@@ -7,10 +7,10 @@ class MainWindow : public juce::DocumentWindow
 {
 public:
     MainWindow(juce::String name)
-        : DocumentWindow(name, juce::CustomLookAndFeel::grey_dark, DocumentWindow::allButtons)
+        : DocumentWindow(name, juce::CustomLookAndFeel::greyDark, DocumentWindow::allButtons)
         , audioBatch(std::make_unique<AudioBatchComponent>())
     {
-        juce::LookAndFeel::setDefaultLookAndFeel(look_and_feel.get());
+        juce::LookAndFeel::setDefaultLookAndFeel(lookAndFeel.get());
 #if JUCE_WINDOWS
         setUsingNativeTitleBar(false);
         setTitleBarTextCentred(false);
@@ -29,7 +29,7 @@ public:
 
 private:
     std::unique_ptr<AudioBatchComponent> audioBatch;
-    std::unique_ptr<juce::CustomLookAndFeel> look_and_feel = std::make_unique<juce::CustomLookAndFeel>(true);
+    std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel = std::make_unique<juce::CustomLookAndFeel>(true);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
 };
@@ -41,7 +41,7 @@ public:
 
     const juce::String getApplicationName() override { return ProjectInfo::projectName; }
     const juce::String getApplicationVersion() override { return ProjectInfo::versionString; }
-    bool moreThanOneInstanceAllowed() override { return true; }
+    bool moreThanOneInstanceAllowed() override { return false; }
 
     void initialise(const juce::String& commandLineParameters) override
     {

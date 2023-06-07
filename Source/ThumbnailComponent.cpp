@@ -21,7 +21,7 @@ ThumbnailComponent::~ThumbnailComponent()
 
 void ThumbnailComponent::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::CustomLookAndFeel::grey_medium_dark);
+    g.fillAll(juce::CustomLookAndFeel::greyMediumDark);
     g.setColour(juce::CustomLookAndFeel::blue);
 
     if (thumbnail.getTotalLength() > 0.0) {
