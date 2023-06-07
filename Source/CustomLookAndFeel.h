@@ -69,6 +69,18 @@ public:
     static constexpr float mono_height {15.0f};
 
 private:
+    const ColourScheme custom_colour_scheme {
+        0xff1B1C1E,  // windowBackground
+        0xff3E3F43,  // widgetBackground
+        0xff585A5F,  // menuBackground
+        0xff8C919D,  // outline
+        0xffF7F8FB,  // defaultText
+        0xff797B7F,  // defaultFill
+        0xffF7F8FB,  // highlightedText
+        0xff00D296,  // highlightedFill
+        0xffF7F8FB,  // menuText
+    };
+
     bool dark_theme;
 };
 }  // namespace juce

@@ -13,7 +13,6 @@ AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 
 #endif
 
     fileTreeComp.setTitle("Files");
-    fileTreeComp.setColour(juce::FileTreeComponent::backgroundColourId, juce::Colours::lightgrey.withAlpha(0.6f));
     fileTreeComp.addListener(this);
     fileTreeComp.setDragAndDropDescription("AudioBatchFileTree");
 
@@ -22,9 +21,8 @@ AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 
     thumbnail->addChangeListener(this);
 
     startStopButton.setEnabled(false);
-    startStopButton.setColour(juce::TextButton::buttonColourId, juce::Colours::grey);
-    startStopButton.setColour(juce::TextButton::buttonOnColourId, juce::Colours::green);
-    startStopButton.setColour(juce::TextButton::textColourOffId, juce::Colours::black);
+    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::grey_medium);
+    startStopButton.setColour(juce::TextButton::buttonOnColourId, juce::CustomLookAndFeel::green);
     startStopButton.onClick = [this] { startOrStop(); };
     addAndMakeVisible(startStopButton);
 
@@ -137,13 +135,13 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
     if (loadURLIntoTransport(resource)) {
         currentAudioUrl = std::move(resource);
         startStopButton.setEnabled(true);
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::Colours::green);
+        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green);
         zoomSlider.setValue(100.0, juce::dontSendNotification);
         audioInfo.clear();
         // juce::MessageManager::callAsync([this]() { showAudioStats(); });
     } else {
         startStopButton.setEnabled(false);
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::Colours::grey);
+        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::grey_medium);
     }
 
     thumbnail->setURL(currentAudioUrl);
@@ -221,7 +219,7 @@ void AudioBatchComponent::openDialogWindow(
         juce::DialogWindow::LaunchOptions launchOptions;
         launchOptions.dialogTitle = title;
         launchOptions.content.setNonOwned(component);
-        launchOptions.content->setSize(600, 150);
+        launchOptions.content->setSize(500, 150);
         window = launchOptions.create();
         childWindows.add(window);
     }
@@ -234,6 +232,8 @@ void AudioBatchComponent::openDialogWindow(
 #endif
     window->setSize(window->getWidth(), window->getHeight());
     window->setResizable(true, true);
+    window->setResizeLimits(window->getWidth(), window->getHeight(), 4096, 4096);
+    window->setColour(juce::DialogWindow::backgroundColourId, juce::CustomLookAndFeel::grey_semi_dark);
     window->setVisible(true);
     window->toFront(true);
 }
