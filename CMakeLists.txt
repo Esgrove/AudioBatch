@@ -101,9 +101,11 @@ target_sources(AudioBatch
     PRIVATE
         "Source/AudioBatchComponent.cpp"
         "Source/AudioBatchComponent.h"
+        "Source/CustomLookAndFeel.cpp"
+        "Source/CustomLookAndFeel.h"
+        "Source/Main.cpp"
         "Source/ThumbnailComponent.cpp"
         "Source/ThumbnailComponent.h"
-        "Source/Main.cpp"
 )
 
 target_include_directories(AudioBatch
@@ -154,6 +156,7 @@ endif()
 juce_add_binary_data(Assets NAMESPACE BinaryData
     SOURCES
         "Assets/RobotoMono-Regular.ttf"
+        "Assets/Roboto-Regular.ttf"
 )
 
 target_link_libraries(AudioBatch

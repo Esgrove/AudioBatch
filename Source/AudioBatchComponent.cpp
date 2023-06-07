@@ -1,5 +1,7 @@
 #include "AudioBatchComponent.h"
 
+#include "CustomLookAndFeel.h"
+
 AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
 {
     addAndMakeVisible(fileTreeComp);
@@ -174,10 +176,10 @@ void AudioBatchComponent::startOrStop()
 {
     if (transportSource.isPlaying()) {
         transportSource.stop();
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::Colours::green);
+        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green);
     } else {
         transportSource.start();
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::Colours::darkred);
+        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::red);
     }
 }
 
