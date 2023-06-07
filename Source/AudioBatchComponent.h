@@ -39,7 +39,8 @@ private:
     juce::AudioFormatManager formatManager;
     juce::TimeSliceThread thread {"audio file preview"};
 
-    std::unique_ptr<juce::WildcardFileFilter> audioFileFilter = std::make_unique<juce::WildcardFileFilter>("*.wav;*.aiff;*.aif;*.m4a;*.mp3;*.flac;*.ogg", "", "audio files");
+    std::unique_ptr<juce::WildcardFileFilter> audioFileFilter
+        = std::make_unique<juce::WildcardFileFilter>("*.wav;*.aiff;*.aif;*.m4a;*.mp3;*.flac;*.ogg", "", "audio files");
 
     juce::DirectoryContentsList directoryList {audioFileFilter.get(), thread};
     juce::FileTreeComponent fileTreeComp {directoryList};
