@@ -11,7 +11,6 @@ public:
     ~AudioBatchComponent() override;
 
     void paint(juce::Graphics& g) override;
-
     void resized() override;
 
 private:
@@ -22,47 +21,41 @@ private:
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
     void fileClicked(const juce::File&, const juce::MouseEvent&) override;
     void fileDoubleClicked(const juce::File&) override;
-    void selectionChanged() override;
-    void showAudioResource(juce::URL resource);
-    void startOrStop();
-    void zoomLevelChanged(double zoomLevel);
-    void showAudioStats();
     void logAudioInfoMessage(const juce::String& m);
-
     void openDialogWindow(
         SafePointer<juce::DialogWindow>& window,
         const SafePointer<juce::Component>& component,
         const juce::String& title);
+    void selectionChanged() override;
+    void showAudioResource(juce::URL resource);
+    void showAudioStats();
+    void startOrStop();
+    void zoomLevelChanged(double zoomLevel);
 
-    juce::AudioDeviceManager audioDeviceManager;
-
-    juce::AudioFormatManager formatManager;
-    juce::TimeSliceThread thread {"audio file preview"};
-
+    std::unique_ptr<juce::AudioFormatReaderSource> currentAudioFileSource;
+    std::unique_ptr<ThumbnailComponent> thumbnail;
     std::unique_ptr<juce::WildcardFileFilter> audioFileFilter
         = std::make_unique<juce::WildcardFileFilter>("*.wav;*.aiff;*.aif;*.m4a;*.mp3;*.flac;*.ogg", "", "audio files");
-
-    juce::DirectoryContentsList directoryList {audioFileFilter.get(), thread};
-    juce::FileTreeComponent fileTreeComp {directoryList};
-
-    juce::URL currentAudioUrl;
-    juce::File currentAudioFile;
-    juce::AudioSourcePlayer audioSourcePlayer;
-    juce::AudioTransportSource transportSource;
-    std::unique_ptr<juce::AudioFormatReaderSource> currentAudioFileSource;
 
     SafePointer<juce::DialogWindow> settingsWindow;
 
     juce::Array<juce::Component::SafePointer<juce::DialogWindow>> childWindows;
-
-    std::unique_ptr<ThumbnailComponent> thumbnail;
-    juce::TextButton startStopButton {"Play/Stop"};
-
-    juce::Slider zoomSlider {"ZoomSlider"};
-    juce::Label zoomLabel {"Zoom"};
-    juce::TextEditor audioInfo {"AudioInfo"};
-    juce::TextButton settingsButton {"Settings"};
+    juce::AudioDeviceManager audioDeviceManager;
     juce::AudioDeviceSelectorComponent audioSetupComp;
+    juce::AudioFormatManager formatManager;
+    juce::AudioSourcePlayer audioSourcePlayer;
+    juce::AudioTransportSource transportSource;
+    juce::DirectoryContentsList directoryList {audioFileFilter.get(), thread};
+    juce::File currentAudioFile;
+    juce::FileTreeComponent fileTreeComp {directoryList};
+    juce::TimeSliceThread thread {"audio file preview"};
+    juce::URL currentAudioUrl;
+
+    juce::Label zoomLabel {"Zoom"};
+    juce::Slider zoomSlider {"ZoomSlider"};
+    juce::TextButton settingsButton {"Settings"};
+    juce::TextButton startStopButton {"Play/Stop"};
+    juce::TextEditor audioInfo {"AudioInfo"};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioBatchComponent)
 };

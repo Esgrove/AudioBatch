@@ -76,26 +76,30 @@ private:
 
 CustomLookAndFeel::CustomLookAndFeel(bool dark_mode_enabled) : dark_theme(dark_mode_enabled)
 {
-    setColour(juce::AlertWindow::backgroundColourId, grey_semi_dark);
-    setColour(juce::CaretComponent::caretColourId, green);
-    setColour(juce::ComboBox::arrowColourId, green);
-    setColour(juce::ComboBox::backgroundColourId, grey_semi_dark);
-    setColour(juce::ComboBox::focusedOutlineColourId, grey_medium);
-    setColour(juce::ComboBox::outlineColourId, grey_semi_light);
-    setColour(juce::FileTreeComponent::backgroundColourId, grey_semi_dark);
-    setColour(juce::HyperlinkButton::textColourId, grey_medium);
-    setColour(juce::PopupMenu::backgroundColourId, grey_semi_dark);
-    setColour(juce::PopupMenu::highlightedBackgroundColourId, green);
-    setColour(juce::ProgressBar::backgroundColourId, grey_medium);
-    setColour(juce::ProgressBar::foregroundColourId, green);
-    setColour(juce::TextButton::buttonColourId, grey_medium);
-    setColour(juce::TextButton::buttonOnColourId, green);
-    setColour(juce::TextButton::textColourOffId, grey_light);
-    setColour(juce::TextButton::textColourOnId, grey_light);
-    setColour(juce::TextEditor::backgroundColourId, grey_semi_dark);
-    setColour(juce::TextEditor::highlightColourId, orange);
-    setColour(juce::TooltipWindow::backgroundColourId, grey_dark);
-    setColour(juce::TooltipWindow::textColourId, green);
+    setColourScheme(custom_colour_scheme);
+
+    // setColour(juce::AlertWindow::backgroundColourId, grey_semi_dark);
+    // setColour(juce::CaretComponent::caretColourId, green);
+    // setColour(juce::ComboBox::arrowColourId, green);
+    // setColour(juce::ComboBox::backgroundColourId, grey_semi_dark);
+    // setColour(juce::ComboBox::focusedOutlineColourId, grey_medium);
+    // setColour(juce::ComboBox::outlineColourId, grey_semi_light);
+    setColour(juce::DialogWindow::backgroundColourId, grey_semi_dark);
+    // setColour(juce::FileTreeComponent::backgroundColourId, grey_semi_dark);
+    // setColour(juce::HyperlinkButton::textColourId, grey_medium);
+    // setColour(juce::PopupMenu::backgroundColourId, grey_semi_dark);
+    // setColour(juce::PopupMenu::highlightedBackgroundColourId, green);
+    // setColour(juce::ProgressBar::backgroundColourId, grey_medium);
+    // setColour(juce::ProgressBar::foregroundColourId, green);
+    // setColour(juce::TextButton::buttonColourId, grey_medium);
+    // setColour(juce::TextButton::buttonOnColourId, green);
+    // setColour(juce::TextButton::textColourOffId, grey_light);
+    // setColour(juce::TextButton::textColourOnId, grey_light);
+    // setColour(juce::TextEditor::backgroundColourId, grey_semi_dark);
+    // setColour(juce::TextEditor::highlightColourId, orange);
+    // setColour(juce::TooltipWindow::backgroundColourId, grey_dark);
+    // setColour(juce::TooltipWindow::textColourId, green);
+    // setColour(juce::ResizableWindow::backgroundColourId, grey_semi_dark);
 
     setDefaultSansSerifTypeface(text_font.getTypefacePtr());
     setUsingNativeAlertWindows(true);

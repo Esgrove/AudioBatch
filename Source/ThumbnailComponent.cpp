@@ -1,5 +1,7 @@
 #include "ThumbnailComponent.h"
 
+#include "CustomLookAndFeel.h"
+
 #include <JuceHeader.h>
 
 ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source)
@@ -19,15 +21,15 @@ ThumbnailComponent::~ThumbnailComponent()
 
 void ThumbnailComponent::paint(juce::Graphics& g)
 {
-    g.fillAll(juce::Colours::darkgrey);
-    g.setColour(juce::Colours::lightblue);
+    g.fillAll(juce::CustomLookAndFeel::grey_medium_dark);
+    g.setColour(juce::CustomLookAndFeel::blue);
 
     if (thumbnail.getTotalLength() > 0.0) {
         auto thumbArea = getLocalBounds();
         thumbnail.drawChannels(g, thumbArea.reduced(2), visibleRange.getStart(), visibleRange.getEnd(), 1.0f);
     } else {
         g.setFont(14.0f);
-        g.drawFittedText("(No audio file selected)", getLocalBounds(), juce::Justification::centred, 2);
+        g.drawFittedText("No audio file selected", getLocalBounds(), juce::Justification::centred, 2);
     }
 }
 

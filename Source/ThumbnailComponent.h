@@ -13,52 +13,36 @@ public:
     ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source);
     ~ThumbnailComponent() override;
 
-    void setURL(const juce::URL& url);
+    bool isInterestedInFileDrag(const juce::StringArray& /*files*/) override;
 
     juce::URL getLastDroppedFile() const noexcept;
 
-    void setRange(juce::Range<double> newRange);
-
-    void paint(juce::Graphics& g) override;
-
-    void resized() override;
-
     void changeListenerCallback(ChangeBroadcaster*) override;
-
-    bool isInterestedInFileDrag(const juce::StringArray& /*files*/) override;
-
     void filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/) override;
-
-    void mouseDown(const juce::MouseEvent& e) override;
-
     void mouseDoubleClick(const juce::MouseEvent&) override;
-
+    void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
-
     void mouseUp(const juce::MouseEvent&) override;
-
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override;
-
+    void paint(juce::Graphics& g) override;
+    void resized() override;
+    void setRange(juce::Range<double> newRange);
+    void setURL(const juce::URL& url);
     void setZoom(double zoomLevel);
 
 private:
-    juce::AudioTransportSource& transportSource;
+    bool canMoveTransport() const noexcept;
+    double xToTime(const float x) const;
+    float timeToX(const double time) const;
+    void timerCallback() override;
+    void updateCursorPosition();
 
-    juce::AudioThumbnailCache thumbnailCache {128};
     juce::AudioThumbnail thumbnail;
+    juce::AudioThumbnailCache thumbnailCache {128};
+    juce::AudioTransportSource& transportSource;
+    juce::DrawableRectangle currentPositionMarker;
     juce::Range<double> visibleRange;
-    bool isFollowingTransport = false;
     juce::URL lastFileDropped;
 
-    juce::DrawableRectangle currentPositionMarker;
-
-    float timeToX(const double time) const;
-
-    double xToTime(const float x) const;
-
-    bool canMoveTransport() const noexcept;
-
-    void timerCallback() override;
-
-    void updateCursorPosition();
+    bool isFollowingTransport = false;
 };
