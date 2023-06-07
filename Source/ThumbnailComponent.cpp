@@ -24,7 +24,6 @@ void ThumbnailComponent::paint(juce::Graphics& g)
 
     if (thumbnail.getTotalLength() > 0.0) {
         auto thumbArea = getLocalBounds();
-
         thumbnail.drawChannels(g, thumbArea.reduced(2), visibleRange.getStart(), visibleRange.getEnd(), 1.0f);
     } else {
         g.setFont(14.0f);
@@ -153,4 +152,16 @@ void ThumbnailComponent::updateCursorPosition()
 
     currentPositionMarker.setRectangle(
         juce::Rectangle<float>(timeToX(transportSource.getCurrentPosition()) - 0.75f, 0, 1.5f, (float)(getHeight())));
+}
+
+void ThumbnailComponent::setZoom(double zoomLevel) {
+    auto start = transportSource.getCurrentPosition();
+    auto zoom = thumbnail.getTotalLength() / zoomLevel;
+    auto end = juce::jmin(thumbnail.getTotalLength(), start + zoom);
+    if (start < thumbnail.getTotalLength() * 0.05 || thumbnail.getTotalLength() - start > zoom) {
+        setRange(juce::Range<double>(start, end));
+    } else {
+        // remaining distance is shorter than zoom length -> zoom from end
+        setRange(juce::Range<double>(thumbnail.getTotalLength() - zoom, end));
+    }
 }

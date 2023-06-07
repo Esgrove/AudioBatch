@@ -39,6 +39,8 @@ public:
 
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override;
 
+    void setZoom(double zoomLevel);
+
 private:
     juce::AudioTransportSource& transportSource;
 
