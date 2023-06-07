@@ -1,7 +1,6 @@
 #include "AudioBatchComponent.h"
 
-AudioBatchComponent::AudioBatchComponent() : 
-    audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
+AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
 {
     addAndMakeVisible(fileTreeComp);
 
@@ -135,12 +134,12 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
         startStopButton.setColour(juce::TextButton::buttonColourId, juce::Colours::green);
         zoomSlider.setValue(100.0, juce::dontSendNotification);
         audioInfo.clear();
-        //juce::MessageManager::callAsync([this]() { showAudioStats(); });
+        // juce::MessageManager::callAsync([this]() { showAudioStats(); });
     } else {
         startStopButton.setEnabled(false);
         startStopButton.setColour(juce::TextButton::buttonColourId, juce::Colours::grey);
     }
- 
+
     thumbnail->setURL(currentAudioUrl);
 }
 
@@ -154,15 +153,12 @@ bool AudioBatchComponent::loadURLIntoTransport(const juce::URL& audioURL)
     juce::AudioFormatReader* reader = nullptr;
 
     if (reader == nullptr) {
-        reader = formatManager.createReaderFor(audioURL.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)));
+        reader = formatManager.createReaderFor(
+            audioURL.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)));
     }
     if (reader != nullptr) {
         currentAudioFileSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
-        transportSource.setSource(
-            currentAudioFileSource.get(),
-            32768,
-            &thread,
-            reader->sampleRate);
+        transportSource.setSource(currentAudioFileSource.get(), 32768, &thread, reader->sampleRate);
 
         return true;
     }
@@ -204,7 +200,8 @@ void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source
     }
 }
 
-void AudioBatchComponent::zoomLevelChanged(double zoomLevel) {
+void AudioBatchComponent::zoomLevelChanged(double zoomLevel)
+{
     thumbnail.get()->setZoom(zoomLevel);
 }
 
@@ -235,7 +232,8 @@ void AudioBatchComponent::openDialogWindow(
     window->toFront(true);
 }
 
-void AudioBatchComponent::showAudioStats() {
+void AudioBatchComponent::showAudioStats()
+{
     logAudioInfoMessage(currentAudioFile.getFileName());
     auto reader = currentAudioFileSource.get()->getAudioFormatReader();
     auto sampleRate = reader->sampleRate;

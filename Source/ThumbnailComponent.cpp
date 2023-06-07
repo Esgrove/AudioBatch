@@ -108,7 +108,8 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent&, const juce::Mou
 {
     if (thumbnail.getTotalLength() > 0.0) {
         auto newStart = visibleRange.getStart() - wheel.deltaX * (visibleRange.getLength()) / 10.0;
-        newStart = juce::jlimit(0.0, juce::jmax(0.0, thumbnail.getTotalLength() - (visibleRange.getLength())), newStart);
+        newStart
+            = juce::jlimit(0.0, juce::jmax(0.0, thumbnail.getTotalLength() - (visibleRange.getLength())), newStart);
 
         if (canMoveTransport()) {
             setRange({newStart, newStart + visibleRange.getLength()});
@@ -154,7 +155,8 @@ void ThumbnailComponent::updateCursorPosition()
         juce::Rectangle<float>(timeToX(transportSource.getCurrentPosition()) - 0.75f, 0, 1.5f, (float)(getHeight())));
 }
 
-void ThumbnailComponent::setZoom(double zoomLevel) {
+void ThumbnailComponent::setZoom(double zoomLevel)
+{
     auto start = transportSource.getCurrentPosition();
     auto zoom = thumbnail.getTotalLength() / zoomLevel;
     auto end = juce::jmin(thumbnail.getTotalLength(), start + zoom);
