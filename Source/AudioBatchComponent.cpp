@@ -4,7 +4,11 @@ AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 
 {
     addAndMakeVisible(fileTreeComp);
 
+#if JUCE_WINDOWS
     directoryList.setDirectory(juce::File("D:\\Dropbox\\DJ MUSIC\\HOUSE"), false, true);
+#else
+    directoryList.setDirectory(juce::File("~/Dropbox/DJ MUSIC/HOUSE"), false, true);
+#endif
 
     fileTreeComp.setTitle("Files");
     fileTreeComp.setColour(juce::FileTreeComponent::backgroundColourId, juce::Colours::lightgrey.withAlpha(0.6f));
@@ -47,7 +51,7 @@ AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 
     // audio setup
     formatManager.registerBasicFormats();
 
-    thread.startThread(3);
+    thread.startThread(juce::Thread::Priority::high);
 
     juce::RuntimePermissions::request(juce::RuntimePermissions::recordAudio, [this](bool granted) {
         int numInputChannels = granted ? 2 : 0;
