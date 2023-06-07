@@ -35,21 +35,4 @@ init_options() {
     done
 }
 
-ccache_zero_stats() {
-    if [ -n "$(command -v ccache)" ]; then
-        echo "ccache: $(ccache --zero-stats)"
-    else
-        echo "ccache not installed"
-    fi
-}
-
-ccache_show_stats() {
-    if [ -n "$(command -v ccache)" ]; then
-        echo "ccache:"
-        ccache --show-stats
-    else
-        echo "ccache not installed"
-    fi
-}
-
 init_options "$@"
