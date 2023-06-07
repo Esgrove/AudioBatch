@@ -1,4 +1,5 @@
 #include "AudioBatchComponent.h"
+#include "CustomLookAndFeel.h"
 
 #include <JuceHeader.h>
 
@@ -6,12 +7,10 @@ class MainWindow : public juce::DocumentWindow
 {
 public:
     MainWindow(juce::String name)
-        : DocumentWindow(
-            name,
-            juce::Desktop::getInstance().getDefaultLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId),
-            DocumentWindow::allButtons)
+        : DocumentWindow(name, juce::CustomLookAndFeel::grey_dark, DocumentWindow::allButtons)
         , audioBatch(std::make_unique<AudioBatchComponent>())
     {
+        juce::LookAndFeel::setDefaultLookAndFeel(look_and_feel.get());
 #if JUCE_WINDOWS
         setUsingNativeTitleBar(false);
         setTitleBarTextCentred(false);
@@ -30,6 +29,7 @@ public:
 
 private:
     std::unique_ptr<AudioBatchComponent> audioBatch;
+    std::unique_ptr<juce::CustomLookAndFeel> look_and_feel = std::make_unique<juce::CustomLookAndFeel>(true);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
 };
@@ -66,7 +66,10 @@ public:
 
     void systemRequestedQuit() override { quit(); }
 
-    void anotherInstanceStarted(const juce::String& commandLine) override {}
+    void anotherInstanceStarted(const juce::String& commandLine) override
+    {
+        DBG("Another instance started with args: " + commandLine);
+    }
 
 private:
     std::unique_ptr<MainWindow> mainWindow;

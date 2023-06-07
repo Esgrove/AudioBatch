@@ -15,7 +15,7 @@ public:
     void resized() override;
 
 private:
-    bool keyPressed(const juce::KeyPress& key);
+    bool keyPressed(const juce::KeyPress& key) override;
     bool loadURLIntoTransport(const juce::URL& audioURL);
 
     void browserRootChanged(const juce::File&) override;
