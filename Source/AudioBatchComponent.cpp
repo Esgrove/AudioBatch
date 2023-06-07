@@ -21,7 +21,7 @@ AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 
     thumbnail->addChangeListener(this);
 
     startStopButton.setEnabled(false);
-    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::grey_medium);
+    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
     startStopButton.setColour(juce::TextButton::buttonOnColourId, juce::CustomLookAndFeel::green);
     startStopButton.onClick = [this] { startOrStop(); };
     addAndMakeVisible(startStopButton);
@@ -141,7 +141,7 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
         // juce::MessageManager::callAsync([this]() { showAudioStats(); });
     } else {
         startStopButton.setEnabled(false);
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::grey_medium);
+        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
     }
 
     thumbnail->setURL(currentAudioUrl);
@@ -233,7 +233,7 @@ void AudioBatchComponent::openDialogWindow(
     window->setSize(window->getWidth(), window->getHeight());
     window->setResizable(true, true);
     window->setResizeLimits(window->getWidth(), window->getHeight(), 4096, 4096);
-    window->setColour(juce::DialogWindow::backgroundColourId, juce::CustomLookAndFeel::grey_semi_dark);
+    window->setColour(juce::DialogWindow::backgroundColourId, juce::CustomLookAndFeel::greySemiDark);
     window->setVisible(true);
     window->toFront(true);
 }

@@ -6,9 +6,9 @@ namespace juce
 class CustomLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    explicit CustomLookAndFeel(bool dark_mode_enabled);
+    explicit CustomLookAndFeel(bool darkModeEnabled);
 
-    [[maybe_unused]] void setDarkTheme(bool dark_mode_enabled) { dark_theme = dark_mode_enabled; }
+    [[maybe_unused]] void setDarkTheme(bool darkModeEnabled) { darkTheme = darkModeEnabled; }
 
     // override title bar button colours
     juce::Button* createDocumentWindowButton(int buttonType) override;
@@ -46,30 +46,30 @@ public:
     Font getTextButtonFont(TextButton&, int buttonHeight) override;
 
     Font getComboBoxFont(ComboBox&) override { return get_mono_font(); }
-    [[nodiscard]] static Font get_mono_font() { return mono_font.withHeight(mono_height); }
+    [[nodiscard]] static Font get_mono_font() { return monoFont.withHeight(monoFontHeight); }
 
-    static const juce::Font mono_font;
-    static const juce::Font text_font;
+    static const juce::Font monoFont;
+    static const juce::Font textFont;
 
     [[maybe_unused]] static const juce::Colour blue;
     [[maybe_unused]] static const juce::Colour green;
-    [[maybe_unused]] static const juce::Colour grey_dark;
-    [[maybe_unused]] static const juce::Colour grey_light;
-    [[maybe_unused]] static const juce::Colour grey_medium;
-    [[maybe_unused]] static const juce::Colour grey_medium_dark;
-    [[maybe_unused]] static const juce::Colour grey_middle;
-    [[maybe_unused]] static const juce::Colour grey_middle_light;
-    [[maybe_unused]] static const juce::Colour grey_semi_dark;
-    [[maybe_unused]] static const juce::Colour grey_semi_light;
-    [[maybe_unused]] static const juce::Colour grey_super_light;
+    [[maybe_unused]] static const juce::Colour greyDark;
+    [[maybe_unused]] static const juce::Colour greyLight;
+    [[maybe_unused]] static const juce::Colour greyMedium;
+    [[maybe_unused]] static const juce::Colour greyMediumDark;
+    [[maybe_unused]] static const juce::Colour greyMiddle;
+    [[maybe_unused]] static const juce::Colour greyMiddleLight;
+    [[maybe_unused]] static const juce::Colour greySemiDark;
+    [[maybe_unused]] static const juce::Colour greySemiLight;
+    [[maybe_unused]] static const juce::Colour greySuperLight;
     [[maybe_unused]] static const juce::Colour orange;
     [[maybe_unused]] static const juce::Colour red;
     [[maybe_unused]] static const juce::Colour yellow;
 
-    static constexpr float mono_height {15.0f};
+    static constexpr float monoFontHeight {15.0f};
 
 private:
-    const ColourScheme custom_colour_scheme {
+    const ColourScheme customColourScheme {
         0xff1B1C1E,  // windowBackground
         0xff3E3F43,  // widgetBackground
         0xff585A5F,  // menuBackground
@@ -77,10 +77,10 @@ private:
         0xffF7F8FB,  // defaultText
         0xff797B7F,  // defaultFill
         0xffF7F8FB,  // highlightedText
-        0xff00D296,  // highlightedFill
+        0xff5ABDF9,  // highlightedFill
         0xffF7F8FB,  // menuText
     };
 
-    bool dark_theme;
+    bool darkTheme;
 };
 }  // namespace juce

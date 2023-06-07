@@ -15,7 +15,7 @@ public:
 
 private:
     bool keyPressed(const juce::KeyPress& key) override;
-    bool loadURLIntoTransport(const juce::URL& audioURL);
+    bool loadURLIntoTransport(const juce::URL& audioUrl);
 
     void browserRootChanged(const juce::File&) override;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
