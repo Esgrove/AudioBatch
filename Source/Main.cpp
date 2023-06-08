@@ -92,7 +92,15 @@ public:
         juce::Logger::setCurrentLogger(nullptr);
     }
 
-    void systemRequestedQuit() override { quit(); }
+    void systemRequestedQuit() override
+    {
+        if (auto exit_code = getApplicationReturnValue(); exit_code != 0) {
+            utils::log_info("Quit with non-zero exit code: " + juce::String(exit_code));
+        } else {
+            utils::log_info("Quit");
+        }
+        quit();
+    }
 
     void anotherInstanceStarted(const juce::String& commandLine) override
     {
