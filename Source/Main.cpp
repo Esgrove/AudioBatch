@@ -48,6 +48,33 @@ public:
     {
         juce::ArgumentList arguments {getApplicationName(), commandLineParameters};
 
+        // Print command line usage and exit
+        if (arguments.containsOption("--help")) {
+            juce::String usage {getApplicationName() + " " + juce::String(version::VERSION_INFO) + "\n"};
+            usage += "  --help              Print usage and exit\n";
+            usage += "  --version           Print build version and exit";
+            std::cout << usage << std::endl;
+            return quit();
+        }
+
+        // Print app version and exit
+        if (arguments.containsOption("--version")) {
+            std::cout << getApplicationName() << " " << version::BRANCH << " " << version::VERSION_INFO << std::endl;
+            return quit();
+        }
+
+        // Init log file in OS default location under dir "AudioBatch"
+        // Mac:     /Users/<username>/Library/Logs/AudioBatch
+        // Windows: C:\Users\<username>\AppData\Roaming\AudioBatch
+        logger = std::unique_ptr<juce::FileLogger>(juce::FileLogger::createDefaultAppLogger(
+            getApplicationName(), getApplicationName() + ".log", getApplicationName(), 32768));
+
+        juce::Logger::setCurrentLogger(logger.get());
+        utils::log_system_info();
+        if (arguments.size() > 0) {
+            utils::log_info("Args: " + commandLineParameters);
+        }
+
         mainWindow = std::make_unique<MainWindow>(getApplicationName());
 
         if (arguments.containsOption("--headless")) {
