@@ -53,16 +53,14 @@ message(STATUS "Build name: ${APP_BUILD_NAME}")
 if(WIN32)
     # Note: WIN32 is true on Windows for x64 as well
     set(CMAKE_GENERATOR_PLATFORM "x64")
-
     set(ICON_FILE "${CMAKE_SOURCE_DIR}/Assets/icon_win.png")
 else()
     set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
     set(CMAKE_OSX_ARCHITECTURES arm64 x86_64)
     # Xcode: Disable automatic build scheme generation.
-    # Instead, we explicitly specify which targets require schemes.
+    # Instead, explicitly specify which targets require schemes.
     set(CMAKE_XCODE_GENERATE_SCHEME OFF)
     set(CMAKE_XCODE_ATTRIBUTE_DEAD_CODE_STRIPPING YES)
-
     set(ICON_FILE "${CMAKE_SOURCE_DIR}/Assets/icon_mac.png")
 endif()
 
