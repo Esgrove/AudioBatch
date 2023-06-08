@@ -104,6 +104,8 @@ target_sources(AudioBatch
         "Source/Main.cpp"
         "Source/ThumbnailComponent.cpp"
         "Source/ThumbnailComponent.h"
+        "Source/utils.cpp"
+        "Source/utils.h"
 )
 
 target_include_directories(AudioBatch
@@ -127,17 +129,20 @@ target_compile_definitions(AudioBatch
         JUCE_WEB_BROWSER=0
         JUCE_WIN_PER_MONITOR_DPI_AWARE=0
         # Version info
+        BUILDTIME_APP_NAME="${CMAKE_PROJECT_NAME}"
         BUILDTIME_BRANCH="${GIT_BRANCH}"
         BUILDTIME_BUILD_NAME="${APP_BUILD_NAME}"
         BUILDTIME_COMMIT="${GIT_HASH}"
         BUILDTIME_DATE="${DATE}"
+        BUILDTIME_VERSION_NUMBER="${APP_BUILD_VERSION}"
+        BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${GIT_HASH} ${DATE}"
 )
 
 set_target_properties(AudioBatch
     PROPERTIES
         CXX_STANDARD 20
         MACOSX_BUNDLE YES
-        OUTPUT_NAME "AudioBatch"
+        OUTPUT_NAME "${CMAKE_PROJECT_NAME}"
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
         XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
         XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "YES"

@@ -1,5 +1,6 @@
 #include "AudioBatchComponent.h"
 #include "CustomLookAndFeel.h"
+#include "utils.h"
 
 #include <JuceHeader.h>
 
@@ -68,7 +69,7 @@ public:
 
     void anotherInstanceStarted(const juce::String& commandLine) override
     {
-        DBG("Another instance started with args: " + commandLine);
+        utils::log_info("Another instance started with args: " + commandLine);
     }
 
 private:
