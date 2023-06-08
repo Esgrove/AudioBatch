@@ -1,4 +1,7 @@
+*.app
+*.exe
 /Assets/icon.afdesign
 /Assets/sound.png
 /build
 /Builds
+/cmake-build-*
