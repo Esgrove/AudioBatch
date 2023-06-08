@@ -46,10 +46,9 @@ string(TIMESTAMP DATE "%Y-%m-%d" UTC)
 string(TIMESTAMP TIMESTAMP "%Y-%m-%d_%H%M" UTC)
 
 set(APP_BUILD_VERSION "${CMAKE_PROJECT_VERSION}.${BUILD_NUMBER}")
-set(APP_BUILD_NAME "${CMAKE_PROJECT_NAME}_${CMAKE_PROJECT_VERSION}_${GIT_HASH}_${TIMESTAMP}")
+set(APP_BUILD_NAME "${CMAKE_PROJECT_NAME}_${APP_BUILD_VERSION}_${GIT_HASH}_${TIMESTAMP}")
 
 message(STATUS "Build name: ${APP_BUILD_NAME}")
-message(STATUS "Build version: ${APP_BUILD_VERSION}")
 
 if(WIN32)
     # Note: WIN32 is true on Windows for x64 as well
@@ -78,13 +77,12 @@ option(JUCE_ENABLE_MODULE_SOURCE_GROUPS "Show all module sources in IDE projects
 add_subdirectory(JUCE)
 
 juce_add_gui_app(AudioBatch
-    BUILD_VERSION ${APP_BUILD_VERSION}
     BUNDLE_ID com.esgrove.audiobatch
     COMPANY_NAME "Esgrove"
     COMPANY_WEBSITE "https://github.com/esgrove"
     ICON_BIG ${ICON_FILE}
     PRODUCT_NAME "AudioBatch"
-    VERSION ${CMAKE_PROJECT_VERSION}
+    VERSION ${APP_BUILD_VERSION}
     PLIST_TO_MERGE "<plist version=\"1.0\">
         <dict>
             <key>CFBundleIconFile</key>
@@ -139,11 +137,12 @@ set_target_properties(AudioBatch
     PROPERTIES
         CXX_STANDARD 20
         MACOSX_BUNDLE YES
-        XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "YES"
+        OUTPUT_NAME "AudioBatch"
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
         XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
+        XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "YES"
+        XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "7522H7K6WF"
         XCODE_GENERATE_SCHEME ON
-        OUTPUT_NAME "AudioBatch"
 )
 
 if (MSVC)

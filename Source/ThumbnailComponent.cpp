@@ -5,8 +5,8 @@
 #include <JuceHeader.h>
 
 ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source)
-    : transportSource(source)
-    , thumbnail(1024, formatManager, thumbnailCache)
+    : thumbnail(1024, formatManager, thumbnailCache)
+    , transportSource(source)
 {
     thumbnail.addChangeListener(this);
 
