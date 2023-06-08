@@ -1,6 +1,7 @@
 #include "AudioBatchComponent.h"
 
 #include "CustomLookAndFeel.h"
+#include "utils.h"
 
 AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
 {
@@ -183,9 +184,12 @@ void AudioBatchComponent::startOrStop()
 
 void AudioBatchComponent::selectionChanged()
 {
-    currentAudioFile = fileTreeComp.getSelectedFile();
-    showAudioResource(juce::URL(currentAudioFile));
-    std::cout << "Loaded file: " << currentAudioFile.getFileName() << "\n";
+    auto selectedFile = fileTreeComp.getSelectedFile();
+    if (selectedFile.existsAsFile() && selectedFile != currentAudioFile) {
+        currentAudioFile = selectedFile;
+        showAudioResource(juce::URL(currentAudioFile));
+        utils::log_info("Loaded file: " + currentAudioFile.getFileName());
+    }
 }
 
 void AudioBatchComponent::fileClicked(const juce::File&, const juce::MouseEvent&) {}
