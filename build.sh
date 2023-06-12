@@ -71,7 +71,7 @@ build_mac_app() {
     APP_EXECUTABLE="$REPO/$APP_BUNDLE/Contents/MacOS/$APP_NAME"
     mv -f "$(find "$CMAKE_BUILD_DIR" -name "$APP_BUNDLE")" "$APP_BUNDLE"
     verify_universal_binary "$APP_EXECUTABLE"
-
+    $APP_EXECUTABLE --version
     print_green "Build successful: $APP_BUNDLE"
 }
 
@@ -84,7 +84,7 @@ build_windows_app() {
     APP_EXECUTABLE="$REPO/$APP_EXE"
     mv -f "$(find "$CMAKE_BUILD_DIR" -name "$APP_EXE")" "$APP_EXECUTABLE"
     file "$APP_EXECUTABLE"
-
+    $APP_EXECUTABLE --version
     print_green "Build successful: $APP_EXE"
 }
 
