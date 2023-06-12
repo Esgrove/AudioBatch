@@ -16,19 +16,19 @@ set(CMAKE_CXX_STANDARD 20)
 message(STATUS "CMake Version: ${CMAKE_VERSION}")
 message(STATUS "CMake source dir: ${CMAKE_SOURCE_DIR}")
 
-# Get git hash
+# Git hash
 execute_process(
     COMMAND bash -c "git rev-parse --short HEAD"
     OUTPUT_VARIABLE GIT_HASH
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
-# Get git branch
+# Git branch
 execute_process(
     COMMAND bash -c "git branch --show-current"
     OUTPUT_VARIABLE GIT_BRANCH
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
-# Get git tag
+# Git tag
 execute_process(
     COMMAND bash -c "git describe --abbrev=0"
     OUTPUT_VARIABLE GIT_TAG
@@ -95,15 +95,15 @@ juce_generate_juce_header(AudioBatch)
 
 target_sources(AudioBatch
     PRIVATE
-        "Source/AudioBatchComponent.cpp"
-        "Source/AudioBatchComponent.h"
-        "Source/CustomLookAndFeel.cpp"
-        "Source/CustomLookAndFeel.h"
-        "Source/Main.cpp"
-        "Source/ThumbnailComponent.cpp"
-        "Source/ThumbnailComponent.h"
-        "Source/utils.cpp"
-        "Source/utils.h"
+        "src/AudioBatchComponent.cpp"
+        "src/AudioBatchComponent.h"
+        "src/CustomLookAndFeel.cpp"
+        "src/CustomLookAndFeel.h"
+        "src/Main.cpp"
+        "src/ThumbnailComponent.cpp"
+        "src/ThumbnailComponent.h"
+        "src/utils.cpp"
+        "src/utils.h"
 )
 
 target_include_directories(AudioBatch
@@ -157,8 +157,8 @@ endif()
 
 juce_add_binary_data(Assets NAMESPACE BinaryData
     SOURCES
-        "Assets/RobotoMono-Regular.ttf"
-        "Assets/Roboto-Regular.ttf"
+        "assets/RobotoMono-Regular.ttf"
+        "assets/Roboto-Regular.ttf"
 )
 
 target_link_libraries(AudioBatch
