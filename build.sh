@@ -62,9 +62,10 @@ build_mac_app() {
 
     if [ -n "$(command -v xcbeautify)" ]; then
         # nicer xcodebuild output: https://github.com/tuist/xcbeautify
-        cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE" | xcbeautify
+        time cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE" | xcbeautify
     else
-        cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE"
+        print_yellow "xcbeautify missing, install it with brew"
+        time cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE"
     fi
 
     APP_EXECUTABLE="$REPO/$APP_BUNDLE/Contents/MacOS/$APP_NAME"
