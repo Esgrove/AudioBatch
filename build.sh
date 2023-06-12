@@ -90,7 +90,7 @@ build_windows_app() {
 
 check_juce_submodule() {
     # Update JUCE submodule if needed
-    print_magenta "Checking JUCE..."
+    print_magenta "Checking JUCE submodule..."
     if [ ! -d "$JUCE_PATH/modules" ]; then
         print_yellow "JUCE directory not found, cloning submodule..."
         git submodule update --init --recursive
@@ -100,6 +100,8 @@ check_juce_submodule() {
     if [ "$JUCE_VERSION" != "$CACHED_JUCE_VERSION" ]; then
         print_yellow "JUCE submodule out of date, updating..."
         git submodule update --init --recursive
+    else
+        echo "up to date"
     fi
 }
 
