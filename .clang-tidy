@@ -85,7 +85,7 @@ CheckOptions:
     readability-identifier-length.IgnoredExceptionVariableNames: "^[e]$"
     readability-identifier-length.IgnoredLoopCounterNames: "^[ijk_]$"
     readability-identifier-length.IgnoredParameterNames: "^[n]$"
-    readability-identifier-length.IgnoredVariableNames: ""
+    readability-identifier-length.IgnoredVariableNames: "^[xy]$"
     readability-identifier-length.MinimumExceptionNameLength: "2"
     readability-identifier-length.MinimumLoopCounterNameLength: "2"
     readability-identifier-length.MinimumParameterNameLength: "3"
