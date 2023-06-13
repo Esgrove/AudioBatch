@@ -12,6 +12,9 @@ project("AudioBatch"
 )
 
 set(CMAKE_CXX_STANDARD 20)
+# Export compile commands for clang-tidy
+# Note: only works with makefile and ninja generators
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 message(STATUS "CMake Version: ${CMAKE_VERSION}")
 message(STATUS "CMake source dir: ${CMAKE_SOURCE_DIR}")
