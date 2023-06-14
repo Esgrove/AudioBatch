@@ -28,7 +28,7 @@ private:
         const juce::String& title);
     void selectionChanged() override;
     void showAudioResource(juce::URL resource);
-    void showAudioStats();
+    void calculateAudioStats();
     void startOrStop();
     void zoomLevelChanged(double zoomLevel);
 

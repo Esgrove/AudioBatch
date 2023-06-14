@@ -138,8 +138,6 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
         startStopButton.setEnabled(true);
         startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green);
         zoomSlider.setValue(100.0, juce::dontSendNotification);
-        audioInfo.clear();
-        // juce::MessageManager::callAsync([this]() { showAudioStats(); });
     } else {
         startStopButton.setEnabled(false);
         startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
@@ -187,8 +185,24 @@ void AudioBatchComponent::selectionChanged()
     auto selectedFile = fileTreeComp.getSelectedFile();
     if (selectedFile.existsAsFile() && selectedFile != currentAudioFile) {
         currentAudioFile = selectedFile;
+        audioInfo.clear();
         showAudioResource(juce::URL(currentAudioFile));
         utils::log_info("Loaded file: " + currentAudioFile.getFileName());
+
+        auto reader = currentAudioFileSource.get()->getAudioFormatReader();
+        auto metadata = reader->metadataValues;
+        auto sampleRate = reader->sampleRate;
+        auto channels = reader->numChannels;
+        auto samples = reader->lengthInSamples;
+        auto seconds = static_cast<double>(samples) / sampleRate;
+        juce::RelativeTime length {seconds};
+
+        logAudioInfoMessage(reader->getFormatName());
+        logAudioInfoMessage(juce::String(sampleRate) + " samplerate");
+        logAudioInfoMessage(juce::String(channels) + " channels");
+        logAudioInfoMessage(juce::String(reader->bitsPerSample) + " bits per sample");
+        logAudioInfoMessage(length.getDescription());
+        logAudioInfoMessage(juce::String(samples) + " samples");
     }
 }
 
@@ -242,21 +256,18 @@ void AudioBatchComponent::openDialogWindow(
     window->toFront(true);
 }
 
-void AudioBatchComponent::showAudioStats()
+void AudioBatchComponent::calculateAudioStats()
 {
-    logAudioInfoMessage(currentAudioFile.getFileName());
     auto reader = currentAudioFileSource.get()->getAudioFormatReader();
-    auto sampleRate = reader->sampleRate;
-    logAudioInfoMessage(reader->getFormatName() + ", " + juce::String(reader->numChannels) + " Channels");
-    logAudioInfoMessage(juce::String(sampleRate) + ", " + juce::String(reader->bitsPerSample));
-    auto samples = reader->lengthInSamples;
-    auto seconds = static_cast<double>(samples) / static_cast<double>(sampleRate);
-    juce::RelativeTime length {seconds};
-    logAudioInfoMessage(length.getDescription() + ", Samples: " + juce::String(samples));
-    float minRight {0.0}, minLeft {0.0}, maxRight {0.0}, maxLeft {0.0};
-    reader->readMaxLevels(0, samples, minLeft, maxLeft, minRight, maxRight);
-    logAudioInfoMessage("Min: " + juce::String(minLeft, 2) + "   " + juce::String(minRight, 2));
-    logAudioInfoMessage("Max: +" + juce::String(maxLeft, 2) + "   +" + juce::String(maxRight, 2));
+    float minRight {0.0};
+    float minLeft {0.0};
+    float maxRight {0.0};
+    float maxLeft {0.0};
+    reader->readMaxLevels(0, reader->lengthInSamples, minLeft, maxLeft, minRight, maxRight);
+    juce::String minInfo {"Min: " + juce::String(minLeft, 2) + "   " + juce::String(minRight, 2)};
+    juce::String maxInfo {"Max: +" + juce::String(maxLeft, 2) + "   +" + juce::String(maxRight, 2)};
+    logAudioInfoMessage(minInfo);
+    logAudioInfoMessage(maxInfo);
 }
 
 void AudioBatchComponent::logAudioInfoMessage(const juce::String& m)
