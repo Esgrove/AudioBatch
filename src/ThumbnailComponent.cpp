@@ -1,6 +1,7 @@
 #include "ThumbnailComponent.h"
 
 #include "CustomLookAndFeel.h"
+#include "utils.h"
 
 #include <JuceHeader.h>
 
@@ -109,7 +110,7 @@ void ThumbnailComponent::mouseUp(const juce::MouseEvent&)
 void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
 {
     if (thumbnail.getTotalLength() > 0.0) {
-        auto newStart = visibleRange.getStart() - wheel.deltaX * (visibleRange.getLength()) / 10.0;
+        auto newStart = visibleRange.getStart() - wheel.deltaX * (visibleRange.getLength()) * 0.10;
         newStart
             = juce::jlimit(0.0, juce::jmax(0.0, thumbnail.getTotalLength() - (visibleRange.getLength())), newStart);
 
