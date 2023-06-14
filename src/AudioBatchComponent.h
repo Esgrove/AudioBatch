@@ -31,6 +31,7 @@ private:
     void calculateAudioStats();
     void startOrStop();
     void zoomLevelChanged(double zoomLevel);
+    void mouseMagnify(const juce::MouseEvent&, float scaleFactor) override;
 
     std::unique_ptr<juce::AudioFormatReaderSource> currentAudioFileSource;
     std::unique_ptr<ThumbnailComponent> thumbnail;
