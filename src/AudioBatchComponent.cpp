@@ -8,9 +8,9 @@ AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 
     addAndMakeVisible(fileTreeComp);
 
 #if JUCE_WINDOWS
-    directoryList.setDirectory(juce::File("D:\\Dropbox\\DJ MUSIC\\HOUSE"), false, true);
+    directoryList.setDirectory(juce::File("D:\\Dropbox\\DJ MUSIC\\FUNKY JAM 1"), false, true);
 #else
-    directoryList.setDirectory(juce::File("~/Dropbox/DJ MUSIC/HOUSE"), false, true);
+    directoryList.setDirectory(juce::File("~/Dropbox/DJ MUSIC/FUNKY JAM 1"), false, true);
 #endif
 
     fileTreeComp.setTitle("Files");
