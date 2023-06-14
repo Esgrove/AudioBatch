@@ -224,7 +224,6 @@ void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source
 
 void AudioBatchComponent::mouseMagnify(const juce::MouseEvent&, float scaleFactor)
 {
-    utils::log_info("scaleFactor: " + juce::String(scaleFactor));
     auto newZoom = zoomSlider.getValue() * (scaleFactor * scaleFactor);
     zoomSlider.setValue(newZoom);
 }
