@@ -27,7 +27,7 @@ AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 
     startStopButton.onClick = [this] { startOrStop(); };
     addAndMakeVisible(startStopButton);
 
-    zoomSlider.setRange(100, 500, 1);
+    zoomSlider.setRange(100, 1500, 1);
     zoomSlider.setNumDecimalPlacesToDisplay(0);
     zoomSlider.setSkewFactor(0.5);
     zoomSlider.setValue(100);
