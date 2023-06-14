@@ -38,7 +38,7 @@ private:
 class AudioBatchApplication : public juce::JUCEApplication
 {
 public:
-    AudioBatchApplication() {}
+    AudioBatchApplication() = default;
 
     const juce::String getApplicationName() override { return ProjectInfo::projectName; }
     const juce::String getApplicationVersion() override { return ProjectInfo::versionString; }
