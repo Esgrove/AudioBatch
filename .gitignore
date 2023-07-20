@@ -41,3 +41,4 @@
 /build
 /Builds
 /cmake-build-*
+/include/ASIO_SDK/
