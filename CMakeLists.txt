@@ -136,7 +136,7 @@ target_compile_definitions(AudioBatch
         BUILDTIME_COMMIT="${GIT_HASH}"
         BUILDTIME_DATE="${DATE}"
         BUILDTIME_VERSION_NUMBER="${APP_BUILD_VERSION}"
-        BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${GIT_HASH} ${DATE}"
+        BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}"
 )
 
 set_target_properties(AudioBatch
