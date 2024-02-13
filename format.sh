@@ -3,12 +3,15 @@ set -eo pipefail
 
 # Format C++ code using ClangFormat
 
-REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-pushd "$REPO" > /dev/null
+# Import common functions
+DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=./common.sh
+source "$DIR/common.sh"
+
+cd "$REPO"
 
 if [ -z "$(command -v clang-format)" ]; then
-    echo "ERROR: clang-format not found in path"
-    exit 1
+    print_error_and_exit "clang-format not found in path"
 fi
 
 echo "Formatting C++ files..."
@@ -18,5 +21,3 @@ if [ -n "$(command -v shfmt)" ]; then
     echo "Formatting shell scripts..."
     shfmt --list --write ./*.sh
 fi
-
-popd > /dev/null || :

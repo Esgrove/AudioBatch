@@ -2,6 +2,7 @@
 set -eo pipefail
 
 REPO=$(git rev-parse --show-toplevel || (cd "$(dirname "${BASH_SOURCE[0]}")" && pwd))
+export REPO
 
 # Set Bash platform script is running on (mac/windows/linux).
 # BSD (Mac) and GNU (Linux & Git for Windows) core-utils implementations
@@ -17,6 +18,7 @@ case "$(uname -s)" in
         BASH_PLATFORM="linux"
         ;;
 esac
+export BASH_PLATFORM
 
 # Print a message with green color
 print_green() {
