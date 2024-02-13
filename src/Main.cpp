@@ -59,7 +59,7 @@ public:
 
         // Print app version and exit
         if (arguments.containsOption("--version")) {
-            std::cout << getApplicationName() << " " << version::BRANCH << " " << version::VERSION_INFO << std::endl;
+            std::cout << getApplicationName() << " " << version::VERSION_INFO << " " << version::BRANCH << std::endl;
             return quit();
         }
 
