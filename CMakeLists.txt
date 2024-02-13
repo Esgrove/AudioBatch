@@ -129,7 +129,6 @@ target_compile_definitions(AudioBatch
         JUCE_WASAPI=1
         JUCE_WEB_BROWSER=0
         JUCE_WIN_PER_MONITOR_DPI_AWARE=0
-        JUCE_SILENCE_XCODE_15_LINKER_WARNING=1
         # Version info
         BUILDTIME_APP_NAME="${CMAKE_PROJECT_NAME}"
         BUILDTIME_BRANCH="${GIT_BRANCH}"
