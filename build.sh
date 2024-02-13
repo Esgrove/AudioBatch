@@ -11,8 +11,7 @@ OPTIONS: All options are optional
         Specify build type for CMake. Default is 'Release'.
 
     --verbose
-        Display commands being executed.
-"
+        Display commands being executed."
 
 # Import common functions
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
