@@ -40,5 +40,5 @@
 /Assets/sound.png
 /build
 /Builds
-/cmake-build-*
+/cmake-build*
 /include/ASIO_SDK/

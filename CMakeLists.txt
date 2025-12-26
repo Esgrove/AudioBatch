@@ -8,7 +8,7 @@ project("AudioBatch"
     VERSION 0.2.0
     DESCRIPTION "App for batch processing audio files"
     HOMEPAGE_URL "https://github.com/Esgrove/AudioBatch"
-    LANGUAGES CXX
+    LANGUAGES CXX C
 )
 
 set(CMAKE_CXX_STANDARD 23)
@@ -119,7 +119,6 @@ target_compile_definitions(AudioBatch
         DONT_SET_USING_JUCE_NAMESPACE=1
         JUCE_ASIO=1
         JUCE_DIRECTSOUND=0
-        JUCE_DISPLAY_SPLASH_SCREEN=0
         JUCE_PLUGINHOST_VST3=1
         JUCE_STRICT_REFCOUNTEDPOINTER=1
         JUCE_USE_CURL=0
