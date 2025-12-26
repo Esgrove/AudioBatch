@@ -4,13 +4,16 @@ set -eo pipefail
 USAGE="Usage: $0 [OPTIONS]
 
 OPTIONS: All options are optional
-    --help
+    -h | --help
         Display these instructions.
 
-    --build-type <type>
+    -n | --ninja
+        Use Ninja as the build system.
+
+    -b | --build-type <type>
         Specify build type for CMake. Default is 'Release'.
 
-    --verbose
+    -v | --verbose
         Display commands being executed.
 "
 export USAGE
@@ -22,18 +25,22 @@ source "$DIR/common.sh"
 
 init_options() {
     BUILD_TYPE="Release"
+    USE_NINJA=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
-            --help)
+            -h | --help)
                 echo "$USAGE"
                 exit 1
                 ;;
-            --build-type)
+            -n | --ninja)
+                USE_NINJA="true"
+                ;;
+            -b | --build-type)
                 BUILD_TYPE="$2"
                 shift
                 ;;
-            --verbose)
+            -v | --verbose)
                 set -x
                 ;;
         esac
@@ -61,19 +68,23 @@ build_mac_app() {
     APP_BUNDLE="$APP_NAME.app"
     rm -rf "${REPO:?}/$APP_BUNDLE"
 
-    if [ -n "$(command -v xcbeautify)" ]; then
-        # nicer xcodebuild output: https://github.com/tuist/xcbeautify
-        time cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE" | xcbeautify
+    if [ "$USE_NINJA" = true ]; then
+        cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE"
     else
-        print_yellow "xcbeautify missing, install it with brew"
-        time cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE"
+        if [ -n "$(command -v xcbeautify)" ]; then
+            # nicer xcodebuild output: https://github.com/tuist/xcbeautify
+            time cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE" | xcbeautify
+        else
+            print_yellow "xcbeautify missing, install it with brew"
+            time cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE"
+        fi
     fi
 
     APP_EXECUTABLE="$REPO/$APP_BUNDLE/Contents/MacOS/$APP_NAME"
     mv -f "$(find "$CMAKE_BUILD_DIR" -name "$APP_BUNDLE")" "$APP_BUNDLE"
     file "$APP_EXECUTABLE"
-    $APP_EXECUTABLE --version
     print_green "Build successful: $APP_BUNDLE"
+    $APP_EXECUTABLE --version
 }
 
 build_windows_app() {
@@ -85,8 +96,8 @@ build_windows_app() {
     APP_EXECUTABLE="$REPO/$APP_EXE"
     mv -f "$(find "$CMAKE_BUILD_DIR" -name "$APP_EXE")" "$APP_EXECUTABLE"
     file "$APP_EXECUTABLE"
-    $APP_EXECUTABLE --version
     print_green "Build successful: $APP_EXE"
+    $APP_EXECUTABLE --version
 }
 
 check_juce_submodule() {
@@ -110,20 +121,27 @@ export_cmake_project() {
     # Export Xcode / VS project from CMake
     cd "$REPO" || print_error_and_exit "Failed to cd to repo root"
 
-    print_magenta "Generating IDE project..."
-    echo "Exporting to: $CMAKE_BUILD_DIR"
-    if [ "$BASH_PLATFORM" = "windows" ]; then
-        if ! cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64; then
+    if [ "$USE_NINJA" = true ]; then
+        print_magenta "Generating Ninja project..."
+        if ! cmake -B "$CMAKE_BUILD_DIR" -G Ninja; then
             rm -rf "$CMAKE_BUILD_DIR"
-            cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64
-        fi
-    elif [ "$BASH_PLATFORM" = "mac" ]; then
-        if ! cmake -B "$CMAKE_BUILD_DIR" -G "Xcode"; then
-            rm -rf "$CMAKE_BUILD_DIR"
-            cmake -B "$CMAKE_BUILD_DIR" -G "Xcode"
+            cmake -B "$CMAKE_BUILD_DIR" -G Ninja
         fi
     else
-        print_error_and_exit "Platform is not supported yet"
+        print_magenta "Generating IDE project..."
+        if [ "$BASH_PLATFORM" = "windows" ]; then
+            if ! cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64; then
+                rm -rf "$CMAKE_BUILD_DIR"
+                cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64
+            fi
+        elif [ "$BASH_PLATFORM" = "mac" ]; then
+            if ! cmake -B "$CMAKE_BUILD_DIR" -G "Xcode"; then
+                rm -rf "$CMAKE_BUILD_DIR"
+                cmake -B "$CMAKE_BUILD_DIR" -G "Xcode"
+            fi
+        else
+            print_error_and_exit "Platform is not supported yet"
+        fi
     fi
 }
 
