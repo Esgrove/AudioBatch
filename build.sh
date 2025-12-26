@@ -11,7 +11,9 @@ OPTIONS: All options are optional
         Specify build type for CMake. Default is 'Release'.
 
     --verbose
-        Display commands being executed."
+        Display commands being executed.
+"
+export USAGE
 
 # Import common functions
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -69,8 +71,7 @@ build_mac_app() {
 
     APP_EXECUTABLE="$REPO/$APP_BUNDLE/Contents/MacOS/$APP_NAME"
     mv -f "$(find "$CMAKE_BUILD_DIR" -name "$APP_BUNDLE")" "$APP_BUNDLE"
-    # Skipping due to Xcode 15 / macOS 14 universal binary build issue
-    # verify_universal_binary "$APP_EXECUTABLE"
+    file "$APP_EXECUTABLE"
     $APP_EXECUTABLE --version
     print_green "Build successful: $APP_BUNDLE"
 }
@@ -112,9 +113,9 @@ export_cmake_project() {
     print_magenta "Generating IDE project..."
     echo "Exporting to: $CMAKE_BUILD_DIR"
     if [ "$BASH_PLATFORM" = "windows" ]; then
-        if ! cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 17 2022" -A x64; then
+        if ! cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64; then
             rm -rf "$CMAKE_BUILD_DIR"
-            cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 17 2022" -A x64
+            cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64
         fi
     elif [ "$BASH_PLATFORM" = "mac" ]; then
         if ! cmake -B "$CMAKE_BUILD_DIR" -G "Xcode"; then

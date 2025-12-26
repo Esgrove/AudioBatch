@@ -14,10 +14,10 @@ if [ -z "$(command -v clang-format)" ]; then
     print_error_and_exit "clang-format not found in path"
 fi
 
-echo "Formatting C++ files..."
+print_magenta "Formatting C++ files..."
 clang-format -i --verbose --style=file "$REPO"/Source/*.cpp "$REPO"/Source/*.h
 
 if [ -n "$(command -v shfmt)" ]; then
-    echo "Formatting shell scripts..."
+    print_magenta "Formatting shell scripts..."
     shfmt --list --write ./*.sh
 fi
