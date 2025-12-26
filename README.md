@@ -1,6 +1,6 @@
 # AudioBatch
 
-GUI and CLI app (C++20 & JUCE) for batch processing audio files.
+CLI and GUI app (C++23 & JUCE) for batch processing audio files.
 
 Work in progress...
 

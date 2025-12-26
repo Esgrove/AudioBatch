@@ -1,17 +1,17 @@
 # AudioBatch
 # Akseli Lukkarila
-# 2023
+# 2023-2025
 
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 4.2)
 
 project("AudioBatch"
-    VERSION 0.1.0
+    VERSION 0.2.0
     DESCRIPTION "App for batch processing audio files"
     HOMEPAGE_URL "https://github.com/Esgrove/AudioBatch"
     LANGUAGES CXX
 )
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 # Export compile commands for clang-tidy
 # Note: only works with makefile and ninja generators
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -58,7 +58,7 @@ if(WIN32)
     set(CMAKE_GENERATOR_PLATFORM "x64")
     set(ICON_FILE "${CMAKE_SOURCE_DIR}/Assets/icon_win.png")
 else()
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version")
     #set(CMAKE_OSX_ARCHITECTURES arm64 x86_64)
     # Xcode: Disable automatic build scheme generation.
     # Instead, explicitly specify which targets require schemes.
@@ -125,8 +125,8 @@ target_compile_definitions(AudioBatch
         JUCE_USE_CURL=0
         JUCE_USE_FLAC=1
         JUCE_USE_OGGVORBIS=1
-        JUCE_USE_WINDOWS_MEDIA_FORMAT=1
-        JUCE_WASAPI=1
+        JUCE_USE_WINDOWS_MEDIA_FORMAT=0
+        JUCE_WASAPI=0
         JUCE_WEB_BROWSER=0
         JUCE_WIN_PER_MONITOR_DPI_AWARE=0
         # Version info
@@ -141,7 +141,7 @@ target_compile_definitions(AudioBatch
 
 set_target_properties(AudioBatch
     PROPERTIES
-        CXX_STANDARD 20
+        CXX_STANDARD 23
         MACOSX_BUNDLE YES
         OUTPUT_NAME "${CMAKE_PROJECT_NAME}"
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
@@ -156,7 +156,6 @@ if (MSVC)
     add_compile_options(/W4 /permissive-)
 else()
     add_compile_options(-Wall -Wextra -pedantic)
-    # If you are using Link Time Optimisation (LTO), the new linker introduced in Xcode 15 may produce a broken binary.
     add_link_options(-Wl,-weak_reference_mismatches,weak)
 endif()
 
