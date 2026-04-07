@@ -536,11 +536,14 @@ void AudioBatchComponent::sortResults()
             return currentSortForwards ? comparison < 0 : comparison > 0;
         };
 
-        auto compareFloats = [this](float left, float right) {
-            if (juce::approximatelyEqual(left, right)) {
+        auto comparePeaks = [this](float left, float right) {
+            const auto leftMagnitude = std::abs(left);
+            const auto rightMagnitude = std::abs(right);
+
+            if (juce::approximatelyEqual(leftMagnitude, rightMagnitude)) {
                 return false;
             }
-            return compareWithDirection(left, right, currentSortForwards);
+            return compareWithDirection(leftMagnitude, rightMagnitude, currentSortForwards);
         };
 
         switch (currentSortColumnId) {
@@ -557,14 +560,14 @@ void AudioBatchComponent::sortResults()
                 return compareStrings(lhs.fileName, rhs.fileName);
 
             case AudioFileTableModel::columnPeakLeft:
-                if (!juce::approximatelyEqual(lhs.peakLeft, rhs.peakLeft)) {
-                    return compareFloats(lhs.peakLeft, rhs.peakLeft);
+                if (!juce::approximatelyEqual(std::abs(lhs.peakLeft), std::abs(rhs.peakLeft))) {
+                    return comparePeaks(lhs.peakLeft, rhs.peakLeft);
                 }
                 return compareStrings(lhs.fileName, rhs.fileName);
 
             case AudioFileTableModel::columnPeakRight:
-                if (!juce::approximatelyEqual(lhs.peakRight, rhs.peakRight)) {
-                    return compareFloats(lhs.peakRight, rhs.peakRight);
+                if (!juce::approximatelyEqual(std::abs(lhs.peakRight), std::abs(rhs.peakRight))) {
+                    return comparePeaks(lhs.peakRight, rhs.peakRight);
                 }
                 return compareStrings(lhs.fileName, rhs.fileName);
 
@@ -578,8 +581,8 @@ void AudioBatchComponent::sortResults()
 
             case AudioFileTableModel::columnOverallPeak:
             default:
-                if (!juce::approximatelyEqual(lhs.overallPeak, rhs.overallPeak)) {
-                    return compareFloats(lhs.overallPeak, rhs.overallPeak);
+                if (!juce::approximatelyEqual(std::abs(lhs.overallPeak), std::abs(rhs.overallPeak))) {
+                    return comparePeaks(lhs.overallPeak, rhs.overallPeak);
                 }
                 return compareStrings(lhs.fileName, rhs.fileName);
         }
