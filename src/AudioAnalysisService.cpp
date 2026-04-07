@@ -9,6 +9,7 @@
 namespace
 {
 constexpr float minimumDisplayDecibels = -100.0f;
+constexpr double kilobitsPerSecondDivisor = 1000.0;
 
 float peakMagnitude(const float peak)
 {
@@ -161,6 +162,26 @@ juce::String AudioAnalysisService::formatPeakDisplay(float peak)
 
     const auto decibels = juce::Decibels::gainToDecibels(peak, minimumDisplayDecibels);
     return juce::String::formatted("%.2f dBFS", decibels);
+}
+
+double AudioAnalysisService::getAverageBitrateKbps(const AudioAnalysisRecord& record)
+{
+    if (record.durationSeconds <= 0.0 || record.fileSize <= 0) {
+        return 0.0;
+    }
+
+    return (static_cast<double>(record.fileSize) * 8.0) / record.durationSeconds / kilobitsPerSecondDivisor;
+}
+
+juce::String AudioAnalysisService::formatBitrateDisplay(const AudioAnalysisRecord& record)
+{
+    const auto bitrateKbps = getAverageBitrateKbps(record);
+
+    if (bitrateKbps <= 0.0) {
+        return "-";
+    }
+
+    return juce::String(juce::roundToInt(bitrateKbps)) + " kbps";
 }
 
 juce::String AudioAnalysisService::formatStatus(const AudioAnalysisRecord& record)

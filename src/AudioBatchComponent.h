@@ -81,6 +81,7 @@ private:
     [[nodiscard]] juce::String buildNormalizationUnavailableMessage(
         const std::vector<AudioAnalysisRecord>& records
     ) const;
+    void reconcilePendingAnalysisResults();
     void unmarkFileProcessing(const juce::String& fullPath);
 
     /// Removes trashed files from the table and keeps selection and preview state coherent.

@@ -17,6 +17,12 @@ public:
     /// Formats a peak value for display in the GUI and CLI.
     static juce::String formatPeakDisplay(float peak);
 
+    /// Returns the average file bitrate in kbps when it can be derived from the analyzed file.
+    static double getAverageBitrateKbps(const AudioAnalysisRecord& record);
+
+    /// Formats the average bitrate for display in the GUI.
+    static juce::String formatBitrateDisplay(const AudioAnalysisRecord& record);
+
     /// Formats the human-readable status text for a record.
     static juce::String formatStatus(const AudioAnalysisRecord& record);
 

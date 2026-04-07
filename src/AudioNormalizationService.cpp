@@ -11,6 +11,7 @@
 namespace
 {
 constexpr int normalizationBlockSize = 32768;
+constexpr auto normalizedMp3OutputSuffix = ".normalized.aif";
 
 struct AudioNormalizationRuntimeState {
     juce::AudioFormatManager readFormatManager;
@@ -65,6 +66,34 @@ juce::String normalizedExtension(const juce::String& extension)
     }
 
     return value;
+}
+
+bool isMp3Extension(const juce::String& extension)
+{
+    return normalizedExtension(extension).equalsIgnoreCase("mp3");
+}
+
+bool isMp3SourceFile(const juce::File& file)
+{
+    return isMp3Extension(normalizedExtension(file));
+}
+
+juce::AudioFormat* getAiffWriterFormat(AudioNormalizationRuntimeState& runtimeState)
+{
+    if (auto* format = runtimeState.readFormatManager.findFormatForFileExtension("aif"); format != nullptr) {
+        return format;
+    }
+
+    return runtimeState.readFormatManager.findFormatForFileExtension("aiff");
+}
+
+juce::File getNormalizationOutputFile(const juce::File& sourceFile)
+{
+    if (!isMp3SourceFile(sourceFile)) {
+        return sourceFile;
+    }
+
+    return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + normalizedMp3OutputSuffix);
 }
 
 juce::String getLameExecutableName()
@@ -181,31 +210,13 @@ juce::AudioFormat* getWriterFormatForExtension(
     const juce::String& extension
 )
 {
-    const auto normalized = normalizedExtension(extension);
-
-#if JUCE_USE_LAME_AUDIO_FORMAT
-    if (normalized.equalsIgnoreCase("mp3") && runtimeState.lameEncoderFormat != nullptr) {
-        return runtimeState.lameEncoderFormat.get();
-    }
-#endif
-
-    return runtimeState.readFormatManager.findFormatForFileExtension(normalized);
+    return runtimeState.readFormatManager.findFormatForFileExtension(normalizedExtension(extension));
 }
 
 juce::String getMp3WriteUnavailableReason(const AudioNormalizationRuntimeState& runtimeState)
 {
-#if JUCE_USE_LAME_AUDIO_FORMAT
-    if (runtimeState.lameExecutable.existsAsFile()) {
-        return "Detected LAME at " + runtimeState.lameExecutable.getFullPathName()
-            + ", but MP3 writing is still unavailable.";
-    }
-
-    return "LAME encoder not found. Install lame and restart the app. Checked " + getLameSearchLocationsDescription()
-        + ".";
-#else
     juce::ignoreUnused(runtimeState);
-    return "This build does not include JUCE's LAME encoder support.";
-#endif
+    return "MP3 sources are normalized to sibling AIF files, but AIFF writing is unavailable in this build.";
 }
 
 juce::String getWriteUnavailableReason(
@@ -225,11 +236,13 @@ bool canWriteExtension(AudioNormalizationRuntimeState& runtimeState, const juce:
 {
     const auto normalized = normalizedExtension(extension);
 
-#if JUCE_USE_LAME_AUDIO_FORMAT
-    if (normalized.equalsIgnoreCase("mp3")) {
-        return runtimeState.lameExecutable.existsAsFile();
+    if (isMp3Extension(normalized)) {
+        if (auto* writerFormat = getAiffWriterFormat(runtimeState); writerFormat != nullptr) {
+            return canCreateProbeWriter(*writerFormat);
+        }
+
+        return false;
     }
-#endif
 
     if (auto* writerFormat = getWriterFormatForExtension(runtimeState, normalized); writerFormat != nullptr) {
         return canCreateProbeWriter(*writerFormat);
@@ -260,16 +273,8 @@ AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
 
 juce::String getMp3EncoderStatusLine(const AudioNormalizationRuntimeState& runtimeState)
 {
-#if JUCE_USE_LAME_AUDIO_FORMAT
-    if (runtimeState.lameExecutable.existsAsFile()) {
-        return "Detected MP3 encoder: " + runtimeState.lameExecutable.getFullPathName();
-    }
-
-    return "Detected MP3 encoder: none. Checked " + getLameSearchLocationsDescription() + ".";
-#else
     juce::ignoreUnused(runtimeState);
-    return "Detected MP3 encoder: disabled in this build.";
-#endif
+    return "MP3 normalization output: sibling AIF files to preserve metadata.";
 }
 
 std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormalizationRuntimeState& runtimeState)
@@ -290,7 +295,11 @@ std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormaliza
         entry.canWriteBack
             = !entry.fileExtensions.isEmpty() && canWriteExtension(runtimeState, entry.fileExtensions[0]);
 
-        if (!entry.canWriteBack) {
+        if (entry.canWriteBack && !entry.fileExtensions.isEmpty()
+            && isMp3Extension(normalizedExtension(entry.fileExtensions[0])))
+        {
+            entry.detail = "Writes sibling AIF files instead of rewriting the source MP3.";
+        } else if (!entry.canWriteBack) {
             entry.detail = getWriteUnavailableReason(entry.fileExtensions, runtimeState);
         }
 
@@ -321,26 +330,18 @@ juce::String formatExtensionsToText(const juce::StringArray& extensions)
 
 juce::String validateTemporaryNormalizedOutput(
     juce::AudioFormatManager& formatManager,
-    const juce::File& temporaryOutputFile,
-    bool isLameWriter
+    const juce::File& temporaryOutputFile
 )
 {
     if (!temporaryOutputFile.existsAsFile() || temporaryOutputFile.getSize() <= 0) {
         return "Normalization failed to produce a valid output file. The original file was left unchanged.";
     }
 
-#if JUCE_USE_LAME_AUDIO_FORMAT
-    if (isLameWriter) {
-        std::unique_ptr<juce::AudioFormatReader> encodedReader(formatManager.createReaderFor(temporaryOutputFile));
+    std::unique_ptr<juce::AudioFormatReader> encodedReader(formatManager.createReaderFor(temporaryOutputFile));
 
-        if (encodedReader == nullptr || encodedReader->lengthInSamples <= 0) {
-            return "MP3 encoding failed before the output file could be verified. The original file was left "
-                   "unchanged.";
-        }
+    if (encodedReader == nullptr || encodedReader->lengthInSamples <= 0) {
+        return "Normalization failed before the output file could be verified. The original file was left unchanged.";
     }
-#else
-    juce::ignoreUnused(formatManager, isLameWriter);
-#endif
 
     return {};
 }
@@ -377,33 +378,32 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
     juce::StringArray readOnlyLines;
 
     for (const auto& entry : support) {
-        const auto line = "- " + entry.formatName + " (" + formatExtensionsToText(entry.fileExtensions) + ")";
+        auto line = "- " + entry.formatName + " (" + formatExtensionsToText(entry.fileExtensions) + ")";
+
+        if (entry.detail.isNotEmpty()) {
+            line << ": " << entry.detail;
+        }
 
         if (entry.canWriteBack) {
             writableLines.add(line);
         } else {
-            auto detailedLine = line;
-
-            if (entry.detail.isNotEmpty()) {
-                detailedLine << ": " << entry.detail;
-            }
-
-            readOnlyLines.add(detailedLine);
+            readOnlyLines.add(line);
         }
     }
 
     juce::String message;
     message << getMp3EncoderStatusLine(runtimeState) << juce::newLine << juce::newLine;
-    message << "Normalization rewrites files in place, so the source format must also be writable in this build."
+    message << "Normalization rewrites files in place when possible. MP3 sources are written to sibling AIF files."
             << juce::newLine << juce::newLine;
 
     if (!writableLines.isEmpty()) {
-        message << "Writable here:" << juce::newLine << writableLines.joinIntoString(juce::newLine) << juce::newLine
-                << juce::newLine;
+        message << "Normalization available here:" << juce::newLine << writableLines.joinIntoString(juce::newLine)
+                << juce::newLine << juce::newLine;
     }
 
     if (!readOnlyLines.isEmpty()) {
-        message << "Readable but not writable here:" << juce::newLine << readOnlyLines.joinIntoString(juce::newLine);
+        message << "Readable but not normalizable here:" << juce::newLine
+                << readOnlyLines.joinIntoString(juce::newLine);
     }
 
     return message.trimEnd();
@@ -417,6 +417,7 @@ juce::AudioFormatManager& AudioNormalizationService::getThreadLocalFormatManager
 AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAnalysisRecord& sourceRecord)
 {
     const auto& file = sourceRecord.file;
+    const auto outputFile = getNormalizationOutputFile(file);
 
     if (!file.existsAsFile()) {
         return AudioNormalizationResult::failure(file, "File does not exist");
@@ -428,7 +429,8 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
 
     auto& runtimeState = getThreadLocalRuntimeState();
     auto& formatManager = runtimeState.readFormatManager;
-    auto* writerFormat = getWriterFormatForExtension(runtimeState, normalizedExtension(file));
+    auto* writerFormat = isMp3SourceFile(file) ? getAiffWriterFormat(runtimeState)
+                                               : getWriterFormatForExtension(runtimeState, normalizedExtension(file));
 
     if (writerFormat == nullptr) {
         return AudioNormalizationResult::failure(file, "Unsupported audio format");
@@ -448,7 +450,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
 
     const auto gain = 1.0f / peak;
 
-    if (juce::approximatelyEqual(gain, 1.0f)) {
+    if (juce::approximatelyEqual(gain, 1.0f) && outputFile == file) {
         AudioNormalizationResult result;
         result.file = file;
         result.fileName = file.getFileName();
@@ -463,7 +465,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
         return result;
     }
 
-    juce::TemporaryFile temporaryFile(file);
+    juce::TemporaryFile temporaryFile(outputFile);
     std::unique_ptr<juce::OutputStream> outputStream(temporaryFile.getFile().createOutputStream().release());
 
     if (outputStream == nullptr) {
@@ -476,17 +478,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
                              .withBitsPerSample(static_cast<int>(reader->bitsPerSample))
                              .withMetadataValues(copyMetadata(reader->metadataValues));
 
-    bool isLameWriter = false;
-
-#if JUCE_USE_LAME_AUDIO_FORMAT
-    isLameWriter = dynamic_cast<juce::LAMEEncoderAudioFormat*>(writerFormat) != nullptr;
-
-    if (isLameWriter) {
-        writerOptions = writerOptions.withBitsPerSample(16);
-    }
-#endif
-
-    if (!isLameWriter && reader->usesFloatingPointData && reader->bitsPerSample == 32) {
+    if (reader->usesFloatingPointData && reader->bitsPerSample == 32) {
         writerOptions = writerOptions.withSampleFormat(juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
     }
 
@@ -523,8 +515,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
 
     writer.reset();
 
-    if (const auto validationError
-        = validateTemporaryNormalizedOutput(formatManager, temporaryFile.getFile(), isLameWriter);
+    if (const auto validationError = validateTemporaryNormalizedOutput(formatManager, temporaryFile.getFile());
         validationError.isNotEmpty())
     {
         return AudioNormalizationResult::failure(file, validationError);
@@ -538,7 +529,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
     result.file = file;
     result.fileName = file.getFileName();
     result.fullPath = file.getFullPathName();
-    result.analysisRecord = AudioAnalysisService::analyzeFile(file);
+    result.analysisRecord = AudioAnalysisService::analyzeFile(outputFile);
     result.succeeded = !result.analysisRecord.hasError();
 
     if (!result.succeeded) {

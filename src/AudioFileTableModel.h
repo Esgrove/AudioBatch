@@ -16,6 +16,7 @@ public:
         columnName = 1,
         columnPath,
         columnType,
+        columnBitrate,
         columnPeakLeft,
         columnPeakRight,
         columnOverallPeak,
@@ -31,6 +32,8 @@ public:
                 return widthFromDefaultWindowFraction(pathColumnWidthFraction);
             case columnType:
                 return widthFromDefaultWindowFraction(typeColumnWidthFraction);
+            case columnBitrate:
+                return widthFromDefaultWindowFraction(bitrateColumnWidthFraction);
             case columnOverallPeak:
                 return widthFromDefaultWindowFraction(overallPeakColumnWidthFraction);
             case columnPeakLeft:
@@ -53,6 +56,8 @@ public:
                 return pathColumnMinimumWidth;
             case columnType:
                 return typeColumnMinimumWidth;
+            case columnBitrate:
+                return bitrateColumnMinimumWidth;
             case columnOverallPeak:
             case columnPeakLeft:
             case columnPeakRight:
@@ -97,25 +102,27 @@ public:
     /// Notifies the owning component when the active sort column changes.
     void sortOrderChanged(int newSortColumnId, bool isForwards) override;
 
-    /// Returns context-sensitive tooltips for hovered table cells.
+    /// Suppresses cell tooltips for the main results list.
     juce::String getCellTooltip(int rowNumber, int columnId) override;
 
 private:
     static constexpr int defaultWindowWidth = 1024;
     static constexpr int nameColumnMinimumWidth = 120;
     static constexpr int pathColumnMinimumWidth = 160;
-    static constexpr int typeColumnMinimumWidth = 96;
+    static constexpr int typeColumnMinimumWidth = 60;
+    static constexpr int bitrateColumnMinimumWidth = 72;
     static constexpr int metricColumnMinimumWidth = 90;
-    static constexpr double nameColumnWidthFraction = 220.0 / defaultWindowWidth;
-    static constexpr double pathColumnWidthFraction = 280.0 / defaultWindowWidth;
-    static constexpr double typeColumnWidthFraction = 110.0 / defaultWindowWidth;
-    static constexpr double overallPeakColumnWidthFraction = 100.0 / defaultWindowWidth;
-    static constexpr double peakLeftColumnWidthFraction = 100.0 / defaultWindowWidth;
-    static constexpr double peakRightColumnWidthFraction = 100.0 / defaultWindowWidth;
-    static constexpr double statusColumnWidthFraction = 114.0 / defaultWindowWidth;
+    static constexpr double nameColumnWidthFraction = 210.0 / defaultWindowWidth;
+    static constexpr double pathColumnWidthFraction = 250.0 / defaultWindowWidth;
+    static constexpr double typeColumnWidthFraction = 80.0 / defaultWindowWidth;
+    static constexpr double bitrateColumnWidthFraction = 90.0 / defaultWindowWidth;
+    static constexpr double overallPeakColumnWidthFraction = 96.0 / defaultWindowWidth;
+    static constexpr double peakLeftColumnWidthFraction = 96.0 / defaultWindowWidth;
+    static constexpr double peakRightColumnWidthFraction = 96.0 / defaultWindowWidth;
+    static constexpr double statusColumnWidthFraction = 106.0 / defaultWindowWidth;
     static constexpr double totalInitialColumnFraction = nameColumnWidthFraction + pathColumnWidthFraction
-        + typeColumnWidthFraction + overallPeakColumnWidthFraction + peakLeftColumnWidthFraction
-        + peakRightColumnWidthFraction + statusColumnWidthFraction;
+        + typeColumnWidthFraction + bitrateColumnWidthFraction + overallPeakColumnWidthFraction
+        + peakLeftColumnWidthFraction + peakRightColumnWidthFraction + statusColumnWidthFraction;
 
     static_assert(totalInitialColumnFraction == 1.0, "Initial column fractions must sum to 1.0");
 
