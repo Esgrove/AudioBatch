@@ -59,8 +59,6 @@ set(APP_BUILD_NAME "${CMAKE_PROJECT_NAME}_${APP_BUILD_VERSION}_${GIT_HASH}_${TIM
 message(STATUS "Build name: ${APP_BUILD_NAME}")
 
 if(WIN32)
-    # Note: WIN32 is true on Windows for x64 as well
-    set(CMAKE_GENERATOR_PLATFORM "x64")
     set(ICON_FILE "${CMAKE_SOURCE_DIR}/Assets/icon_win.png")
 else()
     set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version")

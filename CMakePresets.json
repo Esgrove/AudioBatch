@@ -18,6 +18,24 @@
       }
     },
     {
+      "name": "windows-ninja-msvc-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "cl",
+        "CMAKE_CXX_COMPILER": "cl"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
       "name": "macos-ninja-base",
       "hidden": true,
       "generator": "Ninja",
@@ -44,6 +62,26 @@
       "description": "Use Visual Studio 18 2026 with x64 output in cmake-build-windows-release.",
       "inherits": "windows-vs2026-base",
       "binaryDir": "${sourceDir}/cmake-build-windows-release"
+    },
+    {
+      "name": "windows-ninja-debug",
+      "displayName": "Windows Ninja Debug",
+      "description": "Use Ninja with the MSVC toolchain in cmake-build-windows-ninja-debug for compile_commands.json support.",
+      "inherits": "windows-ninja-msvc-base",
+      "binaryDir": "${sourceDir}/cmake-build-windows-ninja-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "windows-ninja-release",
+      "displayName": "Windows Ninja Release",
+      "description": "Use Ninja with the MSVC toolchain in cmake-build-windows-ninja-release for compile_commands.json support.",
+      "inherits": "windows-ninja-msvc-base",
+      "binaryDir": "${sourceDir}/cmake-build-windows-ninja-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
     },
     {
       "name": "macos-debug",
@@ -76,6 +114,14 @@
       "name": "windows-release",
       "configurePreset": "windows-release",
       "configuration": "Release"
+    },
+    {
+      "name": "windows-ninja-debug",
+      "configurePreset": "windows-ninja-debug"
+    },
+    {
+      "name": "windows-ninja-release",
+      "configurePreset": "windows-ninja-release"
     },
     {
       "name": "macos-debug",
