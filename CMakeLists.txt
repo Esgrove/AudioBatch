@@ -239,6 +239,7 @@ target_compile_definitions(AudioBatch
 
 set_target_properties(AudioBatch
     PROPERTIES
+        COMPILE_WARNING_AS_ERROR YES
         CXX_STANDARD 23
         MACOSX_BUNDLE YES
         OUTPUT_NAME "AudioBatchApp"
@@ -251,6 +252,7 @@ set_target_properties(AudioBatch
 
     set_target_properties(AudioBatchCli
         PROPERTIES
+        COMPILE_WARNING_AS_ERROR YES
         CXX_STANDARD 23
         OUTPUT_NAME "audiobatch"
     )
