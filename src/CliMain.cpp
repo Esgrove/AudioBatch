@@ -3,6 +3,7 @@
 
 #include <JuceHeader.h>
 
+/// Entry point for the headless batch analysis executable.
 int main(int argc, char* argv[])
 {
     juce::ArgumentList arguments(argc, argv);

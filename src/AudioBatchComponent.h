@@ -11,6 +11,7 @@
 
 class AudioInfoPanel;
 
+/// Main application view that coordinates analysis, playback preview, and file-list interactions.
 class AudioBatchComponent :
     public juce::Component,
     public juce::FileDragAndDropTarget,
@@ -18,7 +19,10 @@ class AudioBatchComponent :
     private juce::ChangeListener
 {
 public:
+    /// Creates the UI, opens the analysis cache, and starts the initial scan.
     AudioBatchComponent();
+
+    /// Stops background work and releases audio and dialog resources.
     ~AudioBatchComponent() override;
 
     void filesDropped(const juce::StringArray& files, int x, int y) override;
@@ -32,19 +36,33 @@ private:
     bool keyPressed(const juce::KeyPress& key) override;
     void browseForRootFolder();
     void handleAnalysisComplete(int totalFiles);
+
+    /// Selects the clicked row and opens the per-file action menu.
     void handleFileContextMenuRequested(int row, int columnId, const juce::MouseEvent& event);
+
     void handleAnalysisResult(const AudioAnalysisRecord& record);
     void handleThumbnailFullyLoaded();
     void handleSelectionChanged(int lastRowSelected);
     void handleSortRequested(int columnId, bool isForwards);
     bool loadURLIntoTransport(const juce::URL& audioUrl);
+
+    /// Moves the selected files to the OS trash, optionally asking for confirmation first.
     void moveSelectedRecordsToTrash(bool promptForConfirmation);
+
     int findRecordIndex(const juce::String& fullPath) const;
     juce::StringArray getSelectedRecordPaths() const;
     int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
+
+    /// Removes trashed files from the table and keeps selection and preview state coherent.
     void removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow);
+
+    /// Opens the selected file's parent folder in the platform file manager.
     void revealRecordParentDirectory(int row) const;
+
+    /// Reveals the selected file in the platform file manager when supported.
     void revealRecordInFileManager(int row) const;
+
+    /// Executes the trash operation and reports any failures back to the user.
     void runMoveToTrash(
         const juce::Array<juce::File>& filesToTrash,
         const juce::StringArray& removedPaths,
@@ -53,7 +71,10 @@ private:
     static juce::File getInitialRootDirectory();
     void refreshAnalysis(bool forceRefresh);
     void restoreSelectionByPaths(const juce::StringArray& selectedPaths);
+
+    /// Shows the context menu for the given row at the supplied screen position.
     void showFileContextMenu(int row, juce::Point<int> screenPosition);
+
     void sortResults();
     void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
     void updateResultsTableColumnWidths();

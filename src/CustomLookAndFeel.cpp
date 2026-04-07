@@ -5,6 +5,7 @@
 
 namespace juce
 {
+/// Application palette constants shared by the custom look-and-feel.
 [[maybe_unused]] const juce::Colour CustomLookAndFeel::blue {90, 189, 249};              // #5ABDF9
 [[maybe_unused]] const juce::Colour CustomLookAndFeel::green {0, 210, 150};              // #00D296
 [[maybe_unused]] const juce::Colour CustomLookAndFeel::greyDark {27, 28, 30};            // #1B1C1E

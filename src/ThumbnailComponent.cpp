@@ -5,6 +5,7 @@
 
 #include <JuceHeader.h>
 
+/// Waveform thumbnail component implementation for preview and drag interactions.
 ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source) :
     thumbnail(1024, formatManager, thumbnailCache),
     transportSource(source)

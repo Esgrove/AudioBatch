@@ -5,6 +5,7 @@
 
 #include <iostream>
 
+/// CLI-only formatting helpers used when printing analysis results.
 namespace
 {
 juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
