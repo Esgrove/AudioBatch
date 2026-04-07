@@ -6,13 +6,20 @@ namespace
 {
 juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 {
-    if (record.formatName.isNotEmpty()) {
-        return record.formatName;
-    }
-
     auto extension = record.file.getFileExtension().trimCharactersAtStart(".");
+
     if (extension.isNotEmpty()) {
         return extension.toUpperCase();
+    }
+
+    auto formatName = record.formatName.trim();
+
+    if (formatName.endsWithIgnoreCase(" file")) {
+        formatName = formatName.dropLastCharacters(5).trimEnd();
+    }
+
+    if (formatName.isNotEmpty()) {
+        return formatName;
     }
 
     return "Unknown";
@@ -253,4 +260,48 @@ void AudioFileTableModel::sortOrderChanged(int newSortColumnId, bool isForwards)
     if (sortChanged != nullptr) {
         sortChanged(newSortColumnId, isForwards);
     }
+}
+
+juce::String AudioFileTableModel::getCellTooltip(int rowNumber, int columnId)
+{
+    if (!juce::isPositiveAndBelow(rowNumber, getNumRows())) {
+        return {};
+    }
+
+    const auto& record = records[static_cast<std::size_t>(rowNumber)];
+
+    switch (columnId) {
+        case columnName:
+            return record.fileName + "\nRight-click for file actions.";
+
+        case columnPath:
+            return record.fullPath;
+
+        case columnType:
+            return "File type: " + getRecordTypeLabel(record);
+
+        case columnPeakLeft:
+            return "Peak L: " + AudioAnalysisService::formatPeakDisplay(record.peakLeft);
+
+        case columnPeakRight:
+            return "Peak R: " + AudioAnalysisService::formatPeakDisplay(record.peakRight);
+
+        case columnOverallPeak:
+            return "Peak Max: " + AudioAnalysisService::formatPeakDisplay(record.overallPeak);
+
+        case columnStatus:
+            if (const auto activeStatus
+                = activeStatusLabelProvider != nullptr ? activeStatusLabelProvider(record) : juce::String();
+                activeStatus.isNotEmpty())
+            {
+                return activeStatus;
+            }
+
+            return AudioAnalysisService::formatStatus(record);
+
+        default:
+            break;
+    }
+
+    return {};
 }

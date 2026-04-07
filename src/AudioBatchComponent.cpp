@@ -149,14 +149,20 @@ juce::String getRevealFileMenuLabel()
 
 juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 {
-    if (record.formatName.isNotEmpty()) {
-        return record.formatName;
-    }
-
     auto extension = record.file.getFileExtension().trimCharactersAtStart(".");
 
     if (extension.isNotEmpty()) {
         return extension.toUpperCase();
+    }
+
+    auto formatName = record.formatName.trim();
+
+    if (formatName.endsWithIgnoreCase(" file")) {
+        formatName = formatName.dropLastCharacters(5).trimEnd();
+    }
+
+    if (formatName.isNotEmpty()) {
+        return formatName;
     }
 
     return "Unknown";
@@ -302,16 +308,12 @@ AudioBatchComponent::AudioBatchComponent() :
 
     formatManager.registerBasicFormats();
 
-    chooseFolderButton.onClick = [this] { chooseRootFolder(); };
-    addAndMakeVisible(chooseFolderButton);
-
-    rescanButton.onClick = [this] { rescanCurrentRoot(); };
-    addAndMakeVisible(rescanButton);
-
     currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
+    currentRootLabel.setTooltip(currentRoot.getFullPathName());
     currentRootLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(currentRootLabel);
 
+    statusLabel.setTooltip("Background analysis and normalization status.");
     statusLabel.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(statusLabel);
 
@@ -324,6 +326,10 @@ AudioBatchComponent::AudioBatchComponent() :
     resultsTable.setMultipleSelectionEnabled(true);
     resultsTable.setOutlineThickness(0);
     resultsTable.setRowHeight(24);
+    resultsTable.setTooltip(
+        "Browse analyzed files. Click a header to sort, Ctrl/Cmd-click for secondary sort, and right-click rows for "
+        "actions."
+    );
     resultsTable.getHeader().setSortColumnId(currentSortColumnId, currentSortForwards);
     refreshSortIndicators();
     addAndMakeVisible(resultsTable);
@@ -345,6 +351,7 @@ AudioBatchComponent::AudioBatchComponent() :
     startStopButton.setEnabled(false);
     startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
     startStopButton.setColour(juce::TextButton::buttonOnColourId, juce::CustomLookAndFeel::green);
+    startStopButton.setTooltip("Start or stop preview playback for the selected file.");
     startStopButton.onClick = [this] { startOrStop(); };
     addAndMakeVisible(startStopButton);
 
@@ -353,6 +360,7 @@ AudioBatchComponent::AudioBatchComponent() :
     zoomSlider.setSkewFactor(0.5);
     zoomSlider.setValue(100);
     zoomSlider.setTextValueSuffix("%");
+    zoomSlider.setTooltip("Adjust waveform zoom. You can also use the mouse wheel over the waveform.");
     zoomSlider.onValueChange = [this] { zoomLevelChanged(zoomSlider.getValue() * 0.01); };
     addAndMakeVisible(zoomSlider);
 
@@ -364,8 +372,11 @@ AudioBatchComponent::AudioBatchComponent() :
     audioInfo = std::make_unique<AudioInfoPanel>();
     addAndMakeVisible(audioInfo.get());
 
+    settingsButton.setTooltip("Open audio device settings.");
     settingsButton.onClick = [this] { showAudioSettingsWindow(); };
     addAndMakeVisible(settingsButton);
+
+    tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 700);
 
     thread.startThread(juce::Thread::Priority::high);
 
@@ -461,10 +472,6 @@ void AudioBatchComponent::resized()
     auto r = getLocalBounds().reduced(4);
     auto topBar = r.removeFromTop(34);
 
-    chooseFolderButton.setBounds(topBar.removeFromLeft(140));
-    topBar.removeFromLeft(6);
-    rescanButton.setBounds(topBar.removeFromLeft(90));
-    topBar.removeFromLeft(10);
     statusLabel.setBounds(topBar.removeFromRight(240));
     topBar.removeFromRight(6);
     currentRootLabel.setBounds(topBar);
@@ -568,6 +575,7 @@ void AudioBatchComponent::chooseRootFolder()
             if (selectedFolder.isDirectory()) {
                 safeThis->currentRoot = selectedFolder;
                 safeThis->currentRootLabel.setText(selectedFolder.getFullPathName(), juce::dontSendNotification);
+                safeThis->currentRootLabel.setTooltip(selectedFolder.getFullPathName());
                 safeThis->refreshAnalysis(false);
             }
 
@@ -1335,6 +1343,7 @@ void AudioBatchComponent::startAnalysis(
 
     if (clearResults) {
         currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
+        currentRootLabel.setTooltip(currentRoot.getFullPathName());
     }
 
     analysisCoordinator.start(options);
@@ -1519,9 +1528,7 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
         return;
     }
 
-    if (record.formatName.isNotEmpty()) {
-        rows.emplace_back("Format", record.formatName);
-    }
+    rows.emplace_back("Format", getRecordTypeLabel(record));
 
     rows.emplace_back("Sample rate", juce::String(record.sampleRate));
     rows.emplace_back("Channels", juce::String(record.channels));

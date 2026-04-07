@@ -97,6 +97,9 @@ public:
     /// Notifies the owning component when the active sort column changes.
     void sortOrderChanged(int newSortColumnId, bool isForwards) override;
 
+    /// Returns context-sensitive tooltips for hovered table cells.
+    juce::String getCellTooltip(int rowNumber, int columnId) override;
+
 private:
     static constexpr int defaultWindowWidth = 1024;
     static constexpr int nameColumnMinimumWidth = 120;
