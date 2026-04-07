@@ -34,7 +34,7 @@
 *.out
 *.app
 
-###############################
+# Build
 
 /Assets/icon.afdesign
 /Assets/sound.png
@@ -42,3 +42,6 @@
 /Builds
 /cmake-build*
 /include/ASIO_SDK/
+
+# Test audio files
+/files/
