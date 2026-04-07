@@ -26,7 +26,7 @@ private:
     bool columnExists(const juce::String& tableName, const juce::String& columnName);
     bool execute(const juce::String& sql);
     bool openUnlocked();
-    juce::String normalizedPath(const juce::File& file) const;
+    static juce::String normalizedPath(const juce::File& file);
 
     juce::CriticalSection mutex;
     juce::File databaseFile;
