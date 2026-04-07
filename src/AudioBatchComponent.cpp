@@ -242,6 +242,16 @@ void AudioBatchComponent::paint(juce::Graphics& g)
     g.fillAll(juce::LookAndFeel::getDefaultLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
 }
 
+bool AudioBatchComponent::isInterestedInFileDrag(const juce::StringArray& files)
+{
+    return !files.isEmpty();
+}
+
+void AudioBatchComponent::filesDropped(const juce::StringArray& files, int, int)
+{
+    handleDroppedPaths(files);
+}
+
 void AudioBatchComponent::resized()
 {
     auto r = getLocalBounds().reduced(4);
@@ -370,39 +380,47 @@ void AudioBatchComponent::browseForRootFolder()
     );
 }
 
-void AudioBatchComponent::refreshAnalysis(bool forceRefresh)
+void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
 {
-    analysisResults.clear();
-    completedResults = 0;
-    currentAudioFile = {};
-    currentAudioUrl = {};
-    currentWaveformLoadedFromCache = false;
-    currentAudioFileSource.reset();
-    transportSource.stop();
-    transportSource.setSource(nullptr);
-    thumbnail->setURL(juce::URL());
-    startStopButton.setEnabled(false);
-    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
-    audioInfo->clear();
-    resultsTable.updateContent();
-    updateResultsTableColumnWidths();
-    resultsTable.repaint();
+    juce::Array<juce::File> droppedFiles;
+    juce::File droppedDirectory;
 
-    AudioAnalysisOptions options;
-    options.inputPaths.add(currentRoot);
-    options.recursive = true;
-    options.refresh = forceRefresh;
+    for (const auto& path : paths) {
+        const juce::File droppedPath(path);
 
-    expectedResults = AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive).size();
+        if (droppedPath.isDirectory()) {
+            if (droppedDirectory == juce::File()) {
+                droppedDirectory = droppedPath;
+            }
 
-    if (expectedResults == 0) {
-        statusLabel.setText("No supported audio files found", juce::dontSendNotification);
+            continue;
+        }
+
+        if (droppedPath.existsAsFile()) {
+            droppedFiles.addIfNotAlreadyThere(droppedPath);
+        }
+    }
+
+    if (droppedFiles.isEmpty() && droppedDirectory.isDirectory()) {
+        currentRoot = droppedDirectory;
+        currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
+        refreshAnalysis(false);
         return;
     }
 
-    statusLabel.setText("Analyzing 0/" + juce::String(expectedResults), juce::dontSendNotification);
-    currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
-    analysisCoordinator.start(options);
+    if (droppedFiles.isEmpty()) {
+        statusLabel.setText("No supported dropped files", juce::dontSendNotification);
+        return;
+    }
+
+    startAnalysis(droppedFiles, false, false, false);
+}
+
+void AudioBatchComponent::refreshAnalysis(bool forceRefresh)
+{
+    juce::Array<juce::File> inputPaths;
+    inputPaths.add(currentRoot);
+    startAnalysis(inputPaths, true, forceRefresh, true);
 }
 
 int AudioBatchComponent::findRecordIndex(const juce::String& fullPath) const
@@ -562,6 +580,54 @@ void AudioBatchComponent::sortResults()
                 return compareStrings(lhs.fileName, rhs.fileName);
         }
     });
+}
+
+void AudioBatchComponent::startAnalysis(
+    const juce::Array<juce::File>& inputPaths,
+    bool recursive,
+    bool forceRefresh,
+    bool clearResults
+)
+{
+    if (clearResults) {
+        analysisResults.clear();
+        currentAudioFile = {};
+        currentAudioUrl = {};
+        currentWaveformLoadedFromCache = false;
+        currentAudioFileSource.reset();
+        transportSource.stop();
+        transportSource.setSource(nullptr);
+        thumbnail->setURL(juce::URL());
+        startStopButton.setEnabled(false);
+        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
+        audioInfo->clear();
+        resultsTable.updateContent();
+        updateResultsTableColumnWidths();
+        resultsTable.repaint();
+    }
+
+    AudioAnalysisOptions options;
+    options.inputPaths = inputPaths;
+    options.recursive = recursive;
+    options.refresh = forceRefresh;
+
+    completedResults = 0;
+    expectedResults = AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive).size();
+
+    if (expectedResults == 0) {
+        statusLabel.setText(
+            clearResults ? "No supported audio files found" : "No supported dropped files", juce::dontSendNotification
+        );
+        return;
+    }
+
+    statusLabel.setText("Analyzing 0/" + juce::String(expectedResults), juce::dontSendNotification);
+
+    if (clearResults) {
+        currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
+    }
+
+    analysisCoordinator.start(options);
 }
 
 void AudioBatchComponent::handleSortRequested(int columnId, bool isForwards)
@@ -750,19 +816,11 @@ void AudioBatchComponent::startOrStop()
 void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
     if (source == thumbnail.get()) {
-        const auto droppedFile = thumbnail->getLastDroppedFile().getLocalFile();
+        const auto droppedFiles = thumbnail->getLastDroppedFiles();
 
-        if (!droppedFile.existsAsFile()) {
+        if (!droppedFiles.isEmpty()) {
+            handleDroppedPaths(droppedFiles);
             return;
-        }
-
-        currentAudioFile = droppedFile;
-        showAudioResource(juce::URL(droppedFile));
-
-        if (const auto existingIndex = findRecordIndex(droppedFile.getFullPathName()); existingIndex >= 0) {
-            updateAudioInfo(analysisResults[static_cast<std::size_t>(existingIndex)]);
-        } else {
-            updateAudioInfo(AudioAnalysisService::analyzeFile(droppedFile));
         }
     }
 }

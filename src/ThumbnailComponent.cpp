@@ -117,6 +117,11 @@ juce::URL ThumbnailComponent::getLastDroppedFile() const noexcept
     return lastFileDropped;
 }
 
+juce::StringArray ThumbnailComponent::getLastDroppedFiles() const
+{
+    return lastDroppedFiles;
+}
+
 void ThumbnailComponent::setRange(juce::Range<double> newRange)
 {
     visibleRange = newRange;
@@ -148,6 +153,7 @@ bool ThumbnailComponent::isInterestedInFileDrag(const juce::StringArray& /*files
 
 void ThumbnailComponent::filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/)
 {
+    lastDroppedFiles = files;
     lastFileDropped = juce::URL(juce::File(files[0]));
     sendChangeMessage();
 }
