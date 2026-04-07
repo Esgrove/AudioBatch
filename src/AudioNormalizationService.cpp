@@ -4,12 +4,21 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 /// Helpers for format lookup, metadata passthrough, and chunked normalization.
 namespace
 {
 constexpr int normalizationBlockSize = 32768;
+
+struct AudioNormalizationRuntimeState {
+    juce::AudioFormatManager readFormatManager;
+    juce::File lameExecutable;
+#if JUCE_USE_LAME_AUDIO_FORMAT
+    std::unique_ptr<juce::LAMEEncoderAudioFormat> lameEncoderFormat;
+#endif
+};
 
 struct AudioNormalizationFormatSupport {
     juce::String formatName;
@@ -47,6 +56,86 @@ juce::String normalizedExtension(const juce::File& file)
     return extension;
 }
 
+juce::String normalizedExtension(const juce::String& extension)
+{
+    auto value = extension.trim();
+
+    if (value.startsWithChar('.')) {
+        value = value.substring(1);
+    }
+
+    return value;
+}
+
+juce::String getLameExecutableName()
+{
+#if JUCE_WINDOWS
+    return "lame.exe";
+#else
+    return "lame";
+#endif
+}
+
+juce::String getLameSearchLocationsDescription()
+{
+    return "PATH and common Scoop/Homebrew locations";
+}
+
+juce::StringArray getLameCandidatePaths()
+{
+    juce::StringArray candidatePaths;
+    const auto addCandidate = [&candidatePaths](const juce::File& file) {
+        if (file != juce::File()) {
+            candidatePaths.addIfNotAlreadyThere(file.getFullPathName());
+        }
+    };
+
+    const auto executableName = getLameExecutableName();
+    const auto executableDirectory
+        = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getParentDirectory();
+    const auto userHome = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+
+    addCandidate(executableDirectory.getChildFile(executableName));
+    addCandidate(executableDirectory.getChildFile("tools").getChildFile(executableName));
+
+#if JUCE_WINDOWS
+    addCandidate(userHome.getChildFile("scoop").getChildFile("shims").getChildFile(executableName));
+    addCandidate(
+        userHome.getChildFile("scoop").getChildFile("apps").getChildFile("lame").getChildFile("current").getChildFile(
+            executableName
+        )
+    );
+#else
+    addCandidate(juce::File("/opt/homebrew/bin/lame"));
+    addCandidate(juce::File("/usr/local/bin/lame"));
+    addCandidate(juce::File("/opt/local/bin/lame"));
+#endif
+
+    juce::StringArray pathEntries;
+    pathEntries.addTokens(juce::SystemStats::getEnvironmentVariable("PATH", {}), JUCE_WINDOWS ? ";" : ":", "\"");
+    pathEntries.removeEmptyStrings();
+    pathEntries.trim();
+
+    for (const auto& pathEntry : pathEntries) {
+        addCandidate(juce::File(pathEntry).getChildFile(executableName));
+    }
+
+    return candidatePaths;
+}
+
+juce::File findLameExecutable()
+{
+    for (const auto& candidatePath : getLameCandidatePaths()) {
+        const juce::File candidate(candidatePath);
+
+        if (candidate.existsAsFile()) {
+            return candidate;
+        }
+    }
+
+    return {};
+}
+
 bool extensionsContain(const juce::StringArray& extensions, const juce::String& targetExtension)
 {
     for (const auto& extension : extensions) {
@@ -74,18 +163,6 @@ juce::AudioFormatWriterOptions buildProbeWriterOptions(juce::AudioFormat& format
         .withBitsPerSample(bitDepths[0]);
 }
 
-juce::String getWriteUnavailableReason(const juce::AudioFormat& format)
-{
-    const auto extensions = format.getFileExtensions();
-
-    if (extensionsContain(extensions, ".mp3")) {
-        return "JUCE can read MP3 in this build, but MP3 writing needs an external encoder such as LAME.";
-    }
-
-    return "This format can be read in the current build, but no compatible writer is available for in-place "
-           "normalization.";
-}
-
 bool canCreateProbeWriter(juce::AudioFormat& format)
 {
     const auto options = buildProbeWriterOptions(format);
@@ -99,13 +176,109 @@ bool canCreateProbeWriter(juce::AudioFormat& format)
     return writer != nullptr;
 }
 
-std::vector<AudioNormalizationFormatSupport> collectFormatSupport(juce::AudioFormatManager& formatManager)
+juce::AudioFormat* getWriterFormatForExtension(
+    AudioNormalizationRuntimeState& runtimeState,
+    const juce::String& extension
+)
+{
+    const auto normalized = normalizedExtension(extension);
+
+#if JUCE_USE_LAME_AUDIO_FORMAT
+    if (normalized.equalsIgnoreCase("mp3") && runtimeState.lameEncoderFormat != nullptr) {
+        return runtimeState.lameEncoderFormat.get();
+    }
+#endif
+
+    return runtimeState.readFormatManager.findFormatForFileExtension(normalized);
+}
+
+juce::String getMp3WriteUnavailableReason(const AudioNormalizationRuntimeState& runtimeState)
+{
+#if JUCE_USE_LAME_AUDIO_FORMAT
+    if (runtimeState.lameExecutable.existsAsFile()) {
+        return "Detected LAME at " + runtimeState.lameExecutable.getFullPathName()
+            + ", but MP3 writing is still unavailable.";
+    }
+
+    return "LAME encoder not found. Install lame and restart the app. Checked " + getLameSearchLocationsDescription()
+        + ".";
+#else
+    juce::ignoreUnused(runtimeState);
+    return "This build does not include JUCE's LAME encoder support.";
+#endif
+}
+
+juce::String getWriteUnavailableReason(
+    const juce::StringArray& extensions,
+    const AudioNormalizationRuntimeState& runtimeState
+)
+{
+    if (extensionsContain(extensions, ".mp3")) {
+        return getMp3WriteUnavailableReason(runtimeState);
+    }
+
+    return "This format can be read in the current build, but no compatible writer is available for in-place "
+           "normalization.";
+}
+
+bool canWriteExtension(AudioNormalizationRuntimeState& runtimeState, const juce::String& extension)
+{
+    const auto normalized = normalizedExtension(extension);
+
+#if JUCE_USE_LAME_AUDIO_FORMAT
+    if (normalized.equalsIgnoreCase("mp3")) {
+        return runtimeState.lameExecutable.existsAsFile();
+    }
+#endif
+
+    if (auto* writerFormat = getWriterFormatForExtension(runtimeState, normalized); writerFormat != nullptr) {
+        return canCreateProbeWriter(*writerFormat);
+    }
+
+    return false;
+}
+
+AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
+{
+    thread_local auto runtimeState = [] {
+        auto initializedState = std::make_unique<AudioNormalizationRuntimeState>();
+        initializedState->readFormatManager.registerBasicFormats();
+        initializedState->lameExecutable = findLameExecutable();
+
+#if JUCE_USE_LAME_AUDIO_FORMAT
+        if (initializedState->lameExecutable.existsAsFile()) {
+            initializedState->lameEncoderFormat
+                = std::make_unique<juce::LAMEEncoderAudioFormat>(initializedState->lameExecutable);
+        }
+#endif
+
+        return initializedState;
+    }();
+
+    return *runtimeState;
+}
+
+juce::String getMp3EncoderStatusLine(const AudioNormalizationRuntimeState& runtimeState)
+{
+#if JUCE_USE_LAME_AUDIO_FORMAT
+    if (runtimeState.lameExecutable.existsAsFile()) {
+        return "Detected MP3 encoder: " + runtimeState.lameExecutable.getFullPathName();
+    }
+
+    return "Detected MP3 encoder: none. Checked " + getLameSearchLocationsDescription() + ".";
+#else
+    juce::ignoreUnused(runtimeState);
+    return "Detected MP3 encoder: disabled in this build.";
+#endif
+}
+
+std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormalizationRuntimeState& runtimeState)
 {
     std::vector<AudioNormalizationFormatSupport> support;
-    support.reserve(static_cast<std::size_t>(formatManager.getNumKnownFormats()));
+    support.reserve(static_cast<std::size_t>(runtimeState.readFormatManager.getNumKnownFormats()));
 
-    for (int index = 0; index < formatManager.getNumKnownFormats(); ++index) {
-        auto* format = formatManager.getKnownFormat(index);
+    for (int index = 0; index < runtimeState.readFormatManager.getNumKnownFormats(); ++index) {
+        auto* format = runtimeState.readFormatManager.getKnownFormat(index);
 
         if (format == nullptr) {
             continue;
@@ -114,10 +287,11 @@ std::vector<AudioNormalizationFormatSupport> collectFormatSupport(juce::AudioFor
         AudioNormalizationFormatSupport entry;
         entry.formatName = format->getFormatName();
         entry.fileExtensions = format->getFileExtensions();
-        entry.canWriteBack = canCreateProbeWriter(*format);
+        entry.canWriteBack
+            = !entry.fileExtensions.isEmpty() && canWriteExtension(runtimeState, entry.fileExtensions[0]);
 
         if (!entry.canWriteBack) {
-            entry.detail = getWriteUnavailableReason(*format);
+            entry.detail = getWriteUnavailableReason(entry.fileExtensions, runtimeState);
         }
 
         support.push_back(std::move(entry));
@@ -144,36 +318,60 @@ juce::String formatExtensionsToText(const juce::StringArray& extensions)
 
     return normalizedExtensions.joinIntoString(", ");
 }
+
+juce::String validateTemporaryNormalizedOutput(
+    juce::AudioFormatManager& formatManager,
+    const juce::File& temporaryOutputFile,
+    bool isLameWriter
+)
+{
+    if (!temporaryOutputFile.existsAsFile() || temporaryOutputFile.getSize() <= 0) {
+        return "Normalization failed to produce a valid output file. The original file was left unchanged.";
+    }
+
+#if JUCE_USE_LAME_AUDIO_FORMAT
+    if (isLameWriter) {
+        std::unique_ptr<juce::AudioFormatReader> encodedReader(formatManager.createReaderFor(temporaryOutputFile));
+
+        if (encodedReader == nullptr || encodedReader->lengthInSamples <= 0) {
+            return "MP3 encoding failed before the output file could be verified. The original file was left "
+                   "unchanged.";
+        }
+    }
+#else
+    juce::ignoreUnused(formatManager, isLameWriter);
+#endif
+
+    return {};
+}
 }  // namespace
 
 bool AudioNormalizationService::canNormalizeFile(const juce::File& file)
 {
-    auto& formatManager = getThreadLocalFormatManager();
-    auto* format = formatManager.findFormatForFileExtension(normalizedExtension(file));
-
-    return format != nullptr && canCreateProbeWriter(*format);
+    auto& runtimeState = getThreadLocalRuntimeState();
+    return canWriteExtension(runtimeState, normalizedExtension(file));
 }
 
 juce::String AudioNormalizationService::getNormalizationSupportMessage(const juce::File& file)
 {
-    auto& formatManager = getThreadLocalFormatManager();
-    auto* format = formatManager.findFormatForFileExtension(normalizedExtension(file));
+    auto& runtimeState = getThreadLocalRuntimeState();
+    auto* format = runtimeState.readFormatManager.findFormatForFileExtension(normalizedExtension(file));
 
     if (format == nullptr) {
         return "Unsupported audio format";
     }
 
-    if (canCreateProbeWriter(*format)) {
+    if (canWriteExtension(runtimeState, normalizedExtension(file))) {
         return {};
     }
 
-    return getWriteUnavailableReason(*format);
+    return getWriteUnavailableReason(format->getFileExtensions(), runtimeState);
 }
 
 juce::String AudioNormalizationService::getFormatSupportSummary()
 {
-    auto& formatManager = getThreadLocalFormatManager();
-    const auto support = collectFormatSupport(formatManager);
+    auto& runtimeState = getThreadLocalRuntimeState();
+    const auto support = collectFormatSupport(runtimeState);
 
     juce::StringArray writableLines;
     juce::StringArray readOnlyLines;
@@ -195,6 +393,7 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
     }
 
     juce::String message;
+    message << getMp3EncoderStatusLine(runtimeState) << juce::newLine << juce::newLine;
     message << "Normalization rewrites files in place, so the source format must also be writable in this build."
             << juce::newLine << juce::newLine;
 
@@ -212,14 +411,7 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
 
 juce::AudioFormatManager& AudioNormalizationService::getThreadLocalFormatManager()
 {
-    thread_local juce::AudioFormatManager formatManager;
-    thread_local const bool initialized = [] {
-        formatManager.registerBasicFormats();
-        return true;
-    }();
-
-    juce::ignoreUnused(initialized);
-    return formatManager;
+    return getThreadLocalRuntimeState().readFormatManager;
 }
 
 AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAnalysisRecord& sourceRecord)
@@ -234,10 +426,11 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
         return AudioNormalizationResult::failure(file, "File analysis must finish before normalization");
     }
 
-    auto& formatManager = getThreadLocalFormatManager();
-    auto* format = formatManager.findFormatForFileExtension(normalizedExtension(file));
+    auto& runtimeState = getThreadLocalRuntimeState();
+    auto& formatManager = runtimeState.readFormatManager;
+    auto* writerFormat = getWriterFormatForExtension(runtimeState, normalizedExtension(file));
 
-    if (format == nullptr) {
+    if (writerFormat == nullptr) {
         return AudioNormalizationResult::failure(file, "Unsupported audio format");
     }
 
@@ -283,14 +476,24 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
                              .withBitsPerSample(static_cast<int>(reader->bitsPerSample))
                              .withMetadataValues(copyMetadata(reader->metadataValues));
 
-    if (reader->usesFloatingPointData && reader->bitsPerSample == 32) {
+    bool isLameWriter = false;
+
+#if JUCE_USE_LAME_AUDIO_FORMAT
+    isLameWriter = dynamic_cast<juce::LAMEEncoderAudioFormat*>(writerFormat) != nullptr;
+
+    if (isLameWriter) {
+        writerOptions = writerOptions.withBitsPerSample(16);
+    }
+#endif
+
+    if (!isLameWriter && reader->usesFloatingPointData && reader->bitsPerSample == 32) {
         writerOptions = writerOptions.withSampleFormat(juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
     }
 
-    auto writer = format->createWriterFor(outputStream, writerOptions);
+    auto writer = writerFormat->createWriterFor(outputStream, writerOptions);
 
     if (writer == nullptr) {
-        return AudioNormalizationResult::failure(file, getWriteUnavailableReason(*format));
+        return AudioNormalizationResult::failure(file, getNormalizationSupportMessage(file));
     }
 
     juce::AudioBuffer<float> buffer(static_cast<int>(reader->numChannels), normalizationBlockSize);
@@ -319,6 +522,13 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
     }
 
     writer.reset();
+
+    if (const auto validationError
+        = validateTemporaryNormalizedOutput(formatManager, temporaryFile.getFile(), isLameWriter);
+        validationError.isNotEmpty())
+    {
+        return AudioNormalizationResult::failure(file, validationError);
+    }
 
     if (!temporaryFile.overwriteTargetFileWithTemporary()) {
         return AudioNormalizationResult::failure(file, "Could not replace the original file with normalized audio");
