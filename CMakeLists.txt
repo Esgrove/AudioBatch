@@ -194,6 +194,7 @@ target_compile_definitions(AudioBatch
         DONT_SET_USING_JUCE_NAMESPACE=1
         JUCE_ASIO=1
         JUCE_DIRECTSOUND=0
+        JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_PLUGINHOST_VST3=1
         JUCE_STRICT_REFCOUNTEDPOINTER=1
         JUCE_USE_CURL=0
@@ -216,6 +217,7 @@ target_compile_definitions(AudioBatch
     target_compile_definitions(AudioBatchCli
         PRIVATE
         DONT_SET_USING_JUCE_NAMESPACE=1
+        JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_USE_CURL=0
         JUCE_USE_FLAC=1
         JUCE_USE_OGGVORBIS=1
