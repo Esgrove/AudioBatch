@@ -26,6 +26,23 @@ public:
         centreWithSize(getWidth(), getHeight());
     }
 
+    void showAndActivate()
+    {
+        setVisible(true);
+        setMinimised(false);
+        toFront(true);
+
+        if (auto* peer = getPeer()) {
+            peer->grabFocus();
+        }
+
+        if (auto* content = getContentComponent()) {
+            content->grabKeyboardFocus();
+        } else {
+            grabKeyboardFocus();
+        }
+    }
+
     ~MainWindow() override
     {
         clearContentComponent();
@@ -86,9 +103,13 @@ public:
         if (startHeadless) {
             mainWindow->setVisible(false);
         } else {
-            mainWindow->setVisible(true);
-            mainWindow->toFront(true);
-            mainWindow->grabKeyboardFocus();
+            mainWindow->showAndActivate();
+
+            juce::MessageManager::callAsync([safeWindow = juce::Component::SafePointer<MainWindow>(mainWindow.get())] {
+                if (safeWindow != nullptr) {
+                    safeWindow->showAndActivate();
+                }
+            });
         }
     }
 

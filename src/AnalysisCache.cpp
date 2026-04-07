@@ -13,10 +13,30 @@ juce::String columnText(sqlite3_stmt* statement, int columnIndex)
     return text != nullptr ? juce::String::fromUTF8(reinterpret_cast<const char*>(text)) : juce::String();
 }
 
+juce::MemoryBlock columnBlob(sqlite3_stmt* statement, int columnIndex)
+{
+    juce::MemoryBlock data;
+
+    if (const auto* blob = sqlite3_column_blob(statement, columnIndex)) {
+        const auto size = sqlite3_column_bytes(statement, columnIndex);
+
+        if (size > 0) {
+            data.append(blob, static_cast<size_t>(size));
+        }
+    }
+
+    return data;
+}
+
 void bindText(sqlite3_stmt* statement, int index, const juce::String& value)
 {
     const auto utf8 = value.toRawUTF8();
     sqlite3_bind_text(statement, index, utf8, -1, SQLITE_TRANSIENT);
+}
+
+void bindBlob(sqlite3_stmt* statement, int index, const juce::MemoryBlock& data)
+{
+    sqlite3_bind_blob(statement, index, data.getData(), static_cast<int>(data.getSize()), SQLITE_TRANSIENT);
 }
 }  // namespace
 
@@ -70,6 +90,28 @@ bool AnalysisCache::open()
     return openUnlocked();
 }
 
+bool AnalysisCache::columnExists(const juce::String& tableName, const juce::String& columnName)
+{
+    const auto sql = "PRAGMA table_info(" + tableName + ");";
+
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql.toRawUTF8(), -1, &statement, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    bool found = false;
+
+    while (sqlite3_step(statement) == SQLITE_ROW) {
+        if (columnText(statement, 1) == columnName) {
+            found = true;
+            break;
+        }
+    }
+
+    sqlite3_finalize(statement);
+    return found;
+}
+
 bool AnalysisCache::openUnlocked()
 {
     if (database != nullptr) {
@@ -100,7 +142,7 @@ bool AnalysisCache::openUnlocked()
         return false;
     }
 
-    return execute(R"SQL(
+    if (!execute(R"SQL(
         CREATE TABLE IF NOT EXISTS file_analysis (
             file_path TEXT PRIMARY KEY,
             file_name TEXT NOT NULL,
@@ -117,10 +159,29 @@ bool AnalysisCache::openUnlocked()
             bits_per_sample INTEGER NOT NULL,
             status INTEGER NOT NULL,
             error_message TEXT,
+            waveform_data BLOB,
+            waveform_version INTEGER NOT NULL DEFAULT 0,
             analysis_version INTEGER NOT NULL,
             updated_at_ms INTEGER NOT NULL
         );
-    )SQL");
+    )SQL"))
+    {
+        return false;
+    }
+
+    if (!columnExists("file_analysis", "waveform_data")
+        && !execute("ALTER TABLE file_analysis ADD COLUMN waveform_data BLOB;"))
+    {
+        return false;
+    }
+
+    if (!columnExists("file_analysis", "waveform_version")
+        && !execute("ALTER TABLE file_analysis ADD COLUMN waveform_version INTEGER NOT NULL DEFAULT 0;"))
+    {
+        return false;
+    }
+
+    return true;
 }
 
 bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& record)
@@ -199,8 +260,8 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
         INSERT INTO file_analysis (
             file_path, file_name, format_name, file_size, modified_time_ms, length_in_samples,
             duration_seconds, peak_left, peak_right, overall_peak, sample_rate, channels,
-            bits_per_sample, status, error_message, analysis_version, updated_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            bits_per_sample, status, error_message, waveform_data, waveform_version, analysis_version, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             file_name = excluded.file_name,
             format_name = excluded.format_name,
@@ -216,6 +277,8 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             bits_per_sample = excluded.bits_per_sample,
             status = excluded.status,
             error_message = excluded.error_message,
+                waveform_data = excluded.waveform_data,
+                waveform_version = excluded.waveform_version,
             analysis_version = excluded.analysis_version,
             updated_at_ms = excluded.updated_at_ms;
     )SQL";
@@ -240,10 +303,95 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     sqlite3_bind_int(statement, 13, record.bitsPerSample);
     sqlite3_bind_int(statement, 14, static_cast<int>(record.status));
     bindText(statement, 15, record.errorMessage);
-    sqlite3_bind_int(statement, 16, analysisVersion);
-    sqlite3_bind_int64(statement, 17, juce::Time::getCurrentTime().toMilliseconds());
+    sqlite3_bind_null(statement, 16);
+    sqlite3_bind_int(statement, 17, 0);
+    sqlite3_bind_int(statement, 18, analysisVersion);
+    sqlite3_bind_int64(statement, 19, juce::Time::getCurrentTime().toMilliseconds());
 
     const auto result = sqlite3_step(statement);
     sqlite3_finalize(statement);
     return result == SQLITE_DONE;
+}
+
+bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& waveformData)
+{
+    const juce::ScopedLock lock(mutex);
+
+    waveformData.reset();
+
+    if (database == nullptr && !openUnlocked()) {
+        return false;
+    }
+
+    constexpr auto sql = R"SQL(
+        SELECT file_size, modified_time_ms, waveform_data, waveform_version, analysis_version
+        FROM file_analysis
+        WHERE file_path = ?;
+    )SQL";
+
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    bindText(statement, 1, normalizedPath(file));
+
+    if (sqlite3_step(statement) != SQLITE_ROW) {
+        sqlite3_finalize(statement);
+        return false;
+    }
+
+    const auto cachedFileSize = sqlite3_column_int64(statement, 0);
+    const auto cachedModifiedTime = sqlite3_column_int64(statement, 1);
+    const auto cachedWaveformVersion = sqlite3_column_int(statement, 3);
+    const auto cachedAnalysisVersion = sqlite3_column_int(statement, 4);
+
+    if (cachedFileSize != file.getSize() || cachedModifiedTime != file.getLastModificationTime().toMilliseconds()
+        || cachedWaveformVersion != waveformVersion || cachedAnalysisVersion != analysisVersion)
+    {
+        sqlite3_finalize(statement);
+        return false;
+    }
+
+    waveformData = columnBlob(statement, 2);
+    sqlite3_finalize(statement);
+    return waveformData.getSize() > 0;
+}
+
+bool AnalysisCache::storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData)
+{
+    const juce::ScopedLock lock(mutex);
+
+    if (database == nullptr && !openUnlocked()) {
+        return false;
+    }
+
+    constexpr auto sql = R"SQL(
+        UPDATE file_analysis
+        SET waveform_data = ?,
+            waveform_version = ?,
+            updated_at_ms = ?
+        WHERE file_path = ?
+          AND file_size = ?
+          AND modified_time_ms = ?
+          AND analysis_version = ?;
+    )SQL";
+
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    bindBlob(statement, 1, waveformData);
+    sqlite3_bind_int(statement, 2, waveformVersion);
+    sqlite3_bind_int64(statement, 3, juce::Time::getCurrentTime().toMilliseconds());
+    bindText(statement, 4, normalizedPath(file));
+    sqlite3_bind_int64(statement, 5, file.getSize());
+    sqlite3_bind_int64(statement, 6, file.getLastModificationTime().toMilliseconds());
+    sqlite3_bind_int(statement, 7, analysisVersion);
+
+    const auto result = sqlite3_step(statement);
+    const auto changedRows = sqlite3_changes(database);
+    sqlite3_finalize(statement);
+    return result == SQLITE_DONE && changedRows > 0;
 }

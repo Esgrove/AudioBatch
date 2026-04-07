@@ -28,6 +28,7 @@ public:
     static void configureHeader(juce::TableHeaderComponent& header);
 
     int getNumRows() override;
+    juce::var getDragSourceDescription(const juce::SparseSet<int>& currentlySelectedRows) override;
     void paintCell(juce::Graphics& g, int rowNumber, int columnId, int width, int height, bool rowIsSelected) override;
     void paintRowBackground(juce::Graphics& g, int rowNumber, int width, int height, bool rowIsSelected) override;
     void selectedRowsChanged(int lastRowSelected) override;

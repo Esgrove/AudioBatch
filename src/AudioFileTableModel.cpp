@@ -27,6 +27,26 @@ int AudioFileTableModel::getNumRows()
     return static_cast<int>(records.size());
 }
 
+juce::var AudioFileTableModel::getDragSourceDescription(const juce::SparseSet<int>& currentlySelectedRows)
+{
+    juce::StringArray filePaths;
+
+    for (int index = 0; index < currentlySelectedRows.size(); ++index) {
+        const auto rowNumber = currentlySelectedRows[index];
+
+        if (!juce::isPositiveAndBelow(rowNumber, getNumRows())) {
+            continue;
+        }
+
+        const auto& record = records[static_cast<std::size_t>(rowNumber)];
+        if (record.file.existsAsFile()) {
+            filePaths.addIfNotAlreadyThere(record.file.getFullPathName());
+        }
+    }
+
+    return filePaths.joinIntoString("\n");
+}
+
 void AudioFileTableModel::paintRowBackground(
     juce::Graphics& g,
     int rowNumber,
