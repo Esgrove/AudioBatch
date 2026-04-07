@@ -196,6 +196,7 @@ void AudioFileTableModel::paintCell(
     juce::String text;
     auto justification = juce::Justification::centredLeft;
     auto textBounds = juce::Rectangle<int>(4, 0, width - 8, height);
+    auto font = juce::CustomLookAndFeel::textFont;
 
     switch (columnId) {
         case columnName:
@@ -206,6 +207,7 @@ void AudioFileTableModel::paintCell(
             break;
         case columnType:
             text = getRecordTypeLabel(record);
+            font = juce::CustomLookAndFeel::get_mono_font();
             break;
         case columnBitrate:
             text = AudioAnalysisService::formatBitrateDisplay(record);
@@ -247,6 +249,7 @@ void AudioFileTableModel::paintCell(
     }
 
     g.setColour(juce::Colours::white.withAlpha(record.hasError() ? 0.72f : 0.95f));
+    g.setFont(font);
     g.drawText(text, textBounds, justification, true);
 
     g.setColour(juce::Colours::white.withAlpha(0.08f));
