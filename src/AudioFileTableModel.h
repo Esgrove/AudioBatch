@@ -59,7 +59,8 @@ public:
     AudioFileTableModel(
         std::vector<AudioAnalysisRecord>& records,
         std::function<void(int row)> selectionChanged,
-        std::function<void(int columnId, bool isForwards)> sortChanged
+        std::function<void(int columnId, bool isForwards)> sortChanged,
+        std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested
     );
 
     static void configureHeader(juce::TableHeaderComponent& header);
@@ -68,6 +69,7 @@ public:
     juce::var getDragSourceDescription(const juce::SparseSet<int>& currentlySelectedRows) override;
     void paintCell(juce::Graphics& g, int rowNumber, int columnId, int width, int height, bool rowIsSelected) override;
     void paintRowBackground(juce::Graphics& g, int rowNumber, int width, int height, bool rowIsSelected) override;
+    void cellClicked(int rowNumber, int columnId, const juce::MouseEvent& event) override;
     void selectedRowsChanged(int lastRowSelected) override;
     void sortOrderChanged(int newSortColumnId, bool isForwards) override;
 
@@ -96,4 +98,5 @@ private:
     std::vector<AudioAnalysisRecord>& records;
     std::function<void(int row)> selectionChanged;
     std::function<void(int columnId, bool isForwards)> sortChanged;
+    std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested;
 };
