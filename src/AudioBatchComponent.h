@@ -1,10 +1,15 @@
 #pragma once
 
+#include "AnalysisCache.h"
+#include "AnalysisCoordinator.h"
+#include "AudioFileTableModel.h"
 #include "ThumbnailComponent.h"
 
 #include <JuceHeader.h>
 
-class AudioBatchComponent : public juce::Component, private juce::FileBrowserListener, private juce::ChangeListener
+#include <vector>
+
+class AudioBatchComponent : public juce::Component, private juce::ChangeListener
 {
 public:
     AudioBatchComponent();
@@ -15,28 +20,37 @@ public:
 
 private:
     bool keyPressed(const juce::KeyPress& key) override;
+    void browseForRootFolder();
+    void handleAnalysisComplete(int totalFiles);
+    void handleAnalysisResult(const AudioAnalysisRecord& record);
+    void handleRowSelected(int row);
+    void handleSortRequested(int columnId, bool isForwards);
     bool loadURLIntoTransport(const juce::URL& audioUrl);
+    int findRecordIndex(const juce::String& fullPath) const;
+    static juce::File getInitialRootDirectory();
+    void refreshAnalysis(bool forceRefresh);
+    void sortResults();
+    void updateAudioInfo(const AudioAnalysisRecord& record);
+    void updateStatusLabel();
 
-    void browserRootChanged(const juce::File&) override;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
-    void fileClicked(const juce::File&, const juce::MouseEvent&) override;
-    void fileDoubleClicked(const juce::File&) override;
     void logAudioInfoMessage(const juce::String& m);
     void openDialogWindow(
         SafePointer<juce::DialogWindow>& window,
         const SafePointer<juce::Component>& component,
         const juce::String& title);
-    void selectionChanged() override;
     void showAudioResource(juce::URL resource);
-    void calculateAudioStats();
     void startOrStop();
     void zoomLevelChanged(double zoomLevel);
     void mouseMagnify(const juce::MouseEvent&, float scaleFactor) override;
 
+    AnalysisCache analysisCache;
+    AnalysisCoordinator analysisCoordinator;
+    std::vector<AudioAnalysisRecord> analysisResults;
+    AudioFileTableModel fileTableModel;
     std::unique_ptr<juce::AudioFormatReaderSource> currentAudioFileSource;
+    std::unique_ptr<juce::FileChooser> directoryChooser;
     std::unique_ptr<ThumbnailComponent> thumbnail;
-    std::unique_ptr<juce::WildcardFileFilter> audioFileFilter
-        = std::make_unique<juce::WildcardFileFilter>("*.wav;*.aiff;*.aif;*.m4a;*.mp3;*.flac;*.ogg", "", "audio files");
 
     SafePointer<juce::DialogWindow> settingsWindow;
 
@@ -46,14 +60,22 @@ private:
     juce::AudioFormatManager formatManager;
     juce::AudioSourcePlayer audioSourcePlayer;
     juce::AudioTransportSource transportSource;
-    juce::DirectoryContentsList directoryList {audioFileFilter.get(), thread};
     juce::File currentAudioFile;
-    juce::FileTreeComponent fileTreeComp {directoryList};
+    juce::File currentRoot;
+    juce::TableListBox resultsTable;
     juce::TimeSliceThread thread {"audio file preview"};
     juce::URL currentAudioUrl;
+    int completedResults = 0;
+    int expectedResults = 0;
+    int currentSortColumnId = AudioFileTableModel::columnOverallPeak;
+    bool currentSortForwards = true;
 
+    juce::Label currentRootLabel {"CurrentRootLabel"};
+    juce::Label statusLabel {"StatusLabel"};
     juce::Label zoomLabel {"Zoom"};
     juce::Slider zoomSlider {"ZoomSlider"};
+    juce::TextButton chooseFolderButton {"Choose Folder"};
+    juce::TextButton rescanButton {"Rescan"};
     juce::TextButton settingsButton {"Settings"};
     juce::TextButton startStopButton {"Play/Stop"};
     juce::TextEditor audioInfo {"AudioInfo"};

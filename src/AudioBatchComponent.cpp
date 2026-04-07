@@ -1,21 +1,53 @@
 #include "AudioBatchComponent.h"
 
+#include "AudioAnalysisService.h"
 #include "CustomLookAndFeel.h"
 #include "utils.h"
 
-AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
+#include <algorithm>
+
+namespace
 {
-    addAndMakeVisible(fileTreeComp);
+template<typename Value>
+bool compareWithDirection(Value lhs, Value rhs, bool forwards)
+{
+    return forwards ? lhs < rhs : lhs > rhs;
+}
+}  // namespace
 
-#if JUCE_WINDOWS
-    directoryList.setDirectory(juce::File("D:\\Dropbox\\DJ MUSIC\\FUNKY JAM 1"), false, true);
-#else
-    directoryList.setDirectory(juce::File("~/Dropbox/DJ MUSIC/FUNKY JAM 1"), false, true);
-#endif
+AudioBatchComponent::AudioBatchComponent()
+    : analysisCoordinator(analysisCache)
+    , fileTableModel(
+          analysisResults,
+          [this](int row) { handleRowSelected(row); },
+          [this](int columnId, bool isForwards) { handleSortRequested(columnId, isForwards); })
+    , audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
+{
+    currentRoot = getInitialRootDirectory();
 
-    fileTreeComp.setTitle("Files");
-    fileTreeComp.addListener(this);
-    fileTreeComp.setDragAndDropDescription("AudioBatchFileTree");
+    formatManager.registerBasicFormats();
+
+    chooseFolderButton.onClick = [this] { browseForRootFolder(); };
+    addAndMakeVisible(chooseFolderButton);
+
+    rescanButton.onClick = [this] { refreshAnalysis(true); };
+    addAndMakeVisible(rescanButton);
+
+    currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
+    currentRootLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(currentRootLabel);
+
+    statusLabel.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(statusLabel);
+
+    AudioFileTableModel::configureHeader(resultsTable.getHeader());
+    resultsTable.setModel(&fileTableModel);
+    resultsTable.setColour(juce::ListBox::backgroundColourId, juce::CustomLookAndFeel::greyMediumDark);
+    resultsTable.setMultipleSelectionEnabled(false);
+    resultsTable.setOutlineThickness(0);
+    resultsTable.setRowHeight(24);
+    resultsTable.getHeader().setSortColumnId(currentSortColumnId, currentSortForwards);
+    addAndMakeVisible(resultsTable);
 
     thumbnail = std::make_unique<ThumbnailComponent>(formatManager, transportSource);
     addAndMakeVisible(thumbnail.get());
@@ -49,10 +81,25 @@ AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 
     settingsButton.onClick = [this] { openDialogWindow(settingsWindow, &audioSetupComp, "Audio Settings"); };
     addAndMakeVisible(settingsButton);
 
-    // audio setup
-    formatManager.registerBasicFormats();
-
     thread.startThread(juce::Thread::Priority::high);
+
+    analysisCache.open();
+
+    const SafePointer<AudioBatchComponent> safeThis(this);
+    analysisCoordinator.setResultCallback([safeThis](const AudioAnalysisRecord& record) {
+        juce::MessageManager::callAsync([safeThis, record] {
+            if (safeThis != nullptr) {
+                safeThis->handleAnalysisResult(record);
+            }
+        });
+    });
+    analysisCoordinator.setCompletionCallback([safeThis](int totalFiles) {
+        juce::MessageManager::callAsync([safeThis, totalFiles] {
+            if (safeThis != nullptr) {
+                safeThis->handleAnalysisComplete(totalFiles);
+            }
+        });
+    });
 
     juce::RuntimePermissions::request(juce::RuntimePermissions::recordAudio, [this](bool granted) {
         int numInputChannels = granted ? 2 : 0;
@@ -65,18 +112,21 @@ AudioBatchComponent::AudioBatchComponent() : audioSetupComp(audioDeviceManager, 
     setOpaque(true);
     setSize(1024, 800);
     setWantsKeyboardFocus(true);
+
+    refreshAnalysis(false);
 }
 
 AudioBatchComponent::~AudioBatchComponent()
 {
+    analysisCoordinator.cancelAndWait();
+
     transportSource.setSource(nullptr);
     audioSourcePlayer.setSource(nullptr);
 
     audioDeviceManager.removeAudioCallback(&audioSourcePlayer);
 
-    fileTreeComp.removeListener(this);
-
     thumbnail->removeChangeListener(this);
+    resultsTable.setModel(nullptr);
 
     if (childWindows.size() != 0) {
         for (auto& window : childWindows) {
@@ -94,8 +144,23 @@ void AudioBatchComponent::paint(juce::Graphics& g)
 void AudioBatchComponent::resized()
 {
     auto r = getLocalBounds().reduced(4);
+    auto topBar = r.removeFromTop(34);
 
-    auto info = r.removeFromBottom(juce::jmax(200, juce::roundToIntAccurate(r.getHeight() * 0.275)));
+    chooseFolderButton.setBounds(topBar.removeFromLeft(140));
+    topBar.removeFromLeft(6);
+    rescanButton.setBounds(topBar.removeFromLeft(90));
+    topBar.removeFromLeft(10);
+    statusLabel.setBounds(topBar.removeFromRight(240));
+    topBar.removeFromRight(6);
+    currentRootLabel.setBounds(topBar);
+
+    r.removeFromTop(6);
+
+    resultsTable.setBounds(r.removeFromTop(juce::jmax(240, juce::roundToIntAccurate(r.getHeight() * 0.42f))));
+
+    r.removeFromTop(6);
+
+    auto info = r;
 
     auto space = juce::jmin(250, juce::jmax(150, juce::roundToIntAccurate(r.getWidth() * 0.2)));
     auto control = info.removeFromLeft(space);
@@ -116,19 +181,287 @@ void AudioBatchComponent::resized()
     info.removeFromLeft(6);
 
     thumbnail->setBounds(info);
-
-    r.removeFromBottom(6);
-
-    fileTreeComp.setBounds(r);
 }
 
 bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
 {
     if (key == juce::KeyPress::spaceKey) {
         startOrStop();
+    } else if (key == juce::KeyPress::F5Key) {
+        refreshAnalysis(true);
     }
 
     return false;
+}
+
+juce::File AudioBatchComponent::getInitialRootDirectory()
+{
+    const auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+    const auto dropboxDirectory = homeDirectory.getChildFile("Dropbox").getChildFile("DJ MUSIC").getChildFile("FUNKY JAM 1");
+
+    if (dropboxDirectory.isDirectory()) {
+        return dropboxDirectory;
+    }
+
+    const auto musicDirectory = juce::File::getSpecialLocation(juce::File::userMusicDirectory);
+    if (musicDirectory.isDirectory()) {
+        return musicDirectory;
+    }
+
+    return homeDirectory;
+}
+
+void AudioBatchComponent::browseForRootFolder()
+{
+    directoryChooser = std::make_unique<juce::FileChooser>("Choose Audio Folder", currentRoot, juce::String(), true);
+
+    directoryChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+        [safeThis = SafePointer<AudioBatchComponent>(this)](const juce::FileChooser& chooser) {
+            if (safeThis == nullptr) {
+                return;
+            }
+
+            const auto selectedFolder = chooser.getResult();
+
+            if (selectedFolder.isDirectory()) {
+                safeThis->currentRoot = selectedFolder;
+                safeThis->currentRootLabel.setText(selectedFolder.getFullPathName(), juce::dontSendNotification);
+                safeThis->refreshAnalysis(false);
+            }
+
+            safeThis->directoryChooser.reset();
+        });
+}
+
+void AudioBatchComponent::refreshAnalysis(bool forceRefresh)
+{
+    analysisResults.clear();
+    completedResults = 0;
+    currentAudioFile = {};
+    currentAudioUrl = {};
+    currentAudioFileSource.reset();
+    transportSource.stop();
+    transportSource.setSource(nullptr);
+    thumbnail->setURL(juce::URL());
+    startStopButton.setEnabled(false);
+    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
+    audioInfo.clear();
+    resultsTable.updateContent();
+    resultsTable.repaint();
+
+    AudioAnalysisOptions options;
+    options.inputPaths.add(currentRoot);
+    options.recursive = true;
+    options.refresh = forceRefresh;
+
+    expectedResults = AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive).size();
+
+    if (expectedResults == 0) {
+        statusLabel.setText("No supported audio files found", juce::dontSendNotification);
+        return;
+    }
+
+    statusLabel.setText("Analyzing 0/" + juce::String(expectedResults), juce::dontSendNotification);
+    currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
+    analysisCoordinator.start(options);
+}
+
+int AudioBatchComponent::findRecordIndex(const juce::String& fullPath) const
+{
+    for (std::size_t index = 0; index < analysisResults.size(); ++index) {
+        if (analysisResults[index].fullPath == fullPath) {
+            return static_cast<int>(index);
+        }
+    }
+
+    return -1;
+}
+
+void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record)
+{
+    ++completedResults;
+
+    const auto selectedRow = resultsTable.getSelectedRow();
+    const auto selectedPath = juce::isPositiveAndBelow(selectedRow, static_cast<int>(analysisResults.size()))
+                                  ? analysisResults[static_cast<std::size_t>(selectedRow)].fullPath
+                                  : juce::String();
+
+    if (const auto existingIndex = findRecordIndex(record.fullPath); existingIndex >= 0) {
+        analysisResults[static_cast<std::size_t>(existingIndex)] = record;
+    } else {
+        analysisResults.push_back(record);
+    }
+
+    sortResults();
+    resultsTable.updateContent();
+
+    if (selectedPath.isNotEmpty()) {
+        if (const auto newSelectedIndex = findRecordIndex(selectedPath); newSelectedIndex >= 0) {
+            resultsTable.selectRow(newSelectedIndex);
+        }
+    }
+
+    if (currentAudioFile == record.file) {
+        updateAudioInfo(record);
+    }
+
+    updateStatusLabel();
+}
+
+void AudioBatchComponent::handleAnalysisComplete(int totalFiles)
+{
+    expectedResults = totalFiles;
+    updateStatusLabel();
+
+    if (resultsTable.getSelectedRow() < 0 && !analysisResults.empty()) {
+        resultsTable.selectRow(0);
+    }
+}
+
+void AudioBatchComponent::updateStatusLabel()
+{
+    if (expectedResults <= 0) {
+        statusLabel.setText("No supported audio files found", juce::dontSendNotification);
+        return;
+    }
+
+    if (completedResults < expectedResults) {
+        statusLabel.setText(
+            "Analyzing " + juce::String(completedResults) + "/" + juce::String(expectedResults),
+            juce::dontSendNotification);
+        return;
+    }
+
+    statusLabel.setText("Loaded " + juce::String(analysisResults.size()) + " files", juce::dontSendNotification);
+}
+
+void AudioBatchComponent::sortResults()
+{
+    std::sort(analysisResults.begin(), analysisResults.end(), [this](const auto& lhs, const auto& rhs) {
+        if (lhs.hasError() != rhs.hasError()) {
+            return !lhs.hasError();
+        }
+
+        auto compareStrings = [this](const juce::String& left, const juce::String& right) {
+            const auto comparison = left.compareNatural(right);
+            if (comparison == 0) {
+                return false;
+            }
+            return currentSortForwards ? comparison < 0 : comparison > 0;
+        };
+
+        auto compareFloats = [this](float left, float right) {
+            if (juce::approximatelyEqual(left, right)) {
+                return false;
+            }
+            return compareWithDirection(left, right, currentSortForwards);
+        };
+
+        switch (currentSortColumnId) {
+            case AudioFileTableModel::columnName:
+                if (lhs.fileName != rhs.fileName) {
+                    return compareStrings(lhs.fileName, rhs.fileName);
+                }
+                return compareStrings(lhs.fullPath, rhs.fullPath);
+
+            case AudioFileTableModel::columnPath:
+                if (lhs.fullPath != rhs.fullPath) {
+                    return compareStrings(lhs.fullPath, rhs.fullPath);
+                }
+                return compareStrings(lhs.fileName, rhs.fileName);
+
+            case AudioFileTableModel::columnPeakLeft:
+                if (!juce::approximatelyEqual(lhs.peakLeft, rhs.peakLeft)) {
+                    return compareFloats(lhs.peakLeft, rhs.peakLeft);
+                }
+                return compareStrings(lhs.fileName, rhs.fileName);
+
+            case AudioFileTableModel::columnPeakRight:
+                if (!juce::approximatelyEqual(lhs.peakRight, rhs.peakRight)) {
+                    return compareFloats(lhs.peakRight, rhs.peakRight);
+                }
+                return compareStrings(lhs.fileName, rhs.fileName);
+
+            case AudioFileTableModel::columnStatus:
+                if (AudioAnalysisService::formatStatus(lhs) != AudioAnalysisService::formatStatus(rhs)) {
+                    return compareStrings(AudioAnalysisService::formatStatus(lhs), AudioAnalysisService::formatStatus(rhs));
+                }
+                return compareStrings(lhs.fileName, rhs.fileName);
+
+            case AudioFileTableModel::columnOverallPeak:
+            default:
+                if (!juce::approximatelyEqual(lhs.overallPeak, rhs.overallPeak)) {
+                    return compareFloats(lhs.overallPeak, rhs.overallPeak);
+                }
+                return compareStrings(lhs.fileName, rhs.fileName);
+        }
+    });
+}
+
+void AudioBatchComponent::handleSortRequested(int columnId, bool isForwards)
+{
+    currentSortColumnId = columnId;
+    currentSortForwards = isForwards;
+
+    const auto selectedRow = resultsTable.getSelectedRow();
+    const auto selectedPath = juce::isPositiveAndBelow(selectedRow, static_cast<int>(analysisResults.size()))
+                                  ? analysisResults[static_cast<std::size_t>(selectedRow)].fullPath
+                                  : juce::String();
+
+    sortResults();
+    resultsTable.updateContent();
+
+    if (selectedPath.isNotEmpty()) {
+        if (const auto newIndex = findRecordIndex(selectedPath); newIndex >= 0) {
+            resultsTable.selectRow(newIndex);
+        }
+    }
+}
+
+void AudioBatchComponent::handleRowSelected(int row)
+{
+    if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
+        return;
+    }
+
+    const auto& record = analysisResults[static_cast<std::size_t>(row)];
+
+    if (record.file.existsAsFile()) {
+        currentAudioFile = record.file;
+        showAudioResource(juce::URL(record.file));
+        utils::log_info("Loaded file: " + record.fileName);
+    }
+
+    updateAudioInfo(record);
+}
+
+void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
+{
+    audioInfo.clear();
+
+    if (record.hasError()) {
+        logAudioInfoMessage(record.fileName);
+        logAudioInfoMessage("Error: " + record.errorMessage);
+        return;
+    }
+
+    if (record.formatName.isNotEmpty()) {
+        logAudioInfoMessage(record.formatName);
+    }
+
+    logAudioInfoMessage(juce::String(record.sampleRate) + " samplerate");
+    logAudioInfoMessage(juce::String(record.channels) + " channels");
+    logAudioInfoMessage(juce::String(record.bitsPerSample) + " bits per sample");
+    logAudioInfoMessage(juce::RelativeTime(record.durationSeconds).getDescription());
+    logAudioInfoMessage(juce::String(record.lengthInSamples) + " samples");
+    logAudioInfoMessage("Peak L: " + AudioAnalysisService::formatPeakDisplay(record.peakLeft));
+    logAudioInfoMessage("Peak R: " + AudioAnalysisService::formatPeakDisplay(record.peakRight));
+    logAudioInfoMessage("Peak Max: " + AudioAnalysisService::formatPeakDisplay(record.overallPeak));
+    logAudioInfoMessage("Status: " + AudioAnalysisService::formatStatus(record));
+
+    if (record.fromCache) {
+        logAudioInfoMessage("Source: Analysis cache");
+    }
 }
 
 void AudioBatchComponent::showAudioResource(juce::URL resource)
@@ -180,45 +513,23 @@ void AudioBatchComponent::startOrStop()
     }
 }
 
-void AudioBatchComponent::selectionChanged()
-{
-    auto selectedFile = fileTreeComp.getSelectedFile();
-    if (selectedFile.existsAsFile() && selectedFile != currentAudioFile) {
-        currentAudioFile = selectedFile;
-        audioInfo.clear();
-        showAudioResource(juce::URL(currentAudioFile));
-        utils::log_info("Loaded file: " + currentAudioFile.getFileName());
-
-        auto reader = currentAudioFileSource.get()->getAudioFormatReader();
-        auto metadata = reader->metadataValues;
-        auto sampleRate = reader->sampleRate;
-        auto channels = reader->numChannels;
-        auto samples = reader->lengthInSamples;
-        auto seconds = static_cast<double>(samples) / sampleRate;
-        juce::RelativeTime length {seconds};
-
-        logAudioInfoMessage(reader->getFormatName());
-        logAudioInfoMessage(juce::String(sampleRate) + " samplerate");
-        logAudioInfoMessage(juce::String(channels) + " channels");
-        logAudioInfoMessage(juce::String(reader->bitsPerSample) + " bits per sample");
-        logAudioInfoMessage(length.getDescription());
-        logAudioInfoMessage(juce::String(samples) + " samples");
-    }
-}
-
-void AudioBatchComponent::fileClicked(const juce::File&, const juce::MouseEvent&) {}
-void AudioBatchComponent::fileDoubleClicked(const juce::File&)
-{
-    transportSource.stop();
-    transportSource.setPosition(0.0);
-}
-
-void AudioBatchComponent::browserRootChanged(const juce::File&) {}
-
 void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
     if (source == thumbnail.get()) {
-        showAudioResource(juce::URL(thumbnail->getLastDroppedFile()));
+        const auto droppedFile = thumbnail->getLastDroppedFile().getLocalFile();
+
+        if (!droppedFile.existsAsFile()) {
+            return;
+        }
+
+        currentAudioFile = droppedFile;
+        showAudioResource(juce::URL(droppedFile));
+
+        if (const auto existingIndex = findRecordIndex(droppedFile.getFullPathName()); existingIndex >= 0) {
+            updateAudioInfo(analysisResults[static_cast<std::size_t>(existingIndex)]);
+        } else {
+            updateAudioInfo(AudioAnalysisService::analyzeFile(droppedFile));
+        }
     }
 }
 
@@ -260,20 +571,6 @@ void AudioBatchComponent::openDialogWindow(
     window->setColour(juce::DialogWindow::backgroundColourId, juce::CustomLookAndFeel::greySemiDark);
     window->setVisible(true);
     window->toFront(true);
-}
-
-void AudioBatchComponent::calculateAudioStats()
-{
-    auto reader = currentAudioFileSource.get()->getAudioFormatReader();
-    float minRight {0.0};
-    float minLeft {0.0};
-    float maxRight {0.0};
-    float maxLeft {0.0};
-    reader->readMaxLevels(0, reader->lengthInSamples, minLeft, maxLeft, minRight, maxRight);
-    juce::String minInfo {"Min: " + juce::String(minLeft, 2) + "   " + juce::String(minRight, 2)};
-    juce::String maxInfo {"Max: +" + juce::String(maxLeft, 2) + "   +" + juce::String(maxRight, 2)};
-    logAudioInfoMessage(minInfo);
-    logAudioInfoMessage(maxInfo);
 }
 
 void AudioBatchComponent::logAudioInfoMessage(const juce::String& m)

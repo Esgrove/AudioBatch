@@ -1,0 +1,140 @@
+#include "AnalysisCoordinator.h"
+
+#include <mutex>
+
+AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& cacheToUse, int workerCount)
+    : cache(cacheToUse)
+    , threadPool(juce::jmax(1, workerCount))
+{
+}
+
+AnalysisCoordinator::~AnalysisCoordinator()
+{
+    cancelAndWait();
+}
+
+void AnalysisCoordinator::setResultCallback(ResultCallback callback)
+{
+    const juce::ScopedLock lock(callbackLock);
+    resultCallback = std::move(callback);
+}
+
+void AnalysisCoordinator::setCompletionCallback(CompletionCallback callback)
+{
+    const juce::ScopedLock lock(callbackLock);
+    completionCallback = std::move(callback);
+}
+
+void AnalysisCoordinator::publishResult(const AudioAnalysisRecord& result, int runId)
+{
+    if (runId != currentRunId.load()) {
+        return;
+    }
+
+    ResultCallback callbackCopy;
+
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = resultCallback;
+    }
+
+    if (callbackCopy != nullptr) {
+        callbackCopy(result);
+    }
+}
+
+void AnalysisCoordinator::publishCompletion(int totalFiles, int runId)
+{
+    if (runId != currentRunId.load()) {
+        return;
+    }
+
+    CompletionCallback callbackCopy;
+
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = completionCallback;
+    }
+
+    if (callbackCopy != nullptr) {
+        callbackCopy(totalFiles);
+    }
+}
+
+void AnalysisCoordinator::cancelAndWait()
+{
+    ++currentRunId;
+    threadPool.removeAllJobs(true, 30000);
+    pendingJobs.store(0);
+}
+
+int AnalysisCoordinator::start(const AudioAnalysisOptions& options)
+{
+    cancelAndWait();
+
+    const auto runId = currentRunId.load();
+    const auto files = AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive);
+    juce::Array<juce::File> staleFiles;
+
+    for (const auto& file : files) {
+        AudioAnalysisRecord cachedRecord;
+
+        if (!options.refresh && cache.getAnalysis(file, cachedRecord)) {
+            publishResult(cachedRecord, runId);
+        } else {
+            staleFiles.add(file);
+        }
+    }
+
+    pendingJobs.store(staleFiles.size());
+
+    if (files.isEmpty()) {
+        publishCompletion(0, runId);
+        return 0;
+    }
+
+    for (const auto& file : staleFiles) {
+        threadPool.addJob([this, file, runId, totalFiles = files.size()] {
+            if (runId != currentRunId.load()) {
+                return;
+            }
+
+            auto result = AudioAnalysisService::analyzeFile(file);
+            cache.storeAnalysis(result);
+            publishResult(result, runId);
+
+            if (pendingJobs.fetch_sub(1) == 1) {
+                publishCompletion(totalFiles, runId);
+            }
+        });
+    }
+
+    if (staleFiles.isEmpty()) {
+        publishCompletion(files.size(), runId);
+    }
+
+    return files.size();
+}
+
+std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(const AudioAnalysisOptions& options)
+{
+    std::vector<AudioAnalysisRecord> results;
+    std::mutex resultsMutex;
+    juce::WaitableEvent finishedEvent;
+
+    setResultCallback([&results, &resultsMutex](const AudioAnalysisRecord& result) {
+        const std::scoped_lock lock(resultsMutex);
+        results.push_back(result);
+    });
+
+    setCompletionCallback([&finishedEvent](int) { finishedEvent.signal(); });
+
+    const auto totalFiles = start(options);
+
+    if (totalFiles == 0) {
+        return results;
+    }
+
+    finishedEvent.wait(-1);
+    return results;
+}
