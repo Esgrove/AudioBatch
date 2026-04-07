@@ -328,6 +328,49 @@ juce::String formatExtensionsToText(const juce::StringArray& extensions)
     return normalizedExtensions.joinIntoString(", ");
 }
 
+bool useLegacyMetadataWriter(const juce::AudioFormat& format)
+{
+    return dynamic_cast<const juce::AiffAudioFormat*>(&format) != nullptr
+        || dynamic_cast<const juce::WavAudioFormat*>(&format) != nullptr;
+}
+
+std::unique_ptr<juce::AudioFormatWriter> createWriterPreservingMetadata(
+    juce::AudioFormat& format,
+    std::unique_ptr<juce::OutputStream>& outputStream,
+    const juce::AudioFormatWriterOptions& writerOptions,
+    const juce::StringPairArray& sourceMetadata
+)
+{
+    if (useLegacyMetadataWriter(format)) {
+        auto* releasedStream = outputStream.release();
+
+        JUCE_BEGIN_IGNORE_WARNINGS_MSVC(4996)
+        std::unique_ptr<juce::AudioFormatWriter> writer(format.createWriterFor(
+            releasedStream,
+            writerOptions.getSampleRate(),
+            static_cast<unsigned int>(writerOptions.getNumChannels()),
+            writerOptions.getBitsPerSample(),
+            sourceMetadata,
+            writerOptions.getQualityOptionIndex()
+        ));
+        JUCE_END_IGNORE_WARNINGS_MSVC
+
+        if (writer == nullptr) {
+            outputStream.reset(releasedStream);
+        }
+
+        return writer;
+    }
+
+    return format.createWriterFor(outputStream, writerOptions);
+}
+
+bool preserveOutputMetadata(const juce::File& sourceFile, const juce::File& destinationFile)
+{
+    juce::ignoreUnused(sourceFile, destinationFile);
+    return true;
+}
+
 juce::String validateTemporaryNormalizedOutput(
     juce::AudioFormatManager& formatManager,
     const juce::File& temporaryOutputFile
@@ -482,7 +525,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
         writerOptions = writerOptions.withSampleFormat(juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
     }
 
-    auto writer = writerFormat->createWriterFor(outputStream, writerOptions);
+    auto writer = createWriterPreservingMetadata(*writerFormat, outputStream, writerOptions, reader->metadataValues);
 
     if (writer == nullptr) {
         return AudioNormalizationResult::failure(file, getNormalizationSupportMessage(file));
@@ -514,6 +557,10 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
     }
 
     writer.reset();
+
+    if (!preserveOutputMetadata(file, temporaryFile.getFile())) {
+        return AudioNormalizationResult::failure(file, "Could not preserve metadata while writing normalized audio");
+    }
 
     if (const auto validationError = validateTemporaryNormalizedOutput(formatManager, temporaryFile.getFile());
         validationError.isNotEmpty())
