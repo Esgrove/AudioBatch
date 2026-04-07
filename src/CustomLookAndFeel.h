@@ -86,15 +86,15 @@ public:
 
 private:
     const ColourScheme customColourScheme {
-        0xff1B1C1E,  // windowBackground
-        0xff3E3F43,  // widgetBackground
-        0xff585A5F,  // menuBackground
-        0xff8C919D,  // outline
-        0xffF7F8FB,  // defaultText
-        0xff797B7F,  // defaultFill
-        0xffF7F8FB,  // highlightedText
-        0xff5ABDF9,  // highlightedFill
-        0xffF7F8FB,  // menuText
+        0xff121315,  // windowBackground
+        0xff1A1C20,  // widgetBackground
+        0xff202329,  // menuBackground
+        0xff30343C,  // outline
+        0xffDCE0E5,  // defaultText
+        0xff686F79,  // defaultFill
+        0xffF3F5F7,  // highlightedText
+        0xff76A8DA,  // highlightedFill
+        0xffDCE0E5,  // menuText
     };
 
     bool darkTheme;
