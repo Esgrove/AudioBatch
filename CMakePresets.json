@@ -1,0 +1,89 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 4,
+    "minor": 2,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "windows-vs2026-base",
+      "hidden": true,
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "macos-ninja-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Darwin"
+      }
+    },
+    {
+      "name": "windows-debug",
+      "displayName": "Windows Debug",
+      "description": "Use Visual Studio 18 2026 with x64 output in cmake-build-windows-debug.",
+      "inherits": "windows-vs2026-base",
+      "binaryDir": "${sourceDir}/cmake-build-windows-debug"
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Windows Release",
+      "description": "Use Visual Studio 18 2026 with x64 output in cmake-build-windows-release.",
+      "inherits": "windows-vs2026-base",
+      "binaryDir": "${sourceDir}/cmake-build-windows-release"
+    },
+    {
+      "name": "macos-debug",
+      "displayName": "macOS Debug",
+      "description": "Use Ninja with clang output in cmake-build-mac-debug.",
+      "inherits": "macos-ninja-base",
+      "binaryDir": "${sourceDir}/cmake-build-mac-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "macos-release",
+      "displayName": "macOS Release",
+      "description": "Use Ninja with clang output in cmake-build-mac-release.",
+      "inherits": "macos-ninja-base",
+      "binaryDir": "${sourceDir}/cmake-build-mac-release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-debug",
+      "configurePreset": "windows-debug",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-release",
+      "configurePreset": "windows-release",
+      "configuration": "Release"
+    },
+    {
+      "name": "macos-debug",
+      "configurePreset": "macos-debug"
+    },
+    {
+      "name": "macos-release",
+      "configurePreset": "macos-release"
+    }
+  ]
+}

@@ -5,7 +5,7 @@
 cmake_minimum_required(VERSION 4.2)
 
 project("AudioBatch"
-    VERSION 0.3.0
+    VERSION 0.4.0
     DESCRIPTION "App for batch processing audio files"
     HOMEPAGE_URL "https://github.com/Esgrove/AudioBatch"
     LANGUAGES CXX C
