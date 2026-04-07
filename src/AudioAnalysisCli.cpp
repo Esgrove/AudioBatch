@@ -49,7 +49,10 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
     return usage;
 }
 
-std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(const juce::ArgumentList& sourceArguments, juce::String& errorMessage)
+std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(
+    const juce::ArgumentList& sourceArguments,
+    juce::String& errorMessage
+)
 {
     auto arguments = sourceArguments;
     AudioAnalysisCliOptions options;

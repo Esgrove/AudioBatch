@@ -21,7 +21,8 @@ juce::StringArray system_info()
         "Memory size:  " + juce::String(juce::SystemStats::getMemorySizeInMegabytes()) + " MB",
         "User region:  " + juce::SystemStats::getUserRegion(),
         "User lang:    " + juce::SystemStats::getUserLanguage(),
-        "Display lang: " + juce::SystemStats::getDisplayLanguage()};
+        "Display lang: " + juce::SystemStats::getDisplayLanguage()
+    };
 }
 
 juce::String formatted_system_info()

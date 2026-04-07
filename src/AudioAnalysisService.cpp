@@ -52,7 +52,10 @@ bool AudioAnalysisService::isSupportedAudioFile(const juce::File& file)
     return extension.isNotEmpty() && formatManager.findFormatForFileExtension(extension) != nullptr;
 }
 
-juce::Array<juce::File> AudioAnalysisService::collectInputFiles(const juce::Array<juce::File>& inputPaths, bool recursive)
+juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
+    const juce::Array<juce::File>& inputPaths,
+    bool recursive
+)
 {
     juce::Array<juce::File> files;
     std::set<juce::String> seenPaths;
@@ -122,7 +125,8 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
     record.channels = static_cast<int>(reader->numChannels);
     record.bitsPerSample = reader->bitsPerSample;
     record.lengthInSamples = reader->lengthInSamples;
-    record.durationSeconds = reader->sampleRate > 0.0 ? static_cast<double>(reader->lengthInSamples) / reader->sampleRate : 0.0;
+    record.durationSeconds
+        = reader->sampleRate > 0.0 ? static_cast<double>(reader->lengthInSamples) / reader->sampleRate : 0.0;
     record.peakLeft = leftPeak;
     record.peakRight = rightPeak;
     record.overallPeak = juce::jmax(leftPeak, rightPeak);
@@ -156,16 +160,18 @@ juce::String AudioAnalysisService::formatStatus(const AudioAnalysisRecord& recor
     }
 }
 
-void AudioAnalysisService::sortRecords(std::vector<AudioAnalysisRecord>& records, AudioAnalysisSortMode sortMode, bool ascending)
+void AudioAnalysisService::sortRecords(
+    std::vector<AudioAnalysisRecord>& records,
+    AudioAnalysisSortMode sortMode,
+    bool ascending
+)
 {
     std::sort(records.begin(), records.end(), [sortMode, ascending](const auto& lhs, const auto& rhs) {
         if (const auto stateComparison = compareAnalysisState(lhs, rhs); stateComparison != 0) {
             return stateComparison < 0;
         }
 
-        auto compareFloats = [ascending](float left, float right) {
-            return ascending ? left < right : left > right;
-        };
+        auto compareFloats = [ascending](float left, float right) { return ascending ? left < right : left > right; };
 
         auto compareStrings = [ascending](const juce::String& left, const juce::String& right) {
             return ascending ? compareText(left, right) < 0 : compareText(left, right) > 0;

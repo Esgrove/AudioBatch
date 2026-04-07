@@ -38,7 +38,8 @@ private:
     void openDialogWindow(
         SafePointer<juce::DialogWindow>& window,
         const SafePointer<juce::Component>& component,
-        const juce::String& title);
+        const juce::String& title
+    );
     void showAudioResource(juce::URL resource);
     void startOrStop();
     void zoomLevelChanged(double zoomLevel);

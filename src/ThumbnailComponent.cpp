@@ -5,9 +5,9 @@
 
 #include <JuceHeader.h>
 
-ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source)
-    : thumbnail(1024, formatManager, thumbnailCache)
-    , transportSource(source)
+ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source) :
+    thumbnail(1024, formatManager, thumbnailCache),
+    transportSource(source)
 {
     thumbnail.addChangeListener(this);
 
@@ -34,7 +34,7 @@ void ThumbnailComponent::paint(juce::Graphics& g)
     }
 }
 
-void ThumbnailComponent::resized() {}
+void ThumbnailComponent::resized() { }
 
 void ThumbnailComponent::setURL(const juce::URL& url)
 {
@@ -155,7 +155,8 @@ void ThumbnailComponent::updateCursorPosition()
     currentPositionMarker.setVisible(transportSource.isPlaying() || isMouseButtonDown());
 
     currentPositionMarker.setRectangle(
-        juce::Rectangle<float>(timeToX(transportSource.getCurrentPosition()) - 0.75f, 0, 1.5f, (float)(getHeight())));
+        juce::Rectangle<float>(timeToX(transportSource.getCurrentPosition()) - 0.75f, 0, 1.5f, (float)(getHeight()))
+    );
 }
 
 void ThumbnailComponent::setZoom(double zoomLevel)

@@ -19,22 +19,24 @@ namespace juce
 [[maybe_unused]] const juce::Colour CustomLookAndFeel::red {225, 61, 66};                // #E13D42
 [[maybe_unused]] const juce::Colour CustomLookAndFeel::yellow {246, 200, 99};            // #F6C863
 
-const juce::Font CustomLookAndFeel::textFont {
-    juce::Typeface::createSystemTypefaceFor(BinaryData::RobotoRegular_ttf, BinaryData::RobotoRegular_ttfSize)};
+const juce::Font CustomLookAndFeel::textFont {juce::FontOptions().withTypeface(
+    juce::Typeface::createSystemTypefaceFor(BinaryData::RobotoRegular_ttf, BinaryData::RobotoRegular_ttfSize)
+)};
 
-const juce::Font CustomLookAndFeel::monoFont {
-    juce::Typeface::createSystemTypefaceFor(BinaryData::RobotoMonoRegular_ttf, BinaryData::RobotoMonoRegular_ttfSize)};
+const juce::Font CustomLookAndFeel::monoFont {juce::FontOptions().withTypeface(
+    juce::Typeface::createSystemTypefaceFor(BinaryData::RobotoMonoRegular_ttf, BinaryData::RobotoMonoRegular_ttfSize)
+)};
 
 class CustomDocumentWindowButton : public Button
 {
 public:
-    CustomDocumentWindowButton(const String& name, Colour c, Path normal, Path toggled, bool darkMode)
-        : Button(name)
-        , colour(c)
-        , normalShape(std::move(normal))
-        , toggledShape(std::move(toggled))
-        , useDarkMode(darkMode)
-    {}
+    CustomDocumentWindowButton(const String& name, Colour c, Path normal, Path toggled, bool darkMode) :
+        Button(name),
+        colour(c),
+        normalShape(std::move(normal)),
+        toggledShape(std::move(toggled)),
+        useDarkMode(darkMode)
+    { }
 
     void paintButton(Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override
     {
@@ -137,7 +139,8 @@ Button* CustomLookAndFeel::createDocumentWindowButton(int buttonType)
         PathStrokeType(30.0f).createStrokedPath(fullscreenShape, fullscreenShape);
 
         return new CustomDocumentWindowButton(
-            "maximise", CustomLookAndFeel::greyLight, shape, fullscreenShape, darkTheme);
+            "maximise", CustomLookAndFeel::greyLight, shape, fullscreenShape, darkTheme
+        );
     }
 
     jassertfalse;
@@ -152,7 +155,8 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     int titleSpaceX,
     int titleSpaceW,
     const Image* icon,
-    bool drawTitleTextOnLeft)
+    bool drawTitleTextOnLeft
+)
 {
     if (w * h == 0) {
         return;
@@ -169,7 +173,7 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     auto font = textFont.withHeight((float)h * 0.54f);
     g.setFont(font);
 
-    auto textW = font.getStringWidth(window.getName());
+    auto textW = juce::roundToInt(juce::TextLayout::getStringWidth(font, window.getName()));
     auto iconW = 0;
     auto iconH = 0;
 
@@ -208,7 +212,8 @@ void CustomLookAndFeel::drawPopupMenuItem(
     const String& text,
     const String& shortcutKeyText,
     const Drawable* icon,
-    const Colour* textColourToUse)
+    const Colour* textColourToUse
+)
 {
     if (isSeparator) {
         auto r = area.reduced(5, 0);
@@ -246,7 +251,8 @@ void CustomLookAndFeel::drawPopupMenuItem(
         } else if (isTicked) {
             auto tick = getTickShape(1.0f);
             g.fillPath(
-                tick, tick.getTransformToScaleToFit(iconArea.reduced(iconArea.getWidth() / 5, 0).toFloat(), true));
+                tick, tick.getTransformToScaleToFit(iconArea.reduced(iconArea.getWidth() / 5, 0).toFloat(), true)
+            );
         }
 
         if (hasSubMenu) {

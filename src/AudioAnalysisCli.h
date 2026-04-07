@@ -19,6 +19,9 @@ class AudioAnalysisCli
 {
 public:
     static juce::String buildUsage(const juce::String& executableName);
-    static std::optional<AudioAnalysisCliOptions> parse(const juce::ArgumentList& arguments, juce::String& errorMessage);
+    static std::optional<AudioAnalysisCliOptions> parse(
+        const juce::ArgumentList& arguments,
+        juce::String& errorMessage
+    );
     static int run(const AudioAnalysisCliOptions& options);
 };

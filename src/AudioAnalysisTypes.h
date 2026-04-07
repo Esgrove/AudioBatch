@@ -40,8 +40,14 @@ struct AudioAnalysisRecord {
     AudioAnalysisStatus status = AudioAnalysisStatus::pending;
     bool fromCache = false;
 
-    [[nodiscard]] bool hasError() const noexcept { return status == AudioAnalysisStatus::failed; }
-    [[nodiscard]] bool isReady() const noexcept { return status == AudioAnalysisStatus::cached || status == AudioAnalysisStatus::analyzed; }
+    [[nodiscard]] bool hasError() const noexcept
+    {
+        return status == AudioAnalysisStatus::failed;
+    }
+    [[nodiscard]] bool isReady() const noexcept
+    {
+        return status == AudioAnalysisStatus::cached || status == AudioAnalysisStatus::analyzed;
+    }
 
     static AudioAnalysisRecord fromFile(const juce::File& file)
     {

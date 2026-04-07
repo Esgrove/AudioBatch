@@ -15,13 +15,14 @@ bool compareWithDirection(Value lhs, Value rhs, bool forwards)
 }
 }  // namespace
 
-AudioBatchComponent::AudioBatchComponent()
-    : analysisCoordinator(analysisCache)
-    , fileTableModel(
-          analysisResults,
-          [this](int row) { handleRowSelected(row); },
-          [this](int columnId, bool isForwards) { handleSortRequested(columnId, isForwards); })
-    , audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
+AudioBatchComponent::AudioBatchComponent() :
+    analysisCoordinator(analysisCache),
+    fileTableModel(
+        analysisResults,
+        [this](int row) { handleRowSelected(row); },
+        [this](int columnId, bool isForwards) { handleSortRequested(columnId, isForwards); }
+    ),
+    audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
 {
     currentRoot = getInitialRootDirectory();
 
@@ -197,7 +198,8 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
 juce::File AudioBatchComponent::getInitialRootDirectory()
 {
     const auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
-    const auto dropboxDirectory = homeDirectory.getChildFile("Dropbox").getChildFile("DJ MUSIC").getChildFile("FUNKY JAM 1");
+    const auto dropboxDirectory
+        = homeDirectory.getChildFile("Dropbox").getChildFile("DJ MUSIC").getChildFile("FUNKY JAM 1");
 
     if (dropboxDirectory.isDirectory()) {
         return dropboxDirectory;
@@ -215,7 +217,8 @@ void AudioBatchComponent::browseForRootFolder()
 {
     directoryChooser = std::make_unique<juce::FileChooser>("Choose Audio Folder", currentRoot, juce::String(), true);
 
-    directoryChooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+    directoryChooser->launchAsync(
+        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
         [safeThis = SafePointer<AudioBatchComponent>(this)](const juce::FileChooser& chooser) {
             if (safeThis == nullptr) {
                 return;
@@ -230,7 +233,8 @@ void AudioBatchComponent::browseForRootFolder()
             }
 
             safeThis->directoryChooser.reset();
-        });
+        }
+    );
 }
 
 void AudioBatchComponent::refreshAnalysis(bool forceRefresh)
@@ -283,8 +287,8 @@ void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record
 
     const auto selectedRow = resultsTable.getSelectedRow();
     const auto selectedPath = juce::isPositiveAndBelow(selectedRow, static_cast<int>(analysisResults.size()))
-                                  ? analysisResults[static_cast<std::size_t>(selectedRow)].fullPath
-                                  : juce::String();
+        ? analysisResults[static_cast<std::size_t>(selectedRow)].fullPath
+        : juce::String();
 
     if (const auto existingIndex = findRecordIndex(record.fullPath); existingIndex >= 0) {
         analysisResults[static_cast<std::size_t>(existingIndex)] = record;
@@ -328,7 +332,8 @@ void AudioBatchComponent::updateStatusLabel()
     if (completedResults < expectedResults) {
         statusLabel.setText(
             "Analyzing " + juce::String(completedResults) + "/" + juce::String(expectedResults),
-            juce::dontSendNotification);
+            juce::dontSendNotification
+        );
         return;
     }
 
@@ -384,7 +389,9 @@ void AudioBatchComponent::sortResults()
 
             case AudioFileTableModel::columnStatus:
                 if (AudioAnalysisService::formatStatus(lhs) != AudioAnalysisService::formatStatus(rhs)) {
-                    return compareStrings(AudioAnalysisService::formatStatus(lhs), AudioAnalysisService::formatStatus(rhs));
+                    return compareStrings(
+                        AudioAnalysisService::formatStatus(lhs), AudioAnalysisService::formatStatus(rhs)
+                    );
                 }
                 return compareStrings(lhs.fileName, rhs.fileName);
 
@@ -405,8 +412,8 @@ void AudioBatchComponent::handleSortRequested(int columnId, bool isForwards)
 
     const auto selectedRow = resultsTable.getSelectedRow();
     const auto selectedPath = juce::isPositiveAndBelow(selectedRow, static_cast<int>(analysisResults.size()))
-                                  ? analysisResults[static_cast<std::size_t>(selectedRow)].fullPath
-                                  : juce::String();
+        ? analysisResults[static_cast<std::size_t>(selectedRow)].fullPath
+        : juce::String();
 
     sortResults();
     resultsTable.updateContent();
@@ -490,7 +497,8 @@ bool AudioBatchComponent::loadURLIntoTransport(const juce::URL& audioURL)
 
     if (reader == nullptr) {
         reader = formatManager.createReaderFor(
-            audioURL.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)));
+            audioURL.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress))
+        );
     }
     if (reader != nullptr) {
         currentAudioFileSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
@@ -547,7 +555,8 @@ void AudioBatchComponent::zoomLevelChanged(double zoomLevel)
 void AudioBatchComponent::openDialogWindow(
     SafePointer<juce::DialogWindow>& window,
     const SafePointer<juce::Component>& component,
-    const juce::String& title)
+    const juce::String& title
+)
 {
     // create window the first time it is opened
     if (!window) {

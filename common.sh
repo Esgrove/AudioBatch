@@ -14,6 +14,9 @@ case "$(uname -s)" in
     "MINGW"*)
         BASH_PLATFORM="windows"
         ;;
+    "Windows_NT"*)
+        BASH_PLATFORM="windows"
+        ;;
     *)
         BASH_PLATFORM="linux"
         ;;

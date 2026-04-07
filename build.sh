@@ -16,7 +16,6 @@ OPTIONS: All options are optional
     -v | --verbose
         Display commands being executed.
 "
-export USAGE
 
 # Import common functions
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -49,8 +48,23 @@ init_options() {
 
     JUCE_PATH="$REPO/JUCE"
     APP_NAME="AudioBatch"
-    CMAKE_BUILD_TARGET="$APP_NAME"
+    GUI_TARGET_NAME="AudioBatch"
+    GUI_BINARY_NAME="AudioBatchApp"
+    CLI_TARGET_NAME="AudioBatchCli"
+    CLI_BINARY_NAME="audiobatch"
     CMAKE_BUILD_DIR="$REPO/cmake-build-${BASH_PLATFORM}-$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')"
+}
+
+require_path() {
+    if [ ! -e "$1" ]; then
+        print_error_and_exit "Expected build artifact not found: $1"
+    fi
+}
+
+find_first_path() {
+    local search_root="$1"
+    shift
+    find "$search_root" "$@" -print -quit
 }
 
 build_app() {
@@ -65,39 +79,64 @@ build_app() {
 }
 
 build_mac_app() {
-    APP_BUNDLE="$APP_NAME.app"
-    rm -rf "${REPO:?}/$APP_BUNDLE"
+    GUI_APP_BUNDLE="$GUI_BINARY_NAME.app"
+    GUI_APP_DESTINATION="$REPO/$GUI_APP_BUNDLE"
+    CLI_APP_DESTINATION="$REPO/$CLI_BINARY_NAME"
+
+    rm -rf "${GUI_APP_DESTINATION:?}"
+    rm -f "$CLI_APP_DESTINATION"
 
     if [ "$USE_NINJA" = true ]; then
-        cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE"
+        cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE"
     else
         if [ -n "$(command -v xcbeautify)" ]; then
             # nicer xcodebuild output: https://github.com/tuist/xcbeautify
-            time cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE" | xcbeautify
+            time cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE" | xcbeautify
         else
             print_yellow "xcbeautify missing, install it with brew"
-            time cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE"
+            time cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE"
         fi
     fi
 
-    APP_EXECUTABLE="$REPO/$APP_BUNDLE/Contents/MacOS/$APP_NAME"
-    mv -f "$(find "$CMAKE_BUILD_DIR" -name "$APP_BUNDLE")" "$APP_BUNDLE"
-    file "$APP_EXECUTABLE"
-    print_green "Build successful: $APP_BUNDLE"
-    $APP_EXECUTABLE --version
+    GUI_APP_SOURCE=$(find_first_path "$CMAKE_BUILD_DIR" -type d -name "$GUI_APP_BUNDLE")
+    CLI_APP_SOURCE=$(find_first_path "$CMAKE_BUILD_DIR" -type f -path "*/$BUILD_TYPE/$CLI_BINARY_NAME")
+    require_path "$GUI_APP_SOURCE"
+    require_path "$CLI_APP_SOURCE"
+
+    GUI_EXECUTABLE="$GUI_APP_DESTINATION/Contents/MacOS/$GUI_BINARY_NAME"
+    mv -f "$GUI_APP_SOURCE" "$GUI_APP_DESTINATION"
+    cp -f "$CLI_APP_SOURCE" "$CLI_APP_DESTINATION"
+
+    file "$GUI_EXECUTABLE"
+    file "$CLI_APP_DESTINATION"
+    print_green "GUI build successful: $GUI_APP_BUNDLE"
+    print_green "CLI build successful: $CLI_BINARY_NAME"
+    "$CLI_APP_DESTINATION" --version
 }
 
 build_windows_app() {
-    APP_EXE="$APP_NAME.exe"
-    rm -rf "${REPO:?}/$APP_EXE"
+    GUI_EXE="$GUI_BINARY_NAME.exe"
+    CLI_EXE="$CLI_BINARY_NAME.exe"
+    GUI_EXECUTABLE_SOURCE="$CMAKE_BUILD_DIR/AudioBatch_artefacts/$BUILD_TYPE/$GUI_EXE"
+    CLI_EXECUTABLE_SOURCE="$CMAKE_BUILD_DIR/AudioBatchCli_artefacts/$BUILD_TYPE/$CLI_EXE"
+    GUI_EXECUTABLE="$REPO/$GUI_EXE"
+    CLI_EXECUTABLE="$REPO/$CLI_EXE"
 
-    cmake --build "$CMAKE_BUILD_DIR" --target "$CMAKE_BUILD_TARGET" --config "$BUILD_TYPE"
+    rm -f "$GUI_EXECUTABLE" "$CLI_EXECUTABLE"
 
-    APP_EXECUTABLE="$REPO/$APP_EXE"
-    mv -f "$(find "$CMAKE_BUILD_DIR" -name "$APP_EXE")" "$APP_EXECUTABLE"
-    file "$APP_EXECUTABLE"
-    print_green "Build successful: $APP_EXE"
-    $APP_EXECUTABLE --version
+    cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE"
+
+    require_path "$GUI_EXECUTABLE_SOURCE"
+    require_path "$CLI_EXECUTABLE_SOURCE"
+
+    cp -f "$GUI_EXECUTABLE_SOURCE" "$GUI_EXECUTABLE"
+    cp -f "$CLI_EXECUTABLE_SOURCE" "$CLI_EXECUTABLE"
+
+    file "$GUI_EXECUTABLE"
+    file "$CLI_EXECUTABLE"
+    print_green "GUI build successful: $GUI_EXE"
+    print_green "CLI build successful: $CLI_EXE"
+    "$CLI_EXECUTABLE" --version
 }
 
 check_juce_submodule() {

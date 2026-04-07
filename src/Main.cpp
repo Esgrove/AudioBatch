@@ -7,11 +7,10 @@
 class MainWindow : public juce::DocumentWindow
 {
 public:
-    MainWindow(juce::String name)
-        : DocumentWindow(name, juce::CustomLookAndFeel::greyDark, DocumentWindow::allButtons)
+    MainWindow(juce::String name) :
+        DocumentWindow(name, juce::CustomLookAndFeel::greyDark, DocumentWindow::allButtons),
+        audioBatch(std::make_unique<AudioBatchComponent>())
     {
-        auto audioBatch = std::make_unique<AudioBatchComponent>();
-
         juce::LookAndFeel::setDefaultLookAndFeel(lookAndFeel.get());
 #if JUCE_WINDOWS
         setUsingNativeTitleBar(false);
@@ -20,16 +19,26 @@ public:
 #else
         setUsingNativeTitleBar(true);
 #endif
-    setContentOwned(audioBatch.release(), true);
+        setContentNonOwned(audioBatch.get(), true);
 
         setResizable(true, true);
         setResizeLimits(800, 600, 8192, 8192);
         centreWithSize(getWidth(), getHeight());
     }
 
-    void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
+    ~MainWindow() override
+    {
+        clearContentComponent();
+        juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
+    }
+
+    void closeButtonPressed() override
+    {
+        juce::JUCEApplication::getInstance()->systemRequestedQuit();
+    }
 
 private:
+    std::unique_ptr<AudioBatchComponent> audioBatch;
     std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel = std::make_unique<juce::CustomLookAndFeel>(true);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
@@ -40,9 +49,18 @@ class AudioBatchApplication : public juce::JUCEApplication
 public:
     AudioBatchApplication() = default;
 
-    const juce::String getApplicationName() override { return ProjectInfo::projectName; }
-    const juce::String getApplicationVersion() override { return ProjectInfo::versionString; }
-    bool moreThanOneInstanceAllowed() override { return false; }
+    const juce::String getApplicationName() override
+    {
+        return ProjectInfo::projectName;
+    }
+    const juce::String getApplicationVersion() override
+    {
+        return ProjectInfo::versionString;
+    }
+    bool moreThanOneInstanceAllowed() override
+    {
+        return false;
+    }
 
     void initialise(const juce::String& commandLineParameters) override
     {
@@ -53,7 +71,8 @@ public:
         // Mac:     /Users/<username>/Library/Logs/AudioBatch
         // Windows: C:\Users\<username>\AppData\Roaming\AudioBatch
         logger = std::unique_ptr<juce::FileLogger>(juce::FileLogger::createDefaultAppLogger(
-            getApplicationName(), getApplicationName() + ".log", getApplicationName(), 32768));
+            getApplicationName(), getApplicationName() + ".log", getApplicationName(), 32768
+        ));
 
         juce::Logger::setCurrentLogger(logger.get());
 

@@ -2,11 +2,10 @@
 
 #include <mutex>
 
-AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& cacheToUse, int workerCount)
-    : cache(cacheToUse)
-    , threadPool(juce::jmax(1, workerCount))
-{
-}
+AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& cacheToUse, int workerCount) :
+    cache(cacheToUse),
+    threadPool(juce::jmax(1, workerCount))
+{ }
 
 AnalysisCoordinator::~AnalysisCoordinator()
 {

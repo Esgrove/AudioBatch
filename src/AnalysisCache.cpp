@@ -53,7 +53,8 @@ bool AnalysisCache::execute(const juce::String& sql)
     const auto result = sqlite3_exec(database, sql.toRawUTF8(), nullptr, nullptr, &errorMessage);
 
     if (result != SQLITE_OK) {
-        const auto error = errorMessage != nullptr ? juce::String::fromUTF8(errorMessage) : juce::String("Unknown SQLite error");
+        const auto error
+            = errorMessage != nullptr ? juce::String::fromUTF8(errorMessage) : juce::String("Unknown SQLite error");
         utils::log_error("SQLite error: " + error);
         sqlite3_free(errorMessage);
         return false;
@@ -81,7 +82,8 @@ bool AnalysisCache::openUnlocked()
         databaseFile.getFullPathName().toRawUTF8(),
         &database,
         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
-        nullptr);
+        nullptr
+    );
 
     if (result != SQLITE_OK || database == nullptr) {
         utils::log_error("Failed to open analysis cache at " + databaseFile.getFullPathName());
@@ -156,7 +158,8 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
     const auto cachedVersion = sqlite3_column_int(statement, 14);
 
     if (cachedFileSize != file.getSize() || cachedModifiedTime != file.getLastModificationTime().toMilliseconds()
-        || cachedVersion != analysisVersion) {
+        || cachedVersion != analysisVersion)
+    {
         sqlite3_finalize(statement);
         return false;
     }
