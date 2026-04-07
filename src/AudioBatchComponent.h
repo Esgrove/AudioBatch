@@ -174,11 +174,10 @@ private:
     juce::Label statusLabel {"StatusLabel"};
     juce::Label zoomLabel {"Zoom"};
     juce::Slider zoomSlider {"ZoomSlider"};
-    juce::TextButton chooseFolderButton {"Choose Folder"};
-    juce::TextButton rescanButton {"Rescan"};
     juce::TextButton settingsButton {"Settings"};
     juce::TextButton startStopButton {"Play/Stop"};
     std::unique_ptr<AudioInfoPanel> audioInfo;
+    std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioBatchComponent)
 };
