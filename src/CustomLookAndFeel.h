@@ -8,7 +8,10 @@ class CustomLookAndFeel : public juce::LookAndFeel_V4
 public:
     explicit CustomLookAndFeel(bool darkModeEnabled);
 
-    [[maybe_unused]] void setDarkTheme(bool darkModeEnabled) { darkTheme = darkModeEnabled; }
+    [[maybe_unused]] void setDarkTheme(bool darkModeEnabled)
+    {
+        darkTheme = darkModeEnabled;
+    }
 
     // override title bar button colours
     juce::Button* createDocumentWindowButton(int buttonType) override;
@@ -22,7 +25,8 @@ public:
         int titleSpaceX,
         int titleSpaceW,
         const Image* icon,
-        bool drawTitleTextOnLeft) override;
+        bool drawTitleTextOnLeft
+    ) override;
 
     // overridden to set tooltip font
     void drawTooltip(Graphics& g, const String& text, int width, int height) override;
@@ -41,12 +45,19 @@ public:
         const String& text,
         const String& shortcutKeyText,
         const Drawable* icon,
-        const Colour* textColourToUse) override;
+        const Colour* textColourToUse
+    ) override;
 
     Font getTextButtonFont(TextButton&, int buttonHeight) override;
 
-    Font getComboBoxFont(ComboBox&) override { return get_mono_font(); }
-    [[nodiscard]] static Font get_mono_font() { return monoFont.withHeight(monoFontHeight); }
+    Font getComboBoxFont(ComboBox&) override
+    {
+        return get_mono_font();
+    }
+    [[nodiscard]] static Font get_mono_font()
+    {
+        return monoFont.withHeight(monoFontHeight);
+    }
 
     static const juce::Font monoFont;
     static const juce::Font textFont;

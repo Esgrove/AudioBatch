@@ -5,12 +5,12 @@
 AudioFileTableModel::AudioFileTableModel(
     std::vector<AudioAnalysisRecord>& recordsToUse,
     std::function<void(int row)> selectionChangedCallback,
-    std::function<void(int columnId, bool isForwards)> sortChangedCallback)
-    : records(recordsToUse)
-    , selectionChanged(std::move(selectionChangedCallback))
-    , sortChanged(std::move(sortChangedCallback))
-{
-}
+    std::function<void(int columnId, bool isForwards)> sortChangedCallback
+) :
+    records(recordsToUse),
+    selectionChanged(std::move(selectionChangedCallback)),
+    sortChanged(std::move(sortChangedCallback))
+{ }
 
 void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
 {
@@ -32,7 +32,8 @@ void AudioFileTableModel::paintRowBackground(
     int rowNumber,
     int width,
     int height,
-    bool rowIsSelected)
+    bool rowIsSelected
+)
 {
     juce::ignoreUnused(rowNumber, width, height);
 
@@ -50,7 +51,8 @@ void AudioFileTableModel::paintCell(
     int columnId,
     int width,
     int height,
-    bool rowIsSelected)
+    bool rowIsSelected
+)
 {
     juce::ignoreUnused(rowIsSelected);
 

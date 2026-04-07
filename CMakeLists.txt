@@ -5,7 +5,7 @@
 cmake_minimum_required(VERSION 4.2)
 
 project("AudioBatch"
-    VERSION 0.2.0
+    VERSION 0.3.0
     DESCRIPTION "App for batch processing audio files"
     HOMEPAGE_URL "https://github.com/Esgrove/AudioBatch"
     LANGUAGES CXX C
@@ -249,6 +249,13 @@ set_target_properties(AudioBatch
     )
 
 if (MSVC)
+    # /wd4100 disables MSVC warning C4100 (unreferenced formal parameter) for this JUCE source file only.
+    set_source_files_properties(
+        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_gui_basics/juce_gui_basics.cpp"
+        PROPERTIES
+            COMPILE_OPTIONS "/wd4100"
+    )
+
     # https://docs.microsoft.com/en-us/cpp/build/reference/permissive-standards-conformance
     add_compile_options(/W4 /permissive-)
 else()

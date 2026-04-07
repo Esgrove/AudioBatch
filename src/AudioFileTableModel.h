@@ -22,7 +22,8 @@ public:
     AudioFileTableModel(
         std::vector<AudioAnalysisRecord>& records,
         std::function<void(int row)> selectionChanged,
-        std::function<void(int columnId, bool isForwards)> sortChanged);
+        std::function<void(int columnId, bool isForwards)> sortChanged
+    );
 
     static void configureHeader(juce::TableHeaderComponent& header);
 

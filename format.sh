@@ -15,7 +15,7 @@ if [ -z "$(command -v clang-format)" ]; then
 fi
 
 print_magenta "Formatting C++ files..."
-clang-format -i --verbose --style=file "$REPO"/Source/*.cpp "$REPO"/Source/*.h
+clang-format -i --verbose --style=file "$REPO"/src/*.cpp "$REPO"/src/*.h
 
 if [ -n "$(command -v shfmt)" ]; then
     print_magenta "Formatting shell scripts..."
