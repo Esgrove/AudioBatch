@@ -5,6 +5,7 @@
 
 #include <sqlite3.h>
 
+/// Helpers for marshalling SQLite values into JUCE types.
 namespace
 {
 juce::String columnText(sqlite3_stmt* statement, const int columnIndex)

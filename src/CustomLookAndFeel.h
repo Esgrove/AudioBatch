@@ -3,11 +3,14 @@
 
 namespace juce
 {
+/// Application-specific look-and-feel with the project's fonts, colours, and popup styling.
 class CustomLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
+    /// Builds the colour palette for the requested light or dark theme variant.
     explicit CustomLookAndFeel(bool darkModeEnabled);
 
+    /// Switches the active theme palette without rebuilding the look-and-feel object.
     [[maybe_unused]] void setDarkTheme(bool darkModeEnabled)
     {
         darkTheme = darkModeEnabled;
@@ -54,6 +57,8 @@ public:
     {
         return get_mono_font();
     }
+
+    /// Returns the monospaced font used for tabular values and status text.
     [[nodiscard]] static Font get_mono_font()
     {
         return monoFont.withHeight(monoFontHeight);

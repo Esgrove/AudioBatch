@@ -5,6 +5,7 @@
 #include <limits>
 #include <set>
 
+/// Internal helpers for peak comparisons and stable record sorting.
 namespace
 {
 constexpr float minimumDisplayDecibels = -100.0f;

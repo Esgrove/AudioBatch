@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 
+/// Lifecycle states for a file analysis record.
 enum class AudioAnalysisStatus {
     pending = 0,
     cached = 1,
@@ -9,18 +10,21 @@ enum class AudioAnalysisStatus {
     failed = 3,
 };
 
+/// Available sort keys for CLI output and in-memory result lists.
 enum class AudioAnalysisSortMode {
     peak,
     name,
     path,
 };
 
+/// Input parameters shared by the GUI and CLI analysis flows.
 struct AudioAnalysisOptions {
     juce::Array<juce::File> inputPaths;
     bool recursive = false;
     bool refresh = false;
 };
 
+/// Analysis metadata and derived peak information for a single audio file.
 struct AudioAnalysisRecord {
     juce::File file;
     juce::String fileName;
@@ -40,15 +44,19 @@ struct AudioAnalysisRecord {
     AudioAnalysisStatus status = AudioAnalysisStatus::pending;
     bool fromCache = false;
 
+    /// Returns true when the record represents a failed analysis attempt.
     [[nodiscard]] bool hasError() const noexcept
     {
         return status == AudioAnalysisStatus::failed;
     }
+
+    /// Returns true when the record has usable cached or freshly analyzed data.
     [[nodiscard]] bool isReady() const noexcept
     {
         return status == AudioAnalysisStatus::cached || status == AudioAnalysisStatus::analyzed;
     }
 
+    /// Builds a baseline record from filesystem metadata before analysis begins.
     static AudioAnalysisRecord fromFile(const juce::File& file)
     {
         AudioAnalysisRecord record;

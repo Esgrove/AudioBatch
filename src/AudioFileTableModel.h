@@ -7,9 +7,11 @@
 #include <functional>
 #include <vector>
 
+/// Table model for analyzed audio files, including sorting, painting, and row actions.
 class AudioFileTableModel : public juce::TableListBoxModel
 {
 public:
+    /// Stable identifiers shared by the header configuration, painting, and sort logic.
     enum ColumnId {
         columnName = 1,
         columnPath,
@@ -56,6 +58,7 @@ public:
         return 0;
     }
 
+    /// Creates a model backed by the live result list and UI callbacks owned by the main view.
     AudioFileTableModel(
         std::vector<AudioAnalysisRecord>& records,
         std::function<void(int row)> selectionChanged,
@@ -63,14 +66,28 @@ public:
         std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested
     );
 
+    /// Installs the standard set of columns used by the results table.
     static void configureHeader(juce::TableHeaderComponent& header);
 
+    /// Returns the number of analyzed rows currently available.
     int getNumRows() override;
+
+    /// Packages the selected file paths for external drag-and-drop.
     juce::var getDragSourceDescription(const juce::SparseSet<int>& currentlySelectedRows) override;
+
+    /// Paints the text content for a single table cell.
     void paintCell(juce::Graphics& g, int rowNumber, int columnId, int width, int height, bool rowIsSelected) override;
+
+    /// Paints alternating row backgrounds and selection highlights.
     void paintRowBackground(juce::Graphics& g, int rowNumber, int width, int height, bool rowIsSelected) override;
+
+    /// Forwards popup-clicks so the owning component can show file actions.
     void cellClicked(int rowNumber, int columnId, const juce::MouseEvent& event) override;
+
+    /// Notifies the owning component when the row selection changes.
     void selectedRowsChanged(int lastRowSelected) override;
+
+    /// Notifies the owning component when the active sort column changes.
     void sortOrderChanged(int newSortColumnId, bool isForwards) override;
 
 private:

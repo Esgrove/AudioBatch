@@ -2,6 +2,7 @@
 
 #include "CustomLookAndFeel.h"
 
+/// Builds the results table model used by the main file list.
 AudioFileTableModel::AudioFileTableModel(
     std::vector<AudioAnalysisRecord>& recordsToUse,
     std::function<void(int row)> selectionChangedCallback,

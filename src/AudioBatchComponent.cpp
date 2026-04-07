@@ -8,6 +8,7 @@
 
 using AudioInfoRow = std::pair<juce::String, juce::String>;
 
+/// Compact two-column metadata panel displayed beside the waveform preview.
 class AudioInfoPanel : public juce::Component
 {
 public:
@@ -95,6 +96,7 @@ private:
     std::vector<std::unique_ptr<juce::Label>> valueLabels;
 };
 
+/// Main-view constants and helper functions local to this translation unit.
 namespace
 {
 constexpr auto supportedAudioFilePatterns = "*.wav;*.aif;*.aiff;*.flac;*.mp3";

@@ -2,7 +2,7 @@
 
 namespace utils
 {
-
+/// Collects build and runtime environment details for logs and diagnostics.
 juce::StringArray system_info()
 {
     auto compile_time = juce::Time::getCompilationDate();

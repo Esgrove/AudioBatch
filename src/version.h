@@ -5,6 +5,8 @@
 //==========================================================
 
 #pragma once
+
+/// Build metadata injected by CMake at compile time.
 namespace version
 {
 constexpr auto APP_NAME = BUILDTIME_APP_NAME;

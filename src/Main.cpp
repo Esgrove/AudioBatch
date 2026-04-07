@@ -4,6 +4,7 @@
 
 #include <JuceHeader.h>
 
+/// Top-level application window that hosts the main AudioBatch component.
 class MainWindow : public juce::DocumentWindow
 {
 public:
@@ -61,6 +62,7 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
 };
 
+/// JUCE application entry point for the desktop GUI build.
 class AudioBatchApplication : public juce::JUCEApplication
 {
 public:
