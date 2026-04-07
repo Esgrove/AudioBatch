@@ -26,9 +26,7 @@ juce::StringArray system_info()
 
 juce::String formatted_system_info()
 {
-    juce::String info {
-        juce::JUCEApplication::getInstance()->getApplicationName() + " " + juce::String(version::VERSION_NUMBER)
-        + juce::newLine};
+    juce::String info {juce::String(version::APP_NAME) + " " + juce::String(version::VERSION_NUMBER) + juce::newLine};
     for (const auto& line : utils::system_info()) {
         for (auto tokens = juce::StringArray::fromTokens(line, " ", "\""); const auto& token : tokens) {
             if (token.containsNonWhitespaceChars()) {

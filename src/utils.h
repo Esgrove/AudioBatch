@@ -160,7 +160,7 @@ inline void log_system_info()
 {
     // Get info first to avoid API call debug / error messages in the middle of the log message
     auto info = utils::system_info();
-    log_info("System info\n    " + juce::JUCEApplication::getInstance()->getApplicationName());
+    log_info("System info\n    " + juce::String(version::APP_NAME));
     for (const auto& line : info) {
 #if !JUCE_DEBUG
         std::cout << "    " << line << juce::newLine;

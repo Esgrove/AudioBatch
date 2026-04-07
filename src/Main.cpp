@@ -9,8 +9,9 @@ class MainWindow : public juce::DocumentWindow
 public:
     MainWindow(juce::String name)
         : DocumentWindow(name, juce::CustomLookAndFeel::greyDark, DocumentWindow::allButtons)
-        , audioBatch(std::make_unique<AudioBatchComponent>())
     {
+        auto audioBatch = std::make_unique<AudioBatchComponent>();
+
         juce::LookAndFeel::setDefaultLookAndFeel(lookAndFeel.get());
 #if JUCE_WINDOWS
         setUsingNativeTitleBar(false);
@@ -19,7 +20,7 @@ public:
 #else
         setUsingNativeTitleBar(true);
 #endif
-        setContentOwned(audioBatch.get(), true);
+    setContentOwned(audioBatch.release(), true);
 
         setResizable(true, true);
         setResizeLimits(800, 600, 8192, 8192);
@@ -29,7 +30,6 @@ public:
     void closeButtonPressed() override { juce::JUCEApplication::getInstance()->systemRequestedQuit(); }
 
 private:
-    std::unique_ptr<AudioBatchComponent> audioBatch;
     std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel = std::make_unique<juce::CustomLookAndFeel>(true);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
@@ -47,21 +47,7 @@ public:
     void initialise(const juce::String& commandLineParameters) override
     {
         juce::ArgumentList arguments {getApplicationName(), commandLineParameters};
-
-        // Print command line usage and exit
-        if (arguments.containsOption("--help")) {
-            juce::String usage {getApplicationName() + " " + juce::String(version::VERSION_INFO) + "\n"};
-            usage += "  --help              Print usage and exit\n";
-            usage += "  --version           Print build version and exit";
-            std::cout << usage << std::endl;
-            return quit();
-        }
-
-        // Print app version and exit
-        if (arguments.containsOption("--version")) {
-            std::cout << getApplicationName() << " " << version::VERSION_INFO << " " << version::BRANCH << std::endl;
-            return quit();
-        }
+        const bool startHeadless = arguments.containsOption("--headless|-H");
 
         // Init log file in OS default location under dir "AudioBatch"
         // Mac:     /Users/<username>/Library/Logs/AudioBatch
@@ -70,6 +56,7 @@ public:
             getApplicationName(), getApplicationName() + ".log", getApplicationName(), 32768));
 
         juce::Logger::setCurrentLogger(logger.get());
+
         utils::log_system_info();
         if (arguments.size() > 0) {
             utils::log_info("Args: " + commandLineParameters);
@@ -77,7 +64,7 @@ public:
 
         mainWindow = std::make_unique<MainWindow>(getApplicationName());
 
-        if (arguments.containsOption("--headless")) {
+        if (startHeadless) {
             mainWindow->setVisible(false);
         } else {
             mainWindow->setVisible(true);

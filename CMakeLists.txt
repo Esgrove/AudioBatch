@@ -11,6 +11,8 @@ project("AudioBatch"
     LANGUAGES CXX C
 )
 
+include(FetchContent)
+
 set(CMAKE_CXX_STANDARD 23)
 # Export compile commands for clang-tidy
 # Note: only works with makefile and ninja generators
@@ -77,6 +79,43 @@ option(JUCE_ENABLE_MODULE_SOURCE_GROUPS "Show all module sources in IDE projects
 
 add_subdirectory(JUCE)
 
+find_package(SQLite3 QUIET)
+
+if (SQLite3_FOUND)
+    set(AUDIOBATCH_SQLITE_TARGET SQLite::SQLite3)
+else()
+    FetchContent_Declare(sqlite3
+        URL https://www.sqlite.org/2026/sqlite-amalgamation-3510300.zip
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    )
+    FetchContent_GetProperties(sqlite3)
+
+    if (NOT sqlite3_POPULATED)
+        cmake_policy(PUSH)
+        cmake_policy(SET CMP0169 OLD)
+        FetchContent_Populate(sqlite3)
+        cmake_policy(POP)
+    endif()
+
+    add_library(AudioBatchSQLite STATIC
+        ${sqlite3_SOURCE_DIR}/sqlite3.c
+    )
+
+    target_compile_definitions(AudioBatchSQLite
+        PRIVATE
+            SQLITE_DQS=0
+            SQLITE_OMIT_LOAD_EXTENSION=1
+            SQLITE_THREADSAFE=1
+    )
+
+    target_include_directories(AudioBatchSQLite
+        PUBLIC
+            ${sqlite3_SOURCE_DIR}
+    )
+
+    set(AUDIOBATCH_SQLITE_TARGET AudioBatchSQLite)
+endif()
+
 juce_add_gui_app(AudioBatch
     BUNDLE_ID com.esgrove.audiobatch
     COMPANY_NAME "Esgrove"
@@ -94,12 +133,31 @@ juce_add_gui_app(AudioBatch
         </plist>"
 )
 
+juce_add_console_app(AudioBatchCli
+    COMPANY_NAME "Esgrove"
+    COMPANY_WEBSITE "https://github.com/esgrove"
+    PRODUCT_NAME "audiobatch"
+    VERSION ${APP_BUILD_VERSION}
+)
+
 juce_generate_juce_header(AudioBatch)
+juce_generate_juce_header(AudioBatchCli)
 
 target_sources(AudioBatch
     PRIVATE
+        "src/AnalysisCache.cpp"
+        "src/AnalysisCache.h"
+        "src/AnalysisCoordinator.cpp"
+        "src/AnalysisCoordinator.h"
+        "src/AudioAnalysisCli.cpp"
+        "src/AudioAnalysisCli.h"
+        "src/AudioAnalysisService.cpp"
+        "src/AudioAnalysisService.h"
+        "src/AudioAnalysisTypes.h"
         "src/AudioBatchComponent.cpp"
         "src/AudioBatchComponent.h"
+        "src/AudioFileTableModel.cpp"
+        "src/AudioFileTableModel.h"
         "src/CustomLookAndFeel.cpp"
         "src/CustomLookAndFeel.h"
         "src/Main.cpp"
@@ -112,6 +170,23 @@ target_sources(AudioBatch
 target_include_directories(AudioBatch
     PRIVATE
         "include/ASIO_SDK"
+)
+
+target_sources(AudioBatchCli
+    PRIVATE
+        "src/AnalysisCache.cpp"
+        "src/AnalysisCache.h"
+        "src/AnalysisCoordinator.cpp"
+        "src/AnalysisCoordinator.h"
+        "src/AudioAnalysisCli.cpp"
+        "src/AudioAnalysisCli.h"
+        "src/AudioAnalysisService.cpp"
+        "src/AudioAnalysisService.h"
+        "src/AudioAnalysisTypes.h"
+        "src/CliMain.cpp"
+        "src/utils.cpp"
+        "src/utils.h"
+        "src/version.h"
 )
 
 target_compile_definitions(AudioBatch
@@ -138,17 +213,40 @@ target_compile_definitions(AudioBatch
         BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}"
 )
 
+    target_compile_definitions(AudioBatchCli
+        PRIVATE
+        DONT_SET_USING_JUCE_NAMESPACE=1
+        JUCE_USE_CURL=0
+        JUCE_USE_FLAC=1
+        JUCE_USE_OGGVORBIS=1
+        JUCE_USE_WINDOWS_MEDIA_FORMAT=0
+        # Version info
+        BUILDTIME_APP_NAME="${CMAKE_PROJECT_NAME}"
+        BUILDTIME_BRANCH="${GIT_BRANCH}"
+        BUILDTIME_BUILD_NAME="${APP_BUILD_NAME}"
+        BUILDTIME_COMMIT="${GIT_HASH}"
+        BUILDTIME_DATE="${DATE}"
+        BUILDTIME_VERSION_NUMBER="${APP_BUILD_VERSION}"
+        BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}"
+    )
+
 set_target_properties(AudioBatch
     PROPERTIES
         CXX_STANDARD 23
         MACOSX_BUNDLE YES
-        OUTPUT_NAME "${CMAKE_PROJECT_NAME}"
+        OUTPUT_NAME "AudioBatchApp"
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
         XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
         XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "YES"
         XCODE_ATTRIBUTE_DEVELOPMENT_TEAM "7522H7K6WF"
         XCODE_GENERATE_SCHEME ON
 )
+
+    set_target_properties(AudioBatchCli
+        PROPERTIES
+        CXX_STANDARD 23
+        OUTPUT_NAME "audiobatch"
+    )
 
 if (MSVC)
     # https://docs.microsoft.com/en-us/cpp/build/reference/permissive-standards-conformance
@@ -167,6 +265,7 @@ juce_add_binary_data(Assets NAMESPACE BinaryData
 target_link_libraries(AudioBatch
     PRIVATE
         Assets
+        ${AUDIOBATCH_SQLITE_TARGET}
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
@@ -179,6 +278,20 @@ target_link_libraries(AudioBatch
         juce::juce_graphics
         juce::juce_gui_basics
         juce::juce_gui_extra
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags
+        juce::juce_recommended_warning_flags
+)
+
+target_link_libraries(AudioBatchCli
+    PRIVATE
+        ${AUDIOBATCH_SQLITE_TARGET}
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_events
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
