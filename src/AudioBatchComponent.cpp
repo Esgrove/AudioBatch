@@ -97,11 +97,11 @@ private:
 
 namespace
 {
-constexpr auto supportedAudioFilePatterns = "*.wav;*.aif;*.aiff;*.flac;*.ogg;*.mp3";
-constexpr int nameColumnMinimumWidth = 120;
-constexpr int pathColumnMinimumWidth = 160;
-constexpr int nameColumnDefaultWidth = 220;
-constexpr int pathColumnDefaultWidth = 360;
+constexpr auto supportedAudioFilePatterns = "*.wav;*.aif;*.aiff;*.flac;*.mp3";
+constexpr int nameColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(AudioFileTableModel::columnName);
+constexpr int pathColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(AudioFileTableModel::columnPath);
+constexpr int nameColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnName);
+constexpr int pathColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnPath);
 
 template<typename Value>
 bool compareWithDirection(Value lhs, Value rhs, bool forwards)
