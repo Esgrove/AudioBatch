@@ -32,6 +32,7 @@ public:
     bool loadFromCacheData(const juce::MemoryBlock& waveformData);
     juce::MemoryBlock saveToCacheData() const;
     void setRange(juce::Range<double> newRange);
+    void setMouseWheelZoomCallback(std::function<void(double)> callback);
     void setThumbnailFullyLoadedCallback(std::function<void()> callback);
     void setURL(const juce::URL& url);
     void setZoom(double zoomLevel);
@@ -50,6 +51,7 @@ private:
     juce::Range<double> visibleRange;
     juce::URL lastFileDropped;
     juce::StringArray lastDroppedFiles;
+    std::function<void(double)> mouseWheelZoomCallback;
     std::function<void()> thumbnailFullyLoadedCallback;
 
     bool hasNotifiedFullyLoaded = false;

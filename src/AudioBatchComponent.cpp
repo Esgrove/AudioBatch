@@ -154,6 +154,9 @@ AudioBatchComponent::AudioBatchComponent() :
     thumbnail = std::make_unique<ThumbnailComponent>(formatManager, transportSource);
     addAndMakeVisible(thumbnail.get());
     thumbnail->addChangeListener(this);
+    thumbnail->setMouseWheelZoomCallback([this](double zoomFactor) {
+        zoomSlider.setValue(zoomSlider.getValue() * zoomFactor);
+    });
     thumbnail->setThumbnailFullyLoadedCallback([this] { handleThumbnailFullyLoaded(); });
 
     startStopButton.setEnabled(false);
@@ -226,6 +229,7 @@ AudioBatchComponent::~AudioBatchComponent()
     audioDeviceManager.removeAudioCallback(&audioSourcePlayer);
 
     thumbnail->removeChangeListener(this);
+    thumbnail->setMouseWheelZoomCallback({});
     thumbnail->setThumbnailFullyLoadedCallback({});
     resultsTable.setModel(nullptr);
 

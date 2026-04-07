@@ -84,6 +84,11 @@ void ThumbnailComponent::setThumbnailFullyLoadedCallback(std::function<void()> c
     thumbnailFullyLoadedCallback = std::move(callback);
 }
 
+void ThumbnailComponent::setMouseWheelZoomCallback(std::function<void(double)> callback)
+{
+    mouseWheelZoomCallback = std::move(callback);
+}
+
 void ThumbnailComponent::setURL(const juce::URL& url)
 {
     hasNotifiedFullyLoaded = false;
@@ -184,17 +189,24 @@ void ThumbnailComponent::mouseUp(const juce::MouseEvent&)
 
 void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
 {
-    if (thumbnail.getTotalLength() > 0.0) {
-        auto newStart = visibleRange.getStart() - wheel.deltaX * (visibleRange.getLength()) * 0.10;
-        newStart
-            = juce::jlimit(0.0, juce::jmax(0.0, thumbnail.getTotalLength() - (visibleRange.getLength())), newStart);
-
-        if (canMoveTransport()) {
-            setRange({newStart, newStart + visibleRange.getLength()});
-        }
-
-        repaint();
+    if (thumbnail.getTotalLength() <= 0.0) {
+        return;
     }
+
+    if (std::abs(wheel.deltaY) > 0.0f && mouseWheelZoomCallback) {
+        const auto zoomFactor = std::pow(1.2, static_cast<double>(wheel.deltaY) * 8.0);
+        mouseWheelZoomCallback(zoomFactor);
+        return;
+    }
+
+    auto newStart = visibleRange.getStart() - wheel.deltaX * (visibleRange.getLength()) * 0.10;
+    newStart = juce::jlimit(0.0, juce::jmax(0.0, thumbnail.getTotalLength() - (visibleRange.getLength())), newStart);
+
+    if (canMoveTransport()) {
+        setRange({newStart, newStart + visibleRange.getLength()});
+    }
+
+    repaint();
 }
 
 float ThumbnailComponent::timeToX(const double time) const
