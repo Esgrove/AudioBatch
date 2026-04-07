@@ -11,16 +11,23 @@
 
 class AudioInfoPanel;
 
-class AudioBatchComponent : public juce::Component, private juce::ChangeListener, private juce::DragAndDropContainer
+class AudioBatchComponent :
+    public juce::Component,
+    public juce::FileDragAndDropTarget,
+    private juce::ChangeListener,
+    private juce::DragAndDropContainer
 {
 public:
     AudioBatchComponent();
     ~AudioBatchComponent() override;
 
+    void filesDropped(const juce::StringArray& files, int x, int y) override;
+    bool isInterestedInFileDrag(const juce::StringArray& files) override;
     void paint(juce::Graphics& g) override;
     void resized() override;
 
 private:
+    void handleDroppedPaths(const juce::StringArray& paths);
     bool keyPressed(const juce::KeyPress& key) override;
     void browseForRootFolder();
     void handleAnalysisComplete(int totalFiles);
@@ -36,6 +43,7 @@ private:
     void refreshAnalysis(bool forceRefresh);
     void restoreSelectionByPaths(const juce::StringArray& selectedPaths);
     void sortResults();
+    void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
     void updateResultsTableColumnWidths();
     void updateAudioInfo(const AudioAnalysisRecord& record);
     void updateStatusLabel();

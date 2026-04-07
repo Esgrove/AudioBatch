@@ -18,6 +18,7 @@ public:
     bool isInterestedInFileDrag(const juce::StringArray& /*files*/) override;
 
     juce::URL getLastDroppedFile() const noexcept;
+    juce::StringArray getLastDroppedFiles() const;
 
     void changeListenerCallback(ChangeBroadcaster*) override;
     void filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/) override;
@@ -48,6 +49,7 @@ private:
     juce::DrawableRectangle currentPositionMarker;
     juce::Range<double> visibleRange;
     juce::URL lastFileDropped;
+    juce::StringArray lastDroppedFiles;
     std::function<void()> thumbnailFullyLoadedCallback;
 
     bool hasNotifiedFullyLoaded = false;
