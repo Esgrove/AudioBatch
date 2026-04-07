@@ -7,7 +7,7 @@
 
 namespace
 {
-juce::String columnText(sqlite3_stmt* statement, int columnIndex)
+juce::String columnText(sqlite3_stmt* statement, const int columnIndex)
 {
     const auto* text = sqlite3_column_text(statement, columnIndex);
     return text != nullptr ? juce::String::fromUTF8(reinterpret_cast<const char*>(text)) : juce::String();
@@ -28,13 +28,13 @@ juce::MemoryBlock columnBlob(sqlite3_stmt* statement, int columnIndex)
     return data;
 }
 
-void bindText(sqlite3_stmt* statement, int index, const juce::String& value)
+void bindText(sqlite3_stmt* statement, const int index, const juce::String& value)
 {
     const auto utf8 = value.toRawUTF8();
     sqlite3_bind_text(statement, index, utf8, -1, SQLITE_TRANSIENT);
 }
 
-void bindBlob(sqlite3_stmt* statement, int index, const juce::MemoryBlock& data)
+void bindBlob(sqlite3_stmt* statement, const int index, const juce::MemoryBlock& data)
 {
     sqlite3_bind_blob(statement, index, data.getData(), static_cast<int>(data.getSize()), SQLITE_TRANSIENT);
 }
@@ -62,7 +62,7 @@ juce::File AnalysisCache::getDatabaseFile() const
     return databaseFile;
 }
 
-juce::String AnalysisCache::normalizedPath(const juce::File& file) const
+juce::String AnalysisCache::normalizedPath(const juce::File& file)
 {
     return file.getFullPathName();
 }

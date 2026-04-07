@@ -14,8 +14,8 @@ class AudioInfoPanel;
 class AudioBatchComponent :
     public juce::Component,
     public juce::FileDragAndDropTarget,
-    private juce::ChangeListener,
-    private juce::DragAndDropContainer
+    public juce::DragAndDropContainer,
+    private juce::ChangeListener
 {
 public:
     AudioBatchComponent();
