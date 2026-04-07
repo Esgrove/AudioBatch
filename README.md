@@ -7,6 +7,8 @@ Current implementation focus:
 - Analyze audio files and calculate decoded sample peak values.
 - Cache analysis results in SQLite so unchanged files are not re-read every run.
 - Show sortable peak data in the GUI.
+- Show per-file processing state directly in the results list while background work is running.
+- Normalize selected files to `0 dBFS` peak from the GUI.
 - Run the same analysis from a console executable.
 
 ![Screenshot](./screenshot_mac.png)
@@ -17,13 +19,39 @@ Current implementation focus:
 - CMake
 - SQLite 3
 
-`SQLite3` is resolved through CMake. If a system `SQLite3` package is available it will be used, otherwise CMake falls back to fetching the SQLite amalgamation.
+`SQLite3` is resolved through CMake.
+If a system `SQLite3` package is available it will be used,
+otherwise CMake falls back to fetching the SQLite amalgamation.
 
 ## Build
 
+For routine development checks, use the CMake presets so you reuse the same build directories as the editor or IDE.
+
+Windows debug with the Visual Studio generator:
+
 ```powershell
-cmake -S . -B build
-cmake --build build --config Debug
+cmake --preset windows-debug
+cmake --build --preset windows-debug
+```
+
+Windows debug with Ninja and MSVC, which also produces `compile_commands.json`:
+
+```powershell
+cmake --preset windows-ninja-debug
+cmake --build --preset windows-ninja-debug
+```
+
+macOS debug:
+
+```shell
+cmake --preset macos-debug
+cmake --build --preset macos-debug
+```
+
+`build.sh` is intended for release builds and requires Bash (use Git Bash on Windows):
+
+```shell
+./build.sh -b Release
 ```
 
 This produces two binaries:
@@ -33,12 +61,22 @@ This produces two binaries:
 
 ## GUI
 
-The GUI now analyzes the selected root folder automatically in the background and stores results in a sortable table.
+The GUI analyzes the selected root folder automatically in the background and stores results in a sortable table.
+
+The results list supports per-file actions from the context menu, including:
+
+- reveal file in Finder or Explorer
+- open the parent folder
+- move files to the system trash
+- normalize selected files to `0 dBFS` peak
+
+The status column also shows per-file activity while analysis or normalization is running.
 
 Visible columns:
 
 - file name
 - full path
+- file type
 - peak L
 - peak R
 - peak max
@@ -65,7 +103,7 @@ audiobatch [options] <paths...>
 
 Examples:
 
-```powershell
+```shell
 audiobatch "music/song.wav"
 audiobatch -r -s name "music/library"
 audiobatch --recurse --sort peak "music/library"
@@ -80,7 +118,7 @@ Default CLI output format:
 Example output:
 
 ```text
- -20.48 dBFS  cassette_recorder.wav
+ -20.48 dBFS  audiofile.wav
 ```
 
 ## Cache
@@ -94,13 +132,10 @@ The cache is invalidated when any of these change:
 - file modification time
 - internal analysis schema version
 
-## Current Scope
-
-This milestone covers decoded sample-peak analysis only.
+## TODO
 
 Not implemented yet:
 
-- loudness analysis
+- loudness analysis using <https://github.com/jiixyj/libebur128>
 - true peak analysis
 - VST batch processing
-- drag and drop export workflows

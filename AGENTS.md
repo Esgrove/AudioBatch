@@ -19,11 +19,11 @@ This repository contains a JUCE-based C++23 application with two deliverables:
 
 ## Build And Verification
 
-- Windows release build script: `bash ./build.sh -b Release`
-- Standard CMake debug build: `cmake -S . -B build` then `cmake --build build --config Debug`
-- Windows release outputs are expected at:
-  - `cmake-build-windows-release/AudioBatch_artefacts/Release/AudioBatchApp.exe`
-  - `cmake-build-windows-release/AudioBatchCli_artefacts/Release/audiobatch.exe`
+- Do not use build.sh, it is only for making final release builds
+- When modifying code, use the CMake debug presets for validation so terminal builds reuse the same build directory as the editor or IDE.
+- On Windows, prefer `cmake --preset windows-debug` then `cmake --build --preset windows-debug`.
+- If you need Ninja and `compile_commands.json` on Windows, use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
+- On macOS, use `cmake --preset macos-debug` then `cmake --build --preset macos-debug`.
 
 ## Notes
 

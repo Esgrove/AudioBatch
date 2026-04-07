@@ -68,7 +68,9 @@ public:
         std::vector<AudioAnalysisRecord>& records,
         std::function<void(int row)> selectionChanged,
         std::function<void(int columnId, bool isForwards)> sortChanged,
-        std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested
+        std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested,
+        std::function<juce::String(const AudioAnalysisRecord& record)> activeStatusLabelProvider,
+        std::function<float()> activityPhaseProvider
     );
 
     /// Installs the standard set of columns used by the results table.
@@ -123,4 +125,6 @@ private:
     std::function<void(int row)> selectionChanged;
     std::function<void(int columnId, bool isForwards)> sortChanged;
     std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested;
+    std::function<juce::String(const AudioAnalysisRecord& record)> activeStatusLabelProvider;
+    std::function<float()> activityPhaseProvider;
 };

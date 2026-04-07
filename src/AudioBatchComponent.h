@@ -3,10 +3,12 @@
 #include "AnalysisCache.h"
 #include "AnalysisCoordinator.h"
 #include "AudioFileTableModel.h"
+#include "NormalizeCoordinator.h"
 #include "ThumbnailComponent.h"
 
 #include <JuceHeader.h>
 
+#include <map>
 #include <vector>
 
 class AudioInfoPanel;
@@ -16,7 +18,8 @@ class AudioBatchComponent :
     public juce::Component,
     public juce::FileDragAndDropTarget,
     public juce::DragAndDropContainer,
-    private juce::ChangeListener
+    private juce::ChangeListener,
+    private juce::Timer
 {
 public:
     /// Creates the UI, opens the analysis cache, and starts the initial scan.
@@ -36,6 +39,8 @@ private:
     bool keyPressed(const juce::KeyPress& key) override;
     void browseForRootFolder();
     void handleAnalysisComplete(int totalFiles);
+    void handleNormalizeComplete(int totalFiles);
+    void handleNormalizeResult(const AudioNormalizationResult& result);
 
     /// Selects the clicked row and opens the per-file action menu.
     void handleFileContextMenuRequested(int row, int columnId, const juce::MouseEvent& event);
@@ -44,14 +49,23 @@ private:
     void handleThumbnailFullyLoaded();
     void handleSelectionChanged(int lastRowSelected);
     void handleSortRequested(int columnId, bool isForwards);
+    [[nodiscard]] juce::String getActiveStatusLabel(const AudioAnalysisRecord& record) const;
+    [[nodiscard]] float getActivityPhase() const;
+    [[nodiscard]] bool isAnalysisInProgress() const;
+    [[nodiscard]] bool isAnyFileProcessing() const;
     bool loadURLIntoTransport(const juce::URL& audioUrl);
+    void normalizeSelectedRecords();
 
     /// Moves the selected files to the OS trash, optionally asking for confirmation first.
     void moveSelectedRecordsToTrash(bool promptForConfirmation);
 
     int findRecordIndex(const juce::String& fullPath) const;
+    juce::Array<juce::File> getSelectedRecordFiles() const;
+    std::vector<AudioAnalysisRecord> getSelectedNormalizableRecords() const;
     juce::StringArray getSelectedRecordPaths() const;
     int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
+    void markFilesProcessing(const juce::Array<juce::File>& files, const juce::String& statusLabel);
+    void unmarkFileProcessing(const juce::String& fullPath);
 
     /// Removes trashed files from the table and keeps selection and preview state coherent.
     void removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow);
@@ -93,12 +107,15 @@ private:
         const juce::String& title
     );
     void showAudioResource(juce::URL resource);
+    void syncActivityTimer();
     void startOrStop();
+    void timerCallback() override;
     void zoomLevelChanged(double zoomLevel);
     void mouseMagnify(const juce::MouseEvent&, float scaleFactor) override;
 
     AnalysisCache analysisCache;
     AnalysisCoordinator analysisCoordinator;
+    NormalizeCoordinator normalizeCoordinator;
     std::vector<AudioAnalysisRecord> analysisResults;
     juce::StretchableLayoutManager mainVerticalLayout;
     juce::StretchableLayoutResizerBar waveformResizeBar {&mainVerticalLayout, 1, false};
@@ -122,9 +139,15 @@ private:
     juce::URL currentAudioUrl;
     int completedResults = 0;
     int expectedResults = 0;
+    int normalizedResultsCompleted = 0;
+    int normalizedResultsExpected = 0;
     int currentSortColumnId = AudioFileTableModel::columnOverallPeak;
     bool currentSortForwards = true;
     bool currentWaveformLoadedFromCache = false;
+    bool normalizeInProgress = false;
+
+    std::map<juce::String, juce::String> activeFileStatusLabels;
+    juce::StringArray normalizationFailures;
 
     juce::Label currentRootLabel {"CurrentRootLabel"};
     juce::Label statusLabel {"StatusLabel"};
