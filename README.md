@@ -23,6 +23,22 @@ Current implementation focus:
 If a system `SQLite3` package is available it will be used,
 otherwise CMake falls back to fetching the SQLite amalgamation.
 
+MP3 normalization requires a working `lame` encoder executable to be installed and available to the app.
+
+Install `lame` with your platform package manager:
+
+Windows:
+
+```powershell
+scoop install main/lame
+```
+
+macOS:
+
+```shell
+brew install lame
+```
+
 ## Build
 
 For routine development checks, use the CMake presets so you reuse the same build directories as the editor or IDE.
@@ -69,6 +85,9 @@ The results list supports per-file actions from the context menu, including:
 - open the parent folder
 - move files to the system trash
 - normalize selected files to `0 dBFS` peak
+
+MP3 files can only be normalized when `lame` is installed. AIFF, WAV, and other formats continue to depend on the
+writers available in the current JUCE build.
 
 The status column also shows per-file activity while analysis or normalization is running.
 

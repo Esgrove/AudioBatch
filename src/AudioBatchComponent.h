@@ -28,6 +28,18 @@ public:
     /// Stops background work and releases audio and dialog resources.
     ~AudioBatchComponent() override;
 
+    /// Opens the root-folder chooser used for analysis.
+    void chooseRootFolder();
+
+    /// Re-runs analysis for the current root folder.
+    void rescanCurrentRoot();
+
+    /// Opens the audio-device settings dialog.
+    void showAudioSettingsWindow();
+
+    /// Shows which file types can be normalized in the current build.
+    void showSupportedNormalizationFormats();
+
     void filesDropped(const juce::StringArray& files, int x, int y) override;
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
     void paint(juce::Graphics& g) override;
@@ -37,7 +49,6 @@ private:
     void clearCurrentAudioPreview();
     void handleDroppedPaths(const juce::StringArray& paths);
     bool keyPressed(const juce::KeyPress& key) override;
-    void browseForRootFolder();
     void handleAnalysisComplete(int totalFiles);
     void handleNormalizeComplete(int totalFiles);
     void handleNormalizeResult(const AudioNormalizationResult& result);
@@ -49,6 +60,7 @@ private:
     void handleThumbnailFullyLoaded();
     void handleSelectionChanged(int lastRowSelected);
     void handleSortRequested(int columnId, bool isForwards);
+    void handleSecondarySortRequested(int columnId);
     [[nodiscard]] juce::String getActiveStatusLabel(const AudioAnalysisRecord& record) const;
     [[nodiscard]] float getActivityPhase() const;
     [[nodiscard]] bool isAnalysisInProgress() const;
@@ -65,6 +77,10 @@ private:
     juce::StringArray getSelectedRecordPaths() const;
     int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
     void markFilesProcessing(const juce::Array<juce::File>& files, const juce::String& statusLabel);
+    [[nodiscard]] bool canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records) const;
+    [[nodiscard]] juce::String buildNormalizationUnavailableMessage(
+        const std::vector<AudioAnalysisRecord>& records
+    ) const;
     void unmarkFileProcessing(const juce::String& fullPath);
 
     /// Removes trashed files from the table and keeps selection and preview state coherent.
@@ -85,6 +101,9 @@ private:
     static juce::File getInitialRootDirectory();
     void refreshAnalysis(bool forceRefresh);
     void restoreSelectionByPaths(const juce::StringArray& selectedPaths);
+
+    /// Updates the header text so the secondary sort key remains visible.
+    void refreshSortIndicators();
 
     /// Shows the context menu for the given row at the supplied screen position.
     void showFileContextMenu(int row, juce::Point<int> screenPosition);
@@ -143,6 +162,8 @@ private:
     int normalizedResultsExpected = 0;
     int currentSortColumnId = AudioFileTableModel::columnOverallPeak;
     bool currentSortForwards = true;
+    int secondarySortColumnId = 0;
+    bool secondarySortForwards = true;
     bool currentWaveformLoadedFromCache = false;
     bool normalizeInProgress = false;
 

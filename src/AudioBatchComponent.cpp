@@ -5,6 +5,7 @@
 #include "utils.h"
 
 #include <algorithm>
+#include <map>
 
 using AudioInfoRow = std::pair<juce::String, juce::String>;
 
@@ -111,6 +112,7 @@ enum FileMenuItemId {
     revealFileMenuItemId = 1,
     openParentDirectoryMenuItemId,
     normalizeMenuItemId,
+    normalizeSupportMenuItemId,
     moveToTrashMenuItemId,
 };
 
@@ -145,12 +147,6 @@ juce::String getRevealFileMenuLabel()
 #endif
 }
 
-template<typename Value>
-bool compareWithDirection(Value lhs, Value rhs, bool forwards)
-{
-    return forwards ? lhs < rhs : lhs > rhs;
-}
-
 juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 {
     if (record.formatName.isNotEmpty()) {
@@ -158,11 +154,132 @@ juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
     }
 
     auto extension = record.file.getFileExtension().trimCharactersAtStart(".");
+
     if (extension.isNotEmpty()) {
         return extension.toUpperCase();
     }
 
     return "Unknown";
+}
+
+juce::String formatLabelForFile(const juce::File& file)
+{
+    auto extension = file.getFileExtension().trimCharactersAtStart(".").toUpperCase();
+
+    if (extension.isEmpty()) {
+        extension = "Unknown";
+    }
+
+    return extension;
+}
+
+class SecondarySortTableHeader final : public juce::TableHeaderComponent
+{
+public:
+    using SecondarySortCallback = std::function<void(int columnId)>;
+
+    explicit SecondarySortTableHeader(SecondarySortCallback secondarySortRequestedCallback) :
+        secondarySortRequested(std::move(secondarySortRequestedCallback))
+    { }
+
+    void columnClicked(int columnId, const juce::ModifierKeys& mods) override
+    {
+        if ((mods.isCtrlDown() || mods.isCommandDown()) && secondarySortRequested != nullptr) {
+            secondarySortRequested(columnId);
+            return;
+        }
+
+        juce::TableHeaderComponent::columnClicked(columnId, mods);
+    }
+
+    void setSecondarySortIndicator(int columnId, bool isForwards)
+    {
+        if (baseColumnNames.empty()) {
+            cacheBaseColumnNames();
+        }
+
+        secondarySortColumnId = columnId;
+        secondarySortForwards = isForwards;
+
+        for (const auto& [trackedColumnId, baseName] : baseColumnNames) {
+            auto displayName = baseName;
+
+            if (trackedColumnId == secondarySortColumnId) {
+                displayName << (secondarySortForwards ? " [2^]" : " [2v]");
+            }
+
+            setColumnName(trackedColumnId, displayName);
+        }
+
+        repaint();
+    }
+
+private:
+    void cacheBaseColumnNames()
+    {
+        const auto columnCount = getNumColumns(false);
+
+        for (int index = 0; index < columnCount; ++index) {
+            const auto columnId = getColumnIdOfIndex(index, false);
+            baseColumnNames.emplace(columnId, getColumnName(columnId));
+        }
+    }
+
+    SecondarySortCallback secondarySortRequested;
+    std::map<int, juce::String> baseColumnNames;
+    int secondarySortColumnId = 0;
+    bool secondarySortForwards = true;
+};
+
+SecondarySortTableHeader& getSecondarySortHeader(juce::TableListBox& table)
+{
+    return static_cast<SecondarySortTableHeader&>(table.getHeader());
+}
+
+int compareNaturalStrings(const juce::String& left, const juce::String& right)
+{
+    return left.compareNatural(right);
+}
+
+int comparePeaks(float left, float right)
+{
+    const auto leftMagnitude = std::abs(left);
+    const auto rightMagnitude = std::abs(right);
+
+    if (juce::approximatelyEqual(leftMagnitude, rightMagnitude)) {
+        return 0;
+    }
+
+    return leftMagnitude < rightMagnitude ? -1 : 1;
+}
+
+int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, int columnId)
+{
+    switch (columnId) {
+        case AudioFileTableModel::columnName:
+            return compareNaturalStrings(lhs.fileName, rhs.fileName);
+
+        case AudioFileTableModel::columnPath:
+            return compareNaturalStrings(lhs.fullPath, rhs.fullPath);
+
+        case AudioFileTableModel::columnType:
+            return compareNaturalStrings(getRecordTypeLabel(lhs), getRecordTypeLabel(rhs));
+
+        case AudioFileTableModel::columnPeakLeft:
+            return comparePeaks(lhs.peakLeft, rhs.peakLeft);
+
+        case AudioFileTableModel::columnPeakRight:
+            return comparePeaks(lhs.peakRight, rhs.peakRight);
+
+        case AudioFileTableModel::columnStatus:
+            return compareNaturalStrings(
+                AudioAnalysisService::formatStatus(lhs), AudioAnalysisService::formatStatus(rhs)
+            );
+
+        case AudioFileTableModel::columnOverallPeak:
+        default:
+            return comparePeaks(lhs.overallPeak, rhs.overallPeak);
+    }
 }
 }  // namespace
 
@@ -185,10 +302,10 @@ AudioBatchComponent::AudioBatchComponent() :
 
     formatManager.registerBasicFormats();
 
-    chooseFolderButton.onClick = [this] { browseForRootFolder(); };
+    chooseFolderButton.onClick = [this] { chooseRootFolder(); };
     addAndMakeVisible(chooseFolderButton);
 
-    rescanButton.onClick = [this] { refreshAnalysis(true); };
+    rescanButton.onClick = [this] { rescanCurrentRoot(); };
     addAndMakeVisible(rescanButton);
 
     currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
@@ -198,6 +315,9 @@ AudioBatchComponent::AudioBatchComponent() :
     statusLabel.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(statusLabel);
 
+    resultsTable.setHeader(std::make_unique<SecondarySortTableHeader>([this](int columnId) {
+        handleSecondarySortRequested(columnId);
+    }));
     AudioFileTableModel::configureHeader(resultsTable.getHeader());
     resultsTable.setModel(&fileTableModel);
     resultsTable.setColour(juce::ListBox::backgroundColourId, juce::CustomLookAndFeel::greyMediumDark);
@@ -205,6 +325,7 @@ AudioBatchComponent::AudioBatchComponent() :
     resultsTable.setOutlineThickness(0);
     resultsTable.setRowHeight(24);
     resultsTable.getHeader().setSortColumnId(currentSortColumnId, currentSortForwards);
+    refreshSortIndicators();
     addAndMakeVisible(resultsTable);
 
     // Default to a larger list view while allowing the lower preview area to be resized.
@@ -243,7 +364,7 @@ AudioBatchComponent::AudioBatchComponent() :
     audioInfo = std::make_unique<AudioInfoPanel>();
     addAndMakeVisible(audioInfo.get());
 
-    settingsButton.onClick = [this] { openDialogWindow(settingsWindow, &audioSetupComp, "Audio Settings"); };
+    settingsButton.onClick = [this] { showAudioSettingsWindow(); };
     addAndMakeVisible(settingsButton);
 
     thread.startThread(juce::Thread::Priority::high);
@@ -430,25 +551,7 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
     return false;
 }
 
-juce::File AudioBatchComponent::getInitialRootDirectory()
-{
-    const auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
-    const auto dropboxDirectory
-        = homeDirectory.getChildFile("Dropbox").getChildFile("DJ MUSIC").getChildFile("FUNKY JAM 1");
-
-    if (dropboxDirectory.isDirectory()) {
-        return dropboxDirectory;
-    }
-
-    const auto musicDirectory = juce::File::getSpecialLocation(juce::File::userMusicDirectory);
-    if (musicDirectory.isDirectory()) {
-        return musicDirectory;
-    }
-
-    return homeDirectory;
-}
-
-void AudioBatchComponent::browseForRootFolder()
+void AudioBatchComponent::chooseRootFolder()
 {
     directoryChooser
         = std::make_unique<juce::FileChooser>("Choose Audio Folder", currentRoot, supportedAudioFilePatterns, true);
@@ -471,6 +574,48 @@ void AudioBatchComponent::browseForRootFolder()
             safeThis->directoryChooser.reset();
         }
     );
+}
+
+void AudioBatchComponent::rescanCurrentRoot()
+{
+    refreshAnalysis(true);
+}
+
+void AudioBatchComponent::showAudioSettingsWindow()
+{
+    openDialogWindow(settingsWindow, &audioSetupComp, "Audio Settings");
+}
+
+void AudioBatchComponent::showSupportedNormalizationFormats()
+{
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions::makeOptionsOk(
+            juce::MessageBoxIconType::InfoIcon,
+            "Normalization Format Support",
+            AudioNormalizationService::getFormatSupportSummary(),
+            "OK",
+            this
+        ),
+        nullptr
+    );
+}
+
+juce::File AudioBatchComponent::getInitialRootDirectory()
+{
+    const auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+    const auto dropboxDirectory
+        = homeDirectory.getChildFile("Dropbox").getChildFile("DJ MUSIC").getChildFile("FUNKY JAM 1");
+
+    if (dropboxDirectory.isDirectory()) {
+        return dropboxDirectory;
+    }
+
+    const auto musicDirectory = juce::File::getSpecialLocation(juce::File::userMusicDirectory);
+    if (musicDirectory.isDirectory()) {
+        return musicDirectory;
+    }
+
+    return homeDirectory;
 }
 
 void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
@@ -539,14 +684,15 @@ void AudioBatchComponent::showFileContextMenu(int row, juce::Point<int> screenPo
 
     const auto& record = analysisResults[static_cast<std::size_t>(row)];
     const auto parentDirectory = record.file.getParentDirectory();
-    const auto canNormalize = !normalizeInProgress && !isAnalysisInProgress() && record.isReady()
-        && !getSelectedNormalizableRecords().empty();
+    const auto selectedRecords = getSelectedNormalizableRecords();
+    const auto canNormalize = !normalizeInProgress && !isAnalysisInProgress() && canNormalizeRecords(selectedRecords);
 
     juce::PopupMenu menu;
     menu.addItem(revealFileMenuItemId, getRevealFileMenuLabel(), record.file.exists());
     menu.addItem(openParentDirectoryMenuItemId, "Open Parent Folder", parentDirectory.isDirectory());
     menu.addSeparator();
     menu.addItem(normalizeMenuItemId, "Normalize to 0 dBFS", canNormalize);
+    menu.addItem(normalizeSupportMenuItemId, "Normalization Format Support...");
     menu.addSeparator();
     menu.addItem(moveToTrashMenuItemId, "Move to Trash", record.file.exists());
 
@@ -569,6 +715,9 @@ void AudioBatchComponent::showFileContextMenu(int row, juce::Point<int> screenPo
                     break;
                 case normalizeMenuItemId:
                     safeThis->normalizeSelectedRecords();
+                    break;
+                case normalizeSupportMenuItemId:
+                    safeThis->showSupportedNormalizationFormats();
                     break;
                 case moveToTrashMenuItemId:
                     safeThis->moveSelectedRecordsToTrash(true);
@@ -761,6 +910,42 @@ std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedNormalizableRec
     }
 
     return selectedRecords;
+}
+
+bool AudioBatchComponent::canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records) const
+{
+    if (records.empty()) {
+        return false;
+    }
+
+    return std::all_of(records.begin(), records.end(), [](const auto& record) {
+        return AudioNormalizationService::canNormalizeFile(record.file);
+    });
+}
+
+juce::String AudioBatchComponent::buildNormalizationUnavailableMessage(
+    const std::vector<AudioAnalysisRecord>& records
+) const
+{
+    juce::StringArray unsupportedLines;
+
+    for (const auto& record : records) {
+        const auto reason = AudioNormalizationService::getNormalizationSupportMessage(record.file);
+
+        if (reason.isEmpty()) {
+            continue;
+        }
+
+        unsupportedLines.add(record.fileName + " (" + formatLabelForFile(record.file) + "): " + reason);
+    }
+
+    if (unsupportedLines.isEmpty()) {
+        return {};
+    }
+
+    return "The selected files cannot be normalized with the current build:\n\n"
+        + unsupportedLines.joinIntoString(juce::newLine) + "\n\n"
+        + AudioNormalizationService::getFormatSupportSummary();
 }
 
 void AudioBatchComponent::markFilesProcessing(const juce::Array<juce::File>& files, const juce::String& activityLabel)
@@ -1003,6 +1188,21 @@ void AudioBatchComponent::normalizeSelectedRecords()
         return;
     }
 
+    if (!canNormalizeRecords(recordsToNormalize)) {
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions::makeOptionsOk(
+                juce::MessageBoxIconType::WarningIcon,
+                "Normalization Unavailable",
+                buildNormalizationUnavailableMessage(recordsToNormalize),
+                "OK",
+                this
+            ),
+            nullptr
+        );
+        statusLabel.setText("Selected file type cannot be normalized in this build", juce::dontSendNotification);
+        return;
+    }
+
     juce::Array<juce::File> filesToNormalize;
     for (const auto& record : recordsToNormalize) {
         filesToNormalize.add(record.file);
@@ -1035,72 +1235,36 @@ void AudioBatchComponent::sortResults()
             return !lhs.hasError();
         }
 
-        auto compareStrings = [this](const juce::String& left, const juce::String& right) {
-            const auto comparison = left.compareNatural(right);
+        const auto compareUsingSort = [&](int columnId, bool isForwards) {
+            if (columnId <= 0) {
+                return 0;
+            }
+
+            const auto comparison = compareRecordsByColumn(lhs, rhs, columnId);
             if (comparison == 0) {
-                return false;
+                return 0;
             }
-            return currentSortForwards ? comparison < 0 : comparison > 0;
+
+            return isForwards ? comparison : -comparison;
         };
 
-        auto comparePeaks = [this](float left, float right) {
-            const auto leftMagnitude = std::abs(left);
-            const auto rightMagnitude = std::abs(right);
-
-            if (juce::approximatelyEqual(leftMagnitude, rightMagnitude)) {
-                return false;
-            }
-            return compareWithDirection(leftMagnitude, rightMagnitude, currentSortForwards);
-        };
-
-        switch (currentSortColumnId) {
-            case AudioFileTableModel::columnName:
-                if (lhs.fileName != rhs.fileName) {
-                    return compareStrings(lhs.fileName, rhs.fileName);
-                }
-                return compareStrings(lhs.fullPath, rhs.fullPath);
-
-            case AudioFileTableModel::columnPath:
-                if (lhs.fullPath != rhs.fullPath) {
-                    return compareStrings(lhs.fullPath, rhs.fullPath);
-                }
-                return compareStrings(lhs.fileName, rhs.fileName);
-
-            case AudioFileTableModel::columnType:
-                if (const auto leftType = getRecordTypeLabel(lhs), rightType = getRecordTypeLabel(rhs);
-                    leftType != rightType)
-                {
-                    return compareStrings(leftType, rightType);
-                }
-                return compareStrings(lhs.fileName, rhs.fileName);
-
-            case AudioFileTableModel::columnPeakLeft:
-                if (!juce::approximatelyEqual(std::abs(lhs.peakLeft), std::abs(rhs.peakLeft))) {
-                    return comparePeaks(lhs.peakLeft, rhs.peakLeft);
-                }
-                return compareStrings(lhs.fileName, rhs.fileName);
-
-            case AudioFileTableModel::columnPeakRight:
-                if (!juce::approximatelyEqual(std::abs(lhs.peakRight), std::abs(rhs.peakRight))) {
-                    return comparePeaks(lhs.peakRight, rhs.peakRight);
-                }
-                return compareStrings(lhs.fileName, rhs.fileName);
-
-            case AudioFileTableModel::columnStatus:
-                if (AudioAnalysisService::formatStatus(lhs) != AudioAnalysisService::formatStatus(rhs)) {
-                    return compareStrings(
-                        AudioAnalysisService::formatStatus(lhs), AudioAnalysisService::formatStatus(rhs)
-                    );
-                }
-                return compareStrings(lhs.fileName, rhs.fileName);
-
-            case AudioFileTableModel::columnOverallPeak:
-            default:
-                if (!juce::approximatelyEqual(std::abs(lhs.overallPeak), std::abs(rhs.overallPeak))) {
-                    return comparePeaks(lhs.overallPeak, rhs.overallPeak);
-                }
-                return compareStrings(lhs.fileName, rhs.fileName);
+        if (const auto primaryComparison = compareUsingSort(currentSortColumnId, currentSortForwards);
+            primaryComparison != 0)
+        {
+            return primaryComparison < 0;
         }
+
+        if (const auto secondaryComparison = compareUsingSort(secondarySortColumnId, secondarySortForwards);
+            secondaryComparison != 0)
+        {
+            return secondaryComparison < 0;
+        }
+
+        if (const auto nameComparison = compareNaturalStrings(lhs.fileName, rhs.fileName); nameComparison != 0) {
+            return nameComparison < 0;
+        }
+
+        return compareNaturalStrings(lhs.fullPath, rhs.fullPath) < 0;
     });
 }
 
@@ -1226,12 +1390,50 @@ void AudioBatchComponent::handleSortRequested(int columnId, bool isForwards)
     currentSortColumnId = columnId;
     currentSortForwards = isForwards;
 
+    if (secondarySortColumnId == currentSortColumnId) {
+        secondarySortColumnId = 0;
+        secondarySortForwards = true;
+    }
+
+    refreshSortIndicators();
+
     const auto selectedPaths = getSelectedRecordPaths();
 
     sortResults();
     resultsTable.updateContent();
     updateResultsTableColumnWidths();
     restoreSelectionByPaths(selectedPaths);
+}
+
+void AudioBatchComponent::handleSecondarySortRequested(int columnId)
+{
+    if (columnId <= 0) {
+        return;
+    }
+
+    if (columnId == currentSortColumnId) {
+        secondarySortColumnId = 0;
+        secondarySortForwards = true;
+    } else if (secondarySortColumnId == columnId) {
+        secondarySortForwards = !secondarySortForwards;
+    } else {
+        secondarySortColumnId = columnId;
+        secondarySortForwards = true;
+    }
+
+    refreshSortIndicators();
+
+    const auto selectedPaths = getSelectedRecordPaths();
+
+    sortResults();
+    resultsTable.updateContent();
+    updateResultsTableColumnWidths();
+    restoreSelectionByPaths(selectedPaths);
+}
+
+void AudioBatchComponent::refreshSortIndicators()
+{
+    getSecondarySortHeader(resultsTable).setSecondarySortIndicator(secondarySortColumnId, secondarySortForwards);
 }
 
 int AudioBatchComponent::getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const
