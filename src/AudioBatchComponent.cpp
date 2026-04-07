@@ -50,6 +50,12 @@ AudioBatchComponent::AudioBatchComponent() :
     resultsTable.getHeader().setSortColumnId(currentSortColumnId, currentSortForwards);
     addAndMakeVisible(resultsTable);
 
+    // Default to a larger list view while allowing the lower preview area to be resized.
+    mainVerticalLayout.setItemLayout(0, 240.0, -0.85, -0.62);
+    mainVerticalLayout.setItemLayout(1, 6.0, 6.0, 6.0);
+    mainVerticalLayout.setItemLayout(2, 180.0, -0.70, -0.38);
+    addAndMakeVisible(waveformResizeBar);
+
     thumbnail = std::make_unique<ThumbnailComponent>(formatManager, transportSource);
     addAndMakeVisible(thumbnail.get());
     thumbnail->addChangeListener(this);
@@ -157,11 +163,12 @@ void AudioBatchComponent::resized()
 
     r.removeFromTop(6);
 
-    resultsTable.setBounds(r.removeFromTop(juce::jmax(240, juce::roundToIntAccurate(r.getHeight() * 0.42f))));
+    juce::Component* verticalSections[] = {&resultsTable, &waveformResizeBar, thumbnail.get()};
+    mainVerticalLayout.layOutComponents(
+        verticalSections, 3, r.getX(), r.getY(), r.getWidth(), r.getHeight(), true, true
+    );
 
-    r.removeFromTop(6);
-
-    auto info = r;
+    auto info = thumbnail->getBounds();
 
     auto space = juce::jmin(250, juce::jmax(150, juce::roundToIntAccurate(r.getWidth() * 0.2)));
     auto control = info.removeFromLeft(space);

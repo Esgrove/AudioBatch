@@ -16,9 +16,9 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
 {
     header.addColumn("Name", columnName, 220, 120, 600, juce::TableHeaderComponent::defaultFlags);
     header.addColumn("Path", columnPath, 360, 160, 1200, juce::TableHeaderComponent::defaultFlags);
+    header.addColumn("Peak Max", columnOverallPeak, 120, 90, 160, juce::TableHeaderComponent::defaultFlags);
     header.addColumn("Peak L", columnPeakLeft, 120, 90, 160, juce::TableHeaderComponent::defaultFlags);
     header.addColumn("Peak R", columnPeakRight, 120, 90, 160, juce::TableHeaderComponent::defaultFlags);
-    header.addColumn("Peak Max", columnOverallPeak, 120, 90, 160, juce::TableHeaderComponent::defaultFlags);
     header.addColumn("Status", columnStatus, 120, 90, 200, juce::TableHeaderComponent::defaultFlags);
 }
 
