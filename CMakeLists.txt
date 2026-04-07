@@ -199,6 +199,7 @@ target_compile_definitions(AudioBatch
         DONT_SET_USING_JUCE_NAMESPACE=1
         JUCE_ASIO=1
         JUCE_DIRECTSOUND=0
+        JUCE_USE_LAME_AUDIO_FORMAT=1
         JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_PLUGINHOST_VST3=1
         JUCE_STRICT_REFCOUNTEDPOINTER=1
@@ -219,9 +220,10 @@ target_compile_definitions(AudioBatch
         BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}"
 )
 
-    target_compile_definitions(AudioBatchCli
-        PRIVATE
+target_compile_definitions(AudioBatchCli
+    PRIVATE
         DONT_SET_USING_JUCE_NAMESPACE=1
+        JUCE_USE_LAME_AUDIO_FORMAT=1
         JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_USE_CURL=0
         JUCE_USE_FLAC=1
@@ -235,7 +237,7 @@ target_compile_definitions(AudioBatch
         BUILDTIME_DATE="${DATE}"
         BUILDTIME_VERSION_NUMBER="${APP_BUILD_VERSION}"
         BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}"
-    )
+)
 
 set_target_properties(AudioBatch
     PROPERTIES
@@ -250,12 +252,12 @@ set_target_properties(AudioBatch
         XCODE_GENERATE_SCHEME ON
 )
 
-    set_target_properties(AudioBatchCli
-        PROPERTIES
+set_target_properties(AudioBatchCli
+    PROPERTIES
         COMPILE_WARNING_AS_ERROR YES
         CXX_STANDARD 23
         OUTPUT_NAME "audiobatch"
-    )
+)
 
 if (MSVC)
     # /wd4100 disables MSVC warning C4100 (unreferenced formal parameter) for this JUCE source file only.
