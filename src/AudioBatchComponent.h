@@ -9,7 +9,9 @@
 
 #include <vector>
 
-class AudioBatchComponent : public juce::Component, private juce::ChangeListener
+class AudioInfoPanel;
+
+class AudioBatchComponent : public juce::Component, private juce::ChangeListener, private juce::DragAndDropContainer
 {
 public:
     AudioBatchComponent();
@@ -23,18 +25,27 @@ private:
     void browseForRootFolder();
     void handleAnalysisComplete(int totalFiles);
     void handleAnalysisResult(const AudioAnalysisRecord& record);
-    void handleRowSelected(int row);
+    void handleThumbnailFullyLoaded();
+    void handleSelectionChanged(int lastRowSelected);
     void handleSortRequested(int columnId, bool isForwards);
     bool loadURLIntoTransport(const juce::URL& audioUrl);
     int findRecordIndex(const juce::String& fullPath) const;
+    juce::StringArray getSelectedRecordPaths() const;
+    int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
     static juce::File getInitialRootDirectory();
     void refreshAnalysis(bool forceRefresh);
+    void restoreSelectionByPaths(const juce::StringArray& selectedPaths);
     void sortResults();
+    void updateResultsTableColumnWidths();
     void updateAudioInfo(const AudioAnalysisRecord& record);
     void updateStatusLabel();
+    bool shouldDropFilesWhenDraggedExternally(
+        const juce::DragAndDropTarget::SourceDetails& sourceDetails,
+        juce::StringArray& files,
+        bool& canMoveFiles
+    ) override;
 
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
-    void logAudioInfoMessage(const juce::String& m);
     void openDialogWindow(
         SafePointer<juce::DialogWindow>& window,
         const SafePointer<juce::Component>& component,
@@ -72,6 +83,7 @@ private:
     int expectedResults = 0;
     int currentSortColumnId = AudioFileTableModel::columnOverallPeak;
     bool currentSortForwards = true;
+    bool currentWaveformLoadedFromCache = false;
 
     juce::Label currentRootLabel {"CurrentRootLabel"};
     juce::Label statusLabel {"StatusLabel"};
@@ -81,7 +93,7 @@ private:
     juce::TextButton rescanButton {"Rescan"};
     juce::TextButton settingsButton {"Settings"};
     juce::TextButton startStopButton {"Play/Stop"};
-    juce::TextEditor audioInfo {"AudioInfo"};
+    std::unique_ptr<AudioInfoPanel> audioInfo;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioBatchComponent)
 };

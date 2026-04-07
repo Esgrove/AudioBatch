@@ -36,19 +36,77 @@ void ThumbnailComponent::paint(juce::Graphics& g)
 
 void ThumbnailComponent::resized() { }
 
+bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData)
+{
+    thumbnail.clear();
+    hasNotifiedFullyLoaded = false;
+
+    if (waveformData.getSize() == 0) {
+        visibleRange = {};
+        stopTimer();
+        repaint();
+        return false;
+    }
+
+    juce::MemoryInputStream input(waveformData, false);
+    if (!thumbnail.loadFrom(input)) {
+        visibleRange = {};
+        stopTimer();
+        repaint();
+        return false;
+    }
+
+    if (thumbnail.getTotalLength() > 0.0) {
+        setRange({0.0, thumbnail.getTotalLength()});
+    } else {
+        repaint();
+    }
+
+    startTimerHz(60);
+    return true;
+}
+
+juce::MemoryBlock ThumbnailComponent::saveToCacheData() const
+{
+    juce::MemoryBlock waveformData;
+
+    if (!thumbnail.isFullyLoaded()) {
+        return waveformData;
+    }
+
+    juce::MemoryOutputStream output(waveformData, false);
+    thumbnail.saveTo(output);
+    return waveformData;
+}
+
+void ThumbnailComponent::setThumbnailFullyLoadedCallback(std::function<void()> callback)
+{
+    thumbnailFullyLoadedCallback = std::move(callback);
+}
+
 void ThumbnailComponent::setURL(const juce::URL& url)
 {
-    juce::InputSource* inputSource = nullptr;
+    hasNotifiedFullyLoaded = false;
 
-    if (inputSource == nullptr) {
-        inputSource = new juce::URLInputSource(url);
+    if (!url.isWellFormed()) {
+        thumbnail.clear();
+        visibleRange = {};
+        stopTimer();
+        repaint();
+        return;
     }
+
+    juce::InputSource* inputSource = new juce::URLInputSource(url);
 
     if (inputSource != nullptr) {
         thumbnail.setSource(inputSource);
 
-        juce::Range<double> newRange(0.0, thumbnail.getTotalLength());
-        setRange(newRange);
+        if (thumbnail.getTotalLength() > 0.0) {
+            setRange({0.0, thumbnail.getTotalLength()});
+        } else {
+            visibleRange = {};
+            repaint();
+        }
 
         startTimerHz(60);
     }
@@ -68,8 +126,19 @@ void ThumbnailComponent::setRange(juce::Range<double> newRange)
 
 void ThumbnailComponent::changeListenerCallback(juce::ChangeBroadcaster*)
 {
-    // this method is called by the thumbnail when it has changed, so we should repaint it..
-    repaint();
+    if (thumbnail.getTotalLength() > 0.0 && visibleRange.getLength() <= 0.0) {
+        setRange({0.0, thumbnail.getTotalLength()});
+    } else {
+        repaint();
+    }
+
+    if (thumbnail.isFullyLoaded() && !hasNotifiedFullyLoaded) {
+        hasNotifiedFullyLoaded = true;
+
+        if (thumbnailFullyLoadedCallback) {
+            thumbnailFullyLoadedCallback();
+        }
+    }
 }
 
 bool ThumbnailComponent::isInterestedInFileDrag(const juce::StringArray& /*files*/)

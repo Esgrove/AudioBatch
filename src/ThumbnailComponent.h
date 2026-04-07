@@ -2,6 +2,8 @@
 
 #include <JuceHeader.h>
 
+#include <functional>
+
 class ThumbnailComponent :
     public juce::Component,
     public juce::ChangeListener,
@@ -26,7 +28,10 @@ public:
     void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override;
     void paint(juce::Graphics& g) override;
     void resized() override;
+    bool loadFromCacheData(const juce::MemoryBlock& waveformData);
+    juce::MemoryBlock saveToCacheData() const;
     void setRange(juce::Range<double> newRange);
+    void setThumbnailFullyLoadedCallback(std::function<void()> callback);
     void setURL(const juce::URL& url);
     void setZoom(double zoomLevel);
 
@@ -43,6 +48,8 @@ private:
     juce::DrawableRectangle currentPositionMarker;
     juce::Range<double> visibleRange;
     juce::URL lastFileDropped;
+    std::function<void()> thumbnailFullyLoadedCallback;
 
+    bool hasNotifiedFullyLoaded = false;
     bool isFollowingTransport = false;
 };
