@@ -2,6 +2,23 @@
 
 #include "CustomLookAndFeel.h"
 
+namespace
+{
+juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
+{
+    if (record.formatName.isNotEmpty()) {
+        return record.formatName;
+    }
+
+    auto extension = record.file.getFileExtension().trimCharactersAtStart(".");
+    if (extension.isNotEmpty()) {
+        return extension.toUpperCase();
+    }
+
+    return "Unknown";
+}
+}  // namespace
+
 /// Builds the results table model used by the main file list.
 AudioFileTableModel::AudioFileTableModel(
     std::vector<AudioAnalysisRecord>& recordsToUse,
@@ -31,6 +48,14 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         initialColumnWidth(columnPath),
         minimumColumnWidth(columnPath),
         1200,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
+        "Type",
+        columnType,
+        initialColumnWidth(columnType),
+        minimumColumnWidth(columnType),
+        220,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -135,6 +160,9 @@ void AudioFileTableModel::paintCell(
             break;
         case columnPath:
             text = record.fullPath;
+            break;
+        case columnType:
+            text = getRecordTypeLabel(record);
             break;
         case columnPeakLeft:
             text = AudioAnalysisService::formatPeakDisplay(record.peakLeft);

@@ -102,6 +102,7 @@ namespace
 constexpr auto supportedAudioFilePatterns = "*.wav;*.aif;*.aiff;*.flac;*.mp3";
 constexpr int nameColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(AudioFileTableModel::columnName);
 constexpr int pathColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(AudioFileTableModel::columnPath);
+constexpr int typeColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnType);
 constexpr int nameColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnName);
 constexpr int pathColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnPath);
 
@@ -126,6 +127,20 @@ template<typename Value>
 bool compareWithDirection(Value lhs, Value rhs, bool forwards)
 {
     return forwards ? lhs < rhs : lhs > rhs;
+}
+
+juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
+{
+    if (record.formatName.isNotEmpty()) {
+        return record.formatName;
+    }
+
+    auto extension = record.file.getFileExtension().trimCharactersAtStart(".");
+    if (extension.isNotEmpty()) {
+        return extension.toUpperCase();
+    }
+
+    return "Unknown";
 }
 }  // namespace
 
@@ -168,9 +183,9 @@ AudioBatchComponent::AudioBatchComponent() :
     addAndMakeVisible(resultsTable);
 
     // Default to a larger list view while allowing the lower preview area to be resized.
-    mainVerticalLayout.setItemLayout(0, 240.0, -0.85, -0.62);
+    mainVerticalLayout.setItemLayout(0, 240.0, -0.85, -0.69);
     mainVerticalLayout.setItemLayout(1, 6.0, 6.0, 6.0);
-    mainVerticalLayout.setItemLayout(2, 180.0, -0.70, -0.38);
+    mainVerticalLayout.setItemLayout(2, 180.0, -0.70, -0.31);
     addAndMakeVisible(waveformResizeBar);
 
     thumbnail = std::make_unique<ThumbnailComponent>(formatManager, transportSource);
@@ -327,6 +342,7 @@ void AudioBatchComponent::updateResultsTableColumnWidths()
     auto& header = resultsTable.getHeader();
 
     const auto fixedColumnWidth = header.getColumnWidth(AudioFileTableModel::columnOverallPeak)
+        + header.getColumnWidth(AudioFileTableModel::columnType)
         + header.getColumnWidth(AudioFileTableModel::columnPeakLeft)
         + header.getColumnWidth(AudioFileTableModel::columnPeakRight)
         + header.getColumnWidth(AudioFileTableModel::columnStatus);
@@ -823,6 +839,14 @@ void AudioBatchComponent::sortResults()
                 }
                 return compareStrings(lhs.fileName, rhs.fileName);
 
+            case AudioFileTableModel::columnType:
+                if (const auto leftType = getRecordTypeLabel(lhs), rightType = getRecordTypeLabel(rhs);
+                    leftType != rightType)
+                {
+                    return compareStrings(leftType, rightType);
+                }
+                return compareStrings(lhs.fileName, rhs.fileName);
+
             case AudioFileTableModel::columnPeakLeft:
                 if (!juce::approximatelyEqual(std::abs(lhs.peakLeft), std::abs(rhs.peakLeft))) {
                     return comparePeaks(lhs.peakLeft, rhs.peakLeft);
@@ -993,10 +1017,6 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
     rows.emplace_back("Peak L", AudioAnalysisService::formatPeakDisplay(record.peakLeft));
     rows.emplace_back("Peak R", AudioAnalysisService::formatPeakDisplay(record.peakRight));
     rows.emplace_back("Status", AudioAnalysisService::formatStatus(record));
-
-    if (record.fromCache) {
-        rows.emplace_back("Source", "Analysis cache");
-    }
 
     audioInfo->setRows(std::move(rows));
 }
