@@ -259,6 +259,18 @@ int comparePeaks(float left, float right)
     return leftMagnitude < rightMagnitude ? -1 : 1;
 }
 
+int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
+{
+    const auto leftBitrate = AudioAnalysisService::getAverageBitrateKbps(lhs);
+    const auto rightBitrate = AudioAnalysisService::getAverageBitrateKbps(rhs);
+
+    if (juce::approximatelyEqual(leftBitrate, rightBitrate)) {
+        return 0;
+    }
+
+    return leftBitrate < rightBitrate ? -1 : 1;
+}
+
 int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, int columnId)
 {
     switch (columnId) {
@@ -270,6 +282,9 @@ int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
 
         case AudioFileTableModel::columnType:
             return compareNaturalStrings(getRecordTypeLabel(lhs), getRecordTypeLabel(rhs));
+
+        case AudioFileTableModel::columnBitrate:
+            return compareBitrates(lhs, rhs);
 
         case AudioFileTableModel::columnPeakLeft:
             return comparePeaks(lhs.peakLeft, rhs.peakLeft);
@@ -326,10 +341,6 @@ AudioBatchComponent::AudioBatchComponent() :
     resultsTable.setMultipleSelectionEnabled(true);
     resultsTable.setOutlineThickness(0);
     resultsTable.setRowHeight(24);
-    resultsTable.setTooltip(
-        "Browse analyzed files. Click a header to sort, Ctrl/Cmd-click for secondary sort, and right-click rows for "
-        "actions."
-    );
     resultsTable.getHeader().setSortColumnId(currentSortColumnId, currentSortForwards);
     refreshSortIndicators();
     addAndMakeVisible(resultsTable);
@@ -513,6 +524,7 @@ void AudioBatchComponent::updateResultsTableColumnWidths()
 
     const auto fixedColumnWidth = header.getColumnWidth(AudioFileTableModel::columnOverallPeak)
         + header.getColumnWidth(AudioFileTableModel::columnType)
+        + header.getColumnWidth(AudioFileTableModel::columnBitrate)
         + header.getColumnWidth(AudioFileTableModel::columnPeakLeft)
         + header.getColumnWidth(AudioFileTableModel::columnPeakRight)
         + header.getColumnWidth(AudioFileTableModel::columnStatus);
@@ -972,6 +984,67 @@ void AudioBatchComponent::unmarkFileProcessing(const juce::String& fullPath)
     syncActivityTimer();
 }
 
+void AudioBatchComponent::reconcilePendingAnalysisResults()
+{
+    const auto selectedPaths = getSelectedRecordPaths();
+    bool resultsChanged = false;
+
+    for (auto& record : analysisResults) {
+        const auto activeStatus = getActiveStatusLabel(record);
+        const auto needsRefresh = activeStatus == "Analyzing" || record.status == AudioAnalysisStatus::pending;
+
+        if (!needsRefresh) {
+            continue;
+        }
+
+        AudioAnalysisRecord refreshedRecord;
+
+        if (analysisCache.getAnalysis(record.file, refreshedRecord)) {
+            record = std::move(refreshedRecord);
+            resultsChanged = true;
+            continue;
+        }
+
+        if (!record.file.existsAsFile()) {
+            record.status = AudioAnalysisStatus::failed;
+            record.errorMessage = "File does not exist";
+            resultsChanged = true;
+            continue;
+        }
+
+        auto analyzedRecord = AudioAnalysisService::analyzeFile(record.file);
+        analysisCache.storeAnalysis(analyzedRecord);
+        record = std::move(analyzedRecord);
+        resultsChanged = true;
+    }
+
+    for (auto iterator = activeFileStatusLabels.begin(); iterator != activeFileStatusLabels.end();) {
+        if (iterator->second == "Analyzing") {
+            iterator = activeFileStatusLabels.erase(iterator);
+        } else {
+            ++iterator;
+        }
+    }
+
+    completedResults = expectedResults;
+    syncActivityTimer();
+
+    if (resultsChanged) {
+        sortResults();
+        resultsTable.updateContent();
+        updateResultsTableColumnWidths();
+        restoreSelectionByPaths(selectedPaths);
+
+        if (currentAudioFile.existsAsFile()) {
+            if (const auto currentIndex = findRecordIndex(currentAudioFile.getFullPathName()); currentIndex >= 0) {
+                updateAudioInfo(analysisResults[static_cast<std::size_t>(currentIndex)]);
+            }
+        }
+    }
+
+    resultsTable.repaint();
+}
+
 juce::StringArray AudioBatchComponent::getSelectedRecordPaths() const
 {
     juce::StringArray selectedPaths;
@@ -1142,7 +1215,7 @@ void AudioBatchComponent::handleNormalizeComplete(int totalFiles)
 void AudioBatchComponent::handleAnalysisComplete(int totalFiles)
 {
     expectedResults = totalFiles;
-    syncActivityTimer();
+    reconcilePendingAnalysisResults();
     updateStatusLabel();
 
     if (resultsTable.getSelectedRow() < 0 && !analysisResults.empty()) {
@@ -1533,6 +1606,7 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
     rows.emplace_back("Sample rate", juce::String(record.sampleRate));
     rows.emplace_back("Channels", juce::String(record.channels));
     rows.emplace_back("Bits per sample", juce::String(record.bitsPerSample));
+    rows.emplace_back("Bitrate", AudioAnalysisService::formatBitrateDisplay(record));
     rows.emplace_back("Duration", juce::RelativeTime(record.durationSeconds).getDescription());
     rows.emplace_back("Samples", juce::String(record.lengthInSamples));
     rows.emplace_back("Peak Max", AudioAnalysisService::formatPeakDisplay(record.overallPeak));

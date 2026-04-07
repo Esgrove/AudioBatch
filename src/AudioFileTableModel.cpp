@@ -89,7 +89,15 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnType,
         initialColumnWidth(columnType),
         minimumColumnWidth(columnType),
-        220,
+        160,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
+        "Bitrate",
+        columnBitrate,
+        initialColumnWidth(columnBitrate),
+        minimumColumnWidth(columnBitrate),
+        160,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -199,6 +207,10 @@ void AudioFileTableModel::paintCell(
         case columnType:
             text = getRecordTypeLabel(record);
             break;
+        case columnBitrate:
+            text = AudioAnalysisService::formatBitrateDisplay(record);
+            justification = juce::Justification::centredRight;
+            break;
         case columnPeakLeft:
             text = AudioAnalysisService::formatPeakDisplay(record.peakLeft);
             justification = juce::Justification::centredRight;
@@ -264,44 +276,6 @@ void AudioFileTableModel::sortOrderChanged(int newSortColumnId, bool isForwards)
 
 juce::String AudioFileTableModel::getCellTooltip(int rowNumber, int columnId)
 {
-    if (!juce::isPositiveAndBelow(rowNumber, getNumRows())) {
-        return {};
-    }
-
-    const auto& record = records[static_cast<std::size_t>(rowNumber)];
-
-    switch (columnId) {
-        case columnName:
-            return record.fileName + "\nRight-click for file actions.";
-
-        case columnPath:
-            return record.fullPath;
-
-        case columnType:
-            return "File type: " + getRecordTypeLabel(record);
-
-        case columnPeakLeft:
-            return "Peak L: " + AudioAnalysisService::formatPeakDisplay(record.peakLeft);
-
-        case columnPeakRight:
-            return "Peak R: " + AudioAnalysisService::formatPeakDisplay(record.peakRight);
-
-        case columnOverallPeak:
-            return "Peak Max: " + AudioAnalysisService::formatPeakDisplay(record.overallPeak);
-
-        case columnStatus:
-            if (const auto activeStatus
-                = activeStatusLabelProvider != nullptr ? activeStatusLabelProvider(record) : juce::String();
-                activeStatus.isNotEmpty())
-            {
-                return activeStatus;
-            }
-
-            return AudioAnalysisService::formatStatus(record);
-
-        default:
-            break;
-    }
-
+    juce::ignoreUnused(rowNumber, columnId);
     return {};
 }
