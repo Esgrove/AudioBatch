@@ -1,5 +1,6 @@
 #include "CustomLookAndFeel.h"
 
+#include <cmath>
 #include <utility>
 
 namespace juce
@@ -173,7 +174,7 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     auto font = textFont.withHeight((float)h * 0.54f);
     g.setFont(font);
 
-    auto textW = juce::roundToInt(juce::TextLayout::getStringWidth(font, window.getName()));
+    auto textW = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(font, window.getName())));
     auto iconW = 0;
     auto iconH = 0;
 
@@ -182,23 +183,23 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
         iconW = icon->getWidth() / icon->getHeight() * iconH + 4;
     }
 
-    textW = jmin(titleSpaceW, textW + iconW);
-    auto textX = drawTitleTextOnLeft ? titleSpaceX : jmax(titleSpaceX, (w - textW) / 2);
+    auto contentW = jmin(titleSpaceW, textW + iconW);
+    auto textX = drawTitleTextOnLeft ? titleSpaceX : jmax(titleSpaceX, (w - contentW) / 2);
 
-    if (textX + textW > titleSpaceX + titleSpaceW) {
-        textX = titleSpaceX + titleSpaceW - textW;
+    if (textX + contentW > titleSpaceX + titleSpaceW) {
+        textX = titleSpaceX + titleSpaceW - contentW;
     }
 
     if (icon != nullptr) {
         g.setOpacity(isActive ? 1.0f : 0.6f);
         g.drawImageWithin(*icon, textX, (h - iconH) / 2, iconW, iconH, RectanglePlacement::centred, false);
         textX += iconW;
-        textW -= iconW;
     }
 
     textX += 4;
+    auto availableTextWidth = jmax(0, titleSpaceX + titleSpaceW - textX);
     g.setColour(text);
-    g.drawText(window.getName(), textX, 0, textW, h, Justification::centredLeft, true);
+    g.drawText(window.getName(), textX, 0, availableTextWidth, h, Justification::centredLeft, true);
 }
 
 void CustomLookAndFeel::drawPopupMenuItem(

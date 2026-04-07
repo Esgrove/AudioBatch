@@ -48,6 +48,8 @@ private:
     AnalysisCache analysisCache;
     AnalysisCoordinator analysisCoordinator;
     std::vector<AudioAnalysisRecord> analysisResults;
+    juce::StretchableLayoutManager mainVerticalLayout;
+    juce::StretchableLayoutResizerBar waveformResizeBar {&mainVerticalLayout, 1, false};
     AudioFileTableModel fileTableModel;
     std::unique_ptr<juce::AudioFormatReaderSource> currentAudioFileSource;
     std::unique_ptr<juce::FileChooser> directoryChooser;
