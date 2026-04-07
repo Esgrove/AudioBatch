@@ -1602,10 +1602,9 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
     }
 
     rows.emplace_back("Format", getRecordTypeLabel(record));
-
-    rows.emplace_back("Sample rate", juce::String(record.sampleRate));
     rows.emplace_back("Channels", juce::String(record.channels));
     rows.emplace_back("Bits per sample", juce::String(record.bitsPerSample));
+    rows.emplace_back("Sample rate", juce::String(record.sampleRate));
     rows.emplace_back("Bitrate", AudioAnalysisService::formatBitrateDisplay(record));
     rows.emplace_back("Duration", juce::RelativeTime(record.durationSeconds).getDescription());
     rows.emplace_back("Samples", juce::String(record.lengthInSamples));
