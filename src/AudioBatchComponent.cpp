@@ -103,6 +103,23 @@ constexpr int pathColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(A
 constexpr int nameColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnName);
 constexpr int pathColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnPath);
 
+enum FileMenuItemId {
+    revealFileMenuItemId = 1,
+    openParentDirectoryMenuItemId,
+    moveToTrashMenuItemId,
+};
+
+juce::String getRevealFileMenuLabel()
+{
+#if JUCE_MAC
+    return "Reveal in Finder";
+#elif JUCE_WINDOWS
+    return "Reveal in Explorer";
+#else
+    return "Reveal in File Manager";
+#endif
+}
+
 template<typename Value>
 bool compareWithDirection(Value lhs, Value rhs, bool forwards)
 {
@@ -115,7 +132,10 @@ AudioBatchComponent::AudioBatchComponent() :
     fileTableModel(
         analysisResults,
         [this](int row) { handleSelectionChanged(row); },
-        [this](int columnId, bool isForwards) { handleSortRequested(columnId, isForwards); }
+        [this](int columnId, bool isForwards) { handleSortRequested(columnId, isForwards); },
+        [this](int row, int columnId, const juce::MouseEvent& event) {
+            handleFileContextMenuRequested(row, columnId, event);
+        }
     ),
     audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
 {
@@ -332,10 +352,19 @@ void AudioBatchComponent::updateResultsTableColumnWidths()
 
 bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
 {
+    if (key.getKeyCode() == juce::KeyPress::backspaceKey && key.getModifiers().isCtrlDown()) {
+        moveSelectedRecordsToTrash(!key.getModifiers().isShiftDown());
+        return true;
+    }
+
     if (key == juce::KeyPress::spaceKey) {
         startOrStop();
-    } else if (key == juce::KeyPress::F5Key) {
+        return true;
+    }
+
+    if (key == juce::KeyPress::F5Key) {
         refreshAnalysis(true);
+        return true;
     }
 
     return false;
@@ -427,6 +456,186 @@ void AudioBatchComponent::refreshAnalysis(bool forceRefresh)
     startAnalysis(inputPaths, true, forceRefresh, true);
 }
 
+void AudioBatchComponent::handleFileContextMenuRequested(int row, int columnId, const juce::MouseEvent& event)
+{
+    juce::ignoreUnused(columnId);
+
+    if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
+        return;
+    }
+
+    if (!resultsTable.isRowSelected(row)) {
+        resultsTable.selectRow(row, true, true);
+    }
+
+    showFileContextMenu(row, event.getScreenPosition());
+}
+
+void AudioBatchComponent::showFileContextMenu(int row, juce::Point<int> screenPosition)
+{
+    if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
+        return;
+    }
+
+    const auto& record = analysisResults[static_cast<std::size_t>(row)];
+    const auto parentDirectory = record.file.getParentDirectory();
+
+    juce::PopupMenu menu;
+    menu.addItem(revealFileMenuItemId, getRevealFileMenuLabel(), record.file.exists());
+    menu.addItem(openParentDirectoryMenuItemId, "Open Parent Folder", parentDirectory.isDirectory());
+    menu.addSeparator();
+    menu.addItem(moveToTrashMenuItemId, "Move to Trash", record.file.exists());
+
+    const auto safeThis = SafePointer<AudioBatchComponent>(this);
+    menu.showMenuAsync(
+        juce::PopupMenu::Options()
+            .withTargetScreenArea(juce::Rectangle<int>(screenPosition.x, screenPosition.y, 1, 1))
+            .withParentComponent(this),
+        [safeThis, row](int result) {
+            if (safeThis == nullptr) {
+                return;
+            }
+
+            switch (result) {
+                case revealFileMenuItemId:
+                    safeThis->revealRecordInFileManager(row);
+                    break;
+                case openParentDirectoryMenuItemId:
+                    safeThis->revealRecordParentDirectory(row);
+                    break;
+                case moveToTrashMenuItemId:
+                    safeThis->moveSelectedRecordsToTrash(true);
+                    break;
+                default:
+                    break;
+            }
+        }
+    );
+}
+
+void AudioBatchComponent::revealRecordInFileManager(int row) const
+{
+    if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
+        return;
+    }
+
+    const auto& record = analysisResults[static_cast<std::size_t>(row)];
+
+    if (record.file.exists()) {
+        record.file.revealToUser();
+    } else {
+        record.file.getParentDirectory().revealToUser();
+    }
+}
+
+void AudioBatchComponent::revealRecordParentDirectory(int row) const
+{
+    if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
+        return;
+    }
+
+    const auto parentDirectory = analysisResults[static_cast<std::size_t>(row)].file.getParentDirectory();
+
+    if (parentDirectory.isDirectory()) {
+        parentDirectory.revealToUser();
+    }
+}
+
+void AudioBatchComponent::moveSelectedRecordsToTrash(bool promptForConfirmation)
+{
+    const auto selectedRows = resultsTable.getSelectedRows();
+
+    if (selectedRows.isEmpty()) {
+        return;
+    }
+
+    juce::Array<juce::File> filesToTrash;
+    juce::StringArray removedPaths;
+
+    for (int index = 0; index < selectedRows.size(); ++index) {
+        const auto rowNumber = selectedRows[index];
+
+        if (!juce::isPositiveAndBelow(rowNumber, static_cast<int>(analysisResults.size()))) {
+            continue;
+        }
+
+        const auto& record = analysisResults[static_cast<std::size_t>(rowNumber)];
+
+        if (!record.file.exists()) {
+            continue;
+        }
+
+        filesToTrash.add(record.file);
+        removedPaths.addIfNotAlreadyThere(record.fullPath);
+    }
+
+    if (filesToTrash.isEmpty()) {
+        return;
+    }
+
+    const auto fileCount = filesToTrash.size();
+    const auto message = fileCount == 1
+        ? "Move\n\n" + filesToTrash.getFirst().getFullPathName() + "\n\nto the system trash?"
+        : "Move " + juce::String(fileCount) + " selected files to the system trash?";
+
+    if (!promptForConfirmation) {
+        runMoveToTrash(filesToTrash, removedPaths, selectedRows[0]);
+        return;
+    }
+
+    const auto safeThis = SafePointer<AudioBatchComponent>(this);
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions::makeOptionsOkCancel(
+            juce::MessageBoxIconType::WarningIcon, "Move to Trash", message, "Move to Trash", "Cancel", this
+        ),
+        [safeThis, filesToTrash, removedPaths, fallbackRow = selectedRows[0]](int result) {
+            if (safeThis == nullptr || result == 0) {
+                return;
+            }
+            safeThis->runMoveToTrash(filesToTrash, removedPaths, fallbackRow);
+        }
+    );
+}
+
+void AudioBatchComponent::runMoveToTrash(
+    const juce::Array<juce::File>& filesToTrash,
+    const juce::StringArray& removedPaths,
+    int fallbackRow
+)
+{
+    juce::StringArray failedPaths;
+
+    for (const auto& file : filesToTrash) {
+        if (!file.moveToTrash()) {
+            failedPaths.add(file.getFullPathName());
+        }
+    }
+
+    if (!failedPaths.isEmpty()) {
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions::makeOptionsOk(
+                juce::MessageBoxIconType::WarningIcon,
+                "Move to Trash Failed",
+                failedPaths.size() == 1
+                    ? "Could not move this file to the system trash:\n\n" + failedPaths[0]
+                    : "Could not move " + juce::String(failedPaths.size()) + " files to the system trash.",
+                "OK",
+                this
+            ),
+            nullptr
+        );
+    }
+
+    juce::StringArray successfullyRemovedPaths;
+    for (const auto& path : removedPaths) {
+        if (!failedPaths.contains(path)) {
+            successfullyRemovedPaths.add(path);
+        }
+    }
+
+    removeRecordsByPath(successfullyRemovedPaths, fallbackRow);
+}
+
 int AudioBatchComponent::findRecordIndex(const juce::String& fullPath) const
 {
     for (std::size_t index = 0; index < analysisResults.size(); ++index) {
@@ -469,9 +678,62 @@ void AudioBatchComponent::restoreSelectionByPaths(const juce::StringArray& selec
     resultsTable.setSelectedRows(selectedRows, juce::dontSendNotification);
 }
 
+void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow)
+{
+    if (removedPaths.isEmpty()) {
+        return;
+    }
+
+    auto remainingSelectedPaths = getSelectedRecordPaths();
+    for (int index = remainingSelectedPaths.size(); --index >= 0;) {
+        if (removedPaths.contains(remainingSelectedPaths[index])) {
+            remainingSelectedPaths.remove(index);
+        }
+    }
+
+    const auto currentFileRemoved
+        = currentAudioFile.exists() && removedPaths.contains(currentAudioFile.getFullPathName());
+
+    analysisResults.erase(
+        std::remove_if(
+            analysisResults.begin(),
+            analysisResults.end(),
+            [&removedPaths](const AudioAnalysisRecord& record) { return removedPaths.contains(record.fullPath); }
+        ),
+        analysisResults.end()
+    );
+
+    expectedResults = juce::jmax(0, expectedResults - removedPaths.size());
+    completedResults = juce::jmin(completedResults, expectedResults);
+
+    if (currentFileRemoved) {
+        clearCurrentAudioPreview();
+    }
+
+    resultsTable.updateContent();
+    updateResultsTableColumnWidths();
+    restoreSelectionByPaths(remainingSelectedPaths);
+
+    if (resultsTable.getNumSelectedRows() == 0 && !analysisResults.empty()) {
+        resultsTable.selectRow(juce::jlimit(0, static_cast<int>(analysisResults.size()) - 1, fallbackRow));
+    }
+
+    if (analysisResults.empty()) {
+        audioInfo->clear();
+    }
+
+    updateStatusLabel();
+    resultsTable.repaint();
+}
+
 void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record)
 {
     ++completedResults;
+
+    if (!record.file.exists()) {
+        updateStatusLabel();
+        return;
+    }
 
     const auto selectedPaths = getSelectedRecordPaths();
 
@@ -598,15 +860,7 @@ void AudioBatchComponent::startAnalysis(
 {
     if (clearResults) {
         analysisResults.clear();
-        currentAudioFile = {};
-        currentAudioUrl = {};
-        currentWaveformLoadedFromCache = false;
-        currentAudioFileSource.reset();
-        transportSource.stop();
-        transportSource.setSource(nullptr);
-        thumbnail->setURL(juce::URL());
-        startStopButton.setEnabled(false);
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
+        clearCurrentAudioPreview();
         audioInfo->clear();
         resultsTable.updateContent();
         updateResultsTableColumnWidths();
@@ -830,6 +1084,19 @@ void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source
             return;
         }
     }
+}
+
+void AudioBatchComponent::clearCurrentAudioPreview()
+{
+    currentAudioFile = {};
+    currentAudioUrl = {};
+    currentWaveformLoadedFromCache = false;
+    transportSource.stop();
+    transportSource.setSource(nullptr);
+    currentAudioFileSource.reset();
+    thumbnail->setURL(juce::URL());
+    startStopButton.setEnabled(false);
+    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
 }
 
 void AudioBatchComponent::mouseMagnify(const juce::MouseEvent&, float scaleFactor)

@@ -5,11 +5,13 @@
 AudioFileTableModel::AudioFileTableModel(
     std::vector<AudioAnalysisRecord>& recordsToUse,
     std::function<void(int row)> selectionChangedCallback,
-    std::function<void(int columnId, bool isForwards)> sortChangedCallback
+    std::function<void(int columnId, bool isForwards)> sortChangedCallback,
+    std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequestedCallback
 ) :
     records(recordsToUse),
     selectionChanged(std::move(selectionChangedCallback)),
-    sortChanged(std::move(sortChangedCallback))
+    sortChanged(std::move(sortChangedCallback)),
+    contextMenuRequested(std::move(contextMenuRequestedCallback))
 { }
 
 void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
@@ -163,6 +165,13 @@ void AudioFileTableModel::selectedRowsChanged(int lastRowSelected)
 {
     if (selectionChanged != nullptr) {
         selectionChanged(lastRowSelected);
+    }
+}
+
+void AudioFileTableModel::cellClicked(int rowNumber, int columnId, const juce::MouseEvent& event)
+{
+    if (event.mods.isPopupMenu() && contextMenuRequested != nullptr) {
+        contextMenuRequested(rowNumber, columnId, event);
     }
 }
 

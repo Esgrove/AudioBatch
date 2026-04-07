@@ -27,21 +27,33 @@ public:
     void resized() override;
 
 private:
+    void clearCurrentAudioPreview();
     void handleDroppedPaths(const juce::StringArray& paths);
     bool keyPressed(const juce::KeyPress& key) override;
     void browseForRootFolder();
     void handleAnalysisComplete(int totalFiles);
+    void handleFileContextMenuRequested(int row, int columnId, const juce::MouseEvent& event);
     void handleAnalysisResult(const AudioAnalysisRecord& record);
     void handleThumbnailFullyLoaded();
     void handleSelectionChanged(int lastRowSelected);
     void handleSortRequested(int columnId, bool isForwards);
     bool loadURLIntoTransport(const juce::URL& audioUrl);
+    void moveSelectedRecordsToTrash(bool promptForConfirmation);
     int findRecordIndex(const juce::String& fullPath) const;
     juce::StringArray getSelectedRecordPaths() const;
     int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
+    void removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow);
+    void revealRecordParentDirectory(int row) const;
+    void revealRecordInFileManager(int row) const;
+    void runMoveToTrash(
+        const juce::Array<juce::File>& filesToTrash,
+        const juce::StringArray& removedPaths,
+        int fallbackRow
+    );
     static juce::File getInitialRootDirectory();
     void refreshAnalysis(bool forceRefresh);
     void restoreSelectionByPaths(const juce::StringArray& selectedPaths);
+    void showFileContextMenu(int row, juce::Point<int> screenPosition);
     void sortResults();
     void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
     void updateResultsTableColumnWidths();
