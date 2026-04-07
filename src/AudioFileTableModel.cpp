@@ -14,12 +14,54 @@ AudioFileTableModel::AudioFileTableModel(
 
 void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
 {
-    header.addColumn("Name", columnName, 220, 120, 600, juce::TableHeaderComponent::defaultFlags);
-    header.addColumn("Path", columnPath, 360, 160, 1200, juce::TableHeaderComponent::defaultFlags);
-    header.addColumn("Peak Max", columnOverallPeak, 120, 90, 160, juce::TableHeaderComponent::defaultFlags);
-    header.addColumn("Peak L", columnPeakLeft, 120, 90, 160, juce::TableHeaderComponent::defaultFlags);
-    header.addColumn("Peak R", columnPeakRight, 120, 90, 160, juce::TableHeaderComponent::defaultFlags);
-    header.addColumn("Status", columnStatus, 120, 90, 200, juce::TableHeaderComponent::defaultFlags);
+    header.addColumn(
+        "Name",
+        columnName,
+        initialColumnWidth(columnName),
+        minimumColumnWidth(columnName),
+        600,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
+        "Path",
+        columnPath,
+        initialColumnWidth(columnPath),
+        minimumColumnWidth(columnPath),
+        1200,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
+        "Peak Max",
+        columnOverallPeak,
+        initialColumnWidth(columnOverallPeak),
+        minimumColumnWidth(columnOverallPeak),
+        160,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
+        "Peak L",
+        columnPeakLeft,
+        initialColumnWidth(columnPeakLeft),
+        minimumColumnWidth(columnPeakLeft),
+        160,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
+        "Peak R",
+        columnPeakRight,
+        initialColumnWidth(columnPeakRight),
+        minimumColumnWidth(columnPeakRight),
+        160,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
+        "Status",
+        columnStatus,
+        initialColumnWidth(columnStatus),
+        minimumColumnWidth(columnStatus),
+        200,
+        juce::TableHeaderComponent::defaultFlags
+    );
 }
 
 int AudioFileTableModel::getNumRows()
