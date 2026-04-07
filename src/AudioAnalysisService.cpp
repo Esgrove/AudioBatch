@@ -9,6 +9,21 @@ namespace
 {
 constexpr float minimumDisplayDecibels = -100.0f;
 
+float peakMagnitude(const float peak)
+{
+    return std::abs(peak);
+}
+
+float signedPeakFromExtrema(const float minimum, const float maximum)
+{
+    return peakMagnitude(minimum) > peakMagnitude(maximum) ? minimum : maximum;
+}
+
+float dominantPeak(const float firstPeak, const float secondPeak)
+{
+    return peakMagnitude(firstPeak) > peakMagnitude(secondPeak) ? firstPeak : secondPeak;
+}
+
 int compareAnalysisState(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
 {
     if (lhs.hasError() != rhs.hasError()) {
@@ -117,8 +132,8 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
 
     reader->readMaxLevels(0, reader->lengthInSamples, minLeft, maxLeft, minRight, maxRight);
 
-    const auto leftPeak = juce::jmax(std::abs(minLeft), std::abs(maxLeft));
-    const auto rightPeak = reader->numChannels > 1 ? juce::jmax(std::abs(minRight), std::abs(maxRight)) : leftPeak;
+    const auto leftPeak = signedPeakFromExtrema(minLeft, maxLeft);
+    const auto rightPeak = reader->numChannels > 1 ? signedPeakFromExtrema(minRight, maxRight) : leftPeak;
 
     record.formatName = reader->getFormatName();
     record.sampleRate = juce::roundToInt(reader->sampleRate);
@@ -129,7 +144,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         = reader->sampleRate > 0.0 ? static_cast<double>(reader->lengthInSamples) / reader->sampleRate : 0.0;
     record.peakLeft = leftPeak;
     record.peakRight = rightPeak;
-    record.overallPeak = juce::jmax(leftPeak, rightPeak);
+    record.overallPeak = dominantPeak(leftPeak, rightPeak);
     record.status = AudioAnalysisStatus::analyzed;
     record.fromCache = false;
     return record;
@@ -137,6 +152,8 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
 
 juce::String AudioAnalysisService::formatPeakDisplay(float peak)
 {
+    peak = peakMagnitude(peak);
+
     if (peak <= 0.0f) {
         return "-INF dBFS";
     }
@@ -171,7 +188,11 @@ void AudioAnalysisService::sortRecords(
             return stateComparison < 0;
         }
 
-        auto compareFloats = [ascending](float left, float right) { return ascending ? left < right : left > right; };
+        auto comparePeaks = [ascending](float left, float right) {
+            const auto leftMagnitude = peakMagnitude(left);
+            const auto rightMagnitude = peakMagnitude(right);
+            return ascending ? leftMagnitude < rightMagnitude : leftMagnitude > rightMagnitude;
+        };
 
         auto compareStrings = [ascending](const juce::String& left, const juce::String& right) {
             return ascending ? compareText(left, right) < 0 : compareText(left, right) > 0;
@@ -192,8 +213,8 @@ void AudioAnalysisService::sortRecords(
 
             case AudioAnalysisSortMode::peak:
             default:
-                if (!juce::approximatelyEqual(lhs.overallPeak, rhs.overallPeak)) {
-                    return compareFloats(lhs.overallPeak, rhs.overallPeak);
+                if (!juce::approximatelyEqual(peakMagnitude(lhs.overallPeak), peakMagnitude(rhs.overallPeak))) {
+                    return comparePeaks(lhs.overallPeak, rhs.overallPeak);
                 }
                 return compareStrings(lhs.fileName, rhs.fileName);
         }
