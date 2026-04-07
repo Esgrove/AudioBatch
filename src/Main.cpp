@@ -4,8 +4,28 @@
 
 #include <JuceHeader.h>
 
+namespace
+{
+enum MenuItemId {
+    chooseFolderMenuItemId = 1,
+    rescanMenuItemId,
+    audioSettingsMenuItemId,
+    supportedFormatsMenuItemId,
+    aboutMenuItemId,
+    quitMenuItemId,
+};
+}
+
 /// Top-level application window that hosts the main AudioBatch component.
-class MainWindow : public juce::DocumentWindow
+class MainWindow :
+    public juce::DocumentWindow
+#if JUCE_MAC
+    ,
+    private juce::MenuBarModel
+#else
+    ,
+    private juce::MenuBarModel
+#endif
 {
 public:
     MainWindow(juce::String name) :
@@ -21,6 +41,12 @@ public:
         setUsingNativeTitleBar(true);
 #endif
         setContentNonOwned(audioBatch.get(), true);
+
+#if JUCE_MAC
+        juce::MenuBarModel::setMacMainMenu(this);
+#else
+        setMenuBar(this, 26);
+#endif
 
         setResizable(true, true);
         setResizeLimits(800, 600, 8192, 8192);
@@ -46,6 +72,11 @@ public:
 
     ~MainWindow() override
     {
+#if JUCE_MAC
+        juce::MenuBarModel::setMacMainMenu(nullptr);
+#else
+        setMenuBar(nullptr);
+#endif
         clearContentComponent();
         juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
     }
@@ -56,6 +87,106 @@ public:
     }
 
 private:
+    juce::StringArray getMenuBarNames() override
+    {
+#if JUCE_MAC
+        return {juce::JUCEApplication::getInstance()->getApplicationName(), "File", "Options", "Help"};
+#else
+        return {"File", "Options", "Help"};
+#endif
+    }
+
+    juce::PopupMenu getMenuForIndex(int topLevelMenuIndex, const juce::String& menuName) override
+    {
+        juce::ignoreUnused(menuName);
+
+        juce::PopupMenu menu;
+
+#if JUCE_MAC
+        switch (topLevelMenuIndex) {
+            case 0:
+                menu.addItem(aboutMenuItemId, "About " + juce::JUCEApplication::getInstance()->getApplicationName());
+                menu.addSeparator();
+                menu.addItem(quitMenuItemId, "Quit");
+                break;
+            case 1:
+                menu.addItem(chooseFolderMenuItemId, "Choose Folder...");
+                menu.addItem(rescanMenuItemId, "Rescan");
+                break;
+            case 2:
+                menu.addItem(audioSettingsMenuItemId, "Audio Settings...");
+                break;
+            case 3:
+                menu.addItem(supportedFormatsMenuItemId, "Normalization Format Support...");
+                menu.addSeparator();
+                menu.addItem(aboutMenuItemId, "About " + juce::JUCEApplication::getInstance()->getApplicationName());
+                break;
+            default:
+                break;
+        }
+#else
+        switch (topLevelMenuIndex) {
+            case 0:
+                menu.addItem(chooseFolderMenuItemId, "Choose Folder...");
+                menu.addItem(rescanMenuItemId, "Rescan");
+                menu.addSeparator();
+                menu.addItem(quitMenuItemId, "Quit");
+                break;
+            case 1:
+                menu.addItem(audioSettingsMenuItemId, "Audio Settings...");
+                break;
+            case 2:
+                menu.addItem(supportedFormatsMenuItemId, "Normalization Format Support...");
+                menu.addSeparator();
+                menu.addItem(aboutMenuItemId, "About " + juce::JUCEApplication::getInstance()->getApplicationName());
+                break;
+            default:
+                break;
+        }
+#endif
+
+        return menu;
+    }
+
+    void menuItemSelected(int menuItemID, int topLevelMenuIndex) override
+    {
+        juce::ignoreUnused(topLevelMenuIndex);
+
+        switch (menuItemID) {
+            case chooseFolderMenuItemId:
+                audioBatch->chooseRootFolder();
+                break;
+            case rescanMenuItemId:
+                audioBatch->rescanCurrentRoot();
+                break;
+            case audioSettingsMenuItemId:
+                audioBatch->showAudioSettingsWindow();
+                break;
+            case supportedFormatsMenuItemId:
+                audioBatch->showSupportedNormalizationFormats();
+                break;
+            case aboutMenuItemId:
+                juce::AlertWindow::showAsync(
+                    juce::MessageBoxOptions::makeOptionsOk(
+                        juce::MessageBoxIconType::InfoIcon,
+                        "About " + juce::JUCEApplication::getInstance()->getApplicationName(),
+                        juce::JUCEApplication::getInstance()->getApplicationName() + "\nVersion "
+                            + juce::JUCEApplication::getInstance()->getApplicationVersion()
+                            + "\n\nBatch audio analysis, preview, cleanup, and normalization.",
+                        "OK",
+                        getContentComponent()
+                    ),
+                    nullptr
+                );
+                break;
+            case quitMenuItemId:
+                juce::JUCEApplication::getInstance()->systemRequestedQuit();
+                break;
+            default:
+                break;
+        }
+    }
+
     std::unique_ptr<AudioBatchComponent> audioBatch;
     std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel = std::make_unique<juce::CustomLookAndFeel>(true);
 

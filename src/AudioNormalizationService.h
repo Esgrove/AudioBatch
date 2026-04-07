@@ -33,6 +33,15 @@ struct AudioNormalizationResult {
 class AudioNormalizationService
 {
 public:
+    /// Returns true when the file's format can be rewritten by this build during normalization.
+    static bool canNormalizeFile(const juce::File& file);
+
+    /// Describes why normalization is unavailable for the given file format, or returns an empty string when supported.
+    static juce::String getNormalizationSupportMessage(const juce::File& file);
+
+    /// Summarizes the readable and writable formats available for in-place normalization in this build.
+    static juce::String getFormatSupportSummary();
+
     /// Rewrites a file so its peak reaches 0 dBFS, then re-analyzes the result.
     static AudioNormalizationResult normalizeFile(const AudioAnalysisRecord& record);
 
