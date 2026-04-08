@@ -693,16 +693,15 @@ void AudioBatchComponent::showSupportedNormalizationFormats()
 juce::File AudioBatchComponent::getInitialRootDirectory()
 {
     const auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
-    const auto dropboxDirectory
-        = homeDirectory.getChildFile("Dropbox").getChildFile("DJ MUSIC").getChildFile("FUNKY JAM 1");
+    // TODO: add user config
+#if JUCE_WINDOWS
+    const auto dropboxDirectory = juce::File("D:\\Dropbox");
+#else
+    const auto dropboxDirectory = homeDirectory.getChildFile("Dropbox");
+#endif
 
     if (dropboxDirectory.isDirectory()) {
         return dropboxDirectory;
-    }
-
-    const auto musicDirectory = juce::File::getSpecialLocation(juce::File::userMusicDirectory);
-    if (musicDirectory.isDirectory()) {
-        return musicDirectory;
     }
 
     return homeDirectory;
