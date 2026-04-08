@@ -38,8 +38,8 @@ private:
     static constexpr int analysisVersion = 6;
     static constexpr int waveformVersion = 1;
 
-    bool columnExists(const juce::String& tableName, const juce::String& columnName);
-    bool execute(const juce::String& sql);
+    bool columnExists(const juce::String& tableName, const juce::String& columnName) const;
+    bool execute(const juce::String& sql) const;
     bool openUnlocked();
     static juce::String normalizedPath(const juce::File& file);
 

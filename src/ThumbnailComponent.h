@@ -10,7 +10,7 @@ class ThumbnailComponent :
     public juce::ChangeListener,
     public juce::FileDragAndDropTarget,
     public juce::ChangeBroadcaster,
-    private juce::Timer
+    juce::Timer
 {
 public:
     /// Creates a thumbnail view backed by the shared transport source.
@@ -60,8 +60,8 @@ public:
 
 private:
     bool canMoveTransport() const noexcept;
-    double xToTime(const float x) const;
-    float timeToX(const double time) const;
+    double xToTime(float x) const;
+    float timeToX(double time) const;
     void timerCallback() override;
     void updateCursorPosition();
 
@@ -70,10 +70,10 @@ private:
     juce::AudioTransportSource& transportSource;
     juce::DrawableRectangle currentPositionMarker;
     juce::Range<double> visibleRange;
-    juce::URL lastFileDropped;
     juce::StringArray lastDroppedFiles;
-    std::function<void(double)> mouseWheelZoomCallback;
+    juce::URL lastFileDropped;
     std::function<void()> thumbnailFullyLoadedCallback;
+    std::function<void(double)> mouseWheelZoomCallback;
 
     bool hasNotifiedFullyLoaded = false;
     bool isFollowingTransport = false;

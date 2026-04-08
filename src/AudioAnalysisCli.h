@@ -24,10 +24,7 @@ public:
     static juce::String buildUsage(const juce::String& executableName);
 
     /// Parses command-line arguments into a validated options object.
-    static std::optional<AudioAnalysisCliOptions> parse(
-        const juce::ArgumentList& arguments,
-        juce::String& errorMessage
-    );
+    static std::optional<AudioAnalysisCliOptions> parse(juce::ArgumentList arguments, juce::String& errorMessage);
 
     /// Executes the CLI analysis workflow and returns the process exit code.
     static int run(const AudioAnalysisCliOptions& options);

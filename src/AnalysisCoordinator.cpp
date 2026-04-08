@@ -3,8 +3,8 @@
 #include <mutex>
 
 /// Thread-pool orchestration for publishing analysis work back to the caller.
-AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& cacheToUse, int workerCount) :
-    cache(cacheToUse),
+AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& cache, const int workerCount) :
+    cache(cache),
     threadPool(juce::jmax(1, workerCount))
 { }
 
@@ -25,7 +25,7 @@ void AnalysisCoordinator::setCompletionCallback(CompletionCallback callback)
     completionCallback = std::move(callback);
 }
 
-void AnalysisCoordinator::publishResult(const AudioAnalysisRecord& result, int runId)
+void AnalysisCoordinator::publishResult(const AudioAnalysisRecord& result, const int runId)
 {
     if (runId != currentRunId.load()) {
         return;
@@ -43,7 +43,7 @@ void AnalysisCoordinator::publishResult(const AudioAnalysisRecord& result, int r
     }
 }
 
-void AnalysisCoordinator::publishCompletion(int totalFiles, int runId)
+void AnalysisCoordinator::publishCompletion(const int totalFiles, const int runId) const
 {
     if (runId != currentRunId.load()) {
         return;
@@ -77,9 +77,7 @@ int AnalysisCoordinator::start(const AudioAnalysisOptions& options)
     juce::Array<juce::File> staleFiles;
 
     for (const auto& file : files) {
-        AudioAnalysisRecord cachedRecord;
-
-        if (!options.refresh && cache.getAnalysis(file, cachedRecord)) {
+        if (AudioAnalysisRecord cachedRecord; !options.refresh && cache.getAnalysis(file, cachedRecord)) {
             publishResult(cachedRecord, runId);
         } else {
             staleFiles.add(file);
@@ -99,7 +97,7 @@ int AnalysisCoordinator::start(const AudioAnalysisOptions& options)
                 return;
             }
 
-            auto result = AudioAnalysisService::analyzeFile(file);
+            const auto result = AudioAnalysisService::analyzeFile(file);
             cache.storeAnalysis(result);
             publishResult(result, runId);
 
@@ -129,9 +127,7 @@ std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(const Audi
 
     setCompletionCallback([&finishedEvent](int) { finishedEvent.signal(); });
 
-    const auto totalFiles = start(options);
-
-    if (totalFiles == 0) {
+    if (const auto totalFiles = start(options); totalFiles == 0) {
         return results;
     }
 

@@ -5,8 +5,8 @@ namespace utils
 /// Collects build and runtime environment details for logs and diagnostics.
 juce::StringArray system_info()
 {
-    auto compile_time = juce::Time::getCompilationDate();
-    auto compile_time_in_utc = compile_time - juce::RelativeTime(compile_time.getUTCOffsetSeconds());
+    const auto compile_time = juce::Time::getCompilationDate();
+    const auto compile_time_in_utc = compile_time - juce::RelativeTime(compile_time.getUTCOffsetSeconds());
     return juce::StringArray {
         juce::String(version::VERSION_INFO),
         juce::SystemStats::getJUCEVersion() + " " + compile_time_in_utc.toString(true, true, false, true),

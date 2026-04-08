@@ -3,7 +3,7 @@
 #include <map>
 
 /// Thread-pool orchestration for publishing normalize work back to the caller.
-NormalizeCoordinator::NormalizeCoordinator(int workerCount) : threadPool(juce::jmax(1, workerCount)) { }
+NormalizeCoordinator::NormalizeCoordinator(const int workerCount) : threadPool(juce::jmax(1, workerCount)) { }
 
 NormalizeCoordinator::~NormalizeCoordinator()
 {
@@ -22,7 +22,7 @@ void NormalizeCoordinator::setCompletionCallback(CompletionCallback callback)
     completionCallback = std::move(callback);
 }
 
-void NormalizeCoordinator::publishResult(const AudioNormalizationResult& result, int runId)
+void NormalizeCoordinator::publishResult(const AudioNormalizationResult& result, const int runId)
 {
     if (runId != currentRunId.load()) {
         return;
@@ -40,7 +40,7 @@ void NormalizeCoordinator::publishResult(const AudioNormalizationResult& result,
     }
 }
 
-void NormalizeCoordinator::publishCompletion(int totalFiles, int runId)
+void NormalizeCoordinator::publishCompletion(const int totalFiles, const int runId)
 {
     if (runId != currentRunId.load()) {
         return;

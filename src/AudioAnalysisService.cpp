@@ -8,7 +8,6 @@ extern "C" {
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <limits>
 #include <memory>
 #include <set>
 #include <vector>
@@ -21,7 +20,7 @@ constexpr double kilobitsPerSecondDivisor = 1000.0;
 constexpr int defaultMp3BitsPerSample = 16;
 constexpr int analysisBlockSize = 8192;
 
-struct Ebur128StateDeleter {
+struct EbuR128StateDeleter {
     void operator()(ebur128_state* state) const noexcept
     {
         if (state == nullptr) {
@@ -33,7 +32,7 @@ struct Ebur128StateDeleter {
     }
 };
 
-using Ebur128StatePtr = std::unique_ptr<ebur128_state, Ebur128StateDeleter>;
+using EbuR128StatePtr = std::unique_ptr<ebur128_state, EbuR128StateDeleter>;
 
 juce::String normalizedExtension(const juce::File& file)
 {
@@ -55,21 +54,21 @@ bool reportsDecodedBitDepth(const juce::AudioFormatReader& reader, const juce::F
     return reader.getFormatName().containsIgnoreCase("mp3");
 }
 
-bool readExactly(juce::InputStream& input, void* destination, int bytesToRead)
+bool readExactly(juce::InputStream& input, void* destination, const int bytesToRead)
 {
     return bytesToRead >= 0 && input.read(destination, bytesToRead) == bytesToRead;
 }
 
 std::uint32_t readBigEndianUint32(const std::uint8_t* bytes)
 {
-    return (static_cast<std::uint32_t>(bytes[0]) << 24U) | (static_cast<std::uint32_t>(bytes[1]) << 16U)
-        | (static_cast<std::uint32_t>(bytes[2]) << 8U) | static_cast<std::uint32_t>(bytes[3]);
+    return static_cast<std::uint32_t>(bytes[0]) << 24U | static_cast<std::uint32_t>(bytes[1]) << 16U
+        | static_cast<std::uint32_t>(bytes[2]) << 8U | static_cast<std::uint32_t>(bytes[3]);
 }
 
 std::uint32_t readSynchsafeUint32(const std::uint8_t* bytes)
 {
-    return (static_cast<std::uint32_t>(bytes[0]) << 21U) | (static_cast<std::uint32_t>(bytes[1]) << 14U)
-        | (static_cast<std::uint32_t>(bytes[2]) << 7U) | static_cast<std::uint32_t>(bytes[3]);
+    return static_cast<std::uint32_t>(bytes[0]) << 21U | static_cast<std::uint32_t>(bytes[1]) << 14U
+        | static_cast<std::uint32_t>(bytes[2]) << 7U | static_cast<std::uint32_t>(bytes[3]);
 }
 
 juce::String buildSearchableMetadataText(const juce::MemoryBlock& metadata)
@@ -82,13 +81,13 @@ juce::String buildSearchableMetadataText(const juce::MemoryBlock& metadata)
         const auto byte = bytes[index];
 
         if ((byte >= '0' && byte <= '9') || (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z')) {
-            text += juce::String::charToString(static_cast<juce::juce_wchar>(byte));
+            text += juce::String::charToString(byte);
             previousWasSeparator = false;
             continue;
         }
 
         if (byte == '-' || byte == '_' || byte == '/' || byte == '.') {
-            text += juce::String::charToString(static_cast<juce::juce_wchar>(byte));
+            text += juce::String::charToString(byte);
             previousWasSeparator = false;
             continue;
         }
@@ -104,22 +103,20 @@ juce::String buildSearchableMetadataText(const juce::MemoryBlock& metadata)
 
 int findBitDepthInText(const juce::String& text)
 {
-    constexpr std::array<int, 6> candidateBitDepths {8, 12, 16, 20, 24, 32};
+    constexpr std::array candidateBitDepths {8, 12, 16, 20, 24, 32};
 
     for (const auto candidate : candidateBitDepths) {
-        const auto value = juce::String(candidate);
-
-        if (text.contains(value + "-bit") || text.contains(value + " bit") || text.contains(value + " bits")) {
+        if (const auto value = juce::String(candidate);
+            text.contains(value + "-bit") || text.contains(value + " bit") || text.contains(value + " bits"))
+        {
             return candidate;
         }
     }
 
     for (const auto candidate : candidateBitDepths) {
-        const auto value = juce::String(candidate);
-
-        if (text.contains("bit depth " + value) || text.contains("bitdepth " + value)
-            || text.contains("bits per sample " + value) || text.contains("source bit depth " + value)
-            || text.contains("source bits per sample " + value))
+        if (const auto value = juce::String(candidate); text.contains("bit depth " + value)
+            || text.contains("bitdepth " + value) || text.contains("bits per sample " + value)
+            || text.contains("source bit depth " + value) || text.contains("source bits per sample " + value))
         {
             return candidate;
         }
@@ -130,7 +127,7 @@ int findBitDepthInText(const juce::String& text)
 
 int extractTaggedMp3BitDepth(const juce::File& file)
 {
-    auto input = file.createInputStream();
+    const auto input = file.createInputStream();
 
     if (input == nullptr) {
         return 0;
@@ -242,10 +239,10 @@ bool isEndOfFileReadFailure(
     return !readSucceeded && samplePosition + static_cast<std::int64_t>(framesRead) >= totalFrames;
 }
 
-Ebur128StatePtr createLoudnessState(const int channelCount, const int sampleRate)
+EbuR128StatePtr createLoudnessState(const int channelCount, const int sampleRate)
 {
-    const auto mode = EBUR128_MODE_I | EBUR128_MODE_S | EBUR128_MODE_TRUE_PEAK;
-    return Ebur128StatePtr(
+    constexpr auto mode = EBUR128_MODE_I | EBUR128_MODE_S | EBUR128_MODE_TRUE_PEAK;
+    return EbuR128StatePtr(
         ebur128_init(static_cast<unsigned int>(channelCount), static_cast<unsigned long>(sampleRate), mode)
     );
 }
@@ -283,7 +280,7 @@ bool AudioAnalysisService::isSupportedAudioFile(const juce::File& file)
         return false;
     }
 
-    auto& formatManager = getThreadLocalFormatManager();
+    const auto& formatManager = getThreadLocalFormatManager();
     auto extension = file.getFileExtension();
 
     if (extension.startsWithChar('.')) {
@@ -295,7 +292,7 @@ bool AudioAnalysisService::isSupportedAudioFile(const juce::File& file)
 
 juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
     const juce::Array<juce::File>& inputPaths,
-    bool recursive
+    const bool recursive
 )
 {
     juce::Array<juce::File> files;
@@ -306,8 +303,7 @@ juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
             return;
         }
 
-        auto normalizedPath = file.getFullPathName();
-        if (seenPaths.insert(normalizedPath).second) {
+        if (const auto normalizedPath = file.getFullPathName(); seenPaths.insert(normalizedPath).second) {
             files.add(file);
         }
     };
@@ -325,7 +321,7 @@ juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
         }
     }
 
-    std::sort(files.begin(), files.end(), [](const juce::File& lhs, const juce::File& rhs) {
+    std::ranges::sort(files, [](const juce::File& lhs, const juce::File& rhs) {
         return lhs.getFullPathName().compareNatural(rhs.getFullPathName()) < 0;
     });
 
@@ -368,10 +364,10 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         return record;
     }
 
-    std::vector<float> minSamples(static_cast<size_t>(channelCount), 0.0f);
-    std::vector<float> maxSamples(static_cast<size_t>(channelCount), 0.0f);
+    std::vector minSamples(static_cast<size_t>(channelCount), 0.0f);
+    std::vector maxSamples(static_cast<size_t>(channelCount), 0.0f);
     juce::AudioBuffer<float> readBuffer(channelCount, analysisBlockSize);
-    std::vector<float> interleaved(static_cast<size_t>(channelCount * analysisBlockSize), 0.0f);
+    std::vector interleaved(static_cast<size_t>(channelCount * analysisBlockSize), 0.0f);
     double maxShortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
 
     for (std::int64_t samplePosition = 0; samplePosition < reader->lengthInSamples; samplePosition += analysisBlockSize)
@@ -380,9 +376,9 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         const auto framesThisBlock = static_cast<int>(juce::jmin<std::int64_t>(analysisBlockSize, remainingFrames));
 
         readBuffer.clear();
-        const auto readSucceeded = reader->read(&readBuffer, 0, framesThisBlock, samplePosition, true, true);
 
-        if (!readSucceeded
+        if (const auto readSucceeded = reader->read(&readBuffer, 0, framesThisBlock, samplePosition, true, true);
+            !readSucceeded
             && !isEndOfFileReadFailure(readSucceeded, samplePosition, framesThisBlock, reader->lengthInSamples))
         {
             record.status = AudioAnalysisStatus::failed;
@@ -414,7 +410,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         }
     }
 
-    std::vector<float> signedPeaks(static_cast<size_t>(channelCount), 0.0f);
+    std::vector signedPeaks(static_cast<size_t>(channelCount), 0.0f);
 
     for (int channel = 0; channel < channelCount; ++channel) {
         signedPeaks[static_cast<size_t>(channel)]
@@ -429,7 +425,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         overallPeak = dominantPeak(overallPeak, signedPeaks[static_cast<size_t>(channel)]);
     }
 
-    std::vector<double> truePeaks(static_cast<size_t>(channelCount), 0.0);
+    std::vector truePeaks(static_cast<size_t>(channelCount), 0.0);
 
     for (int channel = 0; channel < channelCount; ++channel) {
         if (ebur128_true_peak(
@@ -479,32 +475,32 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
     return record;
 }
 
-juce::String AudioAnalysisService::formatPeakDisplay(float peak)
+juce::String AudioAnalysisService::formatPeakDisplay(const float peak)
 {
     return formatAmplitudeDisplay(peakMagnitude(peak), " dBFS");
 }
 
-juce::String AudioAnalysisService::formatTruePeakDisplay(double truePeak)
+juce::String AudioAnalysisService::formatTruePeakDisplay(const double truePeak)
 {
     return formatAmplitudeDisplay(peakMagnitude(truePeak), " dBTP");
 }
 
-juce::String AudioAnalysisService::formatLoudnessDisplay(double loudness)
+juce::String AudioAnalysisService::formatLoudnessDisplay(const double loudness)
 {
     return formatLoudnessValue(loudness, " LUFS");
 }
 
-juce::String AudioAnalysisService::formatPeakCompact(double peak)
+juce::String AudioAnalysisService::formatPeakCompact(const double peak)
 {
     return formatAmplitudeDisplay(peakMagnitude(peak), {});
 }
 
-juce::String AudioAnalysisService::formatTruePeakCompact(double truePeak)
+juce::String AudioAnalysisService::formatTruePeakCompact(const double truePeak)
 {
     return formatAmplitudeDisplay(peakMagnitude(truePeak), {});
 }
 
-juce::String AudioAnalysisService::formatLoudnessCompact(double loudness)
+juce::String AudioAnalysisService::formatLoudnessCompact(const double loudness)
 {
     return formatLoudnessValue(loudness, {});
 }
@@ -515,7 +511,7 @@ double AudioAnalysisService::getAverageBitrateKbps(const AudioAnalysisRecord& re
         return 0.0;
     }
 
-    return (static_cast<double>(record.fileSize) * 8.0) / record.durationSeconds / kilobitsPerSecondDivisor;
+    return static_cast<double>(record.fileSize) * 8.0 / record.durationSeconds / kilobitsPerSecondDivisor;
 }
 
 juce::String AudioAnalysisService::formatBitsPerSampleDisplay(const AudioAnalysisRecord& record)
@@ -559,12 +555,12 @@ void AudioAnalysisService::sortRecords(
     bool ascending
 )
 {
-    std::sort(records.begin(), records.end(), [sortMode, ascending](const auto& lhs, const auto& rhs) {
+    std::ranges::sort(records, [sortMode, ascending](const auto& lhs, const auto& rhs) {
         if (const auto stateComparison = compareAnalysisState(lhs, rhs); stateComparison != 0) {
             return stateComparison < 0;
         }
 
-        auto comparePeaks = [ascending](float left, float right) {
+        auto comparePeaks = [ascending](const float left, const float right) {
             const auto leftMagnitude = peakMagnitude(left);
             const auto rightMagnitude = peakMagnitude(right);
             return ascending ? leftMagnitude < rightMagnitude : leftMagnitude > rightMagnitude;

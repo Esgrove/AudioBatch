@@ -2,15 +2,13 @@
 #include "utils.h"
 #include "version.h"
 
-#include <JuceHeader.h>
-
 /// Entry point for the headless batch analysis executable.
-int main(int argc, char* argv[])
+int main(const int argc, char* argv[])
 {
-    juce::ArgumentList arguments(argc, argv);
+    const juce::ArgumentList arguments(argc, argv);
     const auto executableName = juce::File(arguments.executableName).getFileNameWithoutExtension();
     juce::String parseError;
-    auto cliOptions = AudioAnalysisCli::parse(arguments, parseError);
+    const auto cliOptions = AudioAnalysisCli::parse(std::move(arguments), parseError);
 
     if (!cliOptions.has_value()) {
         std::cerr << ansi::red << parseError << ansi::reset << std::endl << std::endl;
