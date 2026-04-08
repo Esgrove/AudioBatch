@@ -1,6 +1,7 @@
 #include "AudioAnalysisCli.h"
 
 #include "AudioAnalysisService.h"
+#include "AudioNormalizationService.h"
 #include "version.h"
 
 #include <iostream>
@@ -11,6 +12,15 @@ namespace
 juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
 {
     return AudioAnalysisService::formatPeakDisplay(record.overallPeak).paddedLeft(' ', 11);
+}
+
+juce::String normalizedOutputPath(const AudioNormalizationResult& result)
+{
+    if (result.analysisRecord.file != juce::File()) {
+        return result.analysisRecord.file.getFullPathName();
+    }
+
+    return result.fullPath;
 }
 }  // namespace
 
@@ -38,6 +48,8 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
     usage += juce::newLine;
     usage += "  -f, --refresh           Ignore cached analysis and re-analyze files";
     usage += juce::newLine;
+    usage += "  -n, --normalize         Normalize analyzed files instead of only reporting peaks";
+    usage += juce::newLine;
     usage += "  -j, --jobs <count>      Override worker count";
     usage += juce::newLine;
     usage += "  -s, --sort <mode>       Sort by peak, name, or path";
@@ -63,6 +75,7 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(
     options.cliMode = arguments.removeOptionIfFound("--cli|-c");
     options.recursive = arguments.removeOptionIfFound("--recurse|-r");
     options.refresh = arguments.removeOptionIfFound("--refresh|-f");
+    options.normalize = arguments.removeOptionIfFound("--normalize|-n");
 
     if (const auto workerCountValue = arguments.removeValueForOption("--jobs|-j"); workerCountValue.isNotEmpty()) {
         options.workerCount = workerCountValue.getIntValue();
@@ -132,7 +145,27 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
             continue;
         }
 
-        std::cout << formattedPeakColumn(result) << "  " << result.fileName << juce::newLine;
+        if (!options.normalize) {
+            std::cout << formattedPeakColumn(result) << "  " << result.fileName << juce::newLine;
+            continue;
+        }
+
+        const auto normalization = AudioNormalizationService::normalizeFile(result);
+
+        if (normalization.hasError()) {
+            ++failureCount;
+            std::cerr << result.file.getFullPathName() << ": " << normalization.errorMessage << juce::newLine;
+            continue;
+        }
+
+        const auto destinationPath = normalizedOutputPath(normalization);
+        std::cout << "normalized  " << destinationPath;
+
+        if (destinationPath != result.file.getFullPathName()) {
+            std::cout << " (from " << result.file.getFullPathName() << ")";
+        }
+
+        std::cout << juce::newLine;
     }
 
     return failureCount == 0 ? 0 : 2;

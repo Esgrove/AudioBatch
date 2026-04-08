@@ -188,6 +188,8 @@ target_sources(AudioBatchCli
         "src/AudioAnalysisService.cpp"
         "src/AudioAnalysisService.h"
         "src/AudioAnalysisTypes.h"
+        "src/AudioNormalizationService.cpp"
+        "src/AudioNormalizationService.h"
         "src/CliMain.cpp"
         "src/utils.cpp"
         "src/utils.h"

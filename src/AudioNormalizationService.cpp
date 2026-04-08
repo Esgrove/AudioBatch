@@ -3,7 +3,10 @@
 #include <unordered_map>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 #include <memory>
 #include <vector>
 
@@ -94,6 +97,202 @@ juce::File getNormalizationOutputFile(const juce::File& sourceFile)
     }
 
     return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + normalizedMp3OutputSuffix);
+}
+
+bool isAiffExtension(const juce::String& extension)
+{
+    const auto normalized = normalizedExtension(extension);
+    return normalized.equalsIgnoreCase("aif") || normalized.equalsIgnoreCase("aiff")
+        || normalized.equalsIgnoreCase("aifc");
+}
+
+bool canStoreAiffId3Metadata(const juce::File& file)
+{
+    return isAiffExtension(normalizedExtension(file));
+}
+
+bool readExactly(juce::InputStream& input, void* destination, int bytesToRead)
+{
+    return bytesToRead >= 0 && input.read(destination, bytesToRead) == bytesToRead;
+}
+
+std::uint32_t readBigEndianUint32(const std::uint8_t* bytes)
+{
+    return (static_cast<std::uint32_t>(bytes[0]) << 24U) | (static_cast<std::uint32_t>(bytes[1]) << 16U)
+        | (static_cast<std::uint32_t>(bytes[2]) << 8U) | static_cast<std::uint32_t>(bytes[3]);
+}
+
+bool tagMatches(const std::uint8_t* bytes, const char* tag)
+{
+    return std::memcmp(bytes, tag, 4) == 0;
+}
+
+bool isAiffFile(const juce::File& file)
+{
+    auto input = file.createInputStream();
+
+    if (input == nullptr) {
+        return false;
+    }
+
+    std::array<std::uint8_t, 12> header {};
+
+    if (!readExactly(*input, header.data(), static_cast<int>(header.size()))) {
+        return false;
+    }
+
+    return tagMatches(header.data(), "FORM")
+        && (tagMatches(header.data() + 8, "AIFF") || tagMatches(header.data() + 8, "AIFC"));
+}
+
+bool extractMp3Id3Metadata(const juce::File& sourceFile, juce::MemoryBlock& metadata)
+{
+    auto input = sourceFile.createInputStream();
+
+    if (input == nullptr) {
+        return false;
+    }
+
+    std::array<std::uint8_t, 10> header {};
+
+    if (!readExactly(*input, header.data(), static_cast<int>(header.size()))) {
+        return sourceFile.getSize() == 0;
+    }
+
+    if (!tagMatches(header.data(), "ID3")) {
+        return true;
+    }
+
+    if ((header[6] | header[7] | header[8] | header[9]) & 0x80U) {
+        return false;
+    }
+
+    const auto payloadSize = (static_cast<std::uint32_t>(header[6]) << 21U)
+        | (static_cast<std::uint32_t>(header[7]) << 14U) | (static_cast<std::uint32_t>(header[8]) << 7U)
+        | static_cast<std::uint32_t>(header[9]);
+    const auto hasFooter = (header[5] & 0x10U) != 0;
+    const auto totalSize = static_cast<juce::int64>(header.size()) + static_cast<juce::int64>(payloadSize)
+        + static_cast<juce::int64>(hasFooter ? 10 : 0);
+
+    if (totalSize <= 0 || totalSize > sourceFile.getSize()) {
+        return false;
+    }
+
+    metadata.setSize(static_cast<size_t>(totalSize), false);
+    input->setPosition(0);
+    return readExactly(*input, metadata.getData(), static_cast<int>(totalSize));
+}
+
+bool extractAiffId3Metadata(const juce::File& sourceFile, juce::MemoryBlock& metadata)
+{
+    auto input = sourceFile.createInputStream();
+
+    if (input == nullptr) {
+        return false;
+    }
+
+    std::array<std::uint8_t, 12> header {};
+
+    if (!readExactly(*input, header.data(), static_cast<int>(header.size()))) {
+        return false;
+    }
+
+    if (!tagMatches(header.data(), "FORM")
+        || !(tagMatches(header.data() + 8, "AIFF") || tagMatches(header.data() + 8, "AIFC")))
+    {
+        return true;
+    }
+
+    const auto fileSize = sourceFile.getSize();
+
+    while (input->getPosition() + 8 <= fileSize) {
+        std::array<std::uint8_t, 8> chunkHeader {};
+
+        if (!readExactly(*input, chunkHeader.data(), static_cast<int>(chunkHeader.size()))) {
+            return false;
+        }
+
+        const auto chunkSize = readBigEndianUint32(chunkHeader.data() + 4);
+        const auto chunkDataPosition = input->getPosition();
+        const auto paddedChunkSize = static_cast<juce::int64>(chunkSize) + static_cast<juce::int64>(chunkSize & 1U);
+
+        if (chunkDataPosition + paddedChunkSize > fileSize) {
+            return false;
+        }
+
+        if (tagMatches(chunkHeader.data(), "ID3 ")) {
+            metadata.setSize(static_cast<size_t>(chunkSize), false);
+            return readExactly(*input, metadata.getData(), static_cast<int>(chunkSize));
+        }
+
+        input->setPosition(chunkDataPosition + paddedChunkSize);
+    }
+
+    return true;
+}
+
+bool extractRawId3Metadata(const juce::File& sourceFile, juce::MemoryBlock& metadata)
+{
+    metadata.reset();
+
+    if (isMp3SourceFile(sourceFile)) {
+        return extractMp3Id3Metadata(sourceFile, metadata);
+    }
+
+    if (isAiffExtension(normalizedExtension(sourceFile))) {
+        return extractAiffId3Metadata(sourceFile, metadata);
+    }
+
+    return true;
+}
+
+bool appendAiffId3Metadata(const juce::File& destinationFile, const juce::MemoryBlock& metadata)
+{
+    if (metadata.getSize() == 0 || !isAiffFile(destinationFile)) {
+        return metadata.getSize() == 0;
+    }
+
+    juce::FileOutputStream output(destinationFile);
+
+    if (output.failedToOpen()) {
+        return false;
+    }
+
+    const auto originalSize = destinationFile.getSize();
+
+    if (!output.setPosition(originalSize) || !output.write("ID3 ", 4)) {
+        return false;
+    }
+
+    output.writeIntBigEndian(static_cast<int>(metadata.getSize()));
+
+    if (output.getStatus().failed() || !output.write(metadata.getData(), metadata.getSize())) {
+        return false;
+    }
+
+    if ((metadata.getSize() & 1U) != 0) {
+        output.writeByte(0);
+
+        if (output.getStatus().failed()) {
+            return false;
+        }
+    }
+
+    const auto newSize = originalSize + 8 + static_cast<juce::int64>(metadata.getSize())
+        + static_cast<juce::int64>(metadata.getSize() & 1U);
+
+    if (!output.setPosition(4)) {
+        return false;
+    }
+
+    output.writeIntBigEndian(static_cast<int>(newSize - 8));
+
+    if (output.getStatus().failed()) {
+        return false;
+    }
+
+    output.flush();
+    return output.getStatus().wasOk();
 }
 
 juce::String getLameExecutableName()
@@ -203,6 +402,52 @@ bool canCreateProbeWriter(juce::AudioFormat& format)
     std::unique_ptr<juce::OutputStream> outputStream = std::make_unique<juce::MemoryOutputStream>();
     auto writer = format.createWriterFor(outputStream, options);
     return writer != nullptr;
+}
+
+int resolveWriterBitDepth(juce::AudioFormat& format, int preferredBitsPerSample)
+{
+    const auto bitDepths = format.getPossibleBitDepths();
+
+    if (bitDepths.isEmpty() || preferredBitsPerSample <= 0) {
+        return preferredBitsPerSample;
+    }
+
+    if (bitDepths.contains(preferredBitsPerSample)) {
+        return preferredBitsPerSample;
+    }
+
+    int resolvedBitsPerSample = bitDepths[0];
+
+    for (const auto bitDepth : bitDepths) {
+        if (bitDepth > resolvedBitsPerSample) {
+            resolvedBitsPerSample = bitDepth;
+        }
+    }
+
+    return resolvedBitsPerSample;
+}
+
+double resolveWriterSampleRate(juce::AudioFormat& format, double preferredSampleRate)
+{
+    const auto sampleRates = format.getPossibleSampleRates();
+
+    if (sampleRates.isEmpty() || preferredSampleRate <= 0.0) {
+        return preferredSampleRate;
+    }
+
+    int resolvedSampleRate = sampleRates[0];
+    auto bestDistance = std::abs(preferredSampleRate - static_cast<double>(resolvedSampleRate));
+
+    for (const auto sampleRate : sampleRates) {
+        const auto distance = std::abs(preferredSampleRate - static_cast<double>(sampleRate));
+
+        if (distance < bestDistance) {
+            resolvedSampleRate = sampleRate;
+            bestDistance = distance;
+        }
+    }
+
+    return static_cast<double>(resolvedSampleRate);
 }
 
 juce::AudioFormat* getWriterFormatForExtension(
@@ -328,12 +573,6 @@ juce::String formatExtensionsToText(const juce::StringArray& extensions)
     return normalizedExtensions.joinIntoString(", ");
 }
 
-bool useLegacyMetadataWriter(const juce::AudioFormat& format)
-{
-    return dynamic_cast<const juce::AiffAudioFormat*>(&format) != nullptr
-        || dynamic_cast<const juce::WavAudioFormat*>(&format) != nullptr;
-}
-
 std::unique_ptr<juce::AudioFormatWriter> createWriterPreservingMetadata(
     juce::AudioFormat& format,
     std::unique_ptr<juce::OutputStream>& outputStream,
@@ -341,34 +580,23 @@ std::unique_ptr<juce::AudioFormatWriter> createWriterPreservingMetadata(
     const juce::StringPairArray& sourceMetadata
 )
 {
-    if (useLegacyMetadataWriter(format)) {
-        auto* releasedStream = outputStream.release();
-
-        JUCE_BEGIN_IGNORE_WARNINGS_MSVC(4996)
-        std::unique_ptr<juce::AudioFormatWriter> writer(format.createWriterFor(
-            releasedStream,
-            writerOptions.getSampleRate(),
-            static_cast<unsigned int>(writerOptions.getNumChannels()),
-            writerOptions.getBitsPerSample(),
-            sourceMetadata,
-            writerOptions.getQualityOptionIndex()
-        ));
-        JUCE_END_IGNORE_WARNINGS_MSVC
-
-        if (writer == nullptr) {
-            outputStream.reset(releasedStream);
-        }
-
-        return writer;
-    }
-
+    juce::ignoreUnused(sourceMetadata);
     return format.createWriterFor(outputStream, writerOptions);
 }
 
 bool preserveOutputMetadata(const juce::File& sourceFile, const juce::File& destinationFile)
 {
-    juce::ignoreUnused(sourceFile, destinationFile);
-    return true;
+    if (!canStoreAiffId3Metadata(destinationFile)) {
+        return true;
+    }
+
+    juce::MemoryBlock metadata;
+
+    if (!extractRawId3Metadata(sourceFile, metadata)) {
+        return false;
+    }
+
+    return appendAiffId3Metadata(destinationFile, metadata);
 }
 
 juce::String validateTemporaryNormalizedOutput(
@@ -515,13 +743,16 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
         return AudioNormalizationResult::failure(file, "Could not create temporary output file");
     }
 
+    const auto writerSampleRate = resolveWriterSampleRate(*writerFormat, reader->sampleRate);
+    const auto writerBitDepth = resolveWriterBitDepth(*writerFormat, static_cast<int>(reader->bitsPerSample));
+
     auto writerOptions = juce::AudioFormatWriterOptions()
-                             .withSampleRate(reader->sampleRate)
+                             .withSampleRate(writerSampleRate)
                              .withNumChannels(static_cast<int>(reader->numChannels))
-                             .withBitsPerSample(static_cast<int>(reader->bitsPerSample))
+                             .withBitsPerSample(writerBitDepth)
                              .withMetadataValues(copyMetadata(reader->metadataValues));
 
-    if (reader->usesFloatingPointData && reader->bitsPerSample == 32) {
+    if (reader->usesFloatingPointData && writerBitDepth == 32) {
         writerOptions = writerOptions.withSampleFormat(juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
     }
 

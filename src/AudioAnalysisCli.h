@@ -9,6 +9,7 @@ struct AudioAnalysisCliOptions {
     bool cliMode = false;
     bool recursive = false;
     bool refresh = false;
+    bool normalize = false;
     bool showHelp = false;
     bool showVersion = false;
     int workerCount = juce::SystemStats::getNumCpus();
