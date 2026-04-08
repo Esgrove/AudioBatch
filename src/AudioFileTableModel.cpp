@@ -2,7 +2,7 @@
 
 #include "CustomLookAndFeel.h"
 
-namespace
+namespace audiobatch::table
 {
 juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 {
@@ -47,7 +47,9 @@ void drawActivityIndicator(juce::Graphics& g, const juce::Rectangle<float> bound
     g.setColour(juce::Colours::white.withAlpha(0.12f));
     g.drawEllipse(ringBounds, 1.0f);
 }
-}  // namespace
+}  // namespace audiobatch::table
+
+using namespace audiobatch::table;
 
 /// Builds the results table model used by the main file list.
 AudioFileTableModel::AudioFileTableModel(

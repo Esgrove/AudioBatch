@@ -1,5 +1,6 @@
 #include "AudioNormalizationService.h"
 
+#include "utils.h"
 #include <unordered_map>
 
 #include <algorithm>
@@ -11,8 +12,14 @@
 #include <vector>
 
 /// Helpers for format lookup, metadata passthrough, and chunked normalization.
-namespace
+namespace audiobatch::normalization
 {
+AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)
+{
+    utils::log_error("Normalization failed for " + file.getFullPathName() + ": " + message);
+    return AudioNormalizationResult::failure(file, message);
+}
+
 constexpr int normalizationBlockSize = 32768;
 constexpr auto normalizedMp3OutputExtension = ".aif";
 constexpr int defaultMp3BitsPerSample = 16;
@@ -121,7 +128,7 @@ bool finalizeNormalizationOutput(
         return false;
     }
 
-    if (sourceFile.existsAsFile() && !sourceFile.moveToTrash()) {
+    if (sourceFile.existsAsFile() && !utils::move_to_trash(sourceFile)) {
         outputFile.deleteFile();
         errorMessage = "Could not move the original MP3 file to the system trash";
         return false;
@@ -682,7 +689,9 @@ juce::String validateTemporaryNormalizedOutput(
 
     return {};
 }
-}  // namespace
+}  // namespace audiobatch::normalization
+
+using namespace audiobatch::normalization;
 
 bool AudioNormalizationService::canNormalizeFile(const juce::File& file)
 {
@@ -757,11 +766,11 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
     const auto outputFile = getNormalizationOutputFile(file);
 
     if (!file.existsAsFile()) {
-        return AudioNormalizationResult::failure(file, "File does not exist");
+        return failNormalization(file, "File does not exist");
     }
 
     if (!record.isReady()) {
-        return AudioNormalizationResult::failure(file, "File analysis must finish before normalization");
+        return failNormalization(file, "File analysis must finish before normalization");
     }
 
     auto& runtimeState = getThreadLocalRuntimeState();
@@ -770,19 +779,19 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
                                                : getWriterFormatForExtension(runtimeState, normalizedExtension(file));
 
     if (writerFormat == nullptr) {
-        return AudioNormalizationResult::failure(file, "Unsupported audio format");
+        return failNormalization(file, "Unsupported audio format");
     }
 
     std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
 
     if (reader == nullptr) {
-        return AudioNormalizationResult::failure(file, "Unsupported or unreadable audio file");
+        return failNormalization(file, "Unsupported or unreadable audio file");
     }
 
     const auto peak = peakMagnitude(record.overallPeak);
 
     if (peak <= 0.0f) {
-        return AudioNormalizationResult::failure(file, "File contains no signal that can be normalized");
+        return failNormalization(file, "File contains no signal that can be normalized");
     }
 
     const auto gain = 1.0f / peak;
@@ -806,7 +815,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
     std::unique_ptr<juce::OutputStream> outputStream(temporaryFile.getFile().createOutputStream().release());
 
     if (outputStream == nullptr) {
-        return AudioNormalizationResult::failure(file, "Could not create temporary output file");
+        return failNormalization(file, "Could not create temporary output file");
     }
 
     const auto writerSampleRate = resolveWriterSampleRate(*writerFormat, reader->sampleRate);
@@ -826,7 +835,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
     auto writer = createWriterPreservingMetadata(*writerFormat, outputStream, writerOptions, reader->metadataValues);
 
     if (writer == nullptr) {
-        return AudioNormalizationResult::failure(file, getNormalizationSupportMessage(file));
+        return failNormalization(file, getNormalizationSupportMessage(file));
     }
 
     juce::AudioBuffer<float> buffer(static_cast<int>(reader->numChannels), normalizationBlockSize);
@@ -846,30 +855,30 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
         if (!reader->read(channelPointers.data(), buffer.getNumChannels(), samplePosition, samplesThisBlock)
             && !canAcceptReadFailureForNormalization(*reader, file, samplePosition, samplesThisBlock))
         {
-            return AudioNormalizationResult::failure(file, "Failed while reading audio data for normalization");
+            return failNormalization(file, "Failed while reading audio data for normalization");
         }
 
         buffer.applyGain(gain);
 
         if (!writer->writeFromAudioSampleBuffer(buffer, 0, samplesThisBlock)) {
-            return AudioNormalizationResult::failure(file, "Failed while writing normalized audio data");
+            return failNormalization(file, "Failed while writing normalized audio data");
         }
     }
 
     writer.reset();
 
     if (!preserveOutputMetadata(file, temporaryFile.getFile())) {
-        return AudioNormalizationResult::failure(file, "Could not preserve metadata while writing normalized audio");
+        return failNormalization(file, "Could not preserve metadata while writing normalized audio");
     }
 
     if (const auto validationError = validateTemporaryNormalizedOutput(formatManager, temporaryFile.getFile());
         validationError.isNotEmpty())
     {
-        return AudioNormalizationResult::failure(file, validationError);
+        return failNormalization(file, validationError);
     }
 
     if (juce::String finalizeError; !finalizeNormalizationOutput(temporaryFile, file, outputFile, finalizeError)) {
-        return AudioNormalizationResult::failure(file, finalizeError);
+        return failNormalization(file, finalizeError);
     }
 
     AudioNormalizationResult result;
@@ -881,6 +890,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
 
     if (!result.succeeded) {
         result.errorMessage = "The file was normalized, but re-analysis failed: " + result.analysisRecord.errorMessage;
+        utils::log_error("Normalization failed for " + result.fullPath + ": " + result.errorMessage);
     }
 
     return result;

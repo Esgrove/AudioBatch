@@ -1,5 +1,7 @@
 #include "AudioAnalysisService.h"
 
+#include "utils.h"
+
 extern "C" {
 #include <ebur128.h>
 }
@@ -13,12 +15,20 @@ extern "C" {
 #include <vector>
 
 /// Internal helpers for peak comparisons and stable record sorting.
-namespace
+namespace audiobatch::analysis
 {
 constexpr float minimumDisplayDecibels = -100.0f;
 constexpr double kilobitsPerSecondDivisor = 1000.0;
 constexpr int defaultMp3BitsPerSample = 16;
 constexpr int analysisBlockSize = 8192;
+
+AudioAnalysisRecord failAnalysis(AudioAnalysisRecord record, const juce::String& message)
+{
+    record.status = AudioAnalysisStatus::failed;
+    record.errorMessage = message;
+    utils::log_error("Analysis failed for " + record.fullPath + ": " + message);
+    return record;
+}
 
 struct EbuR128StateDeleter {
     void operator()(ebur128_state* state) const noexcept
@@ -260,7 +270,9 @@ int compareText(const juce::String& lhs, const juce::String& rhs)
 {
     return lhs.compareNatural(rhs);
 }
-}  // namespace
+}  // namespace audiobatch::analysis
+
+using namespace audiobatch::analysis;
 
 juce::AudioFormatManager& AudioAnalysisService::getThreadLocalFormatManager()
 {
@@ -333,35 +345,27 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
     auto record = AudioAnalysisRecord::fromFile(file);
 
     if (!file.existsAsFile()) {
-        record.status = AudioAnalysisStatus::failed;
-        record.errorMessage = "File does not exist";
-        return record;
+        return failAnalysis(std::move(record), "File does not exist");
     }
 
     auto& formatManager = getThreadLocalFormatManager();
     std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
 
     if (reader == nullptr) {
-        record.status = AudioAnalysisStatus::failed;
-        record.errorMessage = "Unsupported or unreadable audio file";
-        return record;
+        return failAnalysis(std::move(record), "Unsupported or unreadable audio file");
     }
 
     const auto channelCount = static_cast<int>(reader->numChannels);
     const auto sampleRate = juce::roundToInt(reader->sampleRate);
 
     if (channelCount <= 0 || sampleRate <= 0) {
-        record.status = AudioAnalysisStatus::failed;
-        record.errorMessage = "Unsupported audio stream parameters";
-        return record;
+        return failAnalysis(std::move(record), "Unsupported audio stream parameters");
     }
 
     auto loudnessState = createLoudnessState(channelCount, sampleRate);
 
     if (loudnessState == nullptr) {
-        record.status = AudioAnalysisStatus::failed;
-        record.errorMessage = "Could not initialize loudness analyzer";
-        return record;
+        return failAnalysis(std::move(record), "Could not initialize loudness analyzer");
     }
 
     std::vector minSamples(static_cast<size_t>(channelCount), 0.0f);
@@ -381,9 +385,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
             !readSucceeded
             && !isEndOfFileReadFailure(readSucceeded, samplePosition, framesThisBlock, reader->lengthInSamples))
         {
-            record.status = AudioAnalysisStatus::failed;
-            record.errorMessage = "Audio decode failed during analysis";
-            return record;
+            return failAnalysis(std::move(record), "Audio decode failed during analysis");
         }
 
         for (int frame = 0; frame < framesThisBlock; ++frame) {
@@ -398,9 +400,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         if (ebur128_add_frames_float(loudnessState.get(), interleaved.data(), static_cast<size_t>(framesThisBlock))
             != EBUR128_SUCCESS)
         {
-            record.status = AudioAnalysisStatus::failed;
-            record.errorMessage = "Loudness analysis failed while processing audio";
-            return record;
+            return failAnalysis(std::move(record), "Loudness analysis failed while processing audio");
         }
 
         double shortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
@@ -433,18 +433,14 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
             )
             != EBUR128_SUCCESS)
         {
-            record.status = AudioAnalysisStatus::failed;
-            record.errorMessage = "True peak analysis failed";
-            return record;
+            return failAnalysis(std::move(record), "True peak analysis failed");
         }
     }
 
     double integratedLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
 
     if (ebur128_loudness_global(loudnessState.get(), &integratedLoudness) != EBUR128_SUCCESS) {
-        record.status = AudioAnalysisStatus::failed;
-        record.errorMessage = "Integrated loudness analysis failed";
-        return record;
+        return failAnalysis(std::move(record), "Integrated loudness analysis failed");
     }
 
     const auto truePeakLeft = truePeaks.front();

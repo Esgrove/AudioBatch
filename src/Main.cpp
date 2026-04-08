@@ -4,7 +4,7 @@
 
 #include <JuceHeader.h>
 
-namespace
+namespace audiobatch::app
 {
 enum MenuItemId {
     chooseFolderMenuItemId = 1,
@@ -14,18 +14,12 @@ enum MenuItemId {
     aboutMenuItemId,
     quitMenuItemId,
 };
-}
+}  // namespace audiobatch::app
+
+using namespace audiobatch::app;
 
 /// Top-level application window that hosts the main AudioBatch component.
-class MainWindow :
-    public juce::DocumentWindow
-#if JUCE_MAC
-    ,
-    private juce::MenuBarModel
-#else
-    ,
-    juce::MenuBarModel
-#endif
+class MainWindow : public juce::DocumentWindow, juce::MenuBarModel
 {
 public:
     explicit MainWindow(const juce::String& name) :
@@ -220,9 +214,7 @@ public:
         // Init log file in OS default location under dir "AudioBatch"
         // Mac:     /Users/<username>/Library/Logs/AudioBatch
         // Windows: C:\Users\<username>\AppData\Roaming\AudioBatch
-        logger = std::unique_ptr<juce::FileLogger>(juce::FileLogger::createDefaultAppLogger(
-            getApplicationName(), getApplicationName() + ".log", getApplicationName(), 32768
-        ));
+        logger = utils::create_default_logger(getApplicationName());
 
         juce::Logger::setCurrentLogger(logger.get());
 

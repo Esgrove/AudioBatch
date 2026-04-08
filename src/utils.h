@@ -79,6 +79,12 @@ namespace utils
 {
 enum class Level { debug, info, warn, error };
 
+/// Creates the default rolling file logger for the application.
+std::unique_ptr<juce::FileLogger> create_default_logger(const juce::String& appName);
+
+/// Move a file or folder to the OS trash / recycle bin.
+bool move_to_trash(const juce::File& file);
+
 /// Return full system information list
 juce::StringArray system_info();
 
@@ -128,7 +134,6 @@ static void write_to_log(const juce::String& message, [[maybe_unused]] Level log
 }
 
 /// By default, these messages will not be logged in release builds, only in debug builds.
-/// Update YS_LOG_DEBUG_MESSAGES definition to true (1) to show these.
 inline void log_debug([[maybe_unused]] const juce::String& message)
 {
 #if JUCE_DEBUG

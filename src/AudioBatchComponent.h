@@ -157,6 +157,8 @@ private:
     juce::TableListBox resultsTable;
     juce::TimeSliceThread thread {"audio file preview"};
     juce::URL currentAudioUrl;
+    double analysisStartedAtMs = 0.0;
+    int analyzedFilesThisRun = 0;
     int completedResults = 0;
     int expectedResults = 0;
     int normalizedResultsCompleted = 0;

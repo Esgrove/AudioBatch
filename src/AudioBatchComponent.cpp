@@ -98,7 +98,7 @@ private:
 };
 
 /// Main-view constants and helper functions local to this translation unit.
-namespace
+namespace audiobatch::gui
 {
 constexpr auto supportedAudioFilePatterns = "*.wav;*.aif;*.aiff;*.flac;*.mp3";
 constexpr int activityIndicatorTimerHz = 24;
@@ -342,7 +342,9 @@ int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
             return comparePeaks(lhs.overallPeak, rhs.overallPeak);
     }
 }
-}  // namespace
+}  // namespace audiobatch::gui
+
+using namespace audiobatch::gui;
 
 AudioBatchComponent::AudioBatchComponent() :
     analysisCoordinator(analysisCache),
@@ -900,10 +902,19 @@ void AudioBatchComponent::runMoveToTrash(
     juce::StringArray failedPaths;
     juce::StringArray successfullyRemovedPaths;
 
+    if (currentAudioFile.exists()) {
+        for (const auto& file : filesToTrash) {
+            if (file == currentAudioFile) {
+                clearCurrentAudioPreview();
+                break;
+            }
+        }
+    }
+
     for (int index = 0; index < filesToTrash.size(); ++index) {
         const auto& file = filesToTrash.getReference(index);
 
-        if (!file.moveToTrash()) {
+        if (!utils::move_to_trash(file)) {
             failedPaths.add(file.getFullPathName());
             continue;
         }
@@ -916,6 +927,10 @@ void AudioBatchComponent::runMoveToTrash(
     removeRecordsByPath(successfullyRemovedPaths, fallbackRow);
 
     if (!failedPaths.isEmpty()) {
+        for (const auto& failedPath : failedPaths) {
+            utils::log_error("Move to trash failed for " + failedPath);
+        }
+
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions::makeOptionsOk(
                 juce::MessageBoxIconType::WarningIcon,
@@ -1065,6 +1080,7 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
         if (!record.file.existsAsFile()) {
             record.status = AudioAnalysisStatus::failed;
             record.errorMessage = "File does not exist";
+            utils::log_error("Analysis failed for " + record.fullPath + ": " + record.errorMessage);
             resultsChanged = true;
             continue;
         }
@@ -1296,6 +1312,14 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles)
     reconcilePendingAnalysisResults();
     updateStatusLabel();
 
+    const auto elapsedMs = juce::Time::getMillisecondCounterHiRes() - analysisStartedAtMs;
+    const auto cachedFileCount = juce::jmax(0, totalFiles - analyzedFilesThisRun);
+    utils::log_info(
+        "Analysis complete: loaded " + juce::String(totalFiles) + " files (" + juce::String(analyzedFilesThisRun)
+        + " analyzed, " + juce::String(cachedFileCount) + " from cache) in " + juce::String(elapsedMs / 1000.0, 2)
+        + " s"
+    );
+
     if (resultsTable.getSelectedRow() < 0 && !analysisResults.empty()) {
         resultsTable.selectRow(0);
     } else if (!currentAudioFile.existsAsFile() && resultsTable.getSelectedRow() >= 0) {
@@ -1332,11 +1356,13 @@ void AudioBatchComponent::updateStatusLabel()
 void AudioBatchComponent::normalizeSelectedRecords()
 {
     if (normalizeInProgress) {
+        utils::log_error("Normalization requested while another normalization pass is already in progress");
         statusLabel.setText("Normalization already in progress", juce::dontSendNotification);
         return;
     }
 
     if (isAnalysisInProgress()) {
+        utils::log_error("Normalization requested before analysis finished");
         statusLabel.setText("Wait for analysis to finish before normalizing", juce::dontSendNotification);
         return;
     }
@@ -1348,6 +1374,7 @@ void AudioBatchComponent::normalizeSelectedRecords()
     }
 
     if (!canNormalizeRecords(recordsToNormalize)) {
+        utils::log_error("Normalization unavailable for the selected files");
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions::makeOptionsOk(
                 juce::MessageBoxIconType::WarningIcon,
@@ -1454,6 +1481,7 @@ void AudioBatchComponent::startAnalysis(
     options.recursive = recursive;
     options.refresh = forceRefresh;
 
+    analysisStartedAtMs = juce::Time::getMillisecondCounterHiRes();
     completedResults = 0;
     const auto files = AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive);
     expectedResults = files.size();
@@ -1484,6 +1512,8 @@ void AudioBatchComponent::startAnalysis(
         placeholder.status = AudioAnalysisStatus::pending;
         analysisResults.push_back(std::move(placeholder));
     }
+
+    analyzedFilesThisRun = staleFiles.size();
 
     sortResults();
     resultsTable.updateContent();
@@ -1636,7 +1666,7 @@ void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
     if (record.file.existsAsFile() && currentAudioFile != record.file) {
         currentAudioFile = record.file;
         showAudioResource(juce::URL(record.file));
-        utils::log_info("Loaded file: " + record.fileName);
+        utils::log_debug("Loaded file: " + record.fileName);
     }
 
     updateAudioInfo(record);
