@@ -1,4 +1,5 @@
 #include "AudioAnalysisCli.h"
+#include "utils.h"
 #include "version.h"
 
 #include <JuceHeader.h>
@@ -12,7 +13,7 @@ int main(int argc, char* argv[])
     auto cliOptions = AudioAnalysisCli::parse(arguments, parseError);
 
     if (!cliOptions.has_value()) {
-        std::cerr << parseError << juce::newLine << juce::newLine;
+        std::cerr << ansi::red << parseError << ansi::reset << std::endl << std::endl;
         std::cout << AudioAnalysisCli::buildUsage(executableName) << std::endl;
         return 1;
     }

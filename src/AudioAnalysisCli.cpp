@@ -2,6 +2,7 @@
 
 #include "AudioAnalysisService.h"
 #include "AudioNormalizationService.h"
+#include "utils.h"
 #include "version.h"
 
 #include <iostream>
@@ -14,13 +15,22 @@ juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
     return AudioAnalysisService::formatPeakDisplay(record.overallPeak).paddedLeft(' ', 11);
 }
 
-juce::String normalizedOutputPath(const AudioNormalizationResult& result)
+juce::String reportedOutputPath(const AudioAnalysisRecord& record)
 {
-    if (result.analysisRecord.file != juce::File()) {
-        return result.analysisRecord.file.getFullPathName();
+    if (record.fullPath.isNotEmpty()) {
+        return record.fullPath;
     }
 
-    return result.fullPath;
+    if (record.file != juce::File()) {
+        return record.file.getFullPathName();
+    }
+
+    return record.fileName;
+}
+
+void printCliError(const juce::String& message)
+{
+    std::cerr << ansi::red << message << ansi::reset << std::endl;
 }
 }  // namespace
 
@@ -46,16 +56,11 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
     usage += juce::newLine;
     usage += "  -f, --refresh           Ignore cached analysis and re-analyze files";
     usage += juce::newLine;
-    usage += "  -n, --normalize         Normalize analyzed files instead of only reporting peaks";
+    usage += "  -n, --normalize         Normalize analyzed files, then report the re-analyzed output peaks";
     usage += juce::newLine;
     usage += "  -j, --jobs <count>      Override worker count";
     usage += juce::newLine;
     usage += "  -s, --sort <mode>       Sort by peak, name, or path";
-    usage += juce::newLine;
-    usage += juce::newLine;
-    usage += "Default output format:";
-    usage += juce::newLine;
-    usage += "  <peak>  <audio filename>";
     usage += juce::newLine;
     return usage;
 }
@@ -113,7 +118,7 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(
 int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 {
     if (options.inputPaths.isEmpty()) {
-        std::cerr << "No input paths provided" << juce::newLine;
+        printCliError("No input paths provided");
         return 1;
     }
 
@@ -130,11 +135,16 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     AudioAnalysisService::sortRecords(results, options.sortMode, true);
 
     int failureCount = 0;
+    std::vector<AudioAnalysisRecord> normalizedResults;
+
+    if (options.normalize) {
+        normalizedResults.reserve(results.size());
+    }
 
     for (const auto& result : results) {
         if (result.hasError()) {
             ++failureCount;
-            std::cerr << result.file.getFullPathName() << ": " << result.errorMessage << juce::newLine;
+            printCliError(result.file.getFullPathName() + ": " + result.errorMessage);
             continue;
         }
 
@@ -147,18 +157,19 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
         if (normalization.hasError()) {
             ++failureCount;
-            std::cerr << result.file.getFullPathName() << ": " << normalization.errorMessage << juce::newLine;
+            printCliError(result.file.getFullPathName() + ": " + normalization.errorMessage);
             continue;
         }
 
-        const auto destinationPath = normalizedOutputPath(normalization);
-        std::cout << "normalized  " << destinationPath;
+        normalizedResults.push_back(normalization.analysisRecord);
+    }
 
-        if (destinationPath != result.file.getFullPathName()) {
-            std::cout << " (from " << result.file.getFullPathName() << ")";
+    if (options.normalize) {
+        AudioAnalysisService::sortRecords(normalizedResults, options.sortMode, true);
+
+        for (const auto& record : normalizedResults) {
+            std::cout << formattedPeakColumn(record) << "  " << reportedOutputPath(record) << juce::newLine;
         }
-
-        std::cout << juce::newLine;
     }
 
     return failureCount == 0 ? 0 : 2;
