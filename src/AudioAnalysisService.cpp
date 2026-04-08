@@ -12,6 +12,7 @@ namespace
 {
 constexpr float minimumDisplayDecibels = -100.0f;
 constexpr double kilobitsPerSecondDivisor = 1000.0;
+constexpr int defaultMp3BitsPerSample = 16;
 
 juce::String normalizedExtension(const juce::File& file)
 {
@@ -151,7 +152,11 @@ int extractTaggedMp3BitDepth(const juce::File& file)
 int resolveSourceBitsPerSample(const juce::AudioFormatReader& reader, const juce::File& file)
 {
     if (reportsDecodedBitDepth(reader, file)) {
-        return extractTaggedMp3BitDepth(file);
+        if (const auto taggedBitDepth = extractTaggedMp3BitDepth(file); taggedBitDepth > 0) {
+            return taggedBitDepth;
+        }
+
+        return defaultMp3BitsPerSample;
     }
 
     return reader.bitsPerSample;
