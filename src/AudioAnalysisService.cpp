@@ -534,6 +534,19 @@ juce::String AudioAnalysisService::formatBitrateDisplay(const AudioAnalysisRecor
     return juce::String(juce::roundToInt(bitrateKbps)) + " kbps";
 }
 
+juce::String AudioAnalysisService::formatSampleRateDisplay(const AudioAnalysisRecord& record)
+{
+    if (record.sampleRate <= 0) {
+        return "-";
+    }
+
+    if (record.sampleRate % 1000 == 0) {
+        return juce::String(record.sampleRate / 1000) + " kHz";
+    }
+
+    return juce::String::formatted("%.1f kHz", static_cast<double>(record.sampleRate) / 1000.0);
+}
+
 juce::String AudioAnalysisService::formatStatus(const AudioAnalysisRecord& record)
 {
     switch (record.status) {

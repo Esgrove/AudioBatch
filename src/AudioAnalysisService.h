@@ -41,6 +41,9 @@ public:
     /// Formats the average bitrate for display in the GUI.
     static juce::String formatBitrateDisplay(const AudioAnalysisRecord& record);
 
+    /// Formats the sample rate for display in the GUI.
+    static juce::String formatSampleRateDisplay(const AudioAnalysisRecord& record);
+
     /// Formats the human-readable status text for a record.
     static juce::String formatStatus(const AudioAnalysisRecord& record);
 

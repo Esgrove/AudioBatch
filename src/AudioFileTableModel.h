@@ -17,6 +17,7 @@ public:
         columnPath,
         columnType,
         columnBitrate,
+        columnSampleRate,
         columnPeakLeft,
         columnPeakRight,
         columnOverallPeak,
@@ -37,6 +38,8 @@ public:
                 return typeColumnDefaultWidth;
             case columnBitrate:
                 return bitrateColumnDefaultWidth;
+            case columnSampleRate:
+                return sampleRateColumnDefaultWidth;
             case columnOverallPeak:
                 return overallPeakColumnDefaultWidth;
             case columnPeakLeft:
@@ -67,6 +70,8 @@ public:
                 return typeColumnMinimumWidth;
             case columnBitrate:
                 return bitrateColumnMinimumWidth;
+            case columnSampleRate:
+                return sampleRateColumnMinimumWidth;
             case columnOverallPeak:
             case columnPeakLeft:
             case columnPeakRight:
@@ -123,22 +128,25 @@ private:
     static constexpr int pathColumnMinimumWidth = 140;
     static constexpr int typeColumnMinimumWidth = 60;
     static constexpr int bitrateColumnMinimumWidth = 68;
-    static constexpr int metricColumnMinimumWidth = 74;
-    static constexpr int nameColumnDefaultWidth = 160;
-    static constexpr int pathColumnDefaultWidth = 190;
-    static constexpr int typeColumnDefaultWidth = 70;
-    static constexpr int bitrateColumnDefaultWidth = 74;
-    static constexpr int overallPeakColumnDefaultWidth = 76;
-    static constexpr int peakLeftColumnDefaultWidth = 76;
-    static constexpr int peakRightColumnDefaultWidth = 76;
-    static constexpr int truePeakColumnDefaultWidth = 76;
-    static constexpr int maxShortTermLufsColumnDefaultWidth = 78;
-    static constexpr int integratedLufsColumnDefaultWidth = 78;
-    static constexpr int statusColumnDefaultWidth = 70;
+    static constexpr int sampleRateColumnMinimumWidth = 72;
+    static constexpr int metricColumnMinimumWidth = 72;
+    static constexpr int nameColumnDefaultWidth = 140;
+    static constexpr int pathColumnDefaultWidth = 160;
+    static constexpr int typeColumnDefaultWidth = 66;
+    static constexpr int bitrateColumnDefaultWidth = 70;
+    static constexpr int sampleRateColumnDefaultWidth = 76;
+    static constexpr int overallPeakColumnDefaultWidth = 74;
+    static constexpr int peakLeftColumnDefaultWidth = 74;
+    static constexpr int peakRightColumnDefaultWidth = 74;
+    static constexpr int truePeakColumnDefaultWidth = 74;
+    static constexpr int maxShortTermLufsColumnDefaultWidth = 76;
+    static constexpr int integratedLufsColumnDefaultWidth = 76;
+    static constexpr int statusColumnDefaultWidth = 64;
     static constexpr int totalInitialColumnWidth = nameColumnDefaultWidth + pathColumnDefaultWidth
-        + typeColumnDefaultWidth + bitrateColumnDefaultWidth + overallPeakColumnDefaultWidth
-        + peakLeftColumnDefaultWidth + peakRightColumnDefaultWidth + truePeakColumnDefaultWidth
-        + maxShortTermLufsColumnDefaultWidth + integratedLufsColumnDefaultWidth + statusColumnDefaultWidth;
+        + typeColumnDefaultWidth + bitrateColumnDefaultWidth + sampleRateColumnDefaultWidth
+        + overallPeakColumnDefaultWidth + peakLeftColumnDefaultWidth + peakRightColumnDefaultWidth
+        + truePeakColumnDefaultWidth + maxShortTermLufsColumnDefaultWidth + integratedLufsColumnDefaultWidth
+        + statusColumnDefaultWidth;
 
     static_assert(
         totalInitialColumnWidth == defaultWindowWidth,
