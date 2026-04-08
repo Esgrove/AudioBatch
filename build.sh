@@ -17,6 +17,9 @@ OPTIONS: All options are optional
     -x | --xcode
         Use Xcode as the build system (macOS only, default is Ninja).
 
+    -r | --reuse
+        Skip CMake generation and reuse the existing build directory.
+
     -b | --build-type <type>
         Specify build type for CMake. Default is 'Release'.
 
@@ -33,6 +36,7 @@ init_options() {
     BUILD_TYPE="Release"
     USE_NINJA=false
     USE_XCODE=false
+    REUSE_BUILD_DIR=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -45,6 +49,9 @@ init_options() {
                 ;;
             -x | --xcode)
                 USE_XCODE=true
+                ;;
+            -r | --reuse)
+                REUSE_BUILD_DIR=true
                 ;;
             -b | --build-type)
                 BUILD_TYPE="$2"
@@ -210,6 +217,15 @@ export_cmake_project() {
 }
 
 init_options "$@"
-check_juce_submodule
-export_cmake_project
+
+if [ "$REUSE_BUILD_DIR" = true ]; then
+    if [ ! -d "$CMAKE_BUILD_DIR" ]; then
+        print_error_and_exit "Build directory does not exist: $CMAKE_BUILD_DIR"
+    fi
+    print_magenta "Reusing existing build directory: $CMAKE_BUILD_DIR"
+else
+    check_juce_submodule
+    export_cmake_project
+fi
+
 build_app
