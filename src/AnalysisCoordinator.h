@@ -40,6 +40,9 @@ public:
     /// Starts a background analysis run and returns its monotonically increasing run id.
     int start(const AudioAnalysisOptions& options);
 
+    /// Starts a background analysis run using a precomputed file list.
+    int start(const AudioAnalysisOptions& options, const juce::Array<juce::File>& files);
+
 private:
     void publishCompletion(int totalFiles, int runId) const;
     void publishResult(const AudioAnalysisRecord& result, int runId);

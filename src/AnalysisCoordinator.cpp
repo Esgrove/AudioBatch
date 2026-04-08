@@ -70,10 +70,14 @@ void AnalysisCoordinator::cancelAndWait()
 
 int AnalysisCoordinator::start(const AudioAnalysisOptions& options)
 {
+    return start(options, AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive));
+}
+
+int AnalysisCoordinator::start(const AudioAnalysisOptions& options, const juce::Array<juce::File>& files)
+{
     cancelAndWait();
 
     const auto runId = currentRunId.load();
-    const auto files = AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive);
     juce::Array<juce::File> staleFiles;
 
     for (const auto& file : files) {

@@ -23,8 +23,7 @@ class MainWindow : public juce::DocumentWindow, juce::MenuBarModel
 {
 public:
     explicit MainWindow(const juce::String& name) :
-        DocumentWindow(name, juce::CustomLookAndFeel::greyDark, DocumentWindow::allButtons),
-        audioBatch(std::make_unique<AudioBatchComponent>())
+        DocumentWindow(name, juce::CustomLookAndFeel::greyDark, DocumentWindow::allButtons)
     {
         juce::LookAndFeel::setDefaultLookAndFeel(lookAndFeel.get());
 #if JUCE_WINDOWS
@@ -34,7 +33,7 @@ public:
 #else
         setUsingNativeTitleBar(true);
 #endif
-        setContentNonOwned(audioBatch.get(), true);
+        setContentOwned(new AudioBatchComponent(), true);
 
 #if JUCE_MAC
         juce::MenuBarModel::setMacMainMenu(this);
@@ -148,16 +147,16 @@ private:
 
         switch (menuItemID) {
             case chooseFolderMenuItemId:
-                audioBatch->chooseRootFolder();
+                getAudioBatch().chooseRootFolder();
                 break;
             case rescanMenuItemId:
-                audioBatch->rescanCurrentRoot();
+                getAudioBatch().rescanCurrentRoot();
                 break;
             case audioSettingsMenuItemId:
-                audioBatch->showAudioSettingsWindow();
+                getAudioBatch().showAudioSettingsWindow();
                 break;
             case supportedFormatsMenuItemId:
-                audioBatch->showSupportedNormalizationFormats();
+                getAudioBatch().showSupportedNormalizationFormats();
                 break;
             case aboutMenuItemId:
                 juce::AlertWindow::showAsync(
@@ -181,7 +180,11 @@ private:
         }
     }
 
-    std::unique_ptr<AudioBatchComponent> audioBatch;
+    AudioBatchComponent& getAudioBatch() const
+    {
+        return *static_cast<AudioBatchComponent*>(getContentComponent());
+    }
+
     std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel = std::make_unique<juce::CustomLookAndFeel>(true);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)

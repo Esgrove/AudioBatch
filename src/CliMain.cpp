@@ -18,7 +18,6 @@ int main(const int argc, char* argv[])
     const auto executableName = juce::File(arguments.executableName).getFileNameWithoutExtension();
     auto logger = utils::create_default_logger(executableName);
     juce::Logger::setCurrentLogger(logger.get());
-    utils::log_system_info();
 
     juce::String parseError;
     const auto cliOptions = AudioAnalysisCli::parse(std::move(arguments), parseError);

@@ -479,7 +479,11 @@ AudioBatchComponent::AudioBatchComponent() :
     setSize(1024, 800);
     setWantsKeyboardFocus(true);
 
-    refreshAnalysis(false);
+    juce::MessageManager::callAsync([safeThis = SafePointer(this)] {
+        if (safeThis != nullptr) {
+            safeThis->refreshAnalysis(false);
+        }
+    });
 }
 
 AudioBatchComponent::~AudioBatchComponent()
@@ -487,6 +491,8 @@ AudioBatchComponent::~AudioBatchComponent()
     analysisCoordinator.cancelAndWait();
     normalizeCoordinator.cancelAndWait();
 
+    stopTimer();
+    transportSource.stop();
     transportSource.setSource(nullptr);
     audioSourcePlayer.setSource(nullptr);
 
@@ -503,6 +509,8 @@ AudioBatchComponent::~AudioBatchComponent()
         }
         childWindows.clear();
     }
+
+    thread.stopThread(2000);
 }
 
 void AudioBatchComponent::paint(juce::Graphics& g)
@@ -1314,10 +1322,13 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles)
 
     const auto elapsedMs = juce::Time::getMillisecondCounterHiRes() - analysisStartedAtMs;
     const auto cachedFileCount = juce::jmax(0, totalFiles - analyzedFilesThisRun);
+    const auto failedFileCount = std::count_if(analysisResults.begin(), analysisResults.end(), [](const auto& record) {
+        return record.hasError();
+    });
     utils::log_info(
         "Analysis complete: loaded " + juce::String(totalFiles) + " files (" + juce::String(analyzedFilesThisRun)
-        + " analyzed, " + juce::String(cachedFileCount) + " from cache) in " + juce::String(elapsedMs / 1000.0, 2)
-        + " s"
+        + " analyzed, " + juce::String(cachedFileCount) + " from cache, " + juce::String(failedFileCount)
+        + " failed) in " + juce::String(elapsedMs / 1000.0, 2) + " s"
     );
 
     if (resultsTable.getSelectedRow() < 0 && !analysisResults.empty()) {
@@ -1527,7 +1538,7 @@ void AudioBatchComponent::startAnalysis(
         currentRootLabel.setTooltip(currentRoot.getFullPathName());
     }
 
-    analysisCoordinator.start(options);
+    analysisCoordinator.start(options, files);
 }
 
 juce::String AudioBatchComponent::getActiveStatusLabel(const AudioAnalysisRecord& record) const
