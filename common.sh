@@ -50,22 +50,8 @@ print_error_and_exit() {
     exit "${2:-1}"
 }
 
-verify_universal_binary() {
-    # Verify that a Mac bundle is a Universal binary
-    if [ -z "$1" ]; then
-        print_error_and_exit "Give path to Mac executable as an argument!"
-    fi
-    print_magenta "Verifying universal binary: $1"
-    file --brief "$1"
-    local architectures
-    architectures=$(lipo -archs "$1")
-    if ! echo "$architectures" | grep -q "x86_64 arm64"; then
-        print_error_and_exit "Expected Universal Binary, got '$architectures' instead"
-    fi
-}
-
 # Enable calling functions directly as arguments:
-# ./common.sh verify_universal_binary
+# ./common.sh print_green "hello"
 # shellcheck disable=SC2128
 if [ $# -gt 0 ] && [ "$0" = "$BASH_SOURCE" ]; then
     "$@"
