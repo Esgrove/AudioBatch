@@ -8,13 +8,13 @@
 /// Helpers for marshalling SQLite values into JUCE types.
 namespace audiobatch::cache
 {
-juce::String columnText(sqlite3_stmt* statement, const int columnIndex)
+static juce::String columnText(sqlite3_stmt* statement, const int columnIndex)
 {
     const auto* text = sqlite3_column_text(statement, columnIndex);
     return text != nullptr ? juce::String::fromUTF8(reinterpret_cast<const char*>(text)) : juce::String();
 }
 
-juce::MemoryBlock columnBlob(sqlite3_stmt* statement, const int columnIndex)
+static juce::MemoryBlock columnBlob(sqlite3_stmt* statement, const int columnIndex)
 {
     juce::MemoryBlock data;
 
@@ -29,13 +29,13 @@ juce::MemoryBlock columnBlob(sqlite3_stmt* statement, const int columnIndex)
     return data;
 }
 
-void bindText(sqlite3_stmt* statement, const int index, const juce::String& value)
+static void bindText(sqlite3_stmt* statement, const int index, const juce::String& value)
 {
     const auto utf8 = value.toRawUTF8();
     sqlite3_bind_text(statement, index, utf8, -1, SQLITE_TRANSIENT);
 }
 
-void bindBlob(sqlite3_stmt* statement, const int index, const juce::MemoryBlock& data)
+static void bindBlob(sqlite3_stmt* statement, const int index, const juce::MemoryBlock& data)
 {
     sqlite3_bind_blob(statement, index, data.getData(), static_cast<int>(data.getSize()), SQLITE_TRANSIENT);
 }

@@ -104,7 +104,7 @@ constexpr auto supportedAudioFilePatterns = "*.wav;*.aif;*.aiff;*.flac;*.mp3";
 constexpr int activityIndicatorTimerHz = 24;
 constexpr int nameColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(AudioFileTableModel::columnName);
 constexpr int pathColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(AudioFileTableModel::columnPath);
-constexpr int typeColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnType);
+
 constexpr int nameColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnName);
 constexpr int pathColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnPath);
 
@@ -116,7 +116,7 @@ enum FileMenuItemId {
     moveToTrashMenuItemId,
 };
 
-juce::String buildNormalizationFailureMessage(const juce::StringArray& failures)
+static juce::String buildNormalizationFailureMessage(const juce::StringArray& failures)
 {
     if (failures.isEmpty()) {
         return {};
@@ -136,7 +136,7 @@ juce::String buildNormalizationFailureMessage(const juce::StringArray& failures)
     return message.trimEnd();
 }
 
-juce::String getRevealFileMenuLabel()
+static juce::String getRevealFileMenuLabel()
 {
 #if JUCE_MAC
     return "Reveal in Finder";
@@ -147,7 +147,7 @@ juce::String getRevealFileMenuLabel()
 #endif
 }
 
-juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
+static juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 {
     if (const auto extension = record.file.getFileExtension().trimCharactersAtStart("."); extension.isNotEmpty()) {
         return extension.toUpperCase();
@@ -166,7 +166,7 @@ juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
     return "Unknown";
 }
 
-juce::String formatLabelForFile(const juce::File& file)
+static juce::String formatLabelForFile(const juce::File& file)
 {
     auto extension = file.getFileExtension().trimCharactersAtStart(".").toUpperCase();
 
@@ -235,12 +235,12 @@ private:
     bool secondarySortForwards = true;
 };
 
-SecondarySortTableHeader& getSecondarySortHeader(juce::TableListBox& table)
+static SecondarySortTableHeader& getSecondarySortHeader(juce::TableListBox& table)
 {
     return static_cast<SecondarySortTableHeader&>(table.getHeader());
 }
 
-int compareNaturalStrings(const juce::String& left, const juce::String& right)
+static int compareNaturalStrings(const juce::String& left, const juce::String& right)
 {
     return left.compareNatural(right);
 }
@@ -258,7 +258,7 @@ int comparePeaks(Value left, Value right)
     return leftMagnitude < rightMagnitude ? -1 : 1;
 }
 
-int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
+static int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
 {
     const auto leftBitrate = AudioAnalysisService::getAverageBitrateKbps(lhs);
     const auto rightBitrate = AudioAnalysisService::getAverageBitrateKbps(rhs);
@@ -270,7 +270,7 @@ int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& r
     return leftBitrate < rightBitrate ? -1 : 1;
 }
 
-int compareSampleRates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
+static int compareSampleRates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
 {
     if (lhs.sampleRate == rhs.sampleRate) {
         return 0;
@@ -279,7 +279,7 @@ int compareSampleRates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord
     return lhs.sampleRate < rhs.sampleRate ? -1 : 1;
 }
 
-int compareLoudness(const double left, const double right)
+static int compareLoudness(const double left, const double right)
 {
     const auto leftIsNegativeInfinity = left <= AudioAnalysisRecord::negativeInfinityLoudness;
     const auto rightIsNegativeInfinity = right <= AudioAnalysisRecord::negativeInfinityLoudness;
@@ -299,7 +299,7 @@ int compareLoudness(const double left, const double right)
     return left < right ? -1 : 1;
 }
 
-int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, const int columnId)
+static int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, const int columnId)
 {
     switch (columnId) {
         case AudioFileTableModel::columnName:
@@ -479,9 +479,9 @@ AudioBatchComponent::AudioBatchComponent() :
     setSize(1024, 800);
     setWantsKeyboardFocus(true);
 
-    juce::MessageManager::callAsync([safeThis = SafePointer(this)] {
-        if (safeThis != nullptr) {
-            safeThis->refreshAnalysis(false);
+    juce::MessageManager::callAsync([safeThisAsync = SafePointer(this)] {
+        if (safeThisAsync != nullptr) {
+            safeThisAsync->refreshAnalysis(false);
         }
     });
 }
@@ -1830,7 +1830,7 @@ void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source
 
 void AudioBatchComponent::clearCurrentAudioPreview()
 {
-    currentAudioFile = {};
+    currentAudioFile = juce::File();
     currentAudioUrl = {};
     currentWaveformLoadedFromCache = false;
     transportSource.stop();

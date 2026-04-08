@@ -97,21 +97,18 @@ build_mac_app() {
     rm -f "$CLI_APP_DESTINATION"
 
     if [ "$USE_XCODE" = true ]; then
-        # Xcode is a multi-config generator: pass --config at build time
         if [ -n "$(command -v xcbeautify)" ]; then
             time cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE" | xcbeautify
         else
             print_yellow "xcbeautify missing, install it with: brew install xcbeautify"
             time cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE"
         fi
-        # Xcode multi-config generator puts artifacts under a $BUILD_TYPE subdirectory
         GUI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatch_artefacts/$BUILD_TYPE/$GUI_APP_BUNDLE"
         CLI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatchCli_artefacts/$BUILD_TYPE/$CLI_BINARY_NAME"
     else
         time cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME"
-        # Ninja is a single-config generator so there is no $BUILD_TYPE subdirectory
-        GUI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatch_artefacts/$GUI_APP_BUNDLE"
-        CLI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatchCli_artefacts/$CLI_BINARY_NAME"
+        GUI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatch_artefacts/$BUILD_TYPE/$GUI_APP_BUNDLE"
+        CLI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatchCli_artefacts/$BUILD_TYPE/$CLI_BINARY_NAME"
     fi
 
     require_path "$GUI_APP_SOURCE"

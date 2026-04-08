@@ -4,7 +4,7 @@
 
 namespace audiobatch::table
 {
-juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
+static juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 {
     const auto extension = record.file.getFileExtension().trimCharactersAtStart(".");
 
@@ -25,7 +25,7 @@ juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
     return "Unknown";
 }
 
-void drawActivityIndicator(juce::Graphics& g, const juce::Rectangle<float> bounds, const float phase)
+static void drawActivityIndicator(juce::Graphics& g, const juce::Rectangle<float> bounds, const float phase)
 {
     const auto ringBounds = bounds.reduced(1.0f);
     const auto accent = juce::CustomLookAndFeel::blue.withAlpha(0.9f);
@@ -53,19 +53,19 @@ using namespace audiobatch::table;
 
 /// Builds the results table model used by the main file list.
 AudioFileTableModel::AudioFileTableModel(
-    std::vector<AudioAnalysisRecord>& records,
-    std::function<void(int row)> selectionChanged,
-    std::function<void(int columnId, bool isForwards)> sortChanged,
-    std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested,
-    std::function<juce::String(const AudioAnalysisRecord& record)> activeStatusLabelProvider,
-    std::function<float()> activityPhaseProvider
+    std::vector<AudioAnalysisRecord>& sourceRecords,
+    std::function<void(int row)> onSelectionChanged,
+    std::function<void(int columnId, bool isForwards)> onSortChanged,
+    std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,
+    std::function<juce::String(const AudioAnalysisRecord& record)> statusLabelProvider,
+    std::function<float()> phaseProvider
 ) :
-    records(records),
-    selectionChanged(std::move(selectionChanged)),
-    sortChanged(std::move(sortChanged)),
-    contextMenuRequested(std::move(contextMenuRequested)),
-    activeStatusLabelProvider(std::move(activeStatusLabelProvider)),
-    activityPhaseProvider(std::move(activityPhaseProvider))
+    records(sourceRecords),
+    selectionChanged(std::move(onSelectionChanged)),
+    sortChanged(std::move(onSortChanged)),
+    contextMenuRequested(std::move(onContextMenuRequested)),
+    activeStatusLabelProvider(std::move(statusLabelProvider)),
+    activityPhaseProvider(std::move(phaseProvider))
 { }
 
 void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
