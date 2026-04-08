@@ -18,8 +18,8 @@ class AudioBatchComponent :
     public juce::Component,
     public juce::FileDragAndDropTarget,
     public juce::DragAndDropContainer,
-    private juce::ChangeListener,
-    private juce::Timer
+    juce::ChangeListener,
+    juce::Timer
 {
 public:
     /// Creates the UI, opens the analysis cache, and starts the initial scan.
@@ -77,7 +77,7 @@ private:
     juce::StringArray getSelectedRecordPaths() const;
     int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
     void markFilesProcessing(const juce::Array<juce::File>& files, const juce::String& statusLabel);
-    [[nodiscard]] bool canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records) const;
+    [[nodiscard]] static bool canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records);
     [[nodiscard]] juce::String buildNormalizationUnavailableMessage(
         const std::vector<AudioAnalysisRecord>& records
     ) const;
@@ -111,7 +111,7 @@ private:
 
     void sortResults();
     void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
-    void updateResultsTableColumnWidths();
+    void updateResultsTableColumnWidths() const;
     void updateAudioInfo(const AudioAnalysisRecord& record);
     void updateStatusLabel();
     bool shouldDropFilesWhenDraggedExternally(

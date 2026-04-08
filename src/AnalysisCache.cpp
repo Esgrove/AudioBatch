@@ -14,7 +14,7 @@ juce::String columnText(sqlite3_stmt* statement, const int columnIndex)
     return text != nullptr ? juce::String::fromUTF8(reinterpret_cast<const char*>(text)) : juce::String();
 }
 
-juce::MemoryBlock columnBlob(sqlite3_stmt* statement, int columnIndex)
+juce::MemoryBlock columnBlob(sqlite3_stmt* statement, const int columnIndex)
 {
     juce::MemoryBlock data;
 
@@ -68,12 +68,13 @@ juce::String AnalysisCache::normalizedPath(const juce::File& file)
     return file.getFullPathName();
 }
 
-bool AnalysisCache::execute(const juce::String& sql)
+bool AnalysisCache::execute(const juce::String& sql) const
 {
     char* errorMessage = nullptr;
-    const auto result = sqlite3_exec(database, sql.toRawUTF8(), nullptr, nullptr, &errorMessage);
 
-    if (result != SQLITE_OK) {
+    if (const auto result = sqlite3_exec(database, sql.toRawUTF8(), nullptr, nullptr, &errorMessage);
+        result != SQLITE_OK)
+    {
         const auto error
             = errorMessage != nullptr ? juce::String::fromUTF8(errorMessage) : juce::String("Unknown SQLite error");
         utils::log_error("SQLite error: " + error);
@@ -91,7 +92,7 @@ bool AnalysisCache::open()
     return openUnlocked();
 }
 
-bool AnalysisCache::columnExists(const juce::String& tableName, const juce::String& columnName)
+bool AnalysisCache::columnExists(const juce::String& tableName, const juce::String& columnName) const
 {
     const auto sql = "PRAGMA table_info(" + tableName + ");";
 
@@ -244,9 +245,7 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
 
     bindText(statement, 1, normalizedPath(file));
 
-    const auto stepResult = sqlite3_step(statement);
-
-    if (stepResult != SQLITE_ROW) {
+    if (const auto stepResult = sqlite3_step(statement); stepResult != SQLITE_ROW) {
         sqlite3_finalize(statement);
         return false;
     }

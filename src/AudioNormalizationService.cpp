@@ -32,7 +32,7 @@ struct AudioNormalizationFormatSupport {
     juce::String detail;
 };
 
-float peakMagnitude(float peak)
+float peakMagnitude(const float peak)
 {
     return std::abs(peak);
 }
@@ -82,7 +82,7 @@ bool isMp3SourceFile(const juce::File& file)
     return isMp3Extension(normalizedExtension(file));
 }
 
-juce::AudioFormat* getAiffWriterFormat(AudioNormalizationRuntimeState& runtimeState)
+juce::AudioFormat* getAiffWriterFormat(const AudioNormalizationRuntimeState& runtimeState)
 {
     if (auto* format = runtimeState.readFormatManager.findFormatForFileExtension("aif"); format != nullptr) {
         return format;
@@ -101,7 +101,7 @@ juce::File getNormalizationOutputFile(const juce::File& sourceFile)
 }
 
 bool finalizeNormalizationOutput(
-    juce::TemporaryFile& temporaryFile,
+    const juce::TemporaryFile& temporaryFile,
     const juce::File& sourceFile,
     const juce::File& outputFile,
     juce::String& errorMessage
@@ -142,15 +142,15 @@ bool canStoreAiffId3Metadata(const juce::File& file)
     return isAiffExtension(normalizedExtension(file));
 }
 
-bool readExactly(juce::InputStream& input, void* destination, int bytesToRead)
+bool readExactly(juce::InputStream& input, void* destination, const int bytesToRead)
 {
     return bytesToRead >= 0 && input.read(destination, bytesToRead) == bytesToRead;
 }
 
 std::uint32_t readBigEndianUint32(const std::uint8_t* bytes)
 {
-    return (static_cast<std::uint32_t>(bytes[0]) << 24U) | (static_cast<std::uint32_t>(bytes[1]) << 16U)
-        | (static_cast<std::uint32_t>(bytes[2]) << 8U) | static_cast<std::uint32_t>(bytes[3]);
+    return static_cast<std::uint32_t>(bytes[0]) << 24U | static_cast<std::uint32_t>(bytes[1]) << 16U
+        | static_cast<std::uint32_t>(bytes[2]) << 8U | static_cast<std::uint32_t>(bytes[3]);
 }
 
 bool tagMatches(const std::uint8_t* bytes, const char* tag)
@@ -165,7 +165,7 @@ bool startsWithId3Tag(const std::uint8_t* bytes)
 
 bool isAiffFile(const juce::File& file)
 {
-    auto input = file.createInputStream();
+    const auto input = file.createInputStream();
 
     if (input == nullptr) {
         return false;
@@ -183,7 +183,7 @@ bool isAiffFile(const juce::File& file)
 
 bool extractMp3Id3Metadata(const juce::File& sourceFile, juce::MemoryBlock& metadata)
 {
-    auto input = sourceFile.createInputStream();
+    const auto input = sourceFile.createInputStream();
 
     if (input == nullptr) {
         return false;
@@ -203,9 +203,8 @@ bool extractMp3Id3Metadata(const juce::File& sourceFile, juce::MemoryBlock& meta
         return false;
     }
 
-    const auto payloadSize = (static_cast<std::uint32_t>(header[6]) << 21U)
-        | (static_cast<std::uint32_t>(header[7]) << 14U) | (static_cast<std::uint32_t>(header[8]) << 7U)
-        | static_cast<std::uint32_t>(header[9]);
+    const auto payloadSize = static_cast<std::uint32_t>(header[6]) << 21U | static_cast<std::uint32_t>(header[7]) << 14U
+        | static_cast<std::uint32_t>(header[8]) << 7U | static_cast<std::uint32_t>(header[9]);
     const auto hasFooter = (header[5] & 0x10U) != 0;
     const auto totalSize = static_cast<juce::int64>(header.size()) + static_cast<juce::int64>(payloadSize)
         + static_cast<juce::int64>(hasFooter ? 10 : 0);
@@ -221,7 +220,7 @@ bool extractMp3Id3Metadata(const juce::File& sourceFile, juce::MemoryBlock& meta
 
 bool extractAiffId3Metadata(const juce::File& sourceFile, juce::MemoryBlock& metadata)
 {
-    auto input = sourceFile.createInputStream();
+    const auto input = sourceFile.createInputStream();
 
     if (input == nullptr) {
         return false;
@@ -257,7 +256,7 @@ bool extractAiffId3Metadata(const juce::File& sourceFile, juce::MemoryBlock& met
         }
 
         if (tagMatches(chunkHeader.data(), "ID3 ")) {
-            metadata.setSize(static_cast<size_t>(chunkSize), false);
+            metadata.setSize(chunkSize, false);
             return readExactly(*input, metadata.getData(), static_cast<int>(chunkSize));
         }
 
@@ -390,9 +389,7 @@ juce::StringArray getLameCandidatePaths()
 juce::File findLameExecutable()
 {
     for (const auto& candidatePath : getLameCandidatePaths()) {
-        const juce::File candidate(candidatePath);
-
-        if (candidate.existsAsFile()) {
+        if (const juce::File candidate(candidatePath); candidate.existsAsFile()) {
             return candidate;
         }
     }
@@ -415,14 +412,14 @@ juce::AudioFormatWriterOptions buildProbeWriterOptions(juce::AudioFormat& format
 {
     const auto sampleRates = format.getPossibleSampleRates();
     const auto bitDepths = format.getPossibleBitDepths();
-    const auto numChannels = format.canDoStereo() ? 2 : (format.canDoMono() ? 1 : 0);
+    const auto numChannels = format.canDoStereo() ? 2 : format.canDoMono() ? 1 : 0;
 
     if (sampleRates.isEmpty() || bitDepths.isEmpty() || numChannels <= 0) {
         return {};
     }
 
     return juce::AudioFormatWriterOptions()
-        .withSampleRate(static_cast<double>(sampleRates[0]))
+        .withSampleRate(sampleRates[0])
         .withNumChannels(numChannels)
         .withBitsPerSample(bitDepths[0]);
 }
@@ -436,11 +433,11 @@ bool canCreateProbeWriter(juce::AudioFormat& format)
     }
 
     std::unique_ptr<juce::OutputStream> outputStream = std::make_unique<juce::MemoryOutputStream>();
-    auto writer = format.createWriterFor(outputStream, options);
+    const auto writer = format.createWriterFor(outputStream, options);
     return writer != nullptr;
 }
 
-int resolveWriterBitDepth(juce::AudioFormat& format, int preferredBitsPerSample)
+int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredBitsPerSample)
 {
     const auto bitDepths = format.getPossibleBitDepths();
 
@@ -463,7 +460,7 @@ int resolveWriterBitDepth(juce::AudioFormat& format, int preferredBitsPerSample)
     return resolvedBitsPerSample;
 }
 
-double resolveWriterSampleRate(juce::AudioFormat& format, double preferredSampleRate)
+double resolveWriterSampleRate(juce::AudioFormat& format, const double preferredSampleRate)
 {
     const auto sampleRates = format.getPossibleSampleRates();
 
@@ -475,15 +472,15 @@ double resolveWriterSampleRate(juce::AudioFormat& format, double preferredSample
     auto bestDistance = std::abs(preferredSampleRate - static_cast<double>(resolvedSampleRate));
 
     for (const auto sampleRate : sampleRates) {
-        const auto distance = std::abs(preferredSampleRate - static_cast<double>(sampleRate));
-
-        if (distance < bestDistance) {
+        if (const auto distance = std::abs(preferredSampleRate - static_cast<double>(sampleRate));
+            distance < bestDistance)
+        {
             resolvedSampleRate = sampleRate;
             bestDistance = distance;
         }
     }
 
-    return static_cast<double>(resolvedSampleRate);
+    return resolvedSampleRate;
 }
 
 int resolvePreferredOutputBitDepth(
@@ -506,8 +503,8 @@ int resolvePreferredOutputBitDepth(
 bool canAcceptReadFailureForNormalization(
     const juce::AudioFormatReader& reader,
     const juce::File& sourceFile,
-    juce::int64 samplePosition,
-    int samplesThisBlock
+    const juce::int64 samplePosition,
+    const int samplesThisBlock
 )
 {
     if (!isMp3SourceFile(sourceFile)) {
@@ -518,7 +515,7 @@ bool canAcceptReadFailureForNormalization(
 }
 
 juce::AudioFormat* getWriterFormatForExtension(
-    AudioNormalizationRuntimeState& runtimeState,
+    const AudioNormalizationRuntimeState& runtimeState,
     const juce::String& extension
 )
 {
@@ -595,7 +592,7 @@ std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormaliza
     support.reserve(static_cast<std::size_t>(runtimeState.readFormatManager.getNumKnownFormats()));
 
     for (int index = 0; index < runtimeState.readFormatManager.getNumKnownFormats(); ++index) {
-        auto* format = runtimeState.readFormatManager.getKnownFormat(index);
+        const auto* format = runtimeState.readFormatManager.getKnownFormat(index);
 
         if (format == nullptr) {
             continue;
@@ -618,7 +615,7 @@ std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormaliza
         support.push_back(std::move(entry));
     }
 
-    std::sort(support.begin(), support.end(), [](const auto& lhs, const auto& rhs) {
+    std::ranges::sort(support, [](const auto& lhs, const auto& rhs) {
         if (lhs.canWriteBack != rhs.canWriteBack) {
             return lhs.canWriteBack > rhs.canWriteBack;
         }
@@ -675,9 +672,11 @@ juce::String validateTemporaryNormalizedOutput(
         return "Normalization failed to produce a valid output file. The original file was left unchanged.";
     }
 
-    std::unique_ptr<juce::AudioFormatReader> encodedReader(formatManager.createReaderFor(temporaryOutputFile));
-
-    if (encodedReader == nullptr || encodedReader->lengthInSamples <= 0) {
+    if (const std::unique_ptr<juce::AudioFormatReader> encodedReader(
+            formatManager.createReaderFor(temporaryOutputFile)
+        );
+        encodedReader == nullptr || encodedReader->lengthInSamples <= 0)
+    {
         return "Normalization failed before the output file could be verified. The original file was left unchanged.";
     }
 
@@ -694,7 +693,7 @@ bool AudioNormalizationService::canNormalizeFile(const juce::File& file)
 juce::String AudioNormalizationService::getNormalizationSupportMessage(const juce::File& file)
 {
     auto& runtimeState = getThreadLocalRuntimeState();
-    auto* format = runtimeState.readFormatManager.findFormatForFileExtension(normalizedExtension(file));
+    const auto* format = runtimeState.readFormatManager.findFormatForFileExtension(normalizedExtension(file));
 
     if (format == nullptr) {
         return "Unsupported audio format";
@@ -715,14 +714,14 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
     juce::StringArray writableLines;
     juce::StringArray readOnlyLines;
 
-    for (const auto& entry : support) {
-        auto line = "- " + entry.formatName + " (" + formatExtensionsToText(entry.fileExtensions) + ")";
+    for (const auto& [formatName, fileExtensions, canWriteBack, detail] : support) {
+        auto line = "- " + formatName + " (" + formatExtensionsToText(fileExtensions) + ")";
 
-        if (entry.detail.isNotEmpty()) {
-            line << ": " << entry.detail;
+        if (detail.isNotEmpty()) {
+            line << ": " << detail;
         }
 
-        if (entry.canWriteBack) {
+        if (canWriteBack) {
             writableLines.add(line);
         } else {
             readOnlyLines.add(line);
@@ -752,16 +751,16 @@ juce::AudioFormatManager& AudioNormalizationService::getThreadLocalFormatManager
     return getThreadLocalRuntimeState().readFormatManager;
 }
 
-AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAnalysisRecord& sourceRecord)
+AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAnalysisRecord& record)
 {
-    const auto& file = sourceRecord.file;
+    const auto& file = record.file;
     const auto outputFile = getNormalizationOutputFile(file);
 
     if (!file.existsAsFile()) {
         return AudioNormalizationResult::failure(file, "File does not exist");
     }
 
-    if (!sourceRecord.isReady()) {
+    if (!record.isReady()) {
         return AudioNormalizationResult::failure(file, "File analysis must finish before normalization");
     }
 
@@ -780,7 +779,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
         return AudioNormalizationResult::failure(file, "Unsupported or unreadable audio file");
     }
 
-    const auto peak = peakMagnitude(sourceRecord.overallPeak);
+    const auto peak = peakMagnitude(record.overallPeak);
 
     if (peak <= 0.0f) {
         return AudioNormalizationResult::failure(file, "File contains no signal that can be normalized");
@@ -811,7 +810,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
     }
 
     const auto writerSampleRate = resolveWriterSampleRate(*writerFormat, reader->sampleRate);
-    const auto preferredBitDepth = resolvePreferredOutputBitDepth(sourceRecord, *reader, file);
+    const auto preferredBitDepth = resolvePreferredOutputBitDepth(record, *reader, file);
     const auto writerBitDepth = resolveWriterBitDepth(*writerFormat, preferredBitDepth);
 
     auto writerOptions = juce::AudioFormatWriterOptions()
@@ -831,7 +830,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
     }
 
     juce::AudioBuffer<float> buffer(static_cast<int>(reader->numChannels), normalizationBlockSize);
-    std::vector<float*> channelPointers(static_cast<std::size_t>(reader->numChannels));
+    std::vector<float*> channelPointers(reader->numChannels);
 
     for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
         channelPointers[static_cast<std::size_t>(channel)] = buffer.getWritePointer(channel);
@@ -850,7 +849,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
             return AudioNormalizationResult::failure(file, "Failed while reading audio data for normalization");
         }
 
-        buffer.applyGain(static_cast<float>(gain));
+        buffer.applyGain(gain);
 
         if (!writer->writeFromAudioSampleBuffer(buffer, 0, samplesThisBlock)) {
             return AudioNormalizationResult::failure(file, "Failed while writing normalized audio data");
@@ -869,9 +868,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
         return AudioNormalizationResult::failure(file, validationError);
     }
 
-    juce::String finalizeError;
-
-    if (!finalizeNormalizationOutput(temporaryFile, file, outputFile, finalizeError)) {
+    if (juce::String finalizeError; !finalizeNormalizationOutput(temporaryFile, file, outputFile, finalizeError)) {
         return AudioNormalizationResult::failure(file, finalizeError);
     }
 

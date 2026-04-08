@@ -1,7 +1,6 @@
 #include "ThumbnailComponent.h"
 
 #include "CustomLookAndFeel.h"
-#include "utils.h"
 
 #include <JuceHeader.h>
 
@@ -27,7 +26,7 @@ void ThumbnailComponent::paint(juce::Graphics& g)
     g.setColour(juce::CustomLookAndFeel::blue);
 
     if (thumbnail.getTotalLength() > 0.0) {
-        auto thumbArea = getLocalBounds();
+        const auto thumbArea = getLocalBounds();
         thumbnail.drawChannels(g, thumbArea.reduced(2), visibleRange.getStart(), visibleRange.getEnd(), 1.0f);
     } else {
         g.setFont(14.0f);
@@ -49,8 +48,7 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
         return false;
     }
 
-    juce::MemoryInputStream input(waveformData, false);
-    if (!thumbnail.loadFrom(input)) {
+    if (juce::MemoryInputStream input(waveformData, false); !thumbnail.loadFrom(input)) {
         visibleRange = {};
         stopTimer();
         repaint();
@@ -102,9 +100,7 @@ void ThumbnailComponent::setURL(const juce::URL& url)
         return;
     }
 
-    juce::InputSource* inputSource = new juce::URLInputSource(url);
-
-    if (inputSource != nullptr) {
+    if (juce::InputSource* inputSource = new juce::URLInputSource(url); inputSource != nullptr) {
         thumbnail.setSource(inputSource);
 
         if (thumbnail.getTotalLength() > 0.0) {
@@ -128,7 +124,7 @@ juce::StringArray ThumbnailComponent::getLastDroppedFiles() const
     return lastDroppedFiles;
 }
 
-void ThumbnailComponent::setRange(juce::Range<double> newRange)
+void ThumbnailComponent::setRange(const juce::Range<double> newRange)
 {
     visibleRange = newRange;
     updateCursorPosition();
@@ -179,7 +175,7 @@ void ThumbnailComponent::mouseDrag(const juce::MouseEvent& e)
 {
     if (canMoveTransport()) {
         transportSource.stop();
-        transportSource.setPosition(juce::jmax(0.0, xToTime((float)e.x)));
+        transportSource.setPosition(juce::jmax(0.0, xToTime(static_cast<float>(e.x))));
     }
 }
 
@@ -200,8 +196,8 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent&, const juce::Mou
         return;
     }
 
-    auto newStart = visibleRange.getStart() - wheel.deltaX * (visibleRange.getLength()) * 0.10;
-    newStart = juce::jlimit(0.0, juce::jmax(0.0, thumbnail.getTotalLength() - (visibleRange.getLength())), newStart);
+    auto newStart = visibleRange.getStart() - wheel.deltaX * visibleRange.getLength() * 0.10;
+    newStart = juce::jlimit(0.0, juce::jmax(0.0, thumbnail.getTotalLength() - visibleRange.getLength()), newStart);
 
     if (canMoveTransport()) {
         setRange({newStart, newStart + visibleRange.getLength()});
@@ -216,12 +212,13 @@ float ThumbnailComponent::timeToX(const double time) const
         return 0;
     }
 
-    return (float)getWidth() * (float)((time - visibleRange.getStart()) / visibleRange.getLength());
+    return static_cast<float>(getWidth())
+        * static_cast<float>((time - visibleRange.getStart()) / visibleRange.getLength());
 }
 
 double ThumbnailComponent::xToTime(const float x) const
 {
-    return (x / (float)getWidth()) * (visibleRange.getLength()) + visibleRange.getStart();
+    return x / static_cast<float>(getWidth()) * visibleRange.getLength() + visibleRange.getStart();
 }
 
 bool ThumbnailComponent::canMoveTransport() const noexcept
@@ -234,7 +231,7 @@ void ThumbnailComponent::timerCallback()
     if (canMoveTransport()) {
         updateCursorPosition();
     } else {
-        setRange(visibleRange.movedToStartAt(transportSource.getCurrentPosition() - (visibleRange.getLength() / 2.0)));
+        setRange(visibleRange.movedToStartAt(transportSource.getCurrentPosition() - visibleRange.getLength() / 2.0));
     }
 }
 
@@ -243,19 +240,21 @@ void ThumbnailComponent::updateCursorPosition()
     currentPositionMarker.setVisible(transportSource.isPlaying() || isMouseButtonDown());
 
     currentPositionMarker.setRectangle(
-        juce::Rectangle<float>(timeToX(transportSource.getCurrentPosition()) - 0.75f, 0, 1.5f, (float)(getHeight()))
+        juce::Rectangle<float>(
+            timeToX(transportSource.getCurrentPosition()) - 0.75f, 0, 1.5f, static_cast<float>(getHeight())
+        )
     );
 }
 
-void ThumbnailComponent::setZoom(double zoomLevel)
+void ThumbnailComponent::setZoom(const double zoomLevel)
 {
-    auto start = transportSource.getCurrentPosition();
-    auto zoom = thumbnail.getTotalLength() / zoomLevel;
-    auto end = juce::jmin(thumbnail.getTotalLength(), start + zoom);
+    const auto start = transportSource.getCurrentPosition();
+    const auto zoom = thumbnail.getTotalLength() / zoomLevel;
+    const auto end = juce::jmin(thumbnail.getTotalLength(), start + zoom);
     if (start < thumbnail.getTotalLength() * 0.05 || thumbnail.getTotalLength() - start > zoom) {
-        setRange(juce::Range<double>(start, end));
+        setRange(juce::Range(start, end));
     } else {
         // remaining distance is shorter than zoom length -> zoom from end
-        setRange(juce::Range<double>(thumbnail.getTotalLength() - zoom, end));
+        setRange(juce::Range(thumbnail.getTotalLength() - zoom, end));
     }
 }

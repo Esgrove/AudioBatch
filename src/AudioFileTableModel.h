@@ -26,7 +26,7 @@ public:
         columnStatus,
     };
 
-    static consteval int initialColumnWidth(ColumnId columnId)
+    static consteval int initialColumnWidth(const ColumnId columnId)
     {
         switch (columnId) {
             case columnName:
@@ -56,7 +56,7 @@ public:
         return 0;
     }
 
-    static consteval int minimumColumnWidth(ColumnId columnId)
+    static consteval int minimumColumnWidth(const ColumnId columnId)
     {
         switch (columnId) {
             case columnName:

@@ -11,7 +11,7 @@ public:
     explicit CustomLookAndFeel(bool darkModeEnabled);
 
     /// Switches the active theme palette without rebuilding the look-and-feel object.
-    [[maybe_unused]] void setDarkTheme(bool darkModeEnabled)
+    [[maybe_unused]] void setDarkTheme(const bool darkModeEnabled)
     {
         darkTheme = darkModeEnabled;
     }

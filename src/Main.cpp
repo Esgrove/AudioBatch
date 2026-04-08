@@ -24,11 +24,11 @@ class MainWindow :
     private juce::MenuBarModel
 #else
     ,
-    private juce::MenuBarModel
+    juce::MenuBarModel
 #endif
 {
 public:
-    MainWindow(juce::String name) :
+    explicit MainWindow(const juce::String& name) :
         DocumentWindow(name, juce::CustomLookAndFeel::greyDark, DocumentWindow::allButtons),
         audioBatch(std::make_unique<AudioBatchComponent>())
     {
@@ -96,7 +96,7 @@ private:
 #endif
     }
 
-    juce::PopupMenu getMenuForIndex(int topLevelMenuIndex, const juce::String& menuName) override
+    juce::PopupMenu getMenuForIndex(const int topLevelMenuIndex, const juce::String& menuName) override
     {
         juce::ignoreUnused(menuName);
 
@@ -148,7 +148,7 @@ private:
         return menu;
     }
 
-    void menuItemSelected(int menuItemID, int topLevelMenuIndex) override
+    void menuItemSelected(const int menuItemID, int topLevelMenuIndex) override
     {
         juce::ignoreUnused(topLevelMenuIndex);
 
@@ -214,7 +214,7 @@ public:
 
     void initialise(const juce::String& commandLineParameters) override
     {
-        juce::ArgumentList arguments {getApplicationName(), commandLineParameters};
+        const juce::ArgumentList arguments {getApplicationName(), commandLineParameters};
         const bool startHeadless = arguments.containsOption("--headless|-H");
 
         // Init log file in OS default location under dir "AudioBatch"
@@ -238,7 +238,7 @@ public:
         } else {
             mainWindow->showAndActivate();
 
-            juce::MessageManager::callAsync([safeWindow = juce::Component::SafePointer<MainWindow>(mainWindow.get())] {
+            juce::MessageManager::callAsync([safeWindow = juce::Component::SafePointer(mainWindow.get())] {
                 if (safeWindow != nullptr) {
                     safeWindow->showAndActivate();
                 }
@@ -254,7 +254,7 @@ public:
 
     void systemRequestedQuit() override
     {
-        if (auto exit_code = getApplicationReturnValue(); exit_code != 0) {
+        if (const auto exit_code = getApplicationReturnValue(); exit_code != 0) {
             utils::log_info("Quit with non-zero exit code: " + juce::String(exit_code));
         } else {
             utils::log_info("Quit");

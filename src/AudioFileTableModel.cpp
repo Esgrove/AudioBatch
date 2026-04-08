@@ -6,7 +6,7 @@ namespace
 {
 juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 {
-    auto extension = record.file.getFileExtension().trimCharactersAtStart(".");
+    const auto extension = record.file.getFileExtension().trimCharactersAtStart(".");
 
     if (extension.isNotEmpty()) {
         return extension.toUpperCase();
@@ -25,12 +25,12 @@ juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
     return "Unknown";
 }
 
-void drawActivityIndicator(juce::Graphics& g, juce::Rectangle<float> bounds, float phase)
+void drawActivityIndicator(juce::Graphics& g, const juce::Rectangle<float> bounds, const float phase)
 {
     const auto ringBounds = bounds.reduced(1.0f);
     const auto accent = juce::CustomLookAndFeel::blue.withAlpha(0.9f);
     const auto background = juce::CustomLookAndFeel::greyMiddle.withAlpha(0.3f);
-    const auto startAngle = (phase * juce::MathConstants<float>::twoPi) - juce::MathConstants<float>::halfPi;
+    const auto startAngle = phase * juce::MathConstants<float>::twoPi - juce::MathConstants<float>::halfPi;
     const auto endAngle = startAngle + juce::MathConstants<float>::pi * 1.2f;
 
     g.setColour(background);
@@ -51,19 +51,19 @@ void drawActivityIndicator(juce::Graphics& g, juce::Rectangle<float> bounds, flo
 
 /// Builds the results table model used by the main file list.
 AudioFileTableModel::AudioFileTableModel(
-    std::vector<AudioAnalysisRecord>& recordsToUse,
-    std::function<void(int row)> selectionChangedCallback,
-    std::function<void(int columnId, bool isForwards)> sortChangedCallback,
-    std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequestedCallback,
-    std::function<juce::String(const AudioAnalysisRecord& record)> activeStatusLabelProviderCallback,
-    std::function<float()> activityPhaseProviderCallback
+    std::vector<AudioAnalysisRecord>& records,
+    std::function<void(int row)> selectionChanged,
+    std::function<void(int columnId, bool isForwards)> sortChanged,
+    std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested,
+    std::function<juce::String(const AudioAnalysisRecord& record)> activeStatusLabelProvider,
+    std::function<float()> activityPhaseProvider
 ) :
-    records(recordsToUse),
-    selectionChanged(std::move(selectionChangedCallback)),
-    sortChanged(std::move(sortChangedCallback)),
-    contextMenuRequested(std::move(contextMenuRequestedCallback)),
-    activeStatusLabelProvider(std::move(activeStatusLabelProviderCallback)),
-    activityPhaseProvider(std::move(activityPhaseProviderCallback))
+    records(records),
+    selectionChanged(std::move(selectionChanged)),
+    sortChanged(std::move(sortChanged)),
+    contextMenuRequested(std::move(contextMenuRequested)),
+    activeStatusLabelProvider(std::move(activeStatusLabelProvider)),
+    activityPhaseProvider(std::move(activityPhaseProvider))
 { }
 
 void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
@@ -101,7 +101,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
-        "Peak Max",
+        "Peak",
         columnOverallPeak,
         initialColumnWidth(columnOverallPeak),
         minimumColumnWidth(columnOverallPeak),
@@ -133,7 +133,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
-        "Max Short",
+        "LUFS-S",
         columnMaxShortTermLufs,
         initialColumnWidth(columnMaxShortTermLufs),
         minimumColumnWidth(columnMaxShortTermLufs),
@@ -141,7 +141,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
-        "Int LUFS",
+        "LUFS-I",
         columnIntegratedLufs,
         initialColumnWidth(columnIntegratedLufs),
         minimumColumnWidth(columnIntegratedLufs),
@@ -174,8 +174,7 @@ juce::var AudioFileTableModel::getDragSourceDescription(const juce::SparseSet<in
             continue;
         }
 
-        const auto& record = records[static_cast<std::size_t>(rowNumber)];
-        if (record.file.existsAsFile()) {
+        if (const auto& record = records[static_cast<std::size_t>(rowNumber)]; record.file.existsAsFile()) {
             filePaths.addIfNotAlreadyThere(record.file.getFullPathName());
         }
     }
@@ -188,7 +187,7 @@ void AudioFileTableModel::paintRowBackground(
     int rowNumber,
     int width,
     int height,
-    bool rowIsSelected
+    const bool rowIsSelected
 )
 {
     juce::ignoreUnused(rowNumber, width, height);
@@ -198,15 +197,15 @@ void AudioFileTableModel::paintRowBackground(
         return;
     }
 
-    g.fillAll((rowNumber % 2 == 0) ? juce::CustomLookAndFeel::greySemiDark : juce::CustomLookAndFeel::greyMediumDark);
+    g.fillAll(rowNumber % 2 == 0 ? juce::CustomLookAndFeel::greySemiDark : juce::CustomLookAndFeel::greyMediumDark);
 }
 
 void AudioFileTableModel::paintCell(
     juce::Graphics& g,
-    int rowNumber,
-    int columnId,
-    int width,
-    int height,
+    const int rowNumber,
+    const int columnId,
+    const int width,
+    const int height,
     bool rowIsSelected
 )
 {
@@ -219,7 +218,7 @@ void AudioFileTableModel::paintCell(
     const auto& record = records[static_cast<std::size_t>(rowNumber)];
     juce::String text;
     auto justification = juce::Justification::centredLeft;
-    auto textBounds = juce::Rectangle<int>(4, 0, width - 8, height);
+    auto textBounds = juce::Rectangle(4, 0, width - 8, height);
     auto font = juce::CustomLookAndFeel::textFont;
 
     switch (columnId) {
@@ -268,7 +267,7 @@ void AudioFileTableModel::paintCell(
                 text = AudioAnalysisService::formatStatus(record);
             } else {
                 const auto indicatorSize = static_cast<float>(juce::jmin(height - 8, 14));
-                const auto indicatorArea = juce::Rectangle<float>(
+                const auto indicatorArea = juce::Rectangle(
                     static_cast<float>(textBounds.getX()),
                     (static_cast<float>(height) - indicatorSize) * 0.5f,
                     indicatorSize,
@@ -292,21 +291,21 @@ void AudioFileTableModel::paintCell(
     g.fillRect(width - 1, 0, 1, height);
 }
 
-void AudioFileTableModel::selectedRowsChanged(int lastRowSelected)
+void AudioFileTableModel::selectedRowsChanged(const int lastRowSelected)
 {
     if (selectionChanged != nullptr) {
         selectionChanged(lastRowSelected);
     }
 }
 
-void AudioFileTableModel::cellClicked(int rowNumber, int columnId, const juce::MouseEvent& event)
+void AudioFileTableModel::cellClicked(const int rowNumber, const int columnId, const juce::MouseEvent& event)
 {
     if (event.mods.isPopupMenu() && contextMenuRequested != nullptr) {
         contextMenuRequested(rowNumber, columnId, event);
     }
 }
 
-void AudioFileTableModel::sortOrderChanged(int newSortColumnId, bool isForwards)
+void AudioFileTableModel::sortOrderChanged(const int newSortColumnId, const bool isForwards)
 {
     if (sortChanged != nullptr) {
         sortChanged(newSortColumnId, isForwards);

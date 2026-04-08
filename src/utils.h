@@ -102,8 +102,8 @@ inline juce::String format_json(const juce::var& object)
 /// This function should not be called directly outside utils.h!
 static void write_to_log(const juce::String& message, [[maybe_unused]] Level log_level = Level::info)
 {
-    auto timestamp = juce::Time::getCurrentTime().formatted("%H:%M:%S ");
-    auto log_message = timestamp + message;
+    const auto timestamp = juce::Time::getCurrentTime().formatted("%H:%M:%S ");
+    const auto log_message = timestamp + message;
     // Print the log messages to stdout / stderr when running in release configuration, since
     // otherwise log output will not be visible when running the app from command line.
     // In debug builds, the log messages are printed to console already by juce::FileLogger,
@@ -147,7 +147,7 @@ inline void log_error(const juce::String& message)
     write_to_log("[ERROR]: " + message, Level::error);
 }
 
-inline void log_json(const juce::var& object, bool debug = false)
+inline void log_json(const juce::var& object, const bool debug = false)
 {
     if (debug) {
         log_debug(format_json(object));

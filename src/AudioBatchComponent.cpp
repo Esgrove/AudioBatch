@@ -41,7 +41,7 @@ public:
 
     void paint(juce::Graphics& g) override
     {
-        auto bounds = getLocalBounds().toFloat();
+        const auto bounds = getLocalBounds().toFloat();
         g.setColour(juce::CustomLookAndFeel::greySemiDark.withAlpha(0.85f));
         g.fillRoundedRectangle(bounds, 6.0f);
 
@@ -63,11 +63,11 @@ public:
         const auto fieldArea = bounds.removeFromLeft(fieldWidth);
 
         for (int row = 0; row < rowCount; ++row) {
-            auto fieldRow = juce::Rectangle<int>(
+            const auto fieldRow = juce::Rectangle(
                 fieldArea.getX(), fieldArea.getY() + row * rowHeight, fieldArea.getWidth(), rowHeight
             );
-            auto valueRow
-                = juce::Rectangle<int>(bounds.getX(), bounds.getY() + row * rowHeight, bounds.getWidth(), rowHeight);
+            const auto valueRow
+                = juce::Rectangle(bounds.getX(), bounds.getY() + row * rowHeight, bounds.getWidth(), rowHeight);
 
             fieldLabels[static_cast<std::size_t>(row)]->setBounds(fieldRow);
             valueLabels[static_cast<std::size_t>(row)]->setBounds(valueRow);
@@ -75,7 +75,7 @@ public:
     }
 
 private:
-    void ensureLabelCount(std::size_t requiredCount)
+    void ensureLabelCount(const std::size_t requiredCount)
     {
         while (fieldLabels.size() < requiredCount) {
             auto fieldLabel = std::make_unique<juce::Label>();
@@ -149,9 +149,7 @@ juce::String getRevealFileMenuLabel()
 
 juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 {
-    auto extension = record.file.getFileExtension().trimCharactersAtStart(".");
-
-    if (extension.isNotEmpty()) {
+    if (const auto extension = record.file.getFileExtension().trimCharactersAtStart("."); extension.isNotEmpty()) {
         return extension.toUpperCase();
     }
 
@@ -188,7 +186,7 @@ public:
         secondarySortRequested(std::move(secondarySortRequestedCallback))
     { }
 
-    void columnClicked(int columnId, const juce::ModifierKeys& mods) override
+    void columnClicked(const int columnId, const juce::ModifierKeys& mods) override
     {
         if ((mods.isCtrlDown() || mods.isCommandDown()) && secondarySortRequested != nullptr) {
             secondarySortRequested(columnId);
@@ -198,7 +196,7 @@ public:
         juce::TableHeaderComponent::columnClicked(columnId, mods);
     }
 
-    void setSecondarySortIndicator(int columnId, bool isForwards)
+    void setSecondarySortIndicator(const int columnId, const bool isForwards)
     {
         if (baseColumnNames.empty()) {
             cacheBaseColumnNames();
@@ -292,7 +290,7 @@ int compareLoudness(const double left, const double right)
     return left < right ? -1 : 1;
 }
 
-int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, int columnId)
+int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, const int columnId)
 {
     switch (columnId) {
         case AudioFileTableModel::columnName:
@@ -339,9 +337,9 @@ AudioBatchComponent::AudioBatchComponent() :
     normalizeCoordinator(),
     fileTableModel(
         analysisResults,
-        [this](int row) { handleSelectionChanged(row); },
-        [this](int columnId, bool isForwards) { handleSortRequested(columnId, isForwards); },
-        [this](int row, int columnId, const juce::MouseEvent& event) {
+        [this](const int row) { handleSelectionChanged(row); },
+        [this](const int columnId, const bool isForwards) { handleSortRequested(columnId, isForwards); },
+        [this](const int row, const int columnId, const juce::MouseEvent& event) {
             handleFileContextMenuRequested(row, columnId, event);
         },
         [this](const AudioAnalysisRecord& record) { return getActiveStatusLabel(record); },
@@ -362,7 +360,7 @@ AudioBatchComponent::AudioBatchComponent() :
     statusLabel.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(statusLabel);
 
-    resultsTable.setHeader(std::make_unique<SecondarySortTableHeader>([this](int columnId) {
+    resultsTable.setHeader(std::make_unique<SecondarySortTableHeader>([this](const int columnId) {
         handleSecondarySortRequested(columnId);
     }));
     AudioFileTableModel::configureHeader(resultsTable.getHeader());
@@ -384,7 +382,7 @@ AudioBatchComponent::AudioBatchComponent() :
     thumbnail = std::make_unique<ThumbnailComponent>(formatManager, transportSource);
     addAndMakeVisible(thumbnail.get());
     thumbnail->addChangeListener(this);
-    thumbnail->setMouseWheelZoomCallback([this](double zoomFactor) {
+    thumbnail->setMouseWheelZoomCallback([this](const double zoomFactor) {
         zoomSlider.setValue(zoomSlider.getValue() * zoomFactor);
     });
     thumbnail->setThumbnailFullyLoadedCallback([this] { handleThumbnailFullyLoaded(); });
@@ -423,7 +421,7 @@ AudioBatchComponent::AudioBatchComponent() :
 
     analysisCache.open();
 
-    const SafePointer<AudioBatchComponent> safeThis(this);
+    const SafePointer safeThis(this);
     analysisCoordinator.setResultCallback([safeThis](const AudioAnalysisRecord& record) {
         juce::MessageManager::callAsync([safeThis, record] {
             if (safeThis != nullptr) {
@@ -455,8 +453,8 @@ AudioBatchComponent::AudioBatchComponent() :
         });
     });
 
-    juce::RuntimePermissions::request(juce::RuntimePermissions::recordAudio, [this](bool granted) {
-        int numInputChannels = granted ? 2 : 0;
+    juce::RuntimePermissions::request(juce::RuntimePermissions::recordAudio, [this](const bool granted) {
+        const int numInputChannels = granted ? 2 : 0;
         audioDeviceManager.initialise(numInputChannels, 2, nullptr, true, {}, nullptr);
     });
 
@@ -527,7 +525,7 @@ void AudioBatchComponent::resized()
 
     auto info = thumbnail->getBounds();
 
-    auto space = juce::jmin(250, juce::jmax(150, juce::roundToIntAccurate(r.getWidth() * 0.2)));
+    const auto space = juce::jmin(250, juce::jmax(150, juce::roundToIntAccurate(r.getWidth() * 0.2)));
     auto control = info.removeFromLeft(space);
     auto buttons = control.removeFromBottom(50);
 
@@ -548,7 +546,7 @@ void AudioBatchComponent::resized()
     thumbnail->setBounds(info);
 }
 
-void AudioBatchComponent::updateResultsTableColumnWidths()
+void AudioBatchComponent::updateResultsTableColumnWidths() const
 {
     auto& header = resultsTable.getHeader();
 
@@ -610,14 +608,12 @@ void AudioBatchComponent::chooseRootFolder()
 
     directoryChooser->launchAsync(
         juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
-        [safeThis = SafePointer<AudioBatchComponent>(this)](const juce::FileChooser& chooser) {
+        [safeThis = SafePointer(this)](const juce::FileChooser& chooser) {
             if (safeThis == nullptr) {
                 return;
             }
 
-            const auto selectedFolder = chooser.getResult();
-
-            if (selectedFolder.isDirectory()) {
+            if (const auto selectedFolder = chooser.getResult(); selectedFolder.isDirectory()) {
                 safeThis->currentRoot = selectedFolder;
                 safeThis->currentRootLabel.setText(selectedFolder.getFullPathName(), juce::dontSendNotification);
                 safeThis->currentRootLabel.setTooltip(selectedFolder.getFullPathName());
@@ -707,14 +703,14 @@ void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
     startAnalysis(droppedFiles, false, false, false);
 }
 
-void AudioBatchComponent::refreshAnalysis(bool forceRefresh)
+void AudioBatchComponent::refreshAnalysis(const bool forceRefresh)
 {
     juce::Array<juce::File> inputPaths;
     inputPaths.add(currentRoot);
     startAnalysis(inputPaths, true, forceRefresh, true);
 }
 
-void AudioBatchComponent::handleFileContextMenuRequested(int row, int columnId, const juce::MouseEvent& event)
+void AudioBatchComponent::handleFileContextMenuRequested(const int row, int columnId, const juce::MouseEvent& event)
 {
     juce::ignoreUnused(columnId);
 
@@ -729,7 +725,7 @@ void AudioBatchComponent::handleFileContextMenuRequested(int row, int columnId, 
     showFileContextMenu(row, event.getScreenPosition());
 }
 
-void AudioBatchComponent::showFileContextMenu(int row, juce::Point<int> screenPosition)
+void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> screenPosition)
 {
     if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
         return;
@@ -749,12 +745,12 @@ void AudioBatchComponent::showFileContextMenu(int row, juce::Point<int> screenPo
     menu.addSeparator();
     menu.addItem(moveToTrashMenuItemId, "Move to Trash", record.file.exists());
 
-    const auto safeThis = SafePointer<AudioBatchComponent>(this);
+    const auto safeThis = SafePointer(this);
     menu.showMenuAsync(
         juce::PopupMenu::Options()
-            .withTargetScreenArea(juce::Rectangle<int>(screenPosition.x, screenPosition.y, 1, 1))
+            .withTargetScreenArea(juce::Rectangle(screenPosition.x, screenPosition.y, 1, 1))
             .withParentComponent(this),
-        [safeThis, row](int result) {
+        [safeThis, row](const int result) {
             if (safeThis == nullptr) {
                 return;
             }
@@ -782,22 +778,20 @@ void AudioBatchComponent::showFileContextMenu(int row, juce::Point<int> screenPo
     );
 }
 
-void AudioBatchComponent::revealRecordInFileManager(int row) const
+void AudioBatchComponent::revealRecordInFileManager(const int row) const
 {
     if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
         return;
     }
 
-    const auto& record = analysisResults[static_cast<std::size_t>(row)];
-
-    if (record.file.exists()) {
+    if (const auto& record = analysisResults[static_cast<std::size_t>(row)]; record.file.exists()) {
         record.file.revealToUser();
     } else {
         record.file.getParentDirectory().revealToUser();
     }
 }
 
-void AudioBatchComponent::revealRecordParentDirectory(int row) const
+void AudioBatchComponent::revealRecordParentDirectory(const int row) const
 {
     if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
         return;
@@ -810,7 +804,7 @@ void AudioBatchComponent::revealRecordParentDirectory(int row) const
     }
 }
 
-void AudioBatchComponent::moveSelectedRecordsToTrash(bool promptForConfirmation)
+void AudioBatchComponent::moveSelectedRecordsToTrash(const bool promptForConfirmation)
 {
     const auto selectedRows = resultsTable.getSelectedRows();
 
@@ -852,12 +846,12 @@ void AudioBatchComponent::moveSelectedRecordsToTrash(bool promptForConfirmation)
         return;
     }
 
-    const auto safeThis = SafePointer<AudioBatchComponent>(this);
+    const auto safeThis = SafePointer(this);
     juce::AlertWindow::showAsync(
         juce::MessageBoxOptions::makeOptionsOkCancel(
             juce::MessageBoxIconType::WarningIcon, "Move to Trash", message, "Move to Trash", "Cancel", this
         ),
-        [safeThis, filesToTrash, removedPaths, fallbackRow = selectedRows[0]](int result) {
+        [safeThis, filesToTrash, removedPaths, fallbackRow = selectedRows[0]](const int result) {
             if (safeThis == nullptr || result == 0) {
                 return;
             }
@@ -869,7 +863,7 @@ void AudioBatchComponent::moveSelectedRecordsToTrash(bool promptForConfirmation)
 void AudioBatchComponent::runMoveToTrash(
     const juce::Array<juce::File>& filesToTrash,
     const juce::StringArray& removedPaths,
-    int fallbackRow
+    const int fallbackRow
 )
 {
     juce::StringArray failedPaths;
@@ -928,9 +922,7 @@ juce::Array<juce::File> AudioBatchComponent::getSelectedRecordFiles() const
             continue;
         }
 
-        const auto& file = analysisResults[static_cast<std::size_t>(rowNumber)].file;
-
-        if (file.existsAsFile()) {
+        if (const auto& file = analysisResults[static_cast<std::size_t>(rowNumber)].file; file.existsAsFile()) {
             selectedFiles.addIfNotAlreadyThere(file);
         }
     }
@@ -965,7 +957,7 @@ std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedNormalizableRec
     return selectedRecords;
 }
 
-bool AudioBatchComponent::canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records) const
+bool AudioBatchComponent::canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records)
 {
     if (records.empty()) {
         return false;
@@ -1109,7 +1101,7 @@ void AudioBatchComponent::restoreSelectionByPaths(const juce::StringArray& selec
     resultsTable.setSelectedRows(selectedRows, juce::dontSendNotification);
 }
 
-void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow)
+void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPaths, const int fallbackRow)
 {
     if (removedPaths.isEmpty()) {
         return;
@@ -1238,7 +1230,7 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
     updateStatusLabel();
 }
 
-void AudioBatchComponent::handleNormalizeComplete(int totalFiles)
+void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
 {
     normalizedResultsExpected = totalFiles;
     normalizeInProgress = false;
@@ -1266,7 +1258,7 @@ void AudioBatchComponent::handleNormalizeComplete(int totalFiles)
     updateStatusLabel();
 }
 
-void AudioBatchComponent::handleAnalysisComplete(int totalFiles)
+void AudioBatchComponent::handleAnalysisComplete(const int totalFiles)
 {
     expectedResults = totalFiles;
     reconcilePendingAnalysisResults();
@@ -1405,9 +1397,9 @@ void AudioBatchComponent::sortResults()
 
 void AudioBatchComponent::startAnalysis(
     const juce::Array<juce::File>& inputPaths,
-    bool recursive,
-    bool forceRefresh,
-    bool clearResults
+    const bool recursive,
+    const bool forceRefresh,
+    const bool clearResults
 )
 {
     if (normalizeInProgress) {
@@ -1521,7 +1513,7 @@ void AudioBatchComponent::timerCallback()
     resultsTable.repaint();
 }
 
-void AudioBatchComponent::handleSortRequested(int columnId, bool isForwards)
+void AudioBatchComponent::handleSortRequested(const int columnId, const bool isForwards)
 {
     currentSortColumnId = columnId;
     currentSortForwards = isForwards;
@@ -1541,7 +1533,7 @@ void AudioBatchComponent::handleSortRequested(int columnId, bool isForwards)
     restoreSelectionByPaths(selectedPaths);
 }
 
-void AudioBatchComponent::handleSecondarySortRequested(int columnId)
+void AudioBatchComponent::handleSecondarySortRequested(const int columnId)
 {
     if (columnId <= 0) {
         return;
@@ -1572,7 +1564,10 @@ void AudioBatchComponent::refreshSortIndicators()
     getSecondarySortHeader(resultsTable).setSecondarySortIndicator(secondarySortColumnId, secondarySortForwards);
 }
 
-int AudioBatchComponent::getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const
+int AudioBatchComponent::getSelectionDisplayRow(
+    const juce::SparseSet<int>& selectedRows,
+    const int lastRowSelected
+) const
 {
     if (selectedRows.isEmpty()) {
         return -1;
@@ -1595,7 +1590,7 @@ int AudioBatchComponent::getSelectionDisplayRow(const juce::SparseSet<int>& sele
     return selectedRows[0];
 }
 
-void AudioBatchComponent::handleSelectionChanged(int lastRowSelected)
+void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
 {
     const auto selectedRows = resultsTable.getSelectedRows();
     const auto row = getSelectionDisplayRow(selectedRows, lastRowSelected);
@@ -1773,13 +1768,13 @@ void AudioBatchComponent::clearCurrentAudioPreview()
     startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
 }
 
-void AudioBatchComponent::mouseMagnify(const juce::MouseEvent&, float scaleFactor)
+void AudioBatchComponent::mouseMagnify(const juce::MouseEvent&, const float scaleFactor)
 {
-    auto newZoom = zoomSlider.getValue() * (scaleFactor * scaleFactor);
+    const auto newZoom = zoomSlider.getValue() * (scaleFactor * scaleFactor);
     zoomSlider.setValue(newZoom);
 }
 
-void AudioBatchComponent::zoomLevelChanged(double zoomLevel)
+void AudioBatchComponent::zoomLevelChanged(const double zoomLevel)
 {
     thumbnail.get()->setZoom(zoomLevel);
 }

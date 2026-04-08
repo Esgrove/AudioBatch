@@ -32,7 +32,7 @@ const juce::Font CustomLookAndFeel::monoFont {juce::FontOptions().withTypeface(
 class CustomDocumentWindowButton : public Button
 {
 public:
-    CustomDocumentWindowButton(const String& name, Colour c, Path normal, Path toggled, bool darkMode) :
+    CustomDocumentWindowButton(const String& name, const Colour c, Path normal, Path toggled, const bool darkMode) :
         Button(name),
         colour(c),
         normalShape(std::move(normal)),
@@ -40,9 +40,9 @@ public:
         useDarkMode(darkMode)
     { }
 
-    void paintButton(Graphics& g, bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override
+    void paintButton(Graphics& g, const bool shouldDrawButtonAsHighlighted, const bool shouldDrawButtonAsDown) override
     {
-        auto background = useDarkMode ? CustomLookAndFeel::greyDark : CustomLookAndFeel::greyLight;
+        const auto background = useDarkMode ? CustomLookAndFeel::greyDark : CustomLookAndFeel::greyLight;
         auto glyphColour = colour;
 
         g.fillAll(background);
@@ -63,11 +63,11 @@ public:
 
         g.setColour(glyphColour);
 
-        auto& p = getToggleState() ? toggledShape : normalShape;
-        auto reducedRect = Justification(Justification::centred)
-                               .appliedToRectangle(Rectangle<int>(getHeight(), getHeight()), getLocalBounds())
-                               .toFloat()
-                               .reduced((float)getHeight() * 0.3f);
+        const auto& p = getToggleState() ? toggledShape : normalShape;
+        const auto reducedRect = Justification(Justification::centred)
+                                     .appliedToRectangle(Rectangle(getHeight(), getHeight()), getLocalBounds())
+                                     .toFloat()
+                                     .reduced((float)getHeight() * 0.3f);
 
         g.fillPath(p, p.getTransformToScaleToFit(reducedRect, true));
     }
@@ -80,7 +80,7 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CustomDocumentWindowButton)
 };
 
-CustomLookAndFeel::CustomLookAndFeel(bool darkModeEnabled) : darkTheme(darkModeEnabled)
+CustomLookAndFeel::CustomLookAndFeel(const bool darkModeEnabled) : darkTheme(darkModeEnabled)
 {
     setColourScheme(customColourScheme);
 
@@ -122,10 +122,10 @@ CustomLookAndFeel::CustomLookAndFeel(bool darkModeEnabled) : darkTheme(darkModeE
     setUsingNativeAlertWindows(true);
 }
 
-Button* CustomLookAndFeel::createDocumentWindowButton(int buttonType)
+Button* CustomLookAndFeel::createDocumentWindowButton(const int buttonType)
 {
     Path shape;
-    auto crossThickness = 0.15f;
+    const auto crossThickness = 0.15f;
 
     if (buttonType == DocumentWindow::closeButton) {
         shape.addLineSegment({0.0f, 0.0f, 1.0f, 1.0f}, crossThickness);
@@ -165,30 +165,30 @@ Button* CustomLookAndFeel::createDocumentWindowButton(int buttonType)
 void CustomLookAndFeel::drawDocumentWindowTitleBar(
     DocumentWindow& window,
     Graphics& g,
-    int w,
-    int h,
-    int titleSpaceX,
-    int titleSpaceW,
+    const int w,
+    const int h,
+    const int titleSpaceX,
+    const int titleSpaceW,
     const Image* icon,
-    bool drawTitleTextOnLeft
+    const bool drawTitleTextOnLeft
 )
 {
     if (w * h == 0) {
         return;
     }
 
-    auto isActive = window.isActiveWindow();
+    const auto isActive = window.isActiveWindow();
 
-    auto background = darkTheme ? greyDark : greyLight;
-    auto text = darkTheme ? greyLight : greyDark;
+    const auto background = darkTheme ? greyDark : greyLight;
+    const auto text = darkTheme ? greyLight : greyDark;
 
     g.setColour(background);
     g.fillAll();
 
-    auto font = textFont.withHeight((float)h * 0.54f);
+    const auto font = textFont.withHeight((float)h * 0.54f);
     g.setFont(font);
 
-    auto textW = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(font, window.getName())));
+    const auto textW = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(font, window.getName())));
     auto iconW = 0;
     auto iconH = 0;
 
@@ -197,7 +197,7 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
         iconW = icon->getWidth() / icon->getHeight() * iconH + 4;
     }
 
-    auto contentW = jmin(titleSpaceW, textW + iconW);
+    const auto contentW = jmin(titleSpaceW, textW + iconW);
     auto textX = drawTitleTextOnLeft ? titleSpaceX : jmax(titleSpaceX, (w - contentW) / 2);
 
     if (textX + contentW > titleSpaceX + titleSpaceW) {
@@ -211,7 +211,7 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     }
 
     textX += 4;
-    auto availableTextWidth = jmax(0, titleSpaceX + titleSpaceW - textX);
+    const auto availableTextWidth = jmax(0, titleSpaceX + titleSpaceW - textX);
     g.setColour(text);
     g.drawText(window.getName(), textX, 0, availableTextWidth, h, Justification::centredLeft, true);
 }
@@ -219,11 +219,11 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
 void CustomLookAndFeel::drawPopupMenuItem(
     Graphics& g,
     const Rectangle<int>& area,
-    bool isSeparator,
-    bool isActive,
-    bool isHighlighted,
-    bool isTicked,
-    bool hasSubMenu,
+    const bool isSeparator,
+    const bool isActive,
+    const bool isHighlighted,
+    const bool isTicked,
+    const bool hasSubMenu,
     const String& text,
     const String& shortcutKeyText,
     const Drawable* icon,
@@ -232,11 +232,11 @@ void CustomLookAndFeel::drawPopupMenuItem(
 {
     if (isSeparator) {
         auto r = area.reduced(5, 0);
-        r.removeFromTop(roundToInt(((float)r.getHeight() * 0.5f) - 0.5f));
+        r.removeFromTop(roundToInt((float)r.getHeight() * 0.5f - 0.5f));
         g.setColour(findColour(PopupMenu::textColourId).withAlpha(0.3f));
         g.fillRect(r.removeFromTop(1));
     } else {
-        auto textColour = (textColourToUse == nullptr) ? findColour(PopupMenu::textColourId) : *textColourToUse;
+        const auto textColour = textColourToUse == nullptr ? findColour(PopupMenu::textColourId) : *textColourToUse;
 
         auto r = area.reduced(1);
 
@@ -251,30 +251,30 @@ void CustomLookAndFeel::drawPopupMenuItem(
         r.reduce(jmin(5, area.getWidth() / 20), 0);
 
         auto font = get_mono_font();
-        auto maxFontHeight = monoFontHeight;
+        const auto maxFontHeight = monoFontHeight;
         if (font.getHeight() > maxFontHeight) {
             font.setHeight(maxFontHeight);
         }
 
         g.setFont(font);
 
-        auto iconArea = r.removeFromLeft(roundToInt(maxFontHeight)).toFloat();
+        const auto iconArea = r.removeFromLeft(roundToInt(maxFontHeight)).toFloat();
 
         if (icon != nullptr) {
             icon->drawWithin(g, iconArea, RectanglePlacement::centred | RectanglePlacement::onlyReduceInSize, 1.0f);
             r.removeFromLeft(roundToInt(maxFontHeight * 0.5f));
         } else if (isTicked) {
-            auto tick = getTickShape(1.0f);
+            const auto tick = getTickShape(1.0f);
             g.fillPath(
                 tick, tick.getTransformToScaleToFit(iconArea.reduced(iconArea.getWidth() / 5, 0).toFloat(), true)
             );
         }
 
         if (hasSubMenu) {
-            auto arrowH = 0.6f * getPopupMenuFont().getAscent();
+            const auto arrowH = 0.6f * getPopupMenuFont().getAscent();
 
-            auto x = static_cast<float>(r.removeFromRight((int)arrowH).getX());
-            auto halfH = static_cast<float>(r.getCentreY());
+            const auto x = static_cast<float>(r.removeFromRight((int)arrowH).getX());
+            const auto halfH = static_cast<float>(r.getCentreY());
 
             Path path;
             path.startNewSubPath(x, halfH - arrowH * 0.5f);
@@ -297,22 +297,22 @@ void CustomLookAndFeel::drawPopupMenuItem(
     }
 }
 
-Font CustomLookAndFeel::getTextButtonFont(TextButton&, int buttonHeight)
+Font CustomLookAndFeel::getTextButtonFont(TextButton&, const int buttonHeight)
 {
     return textFont.withHeight(jmin(16.0f, (float)buttonHeight * 0.6f));
 }
 
-void CustomLookAndFeel::drawTooltip(Graphics& g, const String& text, int width, int height)
+void CustomLookAndFeel::drawTooltip(Graphics& g, const String& text, const int width, const int height)
 {
-    Rectangle bounds {width, height};
-    auto cornerSize = 5.0f;
+    const Rectangle bounds {width, height};
+    const auto cornerSize = 5.0f;
     g.setColour(findColour(TooltipWindow::backgroundColourId));
     g.fillRoundedRectangle(bounds.toFloat(), cornerSize);
     layoutTooltipText(text, findColour(TooltipWindow::textColourId))
         .draw(g, {static_cast<float>(width), static_cast<float>(height)});
 }
 
-TextLayout CustomLookAndFeel::layoutTooltipText(const String& text, Colour colour) noexcept
+TextLayout CustomLookAndFeel::layoutTooltipText(const String& text, const Colour colour) noexcept
 {
     const float tooltipFontSize = 13.0f;
     const int maxToolTipWidth = 400;
