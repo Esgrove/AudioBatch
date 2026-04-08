@@ -62,8 +62,8 @@ message(STATUS "Build name: ${APP_BUILD_NAME}")
 if(WIN32)
     set(ICON_FILE "${CMAKE_SOURCE_DIR}/Assets/icon_win.png")
 else()
+    # macOS settings
     set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version")
-    #set(CMAKE_OSX_ARCHITECTURES arm64 x86_64)
     # Xcode: Disable automatic build scheme generation.
     # Instead, explicitly specify which targets require schemes.
     set(CMAKE_XCODE_GENERATE_SCHEME OFF)

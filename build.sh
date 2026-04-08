@@ -3,12 +3,19 @@ set -eo pipefail
 
 USAGE="Usage: $0 [OPTIONS]
 
+Build AudioBatch.
+On macOS, Ninja is used by default. Pass --xcode to use the Xcode generator instead.
+On Windows, Visual Studio is used by default. Pass --ninja to use Ninja instead.
+
 OPTIONS: All options are optional
     -h | --help
         Display these instructions.
 
     -n | --ninja
-        Use Ninja as the build system.
+        Use Ninja as the build system (Windows only, macOS uses Ninja by default).
+
+    -x | --xcode
+        Use Xcode as the build system (macOS only, default is Ninja).
 
     -b | --build-type <type>
         Specify build type for CMake. Default is 'Release'.
@@ -25,6 +32,7 @@ source "$DIR/common.sh"
 init_options() {
     BUILD_TYPE="Release"
     USE_NINJA=false
+    USE_XCODE=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -33,7 +41,10 @@ init_options() {
                 exit 1
                 ;;
             -n | --ninja)
-                USE_NINJA="true"
+                USE_NINJA=true
+                ;;
+            -x | --xcode)
+                USE_XCODE=true
                 ;;
             -b | --build-type)
                 BUILD_TYPE="$2"
@@ -45,6 +56,11 @@ init_options() {
         esac
         shift
     done
+
+    # On Mac, use Ninja by default unless --xcode was specified
+    if [ "$BASH_PLATFORM" = "mac" ] && [ "$USE_XCODE" != true ]; then
+        USE_NINJA=true
+    fi
 
     JUCE_PATH="$REPO/JUCE"
     APP_NAME="AudioBatch"
@@ -59,12 +75,6 @@ require_path() {
     if [ ! -e "$1" ]; then
         print_error_and_exit "Expected build artifact not found: $1"
     fi
-}
-
-find_first_path() {
-    local search_root="$1"
-    shift
-    find "$search_root" "$@" -print -quit
 }
 
 build_app() {
@@ -86,20 +96,24 @@ build_mac_app() {
     rm -rf "${GUI_APP_DESTINATION:?}"
     rm -f "$CLI_APP_DESTINATION"
 
-    if [ "$USE_NINJA" = true ]; then
-        cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE"
-    else
+    if [ "$USE_XCODE" = true ]; then
+        # Xcode is a multi-config generator: pass --config at build time
         if [ -n "$(command -v xcbeautify)" ]; then
-            # nicer xcodebuild output: https://github.com/tuist/xcbeautify
             time cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE" | xcbeautify
         else
-            print_yellow "xcbeautify missing, install it with brew"
+            print_yellow "xcbeautify missing, install it with: brew install xcbeautify"
             time cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE"
         fi
+        # Xcode multi-config generator puts artifacts under a $BUILD_TYPE subdirectory
+        GUI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatch_artefacts/$BUILD_TYPE/$GUI_APP_BUNDLE"
+        CLI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatchCli_artefacts/$BUILD_TYPE/$CLI_BINARY_NAME"
+    else
+        time cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME"
+        # Ninja is a single-config generator so there is no $BUILD_TYPE subdirectory
+        GUI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatch_artefacts/$GUI_APP_BUNDLE"
+        CLI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatchCli_artefacts/$CLI_BINARY_NAME"
     fi
 
-    GUI_APP_SOURCE=$(find_first_path "$CMAKE_BUILD_DIR" -type d -name "$GUI_APP_BUNDLE")
-    CLI_APP_SOURCE=$(find_first_path "$CMAKE_BUILD_DIR" -type f -path "*/$BUILD_TYPE/$CLI_BINARY_NAME")
     require_path "$GUI_APP_SOURCE"
     require_path "$CLI_APP_SOURCE"
 
@@ -157,30 +171,44 @@ check_juce_submodule() {
 }
 
 export_cmake_project() {
-    # Export Xcode / VS project from CMake
     cd "$REPO" || print_error_and_exit "Failed to cd to repo root"
 
-    if [ "$USE_NINJA" = true ]; then
-        print_magenta "Generating Ninja project..."
-        if ! cmake -B "$CMAKE_BUILD_DIR" -G Ninja; then
-            rm -rf "$CMAKE_BUILD_DIR"
-            cmake -B "$CMAKE_BUILD_DIR" -G Ninja
-        fi
-    else
-        print_magenta "Generating IDE project..."
-        if [ "$BASH_PLATFORM" = "windows" ]; then
-            if ! cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64; then
-                rm -rf "$CMAKE_BUILD_DIR"
-                cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64
-            fi
-        elif [ "$BASH_PLATFORM" = "mac" ]; then
+    if [ "$BASH_PLATFORM" = "mac" ]; then
+        if [ "$USE_XCODE" = true ]; then
+            print_magenta "Generating Xcode project..."
             if ! cmake -B "$CMAKE_BUILD_DIR" -G "Xcode"; then
                 rm -rf "$CMAKE_BUILD_DIR"
                 cmake -B "$CMAKE_BUILD_DIR" -G "Xcode"
             fi
         else
-            print_error_and_exit "Platform is not supported yet"
+            print_magenta "Generating Ninja project..."
+            if ! cmake -B "$CMAKE_BUILD_DIR" -G Ninja \
+                -DCMAKE_C_COMPILER=clang \
+                -DCMAKE_CXX_COMPILER=clang++ \
+                -DCMAKE_BUILD_TYPE="$BUILD_TYPE"; then
+                rm -rf "$CMAKE_BUILD_DIR"
+                cmake -B "$CMAKE_BUILD_DIR" -G Ninja \
+                    -DCMAKE_C_COMPILER=clang \
+                    -DCMAKE_CXX_COMPILER=clang++ \
+                    -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+            fi
         fi
+    elif [ "$BASH_PLATFORM" = "windows" ]; then
+        if [ "$USE_NINJA" = true ]; then
+            print_magenta "Generating Ninja project..."
+            if ! cmake -B "$CMAKE_BUILD_DIR" -G Ninja; then
+                rm -rf "$CMAKE_BUILD_DIR"
+                cmake -B "$CMAKE_BUILD_DIR" -G Ninja
+            fi
+        else
+            print_magenta "Generating Visual Studio project..."
+            if ! cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64; then
+                rm -rf "$CMAKE_BUILD_DIR"
+                cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64
+            fi
+        fi
+    else
+        print_error_and_exit "Platform is not supported yet"
     fi
 }
 
