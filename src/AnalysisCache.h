@@ -35,7 +35,7 @@ public:
     bool storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData);
 
 private:
-    static constexpr int analysisVersion = 2;
+    static constexpr int analysisVersion = 4;
     static constexpr int waveformVersion = 1;
 
     bool columnExists(const juce::String& tableName, const juce::String& columnName);

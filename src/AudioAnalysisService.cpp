@@ -1,7 +1,9 @@
 #include "AudioAnalysisService.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <set>
 
@@ -10,6 +12,150 @@ namespace
 {
 constexpr float minimumDisplayDecibels = -100.0f;
 constexpr double kilobitsPerSecondDivisor = 1000.0;
+
+juce::String normalizedExtension(const juce::File& file)
+{
+    auto extension = file.getFileExtension();
+
+    if (extension.startsWithChar('.')) {
+        extension = extension.substring(1);
+    }
+
+    return extension.toLowerCase();
+}
+
+bool reportsDecodedBitDepth(const juce::AudioFormatReader& reader, const juce::File& file)
+{
+    if (normalizedExtension(file) == "mp3") {
+        return true;
+    }
+
+    return reader.getFormatName().containsIgnoreCase("mp3");
+}
+
+bool readExactly(juce::InputStream& input, void* destination, int bytesToRead)
+{
+    return bytesToRead >= 0 && input.read(destination, bytesToRead) == bytesToRead;
+}
+
+std::uint32_t readBigEndianUint32(const std::uint8_t* bytes)
+{
+    return (static_cast<std::uint32_t>(bytes[0]) << 24U) | (static_cast<std::uint32_t>(bytes[1]) << 16U)
+        | (static_cast<std::uint32_t>(bytes[2]) << 8U) | static_cast<std::uint32_t>(bytes[3]);
+}
+
+std::uint32_t readSynchsafeUint32(const std::uint8_t* bytes)
+{
+    return (static_cast<std::uint32_t>(bytes[0]) << 21U) | (static_cast<std::uint32_t>(bytes[1]) << 14U)
+        | (static_cast<std::uint32_t>(bytes[2]) << 7U) | static_cast<std::uint32_t>(bytes[3]);
+}
+
+juce::String buildSearchableMetadataText(const juce::MemoryBlock& metadata)
+{
+    juce::String text;
+    auto* bytes = static_cast<const std::uint8_t*>(metadata.getData());
+    bool previousWasSeparator = true;
+
+    for (size_t index = 0; index < metadata.getSize(); ++index) {
+        const auto byte = bytes[index];
+
+        if ((byte >= '0' && byte <= '9') || (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z')) {
+            text += juce::String::charToString(static_cast<juce::juce_wchar>(byte));
+            previousWasSeparator = false;
+            continue;
+        }
+
+        if (byte == '-' || byte == '_' || byte == '/' || byte == '.') {
+            text += juce::String::charToString(static_cast<juce::juce_wchar>(byte));
+            previousWasSeparator = false;
+            continue;
+        }
+
+        if (!previousWasSeparator) {
+            text += ' ';
+            previousWasSeparator = true;
+        }
+    }
+
+    return text.toLowerCase();
+}
+
+int findBitDepthInText(const juce::String& text)
+{
+    constexpr std::array<int, 6> candidateBitDepths {8, 12, 16, 20, 24, 32};
+
+    for (const auto candidate : candidateBitDepths) {
+        const auto value = juce::String(candidate);
+
+        if (text.contains(value + "-bit") || text.contains(value + " bit") || text.contains(value + " bits")) {
+            return candidate;
+        }
+    }
+
+    for (const auto candidate : candidateBitDepths) {
+        const auto value = juce::String(candidate);
+
+        if (text.contains("bit depth " + value) || text.contains("bitdepth " + value)
+            || text.contains("bits per sample " + value) || text.contains("source bit depth " + value)
+            || text.contains("source bits per sample " + value))
+        {
+            return candidate;
+        }
+    }
+
+    return 0;
+}
+
+int extractTaggedMp3BitDepth(const juce::File& file)
+{
+    auto input = file.createInputStream();
+
+    if (input == nullptr) {
+        return 0;
+    }
+
+    std::array<std::uint8_t, 10> header {};
+
+    if (!readExactly(*input, header.data(), static_cast<int>(header.size()))) {
+        return 0;
+    }
+
+    if (!(header[0] == 'I' && header[1] == 'D' && header[2] == '3')) {
+        return 0;
+    }
+
+    if ((header[6] | header[7] | header[8] | header[9]) & 0x80U) {
+        return 0;
+    }
+
+    const auto payloadSize = readSynchsafeUint32(header.data() + 6);
+    const auto hasFooter = (header[5] & 0x10U) != 0;
+    const auto totalSize = static_cast<juce::int64>(header.size()) + static_cast<juce::int64>(payloadSize)
+        + static_cast<juce::int64>(hasFooter ? 10 : 0);
+
+    if (totalSize <= static_cast<juce::int64>(header.size()) || totalSize > file.getSize()) {
+        return 0;
+    }
+
+    juce::MemoryBlock metadata;
+    metadata.setSize(static_cast<size_t>(totalSize), false);
+    input->setPosition(0);
+
+    if (!readExactly(*input, metadata.getData(), static_cast<int>(totalSize))) {
+        return 0;
+    }
+
+    return findBitDepthInText(buildSearchableMetadataText(metadata));
+}
+
+int resolveSourceBitsPerSample(const juce::AudioFormatReader& reader, const juce::File& file)
+{
+    if (reportsDecodedBitDepth(reader, file)) {
+        return extractTaggedMp3BitDepth(file);
+    }
+
+    return reader.bitsPerSample;
+}
 
 float peakMagnitude(const float peak)
 {
@@ -140,7 +286,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
     record.formatName = reader->getFormatName();
     record.sampleRate = juce::roundToInt(reader->sampleRate);
     record.channels = static_cast<int>(reader->numChannels);
-    record.bitsPerSample = reader->bitsPerSample;
+    record.bitsPerSample = resolveSourceBitsPerSample(*reader, file);
     record.lengthInSamples = reader->lengthInSamples;
     record.durationSeconds
         = reader->sampleRate > 0.0 ? static_cast<double>(reader->lengthInSamples) / reader->sampleRate : 0.0;
@@ -171,6 +317,15 @@ double AudioAnalysisService::getAverageBitrateKbps(const AudioAnalysisRecord& re
     }
 
     return (static_cast<double>(record.fileSize) * 8.0) / record.durationSeconds / kilobitsPerSecondDivisor;
+}
+
+juce::String AudioAnalysisService::formatBitsPerSampleDisplay(const AudioAnalysisRecord& record)
+{
+    if (record.bitsPerSample <= 0) {
+        return normalizedExtension(record.file) == "mp3" ? "Unknown" : "-";
+    }
+
+    return juce::String(record.bitsPerSample);
 }
 
 juce::String AudioAnalysisService::formatBitrateDisplay(const AudioAnalysisRecord& record)
