@@ -10,9 +10,36 @@
 /// CLI-only formatting helpers used when printing analysis results.
 namespace
 {
+constexpr int cliPeakColumnWidth = 7;
+constexpr int cliTruePeakColumnWidth = 7;
+constexpr int cliLoudnessColumnWidth = 8;
+
 juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
 {
-    return AudioAnalysisService::formatPeakDisplay(record.overallPeak).paddedLeft(' ', 11);
+    return AudioAnalysisService::formatPeakCompact(record.overallPeak).paddedLeft(' ', cliPeakColumnWidth);
+}
+
+juce::String formattedTruePeakColumn(const AudioAnalysisRecord& record)
+{
+    return AudioAnalysisService::formatTruePeakCompact(record.overallTruePeak).paddedLeft(' ', cliTruePeakColumnWidth);
+}
+
+juce::String formattedIntegratedLoudnessColumn(const AudioAnalysisRecord& record)
+{
+    return AudioAnalysisService::formatLoudnessCompact(record.integratedLufs).paddedLeft(' ', cliLoudnessColumnWidth);
+}
+
+void printHeaderRow()
+{
+    std::cout << juce::String("dBFS").paddedLeft(' ', cliPeakColumnWidth) << "  "
+              << juce::String("dBTP").paddedLeft(' ', cliTruePeakColumnWidth) << "  "
+              << juce::String("LUFS-I").paddedLeft(' ', cliLoudnessColumnWidth) << "  TRACK" << juce::newLine;
+}
+
+void printResultRow(const AudioAnalysisRecord& record, const juce::String& trackLabel)
+{
+    std::cout << formattedPeakColumn(record) << "  " << formattedTruePeakColumn(record) << "  "
+              << formattedIntegratedLoudnessColumn(record) << "  " << trackLabel << juce::newLine;
 }
 
 juce::String reportedOutputPath(const AudioAnalysisRecord& record)
@@ -141,6 +168,10 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
         normalizedResults.reserve(results.size());
     }
 
+    if (!options.normalize) {
+        printHeaderRow();
+    }
+
     for (const auto& result : results) {
         if (result.hasError()) {
             ++failureCount;
@@ -149,7 +180,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
         }
 
         if (!options.normalize) {
-            std::cout << formattedPeakColumn(result) << "  " << result.fileName << juce::newLine;
+            printResultRow(result, result.fileName);
             continue;
         }
 
@@ -166,9 +197,10 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
     if (options.normalize) {
         AudioAnalysisService::sortRecords(normalizedResults, options.sortMode, true);
+        printHeaderRow();
 
         for (const auto& record : normalizedResults) {
-            std::cout << formattedPeakColumn(record) << "  " << reportedOutputPath(record) << juce::newLine;
+            printResultRow(record, reportedOutputPath(record));
         }
     }
 

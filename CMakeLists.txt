@@ -12,6 +12,7 @@ project("AudioBatch"
 )
 
 include(FetchContent)
+include(GNUInstallDirs)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -116,6 +117,28 @@ else()
 
     set(AUDIOBATCH_SQLITE_TARGET AudioBatchSQLite)
 endif()
+
+FetchContent_Declare(libebur128
+    GIT_REPOSITORY https://github.com/jiixyj/libebur128.git
+    GIT_TAG v1.2.6
+    GIT_SHALLOW TRUE
+)
+FetchContent_GetProperties(libebur128)
+
+if (NOT libebur128_POPULATED)
+    cmake_policy(PUSH)
+    cmake_policy(SET CMP0169 OLD)
+    FetchContent_Populate(libebur128)
+    cmake_policy(POP)
+
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
+    add_subdirectory(${libebur128_SOURCE_DIR}/ebur128 ${libebur128_BINARY_DIR}/ebur128 EXCLUDE_FROM_ALL)
+endif()
+
+target_include_directories(ebur128
+    PUBLIC
+        ${libebur128_SOURCE_DIR}/ebur128
+)
 
 juce_add_gui_app(AudioBatch
     BUNDLE_ID com.esgrove.audiobatch
@@ -288,6 +311,7 @@ target_link_libraries(AudioBatch
     PRIVATE
         Assets
         ${AUDIOBATCH_SQLITE_TARGET}
+        ebur128
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
@@ -309,6 +333,7 @@ target_link_libraries(AudioBatch
 target_link_libraries(AudioBatchCli
     PRIVATE
         ${AUDIOBATCH_SQLITE_TARGET}
+        ebur128
         juce::juce_audio_basics
         juce::juce_audio_formats
         juce::juce_core
