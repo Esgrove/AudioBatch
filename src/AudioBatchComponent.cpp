@@ -247,7 +247,8 @@ int compareNaturalStrings(const juce::String& left, const juce::String& right)
     return left.compareNatural(right);
 }
 
-int comparePeaks(float left, float right)
+template<typename Value>
+int comparePeaks(Value left, Value right)
 {
     const auto leftMagnitude = std::abs(left);
     const auto rightMagnitude = std::abs(right);
@@ -271,6 +272,26 @@ int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& r
     return leftBitrate < rightBitrate ? -1 : 1;
 }
 
+int compareLoudness(const double left, const double right)
+{
+    const auto leftIsNegativeInfinity = left <= AudioAnalysisRecord::negativeInfinityLoudness;
+    const auto rightIsNegativeInfinity = right <= AudioAnalysisRecord::negativeInfinityLoudness;
+
+    if (leftIsNegativeInfinity && rightIsNegativeInfinity) {
+        return 0;
+    }
+
+    if (leftIsNegativeInfinity != rightIsNegativeInfinity) {
+        return leftIsNegativeInfinity ? -1 : 1;
+    }
+
+    if (juce::approximatelyEqual(left, right)) {
+        return 0;
+    }
+
+    return left < right ? -1 : 1;
+}
+
 int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, int columnId)
 {
     switch (columnId) {
@@ -291,6 +312,15 @@ int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
 
         case AudioFileTableModel::columnPeakRight:
             return comparePeaks(lhs.peakRight, rhs.peakRight);
+
+        case AudioFileTableModel::columnOverallTruePeak:
+            return comparePeaks(lhs.overallTruePeak, rhs.overallTruePeak);
+
+        case AudioFileTableModel::columnMaxShortTermLufs:
+            return compareLoudness(lhs.maxShortTermLufs, rhs.maxShortTermLufs);
+
+        case AudioFileTableModel::columnIntegratedLufs:
+            return compareLoudness(lhs.integratedLufs, rhs.integratedLufs);
 
         case AudioFileTableModel::columnStatus:
             return compareNaturalStrings(
@@ -527,6 +557,9 @@ void AudioBatchComponent::updateResultsTableColumnWidths()
         + header.getColumnWidth(AudioFileTableModel::columnBitrate)
         + header.getColumnWidth(AudioFileTableModel::columnPeakLeft)
         + header.getColumnWidth(AudioFileTableModel::columnPeakRight)
+        + header.getColumnWidth(AudioFileTableModel::columnOverallTruePeak)
+        + header.getColumnWidth(AudioFileTableModel::columnMaxShortTermLufs)
+        + header.getColumnWidth(AudioFileTableModel::columnIntegratedLufs)
         + header.getColumnWidth(AudioFileTableModel::columnStatus);
 
     const auto availableFlexibleWidth = resultsTable.getVisibleContentWidth() - fixedColumnWidth;
@@ -1632,6 +1665,9 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
     rows.emplace_back("Peak Max", AudioAnalysisService::formatPeakDisplay(record.overallPeak));
     rows.emplace_back("Peak L", AudioAnalysisService::formatPeakDisplay(record.peakLeft));
     rows.emplace_back("Peak R", AudioAnalysisService::formatPeakDisplay(record.peakRight));
+    rows.emplace_back("True Peak Max", AudioAnalysisService::formatTruePeakDisplay(record.overallTruePeak));
+    rows.emplace_back("Max Short-term", AudioAnalysisService::formatLoudnessDisplay(record.maxShortTermLufs));
+    rows.emplace_back("Integrated Loudness", AudioAnalysisService::formatLoudnessDisplay(record.integratedLufs));
     rows.emplace_back("Status", AudioAnalysisService::formatStatus(record));
 
     audioInfo->setRows(std::move(rows));

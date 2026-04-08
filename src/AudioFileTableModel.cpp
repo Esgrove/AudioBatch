@@ -125,6 +125,30 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
+        "True Peak",
+        columnOverallTruePeak,
+        initialColumnWidth(columnOverallTruePeak),
+        minimumColumnWidth(columnOverallTruePeak),
+        160,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
+        "Max Short",
+        columnMaxShortTermLufs,
+        initialColumnWidth(columnMaxShortTermLufs),
+        minimumColumnWidth(columnMaxShortTermLufs),
+        160,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
+        "Int LUFS",
+        columnIntegratedLufs,
+        initialColumnWidth(columnIntegratedLufs),
+        minimumColumnWidth(columnIntegratedLufs),
+        160,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
         "Status",
         columnStatus,
         initialColumnWidth(columnStatus),
@@ -223,6 +247,18 @@ void AudioFileTableModel::paintCell(
             break;
         case columnOverallPeak:
             text = AudioAnalysisService::formatPeakDisplay(record.overallPeak);
+            justification = juce::Justification::centredRight;
+            break;
+        case columnOverallTruePeak:
+            text = AudioAnalysisService::formatTruePeakDisplay(record.overallTruePeak);
+            justification = juce::Justification::centredRight;
+            break;
+        case columnMaxShortTermLufs:
+            text = AudioAnalysisService::formatLoudnessDisplay(record.maxShortTermLufs);
+            justification = juce::Justification::centredRight;
+            break;
+        case columnIntegratedLufs:
+            text = AudioAnalysisService::formatLoudnessDisplay(record.integratedLufs);
             justification = juce::Justification::centredRight;
             break;
         case columnStatus:

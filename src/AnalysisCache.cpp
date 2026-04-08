@@ -155,6 +155,11 @@ bool AnalysisCache::openUnlocked()
             peak_left REAL NOT NULL,
             peak_right REAL NOT NULL,
             overall_peak REAL NOT NULL,
+            true_peak_left REAL NOT NULL DEFAULT 0,
+            true_peak_right REAL NOT NULL DEFAULT 0,
+            overall_true_peak REAL NOT NULL DEFAULT 0,
+            max_short_term_lufs REAL NOT NULL DEFAULT -1000,
+            integrated_lufs REAL NOT NULL DEFAULT -1000,
             sample_rate INTEGER NOT NULL,
             channels INTEGER NOT NULL,
             bits_per_sample INTEGER NOT NULL,
@@ -182,6 +187,36 @@ bool AnalysisCache::openUnlocked()
         return false;
     }
 
+    if (!columnExists("file_analysis", "true_peak_left")
+        && !execute("ALTER TABLE file_analysis ADD COLUMN true_peak_left REAL NOT NULL DEFAULT 0;"))
+    {
+        return false;
+    }
+
+    if (!columnExists("file_analysis", "true_peak_right")
+        && !execute("ALTER TABLE file_analysis ADD COLUMN true_peak_right REAL NOT NULL DEFAULT 0;"))
+    {
+        return false;
+    }
+
+    if (!columnExists("file_analysis", "overall_true_peak")
+        && !execute("ALTER TABLE file_analysis ADD COLUMN overall_true_peak REAL NOT NULL DEFAULT 0;"))
+    {
+        return false;
+    }
+
+    if (!columnExists("file_analysis", "max_short_term_lufs")
+        && !execute("ALTER TABLE file_analysis ADD COLUMN max_short_term_lufs REAL NOT NULL DEFAULT -1000;"))
+    {
+        return false;
+    }
+
+    if (!columnExists("file_analysis", "integrated_lufs")
+        && !execute("ALTER TABLE file_analysis ADD COLUMN integrated_lufs REAL NOT NULL DEFAULT -1000;"))
+    {
+        return false;
+    }
+
     return true;
 }
 
@@ -195,8 +230,9 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
 
     constexpr auto sql = R"SQL(
         SELECT file_name, format_name, file_size, modified_time_ms, length_in_samples,
-               duration_seconds, peak_left, peak_right, overall_peak, sample_rate,
-               channels, bits_per_sample, status, error_message, analysis_version
+               duration_seconds, peak_left, peak_right, overall_peak, true_peak_left,
+               true_peak_right, overall_true_peak, max_short_term_lufs, integrated_lufs,
+               sample_rate, channels, bits_per_sample, status, error_message, analysis_version
         FROM file_analysis
         WHERE file_path = ?;
     )SQL";
@@ -217,7 +253,7 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
 
     const auto cachedFileSize = sqlite3_column_int64(statement, 2);
     const auto cachedModifiedTime = sqlite3_column_int64(statement, 3);
-    const auto cachedVersion = sqlite3_column_int(statement, 14);
+    const auto cachedVersion = sqlite3_column_int(statement, 19);
 
     if (cachedFileSize != file.getSize() || cachedModifiedTime != file.getLastModificationTime().toMilliseconds()
         || cachedVersion != analysisVersion)
@@ -234,11 +270,16 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
     record.peakLeft = static_cast<float>(sqlite3_column_double(statement, 6));
     record.peakRight = static_cast<float>(sqlite3_column_double(statement, 7));
     record.overallPeak = static_cast<float>(sqlite3_column_double(statement, 8));
-    record.sampleRate = sqlite3_column_int(statement, 9);
-    record.channels = sqlite3_column_int(statement, 10);
-    record.bitsPerSample = sqlite3_column_int(statement, 11);
-    record.status = static_cast<AudioAnalysisStatus>(sqlite3_column_int(statement, 12));
-    record.errorMessage = columnText(statement, 13);
+    record.truePeakLeft = sqlite3_column_double(statement, 9);
+    record.truePeakRight = sqlite3_column_double(statement, 10);
+    record.overallTruePeak = sqlite3_column_double(statement, 11);
+    record.maxShortTermLufs = sqlite3_column_double(statement, 12);
+    record.integratedLufs = sqlite3_column_double(statement, 13);
+    record.sampleRate = sqlite3_column_int(statement, 14);
+    record.channels = sqlite3_column_int(statement, 15);
+    record.bitsPerSample = sqlite3_column_int(statement, 16);
+    record.status = static_cast<AudioAnalysisStatus>(sqlite3_column_int(statement, 17));
+    record.errorMessage = columnText(statement, 18);
     record.fromCache = true;
 
     if (record.status != AudioAnalysisStatus::failed) {
@@ -260,9 +301,11 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     constexpr auto sql = R"SQL(
         INSERT INTO file_analysis (
             file_path, file_name, format_name, file_size, modified_time_ms, length_in_samples,
-            duration_seconds, peak_left, peak_right, overall_peak, sample_rate, channels,
-            bits_per_sample, status, error_message, waveform_data, waveform_version, analysis_version, updated_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            duration_seconds, peak_left, peak_right, overall_peak, true_peak_left,
+            true_peak_right, overall_true_peak, max_short_term_lufs, integrated_lufs,
+            sample_rate, channels, bits_per_sample, status, error_message,
+            waveform_data, waveform_version, analysis_version, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             file_name = excluded.file_name,
             format_name = excluded.format_name,
@@ -273,13 +316,18 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             peak_left = excluded.peak_left,
             peak_right = excluded.peak_right,
             overall_peak = excluded.overall_peak,
+            true_peak_left = excluded.true_peak_left,
+            true_peak_right = excluded.true_peak_right,
+            overall_true_peak = excluded.overall_true_peak,
+            max_short_term_lufs = excluded.max_short_term_lufs,
+            integrated_lufs = excluded.integrated_lufs,
             sample_rate = excluded.sample_rate,
             channels = excluded.channels,
             bits_per_sample = excluded.bits_per_sample,
             status = excluded.status,
             error_message = excluded.error_message,
-                waveform_data = excluded.waveform_data,
-                waveform_version = excluded.waveform_version,
+            waveform_data = excluded.waveform_data,
+            waveform_version = excluded.waveform_version,
             analysis_version = excluded.analysis_version,
             updated_at_ms = excluded.updated_at_ms;
     )SQL";
@@ -299,15 +347,20 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     sqlite3_bind_double(statement, 8, record.peakLeft);
     sqlite3_bind_double(statement, 9, record.peakRight);
     sqlite3_bind_double(statement, 10, record.overallPeak);
-    sqlite3_bind_int(statement, 11, record.sampleRate);
-    sqlite3_bind_int(statement, 12, record.channels);
-    sqlite3_bind_int(statement, 13, record.bitsPerSample);
-    sqlite3_bind_int(statement, 14, static_cast<int>(record.status));
-    bindText(statement, 15, record.errorMessage);
-    sqlite3_bind_null(statement, 16);
-    sqlite3_bind_int(statement, 17, 0);
-    sqlite3_bind_int(statement, 18, analysisVersion);
-    sqlite3_bind_int64(statement, 19, juce::Time::getCurrentTime().toMilliseconds());
+    sqlite3_bind_double(statement, 11, record.truePeakLeft);
+    sqlite3_bind_double(statement, 12, record.truePeakRight);
+    sqlite3_bind_double(statement, 13, record.overallTruePeak);
+    sqlite3_bind_double(statement, 14, record.maxShortTermLufs);
+    sqlite3_bind_double(statement, 15, record.integratedLufs);
+    sqlite3_bind_int(statement, 16, record.sampleRate);
+    sqlite3_bind_int(statement, 17, record.channels);
+    sqlite3_bind_int(statement, 18, record.bitsPerSample);
+    sqlite3_bind_int(statement, 19, static_cast<int>(record.status));
+    bindText(statement, 20, record.errorMessage);
+    sqlite3_bind_null(statement, 21);
+    sqlite3_bind_int(statement, 22, 0);
+    sqlite3_bind_int(statement, 23, analysisVersion);
+    sqlite3_bind_int64(statement, 24, juce::Time::getCurrentTime().toMilliseconds());
 
     const auto result = sqlite3_step(statement);
     sqlite3_finalize(statement);

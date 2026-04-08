@@ -5,11 +5,15 @@ GUI and CLI tools (C++23 and JUCE) for analyzing audio files and preparing batch
 Current implementation focus:
 
 - Analyze audio files and calculate decoded sample peak values.
+- Calculate true peak and integrated loudness during analysis.
 - Cache analysis results in SQLite so unchanged files are not re-read every run.
-- Show sortable peak data in the GUI.
+- Show sortable peak, true peak, and loudness data in the GUI.
 - Show per-file processing state directly in the results list while background work is running.
 - Normalize selected files to `0 dBFS` peak from the GUI.
 - Run the same analysis from a console executable.
+
+Analysis scope currently assumes mono or stereo source files, including MP3 joint stereo. Multichannel files are not a
+target for this tool.
 
 ![Screenshot](./screenshot_mac.png)
 
@@ -18,10 +22,13 @@ Current implementation focus:
 - [JUCE](https://juce.com/)
 - CMake
 - SQLite 3
+- [libebur128](https://github.com/jiixyj/libebur128)
 
 `SQLite3` is resolved through CMake.
 If a system `SQLite3` package is available it will be used,
 otherwise CMake falls back to fetching the SQLite amalgamation.
+
+`libebur128` is fetched through CMake for loudness and true peak analysis.
 
 MP3 normalization requires a working `lame` encoder executable to be installed and available to the app.
 
@@ -96,9 +103,13 @@ Visible columns:
 - file name
 - full path
 - file type
+- bitrate
 - peak L
 - peak R
 - peak max
+- true peak
+- max short
+- integrated loudness
 - status
 
 Default sorting is by overall peak ascending, so the quietest files appear first.
@@ -130,20 +141,22 @@ audiobatch --recurse --sort peak "music/library"
 Default CLI output format:
 
 ```text
-<peak>  <audio filename>
+dBFS  dBTP  LUFS-I  TRACK
+<peak>  <true peak>  <integrated loudness>  <audio filename>
 ```
 
 Example output:
 
 ```text
- -20.48 dBFS  audiofile.wav
+  -0.31    -0.17     -8.48  audiofile.wav
 ```
 
 Normalize mode re-analyzes each output file after rewriting it and reports the resulting output paths using the
-same peak format:
+same format:
 
 ```text
- -0.00 dBFS  C:\path\to\normalized-output.aif
+   dBFS     dBTP    LUFS-I  TRACK
+  -0.00    -0.00    -10.42  C:\path\to\normalized-output.aif
 ```
 
 ## Cache
@@ -161,6 +174,4 @@ The cache is invalidated when any of these change:
 
 Not implemented yet:
 
-- loudness analysis using <https://github.com/jiixyj/libebur128>
-- true peak analysis
 - VST batch processing

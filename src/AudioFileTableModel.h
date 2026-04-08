@@ -20,6 +20,9 @@ public:
         columnPeakLeft,
         columnPeakRight,
         columnOverallPeak,
+        columnOverallTruePeak,
+        columnMaxShortTermLufs,
+        columnIntegratedLufs,
         columnStatus,
     };
 
@@ -27,21 +30,27 @@ public:
     {
         switch (columnId) {
             case columnName:
-                return widthFromDefaultWindowFraction(nameColumnWidthFraction);
+                return nameColumnDefaultWidth;
             case columnPath:
-                return widthFromDefaultWindowFraction(pathColumnWidthFraction);
+                return pathColumnDefaultWidth;
             case columnType:
-                return widthFromDefaultWindowFraction(typeColumnWidthFraction);
+                return typeColumnDefaultWidth;
             case columnBitrate:
-                return widthFromDefaultWindowFraction(bitrateColumnWidthFraction);
+                return bitrateColumnDefaultWidth;
             case columnOverallPeak:
-                return widthFromDefaultWindowFraction(overallPeakColumnWidthFraction);
+                return overallPeakColumnDefaultWidth;
             case columnPeakLeft:
-                return widthFromDefaultWindowFraction(peakLeftColumnWidthFraction);
+                return peakLeftColumnDefaultWidth;
             case columnPeakRight:
-                return widthFromDefaultWindowFraction(peakRightColumnWidthFraction);
+                return peakRightColumnDefaultWidth;
+            case columnOverallTruePeak:
+                return truePeakColumnDefaultWidth;
+            case columnMaxShortTermLufs:
+                return maxShortTermLufsColumnDefaultWidth;
+            case columnIntegratedLufs:
+                return integratedLufsColumnDefaultWidth;
             case columnStatus:
-                return widthFromDefaultWindowFraction(statusColumnWidthFraction);
+                return statusColumnDefaultWidth;
         }
 
         return 0;
@@ -61,6 +70,9 @@ public:
             case columnOverallPeak:
             case columnPeakLeft:
             case columnPeakRight:
+            case columnOverallTruePeak:
+            case columnMaxShortTermLufs:
+            case columnIntegratedLufs:
             case columnStatus:
                 return metricColumnMinimumWidth;
         }
@@ -107,29 +119,31 @@ public:
 
 private:
     static constexpr int defaultWindowWidth = 1024;
-    static constexpr int nameColumnMinimumWidth = 120;
-    static constexpr int pathColumnMinimumWidth = 160;
+    static constexpr int nameColumnMinimumWidth = 110;
+    static constexpr int pathColumnMinimumWidth = 140;
     static constexpr int typeColumnMinimumWidth = 60;
-    static constexpr int bitrateColumnMinimumWidth = 72;
-    static constexpr int metricColumnMinimumWidth = 90;
-    static constexpr double nameColumnWidthFraction = 210.0 / defaultWindowWidth;
-    static constexpr double pathColumnWidthFraction = 250.0 / defaultWindowWidth;
-    static constexpr double typeColumnWidthFraction = 80.0 / defaultWindowWidth;
-    static constexpr double bitrateColumnWidthFraction = 90.0 / defaultWindowWidth;
-    static constexpr double overallPeakColumnWidthFraction = 96.0 / defaultWindowWidth;
-    static constexpr double peakLeftColumnWidthFraction = 96.0 / defaultWindowWidth;
-    static constexpr double peakRightColumnWidthFraction = 96.0 / defaultWindowWidth;
-    static constexpr double statusColumnWidthFraction = 106.0 / defaultWindowWidth;
-    static constexpr double totalInitialColumnFraction = nameColumnWidthFraction + pathColumnWidthFraction
-        + typeColumnWidthFraction + bitrateColumnWidthFraction + overallPeakColumnWidthFraction
-        + peakLeftColumnWidthFraction + peakRightColumnWidthFraction + statusColumnWidthFraction;
+    static constexpr int bitrateColumnMinimumWidth = 68;
+    static constexpr int metricColumnMinimumWidth = 74;
+    static constexpr int nameColumnDefaultWidth = 160;
+    static constexpr int pathColumnDefaultWidth = 190;
+    static constexpr int typeColumnDefaultWidth = 70;
+    static constexpr int bitrateColumnDefaultWidth = 74;
+    static constexpr int overallPeakColumnDefaultWidth = 76;
+    static constexpr int peakLeftColumnDefaultWidth = 76;
+    static constexpr int peakRightColumnDefaultWidth = 76;
+    static constexpr int truePeakColumnDefaultWidth = 76;
+    static constexpr int maxShortTermLufsColumnDefaultWidth = 78;
+    static constexpr int integratedLufsColumnDefaultWidth = 78;
+    static constexpr int statusColumnDefaultWidth = 70;
+    static constexpr int totalInitialColumnWidth = nameColumnDefaultWidth + pathColumnDefaultWidth
+        + typeColumnDefaultWidth + bitrateColumnDefaultWidth + overallPeakColumnDefaultWidth
+        + peakLeftColumnDefaultWidth + peakRightColumnDefaultWidth + truePeakColumnDefaultWidth
+        + maxShortTermLufsColumnDefaultWidth + integratedLufsColumnDefaultWidth + statusColumnDefaultWidth;
 
-    static_assert(totalInitialColumnFraction == 1.0, "Initial column fractions must sum to 1.0");
-
-    static consteval int widthFromDefaultWindowFraction(double fraction)
-    {
-        return static_cast<int>(fraction * defaultWindowWidth);
-    }
+    static_assert(
+        totalInitialColumnWidth == defaultWindowWidth,
+        "Initial column widths must sum to default window width"
+    );
 
     std::vector<AudioAnalysisRecord>& records;
     std::function<void(int row)> selectionChanged;

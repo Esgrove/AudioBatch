@@ -17,6 +17,21 @@ public:
     /// Formats a peak value for display in the GUI and CLI.
     static juce::String formatPeakDisplay(float peak);
 
+    /// Formats a true-peak value for display in the GUI.
+    static juce::String formatTruePeakDisplay(double truePeak);
+
+    /// Formats a loudness value for display in the GUI.
+    static juce::String formatLoudnessDisplay(double loudness);
+
+    /// Formats a peak value for compact CLI display without a unit suffix.
+    static juce::String formatPeakCompact(double peak);
+
+    /// Formats a true-peak value for compact CLI display without a unit suffix.
+    static juce::String formatTruePeakCompact(double truePeak);
+
+    /// Formats a loudness value for compact CLI display without a unit suffix.
+    static juce::String formatLoudnessCompact(double loudness);
+
     /// Returns the average file bitrate in kbps when it can be derived from the analyzed file.
     static double getAverageBitrateKbps(const AudioAnalysisRecord& record);
 

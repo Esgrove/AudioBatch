@@ -26,6 +26,8 @@ struct AudioAnalysisOptions {
 
 /// Analysis metadata and derived peak information for a single audio file.
 struct AudioAnalysisRecord {
+    static constexpr double negativeInfinityLoudness = -1000.0;
+
     juce::File file;
     juce::String fileName;
     juce::String fullPath;
@@ -38,6 +40,11 @@ struct AudioAnalysisRecord {
     float peakLeft = 0.0f;
     float peakRight = 0.0f;
     float overallPeak = 0.0f;
+    double truePeakLeft = 0.0;
+    double truePeakRight = 0.0;
+    double overallTruePeak = 0.0;
+    double maxShortTermLufs = negativeInfinityLoudness;
+    double integratedLufs = negativeInfinityLoudness;
     int sampleRate = 0;
     int channels = 0;
     int bitsPerSample = 0;

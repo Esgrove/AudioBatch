@@ -1,11 +1,17 @@
 #include "AudioAnalysisService.h"
 
+extern "C" {
+#include <ebur128.h>
+}
+
 #include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <set>
+#include <vector>
 
 /// Internal helpers for peak comparisons and stable record sorting.
 namespace
@@ -13,6 +19,21 @@ namespace
 constexpr float minimumDisplayDecibels = -100.0f;
 constexpr double kilobitsPerSecondDivisor = 1000.0;
 constexpr int defaultMp3BitsPerSample = 16;
+constexpr int analysisBlockSize = 8192;
+
+struct Ebur128StateDeleter {
+    void operator()(ebur128_state* state) const noexcept
+    {
+        if (state == nullptr) {
+            return;
+        }
+
+        auto* stateToDestroy = state;
+        ebur128_destroy(&stateToDestroy);
+    }
+};
+
+using Ebur128StatePtr = std::unique_ptr<ebur128_state, Ebur128StateDeleter>;
 
 juce::String normalizedExtension(const juce::File& file)
 {
@@ -162,7 +183,8 @@ int resolveSourceBitsPerSample(const juce::AudioFormatReader& reader, const juce
     return reader.bitsPerSample;
 }
 
-float peakMagnitude(const float peak)
+template<typename Value>
+Value peakMagnitude(const Value peak)
 {
     return std::abs(peak);
 }
@@ -175,6 +197,57 @@ float signedPeakFromExtrema(const float minimum, const float maximum)
 float dominantPeak(const float firstPeak, const float secondPeak)
 {
     return peakMagnitude(firstPeak) > peakMagnitude(secondPeak) ? firstPeak : secondPeak;
+}
+
+double dominantPeak(const double firstPeak, const double secondPeak)
+{
+    return peakMagnitude(firstPeak) > peakMagnitude(secondPeak) ? firstPeak : secondPeak;
+}
+
+double normalizeLoudness(const double loudness)
+{
+    if (!std::isfinite(loudness) || loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
+        return AudioAnalysisRecord::negativeInfinityLoudness;
+    }
+
+    return loudness;
+}
+
+juce::String formatAmplitudeDisplay(const double amplitude, const juce::String& unitSuffix)
+{
+    if (amplitude <= 0.0) {
+        return "-INF" + unitSuffix;
+    }
+
+    const auto decibels = juce::Decibels::gainToDecibels(static_cast<float>(amplitude), minimumDisplayDecibels);
+    return juce::String::formatted("%.2f", decibels) + unitSuffix;
+}
+
+juce::String formatLoudnessValue(const double loudness, const juce::String& unitSuffix)
+{
+    if (loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
+        return "-INF" + unitSuffix;
+    }
+
+    return juce::String::formatted("%.2f", loudness) + unitSuffix;
+}
+
+bool isEndOfFileReadFailure(
+    const bool readSucceeded,
+    const std::int64_t samplePosition,
+    const int framesRead,
+    const std::int64_t totalFrames
+)
+{
+    return !readSucceeded && samplePosition + static_cast<std::int64_t>(framesRead) >= totalFrames;
+}
+
+Ebur128StatePtr createLoudnessState(const int channelCount, const int sampleRate)
+{
+    const auto mode = EBUR128_MODE_I | EBUR128_MODE_S | EBUR128_MODE_TRUE_PEAK;
+    return Ebur128StatePtr(
+        ebur128_init(static_cast<unsigned int>(channelCount), static_cast<unsigned long>(sampleRate), mode)
+    );
 }
 
 int compareAnalysisState(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
@@ -278,26 +351,129 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         return record;
     }
 
-    float minLeft = 0.0f;
-    float maxLeft = 0.0f;
-    float minRight = 0.0f;
-    float maxRight = 0.0f;
+    const auto channelCount = static_cast<int>(reader->numChannels);
+    const auto sampleRate = juce::roundToInt(reader->sampleRate);
 
-    reader->readMaxLevels(0, reader->lengthInSamples, minLeft, maxLeft, minRight, maxRight);
+    if (channelCount <= 0 || sampleRate <= 0) {
+        record.status = AudioAnalysisStatus::failed;
+        record.errorMessage = "Unsupported audio stream parameters";
+        return record;
+    }
 
-    const auto leftPeak = signedPeakFromExtrema(minLeft, maxLeft);
-    const auto rightPeak = reader->numChannels > 1 ? signedPeakFromExtrema(minRight, maxRight) : leftPeak;
+    auto loudnessState = createLoudnessState(channelCount, sampleRate);
+
+    if (loudnessState == nullptr) {
+        record.status = AudioAnalysisStatus::failed;
+        record.errorMessage = "Could not initialize loudness analyzer";
+        return record;
+    }
+
+    std::vector<float> minSamples(static_cast<size_t>(channelCount), 0.0f);
+    std::vector<float> maxSamples(static_cast<size_t>(channelCount), 0.0f);
+    juce::AudioBuffer<float> readBuffer(channelCount, analysisBlockSize);
+    std::vector<float> interleaved(static_cast<size_t>(channelCount * analysisBlockSize), 0.0f);
+    double maxShortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
+
+    for (std::int64_t samplePosition = 0; samplePosition < reader->lengthInSamples; samplePosition += analysisBlockSize)
+    {
+        const auto remainingFrames = reader->lengthInSamples - samplePosition;
+        const auto framesThisBlock = static_cast<int>(juce::jmin<std::int64_t>(analysisBlockSize, remainingFrames));
+
+        readBuffer.clear();
+        const auto readSucceeded = reader->read(&readBuffer, 0, framesThisBlock, samplePosition, true, true);
+
+        if (!readSucceeded
+            && !isEndOfFileReadFailure(readSucceeded, samplePosition, framesThisBlock, reader->lengthInSamples))
+        {
+            record.status = AudioAnalysisStatus::failed;
+            record.errorMessage = "Audio decode failed during analysis";
+            return record;
+        }
+
+        for (int frame = 0; frame < framesThisBlock; ++frame) {
+            for (int channel = 0; channel < channelCount; ++channel) {
+                const auto sample = readBuffer.getSample(channel, frame);
+                minSamples[static_cast<size_t>(channel)] = std::min(minSamples[static_cast<size_t>(channel)], sample);
+                maxSamples[static_cast<size_t>(channel)] = std::max(maxSamples[static_cast<size_t>(channel)], sample);
+                interleaved[static_cast<size_t>(frame * channelCount + channel)] = sample;
+            }
+        }
+
+        if (ebur128_add_frames_float(loudnessState.get(), interleaved.data(), static_cast<size_t>(framesThisBlock))
+            != EBUR128_SUCCESS)
+        {
+            record.status = AudioAnalysisStatus::failed;
+            record.errorMessage = "Loudness analysis failed while processing audio";
+            return record;
+        }
+
+        double shortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
+
+        if (ebur128_loudness_shortterm(loudnessState.get(), &shortTermLoudness) == EBUR128_SUCCESS) {
+            maxShortTermLoudness = std::max(maxShortTermLoudness, normalizeLoudness(shortTermLoudness));
+        }
+    }
+
+    std::vector<float> signedPeaks(static_cast<size_t>(channelCount), 0.0f);
+
+    for (int channel = 0; channel < channelCount; ++channel) {
+        signedPeaks[static_cast<size_t>(channel)]
+            = signedPeakFromExtrema(minSamples[static_cast<size_t>(channel)], maxSamples[static_cast<size_t>(channel)]);
+    }
+
+    const auto leftPeak = signedPeaks.front();
+    const auto rightPeak = channelCount > 1 ? signedPeaks[1] : leftPeak;
+    auto overallPeak = leftPeak;
+
+    for (int channel = 1; channel < channelCount; ++channel) {
+        overallPeak = dominantPeak(overallPeak, signedPeaks[static_cast<size_t>(channel)]);
+    }
+
+    std::vector<double> truePeaks(static_cast<size_t>(channelCount), 0.0);
+
+    for (int channel = 0; channel < channelCount; ++channel) {
+        if (ebur128_true_peak(
+                loudnessState.get(), static_cast<unsigned int>(channel), &truePeaks[static_cast<size_t>(channel)]
+            )
+            != EBUR128_SUCCESS)
+        {
+            record.status = AudioAnalysisStatus::failed;
+            record.errorMessage = "True peak analysis failed";
+            return record;
+        }
+    }
+
+    double integratedLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
+
+    if (ebur128_loudness_global(loudnessState.get(), &integratedLoudness) != EBUR128_SUCCESS) {
+        record.status = AudioAnalysisStatus::failed;
+        record.errorMessage = "Integrated loudness analysis failed";
+        return record;
+    }
+
+    const auto truePeakLeft = truePeaks.front();
+    const auto truePeakRight = channelCount > 1 ? truePeaks[1] : truePeakLeft;
+    auto overallTruePeak = truePeakLeft;
+
+    for (int channel = 1; channel < channelCount; ++channel) {
+        overallTruePeak = dominantPeak(overallTruePeak, truePeaks[static_cast<size_t>(channel)]);
+    }
 
     record.formatName = reader->getFormatName();
-    record.sampleRate = juce::roundToInt(reader->sampleRate);
-    record.channels = static_cast<int>(reader->numChannels);
+    record.sampleRate = sampleRate;
+    record.channels = channelCount;
     record.bitsPerSample = resolveSourceBitsPerSample(*reader, file);
     record.lengthInSamples = reader->lengthInSamples;
     record.durationSeconds
         = reader->sampleRate > 0.0 ? static_cast<double>(reader->lengthInSamples) / reader->sampleRate : 0.0;
     record.peakLeft = leftPeak;
     record.peakRight = rightPeak;
-    record.overallPeak = dominantPeak(leftPeak, rightPeak);
+    record.overallPeak = overallPeak;
+    record.truePeakLeft = truePeakLeft;
+    record.truePeakRight = truePeakRight;
+    record.overallTruePeak = overallTruePeak;
+    record.maxShortTermLufs = maxShortTermLoudness;
+    record.integratedLufs = normalizeLoudness(integratedLoudness);
     record.status = AudioAnalysisStatus::analyzed;
     record.fromCache = false;
     return record;
@@ -305,14 +481,32 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
 
 juce::String AudioAnalysisService::formatPeakDisplay(float peak)
 {
-    peak = peakMagnitude(peak);
+    return formatAmplitudeDisplay(peakMagnitude(peak), " dBFS");
+}
 
-    if (peak <= 0.0f) {
-        return "-INF dBFS";
-    }
+juce::String AudioAnalysisService::formatTruePeakDisplay(double truePeak)
+{
+    return formatAmplitudeDisplay(peakMagnitude(truePeak), " dBTP");
+}
 
-    const auto decibels = juce::Decibels::gainToDecibels(peak, minimumDisplayDecibels);
-    return juce::String::formatted("%.2f dBFS", decibels);
+juce::String AudioAnalysisService::formatLoudnessDisplay(double loudness)
+{
+    return formatLoudnessValue(loudness, " LUFS");
+}
+
+juce::String AudioAnalysisService::formatPeakCompact(double peak)
+{
+    return formatAmplitudeDisplay(peakMagnitude(peak), {});
+}
+
+juce::String AudioAnalysisService::formatTruePeakCompact(double truePeak)
+{
+    return formatAmplitudeDisplay(peakMagnitude(truePeak), {});
+}
+
+juce::String AudioAnalysisService::formatLoudnessCompact(double loudness)
+{
+    return formatLoudnessValue(loudness, {});
 }
 
 double AudioAnalysisService::getAverageBitrateKbps(const AudioAnalysisRecord& record)
