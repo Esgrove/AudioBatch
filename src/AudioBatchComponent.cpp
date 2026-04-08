@@ -898,12 +898,22 @@ void AudioBatchComponent::runMoveToTrash(
 )
 {
     juce::StringArray failedPaths;
+    juce::StringArray successfullyRemovedPaths;
 
-    for (const auto& file : filesToTrash) {
+    for (int index = 0; index < filesToTrash.size(); ++index) {
+        const auto& file = filesToTrash.getReference(index);
+
         if (!file.moveToTrash()) {
             failedPaths.add(file.getFullPathName());
+            continue;
+        }
+
+        if (juce::isPositiveAndBelow(index, removedPaths.size())) {
+            successfullyRemovedPaths.addIfNotAlreadyThere(removedPaths[index]);
         }
     }
+
+    removeRecordsByPath(successfullyRemovedPaths, fallbackRow);
 
     if (!failedPaths.isEmpty()) {
         juce::AlertWindow::showAsync(
@@ -919,15 +929,6 @@ void AudioBatchComponent::runMoveToTrash(
             nullptr
         );
     }
-
-    juce::StringArray successfullyRemovedPaths;
-    for (const auto& path : removedPaths) {
-        if (!failedPaths.contains(path)) {
-            successfullyRemovedPaths.add(path);
-        }
-    }
-
-    removeRecordsByPath(successfullyRemovedPaths, fallbackRow);
 }
 
 int AudioBatchComponent::findRecordIndex(const juce::String& fullPath) const
