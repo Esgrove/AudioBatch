@@ -155,9 +155,11 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     const auto analysisStartedAtMs = juce::Time::getMillisecondCounterHiRes();
     auto results = coordinator.analyzeBlocking(analysisOptions);
     const auto analysisElapsedMs = juce::Time::getMillisecondCounterHiRes() - analysisStartedAtMs;
+    const auto analysisFailureCount
+        = std::count_if(results.begin(), results.end(), [](const auto& record) { return record.hasError(); });
     utils::log_info(
-        "Analysis complete: " + juce::String(results.size()) + " files in "
-        + juce::String(analysisElapsedMs / 1000.0, 2) + " s"
+        "Analysis complete: " + juce::String(results.size()) + " files (" + juce::String(analysisFailureCount)
+        + " failed) in " + juce::String(analysisElapsedMs / 1000.0, 2) + " s"
     );
 
     AudioAnalysisService::sortRecords(results, options.sortMode, true);

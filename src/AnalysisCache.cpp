@@ -53,11 +53,7 @@ AnalysisCache::AnalysisCache()
 AnalysisCache::~AnalysisCache()
 {
     const juce::ScopedLock lock(mutex);
-
-    if (database != nullptr) {
-        sqlite3_close(database);
-        database = nullptr;
-    }
+    closeUnlocked();
 }
 
 juce::File AnalysisCache::getDatabaseFile() const
@@ -94,6 +90,25 @@ bool AnalysisCache::open()
     return openUnlocked();
 }
 
+void AnalysisCache::closeUnlocked()
+{
+    if (database == nullptr) {
+        utils::log_debug("Analysis cache close skipped: database was not open");
+        return;
+    }
+
+    const auto startedAtMs = juce::Time::getMillisecondCounterHiRes();
+    const auto databasePath = databaseFile.getFullPathName();
+
+    sqlite3_close(database);
+    database = nullptr;
+
+    utils::log_debug(
+        "Closed analysis cache at " + databasePath + " in "
+        + juce::String((juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0, 3) + " s"
+    );
+}
+
 bool AnalysisCache::columnExists(const juce::String& tableName, const juce::String& columnName) const
 {
     const auto sql = "PRAGMA table_info(" + tableName + ");";
@@ -119,8 +134,13 @@ bool AnalysisCache::columnExists(const juce::String& tableName, const juce::Stri
 bool AnalysisCache::openUnlocked()
 {
     if (database != nullptr) {
+        utils::log_debug("Analysis cache open skipped: database already open at " + databaseFile.getFullPathName());
         return true;
     }
+
+    const auto startedAtMs = juce::Time::getMillisecondCounterHiRes();
+    const auto databasePath = databaseFile.getFullPathName();
+    const auto databaseFound = databaseFile.existsAsFile();
 
     databaseFile.getParentDirectory().createDirectory();
 
@@ -132,7 +152,10 @@ bool AnalysisCache::openUnlocked()
     );
 
     if (result != SQLITE_OK || database == nullptr) {
-        utils::log_error("Failed to open analysis cache at " + databaseFile.getFullPathName());
+        utils::log_error(
+            "Failed to open analysis cache at " + databasePath + " in "
+            + juce::String((juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0, 3) + " s"
+        );
         if (database != nullptr) {
             sqlite3_close(database);
             database = nullptr;
@@ -219,6 +242,11 @@ bool AnalysisCache::openUnlocked()
     {
         return false;
     }
+
+    utils::log_debug(
+        "Opened analysis cache at " + databasePath + " (" + juce::String(databaseFound ? "existing" : "new") + ") in "
+        + juce::String((juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0, 3) + " s"
+    );
 
     return true;
 }

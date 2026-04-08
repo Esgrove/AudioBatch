@@ -39,6 +39,7 @@ private:
     static constexpr int waveformVersion = 1;
 
     bool columnExists(const juce::String& tableName, const juce::String& columnName) const;
+    void closeUnlocked();
     bool execute(const juce::String& sql) const;
     bool openUnlocked();
     static juce::String normalizedPath(const juce::File& file);
