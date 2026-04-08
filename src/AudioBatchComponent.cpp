@@ -1160,7 +1160,24 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
     unmarkFileProcessing(result.fullPath);
 
     if (result.succeeded) {
-        const auto selectedPaths = getSelectedRecordPaths();
+        auto selectedPaths = getSelectedRecordPaths();
+
+        for (int index = 0; index < selectedPaths.size(); ++index) {
+            if (selectedPaths[index] == result.fullPath) {
+                selectedPaths.set(index, result.analysisRecord.fullPath);
+            }
+        }
+
+        analysisResults.erase(
+            std::remove_if(
+                analysisResults.begin(),
+                analysisResults.end(),
+                [&result](const AudioAnalysisRecord& record) {
+                    return record.fullPath == result.fullPath && record.fullPath != result.analysisRecord.fullPath;
+                }
+            ),
+            analysisResults.end()
+        );
 
         if (const auto existingIndex = findRecordIndex(result.analysisRecord.fullPath); existingIndex >= 0) {
             analysisResults[static_cast<std::size_t>(existingIndex)] = result.analysisRecord;
@@ -1174,7 +1191,11 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
         updateResultsTableColumnWidths();
         restoreSelectionByPaths(selectedPaths);
 
-        if (currentAudioFile == result.analysisRecord.file) {
+        if (currentAudioFile == result.file) {
+            currentAudioFile = result.analysisRecord.file;
+            showAudioResource(juce::URL(currentAudioFile));
+            updateAudioInfo(result.analysisRecord);
+        } else if (currentAudioFile == result.analysisRecord.file) {
             updateAudioInfo(result.analysisRecord);
         }
     } else {
@@ -1603,7 +1624,7 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 
     rows.emplace_back("Format", getRecordTypeLabel(record));
     rows.emplace_back("Channels", juce::String(record.channels));
-    rows.emplace_back("Bits per sample", juce::String(record.bitsPerSample));
+    rows.emplace_back("Bits per sample", AudioAnalysisService::formatBitsPerSampleDisplay(record));
     rows.emplace_back("Sample rate", juce::String(record.sampleRate));
     rows.emplace_back("Bitrate", AudioAnalysisService::formatBitrateDisplay(record));
     rows.emplace_back("Duration", juce::RelativeTime(record.durationSeconds).getDescription());

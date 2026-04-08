@@ -14,7 +14,7 @@
 namespace
 {
 constexpr int normalizationBlockSize = 32768;
-constexpr auto normalizedMp3OutputSuffix = ".normalized.aif";
+constexpr auto normalizedMp3OutputExtension = ".aif";
 
 struct AudioNormalizationRuntimeState {
     juce::AudioFormatManager readFormatManager;
@@ -96,7 +96,37 @@ juce::File getNormalizationOutputFile(const juce::File& sourceFile)
         return sourceFile;
     }
 
-    return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + normalizedMp3OutputSuffix);
+    return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + normalizedMp3OutputExtension);
+}
+
+bool finalizeNormalizationOutput(
+    juce::TemporaryFile& temporaryFile,
+    const juce::File& sourceFile,
+    const juce::File& outputFile,
+    juce::String& errorMessage
+)
+{
+    if (outputFile == sourceFile) {
+        if (!temporaryFile.overwriteTargetFileWithTemporary()) {
+            errorMessage = "Could not replace the original file with normalized audio";
+            return false;
+        }
+
+        return true;
+    }
+
+    if (!temporaryFile.overwriteTargetFileWithTemporary()) {
+        errorMessage = "Could not create the normalized AIF file";
+        return false;
+    }
+
+    if (sourceFile.existsAsFile() && !sourceFile.moveToTrash()) {
+        outputFile.deleteFile();
+        errorMessage = "Could not move the original MP3 file to the system trash";
+        return false;
+    }
+
+    return true;
 }
 
 bool isAiffExtension(const juce::String& extension)
@@ -125,6 +155,11 @@ std::uint32_t readBigEndianUint32(const std::uint8_t* bytes)
 bool tagMatches(const std::uint8_t* bytes, const char* tag)
 {
     return std::memcmp(bytes, tag, 4) == 0;
+}
+
+bool startsWithId3Tag(const std::uint8_t* bytes)
+{
+    return bytes[0] == 'I' && bytes[1] == 'D' && bytes[2] == '3';
 }
 
 bool isAiffFile(const juce::File& file)
@@ -159,7 +194,7 @@ bool extractMp3Id3Metadata(const juce::File& sourceFile, juce::MemoryBlock& meta
         return sourceFile.getSize() == 0;
     }
 
-    if (!tagMatches(header.data(), "ID3")) {
+    if (!startsWithId3Tag(header.data())) {
         return true;
     }
 
@@ -461,7 +496,7 @@ juce::AudioFormat* getWriterFormatForExtension(
 juce::String getMp3WriteUnavailableReason(const AudioNormalizationRuntimeState& runtimeState)
 {
     juce::ignoreUnused(runtimeState);
-    return "MP3 sources are normalized to sibling AIF files, but AIFF writing is unavailable in this build.";
+    return "MP3 sources are normalized to same-name AIF files, but AIFF writing is unavailable in this build.";
 }
 
 juce::String getWriteUnavailableReason(
@@ -519,7 +554,7 @@ AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
 juce::String getMp3EncoderStatusLine(const AudioNormalizationRuntimeState& runtimeState)
 {
     juce::ignoreUnused(runtimeState);
-    return "MP3 normalization output: sibling AIF files to preserve metadata.";
+    return "MP3 normalization output: same-name AIF files after moving the original MP3 to the system trash.";
 }
 
 std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormalizationRuntimeState& runtimeState)
@@ -543,7 +578,7 @@ std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormaliza
         if (entry.canWriteBack && !entry.fileExtensions.isEmpty()
             && isMp3Extension(normalizedExtension(entry.fileExtensions[0])))
         {
-            entry.detail = "Writes sibling AIF files instead of rewriting the source MP3.";
+            entry.detail = "Writes same-name AIF files and moves the original MP3 to the system trash.";
         } else if (!entry.canWriteBack) {
             entry.detail = getWriteUnavailableReason(entry.fileExtensions, runtimeState);
         }
@@ -664,7 +699,7 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
 
     juce::String message;
     message << getMp3EncoderStatusLine(runtimeState) << juce::newLine << juce::newLine;
-    message << "Normalization rewrites files in place when possible. MP3 sources are written to sibling AIF files."
+    message << "Normalization rewrites files in place when possible. MP3 sources are replaced by same-name AIF files."
             << juce::newLine << juce::newLine;
 
     if (!writableLines.isEmpty()) {
@@ -799,8 +834,10 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
         return AudioNormalizationResult::failure(file, validationError);
     }
 
-    if (!temporaryFile.overwriteTargetFileWithTemporary()) {
-        return AudioNormalizationResult::failure(file, "Could not replace the original file with normalized audio");
+    juce::String finalizeError;
+
+    if (!finalizeNormalizationOutput(temporaryFile, file, outputFile, finalizeError)) {
+        return AudioNormalizationResult::failure(file, finalizeError);
     }
 
     AudioNormalizationResult result;

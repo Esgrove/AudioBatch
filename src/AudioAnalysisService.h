@@ -20,6 +20,9 @@ public:
     /// Returns the average file bitrate in kbps when it can be derived from the analyzed file.
     static double getAverageBitrateKbps(const AudioAnalysisRecord& record);
 
+    /// Formats the reported source bit depth for display, or "-" when unavailable.
+    static juce::String formatBitsPerSampleDisplay(const AudioAnalysisRecord& record);
+
     /// Formats the average bitrate for display in the GUI.
     static juce::String formatBitrateDisplay(const AudioAnalysisRecord& record);
 
