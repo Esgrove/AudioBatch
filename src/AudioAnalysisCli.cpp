@@ -33,7 +33,7 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
     usage += juce::newLine;
     usage += "Usage: ";
     usage += executableName;
-    usage += " [-c|--cli] [options] <paths...>";
+    usage += " [options] <paths...>";
     usage += juce::newLine;
     usage += juce::newLine;
     usage += "Options:";
@@ -41,8 +41,6 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
     usage += "  -h, --help              Print usage and exit";
     usage += juce::newLine;
     usage += "  -V, --version           Print version and exit";
-    usage += juce::newLine;
-    usage += "  -c, --cli               Run audio analysis in CLI mode";
     usage += juce::newLine;
     usage += "  -r, --recurse           Recurse into directories";
     usage += juce::newLine;
@@ -72,7 +70,6 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(
 
     options.showHelp = arguments.removeOptionIfFound("--help|-h");
     options.showVersion = arguments.removeOptionIfFound("--version|-V");
-    options.cliMode = arguments.removeOptionIfFound("--cli|-c");
     options.recursive = arguments.removeOptionIfFound("--recurse|-r");
     options.refresh = arguments.removeOptionIfFound("--refresh|-f");
     options.normalize = arguments.removeOptionIfFound("--normalize|-n");
@@ -108,10 +105,6 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(
         }
 
         options.inputPaths.add(argument.resolveAsFile());
-    }
-
-    if (!options.inputPaths.isEmpty()) {
-        options.cliMode = true;
     }
 
     return options;

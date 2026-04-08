@@ -6,7 +6,6 @@
 
 /// Parsed command-line options for the headless audio analysis executable.
 struct AudioAnalysisCliOptions {
-    bool cliMode = false;
     bool recursive = false;
     bool refresh = false;
     bool normalize = false;
