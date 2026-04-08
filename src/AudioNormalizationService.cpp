@@ -15,6 +15,7 @@ namespace
 {
 constexpr int normalizationBlockSize = 32768;
 constexpr auto normalizedMp3OutputExtension = ".aif";
+constexpr int defaultMp3BitsPerSample = 16;
 
 struct AudioNormalizationRuntimeState {
     juce::AudioFormatManager readFormatManager;
@@ -485,6 +486,37 @@ double resolveWriterSampleRate(juce::AudioFormat& format, double preferredSample
     return static_cast<double>(resolvedSampleRate);
 }
 
+int resolvePreferredOutputBitDepth(
+    const AudioAnalysisRecord& sourceRecord,
+    const juce::AudioFormatReader& reader,
+    const juce::File& sourceFile
+)
+{
+    if (sourceRecord.bitsPerSample > 0) {
+        return sourceRecord.bitsPerSample;
+    }
+
+    if (isMp3SourceFile(sourceFile)) {
+        return defaultMp3BitsPerSample;
+    }
+
+    return static_cast<int>(reader.bitsPerSample);
+}
+
+bool canAcceptReadFailureForNormalization(
+    const juce::AudioFormatReader& reader,
+    const juce::File& sourceFile,
+    juce::int64 samplePosition,
+    int samplesThisBlock
+)
+{
+    if (!isMp3SourceFile(sourceFile)) {
+        return false;
+    }
+
+    return samplePosition + samplesThisBlock >= reader.lengthInSamples;
+}
+
 juce::AudioFormat* getWriterFormatForExtension(
     AudioNormalizationRuntimeState& runtimeState,
     const juce::String& extension
@@ -779,7 +811,8 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
     }
 
     const auto writerSampleRate = resolveWriterSampleRate(*writerFormat, reader->sampleRate);
-    const auto writerBitDepth = resolveWriterBitDepth(*writerFormat, static_cast<int>(reader->bitsPerSample));
+    const auto preferredBitDepth = resolvePreferredOutputBitDepth(sourceRecord, *reader, file);
+    const auto writerBitDepth = resolveWriterBitDepth(*writerFormat, preferredBitDepth);
 
     auto writerOptions = juce::AudioFormatWriterOptions()
                              .withSampleRate(writerSampleRate)
@@ -811,7 +844,9 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
             juce::jmin<juce::int64>(normalizationBlockSize, reader->lengthInSamples - samplePosition)
         );
 
-        if (!reader->read(channelPointers.data(), buffer.getNumChannels(), samplePosition, samplesThisBlock)) {
+        if (!reader->read(channelPointers.data(), buffer.getNumChannels(), samplePosition, samplesThisBlock)
+            && !canAcceptReadFailureForNormalization(*reader, file, samplePosition, samplesThisBlock))
+        {
             return AudioNormalizationResult::failure(file, "Failed while reading audio data for normalization");
         }
 
