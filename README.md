@@ -172,6 +172,8 @@ The cache is invalidated when any of these change:
 
 ## TODO
 
-Not implemented yet:
-
-- VST batch processing
+- User config file
+- VST / AU batch processing
+- Remove from list
+- Add dir menu option
+- Keyboard shortcuts
