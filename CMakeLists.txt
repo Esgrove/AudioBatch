@@ -191,6 +191,8 @@ target_sources(AudioBatchCli
         "src/AudioNormalizationService.cpp"
         "src/AudioNormalizationService.h"
         "src/CliMain.cpp"
+        "src/NormalizeCoordinator.cpp"
+        "src/NormalizeCoordinator.h"
         "src/utils.cpp"
         "src/utils.h"
         "src/version.h"

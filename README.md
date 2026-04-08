@@ -112,10 +112,9 @@ audiobatch [options] <paths...>
 
   -h, --help
   -V, --version
-  -c, --cli
-  -H, --headless
   -r, --recurse
   -f, --refresh
+  -n, --normalize
   -j, --jobs <count>
   -s, --sort <peak|name|path>
 ```
@@ -138,6 +137,13 @@ Example output:
 
 ```text
  -20.48 dBFS  audiofile.wav
+```
+
+Normalize mode re-analyzes each output file after rewriting it and reports the resulting output paths using the
+same peak format:
+
+```text
+ -0.00 dBFS  C:\path\to\normalized-output.aif
 ```
 
 ## Cache
