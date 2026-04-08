@@ -270,6 +270,15 @@ int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& r
     return leftBitrate < rightBitrate ? -1 : 1;
 }
 
+int compareSampleRates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
+{
+    if (lhs.sampleRate == rhs.sampleRate) {
+        return 0;
+    }
+
+    return lhs.sampleRate < rhs.sampleRate ? -1 : 1;
+}
+
 int compareLoudness(const double left, const double right)
 {
     const auto leftIsNegativeInfinity = left <= AudioAnalysisRecord::negativeInfinityLoudness;
@@ -304,6 +313,9 @@ int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
 
         case AudioFileTableModel::columnBitrate:
             return compareBitrates(lhs, rhs);
+
+        case AudioFileTableModel::columnSampleRate:
+            return compareSampleRates(lhs, rhs);
 
         case AudioFileTableModel::columnPeakLeft:
             return comparePeaks(lhs.peakLeft, rhs.peakLeft);
@@ -551,14 +563,33 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
     auto& header = resultsTable.getHeader();
 
     const auto fixedColumnWidth = header.getColumnWidth(AudioFileTableModel::columnOverallPeak)
-        + header.getColumnWidth(AudioFileTableModel::columnType)
-        + header.getColumnWidth(AudioFileTableModel::columnBitrate)
-        + header.getColumnWidth(AudioFileTableModel::columnPeakLeft)
-        + header.getColumnWidth(AudioFileTableModel::columnPeakRight)
-        + header.getColumnWidth(AudioFileTableModel::columnOverallTruePeak)
-        + header.getColumnWidth(AudioFileTableModel::columnMaxShortTermLufs)
-        + header.getColumnWidth(AudioFileTableModel::columnIntegratedLufs)
-        + header.getColumnWidth(AudioFileTableModel::columnStatus);
+        + (header.isColumnVisible(AudioFileTableModel::columnType)
+               ? header.getColumnWidth(AudioFileTableModel::columnType)
+               : 0)
+        + (header.isColumnVisible(AudioFileTableModel::columnBitrate)
+               ? header.getColumnWidth(AudioFileTableModel::columnBitrate)
+               : 0)
+        + (header.isColumnVisible(AudioFileTableModel::columnSampleRate)
+               ? header.getColumnWidth(AudioFileTableModel::columnSampleRate)
+               : 0)
+        + (header.isColumnVisible(AudioFileTableModel::columnPeakLeft)
+               ? header.getColumnWidth(AudioFileTableModel::columnPeakLeft)
+               : 0)
+        + (header.isColumnVisible(AudioFileTableModel::columnPeakRight)
+               ? header.getColumnWidth(AudioFileTableModel::columnPeakRight)
+               : 0)
+        + (header.isColumnVisible(AudioFileTableModel::columnOverallTruePeak)
+               ? header.getColumnWidth(AudioFileTableModel::columnOverallTruePeak)
+               : 0)
+        + (header.isColumnVisible(AudioFileTableModel::columnMaxShortTermLufs)
+               ? header.getColumnWidth(AudioFileTableModel::columnMaxShortTermLufs)
+               : 0)
+        + (header.isColumnVisible(AudioFileTableModel::columnIntegratedLufs)
+               ? header.getColumnWidth(AudioFileTableModel::columnIntegratedLufs)
+               : 0)
+        + (header.isColumnVisible(AudioFileTableModel::columnStatus)
+               ? header.getColumnWidth(AudioFileTableModel::columnStatus)
+               : 0);
 
     const auto availableFlexibleWidth = resultsTable.getVisibleContentWidth() - fixedColumnWidth;
     const auto currentNameWidth = header.getColumnWidth(AudioFileTableModel::columnName);

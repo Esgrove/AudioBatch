@@ -101,6 +101,14 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
+        "Rate",
+        columnSampleRate,
+        initialColumnWidth(columnSampleRate),
+        minimumColumnWidth(columnSampleRate),
+        160,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
         "Peak",
         columnOverallPeak,
         initialColumnWidth(columnOverallPeak),
@@ -156,6 +164,9 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         200,
         juce::TableHeaderComponent::defaultFlags
     );
+
+    header.setColumnVisible(columnPeakLeft, false);
+    header.setColumnVisible(columnPeakRight, false);
 }
 
 int AudioFileTableModel::getNumRows()
@@ -234,6 +245,10 @@ void AudioFileTableModel::paintCell(
             break;
         case columnBitrate:
             text = AudioAnalysisService::formatBitrateDisplay(record);
+            justification = juce::Justification::centredRight;
+            break;
+        case columnSampleRate:
+            text = AudioAnalysisService::formatSampleRateDisplay(record);
             justification = juce::Justification::centredRight;
             break;
         case columnPeakLeft:
