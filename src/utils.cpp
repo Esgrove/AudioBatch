@@ -1,7 +1,50 @@
 #include "utils.h"
 
+#if JUCE_WINDOWS
+#include <juce_core/native/juce_BasicNativeHeaders.h>
+#endif
+
+namespace audiobatch::utils_detail
+{
+#if JUCE_WINDOWS
+bool moveToTrashWindows(const juce::File& file)
+{
+    auto sourcePath = file.getFullPathName().replaceCharacter('/', '\\');
+    std::wstring fromPath(sourcePath.toWideCharPointer());
+    fromPath.push_back(L'\0');
+
+    SHFILEOPSTRUCTW operation = {};
+    operation.wFunc = FO_DELETE;
+    operation.pFrom = fromPath.c_str();
+    operation.fFlags = FOF_ALLOWUNDO | FOF_NOERRORUI | FOF_SILENT | FOF_NOCONFIRMATION;
+
+    return SHFileOperationW(&operation) == 0 && !operation.fAnyOperationsAborted && !file.exists();
+}
+#endif
+}  // namespace audiobatch::utils_detail
+
 namespace utils
 {
+std::unique_ptr<juce::FileLogger> create_default_logger(const juce::String& appName)
+{
+    return std::unique_ptr<juce::FileLogger>(
+        juce::FileLogger::createDefaultAppLogger(appName, appName + ".log", appName, 32768)
+    );
+}
+
+bool move_to_trash(const juce::File& file)
+{
+    if (!file.exists()) {
+        return true;
+    }
+
+#if JUCE_WINDOWS
+    return audiobatch::utils_detail::moveToTrashWindows(file);
+#else
+    return file.moveToTrash();
+#endif
+}
+
 /// Collects build and runtime environment details for logs and diagnostics.
 juce::StringArray system_info()
 {

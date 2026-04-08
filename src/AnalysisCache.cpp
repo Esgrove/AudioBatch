@@ -6,7 +6,7 @@
 #include <sqlite3.h>
 
 /// Helpers for marshalling SQLite values into JUCE types.
-namespace
+namespace audiobatch::cache
 {
 juce::String columnText(sqlite3_stmt* statement, const int columnIndex)
 {
@@ -39,7 +39,9 @@ void bindBlob(sqlite3_stmt* statement, const int index, const juce::MemoryBlock&
 {
     sqlite3_bind_blob(statement, index, data.getData(), static_cast<int>(data.getSize()), SQLITE_TRANSIENT);
 }
-}  // namespace
+}  // namespace audiobatch::cache
+
+using namespace audiobatch::cache;
 
 AnalysisCache::AnalysisCache()
 {

@@ -8,7 +8,7 @@
 #include <iostream>
 
 /// CLI-only formatting helpers used when printing analysis results.
-namespace
+namespace audiobatch::cli
 {
 constexpr int cliPeakColumnWidth = 7;
 constexpr int cliTruePeakColumnWidth = 7;
@@ -55,11 +55,9 @@ juce::String reportedOutputPath(const AudioAnalysisRecord& record)
     return record.fileName;
 }
 
-void printCliError(const juce::String& message)
-{
-    std::cerr << ansi::red << message << ansi::reset << std::endl;
-}
-}  // namespace
+}  // namespace audiobatch::cli
+
+using namespace audiobatch::cli;
 
 juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
 {
@@ -141,7 +139,7 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
 int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 {
     if (options.inputPaths.isEmpty()) {
-        printCliError("No input paths provided");
+        utils::log_error("No input paths provided");
         return 1;
     }
 
@@ -154,7 +152,14 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     analysisOptions.recursive = options.recursive;
     analysisOptions.refresh = options.refresh;
 
+    const auto analysisStartedAtMs = juce::Time::getMillisecondCounterHiRes();
     auto results = coordinator.analyzeBlocking(analysisOptions);
+    const auto analysisElapsedMs = juce::Time::getMillisecondCounterHiRes() - analysisStartedAtMs;
+    utils::log_info(
+        "Analysis complete: " + juce::String(results.size()) + " files in "
+        + juce::String(analysisElapsedMs / 1000.0, 2) + " s"
+    );
+
     AudioAnalysisService::sortRecords(results, options.sortMode, true);
 
     int failureCount = 0;
@@ -171,7 +176,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     for (const auto& result : results) {
         if (result.hasError()) {
             ++failureCount;
-            printCliError(result.file.getFullPathName() + ": " + result.errorMessage);
+            utils::log_error(result.file.getFullPathName() + ": " + result.errorMessage);
             continue;
         }
 
@@ -184,7 +189,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
         if (normalization.hasError()) {
             ++failureCount;
-            printCliError(result.file.getFullPathName() + ": " + normalization.errorMessage);
+            utils::log_error(result.file.getFullPathName() + ": " + normalization.errorMessage);
             continue;
         }
 
