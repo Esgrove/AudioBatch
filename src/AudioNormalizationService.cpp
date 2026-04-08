@@ -14,7 +14,7 @@
 /// Helpers for format lookup, metadata passthrough, and chunked normalization.
 namespace audiobatch::normalization
 {
-AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)
+static AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)
 {
     utils::log_error("Normalization failed for " + file.getFullPathName() + ": " + message);
     return AudioNormalizationResult::failure(file, message);
@@ -39,12 +39,12 @@ struct AudioNormalizationFormatSupport {
     juce::String detail;
 };
 
-float peakMagnitude(const float peak)
+static float peakMagnitude(const float peak)
 {
     return std::abs(peak);
 }
 
-std::unordered_map<juce::String, juce::String> copyMetadata(const juce::StringPairArray& metadata)
+static std::unordered_map<juce::String, juce::String> copyMetadata(const juce::StringPairArray& metadata)
 {
     std::unordered_map<juce::String, juce::String> copiedMetadata;
     const auto& keys = metadata.getAllKeys();
@@ -57,7 +57,7 @@ std::unordered_map<juce::String, juce::String> copyMetadata(const juce::StringPa
     return copiedMetadata;
 }
 
-juce::String normalizedExtension(const juce::File& file)
+static juce::String normalizedExtension(const juce::File& file)
 {
     auto extension = file.getFileExtension();
 
@@ -68,7 +68,7 @@ juce::String normalizedExtension(const juce::File& file)
     return extension;
 }
 
-juce::String normalizedExtension(const juce::String& extension)
+static juce::String normalizedExtension(const juce::String& extension)
 {
     auto value = extension.trim();
 
@@ -79,17 +79,17 @@ juce::String normalizedExtension(const juce::String& extension)
     return value;
 }
 
-bool isMp3Extension(const juce::String& extension)
+static bool isMp3Extension(const juce::String& extension)
 {
     return normalizedExtension(extension).equalsIgnoreCase("mp3");
 }
 
-bool isMp3SourceFile(const juce::File& file)
+static bool isMp3SourceFile(const juce::File& file)
 {
     return isMp3Extension(normalizedExtension(file));
 }
 
-juce::AudioFormat* getAiffWriterFormat(const AudioNormalizationRuntimeState& runtimeState)
+static juce::AudioFormat* getAiffWriterFormat(const AudioNormalizationRuntimeState& runtimeState)
 {
     if (auto* format = runtimeState.readFormatManager.findFormatForFileExtension("aif"); format != nullptr) {
         return format;
@@ -98,7 +98,7 @@ juce::AudioFormat* getAiffWriterFormat(const AudioNormalizationRuntimeState& run
     return runtimeState.readFormatManager.findFormatForFileExtension("aiff");
 }
 
-juce::File getNormalizationOutputFile(const juce::File& sourceFile)
+static juce::File getNormalizationOutputFile(const juce::File& sourceFile)
 {
     if (!isMp3SourceFile(sourceFile)) {
         return sourceFile;
@@ -107,7 +107,7 @@ juce::File getNormalizationOutputFile(const juce::File& sourceFile)
     return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + normalizedMp3OutputExtension);
 }
 
-bool finalizeNormalizationOutput(
+static bool finalizeNormalizationOutput(
     const juce::TemporaryFile& temporaryFile,
     const juce::File& sourceFile,
     const juce::File& outputFile,
@@ -137,40 +137,40 @@ bool finalizeNormalizationOutput(
     return true;
 }
 
-bool isAiffExtension(const juce::String& extension)
+static bool isAiffExtension(const juce::String& extension)
 {
     const auto normalized = normalizedExtension(extension);
     return normalized.equalsIgnoreCase("aif") || normalized.equalsIgnoreCase("aiff")
         || normalized.equalsIgnoreCase("aifc");
 }
 
-bool canStoreAiffId3Metadata(const juce::File& file)
+static bool canStoreAiffId3Metadata(const juce::File& file)
 {
     return isAiffExtension(normalizedExtension(file));
 }
 
-bool readExactly(juce::InputStream& input, void* destination, const int bytesToRead)
+static bool readExactly(juce::InputStream& input, void* destination, const int bytesToRead)
 {
     return bytesToRead >= 0 && input.read(destination, bytesToRead) == bytesToRead;
 }
 
-std::uint32_t readBigEndianUint32(const std::uint8_t* bytes)
+static std::uint32_t readBigEndianUint32(const std::uint8_t* bytes)
 {
     return static_cast<std::uint32_t>(bytes[0]) << 24U | static_cast<std::uint32_t>(bytes[1]) << 16U
         | static_cast<std::uint32_t>(bytes[2]) << 8U | static_cast<std::uint32_t>(bytes[3]);
 }
 
-bool tagMatches(const std::uint8_t* bytes, const char* tag)
+static bool tagMatches(const std::uint8_t* bytes, const char* tag)
 {
     return std::memcmp(bytes, tag, 4) == 0;
 }
 
-bool startsWithId3Tag(const std::uint8_t* bytes)
+static bool startsWithId3Tag(const std::uint8_t* bytes)
 {
     return bytes[0] == 'I' && bytes[1] == 'D' && bytes[2] == '3';
 }
 
-bool isAiffFile(const juce::File& file)
+static bool isAiffFile(const juce::File& file)
 {
     const auto input = file.createInputStream();
 
@@ -188,7 +188,7 @@ bool isAiffFile(const juce::File& file)
         && (tagMatches(header.data() + 8, "AIFF") || tagMatches(header.data() + 8, "AIFC"));
 }
 
-bool extractMp3Id3Metadata(const juce::File& sourceFile, juce::MemoryBlock& metadata)
+static bool extractMp3Id3Metadata(const juce::File& sourceFile, juce::MemoryBlock& metadata)
 {
     const auto input = sourceFile.createInputStream();
 
@@ -225,7 +225,7 @@ bool extractMp3Id3Metadata(const juce::File& sourceFile, juce::MemoryBlock& meta
     return readExactly(*input, metadata.getData(), static_cast<int>(totalSize));
 }
 
-bool extractAiffId3Metadata(const juce::File& sourceFile, juce::MemoryBlock& metadata)
+static bool extractAiffId3Metadata(const juce::File& sourceFile, juce::MemoryBlock& metadata)
 {
     const auto input = sourceFile.createInputStream();
 
@@ -273,7 +273,7 @@ bool extractAiffId3Metadata(const juce::File& sourceFile, juce::MemoryBlock& met
     return true;
 }
 
-bool extractRawId3Metadata(const juce::File& sourceFile, juce::MemoryBlock& metadata)
+static bool extractRawId3Metadata(const juce::File& sourceFile, juce::MemoryBlock& metadata)
 {
     metadata.reset();
 
@@ -288,7 +288,7 @@ bool extractRawId3Metadata(const juce::File& sourceFile, juce::MemoryBlock& meta
     return true;
 }
 
-bool appendAiffId3Metadata(const juce::File& destinationFile, const juce::MemoryBlock& metadata)
+static bool appendAiffId3Metadata(const juce::File& destinationFile, const juce::MemoryBlock& metadata)
 {
     if (metadata.getSize() == 0 || !isAiffFile(destinationFile)) {
         return metadata.getSize() == 0;
@@ -337,7 +337,7 @@ bool appendAiffId3Metadata(const juce::File& destinationFile, const juce::Memory
     return output.getStatus().wasOk();
 }
 
-juce::String getLameExecutableName()
+static juce::String getLameExecutableName()
 {
 #if JUCE_WINDOWS
     return "lame.exe";
@@ -346,12 +346,7 @@ juce::String getLameExecutableName()
 #endif
 }
 
-juce::String getLameSearchLocationsDescription()
-{
-    return "PATH and common Scoop/Homebrew locations";
-}
-
-juce::StringArray getLameCandidatePaths()
+static juce::StringArray getLameCandidatePaths()
 {
     juce::StringArray candidatePaths;
     const auto addCandidate = [&candidatePaths](const juce::File& file) {
@@ -382,7 +377,11 @@ juce::StringArray getLameCandidatePaths()
 #endif
 
     juce::StringArray pathEntries;
-    pathEntries.addTokens(juce::SystemStats::getEnvironmentVariable("PATH", {}), JUCE_WINDOWS ? ";" : ":", "\"");
+#if JUCE_WINDOWS
+    pathEntries.addTokens(juce::SystemStats::getEnvironmentVariable("PATH", {}), ";", "\"");
+#else
+    pathEntries.addTokens(juce::SystemStats::getEnvironmentVariable("PATH", {}), ":", "\"");
+#endif
     pathEntries.removeEmptyStrings();
     pathEntries.trim();
 
@@ -393,7 +392,7 @@ juce::StringArray getLameCandidatePaths()
     return candidatePaths;
 }
 
-juce::File findLameExecutable()
+static juce::File findLameExecutable()
 {
     for (const auto& candidatePath : getLameCandidatePaths()) {
         if (const juce::File candidate(candidatePath); candidate.existsAsFile()) {
@@ -404,7 +403,7 @@ juce::File findLameExecutable()
     return {};
 }
 
-bool extensionsContain(const juce::StringArray& extensions, const juce::String& targetExtension)
+static bool extensionsContain(const juce::StringArray& extensions, const juce::String& targetExtension)
 {
     for (const auto& extension : extensions) {
         if (extension.equalsIgnoreCase(targetExtension)) {
@@ -415,7 +414,7 @@ bool extensionsContain(const juce::StringArray& extensions, const juce::String& 
     return false;
 }
 
-juce::AudioFormatWriterOptions buildProbeWriterOptions(juce::AudioFormat& format)
+static juce::AudioFormatWriterOptions buildProbeWriterOptions(juce::AudioFormat& format)
 {
     const auto sampleRates = format.getPossibleSampleRates();
     const auto bitDepths = format.getPossibleBitDepths();
@@ -431,7 +430,7 @@ juce::AudioFormatWriterOptions buildProbeWriterOptions(juce::AudioFormat& format
         .withBitsPerSample(bitDepths[0]);
 }
 
-bool canCreateProbeWriter(juce::AudioFormat& format)
+static bool canCreateProbeWriter(juce::AudioFormat& format)
 {
     const auto options = buildProbeWriterOptions(format);
 
@@ -444,7 +443,7 @@ bool canCreateProbeWriter(juce::AudioFormat& format)
     return writer != nullptr;
 }
 
-int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredBitsPerSample)
+static int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredBitsPerSample)
 {
     const auto bitDepths = format.getPossibleBitDepths();
 
@@ -467,7 +466,7 @@ int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredBitsPerS
     return resolvedBitsPerSample;
 }
 
-double resolveWriterSampleRate(juce::AudioFormat& format, const double preferredSampleRate)
+static double resolveWriterSampleRate(juce::AudioFormat& format, const double preferredSampleRate)
 {
     const auto sampleRates = format.getPossibleSampleRates();
 
@@ -490,7 +489,7 @@ double resolveWriterSampleRate(juce::AudioFormat& format, const double preferred
     return resolvedSampleRate;
 }
 
-int resolvePreferredOutputBitDepth(
+static int resolvePreferredOutputBitDepth(
     const AudioAnalysisRecord& sourceRecord,
     const juce::AudioFormatReader& reader,
     const juce::File& sourceFile
@@ -507,7 +506,7 @@ int resolvePreferredOutputBitDepth(
     return static_cast<int>(reader.bitsPerSample);
 }
 
-bool canAcceptReadFailureForNormalization(
+static bool canAcceptReadFailureForNormalization(
     const juce::AudioFormatReader& reader,
     const juce::File& sourceFile,
     const juce::int64 samplePosition,
@@ -521,7 +520,7 @@ bool canAcceptReadFailureForNormalization(
     return samplePosition + samplesThisBlock >= reader.lengthInSamples;
 }
 
-juce::AudioFormat* getWriterFormatForExtension(
+static juce::AudioFormat* getWriterFormatForExtension(
     const AudioNormalizationRuntimeState& runtimeState,
     const juce::String& extension
 )
@@ -529,13 +528,13 @@ juce::AudioFormat* getWriterFormatForExtension(
     return runtimeState.readFormatManager.findFormatForFileExtension(normalizedExtension(extension));
 }
 
-juce::String getMp3WriteUnavailableReason(const AudioNormalizationRuntimeState& runtimeState)
+static juce::String getMp3WriteUnavailableReason(const AudioNormalizationRuntimeState& runtimeState)
 {
     juce::ignoreUnused(runtimeState);
     return "MP3 sources are normalized to same-name AIF files, but AIFF writing is unavailable in this build.";
 }
 
-juce::String getWriteUnavailableReason(
+static juce::String getWriteUnavailableReason(
     const juce::StringArray& extensions,
     const AudioNormalizationRuntimeState& runtimeState
 )
@@ -548,7 +547,7 @@ juce::String getWriteUnavailableReason(
            "normalization.";
 }
 
-bool canWriteExtension(AudioNormalizationRuntimeState& runtimeState, const juce::String& extension)
+static bool canWriteExtension(AudioNormalizationRuntimeState& runtimeState, const juce::String& extension)
 {
     const auto normalized = normalizedExtension(extension);
 
@@ -567,7 +566,7 @@ bool canWriteExtension(AudioNormalizationRuntimeState& runtimeState, const juce:
     return false;
 }
 
-AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
+static AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
 {
     thread_local auto runtimeState = [] {
         auto initializedState = std::make_unique<AudioNormalizationRuntimeState>();
@@ -587,13 +586,13 @@ AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
     return *runtimeState;
 }
 
-juce::String getMp3EncoderStatusLine(const AudioNormalizationRuntimeState& runtimeState)
+static juce::String getMp3EncoderStatusLine(const AudioNormalizationRuntimeState& runtimeState)
 {
     juce::ignoreUnused(runtimeState);
     return "MP3 normalization output: same-name AIF files after moving the original MP3 to the system trash.";
 }
 
-std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormalizationRuntimeState& runtimeState)
+static std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormalizationRuntimeState& runtimeState)
 {
     std::vector<AudioNormalizationFormatSupport> support;
     support.reserve(static_cast<std::size_t>(runtimeState.readFormatManager.getNumKnownFormats()));
@@ -633,7 +632,7 @@ std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormaliza
     return support;
 }
 
-juce::String formatExtensionsToText(const juce::StringArray& extensions)
+static juce::String formatExtensionsToText(const juce::StringArray& extensions)
 {
     juce::StringArray normalizedExtensions;
 
@@ -644,7 +643,7 @@ juce::String formatExtensionsToText(const juce::StringArray& extensions)
     return normalizedExtensions.joinIntoString(", ");
 }
 
-std::unique_ptr<juce::AudioFormatWriter> createWriterPreservingMetadata(
+static std::unique_ptr<juce::AudioFormatWriter> createWriterPreservingMetadata(
     juce::AudioFormat& format,
     std::unique_ptr<juce::OutputStream>& outputStream,
     const juce::AudioFormatWriterOptions& writerOptions,
@@ -655,7 +654,7 @@ std::unique_ptr<juce::AudioFormatWriter> createWriterPreservingMetadata(
     return format.createWriterFor(outputStream, writerOptions);
 }
 
-bool preserveOutputMetadata(const juce::File& sourceFile, const juce::File& destinationFile)
+static bool preserveOutputMetadata(const juce::File& sourceFile, const juce::File& destinationFile)
 {
     if (!canStoreAiffId3Metadata(destinationFile)) {
         return true;
@@ -670,7 +669,7 @@ bool preserveOutputMetadata(const juce::File& sourceFile, const juce::File& dest
     return appendAiffId3Metadata(destinationFile, metadata);
 }
 
-juce::String validateTemporaryNormalizedOutput(
+static juce::String validateTemporaryNormalizedOutput(
     juce::AudioFormatManager& formatManager,
     const juce::File& temporaryOutputFile
 )

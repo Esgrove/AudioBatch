@@ -33,6 +33,7 @@
 *.exe
 *.out
 *.app
+/audiobatch
 
 # Build
 

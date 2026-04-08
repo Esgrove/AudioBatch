@@ -20,7 +20,7 @@ public:
     using ResultCallback = std::function<void(const AudioAnalysisRecord& result)>;
 
     /// Creates a coordinator with a thread pool sized for the current machine.
-    explicit AnalysisCoordinator(AnalysisCache& cache, int workerCount = juce::SystemStats::getNumCpus());
+    explicit AnalysisCoordinator(AnalysisCache& analysisCache, int workerCount = juce::SystemStats::getNumCpus());
 
     /// Cancels any in-flight work and destroys the worker pool.
     ~AnalysisCoordinator();

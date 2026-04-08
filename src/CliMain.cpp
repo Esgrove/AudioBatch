@@ -4,7 +4,7 @@
 
 namespace audiobatch::cli
 {
-int exitCli(const int exitCode)
+static int exitCli(const int exitCode)
 {
     juce::Logger::setCurrentLogger(nullptr);
     return exitCode;

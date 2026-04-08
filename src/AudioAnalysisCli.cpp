@@ -14,35 +14,35 @@ constexpr int cliPeakColumnWidth = 7;
 constexpr int cliTruePeakColumnWidth = 7;
 constexpr int cliLoudnessColumnWidth = 8;
 
-juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
+static juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
 {
     return AudioAnalysisService::formatPeakCompact(record.overallPeak).paddedLeft(' ', cliPeakColumnWidth);
 }
 
-juce::String formattedTruePeakColumn(const AudioAnalysisRecord& record)
+static juce::String formattedTruePeakColumn(const AudioAnalysisRecord& record)
 {
     return AudioAnalysisService::formatTruePeakCompact(record.overallTruePeak).paddedLeft(' ', cliTruePeakColumnWidth);
 }
 
-juce::String formattedIntegratedLoudnessColumn(const AudioAnalysisRecord& record)
+static juce::String formattedIntegratedLoudnessColumn(const AudioAnalysisRecord& record)
 {
     return AudioAnalysisService::formatLoudnessCompact(record.integratedLufs).paddedLeft(' ', cliLoudnessColumnWidth);
 }
 
-void printHeaderRow()
+static void printHeaderRow()
 {
     std::cout << juce::String("dBFS").paddedLeft(' ', cliPeakColumnWidth) << "  "
               << juce::String("dBTP").paddedLeft(' ', cliTruePeakColumnWidth) << "  "
               << juce::String("LUFS-I").paddedLeft(' ', cliLoudnessColumnWidth) << "  TRACK" << juce::newLine;
 }
 
-void printResultRow(const AudioAnalysisRecord& record, const juce::String& trackLabel)
+static void printResultRow(const AudioAnalysisRecord& record, const juce::String& trackLabel)
 {
     std::cout << formattedPeakColumn(record) << "  " << formattedTruePeakColumn(record) << "  "
               << formattedIntegratedLoudnessColumn(record) << "  " << trackLabel << juce::newLine;
 }
 
-juce::String reportedOutputPath(const AudioAnalysisRecord& record)
+static juce::String reportedOutputPath(const AudioAnalysisRecord& record)
 {
     if (record.fullPath.isNotEmpty()) {
         return record.fullPath;

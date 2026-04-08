@@ -83,7 +83,7 @@ find_cli_binary() {
             echo "$build_path"
         fi
     else
-        local build_path="$BUILD_DIR/AudioBatchCli_artefacts/$CLI_BINARY_NAME"
+        local build_path="$BUILD_DIR/AudioBatchCli_artefacts/Release/$CLI_BINARY_NAME"
         if [ -f "$build_path" ]; then
             echo "$build_path"
         fi
@@ -95,7 +95,7 @@ find_gui_app() {
     if [ -d "$REPO/$GUI_APP_BUNDLE" ]; then
         echo "$REPO/$GUI_APP_BUNDLE"
     else
-        local build_path="$BUILD_DIR/AudioBatch_artefacts/$GUI_APP_BUNDLE"
+        local build_path="$BUILD_DIR/AudioBatch_artefacts/Release/$GUI_APP_BUNDLE"
         if [ -d "$build_path" ]; then
             echo "$build_path"
         fi

@@ -84,7 +84,7 @@ add_subdirectory(JUCE)
 find_package(SQLite3 QUIET)
 
 if (SQLite3_FOUND)
-    set(AUDIOBATCH_SQLITE_TARGET SQLite::SQLite3)
+    set(AUDIOBATCH_SQLITE_TARGET SQLite3::SQLite3)
 else()
     FetchContent_Declare(sqlite3
         URL https://www.sqlite.org/2026/sqlite-amalgamation-3510300.zip
@@ -297,6 +297,13 @@ if (MSVC)
     # https://docs.microsoft.com/en-us/cpp/build/reference/permissive-standards-conformance
     add_compile_options(/W4 /permissive-)
 else()
+    # Suppress -Wswitch-enum in vendored JUCE audio formats source (has a default case but not all enum values).
+    set_source_files_properties(
+        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_formats/juce_audio_formats.mm"
+        PROPERTIES
+            COMPILE_OPTIONS "-Wno-switch-enum"
+    )
+
     add_compile_options(-Wall -Wextra -pedantic)
     add_link_options(-Wl,-weak_reference_mismatches,weak)
 endif()

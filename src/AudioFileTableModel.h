@@ -87,12 +87,12 @@ public:
 
     /// Creates a model backed by the live result list and UI callbacks owned by the main view.
     AudioFileTableModel(
-        std::vector<AudioAnalysisRecord>& records,
-        std::function<void(int row)> selectionChanged,
-        std::function<void(int columnId, bool isForwards)> sortChanged,
-        std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested,
-        std::function<juce::String(const AudioAnalysisRecord& record)> activeStatusLabelProvider,
-        std::function<float()> activityPhaseProvider
+        std::vector<AudioAnalysisRecord>& sourceRecords,
+        std::function<void(int row)> onSelectionChanged,
+        std::function<void(int columnId, bool isForwards)> onSortChanged,
+        std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,
+        std::function<juce::String(const AudioAnalysisRecord& record)> statusLabelProvider,
+        std::function<float()> phaseProvider
     );
 
     /// Installs the standard set of columns used by the results table.
