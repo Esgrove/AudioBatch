@@ -177,3 +177,4 @@ The cache is invalidated when any of these change:
 - Remove from list
 - Add dir menu option
 - Keyboard shortcuts
+- GitHub Actions
