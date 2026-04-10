@@ -138,9 +138,11 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
 
 int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 {
-    if (options.inputPaths.isEmpty()) {
-        utils::log_error("No input paths provided");
-        return 1;
+    auto inputPaths = options.inputPaths;
+
+    if (inputPaths.isEmpty()) {
+        inputPaths.add(juce::File::getCurrentWorkingDirectory());
+        utils::log_info("No input paths provided, using current directory: " + inputPaths[0].getFullPathName());
     }
 
     AnalysisCache cache;
@@ -148,7 +150,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
     AnalysisCoordinator coordinator(cache, options.workerCount);
     AudioAnalysisOptions analysisOptions;
-    analysisOptions.inputPaths = options.inputPaths;
+    analysisOptions.inputPaths = inputPaths;
     analysisOptions.recursive = options.recursive;
     analysisOptions.refresh = options.refresh;
 
