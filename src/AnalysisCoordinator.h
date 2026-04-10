@@ -19,6 +19,9 @@ public:
     /// Called for each analysed file as results become available.
     using ResultCallback = std::function<void(const AudioAnalysisRecord& result)>;
 
+    /// Called right before a file's analysis begins, from the worker thread.
+    using StartingCallback = std::function<void(const juce::File& file)>;
+
     /// Creates a coordinator with a thread pool sized for the current machine.
     explicit AnalysisCoordinator(AnalysisCache& analysisCache, int workerCount = juce::SystemStats::getNumCpus());
 
@@ -37,6 +40,9 @@ public:
     /// Sets the callback invoked for each published result.
     void setResultCallback(ResultCallback callback);
 
+    /// Sets the callback invoked when a file's analysis is about to start.
+    void setStartingCallback(StartingCallback callback);
+
     /// Starts a background analysis run and returns its monotonically increasing run id.
     int start(const AudioAnalysisOptions& options);
 
@@ -46,10 +52,12 @@ public:
 private:
     void publishCompletion(int totalFiles, int runId) const;
     void publishResult(const AudioAnalysisRecord& result, int runId);
+    void publishStarting(const juce::File& file, int runId);
 
     AnalysisCache& cache;
     CompletionCallback completionCallback;
     ResultCallback resultCallback;
+    StartingCallback startingCallback;
     juce::CriticalSection callbackLock;
     juce::ThreadPool threadPool;
     std::atomic<int> currentRunId {0};
