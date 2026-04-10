@@ -361,12 +361,8 @@ AudioBatchComponent::AudioBatchComponent() :
     ),
     audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
 {
-    currentRoot = getInitialRootDirectory();
-
     formatManager.registerBasicFormats();
 
-    currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
-    currentRootLabel.setTooltip(currentRoot.getFullPathName());
     currentRootLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(currentRootLabel);
 
@@ -478,12 +474,6 @@ AudioBatchComponent::AudioBatchComponent() :
     setOpaque(true);
     setSize(1024, 800);
     setWantsKeyboardFocus(true);
-
-    juce::MessageManager::callAsync([safeThisAsync = SafePointer(this)] {
-        if (safeThisAsync != nullptr) {
-            safeThisAsync->refreshAnalysis(false);
-        }
-    });
 }
 
 AudioBatchComponent::~AudioBatchComponent()
@@ -644,8 +634,9 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
 
 void AudioBatchComponent::chooseRootFolder()
 {
+    const auto startDirectory = currentRoot.isDirectory() ? currentRoot : getDefaultBrowseDirectory();
     directoryChooser
-        = std::make_unique<juce::FileChooser>("Choose Audio Folder", currentRoot, supportedAudioFilePatterns, true);
+        = std::make_unique<juce::FileChooser>("Choose Audio Folder", startDirectory, supportedAudioFilePatterns, true);
 
     directoryChooser->launchAsync(
         juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
@@ -690,7 +681,7 @@ void AudioBatchComponent::showSupportedNormalizationFormats()
     );
 }
 
-juce::File AudioBatchComponent::getInitialRootDirectory()
+juce::File AudioBatchComponent::getDefaultBrowseDirectory()
 {
     const auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
     // TODO: add user config
@@ -745,9 +736,26 @@ void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
 
 void AudioBatchComponent::refreshAnalysis(const bool forceRefresh)
 {
-    juce::Array<juce::File> inputPaths;
-    inputPaths.add(currentRoot);
-    startAnalysis(inputPaths, true, forceRefresh, true);
+    if (currentRoot.isDirectory()) {
+        juce::Array<juce::File> inputPaths;
+        inputPaths.add(currentRoot);
+        startAnalysis(inputPaths, true, forceRefresh, true);
+        return;
+    }
+
+    // No root directory set — re-analyze individual files already in the results table.
+    juce::Array<juce::File> existingFiles;
+    for (const auto& record : analysisResults) {
+        if (record.file.existsAsFile()) {
+            existingFiles.addIfNotAlreadyThere(record.file);
+        }
+    }
+
+    if (existingFiles.isEmpty()) {
+        return;
+    }
+
+    startAnalysis(existingFiles, false, forceRefresh, true);
 }
 
 void AudioBatchComponent::handleFileContextMenuRequested(const int row, int columnId, const juce::MouseEvent& event)
@@ -1532,9 +1540,12 @@ void AudioBatchComponent::startAnalysis(
 
     statusLabel.setText("Analyzing 0/" + juce::String(expectedResults), juce::dontSendNotification);
 
-    if (clearResults) {
+    if (clearResults && currentRoot.isDirectory()) {
         currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
         currentRootLabel.setTooltip(currentRoot.getFullPathName());
+    } else if (clearResults) {
+        currentRootLabel.setText("", juce::dontSendNotification);
+        currentRootLabel.setTooltip("");
     }
 
     analysisCoordinator.start(options, files);

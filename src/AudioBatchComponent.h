@@ -99,7 +99,7 @@ private:
         const juce::StringArray& removedPaths,
         int fallbackRow
     );
-    static juce::File getInitialRootDirectory();
+    static juce::File getDefaultBrowseDirectory();
     void refreshAnalysis(bool forceRefresh);
     void restoreSelectionByPaths(const juce::StringArray& selectedPaths);
 
