@@ -140,6 +140,11 @@ target_include_directories(ebur128
         ${libebur128_SOURCE_DIR}/ebur128
 )
 
+# Suppress bogus SSE2/FTZ #warning from libebur128 on ARM64
+if (NOT CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86")
+    target_compile_options(ebur128 PRIVATE -Wno-\#warnings)
+endif()
+
 juce_add_gui_app(AudioBatch
     BUNDLE_ID com.esgrove.audiobatch
     COMPANY_NAME "Esgrove"
