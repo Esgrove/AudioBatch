@@ -446,6 +446,14 @@ AudioBatchComponent::AudioBatchComponent() :
             }
         });
     });
+    analysisCoordinator.setStartingCallback([safeThis](const juce::File& file) {
+        juce::MessageManager::callAsync([safeThis, file] {
+            if (safeThis != nullptr) {
+                safeThis->activeFileStatusLabels[file.getFullPathName()] = "Analyzing";
+                safeThis->resultsTable.repaint();
+            }
+        });
+    });
 
     normalizeCoordinator.setResultCallback([safeThis](const AudioNormalizationResult& result) {
         juce::MessageManager::callAsync([safeThis, result] {
@@ -1078,7 +1086,8 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
 
     for (auto& record : analysisResults) {
         const auto activeStatus = getActiveStatusLabel(record);
-        const auto needsRefresh = activeStatus == "Analyzing" || record.status == AudioAnalysisStatus::pending;
+        const auto needsRefresh
+            = activeStatus == "Analyzing" || activeStatus == "Waiting" || record.status == AudioAnalysisStatus::pending;
 
         if (!needsRefresh) {
             continue;
@@ -1107,7 +1116,7 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
     }
 
     for (auto iterator = activeFileStatusLabels.begin(); iterator != activeFileStatusLabels.end();) {
-        if (iterator->second == "Analyzing") {
+        if (iterator->second == "Analyzing" || iterator->second == "Waiting") {
             iterator = activeFileStatusLabels.erase(iterator);
         } else {
             ++iterator;
@@ -1536,7 +1545,7 @@ void AudioBatchComponent::startAnalysis(
     sortResults();
     resultsTable.updateContent();
     updateResultsTableColumnWidths();
-    markFilesProcessing(staleFiles, "Analyzing");
+    markFilesProcessing(staleFiles, "Waiting");
 
     statusLabel.setText("Analyzing 0/" + juce::String(expectedResults), juce::dontSendNotification);
 

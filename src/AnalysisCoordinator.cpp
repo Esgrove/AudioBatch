@@ -13,16 +13,40 @@ AnalysisCoordinator::~AnalysisCoordinator()
     cancelAndWait();
 }
 
+void AnalysisCoordinator::setCompletionCallback(CompletionCallback callback)
+{
+    const juce::ScopedLock lock(callbackLock);
+    completionCallback = std::move(callback);
+}
+
 void AnalysisCoordinator::setResultCallback(ResultCallback callback)
 {
     const juce::ScopedLock lock(callbackLock);
     resultCallback = std::move(callback);
 }
 
-void AnalysisCoordinator::setCompletionCallback(CompletionCallback callback)
+void AnalysisCoordinator::setStartingCallback(StartingCallback callback)
 {
     const juce::ScopedLock lock(callbackLock);
-    completionCallback = std::move(callback);
+    startingCallback = std::move(callback);
+}
+
+void AnalysisCoordinator::publishStarting(const juce::File& file, const int runId)
+{
+    if (runId != currentRunId.load()) {
+        return;
+    }
+
+    StartingCallback callbackCopy;
+
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = startingCallback;
+    }
+
+    if (callbackCopy != nullptr) {
+        callbackCopy(file);
+    }
 }
 
 void AnalysisCoordinator::publishResult(const AudioAnalysisRecord& result, const int runId)
@@ -100,6 +124,8 @@ int AnalysisCoordinator::start(const AudioAnalysisOptions& options, const juce::
             if (runId != currentRunId.load()) {
                 return;
             }
+
+            publishStarting(file, runId);
 
             const auto result = AudioAnalysisService::analyzeFile(file);
             cache.storeAnalysis(result);
