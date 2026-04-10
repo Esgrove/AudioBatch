@@ -85,7 +85,7 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
     usage += juce::newLine;
     usage += "  -j, --jobs <count>      Override worker count";
     usage += juce::newLine;
-    usage += "  -s, --sort <mode>       Sort by peak, name, or path";
+    usage += "  -s, --sort <mode>       Sort by peak, lufs, name, or path";
     usage += juce::newLine;
     return usage;
 }
@@ -114,12 +114,14 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
 
         if (normalizedSort == "peak") {
             options.sortMode = AudioAnalysisSortMode::peak;
+        } else if (normalizedSort == "loudness" || normalizedSort == "lufs") {
+            options.sortMode = AudioAnalysisSortMode::loudness;
         } else if (normalizedSort == "name") {
             options.sortMode = AudioAnalysisSortMode::name;
         } else if (normalizedSort == "path") {
             options.sortMode = AudioAnalysisSortMode::path;
         } else {
-            errorMessage = "Sort mode must be one of: peak, name, path";
+            errorMessage = "Sort mode must be one of: peak, lufs, name, path";
             return std::nullopt;
         }
     }
