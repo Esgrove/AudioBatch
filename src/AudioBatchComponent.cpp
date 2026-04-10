@@ -654,6 +654,7 @@ void AudioBatchComponent::chooseRootFolder()
             }
 
             if (const auto selectedFolder = chooser.getResult(); selectedFolder.isDirectory()) {
+                utils::log_info("Opened directory: " + selectedFolder.getFullPathName());
                 safeThis->currentRoot = selectedFolder;
                 safeThis->currentRootLabel.setText(selectedFolder.getFullPathName(), juce::dontSendNotification);
                 safeThis->currentRootLabel.setTooltip(selectedFolder.getFullPathName());
@@ -728,6 +729,7 @@ void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
     }
 
     if (droppedFiles.isEmpty() && droppedDirectory.isDirectory()) {
+        utils::log_info("Dropped directory: " + droppedDirectory.getFullPathName());
         currentRoot = droppedDirectory;
         currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
         refreshAnalysis(false);
@@ -739,6 +741,7 @@ void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
         return;
     }
 
+    utils::log_info("Dropped " + juce::String(droppedFiles.size()) + " files");
     startAnalysis(droppedFiles, false, false, false);
 }
 
@@ -1512,6 +1515,7 @@ void AudioBatchComponent::startAnalysis(
     completedResults = 0;
     const auto files = AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive);
     expectedResults = files.size();
+    utils::log_info("Found " + juce::String(expectedResults) + " audio files");
 
     if (expectedResults == 0) {
         statusLabel.setText(
