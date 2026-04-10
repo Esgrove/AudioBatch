@@ -15,6 +15,7 @@ enum class AudioAnalysisSortMode {
     peak,
     name,
     path,
+    loudness,
 };
 
 /// Input parameters shared by the GUI and CLI analysis flows.

@@ -573,6 +573,9 @@ void AudioAnalysisService::sortRecords(
             return ascending ? compareText(left, right) < 0 : compareText(left, right) > 0;
         };
 
+        auto compareLoudness
+            = [ascending](const double left, const double right) { return ascending ? left < right : left > right; };
+
         switch (sortMode) {
             case AudioAnalysisSortMode::name:
                 if (lhs.fileName != rhs.fileName) {
@@ -586,10 +589,22 @@ void AudioAnalysisService::sortRecords(
                 }
                 return compareStrings(lhs.fileName, rhs.fileName);
 
+            case AudioAnalysisSortMode::loudness:
+                if (!juce::approximatelyEqual(lhs.integratedLufs, rhs.integratedLufs)) {
+                    return compareLoudness(lhs.integratedLufs, rhs.integratedLufs);
+                }
+                if (!juce::approximatelyEqual(peakMagnitude(lhs.overallPeak), peakMagnitude(rhs.overallPeak))) {
+                    return comparePeaks(lhs.overallPeak, rhs.overallPeak);
+                }
+                return compareStrings(lhs.fileName, rhs.fileName);
+
             case AudioAnalysisSortMode::peak:
             default:
                 if (!juce::approximatelyEqual(peakMagnitude(lhs.overallPeak), peakMagnitude(rhs.overallPeak))) {
                     return comparePeaks(lhs.overallPeak, rhs.overallPeak);
+                }
+                if (!juce::approximatelyEqual(lhs.integratedLufs, rhs.integratedLufs)) {
+                    return compareLoudness(lhs.integratedLufs, rhs.integratedLufs);
                 }
                 return compareStrings(lhs.fileName, rhs.fileName);
         }
