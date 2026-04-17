@@ -59,7 +59,7 @@ public:
 
         const auto rowCount = static_cast<int>(rows.size());
         const auto rowHeight = juce::jmax(18, bounds.getHeight() / juce::jmax(1, rowCount));
-        const auto fieldWidth = juce::roundToInt(bounds.getWidth() * 0.42f);
+        const auto fieldWidth = juce::roundToInt(static_cast<float>(bounds.getWidth()) * 0.42f);
         const auto fieldArea = bounds.removeFromLeft(fieldWidth);
 
         for (int row = 0; row < rowCount; ++row) {

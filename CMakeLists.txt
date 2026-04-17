@@ -276,7 +276,6 @@ set_target_properties(AudioBatch
         COMPILE_WARNING_AS_ERROR YES
         CXX_STANDARD 23
         MACOSX_BUNDLE YES
-        OUTPUT_NAME "AudioBatchApp"
         XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
         XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
         XCODE_ATTRIBUTE_CODE_SIGNING_REQUIRED "YES"
@@ -307,6 +306,15 @@ else()
         "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_formats/juce_audio_formats.mm"
         PROPERTIES
             COMPILE_OPTIONS "-Wno-switch-enum"
+    )
+
+    # Suppress -Wdeprecated-declarations in vendored JUCE audio processors source
+    # (uses std::wstring_convert, deprecated in C++17 and flagged by macOS 26+ SDK).
+    set_source_files_properties(
+        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_processors/juce_audio_processors.mm"
+        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_processors_headless/juce_audio_processors_headless.mm"
+        PROPERTIES
+            COMPILE_OPTIONS "-Wno-deprecated-declarations"
     )
 
     add_compile_options(-Wall -Wextra -pedantic)
