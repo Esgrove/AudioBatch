@@ -63,8 +63,7 @@ init_options() {
     fi
 
     CLI_BINARY_NAME="audiobatch"
-    GUI_BINARY_NAME="AudioBatchApp"
-    GUI_APP_BUNDLE="$GUI_BINARY_NAME.app"
+    GUI_APP_BUNDLE="AudioBatch.app"
     INSTALL_DIR="$HOME/.local/bin"
     BUILD_DIR="$REPO/cmake-build-${BASH_PLATFORM}-release"
 
