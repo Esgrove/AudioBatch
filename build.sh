@@ -132,11 +132,11 @@ build_mac_app() {
 }
 
 build_windows_app() {
-    GUI_EXE="AudioBatchApp.exe"
+    GUI_EXE="AudioBatch.exe"
     CLI_EXE="$CLI_BINARY_NAME.exe"
     GUI_EXECUTABLE_SOURCE="$CMAKE_BUILD_DIR/AudioBatch_artefacts/$BUILD_TYPE/$GUI_EXE"
     CLI_EXECUTABLE_SOURCE="$CMAKE_BUILD_DIR/AudioBatchCli_artefacts/$BUILD_TYPE/$CLI_EXE"
-    GUI_EXECUTABLE="$REPO/$GUI_EXE"
+    GUI_EXECUTABLE="$REPO/AudioBatchApp.exe"
     CLI_EXECUTABLE="$REPO/$CLI_EXE"
 
     rm -f "$GUI_EXECUTABLE" "$CLI_EXECUTABLE"
