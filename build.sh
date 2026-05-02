@@ -72,7 +72,6 @@ init_options() {
     JUCE_PATH="$REPO/JUCE"
     APP_NAME="AudioBatch"
     GUI_TARGET_NAME="AudioBatch"
-    GUI_APP_BUNDLE="AudioBatch.app"
     CLI_TARGET_NAME="AudioBatchCli"
     CLI_BINARY_NAME="audiobatch"
     CMAKE_BUILD_DIR="$REPO/cmake-build-${BASH_PLATFORM}-$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')"
@@ -96,6 +95,7 @@ build_app() {
 }
 
 build_mac_app() {
+    GUI_APP_BUNDLE="AudioBatch.app"
     GUI_APP_DESTINATION="$REPO/$GUI_APP_BUNDLE"
     CLI_APP_DESTINATION="$REPO/$CLI_BINARY_NAME"
 
@@ -123,15 +123,16 @@ build_mac_app() {
     mv -f "$GUI_APP_SOURCE" "$GUI_APP_DESTINATION"
     cp -f "$CLI_APP_SOURCE" "$CLI_APP_DESTINATION"
 
-    file "$GUI_APP_DESTINATION"
-    file "$CLI_APP_DESTINATION"
     print_green "GUI build successful: $GUI_APP_BUNDLE"
+    file "$GUI_APP_DESTINATION"
+
     print_green "CLI build successful: $CLI_BINARY_NAME"
+    file "$CLI_APP_DESTINATION"
     "$CLI_APP_DESTINATION" --version
 }
 
 build_windows_app() {
-    GUI_EXE="audiobatch.exe"
+    GUI_EXE="AudioBatchApp.exe"
     CLI_EXE="$CLI_BINARY_NAME.exe"
     GUI_EXECUTABLE_SOURCE="$CMAKE_BUILD_DIR/AudioBatch_artefacts/$BUILD_TYPE/$GUI_EXE"
     CLI_EXECUTABLE_SOURCE="$CMAKE_BUILD_DIR/AudioBatchCli_artefacts/$BUILD_TYPE/$CLI_EXE"
@@ -148,10 +149,11 @@ build_windows_app() {
     cp -f "$GUI_EXECUTABLE_SOURCE" "$GUI_EXECUTABLE"
     cp -f "$CLI_EXECUTABLE_SOURCE" "$CLI_EXECUTABLE"
 
-    file "$GUI_EXECUTABLE"
-    file "$CLI_EXECUTABLE"
     print_green "GUI build successful: $GUI_EXE"
+    file "$GUI_EXECUTABLE"
+
     print_green "CLI build successful: $CLI_EXE"
+    file "$CLI_EXECUTABLE"
     "$CLI_EXECUTABLE" --version
 }
 
