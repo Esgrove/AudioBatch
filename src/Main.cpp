@@ -1,5 +1,6 @@
 #include "AudioBatchComponent.h"
 #include "CustomLookAndFeel.h"
+#include "PluginChain.h"
 #include "utils.h"
 
 #include <JuceHeader.h>
@@ -16,6 +17,9 @@ enum MenuItemId {
     supportedFormatsMenuItemId,
     aboutMenuItemId,
     quitMenuItemId,
+    editPluginMenuItemId,
+    clearPluginMenuItemId,
+    scanPluginsMenuItemId,
 };
 }  // namespace audiobatch::app
 
@@ -131,6 +135,8 @@ private:
                 menu.addItem(clearFilesMenuItemId, "Clear All Files");
                 break;
             case 2:
+                appendPluginOptionsMenuItems(menu);
+                menu.addSeparator();
                 menu.addItem(audioSettingsMenuItemId, "Audio Settings...");
                 break;
             case 3:
@@ -154,6 +160,8 @@ private:
                 menu.addItem(quitMenuItemId, "Quit");
                 break;
             case 1:
+                appendPluginOptionsMenuItems(menu);
+                menu.addSeparator();
                 menu.addItem(audioSettingsMenuItemId, "Audio Settings...");
                 break;
             case 2:
@@ -212,9 +220,67 @@ private:
             case quitMenuItemId:
                 juce::JUCEApplication::getInstance()->systemRequestedQuit();
                 break;
+            case editPluginMenuItemId:
+                if (auto* chain = getAudioBatch().getPluginChain()) {
+                    chain->openEditor();
+                }
+                break;
+            case clearPluginMenuItemId:
+                if (auto* chain = getAudioBatch().getPluginChain()) {
+                    chain->clearSelection();
+                }
+                break;
+            case scanPluginsMenuItemId:
+                if (auto* chain = getAudioBatch().getPluginChain()) {
+                    chain->showScanWindow();
+                }
+                break;
             default:
+                handlePluginChoiceMenuItem(menuItemID);
                 break;
         }
+    }
+
+    /// Appends the plugin section into a menu, mirroring the popup attached to the Plugin toolbar button.
+    void appendPluginOptionsMenuItems(juce::PopupMenu& menu)
+    {
+        auto* chain = getAudioBatch().getPluginChain();
+        if (chain == nullptr) {
+            return;
+        }
+
+        const auto description = chain->getSelectedPluginDescription();
+        const bool hasSelection = description.fileOrIdentifier.isNotEmpty();
+
+        if (hasSelection) {
+            menu.addSectionHeader(description.name + " (" + description.pluginFormatName + ")");
+            menu.addItem(editPluginMenuItemId, "Edit Plugin...");
+            menu.addItem(clearPluginMenuItemId, "Clear Plugin");
+            menu.addSeparator();
+        }
+
+        const auto& types = chain->getKnownPluginList().getTypes();
+        juce::PopupMenu chooseSubmenu;
+        juce::KnownPluginList::addToMenu(chooseSubmenu, types, juce::KnownPluginList::sortByManufacturer);
+        menu.addSubMenu("Choose Plugin", chooseSubmenu, !types.isEmpty());
+        menu.addItem(scanPluginsMenuItemId, "Scan for Plugins...");
+    }
+
+    /// Decodes a menu result against the known plugin list and applies it as the current selection.
+    void handlePluginChoiceMenuItem(const int menuItemID)
+    {
+        auto* chain = getAudioBatch().getPluginChain();
+        if (chain == nullptr) {
+            return;
+        }
+
+        const auto& types = chain->getKnownPluginList().getTypes();
+        const auto index = juce::KnownPluginList::getIndexChosenByMenu(types, menuItemID);
+        if (index < 0 || index >= types.size()) {
+            return;
+        }
+
+        chain->selectPlugin(types.getReference(index));
     }
 
     AudioBatchComponent& getAudioBatch() const

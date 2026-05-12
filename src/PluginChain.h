@@ -48,6 +48,9 @@ public:
     /// Clears the current selection and saved state.
     void clearSelection();
 
+    /// Sets the active plugin to the given description, discarding any previously saved state.
+    void selectPlugin(const juce::PluginDescription& description);
+
     /// Opens the plugin scan dialog.
     void showScanWindow();
 

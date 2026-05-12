@@ -143,10 +143,7 @@ void PluginChain::showMenu(juce::Component& anchor)
                 return;
             }
 
-            safeThis->selectedDescription = types.getReference(index);
-            safeThis->selectedState.reset();
-            safeThis->persistSelection();
-            safeThis->notifySelectionChanged();
+            safeThis->selectPlugin(types.getReference(index));
         }
     );
 }
@@ -247,6 +244,14 @@ void PluginChain::openEditor()
 void PluginChain::clearSelection()
 {
     selectedDescription = {};
+    selectedState.reset();
+    persistSelection();
+    notifySelectionChanged();
+}
+
+void PluginChain::selectPlugin(const juce::PluginDescription& description)
+{
+    selectedDescription = description;
     selectedState.reset();
     persistSelection();
     notifySelectionChanged();
