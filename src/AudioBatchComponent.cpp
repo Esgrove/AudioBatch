@@ -361,7 +361,17 @@ AudioBatchComponent::AudioBatchComponent() :
     ),
     audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
 {
+    const auto constructorStartedAtMs = juce::Time::getMillisecondCounterHiRes();
+    const auto logStartupCheckpoint = [constructorStartedAtMs](const juce::String& step) {
+        utils::log_debug(
+            "AudioBatchComponent startup: " + step + " ("
+            + juce::String(juce::Time::getMillisecondCounterHiRes() - constructorStartedAtMs, 1) + " ms)"
+        );
+    };
+
+    logStartupCheckpoint("constructor begin");
     formatManager.registerBasicFormats();
+    logStartupCheckpoint("audio formats registered");
 
     currentRootLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(currentRootLabel);
@@ -426,10 +436,18 @@ AudioBatchComponent::AudioBatchComponent() :
     addAndMakeVisible(settingsButton);
 
     tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 700);
+    logStartupCheckpoint("ui controls created");
 
     thread.startThread(juce::Thread::Priority::high);
+    logStartupCheckpoint("audio preview thread started");
 
-    analysisCache.open();
+    utils::log_debug("AudioBatchComponent startup: opening analysis cache");
+    const auto analysisCacheOpened = analysisCache.open();
+    if (analysisCacheOpened) {
+        logStartupCheckpoint("analysis cache opened");
+    } else {
+        utils::log_error("AudioBatchComponent startup: analysis cache open failed");
+    }
 
     const SafePointer safeThis(this);
     analysisCoordinator.setResultCallback([safeThis](const AudioAnalysisRecord& record) {
@@ -470,18 +488,45 @@ AudioBatchComponent::AudioBatchComponent() :
             }
         });
     });
+    logStartupCheckpoint("analysis and normalization callbacks configured");
 
+    utils::log_debug("AudioBatchComponent startup: requesting record-audio permission");
     juce::RuntimePermissions::request(juce::RuntimePermissions::recordAudio, [this](const bool granted) {
         const int numInputChannels = granted ? 2 : 0;
-        audioDeviceManager.initialise(numInputChannels, 2, nullptr, true, {}, nullptr);
+        const auto audioInitStartedAtMs = juce::Time::getMillisecondCounterHiRes();
+
+        utils::log_debug(
+            "AudioBatchComponent startup: audio permission callback granted=" + juce::String(granted ? "true" : "false")
+        );
+        utils::log_debug(
+            "AudioBatchComponent startup: audio device init begin (inputs=" + juce::String(numInputChannels)
+            + ", outputs=2)"
+        );
+
+        const auto initError = audioDeviceManager.initialise(numInputChannels, 2, nullptr, true, {}, nullptr);
+        const auto audioInitElapsedMs = juce::Time::getMillisecondCounterHiRes() - audioInitStartedAtMs;
+
+        if (initError.isEmpty()) {
+            utils::log_debug(
+                "AudioBatchComponent startup: audio device init succeeded (" + juce::String(audioInitElapsedMs, 1)
+                + " ms)"
+            );
+        } else {
+            utils::log_error(
+                "AudioBatchComponent startup: audio device init failed (" + juce::String(audioInitElapsedMs, 1)
+                + " ms): " + initError
+            );
+        }
     });
 
     audioDeviceManager.addAudioCallback(&audioSourcePlayer);
     audioSourcePlayer.setSource(&transportSource);
+    logStartupCheckpoint("audio callback connected");
 
     setOpaque(true);
     setSize(1024, 800);
     setWantsKeyboardFocus(true);
+    logStartupCheckpoint("constructor complete");
 }
 
 AudioBatchComponent::~AudioBatchComponent()
