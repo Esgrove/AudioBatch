@@ -28,20 +28,9 @@ void ThumbnailComponent::paint(juce::Graphics& g)
     if (thumbnail.getTotalLength() > 0.0) {
         const auto reduced = getLocalBounds().reduced(2);
 
-        if (juce::approximatelyEqual(displayGain, 1.0f)) {
-            thumbnail.drawChannels(g, reduced, visibleRange.getStart(), visibleRange.getEnd(), 1.0f);
-        } else {
-            // Clip to the thumbnail bounds first, then vertically scale around the centre.
-            // This way over-0 dBFS peaks are simply cut off, mimicking a hard limiter at the boundary.
-            juce::Graphics::ScopedSaveState saved(g);
-            g.reduceClipRegion(reduced);
-
-            const auto centreY = static_cast<float>(reduced.getCentreY());
-            g.addTransform(
-                juce::AffineTransform::translation(0.0f, -centreY).scaled(1.0f, displayGain).translated(0.0f, centreY)
-            );
-            thumbnail.drawChannels(g, reduced, visibleRange.getStart(), visibleRange.getEnd(), 1.0f);
-        }
+        // drawChannels scales each channel around its own strip midpoint and clamps the waveform
+        // to the strip bounds, so over-0 dBFS peaks are naturally clipped at the channel boundary.
+        thumbnail.drawChannels(g, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
     } else {
         g.setFont(14.0f);
         g.drawFittedText("No audio file selected", getLocalBounds(), juce::Justification::centred, 2);
@@ -100,6 +89,11 @@ void ThumbnailComponent::setThumbnailFullyLoadedCallback(std::function<void()> c
 void ThumbnailComponent::setMouseWheelZoomCallback(std::function<void(double)> callback)
 {
     mouseWheelZoomCallback = std::move(callback);
+}
+
+void ThumbnailComponent::setMouseWheelGainCallback(std::function<void(float)> callback)
+{
+    mouseWheelGainCallback = std::move(callback);
 }
 
 void ThumbnailComponent::setURL(const juce::URL& url)
@@ -198,9 +192,16 @@ void ThumbnailComponent::mouseUp(const juce::MouseEvent&)
     transportSource.start();
 }
 
-void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel)
+void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
 {
     if (thumbnail.getTotalLength() <= 0.0) {
+        return;
+    }
+
+    // Ctrl on Windows/Linux, Cmd on macOS — both map to commandModifier in JUCE.
+    if (event.mods.isCommandDown() && std::abs(wheel.deltaY) > 0.0f && mouseWheelGainCallback) {
+        constexpr float dbPerWheelNotch = 6.0f;
+        mouseWheelGainCallback(wheel.deltaY * dbPerWheelNotch);
         return;
     }
 

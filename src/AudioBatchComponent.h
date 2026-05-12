@@ -3,6 +3,7 @@
 #include "AnalysisCache.h"
 #include "AnalysisCoordinator.h"
 #include "AudioFileTableModel.h"
+#include "IntervalStepSlider.h"
 #include "NormalizeCoordinator.h"
 #include "PluginChain.h"
 #include "PluginProcessing.h"
@@ -216,7 +217,8 @@ private:
     juce::Label zoomLabel {"Zoom"};
     juce::Label gainLabel {"GainLabel"};
     juce::Slider zoomSlider {"ZoomSlider"};
-    juce::Slider gainSlider {"GainSlider"};
+
+    IntervalStepSlider gainSlider {"GainSlider"};
     juce::TextButton gainClearButton {"x"};
     juce::TextButton settingsButton {"Settings"};
     juce::TextButton pluginButton {"Plugin"};
