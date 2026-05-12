@@ -221,7 +221,7 @@ void PluginChain::openEditor()
     auto* editor = editorInstance->createEditorIfNeeded();
 
     if (editor == nullptr) {
-        // No custom editor; fall back to the generic parameter editor.
+        // No custom editor. Fall back to the generic parameter editor.
         editor = new juce::GenericAudioProcessorEditor(*editorInstance);
         editor->setSize(450, 600);
     }

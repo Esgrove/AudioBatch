@@ -110,8 +110,8 @@ static void write_to_log(const juce::String& message, [[maybe_unused]] Level log
 {
     const auto timestamp = juce::Time::getCurrentTime().formatted("%H:%M:%S ");
     const auto log_message = timestamp + message;
-    // Print the log messages to stdout / stderr when running in release configuration, since
-    // otherwise log output will not be visible when running the app from command line.
+    // Print the log messages to stdout / stderr when running in release configuration,
+    // since otherwise log output will not be visible when running the app from command line.
     // In debug builds, the log messages are printed to console already by juce::FileLogger,
     // so this prevents them from being printed twice in debug builds.
 #if !JUCE_DEBUG

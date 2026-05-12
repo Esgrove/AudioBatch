@@ -41,9 +41,11 @@ public:
     /// Sets the callback that is invoked if starting fails.
     void setStartErrorCallback(StartErrorCallback callback);
 
-    /// Starts a background processing run. Plugin instances must be pre-instantiated on the
-    /// message thread by the caller and ownership is transferred to the coordinator.
-    /// One instance is consumed by each worker; instances are returned to a free pool between files.
+    /// Starts a background processing run.
+    /// Plugin instances must be pre-instantiated on the message thread by the caller
+    /// and ownership is transferred to the coordinator.
+    /// One instance is consumed by each worker.
+    /// Instances are returned to a free pool between files.
     /// Returns the number of queued files.
     int start(
         const std::vector<AudioAnalysisRecord>& records,
