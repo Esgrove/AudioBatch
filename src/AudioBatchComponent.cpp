@@ -497,10 +497,7 @@ AudioBatchComponent::AudioBatchComponent() :
     }
 
     pluginChain = std::make_unique<PluginChain>(pluginAppProperties);
-    pluginChain->setSelectionChangedCallback([this](const PluginDescriptorRef& descriptor) {
-        const bool hasPlugin = descriptor.isValid();
-        processButton.setEnabled(hasPlugin && !pluginProcessingInProgress && !isAnalysisInProgress());
-    });
+    pluginChain->setSelectionChangedCallback([this](const PluginDescriptorRef&) { updateProcessButtonState(); });
 
     pluginButton.setTooltip("Choose a plugin, edit its parameters, or scan for plugins.");
     pluginButton.onClick = [this] {
@@ -543,10 +540,7 @@ AudioBatchComponent::AudioBatchComponent() :
     addAndMakeVisible(normalizeBeforePluginToggle);
 
     processButton.setTooltip("Process selected files through the selected plugin.");
-    processButton.setEnabled(
-        pluginChain != nullptr && pluginChain->getSelectedPlugin().isValid() && !pluginProcessingInProgress
-        && !isAnalysisInProgress()
-    );
+    updateProcessButtonState();
     processButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
     processButton.onClick = [this] { processSelectedRecords(); };
     addAndMakeVisible(processButton);
@@ -953,6 +947,7 @@ void AudioBatchComponent::clearAllRecords()
     resultsTable.repaint();
     syncActivityTimer();
     statusLabel.setText("No files", juce::dontSendNotification);
+    updateProcessButtonState();
 }
 
 void AudioBatchComponent::removeSelectedRecords()
@@ -1563,6 +1558,7 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
 
     updateStatusLabel();
     resultsTable.repaint();
+    updateProcessButtonState();
 }
 
 void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record)
@@ -1601,6 +1597,7 @@ void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record
     }
 
     updateStatusLabel();
+    updateProcessButtonState();
 }
 
 void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& result)
@@ -1704,6 +1701,14 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles)
     } else if (!currentAudioFile.existsAsFile() && resultsTable.getSelectedRow() >= 0) {
         handleSelectionChanged(resultsTable.getSelectedRow());
     }
+
+    updateProcessButtonState();
+}
+
+void AudioBatchComponent::updateProcessButtonState()
+{
+    const bool hasPlugin = pluginChain != nullptr && pluginChain->getSelectedPlugin().isValid();
+    processButton.setEnabled(hasPlugin && hasAnyRecords() && !pluginProcessingInProgress && !isAnalysisInProgress());
 }
 
 void AudioBatchComponent::updateStatusLabel()
@@ -1919,6 +1924,7 @@ void AudioBatchComponent::startAnalysis(
     }
 
     analysisCoordinator.start(options, files);
+    updateProcessButtonState();
 }
 
 juce::String AudioBatchComponent::getActiveStatusLabel(const AudioAnalysisRecord& record) const
@@ -2519,13 +2525,13 @@ void AudioBatchComponent::processSelectedRecords()
     processingFailures.clear();
     processedResultsCompleted = 0;
     pluginProcessingInProgress = true;
-    processButton.setEnabled(false);
+    updateProcessButtonState();
 
     processedResultsExpected = pluginCoordinator.start(records, options, std::move(instances));
 
     if (processedResultsExpected <= 0) {
         pluginProcessingInProgress = false;
-        processButton.setEnabled(true);
+        updateProcessButtonState();
         updateStatusLabel();
         return;
     }
@@ -2603,7 +2609,7 @@ void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
     syncActivityTimer();
 
     if (pluginChain != nullptr) {
-        processButton.setEnabled(pluginChain->getSelectedPluginDescription().fileOrIdentifier.isNotEmpty());
+        updateProcessButtonState();
     }
 
     if (!processingFailures.isEmpty()) {
