@@ -154,6 +154,7 @@ private:
     void updateResultsTableColumnWidths() const;
     void updateAudioInfo(const AudioAnalysisRecord& record);
     void updateStatusLabel();
+    void updateProcessButtonState();
     bool shouldDropFilesWhenDraggedExternally(
         const juce::DragAndDropTarget::SourceDetails& sourceDetails,
         juce::StringArray& files,
