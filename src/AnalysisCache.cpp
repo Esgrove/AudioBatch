@@ -139,11 +139,13 @@ bool AnalysisCache::openUnlocked()
     }
 
     const auto startedAtMs = juce::Time::getMillisecondCounterHiRes();
-    const auto databasePath = databaseFile.getFullPathName();
+    const auto& databasePath = databaseFile.getFullPathName();
     const auto databaseFound = databaseFile.existsAsFile();
 
+    utils::log_debug("Analysis cache startup: ensuring directory for " + databasePath);
     databaseFile.getParentDirectory().createDirectory();
 
+    utils::log_debug("Analysis cache startup: calling sqlite3_open_v2");
     const auto result = sqlite3_open_v2(
         databaseFile.getFullPathName().toRawUTF8(),
         &database,
@@ -163,12 +165,15 @@ bool AnalysisCache::openUnlocked()
         return false;
     }
 
+    utils::log_debug("Analysis cache startup: sqlite3_open_v2 returned successfully");
     sqlite3_busy_timeout(database, 2000);
 
+    utils::log_debug("Analysis cache startup: applying SQLite pragmas");
     if (!execute("PRAGMA journal_mode=WAL;") || !execute("PRAGMA synchronous=NORMAL;")) {
         return false;
     }
 
+    utils::log_debug("Analysis cache startup: ensuring schema");
     if (!execute(R"SQL(
         CREATE TABLE IF NOT EXISTS file_analysis (
             file_path TEXT PRIMARY KEY,
@@ -243,6 +248,7 @@ bool AnalysisCache::openUnlocked()
         return false;
     }
 
+    utils::log_debug("Analysis cache startup: schema ready");
     utils::log_debug(
         "Opened analysis cache at " + databasePath + " (" + juce::String(databaseFound ? "existing" : "new") + ") in "
         + juce::String((juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0, 3) + " s"

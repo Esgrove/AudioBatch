@@ -25,6 +25,15 @@ public:
     explicit MainWindow(const juce::String& name) :
         DocumentWindow(name, juce::CustomLookAndFeel::greyDark, DocumentWindow::allButtons)
     {
+        const auto constructorStartedAtMs = juce::Time::getMillisecondCounterHiRes();
+        const auto logStartupCheckpoint = [constructorStartedAtMs](const juce::String& step) {
+            utils::log_debug(
+                "MainWindow startup: " + step + " ("
+                + juce::String(juce::Time::getMillisecondCounterHiRes() - constructorStartedAtMs, 1) + " ms)"
+            );
+        };
+
+        logStartupCheckpoint("constructor begin");
         juce::LookAndFeel::setDefaultLookAndFeel(lookAndFeel.get());
 #if JUCE_WINDOWS
         setUsingNativeTitleBar(false);
@@ -33,21 +42,27 @@ public:
 #else
         setUsingNativeTitleBar(true);
 #endif
+
+        logStartupCheckpoint("creating main content component");
         setContentOwned(new AudioBatchComponent(), true);
+        logStartupCheckpoint("main content component created");
 
 #if JUCE_MAC
         juce::MenuBarModel::setMacMainMenu(this);
 #else
         setMenuBar(this, 26);
 #endif
+        logStartupCheckpoint("menu bar configured");
 
         setResizable(true, true);
         setResizeLimits(800, 600, 8192, 8192);
         centreWithSize(getWidth(), getHeight());
+        logStartupCheckpoint("constructor complete");
     }
 
     void showAndActivate()
     {
+        utils::log_debug("MainWindow startup: showAndActivate begin");
         setVisible(true);
         setMinimised(false);
         toFront(true);
@@ -61,6 +76,8 @@ public:
         } else {
             grabKeyboardFocus();
         }
+
+        utils::log_debug("MainWindow startup: showAndActivate end");
     }
 
     ~MainWindow() override
@@ -211,6 +228,13 @@ public:
 
     void initialise(const juce::String& commandLineParameters) override
     {
+        const auto initialiseStartedAtMs = juce::Time::getMillisecondCounterHiRes();
+        const auto logInitialiseCheckpoint = [initialiseStartedAtMs](const juce::String& step) {
+            utils::log_info(
+                "Application startup: " + step + " ("
+                + juce::String(juce::Time::getMillisecondCounterHiRes() - initialiseStartedAtMs, 1) + " ms)"
+            );
+        };
         const juce::ArgumentList arguments {getApplicationName(), commandLineParameters};
         const bool startHeadless = arguments.containsOption("--headless|-H");
 
@@ -222,23 +246,32 @@ public:
         juce::Logger::setCurrentLogger(logger.get());
 
         utils::log_system_info();
+        logInitialiseCheckpoint("logger ready");
         if (arguments.size() > 0) {
             utils::log_info("Args: " + commandLineParameters);
         }
 
+        logInitialiseCheckpoint("creating main window");
         mainWindow = std::make_unique<MainWindow>(getApplicationName());
+        logInitialiseCheckpoint("main window created");
 
         if (startHeadless) {
+            logInitialiseCheckpoint("headless startup requested");
             mainWindow->setVisible(false);
         } else {
+            logInitialiseCheckpoint("showing main window");
             mainWindow->showAndActivate();
 
             juce::MessageManager::callAsync([safeWindow = juce::Component::SafePointer(mainWindow.get())] {
                 if (safeWindow != nullptr) {
+                    utils::log_info("Application startup: async window activation begin");
                     safeWindow->showAndActivate();
+                    utils::log_info("Application startup: async window activation end");
                 }
             });
         }
+
+        logInitialiseCheckpoint("initialise complete");
     }
 
     void shutdown() override
