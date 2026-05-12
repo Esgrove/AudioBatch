@@ -229,8 +229,8 @@ private:
 
     IntervalStepSlider gainSlider {"GainSlider"};
     juce::TextButton gainClearButton {"x"};
-    juce::TextButton settingsButton {"Settings"};
-    juce::TextButton pluginButton {"Plugin"};
+    juce::TextButton settingsButton {"Audio Settings"};
+    juce::TextButton pluginButton {"Plugins"};
     juce::TextButton startStopButton {"Play/Stop"};
     juce::TextButton processButton {"Process"};
     juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
