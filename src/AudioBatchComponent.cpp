@@ -14,9 +14,19 @@ using AudioInfoRow = std::pair<juce::String, juce::String>;
 class AudioInfoPanel : public juce::Component
 {
 public:
+    static constexpr int rowHeight = 20;
+    static constexpr int verticalPadding = 8;
+    static constexpr int horizontalPadding = 10;
+
     void clear()
     {
         setRows({});
+    }
+
+    [[nodiscard]] int getPreferredHeight() const
+    {
+        const auto rowCount = static_cast<int>(rows.size());
+        return verticalPadding * 2 + juce::jmax(0, rowCount) * rowHeight;
     }
 
     void setRows(std::vector<AudioInfoRow> newRows)
@@ -36,8 +46,17 @@ public:
             valueLabels[index]->setVisible(false);
         }
 
+        if (onPreferredHeightChanged) {
+            onPreferredHeightChanged();
+        }
+
         resized();
         repaint();
+    }
+
+    void setPreferredHeightChangedCallback(std::function<void()> callback)
+    {
+        onPreferredHeightChanged = std::move(callback);
     }
 
     void paint(juce::Graphics& g) override
@@ -52,14 +71,13 @@ public:
 
     void resized() override
     {
-        auto bounds = getLocalBounds().reduced(10, 8);
+        auto bounds = getLocalBounds().reduced(horizontalPadding, verticalPadding);
 
         if (rows.empty()) {
             return;
         }
 
         const auto rowCount = static_cast<int>(rows.size());
-        const auto rowHeight = juce::jmax(18, bounds.getHeight() / juce::jmax(1, rowCount));
         const auto fieldWidth = juce::roundToInt(static_cast<float>(bounds.getWidth()) * 0.55f);
         const auto fieldArea = bounds.removeFromLeft(fieldWidth);
 
@@ -96,6 +114,7 @@ private:
     std::vector<AudioInfoRow> rows;
     std::vector<std::unique_ptr<juce::Label>> fieldLabels;
     std::vector<std::unique_ptr<juce::Label>> valueLabels;
+    std::function<void()> onPreferredHeightChanged;
 };
 
 /// Main-view constants and helper functions local to this translation unit.
@@ -460,7 +479,12 @@ AudioBatchComponent::AudioBatchComponent() :
     addAndMakeVisible(zoomLabel);
 
     audioInfo = std::make_unique<AudioInfoPanel>();
-    addAndMakeVisible(audioInfo.get());
+    audioInfoViewport.setViewedComponent(audioInfo.get(), false);
+    audioInfoViewport.setScrollBarsShown(true, false);
+    audioInfoViewport.setScrollBarThickness(8);
+    addAndMakeVisible(audioInfoViewport);
+
+    audioInfo->setPreferredHeightChangedCallback([this] { resized(); });
 
     {
         juce::PropertiesFile::Options options;
@@ -762,7 +786,11 @@ void AudioBatchComponent::resized()
 
     control.removeFromBottom(8);
 
-    audioInfo->setBounds(control);
+    audioInfoViewport.setBounds(control);
+    const auto viewportWidth = audioInfoViewport.getMaximumVisibleWidth();
+    const auto preferredHeight = audioInfo->getPreferredHeight();
+    const auto viewportHeight = audioInfoViewport.getMaximumVisibleHeight();
+    audioInfo->setSize(viewportWidth, juce::jmax(viewportHeight, preferredHeight));
 
     info.removeFromLeft(6);
 
