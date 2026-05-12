@@ -60,7 +60,7 @@ public:
 
         const auto rowCount = static_cast<int>(rows.size());
         const auto rowHeight = juce::jmax(18, bounds.getHeight() / juce::jmax(1, rowCount));
-        const auto fieldWidth = juce::roundToInt(static_cast<float>(bounds.getWidth()) * 0.42f);
+        const auto fieldWidth = juce::roundToInt(static_cast<float>(bounds.getWidth()) * 0.55f);
         const auto fieldArea = bounds.removeFromLeft(fieldWidth);
 
         for (int row = 0; row < rowCount; ++row) {
@@ -723,36 +723,42 @@ void AudioBatchComponent::resized()
     const auto space = juce::jmin(280, juce::jmax(180, juce::roundToIntAccurate(r.getWidth() * 0.22)));
     auto control = info.removeFromLeft(space);
 
-    // Bottom: two rows of buttons.
+    const auto buttonGap = 6;
+
+    // Bottom row: Process and Play/Stop.
     auto buttonsBottom = control.removeFromBottom(28);
-    processButton.setBounds(buttonsBottom.removeFromRight(juce::roundToIntAccurate(space * 0.5)));
-    buttonsBottom.removeFromRight(6);
-    normalizeBeforePluginToggle.setBounds(buttonsBottom);
+    const auto bottomButtonWidth = (buttonsBottom.getWidth() - buttonGap) / 2;
+    processButton.setBounds(buttonsBottom.removeFromLeft(bottomButtonWidth));
+    buttonsBottom.removeFromLeft(buttonGap);
+    startStopButton.setBounds(buttonsBottom);
 
     control.removeFromBottom(4);
 
+    // Row above: Audio Settings and Plugins.
     auto buttonsTop = control.removeFromBottom(28);
-    const auto topButtonGap = 6;
-    const auto topButtonWidth = juce::jmax(40, (buttonsTop.getWidth() - 2 * topButtonGap) / 3);
+    const auto topButtonWidth = (buttonsTop.getWidth() - buttonGap) / 2;
     settingsButton.setBounds(buttonsTop.removeFromLeft(topButtonWidth));
-    buttonsTop.removeFromLeft(topButtonGap);
-    pluginButton.setBounds(buttonsTop.removeFromLeft(topButtonWidth));
-    buttonsTop.removeFromLeft(topButtonGap);
-    startStopButton.setBounds(buttonsTop);
+    buttonsTop.removeFromLeft(buttonGap);
+    pluginButton.setBounds(buttonsTop);
 
-    control.removeFromBottom(10);
+    control.removeFromBottom(8);
+
+    // Normalize toggle gets its own row above the buttons.
+    normalizeBeforePluginToggle.setBounds(control.removeFromBottom(22));
+
+    control.removeFromBottom(6);
 
     zoomSlider.setBounds(control.removeFromBottom(zoomSlider.getTextBoxHeight()));
 
     control.removeFromBottom(6);
 
+    // Gain row: inline label, slider, then the clear button on the right.
     auto gainRow = control.removeFromBottom(gainSlider.getTextBoxHeight());
     gainClearButton.setBounds(gainRow.removeFromRight(28));
     gainRow.removeFromRight(4);
+    const auto gainLabelWidth = 36;
+    gainLabel.setBounds(gainRow.removeFromLeft(gainLabelWidth));
     gainSlider.setBounds(gainRow);
-
-    control.removeFromBottom(2);
-    gainLabel.setBounds(control.removeFromBottom(16));
 
     control.removeFromBottom(8);
 
