@@ -24,6 +24,7 @@ class AudioBatchComponent :
     public juce::FileDragAndDropTarget,
     public juce::DragAndDropContainer,
     juce::ChangeListener,
+    juce::KeyListener,
     juce::Timer
 {
 public:
@@ -72,6 +73,7 @@ private:
     void clearCurrentAudioPreview();
     void handleDroppedPaths(const juce::StringArray& paths);
     bool keyPressed(const juce::KeyPress& key) override;
+    bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
     void handleAnalysisComplete(int totalFiles);
     void handleNormalizeComplete(int totalFiles);
     void handleNormalizeResult(const AudioNormalizationResult& result);
