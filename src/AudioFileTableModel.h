@@ -24,6 +24,7 @@ public:
         columnOverallTruePeak,
         columnMaxShortTermLufs,
         columnIntegratedLufs,
+        columnCustomGain,
         columnStatus,
     };
 
@@ -52,6 +53,8 @@ public:
                 return maxShortTermLufsColumnDefaultWidth;
             case columnIntegratedLufs:
                 return integratedLufsColumnDefaultWidth;
+            case columnCustomGain:
+                return customGainColumnDefaultWidth;
             case columnStatus:
                 return statusColumnDefaultWidth;
         }
@@ -78,6 +81,7 @@ public:
             case columnOverallTruePeak:
             case columnMaxShortTermLufs:
             case columnIntegratedLufs:
+            case columnCustomGain:
             case columnStatus:
                 return metricColumnMinimumWidth;
         }
@@ -123,7 +127,7 @@ public:
     juce::String getCellTooltip(int rowNumber, int columnId) override;
 
 private:
-    static constexpr int defaultWindowWidth = 1024;
+    static constexpr int defaultWindowWidth = 1096;
     static constexpr int nameColumnMinimumWidth = 110;
     static constexpr int pathColumnMinimumWidth = 140;
     static constexpr int typeColumnMinimumWidth = 60;
@@ -141,12 +145,13 @@ private:
     static constexpr int truePeakColumnDefaultWidth = 74;
     static constexpr int maxShortTermLufsColumnDefaultWidth = 76;
     static constexpr int integratedLufsColumnDefaultWidth = 76;
+    static constexpr int customGainColumnDefaultWidth = 72;
     static constexpr int statusColumnDefaultWidth = 64;
     static constexpr int totalInitialColumnWidth = nameColumnDefaultWidth + pathColumnDefaultWidth
         + typeColumnDefaultWidth + bitrateColumnDefaultWidth + sampleRateColumnDefaultWidth
         + overallPeakColumnDefaultWidth + peakLeftColumnDefaultWidth + peakRightColumnDefaultWidth
         + truePeakColumnDefaultWidth + maxShortTermLufsColumnDefaultWidth + integratedLufsColumnDefaultWidth
-        + statusColumnDefaultWidth;
+        + customGainColumnDefaultWidth + statusColumnDefaultWidth;
 
     static_assert(
         totalInitialColumnWidth == defaultWindowWidth,

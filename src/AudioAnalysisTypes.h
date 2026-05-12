@@ -49,6 +49,8 @@ struct AudioAnalysisRecord {
     int sampleRate = 0;
     int channels = 0;
     int bitsPerSample = 0;
+    float customGainDb = 0.0f;
+    bool hasCustomGain = false;
     AudioAnalysisStatus status = AudioAnalysisStatus::pending;
     bool fromCache = false;
 

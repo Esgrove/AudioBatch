@@ -159,6 +159,14 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
+        "Gain",
+        columnCustomGain,
+        initialColumnWidth(columnCustomGain),
+        minimumColumnWidth(columnCustomGain),
+        160,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
         "Status",
         columnStatus,
         initialColumnWidth(columnStatus),
@@ -169,6 +177,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
 
     header.setColumnVisible(columnPeakLeft, false);
     header.setColumnVisible(columnPeakRight, false);
+    header.setColumnVisible(columnCustomGain, false);
 }
 
 int AudioFileTableModel::getNumRows()
@@ -275,6 +284,14 @@ void AudioFileTableModel::paintCell(
             break;
         case columnIntegratedLufs:
             text = AudioAnalysisService::formatLoudnessDisplay(record.integratedLufs);
+            justification = juce::Justification::centredRight;
+            break;
+        case columnCustomGain:
+            if (record.hasCustomGain) {
+                text = (record.customGainDb >= 0.0f ? "+" : "") + juce::String(record.customGainDb, 1) + " dB";
+            } else {
+                text = {};
+            }
             justification = juce::Justification::centredRight;
             break;
         case columnStatus:

@@ -4,11 +4,15 @@
 #include "AnalysisCoordinator.h"
 #include "AudioFileTableModel.h"
 #include "NormalizeCoordinator.h"
+#include "PluginChain.h"
+#include "PluginProcessing.h"
+#include "PluginProcessingCoordinator.h"
 #include "ThumbnailComponent.h"
 
 #include <JuceHeader.h>
 
 #include <map>
+#include <memory>
 #include <vector>
 
 class AudioInfoPanel;
@@ -49,6 +53,9 @@ public:
     /// Shows which file types can be normalized in the current build.
     void showSupportedNormalizationFormats();
 
+    /// Runs the configured plugin (if any) over the currently-selected files.
+    void processSelectedRecords();
+
     void filesDropped(const juce::StringArray& files, int x, int y) override;
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
     void paint(juce::Graphics& g) override;
@@ -61,6 +68,15 @@ private:
     void handleAnalysisComplete(int totalFiles);
     void handleNormalizeComplete(int totalFiles);
     void handleNormalizeResult(const AudioNormalizationResult& result);
+
+    void handleProcessingComplete(int totalFiles);
+    void handleProcessingResult(const PluginProcessingResult& result);
+
+    /// Updates the current selection's custom gain in-memory, in the cache, and the waveform preview.
+    void applyCustomGainToSelection(float gainDb, bool hasGain);
+    void updateGainControlsForSelection();
+    void updateThumbnailDisplayGain();
+    [[nodiscard]] std::vector<AudioAnalysisRecord> getSelectedProcessableRecords() const;
 
     /// Selects the clicked row and opens the per-file action menu.
     void handleFileContextMenuRequested(int row, int columnId, const juce::MouseEvent& event);
@@ -151,6 +167,9 @@ private:
     AnalysisCache analysisCache;
     AnalysisCoordinator analysisCoordinator;
     NormalizeCoordinator normalizeCoordinator;
+    PluginProcessingCoordinator pluginCoordinator;
+    juce::ApplicationProperties pluginAppProperties;
+    std::unique_ptr<PluginChain> pluginChain;
     std::vector<AudioAnalysisRecord> analysisResults;
     juce::StretchableLayoutManager mainVerticalLayout;
     juce::StretchableLayoutResizerBar waveformResizeBar {&mainVerticalLayout, 1, false};
@@ -184,16 +203,26 @@ private:
     bool secondarySortForwards = true;
     bool currentWaveformLoadedFromCache = false;
     bool normalizeInProgress = false;
+    bool pluginProcessingInProgress = false;
+    int processedResultsCompleted = 0;
+    int processedResultsExpected = 0;
 
     std::map<juce::String, juce::String> activeFileStatusLabels;
     juce::StringArray normalizationFailures;
+    juce::StringArray processingFailures;
 
     juce::Label currentRootLabel {"CurrentRootLabel"};
     juce::Label statusLabel {"StatusLabel"};
     juce::Label zoomLabel {"Zoom"};
+    juce::Label gainLabel {"GainLabel"};
     juce::Slider zoomSlider {"ZoomSlider"};
+    juce::Slider gainSlider {"GainSlider"};
+    juce::TextButton gainClearButton {"x"};
     juce::TextButton settingsButton {"Settings"};
+    juce::TextButton pluginButton {"Plugin"};
     juce::TextButton startStopButton {"Play/Stop"};
+    juce::TextButton processButton {"Process"};
+    juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
     std::unique_ptr<AudioInfoPanel> audioInfo;
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 

@@ -194,6 +194,8 @@ bool AnalysisCache::openUnlocked()
             sample_rate INTEGER NOT NULL,
             channels INTEGER NOT NULL,
             bits_per_sample INTEGER NOT NULL,
+            custom_gain_db REAL NOT NULL DEFAULT 0,
+            has_custom_gain INTEGER NOT NULL DEFAULT 0,
             status INTEGER NOT NULL,
             error_message TEXT,
             waveform_data BLOB,
@@ -248,6 +250,18 @@ bool AnalysisCache::openUnlocked()
         return false;
     }
 
+    if (!columnExists("file_analysis", "custom_gain_db")
+        && !execute("ALTER TABLE file_analysis ADD COLUMN custom_gain_db REAL NOT NULL DEFAULT 0;"))
+    {
+        return false;
+    }
+
+    if (!columnExists("file_analysis", "has_custom_gain")
+        && !execute("ALTER TABLE file_analysis ADD COLUMN has_custom_gain INTEGER NOT NULL DEFAULT 0;"))
+    {
+        return false;
+    }
+
     utils::log_debug("Analysis cache startup: schema ready");
     utils::log_debug(
         "Opened analysis cache at " + databasePath + " (" + juce::String(databaseFound ? "existing" : "new") + ") in "
@@ -269,7 +283,8 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
         SELECT file_name, format_name, file_size, modified_time_ms, length_in_samples,
                duration_seconds, peak_left, peak_right, overall_peak, true_peak_left,
                true_peak_right, overall_true_peak, max_short_term_lufs, integrated_lufs,
-               sample_rate, channels, bits_per_sample, status, error_message, analysis_version
+               sample_rate, channels, bits_per_sample, status, error_message, analysis_version,
+               custom_gain_db, has_custom_gain
         FROM file_analysis
         WHERE file_path = ?;
     )SQL";
@@ -315,6 +330,8 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
     record.bitsPerSample = sqlite3_column_int(statement, 16);
     record.status = static_cast<AudioAnalysisStatus>(sqlite3_column_int(statement, 17));
     record.errorMessage = columnText(statement, 18);
+    record.customGainDb = static_cast<float>(sqlite3_column_double(statement, 20));
+    record.hasCustomGain = sqlite3_column_int(statement, 21) != 0;
     record.fromCache = true;
 
     if (record.status != AudioAnalysisStatus::failed) {
@@ -339,8 +356,9 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             duration_seconds, peak_left, peak_right, overall_peak, true_peak_left,
             true_peak_right, overall_true_peak, max_short_term_lufs, integrated_lufs,
             sample_rate, channels, bits_per_sample, status, error_message,
-            waveform_data, waveform_version, analysis_version, updated_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            waveform_data, waveform_version, analysis_version, updated_at_ms,
+            custom_gain_db, has_custom_gain
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             file_name = excluded.file_name,
             format_name = excluded.format_name,
@@ -396,6 +414,59 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     sqlite3_bind_int(statement, 22, 0);
     sqlite3_bind_int(statement, 23, analysisVersion);
     sqlite3_bind_int64(statement, 24, juce::Time::getCurrentTime().toMilliseconds());
+    sqlite3_bind_double(statement, 25, record.customGainDb);
+    sqlite3_bind_int(statement, 26, record.hasCustomGain ? 1 : 0);
+
+    const auto result = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+    return result == SQLITE_DONE;
+}
+
+bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGainDb, const bool hasCustomGain)
+{
+    const juce::ScopedLock lock(mutex);
+
+    if (database == nullptr && !openUnlocked()) {
+        return false;
+    }
+
+    constexpr auto sql = R"SQL(
+        UPDATE file_analysis
+        SET custom_gain_db = ?, has_custom_gain = ?, updated_at_ms = ?
+        WHERE file_path = ?;
+    )SQL";
+
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    sqlite3_bind_double(statement, 1, customGainDb);
+    sqlite3_bind_int(statement, 2, hasCustomGain ? 1 : 0);
+    sqlite3_bind_int64(statement, 3, juce::Time::getCurrentTime().toMilliseconds());
+    bindText(statement, 4, normalizedPath(file));
+
+    const auto result = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+    return result == SQLITE_DONE;
+}
+
+bool AnalysisCache::removeAnalysis(const juce::File& file)
+{
+    const juce::ScopedLock lock(mutex);
+
+    if (database == nullptr && !openUnlocked()) {
+        return false;
+    }
+
+    constexpr auto sql = "DELETE FROM file_analysis WHERE file_path = ?;";
+
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    bindText(statement, 1, normalizedPath(file));
 
     const auto result = sqlite3_step(statement);
     sqlite3_finalize(statement);

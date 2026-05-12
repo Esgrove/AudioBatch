@@ -2,6 +2,7 @@
 
 #include "AudioAnalysisService.h"
 #include "CustomLookAndFeel.h"
+#include "PluginProcessingService.h"
 #include "utils.h"
 
 #include <algorithm>
@@ -113,6 +114,8 @@ enum FileMenuItemId {
     openParentDirectoryMenuItemId,
     normalizeMenuItemId,
     normalizeSupportMenuItemId,
+    processMenuItemId,
+    clearCustomGainMenuItemId,
     moveToTrashMenuItemId,
     removeFromListMenuItemId,
     reanalyzeMenuItemId,
@@ -334,6 +337,19 @@ static int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAna
         case AudioFileTableModel::columnIntegratedLufs:
             return compareLoudness(lhs.integratedLufs, rhs.integratedLufs);
 
+        case AudioFileTableModel::columnCustomGain: {
+            if (lhs.hasCustomGain != rhs.hasCustomGain) {
+                return lhs.hasCustomGain ? 1 : -1;
+            }
+            if (!lhs.hasCustomGain) {
+                return 0;
+            }
+            if (juce::approximatelyEqual(lhs.customGainDb, rhs.customGainDb)) {
+                return 0;
+            }
+            return lhs.customGainDb < rhs.customGainDb ? -1 : 1;
+        }
+
         case AudioFileTableModel::columnStatus:
             return compareNaturalStrings(
                 AudioAnalysisService::formatStatus(lhs), AudioAnalysisService::formatStatus(rhs)
@@ -351,6 +367,7 @@ using namespace audiobatch::gui;
 AudioBatchComponent::AudioBatchComponent() :
     analysisCoordinator(analysisCache),
     normalizeCoordinator(),
+    pluginCoordinator(),
     fileTableModel(
         analysisResults,
         [this](const int row) { handleSelectionChanged(row); },
@@ -433,6 +450,68 @@ AudioBatchComponent::AudioBatchComponent() :
     audioInfo = std::make_unique<AudioInfoPanel>();
     addAndMakeVisible(audioInfo.get());
 
+    {
+        juce::PropertiesFile::Options options;
+        options.applicationName = "AudioBatch";
+        options.filenameSuffix = ".settings";
+        options.osxLibrarySubFolder = "Application Support";
+        options.folderName = "AudioBatch";
+        options.storageFormat = juce::PropertiesFile::storeAsXML;
+        pluginAppProperties.setStorageParameters(options);
+    }
+
+    pluginChain = std::make_unique<PluginChain>(pluginAppProperties);
+    pluginChain->setSelectionChangedCallback([this](const PluginDescriptorRef& descriptor) {
+        const bool hasPlugin = descriptor.isValid();
+        processButton.setEnabled(hasPlugin && !pluginProcessingInProgress && !isAnalysisInProgress());
+    });
+
+    pluginButton.setTooltip("Choose a plugin, edit its parameters, or scan for plugins.");
+    pluginButton.onClick = [this] {
+        if (pluginChain != nullptr) {
+            pluginChain->showMenu(pluginButton);
+        }
+    };
+    addAndMakeVisible(pluginButton);
+
+    gainLabel.setText("Gain", juce::dontSendNotification);
+    gainLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(gainLabel);
+
+    gainSlider.setRange(-12.0, 12.0, 0.1);
+    gainSlider.setValue(0.0, juce::dontSendNotification);
+    gainSlider.setNumDecimalPlacesToDisplay(1);
+    gainSlider.setTextValueSuffix(" dB");
+    gainSlider.setTooltip("Per-file gain in dB. Non-zero values override normalization for the file.");
+    gainSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    gainSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 64, gainSlider.getTextBoxHeight());
+    gainSlider.setDoubleClickReturnValue(true, 0.0);
+    gainSlider.setEnabled(false);
+    gainSlider.onValueChange = [this] {
+        const auto value = static_cast<float>(gainSlider.getValue());
+        applyCustomGainToSelection(value, !juce::approximatelyEqual(value, 0.0f));
+    };
+    addAndMakeVisible(gainSlider);
+
+    gainClearButton.setTooltip("Clear per-file gain for the current selection.");
+    gainClearButton.setEnabled(false);
+    gainClearButton.onClick = [this] {
+        gainSlider.setValue(0.0, juce::dontSendNotification);
+        applyCustomGainToSelection(0.0f, false);
+    };
+    addAndMakeVisible(gainClearButton);
+
+    normalizeBeforePluginToggle.setTooltip(
+        "When enabled, files without a custom gain are peak-normalized before the plugin."
+    );
+    addAndMakeVisible(normalizeBeforePluginToggle);
+
+    processButton.setTooltip("Process selected files through the selected plugin (output: AIFF).");
+    processButton.setEnabled(false);
+    processButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
+    processButton.onClick = [this] { processSelectedRecords(); };
+    addAndMakeVisible(processButton);
+
     settingsButton.setTooltip("Open audio device settings.");
     settingsButton.onClick = [this] { showAudioSettingsWindow(); };
     addAndMakeVisible(settingsButton);
@@ -492,6 +571,37 @@ AudioBatchComponent::AudioBatchComponent() :
     });
     logStartupCheckpoint("analysis and normalization callbacks configured");
 
+    pluginCoordinator.setResultCallback([safeThis](const PluginProcessingResult& result) {
+        juce::MessageManager::callAsync([safeThis, result] {
+            if (safeThis != nullptr) {
+                safeThis->handleProcessingResult(result);
+            }
+        });
+    });
+
+    pluginCoordinator.setCompletionCallback([safeThis](int totalFiles) {
+        juce::MessageManager::callAsync([safeThis, totalFiles] {
+            if (safeThis != nullptr) {
+                safeThis->handleProcessingComplete(totalFiles);
+            }
+        });
+    });
+
+    pluginCoordinator.setStartErrorCallback([safeThis](juce::String errorMessage) {
+        juce::MessageManager::callAsync([safeThis, errorMessage] {
+            if (safeThis != nullptr) {
+                safeThis->pluginProcessingInProgress = false;
+                safeThis->statusLabel.setText(errorMessage, juce::dontSendNotification);
+                juce::AlertWindow::showAsync(
+                    juce::MessageBoxOptions::makeOptionsOk(
+                        juce::MessageBoxIconType::WarningIcon, "Plugin Processing", errorMessage, "OK", safeThis
+                    ),
+                    nullptr
+                );
+            }
+        });
+    });
+
     utils::log_debug("AudioBatchComponent startup: requesting record-audio permission");
     juce::RuntimePermissions::request(juce::RuntimePermissions::recordAudio, [this](const bool granted) {
         const int numInputChannels = granted ? 2 : 0;
@@ -535,6 +645,7 @@ AudioBatchComponent::~AudioBatchComponent()
 {
     analysisCoordinator.cancelAndWait();
     normalizeCoordinator.cancelAndWait();
+    pluginCoordinator.cancelAndWait();
 
     stopTimer();
     transportSource.stop();
@@ -578,7 +689,7 @@ void AudioBatchComponent::resized()
     auto r = getLocalBounds().reduced(4);
     auto topBar = r.removeFromTop(34);
 
-    statusLabel.setBounds(topBar.removeFromRight(240));
+    statusLabel.setBounds(topBar.removeFromRight(220));
     topBar.removeFromRight(6);
     currentRootLabel.setBounds(topBar);
 
@@ -592,19 +703,41 @@ void AudioBatchComponent::resized()
 
     auto info = thumbnail->getBounds();
 
-    const auto space = juce::jmin(250, juce::jmax(150, juce::roundToIntAccurate(r.getWidth() * 0.2)));
+    const auto space = juce::jmin(280, juce::jmax(180, juce::roundToIntAccurate(r.getWidth() * 0.22)));
     auto control = info.removeFromLeft(space);
-    auto buttons = control.removeFromBottom(50);
 
-    settingsButton.setBounds(buttons.removeFromLeft(juce::roundToIntAccurate((space - 6) * 0.5)));
-    buttons.removeFromLeft(6);
-    startStopButton.setBounds(buttons);
+    // Bottom: two rows of buttons.
+    auto buttonsBottom = control.removeFromBottom(28);
+    processButton.setBounds(buttonsBottom.removeFromRight(juce::roundToIntAccurate(space * 0.5)));
+    buttonsBottom.removeFromRight(6);
+    normalizeBeforePluginToggle.setBounds(buttonsBottom);
 
-    control.removeFromBottom(12);
+    control.removeFromBottom(4);
+
+    auto buttonsTop = control.removeFromBottom(28);
+    const auto topButtonGap = 6;
+    const auto topButtonWidth = juce::jmax(40, (buttonsTop.getWidth() - 2 * topButtonGap) / 3);
+    settingsButton.setBounds(buttonsTop.removeFromLeft(topButtonWidth));
+    buttonsTop.removeFromLeft(topButtonGap);
+    pluginButton.setBounds(buttonsTop.removeFromLeft(topButtonWidth));
+    buttonsTop.removeFromLeft(topButtonGap);
+    startStopButton.setBounds(buttonsTop);
+
+    control.removeFromBottom(10);
 
     zoomSlider.setBounds(control.removeFromBottom(zoomSlider.getTextBoxHeight()));
 
-    control.removeFromBottom(12);
+    control.removeFromBottom(6);
+
+    auto gainRow = control.removeFromBottom(gainSlider.getTextBoxHeight());
+    gainClearButton.setBounds(gainRow.removeFromRight(28));
+    gainRow.removeFromRight(4);
+    gainSlider.setBounds(gainRow);
+
+    control.removeFromBottom(2);
+    gainLabel.setBounds(control.removeFromBottom(16));
+
+    control.removeFromBottom(8);
 
     audioInfo->setBounds(control);
 
@@ -641,6 +774,9 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
                : 0)
         + (header.isColumnVisible(AudioFileTableModel::columnIntegratedLufs)
                ? header.getColumnWidth(AudioFileTableModel::columnIntegratedLufs)
+               : 0)
+        + (header.isColumnVisible(AudioFileTableModel::columnCustomGain)
+               ? header.getColumnWidth(AudioFileTableModel::columnCustomGain)
                : 0)
         + (header.isColumnVisible(AudioFileTableModel::columnStatus)
                ? header.getColumnWidth(AudioFileTableModel::columnStatus)
@@ -920,6 +1056,15 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
     menu.addItem(normalizeMenuItemId, "Normalize to 0 dBFS", canNormalize);
     menu.addItem(normalizeSupportMenuItemId, "Normalization Format Support...");
     menu.addSeparator();
+    const bool canProcess = !pluginProcessingInProgress && !isAnalysisInProgress() && !normalizeInProgress
+        && pluginChain != nullptr && pluginChain->getSelectedPluginDescription().fileOrIdentifier.isNotEmpty();
+    menu.addItem(processMenuItemId, "Process With Plugin (output AIFF)", canProcess);
+    const bool anyHasGain
+        = std::any_of(selectedRecords.begin(), selectedRecords.end(), [](const AudioAnalysisRecord& r) {
+              return r.hasCustomGain;
+          });
+    menu.addItem(clearCustomGainMenuItemId, "Clear Per-file Gain", anyHasGain);
+    menu.addSeparator();
     menu.addItem(removeFromListMenuItemId, "Remove from List");
     menu.addItem(moveToTrashMenuItemId, "Move to Trash", record.file.exists());
 
@@ -954,6 +1099,13 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
                     break;
                 case reanalyzeMenuItemId:
                     safeThis->reanalyzeSelectedRecords();
+                    break;
+                case processMenuItemId:
+                    safeThis->processSelectedRecords();
+                    break;
+                case clearCustomGainMenuItemId:
+                    safeThis->gainSlider.setValue(0.0, juce::dontSendNotification);
+                    safeThis->applyCustomGainToSelection(0.0f, false);
                     break;
                 default:
                     break;
@@ -1361,10 +1513,16 @@ void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record
 
     const auto selectedPaths = getSelectedRecordPaths();
 
+    auto mergedRecord = record;
     if (const auto existingIndex = findRecordIndex(record.fullPath); existingIndex >= 0) {
-        analysisResults[static_cast<std::size_t>(existingIndex)] = record;
+        const auto& existing = analysisResults[static_cast<std::size_t>(existingIndex)];
+        if (existing.hasCustomGain) {
+            mergedRecord.customGainDb = existing.customGainDb;
+            mergedRecord.hasCustomGain = existing.hasCustomGain;
+        }
+        analysisResults[static_cast<std::size_t>(existingIndex)] = mergedRecord;
     } else {
-        analysisResults.push_back(record);
+        analysisResults.push_back(mergedRecord);
     }
 
     sortResults();
@@ -1372,8 +1530,10 @@ void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record
     updateResultsTableColumnWidths();
     restoreSelectionByPaths(selectedPaths);
 
-    if (currentAudioFile == record.file) {
-        updateAudioInfo(record);
+    if (currentAudioFile == mergedRecord.file) {
+        updateAudioInfo(mergedRecord);
+        updateGainControlsForSelection();
+        updateThumbnailDisplayGain();
     }
 
     updateStatusLabel();
@@ -1484,6 +1644,14 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles)
 
 void AudioBatchComponent::updateStatusLabel()
 {
+    if (pluginProcessingInProgress && processedResultsExpected > 0) {
+        statusLabel.setText(
+            "Processing " + juce::String(processedResultsCompleted) + "/" + juce::String(processedResultsExpected),
+            juce::dontSendNotification
+        );
+        return;
+    }
+
     if (normalizeInProgress && normalizedResultsExpected > 0) {
         statusLabel.setText(
             "Normalizing " + juce::String(normalizedResultsCompleted) + "/" + juce::String(normalizedResultsExpected),
@@ -1829,6 +1997,8 @@ void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
     }
 
     updateAudioInfo(record);
+    updateGainControlsForSelection();
+    updateThumbnailDisplayGain();
 }
 
 bool AudioBatchComponent::shouldDropFilesWhenDraggedExternally(
@@ -2028,4 +2198,363 @@ void AudioBatchComponent::openDialogWindow(
     window->setColour(juce::DialogWindow::backgroundColourId, juce::CustomLookAndFeel::greySemiDark);
     window->setVisible(true);
     window->toFront(true);
+}
+
+std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedProcessableRecords() const
+{
+    std::vector<AudioAnalysisRecord> selected;
+    const auto selectedRows = resultsTable.getSelectedRows();
+
+    selected.reserve(static_cast<std::size_t>(selectedRows.size()));
+
+    for (int index = 0; index < selectedRows.size(); ++index) {
+        const auto rowNumber = selectedRows[index];
+
+        if (!juce::isPositiveAndBelow(rowNumber, static_cast<int>(analysisResults.size()))) {
+            continue;
+        }
+
+        const auto& record = analysisResults[static_cast<std::size_t>(rowNumber)];
+
+        if (!record.file.existsAsFile() || !record.isReady()) {
+            continue;
+        }
+
+        if (!PluginProcessingService::canProcessFile(record.file)) {
+            continue;
+        }
+
+        selected.push_back(record);
+    }
+
+    return selected;
+}
+
+void AudioBatchComponent::applyCustomGainToSelection(const float gainDb, const bool hasGain)
+{
+    const auto selectedRows = resultsTable.getSelectedRows();
+    if (selectedRows.size() == 0) {
+        return;
+    }
+
+    bool anyChanged = false;
+
+    for (int index = 0; index < selectedRows.size(); ++index) {
+        const auto rowNumber = selectedRows[index];
+
+        if (!juce::isPositiveAndBelow(rowNumber, static_cast<int>(analysisResults.size()))) {
+            continue;
+        }
+
+        auto& record = analysisResults[static_cast<std::size_t>(rowNumber)];
+        const auto previousHadGain = record.hasCustomGain;
+        const auto previousValue = record.customGainDb;
+
+        record.customGainDb = hasGain ? gainDb : 0.0f;
+        record.hasCustomGain = hasGain;
+
+        if (previousHadGain != record.hasCustomGain || !juce::approximatelyEqual(previousValue, record.customGainDb)) {
+            analysisCache.storeCustomGain(record.file, record.customGainDb, record.hasCustomGain);
+            anyChanged = true;
+        }
+    }
+
+    if (anyChanged) {
+        resultsTable.repaint();
+        updateThumbnailDisplayGain();
+        gainClearButton.setEnabled(hasGain);
+    }
+}
+
+void AudioBatchComponent::updateGainControlsForSelection()
+{
+    const auto selectedRows = resultsTable.getSelectedRows();
+    const bool hasSelection = selectedRows.size() > 0;
+
+    gainSlider.setEnabled(hasSelection);
+    gainClearButton.setEnabled(false);
+
+    if (!hasSelection) {
+        gainSlider.setValue(0.0, juce::dontSendNotification);
+        return;
+    }
+
+    // Use the currently-selected display row to drive the slider value.
+    int referenceRow = selectedRows[0];
+    if (currentAudioFile.existsAsFile()) {
+        if (const auto currentRow = findRecordIndex(currentAudioFile.getFullPathName());
+            currentRow >= 0 && selectedRows.contains(currentRow))
+        {
+            referenceRow = currentRow;
+        }
+    }
+
+    if (!juce::isPositiveAndBelow(referenceRow, static_cast<int>(analysisResults.size()))) {
+        return;
+    }
+
+    const auto& record = analysisResults[static_cast<std::size_t>(referenceRow)];
+    gainSlider.setValue(record.hasCustomGain ? record.customGainDb : 0.0, juce::dontSendNotification);
+    gainClearButton.setEnabled(record.hasCustomGain);
+}
+
+void AudioBatchComponent::updateThumbnailDisplayGain()
+{
+    if (thumbnail == nullptr) {
+        return;
+    }
+
+    if (!currentAudioFile.existsAsFile()) {
+        thumbnail->setDisplayGain(1.0f);
+        return;
+    }
+
+    const auto currentRow = findRecordIndex(currentAudioFile.getFullPathName());
+    if (!juce::isPositiveAndBelow(currentRow, static_cast<int>(analysisResults.size()))) {
+        thumbnail->setDisplayGain(1.0f);
+        return;
+    }
+
+    const auto& record = analysisResults[static_cast<std::size_t>(currentRow)];
+    const auto gain = record.hasCustomGain ? juce::Decibels::decibelsToGain(record.customGainDb) : 1.0f;
+    thumbnail->setDisplayGain(gain);
+}
+
+void AudioBatchComponent::processSelectedRecords()
+{
+    if (pluginProcessingInProgress) {
+        statusLabel.setText("Processing already in progress", juce::dontSendNotification);
+        return;
+    }
+
+    if (normalizeInProgress) {
+        statusLabel.setText("Wait for normalization to finish before processing", juce::dontSendNotification);
+        return;
+    }
+
+    if (isAnalysisInProgress()) {
+        statusLabel.setText("Wait for analysis to finish before processing", juce::dontSendNotification);
+        return;
+    }
+
+    if (pluginChain == nullptr) {
+        return;
+    }
+
+    const auto pluginDescription = pluginChain->getSelectedPluginDescription();
+    if (pluginDescription.fileOrIdentifier.isEmpty()) {
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions::makeOptionsOk(
+                juce::MessageBoxIconType::WarningIcon,
+                "Plugin Processing",
+                "No plugin is selected. Use the Choose... button to pick one.",
+                "OK",
+                this
+            ),
+            nullptr
+        );
+        return;
+    }
+
+    const auto records = getSelectedProcessableRecords();
+    if (records.empty()) {
+        statusLabel.setText("Select files that can be processed", juce::dontSendNotification);
+        return;
+    }
+
+    // Capture plugin state so it gets baked into the processing run.
+    auto descriptorRef = pluginChain->getSelectedPlugin();
+
+    PluginProcessingOptions options;
+    options.plugin = descriptorRef;
+    options.normalizeBeforePlugin = normalizeBeforePluginToggle.getToggleState();
+
+    // Pre-instantiate plugin instances on the message thread.
+    const auto workerCount
+        = juce::jlimit(1, 4, juce::jmin(static_cast<int>(records.size()), juce::SystemStats::getNumCpus()));
+
+    auto& pluginFormatManager = pluginChain->getFormatManager();
+    std::vector<std::unique_ptr<juce::AudioPluginInstance>> instances;
+    instances.reserve(static_cast<std::size_t>(workerCount));
+
+    statusLabel.setText("Loading plugin...", juce::dontSendNotification);
+
+    juce::String instantiationError;
+    for (int i = 0; i < workerCount; ++i) {
+        juce::String error;
+        // Use a reasonable default sample rate; we re-call prepareToPlay per file with the file's rate.
+        auto instance = pluginFormatManager.createPluginInstance(pluginDescription, 48000.0, 1024, error);
+        if (instance == nullptr) {
+            instantiationError = error.isNotEmpty() ? error : juce::String("Plugin instantiation failed");
+            break;
+        }
+
+        instances.push_back(std::move(instance));
+    }
+
+    if (instances.empty() || instantiationError.isNotEmpty()) {
+        instances.clear();
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions::makeOptionsOk(
+                juce::MessageBoxIconType::WarningIcon,
+                "Plugin Processing",
+                "Could not load the selected plugin:\n\n"
+                    + (instantiationError.isNotEmpty() ? instantiationError : juce::String("Unknown error")),
+                "OK",
+                this
+            ),
+            nullptr
+        );
+        statusLabel.setText("Plugin load failed", juce::dontSendNotification);
+        return;
+    }
+
+    // Always stop playback before processing — files may be replaced on disk.
+    if (transportSource.isPlaying()) {
+        transportSource.stop();
+    }
+    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green);
+
+    juce::Array<juce::File> filesToProcess;
+    juce::File previousPreviewFile = currentAudioFile;
+    bool previewWillBeProcessed = false;
+
+    for (const auto& record : records) {
+        filesToProcess.add(record.file);
+
+        if (record.file == currentAudioFile) {
+            previewWillBeProcessed = true;
+        }
+    }
+
+    if (previewWillBeProcessed) {
+        // Release file handles so the on-disk file can be replaced. Keep currentAudioFile so the
+        // result handler can re-load the produced output when processing completes.
+        transportSource.setSource(nullptr);
+        currentAudioFileSource.reset();
+        thumbnail->setURL(juce::URL());
+        currentWaveformLoadedFromCache = false;
+        startStopButton.setEnabled(false);
+        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
+        currentAudioFile = previousPreviewFile;  // Make doubly sure the path is preserved.
+    }
+
+    processingFailures.clear();
+    processedResultsCompleted = 0;
+    pluginProcessingInProgress = true;
+    processButton.setEnabled(false);
+
+    processedResultsExpected = pluginCoordinator.start(records, options, std::move(instances));
+
+    if (processedResultsExpected <= 0) {
+        pluginProcessingInProgress = false;
+        processButton.setEnabled(true);
+        updateStatusLabel();
+        return;
+    }
+
+    markFilesProcessing(filesToProcess, "Processing");
+    updateStatusLabel();
+}
+
+void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& result)
+{
+    ++processedResultsCompleted;
+    unmarkFileProcessing(result.originalFullPath);
+
+    if (result.succeeded) {
+        auto selectedPaths = getSelectedRecordPaths();
+
+        for (int index = 0; index < selectedPaths.size(); ++index) {
+            if (selectedPaths[index] == result.originalFullPath) {
+                selectedPaths.set(index, result.analysisRecord.fullPath);
+            }
+        }
+
+        // Remove any record matching the original path that does not match the new path (in case extension changed).
+        analysisResults.erase(
+            std::remove_if(
+                analysisResults.begin(),
+                analysisResults.end(),
+                [&result](const AudioAnalysisRecord& record) {
+                    return record.fullPath == result.originalFullPath
+                        && record.fullPath != result.analysisRecord.fullPath;
+                }
+            ),
+            analysisResults.end()
+        );
+
+        if (const auto existingIndex = findRecordIndex(result.analysisRecord.fullPath); existingIndex >= 0) {
+            analysisResults[static_cast<std::size_t>(existingIndex)] = result.analysisRecord;
+        } else {
+            analysisResults.push_back(result.analysisRecord);
+        }
+
+        analysisCache.storeAnalysis(result.analysisRecord);
+        // Clear any persisted gain for the new output (gain is baked in).
+        analysisCache.storeCustomGain(result.analysisRecord.file, 0.0f, false);
+
+        // If the output path differs from the original (extension change), drop the stale cache row.
+        if (result.originalFile != result.analysisRecord.file) {
+            analysisCache.removeAnalysis(result.originalFile);
+        }
+
+        sortResults();
+        resultsTable.updateContent();
+        updateResultsTableColumnWidths();
+        restoreSelectionByPaths(selectedPaths);
+
+        if (currentAudioFile == result.originalFile) {
+            currentAudioFile = result.analysisRecord.file;
+            showAudioResource(juce::URL(currentAudioFile));
+            updateAudioInfo(result.analysisRecord);
+            updateGainControlsForSelection();
+            updateThumbnailDisplayGain();
+        }
+    } else {
+        processingFailures.add(result.fileName + ": " + result.errorMessage);
+        utils::log_error("Plugin processing failed for " + result.originalFullPath + ": " + result.errorMessage);
+    }
+
+    updateStatusLabel();
+}
+
+void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
+{
+    processedResultsExpected = totalFiles;
+    pluginProcessingInProgress = false;
+    syncActivityTimer();
+
+    if (pluginChain != nullptr) {
+        processButton.setEnabled(pluginChain->getSelectedPluginDescription().fileOrIdentifier.isNotEmpty());
+    }
+
+    if (!processingFailures.isEmpty()) {
+        juce::String body;
+        const auto linesToShow = juce::jmin(8, processingFailures.size());
+        for (int i = 0; i < linesToShow; ++i) {
+            body << "- " << processingFailures[i] << juce::newLine;
+        }
+        if (processingFailures.size() > linesToShow) {
+            body << "- ...and " << juce::String(processingFailures.size() - linesToShow) << " more";
+        }
+
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions::makeOptionsOk(
+                juce::MessageBoxIconType::WarningIcon,
+                "Plugin Processing",
+                processingFailures.size() == 1 ? processingFailures[0]
+                                               : "Some files could not be processed:\n\n" + body.trimEnd(),
+                "OK",
+                this
+            ),
+            nullptr
+        );
+    }
+
+    if (!currentAudioFile.existsAsFile() && resultsTable.getSelectedRow() >= 0) {
+        handleSelectionChanged(resultsTable.getSelectedRow());
+    }
+
+    updateStatusLabel();
 }

@@ -34,8 +34,14 @@ public:
     /// Stores serialized waveform preview data for a file.
     bool storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData);
 
+    /// Updates only the user-controlled gain fields for a file.
+    bool storeCustomGain(const juce::File& file, float customGainDb, bool hasCustomGain);
+
+    /// Removes the cached row for a file (if any). Returns true when the operation completed.
+    bool removeAnalysis(const juce::File& file);
+
 private:
-    static constexpr int analysisVersion = 6;
+    static constexpr int analysisVersion = 7;
     static constexpr int waveformVersion = 1;
 
     bool columnExists(const juce::String& tableName, const juce::String& columnName) const;

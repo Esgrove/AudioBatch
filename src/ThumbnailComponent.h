@@ -58,6 +58,9 @@ public:
     /// Applies a zoom factor to the waveform viewport.
     void setZoom(double zoomLevel);
 
+    /// Visually scales the waveform vertically by the given linear gain factor (1.0 = unchanged).
+    void setDisplayGain(float linearGain);
+
 private:
     bool canMoveTransport() const noexcept;
     double xToTime(float x) const;
@@ -77,4 +80,5 @@ private:
 
     bool hasNotifiedFullyLoaded = false;
     bool isFollowingTransport = false;
+    float displayGain = 1.0f;
 };
