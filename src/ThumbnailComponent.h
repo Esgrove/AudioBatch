@@ -49,6 +49,9 @@ public:
     /// Sets the callback used for mouse-wheel zoom gestures.
     void setMouseWheelZoomCallback(std::function<void(double)> callback);
 
+    /// Sets the callback used for Ctrl/Cmd + mouse-wheel gain gestures. Argument is the delta in dB.
+    void setMouseWheelGainCallback(std::function<void(float)> callback);
+
     /// Sets the callback fired once a full waveform has been loaded from disk.
     void setThumbnailFullyLoadedCallback(std::function<void()> callback);
 
@@ -77,6 +80,7 @@ private:
     juce::URL lastFileDropped;
     std::function<void()> thumbnailFullyLoadedCallback;
     std::function<void(double)> mouseWheelZoomCallback;
+    std::function<void(float)> mouseWheelGainCallback;
 
     bool hasNotifiedFullyLoaded = false;
     bool isFollowingTransport = false;

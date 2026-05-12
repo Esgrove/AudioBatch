@@ -424,6 +424,16 @@ AudioBatchComponent::AudioBatchComponent() :
     thumbnail->setMouseWheelZoomCallback([this](const double zoomFactor) {
         zoomSlider.setValue(zoomSlider.getValue() * zoomFactor);
     });
+    thumbnail->setMouseWheelGainCallback([this](const float deltaDb) {
+        if (!gainSlider.isEnabled() || juce::approximatelyEqual(deltaDb, 0.0f)) {
+            return;
+        }
+        const auto interval = gainSlider.getInterval() > 0.0 ? gainSlider.getInterval() : 0.1;
+        const auto step = (deltaDb > 0.0f ? 1.0 : -1.0) * interval;
+        const auto newValue
+            = juce::jlimit(gainSlider.getMinimum(), gainSlider.getMaximum(), gainSlider.getValue() + step);
+        gainSlider.setValue(newValue, juce::sendNotificationSync);
+    });
     thumbnail->setThumbnailFullyLoadedCallback([this] { handleThumbnailFullyLoaded(); });
 
     startStopButton.setEnabled(false);
@@ -656,6 +666,7 @@ AudioBatchComponent::~AudioBatchComponent()
 
     thumbnail->removeChangeListener(this);
     thumbnail->setMouseWheelZoomCallback({});
+    thumbnail->setMouseWheelGainCallback({});
     thumbnail->setThumbnailFullyLoadedCallback({});
     resultsTable.setModel(nullptr);
 

@@ -191,6 +191,7 @@ target_sources(AudioBatch
         "src/AudioNormalizationService.h"
         "src/CustomLookAndFeel.cpp"
         "src/CustomLookAndFeel.h"
+        "src/IntervalStepSlider.h"
         "src/Main.cpp"
         "src/NormalizeCoordinator.cpp"
         "src/NormalizeCoordinator.h"
