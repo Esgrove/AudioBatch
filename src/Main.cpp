@@ -9,6 +9,9 @@ namespace audiobatch::app
 enum MenuItemId {
     chooseFolderMenuItemId = 1,
     rescanMenuItemId,
+    clearFilesMenuItemId,
+    removeSelectedMenuItemId,
+    reanalyzeSelectedMenuItemId,
     audioSettingsMenuItemId,
     supportedFormatsMenuItemId,
     aboutMenuItemId,
@@ -122,6 +125,10 @@ private:
             case 1:
                 menu.addItem(chooseFolderMenuItemId, "Choose Folder...");
                 menu.addItem(rescanMenuItemId, "Rescan");
+                menu.addSeparator();
+                menu.addItem(reanalyzeSelectedMenuItemId, "Re-analyze Selected");
+                menu.addItem(removeSelectedMenuItemId, "Remove Selected from List");
+                menu.addItem(clearFilesMenuItemId, "Clear All Files");
                 break;
             case 2:
                 menu.addItem(audioSettingsMenuItemId, "Audio Settings...");
@@ -139,6 +146,10 @@ private:
             case 0:
                 menu.addItem(chooseFolderMenuItemId, "Choose Folder...");
                 menu.addItem(rescanMenuItemId, "Rescan");
+                menu.addSeparator();
+                menu.addItem(reanalyzeSelectedMenuItemId, "Re-analyze Selected");
+                menu.addItem(removeSelectedMenuItemId, "Remove Selected from List");
+                menu.addItem(clearFilesMenuItemId, "Clear All Files");
                 menu.addSeparator();
                 menu.addItem(quitMenuItemId, "Quit");
                 break;
@@ -168,6 +179,15 @@ private:
                 break;
             case rescanMenuItemId:
                 getAudioBatch().rescanCurrentRoot();
+                break;
+            case clearFilesMenuItemId:
+                getAudioBatch().clearAllRecords();
+                break;
+            case removeSelectedMenuItemId:
+                getAudioBatch().removeSelectedRecords();
+                break;
+            case reanalyzeSelectedMenuItemId:
+                getAudioBatch().reanalyzeSelectedRecords();
                 break;
             case audioSettingsMenuItemId:
                 getAudioBatch().showAudioSettingsWindow();
