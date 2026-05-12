@@ -161,6 +161,7 @@ private:
     void showAudioResource(juce::URL resource);
     void syncActivityTimer();
     void startOrStop();
+    void updatePlaybackButtonForTransportState();
     void timerCallback() override;
     void zoomLevelChanged(double zoomLevel);
     void mouseMagnify(const juce::MouseEvent&, float scaleFactor) override;
