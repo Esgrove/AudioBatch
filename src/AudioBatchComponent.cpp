@@ -421,6 +421,7 @@ AudioBatchComponent::AudioBatchComponent() :
     thumbnail = std::make_unique<ThumbnailComponent>(formatManager, transportSource);
     addAndMakeVisible(thumbnail.get());
     thumbnail->addChangeListener(this);
+    transportSource.addChangeListener(this);
     thumbnail->setMouseWheelZoomCallback([this](const double zoomFactor) {
         zoomSlider.setValue(zoomSlider.getValue() * zoomFactor);
     });
@@ -664,6 +665,7 @@ AudioBatchComponent::~AudioBatchComponent()
 
     audioDeviceManager.removeAudioCallback(&audioSourcePlayer);
 
+    transportSource.removeChangeListener(this);
     thumbnail->removeChangeListener(this);
     thumbnail->setMouseWheelZoomCallback({});
     thumbnail->setMouseWheelGainCallback({});
@@ -2138,15 +2140,28 @@ void AudioBatchComponent::startOrStop()
 {
     if (transportSource.isPlaying()) {
         transportSource.stop();
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green);
     } else {
         transportSource.start();
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::red);
     }
+}
+
+void AudioBatchComponent::updatePlaybackButtonForTransportState()
+{
+    if (!startStopButton.isEnabled()) {
+        return;
+    }
+
+    const auto colour = transportSource.isPlaying() ? juce::CustomLookAndFeel::red : juce::CustomLookAndFeel::green;
+    startStopButton.setColour(juce::TextButton::buttonColourId, colour);
 }
 
 void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
+    if (source == &transportSource) {
+        updatePlaybackButtonForTransportState();
+        return;
+    }
+
     if (source == thumbnail.get()) {
         const auto droppedFiles = thumbnail->getLastDroppedFiles();
 
