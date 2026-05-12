@@ -9,6 +9,7 @@ on:
       - ".github/workflows/build.yml"
       - "CMakeLists.txt"
       - "CMakePresets.json"
+      - "JUCE"
       - "src/**"
   pull_request:
     paths:
@@ -16,6 +17,7 @@ on:
       - ".github/workflows/build.yml"
       - "CMakeLists.txt"
       - "CMakePresets.json"
+      - "JUCE"
       - "src/**"
 
 # Cancel previous runs for PRs but not pushes to main
@@ -54,7 +56,7 @@ jobs:
           chmod +x build.sh
           ./build.sh --build-type Debug
 
-  clang-format:
+  format:
     # Need to use macOS since Ubuntu apt has an old clang-format version
     runs-on: macos-latest
     steps:
