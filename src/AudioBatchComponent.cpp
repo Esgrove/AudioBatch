@@ -411,6 +411,7 @@ AudioBatchComponent::AudioBatchComponent() :
     resultsTable.getHeader().setSortColumnId(currentSortColumnId, currentSortForwards);
     refreshSortIndicators();
     addAndMakeVisible(resultsTable);
+    resultsTable.addKeyListener(this);
 
     // Default to a larger list view while allowing the lower preview area to be resized.
     mainVerticalLayout.setItemLayout(0, 240.0, -0.85, -0.69);
@@ -816,6 +817,11 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
     header.setColumnWidth(AudioFileTableModel::columnPath, pathWidth);
 }
 
+bool AudioBatchComponent::keyPressed(const juce::KeyPress& key, juce::Component*)
+{
+    return keyPressed(key);
+}
+
 bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
 {
     if (key.getKeyCode() == juce::KeyPress::backspaceKey && key.getModifiers().isCtrlDown()) {
@@ -823,7 +829,7 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
         return true;
     }
 
-    if (key.getKeyCode() == juce::KeyPress::deleteKey) {
+    if (key.getKeyCode() == juce::KeyPress::deleteKey || key.getKeyCode() == juce::KeyPress::backspaceKey) {
         removeSelectedRecords();
         return true;
     }
