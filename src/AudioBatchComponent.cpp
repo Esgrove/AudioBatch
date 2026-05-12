@@ -114,6 +114,8 @@ enum FileMenuItemId {
     normalizeMenuItemId,
     normalizeSupportMenuItemId,
     moveToTrashMenuItemId,
+    removeFromListMenuItemId,
+    reanalyzeMenuItemId,
 };
 
 static juce::String buildNormalizationFailureMessage(const juce::StringArray& failures)
@@ -672,6 +674,11 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
         return true;
     }
 
+    if (key.getKeyCode() == juce::KeyPress::deleteKey) {
+        removeSelectedRecords();
+        return true;
+    }
+
     if (key == juce::KeyPress::spaceKey) {
         startOrStop();
         return true;
@@ -714,6 +721,71 @@ void AudioBatchComponent::chooseRootFolder()
 void AudioBatchComponent::rescanCurrentRoot()
 {
     refreshAnalysis(true);
+}
+
+bool AudioBatchComponent::hasSelectedRecords() const
+{
+    return resultsTable.getNumSelectedRows() > 0;
+}
+
+bool AudioBatchComponent::hasAnyRecords() const
+{
+    return !analysisResults.empty();
+}
+
+void AudioBatchComponent::clearAllRecords()
+{
+    if (analysisResults.empty()) {
+        return;
+    }
+
+    analysisResults.clear();
+    activeFileStatusLabels.clear();
+    clearCurrentAudioPreview();
+    audioInfo->clear();
+    expectedResults = 0;
+    completedResults = 0;
+    analyzedFilesThisRun = 0;
+
+    resultsTable.deselectAllRows();
+    resultsTable.updateContent();
+    updateResultsTableColumnWidths();
+    resultsTable.repaint();
+    syncActivityTimer();
+    statusLabel.setText("No files", juce::dontSendNotification);
+}
+
+void AudioBatchComponent::removeSelectedRecords()
+{
+    const auto selectedPaths = getSelectedRecordPaths();
+
+    if (selectedPaths.isEmpty()) {
+        return;
+    }
+
+    const auto selectedRows = resultsTable.getSelectedRows();
+    const int fallbackRow = selectedRows.isEmpty() ? 0 : selectedRows[0];
+
+    for (const auto& path : selectedPaths) {
+        unmarkFileProcessing(path);
+    }
+
+    removeRecordsByPath(selectedPaths, fallbackRow);
+}
+
+void AudioBatchComponent::reanalyzeSelectedRecords()
+{
+    if (isAnalysisInProgress() || normalizeInProgress) {
+        return;
+    }
+
+    const auto selectedFiles = getSelectedRecordFiles();
+
+    if (selectedFiles.isEmpty()) {
+        return;
+    }
+
+    startAnalysis(selectedFiles, false, true, false);
 }
 
 void AudioBatchComponent::showAudioSettingsWindow()
@@ -844,9 +916,11 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
     menu.addItem(revealFileMenuItemId, getRevealFileMenuLabel(), record.file.exists());
     menu.addItem(openParentDirectoryMenuItemId, "Open Parent Folder", parentDirectory.isDirectory());
     menu.addSeparator();
+    menu.addItem(reanalyzeMenuItemId, "Re-analyze Selected", !isAnalysisInProgress() && !normalizeInProgress);
     menu.addItem(normalizeMenuItemId, "Normalize to 0 dBFS", canNormalize);
     menu.addItem(normalizeSupportMenuItemId, "Normalization Format Support...");
     menu.addSeparator();
+    menu.addItem(removeFromListMenuItemId, "Remove from List");
     menu.addItem(moveToTrashMenuItemId, "Move to Trash", record.file.exists());
 
     const auto safeThis = SafePointer(this);
@@ -874,6 +948,12 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
                     break;
                 case moveToTrashMenuItemId:
                     safeThis->moveSelectedRecordsToTrash(true);
+                    break;
+                case removeFromListMenuItemId:
+                    safeThis->removeSelectedRecords();
+                    break;
+                case reanalyzeMenuItemId:
+                    safeThis->reanalyzeSelectedRecords();
                     break;
                 default:
                     break;

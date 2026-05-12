@@ -34,6 +34,15 @@ public:
     /// Re-runs analysis for the current root folder.
     void rescanCurrentRoot();
 
+    /// Removes every analyzed file from the table without touching the files on disk.
+    void clearAllRecords();
+
+    /// Removes the currently selected files from the table without touching the files on disk.
+    void removeSelectedRecords();
+
+    /// Forces re-analysis of the currently selected files, bypassing the analysis cache.
+    void reanalyzeSelectedRecords();
+
     /// Opens the audio-device settings dialog.
     void showAudioSettingsWindow();
 
@@ -70,6 +79,12 @@ private:
 
     /// Moves the selected files to the OS trash, optionally asking for confirmation first.
     void moveSelectedRecordsToTrash(bool promptForConfirmation);
+
+    /// True when the table has at least one selected row.
+    [[nodiscard]] bool hasSelectedRecords() const;
+
+    /// True when the table currently holds any analyzed records.
+    [[nodiscard]] bool hasAnyRecords() const;
 
     int findRecordIndex(const juce::String& fullPath) const;
     juce::Array<juce::File> getSelectedRecordFiles() const;
