@@ -518,8 +518,11 @@ AudioBatchComponent::AudioBatchComponent() :
     );
     addAndMakeVisible(normalizeBeforePluginToggle);
 
-    processButton.setTooltip("Process selected files through the selected plugin (output: AIFF).");
-    processButton.setEnabled(false);
+    processButton.setTooltip("Process selected files through the selected plugin.");
+    processButton.setEnabled(
+        pluginChain != nullptr && pluginChain->getSelectedPlugin().isValid() && !pluginProcessingInProgress
+        && !isAnalysisInProgress()
+    );
     processButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
     processButton.onClick = [this] { processSelectedRecords(); };
     addAndMakeVisible(processButton);

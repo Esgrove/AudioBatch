@@ -151,24 +151,54 @@ PluginProcessingResult PluginProcessingService::processFile(
         }
     }
 
-    // Reconfigure the plugin's bus layout to match the file when possible.
-    juce::AudioProcessor::BusesLayout layout;
-    layout.inputBuses.add(juce::AudioChannelSet::canonicalChannelSet(numChannels));
-    layout.outputBuses.add(juce::AudioChannelSet::canonicalChannelSet(numChannels));
+    // Reconfigure the plugin's main input and output buses to match the file when possible.
+    // We preserve the plugin's existing bus count (some plugins have sidechain or aux buses) and
+    // only override the main bus channel set, falling back through several common configurations.
+    auto trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {
+        auto layout = plugin->getBusesLayout();
 
-    if (!plugin->setBusesLayout(layout)) {
-        // Fall back: try stereo if the plugin refuses the file's exact layout.
-        juce::AudioProcessor::BusesLayout stereoLayout;
-        stereoLayout.inputBuses.add(juce::AudioChannelSet::stereo());
-        stereoLayout.outputBuses.add(juce::AudioChannelSet::stereo());
-
-        if (numChannels > 2 || !plugin->setBusesLayout(stereoLayout)) {
-            writer.reset();
-            temporaryFile.getFile().deleteFile();
-            return fail(
-                file, "Plugin does not support the file's channel layout (" + juce::String(numChannels) + " channels)"
-            );
+        if (layout.inputBuses.isEmpty() && layout.outputBuses.isEmpty()) {
+            return false;
         }
+
+        if (!layout.inputBuses.isEmpty()) {
+            layout.inputBuses.getReference(0) = channelSet;
+        }
+        if (!layout.outputBuses.isEmpty()) {
+            layout.outputBuses.getReference(0) = channelSet;
+        }
+
+        return plugin->checkBusesLayoutSupported(layout) && plugin->setBusesLayout(layout);
+    };
+
+    bool layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::canonicalChannelSet(numChannels));
+
+    if (!layoutConfigured && numChannels == 2) {
+        layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::stereo());
+    }
+
+    if (!layoutConfigured && numChannels == 1) {
+        layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::mono());
+        // Plenty of effect plugins are stereo-only; let mono files run through a stereo configuration.
+        if (!layoutConfigured) {
+            layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::stereo());
+        }
+    }
+
+    if (!layoutConfigured && numChannels <= 2) {
+        // Last resort: ask the processor to accept the channel counts directly. Some plugins do not
+        // honor setBusesLayout but still process correctly if play config details are set.
+        plugin->setPlayConfigDetails(numChannels, numChannels, sampleRate, processingBlockSize);
+        layoutConfigured
+            = plugin->getTotalNumInputChannels() >= numChannels && plugin->getTotalNumOutputChannels() >= numChannels;
+    }
+
+    if (!layoutConfigured) {
+        writer.reset();
+        temporaryFile.getFile().deleteFile();
+        return fail(
+            file, "Plugin does not support the file's channel layout (" + juce::String(numChannels) + " channels)"
+        );
     }
 
     plugin->prepareToPlay(sampleRate, processingBlockSize);
