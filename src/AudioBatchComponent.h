@@ -57,6 +57,12 @@ public:
     /// Runs the configured plugin (if any) over the currently-selected files.
     void processSelectedRecords();
 
+    /// Returns the plugin selection controller, or nullptr before the component finishes constructing.
+    [[nodiscard]] PluginChain* getPluginChain() const noexcept
+    {
+        return pluginChain.get();
+    }
+
     void filesDropped(const juce::StringArray& files, int x, int y) override;
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
     void paint(juce::Graphics& g) override;
