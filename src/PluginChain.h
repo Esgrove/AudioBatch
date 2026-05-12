@@ -38,8 +38,8 @@ public:
     /// Invoked whenever the selected plugin (or its persisted state) changes.
     void setSelectionChangedCallback(SelectionChangedCallback callback);
 
-    /// Pops up the plugin menu anchored to the given component. The menu includes the current
-    /// selection, Edit/Clear, the Choose submenu (known plugins), and a Scan entry.
+    /// Pops up the plugin menu anchored to the given component.
+    /// The menu includes the current selection, Edit/Clear, the Choose submenu (known plugins), and a Scan entry.
     void showMenu(juce::Component& anchor);
 
     /// Opens the plugin's editor window (no-op when no plugin is selected).

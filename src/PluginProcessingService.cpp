@@ -227,7 +227,8 @@ PluginProcessingResult PluginProcessingService::processFile(
 
         // Process: trim buffer to the block size the plugin expects (it was prepared at processingBlockSize).
         if (samplesThisBlock < processingBlockSize) {
-            // Pad with silence to the prepared block size; many plugins assume a constant block size.
+            // Pad with silence to the prepared block size.
+            // Many plugins assume a constant block size.
             for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
                 buffer.clear(channel, samplesThisBlock, processingBlockSize - samplesThisBlock);
             }
@@ -273,7 +274,8 @@ PluginProcessingResult PluginProcessingService::processFile(
     }
 
     if (!replacingOriginal && file.existsAsFile()) {
-        // Output had a different extension; remove the original file to avoid duplicates.
+        // Output had a different extension.
+        // Remove the original file to avoid duplicates.
         file.deleteFile();
     }
 
@@ -283,7 +285,7 @@ PluginProcessingResult PluginProcessingService::processFile(
     result.outputFile = outputFile;
     result.fileName = outputFile.getFileName();
     result.analysisRecord = AudioAnalysisService::analyzeFile(outputFile);
-    // Custom gain has been baked in; clear it on the new record.
+    // Custom gain has been baked in. Clear it on the new record.
     result.analysisRecord.customGainDb = 0.0f;
     result.analysisRecord.hasCustomGain = false;
     result.succeeded = !result.analysisRecord.hasError();

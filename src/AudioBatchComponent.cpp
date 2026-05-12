@@ -1018,7 +1018,7 @@ void AudioBatchComponent::refreshAnalysis(const bool forceRefresh)
         return;
     }
 
-    // No root directory set — re-analyze individual files already in the results table.
+    // No root directory set, so re-analyze individual files already in the results table.
     juce::Array<juce::File> existingFiles;
     for (const auto& record : analysisResults) {
         if (record.file.existsAsFile()) {
@@ -2393,7 +2393,7 @@ void AudioBatchComponent::processSelectedRecords()
     juce::String instantiationError;
     for (int i = 0; i < workerCount; ++i) {
         juce::String error;
-        // Use a reasonable default sample rate; we re-call prepareToPlay per file with the file's rate.
+        // Use a reasonable default sample rate. We re-call prepareToPlay per file with the file's rate.
         auto instance = pluginFormatManager.createPluginInstance(pluginDescription, 48000.0, 1024, error);
         if (instance == nullptr) {
             instantiationError = error.isNotEmpty() ? error : juce::String("Plugin instantiation failed");
@@ -2420,7 +2420,7 @@ void AudioBatchComponent::processSelectedRecords()
         return;
     }
 
-    // Always stop playback before processing — files may be replaced on disk.
+    // Always stop playback before processing, since files may be replaced on disk.
     if (transportSource.isPlaying()) {
         transportSource.stop();
     }
@@ -2439,8 +2439,8 @@ void AudioBatchComponent::processSelectedRecords()
     }
 
     if (previewWillBeProcessed) {
-        // Release file handles so the on-disk file can be replaced. Keep currentAudioFile so the
-        // result handler can re-load the produced output when processing completes.
+        // Release file handles so the on-disk file can be replaced.
+        // Keep currentAudioFile so the result handler can re-load the produced output when processing completes.
         transportSource.setSource(nullptr);
         currentAudioFileSource.reset();
         thumbnail->setURL(juce::URL());

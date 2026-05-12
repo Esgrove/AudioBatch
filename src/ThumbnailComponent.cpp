@@ -28,8 +28,8 @@ void ThumbnailComponent::paint(juce::Graphics& g)
     if (thumbnail.getTotalLength() > 0.0) {
         const auto reduced = getLocalBounds().reduced(2);
 
-        // drawChannels scales each channel around its own strip midpoint and clamps the waveform
-        // to the strip bounds, so over-0 dBFS peaks are naturally clipped at the channel boundary.
+        // drawChannels scales each channel around its own strip midpoint and clamps the waveform to the strip bounds,
+        // so over-0 dBFS peaks are naturally clipped at the channel boundary.
         thumbnail.drawChannels(g, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
     } else {
         g.setFont(14.0f);
@@ -198,7 +198,7 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
         return;
     }
 
-    // Ctrl on Windows/Linux, Cmd on macOS — both map to commandModifier in JUCE.
+    // Ctrl on Windows/Linux, Cmd on macOS. Both map to commandModifier in JUCE.
     if (event.mods.isCommandDown() && std::abs(wheel.deltaY) > 0.0f && mouseWheelGainCallback) {
         constexpr float dbPerWheelNotch = 6.0f;
         mouseWheelGainCallback(wheel.deltaY * dbPerWheelNotch);
