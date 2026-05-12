@@ -152,8 +152,9 @@ PluginProcessingResult PluginProcessingService::processFile(
     }
 
     // Reconfigure the plugin's main input and output buses to match the file when possible.
-    // We preserve the plugin's existing bus count (some plugins have sidechain or aux buses) and
-    // only override the main bus channel set, falling back through several common configurations.
+    // We preserve the plugin's existing bus count, because some plugins have sidechain or aux buses,
+    // and only override the main bus channel set.
+    // If that fails we fall back through several common configurations.
     auto trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {
         auto layout = plugin->getBusesLayout();
 
@@ -179,15 +180,16 @@ PluginProcessingResult PluginProcessingService::processFile(
 
     if (!layoutConfigured && numChannels == 1) {
         layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::mono());
-        // Plenty of effect plugins are stereo-only; let mono files run through a stereo configuration.
+        // Plenty of effect plugins are stereo-only.
+        // Let mono files run through a stereo configuration in that case.
         if (!layoutConfigured) {
             layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::stereo());
         }
     }
 
     if (!layoutConfigured && numChannels <= 2) {
-        // Last resort: ask the processor to accept the channel counts directly. Some plugins do not
-        // honor setBusesLayout but still process correctly if play config details are set.
+        // Last resort: ask the processor to accept the channel counts directly.
+        // Some plugins do not honor setBusesLayout but still process correctly if play config details are set.
         plugin->setPlayConfigDetails(numChannels, numChannels, sampleRate, processingBlockSize);
         layoutConfigured
             = plugin->getTotalNumInputChannels() >= numChannels && plugin->getTotalNumOutputChannels() >= numChannels;
