@@ -1,0 +1,72 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".clang-format"
+      - ".github/workflows/cmake.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "src/**"
+  pull_request:
+    paths:
+      - ".clang-format"
+      - ".github/workflows/cmake.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "src/**"
+
+# Cancel previous runs for PRs but not pushes to main
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [macos-latest, windows-2025-vs2026]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Cache CMake
+        uses: actions/cache@v5
+        with:
+          path: |
+            cmake-build-mac-release
+            cmake-build-windows-release
+          key: ${{ runner.os }}-cmake-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-cmake-
+
+      - name: Build
+        run: |
+          chmod +x build.sh
+          ./build.sh --build-type Debug
+
+  clang-format:
+    # Need to use macOS since Ubuntu apt has an old clang-format version
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install clang-format
+        run: |
+          brew update --quiet
+          brew install clang-format
+
+      - name: Check formatting
+        run: |
+          clang-format --version
+          clang-format --verbose --style=file --dry-run --Werror $(find src -type f \( -name "*.cpp" -o -name "*.h" \))
