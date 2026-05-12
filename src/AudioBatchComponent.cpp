@@ -837,6 +837,14 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
         return true;
     }
 
+    if (key == juce::KeyPress('r', juce::ModifierKeys::commandModifier, 0)) {
+        const auto selectedRows = resultsTable.getSelectedRows();
+        if (const auto row = getSelectionDisplayRow(selectedRows, -1); row >= 0) {
+            revealRecordInFileManager(row);
+        }
+        return true;
+    }
+
     if (key == juce::KeyPress::spaceKey) {
         startOrStop();
         return true;
