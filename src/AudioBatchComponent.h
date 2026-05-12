@@ -235,6 +235,7 @@ private:
     juce::TextButton processButton {"Process"};
     juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
     std::unique_ptr<AudioInfoPanel> audioInfo;
+    juce::Viewport audioInfoViewport;
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioBatchComponent)
