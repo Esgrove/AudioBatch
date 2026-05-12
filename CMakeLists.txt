@@ -1,11 +1,11 @@
 # AudioBatch
 # Akseli Lukkarila
-# 2023-2025
+# 2023-2026
 
 cmake_minimum_required(VERSION 4.2)
 
 project("AudioBatch"
-    VERSION 0.5.0
+    VERSION 0.6.0
     DESCRIPTION "App for batch processing audio files"
     HOMEPAGE_URL "https://github.com/Esgrove/AudioBatch"
     LANGUAGES CXX C
@@ -194,6 +194,13 @@ target_sources(AudioBatch
         "src/Main.cpp"
         "src/NormalizeCoordinator.cpp"
         "src/NormalizeCoordinator.h"
+        "src/PluginChain.cpp"
+        "src/PluginChain.h"
+        "src/PluginProcessing.h"
+        "src/PluginProcessingCoordinator.cpp"
+        "src/PluginProcessingCoordinator.h"
+        "src/PluginProcessingService.cpp"
+        "src/PluginProcessingService.h"
         "src/ThumbnailComponent.cpp"
         "src/ThumbnailComponent.h"
         "src/utils.cpp"
@@ -234,6 +241,7 @@ target_compile_definitions(AudioBatch
         JUCE_USE_LAME_AUDIO_FORMAT=1
         JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_AU=1
         JUCE_STRICT_REFCOUNTEDPOINTER=1
         JUCE_USE_CURL=0
         JUCE_USE_FLAC=1

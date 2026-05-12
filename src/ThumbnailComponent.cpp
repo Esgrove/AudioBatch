@@ -26,8 +26,22 @@ void ThumbnailComponent::paint(juce::Graphics& g)
     g.setColour(juce::CustomLookAndFeel::blue);
 
     if (thumbnail.getTotalLength() > 0.0) {
-        const auto thumbArea = getLocalBounds();
-        thumbnail.drawChannels(g, thumbArea.reduced(2), visibleRange.getStart(), visibleRange.getEnd(), 1.0f);
+        const auto reduced = getLocalBounds().reduced(2);
+
+        if (juce::approximatelyEqual(displayGain, 1.0f)) {
+            thumbnail.drawChannels(g, reduced, visibleRange.getStart(), visibleRange.getEnd(), 1.0f);
+        } else {
+            // Clip to the thumbnail bounds first, then vertically scale around the centre.
+            // This way over-0 dBFS peaks are simply cut off, mimicking a hard limiter at the boundary.
+            juce::Graphics::ScopedSaveState saved(g);
+            g.reduceClipRegion(reduced);
+
+            const auto centreY = static_cast<float>(reduced.getCentreY());
+            g.addTransform(
+                juce::AffineTransform::translation(0.0f, -centreY).scaled(1.0f, displayGain).translated(0.0f, centreY)
+            );
+            thumbnail.drawChannels(g, reduced, visibleRange.getStart(), visibleRange.getEnd(), 1.0f);
+        }
     } else {
         g.setFont(14.0f);
         g.drawFittedText("No audio file selected", getLocalBounds(), juce::Justification::centred, 2);
@@ -244,6 +258,17 @@ void ThumbnailComponent::updateCursorPosition()
             timeToX(transportSource.getCurrentPosition()) - 0.75f, 0, 1.5f, static_cast<float>(getHeight())
         )
     );
+}
+
+void ThumbnailComponent::setDisplayGain(const float linearGain)
+{
+    const auto clampedGain = juce::jlimit(0.0f, 100.0f, linearGain);
+    if (juce::approximatelyEqual(displayGain, clampedGain)) {
+        return;
+    }
+
+    displayGain = clampedGain;
+    repaint();
 }
 
 void ThumbnailComponent::setZoom(const double zoomLevel)
