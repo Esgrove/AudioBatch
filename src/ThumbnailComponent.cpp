@@ -58,12 +58,18 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
         return false;
     }
 
-    if (thumbnail.getTotalLength() > 0.0) {
-        setRange({0.0, thumbnail.getTotalLength()});
-    } else {
+    // A successful loadFrom can still leave the thumbnail empty
+    // when the cached blob was written from an incomplete source.
+    // Treat that as a cache miss so the caller can re-read the file.
+    if (thumbnail.getTotalLength() <= 0.0) {
+        thumbnail.clear();
+        visibleRange = {};
+        stopTimer();
         repaint();
+        return false;
     }
 
+    setRange({0.0, thumbnail.getTotalLength()});
     startTimerHz(60);
     return true;
 }
@@ -72,7 +78,11 @@ juce::MemoryBlock ThumbnailComponent::saveToCacheData() const
 {
     juce::MemoryBlock waveformData;
 
-    if (!thumbnail.isFullyLoaded()) {
+    // Refuse to persist an empty thumbnail.
+    // AudioThumbnail::isFullyLoaded can briefly return true before any peak data has been generated.
+    // Without this guard a zero-length blob can land in the cache,
+    // causing the preview to render as "No audio file selected" on the next load.
+    if (!thumbnail.isFullyLoaded() || thumbnail.getTotalLength() <= 0.0) {
         return waveformData;
     }
 
