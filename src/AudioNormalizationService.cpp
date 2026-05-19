@@ -24,10 +24,6 @@ constexpr int defaultMp3BitsPerSample = 16;
 
 struct AudioNormalizationRuntimeState {
     juce::AudioFormatManager readFormatManager;
-    juce::File lameExecutable;
-#if JUCE_USE_LAME_AUDIO_FORMAT
-    std::unique_ptr<juce::LAMEEncoderAudioFormat> lameEncoderFormat;
-#endif
 };
 
 struct AudioNormalizationFormatSupport {
@@ -135,70 +131,10 @@ static bool finalizeNormalizationOutput(
     return true;
 }
 
-static juce::String getLameExecutableName()
+static juce::String getNormalizationStatusLine()
 {
-#if JUCE_WINDOWS
-    return "lame.exe";
-#else
-    return "lame";
-#endif
-}
-
-static juce::StringArray getLameCandidatePaths()
-{
-    juce::StringArray candidatePaths;
-    const auto addCandidate = [&candidatePaths](const juce::File& file) {
-        if (file != juce::File()) {
-            candidatePaths.addIfNotAlreadyThere(file.getFullPathName());
-        }
-    };
-
-    const auto executableName = getLameExecutableName();
-    const auto executableDirectory
-        = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getParentDirectory();
-    const auto userHome = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
-
-    addCandidate(executableDirectory.getChildFile(executableName));
-    addCandidate(executableDirectory.getChildFile("tools").getChildFile(executableName));
-
-#if JUCE_WINDOWS
-    addCandidate(userHome.getChildFile("scoop").getChildFile("shims").getChildFile(executableName));
-    addCandidate(
-        userHome.getChildFile("scoop").getChildFile("apps").getChildFile("lame").getChildFile("current").getChildFile(
-            executableName
-        )
-    );
-#else
-    addCandidate(juce::File("/opt/homebrew/bin/lame"));
-    addCandidate(juce::File("/usr/local/bin/lame"));
-    addCandidate(juce::File("/opt/local/bin/lame"));
-#endif
-
-    juce::StringArray pathEntries;
-#if JUCE_WINDOWS
-    pathEntries.addTokens(juce::SystemStats::getEnvironmentVariable("PATH", {}), ";", "\"");
-#else
-    pathEntries.addTokens(juce::SystemStats::getEnvironmentVariable("PATH", {}), ":", "\"");
-#endif
-    pathEntries.removeEmptyStrings();
-    pathEntries.trim();
-
-    for (const auto& pathEntry : pathEntries) {
-        addCandidate(juce::File(pathEntry).getChildFile(executableName));
-    }
-
-    return candidatePaths;
-}
-
-static juce::File findLameExecutable()
-{
-    for (const auto& candidatePath : getLameCandidatePaths()) {
-        if (const juce::File candidate(candidatePath); candidate.existsAsFile()) {
-            return candidate;
-        }
-    }
-
-    return {};
+    return "Normalization output: same-name AIF files. "
+           "Originals with a different extension are moved to the system trash.";
 }
 
 static bool extensionsContain(const juce::StringArray& extensions, const juce::String& targetExtension)
@@ -369,25 +305,10 @@ static AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
     thread_local auto runtimeState = [] {
         auto initializedState = std::make_unique<AudioNormalizationRuntimeState>();
         initializedState->readFormatManager.registerBasicFormats();
-        initializedState->lameExecutable = findLameExecutable();
-
-#if JUCE_USE_LAME_AUDIO_FORMAT
-        if (initializedState->lameExecutable.existsAsFile()) {
-            initializedState->lameEncoderFormat
-                = std::make_unique<juce::LAMEEncoderAudioFormat>(initializedState->lameExecutable);
-        }
-#endif
-
         return initializedState;
     }();
 
     return *runtimeState;
-}
-
-static juce::String getMp3EncoderStatusLine(const AudioNormalizationRuntimeState& runtimeState)
-{
-    juce::ignoreUnused(runtimeState);
-    return "MP3 normalization output: same-name AIF files after moving the original MP3 to the system trash.";
 }
 
 static std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormalizationRuntimeState& runtimeState)
@@ -551,7 +472,7 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
     }
 
     juce::String message;
-    message << getMp3EncoderStatusLine(runtimeState) << juce::newLine << juce::newLine;
+    message << getNormalizationStatusLine() << juce::newLine << juce::newLine;
     message << "Normalization rewrites files in place when they are already AIFF, and converts every other"
             << " supported format to an AIFF file of the same base name. Metadata (tags, album art, custom"
             << " frames) is read from the source via TagLib and written back to the AIFF output as ID3v2.4."

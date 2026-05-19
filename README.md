@@ -12,6 +12,7 @@ Current implementation focus:
 - Normalize selected files to `0 dBFS` peak from the GUI or the CLI.
 - Convert any normalized output to AIFF and preserve all source metadata,
   including embedded album art and custom tags, by writing them back as ID3v2.4.
+- Batch process selected files through a VST3 or Audio Unit plugin from the GUI.
 - Run the same analysis and normalization from a console executable.
 
 Analysis scope currently assumes mono or stereo source files, including MP3 joint stereo.
@@ -36,22 +37,6 @@ otherwise CMake falls back to fetching the SQLite amalgamation.
 `TagLib` is fetched through CMake.
 It is used to read every tag and embedded picture from the source file,
 and to write the resulting metadata back as ID3v2.4 on the AIFF output.
-
-MP3 normalization requires a working `lame` encoder executable to be installed and available to the app.
-
-Install `lame` with your platform package manager:
-
-Windows:
-
-```powershell
-scoop install main/lame
-```
-
-macOS:
-
-```shell
-brew install lame
-```
 
 ## Build
 
@@ -102,6 +87,7 @@ The results list supports per-file actions from the context menu, including:
 - move files to the system trash
 - remove files from the list without deleting them
 - normalize selected files to `0 dBFS` peak
+- process selected files through the currently chosen plugin
 
 Keyboard shortcuts in the results list:
 
@@ -111,9 +97,9 @@ Keyboard shortcuts in the results list:
 - `F5` refreshes the analysis for the current root folder.
 - `Space` starts or stops the background analysis.
 
-MP3 files can only be normalized when `lame` is installed.
-AIFF, WAV, FLAC, and other readable formats are supported as input regardless,
-because normalization always writes a sibling `.aif` file using the JUCE AIFF writer.
+Normalization works for every readable input format,
+including AIFF, WAV, FLAC, MP3, and Ogg Vorbis,
+because the output is always a sibling `.aif` file written through the JUCE AIFF writer.
 
 The status column also shows per-file activity while analysis or normalization is running.
 
@@ -133,7 +119,20 @@ Visible columns:
 
 Default sorting is by overall peak ascending, so the quietest files appear first.
 
-## Normalization
+## Plugin processing
+
+AudioBatch can run selected files through a VST3 or Audio Unit effect plugin and write the processed audio to disk.
+
+- Use the plugin menu in the GUI to scan for installed plugins and choose one.
+  Selecting a plugin opens its editor window automatically so it can be configured.
+  Plugin state is captured when the editor window is closed and persisted between runs.
+- Processed output is always written as `<name>.aiff` next to the input file.
+  If the input has a different extension, the original is moved to the system trash once the new file has been written.
+- Source metadata is copied onto the processed AIFF through TagLib,
+  so tags and embedded artwork survive the processing step.
+- Optional pre-plugin normalization scales each file by `1 / overall peak` before sending it through the plugin,
+  which keeps the input level consistent across the batch.
+  A per-file custom input gain can also be set from the results list.
 
 Normalization always writes an AIFF file next to the source.
 
@@ -208,6 +207,6 @@ The cache is invalidated when any of these change:
 ## TODO
 
 - User config file.
-- VST3 and AU batch processing.
+- Plugin chains: support running selected files through multiple plugins in sequence.
 - "Add folder" menu option to append more roots to the current list.
 - Optional report export, for example CSV or JSON.
