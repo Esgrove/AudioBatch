@@ -28,8 +28,6 @@ code comments, docstrings, commit messages, and Markdown files.
 - When you do break, break at semantic boundaries:
   after a sentence, or at a logical clause boundary.
   Do not hard-wrap mid-clause at an arbitrary column.
-- These rules apply equally to single-line `///` doc comments grouped together
-  and to multi-line `/** ... */` blocks.
 - Prefer simple sentences separated by periods and commas.
   Avoid semicolons and em dashes.
   Split a long sentence into shorter ones on separate lines
@@ -47,8 +45,8 @@ Example (C++ doc comment):
 
 ```cpp
 /// Processes a single file through the supplied plugin instance.
-/// The plugin must already be prepared with the appropriate sample rate and block size;
-/// the function resets the plugin internally before processing
+/// The plugin must already be prepared with the appropriate sample rate and block size.
+/// The function resets the plugin internally before processing,
 /// and releases its resources afterwards.
 ```
 
@@ -57,7 +55,8 @@ Example (C++ doc comment):
 - Do not use build.sh, it is only for making final release builds
 - When modifying code, use the CMake debug presets for validation so terminal builds reuse the same build directory as the editor or IDE.
 - On Windows, prefer `cmake --preset windows-debug` then `cmake --build --preset windows-debug`.
-- If you need Ninja and `compile_commands.json` on Windows, use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
+- If you need Ninja and `compile_commands.json` on Windows,
+  use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
 - On macOS, use `cmake --preset macos-debug` then `cmake --build --preset macos-debug`.
 
 ## Notes

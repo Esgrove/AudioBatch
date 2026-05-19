@@ -26,7 +26,7 @@ static AudioAnalysisRecord failAnalysis(AudioAnalysisRecord record, const juce::
 {
     record.status = AudioAnalysisStatus::failed;
     record.errorMessage = message;
-    utils::log_error("Analysis failed for " + record.fullPath + ": " + message);
+    utils::logError("Analysis failed for " + record.fullPath + ": " + message);
     return record;
 }
 

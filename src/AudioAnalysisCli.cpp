@@ -144,7 +144,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
     if (inputPaths.isEmpty()) {
         inputPaths.add(juce::File::getCurrentWorkingDirectory());
-        utils::log_info("No input paths provided, using current directory: " + inputPaths[0].getFullPathName());
+        utils::logInfo("No input paths provided, using current directory: " + inputPaths[0].getFullPathName());
     }
 
     AnalysisCache cache;
@@ -161,7 +161,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     const auto analysisElapsedMs = juce::Time::getMillisecondCounterHiRes() - analysisStartedAtMs;
     const auto analysisFailureCount
         = std::count_if(results.begin(), results.end(), [](const auto& record) { return record.hasError(); });
-    utils::log_info(
+    utils::logInfo(
         "Analysis complete: " + juce::String(results.size()) + " files (" + juce::String(analysisFailureCount)
         + " failed) in " + juce::String(analysisElapsedMs / 1000.0, 2) + " s"
     );
@@ -182,7 +182,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     for (const auto& result : results) {
         if (result.hasError()) {
             ++failureCount;
-            utils::log_error(result.file.getFullPathName() + ": " + result.errorMessage);
+            utils::logError(result.file.getFullPathName() + ": " + result.errorMessage);
             continue;
         }
 
@@ -195,7 +195,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
         if (normalization.hasError()) {
             ++failureCount;
-            utils::log_error(result.file.getFullPathName() + ": " + normalization.errorMessage);
+            utils::logError(result.file.getFullPathName() + ": " + normalization.errorMessage);
             continue;
         }
 
