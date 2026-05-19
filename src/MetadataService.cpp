@@ -2,8 +2,8 @@
 
 #include "utils.h"
 
-#include <algorithm>
 #include <aifffile.h>
+#include <algorithm>
 #include <fileref.h>
 #include <id3v2.h>
 #include <tbytevector.h>
