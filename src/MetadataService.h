@@ -9,8 +9,8 @@
 ///
 /// Metadata is represented in a format-agnostic way:
 /// - `properties` mirrors TagLib's unified `PropertyMap` (uppercase keys, one or more values).
-/// - `pictures` mirrors TagLib's generic `PICTURE` complex property and works across
-///   ID3v2 (MP3, AIFF, WAV), Vorbis Comments (FLAC, OGG), MP4, APE, etc.
+/// - `pictures` mirrors TagLib's generic `PICTURE` complex property
+///   and works across ID3v2 (MP3, AIFF, WAV), Vorbis Comments (FLAC, OGG), MP4, APE, etc.
 ///
 /// When writing, AIFF output is stored as an ID3v2.4 tag.
 class MetadataService
@@ -43,7 +43,8 @@ public:
     /// Returns true on success. Output is cleared on entry.
     static bool readMetadata(const juce::File& file, Metadata& outMetadata);
 
-    /// Writes the given metadata to the file. The file must exist and be in a
-    /// format TagLib can write. For AIFF and WAV output the tag is saved as ID3v2.4.
+    /// Writes the given metadata to the file.
+    /// The file must exist and be in a format TagLib can write.
+    /// For AIFF and WAV output the tag is saved as ID3v2.4.
     static bool writeMetadata(const juce::File& file, const Metadata& metadata);
 };

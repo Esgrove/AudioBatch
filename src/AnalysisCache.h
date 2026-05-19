@@ -37,7 +37,8 @@ public:
     /// Updates only the user-controlled gain fields for a file.
     bool storeCustomGain(const juce::File& file, float customGainDb, bool hasCustomGain);
 
-    /// Removes the cached row for a file (if any). Returns true when the operation completed.
+    /// Removes the cached row for a file (if any).
+    /// Returns true when the operation completed.
     bool removeAnalysis(const juce::File& file);
 
 private:

@@ -152,8 +152,8 @@ PluginProcessingResult PluginProcessingService::processFile(
     }
 
     // Reconfigure the plugin's main input and output buses to match the file when possible.
-    // We preserve the plugin's existing bus count, because some plugins have sidechain or aux buses,
-    // and only override the main bus channel set.
+    // We preserve the plugin's existing bus count and only override the main bus channel set,
+    // because some plugins have sidechain or aux buses that should be left alone.
     // If that fails we fall back through several common configurations.
     auto trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {
         auto layout = plugin->getBusesLayout();

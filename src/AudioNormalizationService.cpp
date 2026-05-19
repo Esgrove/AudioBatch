@@ -98,10 +98,10 @@ static juce::AudioFormat* getAiffWriterFormat(const AudioNormalizationRuntimeSta
 
 static juce::File getNormalizationOutputFile(const juce::File& sourceFile)
 {
-    // Output is always a sibling `.aif` file. If the source is already named `<name>.aif`
-    // it will resolve to the same path and be normalized in place; any other extension
-    // (including `.aiff` / `.aifc`) is renamed to `.aif` and the original is trashed once
-    // the write succeeds.
+    // Output is always a sibling `.aif` file.
+    // If the source is already named `<name>.aif` it will resolve to the same path and be normalized in place.
+    // Any other extension (including `.aiff` / `.aifc`) is renamed to `.aif`,
+    // and the original is trashed once the write succeeds.
     return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + normalizedAiffOutputExtension);
 }
 
@@ -457,7 +457,8 @@ static bool preserveOutputMetadata(const juce::File& sourceFile, const juce::Fil
     MetadataService::Metadata metadata;
 
     if (!MetadataService::readMetadata(sourceFile, metadata)) {
-        // Reading failed (unsupported format etc.). This is non-fatal: keep going without metadata.
+        // Reading failed, for example due to an unsupported format.
+        // This is non-fatal, so keep going without metadata.
         utils::log_info("No metadata could be read from " + sourceFile.getFullPathName());
         return true;
     }
