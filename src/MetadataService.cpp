@@ -34,7 +34,7 @@ TagLib::FileName toFileName(const juce::File& file)
 #else
 TagLib::FileName toFileName(const juce::File& file)
 {
-    return TagLib::FileName(file.getFullPathName().toRawUTF8());
+    return file.getFullPathName().toRawUTF8();
 }
 #endif
 
@@ -94,13 +94,12 @@ TagLib::PropertyMap buildPropertyMap(const std::vector<MetadataService::Property
     return propertyMap;
 }
 
-std::vector<MetadataService::Picture> readPictures(TagLib::File& file)
+std::vector<MetadataService::Picture> readPictures(const TagLib::File& file)
 {
     std::vector<MetadataService::Picture> pictures;
 
     const auto keys = file.complexPropertyKeys();
-    const bool hasPictureKey
-        = std::any_of(keys.begin(), keys.end(), [](const TagLib::String& key) { return key == "PICTURE"; });
+    const bool hasPictureKey = std::ranges::any_of(keys, [](const TagLib::String& key) { return key == "PICTURE"; });
 
     if (!hasPictureKey) {
         return pictures;
@@ -140,25 +139,27 @@ TagLib::List<TagLib::VariantMap> buildPictureList(const std::vector<MetadataServ
 {
     TagLib::List<TagLib::VariantMap> pictureList;
 
-    for (const auto& picture : pictures) {
-        if (picture.data.getSize() == 0) {
+    for (const auto& [data, mimeType, description, pictureType] : pictures) {
+        if (data.getSize() == 0) {
             continue;
         }
 
         TagLib::VariantMap pictureMap;
 
         const TagLib::ByteVector bytes(
-            static_cast<const char*>(picture.data.getData()), static_cast<unsigned int>(picture.data.getSize())
+            static_cast<const char*>(data.getData()), static_cast<unsigned int>(data.getSize())
         );
         pictureMap.insert("data", TagLib::Variant(bytes));
 
-        const auto mimeType = picture.mimeType.isEmpty() ? juce::String("image/jpeg") : picture.mimeType;
-        pictureMap.insert("mimeType", TagLib::Variant(toTagLib(mimeType)));
+        pictureMap.insert(
+            "mimeType", TagLib::Variant(toTagLib(mimeType.isEmpty() ? juce::String("image/jpeg") : mimeType))
+        );
 
-        const auto pictureType = picture.pictureType.isEmpty() ? juce::String("Front Cover") : picture.pictureType;
-        pictureMap.insert("pictureType", TagLib::Variant(toTagLib(pictureType)));
+        pictureMap.insert(
+            "pictureType", TagLib::Variant(toTagLib(pictureType.isEmpty() ? juce::String("Front Cover") : pictureType))
+        );
 
-        pictureMap.insert("description", TagLib::Variant(toTagLib(picture.description)));
+        pictureMap.insert("description", TagLib::Variant(toTagLib(description)));
 
         pictureList.append(pictureMap);
     }
@@ -178,11 +179,11 @@ bool MetadataService::readMetadata(const juce::File& file, Metadata& outMetadata
     const TagLib::FileRef ref(toFileName(file), false);
 
     if (ref.isNull() || ref.file() == nullptr) {
-        utils::log_error("TagLib could not open file for reading: " + file.getFullPathName());
+        utils::logError("TagLib could not open file for reading: " + file.getFullPathName());
         return false;
     }
 
-    auto* taglibFile = ref.file();
+    const auto* taglibFile = ref.file();
     outMetadata.properties = readProperties(taglibFile->properties());
     outMetadata.pictures = readPictures(*taglibFile);
 
@@ -192,7 +193,7 @@ bool MetadataService::readMetadata(const juce::File& file, Metadata& outMetadata
 bool MetadataService::writeMetadata(const juce::File& file, const Metadata& metadata)
 {
     if (!file.existsAsFile()) {
-        utils::log_error("Cannot write metadata, target file is missing: " + file.getFullPathName());
+        utils::logError("Cannot write metadata, target file is missing: " + file.getFullPathName());
         return false;
     }
 
@@ -208,7 +209,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
         TagLib::RIFF::AIFF::File aiffFile(toFileName(file), false);
 
         if (!aiffFile.isValid()) {
-            utils::log_error("TagLib could not open AIFF file for writing: " + file.getFullPathName());
+            utils::logError("TagLib could not open AIFF file for writing: " + file.getFullPathName());
             return false;
         }
 
@@ -227,7 +228,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
         TagLib::RIFF::WAV::File wavFile(toFileName(file), false);
 
         if (!wavFile.isValid()) {
-            utils::log_error("TagLib could not open WAV file for writing: " + file.getFullPathName());
+            utils::logError("TagLib could not open WAV file for writing: " + file.getFullPathName());
             return false;
         }
 
@@ -246,7 +247,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
     TagLib::FileRef ref(toFileName(file), false);
 
     if (ref.isNull() || ref.file() == nullptr) {
-        utils::log_error("TagLib could not open file for writing: " + file.getFullPathName());
+        utils::logError("TagLib could not open file for writing: " + file.getFullPathName());
         return false;
     }
 

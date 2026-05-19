@@ -75,7 +75,7 @@ bool AnalysisCache::execute(const juce::String& sql) const
     {
         const auto error
             = errorMessage != nullptr ? juce::String::fromUTF8(errorMessage) : juce::String("Unknown SQLite error");
-        utils::log_error("SQLite error: " + error);
+        utils::logError("SQLite error: " + error);
         sqlite3_free(errorMessage);
         return false;
     }
@@ -93,7 +93,7 @@ bool AnalysisCache::open()
 void AnalysisCache::closeUnlocked()
 {
     if (database == nullptr) {
-        utils::log_debug("Analysis cache close skipped: database was not open");
+        utils::logDebug("Analysis cache close skipped: database was not open");
         return;
     }
 
@@ -103,7 +103,7 @@ void AnalysisCache::closeUnlocked()
     sqlite3_close(database);
     database = nullptr;
 
-    utils::log_debug(
+    utils::logDebug(
         "Closed analysis cache at " + databasePath + " in "
         + juce::String((juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0, 3) + " s"
     );
@@ -134,7 +134,7 @@ bool AnalysisCache::columnExists(const juce::String& tableName, const juce::Stri
 bool AnalysisCache::openUnlocked()
 {
     if (database != nullptr) {
-        utils::log_debug("Analysis cache open skipped: database already open at " + databaseFile.getFullPathName());
+        utils::logDebug("Analysis cache open skipped: database already open at " + databaseFile.getFullPathName());
         return true;
     }
 
@@ -142,10 +142,15 @@ bool AnalysisCache::openUnlocked()
     const auto& databasePath = databaseFile.getFullPathName();
     const auto databaseFound = databaseFile.existsAsFile();
 
-    utils::log_debug("Analysis cache startup: ensuring directory for " + databasePath);
-    databaseFile.getParentDirectory().createDirectory();
+    utils::logDebug("Analysis cache startup: ensuring directory for " + databasePath);
+    if (const auto createResult = databaseFile.getParentDirectory().createDirectory(); createResult.failed()) {
+        utils::logError(
+            "Failed to create analysis cache directory " + databaseFile.getParentDirectory().getFullPathName() + ": "
+            + createResult.getErrorMessage()
+        );
+    }
 
-    utils::log_debug("Analysis cache startup: calling sqlite3_open_v2");
+    utils::logDebug("Analysis cache startup: calling sqlite3_open_v2");
     const auto result = sqlite3_open_v2(
         databaseFile.getFullPathName().toRawUTF8(),
         &database,
@@ -154,7 +159,7 @@ bool AnalysisCache::openUnlocked()
     );
 
     if (result != SQLITE_OK || database == nullptr) {
-        utils::log_error(
+        utils::logError(
             "Failed to open analysis cache at " + databasePath + " in "
             + juce::String((juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0, 3) + " s"
         );
@@ -165,15 +170,15 @@ bool AnalysisCache::openUnlocked()
         return false;
     }
 
-    utils::log_debug("Analysis cache startup: sqlite3_open_v2 returned successfully");
+    utils::logDebug("Analysis cache startup: sqlite3_open_v2 returned successfully");
     sqlite3_busy_timeout(database, 2000);
 
-    utils::log_debug("Analysis cache startup: applying SQLite pragmas");
+    utils::logDebug("Analysis cache startup: applying SQLite pragmas");
     if (!execute("PRAGMA journal_mode=WAL;") || !execute("PRAGMA synchronous=NORMAL;")) {
         return false;
     }
 
-    utils::log_debug("Analysis cache startup: ensuring schema");
+    utils::logDebug("Analysis cache startup: ensuring schema");
     if (!execute(R"SQL(
         CREATE TABLE IF NOT EXISTS file_analysis (
             file_path TEXT PRIMARY KEY,
@@ -262,8 +267,8 @@ bool AnalysisCache::openUnlocked()
         return false;
     }
 
-    utils::log_debug("Analysis cache startup: schema ready");
-    utils::log_debug(
+    utils::logDebug("Analysis cache startup: schema ready");
+    utils::logDebug(
         "Opened analysis cache at " + databasePath + " (" + juce::String(databaseFound ? "existing" : "new") + ") in "
         + juce::String((juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0, 3) + " s"
     );

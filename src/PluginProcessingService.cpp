@@ -198,7 +198,7 @@ PluginProcessingResult PluginProcessingService::processFile(
 
     if (!layoutConfigured) {
         writer.reset();
-        temporaryFile.getFile().deleteFile();
+        utils::deleteFile(temporaryFile.getFile());
         return fail(
             file, "Plugin does not support the file's channel layout (" + juce::String(numChannels) + " channels)"
         );
@@ -243,7 +243,7 @@ PluginProcessingResult PluginProcessingService::processFile(
 
             if (!reader->read(readChannelPointers.data(), numChannels, samplePosition, samplesToRead)) {
                 writer.reset();
-                temporaryFile.getFile().deleteFile();
+                utils::deleteFile(temporaryFile.getFile());
                 return fail(file, "Failed while reading audio data");
             }
 
@@ -275,7 +275,7 @@ PluginProcessingResult PluginProcessingService::processFile(
 
         if (!writer->writeFromAudioSampleBuffer(writeView, 0, samplesThisBlock)) {
             writer.reset();
-            temporaryFile.getFile().deleteFile();
+            utils::deleteFile(temporaryFile.getFile());
             return fail(file, "Failed while writing processed audio data");
         }
     }
@@ -290,7 +290,7 @@ PluginProcessingResult PluginProcessingService::processFile(
         MetadataService::Metadata metadata;
         if (MetadataService::readMetadata(file, metadata) && !metadata.isEmpty()) {
             if (!MetadataService::writeMetadata(temporaryFile.getFile(), metadata)) {
-                utils::log_error("Failed to copy metadata onto processed output for " + file.getFullPathName());
+                utils::logError("Failed to copy metadata onto processed output for " + file.getFullPathName());
             }
         }
     }
@@ -302,15 +302,15 @@ PluginProcessingResult PluginProcessingService::processFile(
         );
 
         if (verifyReader == nullptr) {
-            temporaryFile.getFile().deleteFile();
+            utils::deleteFile(temporaryFile.getFile());
             return fail(file, "Processed output failed validation");
         }
     }
 
     // If the original file path differs from the output path (different extension), delete the original.
     const bool replacingOriginal = file == outputFile;
-    if (outputFile.existsAsFile() && !outputFile.deleteFile()) {
-        temporaryFile.getFile().deleteFile();
+    if (outputFile.existsAsFile() && !utils::deleteFile(outputFile)) {
+        utils::deleteFile(temporaryFile.getFile());
         return fail(file, "Could not replace existing output file");
     }
 
@@ -321,8 +321,8 @@ PluginProcessingResult PluginProcessingService::processFile(
     if (!replacingOriginal && file.existsAsFile()) {
         // Output had a different extension.
         // Move the original file to the system trash so the user can recover it if needed.
-        if (!utils::move_to_trash(file)) {
-            utils::log_error("Could not move the original file to the system trash: " + file.getFullPathName());
+        if (!utils::moveToTrash(file)) {
+            utils::logError("Could not move the original file to the system trash: " + file.getFullPathName());
         }
     }
 
@@ -339,7 +339,7 @@ PluginProcessingResult PluginProcessingService::processFile(
 
     if (!result.succeeded) {
         result.errorMessage = "The file was processed, but re-analysis failed: " + result.analysisRecord.errorMessage;
-        utils::log_error("Plugin processing re-analysis failed for " + result.outputFile.getFullPathName());
+        utils::logError("Plugin processing re-analysis failed for " + result.outputFile.getFullPathName());
     }
 
     return result;
