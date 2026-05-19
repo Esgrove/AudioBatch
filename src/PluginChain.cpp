@@ -251,10 +251,23 @@ void PluginChain::clearSelection()
 
 void PluginChain::selectPlugin(const juce::PluginDescription& description)
 {
+    const bool isDifferentPlugin = selectedDescription.createIdentifierString() != description.createIdentifierString();
+
     selectedDescription = description;
     selectedState.reset();
     persistSelection();
     notifySelectionChanged();
+
+    // Automatically open the editor for a freshly chosen plugin so the user can dial it in right away.
+    // Close any previously open editor first since it belongs to the old plugin instance.
+    if (isDifferentPlugin && editorWindow != nullptr) {
+        editorWindow.deleteAndZero();
+        editorInstance.reset();
+        wasEditorOpen = false;
+        stopTimer();
+    }
+
+    openEditor();
 }
 
 void PluginChain::loadPersistedSelection()
