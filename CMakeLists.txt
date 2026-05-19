@@ -118,6 +118,10 @@ else()
     set(AUDIOBATCH_SQLITE_TARGET AudioBatchSQLite)
 endif()
 
+# Prefer the static zlib import library so taglib does not introduce a runtime dependency on zlib.dll.
+# This must be set before taglib is configured, since taglib calls find_package(ZLIB).
+set(ZLIB_USE_STATIC_LIBS ON)
+
 FetchContent_Declare(taglib
     GIT_REPOSITORY https://github.com/taglib/taglib.git
     GIT_TAG v2.3
