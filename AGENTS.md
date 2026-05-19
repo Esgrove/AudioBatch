@@ -42,6 +42,8 @@ code comments, docstrings, commit messages, and Markdown files.
   Avoid semicolons and em dashes.
   Split a long sentence into shorter ones on separate lines
   rather than joining clauses with `;` or `—`.
+- Never use trailing comments on the same line as code.
+  Place the comment on its own line above the code it describes.
 
 Example (Markdown):
 

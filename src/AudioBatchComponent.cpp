@@ -2511,6 +2511,7 @@ void AudioBatchComponent::processSelectedRecords()
         currentWaveformLoadedFromCache = false;
         startStopButton.setEnabled(false);
         startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
+        // Make doubly sure the path is preserved.
         currentAudioFile = previousPreviewFile;
     }
 
@@ -2547,16 +2548,9 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
         }
 
         // Remove any record matching the original path that does not match the new path (in case extension changed).
-        analysisResults.erase(
-            std::ranges::remove_if(
-                analysisResults,
-                [&result](const AudioAnalysisRecord& record) {
-                    return record.fullPath == result.originalFullPath
-                        && record.fullPath != result.analysisRecord.fullPath;
-                }
-            ).begin(),
-            analysisResults.end()
-        );
+        std::erase_if(analysisResults, [&result](const AudioAnalysisRecord& record) {
+            return record.fullPath == result.originalFullPath && record.fullPath != result.analysisRecord.fullPath;
+        });
 
         if (const auto existingIndex = findRecordIndex(result.analysisRecord.fullPath); existingIndex >= 0) {
             analysisResults[static_cast<std::size_t>(existingIndex)] = result.analysisRecord;
