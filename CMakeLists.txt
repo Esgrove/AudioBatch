@@ -199,7 +199,7 @@ juce_add_gui_app(AudioBatch
     PLIST_TO_MERGE "<plist version=\"1.0\">
         <dict>
             <key>CFBundleIconFile</key>
-            <string>Icon.icns</string>
+            <string>AppIcon.icns</string>
             <key>LSApplicationCategoryType</key>
             <string>public.app-category.developer-tools</string>
         </dict>
