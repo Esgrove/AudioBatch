@@ -118,6 +118,50 @@ else()
     set(AUDIOBATCH_SQLITE_TARGET AudioBatchSQLite)
 endif()
 
+FetchContent_Declare(taglib
+    GIT_REPOSITORY https://github.com/taglib/taglib.git
+    GIT_TAG v2.3
+    GIT_SHALLOW TRUE
+)
+FetchContent_GetProperties(taglib)
+
+if (NOT taglib_POPULATED)
+    cmake_policy(PUSH)
+    cmake_policy(SET CMP0169 OLD)
+    FetchContent_Populate(taglib)
+    cmake_policy(POP)
+
+    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    set(BUILD_BINDINGS OFF CACHE BOOL "" FORCE)
+    set(VISIBILITY_HIDDEN ON CACHE BOOL "" FORCE)
+    add_subdirectory(${taglib_SOURCE_DIR} ${taglib_BINARY_DIR} EXCLUDE_FROM_ALL)
+endif()
+
+# TagLib does not propagate its build-tree include directories to consumers,
+# so add them explicitly so we can include its public headers.
+target_include_directories(tag PUBLIC
+    $<BUILD_INTERFACE:${taglib_BINARY_DIR}>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ape>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/flac>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mp4>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mpeg/id3v1>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mpeg/id3v2/frames>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mpeg/id3v2>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mpeg>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ogg/flac>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ogg/opus>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ogg/vorbis>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ogg>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/riff/aiff>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/riff/wav>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/riff>
+    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/toolkit>
+)
+
 FetchContent_Declare(libebur128
     GIT_REPOSITORY https://github.com/jiixyj/libebur128.git
     GIT_TAG v1.2.6
@@ -193,6 +237,8 @@ target_sources(AudioBatch
         "src/CustomLookAndFeel.h"
         "src/IntervalStepSlider.h"
         "src/Main.cpp"
+        "src/MetadataService.cpp"
+        "src/MetadataService.h"
         "src/NormalizeCoordinator.cpp"
         "src/NormalizeCoordinator.h"
         "src/PluginChain.cpp"
@@ -227,6 +273,8 @@ target_sources(AudioBatchCli
         "src/AudioNormalizationService.cpp"
         "src/AudioNormalizationService.h"
         "src/CliMain.cpp"
+        "src/MetadataService.cpp"
+        "src/MetadataService.h"
         "src/NormalizeCoordinator.cpp"
         "src/NormalizeCoordinator.h"
         "src/utils.cpp"
@@ -341,6 +389,7 @@ target_link_libraries(AudioBatch
         Assets
         ${AUDIOBATCH_SQLITE_TARGET}
         ebur128
+        tag
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats
@@ -363,6 +412,7 @@ target_link_libraries(AudioBatchCli
     PRIVATE
         ${AUDIOBATCH_SQLITE_TARGET}
         ebur128
+        tag
         juce::juce_audio_basics
         juce::juce_audio_formats
         juce::juce_core
