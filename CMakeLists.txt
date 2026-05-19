@@ -123,21 +123,18 @@ FetchContent_Declare(taglib
     GIT_TAG v2.3
     GIT_SHALLOW TRUE
 )
-FetchContent_GetProperties(taglib)
 
-if (NOT taglib_POPULATED)
-    cmake_policy(PUSH)
-    cmake_policy(SET CMP0169 OLD)
-    FetchContent_Populate(taglib)
-    cmake_policy(POP)
+# Configure taglib build options before populating, so they apply on the first configure
+# and remain in effect on subsequent re-configures (when the source is already populated).
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(BUILD_BINDINGS OFF CACHE BOOL "" FORCE)
+set(VISIBILITY_HIDDEN ON CACHE BOOL "" FORCE)
 
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-    set(BUILD_BINDINGS OFF CACHE BOOL "" FORCE)
-    set(VISIBILITY_HIDDEN ON CACHE BOOL "" FORCE)
-    add_subdirectory(${taglib_SOURCE_DIR} ${taglib_BINARY_DIR} EXCLUDE_FROM_ALL)
-endif()
+# FetchContent_MakeAvailable both populates the source (when needed) and calls add_subdirectory
+# every time CMake runs, so the `tag` target is always defined for the rest of this build.
+FetchContent_MakeAvailable(taglib)
 
 # TagLib does not propagate its build-tree include directories to consumers,
 # so add them explicitly so we can include its public headers.

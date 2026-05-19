@@ -29,7 +29,7 @@ struct AudioNormalizationRuntimeState {
 struct AudioNormalizationFormatSupport {
     juce::String formatName;
     juce::StringArray fileExtensions;
-    bool canWriteBack = false;
+    bool canNormalize = false;
     juce::String detail;
 };
 
@@ -135,17 +135,6 @@ static juce::String getNormalizationStatusLine()
 {
     return "Normalization output: same-name AIF files. "
            "Originals with a different extension are moved to the system trash.";
-}
-
-static bool extensionsContain(const juce::StringArray& extensions, const juce::String& targetExtension)
-{
-    for (const auto& extension : extensions) {
-        if (extension.equalsIgnoreCase(targetExtension)) {
-            return true;
-        }
-    }
-
-    return false;
 }
 
 static juce::AudioFormatWriterOptions buildProbeWriterOptions(juce::AudioFormat& format)
@@ -254,52 +243,6 @@ static bool canAcceptReadFailureForNormalization(
     return samplePosition + samplesThisBlock >= reader.lengthInSamples;
 }
 
-static juce::AudioFormat* getWriterFormatForExtension(
-    const AudioNormalizationRuntimeState& runtimeState,
-    const juce::String& extension
-)
-{
-    return runtimeState.readFormatManager.findFormatForFileExtension(normalizedExtension(extension));
-}
-
-static juce::String getMp3WriteUnavailableReason(const AudioNormalizationRuntimeState& runtimeState)
-{
-    juce::ignoreUnused(runtimeState);
-    return "MP3 sources are normalized to same-name AIF files, but AIFF writing is unavailable in this build.";
-}
-
-static juce::String getWriteUnavailableReason(
-    const juce::StringArray& extensions,
-    const AudioNormalizationRuntimeState& runtimeState
-)
-{
-    if (extensionsContain(extensions, ".mp3")) {
-        return getMp3WriteUnavailableReason(runtimeState);
-    }
-
-    return "This format can be read in the current build, but no compatible writer is available for in-place "
-           "normalization.";
-}
-
-static bool canWriteExtension(AudioNormalizationRuntimeState& runtimeState, const juce::String& extension)
-{
-    const auto normalized = normalizedExtension(extension);
-
-    if (isMp3Extension(normalized)) {
-        if (auto* writerFormat = getAiffWriterFormat(runtimeState); writerFormat != nullptr) {
-            return canCreateProbeWriter(*writerFormat);
-        }
-
-        return false;
-    }
-
-    if (auto* writerFormat = getWriterFormatForExtension(runtimeState, normalized); writerFormat != nullptr) {
-        return canCreateProbeWriter(*writerFormat);
-    }
-
-    return false;
-}
-
 static AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
 {
     thread_local auto runtimeState = [] {
@@ -311,10 +254,31 @@ static AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
     return *runtimeState;
 }
 
+static juce::String getNormalizableFormatDetail(const juce::StringArray& extensions)
+{
+    const auto primaryExtension = extensions.isEmpty() ? juce::String {} : normalizedExtension(extensions[0]);
+
+    if (primaryExtension.equalsIgnoreCase("aif")) {
+        // Output path matches the source path, so the existing file is rewritten in place.
+        return "Rewritten in place as AIFF.";
+    }
+
+    if (isMp3Extension(primaryExtension)) {
+        return "Converted to a same-name AIFF file. The original MP3 is moved to the system trash.";
+    }
+
+    return "Converted to a same-name AIFF file. The original is moved to the system trash.";
+}
+
 static std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormalizationRuntimeState& runtimeState)
 {
     std::vector<AudioNormalizationFormatSupport> support;
     support.reserve(static_cast<std::size_t>(runtimeState.readFormatManager.getNumKnownFormats()));
+
+    // Normalization always writes AIFF output, so any readable format is normalizable
+    // as long as an AIFF writer is available in this build.
+    auto* aiffWriterFormat = getAiffWriterFormat(runtimeState);
+    const bool aiffWriterAvailable = aiffWriterFormat != nullptr && canCreateProbeWriter(*aiffWriterFormat);
 
     for (int index = 0; index < runtimeState.readFormatManager.getNumKnownFormats(); ++index) {
         const auto* format = runtimeState.readFormatManager.getKnownFormat(index);
@@ -326,23 +290,20 @@ static std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNo
         AudioNormalizationFormatSupport entry;
         entry.formatName = format->getFormatName();
         entry.fileExtensions = format->getFileExtensions();
-        entry.canWriteBack
-            = !entry.fileExtensions.isEmpty() && canWriteExtension(runtimeState, entry.fileExtensions[0]);
+        entry.canNormalize = aiffWriterAvailable && !entry.fileExtensions.isEmpty();
 
-        if (entry.canWriteBack && !entry.fileExtensions.isEmpty()
-            && isMp3Extension(normalizedExtension(entry.fileExtensions[0])))
-        {
-            entry.detail = "Writes same-name AIF files and moves the original MP3 to the system trash.";
-        } else if (!entry.canWriteBack) {
-            entry.detail = getWriteUnavailableReason(entry.fileExtensions, runtimeState);
+        if (entry.canNormalize) {
+            entry.detail = getNormalizableFormatDetail(entry.fileExtensions);
+        } else {
+            entry.detail = "AIFF writer is not available in this build, so this format cannot be normalized.";
         }
 
         support.push_back(std::move(entry));
     }
 
     std::ranges::sort(support, [](const auto& lhs, const auto& rhs) {
-        if (lhs.canWriteBack != rhs.canWriteBack) {
-            return lhs.canWriteBack > rhs.canWriteBack;
+        if (lhs.canNormalize != rhs.canNormalize) {
+            return lhs.canNormalize > rhs.canNormalize;
         }
 
         return lhs.formatName.compareNatural(rhs.formatName) < 0;
@@ -457,14 +418,14 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
     juce::StringArray writableLines;
     juce::StringArray readOnlyLines;
 
-    for (const auto& [formatName, fileExtensions, canWriteBack, detail] : support) {
+    for (const auto& [formatName, fileExtensions, canNormalize, detail] : support) {
         auto line = "- " + formatName + " (" + formatExtensionsToText(fileExtensions) + ")";
 
         if (detail.isNotEmpty()) {
             line << ": " << detail;
         }
 
-        if (canWriteBack) {
+        if (canNormalize) {
             writableLines.add(line);
         } else {
             readOnlyLines.add(line);

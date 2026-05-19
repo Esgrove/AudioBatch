@@ -30,12 +30,18 @@ TagLib::String toTagLib(const juce::String& s)
 #if JUCE_WINDOWS
 TagLib::FileName toFileName(const juce::File& file)
 {
-    return TagLib::FileName(file.getFullPathName().toWideCharPointer());
+    // Keep the juce::String alive in a local so the wide-char pointer remains valid
+    // for the entire TagLib::FileName constructor call, which copies the path internally.
+    const auto fullPath = file.getFullPathName();
+    return TagLib::FileName(fullPath.toWideCharPointer());
 }
 #else
 TagLib::FileName toFileName(const juce::File& file)
 {
-    return file.getFullPathName().toRawUTF8();
+    // Keep the juce::String alive in a local so the UTF-8 pointer remains valid
+    // for the entire TagLib::FileName constructor call, which copies the path internally.
+    const auto fullPath = file.getFullPathName();
+    return TagLib::FileName(fullPath.toRawUTF8());
 }
 #endif
 
