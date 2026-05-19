@@ -74,7 +74,25 @@ init_options() {
     GUI_TARGET_NAME="AudioBatch"
     CLI_TARGET_NAME="AudioBatchCli"
     CLI_BINARY_NAME="audiobatch"
-    CMAKE_BUILD_DIR="$REPO/cmake-build-${BASH_PLATFORM}-$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')"
+
+    # Use a separate build directory per generator so switching between Ninja and Xcode or
+    # Visual Studio does not require wiping the other configuration's build directory.
+    BUILD_TYPE_LOWER=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
+    if [ "$BASH_PLATFORM" = "mac" ]; then
+        if [ "$USE_XCODE" = true ]; then
+            CMAKE_BUILD_DIR="$REPO/cmake-build-mac-xcode-${BUILD_TYPE_LOWER}"
+        else
+            CMAKE_BUILD_DIR="$REPO/cmake-build-mac-${BUILD_TYPE_LOWER}"
+        fi
+    elif [ "$BASH_PLATFORM" = "windows" ]; then
+        if [ "$USE_NINJA" = true ]; then
+            CMAKE_BUILD_DIR="$REPO/cmake-build-windows-ninja-${BUILD_TYPE_LOWER}"
+        else
+            CMAKE_BUILD_DIR="$REPO/cmake-build-windows-${BUILD_TYPE_LOWER}"
+        fi
+    else
+        CMAKE_BUILD_DIR="$REPO/cmake-build-${BASH_PLATFORM}-${BUILD_TYPE_LOWER}"
+    fi
 }
 
 require_path() {
