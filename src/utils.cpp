@@ -4,11 +4,22 @@
 #include <juce_core/native/juce_BasicNativeHeaders.h>
 #endif
 
-namespace audiobatch::utils_detail
+namespace utils
 {
+std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName)
+{
+    return std::unique_ptr<juce::FileLogger>(
+        juce::FileLogger::createDefaultAppLogger(appName, appName + ".log", appName, 32768)
+    );
+}
+
+bool moveToTrash(const juce::File& file)
+{
+    if (!file.exists()) {
+        return true;
+    }
+
 #if JUCE_WINDOWS
-bool moveToTrashWindows(const juce::File& file)
-{
     auto sourcePath = file.getFullPathName().replaceCharacter('/', '\\');
     std::wstring fromPath(sourcePath.toWideCharPointer());
     fromPath.push_back(L'\0');
@@ -19,34 +30,27 @@ bool moveToTrashWindows(const juce::File& file)
     operation.fFlags = FOF_ALLOWUNDO | FOF_NOERRORUI | FOF_SILENT | FOF_NOCONFIRMATION;
 
     return SHFileOperationW(&operation) == 0 && !operation.fAnyOperationsAborted && !file.exists();
-}
-#endif
-}  // namespace audiobatch::utils_detail
-
-namespace utils
-{
-std::unique_ptr<juce::FileLogger> create_default_logger(const juce::String& appName)
-{
-    return std::unique_ptr<juce::FileLogger>(
-        juce::FileLogger::createDefaultAppLogger(appName, appName + ".log", appName, 32768)
-    );
-}
-
-bool move_to_trash(const juce::File& file)
-{
-    if (!file.exists()) {
-        return true;
-    }
-
-#if JUCE_WINDOWS
-    return audiobatch::utils_detail::moveToTrashWindows(file);
 #else
     return file.moveToTrash();
 #endif
 }
 
+bool deleteFile(const juce::File& file)
+{
+    if (!file.exists()) {
+        return true;
+    }
+
+    if (!file.deleteFile()) {
+        logError("Failed to delete file: " + file.getFullPathName());
+        return false;
+    }
+
+    return true;
+}
+
 /// Collects build and runtime environment details for logs and diagnostics.
-juce::StringArray system_info()
+juce::StringArray systemInfo()
 {
     const auto compile_time = juce::Time::getCompilationDate();
     const auto compile_time_in_utc = compile_time - juce::RelativeTime(compile_time.getUTCOffsetSeconds());
@@ -68,10 +72,10 @@ juce::StringArray system_info()
     };
 }
 
-juce::String formatted_system_info()
+juce::String formattedSystemInfo()
 {
     juce::String info {juce::String(version::APP_NAME) + " " + juce::String(version::VERSION_NUMBER) + juce::newLine};
-    for (const auto& line : utils::system_info()) {
+    for (const auto& line : utils::systemInfo()) {
         for (auto tokens = juce::StringArray::fromTokens(line, " ", "\""); const auto& token : tokens) {
             if (token.containsNonWhitespaceChars()) {
                 info += token + " ";
@@ -80,5 +84,23 @@ juce::String formatted_system_info()
         info += juce::newLine;
     }
     return info;
+}
+
+/// Builds the multi-line About dialog message with application, build, and system information.
+juce::String aboutMessage(const juce::String& appName)
+{
+    juce::String aboutMessage;
+    aboutMessage << appName << " " << version::VERSION_NUMBER << juce::newLine << juce::SystemStats::getJUCEVersion()
+                 << juce::newLine << juce::newLine << "Batch audio analysis, normalization, and processing."
+                 << juce::newLine << juce::newLine << "Date: " << version::DATE << juce::newLine
+                 << "Commit: " << version::COMMIT << juce::newLine << "Branch: " << version::BRANCH << juce::newLine
+                 << juce::newLine << "OS: " << juce::SystemStats::getOperatingSystemName()
+                 << (juce::SystemStats::isOperatingSystem64Bit() ? " (64 bit)" : " (32 bit)") << juce::newLine
+                 << "Device: " << juce::SystemStats::getDeviceDescription() << juce::newLine
+                 << "CPU: " << juce::SystemStats::getCpuModel() << " ("
+                 << juce::String(juce::SystemStats::getNumPhysicalCpus()) << "C/"
+                 << juce::String(juce::SystemStats::getNumCpus()) << "T)" << juce::newLine
+                 << "Memory: " << juce::String(juce::SystemStats::getMemorySizeInMegabytes()) << " MB";
+    return aboutMessage;
 }
 }  // namespace utils

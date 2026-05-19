@@ -34,7 +34,7 @@ public:
     {
         const auto constructorStartedAtMs = juce::Time::getMillisecondCounterHiRes();
         const auto logStartupCheckpoint = [constructorStartedAtMs](const juce::String& step) {
-            utils::log_debug(
+            utils::logDebug(
                 "MainWindow startup: " + step + " ("
                 + juce::String(juce::Time::getMillisecondCounterHiRes() - constructorStartedAtMs, 1) + " ms)"
             );
@@ -69,7 +69,7 @@ public:
 
     void showAndActivate()
     {
-        utils::log_debug("MainWindow startup: showAndActivate begin");
+        utils::logDebug("MainWindow startup: showAndActivate begin");
         setVisible(true);
         setMinimised(false);
         toFront(true);
@@ -84,7 +84,7 @@ public:
             grabKeyboardFocus();
         }
 
-        utils::log_debug("MainWindow startup: showAndActivate end");
+        utils::logDebug("MainWindow startup: showAndActivate end");
     }
 
     ~MainWindow() override
@@ -203,20 +203,21 @@ private:
             case supportedFormatsMenuItemId:
                 getAudioBatch().showSupportedNormalizationFormats();
                 break;
-            case aboutMenuItemId:
+            case aboutMenuItemId: {
+                const auto appName = juce::JUCEApplication::getInstance()->getApplicationName();
+
                 juce::AlertWindow::showAsync(
                     juce::MessageBoxOptions::makeOptionsOk(
                         juce::MessageBoxIconType::InfoIcon,
-                        "About " + juce::JUCEApplication::getInstance()->getApplicationName(),
-                        juce::JUCEApplication::getInstance()->getApplicationName() + "\nVersion "
-                            + juce::JUCEApplication::getInstance()->getApplicationVersion()
-                            + "\n\nBatch audio analysis, preview, cleanup, and normalization.",
+                        "About " + appName,
+                        utils::aboutMessage(appName),
                         "OK",
                         getContentComponent()
                     ),
                     nullptr
                 );
                 break;
+            }
             case quitMenuItemId:
                 juce::JUCEApplication::getInstance()->systemRequestedQuit();
                 break;
@@ -316,7 +317,7 @@ public:
     {
         const auto initialiseStartedAtMs = juce::Time::getMillisecondCounterHiRes();
         const auto logInitialiseCheckpoint = [initialiseStartedAtMs](const juce::String& step) {
-            utils::log_info(
+            utils::logInfo(
                 "Application startup: " + step + " ("
                 + juce::String(juce::Time::getMillisecondCounterHiRes() - initialiseStartedAtMs, 1) + " ms)"
             );
@@ -327,14 +328,14 @@ public:
         // Init log file in OS default location under dir "AudioBatch"
         // Mac:     /Users/<username>/Library/Logs/AudioBatch
         // Windows: C:\Users\<username>\AppData\Roaming\AudioBatch
-        logger = utils::create_default_logger(getApplicationName());
+        logger = utils::createDefaultLogger(getApplicationName());
 
         juce::Logger::setCurrentLogger(logger.get());
 
-        utils::log_system_info();
+        utils::logSystemInfo();
         logInitialiseCheckpoint("logger ready");
         if (arguments.size() > 0) {
-            utils::log_info("Args: " + commandLineParameters);
+            utils::logInfo("Args: " + commandLineParameters);
         }
 
         logInitialiseCheckpoint("creating main window");
@@ -350,9 +351,9 @@ public:
 
             juce::MessageManager::callAsync([safeWindow = juce::Component::SafePointer(mainWindow.get())] {
                 if (safeWindow != nullptr) {
-                    utils::log_info("Application startup: async window activation begin");
+                    utils::logInfo("Application startup: async window activation begin");
                     safeWindow->showAndActivate();
-                    utils::log_info("Application startup: async window activation end");
+                    utils::logInfo("Application startup: async window activation end");
                 }
             });
         }
@@ -369,16 +370,16 @@ public:
     void systemRequestedQuit() override
     {
         if (const auto exit_code = getApplicationReturnValue(); exit_code != 0) {
-            utils::log_info("Quit with non-zero exit code: " + juce::String(exit_code));
+            utils::logInfo("Quit with non-zero exit code: " + juce::String(exit_code));
         } else {
-            utils::log_info("Quit");
+            utils::logInfo("Quit");
         }
         quit();
     }
 
     void anotherInstanceStarted(const juce::String& commandLine) override
     {
-        utils::log_info("Another instance started with args: " + commandLine);
+        utils::logInfo("Another instance started with args: " + commandLine);
     }
 
 private:

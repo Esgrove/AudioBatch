@@ -16,14 +16,14 @@ int main(const int argc, char* argv[])
 {
     const juce::ArgumentList arguments(argc, argv);
     const auto executableName = juce::File(arguments.executableName).getFileNameWithoutExtension();
-    auto logger = utils::create_default_logger(executableName);
+    auto logger = utils::createDefaultLogger(executableName);
     juce::Logger::setCurrentLogger(logger.get());
 
     juce::String parseError;
     const auto cliOptions = AudioAnalysisCli::parse(std::move(arguments), parseError);
 
     if (!cliOptions.has_value()) {
-        utils::log_error(parseError);
+        utils::logError(parseError);
         std::cerr << ansi::red << parseError << ansi::reset << std::endl << std::endl;
         std::cout << AudioAnalysisCli::buildUsage(executableName) << std::endl;
         return audiobatch::cli::exitCli(1);
@@ -42,9 +42,9 @@ int main(const int argc, char* argv[])
     const auto exitCode = AudioAnalysisCli::run(*cliOptions);
 
     if (exitCode != 0) {
-        utils::log_error("CLI exiting with code " + juce::String(exitCode));
+        utils::logError("CLI exiting with code " + juce::String(exitCode));
     } else {
-        utils::log_info("CLI exiting with code 0");
+        utils::logInfo("CLI exiting with code 0");
     }
 
     return audiobatch::cli::exitCli(exitCode);

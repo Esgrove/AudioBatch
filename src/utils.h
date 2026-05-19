@@ -80,18 +80,24 @@ namespace utils
 enum class Level { debug, info, warn, error };
 
 /// Creates the default rolling file logger for the application.
-std::unique_ptr<juce::FileLogger> create_default_logger(const juce::String& appName);
+std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName);
 
 /// Move a file or folder to the OS trash / recycle bin.
-bool move_to_trash(const juce::File& file);
+bool moveToTrash(const juce::File& file);
+
+/// Delete a file and log an error if the deletion fails.
+/// Returns true if the file did not exist or was deleted successfully.
+bool deleteFile(const juce::File& file);
 
 /// Return full system information list
-juce::StringArray system_info();
+juce::StringArray systemInfo();
 
 /// Return full system information formatted as a string
-juce::String formatted_system_info();
+juce::String formattedSystemInfo();
 
-inline juce::String format_json(const juce::var& object)
+juce::String aboutMessage(const juce::String& appName);
+
+inline juce::String formatJson(const juce::var& object)
 {
     // clang-format off
     return juce::JSON::toString(object)
@@ -106,7 +112,7 @@ inline juce::String format_json(const juce::var& object)
 
 /// Write message to log with a timestamp.
 /// This function should not be called directly outside utils.h!
-static void write_to_log(const juce::String& message, [[maybe_unused]] Level log_level = Level::info)
+static void writeToLog(const juce::String& message, [[maybe_unused]] Level log_level = Level::info)
 {
     const auto timestamp = juce::Time::getCurrentTime().formatted("%H:%M:%S ");
     const auto log_message = timestamp + message;
@@ -134,38 +140,38 @@ static void write_to_log(const juce::String& message, [[maybe_unused]] Level log
 }
 
 /// By default, these messages will not be logged in release builds, only in debug builds.
-inline void log_debug([[maybe_unused]] const juce::String& message)
+inline void logDebug([[maybe_unused]] const juce::String& message)
 {
 #if JUCE_DEBUG
     // Write to log if debug logging is enabled
-    write_to_log("[DEBUG]: " + message, Level::debug);
+    writeToLog("[DEBUG]: " + message, Level::debug);
 #endif
 }
 
-inline void log_info(const juce::String& message)
+inline void logInfo(const juce::String& message)
 {
-    write_to_log("[INFO]: " + message);
+    writeToLog("[INFO]: " + message);
 }
 
-inline void log_error(const juce::String& message)
+inline void logError(const juce::String& message)
 {
-    write_to_log("[ERROR]: " + message, Level::error);
+    writeToLog("[ERROR]: " + message, Level::error);
 }
 
-inline void log_json(const juce::var& object, const bool debug = false)
+inline void logJson(const juce::var& object, const bool debug = false)
 {
     if (debug) {
-        log_debug(format_json(object));
+        logDebug(formatJson(object));
     } else {
-        log_info(format_json(object));
+        logInfo(formatJson(object));
     }
 }
 
-inline void log_system_info()
+inline void logSystemInfo()
 {
     // Get info first to avoid API call debug / error messages in the middle of the log message
-    auto info = utils::system_info();
-    log_info("System info\n    " + juce::String(version::APP_NAME));
+    auto info = utils::systemInfo();
+    logInfo("System info\n    " + juce::String(version::APP_NAME));
     for (const auto& line : info) {
 #if !JUCE_DEBUG
         std::cout << "    " << line << juce::newLine;

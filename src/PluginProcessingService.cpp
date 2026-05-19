@@ -1,5 +1,6 @@
 #include "PluginProcessingService.h"
 
+#include "MetadataService.h"
 #include "utils.h"
 
 #include <cmath>
@@ -152,8 +153,8 @@ PluginProcessingResult PluginProcessingService::processFile(
     }
 
     // Reconfigure the plugin's main input and output buses to match the file when possible.
-    // We preserve the plugin's existing bus count, because some plugins have sidechain or aux buses,
-    // and only override the main bus channel set.
+    // We preserve the plugin's existing bus count and only override the main bus channel set,
+    // because some plugins have sidechain or aux buses that should be left alone.
     // If that fails we fall back through several common configurations.
     auto trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {
         auto layout = plugin->getBusesLayout();
@@ -197,7 +198,7 @@ PluginProcessingResult PluginProcessingService::processFile(
 
     if (!layoutConfigured) {
         writer.reset();
-        temporaryFile.getFile().deleteFile();
+        utils::deleteFile(temporaryFile.getFile());
         return fail(
             file, "Plugin does not support the file's channel layout (" + juce::String(numChannels) + " channels)"
         );
@@ -242,7 +243,7 @@ PluginProcessingResult PluginProcessingService::processFile(
 
             if (!reader->read(readChannelPointers.data(), numChannels, samplePosition, samplesToRead)) {
                 writer.reset();
-                temporaryFile.getFile().deleteFile();
+                utils::deleteFile(temporaryFile.getFile());
                 return fail(file, "Failed while reading audio data");
             }
 
@@ -274,13 +275,25 @@ PluginProcessingResult PluginProcessingService::processFile(
 
         if (!writer->writeFromAudioSampleBuffer(writeView, 0, samplesThisBlock)) {
             writer.reset();
-            temporaryFile.getFile().deleteFile();
+            utils::deleteFile(temporaryFile.getFile());
             return fail(file, "Failed while writing processed audio data");
         }
     }
 
     writer.reset();
     plugin->releaseResources();
+
+    // Preserve metadata from the original input file by copying it onto the temporary AIFF file.
+    // This carries ID3 tags, embedded artwork, and similar information across formats such as MP3 to AIFF.
+    // Failure to read metadata is non-fatal because some inputs may not have any TagLib-readable metadata.
+    {
+        MetadataService::Metadata metadata;
+        if (MetadataService::readMetadata(file, metadata) && !metadata.isEmpty()) {
+            if (!MetadataService::writeMetadata(temporaryFile.getFile(), metadata)) {
+                utils::logError("Failed to copy metadata onto processed output for " + file.getFullPathName());
+            }
+        }
+    }
 
     // Validate the temporary AIFF file by opening it for reading.
     {
@@ -289,15 +302,15 @@ PluginProcessingResult PluginProcessingService::processFile(
         );
 
         if (verifyReader == nullptr) {
-            temporaryFile.getFile().deleteFile();
+            utils::deleteFile(temporaryFile.getFile());
             return fail(file, "Processed output failed validation");
         }
     }
 
     // If the original file path differs from the output path (different extension), delete the original.
     const bool replacingOriginal = file == outputFile;
-    if (outputFile.existsAsFile() && !outputFile.deleteFile()) {
-        temporaryFile.getFile().deleteFile();
+    if (outputFile.existsAsFile() && !utils::deleteFile(outputFile)) {
+        utils::deleteFile(temporaryFile.getFile());
         return fail(file, "Could not replace existing output file");
     }
 
@@ -307,8 +320,10 @@ PluginProcessingResult PluginProcessingService::processFile(
 
     if (!replacingOriginal && file.existsAsFile()) {
         // Output had a different extension.
-        // Remove the original file to avoid duplicates.
-        file.deleteFile();
+        // Move the original file to the system trash so the user can recover it if needed.
+        if (!utils::moveToTrash(file)) {
+            utils::logError("Could not move the original file to the system trash: " + file.getFullPathName());
+        }
     }
 
     PluginProcessingResult result;
@@ -324,7 +339,7 @@ PluginProcessingResult PluginProcessingService::processFile(
 
     if (!result.succeeded) {
         result.errorMessage = "The file was processed, but re-analysis failed: " + result.analysisRecord.errorMessage;
-        utils::log_error("Plugin processing re-analysis failed for " + result.outputFile.getFullPathName());
+        utils::logError("Plugin processing re-analysis failed for " + result.outputFile.getFullPathName());
     }
 
     return result;
