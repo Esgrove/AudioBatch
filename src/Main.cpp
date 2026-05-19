@@ -210,7 +210,7 @@ private:
                     juce::MessageBoxOptions::makeOptionsOk(
                         juce::MessageBoxIconType::InfoIcon,
                         "About " + appName,
-                        buildAboutMessage(appName),
+                        utils::aboutMessage(appName),
                         "OK",
                         getContentComponent()
                     ),
@@ -240,25 +240,6 @@ private:
                 handlePluginChoiceMenuItem(menuItemID);
                 break;
         }
-    }
-
-    /// Builds the multi-line About dialog message with application, build, and system information.
-    static juce::String buildAboutMessage(const juce::String& appName)
-    {
-        juce::String aboutMessage;
-        aboutMessage << appName << " " << version::VERSION_NUMBER << juce::newLine << juce::newLine
-                     << "Batch audio analysis, normalization, and processing." << juce::newLine << juce::newLine
-                     << "Date:    " << version::DATE << juce::newLine << "Commit:  " << version::COMMIT << juce::newLine
-                     << "Branch:  " << version::BRANCH << juce::newLine
-                     << "JUCE:    " << juce::SystemStats::getJUCEVersion() << juce::newLine
-                     << "OS:      " << juce::SystemStats::getOperatingSystemName()
-                     << (juce::SystemStats::isOperatingSystem64Bit() ? " (64 bit)" : " (32 bit)") << juce::newLine
-                     << "Device:  " << juce::SystemStats::getDeviceDescription() << juce::newLine
-                     << "CPU:     " << juce::SystemStats::getCpuModel() << " ("
-                     << juce::String(juce::SystemStats::getNumPhysicalCpus()) << "C/"
-                     << juce::String(juce::SystemStats::getNumCpus()) << "T)" << juce::newLine
-                     << "Memory:  " << juce::String(juce::SystemStats::getMemorySizeInMegabytes()) << " MB";
-        return aboutMessage;
     }
 
     /// Appends the plugin section into a menu, mirroring the popup attached to the Plugin toolbar button.

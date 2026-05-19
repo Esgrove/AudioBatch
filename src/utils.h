@@ -95,6 +95,8 @@ juce::StringArray systemInfo();
 /// Return full system information formatted as a string
 juce::String formattedSystemInfo();
 
+juce::String aboutMessage(const juce::String& appName);
+
 inline juce::String formatJson(const juce::var& object)
 {
     // clang-format off
