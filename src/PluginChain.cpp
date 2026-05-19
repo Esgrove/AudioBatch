@@ -215,7 +215,7 @@ void PluginChain::openEditor()
         editorInstance->setStateInformation(selectedState.getData(), static_cast<int>(selectedState.getSize()));
     }
 
-    auto* editor = editorInstance->createEditorIfNeeded();
+    auto* editor = editorInstance->createEditorAndMakeActive();
 
     if (editor == nullptr) {
         // No custom editor. Fall back to the generic parameter editor.
