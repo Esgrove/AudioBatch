@@ -60,9 +60,9 @@ public:
 private:
     void loadPersistedSelection();
     void persistSelection();
-    void persistKnownPluginList();
+    void persistKnownPluginList() const;
     void loadKnownPluginList();
-    void notifySelectionChanged();
+    void notifySelectionChanged() const;
 
     juce::ApplicationProperties& appProperties;
     juce::AudioPluginFormatManager formatManager;

@@ -38,7 +38,7 @@ PluginChain::~PluginChain()
         scanWindow.deleteAndZero();
     }
 
-    editorInstance.reset();
+    editorInstance = nullptr;
 }
 
 PluginDescriptorRef PluginChain::getSelectedPlugin() const
@@ -90,7 +90,7 @@ void PluginChain::timerCallback()
                 notifySelectionChanged();
             }
 
-            editorInstance.reset();
+            editorInstance = nullptr;
         }
 
         stopTimer();
@@ -262,7 +262,7 @@ void PluginChain::selectPlugin(const juce::PluginDescription& description)
     // Close any previously open editor first since it belongs to the old plugin instance.
     if (isDifferentPlugin && editorWindow != nullptr) {
         editorWindow.deleteAndZero();
-        editorInstance.reset();
+        editorInstance = nullptr;
         wasEditorOpen = false;
         stopTimer();
     }
@@ -272,7 +272,7 @@ void PluginChain::selectPlugin(const juce::PluginDescription& description)
 
 void PluginChain::loadPersistedSelection()
 {
-    auto* settings = appProperties.getUserSettings();
+    const auto* settings = appProperties.getUserSettings();
     if (settings == nullptr) {
         return;
     }
@@ -324,7 +324,7 @@ void PluginChain::persistSelection()
     settings->saveIfNeeded();
 }
 
-void PluginChain::persistKnownPluginList()
+void PluginChain::persistKnownPluginList() const
 {
     auto* settings = appProperties.getUserSettings();
     if (settings == nullptr) {
@@ -339,7 +339,7 @@ void PluginChain::persistKnownPluginList()
 
 void PluginChain::loadKnownPluginList()
 {
-    auto* settings = appProperties.getUserSettings();
+    const auto* settings = appProperties.getUserSettings();
     if (settings == nullptr) {
         return;
     }
@@ -354,7 +354,7 @@ void PluginChain::loadKnownPluginList()
     }
 }
 
-void PluginChain::notifySelectionChanged()
+void PluginChain::notifySelectionChanged() const
 {
     if (selectionChangedCallback != nullptr) {
         selectionChangedCallback(getSelectedPlugin());

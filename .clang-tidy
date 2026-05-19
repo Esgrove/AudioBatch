@@ -1,8 +1,16 @@
 ---
-Checks: "clang-diagnostic-*,clang-analyzer-*,readability-*,modernize-*,-modernize-use-trailing-return-type"
+# Disabled checks and the reason for each:
+#
+# - readability-magic-numbers: very noisy in audio and GUI code,
+#   where literals like 0.5f, 2.0f, dB offsets and pixel sizes are routine.
+# - readability-uppercase-literal-suffix: JUCE style uses lowercase 'f' on float literals.
+# - readability-function-cognitive-complexity: subjective and would require large refactors
+#   in code that is already organized around JUCE's component and callback patterns.
+# - readability-math-missing-parentheses: forces parentheses around standard precedence
+#   like `a + b * c`, which hurts readability more than it helps.
+Checks: "clang-diagnostic-*,clang-analyzer-*,readability-*,modernize-*,-modernize-use-trailing-return-type,-readability-magic-numbers,-readability-uppercase-literal-suffix,-readability-function-cognitive-complexity,-readability-math-missing-parentheses"
 WarningsAsErrors: ""
 HeaderFilterRegex: "./src/*"
-AnalyzeTemporaryDtors: false
 FormatStyle: file
 CheckOptions:
     cert-dcl16-c.NewSuffixes: "L;LL;LU;LLU"

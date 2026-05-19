@@ -22,9 +22,9 @@ public:
     // override title bar colour and font
     void drawDocumentWindowTitleBar(
         DocumentWindow& window,
-        Graphics& g,
-        int w,
-        int h,
+        Graphics& graphics,
+        int width,
+        int height,
         int titleSpaceX,
         int titleSpaceW,
         const Image* icon,
@@ -32,13 +32,13 @@ public:
     ) override;
 
     // overridden to set tooltip font
-    void drawTooltip(Graphics& g, const String& text, int width, int height) override;
+    void drawTooltip(Graphics& graphics, const String& text, int width, int height) override;
 
-    TextLayout layoutTooltipText(const String& text, Colour colour) noexcept;
+    static TextLayout layoutTooltipText(const String& text, Colour colour) noexcept;
 
     // this whole thing has to be overridden to set the popup menu font :(
     void drawPopupMenuItem(
-        Graphics& g,
+        Graphics& graphics,
         const Rectangle<int>& area,
         bool isSeparator,
         bool isActive,
@@ -51,9 +51,9 @@ public:
         const Colour* textColourToUse
     ) override;
 
-    Font getTextButtonFont(TextButton&, int buttonHeight) override;
+    Font getTextButtonFont(TextButton& button, int buttonHeight) override;
 
-    Font getComboBoxFont(ComboBox&) override
+    Font getComboBoxFont(ComboBox& /*comboBox*/) override
     {
         return get_mono_font();
     }

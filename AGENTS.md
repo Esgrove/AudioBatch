@@ -17,6 +17,16 @@ This repository contains a JUCE-based C++23 application with two deliverables:
 - After changing any C++ source or header file, run `clang-format -i --style=file` on each changed file before finishing.
 - For repo-wide or multi-file formatting, use `./format.sh`.
 
+## Linting
+
+- After any C++ code change, run `./lint.sh` to check the project with `clang-tidy`.
+  Fix any issues it reports before finishing.
+  The script uses the active CMake debug build's `compile_commands.json`,
+  so configure a debug preset first if no build directory exists.
+- If `clang-tidy` reports a check that is genuinely a poor fit for the project,
+  disable it explicitly in `.clang-tidy` and add a short comment explaining why.
+  Do not silence individual warnings with inline comments.
+
 ## Prose Style (Comments, Docstrings, Markdown)
 
 Use [semantic line breaks](https://sembr.org/) for all prose written in this repository:

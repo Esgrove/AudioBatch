@@ -25,7 +25,7 @@ static juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
     return "Unknown";
 }
 
-static void drawActivityIndicator(juce::Graphics& g, const juce::Rectangle<float> bounds, const float phase)
+static void drawActivityIndicator(juce::Graphics& graphics, const juce::Rectangle<float> bounds, const float phase)
 {
     const auto ringBounds = bounds.reduced(1.0f);
     const auto accent = juce::CustomLookAndFeel::blue.withAlpha(0.9f);
@@ -33,19 +33,19 @@ static void drawActivityIndicator(juce::Graphics& g, const juce::Rectangle<float
     const auto startAngle = phase * juce::MathConstants<float>::twoPi - juce::MathConstants<float>::halfPi;
     const auto endAngle = startAngle + juce::MathConstants<float>::pi * 1.2f;
 
-    g.setColour(background);
-    g.fillEllipse(ringBounds);
+    graphics.setColour(background);
+    graphics.fillEllipse(ringBounds);
 
     juce::Path arc;
     arc.addPieSegment(
         ringBounds.getX(), ringBounds.getY(), ringBounds.getWidth(), ringBounds.getHeight(), startAngle, endAngle, 0.52f
     );
 
-    g.setColour(accent);
-    g.fillPath(arc);
+    graphics.setColour(accent);
+    graphics.fillPath(arc);
 
-    g.setColour(juce::Colours::white.withAlpha(0.12f));
-    g.drawEllipse(ringBounds, 1.0f);
+    graphics.setColour(juce::Colours::white.withAlpha(0.12f));
+    graphics.drawEllipse(ringBounds, 1.0f);
 }
 }  // namespace audiobatch::table
 
@@ -205,7 +205,7 @@ juce::var AudioFileTableModel::getDragSourceDescription(const juce::SparseSet<in
 }
 
 void AudioFileTableModel::paintRowBackground(
-    juce::Graphics& g,
+    juce::Graphics& graphics,
     int rowNumber,
     int width,
     int height,
@@ -215,15 +215,17 @@ void AudioFileTableModel::paintRowBackground(
     juce::ignoreUnused(rowNumber, width, height);
 
     if (rowIsSelected) {
-        g.fillAll(juce::CustomLookAndFeel::blue.withAlpha(0.22f));
+        graphics.fillAll(juce::CustomLookAndFeel::blue.withAlpha(0.22f));
         return;
     }
 
-    g.fillAll(rowNumber % 2 == 0 ? juce::CustomLookAndFeel::greySemiDark : juce::CustomLookAndFeel::greyMediumDark);
+    graphics.fillAll(
+        rowNumber % 2 == 0 ? juce::CustomLookAndFeel::greySemiDark : juce::CustomLookAndFeel::greyMediumDark
+    );
 }
 
 void AudioFileTableModel::paintCell(
-    juce::Graphics& g,
+    juce::Graphics& graphics,
     const int rowNumber,
     const int columnId,
     const int width,
@@ -308,7 +310,7 @@ void AudioFileTableModel::paintCell(
                     indicatorSize
                 );
                 drawActivityIndicator(
-                    g, indicatorArea, activityPhaseProvider != nullptr ? activityPhaseProvider() : 0.0f
+                    graphics, indicatorArea, activityPhaseProvider != nullptr ? activityPhaseProvider() : 0.0f
                 );
                 textBounds.removeFromLeft(static_cast<int>(indicatorSize) + 8);
             }
@@ -317,12 +319,12 @@ void AudioFileTableModel::paintCell(
             break;
     }
 
-    g.setColour(juce::Colours::white.withAlpha(record.hasError() ? 0.72f : 0.95f));
-    g.setFont(font);
-    g.drawText(text, textBounds, justification, true);
+    graphics.setColour(juce::Colours::white.withAlpha(record.hasError() ? 0.72f : 0.95f));
+    graphics.setFont(font);
+    graphics.drawText(text, textBounds, justification, true);
 
-    g.setColour(juce::Colours::white.withAlpha(0.08f));
-    g.fillRect(width - 1, 0, 1, height);
+    graphics.setColour(juce::Colours::white.withAlpha(0.08f));
+    graphics.fillRect(width - 1, 0, 1, height);
 }
 
 void AudioFileTableModel::selectedRowsChanged(const int lastRowSelected)

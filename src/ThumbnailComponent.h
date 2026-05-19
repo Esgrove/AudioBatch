@@ -27,14 +27,14 @@ public:
     /// Returns the full list of files dropped onto the waveform component.
     juce::StringArray getLastDroppedFiles() const;
 
-    void changeListenerCallback(ChangeBroadcaster*) override;
+    void changeListenerCallback(ChangeBroadcaster* source) override;
     void filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/) override;
-    void mouseDoubleClick(const juce::MouseEvent&) override;
-    void mouseDown(const juce::MouseEvent& e) override;
-    void mouseDrag(const juce::MouseEvent& e) override;
-    void mouseUp(const juce::MouseEvent&) override;
-    void mouseWheelMove(const juce::MouseEvent&, const juce::MouseWheelDetails& wheel) override;
-    void paint(juce::Graphics& g) override;
+    void mouseDoubleClick(const juce::MouseEvent& event) override;
+    void mouseDown(const juce::MouseEvent& event) override;
+    void mouseDrag(const juce::MouseEvent& event) override;
+    void mouseUp(const juce::MouseEvent& event) override;
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
+    void paint(juce::Graphics& graphics) override;
     void resized() override;
 
     /// Restores a previously cached waveform without re-reading the audio file.

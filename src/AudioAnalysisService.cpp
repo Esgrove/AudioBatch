@@ -78,7 +78,7 @@ static std::uint32_t readSynchsafeUint32(const std::uint8_t* bytes)
 static juce::String buildSearchableMetadataText(const juce::MemoryBlock& metadata)
 {
     juce::String text;
-    auto* bytes = static_cast<const std::uint8_t*>(metadata.getData());
+    const auto* bytes = static_cast<const std::uint8_t*>(metadata.getData());
     bool previousWasSeparator = true;
 
     for (size_t index = 0; index < metadata.getSize(); ++index) {
@@ -137,26 +137,27 @@ static int extractTaggedMp3BitDepth(const juce::File& file)
         return 0;
     }
 
-    std::array<std::uint8_t, 10> header {};
+    constexpr juce::int64 id3HeaderSize = 10;
+    std::array<std::uint8_t, id3HeaderSize> header {};
 
     if (!readExactly(*input, header.data(), static_cast<int>(header.size()))) {
         return 0;
     }
 
-    if (!(header[0] == 'I' && header[1] == 'D' && header[2] == '3')) {
+    if (header[0] != 'I' || header[1] != 'D' || header[2] != '3') {
         return 0;
     }
 
-    if ((header[6] | header[7] | header[8] | header[9]) & 0x80U) {
+    if (((header[6] | header[7] | header[8] | header[9]) & 0x80U) != 0U) {
         return 0;
     }
 
     const auto payloadSize = readSynchsafeUint32(header.data() + 6);
     const auto hasFooter = (header[5] & 0x10U) != 0;
-    const auto totalSize = static_cast<juce::int64>(header.size()) + static_cast<juce::int64>(payloadSize)
-        + static_cast<juce::int64>(hasFooter ? 10 : 0);
+    const auto totalSize
+        = id3HeaderSize + static_cast<juce::int64>(payloadSize) + (hasFooter ? id3HeaderSize : juce::int64 {0});
 
-    if (totalSize <= static_cast<juce::int64>(header.size()) || totalSize > file.getSize()) {
+    if (totalSize <= id3HeaderSize || totalSize > file.getSize()) {
         return 0;
     }
 

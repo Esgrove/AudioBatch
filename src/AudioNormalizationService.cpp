@@ -141,7 +141,12 @@ static juce::AudioFormatWriterOptions buildProbeWriterOptions(juce::AudioFormat&
 {
     const auto sampleRates = format.getPossibleSampleRates();
     const auto bitDepths = format.getPossibleBitDepths();
-    const auto numChannels = format.canDoStereo() ? 2 : format.canDoMono() ? 1 : 0;
+    int numChannels = 0;
+    if (format.canDoStereo()) {
+        numChannels = 2;
+    } else if (format.canDoMono()) {
+        numChannels = 1;
+    }
 
     if (sampleRates.isEmpty() || bitDepths.isEmpty() || numChannels <= 0) {
         return {};
@@ -181,9 +186,7 @@ static int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredB
     int resolvedBitsPerSample = bitDepths[0];
 
     for (const auto bitDepth : bitDepths) {
-        if (bitDepth > resolvedBitsPerSample) {
-            resolvedBitsPerSample = bitDepth;
-        }
+        resolvedBitsPerSample = std::max(bitDepth, resolvedBitsPerSample);
     }
 
     return resolvedBitsPerSample;
@@ -382,7 +385,7 @@ using namespace audiobatch::normalization;
 
 bool AudioNormalizationService::canNormalizeFile(const juce::File& file)
 {
-    auto& runtimeState = getThreadLocalRuntimeState();
+    const auto& runtimeState = getThreadLocalRuntimeState();
 
     // Source must be readable by JUCE and AIFF output must be writable.
     const auto* readerFormat = runtimeState.readFormatManager.findFormatForFileExtension(normalizedExtension(file));
@@ -396,7 +399,7 @@ bool AudioNormalizationService::canNormalizeFile(const juce::File& file)
 
 juce::String AudioNormalizationService::getNormalizationSupportMessage(const juce::File& file)
 {
-    auto& runtimeState = getThreadLocalRuntimeState();
+    const auto& runtimeState = getThreadLocalRuntimeState();
     const auto* format = runtimeState.readFormatManager.findFormatForFileExtension(normalizedExtension(file));
 
     if (format == nullptr) {

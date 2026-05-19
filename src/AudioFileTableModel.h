@@ -109,10 +109,23 @@ public:
     juce::var getDragSourceDescription(const juce::SparseSet<int>& currentlySelectedRows) override;
 
     /// Paints the text content for a single table cell.
-    void paintCell(juce::Graphics& g, int rowNumber, int columnId, int width, int height, bool rowIsSelected) override;
+    void paintCell(
+        juce::Graphics& graphics,
+        int rowNumber,
+        int columnId,
+        int width,
+        int height,
+        bool rowIsSelected
+    ) override;
 
     /// Paints alternating row backgrounds and selection highlights.
-    void paintRowBackground(juce::Graphics& g, int rowNumber, int width, int height, bool rowIsSelected) override;
+    void paintRowBackground(
+        juce::Graphics& graphics,
+        int rowNumber,
+        int width,
+        int height,
+        bool rowIsSelected
+    ) override;
 
     /// Forwards popup-clicks so the owning component can show file actions.
     void cellClicked(int rowNumber, int columnId, const juce::MouseEvent& event) override;

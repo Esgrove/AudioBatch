@@ -22,7 +22,7 @@ void NormalizeCoordinator::setCompletionCallback(CompletionCallback callback)
     completionCallback = std::move(callback);
 }
 
-void NormalizeCoordinator::publishResult(const AudioNormalizationResult& result, const int runId)
+void NormalizeCoordinator::publishResult(const AudioNormalizationResult& result, const int runId) const
 {
     if (runId != currentRunId.load()) {
         return;
@@ -40,7 +40,7 @@ void NormalizeCoordinator::publishResult(const AudioNormalizationResult& result,
     }
 }
 
-void NormalizeCoordinator::publishCompletion(const int totalFiles, const int runId)
+void NormalizeCoordinator::publishCompletion(const int totalFiles, const int runId) const
 {
     if (runId != currentRunId.load()) {
         return;

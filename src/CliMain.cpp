@@ -14,9 +14,9 @@ static int exitCli(const int exitCode)
 /// Entry point for the headless batch analysis executable.
 int main(const int argc, char* argv[])
 {
-    const juce::ArgumentList arguments(argc, argv);
+    juce::ArgumentList arguments(argc, argv);
     const auto executableName = juce::File(arguments.executableName).getFileNameWithoutExtension();
-    auto logger = utils::createDefaultLogger(executableName);
+    const auto logger = utils::createDefaultLogger(executableName);
     juce::Logger::setCurrentLogger(logger.get());
 
     juce::String parseError;

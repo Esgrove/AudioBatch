@@ -59,14 +59,14 @@ public:
         onPreferredHeightChanged = std::move(callback);
     }
 
-    void paint(juce::Graphics& g) override
+    void paint(juce::Graphics& graphics) override
     {
         const auto bounds = getLocalBounds().toFloat();
-        g.setColour(juce::CustomLookAndFeel::greySemiDark.withAlpha(0.85f));
-        g.fillRoundedRectangle(bounds, 6.0f);
+        graphics.setColour(juce::CustomLookAndFeel::greySemiDark.withAlpha(0.85f));
+        graphics.fillRoundedRectangle(bounds, 6.0f);
 
-        g.setColour(juce::Colours::white.withAlpha(0.08f));
-        g.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
+        graphics.setColour(juce::Colours::white.withAlpha(0.08f));
+        graphics.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
     }
 
     void resized() override
@@ -385,8 +385,6 @@ using namespace audiobatch::gui;
 
 AudioBatchComponent::AudioBatchComponent() :
     analysisCoordinator(analysisCache),
-    normalizeCoordinator(),
-    pluginCoordinator(),
     fileTableModel(
         analysisResults,
         [this](const int row) { handleSelectionChanged(row); },
@@ -395,7 +393,7 @@ AudioBatchComponent::AudioBatchComponent() :
             handleFileContextMenuRequested(row, columnId, event);
         },
         [this](const AudioAnalysisRecord& record) { return getActiveStatusLabel(record); },
-        [this] { return getActivityPhase(); }
+        [] { return getActivityPhase(); }
     ),
     audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
 {
@@ -704,9 +702,9 @@ AudioBatchComponent::~AudioBatchComponent()
     thread.stopThread(2000);
 }
 
-void AudioBatchComponent::paint(juce::Graphics& g)
+void AudioBatchComponent::paint(juce::Graphics& graphics)
 {
-    g.fillAll(juce::LookAndFeel::getDefaultLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
+    graphics.fillAll(juce::LookAndFeel::getDefaultLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
 }
 
 bool AudioBatchComponent::isInterestedInFileDrag(const juce::StringArray& files)
@@ -714,31 +712,31 @@ bool AudioBatchComponent::isInterestedInFileDrag(const juce::StringArray& files)
     return !files.isEmpty();
 }
 
-void AudioBatchComponent::filesDropped(const juce::StringArray& files, int, int)
+void AudioBatchComponent::filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/)
 {
     handleDroppedPaths(files);
 }
 
 void AudioBatchComponent::resized()
 {
-    auto r = getLocalBounds().reduced(4);
-    auto topBar = r.removeFromTop(34);
+    auto bounds = getLocalBounds().reduced(4);
+    auto topBar = bounds.removeFromTop(34);
 
     statusLabel.setBounds(topBar.removeFromRight(220));
     topBar.removeFromRight(6);
     currentRootLabel.setBounds(topBar);
 
-    r.removeFromTop(6);
+    bounds.removeFromTop(6);
 
-    juce::Component* verticalSections[] = {&resultsTable, &waveformResizeBar, thumbnail.get()};
+    std::array<juce::Component*, 3> verticalSections {&resultsTable, &waveformResizeBar, thumbnail.get()};
     mainVerticalLayout.layOutComponents(
-        verticalSections, 3, r.getX(), r.getY(), r.getWidth(), r.getHeight(), true, true
+        verticalSections.data(), 3, bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(), true, true
     );
     updateResultsTableColumnWidths();
 
     auto info = thumbnail->getBounds();
 
-    const auto space = juce::jmin(280, juce::jmax(180, juce::roundToIntAccurate(r.getWidth() * 0.22)));
+    const auto space = juce::jmin(280, juce::jmax(180, juce::roundToIntAccurate(bounds.getWidth() * 0.22)));
     auto control = info.removeFromLeft(space);
 
     const auto buttonGap = 6;
@@ -848,7 +846,7 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
     header.setColumnWidth(AudioFileTableModel::columnPath, pathWidth);
 }
 
-bool AudioBatchComponent::keyPressed(const juce::KeyPress& key, juce::Component*)
+bool AudioBatchComponent::keyPressed(const juce::KeyPress& key, juce::Component* /*originator*/)
 {
     return keyPressed(key);
 }
@@ -1118,10 +1116,9 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
     const bool canProcess = !pluginProcessingInProgress && !isAnalysisInProgress() && !normalizeInProgress
         && pluginChain != nullptr && pluginChain->getSelectedPluginDescription().fileOrIdentifier.isNotEmpty();
     menu.addItem(processMenuItemId, "Process With Plugin (output AIFF)", canProcess);
-    const bool anyHasGain
-        = std::any_of(selectedRecords.begin(), selectedRecords.end(), [](const AudioAnalysisRecord& r) {
-              return r.hasCustomGain;
-          });
+    const bool anyHasGain = std::ranges::any_of(selectedRecords, [](const AudioAnalysisRecord& selectedRecord) {
+        return selectedRecord.hasCustomGain;
+    });
     menu.addItem(clearCustomGainMenuItemId, "Clear Per-file Gain", anyHasGain);
     menu.addSeparator();
     menu.addItem(removeFromListMenuItemId, "Remove from List");
@@ -1372,14 +1369,12 @@ bool AudioBatchComponent::canNormalizeRecords(const std::vector<AudioAnalysisRec
         return false;
     }
 
-    return std::all_of(records.begin(), records.end(), [](const auto& record) {
+    return std::ranges::all_of(records, [](const auto& record) {
         return AudioNormalizationService::canNormalizeFile(record.file);
     });
 }
 
-juce::String AudioBatchComponent::buildNormalizationUnavailableMessage(
-    const std::vector<AudioAnalysisRecord>& records
-) const
+juce::String AudioBatchComponent::buildNormalizationUnavailableMessage(const std::vector<AudioAnalysisRecord>& records)
 {
     juce::StringArray unsupportedLines;
 
@@ -1933,7 +1928,7 @@ juce::String AudioBatchComponent::getActiveStatusLabel(const AudioAnalysisRecord
     return {};
 }
 
-float AudioBatchComponent::getActivityPhase() const
+float AudioBatchComponent::getActivityPhase()
 {
     constexpr auto rotationsPerSecond = 0.85;
     const auto phase = std::fmod(juce::Time::getMillisecondCounterHiRes() * 0.001 * rotationsPerSecond, 1.0);
@@ -2168,7 +2163,7 @@ void AudioBatchComponent::handleThumbnailFullyLoaded()
 
 bool AudioBatchComponent::loadURLIntoTransport(const juce::URL& audioURL)
 {
-    // unload the previous file source and delete it..
+    // Unload the previous file source and delete it
     transportSource.stop();
     transportSource.setSource(nullptr);
     currentAudioFileSource.reset();
@@ -2239,7 +2234,7 @@ void AudioBatchComponent::clearCurrentAudioPreview()
     startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
 }
 
-void AudioBatchComponent::mouseMagnify(const juce::MouseEvent&, const float scaleFactor)
+void AudioBatchComponent::mouseMagnify(const juce::MouseEvent& /*event*/, const float scaleFactor)
 {
     const auto newZoom = zoomSlider.getValue() * (scaleFactor * scaleFactor);
     zoomSlider.setValue(newZoom);
@@ -2247,7 +2242,7 @@ void AudioBatchComponent::mouseMagnify(const juce::MouseEvent&, const float scal
 
 void AudioBatchComponent::zoomLevelChanged(const double zoomLevel)
 {
-    thumbnail.get()->setZoom(zoomLevel);
+    thumbnail->setZoom(zoomLevel);
 }
 
 void AudioBatchComponent::openDialogWindow(
@@ -2257,7 +2252,7 @@ void AudioBatchComponent::openDialogWindow(
 )
 {
     // create window the first time it is opened
-    if (!window) {
+    if (window == nullptr) {
         juce::DialogWindow::LaunchOptions launchOptions;
         launchOptions.dialogTitle = title;
         launchOptions.content.setNonOwned(component);
@@ -2359,7 +2354,7 @@ void AudioBatchComponent::updateGainControlsForSelection()
         return;
     }
 
-    // Use the currently-selected display row to drive the slider value.
+    // Use the currently selected display row to drive the slider value.
     int referenceRow = selectedRows[0];
     if (currentAudioFile.existsAsFile()) {
         if (const auto currentRow = findRecordIndex(currentAudioFile.getFullPathName());
@@ -2516,7 +2511,7 @@ void AudioBatchComponent::processSelectedRecords()
         currentWaveformLoadedFromCache = false;
         startStopButton.setEnabled(false);
         startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
-        currentAudioFile = previousPreviewFile;  // Make doubly sure the path is preserved.
+        currentAudioFile = previousPreviewFile;
     }
 
     processingFailures.clear();
@@ -2553,14 +2548,13 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
 
         // Remove any record matching the original path that does not match the new path (in case extension changed).
         analysisResults.erase(
-            std::remove_if(
-                analysisResults.begin(),
-                analysisResults.end(),
+            std::ranges::remove_if(
+                analysisResults,
                 [&result](const AudioAnalysisRecord& record) {
                     return record.fullPath == result.originalFullPath
                         && record.fullPath != result.analysisRecord.fullPath;
                 }
-            ),
+            ).begin(),
             analysisResults.end()
         );
 

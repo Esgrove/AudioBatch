@@ -31,7 +31,7 @@ static juce::MemoryBlock columnBlob(sqlite3_stmt* statement, const int columnInd
 
 static void bindText(sqlite3_stmt* statement, const int index, const juce::String& value)
 {
-    const auto utf8 = value.toRawUTF8();
+    const auto* utf8 = value.toRawUTF8();
     sqlite3_bind_text(statement, index, utf8, -1, SQLITE_TRANSIENT);
 }
 
