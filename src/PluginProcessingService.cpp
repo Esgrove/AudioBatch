@@ -1,5 +1,6 @@
 #include "PluginProcessingService.h"
 
+#include "MetadataService.h"
 #include "utils.h"
 
 #include <cmath>
@@ -282,6 +283,18 @@ PluginProcessingResult PluginProcessingService::processFile(
     writer.reset();
     plugin->releaseResources();
 
+    // Preserve metadata from the original input file by copying it onto the temporary AIFF file.
+    // This carries ID3 tags, embedded artwork, and similar information across formats such as MP3 to AIFF.
+    // Failure to read metadata is non-fatal because some inputs may not have any TagLib-readable metadata.
+    {
+        MetadataService::Metadata metadata;
+        if (MetadataService::readMetadata(file, metadata) && !metadata.isEmpty()) {
+            if (!MetadataService::writeMetadata(temporaryFile.getFile(), metadata)) {
+                utils::log_error("Failed to copy metadata onto processed output for " + file.getFullPathName());
+            }
+        }
+    }
+
     // Validate the temporary AIFF file by opening it for reading.
     {
         const std::unique_ptr<juce::AudioFormatReader> verifyReader(
@@ -307,8 +320,10 @@ PluginProcessingResult PluginProcessingService::processFile(
 
     if (!replacingOriginal && file.existsAsFile()) {
         // Output had a different extension.
-        // Remove the original file to avoid duplicates.
-        file.deleteFile();
+        // Move the original file to the system trash so the user can recover it if needed.
+        if (!utils::move_to_trash(file)) {
+            utils::log_error("Could not move the original file to the system trash: " + file.getFullPathName());
+        }
     }
 
     PluginProcessingResult result;

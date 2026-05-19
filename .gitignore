@@ -46,6 +46,7 @@
 
 # Test audio files
 /files/
+/test/
 
 # Allow checked-in workspace settings for shared CMake/IntelliSense config.
 !/.vscode/
