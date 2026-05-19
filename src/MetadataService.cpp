@@ -28,19 +28,18 @@ TagLib::String toTagLib(const juce::String& juceString)
 }
 
 #if JUCE_WINDOWS
-TagLib::FileName toFileName(const juce::File& file)
+TagLib::FileName toFileName(const juce::String& fullPath)
 {
-    // Keep the juce::String alive in a local so the wide-char pointer remains valid
-    // for the entire TagLib::FileName constructor call, which copies the path internally.
-    const auto fullPath = file.getFullPathName();
+    // On Windows TagLib::FileName is a class whose constructor copies the wide-char buffer internally,
+    // so the source juce::String only needs to outlive this call.
     return TagLib::FileName(fullPath.toWideCharPointer());
 }
 #else
-TagLib::FileName toFileName(const juce::File& file)
+TagLib::FileName toFileName(const juce::String& fullPath)
 {
-    // Keep the juce::String alive in a local so the UTF-8 pointer remains valid
-    // for the entire TagLib::FileName constructor call, which copies the path internally.
-    const auto fullPath = file.getFullPathName();
+    // On non-Windows TagLib::FileName is a typedef for const char*.
+    // The returned pointer aliases the buffer inside fullPath,
+    // so callers must keep the juce::String alive for as long as the pointer is used.
     return fullPath.toRawUTF8();
 }
 #endif
@@ -183,7 +182,8 @@ bool MetadataService::readMetadata(const juce::File& file, Metadata& outMetadata
         return false;
     }
 
-    const TagLib::FileRef ref(toFileName(file), false);
+    const auto fullPath = file.getFullPathName();
+    const TagLib::FileRef ref(toFileName(fullPath), false);
 
     if (ref.isNull() || ref.file() == nullptr) {
         utils::logError("TagLib could not open file for reading: " + file.getFullPathName());
@@ -211,9 +211,11 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
     const auto propertyMap = buildPropertyMap(metadata.properties);
     const auto pictureList = buildPictureList(metadata.pictures);
 
+    const auto fullPath = file.getFullPathName();
+
     if (isAiffFile(file)) {
         // Use the AIFF type directly so we can request ID3v2.4 on save.
-        TagLib::RIFF::AIFF::File aiffFile(toFileName(file), false);
+        TagLib::RIFF::AIFF::File aiffFile(toFileName(fullPath), false);
 
         if (!aiffFile.isValid()) {
             utils::logError("TagLib could not open AIFF file for writing: " + file.getFullPathName());
@@ -232,7 +234,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
     }
 
     if (isWavFile(file)) {
-        TagLib::RIFF::WAV::File wavFile(toFileName(file), false);
+        TagLib::RIFF::WAV::File wavFile(toFileName(fullPath), false);
 
         if (!wavFile.isValid()) {
             utils::logError("TagLib could not open WAV file for writing: " + file.getFullPathName());
@@ -251,7 +253,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
     }
 
     // Generic fallback for any other writable format.
-    TagLib::FileRef ref(toFileName(file), false);
+    TagLib::FileRef ref(toFileName(fullPath), false);
 
     if (ref.isNull() || ref.file() == nullptr) {
         utils::logError("TagLib could not open file for writing: " + file.getFullPathName());
