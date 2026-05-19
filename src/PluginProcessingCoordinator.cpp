@@ -24,7 +24,7 @@ PluginProcessingCoordinator::~PluginProcessingCoordinator()
                 auto instances = std::move(ownedInstances);
                 ownedInstances.clear();
                 freeInstances.clear();
-                juce::MessageManager::getInstance()->callAsync(
+                juce::MessageManager::callAsync(
                     [instancesCaptured = std::make_shared<decltype(instances)>(std::move(instances))]() mutable {
                         instancesCaptured->clear();
                     }
@@ -52,7 +52,7 @@ void PluginProcessingCoordinator::setStartErrorCallback(StartErrorCallback callb
     startErrorCallback = std::move(callback);
 }
 
-void PluginProcessingCoordinator::publishResult(const PluginProcessingResult& result, const int runId)
+void PluginProcessingCoordinator::publishResult(const PluginProcessingResult& result, const int runId) const
 {
     if (runId != currentRunId.load()) {
         return;
@@ -69,7 +69,7 @@ void PluginProcessingCoordinator::publishResult(const PluginProcessingResult& re
     }
 }
 
-void PluginProcessingCoordinator::publishCompletion(const int totalFiles, const int runId)
+void PluginProcessingCoordinator::publishCompletion(const int totalFiles, const int runId) const
 {
     if (runId != currentRunId.load()) {
         return;

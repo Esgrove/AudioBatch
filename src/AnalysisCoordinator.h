@@ -51,8 +51,8 @@ public:
 
 private:
     void publishCompletion(int totalFiles, int runId) const;
-    void publishResult(const AudioAnalysisRecord& result, int runId);
-    void publishStarting(const juce::File& file, int runId);
+    void publishResult(const AudioAnalysisRecord& result, int runId) const;
+    void publishStarting(const juce::File& file, int runId) const;
 
     AnalysisCache& cache;
     CompletionCallback completionCallback;

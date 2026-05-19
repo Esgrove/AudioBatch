@@ -37,8 +37,8 @@ public:
     int start(const std::vector<AudioAnalysisRecord>& records);
 
 private:
-    void publishCompletion(int totalFiles, int runId);
-    void publishResult(const AudioNormalizationResult& result, int runId);
+    void publishCompletion(int totalFiles, int runId) const;
+    void publishResult(const AudioNormalizationResult& result, int runId) const;
 
     juce::ThreadPool threadPool;
     juce::CriticalSection callbackLock;

@@ -54,8 +54,8 @@ public:
     );
 
 private:
-    void publishCompletion(int totalFiles, int runId);
-    void publishResult(const PluginProcessingResult& result, int runId);
+    void publishCompletion(int totalFiles, int runId) const;
+    void publishResult(const PluginProcessingResult& result, int runId) const;
 
     juce::AudioPluginInstance* acquireInstance();
     void releaseInstance(juce::AudioPluginInstance* instance);

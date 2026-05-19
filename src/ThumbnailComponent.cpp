@@ -20,20 +20,20 @@ ThumbnailComponent::~ThumbnailComponent()
     thumbnail.removeChangeListener(this);
 }
 
-void ThumbnailComponent::paint(juce::Graphics& g)
+void ThumbnailComponent::paint(juce::Graphics& graphics)
 {
-    g.fillAll(juce::CustomLookAndFeel::greyMediumDark);
-    g.setColour(juce::CustomLookAndFeel::blue);
+    graphics.fillAll(juce::CustomLookAndFeel::greyMediumDark);
+    graphics.setColour(juce::CustomLookAndFeel::blue);
 
     if (thumbnail.getTotalLength() > 0.0) {
         const auto reduced = getLocalBounds().reduced(2);
 
         // drawChannels scales each channel around its own strip midpoint and clamps the waveform to the strip bounds,
         // so over-0 dBFS peaks are naturally clipped at the channel boundary.
-        thumbnail.drawChannels(g, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
+        thumbnail.drawChannels(graphics, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
     } else {
-        g.setFont(14.0f);
-        g.drawFittedText("No audio file selected", getLocalBounds(), juce::Justification::centred, 2);
+        graphics.setFont(14.0f);
+        graphics.drawFittedText("No audio file selected", getLocalBounds(), juce::Justification::centred, 2);
     }
 }
 
@@ -149,7 +149,7 @@ void ThumbnailComponent::setRange(const juce::Range<double> newRange)
     repaint();
 }
 
-void ThumbnailComponent::changeListenerCallback(juce::ChangeBroadcaster*)
+void ThumbnailComponent::changeListenerCallback(juce::ChangeBroadcaster* /*source*/)
 {
     if (thumbnail.getTotalLength() > 0.0 && visibleRange.getLength() <= 0.0) {
         setRange({0.0, thumbnail.getTotalLength()});
@@ -178,26 +178,26 @@ void ThumbnailComponent::filesDropped(const juce::StringArray& files, int /*x*/,
     sendChangeMessage();
 }
 
-void ThumbnailComponent::mouseDown(const juce::MouseEvent& e)
+void ThumbnailComponent::mouseDown(const juce::MouseEvent& event)
 {
-    mouseDrag(e);
+    mouseDrag(event);
 }
 
-void ThumbnailComponent::mouseDoubleClick(const juce::MouseEvent&)
+void ThumbnailComponent::mouseDoubleClick(const juce::MouseEvent& /*event*/)
 {
     transportSource.setPosition(0.0);
     transportSource.start();
 }
 
-void ThumbnailComponent::mouseDrag(const juce::MouseEvent& e)
+void ThumbnailComponent::mouseDrag(const juce::MouseEvent& event)
 {
     if (canMoveTransport()) {
         transportSource.stop();
-        transportSource.setPosition(juce::jmax(0.0, xToTime(static_cast<float>(e.x))));
+        transportSource.setPosition(juce::jmax(0.0, xToTime(static_cast<float>(event.x))));
     }
 }
 
-void ThumbnailComponent::mouseUp(const juce::MouseEvent&)
+void ThumbnailComponent::mouseUp(const juce::MouseEvent& /*event*/)
 {
     transportSource.start();
 }

@@ -268,7 +268,7 @@ private:
     }
 
     /// Decodes a menu result against the known plugin list and applies it as the current selection.
-    void handlePluginChoiceMenuItem(const int menuItemID)
+    void handlePluginChoiceMenuItem(const int menuItemID) const
     {
         auto* chain = getAudioBatch().getPluginChain();
         if (chain == nullptr) {

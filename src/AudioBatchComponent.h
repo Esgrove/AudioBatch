@@ -66,7 +66,7 @@ public:
 
     void filesDropped(const juce::StringArray& files, int x, int y) override;
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
-    void paint(juce::Graphics& g) override;
+    void paint(juce::Graphics& graphics) override;
     void resized() override;
 
 private:
@@ -96,7 +96,7 @@ private:
     void handleSortRequested(int columnId, bool isForwards);
     void handleSecondarySortRequested(int columnId);
     [[nodiscard]] juce::String getActiveStatusLabel(const AudioAnalysisRecord& record) const;
-    [[nodiscard]] float getActivityPhase() const;
+    [[nodiscard]] static float getActivityPhase();
     [[nodiscard]] bool isAnalysisInProgress() const;
     [[nodiscard]] bool isAnyFileProcessing() const;
     bool loadURLIntoTransport(const juce::URL& audioUrl);
@@ -116,11 +116,11 @@ private:
     std::vector<AudioAnalysisRecord> getSelectedNormalizableRecords() const;
     juce::StringArray getSelectedRecordPaths() const;
     int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
-    void markFilesProcessing(const juce::Array<juce::File>& files, const juce::String& statusLabel);
+    void markFilesProcessing(const juce::Array<juce::File>& files, const juce::String& activityLabel);
     [[nodiscard]] static bool canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records);
-    [[nodiscard]] juce::String buildNormalizationUnavailableMessage(
+    [[nodiscard]] static juce::String buildNormalizationUnavailableMessage(
         const std::vector<AudioAnalysisRecord>& records
-    ) const;
+    );
     void reconcilePendingAnalysisResults();
     void unmarkFileProcessing(const juce::String& fullPath);
 
@@ -173,7 +173,7 @@ private:
     void updatePlaybackButtonForTransportState();
     void timerCallback() override;
     void zoomLevelChanged(double zoomLevel);
-    void mouseMagnify(const juce::MouseEvent&, float scaleFactor) override;
+    void mouseMagnify(const juce::MouseEvent& event, float scaleFactor) override;
 
     AnalysisCache analysisCache;
     AnalysisCoordinator analysisCoordinator;

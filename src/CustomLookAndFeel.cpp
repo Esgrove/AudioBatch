@@ -32,20 +32,30 @@ const juce::Font CustomLookAndFeel::monoFont {juce::FontOptions().withTypeface(
 class CustomDocumentWindowButton : public Button
 {
 public:
-    CustomDocumentWindowButton(const String& name, const Colour c, Path normal, Path toggled, const bool darkMode) :
+    CustomDocumentWindowButton(
+        const String& name,
+        const Colour buttonColour,
+        Path normal,
+        Path toggled,
+        const bool darkMode
+    ) :
         Button(name),
-        colour(c),
+        colour(buttonColour),
         normalShape(std::move(normal)),
         toggledShape(std::move(toggled)),
         useDarkMode(darkMode)
     { }
 
-    void paintButton(Graphics& g, const bool shouldDrawButtonAsHighlighted, const bool shouldDrawButtonAsDown) override
+    void paintButton(
+        Graphics& graphics,
+        const bool shouldDrawButtonAsHighlighted,
+        const bool shouldDrawButtonAsDown
+    ) override
     {
         const auto background = useDarkMode ? CustomLookAndFeel::greyDark : CustomLookAndFeel::greyLight;
         auto glyphColour = colour;
 
-        g.fillAll(background);
+        graphics.fillAll(background);
 
         if (!isEnabled() || shouldDrawButtonAsDown) {
             glyphColour = colour.withAlpha(0.6f);
@@ -53,23 +63,23 @@ public:
 
         if (shouldDrawButtonAsHighlighted) {
             if (getName().equalsIgnoreCase("close")) {
-                g.fillAll(CustomLookAndFeel::orange);
+                graphics.fillAll(CustomLookAndFeel::orange);
             } else {
-                g.fillAll(CustomLookAndFeel::greyMediumDark);
+                graphics.fillAll(CustomLookAndFeel::greyMediumDark);
             }
 
             glyphColour = CustomLookAndFeel::greySuperLight;
         }
 
-        g.setColour(glyphColour);
+        graphics.setColour(glyphColour);
 
-        const auto& p = getToggleState() ? toggledShape : normalShape;
+        const auto& glyphPath = getToggleState() ? toggledShape : normalShape;
         const auto reducedRect = Justification(Justification::centred)
                                      .appliedToRectangle(Rectangle(getHeight(), getHeight()), getLocalBounds())
                                      .toFloat()
-                                     .reduced((float)getHeight() * 0.3f);
+                                     .reduced(static_cast<float>(getHeight()) * 0.3f);
 
-        g.fillPath(p, p.getTransformToScaleToFit(reducedRect, true));
+        graphics.fillPath(glyphPath, glyphPath.getTransformToScaleToFit(reducedRect, true));
     }
 
 private:
@@ -164,16 +174,16 @@ Button* CustomLookAndFeel::createDocumentWindowButton(const int buttonType)
 
 void CustomLookAndFeel::drawDocumentWindowTitleBar(
     DocumentWindow& window,
-    Graphics& g,
-    const int w,
-    const int h,
+    Graphics& graphics,
+    const int width,
+    const int height,
     const int titleSpaceX,
     const int titleSpaceW,
     const Image* icon,
     const bool drawTitleTextOnLeft
 )
 {
-    if (w * h == 0) {
+    if (width * height == 0) {
         return;
     }
 
@@ -182,11 +192,11 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     const auto background = darkTheme ? greyDark : greyLight;
     const auto text = darkTheme ? greyLight : greyDark;
 
-    g.setColour(background);
-    g.fillAll();
+    graphics.setColour(background);
+    graphics.fillAll();
 
-    const auto font = textFont.withHeight((float)h * 0.54f);
-    g.setFont(font);
+    const auto font = textFont.withHeight(static_cast<float>(height) * 0.54f);
+    graphics.setFont(font);
 
     const auto textW = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(font, window.getName())));
     auto iconW = 0;
@@ -198,26 +208,26 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     }
 
     const auto contentW = jmin(titleSpaceW, textW + iconW);
-    auto textX = drawTitleTextOnLeft ? titleSpaceX : jmax(titleSpaceX, (w - contentW) / 2);
+    auto textX = drawTitleTextOnLeft ? titleSpaceX : jmax(titleSpaceX, (width - contentW) / 2);
 
     if (textX + contentW > titleSpaceX + titleSpaceW) {
         textX = titleSpaceX + titleSpaceW - contentW;
     }
 
     if (icon != nullptr) {
-        g.setOpacity(isActive ? 1.0f : 0.6f);
-        g.drawImageWithin(*icon, textX, (h - iconH) / 2, iconW, iconH, RectanglePlacement::centred, false);
+        graphics.setOpacity(isActive ? 1.0f : 0.6f);
+        graphics.drawImageWithin(*icon, textX, (height - iconH) / 2, iconW, iconH, RectanglePlacement::centred, false);
         textX += iconW;
     }
 
     textX += 4;
     const auto availableTextWidth = jmax(0, titleSpaceX + titleSpaceW - textX);
-    g.setColour(text);
-    g.drawText(window.getName(), textX, 0, availableTextWidth, h, Justification::centredLeft, true);
+    graphics.setColour(text);
+    graphics.drawText(window.getName(), textX, 0, availableTextWidth, height, Justification::centredLeft, true);
 }
 
 void CustomLookAndFeel::drawPopupMenuItem(
-    Graphics& g,
+    Graphics& graphics,
     const Rectangle<int>& area,
     const bool isSeparator,
     const bool isActive,
@@ -231,24 +241,24 @@ void CustomLookAndFeel::drawPopupMenuItem(
 )
 {
     if (isSeparator) {
-        auto r = area.reduced(5, 0);
-        r.removeFromTop(roundToInt((float)r.getHeight() * 0.5f - 0.5f));
-        g.setColour(findColour(PopupMenu::textColourId).withAlpha(0.3f));
-        g.fillRect(r.removeFromTop(1));
+        auto separatorArea = area.reduced(5, 0);
+        separatorArea.removeFromTop(roundToInt(static_cast<float>(separatorArea.getHeight()) * 0.5f - 0.5f));
+        graphics.setColour(findColour(PopupMenu::textColourId).withAlpha(0.3f));
+        graphics.fillRect(separatorArea.removeFromTop(1));
     } else {
         const auto textColour = textColourToUse == nullptr ? findColour(PopupMenu::textColourId) : *textColourToUse;
 
-        auto r = area.reduced(1);
+        auto itemArea = area.reduced(1);
 
         if (isHighlighted && isActive) {
-            g.setColour(findColour(PopupMenu::highlightedBackgroundColourId));
-            g.fillRect(r);
-            g.setColour(findColour(PopupMenu::highlightedTextColourId));
+            graphics.setColour(findColour(PopupMenu::highlightedBackgroundColourId));
+            graphics.fillRect(itemArea);
+            graphics.setColour(findColour(PopupMenu::highlightedTextColourId));
         } else {
-            g.setColour(textColour.withMultipliedAlpha(isActive ? 1.0f : 0.5f));
+            graphics.setColour(textColour.withMultipliedAlpha(isActive ? 1.0f : 0.5f));
         }
 
-        r.reduce(jmin(5, area.getWidth() / 20), 0);
+        itemArea.reduce(jmin(5, area.getWidth() / 20), 0);
 
         auto font = get_mono_font();
         const auto maxFontHeight = monoFontHeight;
@@ -256,16 +266,18 @@ void CustomLookAndFeel::drawPopupMenuItem(
             font.setHeight(maxFontHeight);
         }
 
-        g.setFont(font);
+        graphics.setFont(font);
 
-        const auto iconArea = r.removeFromLeft(roundToInt(maxFontHeight)).toFloat();
+        const auto iconArea = itemArea.removeFromLeft(roundToInt(maxFontHeight)).toFloat();
 
         if (icon != nullptr) {
-            icon->drawWithin(g, iconArea, RectanglePlacement::centred | RectanglePlacement::onlyReduceInSize, 1.0f);
-            r.removeFromLeft(roundToInt(maxFontHeight * 0.5f));
+            icon->drawWithin(
+                graphics, iconArea, RectanglePlacement::centred | RectanglePlacement::onlyReduceInSize, 1.0f
+            );
+            itemArea.removeFromLeft(roundToInt(maxFontHeight * 0.5f));
         } else if (isTicked) {
             const auto tick = getTickShape(1.0f);
-            g.fillPath(
+            graphics.fillPath(
                 tick, tick.getTransformToScaleToFit(iconArea.reduced(iconArea.getWidth() / 5, 0).toFloat(), true)
             );
         }
@@ -273,43 +285,43 @@ void CustomLookAndFeel::drawPopupMenuItem(
         if (hasSubMenu) {
             const auto arrowH = 0.6f * getPopupMenuFont().getAscent();
 
-            const auto x = static_cast<float>(r.removeFromRight((int)arrowH).getX());
-            const auto halfH = static_cast<float>(r.getCentreY());
+            const auto arrowX = static_cast<float>(itemArea.removeFromRight(static_cast<int>(arrowH)).getX());
+            const auto halfH = static_cast<float>(itemArea.getCentreY());
 
             Path path;
-            path.startNewSubPath(x, halfH - arrowH * 0.5f);
-            path.lineTo(x + arrowH * 0.6f, halfH);
-            path.lineTo(x, halfH + arrowH * 0.5f);
+            path.startNewSubPath(arrowX, halfH - arrowH * 0.5f);
+            path.lineTo(arrowX + arrowH * 0.6f, halfH);
+            path.lineTo(arrowX, halfH + arrowH * 0.5f);
 
-            g.strokePath(path, PathStrokeType(2.0f));
+            graphics.strokePath(path, PathStrokeType(2.0f));
         }
 
-        r.removeFromRight(3);
-        g.drawFittedText(text, r, Justification::centredLeft, 1);
+        itemArea.removeFromRight(3);
+        graphics.drawFittedText(text, itemArea, Justification::centredLeft, 1);
 
         if (shortcutKeyText.isNotEmpty()) {
-            auto f2 = font;
-            f2.setHeight(f2.getHeight() * 0.75f);
-            f2.setHorizontalScale(0.95f);
-            g.setFont(f2);
-            g.drawText(shortcutKeyText, r, Justification::centredRight, true);
+            auto shortcutFont = font;
+            shortcutFont.setHeight(shortcutFont.getHeight() * 0.75f);
+            shortcutFont.setHorizontalScale(0.95f);
+            graphics.setFont(shortcutFont);
+            graphics.drawText(shortcutKeyText, itemArea, Justification::centredRight, true);
         }
     }
 }
 
-Font CustomLookAndFeel::getTextButtonFont(TextButton&, const int buttonHeight)
+Font CustomLookAndFeel::getTextButtonFont(TextButton& /*button*/, const int buttonHeight)
 {
-    return textFont.withHeight(jmin(16.0f, (float)buttonHeight * 0.6f));
+    return textFont.withHeight(jmin(16.0f, static_cast<float>(buttonHeight) * 0.6f));
 }
 
-void CustomLookAndFeel::drawTooltip(Graphics& g, const String& text, const int width, const int height)
+void CustomLookAndFeel::drawTooltip(Graphics& graphics, const String& text, const int width, const int height)
 {
     const Rectangle bounds {width, height};
-    const auto cornerSize = 5.0f;
-    g.setColour(findColour(TooltipWindow::backgroundColourId));
-    g.fillRoundedRectangle(bounds.toFloat(), cornerSize);
+    constexpr auto cornerSize = 5.0f;
+    graphics.setColour(findColour(TooltipWindow::backgroundColourId));
+    graphics.fillRoundedRectangle(bounds.toFloat(), cornerSize);
     layoutTooltipText(text, findColour(TooltipWindow::textColourId))
-        .draw(g, {static_cast<float>(width), static_cast<float>(height)});
+        .draw(graphics, {static_cast<float>(width), static_cast<float>(height)});
 }
 
 TextLayout CustomLookAndFeel::layoutTooltipText(const String& text, const Colour colour) noexcept
@@ -317,12 +329,12 @@ TextLayout CustomLookAndFeel::layoutTooltipText(const String& text, const Colour
     const float tooltipFontSize = 13.0f;
     const int maxToolTipWidth = 400;
 
-    AttributedString s;
-    s.setJustification(Justification::centred);
-    s.append(text, textFont.withHeight(tooltipFontSize), colour);
+    AttributedString attributedText;
+    attributedText.setJustification(Justification::centred);
+    attributedText.append(text, textFont.withHeight(tooltipFontSize), colour);
 
-    TextLayout tl;
-    tl.createLayoutWithBalancedLineLengths(s, (float)maxToolTipWidth);
-    return tl;
+    TextLayout layout;
+    layout.createLayoutWithBalancedLineLengths(attributedText, static_cast<float>(maxToolTipWidth));
+    return layout;
 }
 }  // namespace juce

@@ -31,7 +31,7 @@ void AnalysisCoordinator::setStartingCallback(StartingCallback callback)
     startingCallback = std::move(callback);
 }
 
-void AnalysisCoordinator::publishStarting(const juce::File& file, const int runId)
+void AnalysisCoordinator::publishStarting(const juce::File& file, const int runId) const
 {
     if (runId != currentRunId.load()) {
         return;
@@ -49,7 +49,7 @@ void AnalysisCoordinator::publishStarting(const juce::File& file, const int runI
     }
 }
 
-void AnalysisCoordinator::publishResult(const AudioAnalysisRecord& result, const int runId)
+void AnalysisCoordinator::publishResult(const AudioAnalysisRecord& result, const int runId) const
 {
     if (runId != currentRunId.load()) {
         return;
