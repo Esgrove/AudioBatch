@@ -290,7 +290,7 @@ PluginProcessingResult PluginProcessingService::processFile(
         MetadataService::Metadata metadata;
         if (MetadataService::readMetadata(file, metadata) && !metadata.isEmpty()) {
             if (!MetadataService::writeMetadata(temporaryFile.getFile(), metadata)) {
-                utils::logError("Failed to copy metadata onto processed output for " + file.getFullPathName());
+                utils::logError("Failed to copy metadata onto processed output for " + file.getFullPathName().quoted());
             }
         }
     }
@@ -322,7 +322,7 @@ PluginProcessingResult PluginProcessingService::processFile(
         // Output had a different extension.
         // Move the original file to the system trash so the user can recover it if needed.
         if (!utils::moveToTrash(file)) {
-            utils::logError("Could not move the original file to the system trash: " + file.getFullPathName());
+            utils::logError("Could not move the original file to the system trash: " + file.getFullPathName().quoted());
         }
     }
 
@@ -339,7 +339,7 @@ PluginProcessingResult PluginProcessingService::processFile(
 
     if (!result.succeeded) {
         result.errorMessage = "The file was processed, but re-analysis failed: " + result.analysisRecord.errorMessage;
-        utils::logError("Plugin processing re-analysis failed for " + result.outputFile.getFullPathName());
+        utils::logError("Plugin processing re-analysis failed for " + result.outputFile.getFullPathName().quoted());
     }
 
     return result;

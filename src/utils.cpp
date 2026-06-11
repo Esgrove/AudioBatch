@@ -42,7 +42,7 @@ bool deleteFile(const juce::File& file)
     }
 
     if (!file.deleteFile()) {
-        logError("Failed to delete file: " + file.getFullPathName());
+        logError("Failed to delete file: " + file.getFullPathName().quoted());
         return false;
     }
 
