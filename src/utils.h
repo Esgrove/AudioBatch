@@ -153,6 +153,11 @@ inline void logInfo(const juce::String& message)
     writeToLog("[INFO]: " + message);
 }
 
+inline void logWarn(const juce::String& message)
+{
+    writeToLog("[WARN]: " + message, Level::warn);
+}
+
 inline void logError(const juce::String& message)
 {
     writeToLog("[ERROR]: " + message, Level::error);

@@ -21,6 +21,7 @@ constexpr float minimumDisplayDecibels = -100.0f;
 constexpr double kilobitsPerSecondDivisor = 1000.0;
 constexpr int defaultMp3BitsPerSample = 16;
 constexpr int analysisBlockSize = 8192;
+constexpr int maxConsecutiveReadFailures = 3;
 
 static AudioAnalysisRecord failAnalysis(AudioAnalysisRecord record, const juce::String& message)
 {
@@ -368,6 +369,9 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
     juce::AudioBuffer<float> readBuffer(channelCount, analysisBlockSize);
     std::vector interleaved(static_cast<size_t>(channelCount * analysisBlockSize), 0.0f);
     double maxShortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
+    std::int64_t framesDecoded = 0;
+    int consecutiveReadFailures = 0;
+    bool reportedPartialDecode = false;
 
     for (std::int64_t samplePosition = 0; samplePosition < reader->lengthInSamples; samplePosition += analysisBlockSize)
     {
@@ -377,10 +381,25 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         readBuffer.clear();
 
         if (const auto readSucceeded = reader->read(&readBuffer, 0, framesThisBlock, samplePosition, true, true);
-            !readSucceeded
-            && !isEndOfFileReadFailure(readSucceeded, samplePosition, framesThisBlock, reader->lengthInSamples))
+            readSucceeded)
         {
-            return failAnalysis(std::move(record), "Audio decode failed during analysis");
+            consecutiveReadFailures = 0;
+            framesDecoded += framesThisBlock;
+        } else if (!isEndOfFileReadFailure(readSucceeded, samplePosition, framesThisBlock, reader->lengthInSamples)) {
+            // JUCE's built-in MP3 decoder can fail mid-stream (frame sync errors, overestimated stream length)
+            // on files that other decoders handle fine.
+            // A failed block still holds the samples decoded before the error with the remainder zeroed,
+            // so keep analyzing instead of discarding the whole file.
+            ++consecutiveReadFailures;
+
+            if (!reportedPartialDecode) {
+                utils::logWarn(
+                    "Audio decode failed at sample " + juce::String(samplePosition) + " / "
+                    + juce::String(reader->lengthInSamples) + " for " + record.fullPath
+                    + ", continuing analysis with decoded audio"
+                );
+                reportedPartialDecode = true;
+            }
         }
 
         for (int frame = 0; frame < framesThisBlock; ++frame) {
@@ -403,6 +422,16 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         if (ebur128_loudness_shortterm(loudnessState.get(), &shortTermLoudness) == EBUR128_SUCCESS) {
             maxShortTermLoudness = std::max(maxShortTermLoudness, normalizeLoudness(shortTermLoudness));
         }
+
+        if (consecutiveReadFailures >= maxConsecutiveReadFailures) {
+            // Repeated failures mean the rest of the stream is undecodable,
+            // so finish the analysis with the audio decoded so far.
+            break;
+        }
+    }
+
+    if (reportedPartialDecode && framesDecoded == 0) {
+        return failAnalysis(std::move(record), "Audio decode failed during analysis");
     }
 
     std::vector signedPeaks(static_cast<size_t>(channelCount), 0.0f);
