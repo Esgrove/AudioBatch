@@ -898,7 +898,7 @@ void AudioBatchComponent::chooseRootFolder()
             }
 
             if (const auto selectedFolder = chooser.getResult(); selectedFolder.isDirectory()) {
-                utils::logInfo("Opened directory: " + selectedFolder.getFullPathName());
+                utils::logInfo("Opened directory: " + selectedFolder.getFullPathName().quoted());
                 safeThis->currentRoot = selectedFolder;
                 safeThis->currentRootLabel.setText(selectedFolder.getFullPathName(), juce::dontSendNotification);
                 safeThis->currentRootLabel.setTooltip(selectedFolder.getFullPathName());
@@ -1039,7 +1039,7 @@ void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
     }
 
     if (droppedFiles.isEmpty() && droppedDirectory.isDirectory()) {
-        utils::logInfo("Dropped directory: " + droppedDirectory.getFullPathName());
+        utils::logInfo("Dropped directory: " + droppedDirectory.getFullPathName().quoted());
         currentRoot = droppedDirectory;
         currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
         refreshAnalysis(false);
@@ -1287,7 +1287,7 @@ void AudioBatchComponent::runMoveToTrash(
 
     if (!failedPaths.isEmpty()) {
         for (const auto& failedPath : failedPaths) {
-            utils::logError("Move to trash failed for " + failedPath);
+            utils::logError("Move to trash failed for " + failedPath.quoted());
         }
 
         juce::AlertWindow::showAsync(
@@ -1438,7 +1438,7 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
         if (!record.file.existsAsFile()) {
             record.status = AudioAnalysisStatus::failed;
             record.errorMessage = "File does not exist";
-            utils::logError("Analysis failed for " + record.fullPath + ": " + record.errorMessage);
+            utils::logError("Analysis failed for " + record.fullPath.quoted() + ": " + record.errorMessage);
             resultsChanged = true;
             continue;
         }
@@ -2581,7 +2581,9 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
         }
     } else {
         processingFailures.add(result.fileName + ": " + result.errorMessage);
-        utils::logError("Plugin processing failed for " + result.originalFullPath + ": " + result.errorMessage);
+        utils::logError(
+            "Plugin processing failed for " + result.originalFullPath.quoted() + ": " + result.errorMessage
+        );
     }
 
     updateStatusLabel();

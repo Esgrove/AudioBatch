@@ -27,7 +27,7 @@ static AudioAnalysisRecord failAnalysis(AudioAnalysisRecord record, const juce::
 {
     record.status = AudioAnalysisStatus::failed;
     record.errorMessage = message;
-    utils::logError("Analysis failed for " + record.fullPath + ": " + message);
+    utils::logError("Analysis failed for " + record.fullPath.quoted() + ": " + message);
     return record;
 }
 
@@ -395,7 +395,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
             if (!reportedPartialDecode) {
                 utils::logWarn(
                     "Audio decode failed at sample " + juce::String(samplePosition) + " / "
-                    + juce::String(reader->lengthInSamples) + " for " + record.fullPath
+                    + juce::String(reader->lengthInSamples) + " for " + record.fullPath.quoted()
                     + ", continuing analysis with decoded audio"
                 );
                 reportedPartialDecode = true;

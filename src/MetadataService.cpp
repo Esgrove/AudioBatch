@@ -186,7 +186,7 @@ bool MetadataService::readMetadata(const juce::File& file, Metadata& outMetadata
     const TagLib::FileRef ref(toFileName(fullPath), false);
 
     if (ref.isNull() || ref.file() == nullptr) {
-        utils::logError("TagLib could not open file for reading: " + file.getFullPathName());
+        utils::logError("TagLib could not open file for reading: " + file.getFullPathName().quoted());
         return false;
     }
 
@@ -200,7 +200,7 @@ bool MetadataService::readMetadata(const juce::File& file, Metadata& outMetadata
 bool MetadataService::writeMetadata(const juce::File& file, const Metadata& metadata)
 {
     if (!file.existsAsFile()) {
-        utils::logError("Cannot write metadata, target file is missing: " + file.getFullPathName());
+        utils::logError("Cannot write metadata, target file is missing: " + file.getFullPathName().quoted());
         return false;
     }
 
@@ -218,7 +218,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
         TagLib::RIFF::AIFF::File aiffFile(toFileName(fullPath), false);
 
         if (!aiffFile.isValid()) {
-            utils::logError("TagLib could not open AIFF file for writing: " + file.getFullPathName());
+            utils::logError("TagLib could not open AIFF file for writing: " + file.getFullPathName().quoted());
             return false;
         }
 
@@ -237,7 +237,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
         TagLib::RIFF::WAV::File wavFile(toFileName(fullPath), false);
 
         if (!wavFile.isValid()) {
-            utils::logError("TagLib could not open WAV file for writing: " + file.getFullPathName());
+            utils::logError("TagLib could not open WAV file for writing: " + file.getFullPathName().quoted());
             return false;
         }
 
@@ -256,7 +256,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
     TagLib::FileRef ref(toFileName(fullPath), false);
 
     if (ref.isNull() || ref.file() == nullptr) {
-        utils::logError("TagLib could not open file for writing: " + file.getFullPathName());
+        utils::logError("TagLib could not open file for writing: " + file.getFullPathName().quoted());
         return false;
     }
 

@@ -144,7 +144,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
     if (inputPaths.isEmpty()) {
         inputPaths.add(juce::File::getCurrentWorkingDirectory());
-        utils::logInfo("No input paths provided, using current directory: " + inputPaths[0].getFullPathName());
+        utils::logInfo("No input paths provided, using current directory: " + inputPaths[0].getFullPathName().quoted());
     }
 
     AnalysisCache cache;
@@ -182,7 +182,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     for (const auto& result : results) {
         if (result.hasError()) {
             ++failureCount;
-            utils::logError(result.file.getFullPathName() + ": " + result.errorMessage);
+            utils::logError(result.file.getFullPathName().quoted() + ": " + result.errorMessage);
             continue;
         }
 
@@ -195,7 +195,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
         if (normalization.hasError()) {
             ++failureCount;
-            utils::logError(result.file.getFullPathName() + ": " + normalization.errorMessage);
+            utils::logError(result.file.getFullPathName().quoted() + ": " + normalization.errorMessage);
             continue;
         }
 
