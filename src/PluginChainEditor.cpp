@@ -31,8 +31,8 @@ PluginChainEditor::SlotRow::SlotRow(PluginChainEditor& ownerEditor, const int sl
     addAndMakeVisible(enabledToggle);
 
     nameLabel.setText(
-        juce::String(index + 1) + ". " + description.name + " (" + description.pluginFormatName + ") - "
-            + description.manufacturerName,
+        juce::String(index + 1) + ". " + description.manufacturerName + " " + description.name + " ("
+            + description.pluginFormatName + ")",
         juce::dontSendNotification
     );
     nameLabel.setJustificationType(juce::Justification::centredLeft);
