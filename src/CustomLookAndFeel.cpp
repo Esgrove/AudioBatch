@@ -1,3 +1,8 @@
+/// Implementation of the CustomLookAndFeel styling.
+/// Defines the shared colour palette constants and the bundled Roboto fonts,
+/// the CustomDocumentWindowButton used for title bar buttons,
+/// and the drawing code for the title bar, tooltips, and popup menu items.
+
 #include "CustomLookAndFeel.h"
 
 #include <cmath>

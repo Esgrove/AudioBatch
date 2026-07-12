@@ -1,3 +1,9 @@
+/// Shared data types for the plugin processing feature.
+/// Defines PluginDescriptorRef for identifying a plugin and carrying its saved state,
+/// PluginChainSlot for one entry in the chain,
+/// PluginProcessingOptions for configuring a batch run,
+/// and PluginProcessingResult for reporting the outcome of processing one file.
+
 #pragma once
 
 #include "AudioAnalysisTypes.h"

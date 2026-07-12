@@ -1,3 +1,8 @@
+/// Command-line interface for the headless batch analysis executable.
+/// Declares AudioAnalysisCliOptions, the parsed and validated CLI options,
+/// and the AudioAnalysisCli class that builds the usage text,
+/// parses arguments, and runs the analysis workflow.
+
 #pragma once
 
 #include "AnalysisCoordinator.h"

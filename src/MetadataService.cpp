@@ -1,3 +1,8 @@
+/// Implementation of MetadataService.
+/// Converts between JUCE and TagLib string and buffer types,
+/// maps tags through TagLib's unified PropertyMap and the generic PICTURE complex property,
+/// and saves tags for AIFF and WAV output as ID3v2.4.
+
 #include "MetadataService.h"
 
 #include "utils.h"

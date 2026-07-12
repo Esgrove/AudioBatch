@@ -1,3 +1,8 @@
+/// Offline rendering of audio files through a plugin chain.
+/// Declares PluginProcessingService, a stateless service that processes one file at a time
+/// through a caller-owned sequence of plugin instances
+/// and writes the result as 16-bit AIFF next to the original file.
+
 #pragma once
 
 #include "AudioAnalysisService.h"

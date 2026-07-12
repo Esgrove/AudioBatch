@@ -1,3 +1,8 @@
+/// Implementation of the AudioAnalysisCli argument parsing and analysis workflow.
+/// Covers option validation, the usage text,
+/// and the console output formatting that prints aligned peak, true peak,
+/// and loudness columns for analysis and normalization results.
+
 #include "AudioAnalysisCli.h"
 
 #include "AudioAnalysisService.h"

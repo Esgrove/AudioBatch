@@ -1,3 +1,8 @@
+/// Implementation of the AudioFileTableModel results table.
+/// Covers cell text and colour selection, row sorting,
+/// the Type column label derivation,
+/// and the animated activity indicator drawn in the Status column.
+
 #include "AudioFileTableModel.h"
 
 #include "CustomLookAndFeel.h"

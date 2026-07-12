@@ -1,3 +1,8 @@
+/// Shared data types for the audio analysis pipeline.
+/// Defines AudioAnalysisRecord, which carries per-file peak, true peak, and loudness results,
+/// along with the AudioAnalysisStatus and AudioAnalysisSortMode enums
+/// and the AudioAnalysisOptions input parameters used by both the GUI and CLI flows.
+
 #pragma once
 
 #include <JuceHeader.h>

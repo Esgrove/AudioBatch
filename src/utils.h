@@ -1,3 +1,8 @@
+/// Shared logging, terminal color, and small helper utilities.
+/// The ansi namespace provides ANSI color codes and stream manipulators for CLI output.
+/// The utils namespace provides leveled logging on top of juce::FileLogger,
+/// file deletion and trash helpers, and system information formatting for logs and the About dialog.
+
 #pragma once
 
 #include "version.h"

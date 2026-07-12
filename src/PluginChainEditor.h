@@ -1,3 +1,8 @@
+/// GUI content for the chain editor window.
+/// Declares PluginChainEditor, a component that shows the plugin chain as a scrolling list of slot rows
+/// with enable, edit, reorder, and remove controls,
+/// plus buttons for adding plugins and opening the plugin scanner.
+
 #pragma once
 
 #include "PluginChain.h"

@@ -1,3 +1,8 @@
+/// GUI application entry point.
+/// Defines the top-level MainWindow that hosts the AudioBatchComponent,
+/// installs the custom look-and-feel, and builds the platform menu bar,
+/// plus the JUCEApplication subclass that drives startup and shutdown.
+
 #include "AudioBatchComponent.h"
 #include "CustomLookAndFeel.h"
 #include "PluginChain.h"

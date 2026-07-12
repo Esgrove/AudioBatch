@@ -1,3 +1,8 @@
+/// Background orchestration for normalize runs.
+/// NormalizeCoordinator runs normalize jobs on a thread pool
+/// and publishes per-result and completion callbacks tagged with a run id
+/// so results from cancelled runs are ignored.
+
 #pragma once
 
 #include "AudioNormalizationService.h"

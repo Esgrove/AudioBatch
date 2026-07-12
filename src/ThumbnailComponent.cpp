@@ -1,3 +1,9 @@
+/// Implementation of the ThumbnailComponent waveform preview.
+/// Covers waveform painting and cache load and save,
+/// transport scrubbing through the mouse handlers,
+/// wheel-based zoom and gain gestures,
+/// and the timer-driven position marker updates during playback.
+
 #include "ThumbnailComponent.h"
 
 #include "CustomLookAndFeel.h"

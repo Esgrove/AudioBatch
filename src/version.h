@@ -1,3 +1,7 @@
+/// Build-time version information for the application.
+/// The version namespace exposes the application name, version, branch, commit, and build date
+/// as constants filled in from preprocessor definitions set by CMake.
+
 //==========================================================
 // Version header
 // Version information is set in preprocessor definitions

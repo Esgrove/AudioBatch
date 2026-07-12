@@ -1,3 +1,8 @@
+/// Peak normalization interface shared by the GUI and CLI targets.
+/// AudioNormalizationService rewrites audio files so their peak reaches 0 dBFS,
+/// renders the output as AIFF, and re-analyzes the result.
+/// AudioNormalizationResult carries the outcome of a single normalize-and-reanalyze pass.
+
 #pragma once
 
 #include "AudioAnalysisService.h"

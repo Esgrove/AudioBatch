@@ -1,3 +1,13 @@
+/// Implementation of PluginProcessingService.
+/// Covers reading the source file with a thread-local format manager,
+/// applying custom or normalization gain before the chain,
+/// configuring plugin buses for the file's channel layout,
+/// preparing plugins and restoring their state per file,
+/// and rendering block by block through the chain including plugin tails.
+/// The output is written to a temporary 16-bit AIFF file that is validated,
+/// given the original file's metadata, and then moved into place,
+/// with the processed file re-analyzed for the result record.
+
 #include "PluginProcessingService.h"
 
 #include "MetadataService.h"

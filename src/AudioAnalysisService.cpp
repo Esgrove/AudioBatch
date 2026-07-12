@@ -1,3 +1,9 @@
+/// Implementation of AudioAnalysisService.
+/// Decodes files in blocks through per-thread JUCE format readers
+/// and feeds the samples to a libebur128 analyzer state
+/// to measure sample peak, true peak, and integrated loudness.
+/// Also implements supported file discovery, the display and CLI formatting helpers, and record sorting.
+
 #include "AudioAnalysisService.h"
 
 #include "utils.h"

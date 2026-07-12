@@ -1,3 +1,8 @@
+/// Application-wide JUCE look-and-feel.
+/// Declares CustomLookAndFeel with the project fonts and colour palette,
+/// custom title bar buttons and title bar drawing for Windows,
+/// and styled tooltips, popup menus, buttons, and combo boxes.
+
 #pragma once
 #include <JuceHeader.h>
 

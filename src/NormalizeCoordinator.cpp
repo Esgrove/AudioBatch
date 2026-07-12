@@ -1,3 +1,8 @@
+/// Implementation of NormalizeCoordinator.
+/// Queues one thread pool job per file, runs AudioNormalizationService on worker threads,
+/// and guards callback publication with run id checks and a callback lock
+/// so cancelled runs stop publishing results.
+
 #include "NormalizeCoordinator.h"
 
 #include <map>

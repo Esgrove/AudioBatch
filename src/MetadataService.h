@@ -1,3 +1,7 @@
+/// Audio file metadata handling built on TagLib.
+/// MetadataService reads and writes text tag properties and embedded pictures in a format-agnostic way,
+/// so normalized output files keep the tags and album art of their sources.
+
 #pragma once
 
 #include <juce_core/juce_core.h>

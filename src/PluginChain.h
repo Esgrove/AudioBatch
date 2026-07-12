@@ -1,3 +1,9 @@
+/// Ownership and management of the user's plugin chain in the GUI.
+/// Declares PluginChain, which holds the ordered list of plugin slots that files are processed through,
+/// along with the known-plugins database, plugin scanning, persistence in application settings,
+/// and the plugin editor, chain editor, and scan windows.
+/// Callers interact with it through a single menu invoked from a button or menu item.
+
 #pragma once
 
 #include "PluginProcessing.h"

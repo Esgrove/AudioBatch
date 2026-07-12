@@ -1,3 +1,8 @@
+/// Table model for the sortable analysis results table in the GUI.
+/// Declares AudioFileTableModel, a juce::TableListBoxModel
+/// with column identifiers, compile-time column widths,
+/// sorting, cell painting, and row actions for the analyzed files.
+
 #pragma once
 
 #include "AudioAnalysisService.h"

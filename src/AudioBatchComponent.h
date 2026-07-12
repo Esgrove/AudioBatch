@@ -1,3 +1,8 @@
+/// Main GUI component of the application.
+/// Declares AudioBatchComponent, which owns the analysis results table, waveform preview and transport,
+/// folder scanning, gain controls, and the plugin chain button and processing flow.
+/// It also hosts the coordinators for background analysis, normalization, and plugin processing.
+
 #pragma once
 
 #include "AnalysisCache.h"

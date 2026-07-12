@@ -1,3 +1,8 @@
+/// Background job coordination for batch plugin processing.
+/// Declares PluginProcessingCoordinator, which runs files through pre-instantiated plugin chains
+/// on a worker thread pool and marshals per-file results, completion, and start errors
+/// back to the message thread through callbacks.
+
 #pragma once
 
 #include "PluginProcessing.h"

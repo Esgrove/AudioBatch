@@ -1,3 +1,8 @@
+/// Implementation of AnalysisCache.
+/// Manages the SQLite database handle, schema creation, and lightweight column migrations,
+/// and implements the load and store paths for analysis records,
+/// waveform previews, and custom gain values using prepared statements.
+
 #include "AnalysisCache.h"
 
 #include "utils.h"

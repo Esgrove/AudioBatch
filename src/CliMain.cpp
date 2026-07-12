@@ -1,3 +1,8 @@
+/// Console application entry point for the headless batch analysis executable.
+/// Sets up logging, parses arguments through AudioAnalysisCli,
+/// handles the help and version flags, and runs the analysis workflow,
+/// translating the outcome into a process exit code.
+
 #include "AudioAnalysisCli.h"
 #include "utils.h"
 #include "version.h"

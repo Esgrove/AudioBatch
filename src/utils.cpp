@@ -1,3 +1,8 @@
+/// Implementation of the utils namespace helpers.
+/// Covers logger creation, moving files to the OS trash with a native fallback on Windows,
+/// file deletion with error logging,
+/// and collecting and formatting system and build information for logs and the About dialog.
+
 #include "utils.h"
 
 #if JUCE_WINDOWS

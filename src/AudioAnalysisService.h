@@ -1,3 +1,8 @@
+/// Audio analysis interface shared by the GUI and CLI targets.
+/// AudioAnalysisService decodes audio files and measures sample peak, true peak,
+/// and integrated loudness, and provides file discovery, display formatting,
+/// and record sorting helpers built on the AudioAnalysisRecord types.
+
 #pragma once
 
 #include "AudioAnalysisTypes.h"

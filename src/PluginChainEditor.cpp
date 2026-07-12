@@ -1,3 +1,9 @@
+/// Implementation of PluginChainEditor and its SlotRow component.
+/// Covers building the rows and wiring their controls to the owning PluginChain,
+/// laying out the top bar, hint label, and scrolling row list,
+/// drag-to-reorder gestures with a live drop-position preview,
+/// and deferred row rebuilds when the chain changes.
+
 #include "PluginChainEditor.h"
 
 #include "CustomLookAndFeel.h"

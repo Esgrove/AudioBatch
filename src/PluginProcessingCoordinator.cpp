@@ -1,3 +1,10 @@
+/// Implementation of PluginProcessingCoordinator.
+/// Covers queuing one thread-pool job per file,
+/// the free pool of pre-instantiated plugin chains that workers acquire and release between files,
+/// run-id based cancellation, and publishing results and completion to the message thread.
+/// Plugin instances are always destroyed on the message thread
+/// to satisfy VST3 and Audio Unit hosting requirements.
+
 #include "PluginProcessingCoordinator.h"
 
 #include "utils.h"

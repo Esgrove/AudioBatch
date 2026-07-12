@@ -1,3 +1,9 @@
+/// Implementation of the main GUI component.
+/// Covers UI construction and layout, table interaction and sorting, playback preview,
+/// folder scanning and drag-and-drop, and wiring of the analysis, normalization, and plugin coordinators.
+/// Also defines the file-local AudioInfoPanel and SecondarySortTableHeader helper components
+/// and the record sort comparators used by the results table.
+
 #include "AudioBatchComponent.h"
 
 #include "AudioAnalysisService.h"

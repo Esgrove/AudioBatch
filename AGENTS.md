@@ -73,6 +73,14 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
 
 ## Code Style
 
+- Every source and header file must begin with a file-level comment section
+  that explains on a high level what the file contains and implements.
+  Use a `///` comment block at the very top of the file,
+  before `#pragma once` and the includes.
+  A few sentences is enough: name the main classes or functions
+  and describe their role in the application.
+  In a `.cpp` file, focus on what the implementation covers
+  instead of repeating the header text verbatim.
 - Every function must have a docstring (`///` doc comment).
   Focus on what the function does and why, and document non-obvious behaviour,
   side effects, threading constraints, and ownership rules.

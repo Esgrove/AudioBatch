@@ -1,3 +1,8 @@
+/// Background orchestration for audio analysis runs.
+/// AnalysisCoordinator runs analysis jobs on a thread pool, serves cached results first,
+/// and publishes starting, per-result, and completion callbacks tagged with a run id
+/// so results from cancelled runs are ignored.
+
 #pragma once
 
 #include "AnalysisCache.h"

@@ -1,3 +1,9 @@
+/// Waveform preview for the currently loaded audio file.
+/// Declares ThumbnailComponent, a JUCE component that draws the audio thumbnail,
+/// follows and scrubs the shared transport source,
+/// supports zoom and gain mouse-wheel gestures, file drag-and-drop,
+/// and caching of the rendered waveform data.
+
 #pragma once
 
 #include <JuceHeader.h>

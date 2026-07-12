@@ -1,3 +1,10 @@
+/// Implementation of PluginChain.
+/// Covers the popup menu, slot editing operations, and window handling
+/// for the per-slot plugin editors, the chain editor, and the plugin scan dialog,
+/// including capturing live plugin state from open editors before a run or save.
+/// Also implements XML persistence of the chain and the known-plugins list in application settings,
+/// with migration of the legacy single-plugin selection into a one-slot chain.
+
 #include "PluginChain.h"
 
 #include "CustomLookAndFeel.h"
