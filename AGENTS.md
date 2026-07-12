@@ -71,6 +71,22 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
 - Preserve the existing source layout under `src/` and the current naming used in `CMakeLists.txt`.
 - Changes to shared services must keep both the GUI and CLI targets building and behaving correctly.
 
+## Code Style
+
+- Every function must have a docstring (`///` doc comment).
+  Focus on what the function does and why, and document non-obvious behaviour,
+  side effects, threading constraints, and ownership rules.
+  Do not simply restate the signature in prose.
+  Document a function where it is declared:
+  on the declaration in the header for class members,
+  and on the definition for free and file-local functions in `.cpp` files.
+- Prefer full names instead of abbreviations in identifiers,
+  for example `directories` instead of `dirs` and `description` instead of `desc`.
+  Established domain terms and API names (`midi`, `xml`, `id`, `dB`) are fine.
+- Avoid single character variable names.
+  They are only allowed in for loops when it makes sense
+  and it is clear what the variable is, for example a plain loop index.
+
 ## Build And Verification
 
 - Do not use `build.sh`, it is only for making final release builds.
