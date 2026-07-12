@@ -1,21 +1,90 @@
 # AGENTS.md
 
-This repository contains a JUCE-based C++23 application with two deliverables:
+AudioBatch is a JUCE-based C++23 application for analyzing and batch processing audio files.
+It builds two deliverables from a shared core:
 
-- GUI target: `AudioBatch` producing `AudioBatchApp`
-- CLI target: `AudioBatchCli` producing `audiobatch`
+- GUI target: `AudioBatch` producing `AudioBatch.app` / `AudioBatchApp.exe`. This is the primary deliverable.
+- CLI target: `AudioBatchCli` producing `audiobatch`.
+
+The GUI is the primary interface and the main focus of development.
+The CLI is a thin console front end over the same analysis and normalization core,
+so changes to shared services must keep both targets working.
+
+## What It Does
+
+- Analyze audio files for decoded sample peak, true peak, and integrated loudness (EBU R128).
+- Cache analysis results in SQLite so unchanged files are not re-read on later runs.
+- Show sortable peak, true peak, and loudness data in a GUI results table with per-file status.
+- Normalize selected files to `0 dBFS` peak from the GUI or the CLI.
+- Convert normalized output to AIFF while preserving source metadata,
+  including embedded album art and custom tags, written back as ID3v2.4.
+- Batch process selected files through a VST3 or Audio Unit plugin from the GUI.
+
+Analysis assumes mono or stereo sources, including MP3 joint stereo.
+Multichannel files are not a target.
+
+## Source Layout
+
+The application code lives in `src/`.
+The two targets share most sources and differ only in their entry points and GUI-only files.
+
+Entry points:
+
+- `src/Main.cpp` is the GUI application entry point.
+- `src/CliMain.cpp` is the CLI entry point.
+- `src/AudioAnalysisCli.{h,cpp}` holds CLI argument parsing and output formatting.
+
+Shared core (linked into both targets):
+
+- `src/AudioAnalysisService.*` and `src/AudioAnalysisTypes.h` perform audio analysis.
+- `src/AudioNormalizationService.*` handle normalization and AIFF conversion.
+- `src/MetadataService.*` read and write tags and embedded art through TagLib.
+- `src/AnalysisCache.*` manage the SQLite result cache.
+- `src/AnalysisCoordinator.*` and `src/NormalizeCoordinator.*` orchestrate background work.
+- `src/utils.*` and `src/version.h` are shared helpers.
+
+GUI only:
+
+- `src/AudioBatchComponent.*` is the main GUI component.
+- `src/AudioFileTableModel.*` backs the sortable results table.
+- `src/CustomLookAndFeel.*`, `src/ThumbnailComponent.*`, and `src/IntervalStepSlider.h` are UI pieces.
+- `src/PluginChain.*`, `src/PluginProcessing.h`, `src/PluginProcessingCoordinator.*`,
+  and `src/PluginProcessingService.*` implement VST3 / Audio Unit plugin hosting.
+
+The exact source lists for each target are defined in `CMakeLists.txt`.
+Keep those lists in sync when adding or removing files,
+and remember that a shared file must compile cleanly for both the GUI and the CLI.
+
+## Dependencies
+
+- JUCE, vendored under `JUCE/` as a submodule.
+- SQLite 3, resolved via CMake (system package if present, otherwise the fetched amalgamation).
+- libebur128, fetched via CMake, for loudness and true peak analysis.
+- TagLib, fetched via CMake, for cross-format metadata handling.
 
 ## Working Rules
 
-- Keep changes focused and minimal.
+- Prefer modern C++23 coding standards and idioms.
 - Do not edit vendored code under `JUCE/` unless the task explicitly requires it.
 - Prefer fixing warnings and build issues in project code or project configuration before considering third-party changes.
 - Preserve the existing source layout under `src/` and the current naming used in `CMakeLists.txt`.
+- Changes to shared services must keep both the GUI and CLI targets building and behaving correctly.
+
+## Build And Verification
+
+- Do not use `build.sh`, it is only for making final release builds.
+- When modifying code, use the CMake debug presets for validation so terminal builds reuse the same build directory as the editor or IDE.
+- On macOS, use `cmake --preset macos-debug` then `cmake --build --preset macos-debug`.
+- On Windows, prefer `cmake --preset windows-debug` then `cmake --build --preset windows-debug`.
+- If you need Ninja and `compile_commands.json` on Windows,
+  use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
+- Both `AudioBatch` and `AudioBatchCli` build with warnings as errors, so all warnings must be resolved.
 
 ## Formatting
 
 - After changing any C++ source or header file, run `clang-format -i --style=file` on each changed file before finishing.
 - For repo-wide or multi-file formatting, use `./format.sh`.
+- Formatting is configured by `.clang-format`.
 
 ## Linting
 
@@ -62,17 +131,8 @@ Example (C++ doc comment):
 /// and releases its resources afterwards.
 ```
 
-## Build And Verification
-
-- Do not use build.sh, it is only for making final release builds
-- When modifying code, use the CMake debug presets for validation so terminal builds reuse the same build directory as the editor or IDE.
-- On Windows, prefer `cmake --preset windows-debug` then `cmake --build --preset windows-debug`.
-- If you need Ninja and `compile_commands.json` on Windows,
-  use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
-- On macOS, use `cmake --preset macos-debug` then `cmake --build --preset macos-debug`.
-
 ## Notes
 
 - The main application code lives in `src/`.
-- Formatting is configured by `.clang-format`.
 - Shell helpers live in the repository root.
+- `CLAUDE.md` is a symlink to this file, so both point at the same guidance. Only edit `AGENTS.md` directly.
