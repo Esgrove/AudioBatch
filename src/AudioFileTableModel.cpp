@@ -4,6 +4,10 @@
 
 namespace audiobatch::table
 {
+/// Derives a short display label for the Type column.
+/// Prefers the file extension in upper case,
+/// then falls back to the decoder format name with a trailing " file" suffix stripped,
+/// and finally to "Unknown".
 static juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 {
     const auto extension = record.file.getFileExtension().trimCharactersAtStart(".");
@@ -25,6 +29,9 @@ static juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
     return "Unknown";
 }
 
+/// Draws the small spinning arc shown in the Status column while a row is being processed.
+/// The phase argument in the range 0 to 1 controls the arc rotation,
+/// so repeated repaints with an advancing phase animate the spinner.
 static void drawActivityIndicator(juce::Graphics& graphics, const juce::Rectangle<float> bounds, const float phase)
 {
     const auto ringBounds = bounds.reduced(1.0f);
@@ -51,7 +58,6 @@ static void drawActivityIndicator(juce::Graphics& graphics, const juce::Rectangl
 
 using namespace audiobatch::table;
 
-/// Builds the results table model used by the main file list.
 AudioFileTableModel::AudioFileTableModel(
     std::vector<AudioAnalysisRecord>& sourceRecords,
     std::function<void(int row)> onSelectionChanged,

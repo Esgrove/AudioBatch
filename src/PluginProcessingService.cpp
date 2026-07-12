@@ -12,11 +12,15 @@ constexpr int processingBlockSize = 1024;
 constexpr int outputBitsPerSample = 16;
 constexpr auto outputExtension = ".aiff";
 
+/// Shorthand for building a failure result, keeping the early-return error paths compact.
 static PluginProcessingResult fail(const juce::File& file, const juce::String& message)
 {
     return PluginProcessingResult::failure(file, message);
 }
 
+/// Locates the AIFF format among the registered formats by name,
+/// so the writer does not depend on registration order.
+/// Returns nullptr when no AIFF format is available.
 static juce::AudioFormat* findAiffFormat(juce::AudioFormatManager& formatManager)
 {
     for (int i = 0; i < formatManager.getNumKnownFormats(); ++i) {
@@ -33,6 +37,8 @@ static juce::AudioFormat* findAiffFormat(juce::AudioFormatManager& formatManager
     return nullptr;
 }
 
+/// Converts reader metadata into the map type that the writer options expect,
+/// so the output file keeps the metadata JUCE read from the input.
 static std::unordered_map<juce::String, juce::String> copyMetadata(const juce::StringPairArray& metadata)
 {
     std::unordered_map<juce::String, juce::String> result;
@@ -46,20 +52,23 @@ static std::unordered_map<juce::String, juce::String> copyMetadata(const juce::S
     return result;
 }
 
+/// Returns the magnitude of a peak value, since analysis records may store signed peaks.
 static float peakMagnitude(const float peak)
 {
     return std::abs(peak);
 }
 
+/// Clamps a file's channel count to a sane range
+/// before it is used for buffer allocation and bus configuration.
 static int clampChannelCount(const int channels)
 {
     return juce::jlimit(1, 8, channels);
 }
 
-// Reconfigures the plugin's main input and output buses to match the file when possible.
-// We preserve the plugin's existing bus count and only override the main bus channel set,
-// because some plugins have sidechain or aux buses that should be left alone.
-// If that fails we fall back through several common configurations.
+/// Reconfigures the plugin's main input and output buses to match the file when possible.
+/// We preserve the plugin's existing bus count and only override the main bus channel set,
+/// because some plugins have sidechain or aux buses that should be left alone.
+/// If that fails we fall back through several common configurations.
 static bool configurePluginChannels(juce::AudioPluginInstance& plugin, const int numChannels, const double sampleRate)
 {
     auto trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {

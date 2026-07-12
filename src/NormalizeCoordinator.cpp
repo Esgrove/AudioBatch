@@ -2,7 +2,6 @@
 
 #include <map>
 
-/// Thread-pool orchestration for publishing normalize work back to the caller.
 NormalizeCoordinator::NormalizeCoordinator(const int workerCount) : threadPool(juce::jmax(1, workerCount)) { }
 
 NormalizeCoordinator::~NormalizeCoordinator()

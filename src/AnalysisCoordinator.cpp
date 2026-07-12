@@ -2,7 +2,6 @@
 
 #include <mutex>
 
-/// Thread-pool orchestration for publishing analysis work back to the caller.
 AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& analysisCache, const int workerCount) :
     cache(analysisCache),
     threadPool(juce::jmax(1, workerCount))

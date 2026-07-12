@@ -28,13 +28,13 @@ constexpr int editorBlockSize = 512;
 /// Builds the descriptor ref for one chain entry.
 static PluginDescriptorRef makeDescriptorRef(const juce::PluginDescription& description, const juce::MemoryBlock& state)
 {
-    PluginDescriptorRef ref;
-    ref.pluginFormatName = description.pluginFormatName;
-    ref.identifierString = description.createIdentifierString();
-    ref.name = description.name;
-    ref.manufacturer = description.manufacturerName;
-    ref.state = state;
-    return ref;
+    PluginDescriptorRef descriptorRef;
+    descriptorRef.pluginFormatName = description.pluginFormatName;
+    descriptorRef.identifierString = description.createIdentifierString();
+    descriptorRef.name = description.name;
+    descriptorRef.manufacturer = description.manufacturerName;
+    descriptorRef.state = state;
+    return descriptorRef;
 }
 }  // namespace audiobatch::plugin_chain
 

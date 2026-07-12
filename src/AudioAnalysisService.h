@@ -54,5 +54,7 @@ public:
     static void sortRecords(std::vector<AudioAnalysisRecord>& records, AudioAnalysisSortMode sortMode, bool ascending);
 
 private:
+    /// Returns a per-thread format manager with the basic JUCE formats registered.
+    /// Thread-local state avoids locking when analysis jobs run on multiple worker threads.
     static juce::AudioFormatManager& getThreadLocalFormatManager();
 };

@@ -29,6 +29,9 @@ using namespace audiobatch::app;
 class MainWindow : public juce::DocumentWindow, juce::MenuBarModel
 {
 public:
+    /// Builds the window, installs the custom look-and-feel as the global default,
+    /// creates the owned AudioBatchComponent content, and configures the platform menu bar.
+    /// The window is not made visible here, callers use showAndActivate for that.
     explicit MainWindow(const juce::String& name) :
         DocumentWindow(name, juce::CustomLookAndFeel::greyDark, DocumentWindow::allButtons)
     {
@@ -67,6 +70,9 @@ public:
         logStartupCheckpoint("constructor complete");
     }
 
+    /// Makes the window visible and pushes it to the front with keyboard focus.
+    /// Safe to call repeatedly, the GUI startup path also invokes it again asynchronously
+    /// to work around platform focus quirks on first launch.
     void showAndActivate()
     {
         utils::logDebug("MainWindow startup: showAndActivate begin");
@@ -87,6 +93,8 @@ public:
         utils::logDebug("MainWindow startup: showAndActivate end");
     }
 
+    /// Detaches the menu bar model and clears the global look-and-feel
+    /// before the owned look-and-feel object is destroyed.
     ~MainWindow() override
     {
 #if JUCE_MAC
@@ -98,12 +106,15 @@ public:
         juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
     }
 
+    /// Routes the window close button to a normal application quit request.
     void closeButtonPressed() override
     {
         juce::JUCEApplication::getInstance()->systemRequestedQuit();
     }
 
 private:
+    /// Returns the top-level menu names.
+    /// On macOS the application menu is included as the first entry, other platforms omit it.
     juce::StringArray getMenuBarNames() override
     {
 #if JUCE_MAC
@@ -113,6 +124,8 @@ private:
 #endif
     }
 
+    /// Builds the popup menu for one top-level menu.
+    /// The menu layout differs per platform because macOS moves About and Quit into the application menu.
     juce::PopupMenu getMenuForIndex(const int topLevelMenuIndex, const juce::String& menuName) override
     {
         juce::ignoreUnused(menuName);
@@ -177,6 +190,9 @@ private:
         return menu;
     }
 
+    /// Dispatches a chosen menu item to the matching AudioBatchComponent or plugin chain action.
+    /// Unknown ids fall through to handlePluginChoiceMenuItem
+    /// because the Add Plugin submenu generates its ids dynamically.
     void menuItemSelected(const int menuItemID, int topLevelMenuIndex) override
     {
         juce::ignoreUnused(topLevelMenuIndex);
@@ -280,6 +296,8 @@ private:
         chain->addPlugin(types.getReference(index));
     }
 
+    /// Returns the owned content component as its concrete type.
+    /// Valid for the whole window lifetime because the constructor always installs an AudioBatchComponent.
     AudioBatchComponent& getAudioBatch() const
     {
         return *static_cast<AudioBatchComponent*>(getContentComponent());
@@ -294,21 +312,30 @@ private:
 class AudioBatchApplication : public juce::JUCEApplication
 {
 public:
+    /// All real startup work happens in initialise, so the constructor has nothing to do.
     AudioBatchApplication() = default;
 
+    /// Reports the application name from the generated project info.
     const juce::String getApplicationName() override
     {
         return ProjectInfo::projectName;
     }
+
+    /// Reports the application version from the generated project info.
     const juce::String getApplicationVersion() override
     {
         return ProjectInfo::versionString;
     }
+
+    /// Restricts the app to a single running instance.
     bool moreThanOneInstanceAllowed() override
     {
         return false;
     }
 
+    /// Starts the application: sets up file logging, creates the main window,
+    /// and either shows it or keeps it hidden when the --headless flag is present.
+    /// Window activation is repeated asynchronously to reliably gain focus on first launch.
     void initialise(const juce::String& commandLineParameters) override
     {
         const auto initialiseStartedAtMs = juce::Time::getMillisecondCounterHiRes();
@@ -357,12 +384,15 @@ public:
         logInitialiseCheckpoint("initialise complete");
     }
 
+    /// Destroys the main window before detaching the logger,
+    /// so teardown messages are still written to the log file.
     void shutdown() override
     {
         mainWindow.reset();
         juce::Logger::setCurrentLogger(nullptr);
     }
 
+    /// Logs the pending exit code and then quits the message loop.
     void systemRequestedQuit() override
     {
         if (const auto exit_code = getApplicationReturnValue(); exit_code != 0) {
@@ -373,6 +403,8 @@ public:
         quit();
     }
 
+    /// Logs launches of a second instance.
+    /// The arguments are only recorded, this instance keeps running unchanged.
     void anotherInstanceStarted(const juce::String& commandLine) override
     {
         utils::logInfo("Another instance started with args: " + commandLine);

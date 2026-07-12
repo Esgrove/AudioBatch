@@ -4,6 +4,8 @@
 
 namespace audiobatch::cli
 {
+/// Detaches the logger before returning the process exit code,
+/// so the juce::Logger never points at a logger that is about to be destroyed.
 static int exitCli(const int exitCode)
 {
     juce::Logger::setCurrentLogger(nullptr);

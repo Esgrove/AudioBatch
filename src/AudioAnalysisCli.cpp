@@ -14,21 +14,25 @@ constexpr int cliPeakColumnWidth = 7;
 constexpr int cliTruePeakColumnWidth = 7;
 constexpr int cliLoudnessColumnWidth = 8;
 
+/// Formats the sample peak value right-aligned to the fixed dBFS column width.
 static juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
 {
     return AudioAnalysisService::formatPeakCompact(record.overallPeak).paddedLeft(' ', cliPeakColumnWidth);
 }
 
+/// Formats the true peak value right-aligned to the fixed dBTP column width.
 static juce::String formattedTruePeakColumn(const AudioAnalysisRecord& record)
 {
     return AudioAnalysisService::formatTruePeakCompact(record.overallTruePeak).paddedLeft(' ', cliTruePeakColumnWidth);
 }
 
+/// Formats the integrated loudness value right-aligned to the fixed LUFS column width.
 static juce::String formattedIntegratedLoudnessColumn(const AudioAnalysisRecord& record)
 {
     return AudioAnalysisService::formatLoudnessCompact(record.integratedLufs).paddedLeft(' ', cliLoudnessColumnWidth);
 }
 
+/// Prints the column header line to stdout, matching the widths used by the result rows.
 static void printHeaderRow()
 {
     std::cout << juce::String("dBFS").paddedLeft(' ', cliPeakColumnWidth) << "  "
@@ -36,12 +40,17 @@ static void printHeaderRow()
               << juce::String("LUFS-I").paddedLeft(' ', cliLoudnessColumnWidth) << "  TRACK" << juce::newLine;
 }
 
+/// Prints one aligned result line to stdout.
+/// The caller chooses the track label so plain analysis can show file names
+/// while normalization output can show full output paths.
 static void printResultRow(const AudioAnalysisRecord& record, const juce::String& trackLabel)
 {
     std::cout << formattedPeakColumn(record) << "  " << formattedTruePeakColumn(record) << "  "
               << formattedIntegratedLoudnessColumn(record) << "  " << trackLabel << juce::newLine;
 }
 
+/// Picks the most informative path available for a normalized record,
+/// falling back from the cached full path to the file object and finally the bare file name.
 static juce::String reportedOutputPath(const AudioAnalysisRecord& record)
 {
     if (record.fullPath.isNotEmpty()) {

@@ -33,6 +33,7 @@ public:
         std::vector<PropertyEntry> properties;
         std::vector<Picture> pictures;
 
+        /// Returns true when there are no properties and no pictures to write.
         [[nodiscard]] bool isEmpty() const noexcept
         {
             return properties.empty() && pictures.empty();

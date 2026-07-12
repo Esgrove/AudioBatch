@@ -89,7 +89,8 @@ void PluginProcessingCoordinator::publishCompletion(const int totalFiles, const 
 void PluginProcessingCoordinator::cancelAndWait()
 {
     ++currentRunId;
-    instanceAvailable.signal();  // Wake any workers blocked waiting for an instance.
+    // Wake any workers blocked waiting for an instance.
+    instanceAvailable.signal();
     threadPool.removeAllJobs(true, 60000);
     pendingJobs.store(0);
 }

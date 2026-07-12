@@ -8,11 +8,14 @@
 
 /// Lightweight reference describing which plugin to instantiate and its saved state.
 struct PluginDescriptorRef {
-    juce::String pluginFormatName;  ///< "VST3", "AudioUnit", etc.
-    juce::String identifierString;  ///< juce::PluginDescription::createIdentifierString()
+    /// "VST3", "AudioUnit", etc.
+    juce::String pluginFormatName;
+    /// juce::PluginDescription::createIdentifierString()
+    juce::String identifierString;
     juce::String name;
     juce::String manufacturer;
-    juce::MemoryBlock state;  ///< Result of AudioProcessor::getStateInformation()
+    /// Result of AudioProcessor::getStateInformation()
+    juce::MemoryBlock state;
 
     /// True when this descriptor identifies a plugin.
     [[nodiscard]] bool isValid() const noexcept
@@ -33,14 +36,17 @@ struct PluginProcessingOptions {
     /// Disabled slots are filtered out before a run starts,
     /// so entries here align index-for-index with the instantiated chain each worker holds.
     std::vector<PluginDescriptorRef> plugins;
-    bool normalizeBeforePlugin = false;  ///< Apply peak normalization gain when a file has no custom gain.
+    /// Apply peak normalization gain when a file has no custom gain.
+    bool normalizeBeforePlugin = false;
 };
 
 /// Result payload for a single plugin-processing operation.
 struct PluginProcessingResult {
-    juce::File originalFile;  ///< Source file path before processing.
+    /// Source file path before processing.
+    juce::File originalFile;
     juce::String originalFullPath;
-    juce::File outputFile;  ///< Final on-disk file after processing (.aiff).
+    /// Final on-disk file after processing (.aiff).
+    juce::File outputFile;
     juce::String fileName;
     juce::String errorMessage;
     AudioAnalysisRecord analysisRecord;

@@ -18,17 +18,22 @@ public:
     static constexpr int verticalPadding = 8;
     static constexpr int horizontalPadding = 10;
 
+    /// Removes all rows so the panel shows nothing and collapses to its minimum height.
     void clear()
     {
         setRows({});
     }
 
+    /// Returns the height needed to show every row plus padding,
+    /// used to size the panel inside its scrolling viewport.
     [[nodiscard]] int getPreferredHeight() const
     {
         const auto rowCount = static_cast<int>(rows.size());
         return verticalPadding * 2 + juce::jmax(0, rowCount) * rowHeight;
     }
 
+    /// Replaces the displayed rows, reusing existing labels and hiding any leftover ones.
+    /// Notifies the preferred-height callback so the parent can re-run its layout.
     void setRows(std::vector<AudioInfoRow> newRows)
     {
         rows = std::move(newRows);
@@ -54,11 +59,14 @@ public:
         repaint();
     }
 
+    /// Registers a callback invoked whenever the preferred height changes,
+    /// so the owner can resize the surrounding viewport.
     void setPreferredHeightChangedCallback(std::function<void()> callback)
     {
         onPreferredHeightChanged = std::move(callback);
     }
 
+    /// Draws the rounded panel background with a subtle outline.
     void paint(juce::Graphics& graphics) override
     {
         const auto bounds = getLocalBounds().toFloat();
@@ -69,6 +77,7 @@ public:
         graphics.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
     }
 
+    /// Positions the field and value labels in two columns, one fixed-height row per entry.
     void resized() override
     {
         auto bounds = getLocalBounds().reduced(horizontalPadding, verticalPadding);
@@ -94,6 +103,8 @@ public:
     }
 
 private:
+    /// Grows the label pools until at least the required number of field and value label pairs exist.
+    /// Labels are only ever added, never destroyed, so row updates stay cheap.
     void ensureLabelCount(const std::size_t requiredCount)
     {
         while (fieldLabels.size() < requiredCount) {
@@ -140,6 +151,8 @@ enum FileMenuItemId {
     reanalyzeMenuItemId,
 };
 
+/// Formats a bounded list of normalization failures for an alert dialog,
+/// truncating with a "...and N more" line so the dialog stays readable.
 static juce::String buildNormalizationFailureMessage(const juce::StringArray& failures)
 {
     if (failures.isEmpty()) {
@@ -160,6 +173,7 @@ static juce::String buildNormalizationFailureMessage(const juce::StringArray& fa
     return message.trimEnd();
 }
 
+/// Returns the platform-appropriate label for the reveal-in-file-manager menu item.
 static juce::String getRevealFileMenuLabel()
 {
 #if JUCE_MAC
@@ -171,6 +185,8 @@ static juce::String getRevealFileMenuLabel()
 #endif
 }
 
+/// Derives a short display label for a record's file type from its extension,
+/// falling back to the decoder's format name and finally to "Unknown".
 static juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 {
     if (const auto extension = record.file.getFileExtension().trimCharactersAtStart("."); extension.isNotEmpty()) {
@@ -190,6 +206,7 @@ static juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
     return "Unknown";
 }
 
+/// Returns the uppercase file extension for display, or "Unknown" when the file has none.
 static juce::String formatLabelForFile(const juce::File& file)
 {
     auto extension = file.getFileExtension().trimCharactersAtStart(".").toUpperCase();
@@ -201,25 +218,33 @@ static juce::String formatLabelForFile(const juce::File& file)
     return extension;
 }
 
+/// Table header that maps ctrl or cmd clicks to a secondary sort request
+/// and renders the secondary sort indicator inside the column name text.
 class SecondarySortTableHeader final : public juce::TableHeaderComponent
 {
 public:
     using SecondarySortCallback = std::function<void(int columnId)>;
 
+    /// Stores the callback invoked when a column is clicked with ctrl or cmd held down.
     explicit SecondarySortTableHeader(SecondarySortCallback secondarySortRequestedCallback) :
         secondarySortRequested(std::move(secondarySortRequestedCallback))
     { }
 
-    void columnClicked(const int columnId, const juce::ModifierKeys& mods) override
+    /// Routes ctrl or cmd clicks to the secondary sort callback,
+    /// while plain clicks fall through to the normal primary sort behaviour.
+    void columnClicked(const int columnId, const juce::ModifierKeys& modifiers) override
     {
-        if ((mods.isCtrlDown() || mods.isCommandDown()) && secondarySortRequested != nullptr) {
+        if ((modifiers.isCtrlDown() || modifiers.isCommandDown()) && secondarySortRequested != nullptr) {
             secondarySortRequested(columnId);
             return;
         }
 
-        juce::TableHeaderComponent::columnClicked(columnId, mods);
+        juce::TableHeaderComponent::columnClicked(columnId, modifiers);
     }
 
+    /// Appends a textual secondary sort marker to the given column's name
+    /// and restores the base name of every other column.
+    /// Passing a column id of zero clears the indicator entirely.
     void setSecondarySortIndicator(const int columnId, const bool isForwards)
     {
         if (baseColumnNames.empty()) {
@@ -243,6 +268,8 @@ public:
     }
 
 private:
+    /// Captures the original column names once,
+    /// so indicator suffixes can be re-applied without accumulating in the names.
     void cacheBaseColumnNames()
     {
         const auto columnCount = getNumColumns(false);
@@ -259,16 +286,20 @@ private:
     bool secondarySortForwards = true;
 };
 
+/// Returns the table's header downcast to SecondarySortTableHeader.
+/// The table must have been created with that header type, which the constructor guarantees.
 static SecondarySortTableHeader& getSecondarySortHeader(juce::TableListBox& table)
 {
     return static_cast<SecondarySortTableHeader&>(table.getHeader());
 }
 
+/// Three-way natural-order string comparison shared by the column comparators.
 static int compareNaturalStrings(const juce::String& left, const juce::String& right)
 {
     return left.compareNatural(right);
 }
 
+/// Three-way comparison of peak values by magnitude, ignoring polarity.
 template<typename Value>
 int comparePeaks(Value left, Value right)
 {
@@ -282,6 +313,7 @@ int comparePeaks(Value left, Value right)
     return leftMagnitude < rightMagnitude ? -1 : 1;
 }
 
+/// Three-way comparison by average bitrate, treating nearly equal bitrates as equal.
 static int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
 {
     const auto leftBitrate = AudioAnalysisService::getAverageBitrateKbps(lhs);
@@ -294,6 +326,7 @@ static int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
     return leftBitrate < rightBitrate ? -1 : 1;
 }
 
+/// Three-way comparison by sample rate.
 static int compareSampleRates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
 {
     if (lhs.sampleRate == rhs.sampleRate) {
@@ -303,6 +336,7 @@ static int compareSampleRates(const AudioAnalysisRecord& lhs, const AudioAnalysi
     return lhs.sampleRate < rhs.sampleRate ? -1 : 1;
 }
 
+/// Three-way loudness comparison that sorts negative-infinity readings below every measurable value.
 static int compareLoudness(const double left, const double right)
 {
     const auto leftIsNegativeInfinity = left <= AudioAnalysisRecord::negativeInfinityLoudness;
@@ -323,6 +357,8 @@ static int compareLoudness(const double left, const double right)
     return left < right ? -1 : 1;
 }
 
+/// Dispatches to the three-way comparator matching the given table column,
+/// defaulting to overall peak for unknown column ids.
 static int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, const int columnId)
 {
     switch (columnId) {
@@ -2163,7 +2199,7 @@ void AudioBatchComponent::handleThumbnailFullyLoaded()
 
 bool AudioBatchComponent::loadURLIntoTransport(const juce::URL& audioURL)
 {
-    // Unload the previous file source and delete it
+    // Unload the previous file source and delete it.
     transportSource.stop();
     transportSource.setSource(nullptr);
     currentAudioFileSource.reset();
@@ -2251,7 +2287,7 @@ void AudioBatchComponent::openDialogWindow(
     const juce::String& title
 )
 {
-    // create window the first time it is opened
+    // Create the window the first time it is opened.
     if (window == nullptr) {
         juce::DialogWindow::LaunchOptions launchOptions;
         launchOptions.dialogTitle = title;
@@ -2441,7 +2477,7 @@ void AudioBatchComponent::processSelectedRecords()
     PluginProcessingOptions options;
     options.plugins.reserve(enabledPlugins.size());
     for (const auto& enabledPlugin : enabledPlugins) {
-        options.plugins.push_back(enabledPlugin.ref);
+        options.plugins.push_back(enabledPlugin.descriptorRef);
     }
     options.normalizeBeforePlugin = normalizeBeforePluginToggle.getToggleState();
 

@@ -16,13 +16,17 @@ class PluginChain : public juce::ChangeListener, public juce::ChangeBroadcaster,
 public:
     using ChainChangedCallback = std::function<void()>;
 
-    /// Description plus descriptor ref for one enabled slot, in chain order.
+    /// Description plus descriptor reference for one enabled slot, in chain order.
     struct EnabledChainPlugin {
         juce::PluginDescription description;
-        PluginDescriptorRef ref;
+        PluginDescriptorRef descriptorRef;
     };
 
+    /// Registers the default plugin formats and restores the known-plugins list
+    /// and the persisted chain from application settings.
     explicit PluginChain(juce::ApplicationProperties& applicationProperties);
+
+    /// Closes all editor, chain-editor, and scan windows and destroys their plugin instances.
     ~PluginChain() override;
 
     /// Returns the number of slots in the chain, including disabled ones.
@@ -90,7 +94,12 @@ public:
     /// Opens the plugin scan dialog.
     void showScanWindow();
 
+    /// Persists the known-plugins list whenever the plugin scanner updates it.
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
+
+    /// Polls for editor windows the user has closed,
+    /// capturing their plugin state and releasing their instances.
+    /// Stops itself once no editor windows remain open.
     void timerCallback() override;
 
 private:
@@ -113,10 +122,22 @@ private:
     /// Returns true when any entry still has an editor window open.
     [[nodiscard]] bool anyEditorOpen() const noexcept;
 
+    /// Restores the chain from application settings.
+    /// When no chain is stored, migrates a legacy single-plugin selection into a one-slot chain
+    /// and removes the legacy keys.
     void loadPersistedChain();
+
+    /// Writes the chain to application settings,
+    /// capturing the latest state from any open editors first.
     void persistChain();
+
+    /// Writes the known-plugins list to application settings.
     void persistKnownPluginList() const;
+
+    /// Restores the known-plugins list from application settings.
     void loadKnownPluginList();
+
+    /// Broadcasts a change message and invokes the chain-changed callback, if one is set.
     void notifyChainChanged();
 
     juce::ApplicationProperties& appProperties;

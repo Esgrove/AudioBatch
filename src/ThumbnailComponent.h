@@ -19,6 +19,7 @@ public:
     /// Stops timer activity and detaches listeners.
     ~ThumbnailComponent() override;
 
+    /// Accepts every file drag, validation of the dropped files happens in the owning component.
     bool isInterestedInFileDrag(const juce::StringArray& /*files*/) override;
 
     /// Returns the most recently dropped file as a URL for convenience.
@@ -27,14 +28,34 @@ public:
     /// Returns the full list of files dropped onto the waveform component.
     juce::StringArray getLastDroppedFiles() const;
 
+    /// Reacts to thumbnail load progress by repainting,
+    /// and fires the fully-loaded callback exactly once per loaded source.
     void changeListenerCallback(ChangeBroadcaster* source) override;
+
+    /// Records the dropped files and notifies change listeners so the owner can load them.
     void filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/) override;
+
+    /// Restarts playback from the beginning of the file.
     void mouseDoubleClick(const juce::MouseEvent& event) override;
+
+    /// Starts scrubbing by forwarding the press to the drag handler.
     void mouseDown(const juce::MouseEvent& event) override;
+
+    /// Scrubs the transport to the time under the cursor while the mouse is held down.
     void mouseDrag(const juce::MouseEvent& event) override;
+
+    /// Resumes playback from the scrubbed position when the mouse is released.
     void mouseUp(const juce::MouseEvent& event) override;
+
+    /// Handles wheel gestures over the waveform.
+    /// Plain vertical wheel zooms, Ctrl/Cmd plus wheel adjusts gain in dB steps,
+    /// and horizontal wheel scrolls the visible range.
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
+
+    /// Draws the waveform for the visible range, or a placeholder text when no file is loaded.
     void paint(juce::Graphics& graphics) override;
+
+    /// No layout work is needed, the position marker is placed by updateCursorPosition instead.
     void resized() override;
 
     /// Restores a previously cached waveform without re-reading the audio file.
@@ -65,10 +86,22 @@ public:
     void setDisplayGain(float linearGain);
 
 private:
+    /// Reports whether user interaction may reposition the transport.
+    /// Repositioning is blocked while the view is following an actively playing transport.
     bool canMoveTransport() const noexcept;
-    double xToTime(float x) const;
+
+    /// Converts a horizontal pixel position into a time within the visible range.
+    double xToTime(float xPosition) const;
+
+    /// Converts a time into a horizontal pixel position within the visible range.
     float timeToX(double time) const;
+
+    /// Timer tick that keeps the playback cursor in sync,
+    /// scrolling the visible range along with the transport when follow mode is active.
     void timerCallback() override;
+
+    /// Moves the playback position marker to the current transport time
+    /// and shows it only during playback or while the mouse is held down.
     void updateCursorPosition();
 
     juce::AudioThumbnail thumbnail;

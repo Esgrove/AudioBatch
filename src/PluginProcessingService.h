@@ -35,5 +35,8 @@ public:
     );
 
 private:
+    /// Returns a format manager private to the calling thread, with the basic formats registered.
+    /// Thread-local storage lets worker threads read files concurrently
+    /// without sharing a manager or locking.
     static juce::AudioFormatManager& getThreadLocalFormatManager();
 };

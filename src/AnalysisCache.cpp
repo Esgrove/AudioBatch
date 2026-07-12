@@ -8,12 +8,14 @@
 /// Helpers for marshalling SQLite values into JUCE types.
 namespace audiobatch::cache
 {
+/// Reads a text column as a juce::String, mapping SQL NULL to an empty string.
 static juce::String columnText(sqlite3_stmt* statement, const int columnIndex)
 {
     const auto* text = sqlite3_column_text(statement, columnIndex);
     return text != nullptr ? juce::String::fromUTF8(reinterpret_cast<const char*>(text)) : juce::String();
 }
 
+/// Copies a blob column into a juce::MemoryBlock, returning an empty block for NULL or empty data.
 static juce::MemoryBlock columnBlob(sqlite3_stmt* statement, const int columnIndex)
 {
     juce::MemoryBlock data;
@@ -29,12 +31,16 @@ static juce::MemoryBlock columnBlob(sqlite3_stmt* statement, const int columnInd
     return data;
 }
 
+/// Binds a juce::String as UTF-8 text.
+/// SQLITE_TRANSIENT makes SQLite copy the buffer, so the string does not need to outlive the statement.
 static void bindText(sqlite3_stmt* statement, const int index, const juce::String& value)
 {
     const auto* utf8 = value.toRawUTF8();
     sqlite3_bind_text(statement, index, utf8, -1, SQLITE_TRANSIENT);
 }
 
+/// Binds a memory block as a blob.
+/// SQLITE_TRANSIENT makes SQLite copy the data, so the block does not need to outlive the statement.
 static void bindBlob(sqlite3_stmt* statement, const int index, const juce::MemoryBlock& data)
 {
     sqlite3_bind_blob(statement, index, data.getData(), static_cast<int>(data.getSize()), SQLITE_TRANSIENT);
@@ -45,9 +51,9 @@ using namespace audiobatch::cache;
 
 AnalysisCache::AnalysisCache()
 {
-    const auto appDataDir
+    const auto appDataDirectory
         = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile(version::APP_NAME);
-    databaseFile = appDataDir.getChildFile("analysis.db");
+    databaseFile = appDataDirectory.getChildFile("analysis.db");
 }
 
 AnalysisCache::~AnalysisCache()

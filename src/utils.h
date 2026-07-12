@@ -31,42 +31,49 @@ namespace ansi
 // Stream manipulators for easy ANSI color usage with stringstreams.
 // Example usage: std::cout << ansi::red << "example" << ansi::reset << std::endl;
 
+/// Resets the stream's terminal colors back to the default.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& reset(std::basic_ostream<CharT, Traits>& stream)
 {
     return stream << ANSI_RESET;
 }
 
+/// Switches the stream's terminal foreground color to black.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& black(std::basic_ostream<CharT, Traits>& stream)
 {
     return stream << ANSI_BLACK;
 }
 
+/// Switches the stream's terminal foreground color to red.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& red(std::basic_ostream<CharT, Traits>& stream)
 {
     return stream << ANSI_RED;
 }
 
+/// Switches the stream's terminal foreground color to yellow.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& yellow(std::basic_ostream<CharT, Traits>& stream)
 {
     return stream << ANSI_YELLOW;
 }
 
+/// Switches the stream's terminal foreground color to cyan.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& cyan(std::basic_ostream<CharT, Traits>& stream)
 {
     return stream << ANSI_CYAN;
 }
 
+/// Switches the stream's terminal foreground color to magenta.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& magenta(std::basic_ostream<CharT, Traits>& stream)
 {
     return stream << ANSI_MAGENTA;
 }
 
+/// Switches the stream's terminal foreground color to green.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& green(std::basic_ostream<CharT, Traits>& stream)
 {
@@ -89,14 +96,17 @@ bool moveToTrash(const juce::File& file);
 /// Returns true if the file did not exist or was deleted successfully.
 bool deleteFile(const juce::File& file);
 
-/// Return full system information list
+/// Collects build and runtime environment details for logs and diagnostics.
 juce::StringArray systemInfo();
 
 /// Return full system information formatted as a string
 juce::String formattedSystemInfo();
 
+/// Builds the multi-line About dialog message with application, build, and system information.
 juce::String aboutMessage(const juce::String& appName);
 
+/// Renders a JSON var as plain text for log output,
+/// stripping quotes and the outer braces from the serialized form.
 inline juce::String formatJson(const juce::var& object)
 {
     // clang-format off
@@ -148,21 +158,25 @@ inline void logDebug([[maybe_unused]] const juce::String& message)
 #endif
 }
 
+/// Writes an informational message to the application log.
 inline void logInfo(const juce::String& message)
 {
     writeToLog("[INFO]: " + message);
 }
 
+/// Writes a warning message to the application log.
 inline void logWarn(const juce::String& message)
 {
     writeToLog("[WARN]: " + message, Level::warn);
 }
 
+/// Writes an error message to the application log, and to stderr in release builds.
 inline void logError(const juce::String& message)
 {
     writeToLog("[ERROR]: " + message, Level::error);
 }
 
+/// Logs a JSON var as formatted plain text, at debug level when requested.
 inline void logJson(const juce::var& object, const bool debug = false)
 {
     if (debug) {
@@ -172,6 +186,8 @@ inline void logJson(const juce::var& object, const bool debug = false)
     }
 }
 
+/// Logs the collected system information as an indented block.
+/// Detail lines are written without the usual timestamp prefix so the block stays readable.
 inline void logSystemInfo()
 {
     // Get info first to avoid API call debug / error messages in the middle of the log message

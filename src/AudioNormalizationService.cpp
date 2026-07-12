@@ -12,6 +12,7 @@
 /// Helpers for format lookup, metadata passthrough, and chunked normalization.
 namespace audiobatch::normalization
 {
+/// Logs the failure and builds a failure result for the given file.
 static AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)
 {
     utils::logError("Normalization failed for " + file.getFullPathName().quoted() + ": " + message);
@@ -33,11 +34,13 @@ struct AudioNormalizationFormatSupport {
     juce::String detail;
 };
 
+/// Returns the absolute magnitude of a signed peak sample value.
 static float peakMagnitude(const float peak)
 {
     return std::abs(peak);
 }
 
+/// Copies JUCE reader metadata into the map type expected by juce::AudioFormatWriterOptions.
 static std::unordered_map<juce::String, juce::String> copyMetadata(const juce::StringPairArray& metadata)
 {
     std::unordered_map<juce::String, juce::String> copiedMetadata;
@@ -51,6 +54,7 @@ static std::unordered_map<juce::String, juce::String> copyMetadata(const juce::S
     return copiedMetadata;
 }
 
+/// Returns the file's extension without the leading dot.
 static juce::String normalizedExtension(const juce::File& file)
 {
     auto extension = file.getFileExtension();
@@ -62,6 +66,7 @@ static juce::String normalizedExtension(const juce::File& file)
     return extension;
 }
 
+/// Returns the extension text trimmed and without the leading dot.
 static juce::String normalizedExtension(const juce::String& extension)
 {
     auto value = extension.trim();
@@ -73,16 +78,19 @@ static juce::String normalizedExtension(const juce::String& extension)
     return value;
 }
 
+/// Returns true when the extension identifies an MP3 file, ignoring case.
 static bool isMp3Extension(const juce::String& extension)
 {
     return normalizedExtension(extension).equalsIgnoreCase("mp3");
 }
 
+/// Returns true when the file's extension identifies an MP3 source.
 static bool isMp3SourceFile(const juce::File& file)
 {
     return isMp3Extension(normalizedExtension(file));
 }
 
+/// Finds the AIFF format used for writing output, or nullptr when it is unavailable in this build.
 static juce::AudioFormat* getAiffWriterFormat(const AudioNormalizationRuntimeState& runtimeState)
 {
     if (auto* format = runtimeState.readFormatManager.findFormatForFileExtension("aif"); format != nullptr) {
@@ -92,15 +100,19 @@ static juce::AudioFormat* getAiffWriterFormat(const AudioNormalizationRuntimeSta
     return runtimeState.readFormatManager.findFormatForFileExtension("aiff");
 }
 
+/// Resolves the output path for a normalized file, which is always a sibling `.aif` file.
+/// If the source is already named `<name>.aif` it will resolve to the same path and be normalized in place.
+/// Any other extension (including `.aiff` / `.aifc`) is renamed to `.aif`,
+/// and the original is trashed once the write succeeds.
 static juce::File getNormalizationOutputFile(const juce::File& sourceFile)
 {
-    // Output is always a sibling `.aif` file.
-    // If the source is already named `<name>.aif` it will resolve to the same path and be normalized in place.
-    // Any other extension (including `.aiff` / `.aifc`) is renamed to `.aif`,
-    // and the original is trashed once the write succeeds.
     return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + normalizedAiffOutputExtension);
 }
 
+/// Moves the temporary output into its final location and disposes of the original file.
+/// In-place AIFF output simply replaces the source.
+/// For other formats the original is moved to the system trash after the new file is written,
+/// and the new file is deleted again if trashing fails so no duplicate is left behind.
 static bool finalizeNormalizationOutput(
     const juce::TemporaryFile& temporaryFile,
     const juce::File& sourceFile,
@@ -131,12 +143,15 @@ static bool finalizeNormalizationOutput(
     return true;
 }
 
+/// Returns the one-line summary of normalization output behavior used in the support summary.
 static juce::String getNormalizationStatusLine()
 {
     return "Normalization output: same-name AIF files. "
            "Originals with a different extension are moved to the system trash.";
 }
 
+/// Builds minimal writer options from the format's advertised capabilities.
+/// Returns default constructed options when the format advertises no usable configuration.
 static juce::AudioFormatWriterOptions buildProbeWriterOptions(juce::AudioFormat& format)
 {
     const auto sampleRates = format.getPossibleSampleRates();
@@ -158,6 +173,8 @@ static juce::AudioFormatWriterOptions buildProbeWriterOptions(juce::AudioFormat&
         .withBitsPerSample(bitDepths[0]);
 }
 
+/// Checks whether the format can actually create a writer by probing with an in-memory stream.
+/// Some formats are read-only in JUCE even though they are registered with the format manager.
 static bool canCreateProbeWriter(juce::AudioFormat& format)
 {
     const auto options = buildProbeWriterOptions(format);
@@ -171,6 +188,8 @@ static bool canCreateProbeWriter(juce::AudioFormat& format)
     return writer != nullptr;
 }
 
+/// Picks a bit depth the writer format supports, preferring the requested depth.
+/// Falls back to the format's highest supported depth so no precision is lost.
 static int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredBitsPerSample)
 {
     const auto bitDepths = format.getPossibleBitDepths();
@@ -192,6 +211,7 @@ static int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredB
     return resolvedBitsPerSample;
 }
 
+/// Picks the supported writer sample rate closest to the preferred source rate.
 static double resolveWriterSampleRate(juce::AudioFormat& format, const double preferredSampleRate)
 {
     const auto sampleRates = format.getPossibleSampleRates();
@@ -215,6 +235,8 @@ static double resolveWriterSampleRate(juce::AudioFormat& format, const double pr
     return resolvedSampleRate;
 }
 
+/// Chooses the output bit depth for the normalized file.
+/// Prefers the analyzed source depth, then the MP3 default, then the reader's reported depth.
 static int resolvePreferredOutputBitDepth(
     const AudioAnalysisRecord& sourceRecord,
     const juce::AudioFormatReader& reader,
@@ -232,6 +254,9 @@ static int resolvePreferredOutputBitDepth(
     return static_cast<int>(reader.bitsPerSample);
 }
 
+/// Returns true when a read failure can be tolerated during normalization.
+/// Only end-of-stream failures in MP3 sources are acceptable,
+/// since their reported length often overshoots the decodable audio.
 static bool canAcceptReadFailureForNormalization(
     const juce::AudioFormatReader& reader,
     const juce::File& sourceFile,
@@ -246,6 +271,8 @@ static bool canAcceptReadFailureForNormalization(
     return samplePosition + samplesThisBlock >= reader.lengthInSamples;
 }
 
+/// Returns the per-thread runtime state with a format manager that has the basic formats registered.
+/// Thread-local state avoids locking when normalize jobs run on multiple worker threads.
 static AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
 {
     thread_local auto runtimeState = [] {
@@ -257,6 +284,7 @@ static AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
     return *runtimeState;
 }
 
+/// Describes what normalization does with files of the given format for the support summary.
 static juce::String getNormalizableFormatDetail(const juce::StringArray& extensions)
 {
     const auto primaryExtension = extensions.isEmpty() ? juce::String {} : normalizedExtension(extensions[0]);
@@ -273,6 +301,8 @@ static juce::String getNormalizableFormatDetail(const juce::StringArray& extensi
     return "Converted to a same-name AIFF file. The original is moved to the system trash.";
 }
 
+/// Gathers per-format normalization support information for the support summary.
+/// Normalizable formats sort before read-only ones, then alphabetically by name.
 static std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormalizationRuntimeState& runtimeState)
 {
     std::vector<AudioNormalizationFormatSupport> support;
@@ -315,6 +345,7 @@ static std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNo
     return support;
 }
 
+/// Joins the format's extensions into a lowercase, de-duplicated display string.
 static juce::String formatExtensionsToText(const juce::StringArray& extensions)
 {
     juce::StringArray normalizedExtensions;
@@ -326,6 +357,9 @@ static juce::String formatExtensionsToText(const juce::StringArray& extensions)
     return normalizedExtensions.joinIntoString(", ");
 }
 
+/// Creates the audio writer for the output stream.
+/// Source metadata is currently written separately through TagLib after the audio is rendered,
+/// so the reader metadata passed here is unused.
 static std::unique_ptr<juce::AudioFormatWriter> createWriterPreservingMetadata(
     juce::AudioFormat& format,
     std::unique_ptr<juce::OutputStream>& outputStream,
@@ -337,6 +371,8 @@ static std::unique_ptr<juce::AudioFormatWriter> createWriterPreservingMetadata(
     return format.createWriterFor(outputStream, writerOptions);
 }
 
+/// Copies tags and embedded pictures from the source file to the freshly written output.
+/// A source that yields no metadata is not an error, but a failed write to the destination is.
 static bool preserveOutputMetadata(const juce::File& sourceFile, const juce::File& destinationFile)
 {
     MetadataService::Metadata metadata;
@@ -360,6 +396,8 @@ static bool preserveOutputMetadata(const juce::File& sourceFile, const juce::Fil
     return true;
 }
 
+/// Verifies that the temporary output file exists and decodes to a non-empty audio stream.
+/// Returns an empty string on success, or a user-facing error message.
 static juce::String validateTemporaryNormalizedOutput(
     juce::AudioFormatManager& formatManager,
     const juce::File& temporaryOutputFile

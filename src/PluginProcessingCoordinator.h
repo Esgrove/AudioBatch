@@ -58,11 +58,17 @@ public:
     );
 
 private:
+    /// Invokes the completion callback, unless the run has been superseded or cancelled.
     void publishCompletion(int totalFiles, int runId) const;
+
+    /// Invokes the result callback for one processed file,
+    /// unless the run has been superseded or cancelled.
     void publishResult(const PluginProcessingResult& result, int runId) const;
 
     /// Returns the index of a free chain, or -1 when none are available.
     int acquireChain();
+
+    /// Returns a chain to the free pool and wakes one worker waiting for a chain.
     void releaseChain(int chainIndex);
 
     juce::ThreadPool threadPool;
@@ -72,7 +78,8 @@ private:
     StartErrorCallback startErrorCallback;
 
     juce::CriticalSection instanceLock;
-    juce::WaitableEvent instanceAvailable {false};  ///< Auto-reset: signaled on releaseChain().
+    /// Auto-reset event, signaled on releaseChain().
+    juce::WaitableEvent instanceAvailable {false};
     std::vector<PluginChainInstances> ownedChains;
     std::vector<int> freeChainIndices;
 

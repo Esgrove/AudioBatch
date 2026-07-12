@@ -37,7 +37,13 @@ public:
     int start(const std::vector<AudioAnalysisRecord>& records);
 
 private:
+    /// Invokes the completion callback when the given run id is still current.
+    /// The callback is copied under the lock and invoked without it,
+    /// so the callback may safely call back into the coordinator.
     void publishCompletion(int totalFiles, int runId) const;
+
+    /// Invokes the result callback when the given run id is still current.
+    /// Runs on the worker thread, so the callback must marshal to the message thread itself if needed.
     void publishResult(const AudioNormalizationResult& result, int runId) const;
 
     juce::ThreadPool threadPool;

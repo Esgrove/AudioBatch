@@ -6,20 +6,34 @@
 namespace juce
 {
 /// Application palette constants shared by the custom look-and-feel.
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::blue {118, 168, 218};             // #76A8DA
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::green {105, 183, 134};            // #69B786
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyDark {18, 19, 21};            // #121315
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyLight {220, 224, 229};        // #DCE0E5
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyMedium {48, 52, 60};          // #30343C
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyMediumDark {32, 35, 41};      // #202329
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyMiddle {104, 111, 121};       // #686F79
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyMiddleLight {170, 176, 185};  // #AAB0B9
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greySemiDark {26, 28, 32};        // #1A1C20
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greySemiLight {128, 135, 145};    // #808791
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greySuperLight {243, 245, 247};   // #F3F5F7
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::orange {221, 139, 101};           // #DD8B65
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::red {214, 101, 101};              // #D66565
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::yellow {206, 175, 108};           // #CEAF6C
+// #76A8DA
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::blue {118, 168, 218};
+// #69B786
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::green {105, 183, 134};
+// #121315
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyDark {18, 19, 21};
+// #DCE0E5
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyLight {220, 224, 229};
+// #30343C
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyMedium {48, 52, 60};
+// #202329
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyMediumDark {32, 35, 41};
+// #686F79
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyMiddle {104, 111, 121};
+// #AAB0B9
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyMiddleLight {170, 176, 185};
+// #1A1C20
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::greySemiDark {26, 28, 32};
+// #808791
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::greySemiLight {128, 135, 145};
+// #F3F5F7
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::greySuperLight {243, 245, 247};
+// #DD8B65
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::orange {221, 139, 101};
+// #D66565
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::red {214, 101, 101};
+// #CEAF6C
+[[maybe_unused]] const juce::Colour CustomLookAndFeel::yellow {206, 175, 108};
 
 const juce::Font CustomLookAndFeel::textFont {juce::FontOptions().withTypeface(
     juce::Typeface::createSystemTypefaceFor(BinaryData::RobotoRegular_ttf, BinaryData::RobotoRegular_ttfSize)
@@ -29,9 +43,14 @@ const juce::Font CustomLookAndFeel::monoFont {juce::FontOptions().withTypeface(
     juce::Typeface::createSystemTypefaceFor(BinaryData::RobotoMonoRegular_ttf, BinaryData::RobotoMonoRegular_ttfSize)
 )};
 
+/// Title bar button (close, minimise, maximise) drawn with the project palette.
+/// Created by createDocumentWindowButton, ownership passes to the DocumentWindow.
 class CustomDocumentWindowButton : public Button
 {
 public:
+    /// Stores the glyph paths and colours for one title bar button.
+    /// The toggled shape is drawn when the button is in its toggled state,
+    /// which the maximise button uses for the fullscreen glyph.
     CustomDocumentWindowButton(
         const String& name,
         const Colour buttonColour,
@@ -46,6 +65,8 @@ public:
         useDarkMode(darkMode)
     { }
 
+    /// Fills the button background for the current hover and pressed state and draws the glyph path.
+    /// The close button highlights in orange, the others use a neutral grey.
     void paintButton(
         Graphics& graphics,
         const bool shouldDrawButtonAsHighlighted,
@@ -178,7 +199,7 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     const int width,
     const int height,
     const int titleSpaceX,
-    const int titleSpaceW,
+    const int titleSpaceWidth,
     const Image* icon,
     const bool drawTitleTextOnLeft
 )
@@ -198,30 +219,32 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     const auto font = textFont.withHeight(static_cast<float>(height) * 0.54f);
     graphics.setFont(font);
 
-    const auto textW = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(font, window.getName())));
-    auto iconW = 0;
-    auto iconH = 0;
+    const auto textWidth = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(font, window.getName())));
+    auto iconWidth = 0;
+    auto iconHeight = 0;
 
     if (icon != nullptr) {
-        iconH = juce::roundToIntAccurate(font.getHeight());
-        iconW = icon->getWidth() / icon->getHeight() * iconH + 4;
+        iconHeight = juce::roundToIntAccurate(font.getHeight());
+        iconWidth = icon->getWidth() / icon->getHeight() * iconHeight + 4;
     }
 
-    const auto contentW = jmin(titleSpaceW, textW + iconW);
-    auto textX = drawTitleTextOnLeft ? titleSpaceX : jmax(titleSpaceX, (width - contentW) / 2);
+    const auto contentWidth = jmin(titleSpaceWidth, textWidth + iconWidth);
+    auto textX = drawTitleTextOnLeft ? titleSpaceX : jmax(titleSpaceX, (width - contentWidth) / 2);
 
-    if (textX + contentW > titleSpaceX + titleSpaceW) {
-        textX = titleSpaceX + titleSpaceW - contentW;
+    if (textX + contentWidth > titleSpaceX + titleSpaceWidth) {
+        textX = titleSpaceX + titleSpaceWidth - contentWidth;
     }
 
     if (icon != nullptr) {
         graphics.setOpacity(isActive ? 1.0f : 0.6f);
-        graphics.drawImageWithin(*icon, textX, (height - iconH) / 2, iconW, iconH, RectanglePlacement::centred, false);
-        textX += iconW;
+        graphics.drawImageWithin(
+            *icon, textX, (height - iconHeight) / 2, iconWidth, iconHeight, RectanglePlacement::centred, false
+        );
+        textX += iconWidth;
     }
 
     textX += 4;
-    const auto availableTextWidth = jmax(0, titleSpaceX + titleSpaceW - textX);
+    const auto availableTextWidth = jmax(0, titleSpaceX + titleSpaceWidth - textX);
     graphics.setColour(text);
     graphics.drawText(window.getName(), textX, 0, availableTextWidth, height, Justification::centredLeft, true);
 }
@@ -283,15 +306,15 @@ void CustomLookAndFeel::drawPopupMenuItem(
         }
 
         if (hasSubMenu) {
-            const auto arrowH = 0.6f * getPopupMenuFont().getAscent();
+            const auto arrowHeight = 0.6f * getPopupMenuFont().getAscent();
 
-            const auto arrowX = static_cast<float>(itemArea.removeFromRight(static_cast<int>(arrowH)).getX());
-            const auto halfH = static_cast<float>(itemArea.getCentreY());
+            const auto arrowX = static_cast<float>(itemArea.removeFromRight(static_cast<int>(arrowHeight)).getX());
+            const auto centreY = static_cast<float>(itemArea.getCentreY());
 
             Path path;
-            path.startNewSubPath(arrowX, halfH - arrowH * 0.5f);
-            path.lineTo(arrowX + arrowH * 0.6f, halfH);
-            path.lineTo(arrowX, halfH + arrowH * 0.5f);
+            path.startNewSubPath(arrowX, centreY - arrowHeight * 0.5f);
+            path.lineTo(arrowX + arrowHeight * 0.6f, centreY);
+            path.lineTo(arrowX, centreY + arrowHeight * 0.5f);
 
             graphics.strokePath(path, PathStrokeType(2.0f));
         }

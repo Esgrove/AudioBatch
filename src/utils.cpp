@@ -49,7 +49,6 @@ bool deleteFile(const juce::File& file)
     return true;
 }
 
-/// Collects build and runtime environment details for logs and diagnostics.
 juce::StringArray systemInfo()
 {
     const auto compile_time = juce::Time::getCompilationDate();
@@ -86,21 +85,20 @@ juce::String formattedSystemInfo()
     return info;
 }
 
-/// Builds the multi-line About dialog message with application, build, and system information.
 juce::String aboutMessage(const juce::String& appName)
 {
-    juce::String aboutMessage;
-    aboutMessage << appName << " " << version::VERSION_NUMBER << juce::newLine << juce::SystemStats::getJUCEVersion()
-                 << juce::newLine << juce::newLine << "Batch audio analysis, normalization, and processing."
-                 << juce::newLine << juce::newLine << "Date: " << version::DATE << juce::newLine
-                 << "Commit: " << version::COMMIT << juce::newLine << "Branch: " << version::BRANCH << juce::newLine
-                 << juce::newLine << "OS: " << juce::SystemStats::getOperatingSystemName()
-                 << (juce::SystemStats::isOperatingSystem64Bit() ? " (64 bit)" : " (32 bit)") << juce::newLine
-                 << "Device: " << juce::SystemStats::getDeviceDescription() << juce::newLine
-                 << "CPU: " << juce::SystemStats::getCpuModel() << " ("
-                 << juce::String(juce::SystemStats::getNumPhysicalCpus()) << "C/"
-                 << juce::String(juce::SystemStats::getNumCpus()) << "T)" << juce::newLine
-                 << "Memory: " << juce::String(juce::SystemStats::getMemorySizeInMegabytes()) << " MB";
-    return aboutMessage;
+    juce::String message;
+    message << appName << " " << version::VERSION_NUMBER << juce::newLine << juce::SystemStats::getJUCEVersion()
+            << juce::newLine << juce::newLine << "Batch audio analysis, normalization, and processing." << juce::newLine
+            << juce::newLine << "Date: " << version::DATE << juce::newLine << "Commit: " << version::COMMIT
+            << juce::newLine << "Branch: " << version::BRANCH << juce::newLine << juce::newLine
+            << "OS: " << juce::SystemStats::getOperatingSystemName()
+            << (juce::SystemStats::isOperatingSystem64Bit() ? " (64 bit)" : " (32 bit)") << juce::newLine
+            << "Device: " << juce::SystemStats::getDeviceDescription() << juce::newLine
+            << "CPU: " << juce::SystemStats::getCpuModel() << " ("
+            << juce::String(juce::SystemStats::getNumPhysicalCpus()) << "C/"
+            << juce::String(juce::SystemStats::getNumCpus()) << "T)" << juce::newLine
+            << "Memory: " << juce::String(juce::SystemStats::getMemorySizeInMegabytes()) << " MB";
+    return message;
 }
 }  // namespace utils

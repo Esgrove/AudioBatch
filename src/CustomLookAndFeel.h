@@ -16,27 +16,33 @@ public:
         darkTheme = darkModeEnabled;
     }
 
-    // override title bar button colours
+    /// Creates the close, minimise, and maximise buttons with the project palette
+    /// instead of the stock JUCE title bar button colours.
+    /// The caller takes ownership of the returned button.
     juce::Button* createDocumentWindowButton(int buttonType) override;
 
-    // override title bar colour and font
+    /// Draws the custom title bar with the project background colour and text font.
+    /// Only used on Windows, where the app opts out of the native title bar.
     void drawDocumentWindowTitleBar(
         DocumentWindow& window,
         Graphics& graphics,
         int width,
         int height,
         int titleSpaceX,
-        int titleSpaceW,
+        int titleSpaceWidth,
         const Image* icon,
         bool drawTitleTextOnLeft
     ) override;
 
-    // overridden to set tooltip font
+    /// Draws tooltips with the project font and rounded background.
     void drawTooltip(Graphics& graphics, const String& text, int width, int height) override;
 
+    /// Lays out tooltip text with balanced line lengths and a capped width.
+    /// Shared by drawTooltip so the drawn text and its measured size always agree.
     static TextLayout layoutTooltipText(const String& text, Colour colour) noexcept;
 
-    // this whole thing has to be overridden to set the popup menu font :(
+    /// Draws popup menu items with the project monospaced font.
+    /// JUCE offers no smaller hook for the menu item font, so the whole item painting is replicated here.
     void drawPopupMenuItem(
         Graphics& graphics,
         const Rectangle<int>& area,
@@ -51,8 +57,10 @@ public:
         const Colour* textColourToUse
     ) override;
 
+    /// Returns the button label font, scaled down with the button height and capped at 16 points.
     Font getTextButtonFont(TextButton& button, int buttonHeight) override;
 
+    /// Uses the monospaced font for combo box text so numeric choices align.
     Font getComboBoxFont(ComboBox& /*comboBox*/) override
     {
         return get_mono_font();
@@ -86,15 +94,24 @@ public:
 
 private:
     const ColourScheme customColourScheme {
-        0xff121315,  // windowBackground
-        0xff1A1C20,  // widgetBackground
-        0xff202329,  // menuBackground
-        0xff30343C,  // outline
-        0xffDCE0E5,  // defaultText
-        0xff686F79,  // defaultFill
-        0xffF3F5F7,  // highlightedText
-        0xff76A8DA,  // highlightedFill
-        0xffDCE0E5,  // menuText
+        // windowBackground
+        0xff121315,
+        // widgetBackground
+        0xff1A1C20,
+        // menuBackground
+        0xff202329,
+        // outline
+        0xff30343C,
+        // defaultText
+        0xffDCE0E5,
+        // defaultFill
+        0xff686F79,
+        // highlightedText
+        0xffF3F5F7,
+        // highlightedFill
+        0xff76A8DA,
+        // menuText
+        0xffDCE0E5,
     };
 
     bool darkTheme;

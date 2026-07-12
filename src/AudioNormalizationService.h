@@ -46,5 +46,7 @@ public:
     static AudioNormalizationResult normalizeFile(const AudioAnalysisRecord& record);
 
 private:
+    /// Returns a per-thread format manager used for reading source files.
+    /// Thread-local state avoids locking when normalize jobs run on multiple worker threads.
     static juce::AudioFormatManager& getThreadLocalFormatManager();
 };
