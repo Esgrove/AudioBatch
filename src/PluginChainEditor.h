@@ -73,8 +73,9 @@ private:
         juce::ToggleButton enabledToggle;
         juce::Label nameLabel;
         juce::TextButton editButton {"Edit"};
-        juce::TextButton upButton {"^"};
-        juce::TextButton downButton {"v"};
+        /// Reorder buttons, labelled with Unicode arrows in the constructor.
+        juce::TextButton upButton;
+        juce::TextButton downButton;
         juce::TextButton removeButton {"X"};
 
         bool dragging = false;
@@ -118,6 +119,10 @@ private:
     juce::Viewport viewport;
     juce::Component rowContainer;
     std::vector<std::unique_ptr<SlotRow>> rows;
+
+    /// Shows tooltips for the controls in this window.
+    /// The main window's tooltip client cannot serve a separate dialog window.
+    juce::TooltipWindow tooltipWindow {this, 700};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginChainEditor)
 };

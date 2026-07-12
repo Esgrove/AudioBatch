@@ -105,6 +105,8 @@ public:
 
     /// Polls for editor windows the user has closed,
     /// capturing their plugin state and releasing their instances.
+    /// A window hidden by its close button counts as closed,
+    /// because the dialog hides itself instead of deleting itself.
     /// Stops itself once no editor windows remain open.
     void timerCallback() override;
 
@@ -118,6 +120,16 @@ private:
         juce::Component::SafePointer<juce::DialogWindow> editorWindow;
         bool wasEditorOpen = false;
     };
+
+    /// Returns true when the entry's editor window has been closed by the user.
+    /// The dialog window hides itself when its close button is pressed instead of deleting itself,
+    /// so a hidden window also counts as closed.
+    [[nodiscard]] static bool isEditorWindowClosed(const ChainEntry& entry);
+
+    /// Captures plugin state from a closed editor into its entry,
+    /// then destroys the window and the instance.
+    /// Returns true when plugin state was captured.
+    bool reapClosedEditor(ChainEntry& entry);
 
     /// Captures live plugin state from every open editor into its entry without closing anything.
     void captureOpenEditorStates();

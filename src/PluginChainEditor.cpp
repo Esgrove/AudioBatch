@@ -31,7 +31,8 @@ PluginChainEditor::SlotRow::SlotRow(PluginChainEditor& ownerEditor, const int sl
     addAndMakeVisible(enabledToggle);
 
     nameLabel.setText(
-        description.name + " (" + description.pluginFormatName + ") - " + description.manufacturerName,
+        juce::String(index + 1) + ". " + description.name + " (" + description.pluginFormatName + ") - "
+            + description.manufacturerName,
         juce::dontSendNotification
     );
     nameLabel.setJustificationType(juce::Justification::centredLeft);
@@ -46,10 +47,12 @@ PluginChainEditor::SlotRow::SlotRow(PluginChainEditor& ownerEditor, const int sl
     editButton.onClick = [this] { editor.pluginChain.openEditorForSlot(index); };
     addAndMakeVisible(editButton);
 
+    upButton.setButtonText(juce::String::fromUTF8("\xE2\x86\x91"));
     upButton.setTooltip("Move this plugin earlier in the chain.");
     upButton.onClick = [this] { editor.pluginChain.moveSlot(index, index - 1); };
     addAndMakeVisible(upButton);
 
+    downButton.setButtonText(juce::String::fromUTF8("\xE2\x86\x93"));
     downButton.setTooltip("Move this plugin later in the chain.");
     downButton.onClick = [this] { editor.pluginChain.moveSlot(index, index + 1); };
     addAndMakeVisible(downButton);

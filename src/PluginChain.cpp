@@ -164,19 +164,9 @@ void PluginChain::timerCallback()
     bool stateCaptured = false;
 
     for (auto& entry : chain) {
-        if (entry.wasEditorOpen && entry.editorWindow == nullptr) {
-            entry.wasEditorOpen = false;
-
-            if (entry.editorInstance != nullptr) {
-                juce::MemoryBlock state;
-                entry.editorInstance->getStateInformation(state);
-
-                if (state.getSize() > 0) {
-                    entry.state = std::move(state);
-                    stateCaptured = true;
-                }
-
-                entry.editorInstance = nullptr;
+        if (entry.wasEditorOpen && isEditorWindowClosed(entry)) {
+            if (reapClosedEditor(entry)) {
+                stateCaptured = true;
             }
         }
     }
@@ -189,6 +179,30 @@ void PluginChain::timerCallback()
     if (!anyEditorOpen()) {
         stopTimer();
     }
+}
+
+bool PluginChain::isEditorWindowClosed(const ChainEntry& entry)
+{
+    return entry.editorWindow == nullptr || !entry.editorWindow->isVisible();
+}
+
+bool PluginChain::reapClosedEditor(ChainEntry& entry)
+{
+    entry.wasEditorOpen = false;
+
+    bool stateCaptured = false;
+    if (entry.editorInstance != nullptr) {
+        juce::MemoryBlock state;
+        entry.editorInstance->getStateInformation(state);
+
+        if (state.getSize() > 0) {
+            entry.state = std::move(state);
+            stateCaptured = true;
+        }
+    }
+
+    closeEditorForEntry(entry);
+    return stateCaptured;
 }
 
 void PluginChain::showMenu(juce::Component& anchor)
@@ -337,9 +351,19 @@ void PluginChain::openEditorForSlot(const int index)
         return;
     }
 
-    if (entry.editorWindow != nullptr) {
+    if (entry.editorWindow != nullptr && entry.editorWindow->isVisible()) {
         entry.editorWindow->toFront(true);
         return;
+    }
+
+    // A window the user closed is only hidden, not deleted,
+    // and the polling timer may not have reaped it yet.
+    // Capture its state and destroy it now so a fresh editor can open below.
+    if (entry.wasEditorOpen) {
+        if (reapClosedEditor(entry)) {
+            persistChain();
+            notifyChainChanged();
+        }
     }
 
     juce::String errorMessage;
@@ -395,6 +419,8 @@ void PluginChain::openEditorForSlot(const int index)
 void PluginChain::showChainEditor()
 {
     if (chainEditorWindow != nullptr) {
+        // The window hides itself when closed, so reopening only needs to make it visible again.
+        chainEditorWindow->setVisible(true);
         chainEditorWindow->toFront(true);
         return;
     }
@@ -421,6 +447,8 @@ void PluginChain::showChainEditor()
 void PluginChain::showScanWindow()
 {
     if (scanWindow != nullptr) {
+        // The window hides itself when closed, so reopening only needs to make it visible again.
+        scanWindow->setVisible(true);
         scanWindow->toFront(true);
         return;
     }
