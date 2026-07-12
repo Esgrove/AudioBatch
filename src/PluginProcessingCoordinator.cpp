@@ -2,6 +2,7 @@
 
 #include "utils.h"
 
+#include <algorithm>
 #include <map>
 
 PluginProcessingCoordinator::PluginProcessingCoordinator(const int workerCount) :
@@ -15,20 +16,19 @@ PluginProcessingCoordinator::~PluginProcessingCoordinator()
     // Destroy plugin instances on the message thread to keep VST3/AU happy.
     {
         const juce::ScopedLock lock(instanceLock);
-        if (!ownedInstances.empty()) {
+        if (!ownedChains.empty()) {
             if (juce::MessageManager::getInstance()->isThisTheMessageThread()) {
-                ownedInstances.clear();
-                freeInstances.clear();
+                ownedChains.clear();
+                freeChainIndices.clear();
             } else {
                 // Move instances out so they can be cleaned up on the message thread.
-                auto instances = std::move(ownedInstances);
-                ownedInstances.clear();
-                freeInstances.clear();
-                juce::MessageManager::callAsync(
-                    [instancesCaptured = std::make_shared<decltype(instances)>(std::move(instances))]() mutable {
-                        instancesCaptured->clear();
-                    }
-                );
+                auto chains = std::move(ownedChains);
+                ownedChains.clear();
+                freeChainIndices.clear();
+                juce::MessageManager::callAsync([chainsCaptured
+                                                 = std::make_shared<decltype(chains)>(std::move(chains))]() mutable {
+                    chainsCaptured->clear();
+                });
             }
         }
     }
@@ -94,28 +94,28 @@ void PluginProcessingCoordinator::cancelAndWait()
     pendingJobs.store(0);
 }
 
-juce::AudioPluginInstance* PluginProcessingCoordinator::acquireInstance()
+int PluginProcessingCoordinator::acquireChain()
 {
     const juce::ScopedLock lock(instanceLock);
 
-    if (freeInstances.empty()) {
-        return nullptr;
+    if (freeChainIndices.empty()) {
+        return -1;
     }
 
-    auto* instance = freeInstances.back();
-    freeInstances.pop_back();
-    return instance;
+    const auto chainIndex = freeChainIndices.back();
+    freeChainIndices.pop_back();
+    return chainIndex;
 }
 
-void PluginProcessingCoordinator::releaseInstance(juce::AudioPluginInstance* instance)
+void PluginProcessingCoordinator::releaseChain(const int chainIndex)
 {
-    if (instance == nullptr) {
+    if (chainIndex < 0) {
         return;
     }
 
     {
         const juce::ScopedLock lock(instanceLock);
-        freeInstances.push_back(instance);
+        freeChainIndices.push_back(chainIndex);
     }
 
     instanceAvailable.signal();
@@ -124,24 +124,38 @@ void PluginProcessingCoordinator::releaseInstance(juce::AudioPluginInstance* ins
 int PluginProcessingCoordinator::start(
     const std::vector<AudioAnalysisRecord>& records,
     const PluginProcessingOptions& options,
-    std::vector<std::unique_ptr<juce::AudioPluginInstance>> pluginInstances
+    std::vector<PluginChainInstances> chainInstances
 )
 {
     cancelAndWait();
 
+    // A usable chain must align index-for-index with options.plugins and contain no null instances.
+    const auto isUsableChain = [&options](const PluginChainInstances& chainToCheck) {
+        if (chainToCheck.size() != options.plugins.size() || chainToCheck.empty()) {
+            return false;
+        }
+
+        return std::ranges::none_of(chainToCheck, [](const auto& instance) { return instance == nullptr; });
+    };
+
+    bool chainsUsable = !chainInstances.empty();
+    for (const auto& chainToCheck : chainInstances) {
+        chainsUsable = chainsUsable && isUsableChain(chainToCheck);
+    }
+
     {
         const juce::ScopedLock lock(instanceLock);
-        ownedInstances = std::move(pluginInstances);
-        freeInstances.clear();
-        freeInstances.reserve(ownedInstances.size());
-        for (auto& instance : ownedInstances) {
-            if (instance != nullptr) {
-                freeInstances.push_back(instance.get());
+        ownedChains = std::move(chainInstances);
+        freeChainIndices.clear();
+        freeChainIndices.reserve(ownedChains.size());
+        if (chainsUsable) {
+            for (int chainIndex = 0; chainIndex < static_cast<int>(ownedChains.size()); ++chainIndex) {
+                freeChainIndices.push_back(chainIndex);
             }
         }
     }
 
-    if (ownedInstances.empty()) {
+    if (!chainsUsable) {
         StartErrorCallback errorCallback;
         {
             const juce::ScopedLock lock(callbackLock);
@@ -149,7 +163,7 @@ int PluginProcessingCoordinator::start(
         }
 
         if (errorCallback != nullptr) {
-            errorCallback("No plugin instances were available to start processing.");
+            errorCallback("No plugin chain instances were available to start processing.");
         }
 
         publishCompletion(0, currentRunId.load());
@@ -185,21 +199,32 @@ int PluginProcessingCoordinator::start(
                 return;
             }
 
-            auto* instance = acquireInstance();
+            auto chainIndex = acquireChain();
 
-            // Wait for an instance to become free (worker count > instance count is unusual).
-            while (instance == nullptr && runId == currentRunId.load()) {
+            // Wait for a chain to become free (worker count > chain count is unusual).
+            while (chainIndex < 0 && runId == currentRunId.load()) {
                 instanceAvailable.wait(100);
-                instance = acquireInstance();
+                chainIndex = acquireChain();
             }
 
             if (runId != currentRunId.load()) {
-                releaseInstance(instance);
+                releaseChain(chainIndex);
                 return;
             }
 
-            const auto result = PluginProcessingService::processFile(record, options, instance);
-            releaseInstance(instance);
+            // Build a raw-pointer view of the chain for the service call.
+            std::vector<juce::AudioPluginInstance*> chainView;
+            {
+                const juce::ScopedLock lock(instanceLock);
+                const auto& chain = ownedChains[static_cast<std::size_t>(chainIndex)];
+                chainView.reserve(chain.size());
+                for (const auto& instance : chain) {
+                    chainView.push_back(instance.get());
+                }
+            }
+
+            const auto result = PluginProcessingService::processFile(record, options, chainView);
+            releaseChain(chainIndex);
 
             publishResult(result, runId);
 

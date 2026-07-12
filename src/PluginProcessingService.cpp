@@ -3,6 +3,7 @@
 #include "MetadataService.h"
 #include "utils.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace audiobatch::plugin_processing
@@ -54,6 +55,55 @@ static int clampChannelCount(const int channels)
 {
     return juce::jlimit(1, 8, channels);
 }
+
+// Reconfigures the plugin's main input and output buses to match the file when possible.
+// We preserve the plugin's existing bus count and only override the main bus channel set,
+// because some plugins have sidechain or aux buses that should be left alone.
+// If that fails we fall back through several common configurations.
+static bool configurePluginChannels(juce::AudioPluginInstance& plugin, const int numChannels, const double sampleRate)
+{
+    auto trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {
+        auto layout = plugin.getBusesLayout();
+
+        if (layout.inputBuses.isEmpty() && layout.outputBuses.isEmpty()) {
+            return false;
+        }
+
+        if (!layout.inputBuses.isEmpty()) {
+            layout.inputBuses.getReference(0) = channelSet;
+        }
+        if (!layout.outputBuses.isEmpty()) {
+            layout.outputBuses.getReference(0) = channelSet;
+        }
+
+        return plugin.checkBusesLayoutSupported(layout) && plugin.setBusesLayout(layout);
+    };
+
+    bool layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::canonicalChannelSet(numChannels));
+
+    if (!layoutConfigured && numChannels == 2) {
+        layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::stereo());
+    }
+
+    if (!layoutConfigured && numChannels == 1) {
+        layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::mono());
+        // Plenty of effect plugins are stereo-only.
+        // Let mono files run through a stereo configuration in that case.
+        if (!layoutConfigured) {
+            layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::stereo());
+        }
+    }
+
+    if (!layoutConfigured && numChannels <= 2) {
+        // Last resort: ask the processor to accept the channel counts directly.
+        // Some plugins do not honor setBusesLayout but still process correctly if play config details are set.
+        plugin.setPlayConfigDetails(numChannels, numChannels, sampleRate, processingBlockSize);
+        layoutConfigured
+            = plugin.getTotalNumInputChannels() >= numChannels && plugin.getTotalNumOutputChannels() >= numChannels;
+    }
+
+    return layoutConfigured;
+}
 }  // namespace audiobatch::plugin_processing
 
 using namespace audiobatch::plugin_processing;
@@ -86,7 +136,7 @@ juce::AudioFormatManager& PluginProcessingService::getThreadLocalFormatManager()
 PluginProcessingResult PluginProcessingService::processFile(
     const AudioAnalysisRecord& record,
     const PluginProcessingOptions& options,
-    juce::AudioPluginInstance* plugin
+    const std::vector<juce::AudioPluginInstance*>& chainInstances
 )
 {
     const auto& file = record.file;
@@ -99,8 +149,12 @@ PluginProcessingResult PluginProcessingService::processFile(
         return fail(file, "File analysis must finish before processing");
     }
 
-    if (plugin == nullptr) {
-        return fail(file, "Plugin instance is not available");
+    if (chainInstances.empty() || chainInstances.size() != options.plugins.size()) {
+        return fail(file, "Plugin chain instances are not available");
+    }
+
+    if (std::ranges::any_of(chainInstances, [](const auto* instance) { return instance == nullptr; })) {
+        return fail(file, "Plugin chain instances are not available");
     }
 
     auto& formatManager = getThreadLocalFormatManager();
@@ -152,77 +206,46 @@ PluginProcessingResult PluginProcessingService::processFile(
         }
     }
 
-    // Reconfigure the plugin's main input and output buses to match the file when possible.
-    // We preserve the plugin's existing bus count and only override the main bus channel set,
-    // because some plugins have sidechain or aux buses that should be left alone.
-    // If that fails we fall back through several common configurations.
-    auto trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {
-        auto layout = plugin->getBusesLayout();
+    // Configure and prepare every plugin in the chain against the file's channel count.
+    // Each stage's tail must ring through the remaining stages,
+    // so the total tail is the sum of the individually clamped per-plugin tails.
+    int processChannelCount = numChannels;
+    juce::int64 tailSamples = 0;
 
-        if (layout.inputBuses.isEmpty() && layout.outputBuses.isEmpty()) {
-            return false;
+    for (std::size_t pluginIndex = 0; pluginIndex < chainInstances.size(); ++pluginIndex) {
+        auto* plugin = chainInstances[pluginIndex];
+
+        if (!configurePluginChannels(*plugin, numChannels, sampleRate)) {
+            writer.reset();
+            utils::deleteFile(temporaryFile.getFile());
+            return fail(
+                file,
+                "Plugin " + options.plugins[pluginIndex].name.quoted() + " does not support the file's channel layout ("
+                    + juce::String(numChannels) + " channels)"
+            );
         }
 
-        if (!layout.inputBuses.isEmpty()) {
-            layout.inputBuses.getReference(0) = channelSet;
+        plugin->prepareToPlay(sampleRate, processingBlockSize);
+        plugin->reset();
+
+        // Restore plugin state per-file so each file starts clean.
+        const auto& state = options.plugins[pluginIndex].state;
+        if (state.getSize() > 0) {
+            plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
         }
-        if (!layout.outputBuses.isEmpty()) {
-            layout.outputBuses.getReference(0) = channelSet;
-        }
 
-        return plugin->checkBusesLayoutSupported(layout) && plugin->setBusesLayout(layout);
-    };
+        processChannelCount
+            = juce::jmax(processChannelCount, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels());
 
-    bool layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::canonicalChannelSet(numChannels));
-
-    if (!layoutConfigured && numChannels == 2) {
-        layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::stereo());
+        const auto tailSeconds = plugin->getTailLengthSeconds();
+        tailSamples += static_cast<juce::int64>(std::ceil(juce::jlimit(0.0, 30.0, tailSeconds) * sampleRate));
     }
-
-    if (!layoutConfigured && numChannels == 1) {
-        layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::mono());
-        // Plenty of effect plugins are stereo-only.
-        // Let mono files run through a stereo configuration in that case.
-        if (!layoutConfigured) {
-            layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::stereo());
-        }
-    }
-
-    if (!layoutConfigured && numChannels <= 2) {
-        // Last resort: ask the processor to accept the channel counts directly.
-        // Some plugins do not honor setBusesLayout but still process correctly if play config details are set.
-        plugin->setPlayConfigDetails(numChannels, numChannels, sampleRate, processingBlockSize);
-        layoutConfigured
-            = plugin->getTotalNumInputChannels() >= numChannels && plugin->getTotalNumOutputChannels() >= numChannels;
-    }
-
-    if (!layoutConfigured) {
-        writer.reset();
-        utils::deleteFile(temporaryFile.getFile());
-        return fail(
-            file, "Plugin does not support the file's channel layout (" + juce::String(numChannels) + " channels)"
-        );
-    }
-
-    plugin->prepareToPlay(sampleRate, processingBlockSize);
-    plugin->reset();
-
-    // Restore plugin state per-file so each file starts clean.
-    if (options.plugin.state.getSize() > 0) {
-        plugin->setStateInformation(options.plugin.state.getData(), static_cast<int>(options.plugin.state.getSize()));
-    }
-
-    const auto pluginNumInputs = plugin->getTotalNumInputChannels();
-    const auto pluginNumOutputs = plugin->getTotalNumOutputChannels();
-    const auto processChannelCount = juce::jmax(pluginNumInputs, pluginNumOutputs, numChannels);
 
     juce::AudioBuffer<float> buffer(processChannelCount, processingBlockSize);
     juce::AudioBuffer<float> readBuffer(numChannels, processingBlockSize);
     juce::MidiBuffer midi;
     std::vector<float*> readChannelPointers(static_cast<std::size_t>(numChannels));
 
-    const auto tailSeconds = plugin->getTailLengthSeconds();
-    const auto tailSamples = static_cast<juce::int64>(std::ceil(juce::jlimit(0.0, 30.0, tailSeconds) * sampleRate));
     const auto totalSamples = reader->lengthInSamples + tailSamples;
 
     for (juce::int64 samplePosition = 0; samplePosition < totalSamples; samplePosition += processingBlockSize) {
@@ -267,8 +290,11 @@ PluginProcessingResult PluginProcessingService::processFile(
             }
         }
 
-        midi.clear();
-        plugin->processBlock(buffer, midi);
+        // Run the block through every plugin in chain order on the same buffer.
+        for (auto* plugin : chainInstances) {
+            midi.clear();
+            plugin->processBlock(buffer, midi);
+        }
 
         const auto channelsToWrite = juce::jmin(numChannels, buffer.getNumChannels());
         juce::AudioBuffer<float> writeView(buffer.getArrayOfWritePointers(), channelsToWrite, 0, samplesThisBlock);
@@ -281,7 +307,9 @@ PluginProcessingResult PluginProcessingService::processFile(
     }
 
     writer.reset();
-    plugin->releaseResources();
+    for (auto* plugin : chainInstances) {
+        plugin->releaseResources();
+    }
 
     // Preserve metadata from the original input file by copying it onto the temporary AIFF file.
     // This carries ID3 tags, embedded artwork, and similar information across formats such as MP3 to AIFF.

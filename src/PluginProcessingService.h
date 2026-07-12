@@ -6,8 +6,9 @@
 #include <JuceHeader.h>
 
 #include <memory>
+#include <vector>
 
-/// Stateless audio-file processing through a single plugin instance.
+/// Stateless audio-file processing through a chain of plugin instances.
 /// Output is always written as 16-bit AIFF next to the original file.
 class PluginProcessingService
 {
@@ -18,15 +19,19 @@ public:
     /// Returns the on-disk output path that processing would produce for the given input.
     static juce::File getProcessingOutputFile(const juce::File& input);
 
-    /// Processes a single file through the given plugin instance.
-    /// The plugin must already have been prepared with the appropriate sample rate and block size.
-    /// The function resets the plugin internally before processing.
-    /// The caller owns the plugin instance and is responsible for thread-safety:
-    /// a single plugin instance must only be in use by one thread at a time.
+    /// Processes a single file through the given plugin instances in order.
+    /// The instances must align index-for-index with options.plugins.
+    /// The function prepares, resets, and restores state on each plugin internally before processing,
+    /// and releases their resources afterwards.
+    /// The caller owns the plugin instances and is responsible for thread-safety:
+    /// a chain of instances must only be in use by one thread at a time.
+    /// Note that a mono file running through a stereo-only plugin mid-chain
+    /// keeps only the first channel in the written output,
+    /// matching the single-plugin mono-through-stereo fallback behavior.
     static PluginProcessingResult processFile(
         const AudioAnalysisRecord& record,
         const PluginProcessingOptions& options,
-        juce::AudioPluginInstance* plugin
+        const std::vector<juce::AudioPluginInstance*>& chainInstances
     );
 
 private:

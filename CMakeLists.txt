@@ -244,6 +244,8 @@ target_sources(AudioBatch
         "src/NormalizeCoordinator.h"
         "src/PluginChain.cpp"
         "src/PluginChain.h"
+        "src/PluginChainEditor.cpp"
+        "src/PluginChainEditor.h"
         "src/PluginProcessing.h"
         "src/PluginProcessingCoordinator.cpp"
         "src/PluginProcessingCoordinator.h"

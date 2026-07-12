@@ -18,7 +18,7 @@ so changes to shared services must keep both targets working.
 - Normalize selected files to `0 dBFS` peak from the GUI or the CLI.
 - Convert normalized output to AIFF while preserving source metadata,
   including embedded album art and custom tags, written back as ID3v2.4.
-- Batch process selected files through a VST3 or Audio Unit plugin from the GUI.
+- Batch process selected files through a chain of VST3 or Audio Unit plugins from the GUI.
 
 Analysis assumes mono or stereo sources, including MP3 joint stereo.
 Multichannel files are not a target.
@@ -48,8 +48,9 @@ GUI only:
 - `src/AudioBatchComponent.*` is the main GUI component.
 - `src/AudioFileTableModel.*` backs the sortable results table.
 - `src/CustomLookAndFeel.*`, `src/ThumbnailComponent.*`, and `src/IntervalStepSlider.h` are UI pieces.
-- `src/PluginChain.*`, `src/PluginProcessing.h`, `src/PluginProcessingCoordinator.*`,
-  and `src/PluginProcessingService.*` implement VST3 / Audio Unit plugin hosting.
+- `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginProcessing.h`,
+  `src/PluginProcessingCoordinator.*`, and `src/PluginProcessingService.*`
+  implement VST3 / Audio Unit plugin hosting and the plugin chain.
 
 The exact source lists for each target are defined in `CMakeLists.txt`.
 Keep those lists in sync when adding or removing files,

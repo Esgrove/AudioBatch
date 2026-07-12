@@ -17,8 +17,8 @@ enum MenuItemId {
     supportedFormatsMenuItemId,
     aboutMenuItemId,
     quitMenuItemId,
-    editPluginMenuItemId,
-    clearPluginMenuItemId,
+    editChainMenuItemId,
+    clearChainMenuItemId,
     scanPluginsMenuItemId,
 };
 }  // namespace audiobatch::app
@@ -221,14 +221,14 @@ private:
             case quitMenuItemId:
                 juce::JUCEApplication::getInstance()->systemRequestedQuit();
                 break;
-            case editPluginMenuItemId:
+            case editChainMenuItemId:
                 if (auto* chain = getAudioBatch().getPluginChain()) {
-                    chain->openEditor();
+                    chain->showChainEditor();
                 }
                 break;
-            case clearPluginMenuItemId:
+            case clearChainMenuItemId:
                 if (auto* chain = getAudioBatch().getPluginChain()) {
-                    chain->clearSelection();
+                    chain->clearChain();
                 }
                 break;
             case scanPluginsMenuItemId:
@@ -242,7 +242,7 @@ private:
         }
     }
 
-    /// Appends the plugin section into a menu, mirroring the popup attached to the Plugin toolbar button.
+    /// Appends the plugin chain section into a menu, mirroring the popup attached to the Plugin toolbar button.
     void appendPluginOptionsMenuItems(juce::PopupMenu& menu)
     {
         auto* chain = getAudioBatch().getPluginChain();
@@ -250,24 +250,20 @@ private:
             return;
         }
 
-        const auto description = chain->getSelectedPluginDescription();
-        const bool hasSelection = description.fileOrIdentifier.isNotEmpty();
-
-        if (hasSelection) {
-            menu.addSectionHeader(description.name + " (" + description.pluginFormatName + ")");
-            menu.addItem(editPluginMenuItemId, "Edit Plugin...");
-            menu.addItem(clearPluginMenuItemId, "Clear Plugin");
-            menu.addSeparator();
-        }
+        const auto summary = chain->getChainSummary();
+        menu.addSectionHeader(summary.isEmpty() ? juce::String("No plugins in chain") : "Chain: " + summary);
+        menu.addItem(editChainMenuItemId, "Edit Chain...");
+        menu.addSeparator();
 
         const auto& types = chain->getKnownPluginList().getTypes();
-        juce::PopupMenu chooseSubmenu;
-        juce::KnownPluginList::addToMenu(chooseSubmenu, types, juce::KnownPluginList::sortByManufacturer);
-        menu.addSubMenu("Choose Plugin", chooseSubmenu, !types.isEmpty());
+        juce::PopupMenu addSubmenu;
+        juce::KnownPluginList::addToMenu(addSubmenu, types, juce::KnownPluginList::sortByManufacturer);
+        menu.addSubMenu("Add Plugin", addSubmenu, !types.isEmpty());
+        menu.addItem(clearChainMenuItemId, "Clear Chain", chain->getNumSlots() > 0);
         menu.addItem(scanPluginsMenuItemId, "Scan for Plugins...");
     }
 
-    /// Decodes a menu result against the known plugin list and applies it as the current selection.
+    /// Decodes a menu result against the known plugin list and appends the chosen plugin to the chain.
     void handlePluginChoiceMenuItem(const int menuItemID) const
     {
         auto* chain = getAudioBatch().getPluginChain();
@@ -281,7 +277,7 @@ private:
             return;
         }
 
-        chain->selectPlugin(types.getReference(index));
+        chain->addPlugin(types.getReference(index));
     }
 
     AudioBatchComponent& getAudioBatch() const

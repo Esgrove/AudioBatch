@@ -4,6 +4,8 @@
 
 #include <JuceHeader.h>
 
+#include <vector>
+
 /// Lightweight reference describing which plugin to instantiate and its saved state.
 struct PluginDescriptorRef {
     juce::String pluginFormatName;  ///< "VST3", "AudioUnit", etc.
@@ -19,9 +21,18 @@ struct PluginDescriptorRef {
     }
 };
 
+/// One entry in the plugin processing chain.
+struct PluginChainSlot {
+    PluginDescriptorRef plugin;
+    bool enabled = true;
+};
+
 /// Options controlling a batch plugin processing run.
 struct PluginProcessingOptions {
-    PluginDescriptorRef plugin;
+    /// Enabled plugins in chain order.
+    /// Disabled slots are filtered out before a run starts,
+    /// so entries here align index-for-index with the instantiated chain each worker holds.
+    std::vector<PluginDescriptorRef> plugins;
     bool normalizeBeforePlugin = false;  ///< Apply peak normalization gain when a file has no custom gain.
 };
 

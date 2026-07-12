@@ -495,9 +495,9 @@ AudioBatchComponent::AudioBatchComponent() :
     }
 
     pluginChain = std::make_unique<PluginChain>(pluginAppProperties);
-    pluginChain->setSelectionChangedCallback([this](const PluginDescriptorRef&) { updateProcessButtonState(); });
+    pluginChain->setChainChangedCallback([this] { updateProcessButtonState(); });
 
-    pluginButton.setTooltip("Choose a plugin, edit its parameters, or scan for plugins.");
+    pluginButton.setTooltip("Edit the plugin chain, add plugins, or scan for plugins.");
     pluginButton.onClick = [this] {
         if (pluginChain != nullptr) {
             pluginChain->showMenu(pluginButton);
@@ -533,11 +533,11 @@ AudioBatchComponent::AudioBatchComponent() :
     addAndMakeVisible(gainClearButton);
 
     normalizeBeforePluginToggle.setTooltip(
-        "When enabled, files without a custom gain are peak-normalized before the plugin."
+        "When enabled, files without a custom gain are peak-normalized before the plugin chain."
     );
     addAndMakeVisible(normalizeBeforePluginToggle);
 
-    processButton.setTooltip("Process selected files through the selected plugin.");
+    processButton.setTooltip("Process selected files through the plugin chain.");
     updateProcessButtonState();
     processButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
     processButton.onClick = [this] { processSelectedRecords(); };
@@ -1114,8 +1114,8 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
     menu.addItem(normalizeSupportMenuItemId, "Normalization Format Support...");
     menu.addSeparator();
     const bool canProcess = !pluginProcessingInProgress && !isAnalysisInProgress() && !normalizeInProgress
-        && pluginChain != nullptr && pluginChain->getSelectedPluginDescription().fileOrIdentifier.isNotEmpty();
-    menu.addItem(processMenuItemId, "Process With Plugin (output AIFF)", canProcess);
+        && pluginChain != nullptr && pluginChain->getNumEnabledValidSlots() > 0;
+    menu.addItem(processMenuItemId, "Process With Plugin Chain (output AIFF)", canProcess);
     const bool anyHasGain = std::ranges::any_of(selectedRecords, [](const AudioAnalysisRecord& selectedRecord) {
         return selectedRecord.hasCustomGain;
     });
@@ -1699,8 +1699,8 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles)
 
 void AudioBatchComponent::updateProcessButtonState()
 {
-    const bool hasPlugin = pluginChain != nullptr && pluginChain->getSelectedPlugin().isValid();
-    processButton.setEnabled(hasPlugin && hasAnyRecords() && !pluginProcessingInProgress && !isAnalysisInProgress());
+    const bool hasChain = pluginChain != nullptr && pluginChain->getNumEnabledValidSlots() > 0;
+    processButton.setEnabled(hasChain && hasAnyRecords() && !pluginProcessingInProgress && !isAnalysisInProgress());
 }
 
 void AudioBatchComponent::updateStatusLabel()
@@ -2416,13 +2416,14 @@ void AudioBatchComponent::processSelectedRecords()
         return;
     }
 
-    const auto pluginDescription = pluginChain->getSelectedPluginDescription();
-    if (pluginDescription.fileOrIdentifier.isEmpty()) {
+    // Captures live state from any open editors so the run uses the latest tweaks.
+    const auto enabledPlugins = pluginChain->getEnabledPlugins();
+    if (enabledPlugins.empty()) {
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions::makeOptionsOk(
                 juce::MessageBoxIconType::WarningIcon,
                 "Plugin Processing",
-                "No plugin is selected. Use the Choose... button to pick one.",
+                "The plugin chain is empty. Use the Plugins button to add plugins.",
                 "OK",
                 this
             ),
@@ -2437,43 +2438,55 @@ void AudioBatchComponent::processSelectedRecords()
         return;
     }
 
-    // Capture plugin state so it gets baked into the processing run.
-    auto descriptorRef = pluginChain->getSelectedPlugin();
-
     PluginProcessingOptions options;
-    options.plugin = descriptorRef;
+    options.plugins.reserve(enabledPlugins.size());
+    for (const auto& enabledPlugin : enabledPlugins) {
+        options.plugins.push_back(enabledPlugin.ref);
+    }
     options.normalizeBeforePlugin = normalizeBeforePluginToggle.getToggleState();
 
-    // Pre-instantiate plugin instances on the message thread.
+    // Pre-instantiate one chain of plugin instances per worker on the message thread.
     const auto workerCount
         = juce::jlimit(1, 4, juce::jmin(static_cast<int>(records.size()), juce::SystemStats::getNumCpus()));
 
     auto& pluginFormatManager = pluginChain->getFormatManager();
-    std::vector<std::unique_ptr<juce::AudioPluginInstance>> instances;
-    instances.reserve(static_cast<std::size_t>(workerCount));
+    std::vector<PluginProcessingCoordinator::PluginChainInstances> chains;
+    chains.reserve(static_cast<std::size_t>(workerCount));
 
-    statusLabel.setText("Loading plugin...", juce::dontSendNotification);
+    statusLabel.setText("Loading plugins...", juce::dontSendNotification);
 
     juce::String instantiationError;
-    for (int i = 0; i < workerCount; ++i) {
-        juce::String error;
-        // Use a reasonable default sample rate. We re-call prepareToPlay per file with the file's rate.
-        auto instance = pluginFormatManager.createPluginInstance(pluginDescription, 48000.0, 1024, error);
-        if (instance == nullptr) {
-            instantiationError = error.isNotEmpty() ? error : juce::String("Plugin instantiation failed");
-            break;
+    juce::String failedPluginName;
+    for (int i = 0; i < workerCount && instantiationError.isEmpty(); ++i) {
+        PluginProcessingCoordinator::PluginChainInstances chainInstances;
+        chainInstances.reserve(enabledPlugins.size());
+
+        for (const auto& enabledPlugin : enabledPlugins) {
+            juce::String error;
+            // Use a reasonable default sample rate. We re-call prepareToPlay per file with the file's rate.
+            auto instance = pluginFormatManager.createPluginInstance(enabledPlugin.description, 48000.0, 1024, error);
+            if (instance == nullptr) {
+                instantiationError = error.isNotEmpty() ? error : juce::String("Plugin instantiation failed");
+                failedPluginName = enabledPlugin.description.name;
+                break;
+            }
+
+            chainInstances.push_back(std::move(instance));
         }
 
-        instances.push_back(std::move(instance));
+        if (instantiationError.isEmpty()) {
+            chains.push_back(std::move(chainInstances));
+        }
     }
 
-    if (instances.empty() || instantiationError.isNotEmpty()) {
-        instances.clear();
+    if (chains.empty() || instantiationError.isNotEmpty()) {
+        // All-or-nothing: a chain missing any plugin must not run at all.
+        chains.clear();
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions::makeOptionsOk(
                 juce::MessageBoxIconType::WarningIcon,
                 "Plugin Processing",
-                "Could not load the selected plugin:\n\n"
+                "Could not load plugin " + failedPluginName.quoted() + ":\n\n"
                     + (instantiationError.isNotEmpty() ? instantiationError : juce::String("Unknown error")),
                 "OK",
                 this
@@ -2520,7 +2533,7 @@ void AudioBatchComponent::processSelectedRecords()
     pluginProcessingInProgress = true;
     updateProcessButtonState();
 
-    processedResultsExpected = pluginCoordinator.start(records, options, std::move(instances));
+    processedResultsExpected = pluginCoordinator.start(records, options, std::move(chains));
 
     if (processedResultsExpected <= 0) {
         pluginProcessingInProgress = false;
