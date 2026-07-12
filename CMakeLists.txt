@@ -71,6 +71,19 @@ else()
     set(ICON_FILE "${CMAKE_SOURCE_DIR}/Assets/icon_mac.png")
 endif()
 
+# Use ccache for compilation caching when available.
+# Must be set before any targets are created so it also covers JUCE and the fetched dependencies.
+# Only enabled for Ninja and Makefile generators,
+# since Xcode and Visual Studio generators need special setup that is not worth the complexity here.
+if (CMAKE_GENERATOR MATCHES "Ninja|Unix Makefiles" AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    find_program(CCACHE_PROGRAM ccache)
+    if (CCACHE_PROGRAM)
+        message(STATUS "Using ccache: ${CCACHE_PROGRAM}")
+        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    endif()
+endif()
+
 # Adds all the module sources so they appear correctly in the IDE
 # Must be set before JUCE is added as a sub-dir (or any targets are made)
 # https://github.com/juce-framework/JUCE/commit/6b1b4cf7f6b1008db44411f2c8887d71a3348889
