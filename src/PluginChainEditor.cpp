@@ -7,6 +7,7 @@
 #include "PluginChainEditor.h"
 
 #include "CustomLookAndFeel.h"
+#include "StringFormat.h"
 
 namespace audiobatch::plugin_chain_editor
 {
@@ -31,9 +32,7 @@ PluginChainEditor::SlotRow::SlotRow(PluginChainEditor& ownerEditor, const int sl
     addAndMakeVisible(enabledToggle);
 
     nameLabel.setText(
-        juce::String(index + 1) + ". " + description.manufacturerName + " " + description.name + " ("
-            + description.pluginFormatName + ")",
-        juce::dontSendNotification
+        utils::format("{}. {}", index + 1, formatPluginDescription(description)), juce::dontSendNotification
     );
     nameLabel.setJustificationType(juce::Justification::centredLeft);
     nameLabel.setColour(

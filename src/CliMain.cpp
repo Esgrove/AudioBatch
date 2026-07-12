@@ -49,7 +49,7 @@ int main(const int argc, char* argv[])
     const auto exitCode = AudioAnalysisCli::run(*cliOptions);
 
     if (exitCode != 0) {
-        utils::logError("CLI exiting with code " + juce::String(exitCode));
+        utils::logError("CLI exiting with code {}", exitCode);
     } else {
         utils::logInfo("CLI exiting with code 0");
     }

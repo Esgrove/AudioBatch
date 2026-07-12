@@ -62,6 +62,7 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
 - SQLite 3, resolved via CMake (system package if present, otherwise the fetched amalgamation).
 - libebur128, fetched via CMake, for loudness and true peak analysis.
 - TagLib, fetched via CMake, for cross-format metadata handling.
+- {fmt}, fetched via CMake, for string formatting (see `src/StringFormat.h`).
 
 ## Working Rules
 
@@ -94,6 +95,15 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
 - Avoid single character variable names.
   They are only allowed in for loops when it makes sense
   and it is clear what the variable is, for example a plain loop index.
+- Prefer `utils::format` (fmt-based, in `src/StringFormat.h`)
+  over chained `juce::String` concatenation when building display and log text.
+  Format strings must be literals so fmt's compile-time checking applies.
+  Keep `.quoted()` calls on arguments instead of putting quote characters in the format string,
+  and keep `juce::newLine` outside format strings in text that leaves the process,
+  because it is `\r\n` on Windows.
+- The logging helpers accept fmt format strings and arguments directly:
+  `utils::logError("Analysis failed for {}: {}", path.quoted(), message)`.
+  Do not wrap the message in a `utils::format` call first.
 
 ## Build And Verification
 

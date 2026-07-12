@@ -169,11 +169,11 @@ static juce::String buildNormalizationFailureMessage(const juce::StringArray& fa
     const auto linesToShow = juce::jmin(6, failures.size());
 
     for (int index = 0; index < linesToShow; ++index) {
-        message << "- " << failures[index] << juce::newLine;
+        message << utils::format("- {}", failures[index]) << juce::newLine;
     }
 
     if (failures.size() > linesToShow) {
-        message << "- ...and " << juce::String(failures.size() - linesToShow) << " more";
+        message << utils::format("- ...and {} more", failures.size() - linesToShow);
     }
 
     return message.trimEnd();
@@ -442,8 +442,9 @@ AudioBatchComponent::AudioBatchComponent() :
     const auto constructorStartedAtMs = juce::Time::getMillisecondCounterHiRes();
     const auto logStartupCheckpoint = [constructorStartedAtMs](const juce::String& step) {
         utils::logDebug(
-            "AudioBatchComponent startup: " + step + " ("
-            + juce::String(juce::Time::getMillisecondCounterHiRes() - constructorStartedAtMs, 1) + " ms)"
+            "AudioBatchComponent startup: {} ({:.1f} ms)",
+            step,
+            juce::Time::getMillisecondCounterHiRes() - constructorStartedAtMs
         );
     };
 
@@ -681,25 +682,20 @@ AudioBatchComponent::AudioBatchComponent() :
         const auto audioInitStartedAtMs = juce::Time::getMillisecondCounterHiRes();
 
         utils::logDebug(
-            "AudioBatchComponent startup: audio permission callback granted=" + juce::String(granted ? "true" : "false")
+            "AudioBatchComponent startup: audio permission callback granted={}", granted ? "true" : "false"
         );
         utils::logDebug(
-            "AudioBatchComponent startup: audio device init begin (inputs=" + juce::String(numInputChannels)
-            + ", outputs=2)"
+            "AudioBatchComponent startup: audio device init begin (inputs={}, outputs=2)", numInputChannels
         );
 
         const auto initError = audioDeviceManager.initialise(numInputChannels, 2, nullptr, true, {}, nullptr);
         const auto audioInitElapsedMs = juce::Time::getMillisecondCounterHiRes() - audioInitStartedAtMs;
 
         if (initError.isEmpty()) {
-            utils::logDebug(
-                "AudioBatchComponent startup: audio device init succeeded (" + juce::String(audioInitElapsedMs, 1)
-                + " ms)"
-            );
+            utils::logDebug("AudioBatchComponent startup: audio device init succeeded ({:.1f} ms)", audioInitElapsedMs);
         } else {
             utils::logError(
-                "AudioBatchComponent startup: audio device init failed (" + juce::String(audioInitElapsedMs, 1)
-                + " ms): " + initError
+                "AudioBatchComponent startup: audio device init failed ({:.1f} ms): {}", audioInitElapsedMs, initError
             );
         }
     });
@@ -940,7 +936,7 @@ void AudioBatchComponent::chooseRootFolder()
             }
 
             if (const auto selectedFolder = chooser.getResult(); selectedFolder.isDirectory()) {
-                utils::logInfo("Opened directory: " + selectedFolder.getFullPathName().quoted());
+                utils::logInfo("Opened directory: {}", selectedFolder.getFullPathName().quoted());
                 safeThis->currentRoot = selectedFolder;
                 safeThis->currentRootLabel.setText(selectedFolder.getFullPathName(), juce::dontSendNotification);
                 safeThis->currentRootLabel.setTooltip(selectedFolder.getFullPathName());
@@ -1081,7 +1077,7 @@ void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
     }
 
     if (droppedFiles.isEmpty() && droppedDirectory.isDirectory()) {
-        utils::logInfo("Dropped directory: " + droppedDirectory.getFullPathName().quoted());
+        utils::logInfo("Dropped directory: {}", droppedDirectory.getFullPathName().quoted());
         currentRoot = droppedDirectory;
         currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
         refreshAnalysis(false);
@@ -1093,7 +1089,7 @@ void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
         return;
     }
 
-    utils::logInfo("Dropped " + juce::String(droppedFiles.size()) + " files");
+    utils::logInfo("Dropped {} files", droppedFiles.size());
     startAnalysis(droppedFiles, false, false, false);
 }
 
@@ -1271,9 +1267,8 @@ void AudioBatchComponent::moveSelectedRecordsToTrash(const bool promptForConfirm
     }
 
     const auto fileCount = filesToTrash.size();
-    const auto message = fileCount == 1
-        ? "Move\n\n" + filesToTrash.getFirst().getFullPathName() + "\n\nto the system trash?"
-        : "Move " + juce::String(fileCount) + " selected files to the system trash?";
+    const auto message = fileCount == 1 ? utils::format("Move\n\n{}\n\nto the system trash?", filesToTrash.getFirst())
+                                        : utils::format("Move {} selected files to the system trash?", fileCount);
 
     if (!promptForConfirmation) {
         runMoveToTrash(filesToTrash, removedPaths, selectedRows[0]);
@@ -1329,7 +1324,7 @@ void AudioBatchComponent::runMoveToTrash(
 
     if (!failedPaths.isEmpty()) {
         for (const auto& failedPath : failedPaths) {
-            utils::logError("Move to trash failed for " + failedPath.quoted());
+            utils::logError("Move to trash failed for {}", failedPath.quoted());
         }
 
         juce::AlertWindow::showAsync(
@@ -1337,8 +1332,8 @@ void AudioBatchComponent::runMoveToTrash(
                 juce::MessageBoxIconType::WarningIcon,
                 "Move to Trash Failed",
                 failedPaths.size() == 1
-                    ? "Could not move this file to the system trash:\n\n" + failedPaths[0]
-                    : "Could not move " + juce::String(failedPaths.size()) + " files to the system trash.",
+                    ? utils::format("Could not move this file to the system trash:\n\n{}", failedPaths[0])
+                    : utils::format("Could not move {} files to the system trash.", failedPaths.size()),
                 "OK",
                 this
             ),
@@ -1427,16 +1422,18 @@ juce::String AudioBatchComponent::buildNormalizationUnavailableMessage(const std
             continue;
         }
 
-        unsupportedLines.add(record.fileName + " (" + formatLabelForFile(record.file) + "): " + reason);
+        unsupportedLines.add(utils::format("{} ({}): {}", record.fileName, formatLabelForFile(record.file), reason));
     }
 
     if (unsupportedLines.isEmpty()) {
         return {};
     }
 
-    return "The selected files cannot be normalized with the current build:\n\n"
-        + unsupportedLines.joinIntoString(juce::newLine) + "\n\n"
-        + AudioNormalizationService::getFormatSupportSummary();
+    return utils::format(
+        "The selected files cannot be normalized with the current build:\n\n{}\n\n{}",
+        unsupportedLines.joinIntoString(juce::newLine),
+        AudioNormalizationService::getFormatSupportSummary()
+    );
 }
 
 void AudioBatchComponent::markFilesProcessing(const juce::Array<juce::File>& files, const juce::String& activityLabel)
@@ -1480,7 +1477,7 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
         if (!record.file.existsAsFile()) {
             record.status = AudioAnalysisStatus::failed;
             record.errorMessage = "File does not exist";
-            utils::logError("Analysis failed for " + record.fullPath.quoted() + ": " + record.errorMessage);
+            utils::logError("Analysis failed for {}: {}", record.fullPath.quoted(), record.errorMessage);
             resultsChanged = true;
             continue;
         }
@@ -1680,7 +1677,7 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
             updateAudioInfo(result.analysisRecord);
         }
     } else {
-        normalizationFailures.add(result.fileName + ": " + result.errorMessage);
+        normalizationFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
     }
 
     updateStatusLabel();
@@ -1698,8 +1695,10 @@ void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
                 juce::MessageBoxIconType::WarningIcon,
                 "Normalize",
                 normalizationFailures.size() == 1 ? normalizationFailures[0]
-                                                  : "Some files could not be normalized:\n\n"
-                        + buildNormalizationFailureMessage(normalizationFailures),
+                                                  : utils::format(
+                                                        "Some files could not be normalized:\n\n{}",
+                                                        buildNormalizationFailureMessage(normalizationFailures)
+                                                    ),
                 "OK",
                 this
             ),
@@ -1725,9 +1724,12 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles)
     const auto failedFileCount
         = std::ranges::count_if(analysisResults, [](const auto& record) { return record.hasError(); });
     utils::logInfo(
-        "Analysis complete: loaded " + juce::String(totalFiles) + " files (" + juce::String(analyzedFilesThisRun)
-        + " analyzed, " + juce::String(cachedFileCount) + " from cache, " + juce::String(failedFileCount)
-        + " failed) in " + juce::String(elapsedMs / 1000.0, 2) + " s"
+        "Analysis complete: loaded {} files ({} analyzed, {} from cache, {} failed) in {:.2f} s",
+        totalFiles,
+        analyzedFilesThisRun,
+        cachedFileCount,
+        failedFileCount,
+        elapsedMs / 1000.0
     );
 
     if (resultsTable.getSelectedRow() < 0 && !analysisResults.empty()) {
@@ -1749,7 +1751,7 @@ void AudioBatchComponent::updateStatusLabel()
 {
     if (pluginProcessingInProgress && processedResultsExpected > 0) {
         statusLabel.setText(
-            "Processing " + juce::String(processedResultsCompleted) + "/" + juce::String(processedResultsExpected),
+            utils::format("Processing {}/{}", processedResultsCompleted, processedResultsExpected),
             juce::dontSendNotification
         );
         return;
@@ -1757,7 +1759,7 @@ void AudioBatchComponent::updateStatusLabel()
 
     if (normalizeInProgress && normalizedResultsExpected > 0) {
         statusLabel.setText(
-            "Normalizing " + juce::String(normalizedResultsCompleted) + "/" + juce::String(normalizedResultsExpected),
+            utils::format("Normalizing {}/{}", normalizedResultsCompleted, normalizedResultsExpected),
             juce::dontSendNotification
         );
         return;
@@ -1770,13 +1772,12 @@ void AudioBatchComponent::updateStatusLabel()
 
     if (completedResults < expectedResults) {
         statusLabel.setText(
-            "Analyzing " + juce::String(completedResults) + "/" + juce::String(expectedResults),
-            juce::dontSendNotification
+            utils::format("Analyzing {}/{}", completedResults, expectedResults), juce::dontSendNotification
         );
         return;
     }
 
-    statusLabel.setText("Loaded " + juce::String(analysisResults.size()) + " files", juce::dontSendNotification);
+    statusLabel.setText(utils::format("Loaded {} files", analysisResults.size()), juce::dontSendNotification);
 }
 
 void AudioBatchComponent::normalizeSelectedRecords()
@@ -1911,7 +1912,7 @@ void AudioBatchComponent::startAnalysis(
     completedResults = 0;
     const auto files = AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive);
     expectedResults = files.size();
-    utils::logInfo("Found " + juce::String(expectedResults) + " audio files");
+    utils::logInfo("Found {} audio files", expectedResults);
 
     if (expectedResults == 0) {
         statusLabel.setText(
@@ -1947,7 +1948,7 @@ void AudioBatchComponent::startAnalysis(
     updateResultsTableColumnWidths();
     markFilesProcessing(staleFiles, "Waiting");
 
-    statusLabel.setText("Analyzing 0/" + juce::String(expectedResults), juce::dontSendNotification);
+    statusLabel.setText(utils::format("Analyzing 0/{}", expectedResults), juce::dontSendNotification);
 
     if (clearResults && currentRoot.isDirectory()) {
         currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
@@ -2097,7 +2098,7 @@ void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
     if (record.file.existsAsFile() && currentAudioFile != record.file) {
         currentAudioFile = record.file;
         showAudioResource(juce::URL(record.file));
-        utils::logDebug("Loaded file: " + record.fileName);
+        utils::logDebug("Loaded file: {}", record.fileName);
     }
 
     updateAudioInfo(record);
@@ -2528,8 +2529,11 @@ void AudioBatchComponent::processSelectedRecords()
             juce::MessageBoxOptions::makeOptionsOk(
                 juce::MessageBoxIconType::WarningIcon,
                 "Plugin Processing",
-                "Could not load plugin " + failedPluginName.quoted() + ":\n\n"
-                    + (instantiationError.isNotEmpty() ? instantiationError : juce::String("Unknown error")),
+                utils::format(
+                    "Could not load plugin {}:\n\n{}",
+                    failedPluginName.quoted(),
+                    instantiationError.isNotEmpty() ? instantiationError : juce::String("Unknown error")
+                ),
                 "OK",
                 this
             ),
@@ -2635,10 +2639,8 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
             updateThumbnailDisplayGain();
         }
     } else {
-        processingFailures.add(result.fileName + ": " + result.errorMessage);
-        utils::logError(
-            "Plugin processing failed for " + result.originalFullPath.quoted() + ": " + result.errorMessage
-        );
+        processingFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
+        utils::logError("Plugin processing failed for {}: {}", result.originalFullPath.quoted(), result.errorMessage);
     }
 
     updateStatusLabel();
@@ -2658,18 +2660,19 @@ void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
         juce::String body;
         const auto linesToShow = juce::jmin(8, processingFailures.size());
         for (int i = 0; i < linesToShow; ++i) {
-            body << "- " << processingFailures[i] << juce::newLine;
+            body << utils::format("- {}", processingFailures[i]) << juce::newLine;
         }
         if (processingFailures.size() > linesToShow) {
-            body << "- ...and " << juce::String(processingFailures.size() - linesToShow) << " more";
+            body << utils::format("- ...and {} more", processingFailures.size() - linesToShow);
         }
 
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions::makeOptionsOk(
                 juce::MessageBoxIconType::WarningIcon,
                 "Plugin Processing",
-                processingFailures.size() == 1 ? processingFailures[0]
-                                               : "Some files could not be processed:\n\n" + body.trimEnd(),
+                processingFailures.size() == 1
+                    ? processingFailures[0]
+                    : utils::format("Some files could not be processed:\n\n{}", body.trimEnd()),
                 "OK",
                 this
             ),

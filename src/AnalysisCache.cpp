@@ -86,7 +86,7 @@ bool AnalysisCache::execute(const juce::String& sql) const
     {
         const auto error
             = errorMessage != nullptr ? juce::String::fromUTF8(errorMessage) : juce::String("Unknown SQLite error");
-        utils::logError("SQLite error: " + error);
+        utils::logError("SQLite error: {}", error);
         sqlite3_free(errorMessage);
         return false;
     }
@@ -115,14 +115,15 @@ void AnalysisCache::closeUnlocked()
     database = nullptr;
 
     utils::logDebug(
-        "Closed analysis cache at " + databasePath.quoted() + " in "
-        + juce::String((juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0, 3) + " s"
+        "Closed analysis cache at {} in {:.3f} s",
+        databasePath.quoted(),
+        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0
     );
 }
 
 bool AnalysisCache::columnExists(const juce::String& tableName, const juce::String& columnName) const
 {
-    const auto sql = "PRAGMA table_info(" + tableName + ");";
+    const auto sql = utils::format("PRAGMA table_info({});", tableName);
 
     sqlite3_stmt* statement = nullptr;
     if (sqlite3_prepare_v2(database, sql.toRawUTF8(), -1, &statement, nullptr) != SQLITE_OK) {
@@ -146,7 +147,7 @@ bool AnalysisCache::openUnlocked()
 {
     if (database != nullptr) {
         utils::logDebug(
-            "Analysis cache open skipped: database already open at " + databaseFile.getFullPathName().quoted()
+            "Analysis cache open skipped: database already open at {}", databaseFile.getFullPathName().quoted()
         );
         return true;
     }
@@ -155,11 +156,12 @@ bool AnalysisCache::openUnlocked()
     const auto& databasePath = databaseFile.getFullPathName();
     const auto databaseFound = databaseFile.existsAsFile();
 
-    utils::logDebug("Analysis cache startup: ensuring directory for " + databasePath.quoted());
+    utils::logDebug("Analysis cache startup: ensuring directory for {}", databasePath.quoted());
     if (const auto createResult = databaseFile.getParentDirectory().createDirectory(); createResult.failed()) {
         utils::logError(
-            "Failed to create analysis cache directory " + databaseFile.getParentDirectory().getFullPathName().quoted()
-            + ": " + createResult.getErrorMessage()
+            "Failed to create analysis cache directory {}: {}",
+            databaseFile.getParentDirectory().getFullPathName().quoted(),
+            createResult.getErrorMessage()
         );
     }
 
@@ -173,8 +175,9 @@ bool AnalysisCache::openUnlocked()
 
     if (result != SQLITE_OK || database == nullptr) {
         utils::logError(
-            "Failed to open analysis cache at " + databasePath.quoted() + " in "
-            + juce::String((juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0, 3) + " s"
+            "Failed to open analysis cache at {} in {:.3f} s",
+            databasePath.quoted(),
+            (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0
         );
         if (database != nullptr) {
             sqlite3_close(database);
@@ -282,8 +285,10 @@ bool AnalysisCache::openUnlocked()
 
     utils::logDebug("Analysis cache startup: schema ready");
     utils::logDebug(
-        "Opened analysis cache at " + databasePath.quoted() + " (" + juce::String(databaseFound ? "existing" : "new")
-        + ") in " + juce::String((juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0, 3) + " s"
+        "Opened analysis cache at {} ({}) in {:.3f} s",
+        databasePath.quoted(),
+        databaseFound ? "existing" : "new",
+        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0
     );
 
     return true;

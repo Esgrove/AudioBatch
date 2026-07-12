@@ -43,8 +43,9 @@ public:
         const auto constructorStartedAtMs = juce::Time::getMillisecondCounterHiRes();
         const auto logStartupCheckpoint = [constructorStartedAtMs](const juce::String& step) {
             utils::logDebug(
-                "MainWindow startup: " + step + " ("
-                + juce::String(juce::Time::getMillisecondCounterHiRes() - constructorStartedAtMs, 1) + " ms)"
+                "MainWindow startup: {} ({:.1f} ms)",
+                step,
+                juce::Time::getMillisecondCounterHiRes() - constructorStartedAtMs
             );
         };
 
@@ -140,7 +141,10 @@ private:
 #if JUCE_MAC
         switch (topLevelMenuIndex) {
             case 0:
-                menu.addItem(aboutMenuItemId, "About " + juce::JUCEApplication::getInstance()->getApplicationName());
+                menu.addItem(
+                    aboutMenuItemId,
+                    utils::format("About {}", juce::JUCEApplication::getInstance()->getApplicationName())
+                );
                 menu.addSeparator();
                 menu.addItem(quitMenuItemId, "Quit");
                 break;
@@ -160,7 +164,10 @@ private:
             case 3:
                 menu.addItem(supportedFormatsMenuItemId, "Normalization Format Support...");
                 menu.addSeparator();
-                menu.addItem(aboutMenuItemId, "About " + juce::JUCEApplication::getInstance()->getApplicationName());
+                menu.addItem(
+                    aboutMenuItemId,
+                    utils::format("About {}", juce::JUCEApplication::getInstance()->getApplicationName())
+                );
                 break;
             default:
                 break;
@@ -185,7 +192,10 @@ private:
             case 2:
                 menu.addItem(supportedFormatsMenuItemId, "Normalization Format Support...");
                 menu.addSeparator();
-                menu.addItem(aboutMenuItemId, "About " + juce::JUCEApplication::getInstance()->getApplicationName());
+                menu.addItem(
+                    aboutMenuItemId,
+                    utils::format("About {}", juce::JUCEApplication::getInstance()->getApplicationName())
+                );
                 break;
             default:
                 break;
@@ -230,7 +240,7 @@ private:
                 juce::AlertWindow::showAsync(
                     juce::MessageBoxOptions::makeOptionsOk(
                         juce::MessageBoxIconType::InfoIcon,
-                        "About " + appName,
+                        utils::format("About {}", appName),
                         utils::aboutMessage(appName),
                         "OK",
                         getContentComponent()
@@ -272,7 +282,9 @@ private:
         }
 
         const auto summary = chain->getChainSummary();
-        menu.addSectionHeader(summary.isEmpty() ? juce::String("No plugins in chain") : "Chain: " + summary);
+        menu.addSectionHeader(
+            summary.isEmpty() ? juce::String("No plugins in chain") : utils::format("Chain: {}", summary)
+        );
         menu.addItem(editChainMenuItemId, "Edit Chain...");
         menu.addSeparator();
 
@@ -346,8 +358,9 @@ public:
         const auto initialiseStartedAtMs = juce::Time::getMillisecondCounterHiRes();
         const auto logInitialiseCheckpoint = [initialiseStartedAtMs](const juce::String& step) {
             utils::logInfo(
-                "Application startup: " + step + " ("
-                + juce::String(juce::Time::getMillisecondCounterHiRes() - initialiseStartedAtMs, 1) + " ms)"
+                "Application startup: {} ({:.1f} ms)",
+                step,
+                juce::Time::getMillisecondCounterHiRes() - initialiseStartedAtMs
             );
         };
         const juce::ArgumentList arguments {getApplicationName(), commandLineParameters};
@@ -363,7 +376,7 @@ public:
         utils::logSystemInfo();
         logInitialiseCheckpoint("logger ready");
         if (arguments.size() > 0) {
-            utils::logInfo("Args: " + commandLineParameters);
+            utils::logInfo("Args: {}", commandLineParameters);
         }
 
         logInitialiseCheckpoint("creating main window");
@@ -401,7 +414,7 @@ public:
     void systemRequestedQuit() override
     {
         if (const auto exit_code = getApplicationReturnValue(); exit_code != 0) {
-            utils::logInfo("Quit with non-zero exit code: " + juce::String(exit_code));
+            utils::logInfo("Quit with non-zero exit code: {}", exit_code);
         } else {
             utils::logInfo("Quit");
         }
@@ -412,7 +425,7 @@ public:
     /// The arguments are only recorded, this instance keeps running unchanged.
     void anotherInstanceStarted(const juce::String& commandLine) override
     {
-        utils::logInfo("Another instance started with args: " + commandLine);
+        utils::logInfo("Another instance started with args: {}", commandLine);
     }
 
 private:

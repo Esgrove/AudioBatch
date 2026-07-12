@@ -9,6 +9,7 @@
 
 #include "CustomLookAndFeel.h"
 #include "PluginChainEditor.h"
+#include "StringFormat.h"
 
 #include <algorithm>
 
@@ -46,6 +47,11 @@ static PluginDescriptorRef makeDescriptorRef(const juce::PluginDescription& desc
 }  // namespace audiobatch::plugin_chain
 
 using namespace audiobatch::plugin_chain;
+
+juce::String formatPluginDescription(const juce::PluginDescription& description)
+{
+    return utils::format("{} {} ({})", description.manufacturerName, description.name, description.pluginFormatName);
+}
 
 PluginChain::PluginChain(juce::ApplicationProperties& applicationProperties) : appProperties(applicationProperties)
 {
@@ -134,13 +140,13 @@ juce::String PluginChain::getChainSummary() const
 
     juce::StringArray names;
     for (const auto& entry : chain) {
-        names.add(entry.enabled ? entry.description.name : "(" + entry.description.name + ")");
+        names.add(entry.enabled ? entry.description.name : utils::format("({})", entry.description.name));
     }
 
     auto summary = names.joinIntoString(" > ");
     constexpr int maxSummaryLength = 60;
     if (summary.length() > maxSummaryLength) {
-        summary = summary.substring(0, maxSummaryLength) + "...";
+        summary = utils::format("{}...", summary.substring(0, maxSummaryLength));
     }
 
     return summary;
@@ -210,7 +216,9 @@ void PluginChain::showMenu(juce::Component& anchor)
     juce::PopupMenu menu;
 
     const auto summary = getChainSummary();
-    menu.addSectionHeader(summary.isEmpty() ? juce::String("No plugins in chain") : "Chain: " + summary);
+    menu.addSectionHeader(
+        summary.isEmpty() ? juce::String("No plugins in chain") : utils::format("Chain: {}", summary)
+    );
 
     menu.addItem(editChainMenuItemId, "Edit Chain...");
     menu.addSeparator();
@@ -375,7 +383,7 @@ void PluginChain::openEditorForSlot(const int index)
             juce::MessageBoxOptions::makeOptionsOk(
                 juce::MessageBoxIconType::WarningIcon,
                 "Plugin Error",
-                "Could not instantiate plugin:\n\n" + errorMessage,
+                utils::format("Could not instantiate plugin:\n\n{}", errorMessage),
                 "OK"
             ),
             nullptr

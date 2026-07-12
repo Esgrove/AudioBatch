@@ -21,7 +21,7 @@ namespace audiobatch::normalization
 /// Logs the failure and builds a failure result for the given file.
 static AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)
 {
-    utils::logError("Normalization failed for " + file.getFullPathName().quoted() + ": " + message);
+    utils::logError("Normalization failed for {}: {}", file.getFullPathName().quoted(), message);
     return AudioNormalizationResult::failure(file, message);
 }
 
@@ -386,7 +386,7 @@ static bool preserveOutputMetadata(const juce::File& sourceFile, const juce::Fil
     if (!MetadataService::readMetadata(sourceFile, metadata)) {
         // Reading failed, for example due to an unsupported format.
         // This is non-fatal, so keep going without metadata.
-        utils::logInfo("No metadata could be read from " + sourceFile.getFullPathName().quoted());
+        utils::logInfo("No metadata could be read from {}", sourceFile.getFullPathName().quoted());
         return true;
     }
 
@@ -395,7 +395,7 @@ static bool preserveOutputMetadata(const juce::File& sourceFile, const juce::Fil
     }
 
     if (!MetadataService::writeMetadata(destinationFile, metadata)) {
-        utils::logError("Failed to write metadata to " + destinationFile.getFullPathName().quoted());
+        utils::logError("Failed to write metadata to {}", destinationFile.getFullPathName().quoted());
         return false;
     }
 
@@ -466,7 +466,7 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
     juce::StringArray readOnlyLines;
 
     for (const auto& [formatName, fileExtensions, canNormalize, detail] : support) {
-        auto line = "- " + formatName + " (" + formatExtensionsToText(fileExtensions) + ")";
+        auto line = utils::format("- {} ({})", formatName, formatExtensionsToText(fileExtensions));
 
         if (detail.isNotEmpty()) {
             line << ": " << detail;
@@ -632,8 +632,9 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
     result.succeeded = !result.analysisRecord.hasError();
 
     if (!result.succeeded) {
-        result.errorMessage = "The file was normalized, but re-analysis failed: " + result.analysisRecord.errorMessage;
-        utils::logError("Normalization failed for " + result.fullPath.quoted() + ": " + result.errorMessage);
+        result.errorMessage
+            = utils::format("The file was normalized, but re-analysis failed: {}", result.analysisRecord.errorMessage);
+        utils::logError("Normalization failed for {}: {}", result.fullPath.quoted(), result.errorMessage);
     }
 
     return result;

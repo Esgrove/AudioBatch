@@ -6,6 +6,7 @@
 #include "AudioFileTableModel.h"
 
 #include "CustomLookAndFeel.h"
+#include "StringFormat.h"
 
 namespace audiobatch::table
 {
@@ -301,7 +302,7 @@ void AudioFileTableModel::paintCell(
             break;
         case columnCustomGain:
             if (record.hasCustomGain) {
-                text = (record.customGainDb >= 0.0f ? "+" : "") + juce::String(record.customGainDb, 1) + " dB";
+                text = utils::format("{}{:.1f} dB", record.customGainDb >= 0.0f ? "+" : "", record.customGainDb);
             } else {
                 text = {};
             }

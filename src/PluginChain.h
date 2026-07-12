@@ -14,6 +14,10 @@
 #include <memory>
 #include <vector>
 
+/// Formats a plugin description as "Manufacturer Name (Format)"
+/// for chain editor rows, menus, and log messages.
+[[nodiscard]] juce::String formatPluginDescription(const juce::PluginDescription& description);
+
 /// Owns the user's plugin chain, the known-plugins database, scanning, and the editor windows.
 /// The chain is an ordered list of plugins that files are processed through in sequence.
 /// Not a visible component: callers display a single button (or menu item) that invokes showMenu().

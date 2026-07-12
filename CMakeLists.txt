@@ -190,6 +190,24 @@ if (NOT CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86")
     target_compile_options(ebur128 PRIVATE -Wno-\#warnings)
 endif()
 
+# SYSTEM marks the fmt include directories as system includes,
+# so its headers are exempt from this project's warnings-as-errors flags.
+FetchContent_Declare(fmt
+    GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+    GIT_TAG 12.2.0
+    GIT_SHALLOW TRUE
+    SYSTEM
+)
+
+# Configure fmt build options before populating,
+# so they apply on the first configure and on subsequent re-configures.
+set(FMT_DOC OFF CACHE BOOL "" FORCE)
+set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
+set(FMT_TEST OFF CACHE BOOL "" FORCE)
+set(FMT_FUZZ OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(fmt)
+
 juce_add_gui_app(AudioBatch
     BUNDLE_ID com.esgrove.audiobatch
     COMPANY_NAME "Esgrove"
@@ -251,6 +269,7 @@ target_sources(AudioBatch
         "src/PluginProcessingCoordinator.h"
         "src/PluginProcessingService.cpp"
         "src/PluginProcessingService.h"
+        "src/StringFormat.h"
         "src/ThumbnailComponent.cpp"
         "src/ThumbnailComponent.h"
         "src/utils.cpp"
@@ -280,6 +299,7 @@ target_sources(AudioBatchCli
         "src/MetadataService.h"
         "src/NormalizeCoordinator.cpp"
         "src/NormalizeCoordinator.h"
+        "src/StringFormat.h"
         "src/utils.cpp"
         "src/utils.h"
         "src/version.h"
@@ -392,6 +412,7 @@ target_link_libraries(AudioBatch
         Assets
         ${AUDIOBATCH_SQLITE_TARGET}
         ebur128
+        fmt::fmt
         tag
         juce::juce_audio_basics
         juce::juce_audio_devices
@@ -415,6 +436,7 @@ target_link_libraries(AudioBatchCli
     PRIVATE
         ${AUDIOBATCH_SQLITE_TARGET}
         ebur128
+        fmt::fmt
         tag
         juce::juce_audio_basics
         juce::juce_audio_formats

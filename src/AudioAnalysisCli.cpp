@@ -142,7 +142,7 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
 
     for (const auto& argument : arguments.arguments) {
         if (argument.isOption()) {
-            errorMessage = "Unknown option: " + argument.text;
+            errorMessage = utils::format("Unknown option: {}", argument.text);
             return std::nullopt;
         }
 
@@ -158,7 +158,9 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
     if (inputPaths.isEmpty()) {
         inputPaths.add(juce::File::getCurrentWorkingDirectory());
-        utils::logInfo("No input paths provided, using current directory: " + inputPaths[0].getFullPathName().quoted());
+        utils::logInfo(
+            "No input paths provided, using current directory: {}", inputPaths[0].getFullPathName().quoted()
+        );
     }
 
     AnalysisCache cache;
@@ -176,8 +178,10 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     const auto analysisFailureCount
         = std::ranges::count_if(results, [](const auto& record) { return record.hasError(); });
     utils::logInfo(
-        "Analysis complete: " + juce::String(results.size()) + " files (" + juce::String(analysisFailureCount)
-        + " failed) in " + juce::String(analysisElapsedMs / 1000.0, 2) + " s"
+        "Analysis complete: {} files ({} failed) in {:.2f} s",
+        results.size(),
+        analysisFailureCount,
+        analysisElapsedMs / 1000.0
     );
 
     AudioAnalysisService::sortRecords(results, options.sortMode, true);
@@ -196,7 +200,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     for (const auto& result : results) {
         if (result.hasError()) {
             ++failureCount;
-            utils::logError(result.file.getFullPathName().quoted() + ": " + result.errorMessage);
+            utils::logError("{}: {}", result.file.getFullPathName().quoted(), result.errorMessage);
             continue;
         }
 
@@ -209,7 +213,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
         if (normalization.hasError()) {
             ++failureCount;
-            utils::logError(result.file.getFullPathName().quoted() + ": " + normalization.errorMessage);
+            utils::logError("{}: {}", result.file.getFullPathName().quoted(), normalization.errorMessage);
             continue;
         }
 

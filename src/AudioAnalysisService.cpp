@@ -35,7 +35,7 @@ static AudioAnalysisRecord failAnalysis(AudioAnalysisRecord record, const juce::
 {
     record.status = AudioAnalysisStatus::failed;
     record.errorMessage = message;
-    utils::logError("Analysis failed for " + record.fullPath.quoted() + ": " + message);
+    utils::logError("Analysis failed for {}: {}", record.fullPath.quoted(), message);
     return record;
 }
 
@@ -132,17 +132,19 @@ static int findBitDepthInText(const juce::String& text)
     constexpr std::array candidateBitDepths {8, 12, 16, 20, 24, 32};
 
     for (const auto candidate : candidateBitDepths) {
-        if (const auto value = juce::String(candidate);
-            text.contains(value + "-bit") || text.contains(value + " bit") || text.contains(value + " bits"))
+        if (const auto value = juce::String(candidate); text.contains(utils::format("{}-bit", value))
+            || text.contains(utils::format("{} bit", value)) || text.contains(utils::format("{} bits", value)))
         {
             return candidate;
         }
     }
 
     for (const auto candidate : candidateBitDepths) {
-        if (const auto value = juce::String(candidate); text.contains("bit depth " + value)
-            || text.contains("bitdepth " + value) || text.contains("bits per sample " + value)
-            || text.contains("source bit depth " + value) || text.contains("source bits per sample " + value))
+        if (const auto value = juce::String(candidate); text.contains(utils::format("bit depth {}", value))
+            || text.contains(utils::format("bitdepth {}", value))
+            || text.contains(utils::format("bits per sample {}", value))
+            || text.contains(utils::format("source bit depth {}", value))
+            || text.contains(utils::format("source bits per sample {}", value)))
         {
             return candidate;
         }
@@ -252,21 +254,21 @@ static double normalizeLoudness(const double loudness)
 static juce::String formatAmplitudeDisplay(const double amplitude, const juce::String& unitSuffix)
 {
     if (amplitude <= 0.0) {
-        return "-INF" + unitSuffix;
+        return utils::format("-INF{}", unitSuffix);
     }
 
     const auto decibels = juce::Decibels::gainToDecibels(static_cast<float>(amplitude), minimumDisplayDecibels);
-    return juce::String::formatted("%.2f", decibels) + unitSuffix;
+    return utils::format("{:.2f}{}", decibels, unitSuffix);
 }
 
 /// Formats a LUFS loudness value with the given unit suffix, rendering the sentinel value as "-INF".
 static juce::String formatLoudnessValue(const double loudness, const juce::String& unitSuffix)
 {
     if (loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
-        return "-INF" + unitSuffix;
+        return utils::format("-INF{}", unitSuffix);
     }
 
-    return juce::String::formatted("%.2f", loudness) + unitSuffix;
+    return utils::format("{:.2f}{}", loudness, unitSuffix);
 }
 
 /// Returns true when a failed read happened in the final block of the stream.
@@ -433,9 +435,10 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
 
             if (!reportedPartialDecode) {
                 utils::logWarn(
-                    "Audio decode failed at sample " + juce::String(samplePosition) + " / "
-                    + juce::String(reader->lengthInSamples) + " for " + record.fullPath.quoted()
-                    + ", continuing analysis with decoded audio"
+                    "Audio decode failed at sample {} / {} for {}, continuing analysis with decoded audio",
+                    samplePosition,
+                    reader->lengthInSamples,
+                    record.fullPath.quoted()
                 );
                 reportedPartialDecode = true;
             }
@@ -590,7 +593,7 @@ juce::String AudioAnalysisService::formatBitrateDisplay(const AudioAnalysisRecor
         return "-";
     }
 
-    return juce::String(juce::roundToInt(bitrateKbps)) + " kbps";
+    return utils::format("{} kbps", juce::roundToInt(bitrateKbps));
 }
 
 juce::String AudioAnalysisService::formatSampleRateDisplay(const AudioAnalysisRecord& record)
@@ -600,10 +603,10 @@ juce::String AudioAnalysisService::formatSampleRateDisplay(const AudioAnalysisRe
     }
 
     if (record.sampleRate % 1000 == 0) {
-        return juce::String(record.sampleRate / 1000) + " kHz";
+        return utils::format("{} kHz", record.sampleRate / 1000);
     }
 
-    return juce::String::formatted("%.1f kHz", static_cast<double>(record.sampleRate) / 1000.0);
+    return utils::format("{:.1f} kHz", static_cast<double>(record.sampleRate) / 1000.0);
 }
 
 juce::String AudioAnalysisService::formatStatus(const AudioAnalysisRecord& record)

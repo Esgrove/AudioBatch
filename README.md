@@ -27,6 +27,7 @@ Multichannel files are not a target for this tool.
 - SQLite 3
 - [libebur128](https://github.com/jiixyj/libebur128)
 - [TagLib](https://taglib.org/) for cross-format metadata handling.
+- [{fmt}](https://github.com/fmtlib/fmt) for string formatting.
 
 `SQLite3` is resolved through CMake.
 If a system `SQLite3` package is available it will be used,
@@ -37,6 +38,10 @@ otherwise CMake falls back to fetching the SQLite amalgamation.
 `TagLib` is fetched through CMake.
 It is used to read every tag and embedded picture from the source file,
 and to write the resulting metadata back as ID3v2.4 on the AIFF output.
+
+`{fmt}` is fetched through CMake.
+It powers all display and log text formatting through a `utils::format` helper
+that works directly with JUCE string and file types.
 
 ## Build
 

@@ -239,8 +239,11 @@ PluginProcessingResult PluginProcessingService::processFile(
             utils::deleteFile(temporaryFile.getFile());
             return fail(
                 file,
-                "Plugin " + options.plugins[pluginIndex].name.quoted() + " does not support the file's channel layout ("
-                    + juce::String(numChannels) + " channels)"
+                utils::format(
+                    "Plugin {} does not support the file's channel layout ({} channels)",
+                    options.plugins[pluginIndex].name.quoted(),
+                    numChannels
+                )
             );
         }
 
@@ -337,7 +340,9 @@ PluginProcessingResult PluginProcessingService::processFile(
         MetadataService::Metadata metadata;
         if (MetadataService::readMetadata(file, metadata) && !metadata.isEmpty()) {
             if (!MetadataService::writeMetadata(temporaryFile.getFile(), metadata)) {
-                utils::logError("Failed to copy metadata onto processed output for " + file.getFullPathName().quoted());
+                utils::logError(
+                    "Failed to copy metadata onto processed output for {}", file.getFullPathName().quoted()
+                );
             }
         }
     }
@@ -369,7 +374,9 @@ PluginProcessingResult PluginProcessingService::processFile(
         // Output had a different extension.
         // Move the original file to the system trash so the user can recover it if needed.
         if (!utils::moveToTrash(file)) {
-            utils::logError("Could not move the original file to the system trash: " + file.getFullPathName().quoted());
+            utils::logError(
+                "Could not move the original file to the system trash: {}", file.getFullPathName().quoted()
+            );
         }
     }
 
@@ -385,8 +392,9 @@ PluginProcessingResult PluginProcessingService::processFile(
     result.succeeded = !result.analysisRecord.hasError();
 
     if (!result.succeeded) {
-        result.errorMessage = "The file was processed, but re-analysis failed: " + result.analysisRecord.errorMessage;
-        utils::logError("Plugin processing re-analysis failed for " + result.outputFile.getFullPathName().quoted());
+        result.errorMessage
+            = utils::format("The file was processed, but re-analysis failed: {}", result.analysisRecord.errorMessage);
+        utils::logError("Plugin processing re-analysis failed for {}", result.outputFile.getFullPathName().quoted());
     }
 
     return result;

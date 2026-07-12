@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "StringFormat.h"
 #include "version.h"
 
 #include <JuceHeader.h>
@@ -130,7 +131,7 @@ inline juce::String formatJson(const juce::var& object)
 static void writeToLog(const juce::String& message, [[maybe_unused]] Level log_level = Level::info)
 {
     const auto timestamp = juce::Time::getCurrentTime().formatted("%H:%M:%S ");
-    const auto log_message = timestamp + message;
+    const auto log_message = format("{}{}", timestamp, message);
     // Print the log messages to stdout / stderr when running in release configuration,
     // since otherwise log output will not be visible when running the app from command line.
     // In debug builds, the log messages are printed to console already by juce::FileLogger,
@@ -159,26 +160,57 @@ inline void logDebug([[maybe_unused]] const juce::String& message)
 {
 #if JUCE_DEBUG
     // Write to log if debug logging is enabled
-    writeToLog("[DEBUG]: " + message, Level::debug);
+    writeToLog(format("[DEBUG]: {}", message), Level::debug);
+#endif
+}
+
+/// Formats and logs a debug message directly from an fmt format string and arguments.
+/// In release builds the formatting work is skipped entirely since the message is not logged.
+template<typename... Args>
+void logDebug([[maybe_unused]] fmt::format_string<Args...> formatString, [[maybe_unused]] Args&&... args)
+{
+#if JUCE_DEBUG
+    logDebug(utils::format(formatString, std::forward<Args>(args)...));
 #endif
 }
 
 /// Writes an informational message to the application log.
 inline void logInfo(const juce::String& message)
 {
-    writeToLog("[INFO]: " + message);
+    writeToLog(format("[INFO]: {}", message));
+}
+
+/// Formats and logs an informational message directly from an fmt format string and arguments.
+template<typename... Args>
+void logInfo(fmt::format_string<Args...> formatString, Args&&... args)
+{
+    logInfo(utils::format(formatString, std::forward<Args>(args)...));
 }
 
 /// Writes a warning message to the application log.
 inline void logWarn(const juce::String& message)
 {
-    writeToLog("[WARN]: " + message, Level::warn);
+    writeToLog(format("[WARN]: {}", message), Level::warn);
+}
+
+/// Formats and logs a warning message directly from an fmt format string and arguments.
+template<typename... Args>
+void logWarn(fmt::format_string<Args...> formatString, Args&&... args)
+{
+    logWarn(utils::format(formatString, std::forward<Args>(args)...));
 }
 
 /// Writes an error message to the application log, and to stderr in release builds.
 inline void logError(const juce::String& message)
 {
-    writeToLog("[ERROR]: " + message, Level::error);
+    writeToLog(format("[ERROR]: {}", message), Level::error);
+}
+
+/// Formats and logs an error message directly from an fmt format string and arguments.
+template<typename... Args>
+void logError(fmt::format_string<Args...> formatString, Args&&... args)
+{
+    logError(utils::format(formatString, std::forward<Args>(args)...));
 }
 
 /// Logs a JSON var as formatted plain text, at debug level when requested.
@@ -197,7 +229,7 @@ inline void logSystemInfo()
 {
     // Get info first to avoid API call debug / error messages in the middle of the log message
     auto info = utils::systemInfo();
-    logInfo("System info\n    " + juce::String(version::APP_NAME));
+    logInfo("System info\n    {}", version::APP_NAME);
     for (const auto& line : info) {
 #if !JUCE_DEBUG
         std::cout << "    " << line << juce::newLine;
