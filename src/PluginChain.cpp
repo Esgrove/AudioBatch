@@ -464,8 +464,18 @@ void PluginChain::showScanWindow()
     const auto deadMansPedalFile
         = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile(deadMansPedalFileName);
 
+    // allowPluginsWhichRequireAsynchronousInstantiation must stay false so scanning runs on the message thread.
+    // A background-thread scan crashes with copy-protected plugins (for example PACE / iLok wrapped VST3s)
+    // that dispatch licensing work to the main thread while their factory is still being enumerated.
+    // Asynchronous-only plugins (AUv3) are not usable by this app anyway,
+    // since all instantiation goes through the synchronous createPluginInstance.
+    constexpr bool allowAsynchronousInstantiation = false;
     auto* listComponent = new juce::PluginListComponent(
-        formatManager, knownPluginList, deadMansPedalFile, appProperties.getUserSettings(), true
+        formatManager,
+        knownPluginList,
+        deadMansPedalFile,
+        appProperties.getUserSettings(),
+        allowAsynchronousInstantiation
     );
     listComponent->setSize(720, 520);
 

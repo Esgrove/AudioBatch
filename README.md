@@ -223,5 +223,6 @@ The cache is invalidated when any of these change:
 
 - User config file.
 - Compensate plugin latency (`getLatencySamples`) in processed output.
+- Out-of-process plugin scanning so a crashing plugin cannot take down the app.
 - "Add folder" menu option to append more roots to the current list.
 - Optional report export, for example CSV or JSON.
