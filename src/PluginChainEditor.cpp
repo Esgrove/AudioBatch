@@ -1,6 +1,6 @@
 /// Implementation of PluginChainEditor and its SlotRow component.
 /// Covers building the rows and wiring their controls to the owning PluginChain,
-/// laying out the top bar, hint label, and scrolling row list,
+/// laying out the hint label and the scrolling row list with its add button,
 /// drag-to-reorder gestures with a live drop-position preview,
 /// and deferred row rebuilds when the chain changes.
 
@@ -13,7 +13,7 @@ namespace audiobatch::plugin_chain_editor
 {
 constexpr int rowHeight = 36;
 constexpr int rowPadding = 4;
-constexpr int topBarHeight = 32;
+constexpr int addButtonSize = 28;
 constexpr int margin = 8;
 }  // namespace audiobatch::plugin_chain_editor
 
@@ -130,11 +130,7 @@ PluginChainEditor::PluginChainEditor(PluginChain& chain) : pluginChain(chain)
 {
     addButton.setTooltip("Add a plugin to the end of the chain.");
     addButton.onClick = [this] { showAddPluginMenu(); };
-    addAndMakeVisible(addButton);
-
-    scanButton.setTooltip("Open the plugin scanner to find installed plugins.");
-    scanButton.onClick = [this] { pluginChain.showScanWindow(); };
-    addAndMakeVisible(scanButton);
+    rowContainer.addAndMakeVisible(addButton);
 
     hintLabel.setJustificationType(juce::Justification::centred);
     hintLabel.setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddle);
@@ -156,18 +152,14 @@ PluginChainEditor::~PluginChainEditor()
 
 void PluginChainEditor::resized()
 {
-    auto area = getLocalBounds().reduced(margin);
+    const auto area = getLocalBounds().reduced(margin);
 
-    auto topBar = area.removeFromTop(topBarHeight);
-    addButton.setBounds(topBar.removeFromLeft(110));
-    topBar.removeFromLeft(margin);
-    scanButton.setBounds(topBar.removeFromLeft(80));
-
-    area.removeFromTop(margin);
     viewport.setBounds(area);
     hintLabel.setBounds(area);
 
-    rowContainer.setSize(viewport.getMaximumVisibleWidth(), juce::jmax(1, static_cast<int>(rows.size())) * rowHeight);
+    // Reserve one extra row of space below the plugin rows for the add button.
+    const auto rowsHeight = static_cast<int>(rows.size()) * rowHeight;
+    rowContainer.setSize(viewport.getMaximumVisibleWidth(), rowsHeight + rowHeight);
 
     for (auto& row : rows) {
         row->setSize(rowContainer.getWidth(), rowHeight);
@@ -224,6 +216,11 @@ void PluginChainEditor::layoutRows(const SlotRow* draggedRow, const int gapIndex
         row->setTopLeftPosition(0, visualIndex * rowHeight);
         ++visualIndex;
     }
+
+    // Keep the add button centered below the last row.
+    const auto rowsHeight = static_cast<int>(rows.size()) * rowHeight;
+    const auto addButtonX = (rowContainer.getWidth() - addButtonSize) / 2;
+    addButton.setBounds(addButtonX, rowsHeight + rowPadding, addButtonSize, addButtonSize);
 }
 
 void PluginChainEditor::rowDragged(SlotRow& row, const int targetIndex)
@@ -283,8 +280,8 @@ void PluginChainEditor::updateHintLabel()
 
     const bool hasKnownPlugins = !pluginChain.getKnownPluginList().getTypes().isEmpty();
     hintLabel.setText(
-        hasKnownPlugins ? "No plugins in chain. Use Add Plugin to get started."
-                        : "No plugins found. Use Scan... to find installed plugins.",
+        hasKnownPlugins ? "No plugins in chain. Use the + button to get started."
+                        : "No plugins found. Use the Plugins menu to scan for installed plugins.",
         juce::dontSendNotification
     );
     hintLabel.setVisible(true);

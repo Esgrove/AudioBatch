@@ -1,7 +1,7 @@
 /// GUI content for the chain editor window.
 /// Declares PluginChainEditor, a component that shows the plugin chain as a scrolling list of slot rows
 /// with enable, edit, reorder, and remove controls,
-/// plus buttons for adding plugins and opening the plugin scanner.
+/// plus an add button below the rows for appending new plugins.
 
 #pragma once
 
@@ -14,7 +14,7 @@
 
 /// Editor window content for the plugin chain.
 /// Shows one row per slot with enable, edit, reorder, and remove controls,
-/// plus buttons for adding plugins and opening the plugin scanner.
+/// plus an add button below the rows for appending new plugins.
 /// Rows can be reordered by dragging their background or with the arrow buttons.
 class PluginChainEditor : public juce::Component, public juce::ChangeListener, private juce::AsyncUpdater
 {
@@ -26,7 +26,7 @@ public:
     /// Unregisters from the chain's change notifications.
     ~PluginChainEditor() override;
 
-    /// Lays out the top bar buttons, the hint label, and the scrolling row list.
+    /// Lays out the hint label and the scrolling row list with its add button.
     void resized() override;
 
     /// Schedules a deferred row rebuild when the chain changes.
@@ -112,8 +112,9 @@ private:
 
     PluginChain& pluginChain;
 
-    juce::TextButton addButton {"Add Plugin"};
-    juce::TextButton scanButton {"Scan..."};
+    /// Appends a new plugin to the chain.
+    /// Lives inside the row container below the last row, so it scrolls with the rows.
+    juce::TextButton addButton {"+"};
     juce::Label hintLabel;
 
     juce::Viewport viewport;
