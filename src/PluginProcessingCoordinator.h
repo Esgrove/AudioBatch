@@ -1,3 +1,8 @@
+/// Background job coordination for batch plugin processing.
+/// Declares PluginProcessingCoordinator, which runs files through pre-instantiated plugin chains
+/// on a worker thread pool and marshals per-file results, completion, and start errors
+/// back to the message thread through callbacks.
+
 #pragma once
 
 #include "PluginProcessing.h"
@@ -14,6 +19,9 @@
 class PluginProcessingCoordinator
 {
 public:
+    /// One pre-instantiated chain of plugin instances, in processing order.
+    using PluginChainInstances = std::vector<std::unique_ptr<juce::AudioPluginInstance>>;
+
     /// Called once after a run has published all queued results.
     using CompletionCallback = std::function<void(int totalFiles)>;
 
@@ -42,23 +50,31 @@ public:
     void setStartErrorCallback(StartErrorCallback callback);
 
     /// Starts a background processing run.
-    /// Plugin instances must be pre-instantiated on the message thread by the caller
+    /// Plugin chains must be pre-instantiated on the message thread by the caller
     /// and ownership is transferred to the coordinator.
-    /// One instance is consumed by each worker.
-    /// Instances are returned to a free pool between files.
+    /// Each chain's instances must align index-for-index with options.plugins.
+    /// One chain is consumed by each worker.
+    /// Chains are returned to a free pool between files.
     /// Returns the number of queued files.
     int start(
         const std::vector<AudioAnalysisRecord>& records,
         const PluginProcessingOptions& options,
-        std::vector<std::unique_ptr<juce::AudioPluginInstance>> pluginInstances
+        std::vector<PluginChainInstances> chainInstances
     );
 
 private:
+    /// Invokes the completion callback, unless the run has been superseded or cancelled.
     void publishCompletion(int totalFiles, int runId) const;
+
+    /// Invokes the result callback for one processed file,
+    /// unless the run has been superseded or cancelled.
     void publishResult(const PluginProcessingResult& result, int runId) const;
 
-    juce::AudioPluginInstance* acquireInstance();
-    void releaseInstance(juce::AudioPluginInstance* instance);
+    /// Returns the index of a free chain, or -1 when none are available.
+    int acquireChain();
+
+    /// Returns a chain to the free pool and wakes one worker waiting for a chain.
+    void releaseChain(int chainIndex);
 
     juce::ThreadPool threadPool;
     juce::CriticalSection callbackLock;
@@ -67,9 +83,10 @@ private:
     StartErrorCallback startErrorCallback;
 
     juce::CriticalSection instanceLock;
-    juce::WaitableEvent instanceAvailable {false};  ///< Auto-reset: signaled on releaseInstance().
-    std::vector<std::unique_ptr<juce::AudioPluginInstance>> ownedInstances;
-    std::vector<juce::AudioPluginInstance*> freeInstances;
+    /// Auto-reset event, signaled on releaseChain().
+    juce::WaitableEvent instanceAvailable {false};
+    std::vector<PluginChainInstances> ownedChains;
+    std::vector<int> freeChainIndices;
 
     std::atomic<int> currentRunId {0};
     std::atomic<int> pendingJobs {0};

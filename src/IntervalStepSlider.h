@@ -1,3 +1,8 @@
+/// Header-only slider variant used for stepped numeric controls in the GUI.
+/// Declares IntervalStepSlider, a juce::Slider
+/// that moves by exactly one interval per mouse-wheel notch
+/// instead of jumping several steps on fast wheel movement.
+
 #pragma once
 
 #include <JuceHeader.h>
@@ -10,6 +15,9 @@ class IntervalStepSlider : public juce::Slider
 public:
     using juce::Slider::Slider;
 
+    /// Steps the value by one interval in the wheel direction, honouring reversed scrolling.
+    /// This replaces the default JUCE behaviour where fast wheel movement can jump several intervals.
+    /// Falls back to the stock handling when the slider is disabled or the vertical delta is zero.
     void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override
     {
         if (!isEnabled() || std::abs(wheel.deltaY) <= 0.0f) {

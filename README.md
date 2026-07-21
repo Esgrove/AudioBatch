@@ -12,7 +12,7 @@ Current implementation focus:
 - Normalize selected files to `0 dBFS` peak from the GUI or the CLI.
 - Convert any normalized output to AIFF and preserve all source metadata,
   including embedded album art and custom tags, by writing them back as ID3v2.4.
-- Batch process selected files through a VST3 or Audio Unit plugin from the GUI.
+- Batch process selected files through a chain of VST3 or Audio Unit plugins from the GUI.
 - Run the same analysis and normalization from a console executable.
 
 Analysis scope currently assumes mono or stereo source files, including MP3 joint stereo.
@@ -27,6 +27,7 @@ Multichannel files are not a target for this tool.
 - SQLite 3
 - [libebur128](https://github.com/jiixyj/libebur128)
 - [TagLib](https://taglib.org/) for cross-format metadata handling.
+- [{fmt}](https://github.com/fmtlib/fmt) for string formatting.
 
 `SQLite3` is resolved through CMake.
 If a system `SQLite3` package is available it will be used,
@@ -37,6 +38,10 @@ otherwise CMake falls back to fetching the SQLite amalgamation.
 `TagLib` is fetched through CMake.
 It is used to read every tag and embedded picture from the source file,
 and to write the resulting metadata back as ID3v2.4 on the AIFF output.
+
+`{fmt}` is fetched through CMake.
+It powers all display and log text formatting through a `utils::format` helper
+that works directly with JUCE string and file types.
 
 ## Build
 
@@ -87,7 +92,7 @@ The results list supports per-file actions from the context menu, including:
 - move files to the system trash
 - remove files from the list without deleting them
 - normalize selected files to `0 dBFS` peak
-- process selected files through the currently chosen plugin
+- process selected files through the current plugin chain
 
 Keyboard shortcuts in the results list:
 
@@ -121,16 +126,26 @@ Default sorting is by overall peak ascending, so the quietest files appear first
 
 ## Plugin processing
 
-AudioBatch can run selected files through a VST3 or Audio Unit effect plugin and write the processed audio to disk.
+AudioBatch can run selected files through a chain of VST3 or Audio Unit effect plugins
+and write the processed audio to disk.
 
-- Use the plugin menu in the GUI to scan for installed plugins and choose one.
-  Selecting a plugin opens its editor window automatically so it can be configured.
-  Plugin state is captured when the editor window is closed and persisted between runs.
+- Use the plugin menu in the GUI to scan for installed plugins and build a chain.
+  Adding a plugin opens its editor window automatically so it can be configured.
+  Multiple plugin editor windows can be open at the same time.
+  Plugin state is captured when an editor window is closed, and again when processing starts,
+  and the whole chain is persisted between runs.
+- The chain editor window lists the plugins in processing order.
+  Individual plugins can be enabled or disabled without removing them from the chain,
+  reordered by dragging a row or with the arrow buttons, and removed entirely.
+  Removing a plugin closes its editor window.
+- Files are processed through the enabled plugins in chain order in a single pass.
+  The processing tail is the sum of each plugin's reported tail,
+  so reverbs and delays ring out fully through the rest of the chain.
 - Processed output is always written as `<name>.aiff` next to the input file.
   If the input has a different extension, the original is moved to the system trash once the new file has been written.
 - Source metadata is copied onto the processed AIFF through TagLib,
   so tags and embedded artwork survive the processing step.
-- Optional pre-plugin normalization scales each file by `1 / overall peak` before sending it through the plugin,
+- Optional pre-plugin normalization scales each file by `1 / overall peak` before sending it through the chain,
   which keeps the input level consistent across the batch.
   A per-file custom input gain can also be set from the results list.
 
@@ -207,6 +222,7 @@ The cache is invalidated when any of these change:
 ## TODO
 
 - User config file.
-- Plugin chains: support running selected files through multiple plugins in sequence.
+- Compensate plugin latency (`getLatencySamples`) in processed output.
+- Out-of-process plugin scanning so a crashing plugin cannot take down the app.
 - "Add folder" menu option to append more roots to the current list.
 - Optional report export, for example CSV or JSON.

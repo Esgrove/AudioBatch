@@ -1,8 +1,12 @@
+/// Implementation of NormalizeCoordinator.
+/// Queues one thread pool job per file, runs AudioNormalizationService on worker threads,
+/// and guards callback publication with run id checks and a callback lock
+/// so cancelled runs stop publishing results.
+
 #include "NormalizeCoordinator.h"
 
 #include <map>
 
-/// Thread-pool orchestration for publishing normalize work back to the caller.
 NormalizeCoordinator::NormalizeCoordinator(const int workerCount) : threadPool(juce::jmax(1, workerCount)) { }
 
 NormalizeCoordinator::~NormalizeCoordinator()

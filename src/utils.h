@@ -1,5 +1,11 @@
+/// Shared logging, terminal color, and small helper utilities.
+/// The ansi namespace provides ANSI color codes and stream manipulators for CLI output.
+/// The utils namespace provides leveled logging on top of juce::FileLogger,
+/// file deletion and trash helpers, and system information formatting for logs and the About dialog.
+
 #pragma once
 
+#include "StringFormat.h"
 #include "version.h"
 
 #include <JuceHeader.h>
@@ -31,42 +37,49 @@ namespace ansi
 // Stream manipulators for easy ANSI color usage with stringstreams.
 // Example usage: std::cout << ansi::red << "example" << ansi::reset << std::endl;
 
+/// Resets the stream's terminal colors back to the default.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& reset(std::basic_ostream<CharT, Traits>& stream)
 {
     return stream << ANSI_RESET;
 }
 
+/// Switches the stream's terminal foreground color to black.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& black(std::basic_ostream<CharT, Traits>& stream)
 {
     return stream << ANSI_BLACK;
 }
 
+/// Switches the stream's terminal foreground color to red.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& red(std::basic_ostream<CharT, Traits>& stream)
 {
     return stream << ANSI_RED;
 }
 
+/// Switches the stream's terminal foreground color to yellow.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& yellow(std::basic_ostream<CharT, Traits>& stream)
 {
     return stream << ANSI_YELLOW;
 }
 
+/// Switches the stream's terminal foreground color to cyan.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& cyan(std::basic_ostream<CharT, Traits>& stream)
 {
     return stream << ANSI_CYAN;
 }
 
+/// Switches the stream's terminal foreground color to magenta.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& magenta(std::basic_ostream<CharT, Traits>& stream)
 {
     return stream << ANSI_MAGENTA;
 }
 
+/// Switches the stream's terminal foreground color to green.
 template<class CharT, class Traits>
 constexpr std::basic_ostream<CharT, Traits>& green(std::basic_ostream<CharT, Traits>& stream)
 {
@@ -89,14 +102,17 @@ bool moveToTrash(const juce::File& file);
 /// Returns true if the file did not exist or was deleted successfully.
 bool deleteFile(const juce::File& file);
 
-/// Return full system information list
+/// Collects build and runtime environment details for logs and diagnostics.
 juce::StringArray systemInfo();
 
 /// Return full system information formatted as a string
 juce::String formattedSystemInfo();
 
+/// Builds the multi-line About dialog message with application, build, and system information.
 juce::String aboutMessage(const juce::String& appName);
 
+/// Renders a JSON var as plain text for log output,
+/// stripping quotes and the outer braces from the serialized form.
 inline juce::String formatJson(const juce::var& object)
 {
     // clang-format off
@@ -115,7 +131,7 @@ inline juce::String formatJson(const juce::var& object)
 static void writeToLog(const juce::String& message, [[maybe_unused]] Level log_level = Level::info)
 {
     const auto timestamp = juce::Time::getCurrentTime().formatted("%H:%M:%S ");
-    const auto log_message = timestamp + message;
+    const auto log_message = format("{}{}", timestamp, message);
     // Print the log messages to stdout / stderr when running in release configuration,
     // since otherwise log output will not be visible when running the app from command line.
     // In debug builds, the log messages are printed to console already by juce::FileLogger,
@@ -144,25 +160,60 @@ inline void logDebug([[maybe_unused]] const juce::String& message)
 {
 #if JUCE_DEBUG
     // Write to log if debug logging is enabled
-    writeToLog("[DEBUG]: " + message, Level::debug);
+    writeToLog(format("[DEBUG]: {}", message), Level::debug);
 #endif
 }
 
+/// Formats and logs a debug message directly from an fmt format string and arguments.
+/// In release builds the formatting work is skipped entirely since the message is not logged.
+template<typename... Args>
+void logDebug([[maybe_unused]] fmt::format_string<Args...> formatString, [[maybe_unused]] Args&&... args)
+{
+#if JUCE_DEBUG
+    logDebug(utils::format(formatString, std::forward<Args>(args)...));
+#endif
+}
+
+/// Writes an informational message to the application log.
 inline void logInfo(const juce::String& message)
 {
-    writeToLog("[INFO]: " + message);
+    writeToLog(format("[INFO]: {}", message));
 }
 
+/// Formats and logs an informational message directly from an fmt format string and arguments.
+template<typename... Args>
+void logInfo(fmt::format_string<Args...> formatString, Args&&... args)
+{
+    logInfo(utils::format(formatString, std::forward<Args>(args)...));
+}
+
+/// Writes a warning message to the application log.
 inline void logWarn(const juce::String& message)
 {
-    writeToLog("[WARN]: " + message, Level::warn);
+    writeToLog(format("[WARN]: {}", message), Level::warn);
 }
 
+/// Formats and logs a warning message directly from an fmt format string and arguments.
+template<typename... Args>
+void logWarn(fmt::format_string<Args...> formatString, Args&&... args)
+{
+    logWarn(utils::format(formatString, std::forward<Args>(args)...));
+}
+
+/// Writes an error message to the application log, and to stderr in release builds.
 inline void logError(const juce::String& message)
 {
-    writeToLog("[ERROR]: " + message, Level::error);
+    writeToLog(format("[ERROR]: {}", message), Level::error);
 }
 
+/// Formats and logs an error message directly from an fmt format string and arguments.
+template<typename... Args>
+void logError(fmt::format_string<Args...> formatString, Args&&... args)
+{
+    logError(utils::format(formatString, std::forward<Args>(args)...));
+}
+
+/// Logs a JSON var as formatted plain text, at debug level when requested.
 inline void logJson(const juce::var& object, const bool debug = false)
 {
     if (debug) {
@@ -172,11 +223,13 @@ inline void logJson(const juce::var& object, const bool debug = false)
     }
 }
 
+/// Logs the collected system information as an indented block.
+/// Detail lines are written without the usual timestamp prefix so the block stays readable.
 inline void logSystemInfo()
 {
     // Get info first to avoid API call debug / error messages in the middle of the log message
     auto info = utils::systemInfo();
-    logInfo("System info\n    " + juce::String(version::APP_NAME));
+    logInfo("System info\n    {}", version::APP_NAME);
     for (const auto& line : info) {
 #if !JUCE_DEBUG
         std::cout << "    " << line << juce::newLine;

@@ -93,6 +93,27 @@ init_options() {
     else
         CMAKE_BUILD_DIR="$REPO/cmake-build-${BASH_PLATFORM}-${BUILD_TYPE_LOWER}"
     fi
+
+    # Keep the compilation cache next to the build directory it belongs to,
+    # so cleaning a build directory also drops its cache.
+    export CCACHE_DIR="$CMAKE_BUILD_DIR/ccache"
+}
+
+ccache_zero_stats() {
+    if [ -n "$(command -v ccache)" ]; then
+        echo "ccache: $(ccache --zero-stats)"
+    else
+        echo "ccache not installed"
+    fi
+}
+
+ccache_show_stats() {
+    if [ -n "$(command -v ccache)" ]; then
+        echo "ccache:"
+        ccache --show-stats
+    else
+        echo "ccache not installed"
+    fi
 }
 
 require_path() {
@@ -130,7 +151,9 @@ build_mac_app() {
         GUI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatch_artefacts/$BUILD_TYPE/$GUI_APP_BUNDLE"
         CLI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatchCli_artefacts/$BUILD_TYPE/$CLI_BINARY_NAME"
     else
+        ccache_zero_stats
         time cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME"
+        ccache_show_stats
         GUI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatch_artefacts/$BUILD_TYPE/$GUI_APP_BUNDLE"
         CLI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatchCli_artefacts/$BUILD_TYPE/$CLI_BINARY_NAME"
     fi
@@ -159,7 +182,13 @@ build_windows_app() {
 
     rm -f "$GUI_EXECUTABLE" "$CLI_EXECUTABLE"
 
-    cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE"
+    if [ "$USE_NINJA" = true ]; then
+        ccache_zero_stats
+        cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE"
+        ccache_show_stats
+    else
+        cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE"
+    fi
 
     require_path "$GUI_EXECUTABLE_SOURCE"
     require_path "$CLI_EXECUTABLE_SOURCE"

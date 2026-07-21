@@ -1,3 +1,8 @@
+/// Background orchestration for audio analysis runs.
+/// AnalysisCoordinator runs analysis jobs on a thread pool, serves cached results first,
+/// and publishes starting, per-result, and completion callbacks tagged with a run id
+/// so results from cancelled runs are ignored.
+
 #pragma once
 
 #include "AnalysisCache.h"
@@ -50,8 +55,17 @@ public:
     int start(const AudioAnalysisOptions& options, const juce::Array<juce::File>& files);
 
 private:
+    /// Invokes the completion callback when the given run id is still current.
+    /// The callback is copied under the lock and invoked without it,
+    /// so the callback may safely call back into the coordinator.
     void publishCompletion(int totalFiles, int runId) const;
+
+    /// Invokes the result callback when the given run id is still current.
+    /// Runs on the worker thread, so the callback must marshal to the message thread itself if needed.
     void publishResult(const AudioAnalysisRecord& result, int runId) const;
+
+    /// Invokes the starting callback when the given run id is still current.
+    /// Runs on the worker thread right before a file's analysis begins.
     void publishStarting(const juce::File& file, int runId) const;
 
     AnalysisCache& cache;
