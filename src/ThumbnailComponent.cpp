@@ -17,7 +17,7 @@ ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, 
     thumbnail.addChangeListener(this);
 
     currentPositionMarker.setFill(juce::Colours::white.withAlpha(0.85f));
-    addAndMakeVisible(currentPositionMarker);
+    addAndMakeVisible(currentPositionMarkerComponent);
 }
 
 ThumbnailComponent::~ThumbnailComponent()
@@ -267,7 +267,7 @@ void ThumbnailComponent::timerCallback()
 
 void ThumbnailComponent::updateCursorPosition()
 {
-    currentPositionMarker.setVisible(transportSource.isPlaying() || isMouseButtonDown());
+    currentPositionMarkerComponent.setVisible(transportSource.isPlaying() || isMouseButtonDown());
 
     currentPositionMarker.setRectangle(
         juce::Rectangle<float>(
