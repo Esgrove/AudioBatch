@@ -1,3 +1,8 @@
+/// Table model for the sortable analysis results table in the GUI.
+/// Declares AudioFileTableModel, a juce::TableListBoxModel
+/// with column identifiers, compile-time column widths,
+/// sorting, cell painting, and row actions for the analyzed files.
+
 #pragma once
 
 #include "AudioAnalysisService.h"
@@ -28,6 +33,9 @@ public:
         columnStatus,
     };
 
+    /// Returns the compile-time default width for a column.
+    /// The defaults are chosen so that all columns together exactly fill the default window width,
+    /// which is enforced by a static_assert below.
     static consteval int initialColumnWidth(const ColumnId columnId)
     {
         switch (columnId) {
@@ -62,6 +70,8 @@ public:
         return 0;
     }
 
+    /// Returns the compile-time minimum width a user can shrink a column to.
+    /// All metric columns share one minimum so their numeric values stay readable.
     static consteval int minimumColumnWidth(const ColumnId columnId)
     {
         switch (columnId) {

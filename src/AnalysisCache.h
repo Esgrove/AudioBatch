@@ -1,3 +1,8 @@
+/// SQLite-backed cache for audio analysis results.
+/// AnalysisCache stores per-file analysis records and waveform preview data
+/// keyed by path, size, and modification time,
+/// so unchanged files are not re-read on later runs.
+
 #pragma once
 
 #include "AudioAnalysisTypes.h"
@@ -45,10 +50,20 @@ private:
     static constexpr int analysisVersion = 7;
     static constexpr int waveformVersion = 1;
 
+    /// Returns true when the given table already has the named column.
+    /// Used for lightweight schema migrations when opening the database.
     bool columnExists(const juce::String& tableName, const juce::String& columnName) const;
+
+    /// Closes the database handle if it is open. The caller must hold the mutex.
     void closeUnlocked();
+
+    /// Runs a statement that returns no rows, logging any SQLite error.
     bool execute(const juce::String& sql) const;
+
+    /// Opens the database and ensures the schema is current. The caller must hold the mutex.
     bool openUnlocked();
+
+    /// Returns the canonical path string used as the cache key for a file.
     static juce::String normalizedPath(const juce::File& file);
 
     juce::CriticalSection mutex;

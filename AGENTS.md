@@ -18,7 +18,7 @@ so changes to shared services must keep both targets working.
 - Normalize selected files to `0 dBFS` peak from the GUI or the CLI.
 - Convert normalized output to AIFF while preserving source metadata,
   including embedded album art and custom tags, written back as ID3v2.4.
-- Batch process selected files through a VST3 or Audio Unit plugin from the GUI.
+- Batch process selected files through a chain of VST3 or Audio Unit plugins from the GUI.
 
 Analysis assumes mono or stereo sources, including MP3 joint stereo.
 Multichannel files are not a target.
@@ -48,8 +48,9 @@ GUI only:
 - `src/AudioBatchComponent.*` is the main GUI component.
 - `src/AudioFileTableModel.*` backs the sortable results table.
 - `src/CustomLookAndFeel.*`, `src/ThumbnailComponent.*`, and `src/IntervalStepSlider.h` are UI pieces.
-- `src/PluginChain.*`, `src/PluginProcessing.h`, `src/PluginProcessingCoordinator.*`,
-  and `src/PluginProcessingService.*` implement VST3 / Audio Unit plugin hosting.
+- `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginProcessing.h`,
+  `src/PluginProcessingCoordinator.*`, and `src/PluginProcessingService.*`
+  implement VST3 / Audio Unit plugin hosting and the plugin chain.
 
 The exact source lists for each target are defined in `CMakeLists.txt`.
 Keep those lists in sync when adding or removing files,
@@ -61,6 +62,7 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
 - SQLite 3, resolved via CMake (system package if present, otherwise the fetched amalgamation).
 - libebur128, fetched via CMake, for loudness and true peak analysis.
 - TagLib, fetched via CMake, for cross-format metadata handling.
+- {fmt}, fetched via CMake, for string formatting (see `src/StringFormat.h`).
 
 ## Working Rules
 
@@ -69,6 +71,39 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
 - Prefer fixing warnings and build issues in project code or project configuration before considering third-party changes.
 - Preserve the existing source layout under `src/` and the current naming used in `CMakeLists.txt`.
 - Changes to shared services must keep both the GUI and CLI targets building and behaving correctly.
+
+## Code Style
+
+- Every source and header file must begin with a file-level comment section
+  that explains on a high level what the file contains and implements.
+  Use a `///` comment block at the very top of the file,
+  before `#pragma once` and the includes.
+  A few sentences is enough: name the main classes or functions
+  and describe their role in the application.
+  In a `.cpp` file, focus on what the implementation covers
+  instead of repeating the header text verbatim.
+- Every function must have a docstring (`///` doc comment).
+  Focus on what the function does and why, and document non-obvious behaviour,
+  side effects, threading constraints, and ownership rules.
+  Do not simply restate the signature in prose.
+  Document a function where it is declared:
+  on the declaration in the header for class members,
+  and on the definition for free and file-local functions in `.cpp` files.
+- Prefer full names instead of abbreviations in identifiers,
+  for example `directories` instead of `dirs` and `description` instead of `desc`.
+  Established domain terms and API names (`midi`, `xml`, `id`, `dB`) are fine.
+- Avoid single character variable names.
+  They are only allowed in for loops when it makes sense
+  and it is clear what the variable is, for example a plain loop index.
+- Prefer `utils::format` (fmt-based, in `src/StringFormat.h`)
+  over chained `juce::String` concatenation when building display and log text.
+  Format strings must be literals so fmt's compile-time checking applies.
+  Keep `.quoted()` calls on arguments instead of putting quote characters in the format string,
+  and keep `juce::newLine` outside format strings in text that leaves the process,
+  because it is `\r\n` on Windows.
+- The logging helpers accept fmt format strings and arguments directly:
+  `utils::logError("Analysis failed for {}: {}", path.quoted(), message)`.
+  Do not wrap the message in a `utils::format` call first.
 
 ## Build And Verification
 

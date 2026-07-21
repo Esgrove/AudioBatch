@@ -1,3 +1,8 @@
+/// Implementation of MetadataService.
+/// Converts between JUCE and TagLib string and buffer types,
+/// maps tags through TagLib's unified PropertyMap and the generic PICTURE complex property,
+/// and saves tags for AIFF and WAV output as ID3v2.4.
+
 #include "MetadataService.h"
 
 #include "utils.h"
@@ -17,39 +22,45 @@
 
 namespace
 {
+/// Converts a TagLib string to a juce::String, preserving UTF-8 content.
 juce::String toJuce(const TagLib::String& tagString)
 {
     return juce::String::fromUTF8(tagString.toCString(true));
 }
 
+/// Converts a juce::String to a TagLib UTF-8 string.
 TagLib::String toTagLib(const juce::String& juceString)
 {
     return {juceString.toRawUTF8(), TagLib::String::UTF8};
 }
 
 #if JUCE_WINDOWS
+/// Builds a TagLib file name from a JUCE path.
+/// On Windows TagLib::FileName is a class whose constructor copies the wide-char buffer internally,
+/// so the source juce::String only needs to outlive this call.
 TagLib::FileName toFileName(const juce::String& fullPath)
 {
-    // On Windows TagLib::FileName is a class whose constructor copies the wide-char buffer internally,
-    // so the source juce::String only needs to outlive this call.
     return TagLib::FileName(fullPath.toWideCharPointer());
 }
 #else
+/// Builds a TagLib file name from a JUCE path.
+/// On non-Windows TagLib::FileName is a typedef for const char*.
+/// The returned pointer aliases the buffer inside fullPath,
+/// so callers must keep the juce::String alive for as long as the pointer is used.
 TagLib::FileName toFileName(const juce::String& fullPath)
 {
-    // On non-Windows TagLib::FileName is a typedef for const char*.
-    // The returned pointer aliases the buffer inside fullPath,
-    // so callers must keep the juce::String alive for as long as the pointer is used.
     return fullPath.toRawUTF8();
 }
 #endif
 
+/// Returns true when the file extension marks an AIFF family file.
 bool isAiffFile(const juce::File& file)
 {
     const auto extension = file.getFileExtension().toLowerCase();
     return extension == ".aif" || extension == ".aiff" || extension == ".aifc";
 }
 
+/// Returns true when the file extension marks a WAV file.
 bool isWavFile(const juce::File& file)
 {
     const auto extension = file.getFileExtension().toLowerCase();
@@ -100,6 +111,8 @@ TagLib::PropertyMap buildPropertyMap(const std::vector<MetadataService::Property
     return propertyMap;
 }
 
+/// Reads embedded pictures via TagLib's generic "PICTURE" complex property.
+/// Pictures without image data are skipped.
 std::vector<MetadataService::Picture> readPictures(const TagLib::File& file)
 {
     std::vector<MetadataService::Picture> pictures;
@@ -141,6 +154,8 @@ std::vector<MetadataService::Picture> readPictures(const TagLib::File& file)
     return pictures;
 }
 
+/// Converts pictures into TagLib complex property maps for writing.
+/// A missing MIME type defaults to JPEG and a missing picture type to "Front Cover".
 TagLib::List<TagLib::VariantMap> buildPictureList(const std::vector<MetadataService::Picture>& pictures)
 {
     TagLib::List<TagLib::VariantMap> pictureList;
@@ -183,14 +198,14 @@ bool MetadataService::readMetadata(const juce::File& file, Metadata& outMetadata
     }
 
     const auto fullPath = file.getFullPathName();
-    const TagLib::FileRef ref(toFileName(fullPath), false);
+    const TagLib::FileRef fileRef(toFileName(fullPath), false);
 
-    if (ref.isNull() || ref.file() == nullptr) {
-        utils::logError("TagLib could not open file for reading: " + file.getFullPathName().quoted());
+    if (fileRef.isNull() || fileRef.file() == nullptr) {
+        utils::logError("TagLib could not open file for reading: {}", file.getFullPathName().quoted());
         return false;
     }
 
-    const auto* taglibFile = ref.file();
+    const auto* taglibFile = fileRef.file();
     outMetadata.properties = readProperties(taglibFile->properties());
     outMetadata.pictures = readPictures(*taglibFile);
 
@@ -200,7 +215,7 @@ bool MetadataService::readMetadata(const juce::File& file, Metadata& outMetadata
 bool MetadataService::writeMetadata(const juce::File& file, const Metadata& metadata)
 {
     if (!file.existsAsFile()) {
-        utils::logError("Cannot write metadata, target file is missing: " + file.getFullPathName().quoted());
+        utils::logError("Cannot write metadata, target file is missing: {}", file.getFullPathName().quoted());
         return false;
     }
 
@@ -218,7 +233,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
         TagLib::RIFF::AIFF::File aiffFile(toFileName(fullPath), false);
 
         if (!aiffFile.isValid()) {
-            utils::logError("TagLib could not open AIFF file for writing: " + file.getFullPathName().quoted());
+            utils::logError("TagLib could not open AIFF file for writing: {}", file.getFullPathName().quoted());
             return false;
         }
 
@@ -237,7 +252,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
         TagLib::RIFF::WAV::File wavFile(toFileName(fullPath), false);
 
         if (!wavFile.isValid()) {
-            utils::logError("TagLib could not open WAV file for writing: " + file.getFullPathName().quoted());
+            utils::logError("TagLib could not open WAV file for writing: {}", file.getFullPathName().quoted());
             return false;
         }
 
@@ -253,20 +268,20 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
     }
 
     // Generic fallback for any other writable format.
-    TagLib::FileRef ref(toFileName(fullPath), false);
+    TagLib::FileRef fileRef(toFileName(fullPath), false);
 
-    if (ref.isNull() || ref.file() == nullptr) {
-        utils::logError("TagLib could not open file for writing: " + file.getFullPathName().quoted());
+    if (fileRef.isNull() || fileRef.file() == nullptr) {
+        utils::logError("TagLib could not open file for writing: {}", file.getFullPathName().quoted());
         return false;
     }
 
     if (!propertyMap.isEmpty()) {
-        ref.file()->setProperties(propertyMap);
+        fileRef.file()->setProperties(propertyMap);
     }
 
     if (!pictureList.isEmpty()) {
-        ref.file()->setComplexProperties("PICTURE", pictureList);
+        fileRef.file()->setComplexProperties("PICTURE", pictureList);
     }
 
-    return ref.save();
+    return fileRef.save();
 }

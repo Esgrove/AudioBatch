@@ -1,3 +1,8 @@
+/// Implementation of the AudioAnalysisCli argument parsing and analysis workflow.
+/// Covers option validation, the usage text,
+/// and the console output formatting that prints aligned peak, true peak,
+/// and loudness columns for analysis and normalization results.
+
 #include "AudioAnalysisCli.h"
 
 #include "AudioAnalysisService.h"
@@ -14,21 +19,25 @@ constexpr int cliPeakColumnWidth = 7;
 constexpr int cliTruePeakColumnWidth = 7;
 constexpr int cliLoudnessColumnWidth = 8;
 
+/// Formats the sample peak value right-aligned to the fixed dBFS column width.
 static juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
 {
     return AudioAnalysisService::formatPeakCompact(record.overallPeak).paddedLeft(' ', cliPeakColumnWidth);
 }
 
+/// Formats the true peak value right-aligned to the fixed dBTP column width.
 static juce::String formattedTruePeakColumn(const AudioAnalysisRecord& record)
 {
     return AudioAnalysisService::formatTruePeakCompact(record.overallTruePeak).paddedLeft(' ', cliTruePeakColumnWidth);
 }
 
+/// Formats the integrated loudness value right-aligned to the fixed LUFS column width.
 static juce::String formattedIntegratedLoudnessColumn(const AudioAnalysisRecord& record)
 {
     return AudioAnalysisService::formatLoudnessCompact(record.integratedLufs).paddedLeft(' ', cliLoudnessColumnWidth);
 }
 
+/// Prints the column header line to stdout, matching the widths used by the result rows.
 static void printHeaderRow()
 {
     std::cout << juce::String("dBFS").paddedLeft(' ', cliPeakColumnWidth) << "  "
@@ -36,12 +45,17 @@ static void printHeaderRow()
               << juce::String("LUFS-I").paddedLeft(' ', cliLoudnessColumnWidth) << "  TRACK" << juce::newLine;
 }
 
+/// Prints one aligned result line to stdout.
+/// The caller chooses the track label so plain analysis can show file names
+/// while normalization output can show full output paths.
 static void printResultRow(const AudioAnalysisRecord& record, const juce::String& trackLabel)
 {
     std::cout << formattedPeakColumn(record) << "  " << formattedTruePeakColumn(record) << "  "
               << formattedIntegratedLoudnessColumn(record) << "  " << trackLabel << juce::newLine;
 }
 
+/// Picks the most informative path available for a normalized record,
+/// falling back from the cached full path to the file object and finally the bare file name.
 static juce::String reportedOutputPath(const AudioAnalysisRecord& record)
 {
     if (record.fullPath.isNotEmpty()) {
@@ -128,7 +142,7 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
 
     for (const auto& argument : arguments.arguments) {
         if (argument.isOption()) {
-            errorMessage = "Unknown option: " + argument.text;
+            errorMessage = utils::format("Unknown option: {}", argument.text);
             return std::nullopt;
         }
 
@@ -144,7 +158,9 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
     if (inputPaths.isEmpty()) {
         inputPaths.add(juce::File::getCurrentWorkingDirectory());
-        utils::logInfo("No input paths provided, using current directory: " + inputPaths[0].getFullPathName().quoted());
+        utils::logInfo(
+            "No input paths provided, using current directory: {}", inputPaths[0].getFullPathName().quoted()
+        );
     }
 
     AnalysisCache cache;
@@ -162,8 +178,10 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     const auto analysisFailureCount
         = std::ranges::count_if(results, [](const auto& record) { return record.hasError(); });
     utils::logInfo(
-        "Analysis complete: " + juce::String(results.size()) + " files (" + juce::String(analysisFailureCount)
-        + " failed) in " + juce::String(analysisElapsedMs / 1000.0, 2) + " s"
+        "Analysis complete: {} files ({} failed) in {:.2f} s",
+        results.size(),
+        analysisFailureCount,
+        analysisElapsedMs / 1000.0
     );
 
     AudioAnalysisService::sortRecords(results, options.sortMode, true);
@@ -182,7 +200,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     for (const auto& result : results) {
         if (result.hasError()) {
             ++failureCount;
-            utils::logError(result.file.getFullPathName().quoted() + ": " + result.errorMessage);
+            utils::logError("{}: {}", result.file.getFullPathName().quoted(), result.errorMessage);
             continue;
         }
 
@@ -195,7 +213,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
         if (normalization.hasError()) {
             ++failureCount;
-            utils::logError(result.file.getFullPathName().quoted() + ": " + normalization.errorMessage);
+            utils::logError("{}: {}", result.file.getFullPathName().quoted(), normalization.errorMessage);
             continue;
         }
 

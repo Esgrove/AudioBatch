@@ -1,3 +1,8 @@
+/// Peak normalization interface shared by the GUI and CLI targets.
+/// AudioNormalizationService rewrites audio files so their peak reaches 0 dBFS,
+/// renders the output as AIFF, and re-analyzes the result.
+/// AudioNormalizationResult carries the outcome of a single normalize-and-reanalyze pass.
+
 #pragma once
 
 #include "AudioAnalysisService.h"
@@ -46,5 +51,7 @@ public:
     static AudioNormalizationResult normalizeFile(const AudioAnalysisRecord& record);
 
 private:
+    /// Returns a per-thread format manager used for reading source files.
+    /// Thread-local state avoids locking when normalize jobs run on multiple worker threads.
     static juce::AudioFormatManager& getThreadLocalFormatManager();
 };

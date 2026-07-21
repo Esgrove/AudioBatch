@@ -5,7 +5,7 @@
 cmake_minimum_required(VERSION 4.2)
 
 project("AudioBatch"
-    VERSION 0.7.0
+    VERSION 0.8.0
     DESCRIPTION "App for batch processing audio files"
     HOMEPAGE_URL "https://github.com/Esgrove/AudioBatch"
     LANGUAGES CXX C
@@ -71,6 +71,19 @@ else()
     set(ICON_FILE "${CMAKE_SOURCE_DIR}/Assets/icon_mac.png")
 endif()
 
+# Use ccache for compilation caching when available.
+# Must be set before any targets are created so it also covers JUCE and the fetched dependencies.
+# Only enabled for Ninja and Makefile generators,
+# since Xcode and Visual Studio generators need special setup that is not worth the complexity here.
+if (CMAKE_GENERATOR MATCHES "Ninja|Unix Makefiles" AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+    find_program(CCACHE_PROGRAM ccache)
+    if (CCACHE_PROGRAM)
+        message(STATUS "Using ccache: ${CCACHE_PROGRAM}")
+        set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+    endif()
+endif()
+
 # Adds all the module sources so they appear correctly in the IDE
 # Must be set before JUCE is added as a sub-dir (or any targets are made)
 # https://github.com/juce-framework/JUCE/commit/6b1b4cf7f6b1008db44411f2c8887d71a3348889
@@ -118,9 +131,15 @@ else()
     set(AUDIOBATCH_SQLITE_TARGET AudioBatchSQLite)
 endif()
 
-# Prefer the static zlib import library so taglib does not introduce a runtime dependency on zlib.dll.
+# On Windows, prefer the static zlib import library
+# so taglib does not introduce a runtime dependency on zlib.dll.
 # This must be set before taglib is configured, since taglib calls find_package(ZLIB).
-set(ZLIB_USE_STATIC_LIBS ON)
+# On macOS the system provides no static zlib, so requiring one would make find_package(ZLIB) fail
+# and taglib would silently lose support for compressed ID3v2 frames.
+# Linking the system libz dynamically is the standard approach there.
+if (WIN32)
+    set(ZLIB_USE_STATIC_LIBS ON)
+endif()
 
 FetchContent_Declare(taglib
     GIT_REPOSITORY https://github.com/taglib/taglib.git
@@ -190,6 +209,24 @@ if (NOT CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86")
     target_compile_options(ebur128 PRIVATE -Wno-\#warnings)
 endif()
 
+# SYSTEM marks the fmt include directories as system includes,
+# so its headers are exempt from this project's warnings-as-errors flags.
+FetchContent_Declare(fmt
+    GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+    GIT_TAG 12.2.0
+    GIT_SHALLOW TRUE
+    SYSTEM
+)
+
+# Configure fmt build options before populating,
+# so they apply on the first configure and on subsequent re-configures.
+set(FMT_DOC OFF CACHE BOOL "" FORCE)
+set(FMT_INSTALL OFF CACHE BOOL "" FORCE)
+set(FMT_TEST OFF CACHE BOOL "" FORCE)
+set(FMT_FUZZ OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(fmt)
+
 juce_add_gui_app(AudioBatch
     BUNDLE_ID com.esgrove.audiobatch
     COMPANY_NAME "Esgrove"
@@ -244,11 +281,14 @@ target_sources(AudioBatch
         "src/NormalizeCoordinator.h"
         "src/PluginChain.cpp"
         "src/PluginChain.h"
+        "src/PluginChainEditor.cpp"
+        "src/PluginChainEditor.h"
         "src/PluginProcessing.h"
         "src/PluginProcessingCoordinator.cpp"
         "src/PluginProcessingCoordinator.h"
         "src/PluginProcessingService.cpp"
         "src/PluginProcessingService.h"
+        "src/StringFormat.h"
         "src/ThumbnailComponent.cpp"
         "src/ThumbnailComponent.h"
         "src/utils.cpp"
@@ -278,6 +318,7 @@ target_sources(AudioBatchCli
         "src/MetadataService.h"
         "src/NormalizeCoordinator.cpp"
         "src/NormalizeCoordinator.h"
+        "src/StringFormat.h"
         "src/utils.cpp"
         "src/utils.h"
         "src/version.h"
@@ -390,6 +431,7 @@ target_link_libraries(AudioBatch
         Assets
         ${AUDIOBATCH_SQLITE_TARGET}
         ebur128
+        fmt::fmt
         tag
         juce::juce_audio_basics
         juce::juce_audio_devices
@@ -413,6 +455,7 @@ target_link_libraries(AudioBatchCli
     PRIVATE
         ${AUDIOBATCH_SQLITE_TARGET}
         ebur128
+        fmt::fmt
         tag
         juce::juce_audio_basics
         juce::juce_audio_formats

@@ -1,10 +1,15 @@
+/// Implementation of the ThumbnailComponent waveform preview.
+/// Covers waveform painting and cache load and save,
+/// transport scrubbing through the mouse handlers,
+/// wheel-based zoom and gain gestures,
+/// and the timer-driven position marker updates during playback.
+
 #include "ThumbnailComponent.h"
 
 #include "CustomLookAndFeel.h"
 
 #include <JuceHeader.h>
 
-/// Waveform thumbnail component implementation for preview and drag interactions.
 ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source) :
     thumbnail(1024, formatManager, thumbnailCache),
     transportSource(source)
@@ -241,9 +246,9 @@ float ThumbnailComponent::timeToX(const double time) const
         * static_cast<float>((time - visibleRange.getStart()) / visibleRange.getLength());
 }
 
-double ThumbnailComponent::xToTime(const float x) const
+double ThumbnailComponent::xToTime(const float xPosition) const
 {
-    return x / static_cast<float>(getWidth()) * visibleRange.getLength() + visibleRange.getStart();
+    return xPosition / static_cast<float>(getWidth()) * visibleRange.getLength() + visibleRange.getStart();
 }
 
 bool ThumbnailComponent::canMoveTransport() const noexcept
@@ -290,7 +295,7 @@ void ThumbnailComponent::setZoom(const double zoomLevel)
     if (start < thumbnail.getTotalLength() * 0.05 || thumbnail.getTotalLength() - start > zoom) {
         setRange(juce::Range(start, end));
     } else {
-        // remaining distance is shorter than zoom length -> zoom from end
+        // The remaining distance is shorter than the zoom length, so zoom from the end instead.
         setRange(juce::Range(thumbnail.getTotalLength() - zoom, end));
     }
 }

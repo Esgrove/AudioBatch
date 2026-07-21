@@ -1,9 +1,16 @@
+/// Console application entry point for the headless batch analysis executable.
+/// Sets up logging, parses arguments through AudioAnalysisCli,
+/// handles the help and version flags, and runs the analysis workflow,
+/// translating the outcome into a process exit code.
+
 #include "AudioAnalysisCli.h"
 #include "utils.h"
 #include "version.h"
 
 namespace audiobatch::cli
 {
+/// Detaches the logger before returning the process exit code,
+/// so the juce::Logger never points at a logger that is about to be destroyed.
 static int exitCli(const int exitCode)
 {
     juce::Logger::setCurrentLogger(nullptr);
@@ -42,7 +49,7 @@ int main(const int argc, char* argv[])
     const auto exitCode = AudioAnalysisCli::run(*cliOptions);
 
     if (exitCode != 0) {
-        utils::logError("CLI exiting with code " + juce::String(exitCode));
+        utils::logError("CLI exiting with code {}", exitCode);
     } else {
         utils::logInfo("CLI exiting with code 0");
     }

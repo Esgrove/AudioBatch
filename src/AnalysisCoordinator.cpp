@@ -1,8 +1,13 @@
+/// Implementation of AnalysisCoordinator.
+/// Publishes cached records immediately, queues one thread pool job per stale file,
+/// stores fresh results back into the cache,
+/// and guards callback publication with run id checks and a callback lock.
+/// Also provides the blocking analysis entry point used by the CLI.
+
 #include "AnalysisCoordinator.h"
 
 #include <mutex>
 
-/// Thread-pool orchestration for publishing analysis work back to the caller.
 AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& analysisCache, const int workerCount) :
     cache(analysisCache),
     threadPool(juce::jmax(1, workerCount))
