@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <map>
+#include <utility>
 
 PluginProcessingCoordinator::PluginProcessingCoordinator(const int workerCount) :
     threadPool(juce::jmax(1, juce::jmin(4, workerCount)))
@@ -157,7 +158,7 @@ int PluginProcessingCoordinator::start(
         freeChainIndices.clear();
         freeChainIndices.reserve(ownedChains.size());
         if (chainsUsable) {
-            for (int chainIndex = 0; chainIndex < static_cast<int>(ownedChains.size()); ++chainIndex) {
+            for (int chainIndex = 0; std::cmp_less(chainIndex, ownedChains.size()); ++chainIndex) {
                 freeChainIndices.push_back(chainIndex);
             }
         }
