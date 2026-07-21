@@ -114,6 +114,7 @@ private:
     juce::AudioThumbnailCache thumbnailCache {128};
     juce::AudioTransportSource& transportSource;
     juce::DrawableRectangle currentPositionMarker;
+    juce::DrawableComponent currentPositionMarkerComponent {currentPositionMarker};
     juce::Range<double> visibleRange;
     juce::StringArray lastDroppedFiles;
     juce::URL lastFileDropped;
