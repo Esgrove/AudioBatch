@@ -133,13 +133,13 @@ private:
     /// Captures plugin state from a closed editor into its entry,
     /// then destroys the window and the instance.
     /// Returns true when plugin state was captured.
-    bool reapClosedEditor(ChainEntry& entry);
+    static bool reapClosedEditor(ChainEntry& entry);
 
     /// Captures live plugin state from every open editor into its entry without closing anything.
     void captureOpenEditorStates();
 
     /// Closes the given entry's editor window and destroys its instance without capturing state.
-    void closeEditorForEntry(ChainEntry& entry);
+    static void closeEditorForEntry(ChainEntry& entry);
 
     /// Returns true when any entry still has an editor window open.
     [[nodiscard]] bool anyEditorOpen() const noexcept;

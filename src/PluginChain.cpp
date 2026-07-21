@@ -125,7 +125,9 @@ std::vector<PluginChain::EnabledChainPlugin> PluginChain::getEnabledPlugins()
 
     for (const auto& entry : chain) {
         if (entry.enabled && entry.description.fileOrIdentifier.isNotEmpty()) {
-            plugins.push_back({entry.description, makeDescriptorRef(entry.description, entry.state)});
+            plugins.push_back(
+                {.description = entry.description, .descriptorRef = makeDescriptorRef(entry.description, entry.state)}
+            );
         }
     }
 
@@ -521,13 +523,7 @@ void PluginChain::closeEditorForEntry(ChainEntry& entry)
 
 bool PluginChain::anyEditorOpen() const noexcept
 {
-    for (const auto& entry : chain) {
-        if (entry.wasEditorOpen) {
-            return true;
-        }
-    }
-
-    return false;
+    return std::ranges::any_of(chain, [](const auto& entry) { return entry.wasEditorOpen; });
 }
 
 void PluginChain::loadPersistedChain()
@@ -627,7 +623,7 @@ void PluginChain::persistChain()
         }
 
         auto* slotElement = chainElement.createNewChildElement(slotXmlTag);
-        slotElement->setAttribute(slotEnabledAttribute, entry.enabled);
+        slotElement->setAttribute(slotEnabledAttribute, static_cast<int>(entry.enabled));
 
         if (entry.state.getSize() > 0) {
             slotElement->setAttribute(
