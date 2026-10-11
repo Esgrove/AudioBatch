@@ -86,8 +86,6 @@ static void writeToLog(const juce::String& message, [[maybe_unused]] Level log_l
             break;
         case Level::warn:
         case Level::info:
-            [[fallthrough]];
-        default:
             fmt::print("{}\n", log_message);
             break;
     }
