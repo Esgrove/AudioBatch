@@ -6,6 +6,9 @@
 /// restoring their state and preparing them per file,
 /// and rendering block by block through the chain including plugin tails,
 /// with the chain's reported latency removed from the start of the output.
+/// Plugin setup and release are posted to the message thread as VST3 requires,
+/// with a cancellation-aware wait so a worker never deadlocks against a message thread that waits for it,
+/// while processBlock runs on the calling worker thread.
 /// The output is written to a temporary 16-bit AIFF file that is validated,
 /// given the original file's metadata, and then moved into place,
 /// with the processed file re-analyzed for the result record.
@@ -16,7 +19,11 @@
 #include "utils.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
+#include <cstdint>
+#include <functional>
+#include <memory>
 
 #if JUCE_MAC
 #include <AudioToolbox/AudioToolbox.h>
@@ -27,6 +34,9 @@ namespace audiobatch::plugin_processing
 constexpr int processingBlockSize = 1024;
 constexpr int outputBitsPerSample = 16;
 constexpr auto outputExtension = ".aiff";
+constexpr auto cancelledMessage = "Processing was cancelled";
+/// How long a worker waits for the message thread between cancellation checks.
+constexpr int messageThreadPollIntervalMs = 20;
 
 /// Shorthand for building a failure result, keeping the early-return error paths compact.
 static PluginProcessingResult fail(const juce::File& file, const juce::String& message)
@@ -164,6 +174,175 @@ static void enableOfflineRendering(juce::AudioPluginInstance& plugin)
     }
 #endif
 }
+
+/// Returns true when a cancellation check is set and reports that processing should stop.
+static bool isCancellationRequested(const PluginProcessingService::CancellationCheck& isCancelled)
+{
+    return isCancelled != nullptr && isCancelled();
+}
+
+/// A function posted from a worker thread to the message thread,
+/// shared between the waiting worker and the queued message.
+/// The state moves from pending to either running or abandoned exactly once,
+/// and whichever side gets there first wins.
+/// This guarantees that the function never starts after the worker has stopped waiting for it,
+/// so it can safely refer to the worker's stack and to the plugin chain the worker holds.
+struct MessageThreadCall {
+    enum class State : std::uint8_t { pending, running, abandoned };
+
+    std::function<void()> function;
+    std::atomic<State> state {State::pending};
+    juce::WaitableEvent finished;
+};
+
+/// Runs a function on the message thread and blocks the calling worker until it has finished.
+/// Unlike MessageManager::callSync, the wait gives up when cancellation is requested while the call is still queued,
+/// because the message thread may itself be blocked waiting for this worker,
+/// for example in PluginProcessingCoordinator::cancelAndWait when the app quits during processing.
+/// The abandoned call is skipped when the message thread later dequeues it.
+/// A call that has already started always runs to completion,
+/// since the message thread is then busy running it and cannot be waiting for the worker.
+/// Calls the function directly when already on the message thread.
+/// Returns true when the function ran,
+/// and false when it was cancelled before starting or could not be posted to the message thread.
+static bool callOnMessageThread(
+    std::function<void()> function,
+    const PluginProcessingService::CancellationCheck& isCancelled
+)
+{
+    auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
+    if (messageManager == nullptr) {
+        return false;
+    }
+
+    if (messageManager->isThisTheMessageThread()) {
+        function();
+        return true;
+    }
+
+    if (isCancellationRequested(isCancelled)) {
+        return false;
+    }
+
+    auto call = std::make_shared<MessageThreadCall>();
+    call->function = std::move(function);
+
+    const bool posted = juce::MessageManager::callAsync([call] {
+        auto expected = MessageThreadCall::State::pending;
+        if (!call->state.compare_exchange_strong(expected, MessageThreadCall::State::running)) {
+            return;
+        }
+
+        call->function();
+        call->finished.signal();
+    });
+
+    // Posting fails once the app has started quitting and the message loop no longer dispatches.
+    if (!posted) {
+        return false;
+    }
+
+    while (!call->finished.wait(messageThreadPollIntervalMs)) {
+        if (!isCancellationRequested(isCancelled)) {
+            continue;
+        }
+
+        auto expected = MessageThreadCall::State::pending;
+        if (call->state.compare_exchange_strong(expected, MessageThreadCall::State::abandoned)) {
+            return false;
+        }
+
+        // The message thread is already running the function, so it finishes without waiting on this worker.
+        call->finished.wait();
+        break;
+    }
+
+    return true;
+}
+
+/// Releases the resources of every plugin in the chain, leaving the chain inactive for the next file.
+/// Must run on the message thread, because releasing a VST3 plugin deactivates it through setActive.
+/// Plugins that are not prepared ignore the call.
+static void releasePluginResources(const std::vector<juce::AudioPluginInstance*>& chainInstances)
+{
+    for (auto* plugin : chainInstances) {
+        plugin->releaseResources();
+    }
+}
+
+/// Values gathered while preparing a plugin chain for one file that rendering needs.
+struct ChainPreparation {
+    /// Empty when every plugin in the chain was prepared.
+    juce::String errorMessage;
+    /// Widest channel count of any plugin in the chain, at least the file's channel count.
+    int processChannelCount = 0;
+    /// Sum of the individually clamped per-plugin tails.
+    juce::int64 tailSamples = 0;
+    /// Sum of the latencies the plugins report after preparation.
+    juce::int64 latencySamples = 0;
+};
+
+/// Configures the buses, enables offline rendering, restores the saved state,
+/// prepares, and resets every plugin in the chain for one file,
+/// and collects the channel count, tail, and latency of the chain.
+/// Must run on the message thread:
+/// the VST3 specification restricts bus arrangement, setupProcessing, setActive, setState,
+/// and the tail and latency queries to the UI thread,
+/// and JUCE's VST3 host asserts the message thread in prepareToPlay and setStateInformation.
+/// When a plugin rejects the file's channel layout,
+/// the plugins prepared before it are released again so the chain stays usable for the next file.
+static ChainPreparation prepareChain(
+    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    const PluginProcessingOptions& options,
+    const int numChannels,
+    const double sampleRate
+)
+{
+    // Each stage's tail must ring through the remaining stages,
+    // so the total tail is the sum of the individually clamped per-plugin tails.
+    // Latencies add up the same way, since every stage delays the signal it passes on.
+    ChainPreparation preparation;
+    preparation.processChannelCount = numChannels;
+
+    for (std::size_t pluginIndex = 0; pluginIndex < chainInstances.size(); ++pluginIndex) {
+        auto* plugin = chainInstances[pluginIndex];
+
+        if (!configurePluginChannels(*plugin, numChannels, sampleRate)) {
+            releasePluginResources(chainInstances);
+            preparation.errorMessage = utils::format(
+                "Plugin {} does not support the file's channel layout ({} channels)",
+                options.plugins[pluginIndex].name.quoted(),
+                numChannels
+            );
+            return preparation;
+        }
+
+        enableOfflineRendering(*plugin);
+
+        // Restore plugin state per-file so each file starts clean.
+        // The state is restored before prepareToPlay because settings such as lookahead or linear phase
+        // change the plugin's latency, and JUCE refreshes the reported latency of VST3 and AU plugins
+        // when they are prepared.
+        const auto& state = options.plugins[pluginIndex].state;
+        if (state.getSize() > 0) {
+            plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
+        }
+
+        plugin->prepareToPlay(sampleRate, processingBlockSize);
+        plugin->reset();
+        preparation.latencySamples += juce::jmax(0, plugin->getLatencySamples());
+
+        preparation.processChannelCount = juce::jmax(
+            preparation.processChannelCount, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels()
+        );
+
+        const auto tailSeconds = plugin->getTailLengthSeconds();
+        preparation.tailSamples
+            += static_cast<juce::int64>(std::ceil(juce::jlimit(0.0, 30.0, tailSeconds) * sampleRate));
+    }
+
+    return preparation;
+}
 }  // namespace audiobatch::plugin_processing
 
 using namespace audiobatch::plugin_processing;
@@ -196,7 +375,8 @@ juce::AudioFormatManager& PluginProcessingService::getThreadLocalFormatManager()
 PluginProcessingResult PluginProcessingService::processFile(
     const AudioAnalysisRecord& record,
     const PluginProcessingOptions& options,
-    const std::vector<juce::AudioPluginInstance*>& chainInstances
+    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    const CancellationCheck& isCancelled
 )
 {
     const auto& file = record.file;
@@ -266,51 +446,20 @@ PluginProcessingResult PluginProcessingService::processFile(
         }
     }
 
-    // Configure and prepare every plugin in the chain against the file's channel count.
-    // Each stage's tail must ring through the remaining stages,
-    // so the total tail is the sum of the individually clamped per-plugin tails.
-    // Latencies add up the same way, since every stage delays the signal it passes on.
-    int processChannelCount = numChannels;
-    juce::int64 tailSamples = 0;
-    juce::int64 latencySamples = 0;
+    // Plugin setup runs on the message thread as VST3 requires, and only processBlock runs on this worker thread.
+    ChainPreparation preparation;
+    const bool prepared = callOnMessageThread(
+        [&] { preparation = prepareChain(chainInstances, options, numChannels, sampleRate); }, isCancelled
+    );
 
-    for (std::size_t pluginIndex = 0; pluginIndex < chainInstances.size(); ++pluginIndex) {
-        auto* plugin = chainInstances[pluginIndex];
-
-        if (!configurePluginChannels(*plugin, numChannels, sampleRate)) {
-            writer.reset();
-            utils::deleteFile(temporaryFile.getFile());
-            return fail(
-                file,
-                utils::format(
-                    "Plugin {} does not support the file's channel layout ({} channels)",
-                    options.plugins[pluginIndex].name.quoted(),
-                    numChannels
-                )
-            );
-        }
-
-        enableOfflineRendering(*plugin);
-
-        // Restore plugin state per-file so each file starts clean.
-        // The state is restored before prepareToPlay because settings such as lookahead or linear phase
-        // change the plugin's latency, and JUCE refreshes the reported latency of VST3 and AU plugins
-        // when they are prepared.
-        const auto& state = options.plugins[pluginIndex].state;
-        if (state.getSize() > 0) {
-            plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
-        }
-
-        plugin->prepareToPlay(sampleRate, processingBlockSize);
-        plugin->reset();
-        latencySamples += juce::jmax(0, plugin->getLatencySamples());
-
-        processChannelCount
-            = juce::jmax(processChannelCount, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels());
-
-        const auto tailSeconds = plugin->getTailLengthSeconds();
-        tailSamples += static_cast<juce::int64>(std::ceil(juce::jlimit(0.0, 30.0, tailSeconds) * sampleRate));
+    if (!prepared || preparation.errorMessage.isNotEmpty()) {
+        writer.reset();
+        utils::deleteFile(temporaryFile.getFile());
+        return fail(file, prepared ? preparation.errorMessage : juce::String(cancelledMessage));
     }
+
+    const auto processChannelCount = preparation.processChannelCount;
+    const auto latencySamples = preparation.latencySamples;
 
     juce::AudioBuffer<float> buffer(processChannelCount, processingBlockSize);
     juce::AudioBuffer<float> readBuffer(numChannels, processingBlockSize);
@@ -326,9 +475,15 @@ PluginProcessingResult PluginProcessingService::processFile(
     // Render the latency on top of the file length and tail,
     // and discard that many samples from the start of the output,
     // so the processed audio lines up with the input and its end is not cut off.
-    const auto totalSamples = reader->lengthInSamples + latencySamples + tailSamples;
+    const auto totalSamples = reader->lengthInSamples + latencySamples + preparation.tailSamples;
+    juce::String renderError;
 
     for (juce::int64 samplePosition = 0; samplePosition < totalSamples; samplePosition += processingBlockSize) {
+        if (isCancellationRequested(isCancelled)) {
+            renderError = cancelledMessage;
+            break;
+        }
+
         const auto samplesThisBlock
             = static_cast<int>(juce::jmin<juce::int64>(processingBlockSize, totalSamples - samplePosition));
 
@@ -345,9 +500,8 @@ PluginProcessingResult PluginProcessingService::processFile(
             }
 
             if (!reader->read(readChannelPointers.data(), numChannels, samplePosition, samplesToRead)) {
-                writer.reset();
-                utils::deleteFile(temporaryFile.getFile());
-                return fail(file, "Failed while reading audio data");
+                renderError = "Failed while reading audio data";
+                break;
             }
 
             for (int channel = 0; channel < numChannels; ++channel) {
@@ -391,15 +545,21 @@ PluginProcessingResult PluginProcessingService::processFile(
         );
 
         if (!writer->writeFromAudioSampleBuffer(writeView, 0, samplesToWrite)) {
-            writer.reset();
-            utils::deleteFile(temporaryFile.getFile());
-            return fail(file, "Failed while writing processed audio data");
+            renderError = "Failed while writing processed audio data";
+            break;
         }
     }
 
     writer.reset();
-    for (auto* plugin : chainInstances) {
-        plugin->releaseResources();
+
+    // Release on every path so a failed file does not leave the chain active for the next one.
+    // After cancellation the message thread may be blocked waiting for this worker, so the release is skipped,
+    // and the plugin instances release their resources when they are destroyed instead.
+    callOnMessageThread([&chainInstances] { releasePluginResources(chainInstances); }, isCancelled);
+
+    if (renderError.isNotEmpty()) {
+        utils::deleteFile(temporaryFile.getFile());
+        return fail(file, renderError);
     }
 
     // Preserve metadata from the original input file by copying it onto the temporary AIFF file.
@@ -426,6 +586,14 @@ PluginProcessingResult PluginProcessingService::processFile(
             utils::deleteFile(temporaryFile.getFile());
             return fail(file, "Processed output failed validation");
         }
+    }
+
+    // Check again before touching the original, since cancellation may arrive during the last render block.
+    // The coordinator drops results of a cancelled run,
+    // so committing here would change files on disk without the caller ever learning about it.
+    if (isCancellationRequested(isCancelled)) {
+        utils::deleteFile(temporaryFile.getFile());
+        return fail(file, cancelledMessage);
     }
 
     // If the original file path differs from the output path (different extension), delete the original.
