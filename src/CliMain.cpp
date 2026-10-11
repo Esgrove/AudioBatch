@@ -1,10 +1,13 @@
 /// Console application entry point for the headless batch analysis executable.
 /// Parses arguments through AudioAnalysisCli and answers the help and version flags
 /// before any logging starts, so those flags only print to the console.
-/// Every other invocation sets up file logging and runs the analysis workflow,
+/// Every other invocation sets up file logging and runs the analysis workflow or the plugin listing,
 /// translating the outcome into a process exit code.
+/// When launched as a plugin scan worker by a plugin rescan, it runs the worker instead.
 
 #include "AudioAnalysisCli.h"
+#include "PluginListCli.h"
+#include "PluginScanner.h"
 #include "utils.h"
 
 namespace audiobatch::cli
@@ -16,6 +19,25 @@ static int exitCli(const int exitCode)
     juce::Logger::setCurrentLogger(nullptr);
     return exitCode;
 }
+
+/// Runs this process as the plugin scan worker for a plugin rescan in another audiobatch process.
+/// Runs a message loop until the scanning process disconnects, and logs to its own file.
+static int runPluginScanWorker(const juce::String& executableName, const juce::String& commandLine)
+{
+    const juce::ScopedJuceInitialiser_GUI juceInitialiser;
+    const auto logger = utils::createDefaultLogger(executableName, "audiobatchPluginScanner");
+    juce::Logger::setCurrentLogger(logger.get());
+
+    PluginScanWorker worker([] { juce::MessageManager::getInstance()->stopDispatchLoop(); });
+
+    if (!worker.initialiseFromCommandLine(commandLine)) {
+        utils::logError("Could not connect the plugin scan worker to the scanning process");
+        return exitCli(1);
+    }
+
+    juce::MessageManager::getInstance()->runDispatchLoop();
+    return exitCli(0);
+}
 }  // namespace audiobatch::cli
 
 /// Entry point for the headless batch analysis executable.
@@ -23,6 +45,13 @@ int main(const int argc, char* argv[])
 {
     juce::ArgumentList arguments(argc, argv);
     const auto executableName = juce::File(arguments.executableName).getFileNameWithoutExtension();
+
+    // The plugin rescan relaunches this executable as its scan worker.
+    if (const auto commandLine = juce::StringArray(argv + 1, argc - 1).joinIntoString(" ");
+        isPluginScanWorkerCommandLine(commandLine))
+    {
+        return audiobatch::cli::runPluginScanWorker(executableName, commandLine);
+    }
 
     // Help and version only print to the console.
     // They are checked before parsing, so they win over any other argument, even an invalid one,
@@ -50,7 +79,15 @@ int main(const int argc, char* argv[])
         return audiobatch::cli::exitCli(1);
     }
 
-    const auto exitCode = AudioAnalysisCli::run(*cliOptions);
+    int exitCode = 0;
+    try {
+        exitCode = cliOptions->listPlugins ? PluginListCli::run(cliOptions->rescanPlugins, cliOptions->pluginGrouping)
+                                           : AudioAnalysisCli::run(*cliOptions);
+    } catch (const std::system_error& error) {
+        // fmt::print throws when stdout is closed early, for example when piping into head.
+        utils::logError("Writing output failed: {}", error.what());
+        return audiobatch::cli::exitCli(1);
+    }
 
     if (exitCode != 0) {
         utils::logError("CLI exiting with code {}", exitCode);

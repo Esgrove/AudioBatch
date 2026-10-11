@@ -7,6 +7,7 @@
 #pragma once
 
 #include "PluginProcessing.h"
+#include "PluginScanner.h"
 
 #include <JuceHeader.h>
 
@@ -102,6 +103,7 @@ public:
     void showChainEditor();
 
     /// Opens the plugin scan dialog.
+    /// Reloads the known-plugins list from disk first, so changes from a CLI rescan are kept.
     void showScanWindow();
 
     /// Persists the known-plugins list whenever the plugin scanner updates it.
@@ -153,17 +155,26 @@ private:
     /// capturing the latest state from any open editors first.
     void persistChain();
 
-    /// Writes the known-plugins list to application settings.
+    /// Writes the known-plugins list to its KnownPlugins.xml file.
     void persistKnownPluginList() const;
 
-    /// Restores the known-plugins list from application settings.
+    /// Restores the known-plugins list from its KnownPlugins.xml file,
+    /// first moving a list stored in the settings by older versions into that file.
     void loadKnownPluginList();
 
     /// Broadcasts a change message and invokes the chain-changed callback, if one is set.
     void notifyChainChanged();
 
+    /// Prepares a scan from the plugin manager before its first plugin is loaded.
+    /// Takes the plugin scan lock and reloads the known-plugins list,
+    /// so the scan builds on the latest saved list.
+    /// Returns false, and tells the user, when another process such as a CLI rescan is scanning.
+    bool beginPluginScan();
+
     juce::ApplicationProperties& appProperties;
     juce::AudioPluginFormatManager formatManager;
+    // Declared before the list, so it outlives the scanner that the list owns.
+    PluginScanLock pluginScanLock;
     juce::KnownPluginList knownPluginList;
 
     std::vector<ChainEntry> chain;

@@ -22,6 +22,17 @@ std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appNam
     );
 }
 
+juce::PropertiesFile::Options createApplicationSettingsOptions()
+{
+    juce::PropertiesFile::Options options;
+    options.applicationName = "AudioBatch";
+    options.filenameSuffix = ".settings";
+    options.osxLibrarySubFolder = "Application Support";
+    options.folderName = "AudioBatch";
+    options.storageFormat = juce::PropertiesFile::storeAsXML;
+    return options;
+}
+
 bool moveToTrash(const juce::File& file)
 {
     if (!file.exists()) {

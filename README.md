@@ -193,20 +193,70 @@ FLAC Vorbis comments and pictures are translated to the equivalent ID3v2.4 frame
 
 The console executable supports both short and long option forms.
 
-```text
-audiobatch [options] <paths...>
+Output of `audiobatch --help`:
 
-  -h, --help
-  -V, --version
-  -r, --recurse
-  -f, --refresh
-  -n, --normalize
-  -j, --jobs <count>
-  -s, --sort <peak|name|path>
+```text
+audiobatch <version> <date> <commit>
+Usage: audiobatch [options] <paths...>
+
+Options:
+  -h, --help              Print usage and exit
+  -V, --version           Print version and exit
+  -r, --recurse           Recurse into directories
+  -f, --refresh           Ignore cached analysis and re-analyze files
+  -n, --normalize         Normalize analyzed files, then report the re-analyzed output peaks
+  -j, --jobs <count>      Override worker count
+  -s, --sort <mode>       Sort by peak, lufs, name, or path
+  -l, --list-plugins      List the available audio plugins and exit
+  -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format
+  -R, --rescan            Scan for new or changed plugins before listing them
 ```
 
 `--help` and `--version` only print to the console.
 They do not start logging or write to the log file.
+
+### Plugin listing
+
+`--list-plugins` prints the VST3 and Audio Unit plugins known to AudioBatch.
+It reads the plugin list shared with the GUI from `KnownPlugins.xml` next to the GUI settings file,
+so listing is instant and loads no plugins.
+CLAP plugins are not listed, because JUCE cannot host them.
+
+- `--group-by name` (default) prints one alphabetical table.
+- `--group-by manufacturer`, `type`, or `format` prints one section per group.
+  The type is the processing type reported by the plugin, such as Dynamics, EQ, Reverb, or Instrument.
+- `-R` / `--rescan` first scans the plugin folders for new or changed plugins
+  and removes plugins that no longer exist.
+  It uses the same folders as the last scan in the GUI plugin manager, or the default plugin folders.
+  Each plugin is loaded in a separate worker process,
+  so a plugin that crashes is blacklisted and the scan continues.
+  The updated list is saved to `KnownPlugins.xml`,
+  which the GUI reloads when the plugin manager opens.
+  The GUI settings file is never written by the CLI.
+  If the list cannot be saved, the command reports an error and exits with code 1.
+  Only one plugin scan runs at a time.
+  A rescan refuses to start while the GUI plugin manager is scanning,
+  and the GUI skips its scan with a message while a rescan is running.
+
+```shell
+audiobatch --list-plugins
+audiobatch -l -g manufacturer
+audiobatch -l -R --group-by type
+```
+
+Example output:
+
+```text
+NAME                     MANUFACTURER     TYPE      FORMAT  VERSION
+AnSpec                   Voxengo          Analyzer  VST3    1.2
+APU Loudness Compressor  APU Software     Dynamics  VST3    5.0.2
+```
+
+```text
+Analyzer (19)
+  AnSpec                   Voxengo          VST3  1.2
+  Correlometer             Voxengo          VST3  1.1
+```
 
 Examples:
 

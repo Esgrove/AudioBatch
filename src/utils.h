@@ -19,6 +19,10 @@ enum class Level { debug, info, warn, error };
 /// which defaults to the application name.
 std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName, const juce::String& logName = {});
 
+/// Returns the storage options for the AudioBatch.settings file that holds the GUI settings and plugin chain.
+/// The CLI only reads this file, for example the plugin search folders of the last GUI scan.
+juce::PropertiesFile::Options createApplicationSettingsOptions();
+
 /// Move a file or folder to the OS trash / recycle bin.
 bool moveToTrash(const juce::File& file);
 

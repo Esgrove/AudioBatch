@@ -9,18 +9,16 @@
 
 #include "CustomLookAndFeel.h"
 #include "PluginChainEditor.h"
-#include "PluginScanner.h"
 #include "StringFormat.h"
+#include "utils.h"
 
 #include <algorithm>
 
 namespace audiobatch::plugin_chain
 {
-constexpr auto pluginListPropertyKey = "knownPluginList";
 constexpr auto pluginChainPropertyKey = "pluginChain";
 constexpr auto legacySelectedPluginIdPropertyKey = "selectedPluginIdentifier";
 constexpr auto legacySelectedPluginStatePropertyKey = "selectedPluginState";
-constexpr auto deadMansPedalFileName = "audiobatch_plugin_scan_crash_log.txt";
 
 constexpr auto chainXmlTag = "PLUGIN_CHAIN";
 constexpr auto slotXmlTag = "SLOT";
@@ -61,7 +59,12 @@ PluginChain::PluginChain(juce::ApplicationProperties& applicationProperties) : a
 
     // Load plugins in a separate worker process while scanning,
     // so a plugin that crashes during the scan is blacklisted instead of taking down the app.
-    knownPluginList.setCustomScanner(std::make_unique<OutOfProcessPluginScanner>());
+    // The plugin scan lock is held for the whole scan, so a CLI rescan cannot overwrite its results.
+    knownPluginList.setCustomScanner(
+        std::make_unique<OutOfProcessPluginScanner>(
+            [this] { return beginPluginScan(); }, [this] { pluginScanLock.release(); }
+        )
+    );
 
     loadKnownPluginList();
     loadPersistedChain();
@@ -457,6 +460,10 @@ void PluginChain::showChainEditor()
 
 void PluginChain::showScanWindow()
 {
+    // Pick up changes from a CLI rescan since the list was loaded,
+    // so a scan from this window builds on them instead of saving over them.
+    loadKnownPluginList();
+
     if (scanWindow != nullptr) {
         // The window hides itself when closed, so reopening only needs to make it visible again.
         scanWindow->setVisible(true);
@@ -464,8 +471,7 @@ void PluginChain::showScanWindow()
         return;
     }
 
-    const auto deadMansPedalFile
-        = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile(deadMansPedalFileName);
+    const auto deadMansPedalFile = getPluginScanCrashLogFile();
 
     // The plugins themselves are loaded by the OutOfProcessPluginScanner worker process,
     // which scans on its own message thread.
@@ -644,32 +650,41 @@ void PluginChain::persistChain()
 
 void PluginChain::persistKnownPluginList() const
 {
+    // Failures are logged by saveKnownPluginList, and the in-memory list stays usable.
+    [[maybe_unused]] const auto saved = saveKnownPluginList(knownPluginList);
+}
+
+void PluginChain::loadKnownPluginList()
+{
     auto* settings = appProperties.getUserSettings();
     if (settings == nullptr) {
         return;
     }
 
-    if (const auto xml = knownPluginList.createXml(); xml != nullptr) {
-        settings->setValue(pluginListPropertyKey, xml->toString());
-        settings->saveIfNeeded();
-    }
+    migrateKnownPluginList(*settings);
+    ::loadKnownPluginList(*settings, knownPluginList);
 }
 
-void PluginChain::loadKnownPluginList()
+bool PluginChain::beginPluginScan()
 {
-    const auto* settings = appProperties.getUserSettings();
-    if (settings == nullptr) {
-        return;
+    if (!pluginScanLock.tryAcquire()) {
+        utils::logWarn("Skipped a plugin scan because another plugin scan is running");
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions::makeOptionsOk(
+                juce::MessageBoxIconType::InfoIcon,
+                "Plugin Scan Skipped",
+                "Another plugin scan is running, for example audiobatch --rescan in a terminal.\n\n"
+                "Scan again once it has finished.",
+                "OK"
+            ),
+            nullptr
+        );
+        return false;
     }
 
-    const auto xmlText = settings->getValue(pluginListPropertyKey);
-    if (xmlText.isEmpty()) {
-        return;
-    }
-
-    if (const auto element = juce::parseXML(xmlText); element != nullptr) {
-        knownPluginList.recreateFromXml(*element);
-    }
+    // Another process may have saved a newer list since this one was loaded.
+    loadKnownPluginList();
+    return true;
 }
 
 void PluginChain::notifyChainChanged()
