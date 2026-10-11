@@ -72,7 +72,10 @@ void NormalizeCoordinator::cancelAndWait()
     pendingJobs.store(0);
 }
 
-int NormalizeCoordinator::start(const std::vector<AudioAnalysisRecord>& records)
+int NormalizeCoordinator::start(
+    const std::vector<AudioAnalysisRecord>& records,
+    const AudioNormalizationOptions& options
+)
 {
     cancelAndWait();
 
@@ -102,18 +105,38 @@ int NormalizeCoordinator::start(const std::vector<AudioAnalysisRecord>& records)
         return 0;
     }
 
+    const auto conflicts = AudioNormalizationService::findBatchOutputConflicts(normalizedRecords);
+
     for (const auto& record : normalizedRecords) {
-        threadPool.addJob([this, record, runId, totalFiles = static_cast<int>(normalizedRecords.size())] {
-            if (runId != currentRunId.load()) {
-                return;
-            }
+        const bool hasConflict = conflicts.contains(record.file.getFullPathName());
 
-            publishResult(AudioNormalizationService::normalizeFile(record), runId);
+        threadPool.addJob(
+            [this, record, options, hasConflict, runId, totalFiles = static_cast<int>(normalizedRecords.size())] {
+                if (runId != currentRunId.load()) {
+                    return;
+                }
 
-            if (pendingJobs.fetch_sub(1) == 1) {
-                publishCompletion(totalFiles, runId);
+                if (hasConflict) {
+                    publishResult(
+                        AudioNormalizationResult::failure(
+                            record.file, AudioNormalizationService::batchOutputConflictMessage(record.file)
+                        ),
+                        runId
+                    );
+                } else {
+                    publishResult(
+                        AudioNormalizationService::normalizeFile(
+                            record, options, [this, runId] { return runId != currentRunId.load(); }
+                        ),
+                        runId
+                    );
+                }
+
+                if (pendingJobs.fetch_sub(1) == 1) {
+                    publishCompletion(totalFiles, runId);
+                }
             }
-        });
+        );
     }
 
     return static_cast<int>(normalizedRecords.size());

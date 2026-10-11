@@ -15,6 +15,7 @@
 
 #include "PluginProcessingService.h"
 
+#include "AudioNormalizationService.h"
 #include "MetadataService.h"
 #include "utils.h"
 
@@ -33,7 +34,6 @@ namespace audiobatch::plugin_processing
 {
 constexpr int processingBlockSize = 1024;
 constexpr int outputBitsPerSample = 16;
-constexpr auto outputExtension = ".aiff";
 constexpr auto cancelledMessage = "Processing was cancelled";
 /// How long a worker waits for the message thread between cancellation checks.
 constexpr int messageThreadPollIntervalMs = 20;
@@ -359,7 +359,7 @@ bool PluginProcessingService::canProcessFile(const juce::File& file)
 
 juce::File PluginProcessingService::getProcessingOutputFile(const juce::File& input)
 {
-    return input.withFileExtension(outputExtension);
+    return AudioNormalizationService::getOutputFile(input);
 }
 
 juce::AudioFormatManager& PluginProcessingService::getThreadLocalFormatManager()
@@ -538,6 +538,42 @@ static juce::String renderThroughChain(
     return renderError;
 }
 
+/// Moves the validated temporary output into place and disposes of the original.
+/// A different file already at the output path is only replaced when overwriting is allowed,
+/// and it goes to the system trash so it can be recovered.
+/// When the output path differs from the source, the original is moved to the system trash afterwards.
+/// Returns an empty string on success, or a user-facing error message.
+static juce::String commitProcessedOutput(
+    const juce::TemporaryFile& temporaryFile,
+    const juce::File& file,
+    const juce::File& outputFile,
+    const PluginProcessingOptions& options
+)
+{
+    const bool replacingOriginal = file == outputFile;
+    if (!replacingOriginal && outputFile.exists()) {
+        if (!options.overwriteExisting) {
+            utils::deleteFile(temporaryFile.getFile());
+            return utils::format("Output file {} already exists", outputFile.getFileName());
+        }
+
+        if (!utils::moveToTrash(outputFile)) {
+            utils::deleteFile(temporaryFile.getFile());
+            return "Could not move the existing output file to the system trash";
+        }
+    }
+
+    if (!temporaryFile.overwriteTargetFileWithTemporary()) {
+        return "Could not move processed output into place";
+    }
+
+    if (!replacingOriginal && file.existsAsFile() && !utils::moveToTrash(file)) {
+        utils::logError("Could not move the original file to the system trash: {}", file.getFullPathName().quoted());
+    }
+
+    return {};
+}
+
 PluginProcessingResult PluginProcessingService::processFile(
     const AudioAnalysisRecord& record,
     const PluginProcessingOptions& options,
@@ -564,6 +600,14 @@ PluginProcessingResult PluginProcessingService::processFile(
     }
 
     const auto outputFile = getProcessingOutputFile(file);
+
+    if (outputFile != file && outputFile.exists() && !options.overwriteExisting) {
+        return fail(
+            file,
+            utils::format("Output file {} already exists. Use force overwrite to replace it.", outputFile.getFileName())
+        );
+    }
+
     juce::TemporaryFile const temporaryFile(outputFile);
     std::unique_ptr<juce::OutputStream> outputStream(temporaryFile.getFile().createOutputStream().release());
 
@@ -628,13 +672,15 @@ PluginProcessingResult PluginProcessingService::processFile(
 
     // Preserve metadata from the original input file by copying it onto the temporary AIFF file.
     // This carries ID3 tags, embedded artwork, and similar information across formats such as MP3 to AIFF.
-    // Failure to read metadata is non-fatal because some inputs may not have any TagLib-readable metadata.
+    // Failure to read metadata is non-fatal because some inputs may not have any TagLib-readable metadata,
+    // but failing to write metadata that was read is fatal, so the original and its tags are kept.
     {
         MetadataService::Metadata metadata;
         if (MetadataService::readMetadata(file, metadata) && !metadata.isEmpty()
             && !MetadataService::writeMetadata(temporaryFile.getFile(), metadata))
         {
-            utils::logError("Failed to copy metadata onto processed output for {}", file.getFullPathName().quoted());
+            utils::deleteFile(temporaryFile.getFile());
+            return fail(file, "Could not copy metadata onto the processed output");
         }
     }
 
@@ -658,21 +704,10 @@ PluginProcessingResult PluginProcessingService::processFile(
         return fail(file, cancelledMessage);
     }
 
-    // If the original file path differs from the output path (different extension), delete the original.
-    const bool replacingOriginal = file == outputFile;
-    if (outputFile.existsAsFile() && !utils::deleteFile(outputFile)) {
-        utils::deleteFile(temporaryFile.getFile());
-        return fail(file, "Could not replace existing output file");
-    }
-
-    if (!temporaryFile.overwriteTargetFileWithTemporary()) {
-        return fail(file, "Could not move processed output into place");
-    }
-
-    // When the output had a different extension,
-    // move the original file to the system trash so the user can recover it if needed.
-    if (!replacingOriginal && file.existsAsFile() && !utils::moveToTrash(file)) {
-        utils::logError("Could not move the original file to the system trash: {}", file.getFullPathName().quoted());
+    if (const auto commitError = commitProcessedOutput(temporaryFile, file, outputFile, options);
+        commitError.isNotEmpty())
+    {
+        return fail(file, commitError);
     }
 
     PluginProcessingResult result;

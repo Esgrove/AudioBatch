@@ -218,6 +218,10 @@ private:
     /// or an empty string when the file is idle.
     [[nodiscard]] juce::String getActiveStatusLabel(const AudioAnalysisRecord& record) const;
 
+    /// Returns the error from the last failed normalize or process run for a record,
+    /// or an empty string when its last run succeeded or none has failed.
+    [[nodiscard]] juce::String getOperationError(const AudioAnalysisRecord& record) const;
+
     /// Returns the shared animation phase in the range 0 to 1 that drives the spinning activity indicators.
     [[nodiscard]] static float getActivityPhase();
 
@@ -409,6 +413,9 @@ private:
     int processedResultsExpected = 0;
 
     std::map<juce::String, juce::String> activeFileStatusLabels;
+    /// Error of the last failed normalize or process run per file path, shown in the status column.
+    /// Cleared when the file starts another operation.
+    std::map<juce::String, juce::String> operationErrors;
     juce::StringArray normalizationFailures;
     juce::StringArray processingFailures;
 
@@ -425,6 +432,9 @@ private:
     juce::TextButton startStopButton {"Play/Stop"};
     juce::TextButton processButton {"Process"};
     juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
+    /// Lets normalization and plugin processing replace an existing output file.
+    /// Not persisted, so every session starts with overwriting disabled.
+    juce::ToggleButton forceOverwriteToggle {"Force overwrite"};
     std::unique_ptr<AudioInfoPanel> audioInfo;
     juce::Viewport audioInfoViewport;
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;

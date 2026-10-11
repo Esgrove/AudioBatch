@@ -7,6 +7,16 @@
 
 #include "AudioAnalysisService.h"
 
+#include <functional>
+#include <vector>
+
+/// Options controlling how a file is normalized.
+struct AudioNormalizationOptions {
+    /// Replace an existing output file that is not the source itself.
+    /// When false, a file whose output path is already taken fails instead of overwriting it.
+    bool overwriteExisting = false;
+};
+
 /// Result payload for a single normalize-and-reanalyze operation.
 struct AudioNormalizationResult {
     juce::File file;
@@ -38,6 +48,22 @@ struct AudioNormalizationResult {
 class AudioNormalizationService
 {
 public:
+    /// Returns true when the caller wants normalization to stop as soon as possible.
+    /// Polled from the normalizing thread, so it must be thread-safe and cheap.
+    using CancellationCheck = std::function<bool()>;
+
+    /// Returns the output path normalization writes for the given source, which is always a sibling `<name>.aif`.
+    static juce::File getOutputFile(const juce::File& sourceFile);
+
+    /// Returns the full paths of the records that cannot be normalized in this batch
+    /// because an earlier record in the batch writes the same output file.
+    /// A source that is already the output file, such as `<name>.aif` normalized in place, always wins.
+    /// Otherwise the record that sorts first by path wins, so the result does not depend on input order.
+    static juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records);
+
+    /// Returns the user-facing error message for a record that lost a batch output conflict.
+    static juce::String batchOutputConflictMessage(const juce::File& sourceFile);
+
     /// Returns true when the file's format can be rewritten by this build during normalization.
     static bool canNormalizeFile(const juce::File& file);
 
@@ -48,7 +74,14 @@ public:
     static juce::String getFormatSupportSummary();
 
     /// Rewrites a file so its peak reaches 0 dBFS, then re-analyzes the result.
-    static AudioNormalizationResult normalizeFile(const AudioAnalysisRecord& record);
+    /// Fails without writing anything when the output path already exists and is not the source,
+    /// unless options.overwriteExisting is set, in which case the existing output is moved to the system trash.
+    /// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.
+    static AudioNormalizationResult normalizeFile(
+        const AudioAnalysisRecord& record,
+        const AudioNormalizationOptions& options,
+        const CancellationCheck& isCancelled = {}
+    );
 
 private:
     /// Returns a per-thread format manager used for reading source files.

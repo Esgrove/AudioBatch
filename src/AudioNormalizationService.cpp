@@ -28,6 +28,13 @@ static AudioNormalizationResult failNormalization(const juce::File& file, const 
 constexpr int normalizationBlockSize = 32768;
 constexpr auto normalizedAiffOutputExtension = ".aif";
 constexpr int defaultMp3BitsPerSample = 16;
+constexpr auto cancelledMessage = "Normalization was cancelled";
+
+/// Returns true when a cancellation check is set and reports that cancellation was requested.
+static bool isCancellationRequested(const AudioNormalizationService::CancellationCheck& isCancelled)
+{
+    return isCancelled != nullptr && isCancelled();
+}
 
 struct AudioNormalizationRuntimeState {
     juce::AudioFormatManager readFormatManager;
@@ -104,15 +111,6 @@ static juce::AudioFormat* getAiffWriterFormat(const AudioNormalizationRuntimeSta
     }
 
     return runtimeState.readFormatManager.findFormatForFileExtension("aiff");
-}
-
-/// Resolves the output path for a normalized file, which is always a sibling `.aif` file.
-/// If the source is already named `<name>.aif` it will resolve to the same path and be normalized in place.
-/// Any other extension (including `.aiff` / `.aifc`) is renamed to `.aif`,
-/// and the original is trashed once the write succeeds.
-static juce::File getNormalizationOutputFile(const juce::File& sourceFile)
-{
-    return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + normalizedAiffOutputExtension);
 }
 
 /// Moves the temporary output into its final location and disposes of the original file.
@@ -215,30 +213,6 @@ static int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredB
     }
 
     return resolvedBitsPerSample;
-}
-
-/// Picks the supported writer sample rate closest to the preferred source rate.
-static double resolveWriterSampleRate(juce::AudioFormat& format, const double preferredSampleRate)
-{
-    const auto sampleRates = format.getPossibleSampleRates();
-
-    if (sampleRates.isEmpty() || preferredSampleRate <= 0.0) {
-        return preferredSampleRate;
-    }
-
-    int resolvedSampleRate = sampleRates[0];
-    auto bestDistance = std::abs(preferredSampleRate - static_cast<double>(resolvedSampleRate));
-
-    for (const auto sampleRate : sampleRates) {
-        if (const auto distance = std::abs(preferredSampleRate - static_cast<double>(sampleRate));
-            distance < bestDistance)
-        {
-            resolvedSampleRate = sampleRate;
-            bestDistance = distance;
-        }
-    }
-
-    return resolvedSampleRate;
 }
 
 /// Chooses the output bit depth for the normalized file.
@@ -365,20 +339,6 @@ static juce::String formatExtensionsToText(const juce::StringArray& extensions)
     return normalizedExtensions.joinIntoString(", ");
 }
 
-/// Creates the audio writer for the output stream.
-/// Source metadata is currently written separately through TagLib after the audio is rendered,
-/// so the reader metadata passed here is unused.
-static std::unique_ptr<juce::AudioFormatWriter> createWriterPreservingMetadata(
-    juce::AudioFormat& format,
-    std::unique_ptr<juce::OutputStream>& outputStream,
-    const juce::AudioFormatWriterOptions& writerOptions,
-    const juce::StringPairArray& sourceMetadata
-)
-{
-    juce::ignoreUnused(sourceMetadata);
-    return format.createWriterFor(outputStream, writerOptions);
-}
-
 /// Copies tags and embedded pictures from the source file to the freshly written output.
 /// A source that yields no metadata is not an error, but a failed write to the destination is.
 static bool preserveOutputMetadata(const juce::File& sourceFile, const juce::File& destinationFile)
@@ -425,9 +385,131 @@ static juce::String validateTemporaryNormalizedOutput(
 
     return {};
 }
+
+/// Returns the user-facing error for an output path that is already taken by another file.
+static juce::String existingOutputMessage(const juce::File& outputFile)
+{
+    return utils::format("Output file {} already exists. Use force overwrite to replace it.", outputFile.getFileName());
+}
+
+/// Makes room for the output when it would replace a different, existing file.
+/// The existing file is moved to the system trash only when overwriting is allowed.
+/// Returns an empty string on success, or a user-facing error message.
+static juce::String clearExistingOutput(
+    const juce::File& sourceFile,
+    const juce::File& outputFile,
+    const AudioNormalizationOptions& options
+)
+{
+    if (outputFile == sourceFile || !outputFile.exists()) {
+        return {};
+    }
+
+    if (!options.overwriteExisting) {
+        return existingOutputMessage(outputFile);
+    }
+
+    if (!utils::moveToTrash(outputFile)) {
+        return "Could not move the existing output file to the system trash";
+    }
+
+    return {};
+}
+
+/// Streams the source through the writer block by block, applying the normalization gain.
+/// Returns an empty string on success, or a user-facing error message,
+/// including when cancellation is requested between blocks.
+static juce::String renderNormalizedAudio(
+    juce::AudioFormatReader& reader,
+    juce::AudioFormatWriter& writer,
+    const float gain,
+    const juce::File& sourceFile,
+    const AudioNormalizationService::CancellationCheck& isCancelled
+)
+{
+    juce::AudioBuffer<float> buffer(static_cast<int>(reader.numChannels), normalizationBlockSize);
+    std::vector<float*> channelPointers(reader.numChannels);
+
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
+        channelPointers[static_cast<std::size_t>(channel)] = buffer.getWritePointer(channel);
+    }
+
+    for (juce::int64 samplePosition = 0; samplePosition < reader.lengthInSamples;
+         samplePosition += normalizationBlockSize)
+    {
+        if (isCancellationRequested(isCancelled)) {
+            return cancelledMessage;
+        }
+
+        const auto samplesThisBlock = static_cast<int>(
+            juce::jmin<juce::int64>(normalizationBlockSize, reader.lengthInSamples - samplePosition)
+        );
+
+        if (!reader.read(channelPointers.data(), buffer.getNumChannels(), samplePosition, samplesThisBlock)
+            && !canAcceptReadFailureForNormalization(reader, sourceFile, samplePosition, samplesThisBlock))
+        {
+            return "Failed while reading audio data for normalization";
+        }
+
+        buffer.applyGain(gain);
+
+        if (!writer.writeFromAudioSampleBuffer(buffer, 0, samplesThisBlock)) {
+            return "Failed while writing normalized audio data";
+        }
+    }
+
+    return {};
+}
 }  // namespace audiobatch::normalization
 
 using namespace audiobatch::normalization;
+
+juce::File AudioNormalizationService::getOutputFile(const juce::File& sourceFile)
+{
+    return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + normalizedAiffOutputExtension);
+}
+
+juce::StringArray AudioNormalizationService::findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records)
+{
+    std::vector<const AudioAnalysisRecord*> ordered;
+    ordered.reserve(records.size());
+
+    for (const auto& record : records) {
+        ordered.push_back(&record);
+    }
+
+    // In-place sources claim their output first, then the rest in path order.
+    std::ranges::sort(ordered, [](const AudioAnalysisRecord* lhs, const AudioAnalysisRecord* rhs) {
+        const bool lhsInPlace = getOutputFile(lhs->file) == lhs->file;
+        const bool rhsInPlace = getOutputFile(rhs->file) == rhs->file;
+
+        if (lhsInPlace != rhsInPlace) {
+            return lhsInPlace;
+        }
+
+        return lhs->file.getFullPathName() < rhs->file.getFullPathName();
+    });
+
+    juce::StringArray claimedOutputs;
+    juce::StringArray conflicts;
+
+    for (const auto* record : ordered) {
+        const auto outputPath = getOutputFile(record->file).getFullPathName();
+
+        if (claimedOutputs.contains(outputPath, !juce::File::areFileNamesCaseSensitive())) {
+            conflicts.add(record->file.getFullPathName());
+        } else {
+            claimedOutputs.add(outputPath);
+        }
+    }
+
+    return conflicts;
+}
+
+juce::String AudioNormalizationService::batchOutputConflictMessage(const juce::File& sourceFile)
+{
+    return utils::format("Another selected file is also written to {}", getOutputFile(sourceFile).getFileName());
+}
 
 bool AudioNormalizationService::canNormalizeFile(const juce::File& file)
 {
@@ -505,13 +587,21 @@ juce::AudioFormatManager& AudioNormalizationService::getThreadLocalFormatManager
     return getThreadLocalRuntimeState().readFormatManager;
 }
 
-AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAnalysisRecord& record)
+AudioNormalizationResult AudioNormalizationService::normalizeFile(
+    const AudioAnalysisRecord& record,
+    const AudioNormalizationOptions& options,
+    const CancellationCheck& isCancelled
+)
 {
     const auto& file = record.file;
-    const auto outputFile = getNormalizationOutputFile(file);
+    const auto outputFile = getOutputFile(file);
 
     if (!file.existsAsFile()) {
         return failNormalization(file, "File does not exist");
+    }
+
+    if (outputFile != file && outputFile.exists() && !options.overwriteExisting) {
+        return failNormalization(file, existingOutputMessage(outputFile));
     }
 
     if (!record.isReady()) {
@@ -562,51 +652,30 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
         return failNormalization(file, "Could not create temporary output file");
     }
 
-    const auto writerSampleRate = resolveWriterSampleRate(*writerFormat, reader->sampleRate);
+    // The AIFF writer accepts any sample rate, and keeping the source rate avoids a pitch change,
+    // since normalization does not resample.
+    const auto writerSampleRate = reader->sampleRate;
     const auto preferredBitDepth = resolvePreferredOutputBitDepth(record, *reader, file);
     const auto writerBitDepth = resolveWriterBitDepth(*writerFormat, preferredBitDepth);
 
-    auto writerOptions = juce::AudioFormatWriterOptions()
-                             .withSampleRate(writerSampleRate)
-                             .withNumChannels(static_cast<int>(reader->numChannels))
-                             .withBitsPerSample(writerBitDepth)
-                             .withMetadataValues(copyMetadata(reader->metadataValues));
+    // Tags and pictures are copied separately through TagLib after the audio is rendered,
+    // and the reader metadata passed here only covers what the JUCE AIFF writer itself stores.
+    const auto writerOptions = juce::AudioFormatWriterOptions()
+                                   .withSampleRate(writerSampleRate)
+                                   .withNumChannels(static_cast<int>(reader->numChannels))
+                                   .withBitsPerSample(writerBitDepth)
+                                   .withMetadataValues(copyMetadata(reader->metadataValues));
 
-    if (reader->usesFloatingPointData && writerBitDepth == 32) {
-        writerOptions = writerOptions.withSampleFormat(juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
-    }
-
-    auto writer = createWriterPreservingMetadata(*writerFormat, outputStream, writerOptions, reader->metadataValues);
+    auto writer = writerFormat->createWriterFor(outputStream, writerOptions);
 
     if (writer == nullptr) {
         return failNormalization(file, getNormalizationSupportMessage(file));
     }
 
-    juce::AudioBuffer<float> buffer(static_cast<int>(reader->numChannels), normalizationBlockSize);
-    std::vector<float*> channelPointers(reader->numChannels);
-
-    for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
-        channelPointers[static_cast<std::size_t>(channel)] = buffer.getWritePointer(channel);
-    }
-
-    for (juce::int64 samplePosition = 0; samplePosition < reader->lengthInSamples;
-         samplePosition += normalizationBlockSize)
+    if (const auto renderError = renderNormalizedAudio(*reader, *writer, gain, file, isCancelled);
+        renderError.isNotEmpty())
     {
-        const auto samplesThisBlock = static_cast<int>(
-            juce::jmin<juce::int64>(normalizationBlockSize, reader->lengthInSamples - samplePosition)
-        );
-
-        if (!reader->read(channelPointers.data(), buffer.getNumChannels(), samplePosition, samplesThisBlock)
-            && !canAcceptReadFailureForNormalization(*reader, file, samplePosition, samplesThisBlock))
-        {
-            return failNormalization(file, "Failed while reading audio data for normalization");
-        }
-
-        buffer.applyGain(gain);
-
-        if (!writer->writeFromAudioSampleBuffer(buffer, 0, samplesThisBlock)) {
-            return failNormalization(file, "Failed while writing normalized audio data");
-        }
+        return failNormalization(file, renderError);
     }
 
     writer.reset();
@@ -619,6 +688,17 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
         validationError.isNotEmpty())
     {
         return failNormalization(file, validationError);
+    }
+
+    // Check again before touching the original, since cancellation may arrive during the last block.
+    // The coordinator drops results of a cancelled run,
+    // so committing here would change files on disk without the caller ever learning about it.
+    if (isCancellationRequested(isCancelled)) {
+        return failNormalization(file, cancelledMessage);
+    }
+
+    if (const auto clearError = clearExistingOutput(file, outputFile, options); clearError.isNotEmpty()) {
+        return failNormalization(file, clearError);
     }
 
     if (juce::String finalizeError; !finalizeNormalizationOutput(temporaryFile, file, outputFile, finalizeError)) {
