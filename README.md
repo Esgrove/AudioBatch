@@ -138,6 +138,11 @@ and write the processed audio to disk.
   Individual plugins can be enabled or disabled without removing them from the chain,
   reordered by dragging a row or with the arrow buttons, and removed entirely.
   Removing a plugin closes its editor window.
+- Plugins run in offline (non-realtime) rendering mode,
+  the same mode DAWs use for bouncing,
+  so plugins that offer higher-quality processing for offline rendering use it.
+  VST3 plugins receive this through the processing setup,
+  and Audio Units through the offline render property.
 - Files are processed through the enabled plugins in chain order in a single pass.
   The processing tail is the sum of each plugin's reported tail,
   so reverbs and delays ring out fully through the rest of the chain.

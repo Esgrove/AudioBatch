@@ -2,6 +2,7 @@
 /// Covers reading the source file with a thread-local format manager,
 /// applying custom or normalization gain before the chain,
 /// configuring plugin buses for the file's channel layout,
+/// switching plugins to offline (non-realtime) rendering mode,
 /// preparing plugins and restoring their state per file,
 /// and rendering block by block through the chain including plugin tails.
 /// The output is written to a temporary 16-bit AIFF file that is validated,
@@ -15,6 +16,10 @@
 
 #include <algorithm>
 #include <cmath>
+
+#if JUCE_MAC
+#include <AudioToolbox/AudioToolbox.h>
+#endif
 
 namespace audiobatch::plugin_processing
 {
@@ -122,6 +127,41 @@ static bool configurePluginChannels(juce::AudioPluginInstance& plugin, const int
     }
 
     return layoutConfigured;
+}
+
+/// Tells the plugin it is rendering offline rather than running live on an audio device,
+/// so it can use higher-quality processing that does not need to keep up with realtime,
+/// for example higher oversampling or longer lookahead.
+/// Must be called before prepareToPlay:
+/// JUCE passes the mode to VST3 plugins as kOffline in setupProcessing during prepareToPlay.
+/// JUCE's Audio Unit host does not forward the mode,
+/// so it is set directly through kAudioUnitProperty_OfflineRender while the unit is uninitialized.
+static void enableOfflineRendering(juce::AudioPluginInstance& plugin)
+{
+    plugin.setNonRealtime(true);
+
+#if JUCE_MAC
+    if (const auto* audioUnitClient = plugin.getAudioUnitClient(); audioUnitClient != nullptr) {
+        if (auto* audioUnit = audioUnitClient->getAudioUnitHandle(); audioUnit != nullptr) {
+            constexpr UInt32 offlineRender = 1;
+            if (const auto status = AudioUnitSetProperty(
+                    audioUnit,
+                    kAudioUnitProperty_OfflineRender,
+                    kAudioUnitScope_Global,
+                    0,
+                    &offlineRender,
+                    sizeof(offlineRender)
+                );
+                status != noErr)
+            {
+                // Not fatal: the plugin still renders correctly, only without its offline quality mode.
+                utils::logWarn(
+                    "Audio Unit {} did not accept offline render mode (OSStatus {})", plugin.getName().quoted(), status
+                );
+            }
+        }
+    }
+#endif
 }
 }  // namespace audiobatch::plugin_processing
 
@@ -247,6 +287,7 @@ PluginProcessingResult PluginProcessingService::processFile(
             );
         }
 
+        enableOfflineRendering(*plugin);
         plugin->prepareToPlay(sampleRate, processingBlockSize);
         plugin->reset();
 
