@@ -26,12 +26,16 @@ Multichannel files are not a target.
 ## Source Layout
 
 The application code lives in `src/`.
-The two targets share most sources and differ only in their entry points and GUI-only files.
+The two targets share a core set of sources.
+The CLI adds its front end files, and the GUI adds its components and plugin hosting.
 
 Entry points:
 
 - `src/Main.cpp` is the GUI application entry point.
 - `src/CliMain.cpp` is the CLI entry point.
+
+CLI only:
+
 - `src/AudioAnalysisCli.{h,cpp}` holds CLI argument parsing and output formatting.
 - `src/PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
 
@@ -42,8 +46,9 @@ Shared core (linked into both targets):
 - `src/MetadataService.*` read and write tags and embedded art through TagLib.
 - `src/AnalysisCache.*` manage the SQLite result cache.
 - `src/AnalysisCoordinator.*` and `src/NormalizeCoordinator.*` orchestrate background work.
-- `src/utils.*` and `src/version.h` are shared helpers.
-- `src/ConsolePrint.*` provide styled console output helpers for the CLI.
+- `src/utils.*`, `src/StringFormat.h`, and `src/version.h` are shared helpers.
+- `src/ConsolePrint.*` provide styled console output helpers.
+  They are used mainly by the CLI, and `utils.h` includes them in both targets.
 - `src/PluginScanner.*` implement out-of-process plugin scanning and the known-plugins list persistence.
   Each executable relaunches itself as its scan worker:
   `src/Main.cpp` and `src/CliMain.cpp` detect the worker command line before doing anything else.
@@ -57,9 +62,13 @@ GUI only:
 - `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginProcessing.h`, `src/PluginProcessingCoordinator.*`,
   and `src/PluginProcessingService.*` implement VST3 / Audio Unit plugin hosting and the plugin chain.
 
-The exact source lists for each target are defined in `CMakeLists.txt`.
-Keep those lists in sync when adding or removing files,
+The source lists are defined in `CMakeLists.txt`.
+`AUDIOBATCH_CORE_SOURCES` holds the shared core and `AUDIOBATCH_CLI_SOURCES` the CLI front end,
+and each target adds its own entry point and target-specific files.
+Add new shared files to the core list, not to each target,
 and remember that a shared file must compile cleanly for both the GUI and the CLI.
+List sources as relative `src/...` paths,
+because the strict warning set is applied by matching that pattern.
 
 ## Dependencies
 
@@ -106,8 +115,10 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
   Keep `.quoted()` calls on arguments instead of putting quote characters in the format string,
   and keep `juce::newLine` outside format strings in text that leaves the process,
   because it is `\r\n` on Windows.
-- Write console output with `fmt::print` or the `console::` helpers in `src/ConsolePrint.h`,
-  not with `std::cout` / `std::cerr`.
+- Write console output with `fmt::print` or the `console::` helpers in `src/ConsolePrint.h`.
+  `std::format` and `std::print` are also fine.
+  Prefer these over `std::cout` / `std::cerr`,
+  unless the iostream version is clearly more readable and performant with much less code.
   Use `console::printError` and `console::printWarn` for user-facing error and warning messages.
   Avoid `fmt::println`, because it triggers MSVC warning C4702 inside fmt with warnings as errors.
 - The logging helpers accept fmt format strings and arguments directly:
@@ -124,13 +135,27 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
 - If you need Ninja and `compile_commands.json` on Windows,
   use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
 - Both `AudioBatch` and `AudioBatchCli` build with warnings as errors, so all warnings must be resolved.
+- On top of the JUCE recommended warning flags,
+  `audiobatch_set_source_warnings` in `CMakeLists.txt` adds a stricter warning set
+  to the project's own `src/*.cpp` files only.
+  JUCE module sources do not get it,
+  and the JUCE headers are included as system headers so their warnings are not reported.
+  Several of those flags are Clang-specific, so GCC is not a supported compiler.
+  `src/Main.cpp` additionally gets `-Wno-cast-qual`,
+  because the `START_JUCE_APPLICATION` macro casts away `const` in code the project cannot change.
 
 ## Formatting
 
 - After changing any C++ source or header file, run `clang-format -i --style=file` on each changed file before finishing.
 - For repo-wide or multi-file formatting, use `./format.sh`.
   `./format.sh --check` only verifies formatting without changing files.
-- Formatting is configured by `.clang-format`.
+- C++ formatting is configured by `.clang-format`.
+- `./format.sh` also formats `CMakeLists.txt` with cmake-format, configured by `.cmake-format.yaml`,
+  and the shell scripts with shfmt when it is installed.
+  cmake-format runs through `uvx` when it is not installed.
+  After changing `CMakeLists.txt`, run `./format.sh` or cmake-format on it.
+- `.pre-commit-config.yaml` runs clang-format, cmake-format, and basic file checks through [prek](https://prek.j178.dev).
+- CI runs `./format.sh --check`.
 
 ## Linting
 
