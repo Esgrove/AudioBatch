@@ -36,7 +36,9 @@ Entry points:
 
 CLI only:
 
-- `src/AudioAnalysisCli.{h,cpp}` holds CLI argument parsing and output formatting.
+- `src/AudioAnalysisCli.{h,cpp}` declares the CLI options and runs the analysis workflow,
+  `src/AudioAnalysisCliParse.cpp` parses and validates the arguments,
+  and `src/AudioAnalysisCliOutput.*` prints the results as a table, CSV, or JSON.
 - `src/PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
 
 Shared core (linked into both targets):
