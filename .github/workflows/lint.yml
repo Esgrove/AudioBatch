@@ -1,0 +1,73 @@
+name: Lint
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".clang-tidy"
+      - ".github/workflows/lint.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "JUCE"
+      - "common.sh"
+      - "lint.sh"
+      - "src/**"
+  pull_request:
+    paths:
+      - ".clang-tidy"
+      - ".github/workflows/lint.yml"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "JUCE"
+      - "common.sh"
+      - "lint.sh"
+      - "src/**"
+
+# Cancel previous runs for PRs but not pushes to main
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  clang-tidy:
+    # Use macOS with the latest LLVM from Homebrew, since Ubuntu apt has an older clang-tidy
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install LLVM and Ninja
+        run: |
+          brew update --quiet
+          brew install llvm ninja
+
+      - name: Cache CMake build directory
+        uses: actions/cache@v5
+        with:
+          path: cmake-build-mac-debug
+          key: ${{ runner.os }}-lint-cmake-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-lint-cmake-
+
+      # clang-tidy only needs the compile database and the generated JUCE and binary data headers,
+      # so the application itself is not built.
+      - name: Configure CMake and generate headers
+        run: |
+          cmake --preset macos-debug
+          ninja -C cmake-build-mac-debug \
+            AudioBatch_artefacts/JuceLibraryCode/JuceHeader.h \
+            AudioBatchCli_artefacts/JuceLibraryCode/JuceHeader.h \
+            juce_binarydata_Assets/JuceLibraryCode/BinaryData.h
+
+      # Only this step uses the Homebrew LLVM tools,
+      # so CMake above still configures with the Xcode toolchain like the build job.
+      - name: Run clang-tidy
+        run: |
+          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          ./lint.sh --check

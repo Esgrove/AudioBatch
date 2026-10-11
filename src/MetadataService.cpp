@@ -40,7 +40,7 @@ TagLib::String toTagLib(const juce::String& juceString)
 /// so the source juce::String only needs to outlive this call.
 TagLib::FileName toFileName(const juce::String& fullPath)
 {
-    return TagLib::FileName(fullPath.toWideCharPointer());
+    return {fullPath.toWideCharPointer()};
 }
 #else
 /// Builds a TagLib file name from a JUCE path.

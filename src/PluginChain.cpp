@@ -172,10 +172,8 @@ void PluginChain::timerCallback()
     bool stateCaptured = false;
 
     for (auto& entry : chain) {
-        if (entry.wasEditorOpen && isEditorWindowClosed(entry)) {
-            if (reapClosedEditor(entry)) {
-                stateCaptured = true;
-            }
+        if (entry.wasEditorOpen && isEditorWindowClosed(entry) && reapClosedEditor(entry)) {
+            stateCaptured = true;
         }
     }
 
@@ -369,11 +367,9 @@ void PluginChain::openEditorForSlot(const int index)
     // A window the user closed is only hidden, not deleted,
     // and the polling timer may not have reaped it yet.
     // Capture its state and destroy it now so a fresh editor can open below.
-    if (entry.wasEditorOpen) {
-        if (reapClosedEditor(entry)) {
-            persistChain();
-            notifyChainChanged();
-        }
+    if (entry.wasEditorOpen && reapClosedEditor(entry)) {
+        persistChain();
+        notifyChainChanged();
     }
 
     juce::String errorMessage;
