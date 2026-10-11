@@ -35,7 +35,7 @@ repos:
         entry: clang-format -i --style=file
         types_or: [c, c++]
         language: system
-        files: ^src/
+        files: ^(src|tests)/
         priority: 1
       - id: cmake-format
         name: CMake Format

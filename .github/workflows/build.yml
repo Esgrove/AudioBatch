@@ -76,6 +76,38 @@ jobs:
           chmod +x build.sh
           ./build.sh --build-type Debug
 
+      - name: Build and run tests
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            BUILD_DIR=cmake-build-mac-debug
+          else
+            BUILD_DIR=cmake-build-windows-debug
+          fi
+          # Reuse the compilation cache that build.sh keeps inside the build directory.
+          export CCACHE_DIR="$PWD/$BUILD_DIR/ccache"
+          cmake --build "$BUILD_DIR" --target AudioBatchTests --config Debug
+          ctest --test-dir "$BUILD_DIR" --build-config Debug --output-on-failure
+
+      # Runs the CLI that build.sh copied to the repository root on the committed test fixtures,
+      # and checks the reported level and the exit codes.
+      - name: CLI smoke test
+        run: |
+          CLI=./audiobatch
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            CLI=./audiobatch.exe
+          fi
+          "$CLI" --help
+          "$CLI" tests/fixtures/sine_stereo_44100_16.wav | tee smoke-output.txt
+          grep -- "-6.02" smoke-output.txt
+          set +e
+          "$CLI" tests/fixtures/broken.wav
+          EXIT_CODE=$?
+          set -e
+          if [ "$EXIT_CODE" -ne 2 ]; then
+            echo "Expected exit code 2 for a broken file, got $EXIT_CODE"
+            exit 1
+          fi
+
   lint:
     # Use macOS with the latest LLVM from Homebrew, since Ubuntu apt has an older clang-tidy
     runs-on: macos-latest

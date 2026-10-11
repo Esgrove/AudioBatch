@@ -143,6 +143,8 @@ AnalysisCache::AnalysisCache()
     databaseFile = appDataDirectory.getChildFile("analysis.db");
 }
 
+AnalysisCache::AnalysisCache(juce::File cacheDatabaseFile) : databaseFile(std::move(cacheDatabaseFile)) { }
+
 AnalysisCache::~AnalysisCache()
 {
     const juce::ScopedLock lock(mutex);

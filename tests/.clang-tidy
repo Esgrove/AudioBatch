@@ -1,0 +1,7 @@
+---
+# Tests use the project configuration with one exception:
+# readability-magic-numbers is disabled, because tests check against literal expected values
+# such as sample rates and levels, and naming every one of them would hide what is being checked.
+InheritParentConfig: true
+Checks: >
+  -readability-magic-numbers

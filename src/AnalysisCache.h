@@ -17,6 +17,9 @@ public:
     /// Resolves the default cache database location.
     AnalysisCache();
 
+    /// Uses the given SQLite database file instead of the default location, for example in tests.
+    explicit AnalysisCache(juce::File cacheDatabaseFile);
+
     /// Closes the database if it is currently open.
     ~AnalysisCache();
 

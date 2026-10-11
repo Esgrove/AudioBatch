@@ -87,6 +87,9 @@ Formatting and linting run through scripts in the repository root:
   `./format.sh --check` only verifies formatting, which is what CI runs.
 - `./lint.sh` runs clang-tidy on `src/` using the debug build's `compile_commands.json`.
   `./lint.sh --check` exits with code 1 on any warning.
+- `ctest --test-dir cmake-build-mac-debug --output-on-failure` runs the unit and integration tests
+  after a debug build.
+  They use the audio fixtures in `tests/fixtures`, which `tests/fixtures/generate.sh` regenerates with ffmpeg.
 - `.pre-commit-config.yaml` runs the basic file checks, clang-format, and cmake-format through [prek](https://prek.j178.dev).
 
 The project sources compile with warnings as errors and a stricter warning set than the JUCE defaults.
