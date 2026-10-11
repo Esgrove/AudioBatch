@@ -5,8 +5,8 @@ REPO=$(git rev-parse --show-toplevel || { cd "$(dirname "${BASH_SOURCE[0]}")" &&
 export REPO
 
 # Set Bash platform script is running on (mac/windows/linux).
-# BSD (Mac) and GNU (Linux & Git for Windows) core-utils implementations
-# have some differences for example in the available command line options.
+# BSD (Mac) and GNU (Linux & Git for Windows) core-utils implementations have some differences
+# for example in the available command line options.
 case "$(uname -s)" in
     "Darwin")
         BASH_PLATFORM="mac"

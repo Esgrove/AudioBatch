@@ -88,8 +88,8 @@ public:
     }
 
     /// Makes the window visible and pushes it to the front with keyboard focus.
-    /// Safe to call repeatedly, the GUI startup path also invokes it again asynchronously
-    /// to work around platform focus quirks on first launch.
+    /// Safe to call repeatedly,
+    /// the GUI startup path also invokes it again asynchronously to work around platform focus quirks on first launch.
     void showAndActivate()
     {
         utils::logDebug("MainWindow startup: showAndActivate begin");

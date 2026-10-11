@@ -54,9 +54,8 @@ GUI only:
 - `src/AudioBatchComponent.*` is the main GUI component.
 - `src/AudioFileTableModel.*` backs the sortable results table.
 - `src/CustomLookAndFeel.*`, `src/ThumbnailComponent.*`, and `src/IntervalStepSlider.h` are UI pieces.
-- `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginProcessing.h`,
-  `src/PluginProcessingCoordinator.*`, and `src/PluginProcessingService.*`
-  implement VST3 / Audio Unit plugin hosting and the plugin chain.
+- `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginProcessing.h`, `src/PluginProcessingCoordinator.*`,
+  and `src/PluginProcessingService.*` implement VST3 / Audio Unit plugin hosting and the plugin chain.
 
 The exact source lists for each target are defined in `CMakeLists.txt`.
 Keep those lists in sync when adding or removing files,
@@ -118,7 +117,8 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
 ## Build And Verification
 
 - Do not use `build.sh`, it is only for making final release builds.
-- When modifying code, use the CMake debug presets for validation so terminal builds reuse the same build directory as the editor or IDE.
+- When modifying code, use the CMake debug presets for validation
+  so terminal builds reuse the same build directory as the editor or IDE.
 - On macOS, use `cmake --preset macos-debug` then `cmake --build --preset macos-debug`.
 - On Windows, prefer `cmake --preset windows-debug` then `cmake --build --preset windows-debug`.
 - If you need Ninja and `compile_commands.json` on Windows,

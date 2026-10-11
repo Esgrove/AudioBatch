@@ -289,8 +289,8 @@ and reports the resulting output paths using the same format:
 
 ## Cache
 
-Analysis results are cached in a SQLite database
-located under the user application data directory in an `AudioBatch/analysis.db` file.
+Analysis results are cached in a SQLite database located under the
+user application data directory in an `AudioBatch/analysis.db` file.
 
 The cache is invalidated when any of these change:
 
