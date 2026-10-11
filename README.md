@@ -138,9 +138,18 @@ and write the processed audio to disk.
   Individual plugins can be enabled or disabled without removing them from the chain,
   reordered by dragging a row or with the arrow buttons, and removed entirely.
   Removing a plugin closes its editor window.
+- Plugins run in offline (non-realtime) rendering mode,
+  the same mode DAWs use for bouncing,
+  so plugins that offer higher-quality processing for offline rendering use it.
+  VST3 plugins receive this through the processing setup,
+  and Audio Units through the offline render property.
 - Files are processed through the enabled plugins in chain order in a single pass.
   The processing tail is the sum of each plugin's reported tail,
   so reverbs and delays ring out fully through the rest of the chain.
+- Plugin latency is compensated.
+  The latency each plugin reports, for example from lookahead or linear phase processing,
+  is summed over the chain and removed from the start of the output,
+  so the processed audio stays aligned with the original and its end is not cut off.
 - Processed output is always written as `<name>.aiff` next to the input file.
   If the input has a different extension, the original is moved to the system trash once the new file has been written.
 - Source metadata is copied onto the processed AIFF through TagLib,
@@ -222,7 +231,6 @@ The cache is invalidated when any of these change:
 ## TODO
 
 - User config file.
-- Compensate plugin latency (`getLatencySamples`) in processed output.
 - Out-of-process plugin scanning so a crashing plugin cannot take down the app.
 - "Add folder" menu option to append more roots to the current list.
 - Optional report export, for example CSV or JSON.

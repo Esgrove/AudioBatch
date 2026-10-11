@@ -2,8 +2,10 @@
 /// Covers reading the source file with a thread-local format manager,
 /// applying custom or normalization gain before the chain,
 /// configuring plugin buses for the file's channel layout,
-/// preparing plugins and restoring their state per file,
-/// and rendering block by block through the chain including plugin tails.
+/// switching plugins to offline (non-realtime) rendering mode,
+/// restoring their state and preparing them per file,
+/// and rendering block by block through the chain including plugin tails,
+/// with the chain's reported latency removed from the start of the output.
 /// The output is written to a temporary 16-bit AIFF file that is validated,
 /// given the original file's metadata, and then moved into place,
 /// with the processed file re-analyzed for the result record.
@@ -15,6 +17,10 @@
 
 #include <algorithm>
 #include <cmath>
+
+#if JUCE_MAC
+#include <AudioToolbox/AudioToolbox.h>
+#endif
 
 namespace audiobatch::plugin_processing
 {
@@ -123,6 +129,41 @@ static bool configurePluginChannels(juce::AudioPluginInstance& plugin, const int
 
     return layoutConfigured;
 }
+
+/// Tells the plugin it is rendering offline rather than running live on an audio device,
+/// so it can use higher-quality processing that does not need to keep up with realtime,
+/// for example higher oversampling or longer lookahead.
+/// Must be called before prepareToPlay:
+/// JUCE passes the mode to VST3 plugins as kOffline in setupProcessing during prepareToPlay.
+/// JUCE's Audio Unit host does not forward the mode,
+/// so it is set directly through kAudioUnitProperty_OfflineRender while the unit is uninitialized.
+static void enableOfflineRendering(juce::AudioPluginInstance& plugin)
+{
+    plugin.setNonRealtime(true);
+
+#if JUCE_MAC
+    if (const auto* audioUnitClient = plugin.getAudioUnitClient(); audioUnitClient != nullptr) {
+        if (auto* audioUnit = audioUnitClient->getAudioUnitHandle(); audioUnit != nullptr) {
+            constexpr UInt32 offlineRender = 1;
+            if (const auto status = AudioUnitSetProperty(
+                    audioUnit,
+                    kAudioUnitProperty_OfflineRender,
+                    kAudioUnitScope_Global,
+                    0,
+                    &offlineRender,
+                    sizeof(offlineRender)
+                );
+                status != noErr)
+            {
+                // Not fatal: the plugin still renders correctly, only without its offline quality mode.
+                utils::logWarn(
+                    "Audio Unit {} did not accept offline render mode (OSStatus {})", plugin.getName().quoted(), status
+                );
+            }
+        }
+    }
+#endif
+}
 }  // namespace audiobatch::plugin_processing
 
 using namespace audiobatch::plugin_processing;
@@ -228,8 +269,10 @@ PluginProcessingResult PluginProcessingService::processFile(
     // Configure and prepare every plugin in the chain against the file's channel count.
     // Each stage's tail must ring through the remaining stages,
     // so the total tail is the sum of the individually clamped per-plugin tails.
+    // Latencies add up the same way, since every stage delays the signal it passes on.
     int processChannelCount = numChannels;
     juce::int64 tailSamples = 0;
+    juce::int64 latencySamples = 0;
 
     for (std::size_t pluginIndex = 0; pluginIndex < chainInstances.size(); ++pluginIndex) {
         auto* plugin = chainInstances[pluginIndex];
@@ -247,14 +290,20 @@ PluginProcessingResult PluginProcessingService::processFile(
             );
         }
 
-        plugin->prepareToPlay(sampleRate, processingBlockSize);
-        plugin->reset();
+        enableOfflineRendering(*plugin);
 
         // Restore plugin state per-file so each file starts clean.
+        // The state is restored before prepareToPlay because settings such as lookahead or linear phase
+        // change the plugin's latency, and JUCE refreshes the reported latency of VST3 and AU plugins
+        // when they are prepared.
         const auto& state = options.plugins[pluginIndex].state;
         if (state.getSize() > 0) {
             plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
         }
+
+        plugin->prepareToPlay(sampleRate, processingBlockSize);
+        plugin->reset();
+        latencySamples += juce::jmax(0, plugin->getLatencySamples());
 
         processChannelCount
             = juce::jmax(processChannelCount, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels());
@@ -268,7 +317,16 @@ PluginProcessingResult PluginProcessingService::processFile(
     juce::MidiBuffer midi;
     std::vector<float*> readChannelPointers(static_cast<std::size_t>(numChannels));
 
-    const auto totalSamples = reader->lengthInSamples + tailSamples;
+    if (latencySamples > 0) {
+        utils::logDebug(
+            "Compensating {} samples of plugin chain latency for {}", latencySamples, file.getFullPathName().quoted()
+        );
+    }
+
+    // Render the latency on top of the file length and tail,
+    // and discard that many samples from the start of the output,
+    // so the processed audio lines up with the input and its end is not cut off.
+    const auto totalSamples = reader->lengthInSamples + latencySamples + tailSamples;
 
     for (juce::int64 samplePosition = 0; samplePosition < totalSamples; samplePosition += processingBlockSize) {
         const auto samplesThisBlock
@@ -318,10 +376,21 @@ PluginProcessingResult PluginProcessingService::processFile(
             plugin->processBlock(buffer, midi);
         }
 
-        const auto channelsToWrite = juce::jmin(numChannels, buffer.getNumChannels());
-        juce::AudioBuffer<float> writeView(buffer.getArrayOfWritePointers(), channelsToWrite, 0, samplesThisBlock);
+        // Skip the output samples that still fall within the chain latency.
+        const auto firstSampleToWrite
+            = static_cast<int>(juce::jlimit<juce::int64>(0, samplesThisBlock, latencySamples - samplePosition));
+        const auto samplesToWrite = samplesThisBlock - firstSampleToWrite;
 
-        if (!writer->writeFromAudioSampleBuffer(writeView, 0, samplesThisBlock)) {
+        if (samplesToWrite <= 0) {
+            continue;
+        }
+
+        const auto channelsToWrite = juce::jmin(numChannels, buffer.getNumChannels());
+        juce::AudioBuffer<float> writeView(
+            buffer.getArrayOfWritePointers(), channelsToWrite, firstSampleToWrite, samplesToWrite
+        );
+
+        if (!writer->writeFromAudioSampleBuffer(writeView, 0, samplesToWrite)) {
             writer.reset();
             utils::deleteFile(temporaryFile.getFile());
             return fail(file, "Failed while writing processed audio data");
