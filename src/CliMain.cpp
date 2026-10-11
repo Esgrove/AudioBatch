@@ -48,7 +48,10 @@ int main(const int argc, char* argv[])
 {
     juce::ArgumentList arguments(argc, argv);
     AudioAnalysisCli::attachNegativeOptionValues(arguments);
-    const auto executableName = juce::File(arguments.executableName).getFileNameWithoutExtension();
+    // argv[0] is often a relative path, which juce::File asserts on, so resolve it against the working directory.
+    // An absolute path is kept as it is.
+    const auto executableName
+        = juce::File::getCurrentWorkingDirectory().getChildFile(arguments.executableName).getFileNameWithoutExtension();
 
     // The plugin rescan relaunches this executable as its scan worker.
     const auto argumentSpan = std::span(argv, static_cast<std::size_t>(argc)).subspan(1);
