@@ -6,6 +6,7 @@
 #pragma once
 
 #include "AnalysisCoordinator.h"
+#include "AudioNormalizationService.h"
 #include "PluginListCli.h"
 
 #include <cstdint>
@@ -28,6 +29,11 @@ struct AudioAnalysisCliOptions {
     bool normalize = false;
     /// Replace an existing normalized output file that is not the source itself.
     bool force = false;
+    /// Normalization mode and target, set by --peak or --lufs.
+    /// Defaults to a 0 dBFS sample peak.
+    AudioNormalizationOptions normalization;
+    /// True when --peak or --lufs was given, which requires --normalize.
+    bool hasNormalizationTarget = false;
     bool listPlugins = false;
     bool rescanPlugins = false;
     PluginListGrouping pluginGrouping = PluginListGrouping::name;
@@ -45,6 +51,12 @@ class AudioAnalysisCli
 public:
     /// Builds the help text shown by the CLI executable.
     static juce::String buildUsage(const juce::String& executableName);
+
+    /// Joins a long option and a following negative number into one "--option=value" argument,
+    /// for example "--lufs -14" into "--lufs=-14".
+    /// Must run before any juce::ArgumentList option matching:
+    /// its short option check converts the option letter to a number string, so "-14" would match "-h" or "-n".
+    static void attachNegativeOptionValues(juce::ArgumentList& arguments);
 
     /// Parses command-line arguments into a validated options object.
     /// The help and version flags are handled by the caller before parsing.

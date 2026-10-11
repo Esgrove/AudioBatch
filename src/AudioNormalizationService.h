@@ -29,6 +29,14 @@ struct AudioNormalizationOptions {
     static constexpr double defaultTargetLufs = -14.0;
     /// Default highest true peak allowed in loudness mode, in dBTP.
     static constexpr double defaultTruePeakCeilingDbtp = -0.3;
+    /// Lowest accepted target sample peak, in dBFS.
+    static constexpr double minimumTargetPeakDbfs = -12.0;
+    /// Highest accepted target sample peak, in dBFS.
+    static constexpr double maximumTargetPeakDbfs = 0.0;
+    /// Lowest accepted target integrated loudness, in LUFS.
+    static constexpr double minimumTargetLufs = -24.0;
+    /// Highest accepted target integrated loudness, in LUFS.
+    static constexpr double maximumTargetLufs = -6.0;
 
     /// Replace an existing output file that is not the source itself.
     /// When false, a file whose output path is already taken fails instead of overwriting it.

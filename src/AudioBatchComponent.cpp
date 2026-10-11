@@ -208,17 +208,12 @@ constexpr int dialogContentWidth = 500;
 constexpr int dialogContentHeight = 150;
 }  // namespace layout
 
-/// Ranges of the normalization target slider and the keys that persist the normalization settings.
+/// Steps of the normalization target slider and the keys that persist the normalization settings.
+/// The target ranges come from AudioNormalizationOptions, which the CLI validates against too.
 namespace normalize_target
 {
-/// Lowest selectable target sample peak, in dBFS.
-constexpr double minimumPeakDbfs = -12.0;
 /// Step of the target sample peak, in dB.
 constexpr double peakStepDecibels = 0.1;
-/// Lowest selectable target loudness, in LUFS.
-constexpr double minimumLufs = -30.0;
-/// Highest selectable target loudness, in LUFS.
-constexpr double maximumLufs = -6.0;
 /// Step of the target loudness, in LU.
 constexpr double loudnessStepDecibels = 0.5;
 /// Combo box item id of the peak mode, which must be non-zero.
@@ -1347,15 +1342,15 @@ void AudioBatchComponent::loadNormalizationSettings()
 {
     const auto* settings = pluginAppProperties.getUserSettings();
     normalizeTargetPeakDbfs = juce::jlimit(
-        normalize_target::minimumPeakDbfs,
-        0.0,
+        AudioNormalizationOptions::minimumTargetPeakDbfs,
+        AudioNormalizationOptions::maximumTargetPeakDbfs,
         settings->getDoubleValue(
             normalize_target::targetPeakSettingKey, AudioNormalizationOptions::defaultTargetPeakDbfs
         )
     );
     normalizeTargetLufs = juce::jlimit(
-        normalize_target::minimumLufs,
-        normalize_target::maximumLufs,
+        AudioNormalizationOptions::minimumTargetLufs,
+        AudioNormalizationOptions::maximumTargetLufs,
         settings->getDoubleValue(normalize_target::targetLufsSettingKey, AudioNormalizationOptions::defaultTargetLufs)
     );
 
@@ -1380,12 +1375,18 @@ void AudioBatchComponent::updateNormalizeTargetSlider()
 {
     if (normalizeModeBox.getSelectedId() == normalize_target::loudnessModeItemId) {
         normalizeTargetSlider.setRange(
-            normalize_target::minimumLufs, normalize_target::maximumLufs, normalize_target::loudnessStepDecibels
+            AudioNormalizationOptions::minimumTargetLufs,
+            AudioNormalizationOptions::maximumTargetLufs,
+            normalize_target::loudnessStepDecibels
         );
         normalizeTargetSlider.setTextValueSuffix(" LUFS");
         normalizeTargetSlider.setValue(normalizeTargetLufs, juce::dontSendNotification);
     } else {
-        normalizeTargetSlider.setRange(normalize_target::minimumPeakDbfs, 0.0, normalize_target::peakStepDecibels);
+        normalizeTargetSlider.setRange(
+            AudioNormalizationOptions::minimumTargetPeakDbfs,
+            AudioNormalizationOptions::maximumTargetPeakDbfs,
+            normalize_target::peakStepDecibels
+        );
         normalizeTargetSlider.setTextValueSuffix(" dBFS");
         normalizeTargetSlider.setValue(normalizeTargetPeakDbfs, juce::dontSendNotification);
     }

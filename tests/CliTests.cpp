@@ -107,6 +107,31 @@ public:
             expect(!parseArguments({"-l", "-o", "json"}, errorMessage).has_value());
         }
 
+        beginTest("Normalization targets are parsed and validated");
+        {
+            auto options = expectParsed({"-n", "--lufs", "-14"});
+            expect(options.hasNormalizationTarget);
+            expect(options.normalization.mode == AudioNormalizationMode::loudness);
+            expectEquals(options.normalization.targetLufs, -14.0);
+
+            options = expectParsed({"-n", "--lufs=-16.5"});
+            expectEquals(options.normalization.targetLufs, -16.5);
+
+            options = expectParsed({"-n", "--peak", "-1"});
+            expect(options.normalization.mode == AudioNormalizationMode::peak);
+            expectEquals(options.normalization.targetPeakDbfs, -1.0);
+
+            options = expectParsed({"-n"});
+            expect(options.normalization.mode == AudioNormalizationMode::peak);
+            expectEquals(options.normalization.targetPeakDbfs, 0.0);
+
+            expect(!parseArguments({"-n", "--lufs", "-30"}, errorMessage).has_value());
+            expect(!parseArguments({"-n", "--peak", "1"}, errorMessage).has_value());
+            expect(!parseArguments({"-n", "--lufs", "loud"}, errorMessage).has_value());
+            expect(!parseArguments({"-n", "--peak", "-1", "--lufs", "-14"}, errorMessage).has_value());
+            expect(!parseArguments({"--lufs", "-14"}, errorMessage).has_value());
+        }
+
         beginTest("Unknown options are rejected");
         {
             expect(!parseArguments({"--bogus"}, errorMessage).has_value());
