@@ -114,6 +114,23 @@ public:
             expectEquals(results.front().sampleRate, 48000);
         }
 
+        beginTest("A refresh rescan keeps the custom gain of an unchanged file");
+        {
+            const auto unchangedFile = directory.copyFixture("sine_stereo_44100_16.wav", "unchanged.wav");
+            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(unchangedFile)));
+            expect(cache.storeCustomGain(unchangedFile, -2.5f, true));
+
+            AnalysisCoordinator coordinator(cache, 2);
+            AudioAnalysisOptions options;
+            options.inputPaths.add(unchangedFile);
+            options.refresh = true;
+            const auto results = coordinator.analyzeBlocking(options);
+
+            expectEquals(static_cast<int>(results.size()), 1);
+            expect(!results.empty() && results.front().hasCustomGain);
+            expectEquals(results.empty() ? 0.0f : results.front().customGainDb, -2.5f);
+        }
+
         beginTest("A removed record is no longer returned");
         {
             const auto refreshed = AudioAnalysisService::analyzeFile(file);

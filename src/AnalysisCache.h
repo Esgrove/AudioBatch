@@ -8,6 +8,7 @@
 
 #include <JuceHeader.h>
 
+#include <cstdint>
 #include <functional>
 
 struct sqlite3;
@@ -50,6 +51,11 @@ public:
 
     /// Stores serialized waveform preview data for a file.
     bool storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData);
+
+    /// Loads the custom gain stored for a file when the stored row has the given size and modification time,
+    /// so a fresh analysis of an unchanged file keeps the gain the user set.
+    /// Returns false when the file has no row, no custom gain, or the row describes another version of the file.
+    bool getCustomGain(const juce::File& file, std::int64_t fileSize, std::int64_t modifiedTimeMs, float& customGainDb);
 
     /// Updates only the user-controlled gain fields for a file.
     bool storeCustomGain(const juce::File& file, float customGainDb, bool hasCustomGain);
