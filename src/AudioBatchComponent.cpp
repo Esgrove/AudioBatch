@@ -355,7 +355,7 @@ public:
             auto displayName = baseName;
 
             if (trackedColumnId == secondarySortColumnId) {
-                displayName << (secondarySortForwards ? " [2^]" : " [2v]");
+                displayName = utils::format("{} {}", displayName, secondarySortForwards ? "[2^]" : "[2v]");
             }
 
             setColumnName(trackedColumnId, displayName);
@@ -756,7 +756,7 @@ void AudioBatchComponent::requestAudioDeviceAccess()
     utils::logDebug("AudioBatchComponent startup: requesting record-audio permission");
     juce::RuntimePermissions::request(juce::RuntimePermissions::recordAudio, [this](const bool granted) {
         const int numInputChannels = granted ? 2 : 0;
-        const auto audioInitStartedAtMs = juce::Time::getMillisecondCounterHiRes();
+        const auto audioInitialiseStartedAtMs = juce::Time::getMillisecondCounterHiRes();
 
         utils::logDebug(
             "AudioBatchComponent startup: audio permission callback granted={}", granted ? "true" : "false"
@@ -765,14 +765,18 @@ void AudioBatchComponent::requestAudioDeviceAccess()
             "AudioBatchComponent startup: audio device init begin (inputs={}, outputs=2)", numInputChannels
         );
 
-        const auto initError = audioDeviceManager.initialise(numInputChannels, 2, nullptr, true, {}, nullptr);
-        const auto audioInitElapsedMs = juce::Time::getMillisecondCounterHiRes() - audioInitStartedAtMs;
+        const auto initialiseError = audioDeviceManager.initialise(numInputChannels, 2, nullptr, true, {}, nullptr);
+        const auto audioInitialiseElapsedMs = juce::Time::getMillisecondCounterHiRes() - audioInitialiseStartedAtMs;
 
-        if (initError.isEmpty()) {
-            utils::logDebug("AudioBatchComponent startup: audio device init succeeded ({:.1f} ms)", audioInitElapsedMs);
+        if (initialiseError.isEmpty()) {
+            utils::logDebug(
+                "AudioBatchComponent startup: audio device init succeeded ({:.1f} ms)", audioInitialiseElapsedMs
+            );
         } else {
             utils::logError(
-                "AudioBatchComponent startup: audio device init failed ({:.1f} ms): {}", audioInitElapsedMs, initError
+                "AudioBatchComponent startup: audio device init failed ({:.1f} ms): {}",
+                audioInitialiseElapsedMs,
+                initialiseError
             );
         }
     });
@@ -790,7 +794,7 @@ AudioBatchComponent::AudioBatchComponent() :
         [this](const AudioAnalysisRecord& record) { return getActiveStatusLabel(record); },
         [] { return getActivityPhase(); }
     ),
-    audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
+    audioSetupComponent(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
 {
     const auto constructorStartedAtMs = juce::Time::getMillisecondCounterHiRes();
     const auto logStartupCheckpoint = [constructorStartedAtMs](const juce::String& step) {
@@ -907,10 +911,10 @@ void AudioBatchComponent::resized()
     );
     updateResultsTableColumnWidths();
 
-    auto info = thumbnail->getBounds();
+    auto previewArea = thumbnail->getBounds();
 
     const auto space = juce::jmin(280, juce::jmax(180, juce::roundToIntAccurate(bounds.getWidth() * 0.22)));
-    auto control = info.removeFromLeft(space);
+    auto control = previewArea.removeFromLeft(space);
 
     const auto buttonGap = layout::sectionSpacing;
 
@@ -957,9 +961,9 @@ void AudioBatchComponent::resized()
     const auto viewportHeight = audioInfoViewport.getMaximumVisibleHeight();
     audioInfo->setSize(viewportWidth, juce::jmax(viewportHeight, preferredHeight));
 
-    info.removeFromLeft(layout::sectionSpacing);
+    previewArea.removeFromLeft(layout::sectionSpacing);
 
-    thumbnail->setBounds(info);
+    thumbnail->setBounds(previewArea);
 }
 
 void AudioBatchComponent::updateResultsTableColumnWidths() const
@@ -1251,7 +1255,7 @@ void AudioBatchComponent::reanalyzeSelectedRecords()
 
 void AudioBatchComponent::showAudioSettingsWindow()
 {
-    openDialogWindow(settingsWindow, &audioSetupComp, "Audio Settings");
+    openDialogWindow(settingsWindow, &audioSetupComponent, "Audio Settings");
 }
 
 void AudioBatchComponent::showSupportedNormalizationFormats()

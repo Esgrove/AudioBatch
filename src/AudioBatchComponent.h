@@ -80,7 +80,7 @@ public:
 
     /// Starts analysis for dropped files, or switches the root folders when only directories were dropped.
     /// Holding Shift while dropping directories appends them to the current root folders instead.
-    void filesDropped(const juce::StringArray& files, int x, int y) override;
+    void filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/) override;
 
     /// Accepts any external drag that contains at least one file.
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
@@ -383,7 +383,7 @@ private:
 
     juce::Array<juce::Component::SafePointer<juce::DialogWindow>> childWindows;
     juce::AudioDeviceManager audioDeviceManager;
-    juce::AudioDeviceSelectorComponent audioSetupComp;
+    juce::AudioDeviceSelectorComponent audioSetupComponent;
     juce::AudioFormatManager formatManager;
     juce::AudioSourcePlayer audioSourcePlayer;
     juce::AudioTransportSource transportSource;
