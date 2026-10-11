@@ -11,10 +11,11 @@
 
 namespace utils
 {
-std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName)
+std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName, const juce::String& logName)
 {
+    const auto name = logName.isNotEmpty() ? logName : appName;
     return std::unique_ptr<juce::FileLogger>(
-        juce::FileLogger::createDefaultAppLogger(appName, format("{}.log", appName), appName, 32768)
+        juce::FileLogger::createDefaultAppLogger(appName, format("{}.log", name), name, 32768)
     );
 }
 

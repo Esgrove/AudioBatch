@@ -6,6 +6,7 @@
 #include "AudioBatchComponent.h"
 #include "CustomLookAndFeel.h"
 #include "PluginChain.h"
+#include "PluginScanner.h"
 #include "utils.h"
 
 #include <JuceHeader.h>
@@ -351,16 +352,24 @@ public:
     }
 
     /// Restricts the app to a single running instance.
+    /// Plugin scan worker processes are exempt,
+    /// since the running instance launches them from its own executable.
     bool moreThanOneInstanceAllowed() override
     {
-        return false;
+        return isPluginScanWorkerCommandLine(getCommandLineParameters());
     }
 
     /// Starts the application: sets up file logging, creates the main window,
     /// and either shows it or keeps it hidden when the --headless flag is present.
     /// Window activation is repeated asynchronously to reliably gain focus on first launch.
+    /// When launched as a plugin scan worker, only the worker is started instead.
     void initialise(const juce::String& commandLineParameters) override
     {
+        if (isPluginScanWorkerCommandLine(commandLineParameters)) {
+            startPluginScanWorker(commandLineParameters);
+            return;
+        }
+
         const auto initialiseStartedAtMs = juce::Time::getMillisecondCounterHiRes();
         const auto logInitialiseCheckpoint = [initialiseStartedAtMs](const juce::String& step) {
             utils::logInfo(
@@ -413,6 +422,7 @@ public:
     void shutdown() override
     {
         mainWindow.reset();
+        pluginScanWorker.reset();
         juce::Logger::setCurrentLogger(nullptr);
     }
 
@@ -435,7 +445,33 @@ public:
     }
 
 private:
+    /// Runs this process as a plugin scan worker for the main application instance.
+    /// The worker gets its own log file and no window,
+    /// and the process quits when the main instance disconnects.
+    void startPluginScanWorker(const juce::String& commandLineParameters)
+    {
+        logger = utils::createDefaultLogger(getApplicationName(), "AudioBatchPluginScanner");
+        juce::Logger::setCurrentLogger(logger.get());
+
+#if JUCE_MAC
+        // Keep the worker out of the Dock while it scans.
+        juce::Process::setDockIconVisible(false);
+#endif
+
+        pluginScanWorker = std::make_unique<PluginScanWorker>([] { juce::JUCEApplicationBase::quit(); });
+
+        if (!pluginScanWorker->initialiseFromCommandLine(commandLineParameters)) {
+            utils::logError("Could not connect the plugin scan worker to the main process");
+            setApplicationReturnValue(1);
+            quit();
+            return;
+        }
+
+        utils::logInfo("Plugin scan worker started");
+    }
+
     std::unique_ptr<MainWindow> mainWindow;
+    std::unique_ptr<PluginScanWorker> pluginScanWorker;
     std::unique_ptr<juce::FileLogger> logger;
 };
 
