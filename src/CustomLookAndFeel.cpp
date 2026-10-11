@@ -177,14 +177,11 @@ CustomLookAndFeel::CustomLookAndFeel(const bool darkModeEnabled) : darkTheme(dar
     setColour(juce::ComboBox::backgroundColourId, greySemiDark());
     setColour(juce::ComboBox::focusedOutlineColourId, blue().withAlpha(comboBoxFocusedOutlineAlpha));
     setColour(juce::ComboBox::outlineColourId, greyMedium());
-    // setColour(juce::FileTreeComponent::backgroundColourId, greySemiDark);
     setColour(juce::HyperlinkButton::textColourId, blue().withAlpha(hyperlinkTextAlpha));
     setColour(juce::PopupMenu::backgroundColourId, greySemiDark());
     setColour(juce::PopupMenu::highlightedBackgroundColourId, blue().withAlpha(popupMenuHighlightAlpha));
     setColour(juce::PopupMenu::highlightedTextColourId, greySuperLight());
     setColour(juce::PopupMenu::textColourId, greyLight());
-    // setColour(juce::ProgressBar::backgroundColourId, greyMedium);
-    // setColour(juce::ProgressBar::foregroundColourId, green);
     setColour(juce::ResizableWindow::backgroundColourId, greyDark());
     setColour(juce::TextButton::buttonColourId, greyMedium());
     setColour(juce::TextButton::buttonOnColourId, green());

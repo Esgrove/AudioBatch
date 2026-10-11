@@ -417,7 +417,7 @@ public:
         const juce::ArgumentList arguments {getApplicationName(), commandLineParameters};
         const bool startHeadless = arguments.containsOption("--headless|-H");
 
-        // Init log file in OS default location under dir "AudioBatch"
+        // Initialise the log file in the OS default location, under an "AudioBatch" directory.
         // Mac:     /Users/<username>/Library/Logs/AudioBatch
         // Windows: C:\Users\<username>\AppData\Roaming\AudioBatch
         logger = utils::createDefaultLogger(getApplicationName());
@@ -465,8 +465,8 @@ public:
     /// Logs the pending exit code and then quits the message loop.
     void systemRequestedQuit() override
     {
-        if (const auto exit_code = getApplicationReturnValue(); exit_code != 0) {
-            utils::logInfo("Quit with non-zero exit code: {}", exit_code);
+        if (const auto exitCode = getApplicationReturnValue(); exitCode != 0) {
+            utils::logInfo("Quit with non-zero exit code: {}", exitCode);
         } else {
             utils::logInfo("Quit");
         }

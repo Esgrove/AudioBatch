@@ -107,8 +107,8 @@ void PluginChainEditor::SlotRow::mouseDrag(const juce::MouseEvent& event)
     }
 
     const auto containerY = event.getEventRelativeTo(getParentComponent()).getPosition().y - dragGrabOffsetY;
-    const auto maxY = juce::jmax(0, getParentComponent()->getHeight() - getHeight());
-    setTopLeftPosition(getX(), juce::jlimit(0, maxY, containerY));
+    const auto maximumY = juce::jmax(0, getParentComponent()->getHeight() - getHeight());
+    setTopLeftPosition(getX(), juce::jlimit(0, maximumY, containerY));
 
     const auto targetIndex = editor.rowIndexForPosition(getY() + getHeight() / 2);
     editor.rowDragged(*this, targetIndex);
