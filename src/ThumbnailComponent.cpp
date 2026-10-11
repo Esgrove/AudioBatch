@@ -10,13 +10,34 @@
 
 #include <JuceHeader.h>
 
+namespace
+{
+/// Alpha of the white playback position marker drawn over the waveform.
+constexpr float positionMarkerAlpha {0.85f};
+
+/// Width of the playback position marker, in pixels.
+constexpr float positionMarkerWidth {1.5f};
+
+/// Font height of the placeholder text shown when no audio file is loaded.
+constexpr float placeholderFontHeight {14.0f};
+
+/// Rate of the timer that updates the position marker and follows the transport, in hertz.
+constexpr int positionUpdateRateHz {60};
+
+/// Fraction of the visible range scrolled per unit of horizontal mouse wheel movement.
+constexpr double horizontalScrollStepRatio {0.10};
+
+/// Fraction of the total length near the start of the file within which zooming always anchors at the playhead.
+constexpr double zoomStartAnchorRatio {0.05};
+}  // namespace
+
 ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source) :
     thumbnail(1024, formatManager, thumbnailCache),
     transportSource(source)
 {
     thumbnail.addChangeListener(this);
 
-    currentPositionMarker.setFill(juce::Colours::white.withAlpha(0.85f));
+    currentPositionMarker.setFill(juce::Colours::white.withAlpha(positionMarkerAlpha));
     addAndMakeVisible(currentPositionMarkerComponent);
 }
 
@@ -37,7 +58,7 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
         // so over-0 dBFS peaks are naturally clipped at the channel boundary.
         thumbnail.drawChannels(graphics, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
     } else {
-        graphics.setFont(14.0f);
+        graphics.setFont(placeholderFontHeight);
         graphics.drawFittedText("No audio file selected", getLocalBounds(), juce::Justification::centred, 2);
     }
 }
@@ -75,7 +96,7 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
     }
 
     setRange({0.0, thumbnail.getTotalLength()});
-    startTimerHz(60);
+    startTimerHz(positionUpdateRateHz);
     return true;
 }
 
@@ -133,7 +154,7 @@ void ThumbnailComponent::setURL(const juce::URL& url)
             repaint();
         }
 
-        startTimerHz(60);
+        startTimerHz(positionUpdateRateHz);
     }
 }
 
@@ -226,7 +247,8 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
         return;
     }
 
-    auto newStart = visibleRange.getStart() - static_cast<double>(wheel.deltaX) * visibleRange.getLength() * 0.10;
+    auto newStart = visibleRange.getStart()
+        - static_cast<double>(wheel.deltaX) * visibleRange.getLength() * horizontalScrollStepRatio;
     newStart = juce::jlimit(0.0, juce::jmax(0.0, thumbnail.getTotalLength() - visibleRange.getLength()), newStart);
 
     if (canMoveTransport()) {
@@ -272,7 +294,10 @@ void ThumbnailComponent::updateCursorPosition()
 
     currentPositionMarker.setRectangle(
         juce::Rectangle<float>(
-            timeToX(transportSource.getCurrentPosition()) - 0.75f, 0, 1.5f, static_cast<float>(getHeight())
+            timeToX(transportSource.getCurrentPosition()) - positionMarkerWidth / 2.0f,
+            0,
+            positionMarkerWidth,
+            static_cast<float>(getHeight())
         )
     );
 }
@@ -293,7 +318,7 @@ void ThumbnailComponent::setZoom(const double zoomLevel)
     const auto start = transportSource.getCurrentPosition();
     const auto zoom = thumbnail.getTotalLength() / zoomLevel;
     const auto end = juce::jmin(thumbnail.getTotalLength(), start + zoom);
-    if (start < thumbnail.getTotalLength() * 0.05 || thumbnail.getTotalLength() - start > zoom) {
+    if (start < thumbnail.getTotalLength() * zoomStartAnchorRatio || thumbnail.getTotalLength() - start > zoom) {
         setRange(juce::Range(start, end));
     } else {
         // The remaining distance is shorter than the zoom length, so zoom from the end instead.

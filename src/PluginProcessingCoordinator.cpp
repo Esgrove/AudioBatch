@@ -15,6 +15,12 @@
 #include <map>
 #include <utility>
 
+/// How long cancelAndWait waits for running plugin processing jobs to finish before giving up, in milliseconds.
+static constexpr int jobShutdownTimeoutMilliseconds = 60000;
+
+/// How long a worker waits for a plugin chain to be released before checking for cancellation again, in milliseconds.
+static constexpr int chainWaitIntervalMilliseconds = 100;
+
 PluginProcessingCoordinator::PluginProcessingCoordinator(const int workerCount) :
     threadPool(juce::jmax(1, juce::jmin(4, workerCount)))
 { }
@@ -101,7 +107,7 @@ void PluginProcessingCoordinator::cancelAndWait()
     ++currentRunId;
     // Wake any workers blocked waiting for an instance.
     instanceAvailable.signal();
-    threadPool.removeAllJobs(true, 60000);
+    threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
     pendingJobs.store(0);
 }
 
@@ -195,7 +201,7 @@ void PluginProcessingCoordinator::runFileJob(
 
     // Wait for a chain to become free (worker count > chain count is unusual).
     while (chainIndex < 0 && runId == currentRunId.load()) {
-        instanceAvailable.wait(100);
+        instanceAvailable.wait(chainWaitIntervalMilliseconds);
         chainIndex = acquireChain();
     }
 

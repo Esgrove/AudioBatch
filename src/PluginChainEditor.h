@@ -133,9 +133,12 @@ private:
     juce::Component rowContainer;
     std::vector<std::unique_ptr<SlotRow>> rows;
 
+    /// Hover time before a tooltip appears in this window, in milliseconds.
+    static constexpr int tooltipDelayMilliseconds {700};
+
     /// Shows tooltips for the controls in this window.
     /// The main window's tooltip client cannot serve a separate dialog window.
-    juce::TooltipWindow tooltipWindow {this, 700};
+    juce::TooltipWindow tooltipWindow {this, tooltipDelayMilliseconds};
 
     JUCE_LEAK_DETECTOR(PluginChainEditor)
 };

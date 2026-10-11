@@ -7,9 +7,48 @@
 
 #include "CustomLookAndFeel.h"
 #include "StringFormat.h"
+#include <string_view>
 
 namespace audiobatch::table
 {
+/// Suffix that some decoders append to their format name, for example "WAV file".
+/// It is stripped when the format name is used as the Type column label.
+constexpr auto formatNameFileSuffix = " file";
+
+/// Maximum widths a user can drag each column to in the results table header.
+/// The Name and Path columns may grow wide for long names,
+/// while the metric columns are capped so a single column cannot crowd out the others.
+namespace column_limits
+{
+/// Maximum width of the Name column in pixels.
+constexpr int nameMaximumWidth = 600;
+/// Maximum width of the Path column in pixels.
+constexpr int pathMaximumWidth = 1200;
+/// Shared maximum width of the Type, Bitrate, Rate, and metric columns in pixels.
+constexpr int metricMaximumWidth = 160;
+/// Maximum width of the Status column in pixels.
+constexpr int statusMaximumWidth = 200;
+}  // namespace column_limits
+
+/// Inner radius of the activity indicator arc as a proportion of the outer radius,
+/// which turns the pie segment into a ring.
+constexpr float activityIndicatorInnerRadiusProportion = 0.52f;
+
+/// Opacity of the white outline drawn around the activity indicator ring.
+constexpr float activityIndicatorOutlineAlpha = 0.12f;
+
+/// Opacity of the blue fill drawn behind selected rows.
+constexpr float selectedRowHighlightAlpha = 0.22f;
+
+/// Opacity of the cell text for rows with an analysis error, dimmed to set them apart.
+constexpr float errorCellTextAlpha = 0.72f;
+
+/// Opacity of the cell text for rows without errors.
+constexpr float normalCellTextAlpha = 0.95f;
+
+/// Opacity of the one pixel vertical divider drawn at the right edge of each cell.
+constexpr float cellDividerAlpha = 0.08f;
+
 /// Derives a short display label for the Type column.
 /// Prefers the file extension in upper case,
 /// then falls back to the decoder format name with a trailing " file" suffix stripped,
@@ -24,8 +63,9 @@ static juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 
     auto formatName = record.formatName.trim();
 
-    if (formatName.endsWithIgnoreCase(" file")) {
-        formatName = formatName.dropLastCharacters(5).trimEnd();
+    if (formatName.endsWithIgnoreCase(formatNameFileSuffix)) {
+        formatName
+            = formatName.dropLastCharacters(static_cast<int>(std::string_view {formatNameFileSuffix}.size())).trimEnd();
     }
 
     if (formatName.isNotEmpty()) {
@@ -51,13 +91,19 @@ static void drawActivityIndicator(juce::Graphics& graphics, const juce::Rectangl
 
     juce::Path arc;
     arc.addPieSegment(
-        ringBounds.getX(), ringBounds.getY(), ringBounds.getWidth(), ringBounds.getHeight(), startAngle, endAngle, 0.52f
+        ringBounds.getX(),
+        ringBounds.getY(),
+        ringBounds.getWidth(),
+        ringBounds.getHeight(),
+        startAngle,
+        endAngle,
+        activityIndicatorInnerRadiusProportion
     );
 
     graphics.setColour(accent);
     graphics.fillPath(arc);
 
-    graphics.setColour(juce::Colours::white.withAlpha(0.12f));
+    graphics.setColour(juce::Colours::white.withAlpha(activityIndicatorOutlineAlpha));
     graphics.drawEllipse(ringBounds, 1.0f);
 }
 }  // namespace audiobatch::table
@@ -87,7 +133,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnName,
         initialColumnWidth(columnName),
         minimumColumnWidth(columnName),
-        600,
+        column_limits::nameMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -95,7 +141,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnPath,
         initialColumnWidth(columnPath),
         minimumColumnWidth(columnPath),
-        1200,
+        column_limits::pathMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -103,7 +149,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnType,
         initialColumnWidth(columnType),
         minimumColumnWidth(columnType),
-        160,
+        column_limits::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -111,7 +157,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnBitrate,
         initialColumnWidth(columnBitrate),
         minimumColumnWidth(columnBitrate),
-        160,
+        column_limits::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -119,7 +165,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnSampleRate,
         initialColumnWidth(columnSampleRate),
         minimumColumnWidth(columnSampleRate),
-        160,
+        column_limits::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -127,7 +173,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnOverallPeak,
         initialColumnWidth(columnOverallPeak),
         minimumColumnWidth(columnOverallPeak),
-        160,
+        column_limits::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -135,7 +181,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnPeakLeft,
         initialColumnWidth(columnPeakLeft),
         minimumColumnWidth(columnPeakLeft),
-        160,
+        column_limits::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -143,7 +189,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnPeakRight,
         initialColumnWidth(columnPeakRight),
         minimumColumnWidth(columnPeakRight),
-        160,
+        column_limits::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -151,7 +197,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnOverallTruePeak,
         initialColumnWidth(columnOverallTruePeak),
         minimumColumnWidth(columnOverallTruePeak),
-        160,
+        column_limits::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -159,7 +205,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnMaxShortTermLufs,
         initialColumnWidth(columnMaxShortTermLufs),
         minimumColumnWidth(columnMaxShortTermLufs),
-        160,
+        column_limits::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -167,7 +213,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnIntegratedLufs,
         initialColumnWidth(columnIntegratedLufs),
         minimumColumnWidth(columnIntegratedLufs),
-        160,
+        column_limits::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -175,7 +221,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnCustomGain,
         initialColumnWidth(columnCustomGain),
         minimumColumnWidth(columnCustomGain),
-        160,
+        column_limits::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
@@ -183,7 +229,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         columnStatus,
         initialColumnWidth(columnStatus),
         minimumColumnWidth(columnStatus),
-        200,
+        column_limits::statusMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
 
@@ -227,7 +273,7 @@ void AudioFileTableModel::paintRowBackground(
     juce::ignoreUnused(rowNumber, width, height);
 
     if (rowIsSelected) {
-        graphics.fillAll(juce::CustomLookAndFeel::blue().withAlpha(0.22f));
+        graphics.fillAll(juce::CustomLookAndFeel::blue().withAlpha(selectedRowHighlightAlpha));
         return;
     }
 
@@ -331,11 +377,11 @@ void AudioFileTableModel::paintCell(
             break;
     }
 
-    graphics.setColour(juce::Colours::white.withAlpha(record.hasError() ? 0.72f : 0.95f));
+    graphics.setColour(juce::Colours::white.withAlpha(record.hasError() ? errorCellTextAlpha : normalCellTextAlpha));
     graphics.setFont(font);
     graphics.drawText(text, textBounds, justification, true);
 
-    graphics.setColour(juce::Colours::white.withAlpha(0.08f));
+    graphics.setColour(juce::Colours::white.withAlpha(cellDividerAlpha));
     graphics.fillRect(width - 1, 0, 1, height);
 }
 

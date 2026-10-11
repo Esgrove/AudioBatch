@@ -16,6 +16,8 @@ namespace audiobatch::cli
 constexpr int cliPeakColumnWidth = 7;
 constexpr int cliTruePeakColumnWidth = 7;
 constexpr int cliLoudnessColumnWidth = 8;
+/// Divisor that converts the millisecond counter durations into seconds for log output.
+constexpr double millisecondsPerSecond = 1000.0;
 
 /// Formats the sample peak value right-aligned to the fixed dBFS column width.
 static juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
@@ -253,7 +255,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
         "Analysis complete: {} files ({} failed) in {:.2f} s",
         results.size(),
         analysisFailureCount,
-        analysisElapsedMs / 1000.0
+        analysisElapsedMs / millisecondsPerSecond
     );
 
     AudioAnalysisService::sortRecords(results, options.sortMode, true);

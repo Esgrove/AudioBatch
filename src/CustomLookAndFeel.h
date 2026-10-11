@@ -8,6 +8,40 @@
 
 namespace juce
 {
+/// Opaque ARGB values of the project colour palette.
+/// The CustomLookAndFeel colour accessors and its default colour scheme are built from these values.
+namespace palette_argb
+{
+/// Palette colour #76A8DA.
+constexpr juce::uint32 blue {0xff76A8DA};
+/// Palette colour #69B786.
+constexpr juce::uint32 green {0xff69B786};
+/// Palette colour #121315.
+constexpr juce::uint32 greyDark {0xff121315};
+/// Palette colour #DCE0E5.
+constexpr juce::uint32 greyLight {0xffDCE0E5};
+/// Palette colour #30343C.
+constexpr juce::uint32 greyMedium {0xff30343C};
+/// Palette colour #202329.
+constexpr juce::uint32 greyMediumDark {0xff202329};
+/// Palette colour #686F79.
+constexpr juce::uint32 greyMiddle {0xff686F79};
+/// Palette colour #AAB0B9.
+constexpr juce::uint32 greyMiddleLight {0xffAAB0B9};
+/// Palette colour #1A1C20.
+constexpr juce::uint32 greySemiDark {0xff1A1C20};
+/// Palette colour #808791.
+constexpr juce::uint32 greySemiLight {0xff808791};
+/// Palette colour #F3F5F7.
+constexpr juce::uint32 greySuperLight {0xffF3F5F7};
+/// Palette colour #DD8B65.
+constexpr juce::uint32 orange {0xffDD8B65};
+/// Palette colour #D66565.
+constexpr juce::uint32 red {0xffD66565};
+/// Palette colour #CEAF6C.
+constexpr juce::uint32 yellow {0xffCEAF6C};
+}  // namespace palette_argb
+
 /// Application-specific look-and-feel with the project's fonts, colours, and popup styling.
 class CustomLookAndFeel : public juce::LookAndFeel_V4
 {
@@ -88,85 +122,85 @@ public:
     /// Palette colour #76A8DA.
     [[nodiscard]] static juce::Colour blue() noexcept
     {
-        return {118, 168, 218};
+        return juce::Colour {palette_argb::blue};
     }
 
     /// Palette colour #69B786.
     [[nodiscard]] static juce::Colour green() noexcept
     {
-        return {105, 183, 134};
+        return juce::Colour {palette_argb::green};
     }
 
     /// Palette colour #121315.
     [[nodiscard]] static juce::Colour greyDark() noexcept
     {
-        return {18, 19, 21};
+        return juce::Colour {palette_argb::greyDark};
     }
 
     /// Palette colour #DCE0E5.
     [[nodiscard]] static juce::Colour greyLight() noexcept
     {
-        return {220, 224, 229};
+        return juce::Colour {palette_argb::greyLight};
     }
 
     /// Palette colour #30343C.
     [[nodiscard]] static juce::Colour greyMedium() noexcept
     {
-        return {48, 52, 60};
+        return juce::Colour {palette_argb::greyMedium};
     }
 
     /// Palette colour #202329.
     [[nodiscard]] static juce::Colour greyMediumDark() noexcept
     {
-        return {32, 35, 41};
+        return juce::Colour {palette_argb::greyMediumDark};
     }
 
     /// Palette colour #686F79.
     [[nodiscard]] static juce::Colour greyMiddle() noexcept
     {
-        return {104, 111, 121};
+        return juce::Colour {palette_argb::greyMiddle};
     }
 
     /// Palette colour #AAB0B9.
     [[nodiscard]] static juce::Colour greyMiddleLight() noexcept
     {
-        return {170, 176, 185};
+        return juce::Colour {palette_argb::greyMiddleLight};
     }
 
     /// Palette colour #1A1C20.
     [[nodiscard]] static juce::Colour greySemiDark() noexcept
     {
-        return {26, 28, 32};
+        return juce::Colour {palette_argb::greySemiDark};
     }
 
     /// Palette colour #808791.
     [[nodiscard]] static juce::Colour greySemiLight() noexcept
     {
-        return {128, 135, 145};
+        return juce::Colour {palette_argb::greySemiLight};
     }
 
     /// Palette colour #F3F5F7.
     [[nodiscard]] static juce::Colour greySuperLight() noexcept
     {
-        return {243, 245, 247};
+        return juce::Colour {palette_argb::greySuperLight};
     }
 
     /// Palette colour #DD8B65.
     [[nodiscard]] static juce::Colour orange() noexcept
     {
-        return {221, 139, 101};
+        return juce::Colour {palette_argb::orange};
     }
 
     /// Palette colour #D66565.
     [[nodiscard]] static juce::Colour red() noexcept
     {
-        return {214, 101, 101};
+        return juce::Colour {palette_argb::red};
     }
 
     /// Palette colour #CEAF6C.
     [[nodiscard]] static juce::Colour yellow() noexcept
     {
-        return {206, 175, 108};
+        return juce::Colour {palette_argb::yellow};
     }
 
     static constexpr float monoFontHeight {15.0f};
@@ -174,23 +208,23 @@ public:
 private:
     const ColourScheme customColourScheme {
         // windowBackground
-        0xff121315,
+        palette_argb::greyDark,
         // widgetBackground
-        0xff1A1C20,
+        palette_argb::greySemiDark,
         // menuBackground
-        0xff202329,
+        palette_argb::greyMediumDark,
         // outline
-        0xff30343C,
+        palette_argb::greyMedium,
         // defaultText
-        0xffDCE0E5,
+        palette_argb::greyLight,
         // defaultFill
-        0xff686F79,
+        palette_argb::greyMiddle,
         // highlightedText
-        0xffF3F5F7,
+        palette_argb::greySuperLight,
         // highlightedFill
-        0xff76A8DA,
+        palette_argb::blue,
         // menuText
-        0xffDCE0E5,
+        palette_argb::greyLight,
     };
 
     bool darkTheme;

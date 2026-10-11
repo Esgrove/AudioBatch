@@ -31,6 +31,12 @@ enum MenuItemId : std::uint8_t {
     addFolderMenuItemId,
 };
 
+/// Smallest width in pixels the main window can be resized to,
+/// chosen so the results table and the preview controls below it stay usable.
+constexpr int minimumWindowWidth = 800;
+/// Smallest height in pixels the main window can be resized to.
+constexpr int minimumWindowHeight = 600;
+
 /// Returns true when the command line contains the version flag.
 static bool isVersionRequest(const juce::String& commandLine)
 {
@@ -65,7 +71,9 @@ public:
 #if JUCE_WINDOWS
         setUsingNativeTitleBar(false);
         setTitleBarTextCentred(false);
-        setTitleBarHeight(30);
+        /// Height in pixels of the custom drawn title bar used on Windows.
+        constexpr int windowsTitleBarHeight = 30;
+        setTitleBarHeight(windowsTitleBarHeight);
 #else
         setUsingNativeTitleBar(true);
 #endif
@@ -77,12 +85,14 @@ public:
 #if JUCE_MAC
         juce::MenuBarModel::setMacMainMenu(this);
 #else
-        setMenuBar(this, 26);
+        /// Height in pixels of the in-window menu bar used on platforms without a global menu bar.
+        constexpr int menuBarHeight = 26;
+        setMenuBar(this, menuBarHeight);
 #endif
         logStartupCheckpoint("menu bar configured");
 
         setResizable(true, true);
-        setResizeLimits(800, 600, 8192, 8192);
+        setResizeLimits(minimumWindowWidth, minimumWindowHeight, 8192, 8192);
         centreWithSize(getWidth(), getHeight());
         logStartupCheckpoint("constructor complete");
     }
