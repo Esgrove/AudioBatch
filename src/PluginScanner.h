@@ -22,12 +22,25 @@ constexpr auto pluginScanWorkerProcessUid = "audiobatch-plugin-scan-worker";
 /// Uses the same check as ChildProcessWorker: the worker prefix must start the command line.
 [[nodiscard]] bool isPluginScanWorkerCommandLine(const juce::String& commandLine);
 
-/// Restores the known-plugins list from the application settings shared by the GUI and the CLI.
-/// Leaves the list unchanged when nothing has been stored yet.
+/// Returns the KnownPlugins.xml file next to the AudioBatch settings file.
+/// The known-plugins list lives in its own file instead of the settings,
+/// so the GUI and the CLI can each update it without overwriting the other one's settings.
+[[nodiscard]] juce::File getKnownPluginListFile();
+
+/// Restores the known-plugins list from KnownPlugins.xml.
+/// When that file does not exist yet, reads the list stored in the settings by older versions instead.
+/// Leaves the list unchanged when nothing has been stored.
 void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList);
 
-/// Writes the known-plugins list, including blacklisted plugins, to the application settings and saves them.
-void saveKnownPluginList(juce::PropertiesFile& settings, const juce::KnownPluginList& knownPluginList);
+/// Writes the known-plugins list, including blacklisted plugins, to KnownPlugins.xml.
+/// The file is replaced atomically, so a concurrent reader never sees a partial list.
+/// Returns false and logs an error when the file could not be written.
+[[nodiscard]] bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList);
+
+/// Moves a known-plugins list stored in the settings by older versions into KnownPlugins.xml,
+/// and removes it from the settings.
+/// Only the GUI calls this, since it owns the settings file.
+void migrateKnownPluginList(juce::PropertiesFile& settings);
 
 /// Returns the dead man's pedal file that records the plugin being scanned,
 /// so a plugin that crashed a scan is blacklisted on the next one.

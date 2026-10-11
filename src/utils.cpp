@@ -24,16 +24,12 @@ std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appNam
 
 juce::PropertiesFile::Options createApplicationSettingsOptions()
 {
-    // The lock must outlive every PropertiesFile that uses it, so it lives for the whole process.
-    static juce::InterProcessLock settingsLock("AudioBatchSettings");
-
     juce::PropertiesFile::Options options;
     options.applicationName = "AudioBatch";
     options.filenameSuffix = ".settings";
     options.osxLibrarySubFolder = "Application Support";
     options.folderName = "AudioBatch";
     options.storageFormat = juce::PropertiesFile::storeAsXML;
-    options.processLock = &settingsLock;
     return options;
 }
 

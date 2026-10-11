@@ -455,6 +455,10 @@ void PluginChain::showChainEditor()
 
 void PluginChain::showScanWindow()
 {
+    // Pick up changes from a CLI rescan since the list was loaded,
+    // so a scan from this window builds on them instead of saving over them.
+    loadKnownPluginList();
+
     if (scanWindow != nullptr) {
         // The window hides itself when closed, so reopening only needs to make it visible again.
         scanWindow->setVisible(true);
@@ -641,21 +645,18 @@ void PluginChain::persistChain()
 
 void PluginChain::persistKnownPluginList() const
 {
+    // Failures are logged by saveKnownPluginList, and the in-memory list stays usable.
+    [[maybe_unused]] const auto saved = saveKnownPluginList(knownPluginList);
+}
+
+void PluginChain::loadKnownPluginList()
+{
     auto* settings = appProperties.getUserSettings();
     if (settings == nullptr) {
         return;
     }
 
-    saveKnownPluginList(*settings, knownPluginList);
-}
-
-void PluginChain::loadKnownPluginList()
-{
-    const auto* settings = appProperties.getUserSettings();
-    if (settings == nullptr) {
-        return;
-    }
-
+    migrateKnownPluginList(*settings);
     ::loadKnownPluginList(*settings, knownPluginList);
 }
 

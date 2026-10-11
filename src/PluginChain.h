@@ -102,6 +102,7 @@ public:
     void showChainEditor();
 
     /// Opens the plugin scan dialog.
+    /// Reloads the known-plugins list from disk first, so changes from a CLI rescan are kept.
     void showScanWindow();
 
     /// Persists the known-plugins list whenever the plugin scanner updates it.
@@ -153,10 +154,11 @@ private:
     /// capturing the latest state from any open editors first.
     void persistChain();
 
-    /// Writes the known-plugins list to application settings.
+    /// Writes the known-plugins list to its KnownPlugins.xml file.
     void persistKnownPluginList() const;
 
-    /// Restores the known-plugins list from application settings.
+    /// Restores the known-plugins list from its KnownPlugins.xml file,
+    /// first moving a list stored in the settings by older versions into that file.
     void loadKnownPluginList();
 
     /// Broadcasts a change message and invokes the chain-changed callback, if one is set.

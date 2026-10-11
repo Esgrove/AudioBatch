@@ -214,7 +214,8 @@ They do not start logging or write to the log file.
 ### Plugin listing
 
 `--list-plugins` prints the VST3 and Audio Unit plugins known to AudioBatch.
-It reads the plugin list that the GUI keeps in its settings file, so listing is instant and loads no plugins.
+It reads the plugin list shared with the GUI from `KnownPlugins.xml` next to the GUI settings file,
+so listing is instant and loads no plugins.
 CLAP plugins are not listed, because JUCE cannot host them.
 
 - `--group-by name` (default) prints one alphabetical table.
@@ -225,7 +226,10 @@ CLAP plugins are not listed, because JUCE cannot host them.
   It uses the same folders as the last scan in the GUI plugin manager, or the default plugin folders.
   Each plugin is loaded in a separate worker process,
   so a plugin that crashes is blacklisted and the scan continues.
-  The updated list is saved for the GUI too.
+  The updated list is saved to `KnownPlugins.xml`,
+  which the GUI reloads when the plugin manager opens.
+  The GUI settings file is never written by the CLI.
+  If the list cannot be saved, the command reports an error and exits with code 1.
 
 ```shell
 audiobatch --list-plugins

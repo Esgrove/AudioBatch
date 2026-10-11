@@ -136,7 +136,19 @@ static void sortPlugins(std::vector<juce::PluginDescription>& plugins)
     });
 }
 
-/// Computes the width of each column from its header and every value,
+/// Returns how many terminal columns the text occupies, for example two for each CJK character.
+/// Uses fmt's own per-character width, so the computed column widths match how fmt pads the cells.
+static int displayWidth(const juce::String& text)
+{
+    std::size_t width = 0;
+    for (auto character = text.getCharPointer(); !character.isEmpty();) {
+        width += fmt::detail::display_width_of(static_cast<uint32_t>(character.getAndAdvance()));
+    }
+
+    return static_cast<int>(width);
+}
+
+/// Computes the display width of each column from its header and every value,
 /// so rows line up across all groups.
 static std::vector<int> columnWidths(
     const std::vector<juce::PluginDescription>& plugins,
@@ -148,10 +160,10 @@ static std::vector<int> columnWidths(
     widths.reserve(columns.size());
 
     for (const auto column : columns) {
-        int width = includeHeaders ? columnHeader(column).length() : 0;
+        int width = includeHeaders ? displayWidth(columnHeader(column)) : 0;
 
         for (const auto& plugin : plugins) {
-            width = std::max(width, columnValue(plugin, column).length());
+            width = std::max(width, displayWidth(columnValue(plugin, column)));
         }
 
         widths.push_back(width);
@@ -245,8 +257,8 @@ static void printGroups(const std::vector<juce::PluginDescription>& plugins, con
     }
 
     std::ranges::sort(groups, [](const Group& lhs, const Group& rhs) {
-        const auto lhsUnknown = lhs.label == unknownLabel;
-        const auto rhsUnknown = rhs.label == unknownLabel;
+        const auto lhsUnknown = lhs.label.equalsIgnoreCase(unknownLabel);
+        const auto rhsUnknown = rhs.label.equalsIgnoreCase(unknownLabel);
 
         if (lhsUnknown != rhsUnknown) {
             return rhsUnknown;
@@ -410,17 +422,26 @@ int PluginListCli::run(const bool rescan, const PluginListGrouping grouping)
     juce::KnownPluginList knownPluginList;
     loadKnownPluginList(*settings, knownPluginList);
 
+    // The settings file is only read here, never saved, so a running GUI keeps its own settings.
+    // The rescan result goes to its own KnownPlugins.xml file instead.
+    int exitCode = 0;
     if (rescan) {
         juce::AudioPluginFormatManager formatManager;
         juce::addDefaultFormatsToManager(formatManager);
         rescanPlugins(*settings, knownPluginList, formatManager);
-        saveKnownPluginList(*settings, knownPluginList);
+
+        if (!saveKnownPluginList(knownPluginList)) {
+            console::printError(
+                utils::format("Could not save the plugin list to {}", getKnownPluginListFile().getFullPathName())
+            );
+            exitCode = 1;
+        }
     }
 
     const auto types = knownPluginList.getTypes();
     if (types.isEmpty()) {
         console::printWarn("No plugins found. Run with --rescan, or scan for plugins in the GUI.");
-        return 0;
+        return exitCode;
     }
 
     std::vector<juce::PluginDescription> plugins(types.begin(), types.end());
@@ -433,5 +454,5 @@ int PluginListCli::run(const bool rescan, const PluginListGrouping grouping)
     }
 
     console::printStyled(stderr, fmt::emphasis::faint, "{} plugins\n", plugins.size());
-    return 0;
+    return exitCode;
 }

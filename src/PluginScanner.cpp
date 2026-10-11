@@ -3,7 +3,8 @@
 /// a request carries the format name and the plugin file or identifier,
 /// and a reply is an XML list of plugin descriptions.
 /// Also covers the worker process lifetime in the main process,
-/// which launches a worker on demand and drops it after a crash, a cancel, or the end of a scan.
+/// which launches a worker on demand and drops it after a crash, a cancel, or the end of a scan,
+/// and the known-plugins list file with its migration out of the settings.
 
 #include "PluginScanner.h"
 
@@ -15,7 +16,8 @@
 namespace audiobatch::plugin_scanner
 {
 constexpr auto resultsXmlTag = "PLUGINS";
-constexpr auto knownPluginListPropertyKey = "knownPluginList";
+constexpr auto knownPluginListFileName = "KnownPlugins.xml";
+constexpr auto legacyKnownPluginListPropertyKey = "knownPluginList";
 constexpr auto crashLogFileName = "audiobatch_plugin_scan_crash_log.txt";
 constexpr auto responsePollInterval = std::chrono::milliseconds(50);
 
@@ -40,24 +42,65 @@ bool isPluginScanWorkerCommandLine(const juce::String& commandLine)
     return commandLine.trim().startsWith(utils::format("--{}:", pluginScanWorkerProcessUid));
 }
 
+juce::File getKnownPluginListFile()
+{
+    return utils::createApplicationSettingsOptions().getDefaultFile().getSiblingFile(knownPluginListFileName);
+}
+
 void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList)
 {
-    const auto xmlText = settings.getValue(knownPluginListPropertyKey);
-    if (xmlText.isEmpty()) {
+    if (const auto file = getKnownPluginListFile(); file.existsAsFile()) {
+        if (const auto element = juce::parseXML(file); element != nullptr) {
+            knownPluginList.recreateFromXml(*element);
+        } else {
+            utils::logError("Could not parse the known plugins list: {}", file.getFullPathName().quoted());
+        }
+
         return;
     }
 
-    if (const auto element = juce::parseXML(xmlText); element != nullptr) {
+    // Older versions stored the list in the settings.
+    const auto legacyXmlText = settings.getValue(legacyKnownPluginListPropertyKey);
+    if (const auto element = juce::parseXML(legacyXmlText); element != nullptr) {
         knownPluginList.recreateFromXml(*element);
     }
 }
 
-void saveKnownPluginList(juce::PropertiesFile& settings, const juce::KnownPluginList& knownPluginList)
+bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList)
 {
-    if (const auto xml = knownPluginList.createXml(); xml != nullptr) {
-        settings.setValue(knownPluginListPropertyKey, xml->toString());
-        settings.saveIfNeeded();
+    const auto xml = knownPluginList.createXml();
+    const auto file = getKnownPluginListFile();
+
+    // writeTo writes a temporary file and then replaces the target,
+    // so a concurrent reader never sees a partially written list.
+    if (xml == nullptr || !file.getParentDirectory().createDirectory() || !xml->writeTo(file)) {
+        utils::logError("Could not save the known plugins list: {}", file.getFullPathName().quoted());
+        return false;
     }
+
+    return true;
+}
+
+void migrateKnownPluginList(juce::PropertiesFile& settings)
+{
+    if (!settings.containsKey(legacyKnownPluginListPropertyKey)) {
+        return;
+    }
+
+    if (!getKnownPluginListFile().existsAsFile()) {
+        juce::KnownPluginList legacyList;
+        loadKnownPluginList(settings, legacyList);
+
+        if (!saveKnownPluginList(legacyList)) {
+            // Keep the legacy value so nothing is lost, and try again on the next start.
+            return;
+        }
+
+        utils::logInfo("Moved the known plugins list to {}", getKnownPluginListFile().getFullPathName().quoted());
+    }
+
+    settings.removeValue(legacyKnownPluginListPropertyKey);
+    settings.saveIfNeeded();
 }
 
 juce::File getPluginScanCrashLogFile()
