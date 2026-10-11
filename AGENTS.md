@@ -66,8 +66,14 @@ Shared core (linked into both targets):
 GUI only:
 
 - `src/AudioBatchComponent.*` is the main GUI component.
-- `src/AudioFileTableModel.*` backs the sortable results table.
-- `src/CustomLookAndFeel.*`, `src/ThumbnailComponent.*`, and `src/IntervalStepSlider.h` are UI pieces.
+  Its implementation is split by topic into `AudioBatchComponent.cpp` (construction, layout, table, selection),
+  `AudioBatchComponentActions.cpp`, `AudioBatchComponentOperations.cpp`, `AudioBatchComponentPreview.cpp`,
+  and `AudioBatchComponentRoots.cpp`, which share the constants in `AudioBatchComponentConstants.h`.
+  Put new member functions in the file of their topic, and keep each file under about 1000 lines.
+- `src/AudioFileTableModel.*` backs the sortable results table, and `src/ResultsSorting.*` sorts it.
+- `src/FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
+- `src/AudioInfoPanel.*`, `src/NormalizationTargetControl.*`, `src/CustomLookAndFeel.*`,
+  `src/ThumbnailComponent.*`, and `src/IntervalStepSlider.h` are UI pieces.
 - `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginProcessing.h`, `src/PluginProcessingCoordinator.*`,
   and `src/PluginProcessingService.*` implement VST3 / Audio Unit plugin hosting and the plugin chain.
 
