@@ -3,7 +3,8 @@ set -eo pipefail
 
 USAGE="Usage: $0 [OPTIONS]
 
-Format C++ code with ClangFormat, and shell scripts with shfmt when it is installed.
+Format C++ code with ClangFormat, CMake files with cmake-format, and shell scripts with shfmt when it is installed.
+cmake-format is run through uvx when it is not installed.
 
 OPTIONS: All options are optional
     -h | --help
@@ -59,6 +60,27 @@ if [ "$CHECK" = true ]; then
 else
     print_magenta "Formatting C++ files..."
     clang-format -i --verbose --style=file "$REPO"/src/*.cpp "$REPO"/src/*.h
+fi
+
+# Use an installed cmake-format, or fetch it on demand with uvx.
+# PyYAML is needed to read .cmake-format.yaml.
+if [ -n "$(command -v cmake-format)" ]; then
+    CMAKE_FORMAT=(cmake-format)
+elif [ -n "$(command -v uvx)" ]; then
+    CMAKE_FORMAT=(uvx --from cmakelang --with pyyaml cmake-format)
+else
+    CMAKE_FORMAT=()
+    print_yellow "cmake-format and uvx not found, skipping CMake formatting"
+fi
+
+if [ ${#CMAKE_FORMAT[@]} -gt 0 ]; then
+    if [ "$CHECK" = true ]; then
+        print_magenta "Checking CMake formatting..."
+        "${CMAKE_FORMAT[@]}" --check CMakeLists.txt
+    else
+        print_magenta "Formatting CMake files..."
+        "${CMAKE_FORMAT[@]}" --in-place CMakeLists.txt
+    fi
 fi
 
 if [ -n "$(command -v shfmt)" ]; then

@@ -7,8 +7,10 @@
 
 #include <JuceHeader.h>
 
+#include <cstdint>
+
 /// Lifecycle states for a file analysis record.
-enum class AudioAnalysisStatus {
+enum class AudioAnalysisStatus : std::uint8_t {
     pending = 0,
     cached = 1,
     analyzed = 2,
@@ -16,7 +18,7 @@ enum class AudioAnalysisStatus {
 };
 
 /// Available sort keys for CLI output and in-memory result lists.
-enum class AudioAnalysisSortMode {
+enum class AudioAnalysisSortMode : std::uint8_t {
     peak,
     name,
     path,

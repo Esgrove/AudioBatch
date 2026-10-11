@@ -20,7 +20,8 @@ constexpr int cliLoudnessColumnWidth = 8;
 /// Formats the sample peak value right-aligned to the fixed dBFS column width.
 static juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
 {
-    return AudioAnalysisService::formatPeakCompact(record.overallPeak).paddedLeft(' ', cliPeakColumnWidth);
+    return AudioAnalysisService::formatPeakCompact(static_cast<double>(record.overallPeak))
+        .paddedLeft(' ', cliPeakColumnWidth);
 }
 
 /// Formats the true peak value right-aligned to the fixed dBTP column width.
@@ -94,13 +95,13 @@ static std::optional<juce::String> removeOptionWithValue(juce::ArgumentList& arg
         }
 
         if (argument.isLongOption() && argument.text.containsChar('=')) {
-            const auto value = argument.getLongOptionValue();
+            auto value = argument.getLongOptionValue();
             arguments.arguments.remove(index);
             return value;
         }
 
         if (index + 1 < arguments.size() && !arguments[index + 1].isOption()) {
-            const auto value = arguments[index + 1].text;
+            auto value = arguments[index + 1].text;
             arguments.arguments.removeRange(index, 2);
             return value;
         }

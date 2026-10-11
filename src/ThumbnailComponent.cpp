@@ -27,8 +27,8 @@ ThumbnailComponent::~ThumbnailComponent()
 
 void ThumbnailComponent::paint(juce::Graphics& graphics)
 {
-    graphics.fillAll(juce::CustomLookAndFeel::greyMediumDark);
-    graphics.setColour(juce::CustomLookAndFeel::blue);
+    graphics.fillAll(juce::CustomLookAndFeel::greyMediumDark());
+    graphics.setColour(juce::CustomLookAndFeel::blue());
 
     if (thumbnail.getTotalLength() > 0.0) {
         const auto reduced = getLocalBounds().reduced(2);
@@ -226,7 +226,7 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
         return;
     }
 
-    auto newStart = visibleRange.getStart() - wheel.deltaX * visibleRange.getLength() * 0.10;
+    auto newStart = visibleRange.getStart() - static_cast<double>(wheel.deltaX) * visibleRange.getLength() * 0.10;
     newStart = juce::jlimit(0.0, juce::jmax(0.0, thumbnail.getTotalLength() - visibleRange.getLength()), newStart);
 
     if (canMoveTransport()) {
@@ -248,7 +248,8 @@ float ThumbnailComponent::timeToX(const double time) const
 
 double ThumbnailComponent::xToTime(const float xPosition) const
 {
-    return xPosition / static_cast<float>(getWidth()) * visibleRange.getLength() + visibleRange.getStart();
+    return static_cast<double>(xPosition / static_cast<float>(getWidth())) * visibleRange.getLength()
+        + visibleRange.getStart();
 }
 
 bool ThumbnailComponent::canMoveTransport() const noexcept

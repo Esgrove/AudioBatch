@@ -197,7 +197,7 @@ bool MetadataService::readMetadata(const juce::File& file, Metadata& outMetadata
         return false;
     }
 
-    const auto fullPath = file.getFullPathName();
+    const auto& fullPath = file.getFullPathName();
     const TagLib::FileRef fileRef(toFileName(fullPath), false);
 
     if (fileRef.isNull() || fileRef.file() == nullptr) {
@@ -226,7 +226,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
     const auto propertyMap = buildPropertyMap(metadata.properties);
     const auto pictureList = buildPictureList(metadata.pictures);
 
-    const auto fullPath = file.getFullPathName();
+    const auto& fullPath = file.getFullPathName();
 
     if (isAiffFile(file)) {
         // Use the AIFF type directly so we can request ID3v2.4 on save.

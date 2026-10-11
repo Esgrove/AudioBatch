@@ -41,8 +41,8 @@ static juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 static void drawActivityIndicator(juce::Graphics& graphics, const juce::Rectangle<float> bounds, const float phase)
 {
     const auto ringBounds = bounds.reduced(1.0f);
-    const auto accent = juce::CustomLookAndFeel::blue.withAlpha(0.9f);
-    const auto background = juce::CustomLookAndFeel::greyMiddle.withAlpha(0.3f);
+    const auto accent = juce::CustomLookAndFeel::blue().withAlpha(0.9f);
+    const auto background = juce::CustomLookAndFeel::greyMiddle().withAlpha(0.3f);
     const auto startAngle = phase * juce::MathConstants<float>::twoPi - juce::MathConstants<float>::halfPi;
     const auto endAngle = startAngle + juce::MathConstants<float>::pi * 1.2f;
 
@@ -72,7 +72,7 @@ AudioFileTableModel::AudioFileTableModel(
     std::function<juce::String(const AudioAnalysisRecord& record)> statusLabelProvider,
     std::function<float()> phaseProvider
 ) :
-    records(sourceRecords),
+    records(&sourceRecords),
     selectionChanged(std::move(onSelectionChanged)),
     sortChanged(std::move(onSortChanged)),
     contextMenuRequested(std::move(onContextMenuRequested)),
@@ -194,7 +194,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
 
 int AudioFileTableModel::getNumRows()
 {
-    return static_cast<int>(records.size());
+    return static_cast<int>(records->size());
 }
 
 juce::var AudioFileTableModel::getDragSourceDescription(const juce::SparseSet<int>& currentlySelectedRows)
@@ -208,7 +208,7 @@ juce::var AudioFileTableModel::getDragSourceDescription(const juce::SparseSet<in
             continue;
         }
 
-        if (const auto& record = records[static_cast<std::size_t>(rowNumber)]; record.file.existsAsFile()) {
+        if (const auto& record = (*records)[static_cast<std::size_t>(rowNumber)]; record.file.existsAsFile()) {
             filePaths.addIfNotAlreadyThere(record.file.getFullPathName());
         }
     }
@@ -227,12 +227,12 @@ void AudioFileTableModel::paintRowBackground(
     juce::ignoreUnused(rowNumber, width, height);
 
     if (rowIsSelected) {
-        graphics.fillAll(juce::CustomLookAndFeel::blue.withAlpha(0.22f));
+        graphics.fillAll(juce::CustomLookAndFeel::blue().withAlpha(0.22f));
         return;
     }
 
     graphics.fillAll(
-        rowNumber % 2 == 0 ? juce::CustomLookAndFeel::greySemiDark : juce::CustomLookAndFeel::greyMediumDark
+        rowNumber % 2 == 0 ? juce::CustomLookAndFeel::greySemiDark() : juce::CustomLookAndFeel::greyMediumDark()
     );
 }
 
@@ -251,11 +251,11 @@ void AudioFileTableModel::paintCell(
         return;
     }
 
-    const auto& record = records[static_cast<std::size_t>(rowNumber)];
+    const auto& record = (*records)[static_cast<std::size_t>(rowNumber)];
     juce::String text;
     auto justification = juce::Justification::centredLeft;
     auto textBounds = juce::Rectangle(4, 0, width - 8, height);
-    auto font = juce::CustomLookAndFeel::textFont;
+    auto font = juce::CustomLookAndFeel::getTextFont();
 
     switch (columnId) {
         case columnName:

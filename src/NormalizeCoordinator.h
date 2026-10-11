@@ -29,6 +29,11 @@ public:
     /// Cancels any in-flight work and destroys the worker pool.
     ~NormalizeCoordinator();
 
+    NormalizeCoordinator(const NormalizeCoordinator&) = delete;
+    NormalizeCoordinator& operator=(const NormalizeCoordinator&) = delete;
+    NormalizeCoordinator(NormalizeCoordinator&&) = delete;
+    NormalizeCoordinator& operator=(NormalizeCoordinator&&) = delete;
+
     /// Cancels queued work and waits for active jobs to finish.
     void cancelAndWait();
 

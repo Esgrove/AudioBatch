@@ -12,6 +12,7 @@
 #include <condition_variable>
 
 #include <chrono>
+#include <cstdint>
 
 namespace audiobatch::plugin_scanner
 {
@@ -208,7 +209,7 @@ class OutOfProcessPluginScanner::WorkerProcess final : juce::ChildProcessCoordin
 {
 public:
     /// Outcome of waiting for the reply to one scan request.
-    enum class ResponseState { timeout, gotResult, connectionLost };
+    enum class ResponseState : std::uint8_t { timeout, gotResult, connectionLost };
 
     /// Reply to one scan request.
     struct Response {
@@ -232,6 +233,11 @@ public:
     {
         killWorkerProcess();
     }
+
+    WorkerProcess(const WorkerProcess&) = delete;
+    WorkerProcess& operator=(const WorkerProcess&) = delete;
+    WorkerProcess(WorkerProcess&&) = delete;
+    WorkerProcess& operator=(WorkerProcess&&) = delete;
 
     /// True when the worker process was launched and connected.
     [[nodiscard]] bool isRunning() const noexcept
@@ -287,7 +293,7 @@ private:
     bool connectionLost = false;
     bool running = false;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WorkerProcess)
+    JUCE_LEAK_DETECTOR(WorkerProcess)
 };
 
 OutOfProcessPluginScanner::OutOfProcessPluginScanner(

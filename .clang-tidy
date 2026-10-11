@@ -1,16 +1,66 @@
 ---
-# Disabled checks and the reason for each:
+# Enabled beyond the base readability and modernize sets:
+# bugprone, performance, misc, concurrency, portability, and a curated cppcoreguidelines subset.
+#
+# Disabled or deliberately not enabled checks and the reason for each:
 #
 # - readability-magic-numbers: very noisy in audio and GUI code,
 #   where literals like 0.5f, 2.0f, dB offsets and pixel sizes are routine.
 # - readability-uppercase-literal-suffix: JUCE style uses lowercase 'f' on float literals.
-# - readability-function-cognitive-complexity: subjective and would require large refactors
-#   in code that is already organized around JUCE's component and callback patterns.
 # - readability-math-missing-parentheses: forces parentheses around standard precedence
 #   like `a + b * c`, which hurts readability more than it helps.
-Checks: "clang-diagnostic-*,clang-analyzer-*,readability-*,modernize-*,-modernize-use-trailing-return-type,-readability-magic-numbers,-readability-uppercase-literal-suffix,-readability-function-cognitive-complexity,-readability-math-missing-parentheses"
+# - modernize-use-trailing-return-type: the project uses leading return types throughout.
+# - misc-include-cleaner: JUCE modules are included through umbrella headers,
+#   so nearly every use of a JUCE symbol is reported.
+# - misc-use-anonymous-namespace and misc-use-internal-linkage:
+#   file-local helpers are declared `static`, and file-local types stay at namespace scope,
+#   instead of being wrapped in anonymous namespaces.
+# - cppcoreguidelines-use-enum-class: the unscoped menu and table column enums hold ids
+#   that JUCE passes around as plain ints.
+# - cppcoreguidelines-owning-memory: JUCE APIs such as setContentOwned and createDocumentWindowButton
+#   take and return raw owning pointers.
+# - bugprone-exception-escape: the reported destructors and callbacks can only throw on allocation failure,
+#   which terminates the process either way.
+# - misc-multiple-inheritance: JUCE components combine several listener interfaces by design.
+# - bugprone-easily-swappable-parameters: many signatures follow JUCE overrides such as `paintCell`.
+# - portability-avoid-pragma-once: every header uses `#pragma once`.
+Checks: >
+  clang-diagnostic-*,
+  clang-analyzer-*,
+  readability-*,
+  modernize-*,
+  bugprone-*,
+  performance-*,
+  misc-*,
+  concurrency-*,
+  portability-*,
+  cppcoreguidelines-init-variables,
+  cppcoreguidelines-pro-type-member-init,
+  cppcoreguidelines-virtual-class-destructor,
+  cppcoreguidelines-missing-std-forward,
+  cppcoreguidelines-prefer-member-initializer,
+  cppcoreguidelines-slicing,
+  cppcoreguidelines-avoid-const-or-ref-data-members,
+  cppcoreguidelines-narrowing-conversions,
+  cppcoreguidelines-rvalue-reference-param-not-moved,
+  cppcoreguidelines-avoid-goto,
+  cppcoreguidelines-pro-type-static-cast-downcast,
+  cppcoreguidelines-special-member-functions,
+  cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  cppcoreguidelines-pro-type-reinterpret-cast,
+  -modernize-use-trailing-return-type,
+  -readability-magic-numbers,
+  -readability-uppercase-literal-suffix,
+  -readability-math-missing-parentheses,
+  -misc-include-cleaner,
+  -misc-use-anonymous-namespace,
+  -misc-use-internal-linkage,
+  -bugprone-exception-escape,
+  -misc-multiple-inheritance,
+  -bugprone-easily-swappable-parameters,
+  -portability-avoid-pragma-once
 WarningsAsErrors: ""
-HeaderFilterRegex: "./src/*"
+HeaderFilterRegex: ".*/src/.*"
 FormatStyle: file
 CheckOptions:
     cert-dcl16-c.NewSuffixes: "L;LL;LU;LLU"
@@ -18,6 +68,7 @@ CheckOptions:
     cert-oop54-cpp.WarnOnlyIfThisHasSuspiciousField: "false"
     cert-str34-c.DiagnoseSignedUnsignedCharComparisons: "false"
     cppcoreguidelines-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: "true"
+    misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: "true"
     google-readability-braces-around-statements.ShortStatementLines: "1"
     google-readability-function-size.StatementThreshold: "800"
     google-readability-namespace-comments.ShortNamespaceLines: "10"

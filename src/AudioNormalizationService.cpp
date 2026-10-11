@@ -309,7 +309,9 @@ static juce::String getNormalizableFormatDetail(const juce::StringArray& extensi
 
 /// Gathers per-format normalization support information for the support summary.
 /// Normalizable formats sort before read-only ones, then alphabetically by name.
-static std::vector<AudioNormalizationFormatSupport> collectFormatSupport(AudioNormalizationRuntimeState& runtimeState)
+static std::vector<AudioNormalizationFormatSupport> collectFormatSupport(
+    AudioNormalizationRuntimeState const& runtimeState
+)
 {
     std::vector<AudioNormalizationFormatSupport> support;
     support.reserve(static_cast<std::size_t>(runtimeState.readFormatManager.getNumKnownFormats()));
@@ -459,7 +461,7 @@ juce::String AudioNormalizationService::getNormalizationSupportMessage(const juc
 
 juce::String AudioNormalizationService::getFormatSupportSummary()
 {
-    auto& runtimeState = getThreadLocalRuntimeState();
+    const auto& runtimeState = getThreadLocalRuntimeState();
     const auto support = collectFormatSupport(runtimeState);
 
     juce::StringArray writableLines;
@@ -554,7 +556,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(const AudioAna
         return result;
     }
 
-    juce::TemporaryFile temporaryFile(outputFile);
+    juce::TemporaryFile const temporaryFile(outputFile);
     std::unique_ptr<juce::OutputStream> outputStream(temporaryFile.getFile().createOutputStream().release());
 
     if (outputStream == nullptr) {

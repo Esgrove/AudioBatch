@@ -26,6 +26,11 @@ public:
     /// Unregisters from the chain's change notifications.
     ~PluginChainEditor() override;
 
+    PluginChainEditor(const PluginChainEditor&) = delete;
+    PluginChainEditor& operator=(const PluginChainEditor&) = delete;
+    PluginChainEditor(PluginChainEditor&&) = delete;
+    PluginChainEditor& operator=(PluginChainEditor&&) = delete;
+
     /// Lays out the hint label and the scrolling row list with its add button.
     void resized() override;
 
@@ -41,6 +46,13 @@ private:
     public:
         /// Builds the row for the given slot and wires its controls to the owning chain.
         SlotRow(PluginChainEditor& ownerEditor, int slotIndex);
+
+        ~SlotRow() override = default;
+
+        SlotRow(const SlotRow&) = delete;
+        SlotRow& operator=(const SlotRow&) = delete;
+        SlotRow(SlotRow&&) = delete;
+        SlotRow& operator=(SlotRow&&) = delete;
 
         /// Lays out the toggle, name label, and action buttons within the row.
         void resized() override;
@@ -81,7 +93,7 @@ private:
         bool dragging = false;
         int dragGrabOffsetY = 0;
 
-        JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SlotRow)
+        JUCE_LEAK_DETECTOR(SlotRow)
     };
 
     /// Performs the row rebuild deferred by changeListenerCallback().
@@ -125,5 +137,5 @@ private:
     /// The main window's tooltip client cannot serve a separate dialog window.
     juce::TooltipWindow tooltipWindow {this, 700};
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginChainEditor)
+    JUCE_LEAK_DETECTOR(PluginChainEditor)
 };

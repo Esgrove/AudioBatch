@@ -10,9 +10,11 @@
 
 #include <JuceHeader.h>
 
+#include <cstdint>
+
 namespace utils
 {
-enum class Level { debug, info, warn, error };
+enum class Level : std::uint8_t { debug, info, warn, error };
 
 /// Creates the default rolling file logger for the application.
 /// The log file goes into the application's log folder and is named after the log name,
@@ -84,8 +86,6 @@ static void writeToLog(const juce::String& message, [[maybe_unused]] Level log_l
             break;
         case Level::warn:
         case Level::info:
-            [[fallthrough]];
-        default:
             fmt::print("{}\n", log_message);
             break;
     }
@@ -166,7 +166,7 @@ inline void logJson(const juce::var& object, const bool debug = false)
 inline void logSystemInfo()
 {
     // Get info first to avoid API call debug / error messages in the middle of the log message
-    auto info = utils::systemInfo();
+    auto const info = utils::systemInfo();
     logInfo("System info\n    {}", version::APP_NAME);
     for (const auto& line : info) {
 #if !JUCE_DEBUG

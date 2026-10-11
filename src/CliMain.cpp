@@ -10,6 +10,9 @@
 #include "PluginScanner.h"
 #include "utils.h"
 
+#include <cstddef>
+#include <span>
+
 namespace audiobatch::cli
 {
 /// Detaches the logger before returning the process exit code,
@@ -43,11 +46,13 @@ static int runPluginScanWorker(const juce::String& executableName, const juce::S
 /// Entry point for the headless batch analysis executable.
 int main(const int argc, char* argv[])
 {
-    juce::ArgumentList arguments(argc, argv);
+    const juce::ArgumentList arguments(argc, argv);
     const auto executableName = juce::File(arguments.executableName).getFileNameWithoutExtension();
 
     // The plugin rescan relaunches this executable as its scan worker.
-    if (const auto commandLine = juce::StringArray(argv + 1, argc - 1).joinIntoString(" ");
+    const auto argumentSpan = std::span(argv, static_cast<std::size_t>(argc)).subspan(1);
+    if (const auto commandLine
+        = juce::StringArray(argumentSpan.data(), static_cast<int>(argumentSpan.size())).joinIntoString(" ");
         isPluginScanWorkerCommandLine(commandLine))
     {
         return audiobatch::cli::runPluginScanWorker(executableName, commandLine);
@@ -67,7 +72,7 @@ int main(const int argc, char* argv[])
     }
 
     juce::String parseError;
-    const auto cliOptions = AudioAnalysisCli::parse(std::move(arguments), parseError);
+    const auto cliOptions = AudioAnalysisCli::parse(arguments, parseError);
 
     const auto logger = utils::createDefaultLogger(executableName);
     juce::Logger::setCurrentLogger(logger.get());

@@ -132,57 +132,24 @@ void PluginProcessingCoordinator::releaseChain(const int chainIndex)
     instanceAvailable.signal();
 }
 
-int PluginProcessingCoordinator::start(
-    const std::vector<AudioAnalysisRecord>& records,
-    const PluginProcessingOptions& options,
-    std::vector<PluginChainInstances> chainInstances
+/// Returns whether every chain aligns index-for-index with options.plugins and contains no null instances.
+/// At least one chain is required.
+static bool areChainsUsable(
+    const std::vector<PluginProcessingCoordinator::PluginChainInstances>& chains,
+    const PluginProcessingOptions& options
 )
 {
-    cancelAndWait();
-
-    // A usable chain must align index-for-index with options.plugins and contain no null instances.
-    const auto isUsableChain = [&options](const PluginChainInstances& chainToCheck) {
-        if (chainToCheck.size() != options.plugins.size() || chainToCheck.empty()) {
-            return false;
-        }
-
-        return std::ranges::none_of(chainToCheck, [](const auto& instance) { return instance == nullptr; });
+    const auto isUsableChain = [&options](const PluginProcessingCoordinator::PluginChainInstances& chain) {
+        return !chain.empty() && chain.size() == options.plugins.size()
+            && std::ranges::none_of(chain, [](const auto& instance) { return instance == nullptr; });
     };
 
-    bool chainsUsable = !chainInstances.empty();
-    for (const auto& chainToCheck : chainInstances) {
-        chainsUsable = chainsUsable && isUsableChain(chainToCheck);
-    }
+    return !chains.empty() && std::ranges::all_of(chains, isUsableChain);
+}
 
-    {
-        const juce::ScopedLock lock(instanceLock);
-        ownedChains = std::move(chainInstances);
-        freeChainIndices.clear();
-        freeChainIndices.reserve(ownedChains.size());
-        if (chainsUsable) {
-            for (int chainIndex = 0; std::cmp_less(chainIndex, ownedChains.size()); ++chainIndex) {
-                freeChainIndices.push_back(chainIndex);
-            }
-        }
-    }
-
-    if (!chainsUsable) {
-        StartErrorCallback errorCallback;
-        {
-            const juce::ScopedLock lock(callbackLock);
-            errorCallback = startErrorCallback;
-        }
-
-        if (errorCallback != nullptr) {
-            errorCallback("No plugin chain instances were available to start processing.");
-        }
-
-        publishCompletion(0, currentRunId.load());
-        return 0;
-    }
-
-    const auto runId = currentRunId.load();
-
+/// Returns the existing records ordered and deduplicated by full path, so each file is processed once.
+static std::vector<AudioAnalysisRecord> collectQueuedRecords(const std::vector<AudioAnalysisRecord>& records)
+{
     std::map<juce::String, AudioAnalysisRecord> recordsByPath;
     for (const auto& record : records) {
         if (record.file.existsAsFile()) {
@@ -197,7 +164,104 @@ int PluginProcessingCoordinator::start(
         queuedRecords.push_back(std::move(record));
     }
 
-    pendingJobs.store(static_cast<int>(queuedRecords.size()));
+    return queuedRecords;
+}
+
+void PluginProcessingCoordinator::reportStartError(const juce::String& message) const
+{
+    StartErrorCallback errorCallback;
+    {
+        const juce::ScopedLock lock(callbackLock);
+        errorCallback = startErrorCallback;
+    }
+
+    if (errorCallback != nullptr) {
+        errorCallback(message);
+    }
+}
+
+void PluginProcessingCoordinator::runFileJob(
+    const AudioAnalysisRecord& record,
+    const PluginProcessingOptions& options,
+    const int runId,
+    const int totalFiles
+)
+{
+    if (runId != currentRunId.load()) {
+        return;
+    }
+
+    auto chainIndex = acquireChain();
+
+    // Wait for a chain to become free (worker count > chain count is unusual).
+    while (chainIndex < 0 && runId == currentRunId.load()) {
+        instanceAvailable.wait(100);
+        chainIndex = acquireChain();
+    }
+
+    if (runId != currentRunId.load()) {
+        releaseChain(chainIndex);
+        return;
+    }
+
+    // Build a raw-pointer view of the chain for the service call.
+    std::vector<juce::AudioPluginInstance*> chainView;
+    {
+        const juce::ScopedLock lock(instanceLock);
+        const auto& chain = ownedChains[static_cast<std::size_t>(chainIndex)];
+        chainView.reserve(chain.size());
+        for (const auto& instance : chain) {
+            chainView.push_back(instance.get());
+        }
+    }
+
+    // Cancellation lets the worker stop waiting for the message thread,
+    // which cancelAndWait blocks while it waits for the workers to finish.
+    const auto result = PluginProcessingService::processFile(record, options, chainView, [this, runId] {
+        return runId != currentRunId.load();
+    });
+    releaseChain(chainIndex);
+
+    publishResult(result, runId);
+
+    if (pendingJobs.fetch_sub(1) == 1) {
+        publishCompletion(totalFiles, runId);
+    }
+}
+
+int PluginProcessingCoordinator::start(
+    const std::vector<AudioAnalysisRecord>& records,
+    const PluginProcessingOptions& options,
+    std::vector<PluginChainInstances> chainInstances
+)
+{
+    cancelAndWait();
+
+    const auto chainsUsable = areChainsUsable(chainInstances, options);
+
+    {
+        const juce::ScopedLock lock(instanceLock);
+        ownedChains = std::move(chainInstances);
+        freeChainIndices.clear();
+        freeChainIndices.reserve(ownedChains.size());
+        if (chainsUsable) {
+            for (int chainIndex = 0; std::cmp_less(chainIndex, ownedChains.size()); ++chainIndex) {
+                freeChainIndices.push_back(chainIndex);
+            }
+        }
+    }
+
+    if (!chainsUsable) {
+        reportStartError("No plugin chain instances were available to start processing.");
+        publishCompletion(0, currentRunId.load());
+        return 0;
+    }
+
+    const auto runId = currentRunId.load();
+    const auto queuedRecords = collectQueuedRecords(records);
+    const auto totalFiles = static_cast<int>(queuedRecords.size());
+
+    pendingJobs.store(totalFiles);
 
     if (queuedRecords.empty()) {
         publishCompletion(0, runId);
@@ -205,49 +269,10 @@ int PluginProcessingCoordinator::start(
     }
 
     for (const auto& record : queuedRecords) {
-        threadPool.addJob([this, record, options, runId, totalFiles = static_cast<int>(queuedRecords.size())] {
-            if (runId != currentRunId.load()) {
-                return;
-            }
-
-            auto chainIndex = acquireChain();
-
-            // Wait for a chain to become free (worker count > chain count is unusual).
-            while (chainIndex < 0 && runId == currentRunId.load()) {
-                instanceAvailable.wait(100);
-                chainIndex = acquireChain();
-            }
-
-            if (runId != currentRunId.load()) {
-                releaseChain(chainIndex);
-                return;
-            }
-
-            // Build a raw-pointer view of the chain for the service call.
-            std::vector<juce::AudioPluginInstance*> chainView;
-            {
-                const juce::ScopedLock lock(instanceLock);
-                const auto& chain = ownedChains[static_cast<std::size_t>(chainIndex)];
-                chainView.reserve(chain.size());
-                for (const auto& instance : chain) {
-                    chainView.push_back(instance.get());
-                }
-            }
-
-            // Cancellation lets the worker stop waiting for the message thread,
-            // which cancelAndWait blocks while it waits for the workers to finish.
-            const auto result = PluginProcessingService::processFile(record, options, chainView, [this, runId] {
-                return runId != currentRunId.load();
-            });
-            releaseChain(chainIndex);
-
-            publishResult(result, runId);
-
-            if (pendingJobs.fetch_sub(1) == 1) {
-                publishCompletion(totalFiles, runId);
-            }
+        threadPool.addJob([this, record, options, runId, totalFiles] {
+            runFileJob(record, options, runId, totalFiles);
         });
     }
 
-    return static_cast<int>(queuedRecords.size());
+    return totalFiles;
 }

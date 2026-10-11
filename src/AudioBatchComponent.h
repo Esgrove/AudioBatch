@@ -39,6 +39,11 @@ public:
     /// Stops background work and releases audio and dialog resources.
     ~AudioBatchComponent() override;
 
+    AudioBatchComponent(const AudioBatchComponent&) = delete;
+    AudioBatchComponent& operator=(const AudioBatchComponent&) = delete;
+    AudioBatchComponent(AudioBatchComponent&&) = delete;
+    AudioBatchComponent& operator=(AudioBatchComponent&&) = delete;
+
     /// Opens the folder chooser and replaces the current root folders with the chosen folder.
     void chooseRootFolder();
 
@@ -86,6 +91,21 @@ public:
     /// Lays out the top bar, results table, resize bar, waveform preview, and the control column.
     void resized() override;
 
+    /// Handles the application shortcuts for trash, remove, reveal, play/stop, and rescan.
+    bool keyPressed(const juce::KeyPress& key) override;
+
+    /// Maps pinch-zoom gestures onto the waveform zoom slider.
+    void mouseMagnify(const juce::MouseEvent& event, float scaleFactor) override;
+
+protected:
+    /// Lets rows dragged out of the application drop as file copies into other applications,
+    /// never as moves, so the originals stay in place.
+    bool shouldDropFilesWhenDraggedExternally(
+        const juce::DragAndDropTarget::SourceDetails& sourceDetails,
+        juce::StringArray& files,
+        bool& canMoveFiles
+    ) override;
+
 private:
     /// Stops playback and releases the preview file, transport source, and waveform so the file can be replaced.
     void clearCurrentAudioPreview();
@@ -107,13 +127,38 @@ private:
     /// and existing roots inside a newly added folder are absorbed into it.
     void addRoots(const juce::Array<juce::File>& folders);
 
+    /// Shows a non-blocking warning dialog titled "Plugin Processing" with the given message.
+    void showPluginProcessingWarning(const juce::String& message);
+
+    /// Returns the reason a processing run cannot start right now because other work is running,
+    /// or an empty string when a run may start.
+    [[nodiscard]] juce::String getProcessingBlockedReason() const;
+
+    /// Stops playback and releases the preview file handles when the previewed file is about to be replaced.
+    /// Returns the files of the given records.
+    [[nodiscard]] juce::Array<juce::File> releasePreviewBeforeProcessing(
+        const std::vector<AudioAnalysisRecord>& records
+    );
+
+    /// Creates the results table header, model, and selection behavior.
+    void configureResultsTable();
+
+    /// Creates the waveform preview, transport and zoom controls, and the metadata info panel.
+    void configurePreviewControls();
+
+    /// Creates the plugin chain, per-file gain, normalization toggle, process, and settings controls.
+    void configureProcessingControls();
+
+    /// Connects the analysis, normalization, and plugin coordinators to the message thread handlers.
+    void connectCoordinatorCallbacks();
+
+    /// Requests audio input permission and initialises the audio device manager once it is answered.
+    void requestAudioDeviceAccess();
+
     /// Shows the root folders in the top bar label:
     /// the full path for a single root, or the first path and the number of others for several,
     /// with every root listed in the tooltip.
     void updateCurrentRootLabel();
-
-    /// Handles the application shortcuts for trash, remove, reveal, play/stop, and rescan.
-    bool keyPressed(const juce::KeyPress& key) override;
 
     /// Forwards key presses from the results table to the main shortcut handler.
     bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
@@ -290,14 +335,6 @@ private:
     /// records are loaded, and no processing or analysis is running.
     void updateProcessButtonState();
 
-    /// Lets rows dragged out of the application drop as file copies into other applications,
-    /// never as moves, so the originals stay in place.
-    bool shouldDropFilesWhenDraggedExternally(
-        const juce::DragAndDropTarget::SourceDetails& sourceDetails,
-        juce::StringArray& files,
-        bool& canMoveFiles
-    ) override;
-
     /// Reacts to transport state changes and to files dropped onto the waveform preview.
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
@@ -327,9 +364,6 @@ private:
 
     /// Forwards the zoom slider value to the waveform preview.
     void zoomLevelChanged(double zoomLevel);
-
-    /// Maps pinch-zoom gestures onto the waveform zoom slider.
-    void mouseMagnify(const juce::MouseEvent& event, float scaleFactor) override;
 
     AnalysisCache analysisCache;
     AnalysisCoordinator analysisCoordinator;
@@ -395,5 +429,5 @@ private:
     juce::Viewport audioInfoViewport;
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AudioBatchComponent)
+    JUCE_LEAK_DETECTOR(AudioBatchComponent)
 };

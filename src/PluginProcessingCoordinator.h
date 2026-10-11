@@ -37,6 +37,11 @@ public:
     /// Cancels any in-flight work and destroys the worker pool.
     ~PluginProcessingCoordinator();
 
+    PluginProcessingCoordinator(const PluginProcessingCoordinator&) = delete;
+    PluginProcessingCoordinator& operator=(const PluginProcessingCoordinator&) = delete;
+    PluginProcessingCoordinator(PluginProcessingCoordinator&&) = delete;
+    PluginProcessingCoordinator& operator=(PluginProcessingCoordinator&&) = delete;
+
     /// Cancels queued work and waits for active jobs to finish.
     /// Safe to call on the message thread:
     /// workers waiting for plugin setup on the message thread give up once the run is cancelled,
@@ -72,6 +77,19 @@ private:
     /// Invokes the result callback for one processed file,
     /// unless the run has been superseded or cancelled.
     void publishResult(const PluginProcessingResult& result, int runId) const;
+
+    /// Reports that a run could not start to the start error callback, if one is set.
+    void reportStartError(const juce::String& message) const;
+
+    /// Processes one queued file on a worker thread.
+    /// Waits for a free chain, runs the file through it, publishes the result,
+    /// and publishes completion when it was the last pending file of the run.
+    void runFileJob(
+        const AudioAnalysisRecord& record,
+        const PluginProcessingOptions& options,
+        int runId,
+        int totalFiles
+    );
 
     /// Returns the index of a free chain, or -1 when none are available.
     int acquireChain();

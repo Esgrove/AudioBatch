@@ -12,12 +12,18 @@ extern "C" {
 #include <ebur128.h>
 }
 
+#include <initializer_list>
+
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <compare>
 #include <cstdint>
 #include <memory>
+#include <ranges>
 #include <set>
+#include <span>
+#include <utility>
 #include <vector>
 
 /// Internal helpers for peak comparisons and stable record sorting.
@@ -86,7 +92,7 @@ static bool readExactly(juce::InputStream& input, void* destination, const int b
 }
 
 /// Decodes a 28-bit synchsafe integer, the encoding ID3v2 uses for tag and frame sizes.
-static std::uint32_t readSynchsafeUint32(const std::uint8_t* bytes)
+static std::uint32_t readSynchsafeUint32(const std::span<const std::uint8_t, 4> bytes)
 {
     return static_cast<std::uint32_t>(bytes[0]) << 21U | static_cast<std::uint32_t>(bytes[1]) << 14U
         | static_cast<std::uint32_t>(bytes[2]) << 7U | static_cast<std::uint32_t>(bytes[3]);
@@ -98,12 +104,10 @@ static std::uint32_t readSynchsafeUint32(const std::uint8_t* bytes)
 static juce::String buildSearchableMetadataText(const juce::MemoryBlock& metadata)
 {
     juce::String text;
-    const auto* bytes = static_cast<const std::uint8_t*>(metadata.getData());
+    const std::span bytes(static_cast<const std::uint8_t*>(metadata.getData()), metadata.getSize());
     bool previousWasSeparator = true;
 
-    for (size_t index = 0; index < metadata.getSize(); ++index) {
-        const auto byte = bytes[index];
-
+    for (const auto byte : bytes) {
         if ((byte >= '0' && byte <= '9') || (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z')) {
             text += juce::String::charToString(byte);
             previousWasSeparator = false;
@@ -174,11 +178,14 @@ static int extractTaggedMp3BitDepth(const juce::File& file)
         return 0;
     }
 
-    if (((header[6] | header[7] | header[8] | header[9]) & 0x80U) != 0U) {
+    constexpr std::size_t sizeFieldOffset = 6;
+    constexpr std::size_t sizeFieldLength = 4;
+    const auto sizeField = std::span(header).subspan<sizeFieldOffset, sizeFieldLength>();
+    if (std::ranges::any_of(sizeField, [](const std::uint8_t byte) { return (byte & 0x80U) != 0U; })) {
         return 0;
     }
 
-    const auto payloadSize = readSynchsafeUint32(header.data() + 6);
+    const auto payloadSize = readSynchsafeUint32(std::span(header).subspan<sizeFieldOffset, sizeFieldLength>());
     const auto hasFooter = (header[5] & 0x10U) != 0;
     const auto totalSize
         = id3HeaderSize + static_cast<juce::int64>(payloadSize) + (hasFooter ? id3HeaderSize : juce::int64 {0});
@@ -286,7 +293,10 @@ static bool isEndOfFileReadFailure(
 /// Creates an ebur128 state configured for integrated, short-term, and true peak measurement.
 static EbuR128StatePtr createLoudnessState(const int channelCount, const int sampleRate)
 {
-    constexpr auto mode = EBUR128_MODE_I | EBUR128_MODE_S | EBUR128_MODE_TRUE_PEAK;
+    constexpr auto mode = static_cast<int>(
+        static_cast<unsigned int>(EBUR128_MODE_I) | static_cast<unsigned int>(EBUR128_MODE_S)
+        | static_cast<unsigned int>(EBUR128_MODE_TRUE_PEAK)
+    );
     return EbuR128StatePtr(
         ebur128_init(static_cast<unsigned int>(channelCount), static_cast<unsigned long>(sampleRate), mode)
     );
@@ -306,6 +316,52 @@ static int compareAnalysisState(const AudioAnalysisRecord& lhs, const AudioAnaly
 static int compareText(const juce::String& lhs, const juce::String& rhs)
 {
     return lhs.compareNatural(rhs);
+}
+/// Returns the first ordering that is not equivalent, so later keys only break ties of earlier ones.
+static std::weak_ordering firstDifference(const std::initializer_list<std::weak_ordering> orderings)
+{
+    const auto* const difference = std::ranges::find_if(orderings, [](const auto ordering) { return ordering != 0; });
+    return difference != orderings.end() ? *difference : std::weak_ordering::equivalent;
+}
+
+/// Orders two floating point values, treating values that are approximately equal as equivalent.
+template<typename Value>
+static std::weak_ordering compareApproximately(const Value lhs, const Value rhs)
+{
+    if (juce::approximatelyEqual(lhs, rhs)) {
+        return std::weak_ordering::equivalent;
+    }
+
+    return lhs < rhs ? std::weak_ordering::less : std::weak_ordering::greater;
+}
+
+/// Orders two records ascending by the sort key, with the other columns breaking ties.
+static std::weak_ordering compareBySortMode(
+    const AudioAnalysisRecord& lhs,
+    const AudioAnalysisRecord& rhs,
+    const AudioAnalysisSortMode sortMode
+)
+{
+    const std::weak_ordering byName = compareText(lhs.fileName, rhs.fileName) <=> 0;
+    const std::weak_ordering byPath = compareText(lhs.fullPath, rhs.fullPath) <=> 0;
+    const auto byLoudness = compareApproximately(lhs.integratedLufs, rhs.integratedLufs);
+    const auto byPeak = compareApproximately(peakMagnitude(lhs.overallPeak), peakMagnitude(rhs.overallPeak));
+
+    switch (sortMode) {
+        case AudioAnalysisSortMode::name:
+            return firstDifference({byName, byPath});
+
+        case AudioAnalysisSortMode::path:
+            return firstDifference({byPath, byName});
+
+        case AudioAnalysisSortMode::loudness:
+            return firstDifference({byLoudness, byPeak, byName});
+
+        case AudioAnalysisSortMode::peak:
+            return firstDifference({byPeak, byLoudness, byName});
+    }
+
+    std::unreachable();
 }
 }  // namespace audiobatch::analysis
 
@@ -347,12 +403,12 @@ juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
     juce::Array<juce::File> files;
     std::set<juce::String> seenPaths;
 
-    auto addFile = [&](const juce::File& file) {
+    auto const addFile = [&](const juce::File& file) {
         if (!isSupportedAudioFile(file)) {
             return;
         }
 
-        if (const auto normalizedPath = file.getFullPathName(); seenPaths.insert(normalizedPath).second) {
+        if (const auto& normalizedPath = file.getFullPathName(); seenPaths.insert(normalizedPath).second) {
             files.add(file);
         }
     };
@@ -377,6 +433,139 @@ juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
     return files;
 }
 
+/// Left, right, and overall peak reduced from per-channel peaks.
+template<typename Value>
+struct PeakSummary {
+    Value left;
+    Value right;
+    Value overall;
+};
+
+/// Reduces per-channel peaks to the left, right, and overall peak.
+/// A mono source reports its only channel as both left and right.
+template<typename Value>
+static PeakSummary<Value> summarizePeaks(const std::vector<Value>& channelPeaks)
+{
+    const auto left = channelPeaks.front();
+    const auto right = channelPeaks.size() > 1 ? channelPeaks[1] : left;
+    auto overall = left;
+
+    for (const auto peak : std::views::drop(channelPeaks, 1)) {
+        overall = dominantPeak(overall, peak);
+    }
+
+    return {left, right, overall};
+}
+
+/// Measurements gathered while decoding a file for analysis.
+struct DecodeMeasurements {
+    /// Smallest sample seen on each channel.
+    std::vector<float> minSamples;
+    /// Largest sample seen on each channel.
+    std::vector<float> maxSamples;
+    /// Highest short-term loudness seen across the file.
+    double maxShortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
+    /// Empty when decoding and measuring succeeded.
+    juce::String errorMessage;
+};
+
+/// Interleaves one decoded block for the loudness meter and folds its samples into the per-channel extremes.
+static void interleaveBlock(
+    const juce::AudioBuffer<float>& readBuffer,
+    const int framesThisBlock,
+    std::vector<float>& interleaved,
+    DecodeMeasurements& measurements
+)
+{
+    const auto channelCount = static_cast<size_t>(readBuffer.getNumChannels());
+
+    for (int frame = 0; frame < framesThisBlock; ++frame) {
+        for (size_t channel = 0; channel < channelCount; ++channel) {
+            const auto sample = readBuffer.getSample(static_cast<int>(channel), frame);
+            measurements.minSamples[channel] = std::min(measurements.minSamples[channel], sample);
+            measurements.maxSamples[channel] = std::max(measurements.maxSamples[channel], sample);
+            interleaved[static_cast<size_t>(frame) * channelCount + channel] = sample;
+        }
+    }
+}
+
+/// Decodes the whole file block by block, feeding the loudness meter and collecting the sample extremes.
+/// Decoding continues past isolated read failures, since the built-in MP3 decoder can fail mid-stream
+/// on files that other decoders handle fine.
+/// A failed block still holds the samples decoded before the error with the remainder zeroed.
+/// Repeated failures end the measurement early with the audio decoded so far.
+static DecodeMeasurements measureDecodedAudio(
+    juce::AudioFormatReader& reader,
+    ebur128_state* loudnessState,
+    const juce::String& fullPath
+)
+{
+    const auto channelCount = static_cast<int>(reader.numChannels);
+
+    DecodeMeasurements measurements;
+    measurements.minSamples.assign(static_cast<size_t>(channelCount), 0.0f);
+    measurements.maxSamples.assign(static_cast<size_t>(channelCount), 0.0f);
+
+    juce::AudioBuffer<float> readBuffer(channelCount, analysisBlockSize);
+    std::vector interleaved(static_cast<size_t>(channelCount * analysisBlockSize), 0.0f);
+    std::int64_t framesDecoded = 0;
+    int consecutiveReadFailures = 0;
+    bool reportedPartialDecode = false;
+
+    for (std::int64_t samplePosition = 0; samplePosition < reader.lengthInSamples; samplePosition += analysisBlockSize)
+    {
+        const auto framesThisBlock
+            = static_cast<int>(juce::jmin<std::int64_t>(analysisBlockSize, reader.lengthInSamples - samplePosition));
+
+        readBuffer.clear();
+
+        if (const auto readSucceeded = reader.read(&readBuffer, 0, framesThisBlock, samplePosition, true, true);
+            readSucceeded)
+        {
+            consecutiveReadFailures = 0;
+            framesDecoded += framesThisBlock;
+        } else if (!isEndOfFileReadFailure(readSucceeded, samplePosition, framesThisBlock, reader.lengthInSamples)) {
+            ++consecutiveReadFailures;
+
+            if (!reportedPartialDecode) {
+                utils::logWarn(
+                    "Audio decode failed at sample {} / {} for {}, continuing analysis with decoded audio",
+                    samplePosition,
+                    reader.lengthInSamples,
+                    fullPath.quoted()
+                );
+                reportedPartialDecode = true;
+            }
+        }
+
+        interleaveBlock(readBuffer, framesThisBlock, interleaved, measurements);
+
+        if (ebur128_add_frames_float(loudnessState, interleaved.data(), static_cast<size_t>(framesThisBlock))
+            != EBUR128_SUCCESS)
+        {
+            measurements.errorMessage = "Loudness analysis failed while processing audio";
+            return measurements;
+        }
+
+        double shortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
+
+        if (ebur128_loudness_shortterm(loudnessState, &shortTermLoudness) == EBUR128_SUCCESS) {
+            measurements.maxShortTermLoudness
+                = std::max(measurements.maxShortTermLoudness, normalizeLoudness(shortTermLoudness));
+        }
+
+        if (consecutiveReadFailures >= maxConsecutiveReadFailures) {
+            break;
+        }
+    }
+
+    if (reportedPartialDecode && framesDecoded == 0) {
+        measurements.errorMessage = "Audio decode failed during analysis";
+    }
+
+    return measurements;
+}
+
 AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
 {
     auto record = AudioAnalysisRecord::fromFile(file);
@@ -399,97 +588,27 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         return failAnalysis(std::move(record), "Unsupported audio stream parameters");
     }
 
-    auto loudnessState = createLoudnessState(channelCount, sampleRate);
+    auto const loudnessState = createLoudnessState(channelCount, sampleRate);
 
     if (loudnessState == nullptr) {
         return failAnalysis(std::move(record), "Could not initialize loudness analyzer");
     }
 
-    std::vector minSamples(static_cast<size_t>(channelCount), 0.0f);
-    std::vector maxSamples(static_cast<size_t>(channelCount), 0.0f);
-    juce::AudioBuffer<float> readBuffer(channelCount, analysisBlockSize);
-    std::vector interleaved(static_cast<size_t>(channelCount * analysisBlockSize), 0.0f);
-    double maxShortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
-    std::int64_t framesDecoded = 0;
-    int consecutiveReadFailures = 0;
-    bool reportedPartialDecode = false;
+    const auto measurements = measureDecodedAudio(*reader, loudnessState.get(), record.fullPath);
 
-    for (std::int64_t samplePosition = 0; samplePosition < reader->lengthInSamples; samplePosition += analysisBlockSize)
-    {
-        const auto remainingFrames = reader->lengthInSamples - samplePosition;
-        const auto framesThisBlock = static_cast<int>(juce::jmin<std::int64_t>(analysisBlockSize, remainingFrames));
-
-        readBuffer.clear();
-
-        if (const auto readSucceeded = reader->read(&readBuffer, 0, framesThisBlock, samplePosition, true, true);
-            readSucceeded)
-        {
-            consecutiveReadFailures = 0;
-            framesDecoded += framesThisBlock;
-        } else if (!isEndOfFileReadFailure(readSucceeded, samplePosition, framesThisBlock, reader->lengthInSamples)) {
-            // JUCE's built-in MP3 decoder can fail mid-stream (frame sync errors, overestimated stream length)
-            // on files that other decoders handle fine.
-            // A failed block still holds the samples decoded before the error with the remainder zeroed,
-            // so keep analyzing instead of discarding the whole file.
-            ++consecutiveReadFailures;
-
-            if (!reportedPartialDecode) {
-                utils::logWarn(
-                    "Audio decode failed at sample {} / {} for {}, continuing analysis with decoded audio",
-                    samplePosition,
-                    reader->lengthInSamples,
-                    record.fullPath.quoted()
-                );
-                reportedPartialDecode = true;
-            }
-        }
-
-        for (int frame = 0; frame < framesThisBlock; ++frame) {
-            for (int channel = 0; channel < channelCount; ++channel) {
-                const auto sample = readBuffer.getSample(channel, frame);
-                minSamples[static_cast<size_t>(channel)] = std::min(minSamples[static_cast<size_t>(channel)], sample);
-                maxSamples[static_cast<size_t>(channel)] = std::max(maxSamples[static_cast<size_t>(channel)], sample);
-                interleaved[static_cast<size_t>(frame * channelCount + channel)] = sample;
-            }
-        }
-
-        if (ebur128_add_frames_float(loudnessState.get(), interleaved.data(), static_cast<size_t>(framesThisBlock))
-            != EBUR128_SUCCESS)
-        {
-            return failAnalysis(std::move(record), "Loudness analysis failed while processing audio");
-        }
-
-        double shortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
-
-        if (ebur128_loudness_shortterm(loudnessState.get(), &shortTermLoudness) == EBUR128_SUCCESS) {
-            maxShortTermLoudness = std::max(maxShortTermLoudness, normalizeLoudness(shortTermLoudness));
-        }
-
-        if (consecutiveReadFailures >= maxConsecutiveReadFailures) {
-            // Repeated failures mean the rest of the stream is undecodable,
-            // so finish the analysis with the audio decoded so far.
-            break;
-        }
-    }
-
-    if (reportedPartialDecode && framesDecoded == 0) {
-        return failAnalysis(std::move(record), "Audio decode failed during analysis");
+    if (measurements.errorMessage.isNotEmpty()) {
+        return failAnalysis(std::move(record), measurements.errorMessage);
     }
 
     std::vector signedPeaks(static_cast<size_t>(channelCount), 0.0f);
 
     for (int channel = 0; channel < channelCount; ++channel) {
-        signedPeaks[static_cast<size_t>(channel)]
-            = signedPeakFromExtrema(minSamples[static_cast<size_t>(channel)], maxSamples[static_cast<size_t>(channel)]);
+        const auto channelIndex = static_cast<size_t>(channel);
+        signedPeaks[channelIndex]
+            = signedPeakFromExtrema(measurements.minSamples[channelIndex], measurements.maxSamples[channelIndex]);
     }
 
-    const auto leftPeak = signedPeaks.front();
-    const auto rightPeak = channelCount > 1 ? signedPeaks[1] : leftPeak;
-    auto overallPeak = leftPeak;
-
-    for (int channel = 1; channel < channelCount; ++channel) {
-        overallPeak = dominantPeak(overallPeak, signedPeaks[static_cast<size_t>(channel)]);
-    }
+    const auto samplePeaks = summarizePeaks(signedPeaks);
 
     std::vector truePeaks(static_cast<size_t>(channelCount), 0.0);
 
@@ -509,13 +628,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         return failAnalysis(std::move(record), "Integrated loudness analysis failed");
     }
 
-    const auto truePeakLeft = truePeaks.front();
-    const auto truePeakRight = channelCount > 1 ? truePeaks[1] : truePeakLeft;
-    auto overallTruePeak = truePeakLeft;
-
-    for (int channel = 1; channel < channelCount; ++channel) {
-        overallTruePeak = dominantPeak(overallTruePeak, truePeaks[static_cast<size_t>(channel)]);
-    }
+    const auto truePeakSummary = summarizePeaks(truePeaks);
 
     record.formatName = reader->getFormatName();
     record.sampleRate = sampleRate;
@@ -524,13 +637,13 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
     record.lengthInSamples = reader->lengthInSamples;
     record.durationSeconds
         = reader->sampleRate > 0.0 ? static_cast<double>(reader->lengthInSamples) / reader->sampleRate : 0.0;
-    record.peakLeft = leftPeak;
-    record.peakRight = rightPeak;
-    record.overallPeak = overallPeak;
-    record.truePeakLeft = truePeakLeft;
-    record.truePeakRight = truePeakRight;
-    record.overallTruePeak = overallTruePeak;
-    record.maxShortTermLufs = maxShortTermLoudness;
+    record.peakLeft = samplePeaks.left;
+    record.peakRight = samplePeaks.right;
+    record.overallPeak = samplePeaks.overall;
+    record.truePeakLeft = truePeakSummary.left;
+    record.truePeakRight = truePeakSummary.right;
+    record.overallTruePeak = truePeakSummary.overall;
+    record.maxShortTermLufs = measurements.maxShortTermLoudness;
     record.integratedLufs = normalizeLoudness(integratedLoudness);
     record.status = AudioAnalysisStatus::analyzed;
     record.fromCache = false;
@@ -539,7 +652,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
 
 juce::String AudioAnalysisService::formatPeakDisplay(const float peak)
 {
-    return formatAmplitudeDisplay(peakMagnitude(peak), " dBFS");
+    return formatAmplitudeDisplay(peakMagnitude(static_cast<double>(peak)), " dBFS");
 }
 
 juce::String AudioAnalysisService::formatTruePeakDisplay(const double truePeak)
@@ -617,17 +730,18 @@ juce::String AudioAnalysisService::formatStatus(const AudioAnalysisRecord& recor
         case AudioAnalysisStatus::analyzed:
             return "Analyzed";
         case AudioAnalysisStatus::failed:
-            return record.errorMessage.isNotEmpty() ? "Failed" : "Failed";
+            return "Failed";
         case AudioAnalysisStatus::pending:
-        default:
             return "Pending";
     }
+
+    std::unreachable();
 }
 
 void AudioAnalysisService::sortRecords(
     std::vector<AudioAnalysisRecord>& records,
-    AudioAnalysisSortMode sortMode,
-    bool ascending
+    const AudioAnalysisSortMode sortMode,
+    const bool ascending
 )
 {
     std::ranges::sort(records, [sortMode, ascending](const auto& lhs, const auto& rhs) {
@@ -635,50 +749,7 @@ void AudioAnalysisService::sortRecords(
             return stateComparison < 0;
         }
 
-        auto comparePeaks = [ascending](const float left, const float right) {
-            const auto leftMagnitude = peakMagnitude(left);
-            const auto rightMagnitude = peakMagnitude(right);
-            return ascending ? leftMagnitude < rightMagnitude : leftMagnitude > rightMagnitude;
-        };
-
-        auto compareStrings = [ascending](const juce::String& left, const juce::String& right) {
-            return ascending ? compareText(left, right) < 0 : compareText(left, right) > 0;
-        };
-
-        auto compareLoudness
-            = [ascending](const double left, const double right) { return ascending ? left < right : left > right; };
-
-        switch (sortMode) {
-            case AudioAnalysisSortMode::name:
-                if (lhs.fileName != rhs.fileName) {
-                    return compareStrings(lhs.fileName, rhs.fileName);
-                }
-                return compareStrings(lhs.fullPath, rhs.fullPath);
-
-            case AudioAnalysisSortMode::path:
-                if (lhs.fullPath != rhs.fullPath) {
-                    return compareStrings(lhs.fullPath, rhs.fullPath);
-                }
-                return compareStrings(lhs.fileName, rhs.fileName);
-
-            case AudioAnalysisSortMode::loudness:
-                if (!juce::approximatelyEqual(lhs.integratedLufs, rhs.integratedLufs)) {
-                    return compareLoudness(lhs.integratedLufs, rhs.integratedLufs);
-                }
-                if (!juce::approximatelyEqual(peakMagnitude(lhs.overallPeak), peakMagnitude(rhs.overallPeak))) {
-                    return comparePeaks(lhs.overallPeak, rhs.overallPeak);
-                }
-                return compareStrings(lhs.fileName, rhs.fileName);
-
-            case AudioAnalysisSortMode::peak:
-            default:
-                if (!juce::approximatelyEqual(peakMagnitude(lhs.overallPeak), peakMagnitude(rhs.overallPeak))) {
-                    return comparePeaks(lhs.overallPeak, rhs.overallPeak);
-                }
-                if (!juce::approximatelyEqual(lhs.integratedLufs, rhs.integratedLufs)) {
-                    return compareLoudness(lhs.integratedLufs, rhs.integratedLufs);
-                }
-                return compareStrings(lhs.fileName, rhs.fileName);
-        }
+        const auto ordering = compareBySortMode(lhs, rhs, sortMode);
+        return ascending ? ordering < 0 : ordering > 0;
     });
 }

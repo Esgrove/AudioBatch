@@ -7,10 +7,11 @@
 
 #include <JuceHeader.h>
 
+#include <cstdint>
 #include <optional>
 
 /// How the plugin listing is grouped.
-enum class PluginListGrouping {
+enum class PluginListGrouping : std::uint8_t {
     /// One alphabetical table of all plugins.
     name,
     /// One section per manufacturer.

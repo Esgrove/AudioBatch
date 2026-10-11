@@ -13,6 +13,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 /// Formats a plugin description as "Manufacturer Name (Format)"
@@ -39,6 +40,11 @@ public:
 
     /// Closes all editor, chain-editor, and scan windows and destroys their plugin instances.
     ~PluginChain() override;
+
+    PluginChain(const PluginChain&) = delete;
+    PluginChain& operator=(const PluginChain&) = delete;
+    PluginChain(PluginChain&&) = delete;
+    PluginChain& operator=(PluginChain&&) = delete;
 
     /// Returns the number of slots in the chain, including disabled ones.
     [[nodiscard]] int getNumSlots() const noexcept;
@@ -146,6 +152,18 @@ private:
     /// Returns true when any entry still has an editor window open.
     [[nodiscard]] bool anyEditorOpen() const noexcept;
 
+    /// Decodes a base64 plugin state onto the entry, leaving the state empty when the text is not valid base64.
+    static void restoreState(ChainEntry& entry, const juce::String& stateBase64);
+
+    /// Parses one stored chain slot, or returns an empty optional when its plugin description cannot be loaded.
+    [[nodiscard]] static std::optional<ChainEntry> parseSlot(const juce::XmlElement& slotElement);
+
+    /// Parses a legacy single-plugin selection, or returns an empty optional when its description cannot be loaded.
+    [[nodiscard]] static std::optional<ChainEntry> parseLegacyEntry(
+        const juce::String& pluginXml,
+        const juce::String& stateBase64
+    );
+
     /// Restores the chain from application settings.
     /// When no chain is stored, migrates a legacy single-plugin selection into a one-slot chain
     /// and removes the legacy keys.
@@ -185,5 +203,5 @@ private:
     ChainChangedCallback chainChangedCallback;
 
     JUCE_DECLARE_WEAK_REFERENCEABLE(PluginChain)
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginChain)
+    JUCE_LEAK_DETECTOR(PluginChain)
 };

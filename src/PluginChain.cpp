@@ -416,7 +416,7 @@ void PluginChain::openEditorForSlot(const int index)
     launchOptions.escapeKeyTriggersCloseButton = true;
     launchOptions.useNativeTitleBar = true;
     launchOptions.resizable = false;
-    launchOptions.dialogBackgroundColour = juce::CustomLookAndFeel::greySemiDark;
+    launchOptions.dialogBackgroundColour = juce::CustomLookAndFeel::greySemiDark();
 
     entry.editorWindow = launchOptions.create();
 
@@ -448,7 +448,7 @@ void PluginChain::showChainEditor()
     launchOptions.escapeKeyTriggersCloseButton = true;
     launchOptions.useNativeTitleBar = true;
     launchOptions.resizable = true;
-    launchOptions.dialogBackgroundColour = juce::CustomLookAndFeel::greySemiDark;
+    launchOptions.dialogBackgroundColour = juce::CustomLookAndFeel::greySemiDark();
 
     chainEditorWindow = launchOptions.create();
 
@@ -497,7 +497,7 @@ void PluginChain::showScanWindow()
     launchOptions.escapeKeyTriggersCloseButton = true;
     launchOptions.useNativeTitleBar = true;
     launchOptions.resizable = true;
-    launchOptions.dialogBackgroundColour = juce::CustomLookAndFeel::greySemiDark;
+    launchOptions.dialogBackgroundColour = juce::CustomLookAndFeel::greySemiDark();
 
     scanWindow = launchOptions.create();
 
@@ -536,6 +536,54 @@ bool PluginChain::anyEditorOpen() const noexcept
     return std::ranges::any_of(chain, [](const auto& entry) { return entry.wasEditorOpen; });
 }
 
+void PluginChain::restoreState(ChainEntry& entry, const juce::String& stateBase64)
+{
+    if (stateBase64.isEmpty()) {
+        return;
+    }
+
+    juce::MemoryOutputStream stream(entry.state, false);
+    if (!juce::Base64::convertFromBase64(stream, stateBase64)) {
+        entry.state.reset();
+    }
+}
+
+std::optional<PluginChain::ChainEntry> PluginChain::parseSlot(const juce::XmlElement& slotElement)
+{
+    const auto* descriptionElement = slotElement.getFirstChildElement();
+    if (descriptionElement == nullptr) {
+        return std::nullopt;
+    }
+
+    ChainEntry entry;
+    if (!entry.description.loadFromXml(*descriptionElement)) {
+        return std::nullopt;
+    }
+
+    entry.enabled = slotElement.getBoolAttribute(slotEnabledAttribute, true);
+    restoreState(entry, slotElement.getStringAttribute(slotStateAttribute));
+    return entry;
+}
+
+std::optional<PluginChain::ChainEntry> PluginChain::parseLegacyEntry(
+    const juce::String& pluginXml,
+    const juce::String& stateBase64
+)
+{
+    const auto element = juce::parseXML(pluginXml);
+    if (element == nullptr) {
+        return std::nullopt;
+    }
+
+    ChainEntry entry;
+    if (!entry.description.loadFromXml(*element)) {
+        return std::nullopt;
+    }
+
+    restoreState(entry, stateBase64);
+    return entry;
+}
+
 void PluginChain::loadPersistedChain()
 {
     auto* settings = appProperties.getUserSettings();
@@ -543,35 +591,16 @@ void PluginChain::loadPersistedChain()
         return;
     }
 
-    const auto chainXml = settings->getValue(pluginChainPropertyKey);
-    if (chainXml.isNotEmpty()) {
+    if (const auto chainXml = settings->getValue(pluginChainPropertyKey); chainXml.isNotEmpty()) {
         const auto element = juce::parseXML(chainXml);
         if (element == nullptr || !element->hasTagName(chainXmlTag)) {
             return;
         }
 
         for (const auto* slotElement : element->getChildWithTagNameIterator(slotXmlTag)) {
-            const auto* descriptionElement = slotElement->getFirstChildElement();
-            if (descriptionElement == nullptr) {
-                continue;
+            if (auto entry = parseSlot(*slotElement); entry.has_value()) {
+                chain.push_back(std::move(*entry));
             }
-
-            ChainEntry entry;
-            if (!entry.description.loadFromXml(*descriptionElement)) {
-                continue;
-            }
-
-            entry.enabled = slotElement->getBoolAttribute(slotEnabledAttribute, true);
-
-            const auto stateBase64 = slotElement->getStringAttribute(slotStateAttribute);
-            if (stateBase64.isNotEmpty()) {
-                juce::MemoryOutputStream stream(entry.state, false);
-                if (!juce::Base64::convertFromBase64(stream, stateBase64)) {
-                    entry.state.reset();
-                }
-            }
-
-            chain.push_back(std::move(entry));
         }
 
         return;
@@ -583,24 +612,12 @@ void PluginChain::loadPersistedChain()
         return;
     }
 
-    ChainEntry entry;
-    if (const auto element = juce::parseXML(legacyPluginXml); element != nullptr) {
-        if (!entry.description.loadFromXml(*element)) {
-            return;
-        }
-    } else {
+    auto entry = parseLegacyEntry(legacyPluginXml, settings->getValue(legacySelectedPluginStatePropertyKey));
+    if (!entry.has_value()) {
         return;
     }
 
-    const auto stateBase64 = settings->getValue(legacySelectedPluginStatePropertyKey);
-    if (stateBase64.isNotEmpty()) {
-        juce::MemoryOutputStream stream(entry.state, false);
-        if (!juce::Base64::convertFromBase64(stream, stateBase64)) {
-            entry.state.reset();
-        }
-    }
-
-    chain.push_back(std::move(entry));
+    chain.push_back(std::move(*entry));
     persistChain();
 
     settings->removeValue(legacySelectedPluginIdPropertyKey);
