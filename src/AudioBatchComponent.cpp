@@ -1881,7 +1881,11 @@ void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record
     auto mergedRecord = record;
     if (const auto existingIndex = findRecordIndex(record.fullPath); existingIndex >= 0) {
         const auto& existing = analysisResults[static_cast<std::size_t>(existingIndex)];
-        if (existing.hasCustomGain) {
+
+        // A custom gain only applies to the version of the file it was set for, so a changed file starts without one.
+        if (existing.hasCustomGain && existing.fileSize == record.fileSize
+            && existing.modifiedTimeMs == record.modifiedTimeMs)
+        {
             mergedRecord.customGainDb = existing.customGainDb;
             mergedRecord.hasCustomGain = existing.hasCustomGain;
         }

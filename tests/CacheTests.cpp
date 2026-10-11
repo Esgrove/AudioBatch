@@ -48,19 +48,30 @@ public:
             expect(!cache.getAnalysis(file, cached));
         }
 
-        beginTest("A custom gain is kept when the file changes");
+        beginTest("A custom gain is kept while the file is unchanged");
         {
             const auto gainFile = directory.copyFixture("sine_stereo_44100_16.wav", "gain.wav");
             expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(gainFile)));
             expect(cache.storeCustomGain(gainFile, -3.5f, true));
-            expect(fixtureFile("sine_mono_44100_16.wav").copyFileTo(gainFile));
+
+            // Analyzing the unchanged file again must not drop the gain.
+            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(gainFile)));
 
             AudioAnalysisRecord cached;
-            expect(!cache.getAnalysis(gainFile, cached));
+            expect(cache.getAnalysis(gainFile, cached));
+            expect(cached.hasCustomGain);
+            expectEquals(cached.customGainDb, -3.5f);
+        }
 
-            float customGainDb = 0.0f;
-            expect(cache.getCustomGain(gainFile, customGainDb));
-            expectEquals(customGainDb, -3.5f);
+        beginTest("A custom gain is cleared when the file changes");
+        {
+            const auto gainFile = directory.getChildFile("gain.wav");
+            expect(fixtureFile("sine_mono_44100_16.wav").copyFileTo(gainFile));
+            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(gainFile)));
+
+            AudioAnalysisRecord cached;
+            expect(cache.getAnalysis(gainFile, cached));
+            expect(!cached.hasCustomGain);
         }
 
         beginTest("Pruning removes rows of deleted files only");
@@ -77,7 +88,7 @@ public:
             expect(cache.getAnalysis(keptFile, cached));
         }
 
-        beginTest("The coordinator publishes the plan before results and keeps stored custom gains");
+        beginTest("The coordinator publishes the plan before results and drops the gain of a changed file");
         {
             const auto plannedFile = directory.copyFixture("sine_stereo_44100_16.wav", "planned.wav");
             expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(plannedFile)));
@@ -99,8 +110,7 @@ public:
             expectEquals(planFileCount, 1);
             expect(planCameFirst);
             expectEquals(static_cast<int>(results.size()), 1);
-            expect(results.front().hasCustomGain);
-            expectEquals(results.front().customGainDb, 2.0f);
+            expect(!results.front().hasCustomGain);
             expectEquals(results.front().sampleRate, 48000);
         }
 

@@ -88,7 +88,7 @@ private:
     /// Runs on a worker thread and stops early when the run is cancelled.
     void planRun(const AudioAnalysisOptions& options, int runId);
 
-    /// Analyzes one file, keeps its stored custom gain, caches the result, and publishes it.
+    /// Analyzes one file, caches the result, and publishes it.
     /// A file whose analysis is cancelled is neither cached nor published.
     void analyzeStaleFile(const juce::File& file, int runId, int totalFiles);
 

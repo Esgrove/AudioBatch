@@ -711,18 +711,11 @@ static juce::String commitProcessedOutput(
 }
 
 /// Returns the record unchanged when the file still matches it on disk,
-/// otherwise analyzes the file again and keeps the user's custom gain,
-/// so the input gain is never computed from an outdated peak.
+/// otherwise analyzes the file again, so the input gain is never computed from an outdated peak.
+/// The custom gain is dropped for a changed file, since it was set for the previous version of the file.
 static AudioAnalysisRecord refreshIfChanged(const AudioAnalysisRecord& record)
 {
-    if (record.matchesFileOnDisk()) {
-        return record;
-    }
-
-    auto refreshed = AudioAnalysisService::analyzeFile(record.file);
-    refreshed.customGainDb = record.customGainDb;
-    refreshed.hasCustomGain = record.hasCustomGain;
-    return refreshed;
+    return record.matchesFileOnDisk() ? record : AudioAnalysisService::analyzeFile(record.file);
 }
 
 /// Prepares the chain, renders the whole file through it into an unquantized 32-bit float WAV file,

@@ -1,7 +1,7 @@
 /// Implementation of AnalysisCoordinator.
 /// Plans each run on a worker thread: expands the input paths, publishes cached records,
 /// and queues one thread pool job per stale file.
-/// Stores fresh results back into the cache, keeping the custom gain stored for a changed file,
+/// Stores fresh results back into the cache,
 /// and guards callback publication with run id checks and a callback lock.
 /// Also provides the blocking analysis entry point used by the CLI.
 
@@ -156,15 +156,10 @@ void AnalysisCoordinator::analyzeStaleFile(const juce::File& file, const int run
 
     publishStarting(file, runId);
 
-    auto result = AudioAnalysisService::analyzeFile(file, [this, runId] { return runId != currentRunId.load(); });
+    const auto result = AudioAnalysisService::analyzeFile(file, [this, runId] { return runId != currentRunId.load(); });
 
     if (runId != currentRunId.load()) {
         return;
-    }
-
-    if (float customGainDb = 0.0f; cache.getCustomGain(file, customGainDb)) {
-        result.customGainDb = customGainDb;
-        result.hasCustomGain = true;
     }
 
     cache.storeAnalysis(result);

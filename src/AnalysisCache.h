@@ -43,15 +43,13 @@ public:
     bool open();
 
     /// Stores the completed analysis record for a file.
+    /// An existing custom gain is kept while the file is unchanged on disk,
+    /// and replaced by the record's gain when the file's size or modification time differs,
+    /// since a custom gain only applies to the version of the file it was set for.
     bool storeAnalysis(const AudioAnalysisRecord& record);
 
     /// Stores serialized waveform preview data for a file.
     bool storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData);
-
-    /// Loads the user-controlled gain stored for a file, even when the rest of its row is out of date,
-    /// so the gain survives the file changing on disk.
-    /// Returns false when the file has no row or no custom gain.
-    bool getCustomGain(const juce::File& file, float& customGainDb);
 
     /// Updates only the user-controlled gain fields for a file.
     bool storeCustomGain(const juce::File& file, float customGainDb, bool hasCustomGain);

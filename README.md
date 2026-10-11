@@ -369,7 +369,8 @@ The cache is invalidated when any of these change:
 - internal analysis schema version
 
 Failed analyses are cached too, so a file that cannot be decoded is not retried on every run.
-A file's custom gain is kept when the file changes and is analyzed again.
+A custom gain only applies to the version of the file it was set for,
+so it is cleared when the file changes on disk.
 On GUI startup, rows for files that no longer exist are removed in the background.
 Use `--refresh` in the CLI, or re-analyze from the GUI, to retry it.
 
