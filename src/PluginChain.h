@@ -7,6 +7,7 @@
 #pragma once
 
 #include "PluginProcessing.h"
+#include "PluginScanner.h"
 
 #include <JuceHeader.h>
 
@@ -164,8 +165,16 @@ private:
     /// Broadcasts a change message and invokes the chain-changed callback, if one is set.
     void notifyChainChanged();
 
+    /// Prepares a scan from the plugin manager before its first plugin is loaded.
+    /// Takes the plugin scan lock and reloads the known-plugins list,
+    /// so the scan builds on the latest saved list.
+    /// Returns false, and tells the user, when another process such as a CLI rescan is scanning.
+    bool beginPluginScan();
+
     juce::ApplicationProperties& appProperties;
     juce::AudioPluginFormatManager formatManager;
+    // Declared before the list, so it outlives the scanner that the list owns.
+    PluginScanLock pluginScanLock;
     juce::KnownPluginList knownPluginList;
 
     std::vector<ChainEntry> chain;

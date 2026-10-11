@@ -290,7 +290,13 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WorkerProcess)
 };
 
-OutOfProcessPluginScanner::OutOfProcessPluginScanner() = default;
+OutOfProcessPluginScanner::OutOfProcessPluginScanner(
+    ScanStartingCallback scanStartingCallback,
+    ScanFinishedCallback scanFinishedCallback
+) :
+    onScanStarting(std::move(scanStartingCallback)),
+    onScanFinished(std::move(scanFinishedCallback))
+{ }
 
 OutOfProcessPluginScanner::~OutOfProcessPluginScanner() = default;
 
@@ -300,6 +306,16 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
     const juce::String& fileOrIdentifier
 )
 {
+    if (!scanStarted) {
+        scanStarted = true;
+        scanSkipped = onScanStarting != nullptr && !onScanStarting();
+    }
+
+    if (scanSkipped) {
+        // Report the plugin as scanned without loading it, so it is not blacklisted.
+        return true;
+    }
+
     if (worker == nullptr) {
         worker = std::make_unique<WorkerProcess>();
 
@@ -355,4 +371,35 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
 void OutOfProcessPluginScanner::scanFinished()
 {
     worker.reset();
+
+    if (scanStarted && onScanFinished != nullptr) {
+        onScanFinished();
+    }
+
+    scanStarted = false;
+    scanSkipped = false;
+}
+
+//==============================================================================
+
+PluginScanLock::~PluginScanLock()
+{
+    release();
+}
+
+bool PluginScanLock::tryAcquire()
+{
+    if (!held) {
+        held = lock.enter(0);
+    }
+
+    return held;
+}
+
+void PluginScanLock::release()
+{
+    if (held) {
+        lock.exit();
+        held = false;
+    }
 }

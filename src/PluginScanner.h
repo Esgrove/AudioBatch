@@ -99,10 +99,22 @@ private:
 class OutOfProcessPluginScanner final : public juce::KnownPluginList::CustomScanner
 {
 public:
+    /// Called before the first plugin of a scan is loaded.
+    /// Returning false skips every plugin of that scan without blacklisting any of them.
+    using ScanStartingCallback = std::function<bool()>;
+
+    /// Called once a scan has finished, including scans that were skipped or cancelled.
+    using ScanFinishedCallback = std::function<void()>;
+
     /// Creates the scanner without starting a worker.
     /// The worker process is launched on the first scan request,
     /// and relaunched after a crash or a cancelled scan.
-    OutOfProcessPluginScanner();
+    /// The optional callbacks let the owner coordinate the scan with other processes,
+    /// for example through a PluginScanLock.
+    explicit OutOfProcessPluginScanner(
+        ScanStartingCallback scanStartingCallback = nullptr,
+        ScanFinishedCallback scanFinishedCallback = nullptr
+    );
 
     /// Stops the worker process, if one is running.
     ~OutOfProcessPluginScanner() override;
@@ -116,13 +128,44 @@ public:
         const juce::String& fileOrIdentifier
     ) override;
 
-    /// Stops the worker process once the scan has finished.
+    /// Stops the worker process once the scan has finished and invokes the scan-finished callback.
     void scanFinished() override;
 
 private:
     class WorkerProcess;
 
     std::unique_ptr<WorkerProcess> worker;
+    ScanStartingCallback onScanStarting;
+    ScanFinishedCallback onScanFinished;
+    bool scanStarted = false;
+    bool scanSkipped = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(OutOfProcessPluginScanner)
+};
+
+/// Inter-process lock that serializes plugin scans between the GUI and the CLI.
+/// Each scan loads the known-plugins list, adds to it, and saves it,
+/// so two overlapping scans would overwrite each other's results.
+/// Holding this lock from loading the list to saving it prevents that.
+class PluginScanLock
+{
+public:
+    PluginScanLock() = default;
+
+    /// Releases the lock if it is held.
+    ~PluginScanLock();
+
+    /// Tries to take the lock without waiting.
+    /// Returns false when another process is scanning.
+    /// Taking a lock that is already held by this object succeeds.
+    [[nodiscard]] bool tryAcquire();
+
+    /// Releases the lock if it is held.
+    void release();
+
+private:
+    juce::InterProcessLock lock {"AudioBatchPluginScan"};
+    bool held = false;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginScanLock)
 };

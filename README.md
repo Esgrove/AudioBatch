@@ -234,6 +234,9 @@ CLAP plugins are not listed, because JUCE cannot host them.
   which the GUI reloads when the plugin manager opens.
   The GUI settings file is never written by the CLI.
   If the list cannot be saved, the command reports an error and exits with code 1.
+  Only one plugin scan runs at a time.
+  A rescan refuses to start while the GUI plugin manager is scanning,
+  and the GUI skips its scan with a message while a rescan is running.
 
 ```shell
 audiobatch --list-plugins

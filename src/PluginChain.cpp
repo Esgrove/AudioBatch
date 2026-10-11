@@ -9,8 +9,8 @@
 
 #include "CustomLookAndFeel.h"
 #include "PluginChainEditor.h"
-#include "PluginScanner.h"
 #include "StringFormat.h"
+#include "utils.h"
 
 #include <algorithm>
 
@@ -59,7 +59,12 @@ PluginChain::PluginChain(juce::ApplicationProperties& applicationProperties) : a
 
     // Load plugins in a separate worker process while scanning,
     // so a plugin that crashes during the scan is blacklisted instead of taking down the app.
-    knownPluginList.setCustomScanner(std::make_unique<OutOfProcessPluginScanner>());
+    // The plugin scan lock is held for the whole scan, so a CLI rescan cannot overwrite its results.
+    knownPluginList.setCustomScanner(
+        std::make_unique<OutOfProcessPluginScanner>(
+            [this] { return beginPluginScan(); }, [this] { pluginScanLock.release(); }
+        )
+    );
 
     loadKnownPluginList();
     loadPersistedChain();
@@ -658,6 +663,28 @@ void PluginChain::loadKnownPluginList()
 
     migrateKnownPluginList(*settings);
     ::loadKnownPluginList(*settings, knownPluginList);
+}
+
+bool PluginChain::beginPluginScan()
+{
+    if (!pluginScanLock.tryAcquire()) {
+        utils::logWarn("Skipped a plugin scan because another plugin scan is running");
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions::makeOptionsOk(
+                juce::MessageBoxIconType::InfoIcon,
+                "Plugin Scan Skipped",
+                "Another plugin scan is running, for example audiobatch --rescan in a terminal.\n\n"
+                "Scan again once it has finished.",
+                "OK"
+            ),
+            nullptr
+        );
+        return false;
+    }
+
+    // Another process may have saved a newer list since this one was loaded.
+    loadKnownPluginList();
+    return true;
 }
 
 void PluginChain::notifyChainChanged()

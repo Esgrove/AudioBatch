@@ -419,6 +419,17 @@ int PluginListCli::run(const bool rescan, const PluginListGrouping grouping)
         return 1;
     }
 
+    // Hold the plugin scan lock from loading the list to saving it,
+    // so a scan in the GUI cannot overwrite this rescan's results, or the other way around.
+    PluginScanLock pluginScanLock;
+    if (rescan && !pluginScanLock.tryAcquire()) {
+        console::printError(
+            "Another plugin scan is running, for example in the AudioBatch plugin manager. "
+            "Try again once it has finished."
+        );
+        return 1;
+    }
+
     juce::KnownPluginList knownPluginList;
     loadKnownPluginList(*settings, knownPluginList);
 
