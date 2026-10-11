@@ -60,7 +60,7 @@ Checks: >
   -bugprone-easily-swappable-parameters,
   -portability-avoid-pragma-once
 WarningsAsErrors: ""
-HeaderFilterRegex: ".*/src/.*"
+HeaderFilterRegex: ".*/(src|tests)/.*"
 FormatStyle: file
 CheckOptions:
     cppcoreguidelines-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: "true"

@@ -3,7 +3,7 @@ set -eo pipefail
 
 USAGE="Usage: $0 [OPTIONS] [-- CLANG_TIDY_ARGS...]
 
-Lint C++ code in src/ with clang-tidy.
+Lint C++ code in src/ and tests/ with clang-tidy.
 
 Uses the compile_commands.json from an existing CMake build directory.
 On macOS the script also passes the active SDK path so that Homebrew's
@@ -91,8 +91,8 @@ if [ "$BASH_PLATFORM" = "mac" ] && command -v xcrun > /dev/null 2>&1; then
     fi
 fi
 
-# Collect the C++ sources under src/.
-SOURCES=("$REPO"/src/*.cpp)
+# Collect the C++ sources under src/ and tests/.
+SOURCES=("$REPO"/src/*.cpp "$REPO"/tests/*.cpp)
 
 print_magenta "Running clang-tidy on ${#SOURCES[@]} source files..."
 

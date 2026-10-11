@@ -56,10 +56,10 @@ fi
 
 if [ "$CHECK" = true ]; then
     print_magenta "Checking C++ formatting..."
-    clang-format --verbose --style=file --dry-run --Werror "$REPO"/src/*.cpp "$REPO"/src/*.h
+    clang-format --verbose --style=file --dry-run --Werror "$REPO"/src/*.cpp "$REPO"/src/*.h "$REPO"/tests/*.cpp "$REPO"/tests/*.h
 else
     print_magenta "Formatting C++ files..."
-    clang-format -i --verbose --style=file "$REPO"/src/*.cpp "$REPO"/src/*.h
+    clang-format -i --verbose --style=file "$REPO"/src/*.cpp "$REPO"/src/*.h "$REPO"/tests/*.cpp "$REPO"/tests/*.h
 fi
 
 # Use an installed cmake-format, or fetch it on demand with uvx.

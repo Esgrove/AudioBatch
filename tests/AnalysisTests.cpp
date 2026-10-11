@@ -1,0 +1,203 @@
+/// Integration tests for AudioAnalysisService::analyzeFile on the committed fixtures.
+/// Every fixture tone has the same level, so the tests check that each format, channel count,
+/// sample rate, and bit depth is decoded and measured consistently.
+
+#include "AudioAnalysisService.h"
+#include "TestHelpers.h"
+#include "TestSuites.h"
+
+#include <array>
+#include <cmath>
+
+namespace audiobatch::tests
+{
+/// Expected properties of one fixture tone.
+struct ToneFixture {
+    const char* fileName;
+    int channels;
+    int sampleRate;
+    /// Expected source bit depth, or 0 for lossy formats where it is not checked.
+    int bitsPerSample;
+    /// True for lossy formats, which get a wider level tolerance.
+    bool lossy;
+};
+
+/// The tone fixtures and what analysis should report for them.
+constexpr std::array toneFixtures {
+    ToneFixture {
+        .fileName = "sine_stereo_44100_16.wav",
+        .channels = 2,
+        .sampleRate = 44100,
+        .bitsPerSample = 16,
+        .lossy = false,
+    },
+    ToneFixture {
+        .fileName = "sine_stereo_48000_24.wav",
+        .channels = 2,
+        .sampleRate = 48000,
+        .bitsPerSample = 24,
+        .lossy = false,
+    },
+    ToneFixture {
+        .fileName = "sine_mono_44100_16.wav",
+        .channels = 1,
+        .sampleRate = 44100,
+        .bitsPerSample = 16,
+        .lossy = false,
+    },
+    ToneFixture {
+        .fileName = "sine_mono_48000_24.wav",
+        .channels = 1,
+        .sampleRate = 48000,
+        .bitsPerSample = 24,
+        .lossy = false,
+    },
+    ToneFixture {
+        .fileName = "sine_stereo_44100_32f.wav",
+        .channels = 2,
+        .sampleRate = 44100,
+        .bitsPerSample = 32,
+        .lossy = false,
+    },
+    ToneFixture {
+        .fileName = "sine_stereo_96000_16.wav",
+        .channels = 2,
+        .sampleRate = 96000,
+        .bitsPerSample = 16,
+        .lossy = false,
+    },
+    ToneFixture {
+        .fileName = "sine_mono_24000_16.wav",
+        .channels = 1,
+        .sampleRate = 24000,
+        .bitsPerSample = 16,
+        .lossy = false,
+    },
+    ToneFixture {
+        .fileName = "sine_stereo_44100_16.aif",
+        .channels = 2,
+        .sampleRate = 44100,
+        .bitsPerSample = 16,
+        .lossy = false,
+    },
+    ToneFixture {
+        .fileName = "sine_mono_48000_24.aif",
+        .channels = 1,
+        .sampleRate = 48000,
+        .bitsPerSample = 24,
+        .lossy = false,
+    },
+    ToneFixture {
+        .fileName = "sine_stereo_44100_16.flac",
+        .channels = 2,
+        .sampleRate = 44100,
+        .bitsPerSample = 16,
+        .lossy = false,
+    },
+    ToneFixture {
+        .fileName = "sine_stereo_48000_24.flac",
+        .channels = 2,
+        .sampleRate = 48000,
+        .bitsPerSample = 24,
+        .lossy = false,
+    },
+    ToneFixture {
+        .fileName = "sine_stereo_44100_320k.mp3",
+        .channels = 2,
+        .sampleRate = 44100,
+        .bitsPerSample = 0,
+        .lossy = true,
+    },
+    ToneFixture {
+        .fileName = "sine_joint_stereo_44100_192k.mp3",
+        .channels = 2,
+        .sampleRate = 44100,
+        .bitsPerSample = 0,
+        .lossy = true,
+    },
+    ToneFixture {
+        .fileName = "sine_mono_44100_128k.mp3",
+        .channels = 1,
+        .sampleRate = 44100,
+        .bitsPerSample = 0,
+        .lossy = true,
+    },
+    ToneFixture {
+        .fileName = "sine_stereo_48000.ogg",
+        .channels = 2,
+        .sampleRate = 48000,
+        .bitsPerSample = 0,
+        .lossy = true,
+    },
+};
+
+/// Allowed level difference for lossless fixtures, in dB or LU.
+constexpr double losslessTolerance = 0.05;
+/// Allowed level difference for lossy fixtures, in dB or LU.
+constexpr double lossyTolerance = 0.5;
+
+/// Checks the measured peaks, loudness, and file properties of every fixture.
+class AnalysisTests final : public juce::UnitTest
+{
+public:
+    AnalysisTests() : juce::UnitTest("Audio analysis", "AudioBatch") { }
+
+    /// Runs the analysis checks.
+    void runTest() override
+    {
+        for (const auto& fixture : toneFixtures) {
+            checkToneFixture(fixture);
+        }
+
+        beginTest("Digital silence has no peak and no measurable loudness");
+        {
+            const auto record = AudioAnalysisService::analyzeFile(fixtureFile("silence_stereo_44100_16.wav"));
+            expect(!record.hasError(), record.errorMessage);
+            expectEquals(record.overallPeak, 0.0f);
+            expectEquals(record.integratedLufs, AudioAnalysisRecord::negativeInfinityLoudness);
+        }
+
+        beginTest("A file that is not audio fails analysis");
+        {
+            const auto record = AudioAnalysisService::analyzeFile(fixtureFile("broken.wav"));
+            expect(record.hasError());
+            expect(record.errorMessage.isNotEmpty());
+        }
+    }
+
+private:
+    /// Analyzes one fixture and compares the results with its expected properties.
+    void checkToneFixture(const ToneFixture& fixture)
+    {
+        beginTest(fixture.fileName);
+
+        const auto record = AudioAnalysisService::analyzeFile(fixtureFile(fixture.fileName));
+        expect(!record.hasError(), record.errorMessage);
+        expectEquals(record.channels, fixture.channels);
+        expectEquals(record.sampleRate, fixture.sampleRate);
+
+        if (fixture.bitsPerSample > 0) {
+            expectEquals(record.bitsPerSample, fixture.bitsPerSample);
+        }
+
+        const auto tolerance = fixture.lossy ? lossyTolerance : losslessTolerance;
+        const auto expectedLoudness = fixture.channels == 1 ? fixtureMonoLoudness : fixtureStereoLoudness;
+
+        expectWithinAbsoluteError(
+            static_cast<double>(juce::Decibels::gainToDecibels(std::abs(record.overallPeak))),
+            fixturePeakDecibels,
+            tolerance
+        );
+        expectWithinAbsoluteError(
+            juce::Decibels::gainToDecibels(record.overallTruePeak), fixturePeakDecibels, tolerance
+        );
+        expectWithinAbsoluteError(record.integratedLufs, expectedLoudness, tolerance);
+        expectWithinAbsoluteError(record.durationSeconds, 1.0, 0.1);
+    }
+};
+
+std::unique_ptr<juce::UnitTest> createAnalysisTests()
+{
+    return std::make_unique<AnalysisTests>();
+}
+}  // namespace audiobatch::tests

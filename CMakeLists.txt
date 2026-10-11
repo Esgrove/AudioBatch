@@ -357,29 +357,30 @@ target_compile_definitions(
         BUILDTIME_VERSION_STRING="${APP_VERSION_STRING}"
 )
 
-target_compile_definitions(
-    AudioBatchCli
-    PRIVATE
-        DONT_SET_USING_JUCE_NAMESPACE=1
-        JUCE_DISABLE_JUCE_VERSION_PRINTING=1
-        JUCE_PLUGINHOST_AU=1
-        JUCE_PLUGINHOST_VST3=1
-        JUCE_USE_CURL=0
-        JUCE_USE_FLAC=1
-        JUCE_USE_LAME_AUDIO_FORMAT=1
-        JUCE_USE_MP3AUDIOFORMAT=1
-        JUCE_USE_OGGVORBIS=1
-        JUCE_USE_WINDOWS_MEDIA_FORMAT=0
-        JUCE_WEB_BROWSER=0
-        BUILDTIME_APP_NAME="${CMAKE_PROJECT_NAME}"
-        BUILDTIME_BRANCH="${GIT_BRANCH}"
-        BUILDTIME_BUILD_NAME="${APP_BUILD_NAME}"
-        BUILDTIME_COMMIT="${GIT_HASH}"
-        BUILDTIME_DATE="${DATE}"
-        BUILDTIME_VERSION_NUMBER="${APP_BUILD_VERSION}"
-        BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}"
-        BUILDTIME_VERSION_STRING="${APP_VERSION_STRING}"
+# Compile definitions shared by the console executables, the CLI and the tests.
+set(AUDIOBATCH_CONSOLE_DEFINITIONS
+    DONT_SET_USING_JUCE_NAMESPACE=1
+    JUCE_DISABLE_JUCE_VERSION_PRINTING=1
+    JUCE_PLUGINHOST_AU=1
+    JUCE_PLUGINHOST_VST3=1
+    JUCE_USE_CURL=0
+    JUCE_USE_FLAC=1
+    JUCE_USE_LAME_AUDIO_FORMAT=1
+    JUCE_USE_MP3AUDIOFORMAT=1
+    JUCE_USE_OGGVORBIS=1
+    JUCE_USE_WINDOWS_MEDIA_FORMAT=0
+    JUCE_WEB_BROWSER=0
+    BUILDTIME_APP_NAME="${CMAKE_PROJECT_NAME}"
+    BUILDTIME_BRANCH="${GIT_BRANCH}"
+    BUILDTIME_BUILD_NAME="${APP_BUILD_NAME}"
+    BUILDTIME_COMMIT="${GIT_HASH}"
+    BUILDTIME_DATE="${DATE}"
+    BUILDTIME_VERSION_NUMBER="${APP_BUILD_VERSION}"
+    BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}"
+    BUILDTIME_VERSION_STRING="${APP_VERSION_STRING}"
 )
+
+target_compile_definitions(AudioBatchCli PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS})
 
 set_target_properties(
     AudioBatch
@@ -432,7 +433,7 @@ function(audiobatch_set_source_warnings)
     foreach(target IN LISTS ARGN)
         get_target_property(target_sources ${target} SOURCES)
         foreach(source IN LISTS target_sources)
-            if(source MATCHES "^src/.*\\.cpp$")
+            if(source MATCHES "^(src|tests)/.*\\.cpp$")
                 list(APPEND project_sources "${CMAKE_SOURCE_DIR}/${source}")
             endif()
         endforeach()
@@ -524,7 +525,70 @@ function(audiobatch_set_source_warnings)
     )
 endfunction()
 
-audiobatch_set_source_warnings(AudioBatch AudioBatchCli)
+# Unit and integration tests for the shared core and the CLI front end, run through CTest.
+juce_add_console_app(
+    AudioBatchTests
+    PRODUCT_NAME "AudioBatchTests"
+    VERSION ${APP_BUILD_VERSION}
+)
+juce_generate_juce_header(AudioBatchTests)
+
+# cmake-format: off
+target_sources(
+    AudioBatchTests
+    PRIVATE
+        ${AUDIOBATCH_CORE_SOURCES}
+        ${AUDIOBATCH_CLI_SOURCES}
+        "tests/AnalysisTests.cpp"
+        "tests/CacheTests.cpp"
+        "tests/CliTests.cpp"
+        "tests/FormatTests.cpp"
+        "tests/MetadataTests.cpp"
+        "tests/NormalizationTests.cpp"
+        "tests/TestHelpers.cpp"
+        "tests/TestHelpers.h"
+        "tests/TestMain.cpp"
+        "tests/TestSuites.h"
+)
+# cmake-format: on
+
+target_include_directories(AudioBatchTests PRIVATE "${CMAKE_SOURCE_DIR}/src")
+target_compile_definitions(
+    AudioBatchTests PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS}
+                            AUDIOBATCH_TEST_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures"
+)
+set_target_properties(AudioBatchTests PROPERTIES COMPILE_WARNING_AS_ERROR YES CXX_STANDARD 23)
+
+if(APPLE)
+    target_link_libraries(
+        AudioBatchTests PRIVATE "$<LINK_LIBRARY:FRAMEWORK,AudioUnit>" "$<LINK_LIBRARY:FRAMEWORK,CoreAudioKit>"
+    )
+endif()
+
+# cmake-format: off
+target_link_libraries(
+    AudioBatchTests
+    PRIVATE
+        ${AUDIOBATCH_SQLITE_TARGET}
+        ebur128
+        fmt::fmt
+        tag
+        juce::juce_audio_basics
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_events
+    PUBLIC
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags
+)
+# cmake-format: on
+
+enable_testing()
+add_test(NAME AudioBatchTests COMMAND AudioBatchTests)
+
+audiobatch_set_source_warnings(AudioBatch AudioBatchCli AudioBatchTests)
 
 # START_JUCE_APPLICATION expands to a main function that casts `char**` to `const char**`,
 # which -Wcast-qual rejects and project code cannot change.

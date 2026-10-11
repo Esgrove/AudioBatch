@@ -70,6 +70,16 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
 List sources as relative `src/...` paths,
 because the strict warning set is applied by matching that pattern.
 
+Tests:
+
+- `tests/` holds the `AudioBatchTests` executable, which links the shared core and the CLI front end.
+  Suites are `juce::UnitTest` classes, one per file, created through the factories in `tests/TestSuites.h`.
+- `tests/fixtures/` holds small committed audio files: one second 1 kHz tones at -6.02 dBFS
+  in WAV, AIFF, FLAC, MP3, and Ogg, mono and stereo, at several sample rates and bit depths,
+  plus a tagged FLAC file, digital silence, and a broken file.
+  `tests/fixtures/generate.sh` regenerates them with ffmpeg.
+  Tests that modify files work on copies in a temporary directory.
+
 ## Dependencies
 
 - JUCE, vendored under `JUCE/` as a submodule.
@@ -143,6 +153,16 @@ because the strict warning set is applied by matching that pattern.
   Several of those flags are Clang-specific, so GCC is not a supported compiler.
   `src/Main.cpp` additionally gets `-Wno-cast-qual`,
   because the `START_JUCE_APPLICATION` macro casts away `const` in code the project cannot change.
+
+## Testing
+
+- Build the debug preset and run `ctest --test-dir cmake-build-mac-debug --output-on-failure`,
+  or run the `AudioBatchTests` executable directly for the full test log.
+- Add tests for new behaviour in the shared core and the CLI parsing.
+  Prefer the committed fixtures over generating audio in a test.
+- Avoid tests that convert non-AIFF sources through normalization,
+  because a successful conversion moves the source to the system trash.
+- `tests/.clang-tidy` disables `readability-magic-numbers`, since tests compare against literal expected values.
 
 ## Formatting
 
