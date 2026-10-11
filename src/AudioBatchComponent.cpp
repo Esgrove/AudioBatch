@@ -208,6 +208,28 @@ constexpr int dialogContentWidth = 500;
 constexpr int dialogContentHeight = 150;
 }  // namespace layout
 
+/// Ranges of the normalization target slider and the keys that persist the normalization settings.
+namespace normalize_target
+{
+/// Lowest selectable target sample peak, in dBFS.
+constexpr double minimumPeakDbfs = -12.0;
+/// Step of the target sample peak, in dB.
+constexpr double peakStepDecibels = 0.1;
+/// Lowest selectable target loudness, in LUFS.
+constexpr double minimumLufs = -30.0;
+/// Highest selectable target loudness, in LUFS.
+constexpr double maximumLufs = -6.0;
+/// Step of the target loudness, in LU.
+constexpr double loudnessStepDecibels = 0.5;
+/// Combo box item id of the peak mode, which must be non-zero.
+constexpr int peakModeItemId = 1;
+/// Combo box item id of the loudness mode.
+constexpr int loudnessModeItemId = 2;
+constexpr auto modeSettingKey = "normalizeMode";
+constexpr auto targetPeakSettingKey = "normalizeTargetPeakDbfs";
+constexpr auto targetLufsSettingKey = "normalizeTargetLufs";
+}  // namespace normalize_target
+
 /// Range of the waveform zoom slider in percent of the unzoomed view and its conversion to a scale factor.
 namespace zoom_range
 {
@@ -702,6 +724,31 @@ void AudioBatchComponent::configureProcessingControls()
     );
     addAndMakeVisible(forceOverwriteToggle);
 
+    normalizeModeBox.addItem("Peak", normalize_target::peakModeItemId);
+    normalizeModeBox.addItem("Loudness", normalize_target::loudnessModeItemId);
+    normalizeModeBox.setTooltip(
+        "Normalize to a sample peak level, or to an integrated loudness limited to a -0.3 dBTP true peak."
+    );
+    normalizeModeBox.onChange = [this] {
+        updateNormalizeTargetSlider();
+        saveNormalizationSettings();
+    };
+    addAndMakeVisible(normalizeModeBox);
+
+    normalizeTargetSlider.setSliderStyle(juce::Slider::LinearBar);
+    normalizeTargetSlider.setNumDecimalPlacesToDisplay(1);
+    normalizeTargetSlider.setTooltip("Target level for normalization.");
+    normalizeTargetSlider.onValueChange = [this] {
+        if (normalizeModeBox.getSelectedId() == normalize_target::loudnessModeItemId) {
+            normalizeTargetLufs = normalizeTargetSlider.getValue();
+        } else {
+            normalizeTargetPeakDbfs = normalizeTargetSlider.getValue();
+        }
+        saveNormalizationSettings();
+    };
+    addAndMakeVisible(normalizeTargetSlider);
+    loadNormalizationSettings();
+
     processButton.setTooltip("Process selected files through the plugin chain.");
     updateProcessButtonState();
     processButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
@@ -954,6 +1001,14 @@ void AudioBatchComponent::resized()
     normalizeBeforePluginToggle.setBounds(toggleRow.removeFromLeft((toggleRow.getWidth() - buttonGap) / 2));
     toggleRow.removeFromLeft(buttonGap);
     forceOverwriteToggle.setBounds(toggleRow);
+
+    control.removeFromBottom(layout::sectionSpacing);
+
+    // The normalization mode and target share the row above the toggles.
+    auto targetRow = control.removeFromBottom(layout::normalizeToggleHeight);
+    normalizeModeBox.setBounds(targetRow.removeFromLeft((targetRow.getWidth() - buttonGap) / 2));
+    targetRow.removeFromLeft(buttonGap);
+    normalizeTargetSlider.setBounds(targetRow);
 
     control.removeFromBottom(layout::sectionSpacing);
 
@@ -1288,6 +1343,74 @@ void AudioBatchComponent::showSupportedNormalizationFormats()
     );
 }
 
+void AudioBatchComponent::loadNormalizationSettings()
+{
+    const auto* settings = pluginAppProperties.getUserSettings();
+    normalizeTargetPeakDbfs = juce::jlimit(
+        normalize_target::minimumPeakDbfs,
+        0.0,
+        settings->getDoubleValue(
+            normalize_target::targetPeakSettingKey, AudioNormalizationOptions::defaultTargetPeakDbfs
+        )
+    );
+    normalizeTargetLufs = juce::jlimit(
+        normalize_target::minimumLufs,
+        normalize_target::maximumLufs,
+        settings->getDoubleValue(normalize_target::targetLufsSettingKey, AudioNormalizationOptions::defaultTargetLufs)
+    );
+
+    const auto isLoudnessMode = settings->getValue(normalize_target::modeSettingKey) == "loudness";
+    normalizeModeBox.setSelectedId(
+        isLoudnessMode ? normalize_target::loudnessModeItemId : normalize_target::peakModeItemId,
+        juce::dontSendNotification
+    );
+    updateNormalizeTargetSlider();
+}
+
+void AudioBatchComponent::saveNormalizationSettings()
+{
+    auto* settings = pluginAppProperties.getUserSettings();
+    const auto isLoudnessMode = normalizeModeBox.getSelectedId() == normalize_target::loudnessModeItemId;
+    settings->setValue(normalize_target::modeSettingKey, isLoudnessMode ? "loudness" : "peak");
+    settings->setValue(normalize_target::targetPeakSettingKey, normalizeTargetPeakDbfs);
+    settings->setValue(normalize_target::targetLufsSettingKey, normalizeTargetLufs);
+}
+
+void AudioBatchComponent::updateNormalizeTargetSlider()
+{
+    if (normalizeModeBox.getSelectedId() == normalize_target::loudnessModeItemId) {
+        normalizeTargetSlider.setRange(
+            normalize_target::minimumLufs, normalize_target::maximumLufs, normalize_target::loudnessStepDecibels
+        );
+        normalizeTargetSlider.setTextValueSuffix(" LUFS");
+        normalizeTargetSlider.setValue(normalizeTargetLufs, juce::dontSendNotification);
+    } else {
+        normalizeTargetSlider.setRange(normalize_target::minimumPeakDbfs, 0.0, normalize_target::peakStepDecibels);
+        normalizeTargetSlider.setTextValueSuffix(" dBFS");
+        normalizeTargetSlider.setValue(normalizeTargetPeakDbfs, juce::dontSendNotification);
+    }
+}
+
+AudioNormalizationOptions AudioBatchComponent::getNormalizationOptions() const
+{
+    AudioNormalizationOptions options;
+    options.mode = normalizeModeBox.getSelectedId() == normalize_target::loudnessModeItemId
+        ? AudioNormalizationMode::loudness
+        : AudioNormalizationMode::peak;
+    options.targetPeakDbfs = normalizeTargetPeakDbfs;
+    options.targetLufs = normalizeTargetLufs;
+    return options;
+}
+
+juce::String AudioBatchComponent::formatNormalizeTarget() const
+{
+    if (normalizeModeBox.getSelectedId() == normalize_target::loudnessModeItemId) {
+        return utils::format("{:.1f} LUFS", normalizeTargetLufs);
+    }
+
+    return utils::format("{:.1f} dBFS peak", normalizeTargetPeakDbfs);
+}
+
 juce::File AudioBatchComponent::getDefaultBrowseDirectory()
 {
     auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
@@ -1419,7 +1542,7 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
     menu.addItem(openParentDirectoryMenuItemId, "Open Parent Folder", parentDirectory.isDirectory());
     menu.addSeparator();
     menu.addItem(reanalyzeMenuItemId, "Re-analyze Selected", !isAnalysisInProgress() && !normalizeInProgress);
-    menu.addItem(normalizeMenuItemId, "Normalize to 0 dBFS", canNormalize);
+    menu.addItem(normalizeMenuItemId, utils::format("Normalize to {}", formatNormalizeTarget()), canNormalize);
     menu.addItem(normalizeSupportMenuItemId, "Normalization Format Support...");
     menu.addSeparator();
     const bool canProcess = !pluginProcessingInProgress && !isAnalysisInProgress() && !normalizeInProgress
@@ -2119,7 +2242,7 @@ void AudioBatchComponent::normalizeSelectedRecords()
     normalizationFailures.clear();
     normalizedResultsCompleted = 0;
     normalizeInProgress = true;
-    AudioNormalizationOptions normalizationOptions;
+    auto normalizationOptions = getNormalizationOptions();
     normalizationOptions.overwriteExisting = forceOverwriteToggle.getToggleState();
     normalizedResultsExpected = normalizeCoordinator.start(recordsToNormalize, normalizationOptions);
 

@@ -143,6 +143,64 @@ private:
             );
         }
 
+        beginTest("Loudness mode reaches the target loudness unless the true peak ceiling is lower");
+        {
+            const auto record = AudioAnalysisService::analyzeFile(fixtureFile("sine_stereo_44100_16.wav"));
+            AudioNormalizationOptions options;
+            options.mode = AudioNormalizationMode::loudness;
+            juce::String errorMessage;
+
+            options.targetLufs = -14.0;
+            auto gain = AudioNormalizationService::getNormalizationGain(record, options, errorMessage);
+            expect(gain.has_value(), errorMessage);
+            expectWithinAbsoluteError(
+                static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(0.0f))),
+                -14.0 - record.integratedLufs,
+                0.01
+            );
+
+            // Reaching 0 LUFS would put the true peak at about 0 dBTP, above the ceiling, so the gain stops at the
+            // ceiling.
+            options.targetLufs = 0.0;
+            gain = AudioNormalizationService::getNormalizationGain(record, options, errorMessage);
+            expect(gain.has_value(), errorMessage);
+            expectWithinAbsoluteError(
+                static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(0.0f))),
+                AudioNormalizationOptions::defaultTruePeakCeilingDbtp
+                    - juce::Decibels::gainToDecibels(record.overallTruePeak),
+                0.01
+            );
+        }
+
+        beginTest("In-place loudness normalization reaches the target");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "loudness.aif");
+            AudioNormalizationOptions options;
+            options.mode = AudioNormalizationMode::loudness;
+            options.targetLufs = -14.0;
+
+            const auto result
+                = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), options);
+            expect(!result.hasError(), result.errorMessage);
+            expectWithinAbsoluteError(result.analysisRecord.integratedLufs, -14.0, 0.1);
+        }
+
+        beginTest("Peak mode reaches a target below full scale");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "peak.aif");
+            AudioNormalizationOptions options;
+            options.targetPeakDbfs = -1.0;
+
+            const auto result
+                = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), options);
+            expect(!result.hasError(), result.errorMessage);
+            expectWithinAbsoluteError(
+                static_cast<double>(juce::Decibels::gainToDecibels(std::abs(result.analysisRecord.overallPeak))),
+                -1.0,
+                peakTolerance
+            );
+        }
+
         beginTest("A silent file cannot be normalized");
         {
             const auto source = directory.copyFixture("silence_stereo_44100_16.wav");

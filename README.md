@@ -9,7 +9,8 @@ Current implementation focus:
 - Cache analysis results in SQLite so unchanged files are not re-read every run.
 - Show sortable peak, true peak, and loudness data in the GUI.
 - Show per-file processing state directly in the results list while background work is running.
-- Normalize selected files to `0 dBFS` peak from the GUI or the CLI.
+- Normalize selected files to a target peak or integrated loudness from the GUI,
+  or to `0 dBFS` peak from the CLI.
 - Convert any normalized output to AIFF and carry over the source tags,
   including embedded album art and custom tags, by writing them back as ID3v2.4.
 - Batch process selected files through a chain of VST3 or Audio Unit plugins from the GUI.
@@ -129,7 +130,7 @@ The results list supports per-file actions from the context menu, including:
 - re-analyze selected files
 - move files to the system trash
 - remove files from the list without deleting them
-- normalize selected files to `0 dBFS` peak
+- normalize selected files to the selected target
 - process selected files through the current plugin chain
 
 Keyboard shortcuts in the results list:
@@ -139,6 +140,15 @@ Keyboard shortcuts in the results list:
 - `Cmd-R` or `Ctrl-R` reveals the selected file in Finder or Explorer.
 - `F5` refreshes the analysis for all root folders.
 - `Space` starts or stops the background analysis.
+
+The normalization target is set with the mode selector and the target slider above the toggles,
+and is remembered between sessions:
+
+- `Peak` scales each file so its sample peak reaches the target, from -12 to 0 dBFS. The default is 0 dBFS.
+- `Loudness` scales each file so its integrated loudness reaches the target, from -30 to -6 LUFS.
+  The default is -14 LUFS.
+  The gain is limited so the true peak stays at or below -0.3 dBTP,
+  so a dense file can end up quieter than the target instead of clipping.
 
 Normalization works for every readable input format,
 including AIFF, WAV, FLAC, MP3, and Ogg Vorbis,

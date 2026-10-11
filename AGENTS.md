@@ -15,7 +15,8 @@ so changes to shared services must keep both targets working.
 - Analyze audio files for decoded sample peak, true peak, and integrated loudness (EBU R128).
 - Cache analysis results in SQLite so unchanged files are not re-read on later runs.
 - Show sortable peak, true peak, and loudness data in a GUI results table with per-file status.
-- Normalize selected files to `0 dBFS` peak from the GUI or the CLI.
+- Normalize selected files to a target peak or integrated loudness from the GUI,
+  or to `0 dBFS` peak from the CLI.
 - Convert normalized output to AIFF while preserving source metadata,
   including embedded album art and custom tags, written back as ID3v2.4.
 - Batch process selected files through a chain of VST3 or Audio Unit plugins from the GUI.

@@ -493,6 +493,38 @@ juce::StringArray AudioNormalizationService::findBatchOutputConflicts(const std:
     return conflicts;
 }
 
+std::optional<float> AudioNormalizationService::getNormalizationGain(
+    const AudioAnalysisRecord& record,
+    const AudioNormalizationOptions& options,
+    juce::String& errorMessage
+)
+{
+    const auto peak = static_cast<double>(peakMagnitude(record.overallPeak));
+
+    if (peak <= 0.0) {
+        errorMessage = "File contains no signal that can be normalized";
+        return std::nullopt;
+    }
+
+    if (options.mode == AudioNormalizationMode::peak) {
+        return static_cast<float>(juce::Decibels::decibelsToGain(options.targetPeakDbfs) / peak);
+    }
+
+    if (record.integratedLufs <= AudioAnalysisRecord::negativeInfinityLoudness) {
+        errorMessage = "File has no measurable loudness to normalize";
+        return std::nullopt;
+    }
+
+    auto gainDecibels = options.targetLufs - record.integratedLufs;
+
+    // The true peak scales with the gain, so the ceiling caps how far the file can be raised.
+    if (const auto truePeak = juce::jmax(record.overallTruePeak, peak); truePeak > 0.0) {
+        gainDecibels = juce::jmin(gainDecibels, options.truePeakCeilingDbtp - juce::Decibels::gainToDecibels(truePeak));
+    }
+
+    return static_cast<float>(juce::Decibels::decibelsToGain(gainDecibels));
+}
+
 int AudioNormalizationService::getOutputBitDepth(
     const AudioAnalysisRecord& record,
     const juce::AudioFormatReader& reader
@@ -626,13 +658,14 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
         return failNormalization(file, "Unsupported or unreadable audio file");
     }
 
-    const auto peak = peakMagnitude(record.overallPeak);
+    juce::String gainError;
+    const auto normalizationGain = getNormalizationGain(record, options, gainError);
 
-    if (peak <= 0.0f) {
-        return failNormalization(file, "File contains no signal that can be normalized");
+    if (!normalizationGain.has_value()) {
+        return failNormalization(file, gainError);
     }
 
-    const auto gain = 1.0f / peak;
+    const auto gain = *normalizationGain;
 
     if (juce::approximatelyEqual(gain, 1.0f) && outputFile == file) {
         AudioNormalizationResult result;
