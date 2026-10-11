@@ -112,6 +112,10 @@ private:
     /// Stops playback and releases the preview file, transport source, and waveform so the file can be replaced.
     void clearCurrentAudioPreview();
 
+    /// Stops playback, closes the preview file, and clears the waveform, keeping the current file selected,
+    /// so the file on disk can be replaced or the preview reset.
+    void releasePreviewPlayback();
+
     /// Routes dropped paths to a root folder scan when only directories were dropped,
     /// otherwise analyzes the dropped files individually.
     /// Dropped directories replace the root folders, or are appended to them when Shift is held.
@@ -273,6 +277,14 @@ private:
     /// Resolves rows still marked pending or active after a run completes,
     /// falling back to the cache or a synchronous re-analysis so no row is left in a stale state.
     void reconcilePendingAnalysisResults();
+
+    /// Re-sorts the results, refreshes the table, and selects the given paths again.
+    void refreshTablePreservingSelection(const juce::StringArray& selectedPaths);
+
+    /// Replaces the row of a file that a normalize or process run rewrote with the record of its output,
+    /// which may have a new path when the source was converted.
+    /// Updates the selection, the cache, and the preview to follow the file to its new path.
+    void replaceRecordAfterOperation(const juce::File& originalFile, const AudioAnalysisRecord& newRecord);
 
     /// Removes trashed files from the table and keeps selection and preview state coherent.
     void removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow);

@@ -116,26 +116,25 @@ enum FileMenuItemId : std::uint8_t {
     reanalyzeMenuItemId,
 };
 
-/// Formats a bounded list of normalization failures for an alert dialog,
+/// Formats a bounded list of failures for an alert dialog,
 /// truncating with a "...and N more" line so the dialog stays readable.
-static juce::String buildNormalizationFailureMessage(const juce::StringArray& failures)
+static juce::String buildFailureListMessage(const juce::StringArray& failures)
 {
-    if (failures.isEmpty()) {
-        return {};
-    }
-
-    juce::String message;
-    const auto linesToShow = juce::jmin(6, failures.size());
+    /// Most failures listed before the rest are summarized.
+    constexpr int maximumListedFailures = 8;
+    juce::StringArray lines;
+    const auto linesToShow = juce::jmin(maximumListedFailures, failures.size());
 
     for (int index = 0; index < linesToShow; ++index) {
-        message << utils::format("- {}", failures[index]) << juce::newLine;
+        lines.add(utils::format("- {}", failures[index]));
     }
 
     if (failures.size() > linesToShow) {
-        message << utils::format("- ...and {} more", failures.size() - linesToShow);
+        lines.add(utils::format("- ...and {} more", failures.size() - linesToShow));
     }
 
-    return message.trimEnd();
+    // The message is only shown inside the app, so plain '\n' line breaks are fine.
+    return lines.joinIntoString("\n");
 }
 
 /// Returns the platform-appropriate label for the reveal-in-file-manager menu item.
@@ -1355,10 +1354,7 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
     completedResults = expectedResults;
 
     if (resultsChanged) {
-        sortResults();
-        resultsTable.updateContent();
-        updateResultsTableColumnWidths();
-        restoreSelectionByPaths(selectedPaths);
+        refreshTablePreservingSelection(selectedPaths);
 
         if (currentAudioFile.existsAsFile()) {
             if (const auto currentIndex = findRecordIndex(currentAudioFile.getFullPathName()); currentIndex >= 0) {
@@ -1481,10 +1477,7 @@ void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record
         analysisResults.push_back(mergedRecord);
     }
 
-    sortResults();
-    resultsTable.updateContent();
-    updateResultsTableColumnWidths();
-    restoreSelectionByPaths(selectedPaths);
+    refreshTablePreservingSelection(selectedPaths);
 
     if (currentAudioFile == mergedRecord.file) {
         updateAudioInfo(mergedRecord);
@@ -1496,55 +1489,66 @@ void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record
     updateProcessButtonState();
 }
 
+void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArray& selectedPaths)
+{
+    sortResults();
+    resultsTable.updateContent();
+    updateResultsTableColumnWidths();
+    restoreSelectionByPaths(selectedPaths);
+}
+
+void AudioBatchComponent::replaceRecordAfterOperation(
+    const juce::File& originalFile,
+    const AudioAnalysisRecord& newRecord
+)
+{
+    const auto& originalPath = originalFile.getFullPathName();
+    auto selectedPaths = getSelectedRecordPaths();
+
+    for (int index = 0; index < selectedPaths.size(); ++index) {
+        if (selectedPaths[index] == originalPath) {
+            selectedPaths.set(index, newRecord.fullPath);
+        }
+    }
+
+    // A converted original has a different path than its output, so its row is removed.
+    std::erase_if(analysisResults, [&originalPath, &newRecord](const AudioAnalysisRecord& record) {
+        return record.fullPath == originalPath && record.fullPath != newRecord.fullPath;
+    });
+
+    if (const auto existingIndex = findRecordIndex(newRecord.fullPath); existingIndex >= 0) {
+        analysisResults[static_cast<std::size_t>(existingIndex)] = newRecord;
+    } else {
+        analysisResults.push_back(newRecord);
+    }
+
+    analysisCache.storeAnalysis(newRecord);
+
+    // A converted original was moved to the trash, so its cached row is no longer needed.
+    if (newRecord.fullPath != originalPath) {
+        analysisCache.removeAnalysis(originalFile);
+    }
+
+    refreshTablePreservingSelection(selectedPaths);
+
+    if (currentAudioFile == originalFile) {
+        currentAudioFile = newRecord.file;
+        showAudioResource(juce::URL(currentAudioFile));
+        updateAudioInfo(newRecord);
+        updateGainControlsForSelection();
+        updateThumbnailDisplayGain();
+    } else if (currentAudioFile == newRecord.file) {
+        updateAudioInfo(newRecord);
+    }
+}
+
 void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& result)
 {
     ++normalizedResultsCompleted;
     fileActivity.clearActive(result.fullPath);
 
     if (result.succeeded) {
-        auto selectedPaths = getSelectedRecordPaths();
-
-        for (int index = 0; index < selectedPaths.size(); ++index) {
-            if (selectedPaths[index] == result.fullPath) {
-                selectedPaths.set(index, result.analysisRecord.fullPath);
-            }
-        }
-
-        analysisResults.erase(
-            std::ranges::remove_if(
-                analysisResults,
-                [&result](const AudioAnalysisRecord& record) {
-                    return record.fullPath == result.fullPath && record.fullPath != result.analysisRecord.fullPath;
-                }
-            ).begin(),
-            analysisResults.end()
-        );
-
-        if (const auto existingIndex = findRecordIndex(result.analysisRecord.fullPath); existingIndex >= 0) {
-            analysisResults[static_cast<std::size_t>(existingIndex)] = result.analysisRecord;
-        } else {
-            analysisResults.push_back(result.analysisRecord);
-        }
-
-        analysisCache.storeAnalysis(result.analysisRecord);
-
-        // A converted original was moved to the trash, so its cached row is no longer needed.
-        if (result.analysisRecord.fullPath != result.fullPath) {
-            analysisCache.removeAnalysis(result.file);
-        }
-
-        sortResults();
-        resultsTable.updateContent();
-        updateResultsTableColumnWidths();
-        restoreSelectionByPaths(selectedPaths);
-
-        if (currentAudioFile == result.file) {
-            currentAudioFile = result.analysisRecord.file;
-            showAudioResource(juce::URL(currentAudioFile));
-            updateAudioInfo(result.analysisRecord);
-        } else if (currentAudioFile == result.analysisRecord.file) {
-            updateAudioInfo(result.analysisRecord);
-        }
+        replaceRecordAfterOperation(result.file, result.analysisRecord);
     } else {
         normalizationFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
         fileActivity.setMessage(result.fullPath, {.text = result.errorMessage, .isError = true});
@@ -1564,11 +1568,11 @@ void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
             juce::MessageBoxOptions::makeOptionsOk(
                 juce::MessageBoxIconType::WarningIcon,
                 "Normalize",
-                normalizationFailures.size() == 1 ? normalizationFailures[0]
-                                                  : utils::format(
-                                                        "Some files could not be normalized:\n\n{}",
-                                                        buildNormalizationFailureMessage(normalizationFailures)
-                                                    ),
+                normalizationFailures.size() == 1
+                    ? normalizationFailures[0]
+                    : utils::format(
+                          "Some files could not be normalized:\n\n{}", buildFailureListMessage(normalizationFailures)
+                      ),
                 "OK",
                 this
             ),
@@ -1837,10 +1841,7 @@ void AudioBatchComponent::handleSortRequested(const int columnId, const bool isF
 
     const auto selectedPaths = getSelectedRecordPaths();
 
-    sortResults();
-    resultsTable.updateContent();
-    updateResultsTableColumnWidths();
-    restoreSelectionByPaths(selectedPaths);
+    refreshTablePreservingSelection(selectedPaths);
 }
 
 void AudioBatchComponent::handleSecondarySortRequested(const int columnId)
@@ -1863,10 +1864,7 @@ void AudioBatchComponent::handleSecondarySortRequested(const int columnId)
 
     const auto selectedPaths = getSelectedRecordPaths();
 
-    sortResults();
-    resultsTable.updateContent();
-    updateResultsTableColumnWidths();
-    restoreSelectionByPaths(selectedPaths);
+    refreshTablePreservingSelection(selectedPaths);
 }
 
 void AudioBatchComponent::refreshSortIndicators()
@@ -1967,10 +1965,7 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
         }
     } else {
         currentAudioUrl = {};
-        currentWaveformLoadedFromCache = false;
-        startStopButton.setEnabled(false);
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
-        thumbnail->setURL(juce::URL());
+        releasePreviewPlayback();
     }
 }
 
@@ -1995,13 +1990,10 @@ bool AudioBatchComponent::loadURLIntoTransport(const juce::URL& audioURL)
     transportSource.setSource(nullptr);
     currentAudioFileSource.reset();
 
-    juce::AudioFormatReader* reader = nullptr;
+    auto* reader = formatManager.createReaderFor(
+        audioURL.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress))
+    );
 
-    if (reader == nullptr) {
-        reader = formatManager.createReaderFor(
-            audioURL.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress))
-        );
-    }
     if (reader != nullptr) {
         currentAudioFileSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
         transportSource.setSource(currentAudioFileSource.get(), 32768, &thread, reader->sampleRate);
@@ -2052,11 +2044,16 @@ void AudioBatchComponent::clearCurrentAudioPreview()
 {
     currentAudioFile = juce::File();
     currentAudioUrl = {};
-    currentWaveformLoadedFromCache = false;
+    releasePreviewPlayback();
+}
+
+void AudioBatchComponent::releasePreviewPlayback()
+{
     transportSource.stop();
     transportSource.setSource(nullptr);
     currentAudioFileSource.reset();
     thumbnail->setURL(juce::URL());
+    currentWaveformLoadedFromCache = false;
     startStopButton.setEnabled(false);
     startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
 }
@@ -2272,12 +2269,7 @@ juce::Array<juce::File> AudioBatchComponent::releasePreviewBeforeProcessing(
 
     // Release file handles so the on-disk file can be replaced.
     // Keep currentAudioFile so the result handler can re-load the produced output when processing completes.
-    transportSource.setSource(nullptr);
-    currentAudioFileSource.reset();
-    thumbnail->setURL(juce::URL());
-    currentWaveformLoadedFromCache = false;
-    startStopButton.setEnabled(false);
-    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
+    releasePreviewPlayback();
 
     return filesToProcess;
 }
@@ -2361,50 +2353,13 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
     fileActivity.clearActive(result.originalFullPath);
 
     if (result.succeeded) {
-        auto selectedPaths = getSelectedRecordPaths();
-
-        for (int index = 0; index < selectedPaths.size(); ++index) {
-            if (selectedPaths[index] == result.originalFullPath) {
-                selectedPaths.set(index, result.analysisRecord.fullPath);
-            }
-        }
-
         if (result.notice.isNotEmpty()) {
             fileActivity.setMessage(result.analysisRecord.fullPath, {.text = result.notice, .isError = false});
         }
 
-        // Remove any record matching the original path that does not match the new path (in case extension changed).
-        std::erase_if(analysisResults, [&result](const AudioAnalysisRecord& record) {
-            return record.fullPath == result.originalFullPath && record.fullPath != result.analysisRecord.fullPath;
-        });
-
-        if (const auto existingIndex = findRecordIndex(result.analysisRecord.fullPath); existingIndex >= 0) {
-            analysisResults[static_cast<std::size_t>(existingIndex)] = result.analysisRecord;
-        } else {
-            analysisResults.push_back(result.analysisRecord);
-        }
-
-        analysisCache.storeAnalysis(result.analysisRecord);
-        // Clear any persisted gain for the new output (gain is baked in).
+        replaceRecordAfterOperation(result.originalFile, result.analysisRecord);
+        // The custom gain is baked into the processed audio, so the new output starts without one.
         analysisCache.storeCustomGain(result.analysisRecord.file, 0.0f, false);
-
-        // If the output path differs from the original (extension change), drop the stale cache row.
-        if (result.originalFile != result.analysisRecord.file) {
-            analysisCache.removeAnalysis(result.originalFile);
-        }
-
-        sortResults();
-        resultsTable.updateContent();
-        updateResultsTableColumnWidths();
-        restoreSelectionByPaths(selectedPaths);
-
-        if (currentAudioFile == result.originalFile) {
-            currentAudioFile = result.analysisRecord.file;
-            showAudioResource(juce::URL(currentAudioFile));
-            updateAudioInfo(result.analysisRecord);
-            updateGainControlsForSelection();
-            updateThumbnailDisplayGain();
-        }
     } else {
         processingFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
         fileActivity.setMessage(result.originalFullPath, {.text = result.errorMessage, .isError = true});
@@ -2425,22 +2380,15 @@ void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
     }
 
     if (!processingFailures.isEmpty()) {
-        juce::String body;
-        const auto linesToShow = juce::jmin(8, processingFailures.size());
-        for (int i = 0; i < linesToShow; ++i) {
-            body << utils::format("- {}", processingFailures[i]) << juce::newLine;
-        }
-        if (processingFailures.size() > linesToShow) {
-            body << utils::format("- ...and {} more", processingFailures.size() - linesToShow);
-        }
-
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions::makeOptionsOk(
                 juce::MessageBoxIconType::WarningIcon,
                 "Plugin Processing",
                 processingFailures.size() == 1
                     ? processingFailures[0]
-                    : utils::format("Some files could not be processed:\n\n{}", body.trimEnd()),
+                    : utils::format(
+                          "Some files could not be processed:\n\n{}", buildFailureListMessage(processingFailures)
+                      ),
                 "OK",
                 this
             ),
