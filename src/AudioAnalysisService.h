@@ -6,6 +6,7 @@
 #pragma once
 
 #include "AudioAnalysisTypes.h"
+#include "Cancellation.h"
 
 #include <vector>
 
@@ -14,8 +15,7 @@ class AudioAnalysisService
 {
 public:
     /// Returns true when the caller wants analysis to stop as soon as possible.
-    /// Polled between decoded blocks, so it must be thread-safe and cheap.
-    using CancellationCheck = std::function<bool()>;
+    using CancellationCheck = utils::CancellationCheck;
 
     /// Analyzes a single supported audio file and returns the populated result record.
     /// When isCancelled starts returning true, decoding stops and a failed record is returned,
@@ -69,9 +69,4 @@ public:
 
     /// Sorts records by the requested field and direction.
     static void sortRecords(std::vector<AudioAnalysisRecord>& records, AudioAnalysisSortMode sortMode, bool ascending);
-
-private:
-    /// Returns a per-thread format manager with the basic JUCE formats registered.
-    /// Thread-local state avoids locking when analysis jobs run on multiple worker threads.
-    static juce::AudioFormatManager& getThreadLocalFormatManager();
 };

@@ -6,9 +6,9 @@
 #pragma once
 
 #include "AudioAnalysisService.h"
+#include "Cancellation.h"
 
 #include <cstdint>
-#include <functional>
 #include <optional>
 #include <vector>
 
@@ -83,8 +83,7 @@ class AudioNormalizationService
 {
 public:
     /// Returns true when the caller wants normalization to stop as soon as possible.
-    /// Polled from the normalizing thread, so it must be thread-safe and cheap.
-    using CancellationCheck = std::function<bool()>;
+    using CancellationCheck = utils::CancellationCheck;
 
     /// Returns the output path normalization writes for the given source, which is always a sibling `<name>.aif`.
     static juce::File getOutputFile(const juce::File& sourceFile);
@@ -131,9 +130,4 @@ public:
         const AudioNormalizationOptions& options,
         const CancellationCheck& isCancelled = {}
     );
-
-private:
-    /// Returns a per-thread format manager used for reading source files.
-    /// Thread-local state avoids locking when normalize jobs run on multiple worker threads.
-    static juce::AudioFormatManager& getThreadLocalFormatManager();
 };

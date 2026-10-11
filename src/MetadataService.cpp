@@ -5,6 +5,7 @@
 
 #include "MetadataService.h"
 
+#include "FileUtils.h"
 #include "Log.h"
 
 #include <aifffile.h>
@@ -52,20 +53,6 @@ TagLib::FileName toFileName(const juce::String& fullPath)
     return fullPath.toRawUTF8();
 }
 #endif
-
-/// Returns true when the file extension marks an AIFF family file.
-bool isAiffFile(const juce::File& file)
-{
-    const auto extension = file.getFileExtension().toLowerCase();
-    return extension == ".aif" || extension == ".aiff" || extension == ".aifc";
-}
-
-/// Returns true when the file extension marks a WAV file.
-bool isWavFile(const juce::File& file)
-{
-    const auto extension = file.getFileExtension().toLowerCase();
-    return extension == ".wav" || extension == ".wave";
-}
 
 /// Translates a TagLib PropertyMap into our format-agnostic representation.
 std::vector<MetadataService::PropertyEntry> readProperties(const TagLib::PropertyMap& propertyMap)
@@ -228,7 +215,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
 
     const auto& fullPath = file.getFullPathName();
 
-    if (isAiffFile(file)) {
+    if (utils::isAiffFile(file)) {
         // Use the AIFF type directly so we can request ID3v2.4 on save.
         TagLib::RIFF::AIFF::File aiffFile(toFileName(fullPath), false);
 
@@ -248,7 +235,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
         return aiffFile.save(TagLib::ID3v2::v4);
     }
 
-    if (isWavFile(file)) {
+    if (utils::isWavFile(file)) {
         TagLib::RIFF::WAV::File wavFile(toFileName(fullPath), false);
 
         if (!wavFile.isValid()) {

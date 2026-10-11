@@ -49,7 +49,9 @@ Shared core (linked into both targets):
 - Shared helpers are split by area, all in the `utils` namespace unless noted:
   - `src/Log.*` holds the leveled logging functions.
   - `src/AppInfo.*` holds the version line, the About text, system information, and the settings file options.
-  - `src/FileUtils.*` holds the file system helpers, such as moving files to the trash.
+  - `src/FileUtils.*` holds the file system helpers, such as moving files to the trash and extension checks.
+  - `src/AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, and peak math.
+  - `src/Cancellation.h` holds the `CancellationCheck` callback the services poll.
   - `src/StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
   - `src/ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
   - `src/version.h` holds the build version constants.

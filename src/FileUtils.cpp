@@ -49,4 +49,37 @@ bool deleteFile(const juce::File& file)
 
     return true;
 }
+
+juce::String normalizeExtension(const juce::String& extension)
+{
+    auto value = extension.trim().toLowerCase();
+
+    if (value.startsWithChar('.')) {
+        value = value.substring(1);
+    }
+
+    return value;
+}
+
+juce::String fileExtension(const juce::File& file)
+{
+    return normalizeExtension(file.getFileExtension());
+}
+
+bool isMp3File(const juce::File& file)
+{
+    return fileExtension(file) == "mp3";
+}
+
+bool isAiffFile(const juce::File& file)
+{
+    const auto extension = fileExtension(file);
+    return extension == "aif" || extension == "aiff" || extension == "aifc";
+}
+
+bool isWavFile(const juce::File& file)
+{
+    const auto extension = fileExtension(file);
+    return extension == "wav" || extension == "wave";
+}
 }  // namespace utils
