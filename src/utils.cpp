@@ -1,9 +1,12 @@
 /// Implementation of the utils namespace helpers.
 /// Covers logger creation, moving files to the OS trash with a native fallback on Windows,
 /// file deletion with error logging,
-/// and collecting and formatting system and build information for logs and the About dialog.
+/// collecting and formatting system and build information for logs and the About dialog,
+/// and printing to the parent console from the GUI executable.
 
 #include "utils.h"
+
+#include <cstdio>
 
 #if JUCE_WINDOWS
 #include <juce_core/native/juce_BasicNativeHeaders.h>
@@ -107,5 +110,21 @@ juce::String aboutMessage(const juce::String& appName)
             << juce::String(juce::SystemStats::getNumCpus()) << "T)" << juce::newLine
             << "Memory: " << juce::String(juce::SystemStats::getMemorySizeInMegabytes()) << " MB";
     return message;
+}
+
+void printLineToConsole(const std::string_view text)
+{
+#if JUCE_WINDOWS
+    if (auto* const outputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+        outputHandle == nullptr || outputHandle == INVALID_HANDLE_VALUE)
+    {
+        if (AttachConsole(ATTACH_PARENT_PROCESS) != 0) {
+            FILE* stream = nullptr;
+            freopen_s(&stream, "CONOUT$", "w", stdout);
+        }
+    }
+#endif
+    fmt::print("{}\n", text);
+    std::fflush(stdout);
 }
 }  // namespace utils

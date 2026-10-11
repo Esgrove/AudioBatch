@@ -84,6 +84,13 @@ This produces two binaries:
 
 The GUI analyzes the selected root folder automatically in the background and stores results in a sortable table.
 
+Starting the GUI executable with `-V` or `--version` prints the version line and exits without opening a window,
+the same as the CLI:
+
+```text
+AudioBatch 0.8.0.12 2026-10-11 ea19fd1 main JUCE v9.0.3
+```
+
 The results list supports per-file actions from the context menu, including:
 
 - reveal file in Finder or Explorer
@@ -186,6 +193,9 @@ audiobatch [options] <paths...>
   -j, --jobs <count>
   -s, --sort <peak|name|path>
 ```
+
+`--help` and `--version` only print to the console.
+They do not start logging or write to the log file.
 
 Examples:
 

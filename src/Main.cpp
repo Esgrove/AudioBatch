@@ -26,6 +26,13 @@ enum MenuItemId {
     clearChainMenuItemId,
     scanPluginsMenuItemId,
 };
+
+/// Returns true when the command line contains the version flag.
+static bool isVersionRequest(const juce::String& commandLine)
+{
+    const juce::ArgumentList arguments {"AudioBatch", commandLine};
+    return arguments.containsOption("--version|-V");
+}
 }  // namespace audiobatch::app
 
 using namespace audiobatch::app;
@@ -345,16 +352,28 @@ public:
     }
 
     /// Restricts the app to a single running instance.
+    /// A version request is exempt, so it still prints its output while another instance is running
+    /// instead of being forwarded to that instance.
     bool moreThanOneInstanceAllowed() override
     {
-        return false;
+        return isVersionRequest(getCommandLineParameters());
     }
 
     /// Starts the application: sets up file logging, creates the main window,
     /// and either shows it or keeps it hidden when the --headless flag is present.
     /// Window activation is repeated asynchronously to reliably gain focus on first launch.
+    /// The --version flag only prints the version line and quits,
+    /// before the logger or the window are created.
     void initialise(const juce::String& commandLineParameters) override
     {
+        if (isVersionRequest(commandLineParameters)) {
+            constexpr auto versionLine = version::makeVersionLine("AudioBatch");
+            utils::printLineToConsole(versionLine.view());
+            setApplicationReturnValue(0);
+            quit();
+            return;
+        }
+
         const auto initialiseStartedAtMs = juce::Time::getMillisecondCounterHiRes();
         const auto logInitialiseCheckpoint = [initialiseStartedAtMs](const juce::String& step) {
             utils::logInfo(

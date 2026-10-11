@@ -329,6 +329,9 @@ target_compile_definitions(AudioBatch
         DONT_SET_USING_JUCE_NAMESPACE=1
         JUCE_ASIO=1
         JUCE_DIRECTSOUND=0
+        # Debug builds would otherwise print the JUCE version on startup,
+        # which pollutes the --version output.
+        JUCE_DISABLE_JUCE_VERSION_PRINTING=1
         JUCE_USE_LAME_AUDIO_FORMAT=1
         JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_PLUGINHOST_VST3=1
@@ -354,6 +357,9 @@ target_compile_definitions(AudioBatch
 target_compile_definitions(AudioBatchCli
     PRIVATE
         DONT_SET_USING_JUCE_NAMESPACE=1
+        # Debug builds would otherwise print the JUCE version on startup,
+        # which pollutes the --version output.
+        JUCE_DISABLE_JUCE_VERSION_PRINTING=1
         JUCE_USE_LAME_AUDIO_FORMAT=1
         JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_USE_CURL=0
