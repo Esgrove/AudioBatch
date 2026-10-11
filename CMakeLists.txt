@@ -467,6 +467,11 @@ function(audiobatch_set_source_warnings)
         set(options
             # Source files and string literals are UTF-8, whatever code page the build machine uses.
             /utf-8
+            # JUCE headers are written to JUCE's own rules, so they are treated as external headers
+            # and their warnings are not reported, even when promoted to errors below.
+            /external:I
+            "${CMAKE_SOURCE_DIR}/JUCE/modules"
+            /external:W0
             # Implicit conversions that lose data, change sign or sign-extend.
             /we4242
             /we4254
