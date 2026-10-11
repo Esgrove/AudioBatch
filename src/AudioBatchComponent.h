@@ -199,7 +199,8 @@ private:
     void handleFileContextMenuRequested(int row, int columnId, const juce::MouseEvent& event);
 
     /// Merges one analysis result into the table on the message thread,
-    /// preserving any custom gain already set for the file and keeping selection and preview in sync.
+    /// preserving the custom gain set for the file while the file is unchanged on disk,
+    /// and keeping selection and preview in sync.
     void handleAnalysisResult(const AudioAnalysisRecord& record);
 
     /// Adds pending rows for the files the run analyzes and shows the progress text.

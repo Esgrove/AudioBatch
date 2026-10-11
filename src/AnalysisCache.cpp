@@ -466,7 +466,19 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             waveform_data = excluded.waveform_data,
             waveform_version = excluded.waveform_version,
             analysis_version = excluded.analysis_version,
-            updated_at_ms = excluded.updated_at_ms;
+            updated_at_ms = excluded.updated_at_ms,
+            custom_gain_db = CASE
+                WHEN file_analysis.file_size = excluded.file_size
+                    AND file_analysis.modified_time_ms = excluded.modified_time_ms
+                THEN file_analysis.custom_gain_db
+                ELSE excluded.custom_gain_db
+            END,
+            has_custom_gain = CASE
+                WHEN file_analysis.file_size = excluded.file_size
+                    AND file_analysis.modified_time_ms = excluded.modified_time_ms
+                THEN file_analysis.has_custom_gain
+                ELSE excluded.has_custom_gain
+            END;
     )SQL";
 
     sqlite3_stmt* statement = nullptr;
@@ -504,32 +516,6 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     const auto result = sqlite3_step(statement);
     sqlite3_finalize(statement);
     return result == SQLITE_DONE;
-}
-
-bool AnalysisCache::getCustomGain(const juce::File& file, float& customGainDb)
-{
-    const juce::ScopedLock lock(mutex);
-
-    if (database == nullptr && !openUnlocked()) {
-        return false;
-    }
-
-    constexpr auto sql = "SELECT custom_gain_db FROM file_analysis WHERE file_path = ? AND has_custom_gain = 1;";
-
-    sqlite3_stmt* statement = nullptr;
-    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
-        return false;
-    }
-
-    bindText(statement, 1, normalizedPath(file));
-
-    const bool found = sqlite3_step(statement) == SQLITE_ROW;
-    if (found) {
-        customGainDb = static_cast<float>(sqlite3_column_double(statement, 0));
-    }
-
-    sqlite3_finalize(statement);
-    return found;
 }
 
 bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGainDb, const bool hasCustomGain)
