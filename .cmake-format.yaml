@@ -35,6 +35,14 @@ parse:
         GIT_REPOSITORY: 1
         GIT_TAG: 1
         GIT_SHALLOW: 1
+    # Declaring COMPILE_OPTIONS as a nested keyword makes the call count as complex enough to keep the file list
+    # and the PROPERTIES pair on separate lines.
+    set_source_files_properties:
+      pargs: 1+
+      kwargs:
+        PROPERTIES:
+          kwargs:
+            COMPILE_OPTIONS: 1
     juce_add_gui_app:
       pargs: 1
       flags: []

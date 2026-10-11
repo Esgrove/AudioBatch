@@ -431,8 +431,8 @@ if(MSVC)
 else()
     # Suppress -Wswitch-enum in vendored JUCE audio formats source (has a default case but not all enum values).
     set_source_files_properties(
-        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_formats/juce_audio_formats.mm" PROPERTIES COMPILE_OPTIONS
-                                                                                               "-Wno-switch-enum"
+        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_formats/juce_audio_formats.mm"
+        PROPERTIES COMPILE_OPTIONS "-Wno-switch-enum"
     )
 
     # Suppress -Wdeprecated-declarations in vendored JUCE audio processors source
