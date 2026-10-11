@@ -23,7 +23,6 @@
 namespace audiobatch::gui
 {
 constexpr auto supportedAudioFilePatterns = "*.wav;*.aif;*.aiff;*.flac;*.mp3";
-constexpr int activityIndicatorTimerHz = 24;
 constexpr int nameColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(AudioFileTableModel::columnName);
 constexpr int pathColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(AudioFileTableModel::columnPath);
 
@@ -377,8 +376,7 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
     analysisCoordinator.setStartingCallback([safeThis](const juce::File& file, const int runId) {
         juce::MessageManager::callAsync([safeThis, file, runId] {
             if (safeThis != nullptr && runId == safeThis->analysisRunId) {
-                safeThis->activeFileStatusLabels[file.getFullPathName()] = "Analyzing";
-                safeThis->resultsTable.repaint();
+                safeThis->fileActivity.setActive(file.getFullPathName(), "Analyzing");
             }
         });
     });
@@ -440,9 +438,9 @@ AudioBatchComponent::AudioBatchComponent() :
         [this](const int row, const int columnId, const juce::MouseEvent& event) {
             handleFileContextMenuRequested(row, columnId, event);
         },
-        [this](const AudioAnalysisRecord& record) { return getActiveStatusLabel(record); },
-        [this](const AudioAnalysisRecord& record) { return getOperationMessage(record); },
-        [] { return getActivityPhase(); }
+        [this](const AudioAnalysisRecord& record) { return fileActivity.getActiveLabel(record.fullPath); },
+        [this](const AudioAnalysisRecord& record) { return fileActivity.getMessage(record.fullPath); },
+        [] { return FileActivityTracker::getAnimationPhase(); }
     ),
     audioSetupComponent(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
 {
@@ -510,7 +508,6 @@ AudioBatchComponent::~AudioBatchComponent()
     normalizeCoordinator.cancelAndWait();
     pluginCoordinator.cancelAndWait();
 
-    stopTimer();
     transportSource.stop();
     transportSource.setSource(nullptr);
     audioSourcePlayer.setSource(nullptr);
@@ -867,7 +864,7 @@ void AudioBatchComponent::clearAllRecords()
     }
 
     analysisResults.clear();
-    activeFileStatusLabels.clear();
+    fileActivity.clearAllActive();
     clearCurrentAudioPreview();
     audioInfo->clear();
     expectedResults = 0;
@@ -878,7 +875,6 @@ void AudioBatchComponent::clearAllRecords()
     resultsTable.updateContent();
     updateResultsTableColumnWidths();
     resultsTable.repaint();
-    syncActivityTimer();
     statusLabel.setText("No files", juce::dontSendNotification);
     updateProcessButtonState();
 }
@@ -895,7 +891,7 @@ void AudioBatchComponent::removeSelectedRecords()
     const int fallbackRow = selectedRows.isEmpty() ? 0 : selectedRows[0];
 
     for (const auto& path : selectedPaths) {
-        unmarkFileProcessing(path);
+        fileActivity.clearActive(path);
     }
 
     removeRecordsByPath(selectedPaths, fallbackRow);
@@ -1358,30 +1354,13 @@ juce::String AudioBatchComponent::buildNormalizationUnavailableMessage(const std
     );
 }
 
-void AudioBatchComponent::markFilesProcessing(const juce::Array<juce::File>& files, const juce::String& activityLabel)
-{
-    for (const auto& file : files) {
-        activeFileStatusLabels[file.getFullPathName()] = activityLabel;
-        operationMessages.erase(file.getFullPathName());
-    }
-
-    syncActivityTimer();
-    resultsTable.repaint();
-}
-
-void AudioBatchComponent::unmarkFileProcessing(const juce::String& fullPath)
-{
-    activeFileStatusLabels.erase(fullPath);
-    syncActivityTimer();
-}
-
 void AudioBatchComponent::reconcilePendingAnalysisResults()
 {
     const auto selectedPaths = getSelectedRecordPaths();
     bool resultsChanged = false;
 
     for (auto& record : analysisResults) {
-        const auto activeStatus = getActiveStatusLabel(record);
+        const auto activeStatus = fileActivity.getActiveLabel(record.fullPath);
         const auto needsRefresh
             = activeStatus == "Analyzing" || activeStatus == "Waiting" || record.status == AudioAnalysisStatus::pending;
 
@@ -1421,16 +1400,9 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
         resultsChanged = true;
     }
 
-    for (auto iterator = activeFileStatusLabels.begin(); iterator != activeFileStatusLabels.end();) {
-        if (iterator->second == "Analyzing" || iterator->second == "Waiting") {
-            iterator = activeFileStatusLabels.erase(iterator);
-        } else {
-            ++iterator;
-        }
-    }
+    fileActivity.clearActiveWithLabels({"Analyzing", "Waiting"});
 
     completedResults = expectedResults;
-    syncActivityTimer();
 
     if (resultsChanged) {
         sortResults();
@@ -1534,7 +1506,7 @@ void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record
     }
 
     ++completedResults;
-    unmarkFileProcessing(record.fullPath);
+    fileActivity.clearActive(record.fullPath);
 
     if (!record.file.exists()) {
         updateStatusLabel();
@@ -1577,7 +1549,7 @@ void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record
 void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& result)
 {
     ++normalizedResultsCompleted;
-    unmarkFileProcessing(result.fullPath);
+    fileActivity.clearActive(result.fullPath);
 
     if (result.succeeded) {
         auto selectedPaths = getSelectedRecordPaths();
@@ -1625,7 +1597,7 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
         }
     } else {
         normalizationFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
-        operationMessages[result.fullPath] = {.text = result.errorMessage, .isError = true};
+        fileActivity.setMessage(result.fullPath, {.text = result.errorMessage, .isError = true});
         resultsTable.repaint();
     }
 
@@ -1636,7 +1608,6 @@ void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
 {
     normalizedResultsExpected = totalFiles;
     normalizeInProgress = false;
-    syncActivityTimer();
 
     if (!normalizationFailures.isEmpty()) {
         juce::AlertWindow::showAsync(
@@ -1672,7 +1643,6 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int
 
     // The plan handler already reported that no files were found.
     if (totalFiles == 0) {
-        syncActivityTimer();
         updateProcessButtonState();
         return;
     }
@@ -1799,7 +1769,7 @@ void AudioBatchComponent::normalizeSelectedRecords()
         return;
     }
 
-    markFilesProcessing(filesToNormalize, "Normalizing");
+    fileActivity.markActive(filesToNormalize, "Normalizing");
 
     updateStatusLabel();
 }
@@ -1831,7 +1801,7 @@ void AudioBatchComponent::startAnalysis(
 
     if (clearResults) {
         analysisResults.clear();
-        activeFileStatusLabels.clear();
+        fileActivity.clearAllActive();
         clearCurrentAudioPreview();
         audioInfo->clear();
         resultsTable.updateContent();
@@ -1891,65 +1861,16 @@ void AudioBatchComponent::handleAnalysisPlan(const AnalysisCoordinator::Analysis
     sortResults();
     resultsTable.updateContent();
     updateResultsTableColumnWidths();
-    markFilesProcessing(plan.staleFiles, "Waiting");
+    fileActivity.markActive(plan.staleFiles, "Waiting");
 
     statusLabel.setText(
         utils::format("Analyzing {}/{}", completedResults, expectedResults), juce::dontSendNotification
     );
 }
 
-juce::String AudioBatchComponent::getActiveStatusLabel(const AudioAnalysisRecord& record) const
-{
-    if (const auto iterator = activeFileStatusLabels.find(record.fullPath); iterator != activeFileStatusLabels.end()) {
-        return iterator->second;
-    }
-
-    return {};
-}
-
-OperationMessage AudioBatchComponent::getOperationMessage(const AudioAnalysisRecord& record) const
-{
-    if (const auto iterator = operationMessages.find(record.fullPath); iterator != operationMessages.end()) {
-        return iterator->second;
-    }
-
-    return {};
-}
-
-float AudioBatchComponent::getActivityPhase()
-{
-    constexpr auto rotationsPerSecond = 0.85;
-    const auto phase = std::fmod(juce::Time::getMillisecondCounterHiRes() * 0.001 * rotationsPerSecond, 1.0);
-    return static_cast<float>(phase);
-}
-
 bool AudioBatchComponent::isAnalysisInProgress() const
 {
     return completedResults < expectedResults;
-}
-
-bool AudioBatchComponent::isAnyFileProcessing() const
-{
-    return !activeFileStatusLabels.empty();
-}
-
-void AudioBatchComponent::syncActivityTimer()
-{
-    if (isAnyFileProcessing()) {
-        startTimerHz(activityIndicatorTimerHz);
-    } else {
-        stopTimer();
-    }
-}
-
-void AudioBatchComponent::timerCallback()
-{
-    if (!isAnyFileProcessing()) {
-        stopTimer();
-        return;
-    }
-
-    resultsTable.repaint();
 }
 
 void AudioBatchComponent::handleSortRequested(const int columnId, const bool isForwards)
@@ -2074,7 +1995,7 @@ bool AudioBatchComponent::shouldDropFilesWhenDraggedExternally(
 
 void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 {
-    audioInfo->showRecord(record, getActiveStatusLabel(record));
+    audioInfo->showRecord(record, fileActivity.getActiveLabel(record.fullPath));
 }
 
 void AudioBatchComponent::showAudioResource(juce::URL resource)
@@ -2480,14 +2401,14 @@ void AudioBatchComponent::processSelectedRecords()
         return;
     }
 
-    markFilesProcessing(filesToProcess, "Processing");
+    fileActivity.markActive(filesToProcess, "Processing");
     updateStatusLabel();
 }
 
 void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& result)
 {
     ++processedResultsCompleted;
-    unmarkFileProcessing(result.originalFullPath);
+    fileActivity.clearActive(result.originalFullPath);
 
     if (result.succeeded) {
         auto selectedPaths = getSelectedRecordPaths();
@@ -2499,11 +2420,7 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
         }
 
         if (result.notice.isNotEmpty()) {
-            operationMessages[result.analysisRecord.fullPath] = {.text = result.notice, .isError = false};
-        }
-
-        if (result.notice.isNotEmpty()) {
-            operationMessages[result.analysisRecord.fullPath] = {.text = result.notice, .isError = false};
+            fileActivity.setMessage(result.analysisRecord.fullPath, {.text = result.notice, .isError = false});
         }
 
         // Remove any record matching the original path that does not match the new path (in case extension changed).
@@ -2540,7 +2457,7 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
         }
     } else {
         processingFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
-        operationMessages[result.originalFullPath] = {.text = result.errorMessage, .isError = true};
+        fileActivity.setMessage(result.originalFullPath, {.text = result.errorMessage, .isError = true});
         resultsTable.repaint();
         utils::logError("Plugin processing failed for {}: {}", result.originalFullPath.quoted(), result.errorMessage);
     }
@@ -2552,7 +2469,6 @@ void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
 {
     processedResultsExpected = totalFiles;
     pluginProcessingInProgress = false;
-    syncActivityTimer();
 
     if (pluginChain != nullptr) {
         updateProcessButtonState();

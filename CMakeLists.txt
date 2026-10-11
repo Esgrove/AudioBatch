@@ -320,6 +320,8 @@ target_sources(
         "src/AudioInfoPanel.h"
         "src/CustomLookAndFeel.cpp"
         "src/CustomLookAndFeel.h"
+        "src/FileActivityTracker.cpp"
+        "src/FileActivityTracker.h"
         "src/IntervalStepSlider.h"
         "src/Main.cpp"
         "src/NormalizationTargetControl.cpp"
