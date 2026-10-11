@@ -51,6 +51,9 @@ GUI only:
 - `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginProcessing.h`,
   `src/PluginProcessingCoordinator.*`, and `src/PluginProcessingService.*`
   implement VST3 / Audio Unit plugin hosting and the plugin chain.
+- `src/PluginScanner.*` implement out-of-process plugin scanning.
+  The GUI relaunches its own executable as a scan worker,
+  which `src/Main.cpp` detects from the command line before creating any window.
 
 The exact source lists for each target are defined in `CMakeLists.txt`.
 Keep those lists in sync when adding or removing files,

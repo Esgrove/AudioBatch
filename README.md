@@ -138,6 +138,9 @@ AudioBatch can run selected files through a chain of VST3 or Audio Unit effect p
 and write the processed audio to disk.
 
 - Use the plugin menu in the GUI to scan for installed plugins and build a chain.
+  Plugins are loaded in a separate worker process while scanning,
+  so a plugin that crashes during the scan does not take down the app.
+  A crashing plugin is blacklisted in the plugin manager, and the scan continues with the next one.
   Adding a plugin opens its editor window automatically so it can be configured.
   Multiple plugin editor windows can be open at the same time.
   Plugin state is captured when an editor window is closed, and again when processing starts,
@@ -239,5 +242,4 @@ The cache is invalidated when any of these change:
 ## TODO
 
 - User config file.
-- Out-of-process plugin scanning so a crashing plugin cannot take down the app.
 - Optional report export, for example CSV or JSON.

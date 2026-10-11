@@ -288,6 +288,8 @@ target_sources(AudioBatch
         "src/PluginProcessingCoordinator.h"
         "src/PluginProcessingService.cpp"
         "src/PluginProcessingService.h"
+        "src/PluginScanner.cpp"
+        "src/PluginScanner.h"
         "src/StringFormat.h"
         "src/ThumbnailComponent.cpp"
         "src/ThumbnailComponent.h"
