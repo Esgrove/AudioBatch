@@ -26,8 +26,9 @@ public:
 
     /// Processes a single file through the given plugin instances in order.
     /// The instances must align index-for-index with options.plugins.
-    /// The function prepares, resets, and restores state on each plugin internally before processing,
-    /// and releases their resources afterwards.
+    /// The function restores state on each plugin, prepares it in offline mode, and resets it before processing,
+    /// compensates for the chain's total reported latency,
+    /// and releases the plugins' resources afterwards.
     /// The caller owns the plugin instances and is responsible for thread-safety:
     /// a chain of instances must only be in use by one thread at a time.
     /// Note that a mono file running through a stereo-only plugin mid-chain
