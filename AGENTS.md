@@ -78,8 +78,9 @@ GUI only:
 - `src/FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
 - `src/AudioInfoPanel.*`, `src/NormalizationTargetControl.*`, `src/CustomLookAndFeel.*`,
   `src/ThumbnailComponent.*`, and `src/IntervalStepSlider.h` are UI pieces.
-- `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginProcessing.h`, `src/PluginProcessingCoordinator.*`,
-  and `src/PluginProcessingService.*` implement VST3 / Audio Unit plugin hosting and the plugin chain.
+- `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginChainPreparation.*`, `src/PluginProcessing.h`,
+  `src/PluginProcessingCoordinator.*`, and `src/PluginProcessingService.*`
+  implement VST3 / Audio Unit plugin hosting and the plugin chain.
 
 The source lists are defined in `CMakeLists.txt`.
 `AUDIOBATCH_CORE_SOURCES` holds the shared core and `AUDIOBATCH_CLI_SOURCES` the CLI front end,

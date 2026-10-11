@@ -339,6 +339,8 @@ target_sources(
         "src/NormalizationTargetControl.h"
         "src/PluginChain.cpp"
         "src/PluginChain.h"
+        "src/PluginChainPreparation.cpp"
+        "src/PluginChainPreparation.h"
         "src/PluginChainEditor.cpp"
         "src/PluginChainEditor.h"
         "src/PluginProcessing.h"
@@ -568,6 +570,8 @@ target_sources(
     PRIVATE
         ${AUDIOBATCH_CORE_SOURCES}
         ${AUDIOBATCH_CLI_SOURCES}
+        "src/PluginChainPreparation.cpp"
+        "src/PluginChainPreparation.h"
         "src/PluginProcessing.h"
         "src/PluginProcessingService.cpp"
         "src/PluginProcessingService.h"
