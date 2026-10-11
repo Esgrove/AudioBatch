@@ -134,10 +134,24 @@ void printError(std::string_view message);
 /// Prints "Error: <message>" in red to stderr, followed by a newline.
 void printError(const juce::String& message);
 
+/// Prints "Error: <message>" in red to stderr, followed by a newline.
+/// Resolves string literals, which would otherwise be ambiguous between the other overloads.
+inline void printError(const char* message)
+{
+    printError(std::string_view {message});
+}
+
 /// Prints "Warning: <message>" in yellow to stderr, followed by a newline.
 /// Leading whitespace in the message is kept in front of the prefix.
 void printWarn(std::string_view message);
 
 /// Prints "Warning: <message>" in yellow to stderr, followed by a newline.
 void printWarn(const juce::String& message);
+
+/// Prints "Warning: <message>" in yellow to stderr, followed by a newline.
+/// Resolves string literals, which would otherwise be ambiguous between the other overloads.
+inline void printWarn(const char* message)
+{
+    printWarn(std::string_view {message});
+}
 }  // namespace console

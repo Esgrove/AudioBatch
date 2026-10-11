@@ -3,7 +3,8 @@
 /// a request carries the format name and the plugin file or identifier,
 /// and a reply is an XML list of plugin descriptions.
 /// Also covers the worker process lifetime in the main process,
-/// which launches a worker on demand and drops it after a crash, a cancel, or the end of a scan.
+/// which launches a worker on demand and drops it after a crash, a cancel, or the end of a scan,
+/// and the known-plugins list file with its migration out of the settings.
 
 #include "PluginScanner.h"
 
@@ -15,6 +16,9 @@
 namespace audiobatch::plugin_scanner
 {
 constexpr auto resultsXmlTag = "PLUGINS";
+constexpr auto knownPluginListFileName = "KnownPlugins.xml";
+constexpr auto legacyKnownPluginListPropertyKey = "knownPluginList";
+constexpr auto crashLogFileName = "audiobatch_plugin_scan_crash_log.txt";
 constexpr auto responsePollInterval = std::chrono::milliseconds(50);
 
 /// Builds a scan request for one plugin file or identifier.
@@ -36,6 +40,72 @@ bool isPluginScanWorkerCommandLine(const juce::String& commandLine)
     // Match ChildProcessWorker::initialiseFromCommandLine exactly,
     // so the same text in a later argument of an ordinary launch is not mistaken for a worker.
     return commandLine.trim().startsWith(utils::format("--{}:", pluginScanWorkerProcessUid));
+}
+
+juce::File getKnownPluginListFile()
+{
+    return utils::createApplicationSettingsOptions().getDefaultFile().getSiblingFile(knownPluginListFileName);
+}
+
+void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList)
+{
+    if (const auto file = getKnownPluginListFile(); file.existsAsFile()) {
+        if (const auto element = juce::parseXML(file); element != nullptr) {
+            knownPluginList.recreateFromXml(*element);
+        } else {
+            utils::logError("Could not parse the known plugins list: {}", file.getFullPathName().quoted());
+        }
+
+        return;
+    }
+
+    // Older versions stored the list in the settings.
+    const auto legacyXmlText = settings.getValue(legacyKnownPluginListPropertyKey);
+    if (const auto element = juce::parseXML(legacyXmlText); element != nullptr) {
+        knownPluginList.recreateFromXml(*element);
+    }
+}
+
+bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList)
+{
+    const auto xml = knownPluginList.createXml();
+    const auto file = getKnownPluginListFile();
+
+    // writeTo writes a temporary file and then replaces the target,
+    // so a concurrent reader never sees a partially written list.
+    if (xml == nullptr || !file.getParentDirectory().createDirectory() || !xml->writeTo(file)) {
+        utils::logError("Could not save the known plugins list: {}", file.getFullPathName().quoted());
+        return false;
+    }
+
+    return true;
+}
+
+void migrateKnownPluginList(juce::PropertiesFile& settings)
+{
+    if (!settings.containsKey(legacyKnownPluginListPropertyKey)) {
+        return;
+    }
+
+    if (!getKnownPluginListFile().existsAsFile()) {
+        juce::KnownPluginList legacyList;
+        loadKnownPluginList(settings, legacyList);
+
+        if (!saveKnownPluginList(legacyList)) {
+            // Keep the legacy value so nothing is lost, and try again on the next start.
+            return;
+        }
+
+        utils::logInfo("Moved the known plugins list to {}", getKnownPluginListFile().getFullPathName().quoted());
+    }
+
+    settings.removeValue(legacyKnownPluginListPropertyKey);
+    settings.saveIfNeeded();
+}
+
+juce::File getPluginScanCrashLogFile()
+{
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile(crashLogFileName);
 }
 
 //==============================================================================
@@ -220,7 +290,13 @@ private:
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(WorkerProcess)
 };
 
-OutOfProcessPluginScanner::OutOfProcessPluginScanner() = default;
+OutOfProcessPluginScanner::OutOfProcessPluginScanner(
+    ScanStartingCallback scanStartingCallback,
+    ScanFinishedCallback scanFinishedCallback
+) :
+    onScanStarting(std::move(scanStartingCallback)),
+    onScanFinished(std::move(scanFinishedCallback))
+{ }
 
 OutOfProcessPluginScanner::~OutOfProcessPluginScanner() = default;
 
@@ -230,6 +306,16 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
     const juce::String& fileOrIdentifier
 )
 {
+    if (!scanStarted) {
+        scanStarted = true;
+        scanSkipped = onScanStarting != nullptr && !onScanStarting();
+    }
+
+    if (scanSkipped) {
+        // Report the plugin as scanned without loading it, so it is not blacklisted.
+        return true;
+    }
+
     if (worker == nullptr) {
         worker = std::make_unique<WorkerProcess>();
 
@@ -285,4 +371,35 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
 void OutOfProcessPluginScanner::scanFinished()
 {
     worker.reset();
+
+    if (scanStarted && onScanFinished != nullptr) {
+        onScanFinished();
+    }
+
+    scanStarted = false;
+    scanSkipped = false;
+}
+
+//==============================================================================
+
+PluginScanLock::~PluginScanLock()
+{
+    release();
+}
+
+bool PluginScanLock::tryAcquire()
+{
+    if (!held) {
+        held = lock.enter(0);
+    }
+
+    return held;
+}
+
+void PluginScanLock::release()
+{
+    if (held) {
+        lock.exit();
+        held = false;
+    }
 }

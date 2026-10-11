@@ -33,6 +33,7 @@ Entry points:
 - `src/Main.cpp` is the GUI application entry point.
 - `src/CliMain.cpp` is the CLI entry point.
 - `src/AudioAnalysisCli.{h,cpp}` holds CLI argument parsing and output formatting.
+- `src/PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
 
 Shared core (linked into both targets):
 
@@ -43,6 +44,10 @@ Shared core (linked into both targets):
 - `src/AnalysisCoordinator.*` and `src/NormalizeCoordinator.*` orchestrate background work.
 - `src/utils.*` and `src/version.h` are shared helpers.
 - `src/ConsolePrint.*` provide styled console output helpers for the CLI.
+- `src/PluginScanner.*` implement out-of-process plugin scanning and the known-plugins list persistence.
+  Each executable relaunches itself as its scan worker:
+  `src/Main.cpp` and `src/CliMain.cpp` detect the worker command line before doing anything else.
+  The CLI links `juce_audio_processors` for this, which also pulls in the JUCE GUI modules.
 
 GUI only:
 
@@ -52,9 +57,6 @@ GUI only:
 - `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginProcessing.h`,
   `src/PluginProcessingCoordinator.*`, and `src/PluginProcessingService.*`
   implement VST3 / Audio Unit plugin hosting and the plugin chain.
-- `src/PluginScanner.*` implement out-of-process plugin scanning.
-  The GUI relaunches its own executable as a scan worker,
-  which `src/Main.cpp` detects from the command line before creating any window.
 
 The exact source lists for each target are defined in `CMakeLists.txt`.
 Keep those lists in sync when adding or removing files,

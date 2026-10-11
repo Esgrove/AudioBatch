@@ -6,6 +6,7 @@
 #pragma once
 
 #include "AnalysisCoordinator.h"
+#include "PluginListCli.h"
 
 #include <optional>
 
@@ -14,6 +15,9 @@ struct AudioAnalysisCliOptions {
     bool recursive = false;
     bool refresh = false;
     bool normalize = false;
+    bool listPlugins = false;
+    bool rescanPlugins = false;
+    PluginListGrouping pluginGrouping = PluginListGrouping::name;
     int workerCount = juce::SystemStats::getNumCpus();
     AudioAnalysisSortMode sortMode = AudioAnalysisSortMode::peak;
     juce::Array<juce::File> inputPaths;
