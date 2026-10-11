@@ -293,6 +293,7 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/MessageThreadCall.h"
     "src/MetadataService.cpp"
     "src/MetadataService.h"
+    "src/NormalizationFormatSupport.cpp"
     "src/NormalizeCoordinator.cpp"
     "src/NormalizeCoordinator.h"
     "src/PluginScanner.cpp"

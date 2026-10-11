@@ -46,7 +46,8 @@ Shared core (linked into both targets):
 - `src/AudioAnalysisService.*` and `src/AudioAnalysisTypes.h` perform audio analysis.
   `src/AudioAnalysisFormatting.cpp` implements the service's display formatting,
   and `src/BitDepthDetection.*` detects the source bit depth, including tagged MP3 files.
-- `src/AudioNormalizationService.*` handle normalization and AIFF conversion.
+- `src/AudioNormalizationService.*` handle normalization and AIFF conversion,
+  and `src/NormalizationFormatSupport.cpp` reports which formats this build can normalize.
 - `src/MetadataService.*` read and write tags and embedded art through TagLib.
 - `src/AnalysisCache.*` manage the SQLite result cache.
 - `src/AnalysisCoordinator.*` and `src/NormalizeCoordinator.*` orchestrate background work.
