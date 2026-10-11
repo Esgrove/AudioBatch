@@ -588,6 +588,14 @@ PluginProcessingResult PluginProcessingService::processFile(
         }
     }
 
+    // Check again before touching the original, since cancellation may arrive during the last render block.
+    // The coordinator drops results of a cancelled run,
+    // so committing here would change files on disk without the caller ever learning about it.
+    if (isCancellationRequested(isCancelled)) {
+        utils::deleteFile(temporaryFile.getFile());
+        return fail(file, cancelledMessage);
+    }
+
     // If the original file path differs from the output path (different extension), delete the original.
     const bool replacingOriginal = file == outputFile;
     if (outputFile.existsAsFile() && !utils::deleteFile(outputFile)) {

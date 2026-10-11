@@ -42,8 +42,8 @@ public:
     /// unless isCancelled starts returning true:
     /// a worker waiting for the message thread then gives up instead of blocking,
     /// so the message thread may wait for workers after requesting cancellation without deadlocking.
-    /// A cancelled call returns a failure result and may leave the chain prepared,
-    /// in which case the plugin instances release their resources when they are destroyed.
+    /// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.
+    /// It may leave the chain prepared, in which case the plugin instances release their resources when destroyed.
     /// The caller owns the plugin instances and is responsible for thread-safety:
     /// a chain of instances must only be in use by one thread at a time.
     /// Note that a mono file running through a stereo-only plugin mid-chain
