@@ -6,6 +6,7 @@
 
 #include "AudioAnalysisService.h"
 
+#include "DecodeFailureTracker.h"
 #include "utils.h"
 
 extern "C" {
@@ -33,7 +34,6 @@ constexpr float minimumDisplayDecibels = -100.0f;
 constexpr double kilobitsPerSecondDivisor = 1000.0;
 constexpr int defaultMp3BitsPerSample = 16;
 constexpr int analysisBlockSize = 8192;
-constexpr int maxConsecutiveReadFailures = 3;
 /// Number of bits in a byte, used to turn a file size into a bit count for the average bitrate.
 constexpr double bitsPerByte = 8.0;
 /// Number of hertz in a kilohertz, used when displaying sample rates.
@@ -286,18 +286,6 @@ static juce::String formatLoudnessValue(const double loudness, const juce::Strin
     return utils::format("{:.2f}{}", loudness, unitSuffix);
 }
 
-/// Returns true when a failed read happened in the final block of the stream.
-/// Such failures are expected for MP3 files whose reported length overshoots the decodable audio.
-static bool isEndOfFileReadFailure(
-    const bool readSucceeded,
-    const std::int64_t samplePosition,
-    const int framesRead,
-    const std::int64_t totalFrames
-)
-{
-    return !readSucceeded && samplePosition + static_cast<std::int64_t>(framesRead) >= totalFrames;
-}
-
 /// Creates an ebur128 state configured for integrated, short-term, and true peak measurement.
 static EbuR128StatePtr createLoudnessState(const int channelCount, const int sampleRate)
 {
@@ -498,10 +486,9 @@ static void interleaveBlock(
 }
 
 /// Decodes the whole file block by block, feeding the loudness meter and collecting the sample extremes.
-/// Decoding continues past isolated read failures,
-/// since the built-in MP3 decoder can fail mid-stream on files that other decoders handle fine.
-/// A failed block still holds the samples decoded before the error with the remainder zeroed.
-/// Repeated failures end the measurement early with the audio decoded so far.
+/// Read failures follow the shared DecodeFailureTracker rules.
+/// A tolerated failed block still holds the samples decoded before the error with the remainder zeroed.
+/// When decoding has to stop early, the measurement fails instead of reporting levels for part of the file.
 static DecodeMeasurements measureDecodedAudio(
     juce::AudioFormatReader& reader,
     ebur128_state* loudnessState,
@@ -516,8 +503,7 @@ static DecodeMeasurements measureDecodedAudio(
 
     juce::AudioBuffer<float> readBuffer(channelCount, analysisBlockSize);
     std::vector interleaved(static_cast<size_t>(channelCount * analysisBlockSize), 0.0f);
-    std::int64_t framesDecoded = 0;
-    int consecutiveReadFailures = 0;
+    DecodeFailureTracker failureTracker(reader.lengthInSamples);
     bool reportedPartialDecode = false;
 
     for (std::int64_t samplePosition = 0; samplePosition < reader.lengthInSamples; samplePosition += analysisBlockSize)
@@ -527,23 +513,21 @@ static DecodeMeasurements measureDecodedAudio(
 
         readBuffer.clear();
 
-        if (const auto readSucceeded = reader.read(&readBuffer, 0, framesThisBlock, samplePosition, true, true);
-            readSucceeded)
-        {
-            consecutiveReadFailures = 0;
-            framesDecoded += framesThisBlock;
-        } else if (!isEndOfFileReadFailure(readSucceeded, samplePosition, framesThisBlock, reader.lengthInSamples)) {
-            ++consecutiveReadFailures;
+        const auto readSucceeded = reader.read(&readBuffer, 0, framesThisBlock, samplePosition, true, true);
 
-            if (!reportedPartialDecode) {
-                utils::logWarn(
-                    "Audio decode failed at sample {} / {} for {}, continuing analysis with decoded audio",
-                    samplePosition,
-                    reader.lengthInSamples,
-                    fullPath.quoted()
-                );
-                reportedPartialDecode = true;
-            }
+        if (!failureTracker.recordBlock(readSucceeded, samplePosition, framesThisBlock)) {
+            measurements.errorMessage = failureTracker.getErrorMessage();
+            return measurements;
+        }
+
+        if (failureTracker.getFailedBlockCount() > 0 && !reportedPartialDecode) {
+            utils::logWarn(
+                "Audio decode failed at sample {} / {} for {}, continuing analysis with decoded audio",
+                failureTracker.getFirstFailurePosition(),
+                reader.lengthInSamples,
+                fullPath.quoted()
+            );
+            reportedPartialDecode = true;
         }
 
         interleaveBlock(readBuffer, framesThisBlock, interleaved, measurements);
@@ -561,14 +545,6 @@ static DecodeMeasurements measureDecodedAudio(
             measurements.maxShortTermLoudness
                 = std::max(measurements.maxShortTermLoudness, normalizeLoudness(shortTermLoudness));
         }
-
-        if (consecutiveReadFailures >= maxConsecutiveReadFailures) {
-            break;
-        }
-    }
-
-    if (reportedPartialDecode && framesDecoded == 0) {
-        measurements.errorMessage = "Audio decode failed during analysis";
     }
 
     return measurements;

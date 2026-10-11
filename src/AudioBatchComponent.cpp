@@ -798,7 +798,7 @@ AudioBatchComponent::AudioBatchComponent() :
             handleFileContextMenuRequested(row, columnId, event);
         },
         [this](const AudioAnalysisRecord& record) { return getActiveStatusLabel(record); },
-        [this](const AudioAnalysisRecord& record) { return getOperationError(record); },
+        [this](const AudioAnalysisRecord& record) { return getOperationMessage(record); },
         [] { return getActivityPhase(); }
     ),
     audioSetupComponent(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
@@ -1697,7 +1697,7 @@ void AudioBatchComponent::markFilesProcessing(const juce::Array<juce::File>& fil
 {
     for (const auto& file : files) {
         activeFileStatusLabels[file.getFullPathName()] = activityLabel;
-        operationErrors.erase(file.getFullPathName());
+        operationMessages.erase(file.getFullPathName());
     }
 
     syncActivityTimer();
@@ -1936,7 +1936,7 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
         }
     } else {
         normalizationFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
-        operationErrors[result.fullPath] = result.errorMessage;
+        operationMessages[result.fullPath] = {.text = result.errorMessage, .isError = true};
         resultsTable.repaint();
     }
 
@@ -2229,9 +2229,9 @@ juce::String AudioBatchComponent::getActiveStatusLabel(const AudioAnalysisRecord
     return {};
 }
 
-juce::String AudioBatchComponent::getOperationError(const AudioAnalysisRecord& record) const
+OperationMessage AudioBatchComponent::getOperationMessage(const AudioAnalysisRecord& record) const
 {
-    if (const auto iterator = operationErrors.find(record.fullPath); iterator != operationErrors.end()) {
+    if (const auto iterator = operationMessages.find(record.fullPath); iterator != operationMessages.end()) {
         return iterator->second;
     }
 
@@ -2852,6 +2852,14 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
             }
         }
 
+        if (result.notice.isNotEmpty()) {
+            operationMessages[result.analysisRecord.fullPath] = {.text = result.notice, .isError = false};
+        }
+
+        if (result.notice.isNotEmpty()) {
+            operationMessages[result.analysisRecord.fullPath] = {.text = result.notice, .isError = false};
+        }
+
         // Remove any record matching the original path that does not match the new path (in case extension changed).
         std::erase_if(analysisResults, [&result](const AudioAnalysisRecord& record) {
             return record.fullPath == result.originalFullPath && record.fullPath != result.analysisRecord.fullPath;
@@ -2886,7 +2894,7 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
         }
     } else {
         processingFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
-        operationErrors[result.originalFullPath] = result.errorMessage;
+        operationMessages[result.originalFullPath] = {.text = result.errorMessage, .isError = true};
         resultsTable.repaint();
         utils::logError("Plugin processing failed for {}: {}", result.originalFullPath.quoted(), result.errorMessage);
     }

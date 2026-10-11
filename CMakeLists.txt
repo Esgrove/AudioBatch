@@ -276,6 +276,7 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/AudioNormalizationService.h"
     "src/ConsolePrint.cpp"
     "src/ConsolePrint.h"
+    "src/DecodeFailureTracker.h"
     "src/MetadataService.cpp"
     "src/MetadataService.h"
     "src/NormalizeCoordinator.cpp"
@@ -539,12 +540,16 @@ target_sources(
     PRIVATE
         ${AUDIOBATCH_CORE_SOURCES}
         ${AUDIOBATCH_CLI_SOURCES}
+        "src/PluginProcessing.h"
+        "src/PluginProcessingService.cpp"
+        "src/PluginProcessingService.h"
         "tests/AnalysisTests.cpp"
         "tests/CacheTests.cpp"
         "tests/CliTests.cpp"
         "tests/FormatTests.cpp"
         "tests/MetadataTests.cpp"
         "tests/NormalizationTests.cpp"
+        "tests/ProcessingTests.cpp"
         "tests/TestHelpers.cpp"
         "tests/TestHelpers.h"
         "tests/TestMain.cpp"

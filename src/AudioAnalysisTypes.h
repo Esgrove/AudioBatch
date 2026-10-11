@@ -73,6 +73,14 @@ struct AudioAnalysisRecord {
         return status == AudioAnalysisStatus::cached || status == AudioAnalysisStatus::analyzed;
     }
 
+    /// Returns true when the file still has the size and modification time recorded at analysis,
+    /// so the measured levels still describe it.
+    [[nodiscard]] bool matchesFileOnDisk() const
+    {
+        return file.existsAsFile() && file.getSize() == fileSize
+            && file.getLastModificationTime().toMilliseconds() == modifiedTimeMs;
+    }
+
     /// Builds a baseline record from filesystem metadata before analysis begins.
     static AudioAnalysisRecord fromFile(const juce::File& file)
     {

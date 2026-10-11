@@ -6,6 +6,7 @@
 
 #include "AudioNormalizationService.h"
 
+#include "DecodeFailureTracker.h"
 #include "MetadataService.h"
 #include "utils.h"
 #include <unordered_map>
@@ -234,23 +235,6 @@ static int resolvePreferredOutputBitDepth(
     return static_cast<int>(reader.bitsPerSample);
 }
 
-/// Returns true when a read failure can be tolerated during normalization.
-/// Only end-of-stream failures in MP3 sources are acceptable,
-/// since their reported length often overshoots the decodable audio.
-static bool canAcceptReadFailureForNormalization(
-    const juce::AudioFormatReader& reader,
-    const juce::File& sourceFile,
-    const juce::int64 samplePosition,
-    const int samplesThisBlock
-)
-{
-    if (!isMp3SourceFile(sourceFile)) {
-        return false;
-    }
-
-    return samplePosition + samplesThisBlock >= reader.lengthInSamples;
-}
-
 /// Returns the per-thread runtime state with a format manager that has the basic formats registered.
 /// Thread-local state avoids locking when normalize jobs run on multiple worker threads.
 static AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
@@ -417,13 +401,13 @@ static juce::String clearExistingOutput(
 }
 
 /// Streams the source through the writer block by block, applying the normalization gain.
+/// Read failures follow the shared DecodeFailureTracker rules.
 /// Returns an empty string on success, or a user-facing error message,
 /// including when cancellation is requested between blocks.
 static juce::String renderNormalizedAudio(
     juce::AudioFormatReader& reader,
     juce::AudioFormatWriter& writer,
     const float gain,
-    const juce::File& sourceFile,
     const AudioNormalizationService::CancellationCheck& isCancelled
 )
 {
@@ -433,6 +417,8 @@ static juce::String renderNormalizedAudio(
     for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
         channelPointers[static_cast<std::size_t>(channel)] = buffer.getWritePointer(channel);
     }
+
+    DecodeFailureTracker failureTracker(reader.lengthInSamples);
 
     for (juce::int64 samplePosition = 0; samplePosition < reader.lengthInSamples;
          samplePosition += normalizationBlockSize)
@@ -445,10 +431,11 @@ static juce::String renderNormalizedAudio(
             juce::jmin<juce::int64>(normalizationBlockSize, reader.lengthInSamples - samplePosition)
         );
 
-        if (!reader.read(channelPointers.data(), buffer.getNumChannels(), samplePosition, samplesThisBlock)
-            && !canAcceptReadFailureForNormalization(reader, sourceFile, samplePosition, samplesThisBlock))
-        {
-            return "Failed while reading audio data for normalization";
+        const auto readSucceeded
+            = reader.read(channelPointers.data(), buffer.getNumChannels(), samplePosition, samplesThisBlock);
+
+        if (!failureTracker.recordBlock(readSucceeded, samplePosition, samplesThisBlock)) {
+            return failureTracker.getErrorMessage();
         }
 
         buffer.applyGain(gain);
@@ -504,6 +491,16 @@ juce::StringArray AudioNormalizationService::findBatchOutputConflicts(const std:
     }
 
     return conflicts;
+}
+
+int AudioNormalizationService::getOutputBitDepth(
+    const AudioAnalysisRecord& record,
+    const juce::AudioFormatReader& reader
+)
+{
+    auto* writerFormat = getAiffWriterFormat(getThreadLocalRuntimeState());
+    const auto preferredBitDepth = resolvePreferredOutputBitDepth(record, reader, record.file);
+    return writerFormat != nullptr ? resolveWriterBitDepth(*writerFormat, preferredBitDepth) : preferredBitDepth;
 }
 
 juce::String AudioNormalizationService::batchOutputConflictMessage(const juce::File& sourceFile)
@@ -588,12 +585,12 @@ juce::AudioFormatManager& AudioNormalizationService::getThreadLocalFormatManager
 }
 
 AudioNormalizationResult AudioNormalizationService::normalizeFile(
-    const AudioAnalysisRecord& record,
+    const AudioAnalysisRecord& sourceRecord,
     const AudioNormalizationOptions& options,
     const CancellationCheck& isCancelled
 )
 {
-    const auto& file = record.file;
+    const auto& file = sourceRecord.file;
     const auto outputFile = getOutputFile(file);
 
     if (!file.existsAsFile()) {
@@ -604,8 +601,15 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
         return failNormalization(file, existingOutputMessage(outputFile));
     }
 
-    if (!record.isReady()) {
+    if (!sourceRecord.isReady()) {
         return failNormalization(file, "File analysis must finish before normalization");
+    }
+
+    // The gain comes from the analyzed peak, so a file that changed since its analysis is measured again first.
+    const auto record = sourceRecord.matchesFileOnDisk() ? sourceRecord : AudioAnalysisService::analyzeFile(file);
+
+    if (record.hasError()) {
+        return failNormalization(file, record.errorMessage);
     }
 
     auto& runtimeState = getThreadLocalRuntimeState();
@@ -655,8 +659,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
     // The AIFF writer accepts any sample rate, and keeping the source rate avoids a pitch change,
     // since normalization does not resample.
     const auto writerSampleRate = reader->sampleRate;
-    const auto preferredBitDepth = resolvePreferredOutputBitDepth(record, *reader, file);
-    const auto writerBitDepth = resolveWriterBitDepth(*writerFormat, preferredBitDepth);
+    const auto writerBitDepth = getOutputBitDepth(record, *reader);
 
     // Tags and pictures are copied separately through TagLib after the audio is rendered,
     // and the reader metadata passed here only covers what the JUCE AIFF writer itself stores.
@@ -672,9 +675,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
         return failNormalization(file, getNormalizationSupportMessage(file));
     }
 
-    if (const auto renderError = renderNormalizedAudio(*reader, *writer, gain, file, isCancelled);
-        renderError.isNotEmpty())
-    {
+    if (const auto renderError = renderNormalizedAudio(*reader, *writer, gain, isCancelled); renderError.isNotEmpty()) {
         return failNormalization(file, renderError);
     }
 

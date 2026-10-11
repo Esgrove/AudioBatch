@@ -58,6 +58,8 @@ struct PluginProcessingResult {
     juce::File outputFile;
     juce::String fileName;
     juce::String errorMessage;
+    /// Information about a successful run worth showing to the user, such as gain reduced to avoid clipping.
+    juce::String notice;
     AudioAnalysisRecord analysisRecord;
     bool succeeded = false;
 
