@@ -119,6 +119,7 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
 
 - After changing any C++ source or header file, run `clang-format -i --style=file` on each changed file before finishing.
 - For repo-wide or multi-file formatting, use `./format.sh`.
+  `./format.sh --check` only verifies formatting without changing files.
 - Formatting is configured by `.clang-format`.
 
 ## Linting
@@ -127,6 +128,8 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
   Fix any issues it reports before finishing.
   The script uses the active CMake debug build's `compile_commands.json`,
   so configure a debug preset first if no build directory exists.
+- `./lint.sh --check` exits with code 1 when clang-tidy reports any warning.
+  CI runs it on macOS with the latest Homebrew LLVM, so the build must stay free of clang-tidy warnings.
 - If `clang-tidy` reports a check that is genuinely a poor fit for the project,
   disable it explicitly in `.clang-tidy` and add a short comment explaining why.
   Do not silence individual warnings with inline comments.

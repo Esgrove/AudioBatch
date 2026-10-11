@@ -50,6 +50,10 @@ init_options() {
             -v | --verbose)
                 set -x
                 ;;
+            *)
+                print_error "Unknown option: $1"
+                print_usage_and_exit
+                ;;
         esac
         shift
     done

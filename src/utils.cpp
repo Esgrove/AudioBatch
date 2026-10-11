@@ -34,7 +34,7 @@ bool moveToTrash(const juce::File& file)
     operation.pFrom = fromPath.c_str();
     operation.fFlags = FOF_ALLOWUNDO | FOF_NOERRORUI | FOF_SILENT | FOF_NOCONFIRMATION;
 
-    return SHFileOperationW(&operation) == 0 && !operation.fAnyOperationsAborted && !file.exists();
+    return SHFileOperationW(&operation) == 0 && operation.fAnyOperationsAborted == FALSE && !file.exists();
 #else
     return file.moveToTrash();
 #endif

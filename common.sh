@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eo pipefail
 
-REPO=$(git rev-parse --show-toplevel || (cd "$(dirname "${BASH_SOURCE[0]}")" && pwd))
+REPO=$(git rev-parse --show-toplevel || { cd "$(dirname "${BASH_SOURCE[0]}")" && pwd; })
 export REPO
 
 # Set Bash platform script is running on (mac/windows/linux).
@@ -41,6 +41,18 @@ print_red() {
 # Print a message with yellow color
 print_yellow() {
     printf "\e[1;49;33m%s\e[0m\n" "$1"
+}
+
+# Print an error message to stderr without exiting
+print_error() {
+    print_red "ERROR: $1" >&2
+}
+
+# Print the calling script's USAGE text and exit.
+# Use exit code if given as argument, otherwise default to 1.
+print_usage_and_exit() {
+    echo "$USAGE"
+    exit "${1:-1}"
 }
 
 # Print an error message and exit the program

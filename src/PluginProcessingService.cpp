@@ -567,12 +567,10 @@ PluginProcessingResult PluginProcessingService::processFile(
     // Failure to read metadata is non-fatal because some inputs may not have any TagLib-readable metadata.
     {
         MetadataService::Metadata metadata;
-        if (MetadataService::readMetadata(file, metadata) && !metadata.isEmpty()) {
-            if (!MetadataService::writeMetadata(temporaryFile.getFile(), metadata)) {
-                utils::logError(
-                    "Failed to copy metadata onto processed output for {}", file.getFullPathName().quoted()
-                );
-            }
+        if (MetadataService::readMetadata(file, metadata) && !metadata.isEmpty()
+            && !MetadataService::writeMetadata(temporaryFile.getFile(), metadata))
+        {
+            utils::logError("Failed to copy metadata onto processed output for {}", file.getFullPathName().quoted());
         }
     }
 
@@ -607,14 +605,10 @@ PluginProcessingResult PluginProcessingService::processFile(
         return fail(file, "Could not move processed output into place");
     }
 
-    if (!replacingOriginal && file.existsAsFile()) {
-        // Output had a different extension.
-        // Move the original file to the system trash so the user can recover it if needed.
-        if (!utils::moveToTrash(file)) {
-            utils::logError(
-                "Could not move the original file to the system trash: {}", file.getFullPathName().quoted()
-            );
-        }
+    // When the output had a different extension,
+    // move the original file to the system trash so the user can recover it if needed.
+    if (!replacingOriginal && file.existsAsFile() && !utils::moveToTrash(file)) {
+        utils::logError("Could not move the original file to the system trash: {}", file.getFullPathName().quoted());
     }
 
     PluginProcessingResult result;
