@@ -43,17 +43,21 @@ jobs:
         with:
           submodules: recursive
 
+      # Skip the automatic `brew update`, which takes minutes and is not needed for the runner image's formulae.
       - name: Install LLVM and Ninja
-        run: |
-          brew update --quiet
-          brew install llvm ninja
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: brew install llvm ninja
 
-      - name: Cache CMake build directory
-        uses: actions/cache@v5
+      # Restores the build job's macOS cache, which holds the same cmake-build-mac-debug directory
+      # including the fetched dependencies.
+      # Restore-only, since the build job owns saving it.
+      - name: Restore CMake build directory
+        uses: actions/cache/restore@v5
         with:
           path: cmake-build-mac-debug
-          key: ${{ runner.os }}-lint-cmake-${{ github.sha }}
-          restore-keys: ${{ runner.os }}-lint-cmake-
+          key: ${{ runner.os }}-cmake-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-cmake-
 
       # clang-tidy only needs the compile database and the generated JUCE and binary data headers,
       # so the application itself is not built.
