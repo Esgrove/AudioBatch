@@ -24,20 +24,21 @@ int main(const int argc, char* argv[])
     juce::ArgumentList arguments(argc, argv);
     const auto executableName = juce::File(arguments.executableName).getFileNameWithoutExtension();
 
-    juce::String parseError;
-    const auto cliOptions = AudioAnalysisCli::parse(std::move(arguments), parseError);
-
     // Help and version only print to the console.
-    // They return before the logger is created, so they never touch the log file.
-    if (cliOptions.has_value() && cliOptions->showVersion) {
+    // They are checked before parsing, so they win over any other argument, even an invalid one,
+    // and return before the logger is created, so they never touch the log file.
+    if (arguments.containsOption("--version|-V")) {
         fmt::print("{}\n", utils::versionLine(executableName));
         return 0;
     }
 
-    if (cliOptions.has_value() && cliOptions->showHelp) {
+    if (arguments.containsOption("--help|-h")) {
         fmt::print("{}\n", AudioAnalysisCli::buildUsage(executableName));
         return 0;
     }
+
+    juce::String parseError;
+    const auto cliOptions = AudioAnalysisCli::parse(std::move(arguments), parseError);
 
     const auto logger = utils::createDefaultLogger(executableName);
     juce::Logger::setCurrentLogger(logger.get());

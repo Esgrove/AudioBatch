@@ -117,8 +117,6 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
 {
     AudioAnalysisCliOptions options;
 
-    options.showHelp = arguments.removeOptionIfFound("--help|-h");
-    options.showVersion = arguments.removeOptionIfFound("--version|-V");
     options.recursive = arguments.removeOptionIfFound("--recurse|-r");
     options.refresh = arguments.removeOptionIfFound("--refresh|-f");
     options.normalize = arguments.removeOptionIfFound("--normalize|-n");

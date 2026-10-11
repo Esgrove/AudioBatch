@@ -14,8 +14,6 @@ struct AudioAnalysisCliOptions {
     bool recursive = false;
     bool refresh = false;
     bool normalize = false;
-    bool showHelp = false;
-    bool showVersion = false;
     int workerCount = juce::SystemStats::getNumCpus();
     AudioAnalysisSortMode sortMode = AudioAnalysisSortMode::peak;
     juce::Array<juce::File> inputPaths;
@@ -29,6 +27,7 @@ public:
     static juce::String buildUsage(const juce::String& executableName);
 
     /// Parses command-line arguments into a validated options object.
+    /// The help and version flags are handled by the caller before parsing.
     static std::optional<AudioAnalysisCliOptions> parse(juce::ArgumentList arguments, juce::String& errorMessage);
 
     /// Executes the CLI analysis workflow and returns the process exit code.

@@ -104,11 +104,14 @@ void printStyledText(std::FILE* stream, const fmt::text_style style, const std::
     const auto body = text.substr(0, bodyLength);
     const auto trailingNewlines = text.substr(body.size());
 
-    if (!body.empty()) {
-        fmt::print(stream, style, "{}", body);
+    if (body.empty()) {
+        fmt::print(stream, "{}", trailingNewlines);
+        return;
     }
 
-    fmt::print(stream, "{}", trailingNewlines);
+    // Write the styled body and the newlines in a single call,
+    // so output from other threads cannot land between them.
+    fmt::print(stream, "{}{}", fmt::styled(body, style), trailingNewlines);
 }
 
 void printError(const std::string_view message)
