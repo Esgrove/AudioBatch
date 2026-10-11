@@ -33,6 +33,16 @@ public:
         PluginDescriptorRef descriptorRef;
     };
 
+    /// Plugin chains created for one processing run, or the reason they could not be created.
+    struct ChainInstantiation {
+        /// One chain of plugin instances per worker.
+        std::vector<std::vector<std::unique_ptr<juce::AudioPluginInstance>>> chains;
+        /// Empty when every plugin of every chain was created.
+        juce::String errorMessage;
+        /// Name of the plugin that failed to load, when errorMessage is not empty.
+        juce::String failedPluginName;
+    };
+
     /// Registers the default plugin formats and restores the known-plugins list
     /// and the persisted chain from application settings.
     explicit PluginChain(juce::ApplicationProperties& applicationProperties);
@@ -61,6 +71,14 @@ public:
     /// Captures live state from any open editor windows first,
     /// so a processing run always uses the latest tweaks.
     [[nodiscard]] std::vector<EnabledChainPlugin> getEnabledPlugins();
+
+    /// Creates one chain of instances of the enabled plugins per worker, for a processing run.
+    /// Must run on the message thread.
+    /// Stops at the first plugin that fails, since a chain missing any plugin must not run.
+    [[nodiscard]] ChainInstantiation instantiateChains(
+        const std::vector<EnabledChainPlugin>& enabledPlugins,
+        int workerCount
+    );
 
     /// Returns a short human-readable summary of the chain for menu headers,
     /// with disabled slots in parentheses, or an empty string when the chain is empty.
