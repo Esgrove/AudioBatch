@@ -33,6 +33,11 @@ public:
     /// Cancels any in-flight work and destroys the worker pool.
     ~AnalysisCoordinator();
 
+    AnalysisCoordinator(const AnalysisCoordinator&) = delete;
+    AnalysisCoordinator& operator=(const AnalysisCoordinator&) = delete;
+    AnalysisCoordinator(AnalysisCoordinator&&) = delete;
+    AnalysisCoordinator& operator=(AnalysisCoordinator&&) = delete;
+
     /// Runs a full analysis synchronously and returns all collected results.
     std::vector<AudioAnalysisRecord> analyzeBlocking(const AudioAnalysisOptions& options);
 

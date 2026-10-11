@@ -95,13 +95,13 @@ static std::optional<juce::String> removeOptionWithValue(juce::ArgumentList& arg
         }
 
         if (argument.isLongOption() && argument.text.containsChar('=')) {
-            const auto value = argument.getLongOptionValue();
+            auto value = argument.getLongOptionValue();
             arguments.arguments.remove(index);
             return value;
         }
 
         if (index + 1 < arguments.size() && !arguments[index + 1].isOption()) {
-            const auto value = arguments[index + 1].text;
+            auto value = arguments[index + 1].text;
             arguments.arguments.removeRange(index, 2);
             return value;
         }

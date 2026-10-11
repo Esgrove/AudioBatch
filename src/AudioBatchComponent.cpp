@@ -12,6 +12,7 @@
 #include "utils.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <map>
 
 using AudioInfoRow = std::pair<juce::String, juce::String>;
@@ -76,7 +77,7 @@ public:
     void paint(juce::Graphics& graphics) override
     {
         const auto bounds = getLocalBounds().toFloat();
-        graphics.setColour(juce::CustomLookAndFeel::greySemiDark.withAlpha(0.85f));
+        graphics.setColour(juce::CustomLookAndFeel::greySemiDark().withAlpha(0.85f));
         graphics.fillRoundedRectangle(bounds, 6.0f);
 
         graphics.setColour(juce::Colours::white.withAlpha(0.08f));
@@ -116,7 +117,7 @@ private:
         while (fieldLabels.size() < requiredCount) {
             auto fieldLabel = std::make_unique<juce::Label>();
             fieldLabel->setJustificationType(juce::Justification::centredLeft);
-            fieldLabel->setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddleLight);
+            fieldLabel->setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddleLight());
             addAndMakeVisible(*fieldLabel);
             fieldLabels.push_back(std::move(fieldLabel));
 
@@ -145,7 +146,7 @@ constexpr int pathColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(A
 constexpr int nameColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnName);
 constexpr int pathColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnPath);
 
-enum FileMenuItemId {
+enum FileMenuItemId : std::uint8_t {
     revealFileMenuItemId = 1,
     openParentDirectoryMenuItemId,
     normalizeMenuItemId,
@@ -425,46 +426,64 @@ static int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAna
 
 using namespace audiobatch::gui;
 
-AudioBatchComponent::AudioBatchComponent() :
-    analysisCoordinator(analysisCache),
-    fileTableModel(
-        analysisResults,
-        [this](const int row) { handleSelectionChanged(row); },
-        [this](const int columnId, const bool isForwards) { handleSortRequested(columnId, isForwards); },
-        [this](const int row, const int columnId, const juce::MouseEvent& event) {
-            handleFileContextMenuRequested(row, columnId, event);
-        },
-        [this](const AudioAnalysisRecord& record) { return getActiveStatusLabel(record); },
-        [] { return getActivityPhase(); }
-    ),
-    audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
+/// Plugin chains created for one processing run, or the reason the run cannot start.
+struct ChainInstantiation {
+    /// One chain of plugin instances per worker.
+    std::vector<PluginProcessingCoordinator::PluginChainInstances> chains;
+    /// Empty when every plugin of every chain was created.
+    juce::String errorMessage;
+    /// Name of the plugin that failed to load, when errorMessage is not empty.
+    juce::String failedPluginName;
+};
+
+/// Creates one chain of plugin instances per worker on the calling thread, which must be the message thread.
+/// Stops at the first plugin that fails, since a chain missing any plugin must not run.
+static ChainInstantiation instantiateChains(
+    const juce::AudioPluginFormatManager& pluginFormatManager,
+    const std::vector<PluginChain::EnabledChainPlugin>& enabledPlugins,
+    const int workerCount
+)
 {
-    const auto constructorStartedAtMs = juce::Time::getMillisecondCounterHiRes();
-    const auto logStartupCheckpoint = [constructorStartedAtMs](const juce::String& step) {
-        utils::logDebug(
-            "AudioBatchComponent startup: {} ({:.1f} ms)",
-            step,
-            juce::Time::getMillisecondCounterHiRes() - constructorStartedAtMs
-        );
-    };
+    // Use a reasonable default sample rate. The chain is prepared again per file with the file's rate.
+    constexpr double defaultSampleRate = 48000.0;
+    constexpr int defaultBlockSize = 1024;
 
-    logStartupCheckpoint("constructor begin");
-    formatManager.registerBasicFormats();
-    logStartupCheckpoint("audio formats registered");
+    ChainInstantiation instantiation;
+    instantiation.chains.reserve(static_cast<std::size_t>(workerCount));
 
-    currentRootLabel.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(currentRootLabel);
+    for (int worker = 0; worker < workerCount; ++worker) {
+        PluginProcessingCoordinator::PluginChainInstances chainInstances;
+        chainInstances.reserve(enabledPlugins.size());
 
-    statusLabel.setTooltip("Background analysis and normalization status.");
-    statusLabel.setJustificationType(juce::Justification::centredRight);
-    addAndMakeVisible(statusLabel);
+        for (const auto& enabledPlugin : enabledPlugins) {
+            juce::String error;
+            auto instance = pluginFormatManager.createPluginInstance(
+                enabledPlugin.description, defaultSampleRate, defaultBlockSize, error
+            );
 
+            if (instance == nullptr) {
+                instantiation.errorMessage = error.isNotEmpty() ? error : juce::String("Plugin instantiation failed");
+                instantiation.failedPluginName = enabledPlugin.description.name;
+                return instantiation;
+            }
+
+            chainInstances.push_back(std::move(instance));
+        }
+
+        instantiation.chains.push_back(std::move(chainInstances));
+    }
+
+    return instantiation;
+}
+
+void AudioBatchComponent::configureResultsTable()
+{
     resultsTable.setHeader(std::make_unique<SecondarySortTableHeader>([this](const int columnId) {
         handleSecondarySortRequested(columnId);
     }));
     AudioFileTableModel::configureHeader(resultsTable.getHeader());
     resultsTable.setModel(&fileTableModel);
-    resultsTable.setColour(juce::ListBox::backgroundColourId, juce::CustomLookAndFeel::greyMediumDark);
+    resultsTable.setColour(juce::ListBox::backgroundColourId, juce::CustomLookAndFeel::greyMediumDark());
     resultsTable.setMultipleSelectionEnabled(true);
     resultsTable.setOutlineThickness(0);
     resultsTable.setRowHeight(24);
@@ -472,7 +491,10 @@ AudioBatchComponent::AudioBatchComponent() :
     refreshSortIndicators();
     addAndMakeVisible(resultsTable);
     resultsTable.addKeyListener(this);
+}
 
+void AudioBatchComponent::configurePreviewControls()
+{
     // Default to a larger list view while allowing the lower preview area to be resized.
     mainVerticalLayout.setItemLayout(0, 240.0, -0.85, -0.69);
     mainVerticalLayout.setItemLayout(1, 6.0, 6.0, 6.0);
@@ -499,8 +521,8 @@ AudioBatchComponent::AudioBatchComponent() :
     thumbnail->setThumbnailFullyLoadedCallback([this] { handleThumbnailFullyLoaded(); });
 
     startStopButton.setEnabled(false);
-    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
-    startStopButton.setColour(juce::TextButton::buttonOnColourId, juce::CustomLookAndFeel::green);
+    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
+    startStopButton.setColour(juce::TextButton::buttonOnColourId, juce::CustomLookAndFeel::green());
     startStopButton.setTooltip("Start or stop preview playback for the selected file.");
     startStopButton.onClick = [this] { startOrStop(); };
     addAndMakeVisible(startStopButton);
@@ -526,7 +548,10 @@ AudioBatchComponent::AudioBatchComponent() :
     addAndMakeVisible(audioInfoViewport);
 
     audioInfo->setPreferredHeightChangedCallback([this] { resized(); });
+}
 
+void AudioBatchComponent::configureProcessingControls()
+{
     pluginAppProperties.setStorageParameters(utils::createApplicationSettingsOptions());
 
     pluginChain = std::make_unique<PluginChain>(pluginAppProperties);
@@ -574,43 +599,33 @@ AudioBatchComponent::AudioBatchComponent() :
 
     processButton.setTooltip("Process selected files through the plugin chain.");
     updateProcessButtonState();
-    processButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
+    processButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
     processButton.onClick = [this] { processSelectedRecords(); };
     addAndMakeVisible(processButton);
 
     settingsButton.setTooltip("Open audio device settings.");
     settingsButton.onClick = [this] { showAudioSettingsWindow(); };
     addAndMakeVisible(settingsButton);
+}
 
-    tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 700);
-    logStartupCheckpoint("ui controls created");
-
-    thread.startThread(juce::Thread::Priority::high);
-    logStartupCheckpoint("audio preview thread started");
-
-    utils::logDebug("AudioBatchComponent startup: opening analysis cache");
-    const auto analysisCacheOpened = analysisCache.open();
-    if (analysisCacheOpened) {
-        logStartupCheckpoint("analysis cache opened");
-    } else {
-        utils::logError("AudioBatchComponent startup: analysis cache open failed");
-    }
-
+void AudioBatchComponent::connectCoordinatorCallbacks()
+{
     const SafePointer safeThis(this);
-    analysisCoordinator.setResultCallback([safeThis](const AudioAnalysisRecord& record) {
-        juce::MessageManager::callAsync([safeThis, record] {
-            if (safeThis != nullptr) {
-                safeThis->handleAnalysisResult(record);
-            }
-        });
-    });
-    analysisCoordinator.setCompletionCallback([safeThis](int totalFiles) {
-        juce::MessageManager::callAsync([safeThis, totalFiles] {
-            if (safeThis != nullptr) {
-                safeThis->handleAnalysisComplete(totalFiles);
-            }
-        });
-    });
+
+    // Coordinator callbacks arrive on worker threads.
+    // The handler runs on the message thread, and only while this component still exists.
+    const auto postToMessageThread = [safeThis](auto handler) {
+        return [safeThis, handler](const auto& argument) {
+            juce::MessageManager::callAsync([safeThis, handler, argument] {
+                if (safeThis != nullptr) {
+                    (safeThis.getComponent()->*handler)(argument);
+                }
+            });
+        };
+    };
+
+    analysisCoordinator.setResultCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisResult));
+    analysisCoordinator.setCompletionCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisComplete));
     analysisCoordinator.setStartingCallback([safeThis](const juce::File& file) {
         juce::MessageManager::callAsync([safeThis, file] {
             if (safeThis != nullptr) {
@@ -620,54 +635,25 @@ AudioBatchComponent::AudioBatchComponent() :
         });
     });
 
-    normalizeCoordinator.setResultCallback([safeThis](const AudioNormalizationResult& result) {
-        juce::MessageManager::callAsync([safeThis, result] {
-            if (safeThis != nullptr) {
-                safeThis->handleNormalizeResult(result);
-            }
-        });
-    });
+    normalizeCoordinator.setResultCallback(postToMessageThread(&AudioBatchComponent::handleNormalizeResult));
+    normalizeCoordinator.setCompletionCallback(postToMessageThread(&AudioBatchComponent::handleNormalizeComplete));
 
-    normalizeCoordinator.setCompletionCallback([safeThis](int totalFiles) {
-        juce::MessageManager::callAsync([safeThis, totalFiles] {
-            if (safeThis != nullptr) {
-                safeThis->handleNormalizeComplete(totalFiles);
-            }
-        });
-    });
-    logStartupCheckpoint("analysis and normalization callbacks configured");
-
-    pluginCoordinator.setResultCallback([safeThis](const PluginProcessingResult& result) {
-        juce::MessageManager::callAsync([safeThis, result] {
-            if (safeThis != nullptr) {
-                safeThis->handleProcessingResult(result);
-            }
-        });
-    });
-
-    pluginCoordinator.setCompletionCallback([safeThis](int totalFiles) {
-        juce::MessageManager::callAsync([safeThis, totalFiles] {
-            if (safeThis != nullptr) {
-                safeThis->handleProcessingComplete(totalFiles);
-            }
-        });
-    });
+    pluginCoordinator.setResultCallback(postToMessageThread(&AudioBatchComponent::handleProcessingResult));
+    pluginCoordinator.setCompletionCallback(postToMessageThread(&AudioBatchComponent::handleProcessingComplete));
 
     pluginCoordinator.setStartErrorCallback([safeThis](const juce::String& errorMessage) {
         juce::MessageManager::callAsync([safeThis, errorMessage] {
             if (safeThis != nullptr) {
                 safeThis->pluginProcessingInProgress = false;
                 safeThis->statusLabel.setText(errorMessage, juce::dontSendNotification);
-                juce::AlertWindow::showAsync(
-                    juce::MessageBoxOptions::makeOptionsOk(
-                        juce::MessageBoxIconType::WarningIcon, "Plugin Processing", errorMessage, "OK", safeThis
-                    ),
-                    nullptr
-                );
+                safeThis->showPluginProcessingWarning(errorMessage);
             }
         });
     });
+}
 
+void AudioBatchComponent::requestAudioDeviceAccess()
+{
     utils::logDebug("AudioBatchComponent startup: requesting record-audio permission");
     juce::RuntimePermissions::request(juce::RuntimePermissions::recordAudio, [this](const bool granted) {
         const int numInputChannels = granted ? 2 : 0;
@@ -691,6 +677,64 @@ AudioBatchComponent::AudioBatchComponent() :
             );
         }
     });
+}
+
+AudioBatchComponent::AudioBatchComponent() :
+    analysisCoordinator(analysisCache),
+    fileTableModel(
+        analysisResults,
+        [this](const int row) { handleSelectionChanged(row); },
+        [this](const int columnId, const bool isForwards) { handleSortRequested(columnId, isForwards); },
+        [this](const int row, const int columnId, const juce::MouseEvent& event) {
+            handleFileContextMenuRequested(row, columnId, event);
+        },
+        [this](const AudioAnalysisRecord& record) { return getActiveStatusLabel(record); },
+        [] { return getActivityPhase(); }
+    ),
+    audioSetupComp(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
+{
+    const auto constructorStartedAtMs = juce::Time::getMillisecondCounterHiRes();
+    const auto logStartupCheckpoint = [constructorStartedAtMs](const juce::String& step) {
+        utils::logDebug(
+            "AudioBatchComponent startup: {} ({:.1f} ms)",
+            step,
+            juce::Time::getMillisecondCounterHiRes() - constructorStartedAtMs
+        );
+    };
+
+    logStartupCheckpoint("constructor begin");
+    formatManager.registerBasicFormats();
+    logStartupCheckpoint("audio formats registered");
+
+    currentRootLabel.setJustificationType(juce::Justification::centredLeft);
+    addAndMakeVisible(currentRootLabel);
+
+    statusLabel.setTooltip("Background analysis and normalization status.");
+    statusLabel.setJustificationType(juce::Justification::centredRight);
+    addAndMakeVisible(statusLabel);
+
+    configureResultsTable();
+    configurePreviewControls();
+    configureProcessingControls();
+
+    tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 700);
+    logStartupCheckpoint("ui controls created");
+
+    thread.startThread(juce::Thread::Priority::high);
+    logStartupCheckpoint("audio preview thread started");
+
+    utils::logDebug("AudioBatchComponent startup: opening analysis cache");
+    const auto analysisCacheOpened = analysisCache.open();
+    if (analysisCacheOpened) {
+        logStartupCheckpoint("analysis cache opened");
+    } else {
+        utils::logError("AudioBatchComponent startup: analysis cache open failed");
+    }
+
+    connectCoordinatorCallbacks();
+    logStartupCheckpoint("analysis and normalization callbacks configured");
+
+    requestAudioDeviceAccess();
 
     audioDeviceManager.addAudioCallback(&audioSourcePlayer);
     audioSourcePlayer.setSource(&transportSource);
@@ -2266,7 +2310,7 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
         currentAudioUrl = std::move(resource);
         currentWaveformLoadedFromCache = false;
         startStopButton.setEnabled(true);
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green);
+        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green());
         zoomSlider.setValue(100.0, juce::dontSendNotification);
 
         juce::MemoryBlock waveformData;
@@ -2281,7 +2325,7 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
         currentAudioUrl = {};
         currentWaveformLoadedFromCache = false;
         startStopButton.setEnabled(false);
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
+        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
         thumbnail->setURL(juce::URL());
     }
 }
@@ -2339,7 +2383,7 @@ void AudioBatchComponent::updatePlaybackButtonForTransportState()
         return;
     }
 
-    const auto colour = transportSource.isPlaying() ? juce::CustomLookAndFeel::red : juce::CustomLookAndFeel::green;
+    const auto colour = transportSource.isPlaying() ? juce::CustomLookAndFeel::red() : juce::CustomLookAndFeel::green();
     startStopButton.setColour(juce::TextButton::buttonColourId, colour);
 }
 
@@ -2370,7 +2414,7 @@ void AudioBatchComponent::clearCurrentAudioPreview()
     currentAudioFileSource.reset();
     thumbnail->setURL(juce::URL());
     startStopButton.setEnabled(false);
-    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
+    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
 }
 
 void AudioBatchComponent::mouseMagnify(const juce::MouseEvent& /*event*/, const float scaleFactor)
@@ -2409,7 +2453,7 @@ void AudioBatchComponent::openDialogWindow(
     window->setSize(window->getWidth(), window->getHeight());
     window->setResizable(true, true);
     window->setResizeLimits(window->getWidth(), window->getHeight(), 4096, 4096);
-    window->setColour(juce::DialogWindow::backgroundColourId, juce::CustomLookAndFeel::greySemiDark);
+    window->setColour(juce::DialogWindow::backgroundColourId, juce::CustomLookAndFeel::greySemiDark());
     window->setVisible(true);
     window->toFront(true);
 }
@@ -2536,20 +2580,68 @@ void AudioBatchComponent::updateThumbnailDisplayGain()
     thumbnail->setDisplayGain(gain);
 }
 
-void AudioBatchComponent::processSelectedRecords()
+void AudioBatchComponent::showPluginProcessingWarning(const juce::String& message)
+{
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions::makeOptionsOk(
+            juce::MessageBoxIconType::WarningIcon, "Plugin Processing", message, "OK", this
+        ),
+        nullptr
+    );
+}
+
+juce::String AudioBatchComponent::getProcessingBlockedReason() const
 {
     if (pluginProcessingInProgress) {
-        statusLabel.setText("Processing already in progress", juce::dontSendNotification);
-        return;
+        return "Processing already in progress";
     }
 
     if (normalizeInProgress) {
-        statusLabel.setText("Wait for normalization to finish before processing", juce::dontSendNotification);
-        return;
+        return "Wait for normalization to finish before processing";
     }
 
     if (isAnalysisInProgress()) {
-        statusLabel.setText("Wait for analysis to finish before processing", juce::dontSendNotification);
+        return "Wait for analysis to finish before processing";
+    }
+
+    return {};
+}
+
+juce::Array<juce::File> AudioBatchComponent::releasePreviewBeforeProcessing(
+    const std::vector<AudioAnalysisRecord>& records
+)
+{
+    // Always stop playback before processing, since files may be replaced on disk.
+    if (transportSource.isPlaying()) {
+        transportSource.stop();
+    }
+    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green());
+
+    juce::Array<juce::File> filesToProcess;
+    for (const auto& record : records) {
+        filesToProcess.add(record.file);
+    }
+
+    if (!filesToProcess.contains(currentAudioFile)) {
+        return filesToProcess;
+    }
+
+    // Release file handles so the on-disk file can be replaced.
+    // Keep currentAudioFile so the result handler can re-load the produced output when processing completes.
+    transportSource.setSource(nullptr);
+    currentAudioFileSource.reset();
+    thumbnail->setURL(juce::URL());
+    currentWaveformLoadedFromCache = false;
+    startStopButton.setEnabled(false);
+    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
+
+    return filesToProcess;
+}
+
+void AudioBatchComponent::processSelectedRecords()
+{
+    if (const auto blockedReason = getProcessingBlockedReason(); blockedReason.isNotEmpty()) {
+        statusLabel.setText(blockedReason, juce::dontSendNotification);
         return;
     }
 
@@ -2560,16 +2652,7 @@ void AudioBatchComponent::processSelectedRecords()
     // Captures live state from any open editors so the run uses the latest tweaks.
     const auto enabledPlugins = pluginChain->getEnabledPlugins();
     if (enabledPlugins.empty()) {
-        juce::AlertWindow::showAsync(
-            juce::MessageBoxOptions::makeOptionsOk(
-                juce::MessageBoxIconType::WarningIcon,
-                "Plugin Processing",
-                "The plugin chain is empty. Use the Plugins button to add plugins.",
-                "OK",
-                this
-            ),
-            nullptr
-        );
+        showPluginProcessingWarning("The plugin chain is empty. Use the Plugins button to add plugins.");
         return;
     }
 
@@ -2590,94 +2673,31 @@ void AudioBatchComponent::processSelectedRecords()
     const auto workerCount
         = juce::jlimit(1, 4, juce::jmin(static_cast<int>(records.size()), juce::SystemStats::getNumCpus()));
 
-    auto const& pluginFormatManager = pluginChain->getFormatManager();
-    std::vector<PluginProcessingCoordinator::PluginChainInstances> chains;
-    chains.reserve(static_cast<std::size_t>(workerCount));
-
     statusLabel.setText("Loading plugins...", juce::dontSendNotification);
 
-    juce::String instantiationError;
-    juce::String failedPluginName;
-    for (int i = 0; i < workerCount && instantiationError.isEmpty(); ++i) {
-        PluginProcessingCoordinator::PluginChainInstances chainInstances;
-        chainInstances.reserve(enabledPlugins.size());
+    auto instantiation = instantiateChains(pluginChain->getFormatManager(), enabledPlugins, workerCount);
 
-        for (const auto& enabledPlugin : enabledPlugins) {
-            juce::String error;
-            // Use a reasonable default sample rate. We re-call prepareToPlay per file with the file's rate.
-            auto instance = pluginFormatManager.createPluginInstance(enabledPlugin.description, 48000.0, 1024, error);
-            if (instance == nullptr) {
-                instantiationError = error.isNotEmpty() ? error : juce::String("Plugin instantiation failed");
-                failedPluginName = enabledPlugin.description.name;
-                break;
-            }
-
-            chainInstances.push_back(std::move(instance));
-        }
-
-        if (instantiationError.isEmpty()) {
-            chains.push_back(std::move(chainInstances));
-        }
-    }
-
-    if (chains.empty() || instantiationError.isNotEmpty()) {
+    if (instantiation.chains.empty() || instantiation.errorMessage.isNotEmpty()) {
         // All-or-nothing: a chain missing any plugin must not run at all.
-        chains.clear();
-        juce::AlertWindow::showAsync(
-            juce::MessageBoxOptions::makeOptionsOk(
-                juce::MessageBoxIconType::WarningIcon,
-                "Plugin Processing",
-                utils::format(
-                    "Could not load plugin {}:\n\n{}",
-                    failedPluginName.quoted(),
-                    instantiationError.isNotEmpty() ? instantiationError : juce::String("Unknown error")
-                ),
-                "OK",
-                this
-            ),
-            nullptr
+        showPluginProcessingWarning(
+            utils::format(
+                "Could not load plugin {}:\n\n{}",
+                instantiation.failedPluginName.quoted(),
+                instantiation.errorMessage.isNotEmpty() ? instantiation.errorMessage : juce::String("Unknown error")
+            )
         );
         statusLabel.setText("Plugin load failed", juce::dontSendNotification);
         return;
     }
 
-    // Always stop playback before processing, since files may be replaced on disk.
-    if (transportSource.isPlaying()) {
-        transportSource.stop();
-    }
-    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green);
-
-    juce::Array<juce::File> filesToProcess;
-    juce::File previousPreviewFile = currentAudioFile;
-    bool previewWillBeProcessed = false;
-
-    for (const auto& record : records) {
-        filesToProcess.add(record.file);
-
-        if (record.file == currentAudioFile) {
-            previewWillBeProcessed = true;
-        }
-    }
-
-    if (previewWillBeProcessed) {
-        // Release file handles so the on-disk file can be replaced.
-        // Keep currentAudioFile so the result handler can re-load the produced output when processing completes.
-        transportSource.setSource(nullptr);
-        currentAudioFileSource.reset();
-        thumbnail->setURL(juce::URL());
-        currentWaveformLoadedFromCache = false;
-        startStopButton.setEnabled(false);
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
-        // Make doubly sure the path is preserved.
-        currentAudioFile = std::move(previousPreviewFile);
-    }
+    const auto filesToProcess = releasePreviewBeforeProcessing(records);
 
     processingFailures.clear();
     processedResultsCompleted = 0;
     pluginProcessingInProgress = true;
     updateProcessButtonState();
 
-    processedResultsExpected = pluginCoordinator.start(records, options, std::move(chains));
+    processedResultsExpected = pluginCoordinator.start(records, options, std::move(instantiation.chains));
 
     if (processedResultsExpected <= 0) {
         pluginProcessingInProgress = false;

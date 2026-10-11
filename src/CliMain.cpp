@@ -10,6 +10,9 @@
 #include "PluginScanner.h"
 #include "utils.h"
 
+#include <cstddef>
+#include <span>
+
 namespace audiobatch::cli
 {
 /// Detaches the logger before returning the process exit code,
@@ -47,7 +50,9 @@ int main(const int argc, char* argv[])
     const auto executableName = juce::File(arguments.executableName).getFileNameWithoutExtension();
 
     // The plugin rescan relaunches this executable as its scan worker.
-    if (const auto commandLine = juce::StringArray(argv + 1, argc - 1).joinIntoString(" ");
+    const auto argumentSpan = std::span(argv, static_cast<std::size_t>(argc)).subspan(1);
+    if (const auto commandLine
+        = juce::StringArray(argumentSpan.data(), static_cast<int>(argumentSpan.size())).joinIntoString(" ");
         isPluginScanWorkerCommandLine(commandLine))
     {
         return audiobatch::cli::runPluginScanWorker(executableName, commandLine);

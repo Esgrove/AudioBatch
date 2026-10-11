@@ -7,30 +7,23 @@
 # - readability-magic-numbers: very noisy in audio and GUI code,
 #   where literals like 0.5f, 2.0f, dB offsets and pixel sizes are routine.
 # - readability-uppercase-literal-suffix: JUCE style uses lowercase 'f' on float literals.
-# - readability-function-cognitive-complexity: subjective and would require large refactors
-#   in code that is already organized around JUCE's component and callback patterns.
 # - readability-math-missing-parentheses: forces parentheses around standard precedence
 #   like `a + b * c`, which hurts readability more than it helps.
 # - modernize-use-trailing-return-type: the project uses leading return types throughout.
 # - misc-include-cleaner: JUCE modules are included through umbrella headers,
 #   so nearly every use of a JUCE symbol is reported.
-# - misc-non-private-member-variables-in-classes: plain structs with public data members are used on purpose.
-# - misc-multiple-inheritance: JUCE components combine several listener interfaces by design.
 # - misc-use-anonymous-namespace and misc-use-internal-linkage:
-#   file-local helpers are declared `static` throughout the project.
-# - bugprone-easily-swappable-parameters: many signatures follow JUCE overrides such as `paintCell`.
-# - portability-avoid-pragma-once: every header uses `#pragma once`.
-# - cppcoreguidelines-owning-memory: JUCE APIs take and return raw owning pointers.
-# - cppcoreguidelines-special-member-functions: JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR and
-#   JUCE_DECLARE_NON_COPYABLE declare only the copy operations, which the check then reports as an incomplete rule of five.
-# - misc-override-with-different-visibility: JUCE overrides are conventionally declared private.
-# - performance-enum-size: shrinking enum storage saves nothing here,
-#   and several enums are passed to JUCE APIs as plain ints.
-# - bugprone-throwing-static-initialization: the shared fonts are static JUCE objects
-#   that are created from embedded binary data and cannot be made noexcept.
+#   file-local helpers are declared `static`, and file-local types stay at namespace scope,
+#   instead of being wrapped in anonymous namespaces.
+# - cppcoreguidelines-use-enum-class: the unscoped menu and table column enums hold ids
+#   that JUCE passes around as plain ints.
+# - cppcoreguidelines-owning-memory: JUCE APIs such as setContentOwned and createDocumentWindowButton
+#   take and return raw owning pointers.
 # - bugprone-exception-escape: the reported destructors and callbacks can only throw on allocation failure,
 #   which terminates the process either way.
-# - concurrency-mt-unsafe: reports standard library functions that are not used from competing threads here.
+# - misc-multiple-inheritance: JUCE components combine several listener interfaces by design.
+# - bugprone-easily-swappable-parameters: many signatures follow JUCE overrides such as `paintCell`.
+# - portability-avoid-pragma-once: every header uses `#pragma once`.
 Checks: >
   clang-diagnostic-*,
   clang-analyzer-*,
@@ -52,23 +45,20 @@ Checks: >
   cppcoreguidelines-rvalue-reference-param-not-moved,
   cppcoreguidelines-avoid-goto,
   cppcoreguidelines-pro-type-static-cast-downcast,
+  cppcoreguidelines-special-member-functions,
+  cppcoreguidelines-pro-bounds-pointer-arithmetic,
+  cppcoreguidelines-pro-type-reinterpret-cast,
   -modernize-use-trailing-return-type,
   -readability-magic-numbers,
   -readability-uppercase-literal-suffix,
-  -readability-function-cognitive-complexity,
   -readability-math-missing-parentheses,
   -misc-include-cleaner,
-  -misc-non-private-member-variables-in-classes,
-  -misc-multiple-inheritance,
   -misc-use-anonymous-namespace,
   -misc-use-internal-linkage,
-  -bugprone-easily-swappable-parameters,
-  -portability-avoid-pragma-once,
-  -misc-override-with-different-visibility,
-  -performance-enum-size,
-  -bugprone-throwing-static-initialization,
   -bugprone-exception-escape,
-  -concurrency-mt-unsafe
+  -misc-multiple-inheritance,
+  -bugprone-easily-swappable-parameters,
+  -portability-avoid-pragma-once
 WarningsAsErrors: ""
 HeaderFilterRegex: ".*/src/.*"
 FormatStyle: file
@@ -78,6 +68,7 @@ CheckOptions:
     cert-oop54-cpp.WarnOnlyIfThisHasSuspiciousField: "false"
     cert-str34-c.DiagnoseSignedUnsignedCharComparisons: "false"
     cppcoreguidelines-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: "true"
+    misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: "true"
     google-readability-braces-around-statements.ShortStatementLines: "1"
     google-readability-function-size.StatementThreshold: "800"
     google-readability-namespace-comments.ShortNamespaceLines: "10"

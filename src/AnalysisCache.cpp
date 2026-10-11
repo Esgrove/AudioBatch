@@ -8,6 +8,8 @@
 #include "utils.h"
 #include "version.h"
 
+#include <algorithm>
+#include <array>
 #include <sqlite3.h>
 
 /// Helpers for marshalling SQLite values into JUCE types.
@@ -16,8 +18,9 @@ namespace audiobatch::cache
 /// Reads a text column as a juce::String, mapping SQL NULL to an empty string.
 static juce::String columnText(sqlite3_stmt* statement, const int columnIndex)
 {
-    const auto* text = sqlite3_column_text(statement, columnIndex);
-    return text != nullptr ? juce::String::fromUTF8(reinterpret_cast<const char*>(text)) : juce::String();
+    const auto* text = sqlite3_column_blob(statement, columnIndex);
+    return text != nullptr ? juce::String::createStringFromData(text, sqlite3_column_bytes(statement, columnIndex))
+                           : juce::String();
 }
 
 /// Copies a blob column into a juce::MemoryBlock, returning an empty block for NULL or empty data.
@@ -143,6 +146,33 @@ bool AnalysisCache::columnExists(const juce::String& tableName, const juce::Stri
     return found;
 }
 
+bool AnalysisCache::addMissingColumns()
+{
+    struct ColumnMigration {
+        const char* name;
+        const char* definition;
+    };
+
+    constexpr std::array migrations {
+        ColumnMigration {.name = "waveform_data", .definition = "BLOB"},
+        ColumnMigration {.name = "waveform_version", .definition = "INTEGER NOT NULL DEFAULT 0"},
+        ColumnMigration {.name = "true_peak_left", .definition = "REAL NOT NULL DEFAULT 0"},
+        ColumnMigration {.name = "true_peak_right", .definition = "REAL NOT NULL DEFAULT 0"},
+        ColumnMigration {.name = "overall_true_peak", .definition = "REAL NOT NULL DEFAULT 0"},
+        ColumnMigration {.name = "max_short_term_lufs", .definition = "REAL NOT NULL DEFAULT -1000"},
+        ColumnMigration {.name = "integrated_lufs", .definition = "REAL NOT NULL DEFAULT -1000"},
+        ColumnMigration {.name = "custom_gain_db", .definition = "REAL NOT NULL DEFAULT 0"},
+        ColumnMigration {.name = "has_custom_gain", .definition = "INTEGER NOT NULL DEFAULT 0"},
+    };
+
+    return std::ranges::all_of(migrations, [this](const ColumnMigration& migration) {
+        return columnExists("file_analysis", migration.name)
+            || execute(
+                   utils::format("ALTER TABLE file_analysis ADD COLUMN {} {};", migration.name, migration.definition)
+            );
+    });
+}
+
 bool AnalysisCache::openUnlocked()
 {
     if (database != nullptr) {
@@ -229,57 +259,7 @@ bool AnalysisCache::openUnlocked()
         return false;
     }
 
-    if (!columnExists("file_analysis", "waveform_data")
-        && !execute("ALTER TABLE file_analysis ADD COLUMN waveform_data BLOB;"))
-    {
-        return false;
-    }
-
-    if (!columnExists("file_analysis", "waveform_version")
-        && !execute("ALTER TABLE file_analysis ADD COLUMN waveform_version INTEGER NOT NULL DEFAULT 0;"))
-    {
-        return false;
-    }
-
-    if (!columnExists("file_analysis", "true_peak_left")
-        && !execute("ALTER TABLE file_analysis ADD COLUMN true_peak_left REAL NOT NULL DEFAULT 0;"))
-    {
-        return false;
-    }
-
-    if (!columnExists("file_analysis", "true_peak_right")
-        && !execute("ALTER TABLE file_analysis ADD COLUMN true_peak_right REAL NOT NULL DEFAULT 0;"))
-    {
-        return false;
-    }
-
-    if (!columnExists("file_analysis", "overall_true_peak")
-        && !execute("ALTER TABLE file_analysis ADD COLUMN overall_true_peak REAL NOT NULL DEFAULT 0;"))
-    {
-        return false;
-    }
-
-    if (!columnExists("file_analysis", "max_short_term_lufs")
-        && !execute("ALTER TABLE file_analysis ADD COLUMN max_short_term_lufs REAL NOT NULL DEFAULT -1000;"))
-    {
-        return false;
-    }
-
-    if (!columnExists("file_analysis", "integrated_lufs")
-        && !execute("ALTER TABLE file_analysis ADD COLUMN integrated_lufs REAL NOT NULL DEFAULT -1000;"))
-    {
-        return false;
-    }
-
-    if (!columnExists("file_analysis", "custom_gain_db")
-        && !execute("ALTER TABLE file_analysis ADD COLUMN custom_gain_db REAL NOT NULL DEFAULT 0;"))
-    {
-        return false;
-    }
-
-    if (!columnExists("file_analysis", "has_custom_gain")
-        && !execute("ALTER TABLE file_analysis ADD COLUMN has_custom_gain INTEGER NOT NULL DEFAULT 0;"))
-    {
+    if (!addMissingColumns()) {
         return false;
     }
 

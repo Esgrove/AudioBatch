@@ -21,6 +21,11 @@ public:
     /// Closes the database if it is currently open.
     ~AnalysisCache();
 
+    AnalysisCache(const AnalysisCache&) = delete;
+    AnalysisCache& operator=(const AnalysisCache&) = delete;
+    AnalysisCache(AnalysisCache&&) = delete;
+    AnalysisCache& operator=(AnalysisCache&&) = delete;
+
     /// Loads a cached analysis record for the given file when present and current.
     bool getAnalysis(const juce::File& file, AudioAnalysisRecord& record);
 
@@ -53,6 +58,10 @@ private:
     /// Returns true when the given table already has the named column.
     /// Used for lightweight schema migrations when opening the database.
     bool columnExists(const juce::String& tableName, const juce::String& columnName) const;
+
+    /// Adds every column that a database created by an older version lacks, with its default value.
+    /// Returns false when a migration statement fails.
+    bool addMissingColumns();
 
     /// Closes the database handle if it is open. The caller must hold the mutex.
     void closeUnlocked();

@@ -10,6 +10,7 @@
 #include "utils.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -19,7 +20,7 @@ namespace audiobatch::plugin_list
 constexpr auto unknownLabel = "Unknown";
 
 /// One column of the plugin listing.
-enum class Column { name, manufacturer, type, format, version };
+enum class Column : std::uint8_t { name, manufacturer, type, format, version };
 
 /// Returns the short display name of a plugin format, for example AU instead of AudioUnit.
 static juce::String formatLabel(const juce::String& formatName)
@@ -291,7 +292,10 @@ static void printGroups(const std::vector<juce::PluginDescription>& plugins, con
 }
 
 /// Returns the registered format with the given name, or nullptr.
-static juce::AudioPluginFormat* findFormat(juce::AudioPluginFormatManager& formatManager, const juce::String& name)
+static juce::AudioPluginFormat* findFormat(
+    const juce::AudioPluginFormatManager& formatManager,
+    const juce::String& name
+)
 {
     for (auto* format : formatManager.getFormats()) {
         if (format->getName() == name) {
@@ -309,7 +313,7 @@ static juce::AudioPluginFormat* findFormat(juce::AudioPluginFormatManager& forma
 static void rescanPlugins(
     juce::PropertiesFile& settings,
     juce::KnownPluginList& knownPluginList,
-    juce::AudioPluginFormatManager& formatManager
+    const juce::AudioPluginFormatManager& formatManager
 )
 {
     knownPluginList.setCustomScanner(std::make_unique<OutOfProcessPluginScanner>());

@@ -11,9 +11,11 @@
 
 #include <JuceHeader.h>
 
+#include <cstdint>
+
 namespace audiobatch::app
 {
-enum MenuItemId {
+enum MenuItemId : std::uint8_t {
     chooseFolderMenuItemId = 1,
     rescanMenuItemId,
     clearFilesMenuItemId,
@@ -47,7 +49,7 @@ public:
     /// creates the owned AudioBatchComponent content, and configures the platform menu bar.
     /// The window is not made visible here, callers use showAndActivate for that.
     explicit MainWindow(const juce::String& name) :
-        DocumentWindow(name, juce::CustomLookAndFeel::greyDark, DocumentWindow::allButtons)
+        DocumentWindow(name, juce::CustomLookAndFeel::greyDark(), DocumentWindow::allButtons)
     {
         const auto constructorStartedAtMs = juce::Time::getMillisecondCounterHiRes();
         const auto logStartupCheckpoint = [constructorStartedAtMs](const juce::String& step) {
@@ -120,6 +122,11 @@ public:
         clearContentComponent();
         juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
     }
+
+    MainWindow(const MainWindow&) = delete;
+    MainWindow& operator=(const MainWindow&) = delete;
+    MainWindow(MainWindow&&) = delete;
+    MainWindow& operator=(MainWindow&&) = delete;
 
     /// Routes the window close button to a normal application quit request.
     void closeButtonPressed() override
@@ -336,7 +343,7 @@ private:
 
     std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel = std::make_unique<juce::CustomLookAndFeel>(true);
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
+    JUCE_LEAK_DETECTOR(MainWindow)
 };
 
 /// JUCE application entry point for the desktop GUI build.

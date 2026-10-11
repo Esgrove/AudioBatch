@@ -9,6 +9,7 @@
 
 #include <JuceHeader.h>
 
+#include <cstdint>
 #include <functional>
 #include <vector>
 
@@ -17,7 +18,7 @@ class AudioFileTableModel : public juce::TableListBoxModel
 {
 public:
     /// Stable identifiers shared by the header configuration, painting, and sort logic.
-    enum ColumnId {
+    enum ColumnId : std::uint8_t {
         columnName = 1,
         columnPath,
         columnType,

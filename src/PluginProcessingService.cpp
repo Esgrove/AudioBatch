@@ -372,6 +372,169 @@ juce::AudioFormatManager& PluginProcessingService::getThreadLocalFormatManager()
     return formatManager;
 }
 
+/// Returns an error message when the record or the plugin chain cannot be processed, or an empty string when it can.
+static juce::String validateProcessingInputs(
+    const AudioAnalysisRecord& record,
+    const PluginProcessingOptions& options,
+    const std::vector<juce::AudioPluginInstance*>& chainInstances
+)
+{
+    if (!record.file.existsAsFile()) {
+        return "File does not exist";
+    }
+
+    if (!record.isReady()) {
+        return "File analysis must finish before processing";
+    }
+
+    const auto chainAvailable = !chainInstances.empty() && chainInstances.size() == options.plugins.size()
+        && std::ranges::none_of(chainInstances, [](const auto* instance) { return instance == nullptr; });
+
+    return chainAvailable ? juce::String() : juce::String("Plugin chain instances are not available");
+}
+
+/// Returns the linear gain applied before the first plugin.
+/// A custom gain wins, otherwise the file is peak normalized when requested, and otherwise it is left unchanged.
+static float getInputGain(const AudioAnalysisRecord& record, const PluginProcessingOptions& options)
+{
+    if (record.hasCustomGain) {
+        return juce::Decibels::decibelsToGain(record.customGainDb);
+    }
+
+    if (options.normalizeBeforePlugin) {
+        const auto peak = peakMagnitude(record.overallPeak);
+        if (peak > 0.0f) {
+            return 1.0f / peak;
+        }
+    }
+
+    return 1.0f;
+}
+
+/// Reads `samplesToRead` frames starting at `samplePosition` into the start of `buffer` and applies `inputGain`.
+/// `readBuffer` and `readChannelPointers` are scratch storage reused across blocks.
+/// Returns false when the reader fails.
+static bool readInputBlock(
+    juce::AudioFormatReader& reader,
+    juce::AudioBuffer<float>& buffer,
+    juce::AudioBuffer<float>& readBuffer,
+    std::vector<float*>& readChannelPointers,
+    const juce::int64 samplePosition,
+    const int samplesToRead,
+    const float inputGain
+)
+{
+    const auto channelCount = static_cast<int>(readChannelPointers.size());
+    readBuffer.clear();
+
+    for (int channel = 0; channel < channelCount; ++channel) {
+        readChannelPointers[static_cast<std::size_t>(channel)] = readBuffer.getWritePointer(channel);
+    }
+
+    if (!reader.read(readChannelPointers.data(), channelCount, samplePosition, samplesToRead)) {
+        return false;
+    }
+
+    for (int channel = 0; channel < channelCount; ++channel) {
+        buffer.copyFrom(channel, 0, readBuffer, channel, 0, samplesToRead);
+    }
+
+    if (!juce::approximatelyEqual(inputGain, 1.0f)) {
+        for (int channel = 0; channel < channelCount; ++channel) {
+            buffer.applyGain(channel, 0, samplesToRead, inputGain);
+        }
+    }
+
+    return true;
+}
+
+/// Streams the whole file through every plugin in chain order and writes the processed audio.
+/// The chain latency and tail are rendered on top of the file length,
+/// and the first `latencySamples` output samples are discarded,
+/// so the processed audio lines up with the input and its end is not cut off.
+/// Returns an error message, or an empty string when the whole file was written.
+static juce::String renderThroughChain(
+    juce::AudioFormatReader& reader,
+    juce::AudioFormatWriter& writer,
+    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    const ChainPreparation& preparation,
+    const int numChannels,
+    const float inputGain,
+    const PluginProcessingService::CancellationCheck& isCancelled
+)
+{
+    const auto latencySamples = preparation.latencySamples;
+
+    juce::AudioBuffer<float> buffer(preparation.processChannelCount, processingBlockSize);
+    juce::AudioBuffer<float> readBuffer(numChannels, processingBlockSize);
+    juce::MidiBuffer midi;
+    std::vector<float*> readChannelPointers(static_cast<std::size_t>(numChannels));
+
+    const auto totalSamples = reader.lengthInSamples + latencySamples + preparation.tailSamples;
+    juce::String renderError;
+
+    for (juce::int64 samplePosition = 0; samplePosition < totalSamples; samplePosition += processingBlockSize) {
+        if (isCancellationRequested(isCancelled)) {
+            renderError = cancelledMessage;
+            break;
+        }
+
+        const auto samplesThisBlock
+            = static_cast<int>(juce::jmin<juce::int64>(processingBlockSize, totalSamples - samplePosition));
+
+        buffer.clear();
+
+        const auto samplesToRead = static_cast<int>(juce::jmax<juce::int64>(
+            0, juce::jmin<juce::int64>(samplesThisBlock, reader.lengthInSamples - samplePosition)
+        ));
+
+        if (samplesToRead > 0
+            && !readInputBlock(
+                reader, buffer, readBuffer, readChannelPointers, samplePosition, samplesToRead, inputGain
+            ))
+        {
+            renderError = "Failed while reading audio data";
+            break;
+        }
+
+        // Process: trim buffer to the block size the plugin expects (it was prepared at processingBlockSize).
+        if (samplesThisBlock < processingBlockSize) {
+            // Pad with silence to the prepared block size.
+            // Many plugins assume a constant block size.
+            for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
+                buffer.clear(channel, samplesThisBlock, processingBlockSize - samplesThisBlock);
+            }
+        }
+
+        // Run the block through every plugin in chain order on the same buffer.
+        for (auto* plugin : chainInstances) {
+            midi.clear();
+            plugin->processBlock(buffer, midi);
+        }
+
+        // Skip the output samples that still fall within the chain latency.
+        const auto firstSampleToWrite
+            = static_cast<int>(juce::jlimit<juce::int64>(0, samplesThisBlock, latencySamples - samplePosition));
+        const auto samplesToWrite = samplesThisBlock - firstSampleToWrite;
+
+        if (samplesToWrite <= 0) {
+            continue;
+        }
+
+        const auto channelsToWrite = juce::jmin(numChannels, buffer.getNumChannels());
+        juce::AudioBuffer<float> const writeView(
+            buffer.getArrayOfWritePointers(), channelsToWrite, firstSampleToWrite, samplesToWrite
+        );
+
+        if (!writer.writeFromAudioSampleBuffer(writeView, 0, samplesToWrite)) {
+            renderError = "Failed while writing processed audio data";
+            break;
+        }
+    }
+
+    return renderError;
+}
+
 PluginProcessingResult PluginProcessingService::processFile(
     const AudioAnalysisRecord& record,
     const PluginProcessingOptions& options,
@@ -381,20 +544,8 @@ PluginProcessingResult PluginProcessingService::processFile(
 {
     const auto& file = record.file;
 
-    if (!file.existsAsFile()) {
-        return fail(file, "File does not exist");
-    }
-
-    if (!record.isReady()) {
-        return fail(file, "File analysis must finish before processing");
-    }
-
-    if (chainInstances.empty() || chainInstances.size() != options.plugins.size()) {
-        return fail(file, "Plugin chain instances are not available");
-    }
-
-    if (std::ranges::any_of(chainInstances, [](const auto* instance) { return instance == nullptr; })) {
-        return fail(file, "Plugin chain instances are not available");
+    if (const auto inputError = validateProcessingInputs(record, options, chainInstances); inputError.isNotEmpty()) {
+        return fail(file, inputError);
     }
 
     auto& formatManager = getThreadLocalFormatManager();
@@ -435,16 +586,7 @@ PluginProcessingResult PluginProcessingService::processFile(
     // createWriterFor takes ownership of the stream on success.
     juce::ignoreUnused(outputStream);
 
-    // Determine input gain.
-    float inputGain = 1.0f;
-    if (record.hasCustomGain) {
-        inputGain = juce::Decibels::decibelsToGain(record.customGainDb);
-    } else if (options.normalizeBeforePlugin) {
-        const auto peak = peakMagnitude(record.overallPeak);
-        if (peak > 0.0f) {
-            inputGain = 1.0f / peak;
-        }
-    }
+    const auto inputGain = getInputGain(record, options);
 
     // Plugin setup runs on the message thread as VST3 requires, and only processBlock runs on this worker thread.
     ChainPreparation preparation;
@@ -458,13 +600,7 @@ PluginProcessingResult PluginProcessingService::processFile(
         return fail(file, prepared ? preparation.errorMessage : juce::String(cancelledMessage));
     }
 
-    const auto processChannelCount = preparation.processChannelCount;
     const auto latencySamples = preparation.latencySamples;
-
-    juce::AudioBuffer<float> buffer(processChannelCount, processingBlockSize);
-    juce::AudioBuffer<float> readBuffer(numChannels, processingBlockSize);
-    juce::MidiBuffer midi;
-    std::vector<float*> readChannelPointers(static_cast<std::size_t>(numChannels));
 
     if (latencySamples > 0) {
         utils::logDebug(
@@ -472,83 +608,8 @@ PluginProcessingResult PluginProcessingService::processFile(
         );
     }
 
-    // Render the latency on top of the file length and tail,
-    // and discard that many samples from the start of the output,
-    // so the processed audio lines up with the input and its end is not cut off.
-    const auto totalSamples = reader->lengthInSamples + latencySamples + preparation.tailSamples;
-    juce::String renderError;
-
-    for (juce::int64 samplePosition = 0; samplePosition < totalSamples; samplePosition += processingBlockSize) {
-        if (isCancellationRequested(isCancelled)) {
-            renderError = cancelledMessage;
-            break;
-        }
-
-        const auto samplesThisBlock
-            = static_cast<int>(juce::jmin<juce::int64>(processingBlockSize, totalSamples - samplePosition));
-
-        buffer.clear();
-
-        const auto samplesToRead = static_cast<int>(juce::jmax<juce::int64>(
-            0, juce::jmin<juce::int64>(samplesThisBlock, reader->lengthInSamples - samplePosition)
-        ));
-
-        if (samplesToRead > 0) {
-            readBuffer.clear();
-            for (int channel = 0; channel < numChannels; ++channel) {
-                readChannelPointers[static_cast<std::size_t>(channel)] = readBuffer.getWritePointer(channel);
-            }
-
-            if (!reader->read(readChannelPointers.data(), numChannels, samplePosition, samplesToRead)) {
-                renderError = "Failed while reading audio data";
-                break;
-            }
-
-            for (int channel = 0; channel < numChannels; ++channel) {
-                buffer.copyFrom(channel, 0, readBuffer, channel, 0, samplesToRead);
-            }
-
-            if (!juce::approximatelyEqual(inputGain, 1.0f)) {
-                for (int channel = 0; channel < numChannels; ++channel) {
-                    buffer.applyGain(channel, 0, samplesToRead, inputGain);
-                }
-            }
-        }
-
-        // Process: trim buffer to the block size the plugin expects (it was prepared at processingBlockSize).
-        if (samplesThisBlock < processingBlockSize) {
-            // Pad with silence to the prepared block size.
-            // Many plugins assume a constant block size.
-            for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
-                buffer.clear(channel, samplesThisBlock, processingBlockSize - samplesThisBlock);
-            }
-        }
-
-        // Run the block through every plugin in chain order on the same buffer.
-        for (auto* plugin : chainInstances) {
-            midi.clear();
-            plugin->processBlock(buffer, midi);
-        }
-
-        // Skip the output samples that still fall within the chain latency.
-        const auto firstSampleToWrite
-            = static_cast<int>(juce::jlimit<juce::int64>(0, samplesThisBlock, latencySamples - samplePosition));
-        const auto samplesToWrite = samplesThisBlock - firstSampleToWrite;
-
-        if (samplesToWrite <= 0) {
-            continue;
-        }
-
-        const auto channelsToWrite = juce::jmin(numChannels, buffer.getNumChannels());
-        juce::AudioBuffer<float> const writeView(
-            buffer.getArrayOfWritePointers(), channelsToWrite, firstSampleToWrite, samplesToWrite
-        );
-
-        if (!writer->writeFromAudioSampleBuffer(writeView, 0, samplesToWrite)) {
-            renderError = "Failed while writing processed audio data";
-            break;
-        }
-    }
+    const auto renderError
+        = renderThroughChain(*reader, *writer, chainInstances, preparation, numChannels, inputGain, isCancelled);
 
     writer.reset();
 

@@ -10,9 +10,11 @@
 
 #include <JuceHeader.h>
 
+#include <cstdint>
+
 namespace utils
 {
-enum class Level { debug, info, warn, error };
+enum class Level : std::uint8_t { debug, info, warn, error };
 
 /// Creates the default rolling file logger for the application.
 /// The log file goes into the application's log folder and is named after the log name,

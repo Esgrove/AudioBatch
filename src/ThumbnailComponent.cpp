@@ -27,8 +27,8 @@ ThumbnailComponent::~ThumbnailComponent()
 
 void ThumbnailComponent::paint(juce::Graphics& graphics)
 {
-    graphics.fillAll(juce::CustomLookAndFeel::greyMediumDark);
-    graphics.setColour(juce::CustomLookAndFeel::blue);
+    graphics.fillAll(juce::CustomLookAndFeel::greyMediumDark());
+    graphics.setColour(juce::CustomLookAndFeel::blue());
 
     if (thumbnail.getTotalLength() > 0.0) {
         const auto reduced = getLocalBounds().reduced(2);

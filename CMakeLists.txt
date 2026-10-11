@@ -526,6 +526,10 @@ function(audiobatch_set_source_warnings)
             -Wunreachable-code-aggressive
             -Wredundant-decls
             -Wmissing-declarations
+            # A default label in a switch that already covers every enumerator hides future enumerators from -Wswitch.
+            -Wcovered-switch-default
+            # Namespace scope objects that run code during static initialization.
+            -Wglobal-constructors
             # Unused code that is not caught by the default set.
             -Wunused-member-function
             -Wunused-template
