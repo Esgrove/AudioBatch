@@ -618,6 +618,14 @@ static juce::String renderThroughChain(
         summary.samplesWritten += samplesToWrite;
     }
 
+    if (failureTracker.getFailedBlockCount() > 0) {
+        utils::logWarn(
+            "{} audio block(s) failed to decode and were processed as decoded so far, first at sample {}",
+            failureTracker.getFailedBlockCount(),
+            failureTracker.getFirstFailurePosition()
+        );
+    }
+
     return {};
 }
 
@@ -703,7 +711,8 @@ static juce::String writeFinalOutput(
 /// Moves the validated temporary output into place and disposes of the original.
 /// A different file already at the output path is only replaced when overwriting is allowed,
 /// and it goes to the system trash so it can be recovered.
-/// When the output path differs from the source, the original is moved to the system trash afterwards.
+/// When the output path differs from the source, the original is moved to the system trash afterwards,
+/// and the output is removed again when that fails.
 /// Returns an empty string on success, or a user-facing error message.
 static juce::String commitProcessedOutput(
     const juce::TemporaryFile& temporaryFile,
@@ -729,8 +738,11 @@ static juce::String commitProcessedOutput(
         return "Could not move processed output into place";
     }
 
+    // Keeping both files would leave a duplicate next to the original, so a failed trash undoes the output,
+    // the same as in normalization.
     if (!replacingOriginal && file.existsAsFile() && !utils::moveToTrash(file)) {
-        utils::logError("Could not move the original file to the system trash: {}", file.getFullPathName().quoted());
+        utils::deleteFile(outputFile);
+        return "Could not move the original audio file to the system trash";
     }
 
     return {};
@@ -817,8 +829,14 @@ static juce::String writeProcessedAiff(
 )
 {
     juce::WavAudioFormat wavFormat;
+    auto renderedStream = intermediateFile.createInputStream();
+
+    if (renderedStream == nullptr) {
+        return "Could not open the rendered audio";
+    }
+
     const std::unique_ptr<juce::AudioFormatReader> renderedReader(
-        wavFormat.createReaderFor(intermediateFile.createInputStream().release(), true)
+        wavFormat.createReaderFor(renderedStream.release(), true)
     );
 
     if (renderedReader == nullptr) {

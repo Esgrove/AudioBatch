@@ -445,6 +445,14 @@ static juce::String renderNormalizedAudio(
         }
     }
 
+    if (failureTracker.getFailedBlockCount() > 0) {
+        utils::logWarn(
+            "{} audio block(s) failed to decode and were written as decoded so far, first at sample {}",
+            failureTracker.getFailedBlockCount(),
+            failureTracker.getFirstFailurePosition()
+        );
+    }
+
     return {};
 }
 }  // namespace audiobatch::normalization
