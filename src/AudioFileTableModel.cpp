@@ -116,7 +116,7 @@ AudioFileTableModel::AudioFileTableModel(
     std::function<void(int columnId, bool isForwards)> onSortChanged,
     std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,
     std::function<juce::String(const AudioAnalysisRecord& record)> statusLabelProvider,
-    std::function<juce::String(const AudioAnalysisRecord& record)> errorProvider,
+    std::function<OperationMessage(const AudioAnalysisRecord& record)> messageProvider,
     std::function<float()> phaseProvider
 ) :
     records(&sourceRecords),
@@ -124,7 +124,7 @@ AudioFileTableModel::AudioFileTableModel(
     sortChanged(std::move(onSortChanged)),
     contextMenuRequested(std::move(onContextMenuRequested)),
     activeStatusLabelProvider(std::move(statusLabelProvider)),
-    operationErrorProvider(std::move(errorProvider)),
+    operationMessageProvider(std::move(messageProvider)),
     activityPhaseProvider(std::move(phaseProvider))
 { }
 
@@ -301,7 +301,7 @@ void AudioFileTableModel::paintCell(
 
     const auto& record = (*records)[static_cast<std::size_t>(rowNumber)];
     juce::String text;
-    bool hasOperationError = false;
+    OperationMessage operationMessage;
     auto justification = juce::Justification::centredLeft;
     auto textBounds = juce::Rectangle(4, 0, width - 8, height);
     auto font = juce::CustomLookAndFeel::getTextFont();
@@ -361,9 +361,9 @@ void AudioFileTableModel::paintCell(
             text = activeStatusLabelProvider != nullptr ? activeStatusLabelProvider(record) : juce::String();
 
             if (text.isEmpty()) {
-                const auto operationError = getOperationError(record);
-                hasOperationError = operationError.isNotEmpty();
-                text = hasOperationError ? operationError : AudioAnalysisService::formatStatus(record);
+                operationMessage = getOperationMessage(record);
+                text = operationMessage.text.isNotEmpty() ? operationMessage.text
+                                                          : AudioAnalysisService::formatStatus(record);
             } else {
                 const auto indicatorSize = static_cast<float>(juce::jmin(height - 8, 14));
                 const auto indicatorArea = juce::Rectangle(
@@ -382,7 +382,7 @@ void AudioFileTableModel::paintCell(
             break;
     }
 
-    if (hasOperationError) {
+    if (operationMessage.isError) {
         graphics.setColour(juce::Colours::orangered);
     } else {
         graphics.setColour(
@@ -425,14 +425,14 @@ juce::String AudioFileTableModel::getCellTooltip(const int rowNumber, const int 
 
     const auto& record = (*records)[static_cast<std::size_t>(rowNumber)];
 
-    if (const auto operationError = getOperationError(record); operationError.isNotEmpty()) {
-        return operationError;
+    if (const auto operationMessage = getOperationMessage(record); operationMessage.text.isNotEmpty()) {
+        return operationMessage.text;
     }
 
     return record.hasError() ? record.errorMessage : juce::String();
 }
 
-juce::String AudioFileTableModel::getOperationError(const AudioAnalysisRecord& record) const
+OperationMessage AudioFileTableModel::getOperationMessage(const AudioAnalysisRecord& record) const
 {
-    return operationErrorProvider != nullptr ? operationErrorProvider(record) : juce::String();
+    return operationMessageProvider != nullptr ? operationMessageProvider(record) : OperationMessage {};
 }

@@ -1,7 +1,7 @@
 /// Offline rendering of audio files through a plugin chain.
 /// Declares PluginProcessingService, a stateless service
 /// that processes one file at a time through a caller-owned sequence of plugin instances
-/// and writes the result as 16-bit AIFF next to the original file.
+/// and writes the result as `<name>.aif` next to the original file.
 
 #pragma once
 
@@ -15,7 +15,7 @@
 #include <vector>
 
 /// Stateless audio-file processing through a chain of plugin instances.
-/// Output is always written as 16-bit AIFF next to the original file.
+/// Output is always written as `<name>.aif` next to the original file, at the source bit depth up to 24 bits.
 class PluginProcessingService
 {
 public:
@@ -46,10 +46,15 @@ public:
     /// It may leave the chain prepared, in which case the plugin instances release their resources when destroyed.
     /// The caller owns the plugin instances and is responsible for thread-safety:
     /// a chain of instances must only be in use by one thread at a time.
-    /// Note that a mono file running through a stereo-only plugin mid-chain keeps only the first channel
-    /// in the written output, matching the single-plugin mono-through-stereo fallback behavior.
+    /// A mono file running through a stereo chain feeds both plugin inputs and is written back as mono,
+    /// using the average of both output channels.
+    /// The chain renders into an unquantized intermediate file first.
+    /// When the rendered peak exceeds full scale, the whole output is turned down just enough to avoid clipping,
+    /// which is reported in the result notice.
+    /// Trailing silence from the tail allowance is trimmed, and 16-bit output is dithered.
+    /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again first.
     static PluginProcessingResult processFile(
-        const AudioAnalysisRecord& record,
+        const AudioAnalysisRecord& sourceRecord,
         const PluginProcessingOptions& options,
         const std::vector<juce::AudioPluginInstance*>& chainInstances,
         const CancellationCheck& isCancelled = {}

@@ -61,6 +61,12 @@ public:
     /// Otherwise the record that sorts first by path wins, so the result does not depend on input order.
     static juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records);
 
+    /// Returns the AIFF bit depth for output written from the given source.
+    /// Keeps the analyzed source depth when the AIFF writer supports it,
+    /// uses 16 bits for MP3 sources, and falls back to the highest supported depth,
+    /// so for example 32-bit float sources are written as 24-bit.
+    static int getOutputBitDepth(const AudioAnalysisRecord& record, const juce::AudioFormatReader& reader);
+
     /// Returns the user-facing error message for a record that lost a batch output conflict.
     static juce::String batchOutputConflictMessage(const juce::File& sourceFile);
 
@@ -77,8 +83,9 @@ public:
     /// Fails without writing anything when the output path already exists and is not the source,
     /// unless options.overwriteExisting is set, in which case the existing output is moved to the system trash.
     /// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.
+    /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again before computing the gain.
     static AudioNormalizationResult normalizeFile(
-        const AudioAnalysisRecord& record,
+        const AudioAnalysisRecord& sourceRecord,
         const AudioNormalizationOptions& options,
         const CancellationCheck& isCancelled = {}
     );

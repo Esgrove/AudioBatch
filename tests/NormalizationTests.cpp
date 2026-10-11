@@ -127,6 +127,22 @@ private:
         checkInPlaceNormalization(directory, "sine_mono_48000_24.aif", 1, 48000, 24);
         checkInPlaceNormalization(directory, "sine_stereo_44100_16.aif", 2, 44100, 16);
 
+        beginTest("A file that changed since analysis is analyzed again before computing the gain");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "changed.aif");
+            auto staleRecord = AudioAnalysisService::analyzeFile(source);
+            // Pretend the file was a quieter one when it was analyzed.
+            // Trusting this peak would apply 12 dB of gain and clip the output.
+            staleRecord.overallPeak = 0.125f;
+            staleRecord.modifiedTimeMs -= 1000;
+
+            const auto result = AudioNormalizationService::normalizeFile(staleRecord, {});
+            expect(!result.hasError(), result.errorMessage);
+            expectWithinAbsoluteError(
+                result.analysisRecord.integratedLufs, fixtureStereoLoudness - fixturePeakDecibels, 0.1
+            );
+        }
+
         beginTest("A silent file cannot be normalized");
         {
             const auto source = directory.copyFixture("silence_stereo_44100_16.wav");

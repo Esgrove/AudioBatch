@@ -12,6 +12,13 @@
 #include <functional>
 #include <vector>
 
+/// Outcome of the last normalize or process run for a file, shown in the status column while the file is idle.
+struct OperationMessage {
+    juce::String text;
+    /// True for a failure, which is highlighted, and false for an informational notice.
+    bool isError = false;
+};
+
 /// Table model for analyzed audio files, including sorting, painting, and row actions.
 class AudioFileTableModel : public juce::TableListBoxModel
 {
@@ -100,15 +107,15 @@ public:
     }
 
     /// Creates a model backed by the live result list and UI callbacks owned by the main view.
-    /// The operation error provider returns the error of the last failed normalize or process run for a record,
-    /// or an empty string, and is shown in the status column when the file is idle.
+    /// The operation message provider returns the outcome of the last normalize or process run for a record,
+    /// or an empty message, and is shown in the status column when the file is idle.
     AudioFileTableModel(
         std::vector<AudioAnalysisRecord>& sourceRecords,
         std::function<void(int row)> onSelectionChanged,
         std::function<void(int columnId, bool isForwards)> onSortChanged,
         std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,
         std::function<juce::String(const AudioAnalysisRecord& record)> statusLabelProvider,
-        std::function<juce::String(const AudioAnalysisRecord& record)> errorProvider,
+        std::function<OperationMessage(const AudioAnalysisRecord& record)> messageProvider,
         std::function<float()> phaseProvider
     );
 
@@ -149,12 +156,13 @@ public:
     /// Notifies the owning component when the active sort column changes.
     void sortOrderChanged(int newSortColumnId, bool isForwards) override;
 
-    /// Shows the full error text for the status column of a failed file, and no tooltip for other cells.
+    /// Shows the full status text for the status column of a file with an error or notice,
+    /// and no tooltip for other cells.
     juce::String getCellTooltip(int rowNumber, int columnId) override;
 
 private:
-    /// Returns the last normalize or process error for a record from the provider, or an empty string.
-    [[nodiscard]] juce::String getOperationError(const AudioAnalysisRecord& record) const;
+    /// Returns the last normalize or process message for a record from the provider, or an empty message.
+    [[nodiscard]] OperationMessage getOperationMessage(const AudioAnalysisRecord& record) const;
 
     static constexpr int defaultWindowWidth = 1096;
     static constexpr int nameColumnMinimumWidth = 110;
@@ -192,6 +200,6 @@ private:
     std::function<void(int columnId, bool isForwards)> sortChanged;
     std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested;
     std::function<juce::String(const AudioAnalysisRecord& record)> activeStatusLabelProvider;
-    std::function<juce::String(const AudioAnalysisRecord& record)> operationErrorProvider;
+    std::function<OperationMessage(const AudioAnalysisRecord& record)> operationMessageProvider;
     std::function<float()> activityPhaseProvider;
 };

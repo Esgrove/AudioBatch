@@ -191,6 +191,16 @@ and write the processed audio to disk.
   The latency each plugin reports, for example from lookahead or linear phase processing,
   is summed over the chain and removed from the start of the output,
   so the processed audio stays aligned with the original and its end is not cut off.
+- Mono files fed to a stereo-only plugin send the same signal to both plugin inputs,
+  and the output is written back as mono from the average of both channels.
+- The chain output is rendered unquantized first.
+  The final file keeps the source bit depth, up to 24 bits, so 32-bit float sources become 24-bit.
+  If the processed audio would go over 0 dBFS, the whole file is turned down just enough to avoid clipping,
+  and the status column shows how much, for example `Reduced 1.3 dB to avoid clipping`.
+  16-bit output is dithered.
+  Silence left over from the tail allowance is trimmed, but the output is never shorter than the input.
+- A file that changed on disk since it was analyzed is analyzed again before its gain is computed.
+  Normalization does the same.
 - Processed output is always written as `<name>.aif` next to the input file,
   with the same overwrite and collision rules as normalization.
   If the input has a different extension, the original is moved to the system trash once the new file has been written.
