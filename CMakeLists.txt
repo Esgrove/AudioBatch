@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 4.2)
 
 project(
     "AudioBatch"
-    VERSION 0.8.0
+    VERSION 0.9.0
     DESCRIPTION "App for batch processing audio files"
     HOMEPAGE_URL "https://github.com/Esgrove/AudioBatch"
     LANGUAGES CXX C
@@ -251,16 +251,12 @@ juce_add_gui_app(
         </plist>"
 )
 
-# PLUGINHOST_AU sets JUCE_PLUGINHOST_AU and links the AudioUnit and CoreAudioKit frameworks on macOS,
-# which the Audio Unit hosting code needs for the plugin listing.
-# The GUI gets CoreAudioKit through juce_audio_utils instead.
 juce_add_console_app(
     AudioBatchCli
     COMPANY_NAME "Esgrove"
     COMPANY_WEBSITE "https://github.com/esgrove"
     PRODUCT_NAME "audiobatch"
     VERSION ${APP_BUILD_VERSION}
-    PLUGINHOST_AU TRUE
 )
 
 juce_generate_juce_header(AudioBatch)
@@ -383,19 +379,16 @@ target_compile_definitions(
     AudioBatchCli
     PRIVATE
         DONT_SET_USING_JUCE_NAMESPACE=1
-        # Debug builds would otherwise print the JUCE version on startup,
-        # which pollutes the --version output.
         JUCE_DISABLE_JUCE_VERSION_PRINTING=1
-        JUCE_USE_LAME_AUDIO_FORMAT=1
-        JUCE_USE_MP3AUDIOFORMAT=1
-        # The plugin listing scans VST3 plugins, and Audio Unit plugins through PLUGINHOST_AU above
+        JUCE_PLUGINHOST_AU=1
         JUCE_PLUGINHOST_VST3=1
         JUCE_USE_CURL=0
-        JUCE_WEB_BROWSER=0
         JUCE_USE_FLAC=1
+        JUCE_USE_LAME_AUDIO_FORMAT=1
+        JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_USE_OGGVORBIS=1
         JUCE_USE_WINDOWS_MEDIA_FORMAT=0
-        # Version info
+        JUCE_WEB_BROWSER=0
         BUILDTIME_APP_NAME="${CMAKE_PROJECT_NAME}"
         BUILDTIME_BRANCH="${GIT_BRANCH}"
         BUILDTIME_BUILD_NAME="${APP_BUILD_NAME}"
@@ -562,6 +555,14 @@ juce_add_binary_data(
     NAMESPACE BinaryData
     SOURCES "assets/RobotoMono-Regular.ttf" "assets/Roboto-Regular.ttf"
 )
+
+# The Audio Unit hosting code needs these frameworks for the plugin listing.
+# The GUI gets CoreAudioKit through juce_audio_utils instead.
+if(APPLE)
+    target_link_libraries(
+        AudioBatchCli PRIVATE "$<LINK_LIBRARY:FRAMEWORK,AudioUnit>" "$<LINK_LIBRARY:FRAMEWORK,CoreAudioKit>"
+    )
+endif()
 
 # Keep one library per line, which cmake-format would otherwise join.
 # cmake-format: off
