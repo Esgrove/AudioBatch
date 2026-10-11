@@ -316,6 +316,8 @@ target_sources(
         "src/AudioBatchComponent.h"
         "src/AudioFileTableModel.cpp"
         "src/AudioFileTableModel.h"
+        "src/AudioInfoPanel.cpp"
+        "src/AudioInfoPanel.h"
         "src/CustomLookAndFeel.cpp"
         "src/CustomLookAndFeel.h"
         "src/IntervalStepSlider.h"

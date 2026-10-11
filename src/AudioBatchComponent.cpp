@@ -1,13 +1,14 @@
 /// Implementation of the main GUI component.
 /// Covers UI construction and layout, table interaction and sorting, playback preview,
 /// folder scanning and drag-and-drop, and wiring of the analysis, normalization, and plugin coordinators.
-/// Also defines the file-local AudioInfoPanel and SecondarySortTableHeader helper components
+/// Also defines the file-local SecondarySortTableHeader helper component
 /// and the record sort comparators used by the results table.
 
 #include "AudioBatchComponent.h"
 
 #include "AppInfo.h"
 #include "AudioAnalysisService.h"
+#include "AudioInfoPanel.h"
 #include "CustomLookAndFeel.h"
 #include "FileUtils.h"
 #include "Log.h"
@@ -18,135 +19,6 @@
 #include <algorithm>
 #include <cstdint>
 #include <map>
-
-using AudioInfoRow = std::pair<juce::String, juce::String>;
-
-/// Compact two-column metadata panel displayed beside the waveform preview.
-class AudioInfoPanel : public juce::Component
-{
-public:
-    static constexpr int rowHeight = 20;
-    static constexpr int verticalPadding = 8;
-    static constexpr int horizontalPadding = 10;
-
-    /// Opacity of the panel background fill.
-    static constexpr float backgroundAlpha = 0.85f;
-    /// Corner radius in pixels of the rounded panel background and outline.
-    static constexpr float cornerRadius = 6.0f;
-    /// Opacity of the white outline drawn around the panel.
-    static constexpr float outlineAlpha = 0.08f;
-    /// Opacity of the white value text in the right-hand column.
-    static constexpr float valueTextAlpha = 0.95f;
-
-    /// Removes all rows so the panel shows nothing and collapses to its minimum height.
-    void clear()
-    {
-        setRows({});
-    }
-
-    /// Returns the height needed to show every row plus padding,
-    /// used to size the panel inside its scrolling viewport.
-    [[nodiscard]] int getPreferredHeight() const
-    {
-        const auto rowCount = static_cast<int>(rows.size());
-        return verticalPadding * 2 + juce::jmax(0, rowCount) * rowHeight;
-    }
-
-    /// Replaces the displayed rows, reusing existing labels and hiding any leftover ones.
-    /// Notifies the preferred-height callback so the parent can re-run its layout.
-    void setRows(std::vector<AudioInfoRow> newRows)
-    {
-        rows = std::move(newRows);
-        ensureLabelCount(rows.size());
-
-        for (std::size_t index = 0; index < rows.size(); ++index) {
-            fieldLabels[index]->setText(rows[index].first, juce::dontSendNotification);
-            valueLabels[index]->setText(rows[index].second, juce::dontSendNotification);
-            fieldLabels[index]->setVisible(true);
-            valueLabels[index]->setVisible(true);
-        }
-
-        for (std::size_t index = rows.size(); index < fieldLabels.size(); ++index) {
-            fieldLabels[index]->setVisible(false);
-            valueLabels[index]->setVisible(false);
-        }
-
-        if (onPreferredHeightChanged) {
-            onPreferredHeightChanged();
-        }
-
-        resized();
-        repaint();
-    }
-
-    /// Registers a callback invoked whenever the preferred height changes,
-    /// so the owner can resize the surrounding viewport.
-    void setPreferredHeightChangedCallback(std::function<void()> callback)
-    {
-        onPreferredHeightChanged = std::move(callback);
-    }
-
-    /// Draws the rounded panel background with a subtle outline.
-    void paint(juce::Graphics& graphics) override
-    {
-        const auto bounds = getLocalBounds().toFloat();
-        graphics.setColour(juce::CustomLookAndFeel::greySemiDark().withAlpha(backgroundAlpha));
-        graphics.fillRoundedRectangle(bounds, cornerRadius);
-
-        graphics.setColour(juce::Colours::white.withAlpha(outlineAlpha));
-        graphics.drawRoundedRectangle(bounds.reduced(0.5f), cornerRadius, 1.0f);
-    }
-
-    /// Positions the field and value labels in two columns, one fixed-height row per entry.
-    void resized() override
-    {
-        auto bounds = getLocalBounds().reduced(horizontalPadding, verticalPadding);
-
-        if (rows.empty()) {
-            return;
-        }
-
-        const auto rowCount = static_cast<int>(rows.size());
-        const auto fieldWidth = juce::roundToInt(static_cast<float>(bounds.getWidth()) * 0.55f);
-        const auto fieldArea = bounds.removeFromLeft(fieldWidth);
-
-        for (int row = 0; row < rowCount; ++row) {
-            const auto fieldRow = juce::Rectangle(
-                fieldArea.getX(), fieldArea.getY() + row * rowHeight, fieldArea.getWidth(), rowHeight
-            );
-            const auto valueRow
-                = juce::Rectangle(bounds.getX(), bounds.getY() + row * rowHeight, bounds.getWidth(), rowHeight);
-
-            fieldLabels[static_cast<std::size_t>(row)]->setBounds(fieldRow);
-            valueLabels[static_cast<std::size_t>(row)]->setBounds(valueRow);
-        }
-    }
-
-private:
-    /// Grows the label pools until at least the required number of field and value label pairs exist.
-    /// Labels are only ever added, never destroyed, so row updates stay cheap.
-    void ensureLabelCount(const std::size_t requiredCount)
-    {
-        while (fieldLabels.size() < requiredCount) {
-            auto fieldLabel = std::make_unique<juce::Label>();
-            fieldLabel->setJustificationType(juce::Justification::centredLeft);
-            fieldLabel->setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddleLight());
-            addAndMakeVisible(*fieldLabel);
-            fieldLabels.push_back(std::move(fieldLabel));
-
-            auto valueLabel = std::make_unique<juce::Label>();
-            valueLabel->setJustificationType(juce::Justification::centredRight);
-            valueLabel->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(valueTextAlpha));
-            addAndMakeVisible(*valueLabel);
-            valueLabels.push_back(std::move(valueLabel));
-        }
-    }
-
-    std::vector<AudioInfoRow> rows;
-    std::vector<std::unique_ptr<juce::Label>> fieldLabels;
-    std::vector<std::unique_ptr<juce::Label>> valueLabels;
-    std::function<void()> onPreferredHeightChanged;
-};
 
 /// Main-view constants and helper functions local to this translation unit.
 namespace audiobatch::gui
@@ -2542,40 +2414,7 @@ bool AudioBatchComponent::shouldDropFilesWhenDraggedExternally(
 
 void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 {
-    std::vector<AudioInfoRow> rows;
-
-    if (!record.isReady() && !record.hasError()) {
-        rows.emplace_back("File", record.fileName);
-        rows.emplace_back(
-            "Status", getActiveStatusLabel(record).isNotEmpty() ? getActiveStatusLabel(record) : "Pending"
-        );
-        audioInfo->setRows(std::move(rows));
-        return;
-    }
-
-    if (record.hasError()) {
-        rows.emplace_back("File", record.fileName);
-        rows.emplace_back("Error", record.errorMessage);
-        audioInfo->setRows(std::move(rows));
-        return;
-    }
-
-    rows.emplace_back("Format", AudioAnalysisService::formatTypeLabel(record));
-    rows.emplace_back("Channels", juce::String(record.channels));
-    rows.emplace_back("Bits per sample", AudioAnalysisService::formatBitsPerSampleDisplay(record));
-    rows.emplace_back("Sample rate", juce::String(record.sampleRate));
-    rows.emplace_back("Bitrate", AudioAnalysisService::formatBitrateDisplay(record));
-    rows.emplace_back("Duration", juce::RelativeTime(record.durationSeconds).getDescription());
-    rows.emplace_back("Samples", juce::String(record.lengthInSamples));
-    rows.emplace_back("Peak Max", AudioAnalysisService::formatPeakDisplay(record.overallPeak));
-    rows.emplace_back("Peak L", AudioAnalysisService::formatPeakDisplay(record.peakLeft));
-    rows.emplace_back("Peak R", AudioAnalysisService::formatPeakDisplay(record.peakRight));
-    rows.emplace_back("True Peak Max", AudioAnalysisService::formatTruePeakDisplay(record.overallTruePeak));
-    rows.emplace_back("Max Short-term", AudioAnalysisService::formatLoudnessDisplay(record.maxShortTermLufs));
-    rows.emplace_back("Integrated Loudness", AudioAnalysisService::formatLoudnessDisplay(record.integratedLufs));
-    rows.emplace_back("Status", AudioAnalysisService::formatStatus(record));
-
-    audioInfo->setRows(std::move(rows));
+    audioInfo->showRecord(record, getActiveStatusLabel(record));
 }
 
 void AudioBatchComponent::showAudioResource(juce::URL resource)
