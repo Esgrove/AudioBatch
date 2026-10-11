@@ -15,6 +15,15 @@ constexpr int rowHeight = 36;
 constexpr int rowPadding = 4;
 constexpr int addButtonSize = 28;
 constexpr int margin = 8;
+
+/// Width of the square row controls: the enabled toggle and the remove, up, and down buttons.
+constexpr int rowIconButtonWidth = 24;
+
+/// Width of the row button that opens the plugin editor.
+constexpr int rowEditButtonWidth = 48;
+
+/// Corner radius of the rounded row background.
+constexpr float rowCornerRadius = 4.0f;
 }  // namespace audiobatch::plugin_chain_editor
 
 using namespace audiobatch::plugin_chain_editor;
@@ -66,13 +75,13 @@ void PluginChainEditor::SlotRow::resized()
 {
     auto area = getLocalBounds().reduced(rowPadding);
 
-    enabledToggle.setBounds(area.removeFromLeft(24));
-    removeButton.setBounds(area.removeFromRight(24));
+    enabledToggle.setBounds(area.removeFromLeft(rowIconButtonWidth));
+    removeButton.setBounds(area.removeFromRight(rowIconButtonWidth));
     area.removeFromRight(rowPadding);
-    downButton.setBounds(area.removeFromRight(24));
-    upButton.setBounds(area.removeFromRight(24));
+    downButton.setBounds(area.removeFromRight(rowIconButtonWidth));
+    upButton.setBounds(area.removeFromRight(rowIconButtonWidth));
     area.removeFromRight(rowPadding);
-    editButton.setBounds(area.removeFromRight(48));
+    editButton.setBounds(area.removeFromRight(rowEditButtonWidth));
     area.removeFromRight(rowPadding);
     nameLabel.setBounds(area);
 }
@@ -80,7 +89,7 @@ void PluginChainEditor::SlotRow::resized()
 void PluginChainEditor::SlotRow::paint(juce::Graphics& graphics)
 {
     graphics.setColour(dragging ? juce::CustomLookAndFeel::greyMedium() : juce::CustomLookAndFeel::greyMediumDark());
-    graphics.fillRoundedRectangle(getLocalBounds().reduced(1).toFloat(), 4.0f);
+    graphics.fillRoundedRectangle(getLocalBounds().reduced(1).toFloat(), rowCornerRadius);
 }
 
 void PluginChainEditor::SlotRow::mouseDown(const juce::MouseEvent& event)

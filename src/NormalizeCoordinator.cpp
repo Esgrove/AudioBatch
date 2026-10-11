@@ -7,6 +7,9 @@
 
 #include <map>
 
+/// How long cancelAndWait waits for running normalization jobs to finish before giving up, in milliseconds.
+static constexpr int jobShutdownTimeoutMilliseconds = 30000;
+
 NormalizeCoordinator::NormalizeCoordinator(const int workerCount) : threadPool(juce::jmax(1, workerCount)) { }
 
 NormalizeCoordinator::~NormalizeCoordinator()
@@ -65,7 +68,7 @@ void NormalizeCoordinator::publishCompletion(const int totalFiles, const int run
 void NormalizeCoordinator::cancelAndWait()
 {
     ++currentRunId;
-    threadPool.removeAllJobs(true, 30000);
+    threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
     pendingJobs.store(0);
 }
 

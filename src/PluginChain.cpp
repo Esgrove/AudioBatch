@@ -32,6 +32,24 @@ constexpr int scanMenuItemId = 3;
 constexpr double editorSampleRate = 48000.0;
 constexpr int editorBlockSize = 512;
 
+/// Initial width of the generic parameter editor shown for plugins without a custom editor.
+constexpr int genericEditorWidth = 450;
+
+/// Initial height of the generic parameter editor shown for plugins without a custom editor.
+constexpr int genericEditorHeight = 600;
+
+/// Initial width of the plugin chain editor window.
+constexpr int chainEditorWidth = 560;
+
+/// Initial height of the plugin chain editor window.
+constexpr int chainEditorHeight = 420;
+
+/// Initial width of the plugin manager window that lists and scans plugins.
+constexpr int pluginManagerWidth = 720;
+
+/// Initial height of the plugin manager window that lists and scans plugins.
+constexpr int pluginManagerHeight = 520;
+
 /// Builds the descriptor ref for one chain entry.
 static PluginDescriptorRef makeDescriptorRef(const juce::PluginDescription& description, const juce::MemoryBlock& state)
 {
@@ -407,7 +425,7 @@ void PluginChain::openEditorForSlot(const int index)
     if (editor == nullptr) {
         // No custom editor. Fall back to the generic parameter editor.
         editor = new juce::GenericAudioProcessorEditor(*entry.editorInstance);
-        editor->setSize(450, 600);
+        editor->setSize(genericEditorWidth, genericEditorHeight);
     }
 
     juce::DialogWindow::LaunchOptions launchOptions;
@@ -440,7 +458,7 @@ void PluginChain::showChainEditor()
     }
 
     auto* editor = new PluginChainEditor(*this);
-    editor->setSize(560, 420);
+    editor->setSize(chainEditorWidth, chainEditorHeight);
 
     juce::DialogWindow::LaunchOptions launchOptions;
     launchOptions.dialogTitle = "Plugin Chain";
@@ -489,7 +507,7 @@ void PluginChain::showScanWindow()
         appProperties.getUserSettings(),
         allowAsynchronousInstantiation
     );
-    listComponent->setSize(720, 520);
+    listComponent->setSize(pluginManagerWidth, pluginManagerHeight);
 
     juce::DialogWindow::LaunchOptions launchOptions;
     launchOptions.dialogTitle = "Plugin Manager";

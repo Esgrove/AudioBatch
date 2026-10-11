@@ -15,6 +15,85 @@
 /// Helpers for marshalling SQLite values into JUCE types.
 namespace audiobatch::cache
 {
+/// Divisor that converts the millisecond counter durations into seconds for log output.
+constexpr double millisecondsPerSecond = 1000.0;
+
+/// How long SQLite retries a locked database before failing a statement, in milliseconds.
+constexpr int busyTimeoutMilliseconds = 2000;
+
+/// Zero-based result column indices for the analysis record SELECT in AnalysisCache::getAnalysis.
+/// The order must match the column list of that query exactly.
+namespace analysis_column
+{
+constexpr int fileName = 0;
+constexpr int formatName = 1;
+constexpr int fileSize = 2;
+constexpr int modifiedTimeMs = 3;
+constexpr int lengthInSamples = 4;
+constexpr int durationSeconds = 5;
+constexpr int peakLeft = 6;
+constexpr int peakRight = 7;
+constexpr int overallPeak = 8;
+constexpr int truePeakLeft = 9;
+constexpr int truePeakRight = 10;
+constexpr int overallTruePeak = 11;
+constexpr int maxShortTermLufs = 12;
+constexpr int integratedLufs = 13;
+constexpr int sampleRate = 14;
+constexpr int channels = 15;
+constexpr int bitsPerSample = 16;
+constexpr int status = 17;
+constexpr int errorMessage = 18;
+constexpr int analysisVersion = 19;
+constexpr int customGainDb = 20;
+constexpr int hasCustomGain = 21;
+}  // namespace analysis_column
+
+/// One-based bind parameter indices for the analysis record upsert in AnalysisCache::storeAnalysis.
+/// The order must match the column list of that INSERT statement exactly.
+namespace analysis_parameter
+{
+constexpr int filePath = 1;
+constexpr int fileName = 2;
+constexpr int formatName = 3;
+constexpr int fileSize = 4;
+constexpr int modifiedTimeMs = 5;
+constexpr int lengthInSamples = 6;
+constexpr int durationSeconds = 7;
+constexpr int peakLeft = 8;
+constexpr int peakRight = 9;
+constexpr int overallPeak = 10;
+constexpr int truePeakLeft = 11;
+constexpr int truePeakRight = 12;
+constexpr int overallTruePeak = 13;
+constexpr int maxShortTermLufs = 14;
+constexpr int integratedLufs = 15;
+constexpr int sampleRate = 16;
+constexpr int channels = 17;
+constexpr int bitsPerSample = 18;
+constexpr int status = 19;
+constexpr int errorMessage = 20;
+constexpr int waveformData = 21;
+constexpr int waveformVersion = 22;
+constexpr int analysisVersion = 23;
+constexpr int updatedAtMs = 24;
+constexpr int customGainDb = 25;
+constexpr int hasCustomGain = 26;
+}  // namespace analysis_parameter
+
+/// One-based bind parameter indices for the waveform UPDATE in AnalysisCache::storeWaveformData.
+/// The order must match the placeholders of that statement exactly.
+namespace waveform_parameter
+{
+constexpr int waveformData = 1;
+constexpr int waveformVersion = 2;
+constexpr int updatedAtMs = 3;
+constexpr int filePath = 4;
+constexpr int fileSize = 5;
+constexpr int modifiedTimeMs = 6;
+constexpr int analysisVersion = 7;
+}  // namespace waveform_parameter
+
 /// Reads a text column as a juce::String, mapping SQL NULL to an empty string.
 static juce::String columnText(sqlite3_stmt* statement, const int columnIndex)
 {
@@ -120,7 +199,7 @@ void AnalysisCache::closeUnlocked()
     utils::logDebug(
         "Closed analysis cache at {} in {:.3f} s",
         databasePath.quoted(),
-        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0
+        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / millisecondsPerSecond
     );
 }
 
@@ -207,7 +286,7 @@ bool AnalysisCache::openUnlocked()
         utils::logError(
             "Failed to open analysis cache at {} in {:.3f} s",
             databasePath.quoted(),
-            (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0
+            (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / millisecondsPerSecond
         );
         if (database != nullptr) {
             sqlite3_close(database);
@@ -217,7 +296,7 @@ bool AnalysisCache::openUnlocked()
     }
 
     utils::logDebug("Analysis cache startup: sqlite3_open_v2 returned successfully");
-    sqlite3_busy_timeout(database, 2000);
+    sqlite3_busy_timeout(database, busyTimeoutMilliseconds);
 
     utils::logDebug("Analysis cache startup: applying SQLite pragmas");
     if (!execute("PRAGMA journal_mode=WAL;") || !execute("PRAGMA synchronous=NORMAL;")) {
@@ -268,7 +347,7 @@ bool AnalysisCache::openUnlocked()
         "Opened analysis cache at {} ({}) in {:.3f} s",
         databasePath.quoted(),
         databaseFound ? "existing" : "new",
-        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / 1000.0
+        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / millisecondsPerSecond
     );
 
     return true;
@@ -304,9 +383,9 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
         return false;
     }
 
-    const auto cachedFileSize = sqlite3_column_int64(statement, 2);
-    const auto cachedModifiedTime = sqlite3_column_int64(statement, 3);
-    const auto cachedVersion = sqlite3_column_int(statement, 19);
+    const auto cachedFileSize = sqlite3_column_int64(statement, analysis_column::fileSize);
+    const auto cachedModifiedTime = sqlite3_column_int64(statement, analysis_column::modifiedTimeMs);
+    const auto cachedVersion = sqlite3_column_int(statement, analysis_column::analysisVersion);
 
     if (cachedFileSize != file.getSize() || cachedModifiedTime != file.getLastModificationTime().toMilliseconds()
         || cachedVersion != analysisVersion)
@@ -316,25 +395,25 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
     }
 
     record = AudioAnalysisRecord::fromFile(file);
-    record.fileName = columnText(statement, 0);
-    record.formatName = columnText(statement, 1);
-    record.lengthInSamples = sqlite3_column_int64(statement, 4);
-    record.durationSeconds = sqlite3_column_double(statement, 5);
-    record.peakLeft = static_cast<float>(sqlite3_column_double(statement, 6));
-    record.peakRight = static_cast<float>(sqlite3_column_double(statement, 7));
-    record.overallPeak = static_cast<float>(sqlite3_column_double(statement, 8));
-    record.truePeakLeft = sqlite3_column_double(statement, 9);
-    record.truePeakRight = sqlite3_column_double(statement, 10);
-    record.overallTruePeak = sqlite3_column_double(statement, 11);
-    record.maxShortTermLufs = sqlite3_column_double(statement, 12);
-    record.integratedLufs = sqlite3_column_double(statement, 13);
-    record.sampleRate = sqlite3_column_int(statement, 14);
-    record.channels = sqlite3_column_int(statement, 15);
-    record.bitsPerSample = sqlite3_column_int(statement, 16);
-    record.status = static_cast<AudioAnalysisStatus>(sqlite3_column_int(statement, 17));
-    record.errorMessage = columnText(statement, 18);
-    record.customGainDb = static_cast<float>(sqlite3_column_double(statement, 20));
-    record.hasCustomGain = sqlite3_column_int(statement, 21) != 0;
+    record.fileName = columnText(statement, analysis_column::fileName);
+    record.formatName = columnText(statement, analysis_column::formatName);
+    record.lengthInSamples = sqlite3_column_int64(statement, analysis_column::lengthInSamples);
+    record.durationSeconds = sqlite3_column_double(statement, analysis_column::durationSeconds);
+    record.peakLeft = static_cast<float>(sqlite3_column_double(statement, analysis_column::peakLeft));
+    record.peakRight = static_cast<float>(sqlite3_column_double(statement, analysis_column::peakRight));
+    record.overallPeak = static_cast<float>(sqlite3_column_double(statement, analysis_column::overallPeak));
+    record.truePeakLeft = sqlite3_column_double(statement, analysis_column::truePeakLeft);
+    record.truePeakRight = sqlite3_column_double(statement, analysis_column::truePeakRight);
+    record.overallTruePeak = sqlite3_column_double(statement, analysis_column::overallTruePeak);
+    record.maxShortTermLufs = sqlite3_column_double(statement, analysis_column::maxShortTermLufs);
+    record.integratedLufs = sqlite3_column_double(statement, analysis_column::integratedLufs);
+    record.sampleRate = sqlite3_column_int(statement, analysis_column::sampleRate);
+    record.channels = sqlite3_column_int(statement, analysis_column::channels);
+    record.bitsPerSample = sqlite3_column_int(statement, analysis_column::bitsPerSample);
+    record.status = static_cast<AudioAnalysisStatus>(sqlite3_column_int(statement, analysis_column::status));
+    record.errorMessage = columnText(statement, analysis_column::errorMessage);
+    record.customGainDb = static_cast<float>(sqlite3_column_double(statement, analysis_column::customGainDb));
+    record.hasCustomGain = sqlite3_column_int(statement, analysis_column::hasCustomGain) != 0;
     record.fromCache = true;
 
     if (record.status != AudioAnalysisStatus::failed) {
@@ -393,32 +472,32 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
         return false;
     }
 
-    bindText(statement, 1, record.fullPath);
-    bindText(statement, 2, record.fileName);
-    bindText(statement, 3, record.formatName);
-    sqlite3_bind_int64(statement, 4, record.fileSize);
-    sqlite3_bind_int64(statement, 5, record.modifiedTimeMs);
-    sqlite3_bind_int64(statement, 6, record.lengthInSamples);
-    sqlite3_bind_double(statement, 7, record.durationSeconds);
-    sqlite3_bind_double(statement, 8, static_cast<double>(record.peakLeft));
-    sqlite3_bind_double(statement, 9, static_cast<double>(record.peakRight));
-    sqlite3_bind_double(statement, 10, static_cast<double>(record.overallPeak));
-    sqlite3_bind_double(statement, 11, record.truePeakLeft);
-    sqlite3_bind_double(statement, 12, record.truePeakRight);
-    sqlite3_bind_double(statement, 13, record.overallTruePeak);
-    sqlite3_bind_double(statement, 14, record.maxShortTermLufs);
-    sqlite3_bind_double(statement, 15, record.integratedLufs);
-    sqlite3_bind_int(statement, 16, record.sampleRate);
-    sqlite3_bind_int(statement, 17, record.channels);
-    sqlite3_bind_int(statement, 18, record.bitsPerSample);
-    sqlite3_bind_int(statement, 19, static_cast<int>(record.status));
-    bindText(statement, 20, record.errorMessage);
-    sqlite3_bind_null(statement, 21);
-    sqlite3_bind_int(statement, 22, 0);
-    sqlite3_bind_int(statement, 23, analysisVersion);
-    sqlite3_bind_int64(statement, 24, juce::Time::getCurrentTime().toMilliseconds());
-    sqlite3_bind_double(statement, 25, static_cast<double>(record.customGainDb));
-    sqlite3_bind_int(statement, 26, record.hasCustomGain ? 1 : 0);
+    bindText(statement, analysis_parameter::filePath, record.fullPath);
+    bindText(statement, analysis_parameter::fileName, record.fileName);
+    bindText(statement, analysis_parameter::formatName, record.formatName);
+    sqlite3_bind_int64(statement, analysis_parameter::fileSize, record.fileSize);
+    sqlite3_bind_int64(statement, analysis_parameter::modifiedTimeMs, record.modifiedTimeMs);
+    sqlite3_bind_int64(statement, analysis_parameter::lengthInSamples, record.lengthInSamples);
+    sqlite3_bind_double(statement, analysis_parameter::durationSeconds, record.durationSeconds);
+    sqlite3_bind_double(statement, analysis_parameter::peakLeft, static_cast<double>(record.peakLeft));
+    sqlite3_bind_double(statement, analysis_parameter::peakRight, static_cast<double>(record.peakRight));
+    sqlite3_bind_double(statement, analysis_parameter::overallPeak, static_cast<double>(record.overallPeak));
+    sqlite3_bind_double(statement, analysis_parameter::truePeakLeft, record.truePeakLeft);
+    sqlite3_bind_double(statement, analysis_parameter::truePeakRight, record.truePeakRight);
+    sqlite3_bind_double(statement, analysis_parameter::overallTruePeak, record.overallTruePeak);
+    sqlite3_bind_double(statement, analysis_parameter::maxShortTermLufs, record.maxShortTermLufs);
+    sqlite3_bind_double(statement, analysis_parameter::integratedLufs, record.integratedLufs);
+    sqlite3_bind_int(statement, analysis_parameter::sampleRate, record.sampleRate);
+    sqlite3_bind_int(statement, analysis_parameter::channels, record.channels);
+    sqlite3_bind_int(statement, analysis_parameter::bitsPerSample, record.bitsPerSample);
+    sqlite3_bind_int(statement, analysis_parameter::status, static_cast<int>(record.status));
+    bindText(statement, analysis_parameter::errorMessage, record.errorMessage);
+    sqlite3_bind_null(statement, analysis_parameter::waveformData);
+    sqlite3_bind_int(statement, analysis_parameter::waveformVersion, 0);
+    sqlite3_bind_int(statement, analysis_parameter::analysisVersion, analysisVersion);
+    sqlite3_bind_int64(statement, analysis_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
+    sqlite3_bind_double(statement, analysis_parameter::customGainDb, static_cast<double>(record.customGainDb));
+    sqlite3_bind_int(statement, analysis_parameter::hasCustomGain, record.hasCustomGain ? 1 : 0);
 
     const auto result = sqlite3_step(statement);
     sqlite3_finalize(statement);
@@ -545,13 +624,13 @@ bool AnalysisCache::storeWaveformData(const juce::File& file, const juce::Memory
         return false;
     }
 
-    bindBlob(statement, 1, waveformData);
-    sqlite3_bind_int(statement, 2, waveformVersion);
-    sqlite3_bind_int64(statement, 3, juce::Time::getCurrentTime().toMilliseconds());
-    bindText(statement, 4, normalizedPath(file));
-    sqlite3_bind_int64(statement, 5, file.getSize());
-    sqlite3_bind_int64(statement, 6, file.getLastModificationTime().toMilliseconds());
-    sqlite3_bind_int(statement, 7, analysisVersion);
+    bindBlob(statement, waveform_parameter::waveformData, waveformData);
+    sqlite3_bind_int(statement, waveform_parameter::waveformVersion, waveformVersion);
+    sqlite3_bind_int64(statement, waveform_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
+    bindText(statement, waveform_parameter::filePath, normalizedPath(file));
+    sqlite3_bind_int64(statement, waveform_parameter::fileSize, file.getSize());
+    sqlite3_bind_int64(statement, waveform_parameter::modifiedTimeMs, file.getLastModificationTime().toMilliseconds());
+    sqlite3_bind_int(statement, waveform_parameter::analysisVersion, analysisVersion);
 
     const auto result = sqlite3_step(statement);
     const auto changedRows = sqlite3_changes(database);

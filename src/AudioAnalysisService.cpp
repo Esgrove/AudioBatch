@@ -34,6 +34,13 @@ constexpr double kilobitsPerSecondDivisor = 1000.0;
 constexpr int defaultMp3BitsPerSample = 16;
 constexpr int analysisBlockSize = 8192;
 constexpr int maxConsecutiveReadFailures = 3;
+/// Number of bits in a byte, used to turn a file size into a bit count for the average bitrate.
+constexpr double bitsPerByte = 8.0;
+/// Number of hertz in a kilohertz, used when displaying sample rates.
+constexpr int hertzPerKilohertz = 1000;
+/// Number of payload bits in each byte of an ID3v2 synchsafe integer.
+/// The most significant bit of every byte is always zero.
+constexpr std::uint32_t synchsafeBitsPerByte = 7U;
 
 /// Marks the record as failed with the given message and logs the error.
 /// Takes the record by value so callers can hand over a partially filled record with std::move.
@@ -94,8 +101,9 @@ static bool readExactly(juce::InputStream& input, void* destination, const int b
 /// Decodes a 28-bit synchsafe integer, the encoding ID3v2 uses for tag and frame sizes.
 static std::uint32_t readSynchsafeUint32(const std::span<const std::uint8_t, 4> bytes)
 {
-    return static_cast<std::uint32_t>(bytes[0]) << 21U | static_cast<std::uint32_t>(bytes[1]) << 14U
-        | static_cast<std::uint32_t>(bytes[2]) << 7U | static_cast<std::uint32_t>(bytes[3]);
+    return static_cast<std::uint32_t>(bytes[0]) << (synchsafeBitsPerByte * 3U)
+        | static_cast<std::uint32_t>(bytes[1]) << (synchsafeBitsPerByte * 2U)
+        | static_cast<std::uint32_t>(bytes[2]) << synchsafeBitsPerByte | static_cast<std::uint32_t>(bytes[3]);
 }
 
 /// Flattens raw ID3 tag bytes into a lowercase text blob suitable for substring searches.
@@ -686,7 +694,7 @@ double AudioAnalysisService::getAverageBitrateKbps(const AudioAnalysisRecord& re
         return 0.0;
     }
 
-    return static_cast<double>(record.fileSize) * 8.0 / record.durationSeconds / kilobitsPerSecondDivisor;
+    return static_cast<double>(record.fileSize) * bitsPerByte / record.durationSeconds / kilobitsPerSecondDivisor;
 }
 
 juce::String AudioAnalysisService::formatBitsPerSampleDisplay(const AudioAnalysisRecord& record)
@@ -715,11 +723,11 @@ juce::String AudioAnalysisService::formatSampleRateDisplay(const AudioAnalysisRe
         return "-";
     }
 
-    if (record.sampleRate % 1000 == 0) {
-        return utils::format("{} kHz", record.sampleRate / 1000);
+    if (record.sampleRate % hertzPerKilohertz == 0) {
+        return utils::format("{} kHz", record.sampleRate / hertzPerKilohertz);
     }
 
-    return utils::format("{:.1f} kHz", static_cast<double>(record.sampleRate) / 1000.0);
+    return utils::format("{:.1f} kHz", static_cast<double>(record.sampleRate) / hertzPerKilohertz);
 }
 
 juce::String AudioAnalysisService::formatStatus(const AudioAnalysisRecord& record)

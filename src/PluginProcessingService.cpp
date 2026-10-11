@@ -37,6 +37,9 @@ constexpr auto outputExtension = ".aiff";
 constexpr auto cancelledMessage = "Processing was cancelled";
 /// How long a worker waits for the message thread between cancellation checks.
 constexpr int messageThreadPollIntervalMs = 20;
+/// Upper limit for the tail length a plugin may report, in seconds.
+/// Caps the silence appended after each file so a plugin reporting an infinite tail cannot stall processing.
+constexpr double maximumTailSeconds = 30.0;
 
 /// Shorthand for building a failure result, keeping the early-return error paths compact.
 static PluginProcessingResult fail(const juce::File& file, const juce::String& message)
@@ -338,7 +341,7 @@ static ChainPreparation prepareChain(
 
         const auto tailSeconds = plugin->getTailLengthSeconds();
         preparation.tailSamples
-            += static_cast<juce::int64>(std::ceil(juce::jlimit(0.0, 30.0, tailSeconds) * sampleRate));
+            += static_cast<juce::int64>(std::ceil(juce::jlimit(0.0, maximumTailSeconds, tailSeconds) * sampleRate));
     }
 
     return preparation;

@@ -10,6 +10,7 @@
 #include "CustomLookAndFeel.h"
 #include "PluginProcessingService.h"
 #include "utils.h"
+#include <string_view>
 
 #include <algorithm>
 #include <cstdint>
@@ -24,6 +25,15 @@ public:
     static constexpr int rowHeight = 20;
     static constexpr int verticalPadding = 8;
     static constexpr int horizontalPadding = 10;
+
+    /// Opacity of the panel background fill.
+    static constexpr float backgroundAlpha = 0.85f;
+    /// Corner radius in pixels of the rounded panel background and outline.
+    static constexpr float cornerRadius = 6.0f;
+    /// Opacity of the white outline drawn around the panel.
+    static constexpr float outlineAlpha = 0.08f;
+    /// Opacity of the white value text in the right-hand column.
+    static constexpr float valueTextAlpha = 0.95f;
 
     /// Removes all rows so the panel shows nothing and collapses to its minimum height.
     void clear()
@@ -77,11 +87,11 @@ public:
     void paint(juce::Graphics& graphics) override
     {
         const auto bounds = getLocalBounds().toFloat();
-        graphics.setColour(juce::CustomLookAndFeel::greySemiDark().withAlpha(0.85f));
-        graphics.fillRoundedRectangle(bounds, 6.0f);
+        graphics.setColour(juce::CustomLookAndFeel::greySemiDark().withAlpha(backgroundAlpha));
+        graphics.fillRoundedRectangle(bounds, cornerRadius);
 
-        graphics.setColour(juce::Colours::white.withAlpha(0.08f));
-        graphics.drawRoundedRectangle(bounds.reduced(0.5f), 6.0f, 1.0f);
+        graphics.setColour(juce::Colours::white.withAlpha(outlineAlpha));
+        graphics.drawRoundedRectangle(bounds.reduced(0.5f), cornerRadius, 1.0f);
     }
 
     /// Positions the field and value labels in two columns, one fixed-height row per entry.
@@ -123,7 +133,7 @@ private:
 
             auto valueLabel = std::make_unique<juce::Label>();
             valueLabel->setJustificationType(juce::Justification::centredRight);
-            valueLabel->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(0.95f));
+            valueLabel->setColour(juce::Label::textColourId, juce::Colours::white.withAlpha(valueTextAlpha));
             addAndMakeVisible(*valueLabel);
             valueLabels.push_back(std::move(valueLabel));
         }
@@ -145,6 +155,85 @@ constexpr int pathColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(A
 
 constexpr int nameColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnName);
 constexpr int pathColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnPath);
+
+/// Suffix that some decoders append to their format name, for example "WAV file".
+/// It is stripped when the format name is used as the file type label.
+constexpr auto formatNameFileSuffix = " file";
+
+/// Pixel sizes, spacing, and timing used to lay out and configure the main view.
+namespace layout
+{
+/// Initial width in pixels of the main component before the window is resized by the user.
+constexpr int initialComponentWidth = 1024;
+/// Initial height in pixels of the main component.
+constexpr int initialComponentHeight = 800;
+
+/// Height in pixels of the top bar holding the current folder and status labels.
+constexpr int topBarHeight = 34;
+/// Width in pixels reserved for the status label at the right end of the top bar.
+constexpr int statusLabelWidth = 220;
+/// Spacing in pixels between the main sections and between the stacked preview controls.
+constexpr int sectionSpacing = 6;
+
+/// Height in pixels of each row in the results table.
+constexpr int resultsTableRowHeight = 24;
+
+/// Minimum height in pixels of the results table in the vertical split.
+constexpr double resultsTableMinimumHeight = 240.0;
+/// Maximum share of the vertical split for the results table, negative to mark it as a proportion.
+constexpr double resultsTableMaximumProportion = -0.85;
+/// Preferred share of the vertical split for the results table, negative to mark it as a proportion.
+constexpr double resultsTablePreferredProportion = -0.69;
+/// Fixed height in pixels of the draggable bar between the results table and the preview area.
+constexpr double resizeBarHeight = 6.0;
+/// Minimum height in pixels of the waveform preview area in the vertical split.
+constexpr double previewMinimumHeight = 180.0;
+/// Maximum share of the vertical split for the preview area, negative to mark it as a proportion.
+constexpr double previewMaximumProportion = -0.70;
+/// Preferred share of the vertical split for the preview area, negative to mark it as a proportion.
+constexpr double previewPreferredProportion = -0.31;
+
+/// Height in pixels of the Process, Play, Audio Settings, and Plugins buttons.
+constexpr int controlButtonHeight = 28;
+/// Width in pixels of the square button that clears the per-file gain.
+constexpr int gainClearButtonWidth = 28;
+/// Height in pixels of the normalize-before-plugins toggle row.
+constexpr int normalizeToggleHeight = 22;
+/// Width in pixels of the zoom slider value text box.
+constexpr int zoomTextBoxWidth = 50;
+
+/// Width in pixels of the content component in child dialog windows.
+constexpr int dialogContentWidth = 500;
+/// Height in pixels of the content component in child dialog windows.
+constexpr int dialogContentHeight = 150;
+}  // namespace layout
+
+/// Range of the waveform zoom slider in percent of the unzoomed view and its conversion to a scale factor.
+namespace zoom_range
+{
+/// Smallest zoom level in percent, which is also the initial value and shows the whole file.
+constexpr int minimumPercent = 100;
+/// Largest zoom level in percent.
+constexpr int maximumPercent = 1500;
+/// Converts a zoom percentage into the scale factor the thumbnail expects.
+constexpr double percentToScaleFactor = 0.01;
+}  // namespace zoom_range
+
+/// Range and step of the per-file gain slider in decibels.
+namespace gain_range
+{
+/// Largest boost or cut in dB the gain slider allows in either direction.
+constexpr double maximumDecibels = 12.0;
+/// Step size in dB for the slider and for mouse wheel adjustments over the waveform.
+constexpr double stepDecibels = 0.1;
+}  // namespace gain_range
+
+/// Delay in milliseconds before a tooltip appears when hovering over a control.
+constexpr int tooltipDelayMilliseconds = 700;
+/// Time in milliseconds to wait for the audio preview thread to stop during shutdown.
+constexpr int previewThreadStopTimeoutMilliseconds = 2000;
+/// Number of milliseconds in one second, used to report elapsed analysis time in seconds.
+constexpr double millisecondsPerSecond = 1000.0;
 
 enum FileMenuItemId : std::uint8_t {
     revealFileMenuItemId = 1,
@@ -202,8 +291,9 @@ static juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
 
     auto formatName = record.formatName.trim();
 
-    if (formatName.endsWithIgnoreCase(" file")) {
-        formatName = formatName.dropLastCharacters(5).trimEnd();
+    if (formatName.endsWithIgnoreCase(formatNameFileSuffix)) {
+        formatName
+            = formatName.dropLastCharacters(static_cast<int>(std::string_view {formatNameFileSuffix}.size())).trimEnd();
     }
 
     if (formatName.isNotEmpty()) {
@@ -486,7 +576,7 @@ void AudioBatchComponent::configureResultsTable()
     resultsTable.setColour(juce::ListBox::backgroundColourId, juce::CustomLookAndFeel::greyMediumDark());
     resultsTable.setMultipleSelectionEnabled(true);
     resultsTable.setOutlineThickness(0);
-    resultsTable.setRowHeight(24);
+    resultsTable.setRowHeight(layout::resultsTableRowHeight);
     resultsTable.getHeader().setSortColumnId(currentSortColumnId, currentSortForwards);
     refreshSortIndicators();
     addAndMakeVisible(resultsTable);
@@ -496,9 +586,16 @@ void AudioBatchComponent::configureResultsTable()
 void AudioBatchComponent::configurePreviewControls()
 {
     // Default to a larger list view while allowing the lower preview area to be resized.
-    mainVerticalLayout.setItemLayout(0, 240.0, -0.85, -0.69);
-    mainVerticalLayout.setItemLayout(1, 6.0, 6.0, 6.0);
-    mainVerticalLayout.setItemLayout(2, 180.0, -0.70, -0.31);
+    mainVerticalLayout.setItemLayout(
+        0,
+        layout::resultsTableMinimumHeight,
+        layout::resultsTableMaximumProportion,
+        layout::resultsTablePreferredProportion
+    );
+    mainVerticalLayout.setItemLayout(1, layout::resizeBarHeight, layout::resizeBarHeight, layout::resizeBarHeight);
+    mainVerticalLayout.setItemLayout(
+        2, layout::previewMinimumHeight, layout::previewMaximumProportion, layout::previewPreferredProportion
+    );
     addAndMakeVisible(waveformResizeBar);
 
     thumbnail = std::make_unique<ThumbnailComponent>(formatManager, transportSource);
@@ -512,7 +609,7 @@ void AudioBatchComponent::configurePreviewControls()
         if (!gainSlider.isEnabled() || juce::approximatelyEqual(deltaDb, 0.0f)) {
             return;
         }
-        const auto interval = gainSlider.getInterval() > 0.0 ? gainSlider.getInterval() : 0.1;
+        const auto interval = gainSlider.getInterval() > 0.0 ? gainSlider.getInterval() : gain_range::stepDecibels;
         const auto step = (deltaDb > 0.0f ? 1.0 : -1.0) * interval;
         const auto newValue
             = juce::jlimit(gainSlider.getMinimum(), gainSlider.getMaximum(), gainSlider.getValue() + step);
@@ -527,18 +624,20 @@ void AudioBatchComponent::configurePreviewControls()
     startStopButton.onClick = [this] { startOrStop(); };
     addAndMakeVisible(startStopButton);
 
-    zoomSlider.setRange(100, 1500, 1);
+    zoomSlider.setRange(zoom_range::minimumPercent, zoom_range::maximumPercent, 1);
     zoomSlider.setNumDecimalPlacesToDisplay(0);
     zoomSlider.setSkewFactor(0.5);
-    zoomSlider.setValue(100);
+    zoomSlider.setValue(zoom_range::minimumPercent);
     zoomSlider.setTextValueSuffix("%");
     zoomSlider.setTooltip("Adjust waveform zoom. You can also use the mouse wheel over the waveform.");
-    zoomSlider.onValueChange = [this] { zoomLevelChanged(zoomSlider.getValue() * 0.01); };
+    zoomSlider.onValueChange = [this] { zoomLevelChanged(zoomSlider.getValue() * zoom_range::percentToScaleFactor); };
     addAndMakeVisible(zoomSlider);
 
     zoomLabel.setText("Zoom", juce::dontSendNotification);
     zoomLabel.attachToComponent(&zoomSlider, true);
-    zoomSlider.setTextBoxStyle(juce::Slider::TextBoxLeft, false, 50, zoomSlider.getTextBoxHeight());
+    zoomSlider.setTextBoxStyle(
+        juce::Slider::TextBoxLeft, false, layout::zoomTextBoxWidth, zoomSlider.getTextBoxHeight()
+    );
     addAndMakeVisible(zoomLabel);
 
     audioInfo = std::make_unique<AudioInfoPanel>();
@@ -569,7 +668,7 @@ void AudioBatchComponent::configureProcessingControls()
     gainLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(gainLabel);
 
-    gainSlider.setRange(-12.0, 12.0, 0.1);
+    gainSlider.setRange(-gain_range::maximumDecibels, gain_range::maximumDecibels, gain_range::stepDecibels);
     gainSlider.setValue(0.0, juce::dontSendNotification);
     gainSlider.setNumDecimalPlacesToDisplay(1);
     gainSlider.setTextValueSuffix(" dB");
@@ -717,7 +816,7 @@ AudioBatchComponent::AudioBatchComponent() :
     configurePreviewControls();
     configureProcessingControls();
 
-    tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 700);
+    tooltipWindow = std::make_unique<juce::TooltipWindow>(this, tooltipDelayMilliseconds);
     logStartupCheckpoint("ui controls created");
 
     thread.startThread(juce::Thread::Priority::high);
@@ -741,7 +840,7 @@ AudioBatchComponent::AudioBatchComponent() :
     logStartupCheckpoint("audio callback connected");
 
     setOpaque(true);
-    setSize(1024, 800);
+    setSize(layout::initialComponentWidth, layout::initialComponentHeight);
     setWantsKeyboardFocus(true);
     logStartupCheckpoint("constructor complete");
 }
@@ -773,7 +872,7 @@ AudioBatchComponent::~AudioBatchComponent()
         childWindows.clear();
     }
 
-    thread.stopThread(2000);
+    thread.stopThread(previewThreadStopTimeoutMilliseconds);
 }
 
 void AudioBatchComponent::paint(juce::Graphics& graphics)
@@ -794,13 +893,13 @@ void AudioBatchComponent::filesDropped(const juce::StringArray& files, int /*x*/
 void AudioBatchComponent::resized()
 {
     auto bounds = getLocalBounds().reduced(4);
-    auto topBar = bounds.removeFromTop(34);
+    auto topBar = bounds.removeFromTop(layout::topBarHeight);
 
-    statusLabel.setBounds(topBar.removeFromRight(220));
-    topBar.removeFromRight(6);
+    statusLabel.setBounds(topBar.removeFromRight(layout::statusLabelWidth));
+    topBar.removeFromRight(layout::sectionSpacing);
     currentRootLabel.setBounds(topBar);
 
-    bounds.removeFromTop(6);
+    bounds.removeFromTop(layout::sectionSpacing);
 
     std::array<juce::Component*, 3> verticalSections {&resultsTable, &waveformResizeBar, thumbnail.get()};
     mainVerticalLayout.layOutComponents(
@@ -813,10 +912,10 @@ void AudioBatchComponent::resized()
     const auto space = juce::jmin(280, juce::jmax(180, juce::roundToIntAccurate(bounds.getWidth() * 0.22)));
     auto control = info.removeFromLeft(space);
 
-    const auto buttonGap = 6;
+    const auto buttonGap = layout::sectionSpacing;
 
     // Bottom row: Process and Play/Stop.
-    auto buttonsBottom = control.removeFromBottom(28);
+    auto buttonsBottom = control.removeFromBottom(layout::controlButtonHeight);
     const auto bottomButtonWidth = (buttonsBottom.getWidth() - buttonGap) / 2;
     processButton.setBounds(buttonsBottom.removeFromLeft(bottomButtonWidth));
     buttonsBottom.removeFromLeft(buttonGap);
@@ -825,7 +924,7 @@ void AudioBatchComponent::resized()
     control.removeFromBottom(4);
 
     // Row above: Audio Settings and Plugins.
-    auto buttonsTop = control.removeFromBottom(28);
+    auto buttonsTop = control.removeFromBottom(layout::controlButtonHeight);
     const auto topButtonWidth = (buttonsTop.getWidth() - buttonGap) / 2;
     settingsButton.setBounds(buttonsTop.removeFromLeft(topButtonWidth));
     buttonsTop.removeFromLeft(buttonGap);
@@ -834,17 +933,17 @@ void AudioBatchComponent::resized()
     control.removeFromBottom(8);
 
     // Normalize toggle gets its own row above the buttons.
-    normalizeBeforePluginToggle.setBounds(control.removeFromBottom(22));
+    normalizeBeforePluginToggle.setBounds(control.removeFromBottom(layout::normalizeToggleHeight));
 
-    control.removeFromBottom(6);
+    control.removeFromBottom(layout::sectionSpacing);
 
     zoomSlider.setBounds(control.removeFromBottom(zoomSlider.getTextBoxHeight()));
 
-    control.removeFromBottom(6);
+    control.removeFromBottom(layout::sectionSpacing);
 
     // Gain row: inline label, slider, then the clear button on the right.
     auto gainRow = control.removeFromBottom(gainSlider.getTextBoxHeight());
-    gainClearButton.setBounds(gainRow.removeFromRight(28));
+    gainClearButton.setBounds(gainRow.removeFromRight(layout::gainClearButtonWidth));
     gainRow.removeFromRight(4);
     const auto gainLabelWidth = 36;
     gainLabel.setBounds(gainRow.removeFromLeft(gainLabelWidth));
@@ -858,7 +957,7 @@ void AudioBatchComponent::resized()
     const auto viewportHeight = audioInfoViewport.getMaximumVisibleHeight();
     audioInfo->setSize(viewportWidth, juce::jmax(viewportHeight, preferredHeight));
 
-    info.removeFromLeft(6);
+    info.removeFromLeft(layout::sectionSpacing);
 
     thumbnail->setBounds(info);
 }
@@ -1873,7 +1972,7 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles)
         analyzedFilesThisRun,
         cachedFileCount,
         failedFileCount,
-        elapsedMs / 1000.0
+        elapsedMs / millisecondsPerSecond
     );
 
     if (resultsTable.getSelectedRow() < 0 && !analysisResults.empty()) {
@@ -2439,7 +2538,7 @@ void AudioBatchComponent::openDialogWindow(
         juce::DialogWindow::LaunchOptions launchOptions;
         launchOptions.dialogTitle = title;
         launchOptions.content.setNonOwned(component);
-        launchOptions.content->setSize(500, 150);
+        launchOptions.content->setSize(layout::dialogContentWidth, layout::dialogContentHeight);
         window = launchOptions.create();
         childWindows.add(window);
     }

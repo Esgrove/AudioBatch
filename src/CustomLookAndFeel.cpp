@@ -8,6 +8,72 @@
 #include <cmath>
 #include <utility>
 
+namespace
+{
+/// Alpha of a title bar button glyph while the button is disabled or pressed.
+constexpr float dimmedGlyphAlpha {0.6f};
+
+/// Opacity of the title bar icon while the window is inactive.
+constexpr float inactiveTitleIconOpacity {0.6f};
+
+/// Alpha of the combo box outline while the combo box has keyboard focus.
+constexpr float comboBoxFocusedOutlineAlpha {0.45f};
+
+/// Alpha of the hyperlink button text colour.
+constexpr float hyperlinkTextAlpha {0.9f};
+
+/// Alpha of the highlighted popup menu item background.
+constexpr float popupMenuHighlightAlpha {0.18f};
+
+/// Alpha of the text button label while the button is toggled off.
+constexpr float textButtonOffTextAlpha {0.96f};
+
+/// Alpha of the linear slider track fill.
+constexpr float sliderTrackAlpha {0.7f};
+
+/// Alpha of the rotary slider value arc.
+constexpr float rotarySliderFillAlpha {0.72f};
+
+/// Alpha of the text editor selection highlight.
+constexpr float textEditorHighlightAlpha {0.24f};
+
+/// Inset of the inner rectangle of the fullscreen glyph, in the glyph's 100 by 100 path units.
+constexpr float fullscreenGlyphInset {45.0f};
+
+/// Stroke thickness of the fullscreen glyph, in the glyph's 100 by 100 path units.
+constexpr float fullscreenGlyphStrokeThickness {30.0f};
+
+/// Horizontal inset of popup menu separator lines, in pixels.
+constexpr int popupMenuSeparatorInset {5};
+
+/// Alpha of popup menu separator lines relative to the menu text colour.
+constexpr float popupMenuSeparatorAlpha {0.3f};
+
+/// Upper limit of the horizontal padding of popup menu items, in pixels.
+constexpr int popupMenuItemMaximumPadding {5};
+
+/// Popup menu item width divided by this gives the horizontal padding, up to the maximum padding.
+constexpr int popupMenuItemPaddingDivisor {20};
+
+/// Icon area width divided by this gives the horizontal inset of the tick mark.
+constexpr int popupMenuTickInsetDivisor {5};
+
+/// Width of the submenu arrow relative to its height.
+constexpr float subMenuArrowWidthRatio {0.6f};
+
+/// Height of the shortcut key text relative to the menu item font height.
+constexpr float shortcutFontHeightRatio {0.75f};
+
+/// Horizontal scale of the shortcut key text, which slightly condenses it.
+constexpr float shortcutFontHorizontalScale {0.95f};
+
+/// Upper limit of the text button label font height, in points.
+constexpr float maximumButtonFontHeight {16.0f};
+
+/// Text button label font height relative to the button height.
+constexpr float buttonFontHeightRatio {0.6f};
+}  // namespace
+
 namespace juce
 {
 
@@ -71,7 +137,7 @@ protected:
         graphics.fillAll(background);
 
         if (!isEnabled() || shouldDrawButtonAsDown) {
-            glyphColour = colour.withAlpha(0.6f);
+            glyphColour = colour.withAlpha(dimmedGlyphAlpha);
         }
 
         if (shouldDrawButtonAsHighlighted) {
@@ -109,12 +175,12 @@ CustomLookAndFeel::CustomLookAndFeel(const bool darkModeEnabled) : darkTheme(dar
 
     setColour(juce::ComboBox::arrowColourId, blue());
     setColour(juce::ComboBox::backgroundColourId, greySemiDark());
-    setColour(juce::ComboBox::focusedOutlineColourId, blue().withAlpha(0.45f));
+    setColour(juce::ComboBox::focusedOutlineColourId, blue().withAlpha(comboBoxFocusedOutlineAlpha));
     setColour(juce::ComboBox::outlineColourId, greyMedium());
     // setColour(juce::FileTreeComponent::backgroundColourId, greySemiDark);
-    setColour(juce::HyperlinkButton::textColourId, blue().withAlpha(0.9f));
+    setColour(juce::HyperlinkButton::textColourId, blue().withAlpha(hyperlinkTextAlpha));
     setColour(juce::PopupMenu::backgroundColourId, greySemiDark());
-    setColour(juce::PopupMenu::highlightedBackgroundColourId, blue().withAlpha(0.18f));
+    setColour(juce::PopupMenu::highlightedBackgroundColourId, blue().withAlpha(popupMenuHighlightAlpha));
     setColour(juce::PopupMenu::highlightedTextColourId, greySuperLight());
     setColour(juce::PopupMenu::textColourId, greyLight());
     // setColour(juce::ProgressBar::backgroundColourId, greyMedium);
@@ -122,18 +188,18 @@ CustomLookAndFeel::CustomLookAndFeel(const bool darkModeEnabled) : darkTheme(dar
     setColour(juce::ResizableWindow::backgroundColourId, greyDark());
     setColour(juce::TextButton::buttonColourId, greyMedium());
     setColour(juce::TextButton::buttonOnColourId, green());
-    setColour(juce::TextButton::textColourOffId, greySuperLight().withAlpha(0.96f));
+    setColour(juce::TextButton::textColourOffId, greySuperLight().withAlpha(textButtonOffTextAlpha));
     setColour(juce::TextButton::textColourOnId, greySuperLight());
     setColour(juce::Slider::backgroundColourId, greyMedium());
-    setColour(juce::Slider::trackColourId, blue().withAlpha(0.7f));
+    setColour(juce::Slider::trackColourId, blue().withAlpha(sliderTrackAlpha));
     setColour(juce::Slider::thumbColourId, greySuperLight());
-    setColour(juce::Slider::rotarySliderFillColourId, blue().withAlpha(0.72f));
+    setColour(juce::Slider::rotarySliderFillColourId, blue().withAlpha(rotarySliderFillAlpha));
     setColour(juce::Slider::rotarySliderOutlineColourId, greyMedium());
     setColour(juce::Slider::textBoxBackgroundColourId, greyMediumDark());
     setColour(juce::Slider::textBoxTextColourId, greySuperLight());
     setColour(juce::Slider::textBoxOutlineColourId, greyMedium());
     setColour(juce::TextEditor::backgroundColourId, greySemiDark());
-    setColour(juce::TextEditor::highlightColourId, blue().withAlpha(0.24f));
+    setColour(juce::TextEditor::highlightColourId, blue().withAlpha(textEditorHighlightAlpha));
     setColour(juce::TextEditor::outlineColourId, greyMedium());
     setColour(juce::TooltipWindow::backgroundColourId, greyMediumDark());
     setColour(juce::TooltipWindow::textColourId, greySuperLight());
@@ -170,13 +236,13 @@ Button* CustomLookAndFeel::createDocumentWindowButton(const int buttonType)
         shape.addLineSegment({0.0f, 0.5f, 1.0f, 0.5f}, crossThickness);
 
         Path fullscreenShape;
-        fullscreenShape.startNewSubPath(45.0f, 100.0f);
+        fullscreenShape.startNewSubPath(fullscreenGlyphInset, 100.0f);
         fullscreenShape.lineTo(0.0f, 100.0f);
         fullscreenShape.lineTo(0.0f, 0.0f);
         fullscreenShape.lineTo(100.0f, 0.0f);
-        fullscreenShape.lineTo(100.0f, 45.0f);
-        fullscreenShape.addRectangle(45.0f, 45.0f, 100.0f, 100.0f);
-        PathStrokeType(30.0f).createStrokedPath(fullscreenShape, fullscreenShape);
+        fullscreenShape.lineTo(100.0f, fullscreenGlyphInset);
+        fullscreenShape.addRectangle(fullscreenGlyphInset, fullscreenGlyphInset, 100.0f, 100.0f);
+        PathStrokeType(fullscreenGlyphStrokeThickness).createStrokedPath(fullscreenShape, fullscreenShape);
 
         return new CustomDocumentWindowButton(
             "maximise", CustomLookAndFeel::greyMiddleLight(), shape, fullscreenShape, darkTheme
@@ -230,7 +296,7 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     }
 
     if (icon != nullptr) {
-        graphics.setOpacity(isActive ? 1.0f : 0.6f);
+        graphics.setOpacity(isActive ? 1.0f : inactiveTitleIconOpacity);
         graphics.drawImageWithin(
             *icon, textX, (height - iconHeight) / 2, iconWidth, iconHeight, RectanglePlacement::centred, false
         );
@@ -258,9 +324,9 @@ void CustomLookAndFeel::drawPopupMenuItem(
 )
 {
     if (isSeparator) {
-        auto separatorArea = area.reduced(5, 0);
+        auto separatorArea = area.reduced(popupMenuSeparatorInset, 0);
         separatorArea.removeFromTop(roundToInt(static_cast<float>(separatorArea.getHeight()) * 0.5f - 0.5f));
-        graphics.setColour(findColour(PopupMenu::textColourId).withAlpha(0.3f));
+        graphics.setColour(findColour(PopupMenu::textColourId).withAlpha(popupMenuSeparatorAlpha));
         graphics.fillRect(separatorArea.removeFromTop(1));
     } else {
         const auto textColour = textColourToUse == nullptr ? findColour(PopupMenu::textColourId) : *textColourToUse;
@@ -275,7 +341,7 @@ void CustomLookAndFeel::drawPopupMenuItem(
             graphics.setColour(textColour.withMultipliedAlpha(isActive ? 1.0f : 0.5f));
         }
 
-        itemArea.reduce(jmin(5, area.getWidth() / 20), 0);
+        itemArea.reduce(jmin(popupMenuItemMaximumPadding, area.getWidth() / popupMenuItemPaddingDivisor), 0);
 
         auto font = get_mono_font();
         const auto maxFontHeight = monoFontHeight;
@@ -295,7 +361,10 @@ void CustomLookAndFeel::drawPopupMenuItem(
         } else if (isTicked) {
             const auto tick = getTickShape(1.0f);
             graphics.fillPath(
-                tick, tick.getTransformToScaleToFit(iconArea.reduced(iconArea.getWidth() / 5, 0).toFloat(), true)
+                tick,
+                tick.getTransformToScaleToFit(
+                    iconArea.reduced(iconArea.getWidth() / popupMenuTickInsetDivisor, 0).toFloat(), true
+                )
             );
         }
 
@@ -307,7 +376,7 @@ void CustomLookAndFeel::drawPopupMenuItem(
 
             Path path;
             path.startNewSubPath(arrowX, centreY - arrowHeight * 0.5f);
-            path.lineTo(arrowX + arrowHeight * 0.6f, centreY);
+            path.lineTo(arrowX + arrowHeight * subMenuArrowWidthRatio, centreY);
             path.lineTo(arrowX, centreY + arrowHeight * 0.5f);
 
             graphics.strokePath(path, PathStrokeType(2.0f));
@@ -318,8 +387,8 @@ void CustomLookAndFeel::drawPopupMenuItem(
 
         if (shortcutKeyText.isNotEmpty()) {
             auto shortcutFont = font;
-            shortcutFont.setHeight(shortcutFont.getHeight() * 0.75f);
-            shortcutFont.setHorizontalScale(0.95f);
+            shortcutFont.setHeight(shortcutFont.getHeight() * shortcutFontHeightRatio);
+            shortcutFont.setHorizontalScale(shortcutFontHorizontalScale);
             graphics.setFont(shortcutFont);
             graphics.drawText(shortcutKeyText, itemArea, Justification::centredRight, true);
         }
@@ -328,7 +397,9 @@ void CustomLookAndFeel::drawPopupMenuItem(
 
 Font CustomLookAndFeel::getTextButtonFont(TextButton& /*button*/, const int buttonHeight)
 {
-    return getTextFont().withHeight(jmin(16.0f, static_cast<float>(buttonHeight) * 0.6f));
+    return getTextFont().withHeight(
+        jmin(maximumButtonFontHeight, static_cast<float>(buttonHeight) * buttonFontHeightRatio)
+    );
 }
 
 void CustomLookAndFeel::drawTooltip(Graphics& graphics, const String& text, const int width, const int height)

@@ -8,6 +8,9 @@
 
 #include <mutex>
 
+/// How long cancelAndWait waits for running analysis jobs to finish before giving up, in milliseconds.
+static constexpr int jobShutdownTimeoutMilliseconds = 30000;
+
 AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& analysisCache, const int workerCount) :
     cache(analysisCache),
     threadPool(juce::jmax(1, workerCount))
@@ -93,7 +96,7 @@ void AnalysisCoordinator::publishCompletion(const int totalFiles, const int runI
 void AnalysisCoordinator::cancelAndWait()
 {
     ++currentRunId;
-    threadPool.removeAllJobs(true, 30000);
+    threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
     pendingJobs.store(0);
 }
 
