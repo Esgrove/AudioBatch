@@ -924,28 +924,123 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
 
 void AudioBatchComponent::chooseRootFolder()
 {
-    const auto startDirectory = currentRoot.isDirectory() ? currentRoot : getDefaultBrowseDirectory();
-    directoryChooser
-        = std::make_unique<juce::FileChooser>("Choose Audio Folder", startDirectory, supportedAudioFilePatterns, true);
+    launchFolderChooser(false);
+}
+
+void AudioBatchComponent::addRootFolder()
+{
+    launchFolderChooser(true);
+}
+
+void AudioBatchComponent::launchFolderChooser(const bool appendToRoots)
+{
+    const auto lastRoot = currentRoots.isEmpty() ? juce::File() : currentRoots.getLast();
+    const auto startDirectory = lastRoot.isDirectory() ? lastRoot : getDefaultBrowseDirectory();
+    directoryChooser = std::make_unique<juce::FileChooser>(
+        appendToRoots ? "Add Audio Folder" : "Choose Audio Folder", startDirectory, supportedAudioFilePatterns, true
+    );
 
     directoryChooser->launchAsync(
         juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
-        [safeThis = SafePointer(this)](const juce::FileChooser& chooser) {
+        [safeThis = SafePointer(this), appendToRoots](const juce::FileChooser& chooser) {
             if (safeThis == nullptr) {
                 return;
             }
 
             if (const auto selectedFolder = chooser.getResult(); selectedFolder.isDirectory()) {
-                utils::logInfo("Opened directory: {}", selectedFolder.getFullPathName().quoted());
-                safeThis->currentRoot = selectedFolder;
-                safeThis->currentRootLabel.setText(selectedFolder.getFullPathName(), juce::dontSendNotification);
-                safeThis->currentRootLabel.setTooltip(selectedFolder.getFullPathName());
-                safeThis->refreshAnalysis(false);
+                utils::logInfo(
+                    "{} directory: {}", appendToRoots ? "Added" : "Opened", selectedFolder.getFullPathName().quoted()
+                );
+
+                if (appendToRoots) {
+                    safeThis->addRoots({selectedFolder});
+                } else {
+                    safeThis->setRoots({selectedFolder});
+                }
             }
 
             safeThis->directoryChooser.reset();
         }
     );
+}
+
+void AudioBatchComponent::setRoots(const juce::Array<juce::File>& folders)
+{
+    currentRoots.clear();
+
+    for (const auto& folder : folders) {
+        // Keep only the outermost folders, so no file is collected twice.
+        const auto isInsideOtherFolder
+            = std::ranges::any_of(folders, [&folder](const juce::File& other) { return folder.isAChildOf(other); });
+
+        if (!isInsideOtherFolder) {
+            currentRoots.addIfNotAlreadyThere(folder);
+        }
+    }
+
+    updateCurrentRootLabel();
+    refreshAnalysis(false);
+}
+
+void AudioBatchComponent::addRoots(const juce::Array<juce::File>& folders)
+{
+    bool rootsChanged = false;
+
+    for (const auto& folder : folders) {
+        const auto alreadyIncluded = std::ranges::any_of(currentRoots, [&folder](const juce::File& root) {
+            return folder == root || folder.isAChildOf(root);
+        });
+
+        if (alreadyIncluded) {
+            utils::logInfo("Folder is already included in the roots: {}", folder.getFullPathName().quoted());
+            continue;
+        }
+
+        // A new parent folder absorbs the existing roots inside it.
+        currentRoots.removeIf([&folder](const juce::File& root) { return root.isAChildOf(folder); });
+        currentRoots.add(folder);
+        rootsChanged = true;
+    }
+
+    if (!rootsChanged) {
+        statusLabel.setText("Folder is already included", juce::dontSendNotification);
+        return;
+    }
+
+    updateCurrentRootLabel();
+
+    // Re-collect every root instead of only the new folder.
+    // Rows already in the table and cached files are skipped quickly,
+    // and an analysis run that is still in progress gets restarted with all of its files included.
+    juce::Array<juce::File> existingRoots;
+    for (const auto& root : currentRoots) {
+        if (root.isDirectory()) {
+            existingRoots.add(root);
+        }
+    }
+
+    startAnalysis(existingRoots, true, false, false);
+}
+
+void AudioBatchComponent::updateCurrentRootLabel()
+{
+    if (currentRoots.isEmpty()) {
+        currentRootLabel.setText("", juce::dontSendNotification);
+        currentRootLabel.setTooltip("");
+        return;
+    }
+
+    const auto firstPath = currentRoots.getFirst().getFullPathName();
+    const auto labelText
+        = currentRoots.size() == 1 ? firstPath : utils::format("{} (+{} more)", firstPath, currentRoots.size() - 1);
+
+    juce::StringArray rootPaths;
+    for (const auto& root : currentRoots) {
+        rootPaths.add(root.getFullPathName());
+    }
+
+    currentRootLabel.setText(labelText, juce::dontSendNotification);
+    currentRootLabel.setTooltip(rootPaths.joinIntoString("\n"));
 }
 
 void AudioBatchComponent::rescanCurrentRoot()
@@ -1058,16 +1153,13 @@ juce::File AudioBatchComponent::getDefaultBrowseDirectory()
 void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
 {
     juce::Array<juce::File> droppedFiles;
-    juce::File droppedDirectory;
+    juce::Array<juce::File> droppedDirectories;
 
     for (const auto& path : paths) {
         const juce::File droppedPath(path);
 
         if (droppedPath.isDirectory()) {
-            if (droppedDirectory == juce::File()) {
-                droppedDirectory = droppedPath;
-            }
-
+            droppedDirectories.addIfNotAlreadyThere(droppedPath);
             continue;
         }
 
@@ -1076,11 +1168,22 @@ void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
         }
     }
 
-    if (droppedFiles.isEmpty() && droppedDirectory.isDirectory()) {
-        utils::logInfo("Dropped directory: {}", droppedDirectory.getFullPathName().quoted());
-        currentRoot = droppedDirectory;
-        currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
-        refreshAnalysis(false);
+    if (droppedFiles.isEmpty() && !droppedDirectories.isEmpty()) {
+        // The drop callback carries no modifier state, so read the live keyboard state instead.
+        const auto appendToRoots = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
+
+        for (const auto& directory : droppedDirectories) {
+            utils::logInfo(
+                "Dropped directory{}: {}", appendToRoots ? " to add" : "", directory.getFullPathName().quoted()
+            );
+        }
+
+        if (appendToRoots) {
+            addRoots(droppedDirectories);
+        } else {
+            setRoots(droppedDirectories);
+        }
+
         return;
     }
 
@@ -1095,10 +1198,15 @@ void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
 
 void AudioBatchComponent::refreshAnalysis(const bool forceRefresh)
 {
-    if (currentRoot.isDirectory()) {
-        juce::Array<juce::File> inputPaths;
-        inputPaths.add(currentRoot);
-        startAnalysis(inputPaths, true, forceRefresh, true);
+    juce::Array<juce::File> existingRoots;
+    for (const auto& root : currentRoots) {
+        if (root.isDirectory()) {
+            existingRoots.add(root);
+        }
+    }
+
+    if (!existingRoots.isEmpty()) {
+        startAnalysis(existingRoots, true, forceRefresh, true);
         return;
     }
 
@@ -1950,12 +2058,8 @@ void AudioBatchComponent::startAnalysis(
 
     statusLabel.setText(utils::format("Analyzing 0/{}", expectedResults), juce::dontSendNotification);
 
-    if (clearResults && currentRoot.isDirectory()) {
-        currentRootLabel.setText(currentRoot.getFullPathName(), juce::dontSendNotification);
-        currentRootLabel.setTooltip(currentRoot.getFullPathName());
-    } else if (clearResults) {
-        currentRootLabel.setText("", juce::dontSendNotification);
-        currentRootLabel.setTooltip("");
+    if (clearResults) {
+        updateCurrentRootLabel();
     }
 
     analysisCoordinator.start(options, files);
