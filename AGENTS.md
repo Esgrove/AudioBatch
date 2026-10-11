@@ -31,7 +31,7 @@ The CLI adds its front end files, and the GUI adds its components and plugin hos
 
 Entry points:
 
-- `src/Main.cpp` is the GUI application entry point.
+- `src/Main.cpp` is the GUI application entry point, and `src/MainWindow.*` is its top-level window and menu bar.
 - `src/CliMain.cpp` is the CLI entry point.
 
 CLI only:
