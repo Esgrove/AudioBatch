@@ -116,7 +116,7 @@ Starting the GUI executable with `-V` or `--version` prints the version line and
 the same as the CLI:
 
 ```text
-AudioBatch 0.9.0.3 2026-10-11 a11667c main JUCE v9.0.3
+AudioBatch 0.10.0.0 2026-10-12 d9f2357 main JUCE v9.0.3
 ```
 
 Starting the GUI with `-H` or `--headless` runs the app with its main window hidden.
