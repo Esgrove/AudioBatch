@@ -57,6 +57,13 @@ string(TIMESTAMP TIMESTAMP "%Y-%m-%d_%H%M" UTC)
 set(APP_BUILD_VERSION "${CMAKE_PROJECT_VERSION}.${BUILD_NUMBER}")
 set(APP_BUILD_NAME "${CMAKE_PROJECT_NAME}_${APP_BUILD_VERSION}_${GIT_HASH}_${TIMESTAMP}")
 
+# Version text printed by --version: version, date, commit, and branch.
+# The branch is left out when it is empty, for example on a detached HEAD in CI.
+set(APP_VERSION_STRING "${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}")
+if (GIT_BRANCH)
+    string(APPEND APP_VERSION_STRING " ${GIT_BRANCH}")
+endif()
+
 message(STATUS "Build name: ${APP_BUILD_NAME}")
 
 if(WIN32)
@@ -271,6 +278,8 @@ target_sources(AudioBatch
         "src/AudioFileTableModel.h"
         "src/AudioNormalizationService.cpp"
         "src/AudioNormalizationService.h"
+        "src/ConsolePrint.cpp"
+        "src/ConsolePrint.h"
         "src/CustomLookAndFeel.cpp"
         "src/CustomLookAndFeel.h"
         "src/IntervalStepSlider.h"
@@ -315,6 +324,8 @@ target_sources(AudioBatchCli
         "src/AudioAnalysisTypes.h"
         "src/AudioNormalizationService.cpp"
         "src/AudioNormalizationService.h"
+        "src/ConsolePrint.cpp"
+        "src/ConsolePrint.h"
         "src/CliMain.cpp"
         "src/MetadataService.cpp"
         "src/MetadataService.h"
@@ -331,6 +342,9 @@ target_compile_definitions(AudioBatch
         DONT_SET_USING_JUCE_NAMESPACE=1
         JUCE_ASIO=1
         JUCE_DIRECTSOUND=0
+        # Debug builds would otherwise print the JUCE version on startup,
+        # which pollutes the --version output.
+        JUCE_DISABLE_JUCE_VERSION_PRINTING=1
         JUCE_USE_LAME_AUDIO_FORMAT=1
         JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_PLUGINHOST_VST3=1
@@ -351,11 +365,15 @@ target_compile_definitions(AudioBatch
         BUILDTIME_DATE="${DATE}"
         BUILDTIME_VERSION_NUMBER="${APP_BUILD_VERSION}"
         BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}"
+        BUILDTIME_VERSION_STRING="${APP_VERSION_STRING}"
 )
 
 target_compile_definitions(AudioBatchCli
     PRIVATE
         DONT_SET_USING_JUCE_NAMESPACE=1
+        # Debug builds would otherwise print the JUCE version on startup,
+        # which pollutes the --version output.
+        JUCE_DISABLE_JUCE_VERSION_PRINTING=1
         JUCE_USE_LAME_AUDIO_FORMAT=1
         JUCE_USE_MP3AUDIOFORMAT=1
         JUCE_USE_CURL=0
@@ -370,6 +388,7 @@ target_compile_definitions(AudioBatchCli
         BUILDTIME_DATE="${DATE}"
         BUILDTIME_VERSION_NUMBER="${APP_BUILD_VERSION}"
         BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}"
+        BUILDTIME_VERSION_STRING="${APP_VERSION_STRING}"
 )
 
 set_target_properties(AudioBatch
