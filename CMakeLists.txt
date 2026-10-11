@@ -314,6 +314,11 @@ target_sources(
         ${AUDIOBATCH_CORE_SOURCES}
         "src/AudioBatchComponent.cpp"
         "src/AudioBatchComponent.h"
+        "src/AudioBatchComponentActions.cpp"
+        "src/AudioBatchComponentConstants.h"
+        "src/AudioBatchComponentOperations.cpp"
+        "src/AudioBatchComponentPreview.cpp"
+        "src/AudioBatchComponentRoots.cpp"
         "src/AudioFileTableModel.cpp"
         "src/AudioFileTableModel.h"
         "src/AudioInfoPanel.cpp"
