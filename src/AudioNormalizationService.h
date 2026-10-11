@@ -1,5 +1,5 @@
-/// Peak normalization interface shared by the GUI and CLI targets.
-/// AudioNormalizationService rewrites audio files so their peak reaches 0 dBFS,
+/// Normalization interface shared by the GUI and CLI targets.
+/// AudioNormalizationService rewrites audio files to a target sample peak or integrated loudness,
 /// renders the output as AIFF, and re-analyzes the result.
 /// AudioNormalizationResult carries the outcome of a single normalize-and-reanalyze pass.
 
@@ -7,14 +7,40 @@
 
 #include "AudioAnalysisService.h"
 
+#include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
+
+/// What normalization aims the file's level at.
+enum class AudioNormalizationMode : std::uint8_t {
+    /// Scale the file so its sample peak reaches the target peak.
+    peak,
+    /// Scale the file so its integrated loudness reaches the target loudness,
+    /// as far as the true peak ceiling allows.
+    loudness,
+};
 
 /// Options controlling how a file is normalized.
 struct AudioNormalizationOptions {
+    /// Default target sample peak, in dBFS.
+    static constexpr double defaultTargetPeakDbfs = 0.0;
+    /// Default target integrated loudness, in LUFS.
+    static constexpr double defaultTargetLufs = -14.0;
+    /// Default highest true peak allowed in loudness mode, in dBTP.
+    static constexpr double defaultTruePeakCeilingDbtp = -0.3;
+
     /// Replace an existing output file that is not the source itself.
     /// When false, a file whose output path is already taken fails instead of overwriting it.
     bool overwriteExisting = false;
+    AudioNormalizationMode mode = AudioNormalizationMode::peak;
+    /// Target sample peak in peak mode, in dBFS.
+    double targetPeakDbfs = defaultTargetPeakDbfs;
+    /// Target integrated loudness in loudness mode, in LUFS.
+    double targetLufs = defaultTargetLufs;
+    /// Highest true peak allowed in loudness mode, in dBTP.
+    /// When reaching the target loudness would exceed it, the gain is reduced to stay at the ceiling.
+    double truePeakCeilingDbtp = defaultTruePeakCeilingDbtp;
 };
 
 /// Result payload for a single normalize-and-reanalyze operation.
@@ -61,6 +87,14 @@ public:
     /// Otherwise the record that sorts first by path wins, so the result does not depend on input order.
     static juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records);
 
+    /// Returns the linear gain that brings the analyzed file to the target in the options,
+    /// or an empty optional with errorMessage set when the file has no measurable level for that mode.
+    static std::optional<float> getNormalizationGain(
+        const AudioAnalysisRecord& record,
+        const AudioNormalizationOptions& options,
+        juce::String& errorMessage
+    );
+
     /// Returns the AIFF bit depth for output written from the given source.
     /// Keeps the analyzed source depth when the AIFF writer supports it,
     /// uses 16 bits for MP3 sources, and falls back to the highest supported depth,
@@ -79,7 +113,7 @@ public:
     /// Summarizes the readable and writable formats available for in-place normalization in this build.
     static juce::String getFormatSupportSummary();
 
-    /// Rewrites a file so its peak reaches 0 dBFS, then re-analyzes the result.
+    /// Rewrites a file to the target level in the options, then re-analyzes the result.
     /// Fails without writing anything when the output path already exists and is not the source,
     /// unless options.overwriteExisting is set, in which case the existing output is moved to the system trash.
     /// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.

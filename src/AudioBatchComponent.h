@@ -307,6 +307,23 @@ private:
         int fallbackRow
     );
 
+    /// Reads the normalization mode and targets from the user settings into the controls.
+    void loadNormalizationSettings();
+
+    /// Writes the normalization mode and both targets to the user settings, so they persist between sessions.
+    void saveNormalizationSettings();
+
+    /// Switches the target slider between the peak and loudness ranges for the selected mode,
+    /// showing the remembered target of that mode.
+    void updateNormalizeTargetSlider();
+
+    /// Returns the normalization mode and target selected in the controls.
+    /// The caller adds the overwrite setting.
+    [[nodiscard]] AudioNormalizationOptions getNormalizationOptions() const;
+
+    /// Returns the selected normalization target as display text, for example "-14.0 LUFS".
+    [[nodiscard]] juce::String formatNormalizeTarget() const;
+
     /// Returns the starting directory for the folder chooser,
     /// favouring a Dropbox folder, then the system Music folder, then the home folder.
     static juce::File getDefaultBrowseDirectory();
@@ -448,6 +465,14 @@ private:
     /// Lets normalization and plugin processing replace an existing output file.
     /// Not persisted, so every session starts with overwriting disabled.
     juce::ToggleButton forceOverwriteToggle {"Force overwrite"};
+    /// Chooses whether normalization targets a sample peak or an integrated loudness.
+    juce::ComboBox normalizeModeBox;
+    /// Target level of the selected normalization mode, in dBFS for peak mode and LUFS for loudness mode.
+    juce::Slider normalizeTargetSlider {"NormalizeTarget"};
+    /// Remembered peak mode target, in dBFS, kept while loudness mode is selected.
+    double normalizeTargetPeakDbfs = AudioNormalizationOptions::defaultTargetPeakDbfs;
+    /// Remembered loudness mode target, in LUFS, kept while peak mode is selected.
+    double normalizeTargetLufs = AudioNormalizationOptions::defaultTargetLufs;
     std::unique_ptr<AudioInfoPanel> audioInfo;
     juce::Viewport audioInfoViewport;
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
