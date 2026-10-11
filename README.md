@@ -9,8 +9,7 @@ Current implementation focus:
 - Cache analysis results in SQLite so unchanged files are not re-read every run.
 - Show sortable peak, true peak, and loudness data in the GUI.
 - Show per-file processing state directly in the results list while background work is running.
-- Normalize selected files to a target peak or integrated loudness from the GUI,
-  or to `0 dBFS` peak from the CLI.
+- Normalize selected files to a target sample peak or integrated loudness from the GUI or the CLI.
 - Convert any normalized output to AIFF and carry over the source tags,
   including embedded album art and custom tags, by writing them back as ID3v2.4.
 - Batch process selected files through a chain of VST3 or Audio Unit plugins from the GUI.
@@ -145,7 +144,7 @@ The normalization target is set with the mode selector and the target slider abo
 and is remembered between sessions:
 
 - `Peak` scales each file so its sample peak reaches the target, from -12 to 0 dBFS. The default is 0 dBFS.
-- `Loudness` scales each file so its integrated loudness reaches the target, from -30 to -6 LUFS.
+- `Loudness` scales each file so its integrated loudness reaches the target, from -24 to -6 LUFS.
   The default is -14 LUFS.
   The gain is limited so the true peak stays at or below -0.3 dBTP,
   so a dense file can end up quieter than the target instead of clipping.
@@ -266,6 +265,8 @@ Options:
   -f, --refresh           Ignore cached analysis and re-analyze files
   -n, --normalize         Normalize analyzed files, then report the re-analyzed output peaks
   -F, --force             Let --normalize replace an existing output file
+      --peak <dBFS>       Normalize to this sample peak, -12 to 0 (default 0)
+      --lufs <LUFS>       Normalize to this integrated loudness, -24 to -6, with a -0.3 dBTP ceiling
   -j, --jobs <count>      Override worker count
   -s, --sort <mode>       Sort by peak, lufs, name, or path
       --reverse           Sort in descending order
@@ -279,6 +280,15 @@ Short options cannot be combined, so pass -r -f instead of -rf.
 
 `--help` and `--version` only print to the console.
 They do not start logging or write to the log file.
+
+`-n` normalizes to a 0 dBFS sample peak by default.
+`--peak` sets another sample peak target, and `--lufs` normalizes to an integrated loudness instead,
+with the same -0.3 dBTP true peak ceiling as the GUI.
+Negative values can be passed as `--lufs -14` or `--lufs=-14`.
+
+```shell
+audiobatch -n --lufs -14 "music/album"
+```
 
 Short options must be passed separately.
 A combined argument such as `-rf` is rejected,

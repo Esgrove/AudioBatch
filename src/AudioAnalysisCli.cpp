@@ -86,6 +86,15 @@ static juce::String reportedOutputPath(const AudioAnalysisRecord& record)
     return record.fileName;
 }
 
+/// Returns true when the argument is a plain number such as "-14" or "0.5",
+/// which may start with a minus sign but is a value and not an option.
+static bool isNumericArgument(const juce::String& text)
+{
+    const auto digits = text.startsWithChar('-') || text.startsWithChar('+') ? text.substring(1) : text;
+    return digits.isNotEmpty() && digits.containsOnly("0123456789.") && digits.containsAnyOf("0123456789")
+        && digits.indexOfChar('.') == digits.lastIndexOfChar('.');
+}
+
 /// Removes an option and its value from the arguments.
 /// Accepts the value as the next argument for both the short and the long form, like "-g type" and "--group-by type",
 /// and also as "--group-by=type".
@@ -127,7 +136,7 @@ static std::optional<juce::String> removeOptionWithValue(juce::ArgumentList& arg
 static juce::String findCombinedShortOptionError(const juce::ArgumentList& arguments)
 {
     for (const auto& argument : arguments.arguments) {
-        if (argument.isShortOption() && argument.text.length() > 2) {
+        if (argument.isShortOption() && argument.text.length() > 2 && !isNumericArgument(argument.text)) {
             return utils::format(
                 "Combined short options are not supported: {}. Pass each option separately.", argument.text
             );
@@ -297,9 +306,72 @@ static void printRecords(
     }
 }
 
+/// Parses a target level in the given range for --peak or --lufs into the normalization options.
+/// Returns an error message, or an empty string when the value is valid.
+static juce::String parseTargetLevel(
+    const juce::String& option,
+    const juce::String& value,
+    const double minimum,
+    const double maximum,
+    double& target
+)
+{
+    const auto trimmedValue = value.trim();
+
+    if (!isNumericArgument(trimmedValue)) {
+        return utils::format("{} needs a number, for example {} {}", option, option, minimum);
+    }
+
+    target = trimmedValue.getDoubleValue();
+
+    if (target < minimum || target > maximum) {
+        return utils::format("{} must be between {} and {}", option, minimum, maximum);
+    }
+
+    return {};
+}
+
+/// Removes --peak and --lufs from the arguments and sets the normalization mode and target.
+/// Returns an error message, or an empty string when the options are valid or absent.
+static juce::String parseNormalizationTarget(juce::ArgumentList& arguments, AudioAnalysisCliOptions& options)
+{
+    const auto peakValue = removeOptionWithValue(arguments, "--peak");
+    const auto loudnessValue = removeOptionWithValue(arguments, "--lufs");
+
+    if (peakValue.has_value() && loudnessValue.has_value()) {
+        return "--peak and --lufs cannot be used together";
+    }
+
+    if (peakValue.has_value()) {
+        options.hasNormalizationTarget = true;
+        options.normalization.mode = AudioNormalizationMode::peak;
+        return parseTargetLevel(
+            "--peak",
+            *peakValue,
+            AudioNormalizationOptions::minimumTargetPeakDbfs,
+            AudioNormalizationOptions::maximumTargetPeakDbfs,
+            options.normalization.targetPeakDbfs
+        );
+    }
+
+    if (loudnessValue.has_value()) {
+        options.hasNormalizationTarget = true;
+        options.normalization.mode = AudioNormalizationMode::loudness;
+        return parseTargetLevel(
+            "--lufs",
+            *loudnessValue,
+            AudioNormalizationOptions::minimumTargetLufs,
+            AudioNormalizationOptions::maximumTargetLufs,
+            options.normalization.targetLufs
+        );
+    }
+
+    return {};
+}
+
 /// Returns an error message for options that cannot be used together, or an empty string when they can.
 /// The plugin listing takes no input paths and no analysis options,
-/// its grouping and rescan options need --list-plugins, and --force needs --normalize.
+/// its grouping and rescan options need --list-plugins, and --force, --peak, and --lufs need --normalize.
 static juce::String validateOptionCombinations(
     const AudioAnalysisCliOptions& options,
     const bool hasGrouping,
@@ -315,7 +387,7 @@ static juce::String validateOptionCombinations(
     }
 
     const bool hasAnalysisOption = hasAnalysisValueOption || options.recursive || options.refresh || options.normalize
-        || options.force || options.reverse;
+        || options.force || options.reverse || options.hasNormalizationTarget;
 
     if (options.listPlugins && hasAnalysisOption) {
         return "--list-plugins cannot be combined with analysis options";
@@ -323,6 +395,10 @@ static juce::String validateOptionCombinations(
 
     if (options.force && !options.normalize) {
         return "--force can only be used with --normalize";
+    }
+
+    if (options.hasNormalizationTarget && !options.normalize) {
+        return "--peak and --lufs can only be used with --normalize";
     }
 
     return {};
@@ -346,6 +422,8 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
         "  -f, --refresh           Ignore cached analysis and re-analyze files",
         "  -n, --normalize         Normalize analyzed files, then report the re-analyzed output peaks",
         "  -F, --force             Let --normalize replace an existing output file",
+        "      --peak <dBFS>       Normalize to this sample peak, -12 to 0 (default 0)",
+        "      --lufs <LUFS>       Normalize to this integrated loudness, -24 to -6, with a -0.3 dBTP ceiling",
         "  -j, --jobs <count>      Override worker count",
         "  -s, --sort <mode>       Sort by peak, lufs, name, or path",
         "      --reverse           Sort in descending order",
@@ -360,9 +438,25 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
     return lines.joinIntoString(juce::newLine) + juce::newLine;
 }
 
+void AudioAnalysisCli::attachNegativeOptionValues(juce::ArgumentList& arguments)
+{
+    for (int index = 0; index + 1 < arguments.size(); ++index) {
+        const auto& argument = arguments.arguments.getReference(index);
+        const auto& next = arguments.arguments.getReference(index + 1);
+
+        if (argument.isLongOption() && !argument.text.containsChar('=') && next.text.startsWithChar('-')
+            && isNumericArgument(next.text))
+        {
+            arguments.arguments.set(index, {utils::format("{}={}", argument.text, next.text)});
+            arguments.arguments.remove(index + 1);
+        }
+    }
+}
+
 std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentList arguments, juce::String& errorMessage)
 {
     AudioAnalysisCliOptions options;
+    attachNegativeOptionValues(arguments);
 
     if (errorMessage = findCombinedShortOptionError(arguments); errorMessage.isNotEmpty()) {
         return std::nullopt;
@@ -396,6 +490,10 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
         }
 
         options.sortMode = *sortMode;
+    }
+
+    if (errorMessage = parseNormalizationTarget(arguments, options); errorMessage.isNotEmpty()) {
+        return std::nullopt;
     }
 
     const auto outputValue = removeOptionWithValue(arguments, "--output|-o");
@@ -512,7 +610,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
             continue;
         }
 
-        AudioNormalizationOptions normalizationOptions;
+        auto normalizationOptions = options.normalization;
         normalizationOptions.overwriteExisting = options.force;
         const auto normalization = AudioNormalizationService::normalizeFile(result, normalizationOptions);
 

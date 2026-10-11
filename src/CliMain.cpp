@@ -46,7 +46,8 @@ static int runPluginScanWorker(const juce::String& executableName, const juce::S
 /// Entry point for the headless batch analysis executable.
 int main(const int argc, char* argv[])
 {
-    const juce::ArgumentList arguments(argc, argv);
+    juce::ArgumentList arguments(argc, argv);
+    AudioAnalysisCli::attachNegativeOptionValues(arguments);
     const auto executableName = juce::File(arguments.executableName).getFileNameWithoutExtension();
 
     // The plugin rescan relaunches this executable as its scan worker.
