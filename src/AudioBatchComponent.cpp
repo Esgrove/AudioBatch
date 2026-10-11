@@ -1879,6 +1879,16 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
         }
 
         auto analyzedRecord = AudioAnalysisService::analyzeFile(record.file);
+
+        // An unchanged file keeps the custom gain the user set for it.
+        if (float customGainDb = 0.0f; analysisCache.getCustomGain(
+                record.file, analyzedRecord.fileSize, analyzedRecord.modifiedTimeMs, customGainDb
+            ))
+        {
+            analyzedRecord.customGainDb = customGainDb;
+            analyzedRecord.hasCustomGain = true;
+        }
+
         analysisCache.storeAnalysis(analyzedRecord);
         record = std::move(analyzedRecord);
         resultsChanged = true;

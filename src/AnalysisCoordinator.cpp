@@ -156,10 +156,16 @@ void AnalysisCoordinator::analyzeStaleFile(const juce::File& file, const int run
 
     publishStarting(file, runId);
 
-    const auto result = AudioAnalysisService::analyzeFile(file, [this, runId] { return runId != currentRunId.load(); });
+    auto result = AudioAnalysisService::analyzeFile(file, [this, runId] { return runId != currentRunId.load(); });
 
     if (runId != currentRunId.load()) {
         return;
+    }
+
+    // A refresh re-analyzes unchanged files too, and those keep the custom gain the user set for them.
+    if (float customGainDb = 0.0f; cache.getCustomGain(file, result.fileSize, result.modifiedTimeMs, customGainDb)) {
+        result.customGainDb = customGainDb;
+        result.hasCustomGain = true;
     }
 
     cache.storeAnalysis(result);

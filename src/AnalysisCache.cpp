@@ -518,6 +518,42 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     return result == SQLITE_DONE;
 }
 
+bool AnalysisCache::getCustomGain(
+    const juce::File& file,
+    const std::int64_t fileSize,
+    const std::int64_t modifiedTimeMs,
+    float& customGainDb
+)
+{
+    const juce::ScopedLock lock(mutex);
+
+    if (database == nullptr && !openUnlocked()) {
+        return false;
+    }
+
+    constexpr auto sql = R"SQL(
+        SELECT custom_gain_db FROM file_analysis
+        WHERE file_path = ? AND file_size = ? AND modified_time_ms = ? AND has_custom_gain = 1;
+    )SQL";
+
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    bindText(statement, 1, normalizedPath(file));
+    sqlite3_bind_int64(statement, 2, fileSize);
+    sqlite3_bind_int64(statement, 3, modifiedTimeMs);
+
+    const bool found = sqlite3_step(statement) == SQLITE_ROW;
+    if (found) {
+        customGainDb = static_cast<float>(sqlite3_column_double(statement, 0));
+    }
+
+    sqlite3_finalize(statement);
+    return found;
+}
+
 bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGainDb, const bool hasCustomGain)
 {
     const juce::ScopedLock lock(mutex);

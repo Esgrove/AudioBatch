@@ -89,6 +89,7 @@ private:
     void planRun(const AudioAnalysisOptions& options, int runId);
 
     /// Analyzes one file, caches the result, and publishes it.
+    /// The stored custom gain is kept while the file is unchanged on disk.
     /// A file whose analysis is cancelled is neither cached nor published.
     void analyzeStaleFile(const juce::File& file, int runId, int totalFiles);
 
