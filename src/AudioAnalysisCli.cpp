@@ -152,7 +152,7 @@ static juce::String findCombinedShortOptionError(const juce::ArgumentList& argum
 /// Returns an empty optional for an unknown name.
 static std::optional<AudioAnalysisSortMode> parseSortMode(const juce::String& value)
 {
-    const auto normalizedSort = value.trim().toLowerCase();
+    const auto normalizedSort = utils::normalizedToken(value);
 
     if (normalizedSort == "peak") {
         return AudioAnalysisSortMode::peak;
@@ -177,7 +177,7 @@ static std::optional<AudioAnalysisSortMode> parseSortMode(const juce::String& va
 /// Returns an empty optional for an unknown name.
 static std::optional<AudioAnalysisOutputFormat> parseOutputFormat(const juce::String& value)
 {
-    const auto normalizedFormat = value.trim().toLowerCase();
+    const auto normalizedFormat = utils::normalizedToken(value);
 
     if (normalizedFormat == "table") {
         return AudioAnalysisOutputFormat::table;
@@ -240,16 +240,6 @@ static juce::DynamicObject::Ptr buildRecordObject(const AudioAnalysisRecord& rec
     return object;
 }
 
-/// Quotes a CSV field when it contains a separator, a quote, or a line break, doubling any quotes inside.
-static juce::String escapeCsvField(const juce::String& field)
-{
-    if (!field.containsAnyOf(",\"\r\n")) {
-        return field;
-    }
-
-    return utils::format("\"{}\"", field.replace("\"", "\"\""));
-}
-
 /// Prints the records in the requested format to stdout.
 /// The table shows file names, or full paths when showFullPaths is set, as for normalization output.
 /// The table shows only successful records, since failures are already logged to stderr,
@@ -288,7 +278,7 @@ static void printRecords(
                 }
 
                 for (const auto& property : object->getProperties()) {
-                    fields.add(escapeCsvField(property.value.toString()));
+                    fields.add(utils::escapeCsvField(property.value.toString()));
                 }
                 fmt::print("{}\n", fields.joinIntoString(","));
             }

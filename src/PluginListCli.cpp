@@ -139,18 +139,6 @@ static void sortPlugins(std::vector<juce::PluginDescription>& plugins)
     });
 }
 
-/// Returns how many terminal columns the text occupies, for example two for each CJK character.
-/// Uses fmt's own per-character width, so the computed column widths match how fmt pads the cells.
-static int displayWidth(const juce::String& text)
-{
-    std::size_t width = 0;
-    for (auto character = text.getCharPointer(); !character.isEmpty();) {
-        width += fmt::detail::display_width_of(static_cast<uint32_t>(character.getAndAdvance()));
-    }
-
-    return static_cast<int>(width);
-}
-
 /// Computes the display width of each column from its header and every value,
 /// so rows line up across all groups.
 static std::vector<int> columnWidths(
@@ -163,10 +151,10 @@ static std::vector<int> columnWidths(
     widths.reserve(columns.size());
 
     for (const auto column : columns) {
-        int width = includeHeaders ? displayWidth(columnHeader(column)) : 0;
+        int width = includeHeaders ? console::displayWidth(columnHeader(column)) : 0;
 
         for (const auto& plugin : plugins) {
-            width = std::max(width, displayWidth(columnValue(plugin, column)));
+            width = std::max(width, console::displayWidth(columnValue(plugin, column)));
         }
 
         widths.push_back(width);
@@ -390,7 +378,7 @@ using namespace audiobatch::plugin_list;
 
 std::optional<PluginListGrouping> PluginListCli::parseGrouping(const juce::String& value)
 {
-    const auto normalized = value.trim().toLowerCase();
+    const auto normalized = utils::normalizedToken(value);
 
     if (normalized == "name") {
         return PluginListGrouping::name;

@@ -3,6 +3,7 @@
 #include "AudioFormatUtils.h"
 #include "Cancellation.h"
 #include "FileUtils.h"
+#include "StringFormat.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
@@ -75,6 +76,14 @@ public:
             expect(error.contains("already exists"), error);
             expectEquals(output.loadFileAsString(), juce::String("unrelated"));
             expectEquals(source.loadFileAsString(), juce::String("source"));
+        }
+
+        beginTest("Names match case-insensitively and CSV fields are escaped");
+        {
+            expectEquals(utils::normalizedToken("  JSON "), juce::String("json"));
+            expectEquals(utils::escapeCsvField("plain"), juce::String("plain"));
+            expectEquals(utils::escapeCsvField("a,b"), juce::String(R"("a,b")"));
+            expectEquals(utils::escapeCsvField(R"(say "hi")"), juce::String(R"("say ""hi""")"));
         }
 
         beginTest("An empty cancellation check never cancels");

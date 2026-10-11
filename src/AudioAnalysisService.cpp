@@ -295,11 +295,6 @@ static int compareAnalysisState(const AudioAnalysisRecord& lhs, const AudioAnaly
     return 0;
 }
 
-/// Compares strings using natural ordering so numbered file names sort as expected.
-static int compareText(const juce::String& lhs, const juce::String& rhs)
-{
-    return lhs.compareNatural(rhs);
-}
 /// Returns the first ordering that is not equivalent, so later keys only break ties of earlier ones.
 static std::weak_ordering firstDifference(const std::initializer_list<std::weak_ordering> orderings)
 {
@@ -323,8 +318,8 @@ static std::weak_ordering compareBySortMode(
     const AudioAnalysisSortMode sortMode
 )
 {
-    const std::weak_ordering byName = compareText(lhs.fileName, rhs.fileName) <=> 0;
-    const std::weak_ordering byPath = compareText(lhs.fullPath, rhs.fullPath) <=> 0;
+    const std::weak_ordering byName = lhs.fileName.compareNatural(rhs.fileName) <=> 0;
+    const std::weak_ordering byPath = lhs.fullPath.compareNatural(rhs.fullPath) <=> 0;
     const auto byLoudness = compareValues(lhs.integratedLufs, rhs.integratedLufs);
     const auto byPeak = compareValues(utils::peakMagnitude(lhs.overallPeak), utils::peakMagnitude(rhs.overallPeak));
 
@@ -693,6 +688,23 @@ juce::String AudioAnalysisService::formatSampleRateDisplay(const AudioAnalysisRe
     }
 
     return utils::format("{:.1f} kHz", static_cast<double>(record.sampleRate) / hertzPerKilohertz);
+}
+
+juce::String AudioAnalysisService::formatTypeLabel(const AudioAnalysisRecord& record)
+{
+    if (const auto extension = utils::fileExtension(record.file); extension.isNotEmpty()) {
+        return extension.toUpperCase();
+    }
+
+    // JUCE format names end with " file", such as "WAV file", which the label leaves out.
+    const juce::String formatNameFileSuffix {" file"};
+    auto formatName = record.formatName.trim();
+
+    if (formatName.endsWithIgnoreCase(formatNameFileSuffix)) {
+        formatName = formatName.dropLastCharacters(formatNameFileSuffix.length()).trimEnd();
+    }
+
+    return formatName.isNotEmpty() ? formatName : juce::String("Unknown");
 }
 
 juce::String AudioAnalysisService::formatStatus(const AudioAnalysisRecord& record)

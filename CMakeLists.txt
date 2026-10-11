@@ -286,6 +286,8 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/FileUtils.h"
     "src/Log.cpp"
     "src/Log.h"
+    "src/MessageThreadCall.cpp"
+    "src/MessageThreadCall.h"
     "src/MetadataService.cpp"
     "src/MetadataService.h"
     "src/NormalizeCoordinator.cpp"

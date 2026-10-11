@@ -11,9 +11,6 @@
 
 namespace audiobatch::table
 {
-/// Suffix that some decoders append to their format name, for example "WAV file".
-/// It is stripped when the format name is used as the Type column label.
-constexpr auto formatNameFileSuffix = " file";
 
 /// Maximum widths a user can drag each column to in the results table header.
 /// The Name and Path columns may grow wide for long names,
@@ -48,32 +45,6 @@ constexpr float normalCellTextAlpha = 0.95f;
 
 /// Opacity of the one pixel vertical divider drawn at the right edge of each cell.
 constexpr float cellDividerAlpha = 0.08f;
-
-/// Derives a short display label for the Type column.
-/// Prefers the file extension in upper case,
-/// then falls back to the decoder format name with a trailing " file" suffix stripped,
-/// and finally to "Unknown".
-static juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
-{
-    const auto extension = record.file.getFileExtension().trimCharactersAtStart(".");
-
-    if (extension.isNotEmpty()) {
-        return extension.toUpperCase();
-    }
-
-    auto formatName = record.formatName.trim();
-
-    if (formatName.endsWithIgnoreCase(formatNameFileSuffix)) {
-        formatName
-            = formatName.dropLastCharacters(static_cast<int>(std::string_view {formatNameFileSuffix}.size())).trimEnd();
-    }
-
-    if (formatName.isNotEmpty()) {
-        return formatName;
-    }
-
-    return "Unknown";
-}
 
 /// Draws the small spinning arc shown in the Status column while a row is being processed.
 /// The phase argument in the range 0 to 1 controls the arc rotation,
@@ -314,7 +285,7 @@ void AudioFileTableModel::paintCell(
             text = record.fullPath;
             break;
         case columnType:
-            text = getRecordTypeLabel(record);
+            text = AudioAnalysisService::formatTypeLabel(record);
             font = juce::CustomLookAndFeel::get_mono_font();
             break;
         case columnBitrate:

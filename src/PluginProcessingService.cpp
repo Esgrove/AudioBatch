@@ -22,6 +22,7 @@
 #include "DecodeFailureTracker.h"
 #include "FileUtils.h"
 #include "Log.h"
+#include "MessageThreadCall.h"
 #include "MetadataService.h"
 #include "StringFormat.h"
 
@@ -49,8 +50,6 @@ constexpr int maximumDitheredBitDepth = 16;
 /// Seed for the dither noise, so processing the same file twice writes identical output.
 constexpr juce::int64 ditherSeed = 0x41554449;
 constexpr auto cancelledMessage = "Processing was cancelled";
-/// How long a worker waits for the message thread between cancellation checks.
-constexpr int messageThreadPollIntervalMs = 20;
 /// Upper limit for the tail length a plugin may report, in seconds.
 /// Caps the silence appended after each file so a plugin reporting an infinite tail cannot stall processing.
 constexpr double maximumTailSeconds = 30.0;
@@ -150,85 +149,6 @@ static void enableOfflineRendering(juce::AudioPluginInstance& plugin)
         }
     }
 #endif
-}
-
-/// A function posted from a worker thread to the message thread,
-/// shared between the waiting worker and the queued message.
-/// The state moves from pending to either running or abandoned exactly once,
-/// and whichever side gets there first wins.
-/// This guarantees that the function never starts after the worker has stopped waiting for it,
-/// so it can safely refer to the worker's stack and to the plugin chain the worker holds.
-struct MessageThreadCall {
-    enum class State : std::uint8_t { pending, running, abandoned };
-
-    std::function<void()> function;
-    std::atomic<State> state {State::pending};
-    juce::WaitableEvent finished;
-};
-
-/// Runs a function on the message thread and blocks the calling worker until it has finished.
-/// Unlike MessageManager::callSync, the wait gives up when cancellation is requested while the call is still queued,
-/// because the message thread may itself be blocked waiting for this worker,
-/// for example in PluginProcessingCoordinator::cancelAndWait when the app quits during processing.
-/// The abandoned call is skipped when the message thread later dequeues it.
-/// A call that has already started always runs to completion,
-/// since the message thread is then busy running it and cannot be waiting for the worker.
-/// Calls the function directly when already on the message thread.
-/// Returns true when the function ran,
-/// and false when it was cancelled before starting or could not be posted to the message thread.
-static bool callOnMessageThread(
-    std::function<void()> function,
-    const PluginProcessingService::CancellationCheck& isCancelled
-)
-{
-    auto const* messageManager = juce::MessageManager::getInstanceWithoutCreating();
-    if (messageManager == nullptr) {
-        return false;
-    }
-
-    if (messageManager->isThisTheMessageThread()) {
-        function();
-        return true;
-    }
-
-    if (utils::isCancellationRequested(isCancelled)) {
-        return false;
-    }
-
-    auto const call = std::make_shared<MessageThreadCall>();
-    call->function = std::move(function);
-
-    const bool posted = juce::MessageManager::callAsync([call] {
-        auto expected = MessageThreadCall::State::pending;
-        if (!call->state.compare_exchange_strong(expected, MessageThreadCall::State::running)) {
-            return;
-        }
-
-        call->function();
-        call->finished.signal();
-    });
-
-    // Posting fails once the app has started quitting and the message loop no longer dispatches.
-    if (!posted) {
-        return false;
-    }
-
-    while (!call->finished.wait(messageThreadPollIntervalMs)) {
-        if (!utils::isCancellationRequested(isCancelled)) {
-            continue;
-        }
-
-        auto expected = MessageThreadCall::State::pending;
-        if (call->state.compare_exchange_strong(expected, MessageThreadCall::State::abandoned)) {
-            return false;
-        }
-
-        // The message thread is already running the function, so it finishes without waiting on this worker.
-        call->finished.wait();
-        break;
-    }
-
-    return true;
 }
 
 /// Releases the resources of every plugin in the chain, leaving the chain inactive for the next file.
@@ -694,7 +614,7 @@ static juce::String renderChainToFile(
     }
 
     ChainPreparation preparation;
-    const bool prepared = callOnMessageThread(
+    const bool prepared = utils::callOnMessageThread(
         [&] { preparation = prepareChain(chainInstances, options, numChannels, reader.sampleRate); }, isCancelled
     );
 
@@ -713,7 +633,7 @@ static juce::String renderChainToFile(
     // Release on every path so a failed file does not leave the chain active for the next one.
     // After cancellation the message thread may be blocked waiting for this worker, so the release is skipped,
     // and the plugin instances release their resources when they are destroyed instead.
-    callOnMessageThread([&chainInstances] { releasePluginResources(chainInstances); }, isCancelled);
+    utils::callOnMessageThread([&chainInstances] { releasePluginResources(chainInstances); }, isCancelled);
 
     return renderError;
 }

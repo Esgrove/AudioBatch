@@ -61,6 +61,10 @@ public:
     /// Formats the sample rate for display in the GUI.
     static juce::String formatSampleRateDisplay(const AudioAnalysisRecord& record);
 
+    /// Returns the short file type label for display: the uppercase extension, for example "FLAC",
+    /// then the reader's format name without its " file" suffix, and "Unknown" when neither is known.
+    static juce::String formatTypeLabel(const AudioAnalysisRecord& record);
+
     /// Formats the human-readable status text for a record.
     static juce::String formatStatus(const AudioAnalysisRecord& record);
 

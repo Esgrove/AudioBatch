@@ -7,7 +7,6 @@
 #include "TestSuites.h"
 
 #include <array>
-#include <cmath>
 
 namespace audiobatch::tests
 {
@@ -215,11 +214,7 @@ private:
         const auto tolerance = fixture.lossy ? lossyTolerance : losslessTolerance;
         const auto expectedLoudness = fixture.channels == 1 ? fixtureMonoLoudness : fixtureStereoLoudness;
 
-        expectWithinAbsoluteError(
-            static_cast<double>(juce::Decibels::gainToDecibels(std::abs(record.overallPeak))),
-            fixturePeakDecibels,
-            tolerance
-        );
+        expectWithinAbsoluteError(peakDecibels(record), fixturePeakDecibels, tolerance);
         expectWithinAbsoluteError(
             juce::Decibels::gainToDecibels(record.overallTruePeak), fixturePeakDecibels, tolerance
         );
