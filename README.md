@@ -107,6 +107,10 @@ The GUI analyzes the selected root folders automatically in the background and s
 - Dropping folders onto the window replaces the root folders.
   Hold `Shift` while dropping to append them instead.
 - `Rescan` and `F5` re-analyze every root folder.
+- The folder chooser starts in the last root folder,
+  otherwise in a `Dropbox` folder when there is one, then the system Music folder.
+- Folders are scanned in the background, so the window stays responsive with large libraries.
+  Hidden files and macOS `._` metadata files are skipped.
 
 Starting the GUI executable with `-V` or `--version` prints the version line and exits without opening a window,
 the same as the CLI:
@@ -365,6 +369,8 @@ The cache is invalidated when any of these change:
 - internal analysis schema version
 
 Failed analyses are cached too, so a file that cannot be decoded is not retried on every run.
+A file's custom gain is kept when the file changes and is analyzed again.
+On GUI startup, rows for files that no longer exist are removed in the background.
 Use `--refresh` in the CLI, or re-analyze from the GUI, to retry it.
 
 ## TODO

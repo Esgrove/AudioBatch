@@ -1,6 +1,7 @@
 /// Implementation of AnalysisCoordinator.
-/// Publishes cached records immediately, queues one thread pool job per stale file,
-/// stores fresh results back into the cache,
+/// Plans each run on a worker thread: expands the input paths, publishes cached records,
+/// and queues one thread pool job per stale file.
+/// Stores fresh results back into the cache, keeping the custom gain stored for a changed file,
 /// and guards callback publication with run id checks and a callback lock.
 /// Also provides the blocking analysis entry point used by the CLI.
 
@@ -102,54 +103,100 @@ void AnalysisCoordinator::cancelAndWait()
 
 int AnalysisCoordinator::start(const AudioAnalysisOptions& options)
 {
-    return start(options, AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive));
-}
-
-int AnalysisCoordinator::start(const AudioAnalysisOptions& options, const juce::Array<juce::File>& files)
-{
     cancelAndWait();
 
     const auto runId = currentRunId.load();
-    juce::Array<juce::File> staleFiles;
+    threadPool.addJob([this, options, runId] { planRun(options, runId); });
+    return runId;
+}
 
-    for (const auto& file : files) {
+void AnalysisCoordinator::planRun(const AudioAnalysisOptions& options, const int runId)
+{
+    AnalysisPlan plan;
+    plan.files = AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive);
+    std::vector<AudioAnalysisRecord> cachedRecords;
+
+    for (const auto& file : plan.files) {
+        if (runId != currentRunId.load()) {
+            return;
+        }
+
         if (AudioAnalysisRecord cachedRecord; !options.refresh && cache.getAnalysis(file, cachedRecord)) {
-            publishResult(cachedRecord, runId);
+            cachedRecords.push_back(std::move(cachedRecord));
         } else {
-            staleFiles.add(file);
+            plan.staleFiles.add(file);
         }
     }
 
-    pendingJobs.store(staleFiles.size());
+    publishPlan(plan, runId);
 
-    if (files.isEmpty()) {
-        publishCompletion(0, runId);
-        return 0;
+    for (const auto& record : cachedRecords) {
+        publishResult(record, runId);
     }
 
-    for (const auto& file : staleFiles) {
-        threadPool.addJob([this, file, runId, totalFiles = files.size()] {
-            if (runId != currentRunId.load()) {
-                return;
-            }
+    pendingJobs.store(plan.staleFiles.size());
 
-            publishStarting(file, runId);
+    if (plan.staleFiles.isEmpty()) {
+        publishCompletion(plan.files.size(), runId);
+        return;
+    }
 
-            const auto result = AudioAnalysisService::analyzeFile(file);
-            cache.storeAnalysis(result);
-            publishResult(result, runId);
-
-            if (pendingJobs.fetch_sub(1) == 1) {
-                publishCompletion(totalFiles, runId);
-            }
+    for (const auto& file : plan.staleFiles) {
+        threadPool.addJob([this, file, runId, totalFiles = plan.files.size()] {
+            analyzeStaleFile(file, runId, totalFiles);
         });
     }
+}
 
-    if (staleFiles.isEmpty()) {
-        publishCompletion(files.size(), runId);
+void AnalysisCoordinator::analyzeStaleFile(const juce::File& file, const int runId, const int totalFiles)
+{
+    if (runId != currentRunId.load()) {
+        return;
     }
 
-    return files.size();
+    publishStarting(file, runId);
+
+    auto result = AudioAnalysisService::analyzeFile(file, [this, runId] { return runId != currentRunId.load(); });
+
+    if (runId != currentRunId.load()) {
+        return;
+    }
+
+    if (float customGainDb = 0.0f; cache.getCustomGain(file, customGainDb)) {
+        result.customGainDb = customGainDb;
+        result.hasCustomGain = true;
+    }
+
+    cache.storeAnalysis(result);
+    publishResult(result, runId);
+
+    if (pendingJobs.fetch_sub(1) == 1) {
+        publishCompletion(totalFiles, runId);
+    }
+}
+
+void AnalysisCoordinator::setPlanCallback(PlanCallback callback)
+{
+    const juce::ScopedLock lock(callbackLock);
+    planCallback = std::move(callback);
+}
+
+void AnalysisCoordinator::publishPlan(const AnalysisPlan& plan, const int runId) const
+{
+    if (runId != currentRunId.load()) {
+        return;
+    }
+
+    PlanCallback callbackCopy;
+
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = planCallback;
+    }
+
+    if (callbackCopy != nullptr) {
+        callbackCopy(plan);
+    }
 }
 
 std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(const AudioAnalysisOptions& options)
@@ -165,10 +212,7 @@ std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(const Audi
 
     setCompletionCallback([&finishedEvent](int) { finishedEvent.signal(); });
 
-    if (const auto totalFiles = start(options); totalFiles == 0) {
-        return results;
-    }
-
+    start(options);
     finishedEvent.wait(-1);
     return results;
 }

@@ -729,6 +729,7 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
         };
     };
 
+    analysisCoordinator.setPlanCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisPlan));
     analysisCoordinator.setResultCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisResult));
     analysisCoordinator.setCompletionCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisComplete));
     analysisCoordinator.setStartingCallback([safeThis](const juce::File& file) {
@@ -837,6 +838,11 @@ AudioBatchComponent::AudioBatchComponent() :
     const auto analysisCacheOpened = analysisCache.open();
     if (analysisCacheOpened) {
         logStartupCheckpoint("analysis cache opened");
+
+        // Checking every cached path touches the file system, so it runs in the background.
+        cachePruneThread = std::jthread([this](const std::stop_token& stopToken) {
+            analysisCache.pruneMissingFiles([&stopToken] { return stopToken.stop_requested(); });
+        });
     } else {
         utils::logError("AudioBatchComponent startup: analysis cache open failed");
     }
@@ -1285,7 +1291,9 @@ void AudioBatchComponent::showSupportedNormalizationFormats()
 juce::File AudioBatchComponent::getDefaultBrowseDirectory()
 {
     auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
-    // TODO: add user config
+    // Prefer the Dropbox folder where the music library is usually kept,
+    // then the system Music folder, and finally the home folder.
+    // A user config file for this is listed in the README TODO.
 #if JUCE_WINDOWS
     auto dropboxDirectory = juce::File("D:\\Dropbox");
 #else
@@ -1294,6 +1302,12 @@ juce::File AudioBatchComponent::getDefaultBrowseDirectory()
 
     if (dropboxDirectory.isDirectory()) {
         return dropboxDirectory;
+    }
+
+    if (const auto musicDirectory = juce::File::getSpecialLocation(juce::File::userMusicDirectory);
+        musicDirectory.isDirectory())
+    {
+        return musicDirectory;
     }
 
     return homeDirectory;
@@ -1922,6 +1936,12 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
         }
 
         analysisCache.storeAnalysis(result.analysisRecord);
+
+        // A converted original was moved to the trash, so its cached row is no longer needed.
+        if (result.analysisRecord.fullPath != result.fullPath) {
+            analysisCache.removeAnalysis(result.file);
+        }
+
         sortResults();
         resultsTable.updateContent();
         updateResultsTableColumnWidths();
@@ -1976,6 +1996,13 @@ void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
 void AudioBatchComponent::handleAnalysisComplete(const int totalFiles)
 {
     expectedResults = totalFiles;
+
+    // The plan handler already reported that no files were found.
+    if (totalFiles == 0) {
+        updateProcessButtonState();
+        return;
+    }
+
     reconcilePendingAnalysisResults();
     updateStatusLabel();
 
@@ -2172,28 +2199,35 @@ void AudioBatchComponent::startAnalysis(
 
     analysisStartedAtMs = juce::Time::getMillisecondCounterHiRes();
     completedResults = 0;
-    const auto files = AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive);
-    expectedResults = files.size();
+    analysisReplacesResults = clearResults;
+    // Expected until the plan arrives, so the run counts as in progress while the folders are scanned.
+    expectedResults = 1;
+    statusLabel.setText("Scanning for audio files...", juce::dontSendNotification);
+
+    if (clearResults) {
+        updateCurrentRootLabel();
+    }
+
+    analysisCoordinator.start(options);
+    updateProcessButtonState();
+}
+
+void AudioBatchComponent::handleAnalysisPlan(const AnalysisCoordinator::AnalysisPlan& plan)
+{
+    expectedResults = plan.files.size();
+    analyzedFilesThisRun = plan.staleFiles.size();
     utils::logInfo("Found {} audio files", expectedResults);
 
     if (expectedResults == 0) {
         statusLabel.setText(
-            clearResults ? "No supported audio files found" : "No supported dropped files", juce::dontSendNotification
+            analysisReplacesResults ? "No supported audio files found" : "No supported dropped files",
+            juce::dontSendNotification
         );
+        updateProcessButtonState();
         return;
     }
 
-    juce::Array<juce::File> staleFiles;
-
-    for (const auto& file : files) {
-        AudioAnalysisRecord cachedRecord;
-
-        if (!forceRefresh && analysisCache.getAnalysis(file, cachedRecord)) {
-            continue;
-        }
-
-        staleFiles.add(file);
-
+    for (const auto& file : plan.staleFiles) {
         if (findRecordIndex(file.getFullPathName()) >= 0) {
             continue;
         }
@@ -2203,21 +2237,14 @@ void AudioBatchComponent::startAnalysis(
         analysisResults.push_back(std::move(placeholder));
     }
 
-    analyzedFilesThisRun = staleFiles.size();
-
     sortResults();
     resultsTable.updateContent();
     updateResultsTableColumnWidths();
-    markFilesProcessing(staleFiles, "Waiting");
+    markFilesProcessing(plan.staleFiles, "Waiting");
 
-    statusLabel.setText(utils::format("Analyzing 0/{}", expectedResults), juce::dontSendNotification);
-
-    if (clearResults) {
-        updateCurrentRootLabel();
-    }
-
-    analysisCoordinator.start(options, files);
-    updateProcessButtonState();
+    statusLabel.setText(
+        utils::format("Analyzing {}/{}", completedResults, expectedResults), juce::dontSendNotification
+    );
 }
 
 juce::String AudioBatchComponent::getActiveStatusLabel(const AudioAnalysisRecord& record) const

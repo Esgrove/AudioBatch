@@ -8,6 +8,8 @@
 
 #include <JuceHeader.h>
 
+#include <functional>
+
 struct sqlite3;
 
 /// Persistent SQLite-backed cache for file analysis results and waveform previews.
@@ -46,12 +48,23 @@ public:
     /// Stores serialized waveform preview data for a file.
     bool storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData);
 
+    /// Loads the user-controlled gain stored for a file, even when the rest of its row is out of date,
+    /// so the gain survives the file changing on disk.
+    /// Returns false when the file has no row or no custom gain.
+    bool getCustomGain(const juce::File& file, float& customGainDb);
+
     /// Updates only the user-controlled gain fields for a file.
     bool storeCustomGain(const juce::File& file, float customGainDb, bool hasCustomGain);
 
     /// Removes the cached row for a file (if any).
     /// Returns true when the operation completed.
     bool removeAnalysis(const juce::File& file);
+
+    /// Deletes the rows of files that no longer exist, for example after they were trashed or renamed.
+    /// The file system checks run without holding the database lock, so other cache calls are not blocked by them.
+    /// Stops early, keeping the remaining rows, when shouldStop returns true.
+    /// Returns the number of deleted rows.
+    int pruneMissingFiles(const std::function<bool()>& shouldStop = {});
 
 private:
     static constexpr int analysisVersion = 7;

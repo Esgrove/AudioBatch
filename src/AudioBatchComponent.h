@@ -19,6 +19,7 @@
 
 #include <map>
 #include <memory>
+#include <thread>
 #include <vector>
 
 class AudioInfoPanel;
@@ -201,6 +202,10 @@ private:
     /// preserving any custom gain already set for the file and keeping selection and preview in sync.
     void handleAnalysisResult(const AudioAnalysisRecord& record);
 
+    /// Adds pending rows for the files the run analyzes and shows the progress text.
+    /// Called once per run on the message thread, after the coordinator has scanned the input folders.
+    void handleAnalysisPlan(const AnalysisCoordinator::AnalysisPlan& plan);
+
     /// Stores freshly computed waveform data in the analysis cache,
     /// unless the current waveform was itself loaded from the cache.
     void handleThumbnailFullyLoaded();
@@ -300,7 +305,9 @@ private:
         const juce::StringArray& removedPaths,
         int fallbackRow
     );
-    /// Returns the starting directory for the folder chooser, favouring a Dropbox folder when one exists.
+
+    /// Returns the starting directory for the folder chooser,
+    /// favouring a Dropbox folder, then the system Music folder, then the home folder.
     static juce::File getDefaultBrowseDirectory();
 
     /// Re-analyzes all root folders that still exist,
@@ -370,6 +377,9 @@ private:
     void zoomLevelChanged(double zoomLevel);
 
     AnalysisCache analysisCache;
+    /// Removes cached rows of deleted files in the background after startup.
+    /// Declared after the cache, so it is stopped and joined before the cache is destroyed.
+    std::jthread cachePruneThread;
     AnalysisCoordinator analysisCoordinator;
     NormalizeCoordinator normalizeCoordinator;
     PluginProcessingCoordinator pluginCoordinator;
@@ -400,6 +410,8 @@ private:
     int analyzedFilesThisRun = 0;
     int completedResults = 0;
     int expectedResults = 0;
+    /// True when the current run replaces the results list, which picks the message shown when no files are found.
+    bool analysisReplacesResults = false;
     int normalizedResultsCompleted = 0;
     int normalizedResultsExpected = 0;
     int currentSortColumnId = AudioFileTableModel::columnOverallPeak;

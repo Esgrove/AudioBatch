@@ -33,7 +33,10 @@ namespace audiobatch::analysis
 constexpr float minimumDisplayDecibels = -100.0f;
 constexpr double kilobitsPerSecondDivisor = 1000.0;
 constexpr int defaultMp3BitsPerSample = 16;
-constexpr int analysisBlockSize = 8192;
+/// How often the short-term loudness is sampled while decoding, in hertz.
+/// EBU R128 updates short-term loudness at least ten times per second,
+/// so a slower rate can miss the loudest three second window.
+constexpr double shortTermUpdateRateHz = 10.0;
 /// Number of bits in a byte, used to turn a file size into a bit count for the average bitrate.
 constexpr double bitsPerByte = 8.0;
 /// Number of hertz in a kilohertz, used when displaying sample rates.
@@ -320,15 +323,13 @@ static std::weak_ordering firstDifference(const std::initializer_list<std::weak_
     return difference != orderings.end() ? *difference : std::weak_ordering::equivalent;
 }
 
-/// Orders two floating point values, treating values that are approximately equal as equivalent.
+/// Orders two floating point values exactly.
+/// An approximate comparison would not be transitive, which std::sort requires,
+/// and the other sort keys already break ties between equal values.
 template<typename Value>
-static std::weak_ordering compareApproximately(const Value lhs, const Value rhs)
+static std::weak_ordering compareValues(const Value lhs, const Value rhs)
 {
-    if (juce::approximatelyEqual(lhs, rhs)) {
-        return std::weak_ordering::equivalent;
-    }
-
-    return lhs < rhs ? std::weak_ordering::less : std::weak_ordering::greater;
+    return std::weak_order(lhs, rhs);
 }
 
 /// Orders two records ascending by the sort key, with the other columns breaking ties.
@@ -340,8 +341,8 @@ static std::weak_ordering compareBySortMode(
 {
     const std::weak_ordering byName = compareText(lhs.fileName, rhs.fileName) <=> 0;
     const std::weak_ordering byPath = compareText(lhs.fullPath, rhs.fullPath) <=> 0;
-    const auto byLoudness = compareApproximately(lhs.integratedLufs, rhs.integratedLufs);
-    const auto byPeak = compareApproximately(peakMagnitude(lhs.overallPeak), peakMagnitude(rhs.overallPeak));
+    const auto byLoudness = compareValues(lhs.integratedLufs, rhs.integratedLufs);
+    const auto byPeak = compareValues(peakMagnitude(lhs.overallPeak), peakMagnitude(rhs.overallPeak));
 
     switch (sortMode) {
         case AudioAnalysisSortMode::name:
@@ -400,7 +401,8 @@ juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
     std::set<juce::String> seenPaths;
 
     auto const addFile = [&](const juce::File& file) {
-        if (!isSupportedAudioFile(file)) {
+        // AppleDouble "._" files hold macOS metadata on non-Apple file systems and are never audio.
+        if (file.isHidden() || file.getFileName().startsWith("._") || !isSupportedAudioFile(file)) {
             return;
         }
 
@@ -412,7 +414,9 @@ juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
     for (const auto& inputPath : inputPaths) {
         if (inputPath.isDirectory()) {
             juce::Array<juce::File> discoveredFiles;
-            inputPath.findChildFiles(discoveredFiles, juce::File::findFiles, recursive, "*");
+            inputPath.findChildFiles(
+                discoveredFiles, juce::File::findFiles | juce::File::ignoreHiddenFiles, recursive, "*"
+            );
 
             for (const auto& file : discoveredFiles) {
                 addFile(file);
@@ -489,10 +493,12 @@ static void interleaveBlock(
 /// Read failures follow the shared DecodeFailureTracker rules.
 /// A tolerated failed block still holds the samples decoded before the error with the remainder zeroed.
 /// When decoding has to stop early, the measurement fails instead of reporting levels for part of the file.
+/// Cancellation is checked before each block and also fails the measurement.
 static DecodeMeasurements measureDecodedAudio(
     juce::AudioFormatReader& reader,
     ebur128_state* loudnessState,
-    const juce::String& fullPath
+    const juce::String& fullPath,
+    const AudioAnalysisService::CancellationCheck& isCancelled
 )
 {
     const auto channelCount = static_cast<int>(reader.numChannels);
@@ -501,6 +507,8 @@ static DecodeMeasurements measureDecodedAudio(
     measurements.minSamples.assign(static_cast<size_t>(channelCount), 0.0f);
     measurements.maxSamples.assign(static_cast<size_t>(channelCount), 0.0f);
 
+    // One block per short-term loudness update.
+    const auto analysisBlockSize = juce::jmax(1, juce::roundToInt(reader.sampleRate / shortTermUpdateRateHz));
     juce::AudioBuffer<float> readBuffer(channelCount, analysisBlockSize);
     std::vector interleaved(static_cast<size_t>(channelCount * analysisBlockSize), 0.0f);
     DecodeFailureTracker failureTracker(reader.lengthInSamples);
@@ -508,6 +516,11 @@ static DecodeMeasurements measureDecodedAudio(
 
     for (std::int64_t samplePosition = 0; samplePosition < reader.lengthInSamples; samplePosition += analysisBlockSize)
     {
+        if (isCancelled != nullptr && isCancelled()) {
+            measurements.errorMessage = "Analysis was cancelled";
+            return measurements;
+        }
+
         const auto framesThisBlock
             = static_cast<int>(juce::jmin<std::int64_t>(analysisBlockSize, reader.lengthInSamples - samplePosition));
 
@@ -550,7 +563,7 @@ static DecodeMeasurements measureDecodedAudio(
     return measurements;
 }
 
-AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
+AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file, const CancellationCheck& isCancelled)
 {
     auto record = AudioAnalysisRecord::fromFile(file);
 
@@ -578,7 +591,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         return failAnalysis(std::move(record), "Could not initialize loudness analyzer");
     }
 
-    const auto measurements = measureDecodedAudio(*reader, loudnessState.get(), record.fullPath);
+    const auto measurements = measureDecodedAudio(*reader, loudnessState.get(), record.fullPath, isCancelled);
 
     if (measurements.errorMessage.isNotEmpty()) {
         return failAnalysis(std::move(record), measurements.errorMessage);

@@ -13,8 +13,14 @@
 class AudioAnalysisService
 {
 public:
+    /// Returns true when the caller wants analysis to stop as soon as possible.
+    /// Polled between decoded blocks, so it must be thread-safe and cheap.
+    using CancellationCheck = std::function<bool()>;
+
     /// Analyzes a single supported audio file and returns the populated result record.
-    static AudioAnalysisRecord analyzeFile(const juce::File& file);
+    /// When isCancelled starts returning true, decoding stops and a failed record is returned,
+    /// which callers must not cache.
+    static AudioAnalysisRecord analyzeFile(const juce::File& file, const CancellationCheck& isCancelled = {});
 
     /// Expands the input paths into a de-duplicated list of supported files.
     static juce::Array<juce::File> collectInputFiles(const juce::Array<juce::File>& inputPaths, bool recursive);
