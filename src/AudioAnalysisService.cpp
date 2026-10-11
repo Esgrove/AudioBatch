@@ -7,6 +7,7 @@
 #include "AudioAnalysisService.h"
 
 #include "AudioFormatUtils.h"
+#include "BitDepthDetection.h"
 #include "DecodeFailureTracker.h"
 #include "FileUtils.h"
 #include "Log.h"
@@ -19,34 +20,22 @@ extern "C" {
 #include <initializer_list>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <compare>
 #include <cstdint>
 #include <memory>
 #include <ranges>
 #include <set>
-#include <span>
 #include <utility>
 #include <vector>
 
 /// Internal helpers for peak comparisons and stable record sorting.
 namespace audiobatch::analysis
 {
-constexpr float minimumDisplayDecibels = -100.0f;
-constexpr double kilobitsPerSecondDivisor = 1000.0;
-constexpr int defaultMp3BitsPerSample = 16;
 /// How often the short-term loudness is sampled while decoding, in hertz.
 /// EBU R128 updates short-term loudness at least ten times per second,
 /// so a slower rate can miss the loudest three second window.
 constexpr double shortTermUpdateRateHz = 10.0;
-/// Number of bits in a byte, used to turn a file size into a bit count for the average bitrate.
-constexpr double bitsPerByte = 8.0;
-/// Number of hertz in a kilohertz, used when displaying sample rates.
-constexpr int hertzPerKilohertz = 1000;
-/// Number of payload bits in each byte of an ID3v2 synchsafe integer.
-/// The most significant bit of every byte is always zero.
-constexpr std::uint32_t synchsafeBitsPerByte = 7U;
 
 /// Marks the record as failed with the given message and logs the error.
 /// Takes the record by value so callers can hand over a partially filled record with std::move.
@@ -74,155 +63,6 @@ struct EbuR128StateDeleter {
 
 using EbuR128StatePtr = std::unique_ptr<ebur128_state, EbuR128StateDeleter>;
 
-/// Returns true when the reader reports the decoder output bit depth instead of the source bit depth.
-/// JUCE's MP3 reader is the known case, since decoding hides the original encoding depth.
-static bool reportsDecodedBitDepth(const juce::AudioFormatReader& reader, const juce::File& file)
-{
-    if (utils::isMp3File(file)) {
-        return true;
-    }
-
-    return reader.getFormatName().containsIgnoreCase("mp3");
-}
-
-/// Reads exactly the requested number of bytes from the stream.
-/// Returns false on a short read, so callers can treat truncated data as missing.
-static bool readExactly(juce::InputStream& input, void* destination, const int bytesToRead)
-{
-    return bytesToRead >= 0 && input.read(destination, bytesToRead) == bytesToRead;
-}
-
-/// Decodes a 28-bit synchsafe integer, the encoding ID3v2 uses for tag and frame sizes.
-static std::uint32_t readSynchsafeUint32(const std::span<const std::uint8_t, 4> bytes)
-{
-    return static_cast<std::uint32_t>(bytes[0]) << (synchsafeBitsPerByte * 3U)
-        | static_cast<std::uint32_t>(bytes[1]) << (synchsafeBitsPerByte * 2U)
-        | static_cast<std::uint32_t>(bytes[2]) << synchsafeBitsPerByte | static_cast<std::uint32_t>(bytes[3]);
-}
-
-/// Flattens raw ID3 tag bytes into a lowercase text blob suitable for substring searches.
-/// Alphanumeric characters and a few common separators are kept,
-/// and every other run of bytes collapses into a single space.
-static juce::String buildSearchableMetadataText(const juce::MemoryBlock& metadata)
-{
-    juce::String text;
-    const std::span bytes(static_cast<const std::uint8_t*>(metadata.getData()), metadata.getSize());
-    bool previousWasSeparator = true;
-
-    for (const auto byte : bytes) {
-        if ((byte >= '0' && byte <= '9') || (byte >= 'A' && byte <= 'Z') || (byte >= 'a' && byte <= 'z')) {
-            text += juce::String::charToString(byte);
-            previousWasSeparator = false;
-            continue;
-        }
-
-        if (byte == '-' || byte == '_' || byte == '/' || byte == '.') {
-            text += juce::String::charToString(byte);
-            previousWasSeparator = false;
-            continue;
-        }
-
-        if (!previousWasSeparator) {
-            text += ' ';
-            previousWasSeparator = true;
-        }
-    }
-
-    return text.toLowerCase();
-}
-
-/// Searches flattened metadata text for a plausible source bit depth mention.
-/// Returns the matched depth, or 0 when no known pattern is present.
-static int findBitDepthInText(const juce::String& text)
-{
-    constexpr std::array candidateBitDepths {8, 12, 16, 20, 24, 32};
-
-    for (const auto candidate : candidateBitDepths) {
-        if (const auto value = juce::String(candidate); text.contains(utils::format("{}-bit", value))
-            || text.contains(utils::format("{} bit", value)) || text.contains(utils::format("{} bits", value)))
-        {
-            return candidate;
-        }
-    }
-
-    for (const auto candidate : candidateBitDepths) {
-        if (const auto value = juce::String(candidate); text.contains(utils::format("bit depth {}", value))
-            || text.contains(utils::format("bitdepth {}", value))
-            || text.contains(utils::format("bits per sample {}", value))
-            || text.contains(utils::format("source bit depth {}", value))
-            || text.contains(utils::format("source bits per sample {}", value)))
-        {
-            return candidate;
-        }
-    }
-
-    return 0;
-}
-
-/// Scans the ID3v2 tag of an MP3 file for a mention of the original source bit depth.
-/// Returns 0 when the file has no tag, the tag is malformed, or no bit depth is mentioned.
-static int extractTaggedMp3BitDepth(const juce::File& file)
-{
-    const auto input = file.createInputStream();
-
-    if (input == nullptr) {
-        return 0;
-    }
-
-    constexpr juce::int64 id3HeaderSize = 10;
-    std::array<std::uint8_t, id3HeaderSize> header {};
-
-    if (!readExactly(*input, header.data(), static_cast<int>(header.size()))) {
-        return 0;
-    }
-
-    if (header[0] != 'I' || header[1] != 'D' || header[2] != '3') {
-        return 0;
-    }
-
-    constexpr std::size_t sizeFieldOffset = 6;
-    constexpr std::size_t sizeFieldLength = 4;
-    const auto sizeField = std::span(header).subspan<sizeFieldOffset, sizeFieldLength>();
-    if (std::ranges::any_of(sizeField, [](const std::uint8_t byte) { return (byte & 0x80U) != 0U; })) {
-        return 0;
-    }
-
-    const auto payloadSize = readSynchsafeUint32(std::span(header).subspan<sizeFieldOffset, sizeFieldLength>());
-    const auto hasFooter = (header[5] & 0x10U) != 0;
-    const auto totalSize
-        = id3HeaderSize + static_cast<juce::int64>(payloadSize) + (hasFooter ? id3HeaderSize : juce::int64 {0});
-
-    if (totalSize <= id3HeaderSize || totalSize > file.getSize()) {
-        return 0;
-    }
-
-    juce::MemoryBlock metadata;
-    metadata.setSize(static_cast<size_t>(totalSize), false);
-    input->setPosition(0);
-
-    if (!readExactly(*input, metadata.getData(), static_cast<int>(totalSize))) {
-        return 0;
-    }
-
-    return findBitDepthInText(buildSearchableMetadataText(metadata));
-}
-
-/// Determines the best available source bit depth for the analyzed file.
-/// MP3 files fall back to a tagged value or the default of 16,
-/// because the decoder does not expose the original encoding depth.
-static int resolveSourceBitsPerSample(const juce::AudioFormatReader& reader, const juce::File& file)
-{
-    if (reportsDecodedBitDepth(reader, file)) {
-        if (const auto taggedBitDepth = extractTaggedMp3BitDepth(file); taggedBitDepth > 0) {
-            return taggedBitDepth;
-        }
-
-        return defaultMp3BitsPerSample;
-    }
-
-    return static_cast<int>(reader.bitsPerSample);
-}
-
 /// Picks the sample extreme with the larger magnitude, preserving its sign.
 static float signedPeakFromExtrema(const float minimum, const float maximum)
 {
@@ -249,28 +89,6 @@ static double normalizeLoudness(const double loudness)
     }
 
     return loudness;
-}
-
-/// Converts a linear amplitude into a decibel string with the given unit suffix.
-/// Silence renders as "-INF" so it never shows a misleading finite value.
-static juce::String formatAmplitudeDisplay(const double amplitude, const juce::String& unitSuffix)
-{
-    if (amplitude <= 0.0) {
-        return utils::format("-INF{}", unitSuffix);
-    }
-
-    const auto decibels = juce::Decibels::gainToDecibels(static_cast<float>(amplitude), minimumDisplayDecibels);
-    return utils::format("{:.2f}{}", decibels, unitSuffix);
-}
-
-/// Formats a LUFS loudness value with the given unit suffix, rendering the sentinel value as "-INF".
-static juce::String formatLoudnessValue(const double loudness, const juce::String& unitSuffix)
-{
-    if (loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
-        return utils::format("-INF{}", unitSuffix);
-    }
-
-    return utils::format("{:.2f}{}", loudness, unitSuffix);
 }
 
 /// Creates an ebur128 state configured for integrated, short-term, and true peak measurement.
@@ -616,111 +434,6 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file, co
     record.status = AudioAnalysisStatus::analyzed;
     record.fromCache = false;
     return record;
-}
-
-juce::String AudioAnalysisService::formatPeakDisplay(const float peak)
-{
-    return formatAmplitudeDisplay(utils::peakMagnitude(static_cast<double>(peak)), " dBFS");
-}
-
-juce::String AudioAnalysisService::formatTruePeakDisplay(const double truePeak)
-{
-    return formatAmplitudeDisplay(utils::peakMagnitude(truePeak), " dBTP");
-}
-
-juce::String AudioAnalysisService::formatLoudnessDisplay(const double loudness)
-{
-    return formatLoudnessValue(loudness, " LUFS");
-}
-
-juce::String AudioAnalysisService::formatPeakCompact(const double peak)
-{
-    return formatAmplitudeDisplay(utils::peakMagnitude(peak), {});
-}
-
-juce::String AudioAnalysisService::formatTruePeakCompact(const double truePeak)
-{
-    return formatAmplitudeDisplay(utils::peakMagnitude(truePeak), {});
-}
-
-juce::String AudioAnalysisService::formatLoudnessCompact(const double loudness)
-{
-    return formatLoudnessValue(loudness, {});
-}
-
-double AudioAnalysisService::getAverageBitrateKbps(const AudioAnalysisRecord& record)
-{
-    if (record.durationSeconds <= 0.0 || record.fileSize <= 0) {
-        return 0.0;
-    }
-
-    return static_cast<double>(record.fileSize) * bitsPerByte / record.durationSeconds / kilobitsPerSecondDivisor;
-}
-
-juce::String AudioAnalysisService::formatBitsPerSampleDisplay(const AudioAnalysisRecord& record)
-{
-    if (record.bitsPerSample <= 0) {
-        return utils::isMp3File(record.file) ? "Unknown" : "-";
-    }
-
-    return juce::String(record.bitsPerSample);
-}
-
-juce::String AudioAnalysisService::formatBitrateDisplay(const AudioAnalysisRecord& record)
-{
-    const auto bitrateKbps = getAverageBitrateKbps(record);
-
-    if (bitrateKbps <= 0.0) {
-        return "-";
-    }
-
-    return utils::format("{} kbps", juce::roundToInt(bitrateKbps));
-}
-
-juce::String AudioAnalysisService::formatSampleRateDisplay(const AudioAnalysisRecord& record)
-{
-    if (record.sampleRate <= 0) {
-        return "-";
-    }
-
-    if (record.sampleRate % hertzPerKilohertz == 0) {
-        return utils::format("{} kHz", record.sampleRate / hertzPerKilohertz);
-    }
-
-    return utils::format("{:.1f} kHz", static_cast<double>(record.sampleRate) / hertzPerKilohertz);
-}
-
-juce::String AudioAnalysisService::formatTypeLabel(const AudioAnalysisRecord& record)
-{
-    if (const auto extension = utils::fileExtension(record.file); extension.isNotEmpty()) {
-        return extension.toUpperCase();
-    }
-
-    // JUCE format names end with " file", such as "WAV file", which the label leaves out.
-    const juce::String formatNameFileSuffix {" file"};
-    auto formatName = record.formatName.trim();
-
-    if (formatName.endsWithIgnoreCase(formatNameFileSuffix)) {
-        formatName = formatName.dropLastCharacters(formatNameFileSuffix.length()).trimEnd();
-    }
-
-    return formatName.isNotEmpty() ? formatName : juce::String("Unknown");
-}
-
-juce::String AudioAnalysisService::formatStatus(const AudioAnalysisRecord& record)
-{
-    switch (record.status) {
-        case AudioAnalysisStatus::cached:
-            return "Cached";
-        case AudioAnalysisStatus::analyzed:
-            return "Analyzed";
-        case AudioAnalysisStatus::failed:
-            return "Failed";
-        case AudioAnalysisStatus::pending:
-            return "Pending";
-    }
-
-    std::unreachable();
 }
 
 void AudioAnalysisService::sortRecords(
