@@ -25,6 +25,7 @@ enum MenuItemId {
     editChainMenuItemId,
     clearChainMenuItemId,
     scanPluginsMenuItemId,
+    addFolderMenuItemId,
 };
 }  // namespace audiobatch::app
 
@@ -150,6 +151,7 @@ private:
                 break;
             case 1:
                 menu.addItem(chooseFolderMenuItemId, "Choose Folder...");
+                menu.addItem(addFolderMenuItemId, "Add Folder...");
                 menu.addItem(rescanMenuItemId, "Rescan");
                 menu.addSeparator();
                 menu.addItem(reanalyzeSelectedMenuItemId, "Re-analyze Selected");
@@ -176,6 +178,7 @@ private:
         switch (topLevelMenuIndex) {
             case 0:
                 menu.addItem(chooseFolderMenuItemId, "Choose Folder...");
+                menu.addItem(addFolderMenuItemId, "Add Folder...");
                 menu.addItem(rescanMenuItemId, "Rescan");
                 menu.addSeparator();
                 menu.addItem(reanalyzeSelectedMenuItemId, "Re-analyze Selected");
@@ -215,6 +218,9 @@ private:
         switch (menuItemID) {
             case chooseFolderMenuItemId:
                 getAudioBatch().chooseRootFolder();
+                break;
+            case addFolderMenuItemId:
+                getAudioBatch().addRootFolder();
                 break;
             case rescanMenuItemId:
                 getAudioBatch().rescanCurrentRoot();

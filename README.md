@@ -82,7 +82,15 @@ This produces two binaries:
 
 ## GUI
 
-The GUI analyzes the selected root folder automatically in the background and stores results in a sortable table.
+The GUI analyzes the selected root folders automatically in the background and stores results in a sortable table.
+
+- `File > Choose Folder...` replaces the current root folders with the chosen folder.
+- `File > Add Folder...` appends another root folder and analyzes it without clearing the current results.
+  A folder that is already inside a root is skipped,
+  and existing roots inside a newly added parent folder are merged into it.
+- Dropping folders onto the window replaces the root folders.
+  Hold `Shift` while dropping to append them instead.
+- `Rescan` and `F5` re-analyze every root folder.
 
 The results list supports per-file actions from the context menu, including:
 
@@ -99,7 +107,7 @@ Keyboard shortcuts in the results list:
 - `Delete` or `Backspace` removes the selected rows from the list.
 - `Ctrl-Backspace` moves the selected files to the system trash.
 - `Cmd-R` or `Ctrl-R` re-analyzes the selected files.
-- `F5` refreshes the analysis for the current root folder.
+- `F5` refreshes the analysis for all root folders.
 - `Space` starts or stops the background analysis.
 
 Normalization works for every readable input format,
@@ -232,5 +240,4 @@ The cache is invalidated when any of these change:
 
 - User config file.
 - Out-of-process plugin scanning so a crashing plugin cannot take down the app.
-- "Add folder" menu option to append more roots to the current list.
 - Optional report export, for example CSV or JSON.

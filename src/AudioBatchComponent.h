@@ -39,10 +39,14 @@ public:
     /// Stops background work and releases audio and dialog resources.
     ~AudioBatchComponent() override;
 
-    /// Opens the root-folder chooser used for analysis.
+    /// Opens the folder chooser and replaces the current root folders with the chosen folder.
     void chooseRootFolder();
 
-    /// Re-runs analysis for the current root folder.
+    /// Opens the folder chooser and appends the chosen folder to the current root folders,
+    /// analyzing its files without clearing the results that are already in the table.
+    void addRootFolder();
+
+    /// Re-runs analysis for all current root folders.
     void rescanCurrentRoot();
 
     /// Removes every analyzed file from the table without touching the files on disk.
@@ -69,7 +73,8 @@ public:
         return pluginChain.get();
     }
 
-    /// Starts analysis for dropped files, or switches the root folder when only a directory was dropped.
+    /// Starts analysis for dropped files, or switches the root folders when only directories were dropped.
+    /// Holding Shift while dropping directories appends them to the current root folders instead.
     void filesDropped(const juce::StringArray& files, int x, int y) override;
 
     /// Accepts any external drag that contains at least one file.
@@ -85,9 +90,27 @@ private:
     /// Stops playback and releases the preview file, transport source, and waveform so the file can be replaced.
     void clearCurrentAudioPreview();
 
-    /// Routes dropped paths to a root-folder scan when only a directory was dropped,
+    /// Routes dropped paths to a root folder scan when only directories were dropped,
     /// otherwise analyzes the dropped files individually.
+    /// Dropped directories replace the root folders, or are appended to them when Shift is held.
     void handleDroppedPaths(const juce::StringArray& paths);
+
+    /// Opens the asynchronous folder chooser.
+    /// The chosen folder either replaces the root folders or is appended to them.
+    void launchFolderChooser(bool appendToRoots);
+
+    /// Replaces the root folders and re-analyzes them, clearing the current results.
+    void setRoots(const juce::Array<juce::File>& folders);
+
+    /// Appends folders to the root folders and analyzes them without clearing the current results.
+    /// Folders that already are a root or sit inside one are skipped,
+    /// and existing roots inside a newly added folder are absorbed into it.
+    void addRoots(const juce::Array<juce::File>& folders);
+
+    /// Shows the root folders in the top bar label:
+    /// the full path for a single root, or the first path and the number of others for several,
+    /// with every root listed in the tooltip.
+    void updateCurrentRootLabel();
 
     /// Handles the application shortcuts for trash, remove, reveal, play/stop, and rescan.
     bool keyPressed(const juce::KeyPress& key) override;
@@ -231,8 +254,8 @@ private:
     /// Returns the starting directory for the folder chooser, favouring a Dropbox folder when one exists.
     static juce::File getDefaultBrowseDirectory();
 
-    /// Re-analyzes the current root folder,
-    /// or the files already in the table when no root directory has been set.
+    /// Re-analyzes all root folders that still exist,
+    /// or the files already in the table when no root folder has been set.
     void refreshAnalysis(bool forceRefresh);
 
     /// Re-selects rows by file path after the table order or contents have changed.
@@ -331,7 +354,7 @@ private:
     juce::AudioSourcePlayer audioSourcePlayer;
     juce::AudioTransportSource transportSource;
     juce::File currentAudioFile;
-    juce::File currentRoot;
+    juce::Array<juce::File> currentRoots;
     juce::TableListBox resultsTable;
     juce::TimeSliceThread thread {"audio file preview"};
     juce::URL currentAudioUrl;
