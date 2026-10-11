@@ -114,7 +114,7 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
     usage += juce::newLine;
     usage += "  -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format";
     usage += juce::newLine;
-    usage += "      --rescan            Scan for new or changed plugins before listing them";
+    usage += "  -R, --rescan            Scan for new or changed plugins before listing them";
     usage += juce::newLine;
     return usage;
 }
@@ -127,7 +127,7 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
     options.refresh = arguments.removeOptionIfFound("--refresh|-f");
     options.normalize = arguments.removeOptionIfFound("--normalize|-n");
     options.listPlugins = arguments.removeOptionIfFound("--list-plugins|-l");
-    options.rescanPlugins = arguments.removeOptionIfFound("--rescan");
+    options.rescanPlugins = arguments.removeOptionIfFound("--rescan|-R");
 
     if (const auto workerCountValue = arguments.removeValueForOption("--jobs|-j"); workerCountValue.isNotEmpty()) {
         options.workerCount = workerCountValue.getIntValue();

@@ -193,19 +193,23 @@ FLAC Vorbis comments and pictures are translated to the equivalent ID3v2.4 frame
 
 The console executable supports both short and long option forms.
 
-```text
-audiobatch [options] <paths...>
+Output of `audiobatch --help`:
 
-  -h, --help
-  -V, --version
-  -r, --recurse
-  -f, --refresh
-  -n, --normalize
-  -j, --jobs <count>
-  -s, --sort <peak|name|path>
-  -l, --list-plugins
-  -g, --group-by <name|manufacturer|type|format>
-      --rescan
+```text
+audiobatch <version> <date> <commit>
+Usage: audiobatch [options] <paths...>
+
+Options:
+  -h, --help              Print usage and exit
+  -V, --version           Print version and exit
+  -r, --recurse           Recurse into directories
+  -f, --refresh           Ignore cached analysis and re-analyze files
+  -n, --normalize         Normalize analyzed files, then report the re-analyzed output peaks
+  -j, --jobs <count>      Override worker count
+  -s, --sort <mode>       Sort by peak, lufs, name, or path
+  -l, --list-plugins      List the available audio plugins and exit
+  -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format
+  -R, --rescan            Scan for new or changed plugins before listing them
 ```
 
 `--help` and `--version` only print to the console.
@@ -221,7 +225,7 @@ CLAP plugins are not listed, because JUCE cannot host them.
 - `--group-by name` (default) prints one alphabetical table.
 - `--group-by manufacturer`, `type`, or `format` prints one section per group.
   The type is the processing type reported by the plugin, such as Dynamics, EQ, Reverb, or Instrument.
-- `--rescan` first scans the plugin folders for new or changed plugins
+- `-R` / `--rescan` first scans the plugin folders for new or changed plugins
   and removes plugins that no longer exist.
   It uses the same folders as the last scan in the GUI plugin manager, or the default plugin folders.
   Each plugin is loaded in a separate worker process,
@@ -234,7 +238,7 @@ CLAP plugins are not listed, because JUCE cannot host them.
 ```shell
 audiobatch --list-plugins
 audiobatch -l -g manufacturer
-audiobatch -l --group-by type --rescan
+audiobatch -l -R --group-by type
 ```
 
 Example output:
