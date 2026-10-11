@@ -188,10 +188,12 @@ and write the processed audio to disk.
   The latency each plugin reports, for example from lookahead or linear phase processing,
   is summed over the chain and removed from the start of the output,
   so the processed audio stays aligned with the original and its end is not cut off.
-- Processed output is always written as `<name>.aiff` next to the input file.
+- Processed output is always written as `<name>.aif` next to the input file,
+  with the same overwrite and collision rules as normalization.
   If the input has a different extension, the original is moved to the system trash once the new file has been written.
 - Source metadata is copied onto the processed AIFF through TagLib,
   so tags and embedded artwork survive the processing step.
+  If the metadata cannot be written, the file fails and the original is kept.
 - Optional pre-plugin normalization scales each file by `1 / overall peak` before sending it through the chain,
   which keeps the input level consistent across the batch.
   A per-file custom input gain can also be set from the results list.
@@ -203,6 +205,17 @@ Normalization always writes an AIFF file next to the source.
   and the original file is moved to the system trash once the write succeeds.
 - Any other readable format, including MP3, FLAC, WAV, and Ogg,
   is converted to `<name>.aif` and the original is moved to the system trash.
+- The output keeps the source sample rate.
+
+Existing files are never overwritten by default:
+
+- If `<name>.aif` already exists and is not the source itself, the file fails with an error in the status column.
+  Enable `Force overwrite` in the GUI, or pass `--force` to the CLI, to replace it.
+  The replaced file is moved to the system trash.
+- If several selected files would write the same `<name>.aif`, for example `song.mp3` and `song.flac`,
+  only one of them is processed and the others fail.
+  A source that is already `<name>.aif` always wins.
+- Cancelling a run stops before any file on disk is changed.
 
 Metadata is read from the source through TagLib and written back to the AIFF output as ID3v2.4.
 This includes standard text tags, custom tags such as ID3v2 `TXXX` frames and Vorbis comment keys,
@@ -225,15 +238,22 @@ Options:
   -r, --recurse           Recurse into directories
   -f, --refresh           Ignore cached analysis and re-analyze files
   -n, --normalize         Normalize analyzed files, then report the re-analyzed output peaks
+  -F, --force             Let --normalize replace an existing output file
   -j, --jobs <count>      Override worker count
   -s, --sort <mode>       Sort by peak, lufs, name, or path
   -l, --list-plugins      List the available audio plugins and exit
   -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format
   -R, --rescan            Scan for new or changed plugins before listing them
+
+Short options cannot be combined, so pass -r -f instead of -rf.
 ```
 
 `--help` and `--version` only print to the console.
 They do not start logging or write to the log file.
+
+Short options must be passed separately.
+A combined argument such as `-rf` is rejected,
+and `--list-plugins` cannot be combined with the analysis options.
 
 Options that take a value accept both `--jobs 4` and `--jobs=4`.
 `--sort lufs` can also be written as `--sort loudness`.

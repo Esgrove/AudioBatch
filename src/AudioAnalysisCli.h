@@ -15,6 +15,8 @@ struct AudioAnalysisCliOptions {
     bool recursive = false;
     bool refresh = false;
     bool normalize = false;
+    /// Replace an existing normalized output file that is not the source itself.
+    bool force = false;
     bool listPlugins = false;
     bool rescanPlugins = false;
     PluginListGrouping pluginGrouping = PluginListGrouping::name;

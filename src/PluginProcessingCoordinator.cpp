@@ -9,6 +9,7 @@
 
 #include "PluginProcessingCoordinator.h"
 
+#include "AudioNormalizationService.h"
 #include "utils.h"
 
 #include <algorithm>
@@ -274,7 +275,25 @@ int PluginProcessingCoordinator::start(
         return 0;
     }
 
+    const auto conflicts = AudioNormalizationService::findBatchOutputConflicts(queuedRecords);
+
     for (const auto& record : queuedRecords) {
+        if (conflicts.contains(record.file.getFullPathName())) {
+            threadPool.addJob([this, record, runId, totalFiles] {
+                publishResult(
+                    PluginProcessingResult::failure(
+                        record.file, AudioNormalizationService::batchOutputConflictMessage(record.file)
+                    ),
+                    runId
+                );
+
+                if (pendingJobs.fetch_sub(1) == 1) {
+                    publishCompletion(totalFiles, runId);
+                }
+            });
+            continue;
+        }
+
         threadPool.addJob([this, record, options, runId, totalFiles] {
             runFileJob(record, options, runId, totalFiles);
         });

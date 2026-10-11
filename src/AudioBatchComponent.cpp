@@ -696,6 +696,12 @@ void AudioBatchComponent::configureProcessingControls()
     );
     addAndMakeVisible(normalizeBeforePluginToggle);
 
+    forceOverwriteToggle.setTooltip(
+        "When enabled, normalizing or processing replaces an existing output file with the same name. "
+        "The replaced file is moved to the system trash."
+    );
+    addAndMakeVisible(forceOverwriteToggle);
+
     processButton.setTooltip("Process selected files through the plugin chain.");
     updateProcessButtonState();
     processButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
@@ -792,6 +798,7 @@ AudioBatchComponent::AudioBatchComponent() :
             handleFileContextMenuRequested(row, columnId, event);
         },
         [this](const AudioAnalysisRecord& record) { return getActiveStatusLabel(record); },
+        [this](const AudioAnalysisRecord& record) { return getOperationError(record); },
         [] { return getActivityPhase(); }
     ),
     audioSetupComponent(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
@@ -936,8 +943,11 @@ void AudioBatchComponent::resized()
 
     control.removeFromBottom(8);
 
-    // Normalize toggle gets its own row above the buttons.
-    normalizeBeforePluginToggle.setBounds(control.removeFromBottom(layout::normalizeToggleHeight));
+    // The normalize and force overwrite toggles share a row above the buttons.
+    auto toggleRow = control.removeFromBottom(layout::normalizeToggleHeight);
+    normalizeBeforePluginToggle.setBounds(toggleRow.removeFromLeft((toggleRow.getWidth() - buttonGap) / 2));
+    toggleRow.removeFromLeft(buttonGap);
+    forceOverwriteToggle.setBounds(toggleRow);
 
     control.removeFromBottom(layout::sectionSpacing);
 
@@ -1687,6 +1697,7 @@ void AudioBatchComponent::markFilesProcessing(const juce::Array<juce::File>& fil
 {
     for (const auto& file : files) {
         activeFileStatusLabels[file.getFullPathName()] = activityLabel;
+        operationErrors.erase(file.getFullPathName());
     }
 
     syncActivityTimer();
@@ -1925,6 +1936,8 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
         }
     } else {
         normalizationFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
+        operationErrors[result.fullPath] = result.errorMessage;
+        resultsTable.repaint();
     }
 
     updateStatusLabel();
@@ -2075,7 +2088,9 @@ void AudioBatchComponent::normalizeSelectedRecords()
     normalizationFailures.clear();
     normalizedResultsCompleted = 0;
     normalizeInProgress = true;
-    normalizedResultsExpected = normalizeCoordinator.start(recordsToNormalize);
+    AudioNormalizationOptions normalizationOptions;
+    normalizationOptions.overwriteExisting = forceOverwriteToggle.getToggleState();
+    normalizedResultsExpected = normalizeCoordinator.start(recordsToNormalize, normalizationOptions);
 
     if (normalizedResultsExpected <= 0) {
         normalizeInProgress = false;
@@ -2208,6 +2223,15 @@ void AudioBatchComponent::startAnalysis(
 juce::String AudioBatchComponent::getActiveStatusLabel(const AudioAnalysisRecord& record) const
 {
     if (const auto iterator = activeFileStatusLabels.find(record.fullPath); iterator != activeFileStatusLabels.end()) {
+        return iterator->second;
+    }
+
+    return {};
+}
+
+juce::String AudioBatchComponent::getOperationError(const AudioAnalysisRecord& record) const
+{
+    if (const auto iterator = operationErrors.find(record.fullPath); iterator != operationErrors.end()) {
         return iterator->second;
     }
 
@@ -2771,6 +2795,7 @@ void AudioBatchComponent::processSelectedRecords()
         options.plugins.push_back(enabledPlugin.descriptorRef);
     }
     options.normalizeBeforePlugin = normalizeBeforePluginToggle.getToggleState();
+    options.overwriteExisting = forceOverwriteToggle.getToggleState();
 
     // Pre-instantiate one chain of plugin instances per worker on the message thread.
     const auto workerCount
@@ -2861,6 +2886,8 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
         }
     } else {
         processingFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
+        operationErrors[result.originalFullPath] = result.errorMessage;
+        resultsTable.repaint();
         utils::logError("Plugin processing failed for {}: {}", result.originalFullPath.quoted(), result.errorMessage);
     }
 

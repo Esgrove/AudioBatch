@@ -10,6 +10,10 @@
 #include "utils.h"
 #include "version.h"
 
+#include <algorithm>
+#include <iterator>
+#include <vector>
+
 /// CLI-only formatting helpers used when printing analysis results.
 namespace audiobatch::cli
 {
@@ -115,58 +119,95 @@ static std::optional<juce::String> removeOptionWithValue(juce::ArgumentList& arg
     return std::nullopt;
 }
 
+/// Returns an error message for the first argument that combines several short options, such as "-rf",
+/// or an empty string when there is none.
+/// juce::ArgumentList matches a short option by searching for its letter anywhere in the argument,
+/// and removes the whole argument on the first match, so "-rf" would silently set only one of the flags.
+static juce::String findCombinedShortOptionError(const juce::ArgumentList& arguments)
+{
+    for (const auto& argument : arguments.arguments) {
+        if (argument.isShortOption() && argument.text.length() > 2) {
+            return utils::format(
+                "Combined short options are not supported: {}. Pass each option separately.", argument.text
+            );
+        }
+    }
+
+    return {};
+}
+
+/// Parses a sort mode name, accepting "loudness" as an alias for "lufs".
+/// Returns an empty optional for an unknown name.
+static std::optional<AudioAnalysisSortMode> parseSortMode(const juce::String& value)
+{
+    const auto normalizedSort = value.trim().toLowerCase();
+
+    if (normalizedSort == "peak") {
+        return AudioAnalysisSortMode::peak;
+    }
+
+    if (normalizedSort == "loudness" || normalizedSort == "lufs") {
+        return AudioAnalysisSortMode::loudness;
+    }
+
+    if (normalizedSort == "name") {
+        return AudioAnalysisSortMode::name;
+    }
+
+    if (normalizedSort == "path") {
+        return AudioAnalysisSortMode::path;
+    }
+
+    return std::nullopt;
+}
 }  // namespace audiobatch::cli
 
 using namespace audiobatch::cli;
 
 juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
 {
-    juce::String usage;
-    usage += executableName;
-    usage += " ";
-    usage += juce::String(version::VERSION_INFO);
-    usage += juce::newLine;
-    usage += "Usage: ";
-    usage += executableName;
-    usage += " [options] <paths...>";
-    usage += juce::newLine;
-    usage += juce::newLine;
-    usage += "Options:";
-    usage += juce::newLine;
-    usage += "  -h, --help              Print usage and exit";
-    usage += juce::newLine;
-    usage += "  -V, --version           Print version and exit";
-    usage += juce::newLine;
-    usage += "  -r, --recurse           Recurse into directories";
-    usage += juce::newLine;
-    usage += "  -f, --refresh           Ignore cached analysis and re-analyze files";
-    usage += juce::newLine;
-    usage += "  -n, --normalize         Normalize analyzed files, then report the re-analyzed output peaks";
-    usage += juce::newLine;
-    usage += "  -j, --jobs <count>      Override worker count";
-    usage += juce::newLine;
-    usage += "  -s, --sort <mode>       Sort by peak, lufs, name, or path";
-    usage += juce::newLine;
-    usage += "  -l, --list-plugins      List the available audio plugins and exit";
-    usage += juce::newLine;
-    usage += "  -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format";
-    usage += juce::newLine;
-    usage += "  -R, --rescan            Scan for new or changed plugins before listing them";
-    usage += juce::newLine;
-    return usage;
+    // Lines are joined with juce::newLine outside the format strings,
+    // so the text uses the platform line ending when printed.
+    const juce::StringArray lines {
+        utils::format("{} {}", executableName, version::VERSION_INFO),
+        utils::format("Usage: {} [options] <paths...>", executableName),
+        "",
+        "Options:",
+        "  -h, --help              Print usage and exit",
+        "  -V, --version           Print version and exit",
+        "  -r, --recurse           Recurse into directories",
+        "  -f, --refresh           Ignore cached analysis and re-analyze files",
+        "  -n, --normalize         Normalize analyzed files, then report the re-analyzed output peaks",
+        "  -F, --force             Let --normalize replace an existing output file",
+        "  -j, --jobs <count>      Override worker count",
+        "  -s, --sort <mode>       Sort by peak, lufs, name, or path",
+        "  -l, --list-plugins      List the available audio plugins and exit",
+        "  -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format",
+        "  -R, --rescan            Scan for new or changed plugins before listing them",
+        "",
+        "Short options cannot be combined, so pass -r -f instead of -rf.",
+    };
+
+    return lines.joinIntoString(juce::newLine) + juce::newLine;
 }
 
 std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentList arguments, juce::String& errorMessage)
 {
     AudioAnalysisCliOptions options;
 
+    if (errorMessage = findCombinedShortOptionError(arguments); errorMessage.isNotEmpty()) {
+        return std::nullopt;
+    }
+
     options.recursive = arguments.removeOptionIfFound("--recurse|-r");
     options.refresh = arguments.removeOptionIfFound("--refresh|-f");
     options.normalize = arguments.removeOptionIfFound("--normalize|-n");
+    options.force = arguments.removeOptionIfFound("--force|-F");
     options.listPlugins = arguments.removeOptionIfFound("--list-plugins|-l");
     options.rescanPlugins = arguments.removeOptionIfFound("--rescan|-R");
 
-    if (const auto workerCountValue = removeOptionWithValue(arguments, "--jobs|-j"); workerCountValue.has_value()) {
+    const auto workerCountValue = removeOptionWithValue(arguments, "--jobs|-j");
+    if (workerCountValue.has_value()) {
         options.workerCount = workerCountValue->getIntValue();
 
         if (options.workerCount <= 0) {
@@ -175,21 +216,16 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
         }
     }
 
-    if (const auto sortValue = removeOptionWithValue(arguments, "--sort|-s"); sortValue.has_value()) {
-        const auto normalizedSort = sortValue->trim().toLowerCase();
+    const auto sortValue = removeOptionWithValue(arguments, "--sort|-s");
+    if (sortValue.has_value()) {
+        const auto sortMode = parseSortMode(*sortValue);
 
-        if (normalizedSort == "peak") {
-            options.sortMode = AudioAnalysisSortMode::peak;
-        } else if (normalizedSort == "loudness" || normalizedSort == "lufs") {
-            options.sortMode = AudioAnalysisSortMode::loudness;
-        } else if (normalizedSort == "name") {
-            options.sortMode = AudioAnalysisSortMode::name;
-        } else if (normalizedSort == "path") {
-            options.sortMode = AudioAnalysisSortMode::path;
-        } else {
+        if (!sortMode.has_value()) {
             errorMessage = "Sort mode must be one of: peak, lufs, name, path";
             return std::nullopt;
         }
+
+        options.sortMode = *sortMode;
     }
 
     const auto groupingValue = removeOptionWithValue(arguments, "--group-by|-g");
@@ -220,6 +256,19 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
 
     if (options.listPlugins && !options.inputPaths.isEmpty()) {
         errorMessage = "--list-plugins does not take input paths";
+        return std::nullopt;
+    }
+
+    const bool hasAnalysisOption = options.recursive || options.refresh || options.normalize || options.force
+        || workerCountValue.has_value() || sortValue.has_value();
+
+    if (options.listPlugins && hasAnalysisOption) {
+        errorMessage = "--list-plugins cannot be combined with analysis options";
+        return std::nullopt;
+    }
+
+    if (options.force && !options.normalize) {
+        errorMessage = "--force can only be used with --normalize";
         return std::nullopt;
     }
 
@@ -263,8 +312,15 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     int failureCount = 0;
     std::vector<AudioAnalysisRecord> normalizedResults;
 
+    juce::StringArray normalizationConflicts;
+
     if (options.normalize) {
         normalizedResults.reserve(results.size());
+        std::vector<AudioAnalysisRecord> normalizableResults;
+        std::ranges::copy_if(results, std::back_inserter(normalizableResults), [](const auto& record) {
+            return !record.hasError();
+        });
+        normalizationConflicts = AudioNormalizationService::findBatchOutputConflicts(normalizableResults);
     }
 
     if (!options.normalize) {
@@ -283,7 +339,19 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
             continue;
         }
 
-        const auto normalization = AudioNormalizationService::normalizeFile(result);
+        if (normalizationConflicts.contains(result.file.getFullPathName())) {
+            ++failureCount;
+            utils::logError(
+                "{}: {}",
+                result.file.getFullPathName().quoted(),
+                AudioNormalizationService::batchOutputConflictMessage(result.file)
+            );
+            continue;
+        }
+
+        AudioNormalizationOptions normalizationOptions;
+        normalizationOptions.overwriteExisting = options.force;
+        const auto normalization = AudioNormalizationService::normalizeFile(result, normalizationOptions);
 
         if (normalization.hasError()) {
             ++failureCount;

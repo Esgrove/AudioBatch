@@ -44,6 +44,9 @@ struct PluginProcessingOptions {
     std::vector<PluginDescriptorRef> plugins;
     /// Apply peak normalization gain when a file has no custom gain.
     bool normalizeBeforePlugin = false;
+    /// Replace an existing output file that is not the source itself.
+    /// When false, a file whose output path is already taken fails instead of overwriting it.
+    bool overwriteExisting = false;
 };
 
 /// Result payload for a single plugin-processing operation.
@@ -51,7 +54,7 @@ struct PluginProcessingResult {
     /// Source file path before processing.
     juce::File originalFile;
     juce::String originalFullPath;
-    /// Final on-disk file after processing (.aiff).
+    /// Final on-disk file after processing (.aif).
     juce::File outputFile;
     juce::String fileName;
     juce::String errorMessage;

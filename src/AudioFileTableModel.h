@@ -100,12 +100,15 @@ public:
     }
 
     /// Creates a model backed by the live result list and UI callbacks owned by the main view.
+    /// The operation error provider returns the error of the last failed normalize or process run for a record,
+    /// or an empty string, and is shown in the status column when the file is idle.
     AudioFileTableModel(
         std::vector<AudioAnalysisRecord>& sourceRecords,
         std::function<void(int row)> onSelectionChanged,
         std::function<void(int columnId, bool isForwards)> onSortChanged,
         std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,
         std::function<juce::String(const AudioAnalysisRecord& record)> statusLabelProvider,
+        std::function<juce::String(const AudioAnalysisRecord& record)> errorProvider,
         std::function<float()> phaseProvider
     );
 
@@ -146,10 +149,13 @@ public:
     /// Notifies the owning component when the active sort column changes.
     void sortOrderChanged(int newSortColumnId, bool isForwards) override;
 
-    /// Suppresses cell tooltips for the main results list.
+    /// Shows the full error text for the status column of a failed file, and no tooltip for other cells.
     juce::String getCellTooltip(int rowNumber, int columnId) override;
 
 private:
+    /// Returns the last normalize or process error for a record from the provider, or an empty string.
+    [[nodiscard]] juce::String getOperationError(const AudioAnalysisRecord& record) const;
+
     static constexpr int defaultWindowWidth = 1096;
     static constexpr int nameColumnMinimumWidth = 110;
     static constexpr int pathColumnMinimumWidth = 140;
@@ -186,5 +192,6 @@ private:
     std::function<void(int columnId, bool isForwards)> sortChanged;
     std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested;
     std::function<juce::String(const AudioAnalysisRecord& record)> activeStatusLabelProvider;
+    std::function<juce::String(const AudioAnalysisRecord& record)> operationErrorProvider;
     std::function<float()> activityPhaseProvider;
 };

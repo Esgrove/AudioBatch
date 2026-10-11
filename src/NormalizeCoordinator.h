@@ -44,7 +44,9 @@ public:
     void setResultCallback(ResultCallback callback);
 
     /// Starts a background normalize run and returns the number of queued files.
-    int start(const std::vector<AudioAnalysisRecord>& records);
+    /// Records that lose a batch output conflict are published as failures without being normalized.
+    /// Jobs of a run poll the run id, so cancelAndWait or a new run stops them before they commit any output.
+    int start(const std::vector<AudioAnalysisRecord>& records, const AudioNormalizationOptions& options);
 
 private:
     /// Invokes the completion callback when the given run id is still current.
