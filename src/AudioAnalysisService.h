@@ -23,7 +23,13 @@ public:
     static AudioAnalysisRecord analyzeFile(const juce::File& file, const CancellationCheck& isCancelled = {});
 
     /// Expands the input paths into a de-duplicated list of supported files.
-    static juce::Array<juce::File> collectInputFiles(const juce::Array<juce::File>& inputPaths, bool recursive);
+    /// The directory walk checks isCancelled between entries and returns the files found so far when it is set,
+    /// so a scan of a large or slow folder can be abandoned quickly.
+    static juce::Array<juce::File> collectInputFiles(
+        const juce::Array<juce::File>& inputPaths,
+        bool recursive,
+        const CancellationCheck& isCancelled = {}
+    );
 
     /// Formats a peak value for display in the GUI and CLI.
     static juce::String formatPeakDisplay(float peak);

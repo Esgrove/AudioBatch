@@ -109,7 +109,6 @@ void PluginProcessingCoordinator::cancelAndWait()
     // Wake any workers blocked waiting for an instance.
     instanceAvailable.signal();
     threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
-    pendingJobs.store(0);
 }
 
 int PluginProcessingCoordinator::acquireChain()
@@ -191,7 +190,8 @@ void PluginProcessingCoordinator::runFileJob(
     const AudioAnalysisRecord& record,
     const PluginProcessingOptions& options,
     const int runId,
-    const int totalFiles
+    const int totalFiles,
+    std::atomic<int>& pendingFiles
 )
 {
     if (runId != currentRunId.load()) {
@@ -231,7 +231,7 @@ void PluginProcessingCoordinator::runFileJob(
 
     publishResult(result, runId);
 
-    if (pendingJobs.fetch_sub(1) == 1) {
+    if (pendingFiles.fetch_sub(1) == 1) {
         publishCompletion(totalFiles, runId);
     }
 }
@@ -268,18 +268,22 @@ int PluginProcessingCoordinator::start(
     const auto queuedRecords = collectQueuedRecords(records);
     const auto totalFiles = static_cast<int>(queuedRecords.size());
 
-    pendingJobs.store(totalFiles);
-
     if (queuedRecords.empty()) {
         publishCompletion(0, runId);
         return 0;
     }
 
     const auto conflicts = AudioNormalizationService::findBatchOutputConflicts(queuedRecords);
+    // The counter belongs to this run, so a job that outlives a cancellation timeout cannot change a later run's count.
+    const auto pendingFiles = std::make_shared<std::atomic<int>>(totalFiles);
 
     for (const auto& record : queuedRecords) {
         if (conflicts.contains(record.file.getFullPathName())) {
-            threadPool.addJob([this, record, runId, totalFiles] {
+            threadPool.addJob([this, record, runId, totalFiles, pendingFiles] {
+                if (runId != currentRunId.load()) {
+                    return;
+                }
+
                 publishResult(
                     PluginProcessingResult::failure(
                         record.file, AudioNormalizationService::batchOutputConflictMessage(record.file)
@@ -287,15 +291,15 @@ int PluginProcessingCoordinator::start(
                     runId
                 );
 
-                if (pendingJobs.fetch_sub(1) == 1) {
+                if (pendingFiles->fetch_sub(1) == 1) {
                     publishCompletion(totalFiles, runId);
                 }
             });
             continue;
         }
 
-        threadPool.addJob([this, record, options, runId, totalFiles] {
-            runFileJob(record, options, runId, totalFiles);
+        threadPool.addJob([this, record, options, runId, totalFiles, pendingFiles] {
+            runFileJob(record, options, runId, totalFiles, *pendingFiles);
         });
     }
 

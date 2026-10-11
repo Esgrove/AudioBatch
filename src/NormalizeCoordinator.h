@@ -11,6 +11,7 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <vector>
 
 /// Coordinates background normalize jobs and marshals results back to the UI layer.
@@ -63,5 +64,4 @@ private:
     ResultCallback resultCallback;
     CompletionCallback completionCallback;
     std::atomic<int> currentRunId {0};
-    std::atomic<int> pendingJobs {0};
 };

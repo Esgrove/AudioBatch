@@ -114,7 +114,7 @@ public:
             coordinator.setPlanCallback([&](const AnalysisCoordinator::AnalysisPlan& plan) {
                 planFileCount = plan.files.size();
             });
-            coordinator.setStartingCallback([&](const juce::File&) { planCameFirst = planFileCount >= 0; });
+            coordinator.setStartingCallback([&](const juce::File&, int) { planCameFirst = planFileCount >= 0; });
 
             AudioAnalysisOptions options;
             options.inputPaths.add(plannedFile);

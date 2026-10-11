@@ -12,23 +12,29 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <vector>
 
 /// Coordinates background audio analysis jobs and marshals result callbacks to the UI layer.
 class AnalysisCoordinator
 {
 public:
+    // Every callback carries the id of the run it belongs to,
+    // so a receiver that handles them asynchronously can drop messages from a run that was replaced meanwhile.
+
     /// Called once after a run has published all queued results.
-    using CompletionCallback = std::function<void(int totalFiles)>;
+    using CompletionCallback = std::function<void(int totalFiles, int runId)>;
 
     /// Called for each analysed file as results become available.
-    using ResultCallback = std::function<void(const AudioAnalysisRecord& result)>;
+    using ResultCallback = std::function<void(const AudioAnalysisRecord& result, int runId)>;
 
     /// Called right before a file's analysis begins, from the worker thread.
-    using StartingCallback = std::function<void(const juce::File& file)>;
+    using StartingCallback = std::function<void(const juce::File& file, int runId)>;
 
     /// The files of a run, published once the input paths are expanded and checked against the cache.
     struct AnalysisPlan {
+        /// The run the plan belongs to.
+        int runId = 0;
         /// Every supported file found in the input paths.
         juce::Array<juce::File> files;
         /// The files without a current cache entry, which are analyzed in this run.
@@ -91,7 +97,17 @@ private:
     /// Analyzes one file, caches the result, and publishes it.
     /// The stored custom gain is kept while the file is unchanged on disk.
     /// A file whose analysis is cancelled is neither cached nor published.
-    void analyzeStaleFile(const juce::File& file, int runId, int totalFiles);
+    /// pendingFiles counts the run's unfinished files, and the job that finishes the last one publishes completion.
+    /// It belongs to the run, so a job that outlives a cancellation timeout cannot change a later run's count.
+    void analyzeStaleFile(
+        const juce::File& file,
+        int runId,
+        int totalFiles,
+        const std::shared_ptr<std::atomic<int>>& pendingFiles
+    );
+
+    /// Returns true when the run has been cancelled or replaced by a newer one.
+    [[nodiscard]] bool isRunCancelled(int runId) const noexcept;
 
     /// Invokes the plan callback when the given run id is still current.
     void publishPlan(const AnalysisPlan& plan, int runId) const;
@@ -108,5 +124,4 @@ private:
     juce::CriticalSection callbackLock;
     juce::ThreadPool threadPool;
     std::atomic<int> currentRunId {0};
-    std::atomic<int> pendingJobs {0};
 };

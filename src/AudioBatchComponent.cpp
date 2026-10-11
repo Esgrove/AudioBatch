@@ -762,10 +762,10 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
     // Coordinator callbacks arrive on worker threads.
     // The handler runs on the message thread, and only while this component still exists.
     const auto postToMessageThread = [safeThis](auto handler) {
-        return [safeThis, handler](const auto& argument) {
-            juce::MessageManager::callAsync([safeThis, handler, argument] {
+        return [safeThis, handler](const auto&... arguments) {
+            juce::MessageManager::callAsync([safeThis, handler, arguments...] {
                 if (safeThis != nullptr) {
-                    (safeThis.getComponent()->*handler)(argument);
+                    (safeThis.getComponent()->*handler)(arguments...);
                 }
             });
         };
@@ -774,9 +774,9 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
     analysisCoordinator.setPlanCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisPlan));
     analysisCoordinator.setResultCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisResult));
     analysisCoordinator.setCompletionCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisComplete));
-    analysisCoordinator.setStartingCallback([safeThis](const juce::File& file) {
-        juce::MessageManager::callAsync([safeThis, file] {
-            if (safeThis != nullptr) {
+    analysisCoordinator.setStartingCallback([safeThis](const juce::File& file, const int runId) {
+        juce::MessageManager::callAsync([safeThis, file, runId] {
+            if (safeThis != nullptr && runId == safeThis->analysisRunId) {
                 safeThis->activeFileStatusLabels[file.getFullPathName()] = "Analyzing";
                 safeThis->resultsTable.repaint();
             }
@@ -2000,8 +2000,12 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
     updateProcessButtonState();
 }
 
-void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record)
+void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record, const int runId)
 {
+    if (runId != analysisRunId) {
+        return;
+    }
+
     ++completedResults;
     unmarkFileProcessing(record.fullPath);
 
@@ -2131,12 +2135,17 @@ void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
     updateStatusLabel();
 }
 
-void AudioBatchComponent::handleAnalysisComplete(const int totalFiles)
+void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int runId)
 {
+    if (runId != analysisRunId) {
+        return;
+    }
+
     expectedResults = totalFiles;
 
     // The plan handler already reported that no files were found.
     if (totalFiles == 0) {
+        syncActivityTimer();
         updateProcessButtonState();
         return;
     }
@@ -2346,12 +2355,16 @@ void AudioBatchComponent::startAnalysis(
         updateCurrentRootLabel();
     }
 
-    analysisCoordinator.start(options);
+    analysisRunId = analysisCoordinator.start(options);
     updateProcessButtonState();
 }
 
 void AudioBatchComponent::handleAnalysisPlan(const AnalysisCoordinator::AnalysisPlan& plan)
 {
+    if (plan.runId != analysisRunId) {
+        return;
+    }
+
     expectedResults = plan.files.size();
     analyzedFilesThisRun = plan.staleFiles.size();
     utils::logInfo("Found {} audio files", expectedResults);

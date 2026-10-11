@@ -173,6 +173,14 @@ public:
             expect(explicitFiles.isEmpty());
         }
 
+        beginTest("A cancelled folder scan stops without collecting files");
+        {
+            const auto files = AudioAnalysisService::collectInputFiles(
+                {fixtureFile("sine_stereo_44100_16.wav").getParentDirectory()}, true, [] { return true; }
+            );
+            expect(files.isEmpty());
+        }
+
         beginTest("Cancelled analysis fails without measuring");
         {
             const auto record
