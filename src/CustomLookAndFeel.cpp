@@ -79,17 +79,21 @@ namespace juce
 
 const juce::Font& CustomLookAndFeel::getTextFont()
 {
-    static const Font font {FontOptions().withTypeface(
+    // The typeface constructor leaves the name and style empty,
+    // which withTypeface on default options would assert on in debug builds.
+    static const Font font {FontOptions {
         Typeface::createSystemTypefaceFor(BinaryData::RobotoRegular_ttf, BinaryData::RobotoRegular_ttfSize)
-    )};
+    }};
     return font;
 }
 
 const juce::Font& CustomLookAndFeel::getMonoBaseFont()
 {
-    static const Font font {FontOptions().withTypeface(
+    // The typeface constructor leaves the name and style empty,
+    // which withTypeface on default options would assert on in debug builds.
+    static const Font font {FontOptions {
         Typeface::createSystemTypefaceFor(BinaryData::RobotoMonoRegular_ttf, BinaryData::RobotoMonoRegular_ttfSize)
-    )};
+    }};
     return font;
 }
 

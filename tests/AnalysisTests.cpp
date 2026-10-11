@@ -157,6 +157,30 @@ public:
             expectEquals(record.integratedLufs, AudioAnalysisRecord::negativeInfinityLoudness);
         }
 
+        beginTest("Hidden and AppleDouble files are skipped when collecting inputs");
+        {
+            const TemporaryDirectory directory;
+            const auto visible = directory.copyFixture("sine_stereo_44100_16.wav", "visible.wav");
+            juce::ignoreUnused(directory.copyFixture("sine_stereo_44100_16.wav", "._visible.wav"));
+            juce::ignoreUnused(directory.copyFixture("sine_stereo_44100_16.wav", ".hidden.wav"));
+
+            const auto files = AudioAnalysisService::collectInputFiles({visible.getParentDirectory()}, false);
+            expectEquals(files.size(), 1);
+            expectEquals(files[0].getFileName(), juce::String("visible.wav"));
+
+            const auto explicitFiles
+                = AudioAnalysisService::collectInputFiles({directory.getChildFile("._visible.wav")}, false);
+            expect(explicitFiles.isEmpty());
+        }
+
+        beginTest("Cancelled analysis fails without measuring");
+        {
+            const auto record
+                = AudioAnalysisService::analyzeFile(fixtureFile("sine_stereo_44100_16.wav"), [] { return true; });
+            expect(record.hasError());
+            expect(record.errorMessage.contains("cancelled"), record.errorMessage);
+        }
+
         beginTest("A file that is not audio fails analysis");
         {
             const auto record = AudioAnalysisService::analyzeFile(fixtureFile("broken.wav"));

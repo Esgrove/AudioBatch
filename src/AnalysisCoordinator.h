@@ -27,6 +27,17 @@ public:
     /// Called right before a file's analysis begins, from the worker thread.
     using StartingCallback = std::function<void(const juce::File& file)>;
 
+    /// The files of a run, published once the input paths are expanded and checked against the cache.
+    struct AnalysisPlan {
+        /// Every supported file found in the input paths.
+        juce::Array<juce::File> files;
+        /// The files without a current cache entry, which are analyzed in this run.
+        juce::Array<juce::File> staleFiles;
+    };
+
+    /// Called once per run from a worker thread, before any of its results.
+    using PlanCallback = std::function<void(const AnalysisPlan& plan)>;
+
     /// Creates a coordinator with a thread pool sized for the current machine.
     explicit AnalysisCoordinator(AnalysisCache& analysisCache, int workerCount = juce::SystemStats::getNumCpus());
 
@@ -53,11 +64,15 @@ public:
     /// Sets the callback invoked when a file's analysis is about to start.
     void setStartingCallback(StartingCallback callback);
 
-    /// Starts a background analysis run and returns its monotonically increasing run id.
-    int start(const AudioAnalysisOptions& options);
+    /// Sets the callback invoked with the file list of each run.
+    void setPlanCallback(PlanCallback callback);
 
-    /// Starts a background analysis run using a precomputed file list.
-    int start(const AudioAnalysisOptions& options, const juce::Array<juce::File>& files);
+    /// Starts a background analysis run and returns its run id.
+    /// Expanding the input paths and the cache lookups also run in the background,
+    /// so the caller never waits for the file system.
+    /// The plan callback comes first, then cached results, then fresh results, and finally the completion callback,
+    /// which is published even when no files are found.
+    int start(const AudioAnalysisOptions& options);
 
 private:
     /// Invokes the completion callback when the given run id is still current.
@@ -69,6 +84,17 @@ private:
     /// Runs on the worker thread, so the callback must marshal to the message thread itself if needed.
     void publishResult(const AudioAnalysisRecord& result, int runId) const;
 
+    /// Expands the input paths, publishes the plan and the cached results, and queues one job per stale file.
+    /// Runs on a worker thread and stops early when the run is cancelled.
+    void planRun(const AudioAnalysisOptions& options, int runId);
+
+    /// Analyzes one file, keeps its stored custom gain, caches the result, and publishes it.
+    /// A file whose analysis is cancelled is neither cached nor published.
+    void analyzeStaleFile(const juce::File& file, int runId, int totalFiles);
+
+    /// Invokes the plan callback when the given run id is still current.
+    void publishPlan(const AnalysisPlan& plan, int runId) const;
+
     /// Invokes the starting callback when the given run id is still current.
     /// Runs on the worker thread right before a file's analysis begins.
     void publishStarting(const juce::File& file, int runId) const;
@@ -77,6 +103,7 @@ private:
     CompletionCallback completionCallback;
     ResultCallback resultCallback;
     StartingCallback startingCallback;
+    PlanCallback planCallback;
     juce::CriticalSection callbackLock;
     juce::ThreadPool threadPool;
     std::atomic<int> currentRunId {0};

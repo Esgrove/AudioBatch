@@ -506,6 +506,32 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     return result == SQLITE_DONE;
 }
 
+bool AnalysisCache::getCustomGain(const juce::File& file, float& customGainDb)
+{
+    const juce::ScopedLock lock(mutex);
+
+    if (database == nullptr && !openUnlocked()) {
+        return false;
+    }
+
+    constexpr auto sql = "SELECT custom_gain_db FROM file_analysis WHERE file_path = ? AND has_custom_gain = 1;";
+
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    bindText(statement, 1, normalizedPath(file));
+
+    const bool found = sqlite3_step(statement) == SQLITE_ROW;
+    if (found) {
+        customGainDb = static_cast<float>(sqlite3_column_double(statement, 0));
+    }
+
+    sqlite3_finalize(statement);
+    return found;
+}
+
 bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGainDb, const bool hasCustomGain)
 {
     const juce::ScopedLock lock(mutex);
@@ -555,6 +581,53 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
     const auto result = sqlite3_step(statement);
     sqlite3_finalize(statement);
     return result == SQLITE_DONE;
+}
+
+int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
+{
+    juce::StringArray cachedPaths;
+
+    {
+        const juce::ScopedLock lock(mutex);
+
+        if (database == nullptr && !openUnlocked()) {
+            return 0;
+        }
+
+        sqlite3_stmt* statement = nullptr;
+        if (sqlite3_prepare_v2(database, "SELECT file_path FROM file_analysis;", -1, &statement, nullptr) != SQLITE_OK)
+        {
+            return 0;
+        }
+
+        while (sqlite3_step(statement) == SQLITE_ROW) {
+            cachedPaths.add(columnText(statement, 0));
+        }
+
+        sqlite3_finalize(statement);
+    }
+
+    int removedRows = 0;
+
+    for (const auto& path : cachedPaths) {
+        if (shouldStop != nullptr && shouldStop()) {
+            break;
+        }
+
+        if (!juce::File::isAbsolutePath(path) || juce::File(path).existsAsFile()) {
+            continue;
+        }
+
+        if (removeAnalysis(juce::File(path))) {
+            ++removedRows;
+        }
+    }
+
+    if (removedRows > 0) {
+        utils::logInfo("Removed {} cached analysis rows for files that no longer exist", removedRows);
+    }
+
+    return removedRows;
 }
 
 bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& waveformData)

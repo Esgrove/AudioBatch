@@ -3,6 +3,7 @@
 /// The cached files are copies of the committed fixtures.
 
 #include "AnalysisCache.h"
+#include "AnalysisCoordinator.h"
 #include "AudioAnalysisService.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
@@ -45,6 +46,62 @@ public:
 
             AudioAnalysisRecord cached;
             expect(!cache.getAnalysis(file, cached));
+        }
+
+        beginTest("A custom gain is kept when the file changes");
+        {
+            const auto gainFile = directory.copyFixture("sine_stereo_44100_16.wav", "gain.wav");
+            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(gainFile)));
+            expect(cache.storeCustomGain(gainFile, -3.5f, true));
+            expect(fixtureFile("sine_mono_44100_16.wav").copyFileTo(gainFile));
+
+            AudioAnalysisRecord cached;
+            expect(!cache.getAnalysis(gainFile, cached));
+
+            float customGainDb = 0.0f;
+            expect(cache.getCustomGain(gainFile, customGainDb));
+            expectEquals(customGainDb, -3.5f);
+        }
+
+        beginTest("Pruning removes rows of deleted files only");
+        {
+            const auto keptFile = directory.copyFixture("sine_stereo_44100_16.wav", "kept.wav");
+            const auto deletedFile = directory.copyFixture("sine_stereo_44100_16.wav", "deleted.wav");
+            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(keptFile)));
+            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(deletedFile)));
+            expect(deletedFile.deleteFile());
+
+            expectEquals(cache.pruneMissingFiles(), 1);
+
+            AudioAnalysisRecord cached;
+            expect(cache.getAnalysis(keptFile, cached));
+        }
+
+        beginTest("The coordinator publishes the plan before results and keeps stored custom gains");
+        {
+            const auto plannedFile = directory.copyFixture("sine_stereo_44100_16.wav", "planned.wav");
+            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(plannedFile)));
+            expect(cache.storeCustomGain(plannedFile, 2.0f, true));
+            expect(fixtureFile("sine_stereo_48000_24.wav").copyFileTo(plannedFile));
+
+            AnalysisCoordinator coordinator(cache, 2);
+            int planFileCount = -1;
+            bool planCameFirst = false;
+            coordinator.setPlanCallback([&](const AnalysisCoordinator::AnalysisPlan& plan) {
+                planFileCount = plan.files.size();
+            });
+            coordinator.setStartingCallback([&](const juce::File&) { planCameFirst = planFileCount >= 0; });
+
+            AudioAnalysisOptions options;
+            options.inputPaths.add(plannedFile);
+            const auto results = coordinator.analyzeBlocking(options);
+
+            expectEquals(planFileCount, 1);
+            expect(planCameFirst);
+            expectEquals(static_cast<int>(results.size()), 1);
+            expect(results.front().hasCustomGain);
+            expectEquals(results.front().customGainDb, 2.0f);
+            expectEquals(results.front().sampleRate, 48000);
         }
 
         beginTest("A removed record is no longer returned");

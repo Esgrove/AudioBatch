@@ -359,6 +359,13 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
             continue;
         }
 
+        cache.storeAnalysis(normalization.analysisRecord);
+
+        // A converted original was moved to the trash, so its cached row is no longer needed.
+        if (normalization.analysisRecord.fullPath != result.fullPath) {
+            cache.removeAnalysis(result.file);
+        }
+
         normalizedResults.push_back(normalization.analysisRecord);
     }
 
