@@ -8,6 +8,7 @@
 #include "AnalysisCache.h"
 #include "AnalysisCoordinator.h"
 #include "AudioFileTableModel.h"
+#include "FileActivityTracker.h"
 #include "IntervalStepSlider.h"
 #include "NormalizationTargetControl.h"
 #include "NormalizeCoordinator.h"
@@ -31,8 +32,7 @@ class AudioBatchComponent :
     public juce::FileDragAndDropTarget,
     public juce::DragAndDropContainer,
     juce::ChangeListener,
-    juce::KeyListener,
-    juce::Timer
+    juce::KeyListener
 {
 public:
     /// Creates the UI, opens the analysis cache, and starts the initial scan.
@@ -223,22 +223,8 @@ private:
     /// Sets, toggles, or clears the secondary sort column requested with a ctrl or cmd click on a header.
     void handleSecondarySortRequested(int columnId);
 
-    /// Returns the transient activity label for a record, for example "Analyzing" or "Normalizing",
-    /// or an empty string when the file is idle.
-    [[nodiscard]] juce::String getActiveStatusLabel(const AudioAnalysisRecord& record) const;
-
-    /// Returns the outcome of the last normalize or process run for a record that is worth showing,
-    /// such as an error or a clipping notice, or an empty message.
-    [[nodiscard]] OperationMessage getOperationMessage(const AudioAnalysisRecord& record) const;
-
-    /// Returns the shared animation phase in the range 0 to 1 that drives the spinning activity indicators.
-    [[nodiscard]] static float getActivityPhase();
-
     /// True while analysis results are still expected from the coordinator.
     [[nodiscard]] bool isAnalysisInProgress() const;
-
-    /// True while any file carries a transient activity label, which is what keeps the activity timer running.
-    [[nodiscard]] bool isAnyFileProcessing() const;
 
     /// Creates a reader for the URL and attaches it to the transport, replacing any previous source.
     /// Returns false when no reader could be created, leaving the transport empty.
@@ -275,9 +261,6 @@ private:
     /// the current preview file when it is selected, otherwise the last clicked or the first selected row.
     int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
 
-    /// Tags the files with a transient activity label and starts the activity animation.
-    void markFilesProcessing(const juce::Array<juce::File>& files, const juce::String& activityLabel);
-
     /// True when the list is non-empty and every record's format can be normalized in this build.
     [[nodiscard]] static bool canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records);
 
@@ -290,9 +273,6 @@ private:
     /// Resolves rows still marked pending or active after a run completes,
     /// falling back to the cache or a synchronous re-analysis so no row is left in a stale state.
     void reconcilePendingAnalysisResults();
-
-    /// Clears a file's transient activity label and stops the activity animation when nothing is left running.
-    void unmarkFileProcessing(const juce::String& fullPath);
 
     /// Removes trashed files from the table and keeps selection and preview state coherent.
     void removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow);
@@ -365,17 +345,11 @@ private:
     /// preferring cached waveform data over decoding the file again.
     void showAudioResource(juce::URL resource);
 
-    /// Starts or stops the repaint timer based on whether any file shows an activity indicator.
-    void syncActivityTimer();
-
     /// Toggles preview playback of the current file.
     void startOrStop();
 
     /// Recolours the play button to match whether the transport is playing.
     void updatePlaybackButtonForTransportState();
-
-    /// Repaints the table to animate the activity indicators, and stops itself once all files are idle.
-    void timerCallback() override;
 
     /// Forwards the zoom slider value to the waveform preview.
     void zoomLevelChanged(double zoomLevel);
@@ -430,10 +404,8 @@ private:
     int processedResultsCompleted = 0;
     int processedResultsExpected = 0;
 
-    std::map<juce::String, juce::String> activeFileStatusLabels;
-    /// Error or notice of the last normalize or process run per file path, shown in the status column.
-    /// Cleared when the file starts another operation.
-    std::map<juce::String, OperationMessage> operationMessages;
+    /// Activity labels and last operation messages per file, shown in the status column.
+    FileActivityTracker fileActivity {[this] { resultsTable.repaint(); }};
     juce::StringArray normalizationFailures;
     juce::StringArray processingFailures;
 
