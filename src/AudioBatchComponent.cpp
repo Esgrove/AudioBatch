@@ -1,8 +1,6 @@
 /// Implementation of the main GUI component.
 /// Covers UI construction and layout, table interaction and sorting, playback preview,
 /// folder scanning and drag-and-drop, and wiring of the analysis, normalization, and plugin coordinators.
-/// Also defines the file-local SecondarySortTableHeader helper component
-/// and the record sort comparators used by the results table.
 
 #include "AudioBatchComponent.h"
 
@@ -13,6 +11,7 @@
 #include "FileUtils.h"
 #include "Log.h"
 #include "PluginProcessingService.h"
+#include "ResultsSorting.h"
 #include "StringFormat.h"
 #include <string_view>
 
@@ -169,205 +168,6 @@ static juce::String getRevealFileMenuLabel()
 #endif
 }
 
-/// Table header that maps ctrl or cmd clicks to a secondary sort request
-/// and renders the secondary sort indicator inside the column name text.
-class SecondarySortTableHeader final : public juce::TableHeaderComponent
-{
-public:
-    using SecondarySortCallback = std::function<void(int columnId)>;
-
-    /// Stores the callback invoked when a column is clicked with ctrl or cmd held down.
-    explicit SecondarySortTableHeader(SecondarySortCallback secondarySortRequestedCallback) :
-        secondarySortRequested(std::move(secondarySortRequestedCallback))
-    { }
-
-    /// Routes ctrl or cmd clicks to the secondary sort callback,
-    /// while plain clicks fall through to the normal primary sort behaviour.
-    void columnClicked(const int columnId, const juce::ModifierKeys& modifiers) override
-    {
-        if ((modifiers.isCtrlDown() || modifiers.isCommandDown()) && secondarySortRequested != nullptr) {
-            secondarySortRequested(columnId);
-            return;
-        }
-
-        juce::TableHeaderComponent::columnClicked(columnId, modifiers);
-    }
-
-    /// Appends a textual secondary sort marker to the given column's name
-    /// and restores the base name of every other column.
-    /// Passing a column id of zero clears the indicator entirely.
-    void setSecondarySortIndicator(const int columnId, const bool isForwards)
-    {
-        if (baseColumnNames.empty()) {
-            cacheBaseColumnNames();
-        }
-
-        secondarySortColumnId = columnId;
-        secondarySortForwards = isForwards;
-
-        for (const auto& [trackedColumnId, baseName] : baseColumnNames) {
-            auto displayName = baseName;
-
-            if (trackedColumnId == secondarySortColumnId) {
-                displayName = utils::format("{} {}", displayName, secondarySortForwards ? "[2^]" : "[2v]");
-            }
-
-            setColumnName(trackedColumnId, displayName);
-        }
-
-        repaint();
-    }
-
-private:
-    /// Captures the original column names once,
-    /// so indicator suffixes can be re-applied without accumulating in the names.
-    void cacheBaseColumnNames()
-    {
-        const auto columnCount = getNumColumns(false);
-
-        for (int index = 0; index < columnCount; ++index) {
-            const auto columnId = getColumnIdOfIndex(index, false);
-            baseColumnNames.emplace(columnId, getColumnName(columnId));
-        }
-    }
-
-    SecondarySortCallback secondarySortRequested;
-    std::map<int, juce::String> baseColumnNames;
-    int secondarySortColumnId = 0;
-    bool secondarySortForwards = true;
-};
-
-/// Returns the table's header downcast to SecondarySortTableHeader.
-/// The table must have been created with that header type, which the constructor guarantees.
-static SecondarySortTableHeader& getSecondarySortHeader(juce::TableListBox const& table)
-{
-    return dynamic_cast<SecondarySortTableHeader&>(table.getHeader());
-}
-
-/// Three-way natural-order string comparison shared by the column comparators.
-static int compareNaturalStrings(const juce::String& left, const juce::String& right)
-{
-    return left.compareNatural(right);
-}
-
-/// Three-way comparison of peak values by magnitude, ignoring polarity.
-template<typename Value>
-int comparePeaks(Value left, Value right)
-{
-    const auto leftMagnitude = std::abs(left);
-    const auto rightMagnitude = std::abs(right);
-
-    if (juce::approximatelyEqual(leftMagnitude, rightMagnitude)) {
-        return 0;
-    }
-
-    return leftMagnitude < rightMagnitude ? -1 : 1;
-}
-
-/// Three-way comparison by average bitrate, treating nearly equal bitrates as equal.
-static int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
-{
-    const auto leftBitrate = AudioAnalysisService::getAverageBitrateKbps(lhs);
-    const auto rightBitrate = AudioAnalysisService::getAverageBitrateKbps(rhs);
-
-    if (juce::approximatelyEqual(leftBitrate, rightBitrate)) {
-        return 0;
-    }
-
-    return leftBitrate < rightBitrate ? -1 : 1;
-}
-
-/// Three-way comparison by sample rate.
-static int compareSampleRates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
-{
-    if (lhs.sampleRate == rhs.sampleRate) {
-        return 0;
-    }
-
-    return lhs.sampleRate < rhs.sampleRate ? -1 : 1;
-}
-
-/// Three-way loudness comparison that sorts negative-infinity readings below every measurable value.
-static int compareLoudness(const double left, const double right)
-{
-    const auto leftIsNegativeInfinity = left <= AudioAnalysisRecord::negativeInfinityLoudness;
-    const auto rightIsNegativeInfinity = right <= AudioAnalysisRecord::negativeInfinityLoudness;
-
-    if (leftIsNegativeInfinity && rightIsNegativeInfinity) {
-        return 0;
-    }
-
-    if (leftIsNegativeInfinity != rightIsNegativeInfinity) {
-        return leftIsNegativeInfinity ? -1 : 1;
-    }
-
-    if (juce::approximatelyEqual(left, right)) {
-        return 0;
-    }
-
-    return left < right ? -1 : 1;
-}
-
-/// Dispatches to the three-way comparator matching the given table column,
-/// defaulting to overall peak for unknown column ids.
-static int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, const int columnId)
-{
-    switch (columnId) {
-        case AudioFileTableModel::columnName:
-            return compareNaturalStrings(lhs.fileName, rhs.fileName);
-
-        case AudioFileTableModel::columnPath:
-            return compareNaturalStrings(lhs.fullPath, rhs.fullPath);
-
-        case AudioFileTableModel::columnType:
-            return compareNaturalStrings(
-                AudioAnalysisService::formatTypeLabel(lhs), AudioAnalysisService::formatTypeLabel(rhs)
-            );
-
-        case AudioFileTableModel::columnBitrate:
-            return compareBitrates(lhs, rhs);
-
-        case AudioFileTableModel::columnSampleRate:
-            return compareSampleRates(lhs, rhs);
-
-        case AudioFileTableModel::columnPeakLeft:
-            return comparePeaks(lhs.peakLeft, rhs.peakLeft);
-
-        case AudioFileTableModel::columnPeakRight:
-            return comparePeaks(lhs.peakRight, rhs.peakRight);
-
-        case AudioFileTableModel::columnOverallTruePeak:
-            return comparePeaks(lhs.overallTruePeak, rhs.overallTruePeak);
-
-        case AudioFileTableModel::columnMaxShortTermLufs:
-            return compareLoudness(lhs.maxShortTermLufs, rhs.maxShortTermLufs);
-
-        case AudioFileTableModel::columnIntegratedLufs:
-            return compareLoudness(lhs.integratedLufs, rhs.integratedLufs);
-
-        case AudioFileTableModel::columnCustomGain: {
-            if (lhs.hasCustomGain != rhs.hasCustomGain) {
-                return lhs.hasCustomGain ? 1 : -1;
-            }
-            if (!lhs.hasCustomGain) {
-                return 0;
-            }
-            if (juce::approximatelyEqual(lhs.customGainDb, rhs.customGainDb)) {
-                return 0;
-            }
-            return lhs.customGainDb < rhs.customGainDb ? -1 : 1;
-        }
-
-        case AudioFileTableModel::columnStatus:
-            return compareNaturalStrings(
-                AudioAnalysisService::formatStatus(lhs), AudioAnalysisService::formatStatus(rhs)
-            );
-
-        case AudioFileTableModel::columnOverallPeak:
-        default:
-            return comparePeaks(lhs.overallPeak, rhs.overallPeak);
-    }
-}
 }  // namespace audiobatch::gui
 
 using namespace audiobatch::gui;
@@ -2120,42 +1920,15 @@ void AudioBatchComponent::normalizeSelectedRecords()
 
 void AudioBatchComponent::sortResults()
 {
-    std::ranges::sort(analysisResults, [this](const auto& lhs, const auto& rhs) {
-        if (lhs.hasError() != rhs.hasError()) {
-            return !lhs.hasError();
-        }
-
-        const auto compareUsingSort = [&](int columnId, bool isForwards) {
-            if (columnId <= 0) {
-                return 0;
-            }
-
-            const auto comparison = compareRecordsByColumn(lhs, rhs, columnId);
-            if (comparison == 0) {
-                return 0;
-            }
-
-            return isForwards ? comparison : -comparison;
-        };
-
-        if (const auto primaryComparison = compareUsingSort(currentSortColumnId, currentSortForwards);
-            primaryComparison != 0)
+    results_sorting::sortRecords(
+        analysisResults,
         {
-            return primaryComparison < 0;
+            .primaryColumnId = currentSortColumnId,
+            .primaryForwards = currentSortForwards,
+            .secondaryColumnId = secondarySortColumnId,
+            .secondaryForwards = secondarySortForwards,
         }
-
-        if (const auto secondaryComparison = compareUsingSort(secondarySortColumnId, secondarySortForwards);
-            secondaryComparison != 0)
-        {
-            return secondaryComparison < 0;
-        }
-
-        if (const auto nameComparison = compareNaturalStrings(lhs.fileName, rhs.fileName); nameComparison != 0) {
-            return nameComparison < 0;
-        }
-
-        return compareNaturalStrings(lhs.fullPath, rhs.fullPath) < 0;
-    });
+    );
 }
 
 void AudioBatchComponent::startAnalysis(
@@ -2341,7 +2114,8 @@ void AudioBatchComponent::handleSecondarySortRequested(const int columnId)
 
 void AudioBatchComponent::refreshSortIndicators()
 {
-    getSecondarySortHeader(resultsTable).setSecondarySortIndicator(secondarySortColumnId, secondarySortForwards);
+    results_sorting::getSecondarySortHeader(resultsTable)
+        .setSecondarySortIndicator(secondarySortColumnId, secondarySortForwards);
 }
 
 int AudioBatchComponent::getSelectionDisplayRow(
