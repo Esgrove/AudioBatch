@@ -42,6 +42,7 @@ Shared core (linked into both targets):
 - `src/AnalysisCache.*` manage the SQLite result cache.
 - `src/AnalysisCoordinator.*` and `src/NormalizeCoordinator.*` orchestrate background work.
 - `src/utils.*` and `src/version.h` are shared helpers.
+- `src/ConsolePrint.*` provide styled console output helpers for the CLI.
 
 GUI only:
 
@@ -101,6 +102,10 @@ and remember that a shared file must compile cleanly for both the GUI and the CL
   Keep `.quoted()` calls on arguments instead of putting quote characters in the format string,
   and keep `juce::newLine` outside format strings in text that leaves the process,
   because it is `\r\n` on Windows.
+- Write console output with `fmt::print` or the `console::` helpers in `src/ConsolePrint.h`,
+  not with `std::cout` / `std::cerr`.
+  Use `console::printError` and `console::printWarn` for user-facing error and warning messages.
+  Avoid `fmt::println`, because it triggers MSVC warning C4702 inside fmt with warnings as errors.
 - The logging helpers accept fmt format strings and arguments directly:
   `utils::logError("Analysis failed for {}: {}", path.quoted(), message)`.
   Do not wrap the message in a `utils::format` call first.

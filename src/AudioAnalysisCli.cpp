@@ -10,8 +10,6 @@
 #include "utils.h"
 #include "version.h"
 
-#include <iostream>
-
 /// CLI-only formatting helpers used when printing analysis results.
 namespace audiobatch::cli
 {
@@ -37,12 +35,18 @@ static juce::String formattedIntegratedLoudnessColumn(const AudioAnalysisRecord&
     return AudioAnalysisService::formatLoudnessCompact(record.integratedLufs).paddedLeft(' ', cliLoudnessColumnWidth);
 }
 
-/// Prints the column header line to stdout, matching the widths used by the result rows.
+/// Prints the bold column header line to stdout, matching the widths used by the result rows.
 static void printHeaderRow()
 {
-    std::cout << juce::String("dBFS").paddedLeft(' ', cliPeakColumnWidth) << "  "
-              << juce::String("dBTP").paddedLeft(' ', cliTruePeakColumnWidth) << "  "
-              << juce::String("LUFS-I").paddedLeft(' ', cliLoudnessColumnWidth) << "  TRACK" << juce::newLine;
+    console::printBold(
+        "{:>{}}  {:>{}}  {:>{}}  TRACK\n",
+        "dBFS",
+        cliPeakColumnWidth,
+        "dBTP",
+        cliTruePeakColumnWidth,
+        "LUFS-I",
+        cliLoudnessColumnWidth
+    );
 }
 
 /// Prints one aligned result line to stdout.
@@ -50,8 +54,13 @@ static void printHeaderRow()
 /// while normalization output can show full output paths.
 static void printResultRow(const AudioAnalysisRecord& record, const juce::String& trackLabel)
 {
-    std::cout << formattedPeakColumn(record) << "  " << formattedTruePeakColumn(record) << "  "
-              << formattedIntegratedLoudnessColumn(record) << "  " << trackLabel << juce::newLine;
+    fmt::print(
+        "{}  {}  {}  {}\n",
+        formattedPeakColumn(record),
+        formattedTruePeakColumn(record),
+        formattedIntegratedLoudnessColumn(record),
+        trackLabel
+    );
 }
 
 /// Picks the most informative path available for a normalized record,
