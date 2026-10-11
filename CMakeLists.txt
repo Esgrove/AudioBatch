@@ -274,8 +274,11 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/AudioAnalysisService.cpp"
     "src/AudioAnalysisService.h"
     "src/AudioAnalysisTypes.h"
+    "src/AudioFormatUtils.cpp"
+    "src/AudioFormatUtils.h"
     "src/AudioNormalizationService.cpp"
     "src/AudioNormalizationService.h"
+    "src/Cancellation.h"
     "src/ConsolePrint.cpp"
     "src/ConsolePrint.h"
     "src/DecodeFailureTracker.h"
@@ -558,6 +561,7 @@ target_sources(
         "tests/TestHelpers.h"
         "tests/TestMain.cpp"
         "tests/TestSuites.h"
+        "tests/UtilsTests.cpp"
 )
 # cmake-format: on
 

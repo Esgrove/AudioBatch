@@ -20,6 +20,7 @@ int main()
     suites.push_back(audiobatch::tests::createMetadataTests());
     suites.push_back(audiobatch::tests::createNormalizationTests());
     suites.push_back(audiobatch::tests::createProcessingTests());
+    suites.push_back(audiobatch::tests::createUtilsTests());
 
     juce::Array<juce::UnitTest*> tests;
     for (const auto& suite : suites) {

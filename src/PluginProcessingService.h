@@ -6,6 +6,7 @@
 #pragma once
 
 #include "AudioAnalysisService.h"
+#include "Cancellation.h"
 #include "PluginProcessing.h"
 
 #include <JuceHeader.h>
@@ -20,8 +21,7 @@ class PluginProcessingService
 {
 public:
     /// Returns true when the caller wants processing to stop as soon as possible.
-    /// Polled from the processing thread, so it must be thread-safe and cheap.
-    using CancellationCheck = std::function<bool()>;
+    using CancellationCheck = utils::CancellationCheck;
 
     /// Returns true when the file's format can be read for processing.
     static bool canProcessFile(const juce::File& file);
@@ -59,9 +59,4 @@ public:
         const std::vector<juce::AudioPluginInstance*>& chainInstances,
         const CancellationCheck& isCancelled = {}
     );
-
-private:
-    /// Returns a format manager private to the calling thread, with the basic formats registered.
-    /// Thread-local storage lets worker threads read files concurrently without sharing a manager or locking.
-    static juce::AudioFormatManager& getThreadLocalFormatManager();
 };

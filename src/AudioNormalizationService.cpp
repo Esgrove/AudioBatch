@@ -6,12 +6,12 @@
 
 #include "AudioNormalizationService.h"
 
+#include "AudioFormatUtils.h"
 #include "DecodeFailureTracker.h"
 #include "FileUtils.h"
 #include "Log.h"
 #include "MetadataService.h"
 #include "StringFormat.h"
-#include <unordered_map>
 
 #include <algorithm>
 #include <cmath>
@@ -33,88 +33,12 @@ constexpr auto normalizedAiffOutputExtension = ".aif";
 constexpr int defaultMp3BitsPerSample = 16;
 constexpr auto cancelledMessage = "Normalization was cancelled";
 
-/// Returns true when a cancellation check is set and reports that cancellation was requested.
-static bool isCancellationRequested(const AudioNormalizationService::CancellationCheck& isCancelled)
-{
-    return isCancelled != nullptr && isCancelled();
-}
-
-struct AudioNormalizationRuntimeState {
-    juce::AudioFormatManager readFormatManager;
-};
-
 struct AudioNormalizationFormatSupport {
     juce::String formatName;
     juce::StringArray fileExtensions;
     bool canNormalize = false;
     juce::String detail;
 };
-
-/// Returns the absolute magnitude of a signed peak sample value.
-static float peakMagnitude(const float peak)
-{
-    return std::abs(peak);
-}
-
-/// Copies JUCE reader metadata into the map type expected by juce::AudioFormatWriterOptions.
-static std::unordered_map<juce::String, juce::String> copyMetadata(const juce::StringPairArray& metadata)
-{
-    std::unordered_map<juce::String, juce::String> copiedMetadata;
-    const auto& keys = metadata.getAllKeys();
-    const auto& values = metadata.getAllValues();
-
-    for (int index = 0; index < metadata.size(); ++index) {
-        copiedMetadata[keys[index]] = values[index];
-    }
-
-    return copiedMetadata;
-}
-
-/// Returns the file's extension without the leading dot.
-static juce::String normalizedExtension(const juce::File& file)
-{
-    auto extension = file.getFileExtension();
-
-    if (extension.startsWithChar('.')) {
-        extension = extension.substring(1);
-    }
-
-    return extension;
-}
-
-/// Returns the extension text trimmed and without the leading dot.
-static juce::String normalizedExtension(const juce::String& extension)
-{
-    auto value = extension.trim();
-
-    if (value.startsWithChar('.')) {
-        value = value.substring(1);
-    }
-
-    return value;
-}
-
-/// Returns true when the extension identifies an MP3 file, ignoring case.
-static bool isMp3Extension(const juce::String& extension)
-{
-    return normalizedExtension(extension).equalsIgnoreCase("mp3");
-}
-
-/// Returns true when the file's extension identifies an MP3 source.
-static bool isMp3SourceFile(const juce::File& file)
-{
-    return isMp3Extension(normalizedExtension(file));
-}
-
-/// Finds the AIFF format used for writing output, or nullptr when it is unavailable in this build.
-static juce::AudioFormat* getAiffWriterFormat(const AudioNormalizationRuntimeState& runtimeState)
-{
-    if (auto* format = runtimeState.readFormatManager.findFormatForFileExtension("aif"); format != nullptr) {
-        return format;
-    }
-
-    return runtimeState.readFormatManager.findFormatForFileExtension("aiff");
-}
 
 /// Moves the temporary output into its final location and disposes of the original file.
 /// In-place AIFF output simply replaces the source.
@@ -230,37 +154,24 @@ static int resolvePreferredOutputBitDepth(
         return sourceRecord.bitsPerSample;
     }
 
-    if (isMp3SourceFile(sourceFile)) {
+    if (utils::isMp3File(sourceFile)) {
         return defaultMp3BitsPerSample;
     }
 
     return static_cast<int>(reader.bitsPerSample);
 }
 
-/// Returns the per-thread runtime state with a format manager that has the basic formats registered.
-/// Thread-local state avoids locking when normalize jobs run on multiple worker threads.
-static AudioNormalizationRuntimeState& getThreadLocalRuntimeState()
-{
-    thread_local auto runtimeState = [] {
-        auto initializedState = std::make_unique<AudioNormalizationRuntimeState>();
-        initializedState->readFormatManager.registerBasicFormats();
-        return initializedState;
-    }();
-
-    return *runtimeState;
-}
-
 /// Describes what normalization does with files of the given format for the support summary.
 static juce::String getNormalizableFormatDetail(const juce::StringArray& extensions)
 {
-    const auto primaryExtension = extensions.isEmpty() ? juce::String {} : normalizedExtension(extensions[0]);
+    const auto primaryExtension = extensions.isEmpty() ? juce::String {} : utils::normalizeExtension(extensions[0]);
 
     if (primaryExtension.equalsIgnoreCase("aif")) {
         // Output path matches the source path, so the existing file is rewritten in place.
         return "Rewritten in place as AIFF.";
     }
 
-    if (isMp3Extension(primaryExtension)) {
+    if (primaryExtension == "mp3") {
         return "Converted to a same-name AIFF file. The original MP3 is moved to the system trash.";
     }
 
@@ -269,20 +180,18 @@ static juce::String getNormalizableFormatDetail(const juce::StringArray& extensi
 
 /// Gathers per-format normalization support information for the support summary.
 /// Normalizable formats sort before read-only ones, then alphabetically by name.
-static std::vector<AudioNormalizationFormatSupport> collectFormatSupport(
-    AudioNormalizationRuntimeState const& runtimeState
-)
+static std::vector<AudioNormalizationFormatSupport> collectFormatSupport()
 {
     std::vector<AudioNormalizationFormatSupport> support;
-    support.reserve(static_cast<std::size_t>(runtimeState.readFormatManager.getNumKnownFormats()));
+    support.reserve(static_cast<std::size_t>(utils::threadLocalFormatManager().getNumKnownFormats()));
 
     // Normalization always writes AIFF output, so any readable format is normalizable
     // as long as an AIFF writer is available in this build.
-    auto* aiffWriterFormat = getAiffWriterFormat(runtimeState);
+    auto* aiffWriterFormat = utils::findAiffFormat(utils::threadLocalFormatManager());
     const bool aiffWriterAvailable = aiffWriterFormat != nullptr && canCreateProbeWriter(*aiffWriterFormat);
 
-    for (int index = 0; index < runtimeState.readFormatManager.getNumKnownFormats(); ++index) {
-        const auto* format = runtimeState.readFormatManager.getKnownFormat(index);
+    for (int index = 0; index < utils::threadLocalFormatManager().getNumKnownFormats(); ++index) {
+        const auto* format = utils::threadLocalFormatManager().getKnownFormat(index);
 
         if (format == nullptr) {
             continue;
@@ -425,7 +334,7 @@ static juce::String renderNormalizedAudio(
     for (juce::int64 samplePosition = 0; samplePosition < reader.lengthInSamples;
          samplePosition += normalizationBlockSize)
     {
-        if (isCancellationRequested(isCancelled)) {
+        if (utils::isCancellationRequested(isCancelled)) {
             return cancelledMessage;
         }
 
@@ -509,7 +418,7 @@ std::optional<float> AudioNormalizationService::getNormalizationGain(
     juce::String& errorMessage
 )
 {
-    const auto peak = static_cast<double>(peakMagnitude(record.overallPeak));
+    const auto peak = static_cast<double>(utils::peakMagnitude(record.overallPeak));
 
     if (peak <= 0.0) {
         errorMessage = "File contains no signal that can be normalized";
@@ -540,7 +449,7 @@ int AudioNormalizationService::getOutputBitDepth(
     const juce::AudioFormatReader& reader
 )
 {
-    auto* writerFormat = getAiffWriterFormat(getThreadLocalRuntimeState());
+    auto* writerFormat = utils::findAiffFormat(utils::threadLocalFormatManager());
     const auto preferredBitDepth = resolvePreferredOutputBitDepth(record, reader, record.file);
     return writerFormat != nullptr ? resolveWriterBitDepth(*writerFormat, preferredBitDepth) : preferredBitDepth;
 }
@@ -552,28 +461,25 @@ juce::String AudioNormalizationService::batchOutputConflictMessage(const juce::F
 
 bool AudioNormalizationService::canNormalizeFile(const juce::File& file)
 {
-    const auto& runtimeState = getThreadLocalRuntimeState();
-
     // Source must be readable by JUCE and AIFF output must be writable.
-    const auto* readerFormat = runtimeState.readFormatManager.findFormatForFileExtension(normalizedExtension(file));
+    const auto* readerFormat = utils::threadLocalFormatManager().findFormatForFileExtension(utils::fileExtension(file));
 
     if (readerFormat == nullptr) {
         return false;
     }
 
-    return getAiffWriterFormat(runtimeState) != nullptr;
+    return utils::findAiffFormat(utils::threadLocalFormatManager()) != nullptr;
 }
 
 juce::String AudioNormalizationService::getNormalizationSupportMessage(const juce::File& file)
 {
-    const auto& runtimeState = getThreadLocalRuntimeState();
-    const auto* format = runtimeState.readFormatManager.findFormatForFileExtension(normalizedExtension(file));
+    const auto* format = utils::threadLocalFormatManager().findFormatForFileExtension(utils::fileExtension(file));
 
     if (format == nullptr) {
         return "Unsupported audio format";
     }
 
-    if (getAiffWriterFormat(runtimeState) == nullptr) {
+    if (utils::findAiffFormat(utils::threadLocalFormatManager()) == nullptr) {
         return "AIFF writer is not available in this build";
     }
 
@@ -582,8 +488,7 @@ juce::String AudioNormalizationService::getNormalizationSupportMessage(const juc
 
 juce::String AudioNormalizationService::getFormatSupportSummary()
 {
-    const auto& runtimeState = getThreadLocalRuntimeState();
-    const auto support = collectFormatSupport(runtimeState);
+    const auto support = collectFormatSupport();
 
     juce::StringArray writableLines;
     juce::StringArray readOnlyLines;
@@ -621,11 +526,6 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
     return message.trimEnd();
 }
 
-juce::AudioFormatManager& AudioNormalizationService::getThreadLocalFormatManager()
-{
-    return getThreadLocalRuntimeState().readFormatManager;
-}
-
 AudioNormalizationResult AudioNormalizationService::normalizeFile(
     const AudioAnalysisRecord& sourceRecord,
     const AudioNormalizationOptions& options,
@@ -654,9 +554,8 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
         return failNormalization(file, record.errorMessage);
     }
 
-    auto& runtimeState = getThreadLocalRuntimeState();
-    auto& formatManager = runtimeState.readFormatManager;
-    auto* writerFormat = getAiffWriterFormat(runtimeState);
+    auto& formatManager = utils::threadLocalFormatManager();
+    auto* writerFormat = utils::findAiffFormat(utils::threadLocalFormatManager());
 
     if (writerFormat == nullptr) {
         return failNormalization(file, "Unsupported audio format");
@@ -710,7 +609,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
                                    .withSampleRate(writerSampleRate)
                                    .withNumChannels(static_cast<int>(reader->numChannels))
                                    .withBitsPerSample(writerBitDepth)
-                                   .withMetadataValues(copyMetadata(reader->metadataValues));
+                                   .withMetadataValues(utils::copyMetadata(reader->metadataValues));
 
     auto writer = writerFormat->createWriterFor(outputStream, writerOptions);
 
@@ -737,7 +636,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
     // Check again before touching the original, since cancellation may arrive during the last block.
     // The coordinator drops results of a cancelled run,
     // so committing here would change files on disk without the caller ever learning about it.
-    if (isCancellationRequested(isCancelled)) {
+    if (utils::isCancellationRequested(isCancelled)) {
         return failNormalization(file, cancelledMessage);
     }
 

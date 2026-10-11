@@ -30,4 +30,6 @@ std::unique_ptr<juce::UnitTest> createProcessingTests();
 
 /// Creates the suite that checks normalization output paths, collisions, and the written audio.
 std::unique_ptr<juce::UnitTest> createNormalizationTests();
+/// Creates the suite that checks the shared file, format, string, and cancellation helpers.
+std::unique_ptr<juce::UnitTest> createUtilsTests();
 }  // namespace audiobatch::tests

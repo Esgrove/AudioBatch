@@ -6,7 +6,9 @@
 
 #include "AudioAnalysisService.h"
 
+#include "AudioFormatUtils.h"
 #include "DecodeFailureTracker.h"
+#include "FileUtils.h"
 #include "Log.h"
 #include "StringFormat.h"
 
@@ -72,23 +74,11 @@ struct EbuR128StateDeleter {
 
 using EbuR128StatePtr = std::unique_ptr<ebur128_state, EbuR128StateDeleter>;
 
-/// Returns the file extension in lowercase without the leading dot.
-static juce::String normalizedExtension(const juce::File& file)
-{
-    auto extension = file.getFileExtension();
-
-    if (extension.startsWithChar('.')) {
-        extension = extension.substring(1);
-    }
-
-    return extension.toLowerCase();
-}
-
 /// Returns true when the reader reports the decoder output bit depth instead of the source bit depth.
 /// JUCE's MP3 reader is the known case, since decoding hides the original encoding depth.
 static bool reportsDecodedBitDepth(const juce::AudioFormatReader& reader, const juce::File& file)
 {
-    if (normalizedExtension(file) == "mp3") {
+    if (utils::isMp3File(file)) {
         return true;
     }
 
@@ -233,29 +223,22 @@ static int resolveSourceBitsPerSample(const juce::AudioFormatReader& reader, con
     return static_cast<int>(reader.bitsPerSample);
 }
 
-/// Returns the absolute magnitude of a signed peak sample value.
-template<typename Value>
-static Value peakMagnitude(const Value peak)
-{
-    return std::abs(peak);
-}
-
 /// Picks the sample extreme with the larger magnitude, preserving its sign.
 static float signedPeakFromExtrema(const float minimum, const float maximum)
 {
-    return peakMagnitude(minimum) > peakMagnitude(maximum) ? minimum : maximum;
+    return utils::peakMagnitude(minimum) > utils::peakMagnitude(maximum) ? minimum : maximum;
 }
 
 /// Returns whichever sample peak has the larger magnitude, keeping its sign.
 static float dominantPeak(const float firstPeak, const float secondPeak)
 {
-    return peakMagnitude(firstPeak) > peakMagnitude(secondPeak) ? firstPeak : secondPeak;
+    return utils::peakMagnitude(firstPeak) > utils::peakMagnitude(secondPeak) ? firstPeak : secondPeak;
 }
 
 /// Returns whichever true peak has the larger magnitude, keeping its sign.
 static double dominantPeak(const double firstPeak, const double secondPeak)
 {
-    return peakMagnitude(firstPeak) > peakMagnitude(secondPeak) ? firstPeak : secondPeak;
+    return utils::peakMagnitude(firstPeak) > utils::peakMagnitude(secondPeak) ? firstPeak : secondPeak;
 }
 
 /// Clamps non-finite or silent loudness readings to the shared negative infinity sentinel.
@@ -343,7 +326,7 @@ static std::weak_ordering compareBySortMode(
     const std::weak_ordering byName = compareText(lhs.fileName, rhs.fileName) <=> 0;
     const std::weak_ordering byPath = compareText(lhs.fullPath, rhs.fullPath) <=> 0;
     const auto byLoudness = compareValues(lhs.integratedLufs, rhs.integratedLufs);
-    const auto byPeak = compareValues(peakMagnitude(lhs.overallPeak), peakMagnitude(rhs.overallPeak));
+    const auto byPeak = compareValues(utils::peakMagnitude(lhs.overallPeak), utils::peakMagnitude(rhs.overallPeak));
 
     switch (sortMode) {
         case AudioAnalysisSortMode::name:
@@ -365,31 +348,14 @@ static std::weak_ordering compareBySortMode(
 
 using namespace audiobatch::analysis;
 
-juce::AudioFormatManager& AudioAnalysisService::getThreadLocalFormatManager()
-{
-    thread_local juce::AudioFormatManager formatManager;
-    thread_local const bool initialized = [] {
-        formatManager.registerBasicFormats();
-        return true;
-    }();
-
-    juce::ignoreUnused(initialized);
-    return formatManager;
-}
-
 bool AudioAnalysisService::isSupportedAudioFile(const juce::File& file)
 {
     if (!file.existsAsFile()) {
         return false;
     }
 
-    const auto& formatManager = getThreadLocalFormatManager();
-    auto extension = file.getFileExtension();
-
-    if (extension.startsWithChar('.')) {
-        extension = extension.substring(1);
-    }
-
+    const auto& formatManager = utils::threadLocalFormatManager();
+    const auto extension = utils::fileExtension(file);
     return extension.isNotEmpty() && formatManager.findFormatForFileExtension(extension) != nullptr;
 }
 
@@ -413,7 +379,7 @@ juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
         }
     };
 
-    const auto cancelled = [&isCancelled] { return isCancelled != nullptr && isCancelled(); };
+    const auto cancelled = [&isCancelled] { return utils::isCancellationRequested(isCancelled); };
 
     for (const auto& inputPath : inputPaths) {
         if (cancelled()) {
@@ -526,7 +492,7 @@ static DecodeMeasurements measureDecodedAudio(
 
     for (std::int64_t samplePosition = 0; samplePosition < reader.lengthInSamples; samplePosition += analysisBlockSize)
     {
-        if (isCancelled != nullptr && isCancelled()) {
+        if (utils::isCancellationRequested(isCancelled)) {
             measurements.errorMessage = "Analysis was cancelled";
             return measurements;
         }
@@ -581,7 +547,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file, co
         return failAnalysis(std::move(record), "File does not exist");
     }
 
-    auto& formatManager = getThreadLocalFormatManager();
+    auto& formatManager = utils::threadLocalFormatManager();
     std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
 
     if (reader == nullptr) {
@@ -659,12 +625,12 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file, co
 
 juce::String AudioAnalysisService::formatPeakDisplay(const float peak)
 {
-    return formatAmplitudeDisplay(peakMagnitude(static_cast<double>(peak)), " dBFS");
+    return formatAmplitudeDisplay(utils::peakMagnitude(static_cast<double>(peak)), " dBFS");
 }
 
 juce::String AudioAnalysisService::formatTruePeakDisplay(const double truePeak)
 {
-    return formatAmplitudeDisplay(peakMagnitude(truePeak), " dBTP");
+    return formatAmplitudeDisplay(utils::peakMagnitude(truePeak), " dBTP");
 }
 
 juce::String AudioAnalysisService::formatLoudnessDisplay(const double loudness)
@@ -674,12 +640,12 @@ juce::String AudioAnalysisService::formatLoudnessDisplay(const double loudness)
 
 juce::String AudioAnalysisService::formatPeakCompact(const double peak)
 {
-    return formatAmplitudeDisplay(peakMagnitude(peak), {});
+    return formatAmplitudeDisplay(utils::peakMagnitude(peak), {});
 }
 
 juce::String AudioAnalysisService::formatTruePeakCompact(const double truePeak)
 {
-    return formatAmplitudeDisplay(peakMagnitude(truePeak), {});
+    return formatAmplitudeDisplay(utils::peakMagnitude(truePeak), {});
 }
 
 juce::String AudioAnalysisService::formatLoudnessCompact(const double loudness)
@@ -699,7 +665,7 @@ double AudioAnalysisService::getAverageBitrateKbps(const AudioAnalysisRecord& re
 juce::String AudioAnalysisService::formatBitsPerSampleDisplay(const AudioAnalysisRecord& record)
 {
     if (record.bitsPerSample <= 0) {
-        return normalizedExtension(record.file) == "mp3" ? "Unknown" : "-";
+        return utils::isMp3File(record.file) ? "Unknown" : "-";
     }
 
     return juce::String(record.bitsPerSample);

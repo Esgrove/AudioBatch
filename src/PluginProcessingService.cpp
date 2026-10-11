@@ -17,6 +17,7 @@
 
 #include "PluginProcessingService.h"
 
+#include "AudioFormatUtils.h"
 #include "AudioNormalizationService.h"
 #include "DecodeFailureTracker.h"
 #include "FileUtils.h"
@@ -58,46 +59,6 @@ constexpr double maximumTailSeconds = 30.0;
 static PluginProcessingResult fail(const juce::File& file, const juce::String& message)
 {
     return PluginProcessingResult::failure(file, message);
-}
-
-/// Locates the AIFF format among the registered formats by name,
-/// so the writer does not depend on registration order.
-/// Returns nullptr when no AIFF format is available.
-static juce::AudioFormat* findAiffFormat(juce::AudioFormatManager const& formatManager)
-{
-    for (int i = 0; i < formatManager.getNumKnownFormats(); ++i) {
-        auto* format = formatManager.getKnownFormat(i);
-        if (format == nullptr) {
-            continue;
-        }
-
-        if (format->getFormatName().containsIgnoreCase("AIFF")) {
-            return format;
-        }
-    }
-
-    return nullptr;
-}
-
-/// Converts reader metadata into the map type that the writer options expect,
-/// so the output file keeps the metadata JUCE read from the input.
-static std::unordered_map<juce::String, juce::String> copyMetadata(const juce::StringPairArray& metadata)
-{
-    std::unordered_map<juce::String, juce::String> result;
-    const auto& keys = metadata.getAllKeys();
-    const auto& values = metadata.getAllValues();
-
-    for (int index = 0; index < keys.size(); ++index) {
-        result.emplace(keys[index], values[index]);
-    }
-
-    return result;
-}
-
-/// Returns the magnitude of a peak value, since analysis records may store signed peaks.
-static float peakMagnitude(const float peak)
-{
-    return std::abs(peak);
 }
 
 /// Clamps a file's channel count to a sane range
@@ -191,12 +152,6 @@ static void enableOfflineRendering(juce::AudioPluginInstance& plugin)
 #endif
 }
 
-/// Returns true when a cancellation check is set and reports that processing should stop.
-static bool isCancellationRequested(const PluginProcessingService::CancellationCheck& isCancelled)
-{
-    return isCancelled != nullptr && isCancelled();
-}
-
 /// A function posted from a worker thread to the message thread,
 /// shared between the waiting worker and the queued message.
 /// The state moves from pending to either running or abandoned exactly once,
@@ -236,7 +191,7 @@ static bool callOnMessageThread(
         return true;
     }
 
-    if (isCancellationRequested(isCancelled)) {
+    if (utils::isCancellationRequested(isCancelled)) {
         return false;
     }
 
@@ -259,7 +214,7 @@ static bool callOnMessageThread(
     }
 
     while (!call->finished.wait(messageThreadPollIntervalMs)) {
-        if (!isCancellationRequested(isCancelled)) {
+        if (!utils::isCancellationRequested(isCancelled)) {
             continue;
         }
 
@@ -365,7 +320,7 @@ using namespace audiobatch::plugin_processing;
 
 bool PluginProcessingService::canProcessFile(const juce::File& file)
 {
-    auto& formatManager = getThreadLocalFormatManager();
+    auto& formatManager = utils::threadLocalFormatManager();
     const std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
     return reader != nullptr;
 }
@@ -373,19 +328,6 @@ bool PluginProcessingService::canProcessFile(const juce::File& file)
 juce::File PluginProcessingService::getProcessingOutputFile(const juce::File& input)
 {
     return AudioNormalizationService::getOutputFile(input);
-}
-
-juce::AudioFormatManager& PluginProcessingService::getThreadLocalFormatManager()
-{
-    thread_local juce::AudioFormatManager formatManager;
-    thread_local bool initialized = false;
-
-    if (!initialized) {
-        formatManager.registerBasicFormats();
-        initialized = true;
-    }
-
-    return formatManager;
 }
 
 /// Returns an error message when the record or the plugin chain cannot be processed, or an empty string when it can.
@@ -418,7 +360,7 @@ static float getInputGain(const AudioAnalysisRecord& record, const PluginProcess
     }
 
     if (options.normalizeBeforePlugin) {
-        const auto peak = peakMagnitude(record.overallPeak);
+        const auto peak = utils::peakMagnitude(record.overallPeak);
         if (peak > 0.0f) {
             return 1.0f / peak;
         }
@@ -573,7 +515,7 @@ static juce::String renderThroughChain(
     const auto totalSamples = reader.lengthInSamples + latencySamples + preparation.tailSamples;
 
     for (juce::int64 samplePosition = 0; samplePosition < totalSamples; samplePosition += processingBlockSize) {
-        if (isCancellationRequested(isCancelled)) {
+        if (utils::isCancellationRequested(isCancelled)) {
             return cancelledMessage;
         }
 
@@ -685,7 +627,7 @@ static juce::String writeFinalOutput(
     juce::Random random(ditherSeed);
 
     for (juce::int64 samplePosition = 0; samplePosition < finalLength; samplePosition += finalizeBlockSize) {
-        if (isCancellationRequested(isCancelled)) {
+        if (utils::isCancellationRequested(isCancelled)) {
             return cancelledMessage;
         }
 
@@ -855,7 +797,7 @@ static juce::String writeProcessedAiff(
                                    .withSampleRate(sourceReader.sampleRate)
                                    .withNumChannels(static_cast<int>(renderedReader->numChannels))
                                    .withBitsPerSample(bitsPerSample)
-                                   .withMetadataValues(copyMetadata(sourceReader.metadataValues));
+                                   .withMetadataValues(utils::copyMetadata(sourceReader.metadataValues));
     const auto writer = aiffFormat.createWriterFor(outputStream, writerOptions);
 
     if (writer == nullptr) {
@@ -886,14 +828,14 @@ PluginProcessingResult PluginProcessingService::processFile(
         return fail(file, record.errorMessage);
     }
 
-    auto& formatManager = getThreadLocalFormatManager();
+    auto& formatManager = utils::threadLocalFormatManager();
     std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
 
     if (reader == nullptr) {
         return fail(file, "Unsupported or unreadable audio file");
     }
 
-    auto* aiffFormat = findAiffFormat(formatManager);
+    auto* aiffFormat = utils::findAiffFormat(formatManager);
     if (aiffFormat == nullptr) {
         return fail(file, "AIFF writer not available in this build");
     }
@@ -974,7 +916,7 @@ PluginProcessingResult PluginProcessingService::processFile(
     // Check again before touching the original, since cancellation may arrive during the last render block.
     // The coordinator drops results of a cancelled run,
     // so committing here would change files on disk without the caller ever learning about it.
-    if (isCancellationRequested(isCancelled)) {
+    if (utils::isCancellationRequested(isCancelled)) {
         utils::deleteFile(temporaryFile.getFile());
         return fail(file, cancelledMessage);
     }
