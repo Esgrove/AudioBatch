@@ -141,6 +141,7 @@ jobs:
           ninja -C cmake-build-mac-debug \
             AudioBatch_artefacts/JuceLibraryCode/JuceHeader.h \
             AudioBatchCli_artefacts/JuceLibraryCode/JuceHeader.h \
+            AudioBatchTests_artefacts/JuceLibraryCode/JuceHeader.h \
             juce_binarydata_Assets/JuceLibraryCode/BinaryData.h
 
       # Only this step uses the Homebrew LLVM tools,
