@@ -3,11 +3,14 @@
 /// installs the custom look-and-feel, and builds the platform menu bar,
 /// plus the JUCEApplication subclass that drives startup and shutdown.
 
+#include "AppInfo.h"
 #include "AudioBatchComponent.h"
+#include "ConsolePrint.h"
 #include "CustomLookAndFeel.h"
+#include "Log.h"
 #include "PluginChain.h"
 #include "PluginScanner.h"
-#include "utils.h"
+#include "StringFormat.h"
 
 #include <JuceHeader.h>
 
@@ -395,7 +398,7 @@ public:
     void initialise(const juce::String& commandLineParameters) override
     {
         if (isVersionRequest(commandLineParameters)) {
-            utils::printLineToConsole(utils::versionLine(getApplicationName()));
+            console::printLineToConsole(utils::versionLine(getApplicationName()));
             setApplicationReturnValue(0);
             quit();
             return;

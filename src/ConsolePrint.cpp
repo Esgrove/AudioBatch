@@ -133,4 +133,20 @@ void printWarn(const juce::String& message)
 {
     printWarn(std::string_view {message.toRawUTF8(), message.getNumBytesAsUTF8()});
 }
+
+void printLineToConsole(const juce::String& text)
+{
+#if JUCE_WINDOWS
+    if (auto* const outputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+        outputHandle == nullptr || outputHandle == INVALID_HANDLE_VALUE)
+    {
+        if (AttachConsole(ATTACH_PARENT_PROCESS) != 0) {
+            FILE* stream = nullptr;
+            freopen_s(&stream, "CONOUT$", "w", stdout);
+        }
+    }
+#endif
+    fmt::print("{}\n", text);
+    std::fflush(stdout);
+}
 }  // namespace console

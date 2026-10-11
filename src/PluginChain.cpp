@@ -8,9 +8,9 @@
 #include "PluginChain.h"
 
 #include "CustomLookAndFeel.h"
+#include "Log.h"
 #include "PluginChainEditor.h"
 #include "StringFormat.h"
-#include "utils.h"
 
 #include <algorithm>
 

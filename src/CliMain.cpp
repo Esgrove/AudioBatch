@@ -5,10 +5,12 @@
 /// translating the outcome into a process exit code.
 /// When launched as a plugin scan worker by a plugin rescan, it runs the worker instead.
 
+#include "AppInfo.h"
 #include "AudioAnalysisCli.h"
+#include "ConsolePrint.h"
+#include "Log.h"
 #include "PluginListCli.h"
 #include "PluginScanner.h"
-#include "utils.h"
 
 #include <cstddef>
 #include <span>

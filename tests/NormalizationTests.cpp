@@ -6,9 +6,9 @@
 
 #include "AudioAnalysisService.h"
 #include "AudioNormalizationService.h"
+#include "StringFormat.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
-#include "utils.h"
 
 #include <cmath>
 #include <vector>

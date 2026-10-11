@@ -6,10 +6,13 @@
 
 #include "AudioBatchComponent.h"
 
+#include "AppInfo.h"
 #include "AudioAnalysisService.h"
 #include "CustomLookAndFeel.h"
+#include "FileUtils.h"
+#include "Log.h"
 #include "PluginProcessingService.h"
-#include "utils.h"
+#include "StringFormat.h"
 #include <string_view>
 
 #include <algorithm>

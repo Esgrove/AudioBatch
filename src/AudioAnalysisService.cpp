@@ -7,7 +7,8 @@
 #include "AudioAnalysisService.h"
 
 #include "DecodeFailureTracker.h"
-#include "utils.h"
+#include "Log.h"
+#include "StringFormat.h"
 
 extern "C" {
 #include <ebur128.h>

@@ -5,7 +5,8 @@
 
 #include "AnalysisCache.h"
 
-#include "utils.h"
+#include "Log.h"
+#include "StringFormat.h"
 #include "version.h"
 
 #include <algorithm>

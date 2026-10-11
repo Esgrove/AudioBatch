@@ -7,7 +7,9 @@
 
 #include "AudioAnalysisService.h"
 #include "AudioNormalizationService.h"
-#include "utils.h"
+#include "ConsolePrint.h"
+#include "Log.h"
+#include "StringFormat.h"
 #include "version.h"
 
 #include <algorithm>

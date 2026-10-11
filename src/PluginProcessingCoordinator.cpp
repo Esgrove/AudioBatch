@@ -10,7 +10,7 @@
 #include "PluginProcessingCoordinator.h"
 
 #include "AudioNormalizationService.h"
-#include "utils.h"
+#include "StringFormat.h"
 
 #include <algorithm>
 #include <map>

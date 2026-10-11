@@ -8,7 +8,9 @@
 
 #include "PluginScanner.h"
 
-#include "utils.h"
+#include "AppInfo.h"
+#include "Log.h"
+#include "StringFormat.h"
 #include <condition_variable>
 
 #include <chrono>
