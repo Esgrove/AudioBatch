@@ -88,6 +88,19 @@ public:
             expect(cache.getAnalysis(keptFile, cached));
         }
 
+        beginTest("Pruning keeps rows of files whose folder is missing, such as an unmounted drive");
+        {
+            const auto folder = directory.getChildFile("unmounted");
+            expect(folder.createDirectory());
+            const auto unmountedFile = folder.getChildFile("tone.wav");
+            expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(unmountedFile));
+            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(unmountedFile)));
+            expect(cache.storeCustomGain(unmountedFile, 1.5f, true));
+            expect(folder.deleteRecursively());
+
+            expectEquals(cache.pruneMissingFiles(), 0);
+        }
+
         beginTest("The coordinator publishes the plan before results and drops the gain of a changed file");
         {
             const auto plannedFile = directory.copyFixture("sine_stereo_44100_16.wav", "planned.wav");
