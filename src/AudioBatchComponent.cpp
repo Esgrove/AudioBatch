@@ -294,9 +294,9 @@ private:
 
 /// Returns the table's header downcast to SecondarySortTableHeader.
 /// The table must have been created with that header type, which the constructor guarantees.
-static SecondarySortTableHeader& getSecondarySortHeader(juce::TableListBox& table)
+static SecondarySortTableHeader& getSecondarySortHeader(juce::TableListBox const& table)
 {
-    return static_cast<SecondarySortTableHeader&>(table.getHeader());
+    return dynamic_cast<SecondarySortTableHeader&>(table.getHeader());
 }
 
 /// Three-way natural-order string comparison shared by the column comparators.
@@ -653,7 +653,7 @@ AudioBatchComponent::AudioBatchComponent() :
         });
     });
 
-    pluginCoordinator.setStartErrorCallback([safeThis](juce::String errorMessage) {
+    pluginCoordinator.setStartErrorCallback([safeThis](const juce::String& errorMessage) {
         juce::MessageManager::callAsync([safeThis, errorMessage] {
             if (safeThis != nullptr) {
                 safeThis->pluginProcessingInProgress = false;
@@ -1127,7 +1127,7 @@ void AudioBatchComponent::showSupportedNormalizationFormats()
 
 juce::File AudioBatchComponent::getDefaultBrowseDirectory()
 {
-    const auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+    auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
     // TODO: add user config
 #if JUCE_WINDOWS
     auto dropboxDirectory = juce::File("D:\\Dropbox");
@@ -2375,7 +2375,7 @@ void AudioBatchComponent::clearCurrentAudioPreview()
 
 void AudioBatchComponent::mouseMagnify(const juce::MouseEvent& /*event*/, const float scaleFactor)
 {
-    const auto newZoom = zoomSlider.getValue() * (scaleFactor * scaleFactor);
+    const auto newZoom = zoomSlider.getValue() * static_cast<double>(scaleFactor * scaleFactor);
     zoomSlider.setValue(newZoom);
 }
 
@@ -2508,7 +2508,9 @@ void AudioBatchComponent::updateGainControlsForSelection()
     }
 
     const auto& record = analysisResults[static_cast<std::size_t>(referenceRow)];
-    gainSlider.setValue(record.hasCustomGain ? record.customGainDb : 0.0, juce::dontSendNotification);
+    gainSlider.setValue(
+        record.hasCustomGain ? static_cast<double>(record.customGainDb) : 0.0, juce::dontSendNotification
+    );
     gainClearButton.setEnabled(record.hasCustomGain);
 }
 
@@ -2588,7 +2590,7 @@ void AudioBatchComponent::processSelectedRecords()
     const auto workerCount
         = juce::jlimit(1, 4, juce::jmin(static_cast<int>(records.size()), juce::SystemStats::getNumCpus()));
 
-    auto& pluginFormatManager = pluginChain->getFormatManager();
+    auto const& pluginFormatManager = pluginChain->getFormatManager();
     std::vector<PluginProcessingCoordinator::PluginChainInstances> chains;
     chains.reserve(static_cast<std::size_t>(workerCount));
 
@@ -2667,7 +2669,7 @@ void AudioBatchComponent::processSelectedRecords()
         startStopButton.setEnabled(false);
         startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium);
         // Make doubly sure the path is preserved.
-        currentAudioFile = previousPreviewFile;
+        currentAudioFile = std::move(previousPreviewFile);
     }
 
     processingFailures.clear();

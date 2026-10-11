@@ -181,7 +181,7 @@ private:
         "Initial column widths must sum to default window width"
     );
 
-    std::vector<AudioAnalysisRecord>& records;
+    const std::vector<AudioAnalysisRecord>* records;
     std::function<void(int row)> selectionChanged;
     std::function<void(int columnId, bool isForwards)> sortChanged;
     std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested;

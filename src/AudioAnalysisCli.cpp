@@ -20,7 +20,8 @@ constexpr int cliLoudnessColumnWidth = 8;
 /// Formats the sample peak value right-aligned to the fixed dBFS column width.
 static juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
 {
-    return AudioAnalysisService::formatPeakCompact(record.overallPeak).paddedLeft(' ', cliPeakColumnWidth);
+    return AudioAnalysisService::formatPeakCompact(static_cast<double>(record.overallPeak))
+        .paddedLeft(' ', cliPeakColumnWidth);
 }
 
 /// Formats the true peak value right-aligned to the fixed dBTP column width.

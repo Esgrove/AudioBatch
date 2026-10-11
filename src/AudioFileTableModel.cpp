@@ -72,7 +72,7 @@ AudioFileTableModel::AudioFileTableModel(
     std::function<juce::String(const AudioAnalysisRecord& record)> statusLabelProvider,
     std::function<float()> phaseProvider
 ) :
-    records(sourceRecords),
+    records(&sourceRecords),
     selectionChanged(std::move(onSelectionChanged)),
     sortChanged(std::move(onSortChanged)),
     contextMenuRequested(std::move(onContextMenuRequested)),
@@ -194,7 +194,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
 
 int AudioFileTableModel::getNumRows()
 {
-    return static_cast<int>(records.size());
+    return static_cast<int>(records->size());
 }
 
 juce::var AudioFileTableModel::getDragSourceDescription(const juce::SparseSet<int>& currentlySelectedRows)
@@ -208,7 +208,7 @@ juce::var AudioFileTableModel::getDragSourceDescription(const juce::SparseSet<in
             continue;
         }
 
-        if (const auto& record = records[static_cast<std::size_t>(rowNumber)]; record.file.existsAsFile()) {
+        if (const auto& record = (*records)[static_cast<std::size_t>(rowNumber)]; record.file.existsAsFile()) {
             filePaths.addIfNotAlreadyThere(record.file.getFullPathName());
         }
     }
@@ -251,7 +251,7 @@ void AudioFileTableModel::paintCell(
         return;
     }
 
-    const auto& record = records[static_cast<std::size_t>(rowNumber)];
+    const auto& record = (*records)[static_cast<std::size_t>(rowNumber)];
     juce::String text;
     auto justification = juce::Justification::centredLeft;
     auto textBounds = juce::Rectangle(4, 0, width - 8, height);

@@ -18,6 +18,7 @@ extern "C" {
 #include <cstdint>
 #include <memory>
 #include <set>
+#include <span>
 #include <vector>
 
 /// Internal helpers for peak comparisons and stable record sorting.
@@ -174,7 +175,10 @@ static int extractTaggedMp3BitDepth(const juce::File& file)
         return 0;
     }
 
-    if (((header[6] | header[7] | header[8] | header[9]) & 0x80U) != 0U) {
+    constexpr auto sizeFieldOffset = 6U;
+    constexpr auto sizeFieldLength = 4U;
+    const auto sizeField = std::span(header).subspan(sizeFieldOffset, sizeFieldLength);
+    if (std::ranges::any_of(sizeField, [](const std::uint8_t byte) { return (byte & 0x80U) != 0U; })) {
         return 0;
     }
 
@@ -286,7 +290,10 @@ static bool isEndOfFileReadFailure(
 /// Creates an ebur128 state configured for integrated, short-term, and true peak measurement.
 static EbuR128StatePtr createLoudnessState(const int channelCount, const int sampleRate)
 {
-    constexpr auto mode = EBUR128_MODE_I | EBUR128_MODE_S | EBUR128_MODE_TRUE_PEAK;
+    constexpr auto mode = static_cast<int>(
+        static_cast<unsigned int>(EBUR128_MODE_I) | static_cast<unsigned int>(EBUR128_MODE_S)
+        | static_cast<unsigned int>(EBUR128_MODE_TRUE_PEAK)
+    );
     return EbuR128StatePtr(
         ebur128_init(static_cast<unsigned int>(channelCount), static_cast<unsigned long>(sampleRate), mode)
     );
@@ -347,12 +354,12 @@ juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
     juce::Array<juce::File> files;
     std::set<juce::String> seenPaths;
 
-    auto addFile = [&](const juce::File& file) {
+    auto const addFile = [&](const juce::File& file) {
         if (!isSupportedAudioFile(file)) {
             return;
         }
 
-        if (const auto normalizedPath = file.getFullPathName(); seenPaths.insert(normalizedPath).second) {
+        if (const auto& normalizedPath = file.getFullPathName(); seenPaths.insert(normalizedPath).second) {
             files.add(file);
         }
     };
@@ -399,7 +406,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
         return failAnalysis(std::move(record), "Unsupported audio stream parameters");
     }
 
-    auto loudnessState = createLoudnessState(channelCount, sampleRate);
+    auto const loudnessState = createLoudnessState(channelCount, sampleRate);
 
     if (loudnessState == nullptr) {
         return failAnalysis(std::move(record), "Could not initialize loudness analyzer");
@@ -449,7 +456,9 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
                 const auto sample = readBuffer.getSample(channel, frame);
                 minSamples[static_cast<size_t>(channel)] = std::min(minSamples[static_cast<size_t>(channel)], sample);
                 maxSamples[static_cast<size_t>(channel)] = std::max(maxSamples[static_cast<size_t>(channel)], sample);
-                interleaved[static_cast<size_t>(frame * channelCount + channel)] = sample;
+                interleaved
+                    [static_cast<size_t>(frame) * static_cast<size_t>(channelCount) + static_cast<size_t>(channel)]
+                    = sample;
             }
         }
 
@@ -539,7 +548,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file)
 
 juce::String AudioAnalysisService::formatPeakDisplay(const float peak)
 {
-    return formatAmplitudeDisplay(peakMagnitude(peak), " dBFS");
+    return formatAmplitudeDisplay(peakMagnitude(static_cast<double>(peak)), " dBFS");
 }
 
 juce::String AudioAnalysisService::formatTruePeakDisplay(const double truePeak)
@@ -617,7 +626,7 @@ juce::String AudioAnalysisService::formatStatus(const AudioAnalysisRecord& recor
         case AudioAnalysisStatus::analyzed:
             return "Analyzed";
         case AudioAnalysisStatus::failed:
-            return record.errorMessage.isNotEmpty() ? "Failed" : "Failed";
+            return "Failed";
         case AudioAnalysisStatus::pending:
         default:
             return "Pending";
@@ -635,17 +644,17 @@ void AudioAnalysisService::sortRecords(
             return stateComparison < 0;
         }
 
-        auto comparePeaks = [ascending](const float left, const float right) {
+        auto const comparePeaks = [ascending](const float left, const float right) {
             const auto leftMagnitude = peakMagnitude(left);
             const auto rightMagnitude = peakMagnitude(right);
             return ascending ? leftMagnitude < rightMagnitude : leftMagnitude > rightMagnitude;
         };
 
-        auto compareStrings = [ascending](const juce::String& left, const juce::String& right) {
+        auto const compareStrings = [ascending](const juce::String& left, const juce::String& right) {
             return ascending ? compareText(left, right) < 0 : compareText(left, right) > 0;
         };
 
-        auto compareLoudness
+        auto const compareLoudness
             = [ascending](const double left, const double right) { return ascending ? left < right : left > right; };
 
         switch (sortMode) {

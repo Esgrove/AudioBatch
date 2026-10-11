@@ -454,6 +454,96 @@ else()
     add_link_options(-Wl,-weak_reference_mismatches,weak)
 endif()
 
+# Applies the stricter warning set to the project's own sources only.
+# JUCE module sources are compiled into the targets and are not written to these rules,
+# so the options are attached per source file instead of per target.
+# Every option is a front-end check, so the result does not depend on the optimization level.
+function(audiobatch_set_source_warnings)
+    set(project_sources "")
+    foreach (target IN LISTS ARGN)
+        get_target_property(target_sources ${target} SOURCES)
+        foreach (source IN LISTS target_sources)
+            if (source MATCHES "^src/.*\\.cpp$")
+                list(APPEND project_sources "${CMAKE_SOURCE_DIR}/${source}")
+            endif ()
+        endforeach ()
+    endforeach ()
+    list(REMOVE_DUPLICATES project_sources)
+
+    if (MSVC)
+        set(options
+            # Source files and string literals are UTF-8, whatever code page the build machine uses.
+            /utf-8
+            # Implicit conversions that lose data, change sign or sign-extend.
+            /we4242
+            /we4254
+            /we4287
+            /we4388
+            /we4800
+            /we4826
+            # A virtual function that overrides nothing, and a polymorphic class without a virtual destructor.
+            /we4263
+            /we4265
+            # Members initialized out of declaration order.
+            /we5038
+            # Unannotated switch fall-through.
+            /we5262
+            # Pointer truncation, and string literals cast to the wrong character type.
+            /we4311
+            /we4905
+            /we4906
+            # Expressions that are always false or have no effect, and misused comma operators.
+            /we4296
+            /we4545
+            /we4546
+            /we4547
+            /we4549
+            /we4555
+            # A loop variable used outside its loop, and an illegal copy-initialization.
+            /we4289
+            /we4928
+        )
+    else ()
+        set(options
+            # JUCE headers are written to JUCE's own rules, so they are treated as system headers.
+            # Clang keeps the system classification when the same directory is also a normal include directory.
+            -isystem "${CMAKE_SOURCE_DIR}/JUCE/modules"
+            # Implicit float to double widening, which is easy to introduce in single precision audio code.
+            -Wdouble-promotion
+            # Casts written the C way, and casts that drop qualifiers.
+            -Wold-style-cast
+            -Wcast-qual
+            # Class hierarchies.
+            -Wnon-virtual-dtor
+            -Wsuggest-override
+            # Unannotated switch fall-through.
+            -Wimplicit-fallthrough
+            -Wformat=2
+            -Wnull-dereference
+            # Dead code, stray semicolons and misused comma operators.
+            -Wcomma
+            -Wextra-semi-stmt
+            -Wunreachable-code-aggressive
+            -Wredundant-decls
+            -Wmissing-declarations
+            # Unused code that is not caught by the default set.
+            -Wunused-member-function
+            -Wunused-template
+            -Wunused-exception-parameter
+        )
+    endif ()
+
+    set_property(SOURCE ${project_sources} APPEND PROPERTY COMPILE_OPTIONS ${options})
+endfunction()
+
+audiobatch_set_source_warnings(AudioBatch AudioBatchCli)
+
+# START_JUCE_APPLICATION expands to a main function that casts `char**` to `const char**`,
+# which -Wcast-qual rejects and project code cannot change.
+if (NOT MSVC)
+    set_property(SOURCE "${CMAKE_SOURCE_DIR}/src/Main.cpp" APPEND PROPERTY COMPILE_OPTIONS -Wno-cast-qual)
+endif ()
+
 juce_add_binary_data(Assets NAMESPACE BinaryData
     SOURCES
         "assets/RobotoMono-Regular.ttf"

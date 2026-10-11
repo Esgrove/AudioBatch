@@ -229,7 +229,7 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     auto iconHeight = 0;
 
     if (icon != nullptr) {
-        iconHeight = juce::roundToIntAccurate(font.getHeight());
+        iconHeight = juce::roundToIntAccurate(static_cast<double>(font.getHeight()));
         iconWidth = icon->getWidth() / icon->getHeight() * iconHeight + 4;
     }
 

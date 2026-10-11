@@ -420,9 +420,9 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     sqlite3_bind_int64(statement, 5, record.modifiedTimeMs);
     sqlite3_bind_int64(statement, 6, record.lengthInSamples);
     sqlite3_bind_double(statement, 7, record.durationSeconds);
-    sqlite3_bind_double(statement, 8, record.peakLeft);
-    sqlite3_bind_double(statement, 9, record.peakRight);
-    sqlite3_bind_double(statement, 10, record.overallPeak);
+    sqlite3_bind_double(statement, 8, static_cast<double>(record.peakLeft));
+    sqlite3_bind_double(statement, 9, static_cast<double>(record.peakRight));
+    sqlite3_bind_double(statement, 10, static_cast<double>(record.overallPeak));
     sqlite3_bind_double(statement, 11, record.truePeakLeft);
     sqlite3_bind_double(statement, 12, record.truePeakRight);
     sqlite3_bind_double(statement, 13, record.overallTruePeak);
@@ -437,7 +437,7 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     sqlite3_bind_int(statement, 22, 0);
     sqlite3_bind_int(statement, 23, analysisVersion);
     sqlite3_bind_int64(statement, 24, juce::Time::getCurrentTime().toMilliseconds());
-    sqlite3_bind_double(statement, 25, record.customGainDb);
+    sqlite3_bind_double(statement, 25, static_cast<double>(record.customGainDb));
     sqlite3_bind_int(statement, 26, record.hasCustomGain ? 1 : 0);
 
     const auto result = sqlite3_step(statement);
@@ -464,7 +464,7 @@ bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGa
         return false;
     }
 
-    sqlite3_bind_double(statement, 1, customGainDb);
+    sqlite3_bind_double(statement, 1, static_cast<double>(customGainDb));
     sqlite3_bind_int(statement, 2, hasCustomGain ? 1 : 0);
     sqlite3_bind_int64(statement, 3, juce::Time::getCurrentTime().toMilliseconds());
     bindText(statement, 4, normalizedPath(file));

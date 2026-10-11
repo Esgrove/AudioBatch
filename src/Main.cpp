@@ -331,7 +331,7 @@ private:
     /// Valid for the whole window lifetime because the constructor always installs an AudioBatchComponent.
     AudioBatchComponent& getAudioBatch() const
     {
-        return *static_cast<AudioBatchComponent*>(getContentComponent());
+        return *dynamic_cast<AudioBatchComponent*>(getContentComponent());
     }
 
     std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel = std::make_unique<juce::CustomLookAndFeel>(true);

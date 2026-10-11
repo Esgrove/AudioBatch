@@ -47,7 +47,7 @@ static PluginProcessingResult fail(const juce::File& file, const juce::String& m
 /// Locates the AIFF format among the registered formats by name,
 /// so the writer does not depend on registration order.
 /// Returns nullptr when no AIFF format is available.
-static juce::AudioFormat* findAiffFormat(juce::AudioFormatManager& formatManager)
+static juce::AudioFormat* findAiffFormat(juce::AudioFormatManager const& formatManager)
 {
     for (int i = 0; i < formatManager.getNumKnownFormats(); ++i) {
         auto* format = formatManager.getKnownFormat(i);
@@ -97,7 +97,7 @@ static int clampChannelCount(const int channels)
 /// If that fails we fall back through several common configurations.
 static bool configurePluginChannels(juce::AudioPluginInstance& plugin, const int numChannels, const double sampleRate)
 {
-    auto trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {
+    auto const trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {
         auto layout = plugin.getBusesLayout();
 
         if (layout.inputBuses.isEmpty() && layout.outputBuses.isEmpty()) {
@@ -210,7 +210,7 @@ static bool callOnMessageThread(
     const PluginProcessingService::CancellationCheck& isCancelled
 )
 {
-    auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
+    auto const* messageManager = juce::MessageManager::getInstanceWithoutCreating();
     if (messageManager == nullptr) {
         return false;
     }
@@ -224,7 +224,7 @@ static bool callOnMessageThread(
         return false;
     }
 
-    auto call = std::make_shared<MessageThreadCall>();
+    auto const call = std::make_shared<MessageThreadCall>();
     call->function = std::move(function);
 
     const bool posted = juce::MessageManager::callAsync([call] {
@@ -410,7 +410,7 @@ PluginProcessingResult PluginProcessingService::processFile(
     }
 
     const auto outputFile = getProcessingOutputFile(file);
-    juce::TemporaryFile temporaryFile(outputFile);
+    juce::TemporaryFile const temporaryFile(outputFile);
     std::unique_ptr<juce::OutputStream> outputStream(temporaryFile.getFile().createOutputStream().release());
 
     if (outputStream == nullptr) {
@@ -420,11 +420,11 @@ PluginProcessingResult PluginProcessingService::processFile(
     const auto numChannels = clampChannelCount(static_cast<int>(reader->numChannels));
     const auto sampleRate = reader->sampleRate;
 
-    auto writerOptions = juce::AudioFormatWriterOptions()
-                             .withSampleRate(sampleRate)
-                             .withNumChannels(numChannels)
-                             .withBitsPerSample(outputBitsPerSample)
-                             .withMetadataValues(copyMetadata(reader->metadataValues));
+    auto const writerOptions = juce::AudioFormatWriterOptions()
+                                   .withSampleRate(sampleRate)
+                                   .withNumChannels(numChannels)
+                                   .withBitsPerSample(outputBitsPerSample)
+                                   .withMetadataValues(copyMetadata(reader->metadataValues));
 
     std::unique_ptr<juce::AudioFormatWriter> writer(aiffFormat->createWriterFor(outputStream, writerOptions));
 
@@ -540,7 +540,7 @@ PluginProcessingResult PluginProcessingService::processFile(
         }
 
         const auto channelsToWrite = juce::jmin(numChannels, buffer.getNumChannels());
-        juce::AudioBuffer<float> writeView(
+        juce::AudioBuffer<float> const writeView(
             buffer.getArrayOfWritePointers(), channelsToWrite, firstSampleToWrite, samplesToWrite
         );
 

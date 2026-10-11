@@ -166,7 +166,7 @@ inline void logJson(const juce::var& object, const bool debug = false)
 inline void logSystemInfo()
 {
     // Get info first to avoid API call debug / error messages in the middle of the log message
-    auto info = utils::systemInfo();
+    auto const info = utils::systemInfo();
     logInfo("System info\n    {}", version::APP_NAME);
     for (const auto& line : info) {
 #if !JUCE_DEBUG
