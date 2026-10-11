@@ -60,6 +60,20 @@ public:
             expectEquals(AudioAnalysisService::formatBitrateDisplay(record), juce::String("320 kbps"));
         }
 
+        beginTest("The type label prefers the extension, then the format name");
+        {
+            AudioAnalysisRecord record;
+            record.file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("song.flac");
+            expectEquals(AudioAnalysisService::formatTypeLabel(record), juce::String("FLAC"));
+
+            record.file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("no_extension");
+            record.formatName = "WAV file";
+            expectEquals(AudioAnalysisService::formatTypeLabel(record), juce::String("WAV"));
+
+            record.formatName = {};
+            expectEquals(AudioAnalysisService::formatTypeLabel(record), juce::String("Unknown"));
+        }
+
         beginTest("Records sort by peak and by name");
         {
             std::vector<AudioAnalysisRecord> records(3);

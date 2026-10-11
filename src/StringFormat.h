@@ -3,6 +3,7 @@
 /// and utils::format, a compile-time checked wrapper around fmt::format
 /// that round-trips text through UTF-8 so results are safe for any juce::String content.
 /// Prefer utils::format over chained juce::String concatenation when building display and log text.
+/// Also holds small string helpers for matching names and escaping CSV fields.
 
 #pragma once
 
@@ -51,5 +52,21 @@ template<typename... Args>
 {
     const std::string result = fmt::format(formatString, std::forward<Args>(args)...);
     return juce::String::fromUTF8(result.c_str(), static_cast<int>(result.size()));
+}
+
+/// Returns the text trimmed and lowercased, for matching option values and other names case-insensitively.
+[[nodiscard]] inline juce::String normalizedToken(const juce::String& value)
+{
+    return value.trim().toLowerCase();
+}
+
+/// Quotes a CSV field when it contains a separator, a quote, or a line break, doubling any quotes inside.
+[[nodiscard]] inline juce::String escapeCsvField(const juce::String& field)
+{
+    if (!field.containsAnyOf(",\"\r\n")) {
+        return field;
+    }
+
+    return format("\"{}\"", field.replace("\"", "\"\""));
 }
 }  // namespace utils

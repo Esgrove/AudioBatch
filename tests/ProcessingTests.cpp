@@ -8,7 +8,6 @@
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
-#include <cmath>
 #include <vector>
 
 namespace audiobatch::tests
@@ -206,12 +205,6 @@ public:
     }
 
 private:
-    /// Returns the sample peak of a record in dBFS.
-    static double peakDecibels(const AudioAnalysisRecord& record)
-    {
-        return static_cast<double>(juce::Decibels::gainToDecibels(std::abs(record.overallPeak)));
-    }
-
     /// Processes the file through a single-plugin chain on the calling thread.
     static PluginProcessingResult process(
         const juce::File& source,

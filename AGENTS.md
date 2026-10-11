@@ -52,6 +52,7 @@ Shared core (linked into both targets):
   - `src/FileUtils.*` holds the file system helpers, such as moving files to the trash and extension checks.
   - `src/AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, and peak math.
   - `src/Cancellation.h` holds the `CancellationCheck` callback the services poll.
+  - `src/MessageThreadCall.*` holds the cancellable blocking call from a worker to the message thread.
   - `src/StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
   - `src/ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
   - `src/version.h` holds the build version constants.

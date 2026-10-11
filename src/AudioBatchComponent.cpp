@@ -159,10 +159,6 @@ constexpr int pathColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(A
 constexpr int nameColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnName);
 constexpr int pathColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnPath);
 
-/// Suffix that some decoders append to their format name, for example "WAV file".
-/// It is stripped when the format name is used as the file type label.
-constexpr auto formatNameFileSuffix = " file";
-
 /// Pixel sizes, spacing, and timing used to lay out and configure the main view.
 namespace layout
 {
@@ -299,40 +295,6 @@ static juce::String getRevealFileMenuLabel()
 #else
     return "Reveal in File Manager";
 #endif
-}
-
-/// Derives a short display label for a record's file type from its extension,
-/// falling back to the decoder's format name and finally to "Unknown".
-static juce::String getRecordTypeLabel(const AudioAnalysisRecord& record)
-{
-    if (const auto extension = record.file.getFileExtension().trimCharactersAtStart("."); extension.isNotEmpty()) {
-        return extension.toUpperCase();
-    }
-
-    auto formatName = record.formatName.trim();
-
-    if (formatName.endsWithIgnoreCase(formatNameFileSuffix)) {
-        formatName
-            = formatName.dropLastCharacters(static_cast<int>(std::string_view {formatNameFileSuffix}.size())).trimEnd();
-    }
-
-    if (formatName.isNotEmpty()) {
-        return formatName;
-    }
-
-    return "Unknown";
-}
-
-/// Returns the uppercase file extension for display, or "Unknown" when the file has none.
-static juce::String formatLabelForFile(const juce::File& file)
-{
-    auto extension = file.getFileExtension().trimCharactersAtStart(".").toUpperCase();
-
-    if (extension.isEmpty()) {
-        extension = "Unknown";
-    }
-
-    return extension;
 }
 
 /// Table header that maps ctrl or cmd clicks to a secondary sort request
@@ -486,7 +448,9 @@ static int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAna
             return compareNaturalStrings(lhs.fullPath, rhs.fullPath);
 
         case AudioFileTableModel::columnType:
-            return compareNaturalStrings(getRecordTypeLabel(lhs), getRecordTypeLabel(rhs));
+            return compareNaturalStrings(
+                AudioAnalysisService::formatTypeLabel(lhs), AudioAnalysisService::formatTypeLabel(rhs)
+            );
 
         case AudioFileTableModel::columnBitrate:
             return compareBitrates(lhs, rhs);
@@ -1820,7 +1784,9 @@ juce::String AudioBatchComponent::buildNormalizationUnavailableMessage(const std
             continue;
         }
 
-        unsupportedLines.add(utils::format("{} ({}): {}", record.fileName, formatLabelForFile(record.file), reason));
+        unsupportedLines.add(
+            utils::format("{} ({}): {}", record.fileName, AudioAnalysisService::formatTypeLabel(record), reason)
+        );
     }
 
     if (unsupportedLines.isEmpty()) {
@@ -2594,7 +2560,7 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
         return;
     }
 
-    rows.emplace_back("Format", getRecordTypeLabel(record));
+    rows.emplace_back("Format", AudioAnalysisService::formatTypeLabel(record));
     rows.emplace_back("Channels", juce::String(record.channels));
     rows.emplace_back("Bits per sample", AudioAnalysisService::formatBitsPerSampleDisplay(record));
     rows.emplace_back("Sample rate", juce::String(record.sampleRate));

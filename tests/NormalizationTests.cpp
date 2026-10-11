@@ -10,7 +10,6 @@
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
-#include <cmath>
 #include <vector>
 
 namespace audiobatch::tests
@@ -194,11 +193,7 @@ private:
             const auto result
                 = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), options);
             expect(!result.hasError(), result.errorMessage);
-            expectWithinAbsoluteError(
-                static_cast<double>(juce::Decibels::gainToDecibels(std::abs(result.analysisRecord.overallPeak))),
-                -1.0,
-                peakTolerance
-            );
+            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), -1.0, peakTolerance);
         }
 
         beginTest("A silent file cannot be normalized");
@@ -229,11 +224,7 @@ private:
         expectEquals(result.analysisRecord.channels, channels);
         expectEquals(result.analysisRecord.sampleRate, sampleRate);
         expectEquals(result.analysisRecord.bitsPerSample, bitsPerSample);
-        expectWithinAbsoluteError(
-            static_cast<double>(juce::Decibels::gainToDecibels(std::abs(result.analysisRecord.overallPeak))),
-            0.0,
-            peakTolerance
-        );
+        expectWithinAbsoluteError(peakDecibels(result.analysisRecord), 0.0, peakTolerance);
     }
 };
 

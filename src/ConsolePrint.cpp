@@ -6,6 +6,7 @@
 #include "ConsolePrint.h"
 
 #include <algorithm>
+#include <cstdint>
 
 #if JUCE_WINDOWS
 #include <juce_core/native/juce_BasicNativeHeaders.h>
@@ -148,5 +149,15 @@ void printLineToConsole(const juce::String& text)
 #endif
     fmt::print("{}\n", text);
     std::fflush(stdout);
+}
+
+int displayWidth(const juce::String& text)
+{
+    std::size_t width = 0;
+    for (auto character = text.getCharPointer(); !character.isEmpty();) {
+        width += fmt::detail::display_width_of(static_cast<std::uint32_t>(character.getAndAdvance()));
+    }
+
+    return static_cast<int>(width);
 }
 }  // namespace console

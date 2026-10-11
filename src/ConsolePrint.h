@@ -19,6 +19,10 @@
 
 namespace console
 {
+/// Returns how many terminal columns the text occupies, for example two for each CJK character.
+/// Uses fmt's own per-character width, so computed column widths match how fmt pads the cells.
+[[nodiscard]] int displayWidth(const juce::String& text);
+
 /// Prints one line of text to stdout and flushes it.
 /// On Windows a GUI subsystem executable has no console of its own,
 /// so when stdout is not already redirected to a pipe or file,

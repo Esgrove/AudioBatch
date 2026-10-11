@@ -1,8 +1,10 @@
 /// Shared helpers for the AudioBatch tests.
 /// Declares TemporaryDirectory, which owns a scratch folder that is deleted with it,
-/// and the functions that locate the committed audio fixtures in tests/fixtures.
+/// the functions that locate the committed audio fixtures in tests/fixtures, and level helpers.
 
 #pragma once
+
+#include "AudioAnalysisTypes.h"
 
 #include <JuceHeader.h>
 
@@ -44,4 +46,7 @@ private:
 
 /// Returns the committed fixture with the given file name from tests/fixtures.
 juce::File fixtureFile(const juce::String& name);
+
+/// Returns the sample peak of an analysis record in dBFS.
+double peakDecibels(const AudioAnalysisRecord& record);
 }  // namespace audiobatch::tests

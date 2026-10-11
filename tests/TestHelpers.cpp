@@ -3,6 +3,8 @@
 
 #include "TestHelpers.h"
 
+#include <cmath>
+
 namespace audiobatch::tests
 {
 TemporaryDirectory::TemporaryDirectory() :
@@ -36,5 +38,10 @@ juce::File fixtureFile(const juce::String& name)
 {
     // Set by CMake to the absolute path of tests/fixtures.
     return juce::File(AUDIOBATCH_TEST_FIXTURES_DIR).getChildFile(name);
+}
+
+double peakDecibels(const AudioAnalysisRecord& record)
+{
+    return static_cast<double>(juce::Decibels::gainToDecibels(std::abs(record.overallPeak)));
 }
 }  // namespace audiobatch::tests
