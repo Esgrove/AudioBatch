@@ -4,7 +4,8 @@
 
 cmake_minimum_required(VERSION 4.2)
 
-project("AudioBatch"
+project(
+    "AudioBatch"
     VERSION 0.8.0
     DESCRIPTION "App for batch processing audio files"
     HOMEPAGE_URL "https://github.com/Esgrove/AudioBatch"
@@ -52,7 +53,11 @@ execute_process(
 
 # Date and time
 string(TIMESTAMP DATE "%Y-%m-%d" UTC)
-string(TIMESTAMP TIMESTAMP "%Y-%m-%d_%H%M" UTC)
+string(
+    TIMESTAMP
+    TIMESTAMP "%Y-%m-%d_%H%M"
+    UTC
+)
 
 set(APP_BUILD_VERSION "${CMAKE_PROJECT_VERSION}.${BUILD_NUMBER}")
 set(APP_BUILD_NAME "${CMAKE_PROJECT_NAME}_${APP_BUILD_VERSION}_${GIT_HASH}_${TIMESTAMP}")
@@ -60,7 +65,7 @@ set(APP_BUILD_NAME "${CMAKE_PROJECT_NAME}_${APP_BUILD_VERSION}_${GIT_HASH}_${TIM
 # Version text printed by --version: version, date, commit, and branch.
 # The branch is left out when it is empty, for example on a detached HEAD in CI.
 set(APP_VERSION_STRING "${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}")
-if (GIT_BRANCH)
+if(GIT_BRANCH)
     string(APPEND APP_VERSION_STRING " ${GIT_BRANCH}")
 endif()
 
@@ -82,9 +87,9 @@ endif()
 # Must be set before any targets are created so it also covers JUCE and the fetched dependencies.
 # Only enabled for Ninja and Makefile generators,
 # since Xcode and Visual Studio generators need special setup that is not worth the complexity here.
-if (CMAKE_GENERATOR MATCHES "Ninja|Unix Makefiles" AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
+if(CMAKE_GENERATOR MATCHES "Ninja|Unix Makefiles" AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
     find_program(CCACHE_PROGRAM ccache)
-    if (CCACHE_PROGRAM)
+    if(CCACHE_PROGRAM)
         message(STATUS "Using ccache: ${CCACHE_PROGRAM}")
         set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
         set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
@@ -103,37 +108,28 @@ add_subdirectory(JUCE)
 
 find_package(SQLite3 QUIET)
 
-if (SQLite3_FOUND)
+if(SQLite3_FOUND)
     set(AUDIOBATCH_SQLITE_TARGET SQLite3::SQLite3)
 else()
-    FetchContent_Declare(sqlite3
+    FetchContent_Declare(
+        sqlite3
         URL https://www.sqlite.org/2026/sqlite-amalgamation-3510300.zip
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     FetchContent_GetProperties(sqlite3)
 
-    if (NOT sqlite3_POPULATED)
+    if(NOT sqlite3_POPULATED)
         cmake_policy(PUSH)
         cmake_policy(SET CMP0169 OLD)
         FetchContent_Populate(sqlite3)
         cmake_policy(POP)
     endif()
 
-    add_library(AudioBatchSQLite STATIC
-        ${sqlite3_SOURCE_DIR}/sqlite3.c
-    )
+    add_library(AudioBatchSQLite STATIC ${sqlite3_SOURCE_DIR}/sqlite3.c)
 
-    target_compile_definitions(AudioBatchSQLite
-        PRIVATE
-            SQLITE_DQS=0
-            SQLITE_OMIT_LOAD_EXTENSION=1
-            SQLITE_THREADSAFE=1
-    )
+    target_compile_definitions(AudioBatchSQLite PRIVATE SQLITE_DQS=0 SQLITE_OMIT_LOAD_EXTENSION=1 SQLITE_THREADSAFE=1)
 
-    target_include_directories(AudioBatchSQLite
-        PUBLIC
-            ${sqlite3_SOURCE_DIR}
-    )
+    target_include_directories(AudioBatchSQLite PUBLIC ${sqlite3_SOURCE_DIR})
 
     set(AUDIOBATCH_SQLITE_TARGET AudioBatchSQLite)
 endif()
@@ -144,11 +140,12 @@ endif()
 # On macOS the system provides no static zlib, so requiring one would make find_package(ZLIB) fail
 # and taglib would silently lose support for compressed ID3v2 frames.
 # Linking the system libz dynamically is the standard approach there.
-if (WIN32)
+if(WIN32)
     set(ZLIB_USE_STATIC_LIBS ON)
 endif()
 
-FetchContent_Declare(taglib
+FetchContent_Declare(
+    taglib
     GIT_REPOSITORY https://github.com/taglib/taglib.git
     GIT_TAG v2.3
     GIT_SHALLOW TRUE
@@ -168,35 +165,38 @@ FetchContent_MakeAvailable(taglib)
 
 # TagLib does not propagate its build-tree include directories to consumers,
 # so add them explicitly so we can include its public headers.
-target_include_directories(tag PUBLIC
-    $<BUILD_INTERFACE:${taglib_BINARY_DIR}>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ape>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/flac>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mp4>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mpeg/id3v1>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mpeg/id3v2/frames>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mpeg/id3v2>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mpeg>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ogg/flac>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ogg/opus>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ogg/vorbis>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ogg>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/riff/aiff>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/riff/wav>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/riff>
-    $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/toolkit>
+target_include_directories(
+    tag
+    PUBLIC
+        $<BUILD_INTERFACE:${taglib_BINARY_DIR}>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ape>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/flac>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mp4>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mpeg/id3v1>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mpeg/id3v2/frames>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mpeg/id3v2>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/mpeg>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ogg/flac>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ogg/opus>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ogg/vorbis>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/ogg>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/riff/aiff>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/riff/wav>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/riff>
+        $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/toolkit>
 )
 
-FetchContent_Declare(libebur128
+FetchContent_Declare(
+    libebur128
     GIT_REPOSITORY https://github.com/jiixyj/libebur128.git
     GIT_TAG v1.2.6
     GIT_SHALLOW TRUE
 )
 FetchContent_GetProperties(libebur128)
 
-if (NOT libebur128_POPULATED)
+if(NOT libebur128_POPULATED)
     cmake_policy(PUSH)
     cmake_policy(SET CMP0169 OLD)
     FetchContent_Populate(libebur128)
@@ -206,19 +206,17 @@ if (NOT libebur128_POPULATED)
     add_subdirectory(${libebur128_SOURCE_DIR}/ebur128 ${libebur128_BINARY_DIR}/ebur128 EXCLUDE_FROM_ALL)
 endif()
 
-target_include_directories(ebur128
-    PUBLIC
-        ${libebur128_SOURCE_DIR}/ebur128
-)
+target_include_directories(ebur128 PUBLIC ${libebur128_SOURCE_DIR}/ebur128)
 
 # Suppress bogus SSE2/FTZ #warning from libebur128 on ARM64
-if (NOT CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86")
+if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|i[3-6]86")
     target_compile_options(ebur128 PRIVATE -Wno-\#warnings)
 endif()
 
 # SYSTEM marks the fmt include directories as system includes,
 # so its headers are exempt from this project's warnings-as-errors flags.
-FetchContent_Declare(fmt
+FetchContent_Declare(
+    fmt
     GIT_REPOSITORY https://github.com/fmtlib/fmt.git
     GIT_TAG 12.2.0
     GIT_SHALLOW TRUE
@@ -234,14 +232,16 @@ set(FMT_FUZZ OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(fmt)
 
-juce_add_gui_app(AudioBatch
+juce_add_gui_app(
+    AudioBatch
     BUNDLE_ID com.esgrove.audiobatch
     COMPANY_NAME "Esgrove"
     COMPANY_WEBSITE "https://github.com/esgrove"
     ICON_BIG ${ICON_FILE}
     PRODUCT_NAME "AudioBatch"
     VERSION ${APP_BUILD_VERSION}
-    PLIST_TO_MERGE "<plist version=\"1.0\">
+    PLIST_TO_MERGE
+        "<plist version=\"1.0\">
         <dict>
             <key>CFBundleIconFile</key>
             <string>AppIcon.icns</string>
@@ -254,7 +254,8 @@ juce_add_gui_app(AudioBatch
 # PLUGINHOST_AU sets JUCE_PLUGINHOST_AU and links the AudioUnit and CoreAudioKit frameworks on macOS,
 # which the Audio Unit hosting code needs for the plugin listing.
 # The GUI gets CoreAudioKit through juce_audio_utils instead.
-juce_add_console_app(AudioBatchCli
+juce_add_console_app(
+    AudioBatchCli
     COMPANY_NAME "Esgrove"
     COMPANY_WEBSITE "https://github.com/esgrove"
     PRODUCT_NAME "audiobatch"
@@ -265,7 +266,8 @@ juce_add_console_app(AudioBatchCli
 juce_generate_juce_header(AudioBatch)
 juce_generate_juce_header(AudioBatchCli)
 
-target_sources(AudioBatch
+target_sources(
+    AudioBatch
     PRIVATE
         "src/AnalysisCache.cpp"
         "src/AnalysisCache.h"
@@ -312,12 +314,10 @@ target_sources(AudioBatch
         "src/utils.h"
 )
 
-target_include_directories(AudioBatch
-    PRIVATE
-        "include/ASIO_SDK"
-)
+target_include_directories(AudioBatch PRIVATE "include/ASIO_SDK")
 
-target_sources(AudioBatchCli
+target_sources(
+    AudioBatchCli
     PRIVATE
         "src/AnalysisCache.cpp"
         "src/AnalysisCache.h"
@@ -347,7 +347,8 @@ target_sources(AudioBatchCli
         "src/version.h"
 )
 
-target_compile_definitions(AudioBatch
+target_compile_definitions(
+    AudioBatch
     PRIVATE
         DONT_SET_USING_JUCE_NAMESPACE=1
         JUCE_ASIO=1
@@ -378,7 +379,8 @@ target_compile_definitions(AudioBatch
         BUILDTIME_VERSION_STRING="${APP_VERSION_STRING}"
 )
 
-target_compile_definitions(AudioBatchCli
+target_compile_definitions(
+    AudioBatchCli
     PRIVATE
         DONT_SET_USING_JUCE_NAMESPACE=1
         # Debug builds would otherwise print the JUCE version on startup,
@@ -404,7 +406,8 @@ target_compile_definitions(AudioBatchCli
         BUILDTIME_VERSION_STRING="${APP_VERSION_STRING}"
 )
 
-set_target_properties(AudioBatch
+set_target_properties(
+    AudioBatch
     PROPERTIES
         COMPILE_WARNING_AS_ERROR YES
         CXX_STANDARD 23
@@ -416,19 +419,18 @@ set_target_properties(AudioBatch
         XCODE_GENERATE_SCHEME ON
 )
 
-set_target_properties(AudioBatchCli
+set_target_properties(
+    AudioBatchCli
     PROPERTIES
         COMPILE_WARNING_AS_ERROR YES
         CXX_STANDARD 23
         OUTPUT_NAME "audiobatch"
 )
 
-if (MSVC)
+if(MSVC)
     # /wd4100 disables MSVC warning C4100 (unreferenced formal parameter) for this JUCE source file only.
     set_source_files_properties(
-        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_gui_basics/juce_gui_basics.cpp"
-        PROPERTIES
-            COMPILE_OPTIONS "/wd4100"
+        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_gui_basics/juce_gui_basics.cpp" PROPERTIES COMPILE_OPTIONS "/wd4100"
     )
 
     # https://docs.microsoft.com/en-us/cpp/build/reference/permissive-standards-conformance
@@ -436,9 +438,8 @@ if (MSVC)
 else()
     # Suppress -Wswitch-enum in vendored JUCE audio formats source (has a default case but not all enum values).
     set_source_files_properties(
-        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_formats/juce_audio_formats.mm"
-        PROPERTIES
-            COMPILE_OPTIONS "-Wno-switch-enum"
+        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_formats/juce_audio_formats.mm" PROPERTIES COMPILE_OPTIONS
+                                                                                               "-Wno-switch-enum"
     )
 
     # Suppress -Wdeprecated-declarations in vendored JUCE audio processors source
@@ -446,8 +447,7 @@ else()
     set_source_files_properties(
         "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_processors/juce_audio_processors.mm"
         "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_processors_headless/juce_audio_processors_headless.mm"
-        PROPERTIES
-            COMPILE_OPTIONS "-Wno-deprecated-declarations"
+        PROPERTIES COMPILE_OPTIONS "-Wno-deprecated-declarations"
     )
 
     add_compile_options(-Wall -Wextra -pedantic)
@@ -460,17 +460,17 @@ endif()
 # Every option is a front-end check, so the result does not depend on the optimization level.
 function(audiobatch_set_source_warnings)
     set(project_sources "")
-    foreach (target IN LISTS ARGN)
+    foreach(target IN LISTS ARGN)
         get_target_property(target_sources ${target} SOURCES)
-        foreach (source IN LISTS target_sources)
-            if (source MATCHES "^src/.*\\.cpp$")
+        foreach(source IN LISTS target_sources)
+            if(source MATCHES "^src/.*\\.cpp$")
                 list(APPEND project_sources "${CMAKE_SOURCE_DIR}/${source}")
-            endif ()
-        endforeach ()
-    endforeach ()
+            endif()
+        endforeach()
+    endforeach()
     list(REMOVE_DUPLICATES project_sources)
 
-    if (MSVC)
+    if(MSVC)
         set(options
             # Source files and string literals are UTF-8, whatever code page the build machine uses.
             /utf-8
@@ -503,11 +503,12 @@ function(audiobatch_set_source_warnings)
             /we4289
             /we4928
         )
-    else ()
+    else()
         set(options
             # JUCE headers are written to JUCE's own rules, so they are treated as system headers.
             # Clang keeps the system classification when the same directory is also a normal include directory.
-            -isystem "${CMAKE_SOURCE_DIR}/JUCE/modules"
+            -isystem
+            "${CMAKE_SOURCE_DIR}/JUCE/modules"
             # Implicit float to double widening, which is easy to introduce in single precision audio code.
             -Wdouble-promotion
             # Casts written the C way, and casts that drop qualifiers.
@@ -535,26 +536,37 @@ function(audiobatch_set_source_warnings)
             -Wunused-template
             -Wunused-exception-parameter
         )
-    endif ()
+    endif()
 
-    set_property(SOURCE ${project_sources} APPEND PROPERTY COMPILE_OPTIONS ${options})
+    set_property(
+        SOURCE ${project_sources}
+        APPEND
+        PROPERTY COMPILE_OPTIONS ${options}
+    )
 endfunction()
 
 audiobatch_set_source_warnings(AudioBatch AudioBatchCli)
 
 # START_JUCE_APPLICATION expands to a main function that casts `char**` to `const char**`,
 # which -Wcast-qual rejects and project code cannot change.
-if (NOT MSVC)
-    set_property(SOURCE "${CMAKE_SOURCE_DIR}/src/Main.cpp" APPEND PROPERTY COMPILE_OPTIONS -Wno-cast-qual)
-endif ()
+if(NOT MSVC)
+    set_property(
+        SOURCE "${CMAKE_SOURCE_DIR}/src/Main.cpp"
+        APPEND
+        PROPERTY COMPILE_OPTIONS -Wno-cast-qual
+    )
+endif()
 
-juce_add_binary_data(Assets NAMESPACE BinaryData
-    SOURCES
-        "assets/RobotoMono-Regular.ttf"
-        "assets/Roboto-Regular.ttf"
+juce_add_binary_data(
+    Assets
+    NAMESPACE BinaryData
+    SOURCES "assets/RobotoMono-Regular.ttf" "assets/Roboto-Regular.ttf"
 )
 
-target_link_libraries(AudioBatch
+# Keep one library per line, which cmake-format would otherwise join.
+# cmake-format: off
+target_link_libraries(
+    AudioBatch
     PRIVATE
         Assets
         ${AUDIOBATCH_SQLITE_TARGET}
@@ -578,8 +590,11 @@ target_link_libraries(AudioBatch
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
+# cmake-format: on
 
-target_link_libraries(AudioBatchCli
+# cmake-format: off
+target_link_libraries(
+    AudioBatchCli
     PRIVATE
         ${AUDIOBATCH_SQLITE_TARGET}
         ebur128
@@ -597,3 +612,4 @@ target_link_libraries(AudioBatchCli
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags
 )
+# cmake-format: on
