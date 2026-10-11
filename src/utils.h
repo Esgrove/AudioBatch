@@ -35,11 +35,15 @@ juce::String formattedSystemInfo();
 /// Builds the multi-line About dialog message with application, build, and system information.
 juce::String aboutMessage(const juce::String& appName);
 
+/// Returns the line printed by the --version flag of both executables:
+/// the application name, the build version string from CMake, and the JUCE version.
+juce::String versionLine(const juce::String& appName);
+
 /// Prints one line of text to stdout and flushes it.
 /// On Windows a GUI subsystem executable has no console of its own,
 /// so when stdout is not already redirected to a pipe or file,
 /// this attaches to the console of the parent process first, so the text shows up in cmd or PowerShell.
-void printLineToConsole(std::string_view text);
+void printLineToConsole(const juce::String& text);
 
 /// Renders a JSON var as plain text for log output,
 /// stripping quotes and the outer braces from the serialized form.

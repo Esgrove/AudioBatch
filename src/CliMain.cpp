@@ -30,8 +30,7 @@ int main(const int argc, char* argv[])
     // Help and version only print to the console.
     // They return before the logger is created, so they never touch the log file.
     if (cliOptions.has_value() && cliOptions->showVersion) {
-        constexpr auto versionLine = version::makeVersionLine("audiobatch");
-        fmt::print("{}\n", versionLine.view());
+        fmt::print("{}\n", utils::versionLine(executableName));
         return 0;
     }
 

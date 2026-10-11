@@ -113,7 +113,12 @@ juce::String aboutMessage(const juce::String& appName)
     return message;
 }
 
-void printLineToConsole(const std::string_view text)
+juce::String versionLine(const juce::String& appName)
+{
+    return format("{} {} {}", appName, version::VERSION_STRING, juce::SystemStats::getJUCEVersion());
+}
+
+void printLineToConsole(const juce::String& text)
 {
 #if JUCE_WINDOWS
     if (auto* const outputHandle = GetStdHandle(STD_OUTPUT_HANDLE);

@@ -378,8 +378,7 @@ public:
     void initialise(const juce::String& commandLineParameters) override
     {
         if (isVersionRequest(commandLineParameters)) {
-            constexpr auto versionLine = version::makeVersionLine("AudioBatch");
-            utils::printLineToConsole(versionLine.view());
+            utils::printLineToConsole(utils::versionLine(getApplicationName()));
             setApplicationReturnValue(0);
             quit();
             return;
