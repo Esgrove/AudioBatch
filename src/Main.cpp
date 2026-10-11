@@ -28,6 +28,13 @@ enum MenuItemId {
     scanPluginsMenuItemId,
     addFolderMenuItemId,
 };
+
+/// Returns true when the command line contains the version flag.
+static bool isVersionRequest(const juce::String& commandLine)
+{
+    const juce::ArgumentList arguments {"AudioBatch", commandLine};
+    return arguments.containsOption("--version|-V");
+}
 }  // namespace audiobatch::app
 
 using namespace audiobatch::app;
@@ -352,19 +359,31 @@ public:
     }
 
     /// Restricts the app to a single running instance.
-    /// Plugin scan worker processes are exempt,
-    /// since the running instance launches them from its own executable.
+    /// Version requests and plugin scan worker processes are exempt.
+    /// A version request still prints its output while another instance is running
+    /// instead of being forwarded to that instance,
+    /// and the running instance launches scan workers from its own executable.
     bool moreThanOneInstanceAllowed() override
     {
-        return isPluginScanWorkerCommandLine(getCommandLineParameters());
+        const auto commandLine = getCommandLineParameters();
+        return isVersionRequest(commandLine) || isPluginScanWorkerCommandLine(commandLine);
     }
 
     /// Starts the application: sets up file logging, creates the main window,
     /// and either shows it or keeps it hidden when the --headless flag is present.
     /// Window activation is repeated asynchronously to reliably gain focus on first launch.
+    /// The --version flag only prints the version line and quits,
+    /// before the logger or the window are created.
     /// When launched as a plugin scan worker, only the worker is started instead.
     void initialise(const juce::String& commandLineParameters) override
     {
+        if (isVersionRequest(commandLineParameters)) {
+            utils::printLineToConsole(utils::versionLine(getApplicationName()));
+            setApplicationReturnValue(0);
+            quit();
+            return;
+        }
+
         if (isPluginScanWorkerCommandLine(commandLineParameters)) {
             startPluginScanWorker(commandLineParameters);
             return;

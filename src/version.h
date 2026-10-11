@@ -20,4 +20,6 @@ constexpr auto COMMIT = BUILDTIME_COMMIT;
 constexpr auto DATE = BUILDTIME_DATE;
 constexpr auto VERSION_INFO = BUILDTIME_VERSION_INFO;
 constexpr auto VERSION_NUMBER = BUILDTIME_VERSION_NUMBER;
+/// Version, build date, commit, and branch, as printed by the --version flag.
+constexpr auto VERSION_STRING = BUILDTIME_VERSION_STRING;
 }  // namespace version
