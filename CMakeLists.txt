@@ -322,6 +322,8 @@ target_sources(
         "src/CustomLookAndFeel.h"
         "src/IntervalStepSlider.h"
         "src/Main.cpp"
+        "src/NormalizationTargetControl.cpp"
+        "src/NormalizationTargetControl.h"
         "src/PluginChain.cpp"
         "src/PluginChain.h"
         "src/PluginChainEditor.cpp"
