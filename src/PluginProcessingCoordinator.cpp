@@ -34,7 +34,7 @@ PluginProcessingCoordinator::~PluginProcessingCoordinator()
                 ownedChains.clear();
                 freeChainIndices.clear();
                 juce::MessageManager::callAsync([chainsCaptured
-                                                 = std::make_shared<decltype(chains)>(std::move(chains))]() mutable {
+                                                 = std::make_shared<decltype(chains)>(std::move(chains))] mutable {
                     chainsCaptured->clear();
                 });
             }
