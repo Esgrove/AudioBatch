@@ -335,6 +335,8 @@ target_sources(
         "src/FileActivityTracker.h"
         "src/IntervalStepSlider.h"
         "src/Main.cpp"
+        "src/MainWindow.cpp"
+        "src/MainWindow.h"
         "src/NormalizationTargetControl.cpp"
         "src/NormalizationTargetControl.h"
         "src/PluginChain.cpp"
