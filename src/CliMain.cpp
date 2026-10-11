@@ -94,11 +94,5 @@ int main(const int argc, char* argv[])
         return audiobatch::cli::exitCli(1);
     }
 
-    if (exitCode != 0) {
-        utils::logError("CLI exiting with code {}", exitCode);
-    } else {
-        utils::logInfo("CLI exiting with code 0");
-    }
-
     return audiobatch::cli::exitCli(exitCode);
 }
