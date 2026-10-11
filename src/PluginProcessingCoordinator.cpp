@@ -2,6 +2,8 @@
 /// Covers queuing one thread-pool job per file,
 /// the free pool of pre-instantiated plugin chains that workers acquire and release between files,
 /// run-id based cancellation, and publishing results and completion to the message thread.
+/// Cancellation also releases workers waiting for plugin setup on the message thread,
+/// so cancelAndWait can block the message thread without deadlocking.
 /// Plugin instances are always destroyed on the message thread
 /// to satisfy VST3 and Audio Unit hosting requirements.
 
@@ -232,7 +234,11 @@ int PluginProcessingCoordinator::start(
                 }
             }
 
-            const auto result = PluginProcessingService::processFile(record, options, chainView);
+            // Cancellation lets the worker stop waiting for the message thread,
+            // which cancelAndWait blocks while it waits for the workers to finish.
+            const auto result = PluginProcessingService::processFile(record, options, chainView, [this, runId] {
+                return runId != currentRunId.load();
+            });
             releaseChain(chainIndex);
 
             publishResult(result, runId);

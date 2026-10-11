@@ -38,6 +38,9 @@ public:
     ~PluginProcessingCoordinator();
 
     /// Cancels queued work and waits for active jobs to finish.
+    /// Safe to call on the message thread:
+    /// workers waiting for plugin setup on the message thread give up once the run is cancelled,
+    /// and workers that are rendering stop at the next block.
     void cancelAndWait();
 
     /// Sets the callback that is invoked when a run completes.
