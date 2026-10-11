@@ -426,7 +426,6 @@ static float getInputGain(const AudioAnalysisRecord& record, const PluginProcess
 }
 
 /// Reads `samplesToRead` frames starting at `samplePosition` into the start of `buffer` and applies `inputGain`.
-/// A mono source is copied to the second channel when the chain processes stereo.
 /// `readBuffer` and `readChannelPointers` are scratch storage reused across blocks.
 /// Returns false when the reader reports a failure, in which case the block holds what was decoded before it.
 static bool readInputBlock(
@@ -458,12 +457,6 @@ static bool readInputBlock(
         }
     }
 
-    // A mono file running through a stereo chain feeds the same signal to both inputs,
-    // so stereo-linked and mid/side processing see a centred source instead of a hard-left one.
-    if (channelCount == 1 && buffer.getNumChannels() >= 2) {
-        buffer.copyFrom(1, 0, buffer, 0, 0, samplesToRead);
-    }
-
     return readSucceeded;
 }
 
@@ -477,17 +470,53 @@ struct RenderSummary {
     juce::int64 lastAudibleSample = -1;
 };
 
+/// Runs one block through every plugin in chain order on the same buffer,
+/// and returns the number of main channels carrying signal after the last plugin.
+/// The signal starts with the file's channel count.
+/// A mono signal reaching a plugin with a stereo main input is copied to the second channel first,
+/// so stereo-linked and mid/side processing see a centred source instead of a hard-left one,
+/// and a mono plugin earlier in the chain still affects both channels.
+/// Channels beyond a plugin's main input, such as a sidechain, are cleared so no dry signal leaks into them.
+static int processBlockThroughChain(
+    juce::AudioBuffer<float>& buffer,
+    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    const int numChannels,
+    juce::MidiBuffer& midi
+)
+{
+    auto signalChannels = numChannels;
+
+    for (auto* plugin : chainInstances) {
+        const auto mainInputChannels = juce::jmin(plugin->getMainBusNumInputChannels(), buffer.getNumChannels());
+
+        if (signalChannels == 1 && mainInputChannels >= 2) {
+            buffer.copyFrom(1, 0, buffer, 0, 0, buffer.getNumSamples());
+        }
+
+        for (int channel = juce::jmax(mainInputChannels, 1); channel < buffer.getNumChannels(); ++channel) {
+            buffer.clear(channel, 0, buffer.getNumSamples());
+        }
+
+        midi.clear();
+        plugin->processBlock(buffer, midi);
+        signalChannels = juce::jmax(1, juce::jmin(plugin->getMainBusNumOutputChannels(), buffer.getNumChannels()));
+    }
+
+    return signalChannels;
+}
+
 /// Folds the processed channels down to the file's channel count before they are written.
-/// A mono file processed in stereo is written as the average of both channels.
+/// A mono file whose signal ended up in stereo is written as the average of both main channels.
 /// Returns the buffer view to write, which aliases `buffer`.
 static juce::AudioBuffer<float> prepareOutputView(
     juce::AudioBuffer<float>& buffer,
     const int numChannels,
+    const int signalChannels,
     const int firstSample,
     const int numSamples
 )
 {
-    if (numChannels == 1 && buffer.getNumChannels() >= 2) {
+    if (numChannels == 1 && signalChannels >= 2) {
         buffer.addFrom(0, firstSample, buffer, 1, firstSample, numSamples);
         buffer.applyGain(0, firstSample, numSamples, 0.5f);
     }
@@ -567,11 +596,7 @@ static juce::String renderThroughChain(
             }
         }
 
-        // Run the block through every plugin in chain order on the same buffer.
-        for (auto* plugin : chainInstances) {
-            midi.clear();
-            plugin->processBlock(buffer, midi);
-        }
+        const auto signalChannels = processBlockThroughChain(buffer, chainInstances, numChannels, midi);
 
         // Skip the output samples that still fall within the chain latency.
         const auto firstSampleToWrite
@@ -582,7 +607,8 @@ static juce::String renderThroughChain(
             continue;
         }
 
-        const auto writeView = prepareOutputView(buffer, numChannels, firstSampleToWrite, samplesToWrite);
+        const auto writeView
+            = prepareOutputView(buffer, numChannels, signalChannels, firstSampleToWrite, samplesToWrite);
         measureOutputBlock(writeView, samplesToWrite, summary);
 
         if (!writer.writeFromAudioSampleBuffer(writeView, 0, samplesToWrite)) {

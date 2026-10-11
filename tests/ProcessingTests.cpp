@@ -13,26 +13,31 @@
 
 namespace audiobatch::tests
 {
-/// A stereo-only test plugin that applies a fixed gain and can swap the left and right channels.
+/// A test plugin that applies a fixed gain and can swap the left and right channels.
+/// It is stereo-only by default, like many effect plugins, and can also accept a mono layout.
 /// Swapping exposes whether a mono source reaches the right input of a stereo-only plugin.
 class TestPlugin final : public juce::AudioPluginInstance
 {
 public:
     /// Creates the plugin with the given linear gain and channel swap setting.
-    TestPlugin(const float pluginGain, const bool swapChannels) :
+    TestPlugin(const float pluginGain, const bool swapChannels, const bool acceptsMono = false) :
         juce::AudioPluginInstance(
             BusesProperties()
                 .withInput("Input", juce::AudioChannelSet::stereo())
                 .withOutput("Output", juce::AudioChannelSet::stereo())
         ),
         gain(pluginGain),
-        swap(swapChannels)
+        swap(swapChannels),
+        monoSupported(acceptsMono)
     { }
 
-    /// Applies the gain and the optional channel swap.
+    /// Applies the gain and the optional channel swap to the main bus channels only,
+    /// like a hosted plugin, which never touches buffer channels outside its own buses.
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*midiMessages*/) override
     {
-        if (swap && buffer.getNumChannels() >= 2) {
+        const auto channels = juce::jmin(buffer.getNumChannels(), getMainBusNumOutputChannels());
+
+        if (swap && channels >= 2) {
             for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
                 const auto left = buffer.getSample(0, sample);
                 buffer.setSample(0, sample, buffer.getSample(1, sample));
@@ -40,7 +45,9 @@ public:
             }
         }
 
-        buffer.applyGain(gain);
+        for (int channel = 0; channel < channels; ++channel) {
+            buffer.applyGain(channel, 0, buffer.getNumSamples(), gain);
+        }
     }
 
     /// Describes the plugin for the host.
@@ -122,8 +129,14 @@ protected:
     /// Accepts only a stereo main bus on both sides, like many effect plugins.
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override
     {
-        return layouts.getMainInputChannelSet() == juce::AudioChannelSet::stereo()
-            && layouts.getMainOutputChannelSet() == juce::AudioChannelSet::stereo();
+        const auto input = layouts.getMainInputChannelSet();
+        const auto output = layouts.getMainOutputChannelSet();
+
+        if (monoSupported && input == juce::AudioChannelSet::mono() && output == juce::AudioChannelSet::mono()) {
+            return true;
+        }
+
+        return input == juce::AudioChannelSet::stereo() && output == juce::AudioChannelSet::stereo();
     }
 
 private:
@@ -135,6 +148,7 @@ private:
 
     float gain;
     bool swap;
+    bool monoSupported;
 };
 
 /// Checks plugin processing output against the committed fixtures.
@@ -152,7 +166,7 @@ public:
         {
             const auto source = directory.copyFixture("sine_mono_48000_24.aif");
             TestPlugin plugin(1.0f, true);
-            const auto result = process(source, plugin);
+            const auto result = process(source, {&plugin});
 
             expect(!result.hasError(), result.errorMessage);
             expectEquals(result.analysisRecord.channels, 1);
@@ -161,12 +175,25 @@ public:
             expect(result.notice.isEmpty(), result.notice);
         }
 
+        beginTest("A mono plugin followed by a stereo-only plugin passes the processed signal to both channels");
+        {
+            const auto source = directory.copyFixture("sine_mono_48000_24.aif", "mono_chain.aif");
+            TestPlugin monoGain(juce::Decibels::decibelsToGain(6.0f), false, true);
+            TestPlugin stereoSwap(1.0f, true);
+            const auto result = process(source, {&monoGain, &stereoSwap});
+
+            expect(!result.hasError(), result.errorMessage);
+            expectEquals(result.analysisRecord.channels, 1);
+            // Both stereo channels carry the boosted signal, so their average keeps the full 6 dB boost.
+            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels + 6.0, 0.05);
+        }
+
         beginTest("Output that would clip is turned down to full scale and reported");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif");
             const auto sourceLength = AudioAnalysisService::analyzeFile(source).lengthInSamples;
             TestPlugin plugin(juce::Decibels::decibelsToGain(12.0f), false);
-            const auto result = process(source, plugin);
+            const auto result = process(source, {&plugin});
 
             expect(!result.hasError(), result.errorMessage);
             expectEquals(result.analysisRecord.channels, 2);
@@ -186,15 +213,20 @@ private:
     }
 
     /// Processes the file through a single-plugin chain on the calling thread.
-    static PluginProcessingResult process(const juce::File& source, TestPlugin& plugin)
+    static PluginProcessingResult process(
+        const juce::File& source,
+        const std::vector<juce::AudioPluginInstance*>& chain
+    )
     {
         PluginProcessingOptions options;
-        PluginDescriptorRef descriptor;
-        descriptor.identifierString = "test-plugin";
-        descriptor.name = plugin.getName();
-        options.plugins.push_back(descriptor);
 
-        const std::vector<juce::AudioPluginInstance*> chain {&plugin};
+        for (const auto* plugin : chain) {
+            PluginDescriptorRef descriptor;
+            descriptor.identifierString = "test-plugin";
+            descriptor.name = plugin->getName();
+            options.plugins.push_back(descriptor);
+        }
+
         return PluginProcessingService::processFile(AudioAnalysisService::analyzeFile(source), options, chain);
     }
 };
