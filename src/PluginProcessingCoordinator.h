@@ -84,12 +84,14 @@ private:
 
     /// Processes one queued file on a worker thread.
     /// Waits for a free chain, runs the file through it, publishes the result,
-    /// and publishes completion when it was the last pending file of the run.
+    /// and publishes completion when it was the last pending file of the run, counted in pendingFiles.
+    /// The caller keeps the counter alive for as long as the job may run.
     void runFileJob(
         const AudioAnalysisRecord& record,
         const PluginProcessingOptions& options,
         int runId,
-        int totalFiles
+        int totalFiles,
+        std::atomic<int>& pendingFiles
     );
 
     /// Returns the index of a free chain, or -1 when none are available.
@@ -111,5 +113,4 @@ private:
     std::vector<int> freeChainIndices;
 
     std::atomic<int> currentRunId {0};
-    std::atomic<int> pendingJobs {0};
 };

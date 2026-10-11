@@ -394,7 +394,8 @@ bool AudioAnalysisService::isSupportedAudioFile(const juce::File& file)
 
 juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
     const juce::Array<juce::File>& inputPaths,
-    const bool recursive
+    const bool recursive,
+    const CancellationCheck& isCancelled
 )
 {
     juce::Array<juce::File> files;
@@ -411,15 +412,23 @@ juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
         }
     };
 
-    for (const auto& inputPath : inputPaths) {
-        if (inputPath.isDirectory()) {
-            juce::Array<juce::File> discoveredFiles;
-            inputPath.findChildFiles(
-                discoveredFiles, juce::File::findFiles | juce::File::ignoreHiddenFiles, recursive, "*"
-            );
+    const auto cancelled = [&isCancelled] { return isCancelled != nullptr && isCancelled(); };
 
-            for (const auto& file : discoveredFiles) {
-                addFile(file);
+    for (const auto& inputPath : inputPaths) {
+        if (cancelled()) {
+            break;
+        }
+
+        if (inputPath.isDirectory()) {
+            for (const auto& entry : juce::RangedDirectoryIterator(
+                     inputPath, recursive, "*", juce::File::findFiles | juce::File::ignoreHiddenFiles
+                 ))
+            {
+                if (cancelled()) {
+                    break;
+                }
+
+                addFile(entry.getFile());
             }
         } else {
             addFile(inputPath);

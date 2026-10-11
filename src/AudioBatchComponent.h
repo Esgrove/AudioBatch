@@ -166,7 +166,8 @@ private:
 
     /// Finalizes an analysis run on the message thread:
     /// reconciles rows still pending, logs run statistics, and restores a sensible selection.
-    void handleAnalysisComplete(int totalFiles);
+    /// Completion of a replaced run is ignored.
+    void handleAnalysisComplete(int totalFiles, int runId);
 
     /// Ends the normalization pass and reports any accumulated failures to the user.
     void handleNormalizeComplete(int totalFiles);
@@ -201,7 +202,8 @@ private:
     /// Merges one analysis result into the table on the message thread,
     /// preserving the custom gain set for the file while the file is unchanged on disk,
     /// and keeping selection and preview in sync.
-    void handleAnalysisResult(const AudioAnalysisRecord& record);
+    /// Results from a replaced run are ignored, since their queued messages can arrive after a new run started.
+    void handleAnalysisResult(const AudioAnalysisRecord& record, int runId);
 
     /// Adds pending rows for the files the run analyzes and shows the progress text.
     /// Called once per run on the message thread, after the coordinator has scanned the input folders.
@@ -428,6 +430,8 @@ private:
     int analyzedFilesThisRun = 0;
     int completedResults = 0;
     int expectedResults = 0;
+    /// Id of the current analysis run, used to drop queued messages from runs that were replaced.
+    int analysisRunId = -1;
     /// True when the current run replaces the results list, which picks the message shown when no files are found.
     bool analysisReplacesResults = false;
     int normalizedResultsCompleted = 0;

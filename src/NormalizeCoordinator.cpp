@@ -69,7 +69,6 @@ void NormalizeCoordinator::cancelAndWait()
 {
     ++currentRunId;
     threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
-    pendingJobs.store(0);
 }
 
 int NormalizeCoordinator::start(
@@ -98,45 +97,49 @@ int NormalizeCoordinator::start(
         normalizedRecords.push_back(record);
     }
 
-    pendingJobs.store(static_cast<int>(normalizedRecords.size()));
-
     if (normalizedRecords.empty()) {
         publishCompletion(0, runId);
         return 0;
     }
 
     const auto conflicts = AudioNormalizationService::findBatchOutputConflicts(normalizedRecords);
+    // The counter belongs to this run, so a job that outlives a cancellation timeout cannot change a later run's count.
+    const auto pendingFiles = std::make_shared<std::atomic<int>>(static_cast<int>(normalizedRecords.size()));
 
     for (const auto& record : normalizedRecords) {
         const bool hasConflict = conflicts.contains(record.file.getFullPathName());
 
-        threadPool.addJob(
-            [this, record, options, hasConflict, runId, totalFiles = static_cast<int>(normalizedRecords.size())] {
-                if (runId != currentRunId.load()) {
-                    return;
-                }
-
-                if (hasConflict) {
-                    publishResult(
-                        AudioNormalizationResult::failure(
-                            record.file, AudioNormalizationService::batchOutputConflictMessage(record.file)
-                        ),
-                        runId
-                    );
-                } else {
-                    publishResult(
-                        AudioNormalizationService::normalizeFile(
-                            record, options, [this, runId] { return runId != currentRunId.load(); }
-                        ),
-                        runId
-                    );
-                }
-
-                if (pendingJobs.fetch_sub(1) == 1) {
-                    publishCompletion(totalFiles, runId);
-                }
+        threadPool.addJob([this,
+                           record,
+                           options,
+                           hasConflict,
+                           runId,
+                           pendingFiles,
+                           totalFiles = static_cast<int>(normalizedRecords.size())] {
+            if (runId != currentRunId.load()) {
+                return;
             }
-        );
+
+            if (hasConflict) {
+                publishResult(
+                    AudioNormalizationResult::failure(
+                        record.file, AudioNormalizationService::batchOutputConflictMessage(record.file)
+                    ),
+                    runId
+                );
+            } else {
+                publishResult(
+                    AudioNormalizationService::normalizeFile(
+                        record, options, [this, runId] { return runId != currentRunId.load(); }
+                    ),
+                    runId
+                );
+            }
+
+            if (pendingFiles->fetch_sub(1) == 1) {
+                publishCompletion(totalFiles, runId);
+            }
+        });
     }
 
     return static_cast<int>(normalizedRecords.size());
