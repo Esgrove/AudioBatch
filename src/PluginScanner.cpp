@@ -32,8 +32,10 @@ using namespace audiobatch::plugin_scanner;
 
 bool isPluginScanWorkerCommandLine(const juce::String& commandLine)
 {
-    // ChildProcessCoordinator passes "--<uid>:<pipe name>" to the worker process.
-    return commandLine.contains(utils::format("--{}:", pluginScanWorkerProcessUid));
+    // ChildProcessCoordinator passes "--<uid>:<pipe name>" as the first argument.
+    // Match ChildProcessWorker::initialiseFromCommandLine exactly,
+    // so the same text in a later argument of an ordinary launch is not mistaken for a worker.
+    return commandLine.trim().startsWith(utils::format("--{}:", pluginScanWorkerProcessUid));
 }
 
 //==============================================================================

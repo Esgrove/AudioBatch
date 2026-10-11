@@ -19,6 +19,7 @@
 constexpr auto pluginScanWorkerProcessUid = "audiobatch-plugin-scan-worker";
 
 /// Returns true when the command line launches this executable as a plugin scan worker.
+/// Uses the same check as ChildProcessWorker: the worker prefix must start the command line.
 [[nodiscard]] bool isPluginScanWorkerCommandLine(const juce::String& commandLine);
 
 /// Child side of out-of-process plugin scanning.
@@ -74,6 +75,9 @@ private:
 class OutOfProcessPluginScanner final : public juce::KnownPluginList::CustomScanner
 {
 public:
+    /// Creates the scanner without starting a worker.
+    /// The worker process is launched on the first scan request,
+    /// and relaunched after a crash or a cancelled scan.
     OutOfProcessPluginScanner();
 
     /// Stops the worker process, if one is running.
