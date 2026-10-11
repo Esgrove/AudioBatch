@@ -45,8 +45,8 @@ int main(const int argc, char* argv[])
 
     if (!cliOptions.has_value()) {
         utils::logError(parseError);
-        fmt::print(stderr, "{}{}{}\n\n", ansi::ANSI_RED, parseError, ansi::ANSI_RESET);
-        fmt::print("{}\n", AudioAnalysisCli::buildUsage(executableName));
+        console::printError(parseError);
+        fmt::print("\n{}\n", AudioAnalysisCli::buildUsage(executableName));
         return audiobatch::cli::exitCli(1);
     }
 

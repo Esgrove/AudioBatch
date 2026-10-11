@@ -1,92 +1,14 @@
-/// Shared logging, terminal color, and small helper utilities.
-/// The ansi namespace provides ANSI color codes and stream manipulators for CLI output.
+/// Shared logging and small helper utilities.
 /// The utils namespace provides leveled logging on top of juce::FileLogger,
 /// file deletion and trash helpers, and system information formatting for logs and the About dialog.
 
 #pragma once
 
+#include "ConsolePrint.h"
 #include "StringFormat.h"
 #include "version.h"
 
 #include <JuceHeader.h>
-
-namespace ansi
-{
-// Foreground
-[[maybe_unused]] constexpr auto ANSI_BLACK = "\033[0;30m";
-[[maybe_unused]] constexpr auto ANSI_RED = "\033[0;31m";
-[[maybe_unused]] constexpr auto ANSI_GREEN = "\033[0;32m";
-[[maybe_unused]] constexpr auto ANSI_YELLOW = "\033[0;33m";
-[[maybe_unused]] constexpr auto ANSI_BLUE = "\033[0;34m";
-[[maybe_unused]] constexpr auto ANSI_MAGENTA = "\033[0;35m";
-[[maybe_unused]] constexpr auto ANSI_CYAN = "\033[0;36m";
-[[maybe_unused]] constexpr auto ANSI_WHITE = "\033[0;37m";
-
-// Foreground bold
-[[maybe_unused]] constexpr auto ANSI_BOLD_BLACK = "\033[1;30m";
-[[maybe_unused]] constexpr auto ANSI_BOLD_RED = "\033[1;31m";
-[[maybe_unused]] constexpr auto ANSI_BOLD_GREEN = "\033[1;32m";
-[[maybe_unused]] constexpr auto ANSI_BOLD_YELLOW = "\033[1;33m";
-[[maybe_unused]] constexpr auto ANSI_BOLD_BLUE = "\033[1;34m";
-[[maybe_unused]] constexpr auto ANSI_BOLD_MAGENTA = "\033[1;35m";
-[[maybe_unused]] constexpr auto ANSI_BOLD_CYAN = "\033[1;36m";
-[[maybe_unused]] constexpr auto ANSI_BOLD_WHITE = "\033[1;37m";
-
-[[maybe_unused]] constexpr auto ANSI_RESET = "\033[0m";
-
-// Stream manipulators for easy ANSI color usage with stringstreams.
-// Example usage: std::cout << ansi::red << "example" << ansi::reset << std::endl;
-
-/// Resets the stream's terminal colors back to the default.
-template<class CharT, class Traits>
-constexpr std::basic_ostream<CharT, Traits>& reset(std::basic_ostream<CharT, Traits>& stream)
-{
-    return stream << ANSI_RESET;
-}
-
-/// Switches the stream's terminal foreground color to black.
-template<class CharT, class Traits>
-constexpr std::basic_ostream<CharT, Traits>& black(std::basic_ostream<CharT, Traits>& stream)
-{
-    return stream << ANSI_BLACK;
-}
-
-/// Switches the stream's terminal foreground color to red.
-template<class CharT, class Traits>
-constexpr std::basic_ostream<CharT, Traits>& red(std::basic_ostream<CharT, Traits>& stream)
-{
-    return stream << ANSI_RED;
-}
-
-/// Switches the stream's terminal foreground color to yellow.
-template<class CharT, class Traits>
-constexpr std::basic_ostream<CharT, Traits>& yellow(std::basic_ostream<CharT, Traits>& stream)
-{
-    return stream << ANSI_YELLOW;
-}
-
-/// Switches the stream's terminal foreground color to cyan.
-template<class CharT, class Traits>
-constexpr std::basic_ostream<CharT, Traits>& cyan(std::basic_ostream<CharT, Traits>& stream)
-{
-    return stream << ANSI_CYAN;
-}
-
-/// Switches the stream's terminal foreground color to magenta.
-template<class CharT, class Traits>
-constexpr std::basic_ostream<CharT, Traits>& magenta(std::basic_ostream<CharT, Traits>& stream)
-{
-    return stream << ANSI_MAGENTA;
-}
-
-/// Switches the stream's terminal foreground color to green.
-template<class CharT, class Traits>
-constexpr std::basic_ostream<CharT, Traits>& green(std::basic_ostream<CharT, Traits>& stream)
-{
-    return stream << ANSI_GREEN;
-}
-
-}  // namespace ansi
 
 namespace utils
 {
@@ -147,16 +69,16 @@ static void writeToLog(const juce::String& message, [[maybe_unused]] Level log_l
 #if !JUCE_DEBUG
     switch (log_level) {
         case Level::error:
-            std::cerr << ansi::red << log_message << ansi::reset << juce::newLine;
+            console::printStyled(stderr, fmt::fg(fmt::terminal_color::red), "{}\n", log_message);
             break;
         case Level::debug:
-            std::cout << ansi::yellow << log_message << ansi::reset << juce::newLine;
+            console::printYellow("{}\n", log_message);
             break;
         case Level::warn:
         case Level::info:
             [[fallthrough]];
         default:
-            std::cout << log_message << juce::newLine;
+            fmt::print("{}\n", log_message);
             break;
     }
 #endif
@@ -240,7 +162,7 @@ inline void logSystemInfo()
     logInfo("System info\n    {}", version::APP_NAME);
     for (const auto& line : info) {
 #if !JUCE_DEBUG
-        std::cout << "    " << line << juce::newLine;
+        fmt::print("    {}\n", line);
 #endif
         juce::Logger::writeToLog("    " + line);
     }
