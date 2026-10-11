@@ -35,5 +35,5 @@ repos:
         entry: clang-format -i --style=file
         types_or: [c, c++]
         language: system
-        files: ^cpp/
+        files: ^src/
         priority: 1
