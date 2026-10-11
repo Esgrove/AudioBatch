@@ -25,6 +25,11 @@ public:
     /// Stops timer activity and detaches listeners.
     ~ThumbnailComponent() override;
 
+    ThumbnailComponent(const ThumbnailComponent&) = delete;
+    ThumbnailComponent& operator=(const ThumbnailComponent&) = delete;
+    ThumbnailComponent(ThumbnailComponent&&) = delete;
+    ThumbnailComponent& operator=(ThumbnailComponent&&) = delete;
+
     /// Accepts every file drag, validation of the dropped files happens in the owning component.
     bool isInterestedInFileDrag(const juce::StringArray& /*files*/) override;
 

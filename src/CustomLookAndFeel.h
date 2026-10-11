@@ -74,26 +74,100 @@ public:
     /// Returns the monospaced font used for tabular values and status text.
     [[nodiscard]] static Font get_mono_font()
     {
-        return monoFont.withHeight(monoFontHeight);
+        return getMonoBaseFont().withHeight(monoFontHeight);
     }
 
-    static const juce::Font monoFont;
-    static const juce::Font textFont;
+    /// Returns the proportional font created from the embedded Roboto typeface.
+    /// The font is created on first use, so no font construction runs during static initialization.
+    [[nodiscard]] static const juce::Font& getTextFont();
 
-    [[maybe_unused]] static const juce::Colour blue;
-    [[maybe_unused]] static const juce::Colour green;
-    [[maybe_unused]] static const juce::Colour greyDark;
-    [[maybe_unused]] static const juce::Colour greyLight;
-    [[maybe_unused]] static const juce::Colour greyMedium;
-    [[maybe_unused]] static const juce::Colour greyMediumDark;
-    [[maybe_unused]] static const juce::Colour greyMiddle;
-    [[maybe_unused]] static const juce::Colour greyMiddleLight;
-    [[maybe_unused]] static const juce::Colour greySemiDark;
-    [[maybe_unused]] static const juce::Colour greySemiLight;
-    [[maybe_unused]] static const juce::Colour greySuperLight;
-    [[maybe_unused]] static const juce::Colour orange;
-    [[maybe_unused]] static const juce::Colour red;
-    [[maybe_unused]] static const juce::Colour yellow;
+    /// Returns the base monospaced font created from the embedded Roboto Mono typeface, before height is applied.
+    /// The font is created on first use, so no font construction runs during static initialization.
+    [[nodiscard]] static const juce::Font& getMonoBaseFont();
+
+    /// Palette colour #76A8DA.
+    [[nodiscard]] static juce::Colour blue() noexcept
+    {
+        return {118, 168, 218};
+    }
+
+    /// Palette colour #69B786.
+    [[nodiscard]] static juce::Colour green() noexcept
+    {
+        return {105, 183, 134};
+    }
+
+    /// Palette colour #121315.
+    [[nodiscard]] static juce::Colour greyDark() noexcept
+    {
+        return {18, 19, 21};
+    }
+
+    /// Palette colour #DCE0E5.
+    [[nodiscard]] static juce::Colour greyLight() noexcept
+    {
+        return {220, 224, 229};
+    }
+
+    /// Palette colour #30343C.
+    [[nodiscard]] static juce::Colour greyMedium() noexcept
+    {
+        return {48, 52, 60};
+    }
+
+    /// Palette colour #202329.
+    [[nodiscard]] static juce::Colour greyMediumDark() noexcept
+    {
+        return {32, 35, 41};
+    }
+
+    /// Palette colour #686F79.
+    [[nodiscard]] static juce::Colour greyMiddle() noexcept
+    {
+        return {104, 111, 121};
+    }
+
+    /// Palette colour #AAB0B9.
+    [[nodiscard]] static juce::Colour greyMiddleLight() noexcept
+    {
+        return {170, 176, 185};
+    }
+
+    /// Palette colour #1A1C20.
+    [[nodiscard]] static juce::Colour greySemiDark() noexcept
+    {
+        return {26, 28, 32};
+    }
+
+    /// Palette colour #808791.
+    [[nodiscard]] static juce::Colour greySemiLight() noexcept
+    {
+        return {128, 135, 145};
+    }
+
+    /// Palette colour #F3F5F7.
+    [[nodiscard]] static juce::Colour greySuperLight() noexcept
+    {
+        return {243, 245, 247};
+    }
+
+    /// Palette colour #DD8B65.
+    [[nodiscard]] static juce::Colour orange() noexcept
+    {
+        return {221, 139, 101};
+    }
+
+    /// Palette colour #D66565.
+    [[nodiscard]] static juce::Colour red() noexcept
+    {
+        return {214, 101, 101};
+    }
+
+    /// Palette colour #CEAF6C.
+    [[nodiscard]] static juce::Colour yellow() noexcept
+    {
+        return {206, 175, 108};
+    }
 
     static constexpr float monoFontHeight {15.0f};
 

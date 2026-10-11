@@ -10,43 +10,22 @@
 
 namespace juce
 {
-/// Application palette constants shared by the custom look-and-feel.
-// #76A8DA
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::blue {118, 168, 218};
-// #69B786
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::green {105, 183, 134};
-// #121315
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyDark {18, 19, 21};
-// #DCE0E5
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyLight {220, 224, 229};
-// #30343C
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyMedium {48, 52, 60};
-// #202329
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyMediumDark {32, 35, 41};
-// #686F79
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyMiddle {104, 111, 121};
-// #AAB0B9
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greyMiddleLight {170, 176, 185};
-// #1A1C20
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greySemiDark {26, 28, 32};
-// #808791
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greySemiLight {128, 135, 145};
-// #F3F5F7
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::greySuperLight {243, 245, 247};
-// #DD8B65
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::orange {221, 139, 101};
-// #D66565
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::red {214, 101, 101};
-// #CEAF6C
-[[maybe_unused]] const juce::Colour CustomLookAndFeel::yellow {206, 175, 108};
 
-const juce::Font CustomLookAndFeel::textFont {juce::FontOptions().withTypeface(
-    juce::Typeface::createSystemTypefaceFor(BinaryData::RobotoRegular_ttf, BinaryData::RobotoRegular_ttfSize)
-)};
+const juce::Font& CustomLookAndFeel::getTextFont()
+{
+    static const Font font {FontOptions().withTypeface(
+        Typeface::createSystemTypefaceFor(BinaryData::RobotoRegular_ttf, BinaryData::RobotoRegular_ttfSize)
+    )};
+    return font;
+}
 
-const juce::Font CustomLookAndFeel::monoFont {juce::FontOptions().withTypeface(
-    juce::Typeface::createSystemTypefaceFor(BinaryData::RobotoMonoRegular_ttf, BinaryData::RobotoMonoRegular_ttfSize)
-)};
+const juce::Font& CustomLookAndFeel::getMonoBaseFont()
+{
+    static const Font font {FontOptions().withTypeface(
+        Typeface::createSystemTypefaceFor(BinaryData::RobotoMonoRegular_ttf, BinaryData::RobotoMonoRegular_ttfSize)
+    )};
+    return font;
+}
 
 /// Title bar button (close, minimise, maximise) drawn with the project palette.
 /// Created by createDocumentWindowButton, ownership passes to the DocumentWindow.
@@ -70,6 +49,14 @@ public:
         useDarkMode(darkMode)
     { }
 
+    ~CustomDocumentWindowButton() override = default;
+
+    CustomDocumentWindowButton(const CustomDocumentWindowButton&) = delete;
+    CustomDocumentWindowButton& operator=(const CustomDocumentWindowButton&) = delete;
+    CustomDocumentWindowButton(CustomDocumentWindowButton&&) = delete;
+    CustomDocumentWindowButton& operator=(CustomDocumentWindowButton&&) = delete;
+
+protected:
     /// Fills the button background for the current hover and pressed state and draws the glyph path.
     /// The close button highlights in orange, the others use a neutral grey.
     void paintButton(
@@ -78,7 +65,7 @@ public:
         const bool shouldDrawButtonAsDown
     ) override
     {
-        const auto background = useDarkMode ? CustomLookAndFeel::greyDark : CustomLookAndFeel::greyLight;
+        const auto background = useDarkMode ? CustomLookAndFeel::greyDark() : CustomLookAndFeel::greyLight();
         auto glyphColour = colour;
 
         graphics.fillAll(background);
@@ -89,12 +76,12 @@ public:
 
         if (shouldDrawButtonAsHighlighted) {
             if (getName().equalsIgnoreCase("close")) {
-                graphics.fillAll(CustomLookAndFeel::orange);
+                graphics.fillAll(CustomLookAndFeel::orange());
             } else {
-                graphics.fillAll(CustomLookAndFeel::greyMediumDark);
+                graphics.fillAll(CustomLookAndFeel::greyMediumDark());
             }
 
-            glyphColour = CustomLookAndFeel::greySuperLight;
+            glyphColour = CustomLookAndFeel::greySuperLight();
         }
 
         graphics.setColour(glyphColour);
@@ -113,48 +100,48 @@ private:
     Path normalShape;
     Path toggledShape;
     bool useDarkMode {true};
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CustomDocumentWindowButton)
+    JUCE_LEAK_DETECTOR(CustomDocumentWindowButton)
 };
 
 CustomLookAndFeel::CustomLookAndFeel(const bool darkModeEnabled) : darkTheme(darkModeEnabled)
 {
     setColourScheme(customColourScheme);
 
-    setColour(juce::ComboBox::arrowColourId, blue);
-    setColour(juce::ComboBox::backgroundColourId, greySemiDark);
-    setColour(juce::ComboBox::focusedOutlineColourId, blue.withAlpha(0.45f));
-    setColour(juce::ComboBox::outlineColourId, greyMedium);
+    setColour(juce::ComboBox::arrowColourId, blue());
+    setColour(juce::ComboBox::backgroundColourId, greySemiDark());
+    setColour(juce::ComboBox::focusedOutlineColourId, blue().withAlpha(0.45f));
+    setColour(juce::ComboBox::outlineColourId, greyMedium());
     // setColour(juce::FileTreeComponent::backgroundColourId, greySemiDark);
-    setColour(juce::HyperlinkButton::textColourId, blue.withAlpha(0.9f));
-    setColour(juce::PopupMenu::backgroundColourId, greySemiDark);
-    setColour(juce::PopupMenu::highlightedBackgroundColourId, blue.withAlpha(0.18f));
-    setColour(juce::PopupMenu::highlightedTextColourId, greySuperLight);
-    setColour(juce::PopupMenu::textColourId, greyLight);
+    setColour(juce::HyperlinkButton::textColourId, blue().withAlpha(0.9f));
+    setColour(juce::PopupMenu::backgroundColourId, greySemiDark());
+    setColour(juce::PopupMenu::highlightedBackgroundColourId, blue().withAlpha(0.18f));
+    setColour(juce::PopupMenu::highlightedTextColourId, greySuperLight());
+    setColour(juce::PopupMenu::textColourId, greyLight());
     // setColour(juce::ProgressBar::backgroundColourId, greyMedium);
     // setColour(juce::ProgressBar::foregroundColourId, green);
-    setColour(juce::ResizableWindow::backgroundColourId, greyDark);
-    setColour(juce::TextButton::buttonColourId, greyMedium);
-    setColour(juce::TextButton::buttonOnColourId, green);
-    setColour(juce::TextButton::textColourOffId, greySuperLight.withAlpha(0.96f));
-    setColour(juce::TextButton::textColourOnId, greySuperLight);
-    setColour(juce::Slider::backgroundColourId, greyMedium);
-    setColour(juce::Slider::trackColourId, blue.withAlpha(0.7f));
-    setColour(juce::Slider::thumbColourId, greySuperLight);
-    setColour(juce::Slider::rotarySliderFillColourId, blue.withAlpha(0.72f));
-    setColour(juce::Slider::rotarySliderOutlineColourId, greyMedium);
-    setColour(juce::Slider::textBoxBackgroundColourId, greyMediumDark);
-    setColour(juce::Slider::textBoxTextColourId, greySuperLight);
-    setColour(juce::Slider::textBoxOutlineColourId, greyMedium);
-    setColour(juce::TextEditor::backgroundColourId, greySemiDark);
-    setColour(juce::TextEditor::highlightColourId, blue.withAlpha(0.24f));
-    setColour(juce::TextEditor::outlineColourId, greyMedium);
-    setColour(juce::TooltipWindow::backgroundColourId, greyMediumDark);
-    setColour(juce::TooltipWindow::textColourId, greySuperLight);
-    setColour(juce::AlertWindow::backgroundColourId, greySemiDark);
-    setColour(juce::CaretComponent::caretColourId, blue);
-    setColour(juce::DialogWindow::backgroundColourId, greySemiDark);
+    setColour(juce::ResizableWindow::backgroundColourId, greyDark());
+    setColour(juce::TextButton::buttonColourId, greyMedium());
+    setColour(juce::TextButton::buttonOnColourId, green());
+    setColour(juce::TextButton::textColourOffId, greySuperLight().withAlpha(0.96f));
+    setColour(juce::TextButton::textColourOnId, greySuperLight());
+    setColour(juce::Slider::backgroundColourId, greyMedium());
+    setColour(juce::Slider::trackColourId, blue().withAlpha(0.7f));
+    setColour(juce::Slider::thumbColourId, greySuperLight());
+    setColour(juce::Slider::rotarySliderFillColourId, blue().withAlpha(0.72f));
+    setColour(juce::Slider::rotarySliderOutlineColourId, greyMedium());
+    setColour(juce::Slider::textBoxBackgroundColourId, greyMediumDark());
+    setColour(juce::Slider::textBoxTextColourId, greySuperLight());
+    setColour(juce::Slider::textBoxOutlineColourId, greyMedium());
+    setColour(juce::TextEditor::backgroundColourId, greySemiDark());
+    setColour(juce::TextEditor::highlightColourId, blue().withAlpha(0.24f));
+    setColour(juce::TextEditor::outlineColourId, greyMedium());
+    setColour(juce::TooltipWindow::backgroundColourId, greyMediumDark());
+    setColour(juce::TooltipWindow::textColourId, greySuperLight());
+    setColour(juce::AlertWindow::backgroundColourId, greySemiDark());
+    setColour(juce::CaretComponent::caretColourId, blue());
+    setColour(juce::DialogWindow::backgroundColourId, greySemiDark());
 
-    setDefaultSansSerifTypeface(textFont.getTypefacePtr());
+    setDefaultSansSerifTypeface(getTextFont().getTypefacePtr());
     setUsingNativeAlertWindows(true);
 }
 
@@ -167,13 +154,15 @@ Button* CustomLookAndFeel::createDocumentWindowButton(const int buttonType)
         shape.addLineSegment({0.0f, 0.0f, 1.0f, 1.0f}, crossThickness);
         shape.addLineSegment({1.0f, 0.0f, 0.0f, 1.0f}, crossThickness);
 
-        return new CustomDocumentWindowButton("close", CustomLookAndFeel::greyMiddleLight, shape, shape, darkTheme);
+        return new CustomDocumentWindowButton("close", CustomLookAndFeel::greyMiddleLight(), shape, shape, darkTheme);
     }
 
     if (buttonType == DocumentWindow::minimiseButton) {
         shape.addLineSegment({0.0f, 0.5f, 1.0f, 0.5f}, crossThickness);
 
-        return new CustomDocumentWindowButton("minimise", CustomLookAndFeel::greyMiddleLight, shape, shape, darkTheme);
+        return new CustomDocumentWindowButton(
+            "minimise", CustomLookAndFeel::greyMiddleLight(), shape, shape, darkTheme
+        );
     }
 
     if (buttonType == DocumentWindow::maximiseButton) {
@@ -190,7 +179,7 @@ Button* CustomLookAndFeel::createDocumentWindowButton(const int buttonType)
         PathStrokeType(30.0f).createStrokedPath(fullscreenShape, fullscreenShape);
 
         return new CustomDocumentWindowButton(
-            "maximise", CustomLookAndFeel::greyMiddleLight, shape, fullscreenShape, darkTheme
+            "maximise", CustomLookAndFeel::greyMiddleLight(), shape, fullscreenShape, darkTheme
         );
     }
 
@@ -215,13 +204,13 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
 
     const auto isActive = window.isActiveWindow();
 
-    const auto background = darkTheme ? greyDark : greyLight;
-    const auto text = darkTheme ? greyLight : greyDark;
+    const auto background = darkTheme ? greyDark() : greyLight();
+    const auto text = darkTheme ? greyLight() : greyDark();
 
     graphics.setColour(background);
     graphics.fillAll();
 
-    const auto font = textFont.withHeight(static_cast<float>(height) * 0.54f);
+    const auto font = getTextFont().withHeight(static_cast<float>(height) * 0.54f);
     graphics.setFont(font);
 
     const auto textWidth = juce::roundToInt(std::ceil(juce::TextLayout::getStringWidth(font, window.getName())));
@@ -229,7 +218,7 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     auto iconHeight = 0;
 
     if (icon != nullptr) {
-        iconHeight = juce::roundToIntAccurate(font.getHeight());
+        iconHeight = juce::roundToIntAccurate(static_cast<double>(font.getHeight()));
         iconWidth = icon->getWidth() / icon->getHeight() * iconHeight + 4;
     }
 
@@ -339,7 +328,7 @@ void CustomLookAndFeel::drawPopupMenuItem(
 
 Font CustomLookAndFeel::getTextButtonFont(TextButton& /*button*/, const int buttonHeight)
 {
-    return textFont.withHeight(jmin(16.0f, static_cast<float>(buttonHeight) * 0.6f));
+    return getTextFont().withHeight(jmin(16.0f, static_cast<float>(buttonHeight) * 0.6f));
 }
 
 void CustomLookAndFeel::drawTooltip(Graphics& graphics, const String& text, const int width, const int height)
@@ -359,7 +348,7 @@ TextLayout CustomLookAndFeel::layoutTooltipText(const String& text, const Colour
 
     AttributedString attributedText;
     attributedText.setJustification(Justification::centred);
-    attributedText.append(text, textFont.withHeight(tooltipFontSize), colour);
+    attributedText.append(text, getTextFont().withHeight(tooltipFontSize), colour);
 
     TextLayout layout;
     layout.createLayoutWithBalancedLineLengths(attributedText, static_cast<float>(maxToolTipWidth));

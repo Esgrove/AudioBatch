@@ -37,7 +37,7 @@ PluginChainEditor::SlotRow::SlotRow(PluginChainEditor& ownerEditor, const int sl
     nameLabel.setJustificationType(juce::Justification::centredLeft);
     nameLabel.setColour(
         juce::Label::textColourId,
-        enabled ? juce::CustomLookAndFeel::greySuperLight : juce::CustomLookAndFeel::greyMiddle
+        enabled ? juce::CustomLookAndFeel::greySuperLight() : juce::CustomLookAndFeel::greyMiddle()
     );
     nameLabel.setInterceptsMouseClicks(false, false);
     addAndMakeVisible(nameLabel);
@@ -57,7 +57,7 @@ PluginChainEditor::SlotRow::SlotRow(PluginChainEditor& ownerEditor, const int sl
     addAndMakeVisible(downButton);
 
     removeButton.setTooltip("Remove this plugin from the chain.");
-    removeButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMediumDark);
+    removeButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMediumDark());
     removeButton.onClick = [this] { editor.pluginChain.removeSlot(index); };
     addAndMakeVisible(removeButton);
 }
@@ -79,7 +79,7 @@ void PluginChainEditor::SlotRow::resized()
 
 void PluginChainEditor::SlotRow::paint(juce::Graphics& graphics)
 {
-    graphics.setColour(dragging ? juce::CustomLookAndFeel::greyMedium : juce::CustomLookAndFeel::greyMediumDark);
+    graphics.setColour(dragging ? juce::CustomLookAndFeel::greyMedium() : juce::CustomLookAndFeel::greyMediumDark());
     graphics.fillRoundedRectangle(getLocalBounds().reduced(1).toFloat(), 4.0f);
 }
 
@@ -133,7 +133,7 @@ PluginChainEditor::PluginChainEditor(PluginChain& chain) : pluginChain(chain)
     rowContainer.addAndMakeVisible(addButton);
 
     hintLabel.setJustificationType(juce::Justification::centred);
-    hintLabel.setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddle);
+    hintLabel.setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddle());
     addChildComponent(hintLabel);
 
     viewport.setViewedComponent(&rowContainer, false);

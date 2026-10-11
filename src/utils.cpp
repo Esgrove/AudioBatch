@@ -97,7 +97,7 @@ juce::String formattedSystemInfo()
 {
     juce::String info {format("{} {}", version::APP_NAME, version::VERSION_NUMBER) + juce::newLine};
     for (const auto& line : utils::systemInfo()) {
-        for (auto tokens = juce::StringArray::fromTokens(line, " ", "\""); const auto& token : tokens) {
+        for (auto const tokens = juce::StringArray::fromTokens(line, " ", "\""); const auto& token : tokens) {
             if (token.containsNonWhitespaceChars()) {
                 info += format("{} ", token);
             }

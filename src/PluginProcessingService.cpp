@@ -47,7 +47,7 @@ static PluginProcessingResult fail(const juce::File& file, const juce::String& m
 /// Locates the AIFF format among the registered formats by name,
 /// so the writer does not depend on registration order.
 /// Returns nullptr when no AIFF format is available.
-static juce::AudioFormat* findAiffFormat(juce::AudioFormatManager& formatManager)
+static juce::AudioFormat* findAiffFormat(juce::AudioFormatManager const& formatManager)
 {
     for (int i = 0; i < formatManager.getNumKnownFormats(); ++i) {
         auto* format = formatManager.getKnownFormat(i);
@@ -97,7 +97,7 @@ static int clampChannelCount(const int channels)
 /// If that fails we fall back through several common configurations.
 static bool configurePluginChannels(juce::AudioPluginInstance& plugin, const int numChannels, const double sampleRate)
 {
-    auto trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {
+    auto const trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {
         auto layout = plugin.getBusesLayout();
 
         if (layout.inputBuses.isEmpty() && layout.outputBuses.isEmpty()) {
@@ -210,7 +210,7 @@ static bool callOnMessageThread(
     const PluginProcessingService::CancellationCheck& isCancelled
 )
 {
-    auto* messageManager = juce::MessageManager::getInstanceWithoutCreating();
+    auto const* messageManager = juce::MessageManager::getInstanceWithoutCreating();
     if (messageManager == nullptr) {
         return false;
     }
@@ -224,7 +224,7 @@ static bool callOnMessageThread(
         return false;
     }
 
-    auto call = std::make_shared<MessageThreadCall>();
+    auto const call = std::make_shared<MessageThreadCall>();
     call->function = std::move(function);
 
     const bool posted = juce::MessageManager::callAsync([call] {
@@ -372,110 +372,105 @@ juce::AudioFormatManager& PluginProcessingService::getThreadLocalFormatManager()
     return formatManager;
 }
 
-PluginProcessingResult PluginProcessingService::processFile(
+/// Returns an error message when the record or the plugin chain cannot be processed, or an empty string when it can.
+static juce::String validateProcessingInputs(
     const AudioAnalysisRecord& record,
     const PluginProcessingOptions& options,
-    const std::vector<juce::AudioPluginInstance*>& chainInstances,
-    const CancellationCheck& isCancelled
+    const std::vector<juce::AudioPluginInstance*>& chainInstances
 )
 {
-    const auto& file = record.file;
-
-    if (!file.existsAsFile()) {
-        return fail(file, "File does not exist");
+    if (!record.file.existsAsFile()) {
+        return "File does not exist";
     }
 
     if (!record.isReady()) {
-        return fail(file, "File analysis must finish before processing");
+        return "File analysis must finish before processing";
     }
 
-    if (chainInstances.empty() || chainInstances.size() != options.plugins.size()) {
-        return fail(file, "Plugin chain instances are not available");
-    }
+    const auto chainAvailable = !chainInstances.empty() && chainInstances.size() == options.plugins.size()
+        && std::ranges::none_of(chainInstances, [](const auto* instance) { return instance == nullptr; });
 
-    if (std::ranges::any_of(chainInstances, [](const auto* instance) { return instance == nullptr; })) {
-        return fail(file, "Plugin chain instances are not available");
-    }
+    return chainAvailable ? juce::String() : juce::String("Plugin chain instances are not available");
+}
 
-    auto& formatManager = getThreadLocalFormatManager();
-    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
-
-    if (reader == nullptr) {
-        return fail(file, "Unsupported or unreadable audio file");
-    }
-
-    auto* aiffFormat = findAiffFormat(formatManager);
-    if (aiffFormat == nullptr) {
-        return fail(file, "AIFF writer not available in this build");
-    }
-
-    const auto outputFile = getProcessingOutputFile(file);
-    juce::TemporaryFile temporaryFile(outputFile);
-    std::unique_ptr<juce::OutputStream> outputStream(temporaryFile.getFile().createOutputStream().release());
-
-    if (outputStream == nullptr) {
-        return fail(file, "Could not create temporary output file");
-    }
-
-    const auto numChannels = clampChannelCount(static_cast<int>(reader->numChannels));
-    const auto sampleRate = reader->sampleRate;
-
-    auto writerOptions = juce::AudioFormatWriterOptions()
-                             .withSampleRate(sampleRate)
-                             .withNumChannels(numChannels)
-                             .withBitsPerSample(outputBitsPerSample)
-                             .withMetadataValues(copyMetadata(reader->metadataValues));
-
-    std::unique_ptr<juce::AudioFormatWriter> writer(aiffFormat->createWriterFor(outputStream, writerOptions));
-
-    if (writer == nullptr) {
-        return fail(file, "Could not create AIFF writer for output");
-    }
-
-    // createWriterFor takes ownership of the stream on success.
-    juce::ignoreUnused(outputStream);
-
-    // Determine input gain.
-    float inputGain = 1.0f;
+/// Returns the linear gain applied before the first plugin.
+/// A custom gain wins, otherwise the file is peak normalized when requested, and otherwise it is left unchanged.
+static float getInputGain(const AudioAnalysisRecord& record, const PluginProcessingOptions& options)
+{
     if (record.hasCustomGain) {
-        inputGain = juce::Decibels::decibelsToGain(record.customGainDb);
-    } else if (options.normalizeBeforePlugin) {
+        return juce::Decibels::decibelsToGain(record.customGainDb);
+    }
+
+    if (options.normalizeBeforePlugin) {
         const auto peak = peakMagnitude(record.overallPeak);
         if (peak > 0.0f) {
-            inputGain = 1.0f / peak;
+            return 1.0f / peak;
         }
     }
 
-    // Plugin setup runs on the message thread as VST3 requires, and only processBlock runs on this worker thread.
-    ChainPreparation preparation;
-    const bool prepared = callOnMessageThread(
-        [&] { preparation = prepareChain(chainInstances, options, numChannels, sampleRate); }, isCancelled
-    );
+    return 1.0f;
+}
 
-    if (!prepared || preparation.errorMessage.isNotEmpty()) {
-        writer.reset();
-        utils::deleteFile(temporaryFile.getFile());
-        return fail(file, prepared ? preparation.errorMessage : juce::String(cancelledMessage));
+/// Reads `samplesToRead` frames starting at `samplePosition` into the start of `buffer` and applies `inputGain`.
+/// `readBuffer` and `readChannelPointers` are scratch storage reused across blocks.
+/// Returns false when the reader fails.
+static bool readInputBlock(
+    juce::AudioFormatReader& reader,
+    juce::AudioBuffer<float>& buffer,
+    juce::AudioBuffer<float>& readBuffer,
+    std::vector<float*>& readChannelPointers,
+    const juce::int64 samplePosition,
+    const int samplesToRead,
+    const float inputGain
+)
+{
+    const auto channelCount = static_cast<int>(readChannelPointers.size());
+    readBuffer.clear();
+
+    for (int channel = 0; channel < channelCount; ++channel) {
+        readChannelPointers[static_cast<std::size_t>(channel)] = readBuffer.getWritePointer(channel);
     }
 
-    const auto processChannelCount = preparation.processChannelCount;
+    if (!reader.read(readChannelPointers.data(), channelCount, samplePosition, samplesToRead)) {
+        return false;
+    }
+
+    for (int channel = 0; channel < channelCount; ++channel) {
+        buffer.copyFrom(channel, 0, readBuffer, channel, 0, samplesToRead);
+    }
+
+    if (!juce::approximatelyEqual(inputGain, 1.0f)) {
+        for (int channel = 0; channel < channelCount; ++channel) {
+            buffer.applyGain(channel, 0, samplesToRead, inputGain);
+        }
+    }
+
+    return true;
+}
+
+/// Streams the whole file through every plugin in chain order and writes the processed audio.
+/// The chain latency and tail are rendered on top of the file length,
+/// and the first `latencySamples` output samples are discarded,
+/// so the processed audio lines up with the input and its end is not cut off.
+/// Returns an error message, or an empty string when the whole file was written.
+static juce::String renderThroughChain(
+    juce::AudioFormatReader& reader,
+    juce::AudioFormatWriter& writer,
+    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    const ChainPreparation& preparation,
+    const int numChannels,
+    const float inputGain,
+    const PluginProcessingService::CancellationCheck& isCancelled
+)
+{
     const auto latencySamples = preparation.latencySamples;
 
-    juce::AudioBuffer<float> buffer(processChannelCount, processingBlockSize);
+    juce::AudioBuffer<float> buffer(preparation.processChannelCount, processingBlockSize);
     juce::AudioBuffer<float> readBuffer(numChannels, processingBlockSize);
     juce::MidiBuffer midi;
     std::vector<float*> readChannelPointers(static_cast<std::size_t>(numChannels));
 
-    if (latencySamples > 0) {
-        utils::logDebug(
-            "Compensating {} samples of plugin chain latency for {}", latencySamples, file.getFullPathName().quoted()
-        );
-    }
-
-    // Render the latency on top of the file length and tail,
-    // and discard that many samples from the start of the output,
-    // so the processed audio lines up with the input and its end is not cut off.
-    const auto totalSamples = reader->lengthInSamples + latencySamples + preparation.tailSamples;
+    const auto totalSamples = reader.lengthInSamples + latencySamples + preparation.tailSamples;
     juce::String renderError;
 
     for (juce::int64 samplePosition = 0; samplePosition < totalSamples; samplePosition += processingBlockSize) {
@@ -490,29 +485,16 @@ PluginProcessingResult PluginProcessingService::processFile(
         buffer.clear();
 
         const auto samplesToRead = static_cast<int>(juce::jmax<juce::int64>(
-            0, juce::jmin<juce::int64>(samplesThisBlock, reader->lengthInSamples - samplePosition)
+            0, juce::jmin<juce::int64>(samplesThisBlock, reader.lengthInSamples - samplePosition)
         ));
 
-        if (samplesToRead > 0) {
-            readBuffer.clear();
-            for (int channel = 0; channel < numChannels; ++channel) {
-                readChannelPointers[static_cast<std::size_t>(channel)] = readBuffer.getWritePointer(channel);
-            }
-
-            if (!reader->read(readChannelPointers.data(), numChannels, samplePosition, samplesToRead)) {
-                renderError = "Failed while reading audio data";
-                break;
-            }
-
-            for (int channel = 0; channel < numChannels; ++channel) {
-                buffer.copyFrom(channel, 0, readBuffer, channel, 0, samplesToRead);
-            }
-
-            if (!juce::approximatelyEqual(inputGain, 1.0f)) {
-                for (int channel = 0; channel < numChannels; ++channel) {
-                    buffer.applyGain(channel, 0, samplesToRead, inputGain);
-                }
-            }
+        if (samplesToRead > 0
+            && !readInputBlock(
+                reader, buffer, readBuffer, readChannelPointers, samplePosition, samplesToRead, inputGain
+            ))
+        {
+            renderError = "Failed while reading audio data";
+            break;
         }
 
         // Process: trim buffer to the block size the plugin expects (it was prepared at processingBlockSize).
@@ -540,15 +522,94 @@ PluginProcessingResult PluginProcessingService::processFile(
         }
 
         const auto channelsToWrite = juce::jmin(numChannels, buffer.getNumChannels());
-        juce::AudioBuffer<float> writeView(
+        juce::AudioBuffer<float> const writeView(
             buffer.getArrayOfWritePointers(), channelsToWrite, firstSampleToWrite, samplesToWrite
         );
 
-        if (!writer->writeFromAudioSampleBuffer(writeView, 0, samplesToWrite)) {
+        if (!writer.writeFromAudioSampleBuffer(writeView, 0, samplesToWrite)) {
             renderError = "Failed while writing processed audio data";
             break;
         }
     }
+
+    return renderError;
+}
+
+PluginProcessingResult PluginProcessingService::processFile(
+    const AudioAnalysisRecord& record,
+    const PluginProcessingOptions& options,
+    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    const CancellationCheck& isCancelled
+)
+{
+    const auto& file = record.file;
+
+    if (const auto inputError = validateProcessingInputs(record, options, chainInstances); inputError.isNotEmpty()) {
+        return fail(file, inputError);
+    }
+
+    auto& formatManager = getThreadLocalFormatManager();
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+
+    if (reader == nullptr) {
+        return fail(file, "Unsupported or unreadable audio file");
+    }
+
+    auto* aiffFormat = findAiffFormat(formatManager);
+    if (aiffFormat == nullptr) {
+        return fail(file, "AIFF writer not available in this build");
+    }
+
+    const auto outputFile = getProcessingOutputFile(file);
+    juce::TemporaryFile const temporaryFile(outputFile);
+    std::unique_ptr<juce::OutputStream> outputStream(temporaryFile.getFile().createOutputStream().release());
+
+    if (outputStream == nullptr) {
+        return fail(file, "Could not create temporary output file");
+    }
+
+    const auto numChannels = clampChannelCount(static_cast<int>(reader->numChannels));
+    const auto sampleRate = reader->sampleRate;
+
+    auto const writerOptions = juce::AudioFormatWriterOptions()
+                                   .withSampleRate(sampleRate)
+                                   .withNumChannels(numChannels)
+                                   .withBitsPerSample(outputBitsPerSample)
+                                   .withMetadataValues(copyMetadata(reader->metadataValues));
+
+    std::unique_ptr<juce::AudioFormatWriter> writer(aiffFormat->createWriterFor(outputStream, writerOptions));
+
+    if (writer == nullptr) {
+        return fail(file, "Could not create AIFF writer for output");
+    }
+
+    // createWriterFor takes ownership of the stream on success.
+    juce::ignoreUnused(outputStream);
+
+    const auto inputGain = getInputGain(record, options);
+
+    // Plugin setup runs on the message thread as VST3 requires, and only processBlock runs on this worker thread.
+    ChainPreparation preparation;
+    const bool prepared = callOnMessageThread(
+        [&] { preparation = prepareChain(chainInstances, options, numChannels, sampleRate); }, isCancelled
+    );
+
+    if (!prepared || preparation.errorMessage.isNotEmpty()) {
+        writer.reset();
+        utils::deleteFile(temporaryFile.getFile());
+        return fail(file, prepared ? preparation.errorMessage : juce::String(cancelledMessage));
+    }
+
+    const auto latencySamples = preparation.latencySamples;
+
+    if (latencySamples > 0) {
+        utils::logDebug(
+            "Compensating {} samples of plugin chain latency for {}", latencySamples, file.getFullPathName().quoted()
+        );
+    }
+
+    const auto renderError
+        = renderThroughChain(*reader, *writer, chainInstances, preparation, numChannels, inputGain, isCancelled);
 
     writer.reset();
 
