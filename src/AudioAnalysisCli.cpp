@@ -78,6 +78,40 @@ static juce::String reportedOutputPath(const AudioAnalysisRecord& record)
     return record.fileName;
 }
 
+/// Removes an option and its value from the arguments.
+/// Accepts the value as the next argument for both the short and the long form, like "-g type" and "--group-by type",
+/// and also as "--group-by=type".
+/// juce::ArgumentList::removeValueForOption only takes the next argument for the short form.
+/// Returns an empty optional when the option is not present,
+/// and an empty string when it is present without a value.
+static std::optional<juce::String> removeOptionWithValue(juce::ArgumentList& arguments, const juce::StringRef option)
+{
+    for (int index = 0; index < arguments.size(); ++index) {
+        const auto& argument = arguments.arguments.getReference(index);
+
+        if (argument != option) {
+            continue;
+        }
+
+        if (argument.isLongOption() && argument.text.containsChar('=')) {
+            const auto value = argument.getLongOptionValue();
+            arguments.arguments.remove(index);
+            return value;
+        }
+
+        if (index + 1 < arguments.size() && !arguments[index + 1].isOption()) {
+            const auto value = arguments[index + 1].text;
+            arguments.arguments.removeRange(index, 2);
+            return value;
+        }
+
+        arguments.arguments.remove(index);
+        return juce::String();
+    }
+
+    return std::nullopt;
+}
+
 }  // namespace audiobatch::cli
 
 using namespace audiobatch::cli;
@@ -129,8 +163,8 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
     options.listPlugins = arguments.removeOptionIfFound("--list-plugins|-l");
     options.rescanPlugins = arguments.removeOptionIfFound("--rescan|-R");
 
-    if (const auto workerCountValue = arguments.removeValueForOption("--jobs|-j"); workerCountValue.isNotEmpty()) {
-        options.workerCount = workerCountValue.getIntValue();
+    if (const auto workerCountValue = removeOptionWithValue(arguments, "--jobs|-j"); workerCountValue.has_value()) {
+        options.workerCount = workerCountValue->getIntValue();
 
         if (options.workerCount <= 0) {
             errorMessage = "Worker count must be greater than zero";
@@ -138,8 +172,8 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
         }
     }
 
-    if (const auto sortValue = arguments.removeValueForOption("--sort|-s"); sortValue.isNotEmpty()) {
-        const auto normalizedSort = sortValue.trim().toLowerCase();
+    if (const auto sortValue = removeOptionWithValue(arguments, "--sort|-s"); sortValue.has_value()) {
+        const auto normalizedSort = sortValue->trim().toLowerCase();
 
         if (normalizedSort == "peak") {
             options.sortMode = AudioAnalysisSortMode::peak;
@@ -155,15 +189,9 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
         }
     }
 
-    const auto groupingGiven = arguments.containsOption("--group-by|-g");
-    const auto groupingValue = arguments.removeValueForOption("--group-by|-g");
-    if (groupingGiven && groupingValue.isEmpty()) {
-        errorMessage = "--group-by requires a value: name, manufacturer, type, or format";
-        return std::nullopt;
-    }
-
-    if (groupingValue.isNotEmpty()) {
-        const auto grouping = PluginListCli::parseGrouping(groupingValue);
+    const auto groupingValue = removeOptionWithValue(arguments, "--group-by|-g");
+    if (groupingValue.has_value()) {
+        const auto grouping = PluginListCli::parseGrouping(*groupingValue);
 
         if (!grouping.has_value()) {
             errorMessage = "Plugin grouping must be one of: name, manufacturer, type, format";
@@ -182,7 +210,7 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
         options.inputPaths.add(argument.resolveAsFile());
     }
 
-    if ((groupingValue.isNotEmpty() || options.rescanPlugins) && !options.listPlugins) {
+    if ((groupingValue.has_value() || options.rescanPlugins) && !options.listPlugins) {
         errorMessage = "--group-by and --rescan can only be used with --list-plugins";
         return std::nullopt;
     }
