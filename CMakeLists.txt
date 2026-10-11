@@ -72,7 +72,7 @@ endif()
 message(STATUS "Build name: ${APP_BUILD_NAME}")
 
 if(WIN32)
-    set(ICON_FILE "${CMAKE_SOURCE_DIR}/Assets/icon_win.png")
+    set(ICON_FILE "${CMAKE_SOURCE_DIR}/assets/icon_win.png")
 else()
     # macOS settings
     set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version")
@@ -80,7 +80,7 @@ else()
     # Instead, explicitly specify which targets require schemes.
     set(CMAKE_XCODE_GENERATE_SCHEME OFF)
     set(CMAKE_XCODE_ATTRIBUTE_DEAD_CODE_STRIPPING YES)
-    set(ICON_FILE "${CMAKE_SOURCE_DIR}/Assets/icon_mac.png")
+    set(ICON_FILE "${CMAKE_SOURCE_DIR}/assets/icon_mac.png")
 endif()
 
 # Use ccache for compilation caching when available.
@@ -262,86 +262,68 @@ juce_add_console_app(
 juce_generate_juce_header(AudioBatch)
 juce_generate_juce_header(AudioBatchCli)
 
+# Sources shared by the GUI, the CLI and the tests.
+# Paths stay relative to the source directory, which audiobatch_set_source_warnings relies on.
+set(AUDIOBATCH_CORE_SOURCES
+    "src/AnalysisCache.cpp"
+    "src/AnalysisCache.h"
+    "src/AnalysisCoordinator.cpp"
+    "src/AnalysisCoordinator.h"
+    "src/AudioAnalysisService.cpp"
+    "src/AudioAnalysisService.h"
+    "src/AudioAnalysisTypes.h"
+    "src/AudioNormalizationService.cpp"
+    "src/AudioNormalizationService.h"
+    "src/ConsolePrint.cpp"
+    "src/ConsolePrint.h"
+    "src/MetadataService.cpp"
+    "src/MetadataService.h"
+    "src/NormalizeCoordinator.cpp"
+    "src/NormalizeCoordinator.h"
+    "src/PluginScanner.cpp"
+    "src/PluginScanner.h"
+    "src/StringFormat.h"
+    "src/utils.cpp"
+    "src/utils.h"
+    "src/version.h"
+)
+
+# CLI front end sources, also linked into the tests.
+# cmake-format: off
+set(AUDIOBATCH_CLI_SOURCES
+    "src/AudioAnalysisCli.cpp"
+    "src/AudioAnalysisCli.h"
+    "src/PluginListCli.cpp"
+    "src/PluginListCli.h"
+)
+# cmake-format: on
+
 target_sources(
     AudioBatch
     PRIVATE
-        "src/AnalysisCache.cpp"
-        "src/AnalysisCache.h"
-        "src/AnalysisCoordinator.cpp"
-        "src/AnalysisCoordinator.h"
-        "src/AudioAnalysisCli.cpp"
-        "src/AudioAnalysisCli.h"
-        "src/AudioAnalysisService.cpp"
-        "src/AudioAnalysisService.h"
-        "src/AudioAnalysisTypes.h"
+        ${AUDIOBATCH_CORE_SOURCES}
         "src/AudioBatchComponent.cpp"
         "src/AudioBatchComponent.h"
         "src/AudioFileTableModel.cpp"
         "src/AudioFileTableModel.h"
-        "src/AudioNormalizationService.cpp"
-        "src/AudioNormalizationService.h"
-        "src/ConsolePrint.cpp"
-        "src/ConsolePrint.h"
         "src/CustomLookAndFeel.cpp"
         "src/CustomLookAndFeel.h"
         "src/IntervalStepSlider.h"
         "src/Main.cpp"
-        "src/MetadataService.cpp"
-        "src/MetadataService.h"
-        "src/NormalizeCoordinator.cpp"
-        "src/NormalizeCoordinator.h"
         "src/PluginChain.cpp"
         "src/PluginChain.h"
         "src/PluginChainEditor.cpp"
         "src/PluginChainEditor.h"
-        "src/PluginListCli.cpp"
-        "src/PluginListCli.h"
         "src/PluginProcessing.h"
         "src/PluginProcessingCoordinator.cpp"
         "src/PluginProcessingCoordinator.h"
         "src/PluginProcessingService.cpp"
         "src/PluginProcessingService.h"
-        "src/PluginScanner.cpp"
-        "src/PluginScanner.h"
-        "src/StringFormat.h"
         "src/ThumbnailComponent.cpp"
         "src/ThumbnailComponent.h"
-        "src/utils.cpp"
-        "src/utils.h"
 )
 
-target_include_directories(AudioBatch PRIVATE "include/ASIO_SDK")
-
-target_sources(
-    AudioBatchCli
-    PRIVATE
-        "src/AnalysisCache.cpp"
-        "src/AnalysisCache.h"
-        "src/AnalysisCoordinator.cpp"
-        "src/AnalysisCoordinator.h"
-        "src/AudioAnalysisCli.cpp"
-        "src/AudioAnalysisCli.h"
-        "src/AudioAnalysisService.cpp"
-        "src/AudioAnalysisService.h"
-        "src/AudioAnalysisTypes.h"
-        "src/AudioNormalizationService.cpp"
-        "src/AudioNormalizationService.h"
-        "src/ConsolePrint.cpp"
-        "src/ConsolePrint.h"
-        "src/CliMain.cpp"
-        "src/MetadataService.cpp"
-        "src/MetadataService.h"
-        "src/NormalizeCoordinator.cpp"
-        "src/NormalizeCoordinator.h"
-        "src/PluginListCli.cpp"
-        "src/PluginListCli.h"
-        "src/PluginScanner.cpp"
-        "src/PluginScanner.h"
-        "src/StringFormat.h"
-        "src/utils.cpp"
-        "src/utils.h"
-        "src/version.h"
-)
+target_sources(AudioBatchCli PRIVATE ${AUDIOBATCH_CORE_SOURCES} ${AUDIOBATCH_CLI_SOURCES} "src/CliMain.cpp")
 
 target_compile_definitions(
     AudioBatch
@@ -425,9 +407,6 @@ if(MSVC)
     set_source_files_properties(
         "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_gui_basics/juce_gui_basics.cpp" PROPERTIES COMPILE_OPTIONS "/wd4100"
     )
-
-    # https://docs.microsoft.com/en-us/cpp/build/reference/permissive-standards-conformance
-    add_compile_options(/W4 /permissive-)
 else()
     # Suppress -Wswitch-enum in vendored JUCE audio formats source (has a default case but not all enum values).
     set_source_files_properties(
@@ -442,9 +421,6 @@ else()
         "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_processors_headless/juce_audio_processors_headless.mm"
         PROPERTIES COMPILE_OPTIONS "-Wno-deprecated-declarations"
     )
-
-    add_compile_options(-Wall -Wextra -pedantic)
-    add_link_options(-Wl,-weak_reference_mismatches,weak)
 endif()
 
 # Applies the stricter warning set to the project's own sources only.
@@ -465,6 +441,9 @@ function(audiobatch_set_source_warnings)
 
     if(MSVC)
         set(options
+            # Standards conformance mode.
+            # https://learn.microsoft.com/en-us/cpp/build/reference/permissive-standards-conformance
+            /permissive-
             # Source files and string literals are UTF-8, whatever code page the build machine uses.
             /utf-8
             # JUCE headers are written to JUCE's own rules, so they are treated as external headers
@@ -507,6 +486,8 @@ function(audiobatch_set_source_warnings)
             # Clang keeps the system classification when the same directory is also a normal include directory.
             -isystem
             "${CMAKE_SOURCE_DIR}/JUCE/modules"
+            # The JUCE recommended warning flags include -Wall and -Wpedantic but not -Wextra.
+            -Wextra
             # Implicit float to double widening, which is easy to introduce in single precision audio code.
             -Wdouble-promotion
             # Casts written the C way, and casts that drop qualifiers.
