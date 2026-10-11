@@ -9,6 +9,7 @@
 
 #include "CustomLookAndFeel.h"
 #include "PluginChainEditor.h"
+#include "PluginScanner.h"
 #include "StringFormat.h"
 
 #include <algorithm>
@@ -57,6 +58,10 @@ PluginChain::PluginChain(juce::ApplicationProperties& applicationProperties) : a
 {
     juce::addDefaultFormatsToManager(formatManager);
     knownPluginList.addChangeListener(this);
+
+    // Load plugins in a separate worker process while scanning,
+    // so a plugin that crashes during the scan is blacklisted instead of taking down the app.
+    knownPluginList.setCustomScanner(std::make_unique<OutOfProcessPluginScanner>());
 
     loadKnownPluginList();
     loadPersistedChain();
@@ -462,10 +467,13 @@ void PluginChain::showScanWindow()
     const auto deadMansPedalFile
         = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile(deadMansPedalFileName);
 
-    // allowPluginsWhichRequireAsynchronousInstantiation must stay false so scanning runs on the message thread.
-    // A background-thread scan crashes with copy-protected plugins (for example PACE / iLok wrapped VST3s)
-    // that dispatch licensing work to the main thread while their factory is still being enumerated.
-    // Asynchronous-only plugins (AUv3) are not usable by this app anyway,
+    // The plugins themselves are loaded by the OutOfProcessPluginScanner worker process,
+    // which scans on its own message thread.
+    // Copy-protected plugins (for example PACE / iLok wrapped VST3s) need that,
+    // because they dispatch licensing work to the main thread while their factory is still being enumerated.
+    // allowPluginsWhichRequireAsynchronousInstantiation stays false,
+    // so asynchronous-only plugins (AUv3) are still left out of the scan.
+    // They are not usable by this app anyway,
     // since all instantiation goes through the synchronous createPluginInstance.
     constexpr bool allowAsynchronousInstantiation = false;
     auto* listComponent = new juce::PluginListComponent(

@@ -93,7 +93,9 @@ namespace utils
 enum class Level { debug, info, warn, error };
 
 /// Creates the default rolling file logger for the application.
-std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName);
+/// The log file goes into the application's log folder and is named after the log name,
+/// which defaults to the application name.
+std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName, const juce::String& logName = {});
 
 /// Move a file or folder to the OS trash / recycle bin.
 bool moveToTrash(const juce::File& file);
