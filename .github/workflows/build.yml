@@ -7,24 +7,32 @@ on:
     paths:
       - ".clang-format"
       - ".clang-tidy"
+      - ".cmake-format.yaml"
       - ".github/workflows/build.yml"
+      - "build.sh"
       - "CMakeLists.txt"
       - "CMakePresets.json"
       - "common.sh"
+      - "format.sh"
       - "JUCE"
       - "lint.sh"
       - "src/**"
+      - "tests/**"
   pull_request:
     paths:
       - ".clang-format"
       - ".clang-tidy"
+      - ".cmake-format.yaml"
       - ".github/workflows/build.yml"
+      - "build.sh"
       - "CMakeLists.txt"
       - "CMakePresets.json"
       - "common.sh"
+      - "format.sh"
       - "JUCE"
       - "lint.sh"
       - "src/**"
+      - "tests/**"
 
 # Cancel previous runs for PRs but not pushes to main
 concurrency:
@@ -117,12 +125,14 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Install clang-format
+      # format.sh also checks CMake files with cmake-format, which it runs through uvx,
+      # and shell scripts with shfmt.
+      - name: Install formatters
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
-        run: brew install clang-format
+        run: brew install clang-format shfmt uv
 
       - name: Check formatting
         run: |
           clang-format --version
-          clang-format --verbose --style=file --dry-run --Werror $(find src -type f \( -name "*.cpp" -o -name "*.h" \))
+          ./format.sh --check

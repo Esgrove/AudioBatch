@@ -10,15 +10,13 @@ Current implementation focus:
 - Show sortable peak, true peak, and loudness data in the GUI.
 - Show per-file processing state directly in the results list while background work is running.
 - Normalize selected files to `0 dBFS` peak from the GUI or the CLI.
-- Convert any normalized output to AIFF and preserve all source metadata,
+- Convert any normalized output to AIFF and carry over the source tags,
   including embedded album art and custom tags, by writing them back as ID3v2.4.
 - Batch process selected files through a chain of VST3 or Audio Unit plugins from the GUI.
 - Run the same analysis and normalization from a console executable.
 
 Analysis scope currently assumes mono or stereo source files, including MP3 joint stereo.
 Multichannel files are not a target for this tool.
-
-![Screenshot](./screenshot_mac.png)
 
 ## Dependencies
 
@@ -80,6 +78,21 @@ This produces two binaries:
 - `AudioBatchApp.exe` / `AudioBatch.app` for the GUI app.
 - `audiobatch` for CLI binary.
 
+## Development
+
+Formatting and linting run through scripts in the repository root:
+
+- `./format.sh` formats C++ with clang-format, `CMakeLists.txt` with cmake-format, and shell scripts with shfmt.
+  cmake-format runs through `uvx` when it is not installed.
+  `./format.sh --check` only verifies formatting, which is what CI runs.
+- `./lint.sh` runs clang-tidy on `src/` using the debug build's `compile_commands.json`.
+  `./lint.sh --check` exits with code 1 on any warning.
+- `.pre-commit-config.yaml` runs the basic file checks, clang-format, and cmake-format through [prek](https://prek.j178.dev).
+
+The project sources compile with warnings as errors and a stricter warning set than the JUCE defaults.
+CMake 4.2 or newer is required.
+Linux is not supported yet.
+
 ## GUI
 
 The GUI analyzes the selected root folders automatically in the background and stores results in a sortable table.
@@ -96,8 +109,11 @@ Starting the GUI executable with `-V` or `--version` prints the version line and
 the same as the CLI:
 
 ```text
-AudioBatch 0.8.0.12 2026-10-11 ea19fd1 main JUCE v9.0.3
+AudioBatch 0.9.0.3 2026-10-11 a11667c main JUCE v9.0.3
 ```
+
+Starting the GUI with `-H` or `--headless` runs the app with its main window hidden.
+This is meant for automated startup checks, since the window cannot be shown again from inside the app.
 
 The results list supports per-file actions from the context menu, including:
 
@@ -113,7 +129,7 @@ Keyboard shortcuts in the results list:
 
 - `Delete` or `Backspace` removes the selected rows from the list.
 - `Ctrl-Backspace` moves the selected files to the system trash.
-- `Cmd-R` or `Ctrl-R` re-analyzes the selected files.
+- `Cmd-R` or `Ctrl-R` reveals the selected file in Finder or Explorer.
 - `F5` refreshes the analysis for all root folders.
 - `Space` starts or stops the background analysis.
 
@@ -123,19 +139,23 @@ because the output is always a sibling `.aif` file written through the JUCE AIFF
 
 The status column also shows per-file activity while analysis or normalization is running.
 
-Visible columns:
+Columns:
 
 - file name
 - full path
 - file type
 - bitrate
-- peak L
-- peak R
+- sample rate
+- peak L (hidden by default)
+- peak R (hidden by default)
 - peak max
 - true peak
 - max short
 - integrated loudness
+- custom gain (hidden by default)
 - status
+
+Columns can be shown or hidden from the table header context menu.
 
 Default sorting is by overall peak ascending, so the quietest files appear first.
 
@@ -214,6 +234,18 @@ Options:
 
 `--help` and `--version` only print to the console.
 They do not start logging or write to the log file.
+
+Options that take a value accept both `--jobs 4` and `--jobs=4`.
+`--sort lufs` can also be written as `--sort loudness`.
+Without any paths, the current directory is analyzed.
+`--jobs` sets the number of parallel analysis workers.
+Normalization in the CLI processes one file at a time.
+
+Exit codes:
+
+- `0`: every file was analyzed (and normalized, with `-n`) successfully.
+- `1`: invalid arguments, or the output or plugin list could not be written.
+- `2`: at least one file failed analysis or normalization.
 
 ### Plugin listing
 
@@ -298,6 +330,9 @@ The cache is invalidated when any of these change:
 - file size
 - file modification time
 - internal analysis schema version
+
+Failed analyses are cached too, so a file that cannot be decoded is not retried on every run.
+Use `--refresh` in the CLI, or re-analyze from the GUI, to retry it.
 
 ## TODO
 
