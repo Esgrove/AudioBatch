@@ -5,6 +5,7 @@
 #include "FileUtils.h"
 
 #include "Log.h"
+#include "StringFormat.h"
 
 #include <string>
 
@@ -81,5 +82,42 @@ bool isWavFile(const juce::File& file)
 {
     const auto extension = fileExtension(file);
     return extension == "wav" || extension == "wave";
+}
+
+juce::String existingOutputMessage(const juce::File& outputFile)
+{
+    return format("Output file {} already exists. Use force overwrite to replace it.", outputFile.getFileName());
+}
+
+juce::String commitTemporaryOutput(
+    const juce::TemporaryFile& temporaryFile,
+    const juce::File& sourceFile,
+    const juce::File& outputFile,
+    const bool overwriteExisting
+)
+{
+    const bool replacingSource = outputFile == sourceFile;
+
+    if (!replacingSource && outputFile.exists()) {
+        if (!overwriteExisting) {
+            return existingOutputMessage(outputFile);
+        }
+
+        if (!moveToTrash(outputFile)) {
+            return "Could not move the existing output file to the system trash";
+        }
+    }
+
+    if (!temporaryFile.overwriteTargetFileWithTemporary()) {
+        return replacingSource ? "Could not replace the original file with the new audio"
+                               : "Could not move the new audio file into place";
+    }
+
+    if (!replacingSource && sourceFile.existsAsFile() && !moveToTrash(sourceFile)) {
+        deleteFile(outputFile);
+        return "Could not move the original audio file to the system trash";
+    }
+
+    return {};
 }
 }  // namespace utils

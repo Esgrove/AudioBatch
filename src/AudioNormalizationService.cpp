@@ -40,40 +40,6 @@ struct AudioNormalizationFormatSupport {
     juce::String detail;
 };
 
-/// Moves the temporary output into its final location and disposes of the original file.
-/// In-place AIFF output simply replaces the source.
-/// For other formats the original is moved to the system trash after the new file is written,
-/// and the new file is deleted again if trashing fails so no duplicate is left behind.
-static bool finalizeNormalizationOutput(
-    const juce::TemporaryFile& temporaryFile,
-    const juce::File& sourceFile,
-    const juce::File& outputFile,
-    juce::String& errorMessage
-)
-{
-    if (outputFile == sourceFile) {
-        if (!temporaryFile.overwriteTargetFileWithTemporary()) {
-            errorMessage = "Could not replace the original file with normalized audio";
-            return false;
-        }
-
-        return true;
-    }
-
-    if (!temporaryFile.overwriteTargetFileWithTemporary()) {
-        errorMessage = "Could not create the normalized AIF file";
-        return false;
-    }
-
-    if (sourceFile.existsAsFile() && !utils::moveToTrash(sourceFile)) {
-        utils::deleteFile(outputFile);
-        errorMessage = "Could not move the original audio file to the system trash";
-        return false;
-    }
-
-    return true;
-}
-
 /// Returns the one-line summary of normalization output behavior used in the support summary.
 static juce::String getNormalizationStatusLine()
 {
@@ -276,36 +242,6 @@ static juce::String validateTemporaryNormalizedOutput(
         encodedReader == nullptr || encodedReader->lengthInSamples <= 0)
     {
         return "Normalization failed before the output file could be verified. The original file was left unchanged.";
-    }
-
-    return {};
-}
-
-/// Returns the user-facing error for an output path that is already taken by another file.
-static juce::String existingOutputMessage(const juce::File& outputFile)
-{
-    return utils::format("Output file {} already exists. Use force overwrite to replace it.", outputFile.getFileName());
-}
-
-/// Makes room for the output when it would replace a different, existing file.
-/// The existing file is moved to the system trash only when overwriting is allowed.
-/// Returns an empty string on success, or a user-facing error message.
-static juce::String clearExistingOutput(
-    const juce::File& sourceFile,
-    const juce::File& outputFile,
-    const AudioNormalizationOptions& options
-)
-{
-    if (outputFile == sourceFile || !outputFile.exists()) {
-        return {};
-    }
-
-    if (!options.overwriteExisting) {
-        return existingOutputMessage(outputFile);
-    }
-
-    if (!utils::moveToTrash(outputFile)) {
-        return "Could not move the existing output file to the system trash";
     }
 
     return {};
@@ -540,7 +476,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
     }
 
     if (outputFile != file && outputFile.exists() && !options.overwriteExisting) {
-        return failNormalization(file, existingOutputMessage(outputFile));
+        return failNormalization(file, utils::existingOutputMessage(outputFile));
     }
 
     if (!sourceRecord.isReady()) {
@@ -640,12 +576,11 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
         return failNormalization(file, cancelledMessage);
     }
 
-    if (const auto clearError = clearExistingOutput(file, outputFile, options); clearError.isNotEmpty()) {
-        return failNormalization(file, clearError);
-    }
-
-    if (juce::String finalizeError; !finalizeNormalizationOutput(temporaryFile, file, outputFile, finalizeError)) {
-        return failNormalization(file, finalizeError);
+    if (const auto commitError
+        = utils::commitTemporaryOutput(temporaryFile, file, outputFile, options.overwriteExisting);
+        commitError.isNotEmpty())
+    {
+        return failNormalization(file, commitError);
     }
 
     AudioNormalizationResult result;

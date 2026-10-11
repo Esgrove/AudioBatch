@@ -652,46 +652,6 @@ static juce::String writeFinalOutput(
     return {};
 }
 
-/// Moves the validated temporary output into place and disposes of the original.
-/// A different file already at the output path is only replaced when overwriting is allowed,
-/// and it goes to the system trash so it can be recovered.
-/// When the output path differs from the source, the original is moved to the system trash afterwards,
-/// and the output is removed again when that fails.
-/// Returns an empty string on success, or a user-facing error message.
-static juce::String commitProcessedOutput(
-    const juce::TemporaryFile& temporaryFile,
-    const juce::File& file,
-    const juce::File& outputFile,
-    const PluginProcessingOptions& options
-)
-{
-    const bool replacingOriginal = file == outputFile;
-    if (!replacingOriginal && outputFile.exists()) {
-        if (!options.overwriteExisting) {
-            utils::deleteFile(temporaryFile.getFile());
-            return utils::format("Output file {} already exists", outputFile.getFileName());
-        }
-
-        if (!utils::moveToTrash(outputFile)) {
-            utils::deleteFile(temporaryFile.getFile());
-            return "Could not move the existing output file to the system trash";
-        }
-    }
-
-    if (!temporaryFile.overwriteTargetFileWithTemporary()) {
-        return "Could not move processed output into place";
-    }
-
-    // Keeping both files would leave a duplicate next to the original, so a failed trash undoes the output,
-    // the same as in normalization.
-    if (!replacingOriginal && file.existsAsFile() && !utils::moveToTrash(file)) {
-        utils::deleteFile(outputFile);
-        return "Could not move the original audio file to the system trash";
-    }
-
-    return {};
-}
-
 /// Returns the record unchanged when the file still matches it on disk,
 /// otherwise analyzes the file again, so the input gain is never computed from an outdated peak.
 /// The custom gain is dropped for a changed file, since it was set for the previous version of the file.
@@ -843,10 +803,7 @@ PluginProcessingResult PluginProcessingService::processFile(
     const auto outputFile = getProcessingOutputFile(file);
 
     if (outputFile != file && outputFile.exists() && !options.overwriteExisting) {
-        return fail(
-            file,
-            utils::format("Output file {} already exists. Use force overwrite to replace it.", outputFile.getFileName())
-        );
+        return fail(file, utils::existingOutputMessage(outputFile));
     }
 
     const auto numChannels = clampChannelCount(static_cast<int>(reader->numChannels));
@@ -921,7 +878,8 @@ PluginProcessingResult PluginProcessingService::processFile(
         return fail(file, cancelledMessage);
     }
 
-    if (const auto commitError = commitProcessedOutput(temporaryFile, file, outputFile, options);
+    if (const auto commitError
+        = utils::commitTemporaryOutput(temporaryFile, file, outputFile, options.overwriteExisting);
         commitError.isNotEmpty())
     {
         return fail(file, commitError);

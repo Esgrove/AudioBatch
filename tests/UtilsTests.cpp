@@ -3,6 +3,7 @@
 #include "AudioFormatUtils.h"
 #include "Cancellation.h"
 #include "FileUtils.h"
+#include "TestHelpers.h"
 #include "TestSuites.h"
 
 namespace audiobatch::tests
@@ -44,6 +45,36 @@ public:
             const auto copied = utils::copyMetadata(metadata);
             expect(copied.contains("key"));
             expectEquals(utils::peakMagnitude(-0.5f), 0.5f);
+        }
+
+        beginTest("A temporary output replaces its source in place");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.aif");
+            expect(source.replaceWithText("old"));
+
+            const juce::TemporaryFile temporaryFile(source);
+            expect(temporaryFile.getFile().replaceWithText("new"));
+
+            expectEquals(utils::commitTemporaryOutput(temporaryFile, source, source, false), juce::String());
+            expectEquals(source.loadFileAsString(), juce::String("new"));
+        }
+
+        beginTest("A temporary output never replaces an unrelated file without overwrite");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.wav");
+            const auto output = directory.getChildFile("song.aif");
+            expect(source.replaceWithText("source"));
+            expect(output.replaceWithText("unrelated"));
+
+            const juce::TemporaryFile temporaryFile(output);
+            expect(temporaryFile.getFile().replaceWithText("new"));
+
+            const auto error = utils::commitTemporaryOutput(temporaryFile, source, output, false);
+            expect(error.contains("already exists"), error);
+            expectEquals(output.loadFileAsString(), juce::String("unrelated"));
+            expectEquals(source.loadFileAsString(), juce::String("source"));
         }
 
         beginTest("An empty cancellation check never cancels");
