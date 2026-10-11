@@ -159,8 +159,8 @@ set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(BUILD_BINDINGS OFF CACHE BOOL "" FORCE)
 set(VISIBILITY_HIDDEN ON CACHE BOOL "" FORCE)
 
-# FetchContent_MakeAvailable both populates the source (when needed) and calls add_subdirectory
-# every time CMake runs, so the `tag` target is always defined for the rest of this build.
+# FetchContent_MakeAvailable both populates the source (when needed)
+# and calls add_subdirectory every time CMake runs, so the `tag` target is always defined for the rest of this build.
 FetchContent_MakeAvailable(taglib)
 
 # TagLib does not propagate its build-tree include directories to consumers,

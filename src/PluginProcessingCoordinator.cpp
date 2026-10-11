@@ -4,8 +4,8 @@
 /// run-id based cancellation, and publishing results and completion to the message thread.
 /// Cancellation also releases workers waiting for plugin setup on the message thread,
 /// so cancelAndWait can block the message thread without deadlocking.
-/// Plugin instances are always destroyed on the message thread
-/// to satisfy VST3 and Audio Unit hosting requirements.
+/// Plugin instances are always destroyed on the message thread to satisfy VST3
+/// and Audio Unit hosting requirements.
 
 #include "PluginProcessingCoordinator.h"
 

@@ -1,7 +1,7 @@
 /// Implementation of AudioAnalysisService.
 /// Decodes files in blocks through per-thread JUCE format readers
-/// and feeds the samples to a libebur128 analyzer state
-/// to measure sample peak, true peak, and integrated loudness.
+/// and feeds the samples to a libebur128 analyzer state to measure sample peak,
+/// true peak, and integrated loudness.
 /// Also implements supported file discovery, the display and CLI formatting helpers, and record sorting.
 
 #include "AudioAnalysisService.h"
@@ -490,8 +490,8 @@ static void interleaveBlock(
 }
 
 /// Decodes the whole file block by block, feeding the loudness meter and collecting the sample extremes.
-/// Decoding continues past isolated read failures, since the built-in MP3 decoder can fail mid-stream
-/// on files that other decoders handle fine.
+/// Decoding continues past isolated read failures,
+/// since the built-in MP3 decoder can fail mid-stream on files that other decoders handle fine.
 /// A failed block still holds the samples decoded before the error with the remainder zeroed.
 /// Repeated failures end the measurement early with the audio decoded so far.
 static DecodeMeasurements measureDecodedAudio(

@@ -1,7 +1,7 @@
 /// Background job coordination for batch plugin processing.
-/// Declares PluginProcessingCoordinator, which runs files through pre-instantiated plugin chains
-/// on a worker thread pool and marshals per-file results, completion, and start errors
-/// back to the message thread through callbacks.
+/// Declares PluginProcessingCoordinator,
+/// which runs files through pre-instantiated plugin chains on a worker thread pool
+/// and marshals per-file results, completion, and start errors back to the message thread through callbacks.
 
 #pragma once
 
@@ -28,7 +28,8 @@ public:
     /// Called for each processed file as plugin-processing results become available.
     using ResultCallback = std::function<void(const PluginProcessingResult& result)>;
 
-    /// Called on the message thread when the coordinator could not start a run; receives the error message.
+    /// Called on the message thread when the coordinator could not start a run.
+    /// Receives the error message.
     using StartErrorCallback = std::function<void(juce::String errorMessage)>;
 
     /// Creates a coordinator with a thread pool sized for the current machine.

@@ -1,6 +1,6 @@
 /// GUI content for the chain editor window.
-/// Declares PluginChainEditor, a component that shows the plugin chain as a scrolling list of slot rows
-/// with enable, edit, reorder, and remove controls,
+/// Declares PluginChainEditor, a component that shows the plugin chain
+/// as a scrolling list of slot rows with enable, edit, reorder, and remove controls,
 /// plus an add button below the rows for appending new plugins.
 
 #pragma once

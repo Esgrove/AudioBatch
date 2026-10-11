@@ -29,8 +29,8 @@ static juce::String formatLabel(const juce::String& formatName)
 }
 
 /// Returns the processing type of a plugin, such as Dynamics, EQ, Reverb, or Instrument.
-/// VST3 categories are lists like "Fx|Dynamics", where the generic Fx and Instrument entries are skipped
-/// in favour of the first specific one.
+/// VST3 categories are lists like "Fx|Dynamics", where the generic Fx
+/// and Instrument entries are skipped in favour of the first specific one.
 /// Audio Unit categories, such as Effect or Synth, are used as they are.
 static juce::String typeLabel(const juce::PluginDescription& description)
 {

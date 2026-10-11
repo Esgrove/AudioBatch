@@ -79,8 +79,8 @@ init_options() {
     CLI_TARGET_NAME="AudioBatchCli"
     CLI_BINARY_NAME="audiobatch"
 
-    # Use a separate build directory per generator so switching between Ninja and Xcode or
-    # Visual Studio does not require wiping the other configuration's build directory.
+    # Use a separate build directory per generator so switching between Ninja and Xcode
+    # or Visual Studio does not require wiping the other configuration's build directory.
     BUILD_TYPE_LOWER=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
     if [ "$BASH_PLATFORM" = "mac" ]; then
         if [ "$USE_XCODE" = true ]; then

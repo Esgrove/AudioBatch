@@ -1,6 +1,5 @@
 /// SQLite-backed cache for audio analysis results.
-/// AnalysisCache stores per-file analysis records and waveform preview data
-/// keyed by path, size, and modification time,
+/// AnalysisCache stores per-file analysis records and waveform preview data keyed by path, size, and modification time,
 /// so unchanged files are not re-read on later runs.
 
 #pragma once

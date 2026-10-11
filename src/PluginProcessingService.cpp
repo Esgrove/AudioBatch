@@ -320,9 +320,9 @@ static ChainPreparation prepareChain(
         enableOfflineRendering(*plugin);
 
         // Restore plugin state per-file so each file starts clean.
-        // The state is restored before prepareToPlay because settings such as lookahead or linear phase
-        // change the plugin's latency, and JUCE refreshes the reported latency of VST3 and AU plugins
-        // when they are prepared.
+        // The state is restored before prepareToPlay because settings
+        // such as lookahead or linear phase change the plugin's latency,
+        // and JUCE refreshes the reported latency of VST3 and AU plugins when they are prepared.
         const auto& state = options.plugins[pluginIndex].state;
         if (state.getSize() > 0) {
             plugin->setStateInformation(state.getData(), static_cast<int>(state.getSize()));
