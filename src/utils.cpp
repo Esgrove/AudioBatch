@@ -71,11 +71,11 @@ bool deleteFile(const juce::File& file)
 
 juce::StringArray systemInfo()
 {
-    const auto compile_time = juce::Time::getCompilationDate();
-    const auto compile_time_in_utc = compile_time - juce::RelativeTime(compile_time.getUTCOffsetSeconds());
+    const auto compileTime = juce::Time::getCompilationDate();
+    const auto compileTimeInUtc = compileTime - juce::RelativeTime(compileTime.getUTCOffsetSeconds());
     return juce::StringArray {
         juce::String(version::VERSION_INFO),
-        format("{} {}", juce::SystemStats::getJUCEVersion(), compile_time_in_utc.toString(true, true, false, true)),
+        format("{} {}", juce::SystemStats::getJUCEVersion(), compileTimeInUtc.toString(true, true, false, true)),
         format("Branch:       {}", version::BRANCH),
         format(
             "OS:           {}{}",
@@ -93,35 +93,28 @@ juce::StringArray systemInfo()
     };
 }
 
-juce::String formattedSystemInfo()
-{
-    juce::String info {format("{} {}", version::APP_NAME, version::VERSION_NUMBER) + juce::newLine};
-    for (const auto& line : utils::systemInfo()) {
-        for (auto const tokens = juce::StringArray::fromTokens(line, " ", "\""); const auto& token : tokens) {
-            if (token.containsNonWhitespaceChars()) {
-                info += format("{} ", token);
-            }
-        }
-        info += juce::newLine;
-    }
-    return info;
-}
-
 juce::String aboutMessage(const juce::String& appName)
 {
-    juce::String message;
-    message << appName << " " << version::VERSION_NUMBER << juce::newLine << juce::SystemStats::getJUCEVersion()
-            << juce::newLine << juce::newLine << "Batch audio analysis, normalization, and processing." << juce::newLine
-            << juce::newLine << "Date: " << version::DATE << juce::newLine << "Commit: " << version::COMMIT
-            << juce::newLine << "Branch: " << version::BRANCH << juce::newLine << juce::newLine
-            << "OS: " << juce::SystemStats::getOperatingSystemName()
-            << (juce::SystemStats::isOperatingSystem64Bit() ? " (64 bit)" : " (32 bit)") << juce::newLine
-            << "Device: " << juce::SystemStats::getDeviceDescription() << juce::newLine
-            << "CPU: " << juce::SystemStats::getCpuModel() << " ("
-            << juce::String(juce::SystemStats::getNumPhysicalCpus()) << "C/"
-            << juce::String(juce::SystemStats::getNumCpus()) << "T)" << juce::newLine
-            << "Memory: " << juce::String(juce::SystemStats::getMemorySizeInMegabytes()) << " MB";
-    return message;
+    // The message is only shown inside the app, so plain '\n' line breaks are fine.
+    return format(
+        "{} {}\n{}\n\n"
+        "Batch audio analysis, normalization, and processing.\n\n"
+        "Date: {}\nCommit: {}\nBranch: {}\n\n"
+        "OS: {} ({})\nDevice: {}\nCPU: {} ({}C/{}T)\nMemory: {} MB",
+        appName,
+        version::VERSION_NUMBER,
+        juce::SystemStats::getJUCEVersion(),
+        version::DATE,
+        version::COMMIT,
+        version::BRANCH,
+        juce::SystemStats::getOperatingSystemName(),
+        juce::SystemStats::isOperatingSystem64Bit() ? "64 bit" : "32 bit",
+        juce::SystemStats::getDeviceDescription(),
+        juce::SystemStats::getCpuModel(),
+        juce::SystemStats::getNumPhysicalCpus(),
+        juce::SystemStats::getNumCpus(),
+        juce::SystemStats::getMemorySizeInMegabytes()
+    );
 }
 
 juce::String versionLine(const juce::String& appName)

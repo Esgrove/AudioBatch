@@ -2,12 +2,6 @@
 /// The version namespace exposes the application name, version, branch, commit, and build date
 /// as constants filled in from preprocessor definitions set by CMake.
 
-//==========================================================
-// Version header
-// Version information is set in preprocessor definitions
-// Akseli Lukkarila
-//==========================================================
-
 #pragma once
 
 /// Build metadata injected by CMake at compile time.

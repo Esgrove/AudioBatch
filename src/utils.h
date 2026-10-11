@@ -35,9 +35,6 @@ bool deleteFile(const juce::File& file);
 /// Collects build and runtime environment details for logs and diagnostics.
 juce::StringArray systemInfo();
 
-/// Return full system information formatted as a string
-juce::String formattedSystemInfo();
-
 /// Builds the multi-line About dialog message with application, build, and system information.
 juce::String aboutMessage(const juce::String& appName);
 
@@ -68,29 +65,29 @@ inline juce::String formatJson(const juce::var& object)
 
 /// Write message to log with a timestamp.
 /// This function should not be called directly outside utils.h!
-static void writeToLog(const juce::String& message, [[maybe_unused]] Level log_level = Level::info)
+static void writeToLog(const juce::String& message, [[maybe_unused]] Level logLevel = Level::info)
 {
     const auto timestamp = juce::Time::getCurrentTime().formatted("%H:%M:%S ");
-    const auto log_message = format("{}{}", timestamp, message);
+    const auto logMessage = format("{}{}", timestamp, message);
     // Print the log messages to stdout / stderr when running in release configuration,
     // since otherwise log output will not be visible when running the app from command line.
     // In debug builds, the log messages are printed to console already by juce::FileLogger,
     // so this prevents them from being printed twice in debug builds.
 #if !JUCE_DEBUG
-    switch (log_level) {
+    switch (logLevel) {
         case Level::error:
-            console::printStyled(stderr, fmt::fg(fmt::terminal_color::red), "{}\n", log_message);
+            console::printStyled(stderr, fmt::fg(fmt::terminal_color::red), "{}\n", logMessage);
             break;
         case Level::debug:
-            console::printYellow("{}\n", log_message);
+            console::printYellow("{}\n", logMessage);
             break;
         case Level::warn:
         case Level::info:
-            fmt::print("{}\n", log_message);
+            fmt::print("{}\n", logMessage);
             break;
     }
 #endif
-    juce::Logger::writeToLog(log_message);
+    juce::Logger::writeToLog(logMessage);
 }
 
 /// By default, these messages will not be logged in release builds, only in debug builds.
@@ -172,7 +169,7 @@ inline void logSystemInfo()
 #if !JUCE_DEBUG
         fmt::print("    {}\n", line);
 #endif
-        juce::Logger::writeToLog("    " + line);
+        juce::Logger::writeToLog(format("    {}", line));
     }
 }
 }  // namespace utils
