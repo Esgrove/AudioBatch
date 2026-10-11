@@ -154,56 +154,6 @@ static juce::String getRevealFileMenuLabel()
 
 using namespace audiobatch::gui;
 
-/// Plugin chains created for one processing run, or the reason the run cannot start.
-struct ChainInstantiation {
-    /// One chain of plugin instances per worker.
-    std::vector<PluginProcessingCoordinator::PluginChainInstances> chains;
-    /// Empty when every plugin of every chain was created.
-    juce::String errorMessage;
-    /// Name of the plugin that failed to load, when errorMessage is not empty.
-    juce::String failedPluginName;
-};
-
-/// Creates one chain of plugin instances per worker on the calling thread, which must be the message thread.
-/// Stops at the first plugin that fails, since a chain missing any plugin must not run.
-static ChainInstantiation instantiateChains(
-    const juce::AudioPluginFormatManager& pluginFormatManager,
-    const std::vector<PluginChain::EnabledChainPlugin>& enabledPlugins,
-    const int workerCount
-)
-{
-    // Use a reasonable default sample rate. The chain is prepared again per file with the file's rate.
-    constexpr double defaultSampleRate = 48000.0;
-    constexpr int defaultBlockSize = 1024;
-
-    ChainInstantiation instantiation;
-    instantiation.chains.reserve(static_cast<std::size_t>(workerCount));
-
-    for (int worker = 0; worker < workerCount; ++worker) {
-        PluginProcessingCoordinator::PluginChainInstances chainInstances;
-        chainInstances.reserve(enabledPlugins.size());
-
-        for (const auto& enabledPlugin : enabledPlugins) {
-            juce::String error;
-            auto instance = pluginFormatManager.createPluginInstance(
-                enabledPlugin.description, defaultSampleRate, defaultBlockSize, error
-            );
-
-            if (instance == nullptr) {
-                instantiation.errorMessage = error.isNotEmpty() ? error : juce::String("Plugin instantiation failed");
-                instantiation.failedPluginName = enabledPlugin.description.name;
-                return instantiation;
-            }
-
-            chainInstances.push_back(std::move(instance));
-        }
-
-        instantiation.chains.push_back(std::move(chainInstances));
-    }
-
-    return instantiation;
-}
-
 void AudioBatchComponent::configureResultsTable()
 {
     resultsTable.setHeader(std::make_unique<SecondarySortTableHeader>([this](const int columnId) {
@@ -2370,7 +2320,7 @@ void AudioBatchComponent::processSelectedRecords()
 
     statusLabel.setText("Loading plugins...", juce::dontSendNotification);
 
-    auto instantiation = instantiateChains(pluginChain->getFormatManager(), enabledPlugins, workerCount);
+    auto instantiation = pluginChain->instantiateChains(enabledPlugins, workerCount);
 
     if (instantiation.chains.empty() || instantiation.errorMessage.isNotEmpty()) {
         // All-or-nothing: a chain missing any plugin must not run at all.

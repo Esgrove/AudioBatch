@@ -160,6 +160,43 @@ std::vector<PluginChain::EnabledChainPlugin> PluginChain::getEnabledPlugins()
     return plugins;
 }
 
+PluginChain::ChainInstantiation PluginChain::instantiateChains(
+    const std::vector<EnabledChainPlugin>& enabledPlugins,
+    const int workerCount
+)
+{
+    // Use a reasonable default sample rate. The chain is prepared again per file with the file's rate.
+    constexpr double defaultSampleRate = 48000.0;
+    constexpr int defaultBlockSize = 1024;
+
+    ChainInstantiation instantiation;
+    instantiation.chains.reserve(static_cast<std::size_t>(workerCount));
+
+    for (int worker = 0; worker < workerCount; ++worker) {
+        std::vector<std::unique_ptr<juce::AudioPluginInstance>> chainInstances;
+        chainInstances.reserve(enabledPlugins.size());
+
+        for (const auto& enabledPlugin : enabledPlugins) {
+            juce::String error;
+            auto instance = formatManager.createPluginInstance(
+                enabledPlugin.description, defaultSampleRate, defaultBlockSize, error
+            );
+
+            if (instance == nullptr) {
+                instantiation.errorMessage = error.isNotEmpty() ? error : juce::String("Plugin instantiation failed");
+                instantiation.failedPluginName = enabledPlugin.description.name;
+                return instantiation;
+            }
+
+            chainInstances.push_back(std::move(instance));
+        }
+
+        instantiation.chains.push_back(std::move(chainInstances));
+    }
+
+    return instantiation;
+}
+
 juce::String PluginChain::getChainSummary() const
 {
     if (chain.empty()) {
