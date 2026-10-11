@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <sqlite3.h>
+#include <vector>
 
 /// Helpers for marshalling SQLite values into JUCE types.
 namespace audiobatch::cache
@@ -607,7 +608,14 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
 
 int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
 {
-    juce::StringArray cachedPaths;
+    /// One cached row, identified by path and the file version it describes.
+    struct CachedRow {
+        juce::String path;
+        std::int64_t fileSize = 0;
+        std::int64_t modifiedTimeMs = 0;
+    };
+
+    std::vector<CachedRow> cachedRows;
 
     {
         const juce::ScopedLock lock(mutex);
@@ -616,14 +624,18 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
             return 0;
         }
 
+        constexpr auto sql = "SELECT file_path, file_size, modified_time_ms FROM file_analysis;";
         sqlite3_stmt* statement = nullptr;
-        if (sqlite3_prepare_v2(database, "SELECT file_path FROM file_analysis;", -1, &statement, nullptr) != SQLITE_OK)
-        {
+        if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
             return 0;
         }
 
         while (sqlite3_step(statement) == SQLITE_ROW) {
-            cachedPaths.add(columnText(statement, 0));
+            cachedRows.push_back({
+                .path = columnText(statement, 0),
+                .fileSize = sqlite3_column_int64(statement, 1),
+                .modifiedTimeMs = sqlite3_column_int64(statement, 2),
+            });
         }
 
         sqlite3_finalize(statement);
@@ -631,16 +643,23 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
 
     int removedRows = 0;
 
-    for (const auto& path : cachedPaths) {
+    for (const auto& row : cachedRows) {
         if (shouldStop != nullptr && shouldStop()) {
             break;
         }
 
-        if (!juce::File::isAbsolutePath(path) || juce::File(path).existsAsFile()) {
+        if (!juce::File::isAbsolutePath(row.path)) {
             continue;
         }
 
-        if (removeAnalysis(juce::File(path))) {
+        // A missing folder usually means an unmounted drive or network share rather than deleted files,
+        // and those rows hold custom gains that would be lost for good.
+        const juce::File file(row.path);
+        if (file.existsAsFile() || !file.getParentDirectory().isDirectory()) {
+            continue;
+        }
+
+        if (removeRowVersion(row.path, row.fileSize, row.modifiedTimeMs)) {
             ++removedRows;
         }
     }
@@ -650,6 +669,34 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
     }
 
     return removedRows;
+}
+
+bool AnalysisCache::removeRowVersion(
+    const juce::String& path,
+    const std::int64_t fileSize,
+    const std::int64_t modifiedTimeMs
+)
+{
+    const juce::ScopedLock lock(mutex);
+
+    if (database == nullptr) {
+        return false;
+    }
+
+    constexpr auto sql = "DELETE FROM file_analysis WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;";
+
+    sqlite3_stmt* statement = nullptr;
+    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        return false;
+    }
+
+    bindText(statement, 1, path);
+    sqlite3_bind_int64(statement, 2, fileSize);
+    sqlite3_bind_int64(statement, 3, modifiedTimeMs);
+
+    const auto result = sqlite3_step(statement);
+    sqlite3_finalize(statement);
+    return result == SQLITE_DONE && sqlite3_changes(database) > 0;
 }
 
 bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& waveformData)

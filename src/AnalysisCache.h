@@ -65,6 +65,9 @@ public:
     bool removeAnalysis(const juce::File& file);
 
     /// Deletes the rows of files that no longer exist, for example after they were trashed or renamed.
+    /// Rows whose folder is missing are kept, since that usually means an unmounted drive, not deleted files.
+    /// A row is only deleted while it still describes the version that was checked,
+    /// so a file recreated in the meantime keeps its new row.
     /// The file system checks run without holding the database lock, so other cache calls are not blocked by them.
     /// Stops early, keeping the remaining rows, when shouldStop returns true.
     /// Returns the number of deleted rows.
@@ -90,6 +93,10 @@ private:
 
     /// Opens the database and ensures the schema is current. The caller must hold the mutex.
     bool openUnlocked();
+
+    /// Deletes the row for the path only when it still has the given size and modification time.
+    /// Returns true when a row was deleted.
+    bool removeRowVersion(const juce::String& path, std::int64_t fileSize, std::int64_t modifiedTimeMs);
 
     /// Returns the canonical path string used as the cache key for a file.
     static juce::String normalizedPath(const juce::File& file);
