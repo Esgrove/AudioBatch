@@ -11,6 +11,7 @@
 #include "version.h"
 
 #include <algorithm>
+#include <cmath>
 #include <iterator>
 #include <vector>
 
@@ -160,6 +161,172 @@ static std::optional<AudioAnalysisSortMode> parseSortMode(const juce::String& va
 
     return std::nullopt;
 }
+
+/// Parses an output format name.
+/// Returns an empty optional for an unknown name.
+static std::optional<AudioAnalysisOutputFormat> parseOutputFormat(const juce::String& value)
+{
+    const auto normalizedFormat = value.trim().toLowerCase();
+
+    if (normalizedFormat == "table") {
+        return AudioAnalysisOutputFormat::table;
+    }
+
+    if (normalizedFormat == "csv") {
+        return AudioAnalysisOutputFormat::csv;
+    }
+
+    if (normalizedFormat == "json") {
+        return AudioAnalysisOutputFormat::json;
+    }
+
+    return std::nullopt;
+}
+
+/// Converts a linear amplitude to dB rounded to two decimals,
+/// or returns a void var, which JSON writes as null, for silence.
+static juce::var decibelsOrNull(const double amplitude)
+{
+    if (amplitude <= 0.0) {
+        return {};
+    }
+
+    return std::round(juce::Decibels::gainToDecibels(amplitude, AudioAnalysisRecord::negativeInfinityLoudness) * 100.0)
+        / 100.0;
+}
+
+/// Rounds a loudness value to two decimals,
+/// or returns a void var, which JSON writes as null, for the negative infinity sentinel.
+static juce::var loudnessOrNull(const double loudness)
+{
+    if (loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
+        return {};
+    }
+
+    return std::round(loudness * 100.0) / 100.0;
+}
+
+/// Builds the machine-readable fields of one record, shared by the CSV and JSON output.
+/// The keys keep their insertion order, which is also the CSV column order.
+static juce::DynamicObject::Ptr buildRecordObject(const AudioAnalysisRecord& record)
+{
+    juce::DynamicObject::Ptr object = new juce::DynamicObject();
+    object->setProperty("path", reportedOutputPath(record));
+    object->setProperty("name", record.fileName);
+    object->setProperty("format", record.formatName);
+    object->setProperty("sampleRate", record.sampleRate);
+    object->setProperty("channels", record.channels);
+    object->setProperty("bitsPerSample", record.bitsPerSample);
+    object->setProperty(
+        "durationSeconds", std::round(record.durationSeconds * millisecondsPerSecond) / millisecondsPerSecond
+    );
+    object->setProperty("peakDbfs", decibelsOrNull(std::abs(static_cast<double>(record.overallPeak))));
+    object->setProperty("truePeakDbtp", decibelsOrNull(record.overallTruePeak));
+    object->setProperty("integratedLufs", loudnessOrNull(record.integratedLufs));
+    object->setProperty("maxShortTermLufs", loudnessOrNull(record.maxShortTermLufs));
+    object->setProperty("status", AudioAnalysisService::formatStatus(record).toLowerCase());
+    object->setProperty("error", record.errorMessage);
+    return object;
+}
+
+/// Quotes a CSV field when it contains a separator, a quote, or a line break, doubling any quotes inside.
+static juce::String escapeCsvField(const juce::String& field)
+{
+    if (!field.containsAnyOf(",\"\r\n")) {
+        return field;
+    }
+
+    return utils::format("\"{}\"", field.replace("\"", "\"\""));
+}
+
+/// Prints the records in the requested format to stdout.
+/// The table shows file names, or full paths when showFullPaths is set, as for normalization output.
+/// The table shows only successful records, since failures are already logged to stderr,
+/// while CSV and JSON include every record with its status and error.
+static void printRecords(
+    const std::vector<AudioAnalysisRecord>& records,
+    const AudioAnalysisOutputFormat format,
+    const bool showFullPaths
+)
+{
+    switch (format) {
+        case AudioAnalysisOutputFormat::table:
+            printHeaderRow();
+
+            for (const auto& record : records) {
+                if (!record.hasError()) {
+                    printResultRow(record, showFullPaths ? reportedOutputPath(record) : record.fileName);
+                }
+            }
+            break;
+
+        case AudioAnalysisOutputFormat::csv: {
+            bool headerPrinted = false;
+
+            for (const auto& record : records) {
+                const auto object = buildRecordObject(record);
+                juce::StringArray fields;
+
+                if (!headerPrinted) {
+                    for (const auto& property : object->getProperties()) {
+                        fields.add(property.name.toString());
+                    }
+                    fmt::print("{}\n", fields.joinIntoString(","));
+                    fields.clear();
+                    headerPrinted = true;
+                }
+
+                for (const auto& property : object->getProperties()) {
+                    fields.add(escapeCsvField(property.value.toString()));
+                }
+                fmt::print("{}\n", fields.joinIntoString(","));
+            }
+            break;
+        }
+
+        case AudioAnalysisOutputFormat::json: {
+            juce::Array<juce::var> array;
+
+            for (const auto& record : records) {
+                array.add(juce::var(buildRecordObject(record).get()));
+            }
+
+            fmt::print("{}\n", juce::JSON::toString(juce::var(array)));
+            break;
+        }
+    }
+}
+
+/// Returns an error message for options that cannot be used together, or an empty string when they can.
+/// The plugin listing takes no input paths and no analysis options,
+/// its grouping and rescan options need --list-plugins, and --force needs --normalize.
+static juce::String validateOptionCombinations(
+    const AudioAnalysisCliOptions& options,
+    const bool hasGrouping,
+    const bool hasAnalysisValueOption
+)
+{
+    if ((hasGrouping || options.rescanPlugins) && !options.listPlugins) {
+        return "--group-by and --rescan can only be used with --list-plugins";
+    }
+
+    if (options.listPlugins && !options.inputPaths.isEmpty()) {
+        return "--list-plugins does not take input paths";
+    }
+
+    const bool hasAnalysisOption = hasAnalysisValueOption || options.recursive || options.refresh || options.normalize
+        || options.force || options.reverse;
+
+    if (options.listPlugins && hasAnalysisOption) {
+        return "--list-plugins cannot be combined with analysis options";
+    }
+
+    if (options.force && !options.normalize) {
+        return "--force can only be used with --normalize";
+    }
+
+    return {};
+}
 }  // namespace audiobatch::cli
 
 using namespace audiobatch::cli;
@@ -181,6 +348,8 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
         "  -F, --force             Let --normalize replace an existing output file",
         "  -j, --jobs <count>      Override worker count",
         "  -s, --sort <mode>       Sort by peak, lufs, name, or path",
+        "      --reverse           Sort in descending order",
+        "  -o, --output <format>   Print results as table (default), csv, or json",
         "  -l, --list-plugins      List the available audio plugins and exit",
         "  -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format",
         "  -R, --rescan            Scan for new or changed plugins before listing them",
@@ -203,6 +372,7 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
     options.refresh = arguments.removeOptionIfFound("--refresh|-f");
     options.normalize = arguments.removeOptionIfFound("--normalize|-n");
     options.force = arguments.removeOptionIfFound("--force|-F");
+    options.reverse = arguments.removeOptionIfFound("--reverse");
     options.listPlugins = arguments.removeOptionIfFound("--list-plugins|-l");
     options.rescanPlugins = arguments.removeOptionIfFound("--rescan|-R");
 
@@ -228,6 +398,18 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
         options.sortMode = *sortMode;
     }
 
+    const auto outputValue = removeOptionWithValue(arguments, "--output|-o");
+    if (outputValue.has_value()) {
+        const auto outputFormat = parseOutputFormat(*outputValue);
+
+        if (!outputFormat.has_value()) {
+            errorMessage = "Output format must be one of: table, csv, json";
+            return std::nullopt;
+        }
+
+        options.outputFormat = *outputFormat;
+    }
+
     const auto groupingValue = removeOptionWithValue(arguments, "--group-by|-g");
     if (groupingValue.has_value()) {
         const auto grouping = PluginListCli::parseGrouping(*groupingValue);
@@ -249,26 +431,12 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
         options.inputPaths.add(argument.resolveAsFile());
     }
 
-    if ((groupingValue.has_value() || options.rescanPlugins) && !options.listPlugins) {
-        errorMessage = "--group-by and --rescan can only be used with --list-plugins";
-        return std::nullopt;
-    }
+    const bool hasAnalysisValueOption
+        = workerCountValue.has_value() || sortValue.has_value() || outputValue.has_value();
 
-    if (options.listPlugins && !options.inputPaths.isEmpty()) {
-        errorMessage = "--list-plugins does not take input paths";
-        return std::nullopt;
-    }
-
-    const bool hasAnalysisOption = options.recursive || options.refresh || options.normalize || options.force
-        || workerCountValue.has_value() || sortValue.has_value();
-
-    if (options.listPlugins && hasAnalysisOption) {
-        errorMessage = "--list-plugins cannot be combined with analysis options";
-        return std::nullopt;
-    }
-
-    if (options.force && !options.normalize) {
-        errorMessage = "--force can only be used with --normalize";
+    if (errorMessage = validateOptionCombinations(options, groupingValue.has_value(), hasAnalysisValueOption);
+        errorMessage.isNotEmpty())
+    {
         return std::nullopt;
     }
 
@@ -307,7 +475,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
         analysisElapsedMs / millisecondsPerSecond
     );
 
-    AudioAnalysisService::sortRecords(results, options.sortMode, true);
+    AudioAnalysisService::sortRecords(results, options.sortMode, !options.reverse);
 
     int failureCount = 0;
     std::vector<AudioAnalysisRecord> normalizedResults;
@@ -323,10 +491,6 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
         normalizationConflicts = AudioNormalizationService::findBatchOutputConflicts(normalizableResults);
     }
 
-    if (!options.normalize) {
-        printHeaderRow();
-    }
-
     for (const auto& result : results) {
         if (result.hasError()) {
             ++failureCount;
@@ -335,7 +499,6 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
         }
 
         if (!options.normalize) {
-            printResultRow(result, result.fileName);
             continue;
         }
 
@@ -370,12 +533,10 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     }
 
     if (options.normalize) {
-        AudioAnalysisService::sortRecords(normalizedResults, options.sortMode, true);
-        printHeaderRow();
-
-        for (const auto& record : normalizedResults) {
-            printResultRow(record, reportedOutputPath(record));
-        }
+        AudioAnalysisService::sortRecords(normalizedResults, options.sortMode, !options.reverse);
+        printRecords(normalizedResults, options.outputFormat, true);
+    } else {
+        printRecords(results, options.outputFormat, false);
     }
 
     return failureCount == 0 ? 0 : 2;

@@ -8,7 +8,18 @@
 #include "AnalysisCoordinator.h"
 #include "PluginListCli.h"
 
+#include <cstdint>
 #include <optional>
+
+/// Formats for the analysis results printed to stdout.
+enum class AudioAnalysisOutputFormat : std::uint8_t {
+    /// Aligned columns for reading in a terminal.
+    table,
+    /// One header row and one row per file, for spreadsheets.
+    csv,
+    /// An array with one object per file, for scripts.
+    json,
+};
 
 /// Parsed command-line options for the headless audio analysis executable.
 struct AudioAnalysisCliOptions {
@@ -22,6 +33,9 @@ struct AudioAnalysisCliOptions {
     PluginListGrouping pluginGrouping = PluginListGrouping::name;
     int workerCount = juce::SystemStats::getNumCpus();
     AudioAnalysisSortMode sortMode = AudioAnalysisSortMode::peak;
+    /// Sort in descending instead of ascending order.
+    bool reverse = false;
+    AudioAnalysisOutputFormat outputFormat = AudioAnalysisOutputFormat::table;
     juce::Array<juce::File> inputPaths;
 };
 

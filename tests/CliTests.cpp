@@ -94,6 +94,19 @@ public:
             expect(options.force);
         }
 
+        beginTest("Output formats and reverse sorting are parsed");
+        {
+            auto options = expectParsed({"--output", "json", "--reverse"});
+            expect(options.outputFormat == AudioAnalysisOutputFormat::json);
+            expect(options.reverse);
+
+            options = expectParsed({"--output=csv"});
+            expect(options.outputFormat == AudioAnalysisOutputFormat::csv);
+
+            expect(!parseArguments({"-o", "xml"}, errorMessage).has_value());
+            expect(!parseArguments({"-l", "-o", "json"}, errorMessage).has_value());
+        }
+
         beginTest("Unknown options are rejected");
         {
             expect(!parseArguments({"--bogus"}, errorMessage).has_value());

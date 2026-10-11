@@ -69,8 +69,9 @@ static void writeToLog(const juce::String& message, [[maybe_unused]] Level logLe
 {
     const auto timestamp = juce::Time::getCurrentTime().formatted("%H:%M:%S ");
     const auto logMessage = format("{}{}", timestamp, message);
-    // Print the log messages to stdout / stderr when running in release configuration,
+    // Print the log messages to stderr when running in release configuration,
     // since otherwise log output will not be visible when running the app from command line.
+    // stderr keeps them apart from the CLI results on stdout, so piped table, CSV, or JSON output stays clean.
     // In debug builds, the log messages are printed to console already by juce::FileLogger,
     // so this prevents them from being printed twice in debug builds.
 #if !JUCE_DEBUG
@@ -78,12 +79,12 @@ static void writeToLog(const juce::String& message, [[maybe_unused]] Level logLe
         case Level::error:
             console::printStyled(stderr, fmt::fg(fmt::terminal_color::red), "{}\n", logMessage);
             break;
-        case Level::debug:
-            console::printYellow("{}\n", logMessage);
-            break;
         case Level::warn:
+            console::printStyled(stderr, fmt::fg(fmt::terminal_color::yellow), "{}\n", logMessage);
+            break;
+        case Level::debug:
         case Level::info:
-            fmt::print("{}\n", logMessage);
+            fmt::print(stderr, "{}\n", logMessage);
             break;
     }
 #endif
