@@ -258,6 +258,8 @@ Options:
   -F, --force             Let --normalize replace an existing output file
   -j, --jobs <count>      Override worker count
   -s, --sort <mode>       Sort by peak, lufs, name, or path
+      --reverse           Sort in descending order
+  -o, --output <format>   Print results as table (default), csv, or json
   -l, --list-plugins      List the available audio plugins and exit
   -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format
   -R, --rescan            Scan for new or changed plugins before listing them
@@ -356,6 +358,19 @@ and reports the resulting output paths using the same format:
   -0.00    -0.00    -10.42  C:\path\to\normalized-output.aif
 ```
 
+### Output formats
+
+`--output csv` and `--output json` print one entry per file for spreadsheets and scripts.
+They include the path, file properties, peak in dBFS, true peak in dBTP, integrated and maximum short-term loudness,
+the status, and the error for files that failed.
+Silence has no level, which JSON writes as `null` and CSV as an empty field.
+Log messages always go to stderr, so stdout only holds the results:
+
+```shell
+audiobatch -r -o json "music/library" > levels.json
+audiobatch -s lufs --reverse -o csv "music/library" > levels.csv
+```
+
 ## Cache
 
 Analysis results are cached in a SQLite database located under the
@@ -377,4 +392,3 @@ Use `--refresh` in the CLI, or re-analyze from the GUI, to retry it.
 ## TODO
 
 - User config file.
-- Optional report export, for example CSV or JSON.
