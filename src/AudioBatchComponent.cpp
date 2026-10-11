@@ -527,15 +527,7 @@ AudioBatchComponent::AudioBatchComponent() :
 
     audioInfo->setPreferredHeightChangedCallback([this] { resized(); });
 
-    {
-        juce::PropertiesFile::Options options;
-        options.applicationName = "AudioBatch";
-        options.filenameSuffix = ".settings";
-        options.osxLibrarySubFolder = "Application Support";
-        options.folderName = "AudioBatch";
-        options.storageFormat = juce::PropertiesFile::storeAsXML;
-        pluginAppProperties.setStorageParameters(options);
-    }
+    pluginAppProperties.setStorageParameters(utils::createApplicationSettingsOptions());
 
     pluginChain = std::make_unique<PluginChain>(pluginAppProperties);
     pluginChain->setChainChangedCallback([this] { updateProcessButtonState(); });

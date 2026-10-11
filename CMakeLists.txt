@@ -292,6 +292,8 @@ target_sources(AudioBatch
         "src/PluginChain.h"
         "src/PluginChainEditor.cpp"
         "src/PluginChainEditor.h"
+        "src/PluginListCli.cpp"
+        "src/PluginListCli.h"
         "src/PluginProcessing.h"
         "src/PluginProcessingCoordinator.cpp"
         "src/PluginProcessingCoordinator.h"
@@ -331,6 +333,10 @@ target_sources(AudioBatchCli
         "src/MetadataService.h"
         "src/NormalizeCoordinator.cpp"
         "src/NormalizeCoordinator.h"
+        "src/PluginListCli.cpp"
+        "src/PluginListCli.h"
+        "src/PluginScanner.cpp"
+        "src/PluginScanner.h"
         "src/StringFormat.h"
         "src/utils.cpp"
         "src/utils.h"
@@ -376,7 +382,11 @@ target_compile_definitions(AudioBatchCli
         JUCE_DISABLE_JUCE_VERSION_PRINTING=1
         JUCE_USE_LAME_AUDIO_FORMAT=1
         JUCE_USE_MP3AUDIOFORMAT=1
+        # The plugin listing scans VST3 and Audio Unit plugins
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_PLUGINHOST_AU=1
         JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0
         JUCE_USE_FLAC=1
         JUCE_USE_OGGVORBIS=1
         JUCE_USE_WINDOWS_MEDIA_FORMAT=0
@@ -480,6 +490,8 @@ target_link_libraries(AudioBatchCli
         tag
         juce::juce_audio_basics
         juce::juce_audio_formats
+        # Plugin scanning for the plugin listing, which also pulls in the JUCE GUI modules
+        juce::juce_audio_processors
         juce::juce_core
         juce::juce_data_structures
         juce::juce_events

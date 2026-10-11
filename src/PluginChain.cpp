@@ -16,11 +16,9 @@
 
 namespace audiobatch::plugin_chain
 {
-constexpr auto pluginListPropertyKey = "knownPluginList";
 constexpr auto pluginChainPropertyKey = "pluginChain";
 constexpr auto legacySelectedPluginIdPropertyKey = "selectedPluginIdentifier";
 constexpr auto legacySelectedPluginStatePropertyKey = "selectedPluginState";
-constexpr auto deadMansPedalFileName = "audiobatch_plugin_scan_crash_log.txt";
 
 constexpr auto chainXmlTag = "PLUGIN_CHAIN";
 constexpr auto slotXmlTag = "SLOT";
@@ -464,8 +462,7 @@ void PluginChain::showScanWindow()
         return;
     }
 
-    const auto deadMansPedalFile
-        = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile(deadMansPedalFileName);
+    const auto deadMansPedalFile = getPluginScanCrashLogFile();
 
     // The plugins themselves are loaded by the OutOfProcessPluginScanner worker process,
     // which scans on its own message thread.
@@ -649,10 +646,7 @@ void PluginChain::persistKnownPluginList() const
         return;
     }
 
-    if (const auto xml = knownPluginList.createXml(); xml != nullptr) {
-        settings->setValue(pluginListPropertyKey, xml->toString());
-        settings->saveIfNeeded();
-    }
+    saveKnownPluginList(*settings, knownPluginList);
 }
 
 void PluginChain::loadKnownPluginList()
@@ -662,14 +656,7 @@ void PluginChain::loadKnownPluginList()
         return;
     }
 
-    const auto xmlText = settings->getValue(pluginListPropertyKey);
-    if (xmlText.isEmpty()) {
-        return;
-    }
-
-    if (const auto element = juce::parseXML(xmlText); element != nullptr) {
-        knownPluginList.recreateFromXml(*element);
-    }
+    ::loadKnownPluginList(*settings, knownPluginList);
 }
 
 void PluginChain::notifyChainChanged()

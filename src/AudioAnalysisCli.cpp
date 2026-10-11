@@ -110,6 +110,12 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
     usage += juce::newLine;
     usage += "  -s, --sort <mode>       Sort by peak, lufs, name, or path";
     usage += juce::newLine;
+    usage += "  -l, --list-plugins      List the available audio plugins and exit";
+    usage += juce::newLine;
+    usage += "  -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format";
+    usage += juce::newLine;
+    usage += "      --rescan            Scan for new or changed plugins before listing them";
+    usage += juce::newLine;
     return usage;
 }
 
@@ -120,6 +126,8 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
     options.recursive = arguments.removeOptionIfFound("--recurse|-r");
     options.refresh = arguments.removeOptionIfFound("--refresh|-f");
     options.normalize = arguments.removeOptionIfFound("--normalize|-n");
+    options.listPlugins = arguments.removeOptionIfFound("--list-plugins|-l");
+    options.rescanPlugins = arguments.removeOptionIfFound("--rescan");
 
     if (const auto workerCountValue = arguments.removeValueForOption("--jobs|-j"); workerCountValue.isNotEmpty()) {
         options.workerCount = workerCountValue.getIntValue();
@@ -147,6 +155,24 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
         }
     }
 
+    const auto groupingGiven = arguments.containsOption("--group-by|-g");
+    const auto groupingValue = arguments.removeValueForOption("--group-by|-g");
+    if (groupingGiven && groupingValue.isEmpty()) {
+        errorMessage = "--group-by requires a value: name, manufacturer, type, or format";
+        return std::nullopt;
+    }
+
+    if (groupingValue.isNotEmpty()) {
+        const auto grouping = PluginListCli::parseGrouping(groupingValue);
+
+        if (!grouping.has_value()) {
+            errorMessage = "Plugin grouping must be one of: name, manufacturer, type, format";
+            return std::nullopt;
+        }
+
+        options.pluginGrouping = *grouping;
+    }
+
     for (const auto& argument : arguments.arguments) {
         if (argument.isOption()) {
             errorMessage = utils::format("Unknown option: {}", argument.text);
@@ -154,6 +180,16 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
         }
 
         options.inputPaths.add(argument.resolveAsFile());
+    }
+
+    if ((groupingValue.isNotEmpty() || options.rescanPlugins) && !options.listPlugins) {
+        errorMessage = "--group-by and --rescan can only be used with --list-plugins";
+        return std::nullopt;
+    }
+
+    if (options.listPlugins && !options.inputPaths.isEmpty()) {
+        errorMessage = "--list-plugins does not take input paths";
+        return std::nullopt;
     }
 
     return options;

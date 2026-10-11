@@ -22,6 +22,17 @@ constexpr auto pluginScanWorkerProcessUid = "audiobatch-plugin-scan-worker";
 /// Uses the same check as ChildProcessWorker: the worker prefix must start the command line.
 [[nodiscard]] bool isPluginScanWorkerCommandLine(const juce::String& commandLine);
 
+/// Restores the known-plugins list from the application settings shared by the GUI and the CLI.
+/// Leaves the list unchanged when nothing has been stored yet.
+void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList);
+
+/// Writes the known-plugins list, including blacklisted plugins, to the application settings and saves them.
+void saveKnownPluginList(juce::PropertiesFile& settings, const juce::KnownPluginList& knownPluginList);
+
+/// Returns the dead man's pedal file that records the plugin being scanned,
+/// so a plugin that crashed a scan is blacklisted on the next one.
+[[nodiscard]] juce::File getPluginScanCrashLogFile();
+
 /// Child side of out-of-process plugin scanning.
 /// Receives scan requests from the main process, loads the plugin file on the message thread,
 /// and replies with the plugin descriptions found in it.

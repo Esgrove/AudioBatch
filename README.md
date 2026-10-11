@@ -203,10 +203,49 @@ audiobatch [options] <paths...>
   -n, --normalize
   -j, --jobs <count>
   -s, --sort <peak|name|path>
+  -l, --list-plugins
+  -g, --group-by <name|manufacturer|type|format>
+      --rescan
 ```
 
 `--help` and `--version` only print to the console.
 They do not start logging or write to the log file.
+
+### Plugin listing
+
+`--list-plugins` prints the VST3 and Audio Unit plugins known to AudioBatch.
+It reads the plugin list that the GUI keeps in its settings file, so listing is instant and loads no plugins.
+CLAP plugins are not listed, because JUCE cannot host them.
+
+- `--group-by name` (default) prints one alphabetical table.
+- `--group-by manufacturer`, `type`, or `format` prints one section per group.
+  The type is the processing type reported by the plugin, such as Dynamics, EQ, Reverb, or Instrument.
+- `--rescan` first scans the plugin folders for new or changed plugins
+  and removes plugins that no longer exist.
+  It uses the same folders as the last scan in the GUI plugin manager, or the default plugin folders.
+  Each plugin is loaded in a separate worker process,
+  so a plugin that crashes is blacklisted and the scan continues.
+  The updated list is saved for the GUI too.
+
+```shell
+audiobatch --list-plugins
+audiobatch -l -g manufacturer
+audiobatch -l --group-by type --rescan
+```
+
+Example output:
+
+```text
+NAME                     MANUFACTURER     TYPE      FORMAT  VERSION
+AnSpec                   Voxengo          Analyzer  VST3    1.2
+APU Loudness Compressor  APU Software     Dynamics  VST3    5.0.2
+```
+
+```text
+Analyzer (19)
+  AnSpec                   Voxengo          VST3  1.2
+  Correlometer             Voxengo          VST3  1.1
+```
 
 Examples:
 

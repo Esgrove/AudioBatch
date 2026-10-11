@@ -15,6 +15,8 @@
 namespace audiobatch::plugin_scanner
 {
 constexpr auto resultsXmlTag = "PLUGINS";
+constexpr auto knownPluginListPropertyKey = "knownPluginList";
+constexpr auto crashLogFileName = "audiobatch_plugin_scan_crash_log.txt";
 constexpr auto responsePollInterval = std::chrono::milliseconds(50);
 
 /// Builds a scan request for one plugin file or identifier.
@@ -36,6 +38,31 @@ bool isPluginScanWorkerCommandLine(const juce::String& commandLine)
     // Match ChildProcessWorker::initialiseFromCommandLine exactly,
     // so the same text in a later argument of an ordinary launch is not mistaken for a worker.
     return commandLine.trim().startsWith(utils::format("--{}:", pluginScanWorkerProcessUid));
+}
+
+void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList)
+{
+    const auto xmlText = settings.getValue(knownPluginListPropertyKey);
+    if (xmlText.isEmpty()) {
+        return;
+    }
+
+    if (const auto element = juce::parseXML(xmlText); element != nullptr) {
+        knownPluginList.recreateFromXml(*element);
+    }
+}
+
+void saveKnownPluginList(juce::PropertiesFile& settings, const juce::KnownPluginList& knownPluginList)
+{
+    if (const auto xml = knownPluginList.createXml(); xml != nullptr) {
+        settings.setValue(knownPluginListPropertyKey, xml->toString());
+        settings.saveIfNeeded();
+    }
+}
+
+juce::File getPluginScanCrashLogFile()
+{
+    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile(crashLogFileName);
 }
 
 //==============================================================================
