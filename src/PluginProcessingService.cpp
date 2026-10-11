@@ -19,8 +19,10 @@
 
 #include "AudioNormalizationService.h"
 #include "DecodeFailureTracker.h"
+#include "FileUtils.h"
+#include "Log.h"
 #include "MetadataService.h"
-#include "utils.h"
+#include "StringFormat.h"
 
 #include <algorithm>
 #include <atomic>

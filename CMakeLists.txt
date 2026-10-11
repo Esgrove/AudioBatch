@@ -269,6 +269,8 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/AnalysisCache.h"
     "src/AnalysisCoordinator.cpp"
     "src/AnalysisCoordinator.h"
+    "src/AppInfo.cpp"
+    "src/AppInfo.h"
     "src/AudioAnalysisService.cpp"
     "src/AudioAnalysisService.h"
     "src/AudioAnalysisTypes.h"
@@ -277,6 +279,10 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/ConsolePrint.cpp"
     "src/ConsolePrint.h"
     "src/DecodeFailureTracker.h"
+    "src/FileUtils.cpp"
+    "src/FileUtils.h"
+    "src/Log.cpp"
+    "src/Log.h"
     "src/MetadataService.cpp"
     "src/MetadataService.h"
     "src/NormalizeCoordinator.cpp"
@@ -284,8 +290,6 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/PluginScanner.cpp"
     "src/PluginScanner.h"
     "src/StringFormat.h"
-    "src/utils.cpp"
-    "src/utils.h"
     "src/version.h"
 )
 

@@ -5,9 +5,11 @@
 
 #include "PluginListCli.h"
 
+#include "AppInfo.h"
 #include "ConsolePrint.h"
+#include "Log.h"
 #include "PluginScanner.h"
-#include "utils.h"
+#include "StringFormat.h"
 
 #include <algorithm>
 #include <cstdint>

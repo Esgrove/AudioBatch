@@ -46,9 +46,15 @@ Shared core (linked into both targets):
 - `src/MetadataService.*` read and write tags and embedded art through TagLib.
 - `src/AnalysisCache.*` manage the SQLite result cache.
 - `src/AnalysisCoordinator.*` and `src/NormalizeCoordinator.*` orchestrate background work.
-- `src/utils.*`, `src/StringFormat.h`, and `src/version.h` are shared helpers.
-- `src/ConsolePrint.*` provide styled console output helpers.
-  They are used mainly by the CLI, and `utils.h` includes them in both targets.
+- Shared helpers are split by area, all in the `utils` namespace unless noted:
+  - `src/Log.*` holds the leveled logging functions.
+  - `src/AppInfo.*` holds the version line, the About text, system information, and the settings file options.
+  - `src/FileUtils.*` holds the file system helpers, such as moving files to the trash.
+  - `src/StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
+  - `src/ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
+  - `src/version.h` holds the build version constants.
+  Put new generic helpers in the matching file instead of a file-local `static` function,
+  so they are not duplicated across services, and keep each file well under 1000 lines.
 - `src/PluginScanner.*` implement out-of-process plugin scanning and the known-plugins list persistence.
   Each executable relaunches itself as its scan worker:
   `src/Main.cpp` and `src/CliMain.cpp` detect the worker command line before doing anything else.

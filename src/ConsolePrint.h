@@ -19,6 +19,12 @@
 
 namespace console
 {
+/// Prints one line of text to stdout and flushes it.
+/// On Windows a GUI subsystem executable has no console of its own,
+/// so when stdout is not already redirected to a pipe or file,
+/// this attaches to the console of the parent process first, so the text shows up in cmd or PowerShell.
+void printLineToConsole(const juce::String& text);
+
 /// Returns true when styled output should be written to the given stream.
 /// That is the case for an interactive terminal when the NO_COLOR environment variable is not set.
 /// On Windows this also enables virtual terminal processing for the console the first time,
