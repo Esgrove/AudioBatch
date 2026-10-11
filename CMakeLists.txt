@@ -303,6 +303,9 @@ set(AUDIOBATCH_CORE_SOURCES
 set(AUDIOBATCH_CLI_SOURCES
     "src/AudioAnalysisCli.cpp"
     "src/AudioAnalysisCli.h"
+    "src/AudioAnalysisCliOutput.cpp"
+    "src/AudioAnalysisCliOutput.h"
+    "src/AudioAnalysisCliParse.cpp"
     "src/PluginListCli.cpp"
     "src/PluginListCli.h"
 )
