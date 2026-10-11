@@ -251,11 +251,15 @@ juce_add_gui_app(AudioBatch
         </plist>"
 )
 
+# PLUGINHOST_AU sets JUCE_PLUGINHOST_AU and links the AudioUnit and CoreAudioKit frameworks on macOS,
+# which the Audio Unit hosting code needs for the plugin listing.
+# The GUI gets CoreAudioKit through juce_audio_utils instead.
 juce_add_console_app(AudioBatchCli
     COMPANY_NAME "Esgrove"
     COMPANY_WEBSITE "https://github.com/esgrove"
     PRODUCT_NAME "audiobatch"
     VERSION ${APP_BUILD_VERSION}
+    PLUGINHOST_AU TRUE
 )
 
 juce_generate_juce_header(AudioBatch)
@@ -382,9 +386,8 @@ target_compile_definitions(AudioBatchCli
         JUCE_DISABLE_JUCE_VERSION_PRINTING=1
         JUCE_USE_LAME_AUDIO_FORMAT=1
         JUCE_USE_MP3AUDIOFORMAT=1
-        # The plugin listing scans VST3 and Audio Unit plugins
+        # The plugin listing scans VST3 plugins, and Audio Unit plugins through PLUGINHOST_AU above
         JUCE_PLUGINHOST_VST3=1
-        JUCE_PLUGINHOST_AU=1
         JUCE_USE_CURL=0
         JUCE_WEB_BROWSER=0
         JUCE_USE_FLAC=1
