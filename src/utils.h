@@ -113,6 +113,12 @@ juce::String formattedSystemInfo();
 /// Builds the multi-line About dialog message with application, build, and system information.
 juce::String aboutMessage(const juce::String& appName);
 
+/// Prints one line of text to stdout and flushes it.
+/// On Windows a GUI subsystem executable has no console of its own,
+/// so when stdout is not already redirected to a pipe or file,
+/// this attaches to the console of the parent process first, so the text shows up in cmd or PowerShell.
+void printLineToConsole(std::string_view text);
+
 /// Renders a JSON var as plain text for log output,
 /// stripping quotes and the outer braces from the serialized form.
 inline juce::String formatJson(const juce::var& object)

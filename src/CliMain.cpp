@@ -1,11 +1,11 @@
 /// Console application entry point for the headless batch analysis executable.
-/// Sets up logging, parses arguments through AudioAnalysisCli,
-/// handles the help and version flags, and runs the analysis workflow,
+/// Parses arguments through AudioAnalysisCli and answers the help and version flags
+/// before any logging starts, so those flags only print to the console.
+/// Every other invocation sets up file logging and runs the analysis workflow,
 /// translating the outcome into a process exit code.
 
 #include "AudioAnalysisCli.h"
 #include "utils.h"
-#include "version.h"
 
 namespace audiobatch::cli
 {
@@ -23,27 +23,31 @@ int main(const int argc, char* argv[])
 {
     juce::ArgumentList arguments(argc, argv);
     const auto executableName = juce::File(arguments.executableName).getFileNameWithoutExtension();
-    const auto logger = utils::createDefaultLogger(executableName);
-    juce::Logger::setCurrentLogger(logger.get());
 
     juce::String parseError;
     const auto cliOptions = AudioAnalysisCli::parse(std::move(arguments), parseError);
 
+    // Help and version only print to the console.
+    // They return before the logger is created, so they never touch the log file.
+    if (cliOptions.has_value() && cliOptions->showVersion) {
+        constexpr auto versionLine = version::makeVersionLine("audiobatch");
+        fmt::print("{}\n", versionLine.view());
+        return 0;
+    }
+
+    if (cliOptions.has_value() && cliOptions->showHelp) {
+        fmt::print("{}\n", AudioAnalysisCli::buildUsage(executableName));
+        return 0;
+    }
+
+    const auto logger = utils::createDefaultLogger(executableName);
+    juce::Logger::setCurrentLogger(logger.get());
+
     if (!cliOptions.has_value()) {
         utils::logError(parseError);
-        std::cerr << ansi::red << parseError << ansi::reset << std::endl << std::endl;
-        std::cout << AudioAnalysisCli::buildUsage(executableName) << std::endl;
+        fmt::print(stderr, "{}{}{}\n\n", ansi::ANSI_RED, parseError, ansi::ANSI_RESET);
+        fmt::print("{}\n", AudioAnalysisCli::buildUsage(executableName));
         return audiobatch::cli::exitCli(1);
-    }
-
-    if (cliOptions->showHelp) {
-        std::cout << AudioAnalysisCli::buildUsage(executableName) << std::endl;
-        return audiobatch::cli::exitCli(0);
-    }
-
-    if (cliOptions->showVersion) {
-        std::cout << executableName << " " << version::VERSION_INFO << " " << version::BRANCH << std::endl;
-        return audiobatch::cli::exitCli(0);
     }
 
     const auto exitCode = AudioAnalysisCli::run(*cliOptions);
