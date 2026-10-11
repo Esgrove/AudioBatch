@@ -37,12 +37,11 @@
 
 # Build
 
-/Assets/icon.afdesign
-/Assets/sound.png
+/assets/icon.afdesign
+/assets/sound.png
 /build
 /Builds
 /cmake-build*
-/include/ASIO_SDK/
 
 # Test audio files
 /files/
