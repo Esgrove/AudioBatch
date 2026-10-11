@@ -1,5 +1,4 @@
-/// Out-of-process plugin scanning, so a plugin that crashes while it is being scanned
-/// cannot take down the application.
+/// Out-of-process plugin scanning, so a plugin that crashes while it is being scanned cannot take down the application.
 /// Declares PluginScanWorker, which runs in a child process launched from the application's own executable
 /// and loads plugins to describe them,
 /// and OutOfProcessPluginScanner, the KnownPluginList::CustomScanner the main process installs

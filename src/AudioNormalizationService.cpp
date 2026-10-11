@@ -468,11 +468,9 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
     juce::StringArray readOnlyLines;
 
     for (const auto& [formatName, fileExtensions, canNormalize, detail] : support) {
-        auto line = utils::format("- {} ({})", formatName, formatExtensionsToText(fileExtensions));
-
-        if (detail.isNotEmpty()) {
-            line << ": " << detail;
-        }
+        const auto line = detail.isNotEmpty()
+            ? utils::format("- {} ({}): {}", formatName, formatExtensionsToText(fileExtensions), detail)
+            : utils::format("- {} ({})", formatName, formatExtensionsToText(fileExtensions));
 
         if (canNormalize) {
             writableLines.add(line);
@@ -481,21 +479,22 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
         }
     }
 
-    juce::String message;
-    message << getNormalizationStatusLine() << juce::newLine << juce::newLine;
-    message << "Normalization rewrites files in place when they are already AIFF, and converts every other"
-            << " supported format to an AIFF file of the same base name. Metadata (tags, album art, custom"
-            << " frames) is read from the source via TagLib and written back to the AIFF output as ID3v2.4."
-            << juce::newLine << juce::newLine;
+    // The summary is only shown in GUI dialogs, so plain '\n' line breaks are fine.
+    auto message = utils::format(
+        "{}\n\n"
+        "Normalization rewrites files in place when they are already AIFF, "
+        "and converts every other supported format to an AIFF file of the same base name. "
+        "Metadata (tags, album art, custom frames) is read from the source via TagLib "
+        "and written back to the AIFF output as ID3v2.4.\n\n",
+        getNormalizationStatusLine()
+    );
 
     if (!writableLines.isEmpty()) {
-        message << "Normalization available here:" << juce::newLine << writableLines.joinIntoString(juce::newLine)
-                << juce::newLine << juce::newLine;
+        message += utils::format("Normalization available here:\n{}\n\n", writableLines.joinIntoString("\n"));
     }
 
     if (!readOnlyLines.isEmpty()) {
-        message << "Readable but not normalizable here:" << juce::newLine
-                << readOnlyLines.joinIntoString(juce::newLine);
+        message += utils::format("Readable but not normalizable here:\n{}", readOnlyLines.joinIntoString("\n"));
     }
 
     return message.trimEnd();

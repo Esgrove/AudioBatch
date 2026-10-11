@@ -1,6 +1,5 @@
 /// Header-only slider variant used for stepped numeric controls in the GUI.
-/// Declares IntervalStepSlider, a juce::Slider
-/// that moves by exactly one interval per mouse-wheel notch
+/// Declares IntervalStepSlider, a juce::Slider that moves by exactly one interval per mouse-wheel notch
 /// instead of jumping several steps on fast wheel movement.
 
 #pragma once
