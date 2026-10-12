@@ -265,7 +265,7 @@ private:
     /// Returns false when no reader could be created, leaving the transport empty.
     bool loadURLIntoTransport(const juce::URL& audioUrl);
 
-    /// Starts peak normalization for the selected files
+    /// Starts normalization to the selected peak or loudness target for the selected files
     /// after checking that no other pass is running and that every selected format is supported.
     void normalizeSelectedRecords();
 
@@ -352,8 +352,8 @@ private:
     /// keeping the order stable across incremental result updates.
     void sortResults();
 
-    /// Kicks off a background analysis run,
-    /// adding pending placeholder rows for files that are not already cached.
+    /// Kicks off a background analysis run.
+    /// Pending placeholder rows for the files that are not already cached are added once the plan arrives.
     /// A run that keeps the results replaces a running one, so it also takes over the inputs of that run,
     /// which would otherwise leave its placeholder rows waiting forever.
     /// Refuses to start while normalization or plugin processing is running,

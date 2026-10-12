@@ -85,7 +85,7 @@ Formatting and linting run through scripts in the repository root:
 - `./format.sh` formats C++ with clang-format, `CMakeLists.txt` with cmake-format, and shell scripts with shfmt.
   cmake-format runs through `uvx` when it is not installed.
   `./format.sh --check` only verifies formatting, which is what CI runs.
-- `./lint.sh` runs clang-tidy on `src/` using the debug build's `compile_commands.json`.
+- `./lint.sh` runs clang-tidy on `src/` and `tests/` using the debug build's `compile_commands.json`.
   `./lint.sh --check` exits with code 1 on any warning.
 - `ctest --test-dir cmake-build-mac-debug --output-on-failure` runs the unit and integration tests
   after a debug build.

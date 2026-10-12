@@ -1,8 +1,8 @@
 /// Implementation of AudioNormalizationService.
-/// Reads source files through per-thread JUCE format readers, applies gain in chunks,
-/// and writes peak-normalized AIFF output.
-/// Carries source tags and embedded art across through MetadataService,
-/// and reports which formats this build can read and rewrite during normalization.
+/// Reads source files through per-thread JUCE format readers, applies the peak or loudness gain in chunks,
+/// and writes AIFF output.
+/// Carries source tags and embedded art across through MetadataService.
+/// The format support reporting lives in NormalizationFormatSupport.cpp.
 
 #include "AudioNormalizationService.h"
 
