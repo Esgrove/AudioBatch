@@ -36,14 +36,23 @@ namespace audiobatch::analysis
 /// EBU R128 updates short-term loudness at least ten times per second,
 /// so a slower rate can miss the loudest three second window.
 constexpr double shortTermUpdateRateHz = 10.0;
+constexpr auto cancelledMessage = "Analysis was cancelled";
 
 /// Marks the record as failed with the given message and logs the error.
+/// Cancellation is logged at debug level only,
+/// because a rescan cancels every file still in flight and none of them failed.
 /// Takes the record by value so callers can hand over a partially filled record with std::move.
 static AudioAnalysisRecord failAnalysis(AudioAnalysisRecord record, const juce::String& message)
 {
     record.status = AudioAnalysisStatus::failed;
     record.errorMessage = message;
-    utils::logError("Analysis failed for {}: {}", record.fullPath.quoted(), message);
+
+    if (message == cancelledMessage) {
+        utils::logDebug("Analysis cancelled for {}", record.fullPath.quoted());
+    } else {
+        utils::logError("Analysis failed for {}: {}", record.fullPath.quoted(), message);
+    }
+
     return record;
 }
 
@@ -319,7 +328,7 @@ static DecodeMeasurements measureDecodedAudio(
     for (std::int64_t samplePosition = 0; samplePosition < reader.lengthInSamples; samplePosition += analysisBlockSize)
     {
         if (utils::isCancellationRequested(isCancelled)) {
-            measurements.errorMessage = "Analysis was cancelled";
+            measurements.errorMessage = cancelledMessage;
             return measurements;
         }
 
