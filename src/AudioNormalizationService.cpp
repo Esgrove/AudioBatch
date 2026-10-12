@@ -153,6 +153,14 @@ static juce::String renderNormalizedAudio(
             juce::jmin<juce::int64>(normalizationBlockSize, reader.lengthInSamples - samplePosition)
         );
 
+        // A failed read leaves the destination untouched, so without clearing, a tolerated failure would write
+        // the previous, already gained block again.
+        // The samples are zeroed through the channel pointers, because AudioBuffer::clear marks the whole buffer as
+        // clear and applyGain would then skip the samples the reader writes through those pointers.
+        for (auto* const channelPointer : channelPointers) {
+            juce::FloatVectorOperations::clear(channelPointer, samplesThisBlock);
+        }
+
         const auto readSucceeded
             = reader.read(channelPointers.data(), buffer.getNumChannels(), samplePosition, samplesThisBlock);
 
