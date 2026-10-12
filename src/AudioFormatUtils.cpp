@@ -2,6 +2,11 @@
 
 #include "AudioFormatUtils.h"
 
+#include "StringFormat.h"
+
+#include <memory>
+#include <utility>
+
 namespace utils
 {
 juce::AudioFormatManager& threadLocalFormatManager()
@@ -44,6 +49,35 @@ bool readFloatSamples(
     }
 
     return false;
+}
+
+juce::String validateWrittenAudio(
+    juce::AudioFormatManager& formatManager,
+    const juce::File& file,
+    const int expectedChannels,
+    const double expectedSampleRate,
+    const juce::int64 expectedLength
+)
+{
+    const std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+
+    if (reader == nullptr) {
+        return "the output file cannot be read";
+    }
+
+    if (std::cmp_not_equal(reader->numChannels, expectedChannels)) {
+        return format("the output has {} channels instead of {}", reader->numChannels, expectedChannels);
+    }
+
+    if (!juce::approximatelyEqual(reader->sampleRate, expectedSampleRate)) {
+        return format("the output sample rate is {} Hz instead of {} Hz", reader->sampleRate, expectedSampleRate);
+    }
+
+    if (reader->lengthInSamples != expectedLength) {
+        return format("the output has {} samples instead of {}", reader->lengthInSamples, expectedLength);
+    }
+
+    return {};
 }
 
 std::unordered_map<juce::String, juce::String> copyMetadata(const juce::StringPairArray& metadata)

@@ -614,12 +614,14 @@ PluginProcessingResult PluginProcessingService::processFile(
     const auto bitsPerSample = AudioNormalizationService::getOutputBitDepth(record, *reader);
     const auto clipGuardGain = getClipGuardGain(summary, bitsPerSample);
 
+    const auto finalLength = getFinalLength(summary, reader->lengthInSamples);
+
     if (const auto writeError = writeProcessedAiff(
             *aiffFormat,
             intermediateFile.getFile(),
             temporaryFile.getFile(),
             *reader,
-            getFinalLength(summary, reader->lengthInSamples),
+            finalLength,
             clipGuardGain,
             bitsPerSample,
             isCancelled
@@ -643,16 +645,12 @@ PluginProcessingResult PluginProcessingService::processFile(
         }
     }
 
-    // Validate the temporary AIFF file by opening it for reading.
-    {
-        const std::unique_ptr<juce::AudioFormatReader> verifyReader(
-            formatManager.createReaderFor(temporaryFile.getFile())
+    if (const auto validationError = utils::validateWrittenAudio(
+            formatManager, temporaryFile.getFile(), numChannels, reader->sampleRate, finalLength
         );
-
-        if (verifyReader == nullptr) {
-            utils::deleteFile(temporaryFile.getFile());
-            return fail(file, "Processed output failed validation");
-        }
+        validationError.isNotEmpty())
+    {
+        return fail(file, utils::format("Processed output failed validation: {}", validationError));
     }
 
     // Check again before touching the original, since cancellation may arrive during the last render block.
