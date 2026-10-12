@@ -1,13 +1,15 @@
 /// Tests for PluginProcessingService::processFile with small in-process test plugins.
 /// Covers mono files through stereo-only and mixed-width chains, the clip guard, the output bit depth,
-/// and the output length.
+/// latency compensation, rendering and trimming the tail, per-file state, cancellation, and the output length.
 /// Replaced files are deleted instead of moved to the system trash, so the tests never touch the user's trash.
 
 #include "AudioAnalysisService.h"
+#include "AudioFormatUtils.h"
 #include "PluginProcessingService.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 #include <vector>
@@ -29,6 +31,12 @@ struct TestPluginSettings {
     /// Multiplies the gain by this factor after every block, like a plugin that adapts to its input.
     /// The current gain is the plugin state, so restoring the state undoes the adaptation.
     float adaptiveGainStep = 1.0f;
+    /// Delays the output by this many samples and reports the delay as the plugin latency.
+    int latencySamples = 0;
+    /// Adds an echo at half level this many samples after the input, and reports the echo as the tail.
+    int echoSamples = 0;
+    /// Tail length reported without producing any tail, in seconds, for a plugin without an echo.
+    double reportedTailSeconds = 0.0;
 };
 
 /// A test plugin that applies a fixed gain and can swap the left and right channels.
@@ -54,6 +62,7 @@ public:
     {
         widestBuffer = juce::jmax(widestBuffer, buffer.getNumChannels());
         const auto channels = juce::jmin(buffer.getNumChannels(), getMainBusNumOutputChannels());
+        applyDelays(buffer, channels);
 
         if (settings.swapChannels && channels >= 2) {
             for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
@@ -99,16 +108,34 @@ public:
         return "Test Plugin";
     }
 
-    /// Needs no preparation.
-    void prepareToPlay(double /*sampleRate*/, int /*maximumExpectedSamplesPerBlock*/) override { }
+    /// Reports the latency and clears the delay history.
+    void prepareToPlay(const double sampleRate, int /*maximumExpectedSamplesPerBlock*/) override
+    {
+        preparedSampleRate = sampleRate;
+        setLatencySamples(settings.latencySamples);
+        const auto historyLength
+            = static_cast<std::size_t>(juce::jmax(settings.latencySamples, settings.echoSamples) + 1);
+        history.assign(2, std::vector<float>(historyLength, 0.0f));
+        historyPosition = 0;
+    }
+
+    /// Clears the delay history, so no signal from an earlier file is left in it.
+    void reset() override
+    {
+        for (auto& channelHistory : history) {
+            std::ranges::fill(channelHistory, 0.0f);
+        }
+
+        historyPosition = 0;
+    }
 
     /// Holds no resources.
     void releaseResources() override { }
 
-    /// Has no tail.
+    /// Returns the echo length, or the reported tail when there is no echo.
     double getTailLengthSeconds() const override
     {
-        return 0.0;
+        return settings.echoSamples > 0 ? settings.echoSamples / preparedSampleRate : settings.reportedTailSeconds;
     }
 
     /// Takes no MIDI input.
@@ -188,9 +215,41 @@ private:
         return nullptr;
     }
 
+    /// Delays the main channels by the latency and adds the echo, through a per-channel history of recent input.
+    void applyDelays(juce::AudioBuffer<float>& buffer, const int channels)
+    {
+        if ((settings.latencySamples == 0 && settings.echoSamples == 0) || history.empty()) {
+            return;
+        }
+
+        const auto historyLength = history.front().size();
+        const auto delayedPosition = [&](const int delay) {
+            return (historyPosition + historyLength - static_cast<std::size_t>(delay)) % historyLength;
+        };
+
+        for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
+            for (int channel = 0; channel < juce::jmin(channels, 2); ++channel) {
+                auto& channelHistory = history[static_cast<std::size_t>(channel)];
+                channelHistory[historyPosition] = buffer.getSample(channel, sample);
+
+                auto output = channelHistory[delayedPosition(settings.latencySamples)];
+                if (settings.echoSamples > 0) {
+                    output += 0.5f * channelHistory[delayedPosition(settings.echoSamples)];
+                }
+
+                buffer.setSample(channel, sample, output);
+            }
+
+            historyPosition = (historyPosition + 1) % historyLength;
+        }
+    }
+
     TestPluginSettings settings;
     float currentGain;
     int widestBuffer = 0;
+    double preparedSampleRate = 44100.0;
+    std::vector<std::vector<float>> history;
+    std::size_t historyPosition = 0;
 };
 
 /// Checks plugin processing output against the committed fixtures.
@@ -318,6 +377,62 @@ public:
             expectEquals(result.analysisRecord.sampleRate, 48000);
         }
 
+        beginTest("Plugin latency is removed from the start of the output");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "latency.aif");
+            const auto sourceLength = AudioAnalysisService::analyzeFile(source).lengthInSamples;
+            TestPlugin plugin({.latencySamples = 1000});
+            const auto result = process(source, {&plugin});
+
+            expect(!result.hasError(), result.errorMessage);
+            expectEquals(result.analysisRecord.lengthInSamples, sourceLength);
+            expectWithinAbsoluteError(
+                maximumDifference(fixtureFile("sine_stereo_44100_16.aif"), result.outputFile, 512), 0.0f, 0.001f
+            );
+        }
+
+        beginTest("The tail of a plugin is rendered past the end of the source");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "echo.aif");
+            const auto sourceLength = AudioAnalysisService::analyzeFile(source).lengthInSamples;
+            constexpr int echoSamples = 4410;
+            TestPlugin plugin({.echoSamples = echoSamples});
+            const auto result = process(source, {&plugin});
+
+            expect(!result.hasError(), result.errorMessage);
+            expect(result.analysisRecord.lengthInSamples > sourceLength + echoSamples - 20);
+            expect(result.analysisRecord.lengthInSamples <= sourceLength + echoSamples);
+        }
+
+        beginTest("A silent tail allowance is trimmed back to the source length");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "silent_tail.aif");
+            const auto sourceLength = AudioAnalysisService::analyzeFile(source).lengthInSamples;
+            TestPlugin plugin({.reportedTailSeconds = 0.5});
+            const auto result = process(source, {&plugin});
+
+            expect(!result.hasError(), result.errorMessage);
+            expectEquals(result.analysisRecord.lengthInSamples, sourceLength);
+        }
+
+        beginTest("A cancelled run leaves the source untouched and removes its temporary files");
+        {
+            const TemporaryDirectory cancelDirectory;
+            const auto source = cancelDirectory.copyFixture("sine_stereo_44100_16.aif", "cancelled.aif");
+            const auto sourceSize = source.getSize();
+            const auto sourceModified = source.getLastModificationTime();
+            TestPlugin plugin({.gain = 0.5f});
+            const auto result = PluginProcessingService::processFile(
+                AudioAnalysisService::analyzeFile(source), makeOptions({&plugin}), {&plugin}, [] { return true; }
+            );
+
+            expect(result.hasError());
+            expect(result.errorMessage.contains("cancelled"), result.errorMessage);
+            expectEquals(source.getSize(), sourceSize);
+            expect(source.getLastModificationTime() == sourceModified);
+            expectEquals(source.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 1);
+        }
+
         beginTest("Output that would clip is turned down to full scale and reported");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif");
@@ -347,6 +462,38 @@ private:
         return PluginProcessingService::processFile(
             AudioAnalysisService::analyzeFile(source), makeOptions(chain, states), chain
         );
+    }
+
+    /// Returns the largest absolute sample difference between the first samples of two files,
+    /// or 1 when either file cannot be read.
+    static float maximumDifference(const juce::File& expected, const juce::File& actual, const int numSamples)
+    {
+        auto& formatManager = utils::threadLocalFormatManager();
+        const std::unique_ptr<juce::AudioFormatReader> expectedReader(formatManager.createReaderFor(expected));
+        const std::unique_ptr<juce::AudioFormatReader> actualReader(formatManager.createReaderFor(actual));
+
+        if (expectedReader == nullptr || actualReader == nullptr) {
+            return 1.0f;
+        }
+
+        juce::AudioBuffer<float> expectedSamples(static_cast<int>(expectedReader->numChannels), numSamples);
+        juce::AudioBuffer<float> actualSamples(static_cast<int>(actualReader->numChannels), numSamples);
+        expectedReader->read(&expectedSamples, 0, numSamples, 0, true, true);
+        actualReader->read(&actualSamples, 0, numSamples, 0, true, true);
+
+        float difference = 0.0f;
+        for (int channel = 0; channel < juce::jmin(expectedSamples.getNumChannels(), actualSamples.getNumChannels());
+             ++channel)
+        {
+            for (int sample = 0; sample < numSamples; ++sample) {
+                difference = juce::jmax(
+                    difference,
+                    std::abs(expectedSamples.getSample(channel, sample) - actualSamples.getSample(channel, sample))
+                );
+            }
+        }
+
+        return difference;
     }
 
     /// Builds options for the given chain that delete replaced files instead of moving them to the system trash.
