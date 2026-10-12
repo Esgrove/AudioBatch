@@ -28,6 +28,7 @@ public:
     explicit NormalizeCoordinator(int workerCount = juce::SystemStats::getNumCpus());
 
     /// Cancels any in-flight work and destroys the worker pool.
+    /// Waits without a timeout so workers cannot access destroyed coordinator state.
     ~NormalizeCoordinator();
 
     NormalizeCoordinator(const NormalizeCoordinator&) = delete;

@@ -15,6 +15,7 @@ NormalizeCoordinator::NormalizeCoordinator(const int workerCount) : threadPool(j
 NormalizeCoordinator::~NormalizeCoordinator()
 {
     cancelAndWait();
+    threadPool.removeAllJobs(true, -1);
 }
 
 void NormalizeCoordinator::setResultCallback(ResultCallback callback)
