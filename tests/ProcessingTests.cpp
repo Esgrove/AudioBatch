@@ -1,8 +1,7 @@
 /// Tests for PluginProcessingService::processFile with small in-process test plugins.
 /// Covers mono files through stereo-only and mixed-width chains, the clip guard, the output bit depth,
 /// and the output length.
-/// Only `.aif` sources are processed, which are rewritten in place,
-/// because processing other formats moves the source to the system trash.
+/// Replaced files are deleted instead of moved to the system trash, so the tests never touch the user's trash.
 
 #include "AudioAnalysisService.h"
 #include "PluginProcessingService.h"
@@ -281,6 +280,42 @@ public:
             );
         }
 
+        beginTest("An .aif source rewritten in place disposes of a copy of the original first");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "in_place.aif");
+            const auto sourceSize = source.getSize();
+            TestPlugin plugin({.gain = 0.5f});
+            auto options = makeOptions({&plugin});
+            juce::StringArray disposedNames;
+            juce::Array<juce::int64> disposedSizes;
+            options.disposeFile = [&](const juce::File& file) {
+                disposedNames.add(file.getFileName());
+                disposedSizes.add(file.getSize());
+                return file.deleteFile();
+            };
+
+            const auto result
+                = PluginProcessingService::processFile(AudioAnalysisService::analyzeFile(source), options, {&plugin});
+
+            expect(!result.hasError(), result.errorMessage);
+            expectEquals(disposedNames.joinIntoString(","), juce::String("in_place.aif"));
+            expectEquals(disposedSizes[0], sourceSize);
+            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels - 6.0206, 0.05);
+        }
+
+        beginTest("A converted source is disposed of once its .aif output is in place");
+        {
+            const auto source = directory.copyFixture("sine_stereo_48000_24.wav", "converted.wav");
+            TestPlugin plugin({});
+            const auto result = process(source, {&plugin});
+
+            expect(!result.hasError(), result.errorMessage);
+            expect(!source.exists());
+            expectEquals(result.outputFile.getFileName(), juce::String("converted.aif"));
+            expectEquals(result.analysisRecord.bitsPerSample, 24);
+            expectEquals(result.analysisRecord.sampleRate, 48000);
+        }
+
         beginTest("Output that would clip is turned down to full scale and reported");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif");
@@ -307,7 +342,20 @@ private:
         const std::vector<juce::MemoryBlock>& states = {}
     )
     {
+        return PluginProcessingService::processFile(
+            AudioAnalysisService::analyzeFile(source), makeOptions(chain, states), chain
+        );
+    }
+
+    /// Builds options for the given chain that delete replaced files instead of moving them to the system trash.
+    /// Each plugin gets the saved state at its index in `states`, or no saved state.
+    static PluginProcessingOptions makeOptions(
+        const std::vector<juce::AudioPluginInstance*>& chain,
+        const std::vector<juce::MemoryBlock>& states = {}
+    )
+    {
         PluginProcessingOptions options;
+        options.disposeFile = [](const juce::File& file) { return file.deleteFile(); };
 
         for (std::size_t index = 0; index < chain.size(); ++index) {
             PluginDescriptorRef descriptor;
@@ -321,7 +369,7 @@ private:
             options.plugins.push_back(descriptor);
         }
 
-        return PluginProcessingService::processFile(AudioAnalysisService::analyzeFile(source), options, chain);
+        return options;
     }
 };
 

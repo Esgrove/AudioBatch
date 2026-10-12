@@ -100,6 +100,26 @@ juce::String existingOutputMessage(const juce::File& outputFile)
     return format("Output file {} already exists. Use force overwrite to replace it.", outputFile.getFileName());
 }
 
+bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile)
+{
+    const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
+                               .getChildFile("AudioBatch")
+                               .getNonexistentChildFile("original", {}, false);
+
+    if (!directory.createDirectory()) {
+        return false;
+    }
+
+    const auto copy = directory.getChildFile(file.getFileName());
+    const bool disposed = file.copyFileTo(copy) && disposeFile(copy);
+
+    if (!directory.deleteRecursively()) {
+        logWarn("Could not remove the temporary folder {}", directory.getFullPathName().quoted());
+    }
+
+    return disposed;
+}
+
 juce::String checkOutputPath(const juce::File& sourceFile, const juce::File& outputFile, const bool overwriteExisting)
 {
     if (outputFile == sourceFile || !outputFile.exists()) {

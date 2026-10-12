@@ -34,6 +34,13 @@ juce::String checkOutputPath(const juce::File& sourceFile, const juce::File& out
 /// Disposes of a file that a committed output replaces, and returns true when the file is gone.
 using FileDisposer = std::function<bool(const juce::File&)>;
 
+/// Disposes of a copy of the file under the same name, leaving the file itself in place.
+/// Used before an in-place rewrite that cannot be repeated to get back to the original,
+/// so the original stays recoverable from the trash.
+/// The copy is made in a new folder in the system temp directory, which is removed afterwards.
+/// Returns true when the copy was made and disposed of.
+bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile);
+
 /// Moves a finished temporary output into place next to its source and disposes of the source.
 /// When the output path is the source itself, the source is replaced in place.
 /// Otherwise an output path that fails checkOutputPath fails the commit,

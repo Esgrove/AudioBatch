@@ -183,6 +183,8 @@ Tests:
   Prefer the committed fixtures over generating audio in a test.
 - Avoid tests that convert non-AIFF sources through normalization,
   because a successful conversion moves the source to the system trash.
+  Plugin processing tests set `PluginProcessingOptions::disposeFile` to a function that deletes the file instead,
+  and `utils::commitTemporaryOutput` takes the same kind of function.
 - `tests/.clang-tidy` disables `readability-magic-numbers`, since tests compare against literal expected values.
 
 ## Formatting
