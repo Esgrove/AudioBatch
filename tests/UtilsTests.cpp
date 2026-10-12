@@ -8,8 +8,43 @@
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
+#include <algorithm>
+#include <bit>
+
 namespace audiobatch::tests
 {
+/// A fixed-point reader whose reads write integer samples and then report a failure,
+/// like a decoder that fails part way through a block.
+class FailingFixedPointReader final : public juce::AudioFormatReader
+{
+public:
+    /// Creates a mono 16-bit reader with one second of audio.
+    FailingFixedPointReader() : juce::AudioFormatReader(nullptr, "Failing")
+    {
+        sampleRate = 44100.0;
+        bitsPerSample = 16;
+        lengthInSamples = 44100;
+        numChannels = 1;
+        usesFloatingPointData = false;
+    }
+
+    /// Fills the destination with integers whose bits read as 0.5 when reinterpreted as floats, and fails.
+    bool readSamples(
+        int* const* destSamples,
+        const int numDestChannels,
+        const int startOffsetInDestBuffer,
+        juce::int64 /*startSampleInFile*/,
+        const int numSamples
+    ) override
+    {
+        for (int channel = 0; channel < numDestChannels; ++channel) {
+            std::fill_n(destSamples[channel] + startOffsetInDestBuffer, numSamples, std::bit_cast<int>(0.5f));
+        }
+
+        return false;
+    }
+};
+
 /// Checks the generic file, format, and cancellation helpers.
 class UtilsTests final : public juce::UnitTest
 {
@@ -110,6 +145,16 @@ public:
         {
             expect(!utils::isCancellationRequested({}));
             expect(utils::isCancellationRequested([] { return true; }));
+        }
+
+        beginTest("A failed read from a fixed-point reader leaves silence instead of raw integers");
+        {
+            FailingFixedPointReader reader;
+            juce::AudioBuffer<float> buffer(1, 64);
+            buffer.getWritePointer(0)[0] = 0.25f;
+
+            expect(!utils::readFloatSamples(reader, buffer.getArrayOfWritePointers(), 1, 0, 64));
+            expectEquals(buffer.getMagnitude(0, 0, 64), 0.0f);
         }
 
         beginTest("Decode failures are tolerated in isolation and reported in a notice");

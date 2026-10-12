@@ -12,7 +12,9 @@
 /// A failed read in the final block is tolerated,
 /// because MP3 files often report a length that overshoots the decodable audio.
 /// Isolated failures elsewhere are tolerated too, because the built-in MP3 decoder can fail mid-stream on files
-/// that other decoders handle fine, and a failed block still holds the samples decoded before the error.
+/// that other decoders handle fine.
+/// A failed block keeps the samples a floating point decoder produced before the error and is silent otherwise,
+/// as utils::readFloatSamples describes.
 /// Several failures in a row mean the rest of the file cannot be decoded, and the pass must stop with an error.
 class DecodeFailureTracker
 {

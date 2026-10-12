@@ -25,6 +25,27 @@ juce::AudioFormat* findAiffFormat(const juce::AudioFormatManager& formatManager)
     return formatManager.findFormatForFileExtension("aiff");
 }
 
+bool readFloatSamples(
+    juce::AudioFormatReader& reader,
+    float* const* channels,
+    const int numChannels,
+    const juce::int64 startSample,
+    const int numSamples
+)
+{
+    if (reader.read(channels, numChannels, startSample, numSamples)) {
+        return true;
+    }
+
+    if (!reader.usesFloatingPointData) {
+        for (int channel = 0; channel < numChannels; ++channel) {
+            juce::FloatVectorOperations::clear(channels[channel], numSamples);
+        }
+    }
+
+    return false;
+}
+
 std::unordered_map<juce::String, juce::String> copyMetadata(const juce::StringPairArray& metadata)
 {
     std::unordered_map<juce::String, juce::String> copiedMetadata;

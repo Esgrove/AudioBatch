@@ -328,7 +328,9 @@ static DecodeMeasurements measureDecodedAudio(
 
         readBuffer.clear();
 
-        const auto readSucceeded = reader.read(&readBuffer, 0, framesThisBlock, samplePosition, true, true);
+        const auto readSucceeded = utils::readFloatSamples(
+            reader, readBuffer.getArrayOfWritePointers(), channelCount, samplePosition, framesThisBlock
+        );
 
         if (!failureTracker.recordBlock(readSucceeded, samplePosition, framesThisBlock)) {
             measurements.errorMessage = failureTracker.getErrorMessage();

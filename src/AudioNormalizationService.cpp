@@ -163,8 +163,9 @@ static juce::String renderNormalizedAudio(
             juce::FloatVectorOperations::clear(channelPointer, samplesThisBlock);
         }
 
-        const auto readSucceeded
-            = reader.read(channelPointers.data(), buffer.getNumChannels(), samplePosition, samplesThisBlock);
+        const auto readSucceeded = utils::readFloatSamples(
+            reader, channelPointers.data(), buffer.getNumChannels(), samplePosition, samplesThisBlock
+        );
 
         if (!failureTracker.recordBlock(readSucceeded, samplePosition, samplesThisBlock)) {
             return failureTracker.getErrorMessage();
