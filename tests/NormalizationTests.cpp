@@ -1,15 +1,17 @@
 /// Tests for AudioNormalizationService.
 /// Covers output path resolution, batch output conflicts, refusal to overwrite unrelated files,
-/// cancellation, and the level and sample rate of the written output.
+/// cancellation, the level and sample rate of the written output, and the tags and art carried over to it.
 /// Only in-place `.aif` sources are normalized successfully here,
 /// because converting other formats moves the original to the system trash.
 
 #include "AudioAnalysisService.h"
 #include "AudioNormalizationService.h"
+#include "MetadataService.h"
 #include "StringFormat.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
+#include <algorithm>
 #include <vector>
 
 namespace audiobatch::tests
@@ -95,6 +97,19 @@ private:
             expectEquals(conflicts.size(), 1);
             expect(conflicts.contains(root.getChildFile("song.mp3").getFullPathName()));
         }
+
+        if (!juce::File::areFileNamesCaseSensitive()) {
+            beginTest("Outputs that differ only in case conflict where file names ignore case");
+            {
+                const std::vector records {
+                    recordForPath(root.getChildFile("song.mp3").getFullPathName()),
+                    recordForPath(root.getChildFile("SONG.flac").getFullPathName()),
+                };
+
+                const auto conflicts = AudioNormalizationService::findBatchOutputConflicts(records);
+                expectEquals(conflicts.size(), 1);
+            }
+        }
     }
 
     /// Normalizes generated files and checks the results on disk.
@@ -154,6 +169,47 @@ private:
         checkInPlaceNormalization(directory, "sine_mono_24000_16.aif", 1, 24000, 16);
         checkInPlaceNormalization(directory, "sine_mono_48000_24.aif", 1, 48000, 24);
         checkInPlaceNormalization(directory, "sine_stereo_44100_16.aif", 2, 44100, 16);
+
+        beginTest("Tags and embedded art survive in-place normalization");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "tagged.aif");
+            MetadataService::Metadata metadata;
+            metadata.properties.push_back({.key = "TITLE", .values = {"Tagged tone"}});
+            metadata.properties.push_back({.key = "ARTIST", .values = {"AudioBatch"}});
+            const juce::String pictureText("not really a picture");
+            metadata.pictures.push_back({
+                .data = juce::MemoryBlock(pictureText.toRawUTF8(), pictureText.getNumBytesAsUTF8()),
+                .mimeType = "image/jpeg",
+                .description = "cover",
+                .pictureType = "Front Cover",
+            });
+            expect(MetadataService::writeMetadata(source, metadata));
+
+            const auto result = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), {});
+            expect(!result.hasError(), result.errorMessage);
+
+            MetadataService::Metadata written;
+            expect(MetadataService::readMetadata(source, written));
+            const auto title
+                = std::ranges::find_if(written.properties, [](const auto& entry) { return entry.key == "TITLE"; });
+            expect(title != written.properties.end() && title->values[0] == "Tagged tone");
+            expectEquals(static_cast<int>(written.pictures.size()), 1);
+            expect(!written.pictures.empty() && written.pictures.front().data == metadata.pictures.front().data);
+        }
+
+        if (!juce::File::areFileNamesCaseSensitive()) {
+            beginTest("A source whose extension differs only in case is normalized in place");
+            {
+                const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "Upper.AIF");
+                const auto result
+                    = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), {});
+
+                expect(!result.hasError(), result.errorMessage);
+                expect(result.analysisRecord.file == source);
+                expect(source.existsAsFile());
+                expectWithinAbsoluteError(peakDecibels(result.analysisRecord), 0.0, peakTolerance);
+            }
+        }
 
         beginTest("A file that changed since analysis is analyzed again before computing the gain");
         {
