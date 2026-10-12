@@ -12,7 +12,9 @@
 #include <memory>
 
 /// Top-level application window that hosts the main AudioBatch component.
-class MainWindow : public juce::DocumentWindow, juce::MenuBarModel
+/// The menu items that have a keyboard shortcut are application commands,
+/// because the menu only displays shortcuts for items that are backed by a command manager.
+class MainWindow : public juce::DocumentWindow, juce::MenuBarModel, juce::ApplicationCommandTarget
 {
 public:
     /// Builds the window, installs the custom look-and-feel as the global default,
@@ -51,6 +53,22 @@ private:
     /// because the Add Plugin submenu generates its ids dynamically.
     void menuItemSelected(int menuItemID, int topLevelMenuIndex) override;
 
+    /// Returns nullptr, the window is the only command target and has no parent target to forward to.
+    ApplicationCommandTarget* getNextCommandTarget() override;
+
+    /// Lists the commands that appear in the menu bar with a keyboard shortcut.
+    void getAllCommands(juce::Array<juce::CommandID>& commands) override;
+
+    /// Describes one command, including the default key presses the menu displays next to its item.
+    /// The key presses are only displayed.
+    /// The shortcuts themselves are handled by AudioBatchComponent::keyPressed.
+    void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override;
+
+    /// Runs a command chosen from the menu.
+    /// The menu also reports the choice through menuItemSelected,
+    /// which ignores these commands so each choice runs once.
+    bool perform(const InvocationInfo& info) override;
+
     /// Appends the plugin chain section into a menu, mirroring the popup attached to the Plugin toolbar button.
     void appendPluginOptionsMenuItems(juce::PopupMenu& menu);
 
@@ -60,6 +78,9 @@ private:
     /// Returns the owned content component as its concrete type.
     /// Valid for the whole window lifetime because the constructor always installs an AudioBatchComponent.
     AudioBatchComponent& getAudioBatch() const;
+
+    /// Registry of the menu commands, used by the menu to look up and display their shortcuts.
+    juce::ApplicationCommandManager commandManager;
 
     std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel = std::make_unique<juce::CustomLookAndFeel>(true);
 
