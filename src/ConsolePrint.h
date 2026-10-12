@@ -20,7 +20,8 @@
 namespace console
 {
 /// Returns how many terminal columns the text occupies, for example two for each CJK character.
-/// Uses fmt's own per-character width, so computed column widths match how fmt pads the cells.
+/// Measures the width through fmt's own padding, so computed column widths match how fmt pads the cells,
+/// without relying on fmt's internal width function.
 [[nodiscard]] int displayWidth(const juce::String& text);
 
 /// Prints one line of text to stdout and flushes it.

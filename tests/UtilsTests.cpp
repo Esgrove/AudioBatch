@@ -2,6 +2,7 @@
 
 #include "AudioFormatUtils.h"
 #include "Cancellation.h"
+#include "ConsolePrint.h"
 #include "DecodeFailureTracker.h"
 #include "FileUtils.h"
 #include "StringFormat.h"
@@ -206,6 +207,13 @@ public:
             expectEquals(utils::escapeCsvField("plain"), juce::String("plain"));
             expectEquals(utils::escapeCsvField("a,b"), juce::String(R"("a,b")"));
             expectEquals(utils::escapeCsvField(R"(say "hi")"), juce::String(R"("say ""hi""")"));
+        }
+
+        beginTest("Display width counts terminal columns");
+        {
+            expectEquals(console::displayWidth("plain"), 5);
+            expectEquals(console::displayWidth(juce::String()), 0);
+            expectEquals(console::displayWidth(juce::String::fromUTF8("\xe6\x97\xa5\xe6\x9c\xac")), 4);
         }
 
         beginTest("An empty cancellation check never cancels");
