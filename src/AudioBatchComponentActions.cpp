@@ -326,21 +326,16 @@ void AudioBatchComponent::runMoveToTrash(
     juce::StringArray failedPaths;
     juce::StringArray successfullyRemovedPaths;
 
-    if (currentAudioFile.exists()) {
-        for (const auto& file : filesToTrash) {
-            if (file == currentAudioFile) {
-                clearCurrentAudioPreview();
-                break;
-            }
-        }
-    }
-
     for (int index = 0; index < filesToTrash.size(); ++index) {
         const auto& file = filesToTrash.getReference(index);
 
         if (!utils::moveToTrash(file)) {
             failedPaths.add(file.getFullPathName());
             continue;
+        }
+
+        if (file == currentAudioFile) {
+            clearCurrentAudioPreview();
         }
 
         if (juce::isPositiveAndBelow(index, removedPaths.size())) {
