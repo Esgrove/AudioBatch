@@ -241,7 +241,7 @@ private:
     /// Sets, toggles, or clears the secondary sort column requested with a ctrl or cmd click on a header.
     void handleSecondarySortRequested(int columnId);
 
-    /// True while analysis results are still expected from the coordinator.
+    /// True from the start of an analysis run until the coordinator reports its completion.
     [[nodiscard]] bool isAnalysisInProgress() const;
 
     /// True while normalization or plugin processing is rewriting files.
@@ -424,6 +424,11 @@ private:
     int expectedResults = 0;
     /// Id of the current analysis run, used to drop queued messages from runs that were replaced.
     int analysisRunId = -1;
+    /// True from the start of an analysis run until its completion arrives.
+    /// Kept separate from the progress counters, which only drive the status text.
+    bool analysisRunning = false;
+    /// True once the current run's plan arrived, so the status shows progress instead of the folder scan.
+    bool analysisPlanReceived = false;
     /// True when the current run replaces the results list, which picks the message shown when no files are found.
     bool analysisReplacesResults = false;
     int normalizedResultsCompleted = 0;

@@ -316,6 +316,7 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int
         return;
     }
 
+    analysisRunning = false;
     expectedResults = totalFiles;
 
     // The plan handler already reported that no files were found.
@@ -448,9 +449,10 @@ void AudioBatchComponent::startAnalysis(
 
     analysisStartedAtMs = juce::Time::getMillisecondCounterHiRes();
     completedResults = 0;
+    expectedResults = 0;
     analysisReplacesResults = clearResults;
-    // Expected until the plan arrives, so the run counts as in progress while the folders are scanned.
-    expectedResults = 1;
+    analysisRunning = true;
+    analysisPlanReceived = false;
     statusLabel.setText("Scanning for audio files...", juce::dontSendNotification);
 
     if (clearResults) {
@@ -467,6 +469,7 @@ void AudioBatchComponent::handleAnalysisPlan(const AnalysisCoordinator::Analysis
         return;
     }
 
+    analysisPlanReceived = true;
     expectedResults = plan.files.size();
     analyzedFilesThisRun = plan.staleFiles.size();
     utils::logInfo("Found {} audio files", expectedResults);
@@ -502,7 +505,7 @@ void AudioBatchComponent::handleAnalysisPlan(const AnalysisCoordinator::Analysis
 
 bool AudioBatchComponent::isAnalysisInProgress() const
 {
-    return completedResults < expectedResults;
+    return analysisRunning;
 }
 
 bool AudioBatchComponent::isFileOperationInProgress() const noexcept

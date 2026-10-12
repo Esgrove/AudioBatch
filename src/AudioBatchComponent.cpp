@@ -595,15 +595,17 @@ void AudioBatchComponent::updateStatusLabel()
         return;
     }
 
-    if (expectedResults <= 0) {
-        statusLabel.setText("No supported audio files found", juce::dontSendNotification);
+    if (analysisRunning) {
+        statusLabel.setText(
+            analysisPlanReceived ? utils::format("Analyzing {}/{}", completedResults, expectedResults)
+                                 : juce::String("Scanning for audio files..."),
+            juce::dontSendNotification
+        );
         return;
     }
 
-    if (completedResults < expectedResults) {
-        statusLabel.setText(
-            utils::format("Analyzing {}/{}", completedResults, expectedResults), juce::dontSendNotification
-        );
+    if (analysisResults.empty()) {
+        statusLabel.setText("No supported audio files found", juce::dontSendNotification);
         return;
     }
 
