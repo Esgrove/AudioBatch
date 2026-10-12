@@ -1,21 +1,12 @@
 /// AudioBatchComponent member functions for choosing what to analyze:
 /// the folder chooser, the root folders, drag and drop, and starting a rescan.
 
-#include "AppInfo.h"
-#include "AudioAnalysisService.h"
 #include "AudioBatchComponent.h"
 #include "AudioBatchComponentConstants.h"
-#include "AudioInfoPanel.h"
-#include "CustomLookAndFeel.h"
-#include "FileUtils.h"
 #include "Log.h"
-#include "PluginProcessingService.h"
-#include "ResultsSorting.h"
 #include "StringFormat.h"
 
 #include <algorithm>
-#include <cstdint>
-#include <map>
 
 using namespace audiobatch::gui;
 

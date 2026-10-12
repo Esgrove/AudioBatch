@@ -2,21 +2,14 @@
 /// keyboard shortcuts, the file context menu, revealing files, moving them to the trash,
 /// and removing, clearing, or re-analyzing rows.
 
-#include "AppInfo.h"
-#include "AudioAnalysisService.h"
 #include "AudioBatchComponent.h"
 #include "AudioBatchComponentConstants.h"
 #include "AudioInfoPanel.h"
-#include "CustomLookAndFeel.h"
 #include "FileUtils.h"
 #include "Log.h"
-#include "PluginProcessingService.h"
-#include "ResultsSorting.h"
 #include "StringFormat.h"
 
 #include <algorithm>
-#include <cstdint>
-#include <map>
 
 using namespace audiobatch::gui;
 
