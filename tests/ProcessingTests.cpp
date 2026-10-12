@@ -9,6 +9,7 @@
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
+#include <cstring>
 #include <limits>
 #include <vector>
 
@@ -26,6 +27,9 @@ struct TestPluginSettings {
     bool acceptsMono = false;
     /// Replaces the first sample of every block with infinity, like an unstable filter.
     bool producesInfinity = false;
+    /// Multiplies the gain by this factor after every block, like a plugin that adapts to its input.
+    /// The current gain is the plugin state, so restoring the state undoes the adaptation.
+    float adaptiveGainStep = 1.0f;
 };
 
 /// A test plugin that applies a fixed gain and can swap the left and right channels.
@@ -41,7 +45,8 @@ public:
                 .withInput("Input", juce::AudioChannelSet::stereo())
                 .withOutput("Output", juce::AudioChannelSet::stereo())
         ),
-        settings(pluginSettings)
+        settings(pluginSettings),
+        currentGain(pluginSettings.gain)
     { }
 
     /// Applies the gain and the optional channel swap to the main bus channels only,
@@ -60,8 +65,10 @@ public:
         }
 
         for (int channel = 0; channel < channels; ++channel) {
-            buffer.applyGain(channel, 0, buffer.getNumSamples(), settings.gain);
+            buffer.applyGain(channel, 0, buffer.getNumSamples(), currentGain);
         }
+
+        currentGain *= settings.adaptiveGainStep;
 
         if (channels >= 2) {
             buffer.applyGain(1, 0, buffer.getNumSamples(), settings.rightGain);
@@ -147,11 +154,19 @@ public:
     /// Ignores program renames.
     void changeProgramName(int /*index*/, const juce::String& /*newName*/) override { }
 
-    /// Has no state to save.
-    void getStateInformation(juce::MemoryBlock& /*destData*/) override { }
+    /// Saves the current gain as the plugin state.
+    void getStateInformation(juce::MemoryBlock& destData) override
+    {
+        destData.replaceAll(&currentGain, sizeof(currentGain));
+    }
 
-    /// Has no state to restore.
-    void setStateInformation(const void* /*data*/, int /*sizeInBytes*/) override { }
+    /// Restores the current gain from a state saved by getStateInformation.
+    void setStateInformation(const void* data, const int sizeInBytes) override
+    {
+        if (sizeInBytes == static_cast<int>(sizeof(currentGain))) {
+            std::memcpy(&currentGain, data, sizeof(currentGain));
+        }
+    }
 
 protected:
     /// Accepts only a stereo main bus on both sides, like many effect plugins.
@@ -175,6 +190,7 @@ private:
     }
 
     TestPluginSettings settings;
+    float currentGain;
     int widestBuffer = 0;
 };
 
@@ -246,6 +262,25 @@ public:
             expect(source.getLastModificationTime() == sourceModified);
         }
 
+        beginTest("The saved plugin state is restored before every file");
+        {
+            const auto first = directory.copyFixture("sine_stereo_44100_16.aif", "first.aif");
+            const auto second = directory.copyFixture("sine_stereo_44100_16.aif", "second.aif");
+            TestPlugin plugin({.adaptiveGainStep = 0.99f});
+            juce::MemoryBlock initialState;
+            plugin.getStateInformation(initialState);
+
+            const auto firstResult = process(first, {&plugin}, {initialState});
+            const auto secondResult = process(second, {&plugin}, {initialState});
+
+            expect(!firstResult.hasError(), firstResult.errorMessage);
+            expect(!secondResult.hasError(), secondResult.errorMessage);
+            // Without the restore, the second file would start from the gain the first file adapted to.
+            expectWithinAbsoluteError(
+                peakDecibels(secondResult.analysisRecord), peakDecibels(firstResult.analysisRecord), 0.01
+            );
+        }
+
         beginTest("Output that would clip is turned down to full scale and reported");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif");
@@ -265,17 +300,24 @@ public:
 
 private:
     /// Processes the file through the given plugin chain on the calling thread.
+    /// Each plugin gets the saved state at its index in `states`, or no saved state.
     static PluginProcessingResult process(
         const juce::File& source,
-        const std::vector<juce::AudioPluginInstance*>& chain
+        const std::vector<juce::AudioPluginInstance*>& chain,
+        const std::vector<juce::MemoryBlock>& states = {}
     )
     {
         PluginProcessingOptions options;
 
-        for (const auto* plugin : chain) {
+        for (std::size_t index = 0; index < chain.size(); ++index) {
             PluginDescriptorRef descriptor;
             descriptor.identifierString = "test-plugin";
-            descriptor.name = plugin->getName();
+            descriptor.name = chain[index]->getName();
+
+            if (index < states.size()) {
+                descriptor.state = states[index];
+            }
+
             options.plugins.push_back(descriptor);
         }
 

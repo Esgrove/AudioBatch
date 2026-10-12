@@ -37,6 +37,10 @@ public:
     struct ChainInstantiation {
         /// One chain of plugin instances per worker.
         std::vector<std::vector<std::unique_ptr<juce::AudioPluginInstance>>> chains;
+        /// State of each enabled plugin right after it was created, in chain order.
+        /// Restored before every file for a plugin without saved state,
+        /// so adaptive state from one file does not carry over to the next.
+        std::vector<juce::MemoryBlock> initialStates;
         /// Empty when every plugin of every chain was created.
         juce::String errorMessage;
         /// Name of the plugin that failed to load, when errorMessage is not empty.
@@ -75,6 +79,7 @@ public:
     /// Creates one chain of instances of the enabled plugins per worker, for a processing run.
     /// Must run on the message thread.
     /// Stops at the first plugin that fails, since a chain missing any plugin must not run.
+    /// Captures the initial state of each plugin from the first chain.
     [[nodiscard]] ChainInstantiation instantiateChains(
         const std::vector<EnabledChainPlugin>& enabledPlugins,
         int workerCount
