@@ -4,6 +4,7 @@
 #include "ResultsSorting.h"
 #include "TestSuites.h"
 
+#include <cmath>
 #include <vector>
 
 namespace audiobatch::tests
@@ -44,6 +45,17 @@ public:
             const auto quiet = makeRecord("quiet", -0.25f, -20.0);
             const auto loud = makeRecord("loud", 0.5f, -10.0);
             expect(results_sorting::compareRecordsByColumn(quiet, loud, AudioFileTableModel::columnOverallPeak) < 0);
+        }
+
+        beginTest("Peaks that differ by the smallest step still order strictly");
+        {
+            const auto lower = makeRecord("lower", 0.5f, -20.0);
+            const auto higher = makeRecord("higher", std::nextafter(0.5f, 1.0f), -20.0);
+            expect(results_sorting::compareRecordsByColumn(lower, higher, AudioFileTableModel::columnOverallPeak) < 0);
+            expect(results_sorting::compareRecordsByColumn(higher, lower, AudioFileTableModel::columnOverallPeak) > 0);
+            expectEquals(
+                results_sorting::compareRecordsByColumn(lower, lower, AudioFileTableModel::columnOverallPeak), 0
+            );
         }
 
         beginTest("Silent loudness sorts below every measurable value");
