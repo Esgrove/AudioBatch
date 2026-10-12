@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <iterator>
+#include <utility>
 #include <vector>
 
 /// Constants of the CLI analysis workflow.
@@ -71,10 +72,21 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
         normalizationConflicts = AudioNormalizationService::findBatchOutputConflicts(normalizableResults);
     }
 
+    // The CSV and JSON output of a normalize run lists failed files too, with their error.
+    const auto addNormalizationFailure = [&normalizedResults](AudioAnalysisRecord record, const juce::String& error) {
+        record.status = AudioAnalysisStatus::failed;
+        record.errorMessage = error;
+        normalizedResults.push_back(std::move(record));
+    };
+
     for (const auto& result : results) {
         if (result.hasError()) {
             ++failureCount;
             utils::logError("{}: {}", result.file.getFullPathName().quoted(), result.errorMessage);
+
+            if (options.normalize) {
+                normalizedResults.push_back(result);
+            }
             continue;
         }
 
@@ -84,11 +96,9 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
         if (normalizationConflicts.contains(result.file.getFullPathName())) {
             ++failureCount;
-            utils::logError(
-                "{}: {}",
-                result.file.getFullPathName().quoted(),
-                AudioNormalizationService::batchOutputConflictMessage(result.file)
-            );
+            const auto conflictMessage = AudioNormalizationService::batchOutputConflictMessage(result.file);
+            utils::logError("{}: {}", result.file.getFullPathName().quoted(), conflictMessage);
+            addNormalizationFailure(result, conflictMessage);
             continue;
         }
 
@@ -105,6 +115,10 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
         if (normalization.hasError()) {
             ++failureCount;
             utils::logError("{}: {}", result.file.getFullPathName().quoted(), normalization.errorMessage);
+            // A committed output replaced the source, so the failed re-analysis of the output is reported instead.
+            addNormalizationFailure(
+                normalization.committed ? normalization.analysisRecord : result, normalization.errorMessage
+            );
             continue;
         }
 
