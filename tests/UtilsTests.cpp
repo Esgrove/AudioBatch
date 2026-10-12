@@ -78,6 +78,25 @@ public:
             expectEquals(source.loadFileAsString(), juce::String("source"));
         }
 
+        beginTest("Force overwrite never trashes a folder at the output path");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.wav");
+            const auto output = directory.getChildFile("song.aif");
+            expect(source.replaceWithText("source"));
+            expect(output.createDirectory());
+            const auto keptFile = output.getChildFile("kept.txt");
+            expect(keptFile.replaceWithText("kept"));
+
+            const juce::TemporaryFile temporaryFile(output);
+            expect(temporaryFile.getFile().replaceWithText("new"));
+
+            const auto error = utils::commitTemporaryOutput(temporaryFile, source, output, true);
+            expect(error.contains("not a file"), error);
+            expect(keptFile.existsAsFile());
+            expectEquals(source.loadFileAsString(), juce::String("source"));
+        }
+
         beginTest("Names match case-insensitively and CSV fields are escaped");
         {
             expectEquals(utils::normalizedToken("  JSON "), juce::String("json"));

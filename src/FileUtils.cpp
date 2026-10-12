@@ -114,6 +114,10 @@ juce::String commitTemporaryOutput(
             return existingOutputMessage(outputFile);
         }
 
+        if (!outputFile.existsAsFile()) {
+            return format("Output path {} is not a file and cannot be replaced.", outputFile.getFileName());
+        }
+
         if (!moveToTrash(outputFile)) {
             return "Could not move the existing output file to the system trash";
         }
