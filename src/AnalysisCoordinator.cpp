@@ -227,5 +227,9 @@ std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(const Audi
 
     start(options);
     finishedEvent.wait(-1);
+
+    // The callbacks refer to this function's locals, so they must not outlive it.
+    setResultCallback({});
+    setCompletionCallback({});
     return results;
 }

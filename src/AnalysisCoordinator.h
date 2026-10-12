@@ -56,6 +56,7 @@ public:
     AnalysisCoordinator& operator=(AnalysisCoordinator&&) = delete;
 
     /// Runs a full analysis synchronously and returns all collected results.
+    /// Replaces the result and completion callbacks for the run and clears them before returning.
     std::vector<AudioAnalysisRecord> analyzeBlocking(const AudioAnalysisOptions& options);
 
     /// Cancels queued work and waits for active jobs to finish.
