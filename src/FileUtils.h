@@ -42,6 +42,8 @@ using FileDisposer = std::function<bool(const juce::File&)>;
 /// and when that fails the output is removed again and the backup is renamed back,
 /// so the folder is left as it was.
 /// The backup is disposed of last, once everything else succeeded.
+/// When an in-place replace fails after the original was already removed,
+/// the new audio is kept next to it under a "(recovered)" name instead of being deleted with the temporary file.
 /// `disposeFile` moves files to the system trash unless a caller such as a test passes another function.
 /// Returns an empty string on success, or a user-facing error message.
 /// The temporary file is deleted by its own destructor on failure.

@@ -130,6 +130,33 @@ static void restoreOutputBackup(const juce::File& backupFile, const juce::File& 
     }
 }
 
+/// Moves the new audio out of the temporary file after an in-place replace lost the original,
+/// so the temporary file's destructor cannot delete the only remaining copy of the audio.
+/// On Windows, ReplaceFile can delete the original and then fail to move the replacement into place.
+/// Returns the user-facing error describing where the new audio was kept.
+static juce::String keepNewAudioAfterLostOriginal(
+    const juce::TemporaryFile& temporaryFile,
+    const juce::File& outputFile
+)
+{
+    const auto keptFile
+        = outputFile
+              .getSiblingFile(outputFile.getFileNameWithoutExtension() + " (recovered)" + outputFile.getFileExtension())
+              .getNonexistentSibling(false);
+
+    if (temporaryFile.getFile().moveFileTo(keptFile) || temporaryFile.getFile().copyFileTo(keptFile)) {
+        logError(
+            "The original file {} was removed while being replaced, the new audio was kept as {}",
+            outputFile.getFullPathName().quoted(),
+            keptFile.getFullPathName().quoted()
+        );
+        return format("Could not replace the original file. The new audio was kept as {}", keptFile.getFileName());
+    }
+
+    logError("The original file {} was removed while being replaced", outputFile.getFullPathName().quoted());
+    return "Could not replace the original file, and the new audio could not be kept";
+}
+
 juce::String commitTemporaryOutput(
     const juce::TemporaryFile& temporaryFile,
     const juce::File& sourceFile,
@@ -158,6 +185,10 @@ juce::String commitTemporaryOutput(
 
     if (!temporaryFile.overwriteTargetFileWithTemporary()) {
         restoreOutputBackup(backupFile, outputFile);
+
+        if (replacingSource && !sourceFile.exists() && temporaryFile.getFile().existsAsFile()) {
+            return keepNewAudioAfterLostOriginal(temporaryFile, outputFile);
+        }
         return replacingSource ? "Could not replace the original file with the new audio"
                                : "Could not move the new audio file into place";
     }
