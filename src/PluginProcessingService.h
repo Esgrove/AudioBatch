@@ -54,6 +54,7 @@ public:
     /// Isolated source blocks that fail to decode are processed as decoded and reported in the notice too.
     /// Trailing silence from the tail allowance is trimmed, and 16-bit output is dithered.
     /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again first.
+    /// An `.aif` source is rewritten in place after a copy of it is disposed of through options.disposeFile.
     static PluginProcessingResult processFile(
         const AudioAnalysisRecord& sourceRecord,
         const PluginProcessingOptions& options,

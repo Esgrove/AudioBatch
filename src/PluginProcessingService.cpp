@@ -663,8 +663,14 @@ PluginProcessingResult PluginProcessingService::processFile(
         return fail(file, cancelledMessage);
     }
 
+    // Unlike normalization, processing cannot be repeated to get back to the original,
+    // so an original rewritten in place keeps a copy in the trash like a converted original does.
+    if (outputFile == file && !utils::disposeOfCopy(file, options.disposeFile)) {
+        return fail(file, "Could not move a copy of the original file to the system trash");
+    }
+
     if (const auto commitError
-        = utils::commitTemporaryOutput(temporaryFile, file, outputFile, options.overwriteExisting);
+        = utils::commitTemporaryOutput(temporaryFile, file, outputFile, options.overwriteExisting, options.disposeFile);
         commitError.isNotEmpty())
     {
         return fail(file, commitError);

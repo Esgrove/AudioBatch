@@ -219,6 +219,8 @@ and write the processed audio to disk.
 - Processed output is always written as `<name>.aif` next to the input file,
   with the same overwrite and collision rules as normalization.
   If the input has a different extension, the original is moved to the system trash once the new file has been written.
+  A `<name>.aif` input is rewritten in place, and a copy of the original is moved to the system trash first,
+  because the processing cannot be undone.
 - Source metadata is copied onto the processed AIFF through TagLib,
   so tags and embedded artwork survive the processing step.
   If the metadata cannot be written, the file fails and the original is kept.

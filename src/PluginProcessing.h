@@ -7,6 +7,7 @@
 #pragma once
 
 #include "AudioAnalysisTypes.h"
+#include "FileUtils.h"
 
 #include <JuceHeader.h>
 
@@ -47,6 +48,10 @@ struct PluginProcessingOptions {
     /// Replace an existing output file that is not the source itself.
     /// When false, a file whose output path is already taken fails instead of overwriting it.
     bool overwriteExisting = false;
+    /// Disposes of the files a processed output replaces:
+    /// a converted source, an overwritten output, and a copy of an `.aif` source rewritten in place.
+    /// Moves them to the system trash, unless a caller such as a test passes another function.
+    utils::FileDisposer disposeFile = utils::moveToTrash;
 };
 
 /// Result payload for a single plugin-processing operation.
