@@ -58,6 +58,8 @@ public:
     bool getCustomGain(const juce::File& file, std::int64_t fileSize, std::int64_t modifiedTimeMs, float& customGainDb);
 
     /// Updates only the user-controlled gain fields for a file.
+    /// Returns true when a cached row was updated.
+    /// A file without a cached row, such as one still waiting for its analysis, keeps no gain in the cache.
     bool storeCustomGain(const juce::File& file, float customGainDb, bool hasCustomGain);
 
     /// Removes the cached row for a file (if any).

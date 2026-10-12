@@ -581,8 +581,9 @@ bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGa
     bindText(statement, 4, normalizedPath(file));
 
     const auto result = sqlite3_step(statement);
+    const auto updatedRows = sqlite3_changes(database);
     sqlite3_finalize(statement);
-    return result == SQLITE_DONE;
+    return result == SQLITE_DONE && updatedRows > 0;
 }
 
 bool AnalysisCache::removeAnalysis(const juce::File& file)

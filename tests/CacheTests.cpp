@@ -63,6 +63,12 @@ public:
             expectEquals(cached.customGainDb, -3.5f);
         }
 
+        beginTest("A custom gain for a file without a cached row reports that nothing was stored");
+        {
+            const auto waitingFile = directory.copyFixture("sine_stereo_44100_16.wav", "waiting.wav");
+            expect(!cache.storeCustomGain(waitingFile, 1.0f, true));
+        }
+
         beginTest("A custom gain is cleared when the file changes");
         {
             const auto gainFile = directory.getChildFile("gain.wav");
