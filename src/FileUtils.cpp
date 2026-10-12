@@ -1,20 +1,281 @@
 /// Implementation of the file system helpers.
-/// Moving to the trash uses the shell file operation on Windows,
-/// which supports undo through the recycle bin, and juce::File::moveToTrash elsewhere.
+/// Moving to the trash uses the shell's IFileOperation on Windows,
+/// with a progress sink that refuses deletes the shell would perform permanently,
+/// and juce::File::moveToTrash elsewhere.
 
 #include "FileUtils.h"
 
 #include "Log.h"
 #include "StringFormat.h"
 
-#include <string>
-
 #if JUCE_WINDOWS
 #include <juce_core/native/juce_BasicNativeHeaders.h>
+
+#include <memory>
+#include <shobjidl.h>
+
+#if JUCE_MSVC
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "uuid.lib")
+#endif
 #endif
 
 namespace utils
 {
+#if JUCE_WINDOWS
+/// Releases a COM interface when its owning pointer goes out of scope.
+struct ComReleaser {
+    /// Releases the interface, ignoring null pointers.
+    void operator()(IUnknown* object) const noexcept
+    {
+        if (object != nullptr) {
+            object->Release();
+        }
+    }
+};
+
+template<typename Interface>
+using ComPointer = std::unique_ptr<Interface, ComReleaser>;
+
+/// Progress sink that aborts a delete the shell would perform permanently instead of recycling it.
+/// Drives without a recycle bin, such as network shares and some removable drives,
+/// delete for good even with FOF_ALLOWUNDO, without a prompt when FOF_NOCONFIRMATION is set.
+/// The sink lives on the stack for the duration of one operation, so reference counting is a no-op.
+class RecycleOnlyProgressSink final : public IFileOperationProgressSink
+{
+public:
+    /// Returns this object for IUnknown and IFileOperationProgressSink.
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID interfaceId, void** object) override
+    {
+        if (object == nullptr) {
+            return E_POINTER;
+        }
+
+        if (interfaceId == __uuidof(IUnknown) || interfaceId == __uuidof(IFileOperationProgressSink)) {
+            *object = static_cast<IFileOperationProgressSink*>(this);
+            return S_OK;
+        }
+
+        *object = nullptr;
+        return E_NOINTERFACE;
+    }
+
+    /// Does nothing, because the sink is owned by the stack frame that runs the operation.
+    ULONG STDMETHODCALLTYPE AddRef() override
+    {
+        return 1;
+    }
+
+    /// Does nothing, because the sink is owned by the stack frame that runs the operation.
+    ULONG STDMETHODCALLTYPE Release() override
+    {
+        return 1;
+    }
+
+    /// Aborts the delete when the shell will not recycle the item.
+    HRESULT STDMETHODCALLTYPE PreDeleteItem(DWORD flags, IShellItem* /*item*/) override
+    {
+        if ((flags & TSF_DELETE_RECYCLE_IF_POSSIBLE) == 0) {
+            refusedPermanentDelete = true;
+            return E_ABORT;
+        }
+
+        return S_OK;
+    }
+
+    /// Accepts the start of the operations.
+    HRESULT STDMETHODCALLTYPE StartOperations() override
+    {
+        return S_OK;
+    }
+
+    /// Accepts the end of the operations.
+    HRESULT STDMETHODCALLTYPE FinishOperations(HRESULT /*result*/) override
+    {
+        return S_OK;
+    }
+
+    /// Accepts renames, which this operation does not perform.
+    HRESULT STDMETHODCALLTYPE PreRenameItem(DWORD /*flags*/, IShellItem* /*item*/, LPCWSTR /*newName*/) override
+    {
+        return S_OK;
+    }
+
+    /// Accepts renames, which this operation does not perform.
+    HRESULT STDMETHODCALLTYPE PostRenameItem(
+        DWORD /*flags*/,
+        IShellItem* /*item*/,
+        LPCWSTR /*newName*/,
+        HRESULT /*result*/,
+        IShellItem* /*newItem*/
+    ) override
+    {
+        return S_OK;
+    }
+
+    /// Accepts moves, which this operation does not perform.
+    HRESULT STDMETHODCALLTYPE PreMoveItem(
+        DWORD /*flags*/,
+        IShellItem* /*item*/,
+        IShellItem* /*destinationFolder*/,
+        LPCWSTR /*newName*/
+    ) override
+    {
+        return S_OK;
+    }
+
+    /// Accepts moves, which this operation does not perform.
+    HRESULT STDMETHODCALLTYPE PostMoveItem(
+        DWORD /*flags*/,
+        IShellItem* /*item*/,
+        IShellItem* /*destinationFolder*/,
+        LPCWSTR /*newName*/,
+        HRESULT /*result*/,
+        IShellItem* /*newItem*/
+    ) override
+    {
+        return S_OK;
+    }
+
+    /// Accepts copies, which this operation does not perform.
+    HRESULT STDMETHODCALLTYPE PreCopyItem(
+        DWORD /*flags*/,
+        IShellItem* /*item*/,
+        IShellItem* /*destinationFolder*/,
+        LPCWSTR /*newName*/
+    ) override
+    {
+        return S_OK;
+    }
+
+    /// Accepts copies, which this operation does not perform.
+    HRESULT STDMETHODCALLTYPE PostCopyItem(
+        DWORD /*flags*/,
+        IShellItem* /*item*/,
+        IShellItem* /*destinationFolder*/,
+        LPCWSTR /*newName*/,
+        HRESULT /*result*/,
+        IShellItem* /*newItem*/
+    ) override
+    {
+        return S_OK;
+    }
+
+    /// Accepts the outcome of a delete.
+    HRESULT STDMETHODCALLTYPE
+        PostDeleteItem(DWORD /*flags*/, IShellItem* /*item*/, HRESULT /*result*/, IShellItem* /*newItem*/) override
+    {
+        return S_OK;
+    }
+
+    /// Accepts new items, which this operation does not create.
+    HRESULT STDMETHODCALLTYPE
+        PreNewItem(DWORD /*flags*/, IShellItem* /*destinationFolder*/, LPCWSTR /*newName*/) override
+    {
+        return S_OK;
+    }
+
+    /// Accepts new items, which this operation does not create.
+    HRESULT STDMETHODCALLTYPE PostNewItem(
+        DWORD /*flags*/,
+        IShellItem* /*destinationFolder*/,
+        LPCWSTR /*newName*/,
+        LPCWSTR /*templateName*/,
+        DWORD /*fileAttributes*/,
+        HRESULT /*result*/,
+        IShellItem* /*newItem*/
+    ) override
+    {
+        return S_OK;
+    }
+
+    /// Ignores progress updates.
+    HRESULT STDMETHODCALLTYPE UpdateProgress(UINT /*workTotal*/, UINT /*workSoFar*/) override
+    {
+        return S_OK;
+    }
+
+    /// Ignores timer changes.
+    HRESULT STDMETHODCALLTYPE ResetTimer() override
+    {
+        return S_OK;
+    }
+
+    /// Ignores timer changes.
+    HRESULT STDMETHODCALLTYPE PauseTimer() override
+    {
+        return S_OK;
+    }
+
+    /// Ignores timer changes.
+    HRESULT STDMETHODCALLTYPE ResumeTimer() override
+    {
+        return S_OK;
+    }
+
+    /// True when a delete was aborted because the shell would not have recycled the item.
+    bool refusedPermanentDelete = false;
+};
+
+/// Moves the file or folder to the recycle bin through IFileOperation,
+/// refusing to delete it when the drive has no recycle bin.
+/// IFileOperation requires a single-threaded apartment,
+/// so the calling thread is initialized for one when it has no apartment yet,
+/// and the move fails on a thread that already joined the multithreaded apartment.
+static bool moveToRecycleBin(const juce::File& file)
+{
+    const auto apartmentResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+    if (FAILED(apartmentResult)) {
+        logError("Could not initialize COM to move {} to the recycle bin", file.getFullPathName().quoted());
+        return false;
+    }
+
+    const auto recycled = [&file] {
+        IFileOperation* rawOperation = nullptr;
+        if (FAILED(CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&rawOperation)))) {
+            return false;
+        }
+        const ComPointer<IFileOperation> operation(rawOperation);
+
+        IShellItem* rawItem = nullptr;
+        const auto path = file.getFullPathName().replaceCharacter('/', '\\');
+        if (FAILED(SHCreateItemFromParsingName(path.toWideCharPointer(), nullptr, IID_PPV_ARGS(&rawItem)))) {
+            return false;
+        }
+        const ComPointer<IShellItem> item(rawItem);
+
+        RecycleOnlyProgressSink progressSink;
+        DWORD adviseCookie = 0;
+
+        if (FAILED(operation->SetOperationFlags(FOF_ALLOWUNDO | FOF_NOERRORUI | FOF_SILENT | FOF_NOCONFIRMATION))
+            || FAILED(operation->Advise(&progressSink, &adviseCookie)))
+        {
+            return false;
+        }
+
+        const auto deleted
+            = SUCCEEDED(operation->DeleteItem(item.get(), nullptr)) && SUCCEEDED(operation->PerformOperations());
+        BOOL anyAborted = FALSE;
+        const auto abortQueried = SUCCEEDED(operation->GetAnyOperationsAborted(&anyAborted));
+        operation->Unadvise(adviseCookie);
+
+        if (progressSink.refusedPermanentDelete) {
+            logError(
+                "Did not move {} to the recycle bin, because its drive would delete it permanently",
+                file.getFullPathName().quoted()
+            );
+        }
+
+        return deleted && abortQueried && anyAborted == FALSE && !progressSink.refusedPermanentDelete;
+    }();
+
+    CoUninitialize();
+    return recycled && !file.exists();
+}
+#endif
+
 bool moveToTrash(const juce::File& file)
 {
     if (!file.exists()) {
@@ -22,16 +283,7 @@ bool moveToTrash(const juce::File& file)
     }
 
 #if JUCE_WINDOWS
-    auto sourcePath = file.getFullPathName().replaceCharacter('/', '\\');
-    std::wstring fromPath(sourcePath.toWideCharPointer());
-    fromPath.push_back(L'\0');
-
-    SHFILEOPSTRUCTW operation = {};
-    operation.wFunc = FO_DELETE;
-    operation.pFrom = fromPath.c_str();
-    operation.fFlags = FOF_ALLOWUNDO | FOF_NOERRORUI | FOF_SILENT | FOF_NOCONFIRMATION;
-
-    return SHFileOperationW(&operation) == 0 && operation.fAnyOperationsAborted == FALSE && !file.exists();
+    return moveToRecycleBin(file);
 #else
     return file.moveToTrash();
 #endif

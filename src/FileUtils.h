@@ -12,6 +12,8 @@ namespace utils
 {
 /// Moves a file or folder to the OS trash or recycle bin.
 /// Returns true when the file did not exist or was moved.
+/// On Windows, a file on a drive without a recycle bin, such as a network share, is left in place and fails,
+/// because the shell would otherwise delete it permanently.
 bool moveToTrash(const juce::File& file);
 
 /// Returns the platform-appropriate label for the menu item that reveals a file in the file manager.
