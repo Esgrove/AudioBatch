@@ -52,4 +52,10 @@ public:
     /// The file must exist and be in a format TagLib can write.
     /// For AIFF and WAV output the tag is saved as ID3v2.4.
     static bool writeMetadata(const juce::File& file, const Metadata& metadata);
+
+    /// Copies the tags and embedded pictures of the source onto a freshly written output file.
+    /// A source without readable metadata is not an error, because some inputs have none that TagLib can read,
+    /// but failing to write metadata that was read is, so the caller can keep the original and its tags.
+    /// Returns false only when writing failed.
+    static bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile);
 };

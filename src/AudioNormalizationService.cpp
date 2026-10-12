@@ -18,7 +18,7 @@
 #include <memory>
 #include <vector>
 
-/// Helpers for format lookup, metadata passthrough, and chunked normalization.
+/// Helpers for bit depth selection and chunked normalization.
 namespace audiobatch::normalization
 {
 /// Logs the failure and builds a failure result for the given file.
@@ -73,31 +73,6 @@ static int resolvePreferredOutputBitDepth(
     }
 
     return static_cast<int>(reader.bitsPerSample);
-}
-
-/// Copies tags and embedded pictures from the source file to the freshly written output.
-/// A source that yields no metadata is not an error, but a failed write to the destination is.
-static bool preserveOutputMetadata(const juce::File& sourceFile, const juce::File& destinationFile)
-{
-    MetadataService::Metadata metadata;
-
-    if (!MetadataService::readMetadata(sourceFile, metadata)) {
-        // Reading failed, for example due to an unsupported format.
-        // This is non-fatal, so keep going without metadata.
-        utils::logInfo("No metadata could be read from {}", sourceFile.getFullPathName().quoted());
-        return true;
-    }
-
-    if (metadata.isEmpty()) {
-        return true;
-    }
-
-    if (!MetadataService::writeMetadata(destinationFile, metadata)) {
-        utils::logError("Failed to write metadata to {}", destinationFile.getFullPathName().quoted());
-        return false;
-    }
-
-    return true;
 }
 
 /// Streams the source through the writer block by block, applying the normalization gain.
@@ -283,7 +258,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
     }
 
     auto& formatManager = utils::threadLocalFormatManager();
-    auto* writerFormat = utils::findAiffFormat(utils::threadLocalFormatManager());
+    auto* writerFormat = utils::findAiffFormat(formatManager);
 
     if (writerFormat == nullptr) {
         return failNormalization(file, "Unsupported audio format");
@@ -355,7 +330,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
 
     writer.reset();
 
-    if (!preserveOutputMetadata(file, temporaryFile.getFile())) {
+    if (!MetadataService::copyMetadata(file, temporaryFile.getFile())) {
         return failNormalization(file, "Could not preserve metadata while writing normalized audio");
     }
 
