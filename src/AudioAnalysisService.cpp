@@ -182,8 +182,10 @@ juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
     std::set<juce::String> seenPaths;
 
     auto const addFile = [&](const juce::File& file) {
-        // AppleDouble "._" files hold macOS metadata on non-Apple file systems and are never audio.
-        if (file.isHidden() || file.getFileName().startsWith("._") || !isSupportedAudioFile(file)) {
+        // Dot-prefixed files are skipped on every platform, because juce::File::isHidden only checks the hidden
+        // attribute on Windows. This includes AppleDouble "._" files, which hold macOS metadata on non-Apple file
+        // systems and are never audio.
+        if (file.isHidden() || file.getFileName().startsWithChar('.') || !isSupportedAudioFile(file)) {
             return;
         }
 
