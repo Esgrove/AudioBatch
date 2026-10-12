@@ -244,6 +244,22 @@ private:
             expect(remainingBytes == originalBytes);
         }
 
+        beginTest("A successful in-place no-op returns refreshed analysis without committing output");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "refreshed_no_op.aif");
+            auto staleRecord = AudioAnalysisService::analyzeFile(source);
+            AudioNormalizationOptions options;
+            options.targetPeakDbfs = peakDecibels(staleRecord);
+            staleRecord.modifiedTimeMs -= 1000;
+            staleRecord.overallPeak = 0.125f;
+
+            const auto result = AudioNormalizationService::normalizeFile(staleRecord, options);
+            expect(result.succeeded, result.errorMessage);
+            expect(!result.committed);
+            expect(result.analysisRecord.matchesFileOnDisk());
+            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), options.targetPeakDbfs, peakTolerance);
+        }
+
         beginTest("Cancellation stops re-analysis of an unchanged in-place no-op");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cancelled_no_op.aif");
