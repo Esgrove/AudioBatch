@@ -56,6 +56,12 @@ private:
             AudioNormalizationService::getOutputFile(root.getChildFile("song.aif")).getFileName(),
             juce::String("song.aif")
         );
+
+        beginTest("The format summary describes .aif sources as rewritten in place");
+        {
+            const auto summary = AudioNormalizationService::getFormatSupportSummary();
+            expect(summary.contains("A .aif file is rewritten in place"), summary);
+        }
     }
 
     /// Checks which records lose when several sources map to the same output.
