@@ -177,6 +177,7 @@ static void foldStereoToMono(juce::AudioBuffer<float>& buffer, const int firstSa
 /// A stereo signal reaching a plugin with a mono main input is folded to the average of both channels,
 /// the same way the output of a mono file is written, so the order of the plugins does not drop a channel.
 /// Channels beyond a plugin's main input, such as a sidechain, are cleared so no dry signal leaks into them.
+/// The buffer is as wide as the widest plugin, and each plugin only sees the channels of its own buses.
 static int processBlockThroughChain(
     juce::AudioBuffer<float>& buffer,
     const std::vector<juce::AudioPluginInstance*>& chainInstances,
@@ -199,8 +200,15 @@ static int processBlockThroughChain(
             buffer.clear(channel, 0, buffer.getNumSamples());
         }
 
+        // Each plugin gets a view with only as many channels as it was prepared for,
+        // because JUCE's Audio Unit host asserts that the buffer is not wider than the prepared layout.
+        const auto pluginChannels = juce::jmin(
+            buffer.getNumChannels(), juce::jmax(plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels())
+        );
+        juce::AudioBuffer<float> pluginBuffer(buffer.getArrayOfWritePointers(), pluginChannels, buffer.getNumSamples());
+
         midi.clear();
-        plugin->processBlock(buffer, midi);
+        plugin->processBlock(pluginBuffer, midi);
         signalChannels = juce::jmax(1, juce::jmin(plugin->getMainBusNumOutputChannels(), buffer.getNumChannels()));
     }
 

@@ -48,6 +48,7 @@ public:
     /// like a hosted plugin, which never touches buffer channels outside its own buses.
     void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*midiMessages*/) override
     {
+        widestBuffer = juce::jmax(widestBuffer, buffer.getNumChannels());
         const auto channels = juce::jmin(buffer.getNumChannels(), getMainBusNumOutputChannels());
 
         if (settings.swapChannels && channels >= 2) {
@@ -69,6 +70,12 @@ public:
         if (settings.producesInfinity && channels > 0) {
             buffer.setSample(0, 0, std::numeric_limits<float>::infinity());
         }
+    }
+
+    /// Returns the largest channel count of any buffer passed to processBlock.
+    [[nodiscard]] int getWidestBufferChannels() const
+    {
+        return widestBuffer;
     }
 
     /// Describes the plugin for the host.
@@ -168,6 +175,7 @@ private:
     }
 
     TestPluginSettings settings;
+    int widestBuffer = 0;
 };
 
 /// Checks plugin processing output against the committed fixtures.
@@ -205,6 +213,9 @@ public:
             expectEquals(result.analysisRecord.channels, 1);
             // Both stereo channels carry the boosted signal, so their average keeps the full 6 dB boost.
             expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels + 6.0, 0.05);
+            // The mono plugin only sees its own channel, although the chain buffer is stereo.
+            expectEquals(monoGain.getWidestBufferChannels(), 1);
+            expectEquals(stereoSwap.getWidestBufferChannels(), 2);
         }
 
         beginTest("A stereo plugin followed by a mono plugin passes the average of both channels on");
