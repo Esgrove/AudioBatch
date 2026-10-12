@@ -137,9 +137,7 @@ private:
 
             const auto result = AudioNormalizationService::normalizeFile(staleRecord, {});
             expect(!result.hasError(), result.errorMessage);
-            expectWithinAbsoluteError(
-                result.analysisRecord.integratedLufs, fixtureStereoLoudness - fixturePeakDecibels, 0.1
-            );
+            expectWithinAbsoluteError(result.analysisRecord.integratedLufs, fixtureLoudness - fixturePeakDecibels, 0.1);
         }
 
         beginTest("Loudness mode reaches the target loudness unless the true peak ceiling is lower");

@@ -12,11 +12,10 @@ namespace audiobatch::tests
 {
 /// Peak level of the fixture tones, which have a peak amplitude of 0.5, in dBFS.
 constexpr double fixturePeakDecibels = -6.0206;
-/// Integrated loudness of a stereo fixture tone, in LUFS.
+/// Integrated loudness of a fixture tone, in LUFS.
 /// A 1 kHz sine on both channels measures the same as its peak level, as in EBU Tech 3341.
-constexpr double fixtureStereoLoudness = fixturePeakDecibels;
-/// Integrated loudness of a mono fixture tone, in LUFS, which is 3 dB below the stereo one.
-constexpr double fixtureMonoLoudness = fixturePeakDecibels - 3.0103;
+/// Mono fixtures are measured as dual mono, so they read the same as the stereo ones.
+constexpr double fixtureLoudness = fixturePeakDecibels;
 
 /// A uniquely named folder in the system temp directory that is deleted recursively on destruction.
 class TemporaryDirectory

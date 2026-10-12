@@ -92,15 +92,26 @@ static double normalizeLoudness(const double loudness)
 }
 
 /// Creates an ebur128 state configured for integrated, short-term, and true peak measurement.
+/// A mono source is measured as dual mono, because it is played on both speakers,
+/// so a mono file reads the same loudness as the same content in stereo
+/// and loudness normalization brings both to the same perceived level.
 static EbuR128StatePtr createLoudnessState(const int channelCount, const int sampleRate)
 {
     constexpr auto mode = static_cast<int>(
         static_cast<unsigned int>(EBUR128_MODE_I) | static_cast<unsigned int>(EBUR128_MODE_S)
         | static_cast<unsigned int>(EBUR128_MODE_TRUE_PEAK)
     );
-    return EbuR128StatePtr(
+    EbuR128StatePtr state(
         ebur128_init(static_cast<unsigned int>(channelCount), static_cast<unsigned long>(sampleRate), mode)
     );
+
+    if (state != nullptr && channelCount == 1
+        && ebur128_set_channel(state.get(), 0, EBUR128_DUAL_MONO) != EBUR128_SUCCESS)
+    {
+        return nullptr;
+    }
+
+    return state;
 }
 
 /// Orders failed records after successful ones, regardless of the requested sort key.
