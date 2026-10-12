@@ -193,17 +193,19 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
         juce::PopupMenu::Options()
             .withTargetScreenArea(juce::Rectangle(screenPosition.x, screenPosition.y, 1, 1))
             .withParentComponent(this),
-        [safeThis, row](const int result) {
+        // The file is captured instead of the row,
+        // because results arriving while the menu is open re-sort the table.
+        [safeThis, file = record.file](const int result) {
             if (safeThis == nullptr) {
                 return;
             }
 
             switch (result) {
                 case revealFileMenuItemId:
-                    safeThis->revealRecordInFileManager(row);
+                    revealFileInFileManager(file);
                     break;
                 case openParentDirectoryMenuItemId:
-                    safeThis->revealRecordParentDirectory(row);
+                    revealParentDirectory(file);
                     break;
                 case normalizeMenuItemId:
                     safeThis->normalizeSelectedRecords();
@@ -238,33 +240,25 @@ void AudioBatchComponent::revealSelectedRecord()
 {
     const auto selectedRows = resultsTable.getSelectedRows();
 
-    if (const auto row = getSelectionDisplayRow(selectedRows, -1); row >= 0) {
-        revealRecordInFileManager(row);
+    if (const auto row = getSelectionDisplayRow(selectedRows, -1);
+        juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size())))
+    {
+        revealFileInFileManager(analysisResults[static_cast<std::size_t>(row)].file);
     }
 }
 
-void AudioBatchComponent::revealRecordInFileManager(const int row) const
+void AudioBatchComponent::revealFileInFileManager(const juce::File& file)
 {
-    if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
-        return;
-    }
-
-    if (const auto& record = analysisResults[static_cast<std::size_t>(row)]; record.file.exists()) {
-        record.file.revealToUser();
+    if (file.exists()) {
+        file.revealToUser();
     } else {
-        record.file.getParentDirectory().revealToUser();
+        file.getParentDirectory().revealToUser();
     }
 }
 
-void AudioBatchComponent::revealRecordParentDirectory(const int row) const
+void AudioBatchComponent::revealParentDirectory(const juce::File& file)
 {
-    if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
-        return;
-    }
-
-    const auto parentDirectory = analysisResults[static_cast<std::size_t>(row)].file.getParentDirectory();
-
-    if (parentDirectory.isDirectory()) {
+    if (const auto parentDirectory = file.getParentDirectory(); parentDirectory.isDirectory()) {
         parentDirectory.revealToUser();
     }
 }

@@ -315,11 +315,11 @@ private:
     /// and while analysis runs, makes sure their results do not add the rows back.
     void removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow);
 
-    /// Opens the selected file's parent folder in the platform file manager.
-    void revealRecordParentDirectory(int row) const;
+    /// Opens the file's parent folder in the platform file manager.
+    static void revealParentDirectory(const juce::File& file);
 
-    /// Reveals the selected file in the platform file manager when supported.
-    void revealRecordInFileManager(int row) const;
+    /// Reveals the file in the platform file manager, or its parent folder when the file no longer exists.
+    static void revealFileInFileManager(const juce::File& file);
 
     /// Executes the trash operation and reports any failures back to the user.
     void runMoveToTrash(
