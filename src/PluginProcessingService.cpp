@@ -160,12 +160,22 @@ struct RenderSummary {
     juce::int64 lastAudibleSample = -1;
 };
 
+/// Replaces the first channel with the average of the first two channels over the given sample range,
+/// so a stereo signal derived from a mono source keeps both of its channels when it continues as mono.
+static void foldStereoToMono(juce::AudioBuffer<float>& buffer, const int firstSample, const int numSamples)
+{
+    buffer.addFrom(0, firstSample, buffer, 1, firstSample, numSamples);
+    buffer.applyGain(0, firstSample, numSamples, 0.5f);
+}
+
 /// Runs one block through every plugin in chain order on the same buffer,
 /// and returns the number of main channels carrying signal after the last plugin.
 /// The signal starts with the file's channel count.
 /// A mono signal reaching a plugin with a stereo main input is copied to the second channel first,
 /// so stereo-linked and mid/side processing see a centred source instead of a hard-left one,
 /// and a mono plugin earlier in the chain still affects both channels.
+/// A stereo signal reaching a plugin with a mono main input is folded to the average of both channels,
+/// the same way the output of a mono file is written, so the order of the plugins does not drop a channel.
 /// Channels beyond a plugin's main input, such as a sidechain, are cleared so no dry signal leaks into them.
 static int processBlockThroughChain(
     juce::AudioBuffer<float>& buffer,
@@ -181,6 +191,8 @@ static int processBlockThroughChain(
 
         if (signalChannels == 1 && mainInputChannels >= 2) {
             buffer.copyFrom(1, 0, buffer, 0, 0, buffer.getNumSamples());
+        } else if (signalChannels >= 2 && mainInputChannels == 1) {
+            foldStereoToMono(buffer, 0, buffer.getNumSamples());
         }
 
         for (int channel = juce::jmax(mainInputChannels, 1); channel < buffer.getNumChannels(); ++channel) {
@@ -207,8 +219,7 @@ static juce::AudioBuffer<float> prepareOutputView(
 )
 {
     if (numChannels == 1 && signalChannels >= 2) {
-        buffer.addFrom(0, firstSample, buffer, 1, firstSample, numSamples);
-        buffer.applyGain(0, firstSample, numSamples, 0.5f);
+        foldStereoToMono(buffer, firstSample, numSamples);
     }
 
     const auto channelsToWrite = juce::jmin(numChannels, buffer.getNumChannels());
