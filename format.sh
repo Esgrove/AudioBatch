@@ -86,9 +86,9 @@ fi
 if [ -n "$(command -v shfmt)" ]; then
     if [ "$CHECK" = true ]; then
         print_magenta "Checking shell script formatting..."
-        shfmt --diff ./*.sh
+        shfmt --diff ./*.sh tests/fixtures/*.sh
     else
         print_magenta "Formatting shell scripts..."
-        shfmt --list --write ./*.sh
+        shfmt --list --write ./*.sh tests/fixtures/*.sh
     fi
 fi
