@@ -3,6 +3,7 @@
 /// sample rate, and bit depth is decoded and measured consistently.
 
 #include "AudioAnalysisService.h"
+#include "MetadataService.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
@@ -15,7 +16,8 @@ struct ToneFixture {
     const char* fileName;
     int channels;
     int sampleRate;
-    /// Expected source bit depth, or 0 for lossy formats where it is not checked.
+    /// Expected source bit depth, or 0 where it is not checked.
+    /// MP3 files report the fixed default of 16 bits, since the format stores no source bit depth.
     int bitsPerSample;
     /// True for lossy formats, which get a wider level tolerance.
     bool lossy;
@@ -104,21 +106,21 @@ constexpr std::array toneFixtures {
         .fileName = "sine_stereo_44100_320k.mp3",
         .channels = 2,
         .sampleRate = 44100,
-        .bitsPerSample = 0,
+        .bitsPerSample = 16,
         .lossy = true,
     },
     ToneFixture {
         .fileName = "sine_joint_stereo_44100_192k.mp3",
         .channels = 2,
         .sampleRate = 44100,
-        .bitsPerSample = 0,
+        .bitsPerSample = 16,
         .lossy = true,
     },
     ToneFixture {
         .fileName = "sine_mono_44100_128k.mp3",
         .channels = 1,
         .sampleRate = 44100,
-        .bitsPerSample = 0,
+        .bitsPerSample = 16,
         .lossy = true,
     },
     ToneFixture {
@@ -186,6 +188,20 @@ public:
                 = AudioAnalysisService::analyzeFile(fixtureFile("sine_stereo_44100_16.wav"), [] { return true; });
             expect(record.hasError());
             expect(record.errorMessage.contains("cancelled"), record.errorMessage);
+        }
+
+        beginTest("An MP3 bit depth is never read from its tags");
+        {
+            const TemporaryDirectory directory;
+            const auto tagged = directory.copyFixture("sine_stereo_44100_320k.mp3", "tagged.mp3");
+            MetadataService::Metadata metadata;
+            metadata.properties.push_back({.key = "TITLE", .values = {"Master 24-bit 96 kHz"}});
+            metadata.properties.push_back({.key = "COMMENT", .values = {"24 bit"}});
+            expect(MetadataService::writeMetadata(tagged, metadata));
+
+            const auto record = AudioAnalysisService::analyzeFile(tagged);
+            expect(!record.hasError(), record.errorMessage);
+            expectEquals(record.bitsPerSample, 16);
         }
 
         beginTest("A file that is not audio fails analysis");
