@@ -63,6 +63,8 @@ private:
         {
             const auto summary = AudioNormalizationService::getFormatSupportSummary();
             expect(summary.contains("A .aif file is rewritten in place"), summary);
+            expect(summary.contains("including other AIFF extensions, to a .aif file"), summary);
+            expect(!summary.contains("when they are already AIFF"), summary);
         }
     }
 
