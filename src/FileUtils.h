@@ -24,13 +24,20 @@ bool deleteFile(const juce::File& file);
 /// Returns the user-facing error for an output path that is already taken by a file other than the source.
 juce::String existingOutputMessage(const juce::File& outputFile);
 
+/// Returns the user-facing error when the output path cannot take the output of the given source,
+/// or an empty string when it can.
+/// A folder at the output path is never replaced, even with overwriteExisting,
+/// and a different file there needs overwriteExisting.
+/// The services check this before rendering, so a doomed file fails before any work is done.
+juce::String checkOutputPath(const juce::File& sourceFile, const juce::File& outputFile, bool overwriteExisting);
+
 /// Disposes of a file that a committed output replaces, and returns true when the file is gone.
 using FileDisposer = std::function<bool(const juce::File&)>;
 
 /// Moves a finished temporary output into place next to its source and disposes of the source.
 /// When the output path is the source itself, the source is replaced in place.
-/// Otherwise a different file already at the output path fails with existingOutputMessage,
-/// unless overwriteExisting is set, in which case that file is renamed to a hidden backup next to it first.
+/// Otherwise an output path that fails checkOutputPath fails the commit,
+/// and a file allowed to be overwritten is renamed to a hidden backup next to it first.
 /// After the output is in place, a source with a different path is disposed of,
 /// and when that fails the output is removed again and the backup is renamed back,
 /// so the folder is left as it was.

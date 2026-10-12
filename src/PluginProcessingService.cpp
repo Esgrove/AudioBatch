@@ -585,8 +585,10 @@ PluginProcessingResult PluginProcessingService::processFile(
 
     const auto outputFile = getProcessingOutputFile(file);
 
-    if (outputFile != file && outputFile.exists() && !options.overwriteExisting) {
-        return fail(file, utils::existingOutputMessage(outputFile));
+    if (const auto outputError = utils::checkOutputPath(file, outputFile, options.overwriteExisting);
+        outputError.isNotEmpty())
+    {
+        return fail(file, outputError);
     }
 
     const auto numChannels = clampChannelCount(static_cast<int>(reader->numChannels));
