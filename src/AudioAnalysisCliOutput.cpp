@@ -125,6 +125,40 @@ static juce::DynamicObject::Ptr buildRecordObject(const AudioAnalysisRecord& rec
     return object;
 }
 
+juce::String formatRecordsAsCsv(const std::vector<AudioAnalysisRecord>& records)
+{
+    juce::StringArray lines;
+    juce::StringArray headerFields;
+
+    for (const auto& property : buildRecordObject(AudioAnalysisRecord {})->getProperties()) {
+        headerFields.add(property.name.toString());
+    }
+    lines.add(headerFields.joinIntoString(","));
+
+    for (const auto& record : records) {
+        const auto object = buildRecordObject(record);
+        juce::StringArray fields;
+
+        for (const auto& property : object->getProperties()) {
+            fields.add(utils::escapeCsvField(property.value.toString()));
+        }
+        lines.add(fields.joinIntoString(","));
+    }
+
+    return lines.joinIntoString("\n") + "\n";
+}
+
+juce::String formatRecordsAsJson(const std::vector<AudioAnalysisRecord>& records)
+{
+    juce::Array<juce::var> array;
+
+    for (const auto& record : records) {
+        array.add(juce::var(buildRecordObject(record).get()));
+    }
+
+    return juce::JSON::toString(juce::var(array)) + "\n";
+}
+
 void printRecords(
     const std::vector<AudioAnalysisRecord>& records,
     const AudioAnalysisOutputFormat format,
@@ -142,36 +176,13 @@ void printRecords(
             }
             break;
 
-        case AudioAnalysisOutputFormat::csv: {
-            juce::StringArray headerFields;
-
-            for (const auto& property : buildRecordObject(AudioAnalysisRecord {})->getProperties()) {
-                headerFields.add(property.name.toString());
-            }
-            fmt::print("{}\n", headerFields.joinIntoString(","));
-
-            for (const auto& record : records) {
-                const auto object = buildRecordObject(record);
-                juce::StringArray fields;
-
-                for (const auto& property : object->getProperties()) {
-                    fields.add(utils::escapeCsvField(property.value.toString()));
-                }
-                fmt::print("{}\n", fields.joinIntoString(","));
-            }
+        case AudioAnalysisOutputFormat::csv:
+            fmt::print("{}", formatRecordsAsCsv(records));
             break;
-        }
 
-        case AudioAnalysisOutputFormat::json: {
-            juce::Array<juce::var> array;
-
-            for (const auto& record : records) {
-                array.add(juce::var(buildRecordObject(record).get()));
-            }
-
-            fmt::print("{}\n", juce::JSON::toString(juce::var(array)));
+        case AudioAnalysisOutputFormat::json:
+            fmt::print("{}", formatRecordsAsJson(records));
             break;
-        }
     }
 }
 }  // namespace audiobatch::cli

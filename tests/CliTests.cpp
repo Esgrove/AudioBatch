@@ -1,10 +1,12 @@
-/// Tests for the CLI argument parsing in AudioAnalysisCli::parse.
-/// Covers option values, aliases, and the combinations the CLI rejects.
+/// Tests for the CLI argument parsing in AudioAnalysisCli::parse and the CSV and JSON output.
+/// Covers option values, aliases, the combinations the CLI rejects, and the machine-readable record fields.
 
 #include "AudioAnalysisCli.h"
+#include "AudioAnalysisCliOutput.h"
 #include "TestSuites.h"
 
 #include <optional>
+#include <vector>
 
 namespace audiobatch::tests
 {
@@ -136,6 +138,66 @@ public:
         {
             expect(!parseArguments({"--bogus"}, errorMessage).has_value());
             expect(errorMessage.contains("--bogus"), errorMessage);
+        }
+
+        runOutputTests();
+    }
+
+private:
+    /// Checks the CSV and JSON output of a quoted path, a silent file, and a failed file.
+    void runOutputTests()
+    {
+        AudioAnalysisRecord quoted;
+        quoted.fullPath = R"(/music/a, "b".wav)";
+        quoted.fileName = R"(a, "b".wav)";
+        quoted.overallPeak = 0.5f;
+        quoted.overallTruePeak = 0.5;
+        quoted.integratedLufs = -14.0;
+        quoted.status = AudioAnalysisStatus::analyzed;
+
+        AudioAnalysisRecord silent;
+        silent.fullPath = "/music/silence.wav";
+        silent.fileName = "silence.wav";
+        silent.integratedLufs = AudioAnalysisRecord::negativeInfinityLoudness;
+        silent.maxShortTermLufs = AudioAnalysisRecord::negativeInfinityLoudness;
+        silent.status = AudioAnalysisStatus::analyzed;
+
+        AudioAnalysisRecord failed;
+        failed.fullPath = "/music/broken.wav";
+        failed.fileName = "broken.wav";
+        failed.status = AudioAnalysisStatus::failed;
+        failed.errorMessage = "Unsupported or unreadable audio file";
+
+        const std::vector records {quoted, silent, failed};
+
+        beginTest("CSV output escapes fields and always has a header");
+        {
+            const auto emptyLines = juce::StringArray::fromLines(cli::formatRecordsAsCsv({}).trimEnd());
+            expectEquals(emptyLines.size(), 1);
+            expect(emptyLines[0].startsWith("path,name,"), emptyLines[0]);
+
+            const auto csv = cli::formatRecordsAsCsv(records);
+            expect(!csv.containsChar('\r'));
+            const auto lines = juce::StringArray::fromLines(csv.trimEnd());
+            expectEquals(lines.size(), 4);
+            expect(lines[1].startsWith(R"("/music/a, ""b"".wav")"), lines[1]);
+            expect(lines[3].contains("failed"), lines[3]);
+            expect(lines[3].contains("Unsupported or unreadable audio file"), lines[3]);
+        }
+
+        beginTest("JSON output writes null for silence and keeps failed records");
+        {
+            const auto json = cli::formatRecordsAsJson(records);
+            const auto parsed = juce::JSON::parse(json);
+            expect(parsed.isArray());
+            expectEquals(parsed.size(), 3);
+
+            expectEquals(static_cast<double>(parsed[0]["peakDbfs"]), -6.02);
+            expectEquals(parsed[0]["path"].toString(), quoted.fullPath);
+            expect(parsed[1]["peakDbfs"].isVoid());
+            expect(parsed[1]["integratedLufs"].isVoid());
+            expectEquals(parsed[2]["status"].toString(), juce::String("failed"));
+            expectEquals(parsed[2]["error"].toString(), failed.errorMessage);
         }
     }
 };
