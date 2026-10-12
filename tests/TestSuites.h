@@ -19,6 +19,9 @@ std::unique_ptr<juce::UnitTest> createCacheTests();
 /// Creates the suite that checks CLI argument parsing and validation.
 std::unique_ptr<juce::UnitTest> createCliTests();
 
+/// Creates the suite that checks the per-file activity labels and operation messages of the results table.
+std::unique_ptr<juce::UnitTest> createFileActivityTests();
+
 /// Creates the suite that checks the peak, loudness, and file property display formatting.
 std::unique_ptr<juce::UnitTest> createFormatTests();
 

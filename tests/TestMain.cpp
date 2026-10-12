@@ -34,6 +34,7 @@ int main()
     suites.push_back(audiobatch::tests::createAnalysisTests());
     suites.push_back(audiobatch::tests::createCacheTests());
     suites.push_back(audiobatch::tests::createCliTests());
+    suites.push_back(audiobatch::tests::createFileActivityTests());
     suites.push_back(audiobatch::tests::createFormatTests());
     suites.push_back(audiobatch::tests::createMetadataTests());
     suites.push_back(audiobatch::tests::createNormalizationTests());

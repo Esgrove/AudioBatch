@@ -573,6 +573,8 @@ target_sources(
     PRIVATE
         ${AUDIOBATCH_CORE_SOURCES}
         ${AUDIOBATCH_CLI_SOURCES}
+        "src/FileActivityTracker.cpp"
+        "src/FileActivityTracker.h"
         "src/PluginChainPreparation.cpp"
         "src/PluginChainPreparation.h"
         "src/PluginProcessing.h"
@@ -583,6 +585,7 @@ target_sources(
         "tests/AnalysisTests.cpp"
         "tests/CacheTests.cpp"
         "tests/CliTests.cpp"
+        "tests/FileActivityTests.cpp"
         "tests/FormatTests.cpp"
         "tests/MetadataTests.cpp"
         "tests/NormalizationTests.cpp"
