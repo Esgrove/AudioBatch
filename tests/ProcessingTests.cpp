@@ -9,6 +9,7 @@
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
+#include <limits>
 #include <vector>
 
 namespace audiobatch::tests
@@ -23,6 +24,8 @@ struct TestPluginSettings {
     bool swapChannels = false;
     /// Accepts a mono main bus in addition to stereo.
     bool acceptsMono = false;
+    /// Replaces the first sample of every block with infinity, like an unstable filter.
+    bool producesInfinity = false;
 };
 
 /// A test plugin that applies a fixed gain and can swap the left and right channels.
@@ -61,6 +64,10 @@ public:
 
         if (channels >= 2) {
             buffer.applyGain(1, 0, buffer.getNumSamples(), settings.rightGain);
+        }
+
+        if (settings.producesInfinity && channels > 0) {
+            buffer.setSample(0, 0, std::numeric_limits<float>::infinity());
         }
     }
 
@@ -212,6 +219,20 @@ public:
             expect(!result.hasError(), result.errorMessage);
             expectEquals(result.analysisRecord.channels, 1);
             expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels - 6.0206, 0.05);
+        }
+
+        beginTest("A plugin that produces infinity fails the file and leaves the source unchanged");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "unstable.aif");
+            const auto sourceSize = source.getSize();
+            const auto sourceModified = source.getLastModificationTime();
+            TestPlugin plugin({.producesInfinity = true});
+            const auto result = process(source, {&plugin});
+
+            expect(result.hasError());
+            expect(result.errorMessage.contains("invalid samples"), result.errorMessage);
+            expectEquals(source.getSize(), sourceSize);
+            expect(source.getLastModificationTime() == sourceModified);
         }
 
         beginTest("Output that would clip is turned down to full scale and reported");
