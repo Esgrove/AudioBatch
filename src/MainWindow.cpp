@@ -77,8 +77,8 @@ MainWindow::MainWindow(const juce::String& name) :
     juce::MenuBarModel::setMacMainMenu(this);
 #else
     /// Height in pixels of the in-window menu bar used on platforms without a global menu bar.
-    constexpr int menuBarHeight = 26;
-    setMenuBar(this, menuBarHeight);
+    constexpr int inWindowMenuBarHeight = 26;
+    setMenuBar(this, inWindowMenuBarHeight);
 #endif
     logStartupCheckpoint("menu bar configured");
 
