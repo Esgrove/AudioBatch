@@ -251,7 +251,8 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
 
     // A committed output replaces its source even when its re-analysis failed,
     // since a converted source is already in the trash.
-    if (result.committed) {
+    // A successful in-place no-op is applied too, since it carries a refreshed analysis of a changed file.
+    if (result.committed || result.succeeded) {
         replaceRecordAfterOperation(result.file, result.analysisRecord);
     }
 
