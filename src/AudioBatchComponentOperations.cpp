@@ -21,6 +21,23 @@
 /// Helpers local to the operation handlers.
 namespace audiobatch::gui
 {
+/// Copies the custom gain of the record in the table onto a new record for the same path,
+/// when the file still has the size and modification time the gain was set for.
+/// A custom gain only applies to the version of the file it was set for, so a changed file starts without one.
+/// Returns true when the gain was carried over.
+static bool keepCustomGainOfUnchangedFile(const AudioAnalysisRecord& existing, AudioAnalysisRecord& incoming)
+{
+    if (!existing.hasCustomGain || existing.fileSize != incoming.fileSize
+        || existing.modifiedTimeMs != incoming.modifiedTimeMs)
+    {
+        return false;
+    }
+
+    incoming.customGainDb = existing.customGainDb;
+    incoming.hasCustomGain = true;
+    return true;
+}
+
 /// Formats a bounded list of failures for an alert dialog,
 /// truncating with a "...and N more" line so the dialog stays readable.
 static juce::String buildFailureListMessage(const juce::StringArray& failures)
@@ -164,15 +181,15 @@ void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record
 
     auto mergedRecord = record;
     if (const auto existingIndex = findRecordIndex(record.fullPath); existingIndex >= 0) {
-        const auto& existing = analysisResults[static_cast<std::size_t>(existingIndex)];
-
-        // A custom gain only applies to the version of the file it was set for, so a changed file starts without one.
-        if (existing.hasCustomGain && existing.fileSize == record.fileSize
-            && existing.modifiedTimeMs == record.modifiedTimeMs)
+        // A gain set while the file was still waiting may only live in the table,
+        // because the cache had no row for this version of the file to store it in yet.
+        // The coordinator stored the row before publishing the result, so the gain can be stored now.
+        if (keepCustomGainOfUnchangedFile(analysisResults[static_cast<std::size_t>(existingIndex)], mergedRecord)
+            && (!record.hasCustomGain || !juce::approximatelyEqual(record.customGainDb, mergedRecord.customGainDb)))
         {
-            mergedRecord.customGainDb = existing.customGainDb;
-            mergedRecord.hasCustomGain = existing.hasCustomGain;
+            analysisCache.storeCustomGain(mergedRecord.file, mergedRecord.customGainDb, true);
         }
+
         analysisResults[static_cast<std::size_t>(existingIndex)] = mergedRecord;
     } else {
         analysisResults.push_back(mergedRecord);
@@ -209,13 +226,17 @@ void AudioBatchComponent::replaceRecordAfterOperation(
         return record.fullPath == originalPath && record.fullPath != newRecord.fullPath;
     });
 
+    auto mergedRecord = newRecord;
+
     if (const auto existingIndex = findRecordIndex(newRecord.fullPath); existingIndex >= 0) {
-        analysisResults[static_cast<std::size_t>(existingIndex)] = newRecord;
+        // An operation that left the file unchanged, such as normalizing a file already at the target, keeps its gain.
+        keepCustomGainOfUnchangedFile(analysisResults[static_cast<std::size_t>(existingIndex)], mergedRecord);
+        analysisResults[static_cast<std::size_t>(existingIndex)] = mergedRecord;
     } else {
-        analysisResults.push_back(newRecord);
+        analysisResults.push_back(mergedRecord);
     }
 
-    analysisCache.storeAnalysis(newRecord);
+    analysisCache.storeAnalysis(mergedRecord);
 
     // A converted original was moved to the trash, so its cached row is no longer needed.
     if (newRecord.fullPath != originalPath) {
@@ -227,11 +248,11 @@ void AudioBatchComponent::replaceRecordAfterOperation(
     if (currentAudioFile == originalFile) {
         currentAudioFile = newRecord.file;
         showAudioResource(juce::URL(currentAudioFile));
-        updateAudioInfo(newRecord);
+        updateAudioInfo(mergedRecord);
         updateGainControlsForSelection();
         updateThumbnailDisplayGain();
     } else if (currentAudioFile == newRecord.file) {
-        updateAudioInfo(newRecord);
+        updateAudioInfo(mergedRecord);
     }
 }
 
