@@ -54,6 +54,12 @@ public:
     /// Stores the outcome message of a file's last operation, such as an error or a clipping notice.
     void setMessage(const juce::String& fullPath, const OperationMessage& message);
 
+    /// Forgets the outcome message of one file, for example when its row leaves the table.
+    void clearMessage(const juce::String& fullPath);
+
+    /// Forgets the outcome messages of all files.
+    void clearAllMessages();
+
     /// Returns the outcome message of a file's last operation, or an empty message.
     [[nodiscard]] OperationMessage getMessage(const juce::String& fullPath) const;
 

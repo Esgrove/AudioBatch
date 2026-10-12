@@ -397,6 +397,7 @@ void AudioBatchComponent::startAnalysis(
     if (clearResults) {
         analysisResults.clear();
         fileActivity.clearAllActive();
+        fileActivity.clearAllMessages();
         clearCurrentAudioPreview();
         audioInfo->clear();
         resultsTable.updateContent();

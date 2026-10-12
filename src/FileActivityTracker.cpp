@@ -70,6 +70,22 @@ void FileActivityTracker::setMessage(const juce::String& fullPath, const Operati
     }
 }
 
+void FileActivityTracker::clearMessage(const juce::String& fullPath)
+{
+    if (messages.erase(fullPath) > 0 && repaint != nullptr) {
+        repaint();
+    }
+}
+
+void FileActivityTracker::clearAllMessages()
+{
+    messages.clear();
+
+    if (repaint != nullptr) {
+        repaint();
+    }
+}
+
 OperationMessage FileActivityTracker::getMessage(const juce::String& fullPath) const
 {
     const auto iterator = messages.find(fullPath);
