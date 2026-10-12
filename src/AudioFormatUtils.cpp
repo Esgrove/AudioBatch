@@ -80,9 +80,15 @@ juce::String validateWrittenAudio(
     return {};
 }
 
-std::unordered_map<juce::String, juce::String> copyMetadata(const juce::StringPairArray& metadata)
+std::unordered_map<juce::String, juce::String> aiffWriterMetadata(const juce::StringPairArray& metadata)
 {
     std::unordered_map<juce::String, juce::String> copiedMetadata;
+
+    // JUCE's AIFF reader marks its metadata with this source key, and other readers either set their own or none.
+    if (metadata.getValue("MetaDataSource", {}) != "AIFF") {
+        return copiedMetadata;
+    }
+
     const auto& keys = metadata.getAllKeys();
     const auto& values = metadata.getAllValues();
 

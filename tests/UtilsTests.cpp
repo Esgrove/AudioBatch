@@ -78,9 +78,12 @@ public:
             expect(utils::findAiffFormat(utils::threadLocalFormatManager()) != nullptr);
 
             juce::StringPairArray metadata;
+            metadata.set("MetaDataSource", "AIFF");
             metadata.set("key", "value");
-            const auto copied = utils::copyMetadata(metadata);
-            expect(copied.contains("key"));
+            expect(utils::aiffWriterMetadata(metadata).contains("key"));
+
+            metadata.set("MetaDataSource", "WAV");
+            expect(utils::aiffWriterMetadata(metadata).empty());
             expectEquals(utils::peakMagnitude(-0.5f), 0.5f);
         }
 
