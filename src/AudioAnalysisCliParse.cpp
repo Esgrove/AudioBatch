@@ -5,6 +5,9 @@
 #include "StringFormat.h"
 #include "version.h"
 
+#include <algorithm>
+#include <map>
+
 /// Helpers for parsing and validating the CLI options.
 namespace audiobatch::cli
 {
@@ -52,13 +55,25 @@ static std::optional<juce::String> removeOptionWithValue(juce::ArgumentList& arg
 }
 
 /// Returns an error message for the first argument that combines several short options, such as "-rf",
+/// or that is a negative number no option took as its value, such as "-12",
 /// or an empty string when there is none.
 /// juce::ArgumentList matches a short option by searching for its letter anywhere in the argument,
 /// and removes the whole argument on the first match, so "-rf" would silently set only one of the flags.
-static juce::String findCombinedShortOptionError(const juce::ArgumentList& arguments)
+/// It also converts the option letter to a number string first, so "-12" would match "-r" and several other flags.
+static juce::String findShortOptionError(const juce::ArgumentList& arguments)
 {
     for (const auto& argument : arguments.arguments) {
-        if (argument.isShortOption() && argument.text.length() > 2 && !isNumericArgument(argument.text)) {
+        if (!argument.isShortOption()) {
+            continue;
+        }
+
+        if (isNumericArgument(argument.text)) {
+            return utils::format(
+                "Unexpected number {}. Pass a negative value right after the option that takes it.", argument.text
+            );
+        }
+
+        if (argument.text.length() > 2) {
             return utils::format(
                 "Combined short options are not supported: {}. Pass each option separately.", argument.text
             );
@@ -248,17 +263,42 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
 
 void AudioAnalysisCli::attachNegativeOptionValues(juce::ArgumentList& arguments)
 {
+    // Short options cannot carry a value after an equals sign, so the ones that take a value use their long form.
+    const std::map<juce::String, juce::String> longFormOfShortValueOptions {
+        {"-j", "--jobs"},
+        {"-s", "--sort"},
+        {"-o", "--output"},
+        {"-g", "--group-by"},
+    };
+
     for (int index = 0; index + 1 < arguments.size(); ++index) {
         const auto& argument = arguments.arguments.getReference(index);
         const auto& next = arguments.arguments.getReference(index + 1);
 
-        if (argument.isLongOption() && !argument.text.containsChar('=') && next.text.startsWithChar('-')
-            && isNumericArgument(next.text))
-        {
-            arguments.arguments.set(index, {utils::format("{}={}", argument.text, next.text)});
-            arguments.arguments.remove(index + 1);
+        if (!next.text.startsWithChar('-') || !isNumericArgument(next.text)) {
+            continue;
         }
+
+        auto optionText = argument.text;
+
+        if (const auto longForm = longFormOfShortValueOptions.find(argument.text);
+            longForm != longFormOfShortValueOptions.end())
+        {
+            optionText = longForm->second;
+        } else if (!argument.isLongOption() || argument.text.containsChar('=')) {
+            continue;
+        }
+
+        arguments.arguments.set(index, {utils::format("{}={}", optionText, next.text)});
+        arguments.arguments.remove(index + 1);
     }
+}
+
+bool AudioAnalysisCli::containsExactOption(const juce::ArgumentList& arguments, const juce::StringArray& optionNames)
+{
+    return std::ranges::any_of(arguments.arguments, [&optionNames](const juce::ArgumentList::Argument& argument) {
+        return optionNames.contains(argument.text);
+    });
 }
 
 std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentList arguments, juce::String& errorMessage)
@@ -266,7 +306,7 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
     AudioAnalysisCliOptions options;
     attachNegativeOptionValues(arguments);
 
-    if (errorMessage = findCombinedShortOptionError(arguments); errorMessage.isNotEmpty()) {
+    if (errorMessage = findShortOptionError(arguments); errorMessage.isNotEmpty()) {
         return std::nullopt;
     }
 
