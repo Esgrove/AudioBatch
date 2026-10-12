@@ -226,7 +226,24 @@ static juce::AudioBuffer<float> prepareOutputView(
     return {buffer.getArrayOfWritePointers(), channelsToWrite, firstSample, numSamples};
 }
 
+/// Returns true when every sample of the block is a finite number.
+/// An unstable plugin can produce infinity or NaN,
+/// which would turn the clip guard gain into zero or reach the integer writer unchanged.
+static bool isBlockFinite(const juce::AudioBuffer<float>& block, const int numSamples)
+{
+    for (int channel = 0; channel < block.getNumChannels(); ++channel) {
+        const auto* samples = block.getReadPointer(channel);
+
+        if (!std::all_of(samples, samples + numSamples, [](const float sample) { return std::isfinite(sample); })) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 /// Updates the peak and the last audible sample position with a block about to be written.
+/// The block must only hold finite samples.
 static void measureOutputBlock(const juce::AudioBuffer<float>& block, const int numSamples, RenderSummary& summary)
 {
     for (int channel = 0; channel < block.getNumChannels(); ++channel) {
@@ -310,6 +327,11 @@ static juce::String renderThroughChain(
 
         const auto writeView
             = prepareOutputView(buffer, numChannels, signalChannels, firstSampleToWrite, samplesToWrite);
+
+        if (!isBlockFinite(writeView, samplesToWrite)) {
+            return "The plugin chain produced invalid samples (infinity or NaN)";
+        }
+
         measureOutputBlock(writeView, samplesToWrite, summary);
 
         if (!writer.writeFromAudioSampleBuffer(writeView, 0, samplesToWrite)) {
