@@ -241,6 +241,10 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
     fileActivity.clearActive(result.fullPath);
 
     if (result.succeeded) {
+        if (result.notice.isNotEmpty()) {
+            fileActivity.setMessage(result.analysisRecord.fullPath, {.text = result.notice, .isError = false});
+        }
+
         replaceRecordAfterOperation(result.file, result.analysisRecord);
     } else {
         normalizationFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
