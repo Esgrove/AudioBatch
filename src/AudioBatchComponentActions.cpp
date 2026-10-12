@@ -18,22 +18,6 @@
 #include <cstdint>
 #include <map>
 
-/// Helpers local to the action handlers.
-namespace audiobatch::gui
-{
-/// Returns the platform-appropriate label for the reveal-in-file-manager menu item.
-static juce::String getRevealFileMenuLabel()
-{
-#if JUCE_MAC
-    return "Reveal in Finder";
-#elif JUCE_WINDOWS
-    return "Reveal in Explorer";
-#else
-    return "Reveal in File Manager";
-#endif
-}
-}  // namespace audiobatch::gui
-
 using namespace audiobatch::gui;
 
 bool AudioBatchComponent::keyPressed(const juce::KeyPress& key, juce::Component* /*originator*/)
@@ -54,10 +38,7 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
     }
 
     if (key == juce::KeyPress('r', juce::ModifierKeys::commandModifier, 0)) {
-        const auto selectedRows = resultsTable.getSelectedRows();
-        if (const auto row = getSelectionDisplayRow(selectedRows, -1); row >= 0) {
-            revealRecordInFileManager(row);
-        }
+        revealSelectedRecord();
         return true;
     }
 
@@ -170,7 +151,7 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
     const auto canNormalize = !normalizeInProgress && !isAnalysisInProgress() && canNormalizeRecords(selectedRecords);
 
     juce::PopupMenu menu;
-    menu.addItem(revealFileMenuItemId, getRevealFileMenuLabel(), record.file.exists());
+    menu.addItem(revealFileMenuItemId, utils::revealInFileManagerLabel(), record.file.exists());
     menu.addItem(openParentDirectoryMenuItemId, "Open Parent Folder", parentDirectory.isDirectory());
     menu.addSeparator();
     menu.addItem(reanalyzeMenuItemId, "Re-analyze Selected", !isAnalysisInProgress() && !normalizeInProgress);
@@ -234,6 +215,15 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
             }
         }
     );
+}
+
+void AudioBatchComponent::revealSelectedRecord()
+{
+    const auto selectedRows = resultsTable.getSelectedRows();
+
+    if (const auto row = getSelectionDisplayRow(selectedRows, -1); row >= 0) {
+        revealRecordInFileManager(row);
+    }
 }
 
 void AudioBatchComponent::revealRecordInFileManager(const int row) const

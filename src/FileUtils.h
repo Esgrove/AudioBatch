@@ -1,6 +1,6 @@
 /// File system helpers shared by the services and both front ends.
-/// Declares moving files to the system trash, deleting files with error logging,
-/// and extension checks for the audio file types the services treat specially.
+/// Declares moving files to the system trash, the file manager label for revealing a file,
+/// deleting files with error logging, and extension checks for the audio file types the services treat specially.
 
 #pragma once
 
@@ -11,6 +11,9 @@ namespace utils
 /// Moves a file or folder to the OS trash or recycle bin.
 /// Returns true when the file did not exist or was moved.
 bool moveToTrash(const juce::File& file);
+
+/// Returns the platform-appropriate label for the menu item that reveals a file in the file manager.
+juce::String revealInFileManagerLabel();
 
 /// Deletes a file and logs an error if the deletion fails.
 /// Returns true if the file did not exist or was deleted successfully.

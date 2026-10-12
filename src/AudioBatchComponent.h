@@ -62,6 +62,11 @@ public:
     /// Removes the currently selected files from the table without touching the files on disk.
     void removeSelectedRecords();
 
+    /// Reveals the file of the selected row in the platform file manager.
+    /// With several rows selected, the row shown in the info panel is used.
+    /// Does nothing when no row is selected.
+    void revealSelectedRecord();
+
     /// Moves the selected files to the OS trash, optionally asking for confirmation first.
     /// The rows of the files that were trashed are removed from the table.
     void moveSelectedRecordsToTrash(bool promptForConfirmation);

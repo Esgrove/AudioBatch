@@ -37,6 +37,17 @@ bool moveToTrash(const juce::File& file)
 #endif
 }
 
+juce::String revealInFileManagerLabel()
+{
+#if JUCE_MAC
+    return "Reveal in Finder";
+#elif JUCE_WINDOWS
+    return "Reveal in Explorer";
+#else
+    return "Reveal in File Manager";
+#endif
+}
+
 bool deleteFile(const juce::File& file)
 {
     if (!file.exists()) {

@@ -5,6 +5,7 @@
 #include "MainWindow.h"
 
 #include "AppInfo.h"
+#include "FileUtils.h"
 #include "Log.h"
 #include "PluginChain.h"
 #include "StringFormat.h"
@@ -29,6 +30,7 @@ enum MenuItemId : std::uint8_t {
     scanPluginsMenuItemId,
     addFolderMenuItemId,
     moveSelectedToTrashMenuItemId,
+    revealSelectedMenuItemId,
 };
 
 /// Smallest width in pixels the main window can be resized to,
@@ -151,6 +153,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             menu.addItem(addFolderMenuItemId, "Add Folder...");
             menu.addCommandItem(&commandManager, rescanMenuItemId, "Rescan");
             menu.addSeparator();
+            menu.addCommandItem(&commandManager, revealSelectedMenuItemId, utils::revealInFileManagerLabel());
             menu.addItem(reanalyzeSelectedMenuItemId, "Re-analyze Selected");
             menu.addCommandItem(&commandManager, removeSelectedMenuItemId, "Remove Selected from List");
             menu.addCommandItem(&commandManager, moveSelectedToTrashMenuItemId, "Move Selected to Trash");
@@ -178,6 +181,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             menu.addItem(addFolderMenuItemId, "Add Folder...");
             menu.addCommandItem(&commandManager, rescanMenuItemId, "Rescan");
             menu.addSeparator();
+            menu.addCommandItem(&commandManager, revealSelectedMenuItemId, utils::revealInFileManagerLabel());
             menu.addItem(reanalyzeSelectedMenuItemId, "Re-analyze Selected");
             menu.addCommandItem(&commandManager, removeSelectedMenuItemId, "Remove Selected from List");
             menu.addCommandItem(&commandManager, moveSelectedToTrashMenuItemId, "Move Selected to Trash");
@@ -222,6 +226,7 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
         case rescanMenuItemId:
         case removeSelectedMenuItemId:
         case moveSelectedToTrashMenuItemId:
+        case revealSelectedMenuItemId:
             // Handled by perform, the menu invokes the command before it reports the choice here.
             break;
         case reanalyzeSelectedMenuItemId:
@@ -279,7 +284,9 @@ juce::ApplicationCommandTarget* MainWindow::getNextCommandTarget()
 
 void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
 {
-    commands.addArray({rescanMenuItemId, removeSelectedMenuItemId, moveSelectedToTrashMenuItemId});
+    commands.addArray(
+        {rescanMenuItemId, revealSelectedMenuItemId, removeSelectedMenuItemId, moveSelectedToTrashMenuItemId}
+    );
 }
 
 void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::ApplicationCommandInfo& result)
@@ -290,6 +297,12 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
         case rescanMenuItemId:
             result.setInfo("Rescan", "Re-runs analysis for all root folders", fileCategory, 0);
             result.addDefaultKeypress(juce::KeyPress::F5Key, juce::ModifierKeys::noModifiers);
+            break;
+        case revealSelectedMenuItemId:
+            result.setInfo(
+                utils::revealInFileManagerLabel(), "Reveals the selected file in the file manager", fileCategory, 0
+            );
+            result.addDefaultKeypress('r', juce::ModifierKeys::commandModifier);
             break;
         case removeSelectedMenuItemId:
             result.setInfo("Remove Selected from List", "Removes the selected files from the list", fileCategory, 0);
@@ -310,6 +323,9 @@ bool MainWindow::perform(const InvocationInfo& info)
     switch (info.commandID) {
         case rescanMenuItemId:
             getAudioBatch().rescanCurrentRoot();
+            return true;
+        case revealSelectedMenuItemId:
+            getAudioBatch().revealSelectedRecord();
             return true;
         case removeSelectedMenuItemId:
             getAudioBatch().removeSelectedRecords();
