@@ -7,10 +7,12 @@
 #pragma once
 
 #include "AudioAnalysisTypes.h"
+#include "AudioNormalizationService.h"
 #include "FileUtils.h"
 
 #include <JuceHeader.h>
 
+#include <optional>
 #include <vector>
 
 /// Lightweight reference describing which plugin to instantiate and its saved state.
@@ -43,8 +45,10 @@ struct PluginProcessingOptions {
     /// Disabled slots are filtered out before a run starts,
     /// so entries here align index-for-index with the instantiated chain each worker holds.
     std::vector<PluginDescriptorRef> plugins;
-    /// Apply peak normalization gain when a file has no custom gain.
-    bool normalizeBeforePlugin = false;
+    /// Normalization target applied before the first plugin to files without a custom gain,
+    /// or no normalization when empty.
+    /// Uses the same peak or loudness gain as normalizing the file, including the true peak ceiling.
+    std::optional<AudioNormalizationOptions> normalizeBeforePlugin;
     /// Replace an existing output file that is not the source itself.
     /// When false, a file whose output path is already taken fails instead of overwriting it.
     bool overwriteExisting = false;

@@ -142,7 +142,8 @@ void AudioBatchComponent::configureProcessingControls()
     addAndMakeVisible(gainClearButton);
 
     normalizeBeforePluginToggle.setTooltip(
-        "When enabled, files without a custom gain are peak-normalized before the plugin chain."
+        "When enabled, files without a custom gain are normalized to the selected peak or loudness target "
+        "before the plugin chain."
     );
     addAndMakeVisible(normalizeBeforePluginToggle);
 

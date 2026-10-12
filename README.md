@@ -228,8 +228,9 @@ and write the processed audio to disk.
 - Source metadata is copied onto the processed AIFF through TagLib,
   so tags and embedded artwork survive the processing step.
   If the metadata cannot be written, the file fails and the original is kept.
-- Optional pre-plugin normalization scales each file by `1 / overall peak` before sending it through the chain,
-  which keeps the input level consistent across the batch.
+- Optional pre-plugin normalization scales each file to the selected normalization target
+  before sending it through the chain, which keeps the input level consistent across the batch.
+  It follows the same peak or loudness mode and target as normalization, including the true peak ceiling.
   A per-file custom input gain can also be set from the results list.
 
 Normalization always writes an AIFF file next to the source.

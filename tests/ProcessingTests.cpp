@@ -434,6 +434,56 @@ public:
             expectEquals(source.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 1);
         }
 
+        beginTest("Normalization before the chain follows the selected peak target");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "pre_peak.aif");
+            TestPlugin plugin({});
+            auto options = makeOptions({&plugin});
+            AudioNormalizationOptions target;
+            target.mode = AudioNormalizationMode::peak;
+            target.targetPeakDbfs = -3.0;
+            options.normalizeBeforePlugin = target;
+
+            const auto result
+                = PluginProcessingService::processFile(AudioAnalysisService::analyzeFile(source), options, {&plugin});
+
+            expect(!result.hasError(), result.errorMessage);
+            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), -3.0, 0.05);
+        }
+
+        beginTest("Normalization before the chain follows the selected loudness target");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "pre_loudness.aif");
+            TestPlugin plugin({});
+            auto options = makeOptions({&plugin});
+            AudioNormalizationOptions target;
+            target.mode = AudioNormalizationMode::loudness;
+            target.targetLufs = -20.0;
+            options.normalizeBeforePlugin = target;
+
+            const auto result
+                = PluginProcessingService::processFile(AudioAnalysisService::analyzeFile(source), options, {&plugin});
+
+            expect(!result.hasError(), result.errorMessage);
+            expectWithinAbsoluteError(result.analysisRecord.integratedLufs, -20.0, 0.1);
+        }
+
+        beginTest("A custom gain wins over normalization before the chain");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "pre_custom.aif");
+            TestPlugin plugin({});
+            auto options = makeOptions({&plugin});
+            options.normalizeBeforePlugin = AudioNormalizationOptions {};
+            auto record = AudioAnalysisService::analyzeFile(source);
+            record.hasCustomGain = true;
+            record.customGainDb = -6.0f;
+
+            const auto result = PluginProcessingService::processFile(record, options, {&plugin});
+
+            expect(!result.hasError(), result.errorMessage);
+            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels - 6.0, 0.05);
+        }
+
         beginTest("Output that would clip is turned down to full scale and reported");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif");
