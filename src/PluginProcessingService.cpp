@@ -99,18 +99,19 @@ static juce::String validateProcessingInputs(
 }
 
 /// Returns the linear gain applied before the first plugin.
-/// A custom gain wins, otherwise the file is peak normalized when requested, and otherwise it is left unchanged.
+/// A custom gain wins, otherwise the file is normalized to the requested peak or loudness target,
+/// and otherwise it is left unchanged.
+/// A file without a measurable level for the target, such as silence, is left unchanged too.
 static float getInputGain(const AudioAnalysisRecord& record, const PluginProcessingOptions& options)
 {
     if (record.hasCustomGain) {
         return juce::Decibels::decibelsToGain(record.customGainDb);
     }
 
-    if (options.normalizeBeforePlugin) {
-        const auto peak = utils::peakMagnitude(record.overallPeak);
-        if (peak > 0.0f) {
-            return 1.0f / peak;
-        }
+    if (options.normalizeBeforePlugin.has_value()) {
+        juce::String unusedError;
+        return AudioNormalizationService::getNormalizationGain(record, *options.normalizeBeforePlugin, unusedError)
+            .value_or(1.0f);
     }
 
     return 1.0f;

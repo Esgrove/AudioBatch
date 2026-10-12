@@ -617,7 +617,9 @@ void AudioBatchComponent::processSelectedRecords()
     for (const auto& enabledPlugin : enabledPlugins) {
         options.plugins.push_back(enabledPlugin.descriptorRef);
     }
-    options.normalizeBeforePlugin = normalizeBeforePluginToggle.getToggleState();
+    if (normalizeBeforePluginToggle.getToggleState()) {
+        options.normalizeBeforePlugin = normalizationTargetControl.getOptions();
+    }
     options.overwriteExisting = forceOverwriteToggle.getToggleState();
 
     // Pre-instantiate one chain of plugin instances per worker on the message thread.
