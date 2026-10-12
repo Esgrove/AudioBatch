@@ -68,6 +68,14 @@ public:
             expect(AudioAnalysisCli::containsExactOption(help, {"--help", "-h"}));
         }
 
+        beginTest("Boolean options never absorb following negative numbers");
+        {
+            for (const auto& option : juce::StringArray {"--refresh", "--normalize", "--reverse"}) {
+                expect(!parseArguments({option, "-14", "song.wav"}, errorMessage).has_value());
+                expect(errorMessage.contains("Unexpected number -14"), errorMessage);
+            }
+        }
+
         beginTest("Option values are accepted after an equals sign or as the next argument");
         {
             auto options = expectParsed({"--jobs=4"});
