@@ -54,6 +54,20 @@ public:
             expect(errorMessage.contains("-rf"), errorMessage);
         }
 
+        beginTest("Negative numbers never match short options");
+        {
+            expect(!parseArguments({"-j", "-1"}, errorMessage).has_value());
+            expect(errorMessage.contains("greater than zero"), errorMessage);
+
+            expect(!parseArguments({"-12", "song.wav"}, errorMessage).has_value());
+            expect(errorMessage.contains("Unexpected number -12"), errorMessage);
+
+            const juce::ArgumentList negativeValue("audiobatch", juce::StringArray {"-j", "-1"});
+            expect(!AudioAnalysisCli::containsExactOption(negativeValue, {"--help", "-h"}));
+            const juce::ArgumentList help("audiobatch", juce::StringArray {"-h"});
+            expect(AudioAnalysisCli::containsExactOption(help, {"--help", "-h"}));
+        }
+
         beginTest("Option values are accepted after an equals sign or as the next argument");
         {
             auto options = expectParsed({"--jobs=4"});

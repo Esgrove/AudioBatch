@@ -67,12 +67,12 @@ int main(const int argc, char* argv[])
     // Help and version only print to the console.
     // They are checked before parsing, so they win over any other argument, even an invalid one,
     // and return before the logger is created, so they never touch the log file.
-    if (arguments.containsOption("--version|-V")) {
+    if (AudioAnalysisCli::containsExactOption(arguments, {"--version", "-V"})) {
         fmt::print("{}\n", utils::versionLine(executableName));
         return 0;
     }
 
-    if (arguments.containsOption("--help|-h")) {
+    if (AudioAnalysisCli::containsExactOption(arguments, {"--help", "-h"})) {
         fmt::print("{}\n", AudioAnalysisCli::buildUsage(executableName));
         return 0;
     }
