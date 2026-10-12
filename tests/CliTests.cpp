@@ -77,6 +77,10 @@ public:
             expectEquals(options.workerCount, 3);
 
             expect(!parseArguments({"-j", "0"}, errorMessage).has_value());
+            expect(!parseArguments({"-j", "4x"}, errorMessage).has_value());
+            expect(!parseArguments({"-j", "2.5"}, errorMessage).has_value());
+            expect(!parseArguments({"-j", "100000"}, errorMessage).has_value());
+            expect(errorMessage.contains("at most"), errorMessage);
         }
 
         beginTest("Sort modes and the loudness alias are recognised");

@@ -11,6 +11,11 @@
 /// Helpers for parsing and validating the CLI options.
 namespace audiobatch::cli
 {
+/// Lowest upper limit for the worker count, used on machines with few cores.
+constexpr int minimumWorkerLimit = 64;
+/// Longest worker count text that is parsed, which keeps the number far from the 64-bit limit.
+constexpr int maximumWorkerCountDigits = 9;
+
 /// Returns true when the argument is a plain number such as "-14" or "0.5",
 /// which may start with a minus sign but is a value and not an option.
 static bool isNumericArgument(const juce::String& text)
@@ -320,12 +325,29 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
 
     const auto workerCountValue = removeOptionWithValue(arguments, "--jobs|-j");
     if (workerCountValue.has_value()) {
-        options.workerCount = workerCountValue->getIntValue();
+        // The thread pool creates every worker up front, so the count is capped well above any useful value.
+        const auto maximumWorkerCount = juce::jmax(minimumWorkerLimit, juce::SystemStats::getNumCpus() * 4);
+        const auto workerCountText = workerCountValue->trim();
 
-        if (options.workerCount <= 0) {
+        if (workerCountText.isEmpty() || !workerCountText.containsOnly("0123456789")) {
+            errorMessage = "Worker count must be a whole number greater than zero";
+            return std::nullopt;
+        }
+
+        // Parsed as a 64-bit value, so a very long number cannot overflow into a small one.
+        const auto workerCount = workerCountText.getLargeIntValue();
+
+        if (workerCount <= 0) {
             errorMessage = "Worker count must be greater than zero";
             return std::nullopt;
         }
+
+        if (workerCount > maximumWorkerCount || workerCountText.length() > maximumWorkerCountDigits) {
+            errorMessage = utils::format("Worker count must be at most {}", maximumWorkerCount);
+            return std::nullopt;
+        }
+
+        options.workerCount = static_cast<int>(workerCount);
     }
 
     const auto sortValue = removeOptionWithValue(arguments, "--sort|-s");

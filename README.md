@@ -305,7 +305,8 @@ and `--list-plugins` cannot be combined with the analysis options.
 Options that take a value accept both `--jobs 4` and `--jobs=4`.
 `--sort lufs` can also be written as `--sort loudness`.
 Without any paths, the current directory is analyzed.
-`--jobs` sets the number of parallel analysis workers.
+`--jobs` sets the number of parallel analysis workers,
+a whole number up to four times the CPU count, and at least up to 64.
 Normalization in the CLI processes one file at a time.
 
 Exit codes:
