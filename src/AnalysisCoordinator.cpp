@@ -20,6 +20,12 @@ AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& analysisCache, const int
 AnalysisCoordinator::~AnalysisCoordinator()
 {
     cancelAndWait();
+
+    // A planning job can queue analysis jobs after removeAllJobs has collected the jobs it waits for,
+    // so wait again until the pool is empty.
+    while (threadPool.getNumJobs() != 0) {
+        threadPool.removeAllJobs(true, -1);
+    }
 }
 
 void AnalysisCoordinator::setCompletionCallback(CompletionCallback callback)

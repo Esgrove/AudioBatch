@@ -48,6 +48,7 @@ public:
     explicit AnalysisCoordinator(AnalysisCache& analysisCache, int workerCount = juce::SystemStats::getNumCpus());
 
     /// Cancels any in-flight work and destroys the worker pool.
+    /// Waits without a timeout so workers cannot access destroyed coordinator state.
     ~AnalysisCoordinator();
 
     AnalysisCoordinator(const AnalysisCoordinator&) = delete;

@@ -29,6 +29,7 @@ PluginProcessingCoordinator::PluginProcessingCoordinator(const int workerCount) 
 PluginProcessingCoordinator::~PluginProcessingCoordinator()
 {
     cancelAndWait();
+    threadPool.removeAllJobs(true, -1);
     currentChains.reset();
 }
 
