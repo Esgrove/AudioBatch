@@ -5,6 +5,7 @@
 #include "TestSuites.h"
 
 #include <cmath>
+#include <map>
 #include <vector>
 
 namespace audiobatch::tests
@@ -91,6 +92,31 @@ public:
             );
 
             expectEquals(namesOf(records).joinIntoString(","), juce::String("a,b,c,d,failed"));
+        }
+
+        beginTest("The status column sorts by the text it shows when one is provided");
+        {
+            std::vector records {
+                makeRecord("first", 0.5f, -12.0),
+                makeRecord("second", 0.5f, -12.0),
+                makeRecord("third", 0.5f, -12.0),
+            };
+            const std::map<juce::String, juce::String> shownText {
+                {"first", "Reduced 2.0 dB to avoid clipping"},
+                {"second", "Analyzed"},
+                {"third", "Cached"},
+            };
+
+            results_sorting::sortRecords(
+                records,
+                {
+                    .primaryColumnId = AudioFileTableModel::columnStatus,
+                    .statusText
+                    = [&shownText](const AudioAnalysisRecord& record) { return shownText.at(record.fileName); },
+                }
+            );
+
+            expectEquals(namesOf(records).joinIntoString(","), juce::String("second,third,first"));
         }
     }
 };

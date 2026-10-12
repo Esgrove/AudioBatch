@@ -191,7 +191,9 @@ void sortRecords(std::vector<AudioAnalysisRecord>& records, const SortState& sta
                 return 0;
             }
 
-            const auto comparison = compareRecordsByColumn(lhs, rhs, columnId);
+            const auto comparison = columnId == AudioFileTableModel::columnStatus && state.statusText != nullptr
+                ? compareNatural(state.statusText(lhs), state.statusText(rhs))
+                : compareRecordsByColumn(lhs, rhs, columnId);
             return isForwards ? comparison : -comparison;
         };
 
