@@ -256,6 +256,7 @@ public:
             const auto result = process(source, {&plugin});
 
             expect(result.hasError());
+            expect(!result.committed);
             expect(result.errorMessage.contains("invalid samples"), result.errorMessage);
             expectEquals(source.getSize(), sourceSize);
             expect(source.getLastModificationTime() == sourceModified);
@@ -310,6 +311,7 @@ public:
             const auto result = process(source, {&plugin});
 
             expect(!result.hasError(), result.errorMessage);
+            expect(result.committed);
             expect(!source.exists());
             expectEquals(result.outputFile.getFileName(), juce::String("converted.aif"));
             expectEquals(result.analysisRecord.bitsPerSample, 24);

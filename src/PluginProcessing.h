@@ -68,6 +68,9 @@ struct PluginProcessingResult {
     juce::String notice;
     AudioAnalysisRecord analysisRecord;
     bool succeeded = false;
+    /// True once the output was moved into place, which can happen even when re-analysis then failed.
+    /// A converted source is in the trash by then, so callers move the record to the output either way.
+    bool committed = false;
 
     /// True when processing failed.
     [[nodiscard]] bool hasError() const noexcept

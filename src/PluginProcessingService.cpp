@@ -669,6 +669,7 @@ PluginProcessingResult PluginProcessingService::processFile(
     result.originalFile = file;
     result.originalFullPath = file.getFullPathName();
     result.outputFile = outputFile;
+    result.committed = true;
 
     juce::StringArray notices;
 

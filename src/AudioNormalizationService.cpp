@@ -370,6 +370,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
     result.file = file;
     result.fileName = file.getFileName();
     result.fullPath = file.getFullPathName();
+    result.committed = true;
     result.notice = decodeNotice;
     result.analysisRecord = AudioAnalysisService::analyzeFile(outputFile);
     result.succeeded = !result.analysisRecord.hasError();
