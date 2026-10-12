@@ -1,16 +1,20 @@
-/// Tests for the shared helpers in FileUtils, AudioFormatUtils, Cancellation, and DecodeFailureTracker.
+/// Tests for the shared helpers in FileUtils, AudioFormatUtils, Cancellation, MessageThreadCall, ConsolePrint,
+/// and DecodeFailureTracker.
 
 #include "AudioFormatUtils.h"
 #include "Cancellation.h"
 #include "ConsolePrint.h"
 #include "DecodeFailureTracker.h"
 #include "FileUtils.h"
+#include "MessageThreadCall.h"
 #include "StringFormat.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
+#include <thread>
 
 namespace audiobatch::tests
 {
@@ -214,6 +218,35 @@ public:
             expectEquals(console::displayWidth("plain"), 5);
             expectEquals(console::displayWidth(juce::String()), 0);
             expectEquals(console::displayWidth(juce::String::fromUTF8("\xe6\x97\xa5\xe6\x9c\xac")), 4);
+        }
+
+        beginTest("A message thread call runs directly on the message thread");
+        {
+            bool ran = false;
+            expect(utils::callOnMessageThread([&ran] { ran = true; }, {}));
+            expect(ran);
+        }
+
+        beginTest("A queued message thread call from a worker is abandoned when cancelled");
+        {
+            // The test runs on the message thread and does not dispatch messages,
+            // so the call stays queued until the worker gives up on it.
+            std::atomic<bool> cancelled {false};
+            std::atomic<bool> ran {false};
+            std::atomic<int> outcome {-1};
+
+            std::thread worker([&] {
+                const auto completed
+                    = utils::callOnMessageThread([&ran] { ran = true; }, [&cancelled] { return cancelled.load(); });
+                outcome = completed ? 1 : 0;
+            });
+
+            juce::Thread::sleep(50);
+            cancelled = true;
+            worker.join();
+
+            expectEquals(outcome.load(), 0);
+            expect(!ran.load());
         }
 
         beginTest("An empty cancellation check never cancels");
