@@ -149,7 +149,8 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
     const auto& record = analysisResults[static_cast<std::size_t>(row)];
     const auto parentDirectory = record.file.getParentDirectory();
     const auto selectedRecords = getSelectedNormalizableRecords();
-    const auto canNormalize = !normalizeInProgress && !isAnalysisInProgress() && canNormalizeRecords(selectedRecords);
+    const auto canNormalize = !normalizeInProgress && !pluginProcessingInProgress && !isAnalysisInProgress()
+        && canNormalizeRecords(selectedRecords);
 
     juce::PopupMenu menu;
     menu.addItem(revealFileMenuItemId, utils::revealInFileManagerLabel(), record.file.exists());

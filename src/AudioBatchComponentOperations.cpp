@@ -327,6 +327,12 @@ void AudioBatchComponent::normalizeSelectedRecords()
         return;
     }
 
+    if (pluginProcessingInProgress) {
+        utils::logError("Normalization requested while plugin processing is in progress");
+        statusLabel.setText("Wait for plugin processing to finish before normalizing", juce::dontSendNotification);
+        return;
+    }
+
     if (isAnalysisInProgress()) {
         utils::logError("Normalization requested before analysis finished");
         statusLabel.setText("Wait for analysis to finish before normalizing", juce::dontSendNotification);
