@@ -30,6 +30,17 @@ public:
         const auto analyzed = AudioAnalysisService::analyzeFile(file);
         expect(!analyzed.hasError(), analyzed.errorMessage);
 
+        beginTest("A database whose schema cannot be prepared is not left half open");
+        {
+            const auto notDatabase = directory.getChildFile("not_a_database.db");
+            expect(notDatabase.replaceWithText("This text is not an SQLite database, so preparing the schema fails."));
+            AnalysisCache brokenCache(notDatabase);
+
+            expect(!brokenCache.open());
+            // A connection left open by the first attempt would make the second one report success.
+            expect(!brokenCache.open());
+        }
+
         beginTest("A stored record is returned for the unchanged file");
         {
             expect(cache.storeAnalysis(analyzed));

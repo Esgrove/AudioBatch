@@ -180,6 +180,30 @@ bool AnalysisCache::execute(const juce::String& sql) const
     return true;
 }
 
+bool AnalysisCache::prepare(const char* sql, sqlite3_stmt*& statement) const
+{
+    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) == SQLITE_OK) {
+        return true;
+    }
+
+    utils::logError(
+        "SQLite could not prepare an analysis cache query: {}", juce::String::fromUTF8(sqlite3_errmsg(database))
+    );
+    return false;
+}
+
+bool AnalysisCache::stepToCompletion(sqlite3_stmt* statement) const
+{
+    if (sqlite3_step(statement) == SQLITE_DONE) {
+        return true;
+    }
+
+    utils::logError(
+        "SQLite could not complete an analysis cache update: {}", juce::String::fromUTF8(sqlite3_errmsg(database))
+    );
+    return false;
+}
+
 bool AnalysisCache::open()
 {
     const juce::ScopedLock lock(mutex);
@@ -212,7 +236,7 @@ bool AnalysisCache::columnExists(const juce::String& tableName, const juce::Stri
     const auto sql = utils::format("PRAGMA table_info({});", tableName);
 
     sqlite3_stmt* statement = nullptr;
-    if (sqlite3_prepare_v2(database, sql.toRawUTF8(), -1, &statement, nullptr) != SQLITE_OK) {
+    if (!prepare(sql.toRawUTF8(), statement)) {
         return false;
     }
 
@@ -302,8 +326,11 @@ bool AnalysisCache::openUnlocked()
     utils::logDebug("Analysis cache startup: sqlite3_open_v2 returned successfully");
     sqlite3_busy_timeout(database, busyTimeoutMilliseconds);
 
+    // Any failure from here on closes the connection again,
+    // so a later call retries the whole open instead of using a database with an incomplete schema.
     utils::logDebug("Analysis cache startup: applying SQLite pragmas");
     if (!execute("PRAGMA journal_mode=WAL;") || !execute("PRAGMA synchronous=NORMAL;")) {
+        closeUnlocked();
         return false;
     }
 
@@ -339,10 +366,12 @@ bool AnalysisCache::openUnlocked()
         );
     )SQL"))
     {
+        closeUnlocked();
         return false;
     }
 
     if (!addMissingColumns()) {
+        closeUnlocked();
         return false;
     }
 
@@ -376,7 +405,7 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
     )SQL";
 
     sqlite3_stmt* statement = nullptr;
-    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+    if (!prepare(sql, statement)) {
         return false;
     }
 
@@ -484,7 +513,7 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     )SQL";
 
     sqlite3_stmt* statement = nullptr;
-    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+    if (!prepare(sql, statement)) {
         return false;
     }
 
@@ -515,9 +544,9 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     sqlite3_bind_double(statement, analysis_parameter::customGainDb, static_cast<double>(record.customGainDb));
     sqlite3_bind_int(statement, analysis_parameter::hasCustomGain, record.hasCustomGain ? 1 : 0);
 
-    const auto result = sqlite3_step(statement);
+    const auto completed = stepToCompletion(statement);
     sqlite3_finalize(statement);
-    return result == SQLITE_DONE;
+    return completed;
 }
 
 bool AnalysisCache::getCustomGain(
@@ -539,7 +568,7 @@ bool AnalysisCache::getCustomGain(
     )SQL";
 
     sqlite3_stmt* statement = nullptr;
-    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+    if (!prepare(sql, statement)) {
         return false;
     }
 
@@ -571,7 +600,7 @@ bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGa
     )SQL";
 
     sqlite3_stmt* statement = nullptr;
-    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+    if (!prepare(sql, statement)) {
         return false;
     }
 
@@ -580,10 +609,10 @@ bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGa
     sqlite3_bind_int64(statement, 3, juce::Time::getCurrentTime().toMilliseconds());
     bindText(statement, 4, normalizedPath(file));
 
-    const auto result = sqlite3_step(statement);
+    const auto completed = stepToCompletion(statement);
     const auto updatedRows = sqlite3_changes(database);
     sqlite3_finalize(statement);
-    return result == SQLITE_DONE && updatedRows > 0;
+    return completed && updatedRows > 0;
 }
 
 bool AnalysisCache::removeAnalysis(const juce::File& file)
@@ -597,15 +626,15 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
     constexpr auto sql = "DELETE FROM file_analysis WHERE file_path = ?;";
 
     sqlite3_stmt* statement = nullptr;
-    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+    if (!prepare(sql, statement)) {
         return false;
     }
 
     bindText(statement, 1, normalizedPath(file));
 
-    const auto result = sqlite3_step(statement);
+    const auto completed = stepToCompletion(statement);
     sqlite3_finalize(statement);
-    return result == SQLITE_DONE;
+    return completed;
 }
 
 int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
@@ -628,7 +657,7 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
 
         constexpr auto sql = "SELECT file_path, file_size, modified_time_ms FROM file_analysis;";
         sqlite3_stmt* statement = nullptr;
-        if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+        if (!prepare(sql, statement)) {
             return 0;
         }
 
@@ -688,7 +717,7 @@ bool AnalysisCache::removeRowVersion(
     constexpr auto sql = "DELETE FROM file_analysis WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;";
 
     sqlite3_stmt* statement = nullptr;
-    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+    if (!prepare(sql, statement)) {
         return false;
     }
 
@@ -696,9 +725,9 @@ bool AnalysisCache::removeRowVersion(
     sqlite3_bind_int64(statement, 2, fileSize);
     sqlite3_bind_int64(statement, 3, modifiedTimeMs);
 
-    const auto result = sqlite3_step(statement);
+    const auto completed = stepToCompletion(statement);
     sqlite3_finalize(statement);
-    return result == SQLITE_DONE && sqlite3_changes(database) > 0;
+    return completed && sqlite3_changes(database) > 0;
 }
 
 bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& waveformData)
@@ -718,7 +747,7 @@ bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& w
     )SQL";
 
     sqlite3_stmt* statement = nullptr;
-    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+    if (!prepare(sql, statement)) {
         return false;
     }
 
@@ -766,7 +795,7 @@ bool AnalysisCache::storeWaveformData(const juce::File& file, const juce::Memory
     )SQL";
 
     sqlite3_stmt* statement = nullptr;
-    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) != SQLITE_OK) {
+    if (!prepare(sql, statement)) {
         return false;
     }
 
@@ -778,8 +807,8 @@ bool AnalysisCache::storeWaveformData(const juce::File& file, const juce::Memory
     sqlite3_bind_int64(statement, waveform_parameter::modifiedTimeMs, file.getLastModificationTime().toMilliseconds());
     sqlite3_bind_int(statement, waveform_parameter::analysisVersion, analysisVersion);
 
-    const auto result = sqlite3_step(statement);
+    const auto completed = stepToCompletion(statement);
     const auto changedRows = sqlite3_changes(database);
     sqlite3_finalize(statement);
-    return result == SQLITE_DONE && changedRows > 0;
+    return completed && changedRows > 0;
 }

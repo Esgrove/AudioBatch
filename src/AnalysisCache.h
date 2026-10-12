@@ -12,6 +12,7 @@
 #include <functional>
 
 struct sqlite3;
+struct sqlite3_stmt;
 
 /// Persistent SQLite-backed cache for file analysis results and waveform previews.
 class AnalysisCache
@@ -93,7 +94,15 @@ private:
     /// Runs a statement that returns no rows, logging any SQLite error.
     bool execute(const juce::String& sql) const;
 
+    /// Prepares a statement, logging the SQLite error when it fails.
+    bool prepare(const char* sql, sqlite3_stmt*& statement) const;
+
+    /// Steps a statement that returns no rows to completion, logging the SQLite error when it fails.
+    /// Returns true when the statement completed.
+    bool stepToCompletion(sqlite3_stmt* statement) const;
+
     /// Opens the database and ensures the schema is current. The caller must hold the mutex.
+    /// Closes the connection again when the schema cannot be prepared, so the next call retries the open.
     bool openUnlocked();
 
     /// Deletes the row for the path only when it still has the given size and modification time.
