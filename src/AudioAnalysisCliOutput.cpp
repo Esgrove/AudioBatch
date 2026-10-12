@@ -143,20 +143,16 @@ void printRecords(
             break;
 
         case AudioAnalysisOutputFormat::csv: {
-            bool headerPrinted = false;
+            juce::StringArray headerFields;
+
+            for (const auto& property : buildRecordObject(AudioAnalysisRecord {})->getProperties()) {
+                headerFields.add(property.name.toString());
+            }
+            fmt::print("{}\n", headerFields.joinIntoString(","));
 
             for (const auto& record : records) {
                 const auto object = buildRecordObject(record);
                 juce::StringArray fields;
-
-                if (!headerPrinted) {
-                    for (const auto& property : object->getProperties()) {
-                        fields.add(property.name.toString());
-                    }
-                    fmt::print("{}\n", fields.joinIntoString(","));
-                    fields.clear();
-                    headerPrinted = true;
-                }
 
                 for (const auto& property : object->getProperties()) {
                     fields.add(utils::escapeCsvField(property.value.toString()));
