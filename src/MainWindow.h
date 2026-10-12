@@ -59,9 +59,13 @@ private:
     /// Lists the commands that appear in the menu bar with a keyboard shortcut.
     void getAllCommands(juce::Array<juce::CommandID>& commands) override;
 
-    /// Describes one command, including the default key presses the menu displays next to its item.
-    /// The key presses are only displayed.
-    /// The shortcuts themselves are handled by AudioBatchComponent::keyPressed.
+    /// Describes one command, including the default key presses the menu displays next to its item,
+    /// and whether the command can run right now.
+    /// AudioBatchComponent::keyPressed handles the shortcuts while the window has keyboard focus.
+    /// On macOS the menu also installs the shortcuts other than plain Delete and Backspace as key equivalents,
+    /// which fire when no component consumes the key press, for example while a dialog is open.
+    /// A command is therefore inactive while the window is blocked by a dialog or the command has nothing to act on,
+    /// and the command manager does not invoke inactive commands.
     void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override;
 
     /// Runs a command chosen from the menu.

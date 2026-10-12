@@ -27,12 +27,17 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key, juce::Component*
 
 bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
 {
-    if (key.getKeyCode() == juce::KeyPress::backspaceKey && key.getModifiers().isCtrlDown()) {
-        moveSelectedRecordsToTrash(!key.getModifiers().isShiftDown());
+    const auto modifiers = key.getModifiers();
+
+    // Cmd-Backspace is the Finder shortcut on macOS, and Ctrl-Backspace works on every platform.
+    if (key.getKeyCode() == juce::KeyPress::backspaceKey && (modifiers.isCommandDown() || modifiers.isCtrlDown())) {
+        moveSelectedRecordsToTrash(!modifiers.isShiftDown());
         return true;
     }
 
-    if (key.getKeyCode() == juce::KeyPress::deleteKey || key.getKeyCode() == juce::KeyPress::backspaceKey) {
+    if ((key.getKeyCode() == juce::KeyPress::deleteKey || key.getKeyCode() == juce::KeyPress::backspaceKey)
+        && !modifiers.isCommandDown() && !modifiers.isCtrlDown() && !modifiers.isAltDown())
+    {
         removeSelectedRecords();
         return true;
     }

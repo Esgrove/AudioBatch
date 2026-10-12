@@ -90,6 +90,12 @@ public:
     /// Runs the configured plugin (if any) over the currently-selected files.
     void processSelectedRecords();
 
+    /// True when the table has at least one selected row.
+    [[nodiscard]] bool hasSelectedRecords() const;
+
+    /// True while normalization or plugin processing is rewriting files.
+    [[nodiscard]] bool isFileOperationInProgress() const noexcept;
+
     /// Returns the plugin selection controller, or nullptr before the component finishes constructing.
     [[nodiscard]] PluginChain* getPluginChain() const noexcept
     {
@@ -110,6 +116,8 @@ public:
     void resized() override;
 
     /// Handles the application shortcuts for trash, remove, reveal, play/stop, and rescan.
+    /// Command or Ctrl with Backspace moves the selection to the trash,
+    /// and Delete or Backspace without those modifiers removes it from the list.
     bool keyPressed(const juce::KeyPress& key) override;
 
     /// Maps pinch-zoom gestures onto the waveform zoom slider.
@@ -246,9 +254,6 @@ private:
     /// True from the start of an analysis run until the coordinator reports its completion.
     [[nodiscard]] bool isAnalysisInProgress() const;
 
-    /// True while normalization or plugin processing is rewriting files.
-    [[nodiscard]] bool isFileOperationInProgress() const noexcept;
-
     /// Returns the reason analysis or a change to the list cannot happen right now
     /// because files are being normalized or processed, or an empty string when it can.
     [[nodiscard]] juce::String getFileOperationBlockedReason() const;
@@ -263,9 +268,6 @@ private:
     /// Starts peak normalization for the selected files
     /// after checking that no other pass is running and that every selected format is supported.
     void normalizeSelectedRecords();
-
-    /// True when the table has at least one selected row.
-    [[nodiscard]] bool hasSelectedRecords() const;
 
     /// True when the table currently holds any analyzed records.
     [[nodiscard]] bool hasAnyRecords() const;

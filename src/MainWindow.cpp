@@ -292,26 +292,33 @@ void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
 void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::ApplicationCommandInfo& result)
 {
     constexpr auto fileCategory = "File";
+    const auto& audioBatch = getAudioBatch();
+    const auto blockedByDialog = audioBatch.isCurrentlyBlockedByAnotherModalComponent();
+    const auto canActOnSelection = !blockedByDialog && audioBatch.hasSelectedRecords();
 
     switch (commandID) {
         case rescanMenuItemId:
             result.setInfo("Rescan", "Re-runs analysis for all root folders", fileCategory, 0);
             result.addDefaultKeypress(juce::KeyPress::F5Key, juce::ModifierKeys::noModifiers);
+            result.setActive(!blockedByDialog && !audioBatch.isFileOperationInProgress());
             break;
         case revealSelectedMenuItemId:
             result.setInfo(
                 utils::revealInFileManagerLabel(), "Reveals the selected file in the file manager", fileCategory, 0
             );
             result.addDefaultKeypress('r', juce::ModifierKeys::commandModifier);
+            result.setActive(canActOnSelection);
             break;
         case removeSelectedMenuItemId:
             result.setInfo("Remove Selected from List", "Removes the selected files from the list", fileCategory, 0);
             result.addDefaultKeypress(juce::KeyPress::deleteKey, juce::ModifierKeys::noModifiers);
             result.addDefaultKeypress(juce::KeyPress::backspaceKey, juce::ModifierKeys::noModifiers);
+            result.setActive(canActOnSelection);
             break;
         case moveSelectedToTrashMenuItemId:
             result.setInfo("Move Selected to Trash", "Moves the selected files to the system trash", fileCategory, 0);
-            result.addDefaultKeypress(juce::KeyPress::backspaceKey, juce::ModifierKeys::ctrlModifier);
+            result.addDefaultKeypress(juce::KeyPress::backspaceKey, juce::ModifierKeys::commandModifier);
+            result.setActive(canActOnSelection);
             break;
         default:
             break;
