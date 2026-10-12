@@ -132,6 +132,9 @@ The results list supports per-file actions from the context menu, including:
 - normalize selected files to the selected target
 - process selected files through the current plugin chain
 
+On Windows, files on a drive without a recycle bin, such as a network share, are never deleted.
+Moving them to the trash fails instead, and so do normalization and processing that would trash the original.
+
 Keyboard shortcuts in the results list:
 
 - `Delete` or `Backspace` removes the selected rows from the list.
