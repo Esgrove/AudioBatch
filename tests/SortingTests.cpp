@@ -267,12 +267,14 @@ private:
 
         juce::Random random(1234);
         const auto pickPeak = [&random, &specialPeaks] {
-            return random.nextBool() ? specialPeaks[static_cast<std::size_t>(random.nextInt(specialPeaks.size()))]
-                                     : random.nextFloat() * 2.0f - 1.0f;
+            return random.nextBool()
+                ? specialPeaks[static_cast<std::size_t>(random.nextInt(static_cast<int>(specialPeaks.size())))]
+                : random.nextFloat() * 2.0f - 1.0f;
         };
         const auto pickLoudness = [&random, &specialLoudness] {
-            return random.nextBool() ? specialLoudness[static_cast<std::size_t>(random.nextInt(specialLoudness.size()))]
-                                     : random.nextDouble() * -40.0;
+            return random.nextBool()
+                ? specialLoudness[static_cast<std::size_t>(random.nextInt(static_cast<int>(specialLoudness.size())))]
+                : random.nextDouble() * -40.0;
         };
 
         std::vector<AudioAnalysisRecord> records;
