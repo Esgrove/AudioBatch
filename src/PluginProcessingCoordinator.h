@@ -72,6 +72,39 @@ public:
     );
 
 private:
+    /// The plugin chains of one run and the indices of the chains no worker is using.
+    /// Every job of the run shares ownership,
+    /// so a job that outlives a cancellation timeout keeps its chain alive
+    /// and can never return a chain index to the free pool of a later run.
+    struct RunChains {
+        /// Takes ownership of the run's chains, with all of them free when `usable` is true.
+        RunChains(std::vector<PluginChainInstances> chainInstances, bool usable);
+
+        /// Destroys the plugin instances on the message thread, as VST3 and Audio Unit hosting require.
+        /// When the last owner is a worker, the instances are handed to the message thread instead.
+        ~RunChains();
+
+        RunChains(const RunChains&) = delete;
+        RunChains& operator=(const RunChains&) = delete;
+        RunChains(RunChains&&) = delete;
+        RunChains& operator=(RunChains&&) = delete;
+
+        /// Returns the index of a free chain, or -1 when none are available.
+        int acquire();
+
+        /// Returns a chain to the free pool and wakes one worker waiting for a chain.
+        void release(int chainIndex);
+
+        /// Returns a raw pointer view of the given chain for the service call.
+        [[nodiscard]] std::vector<juce::AudioPluginInstance*> getChainView(int chainIndex) const;
+
+        std::vector<PluginChainInstances> chains;
+        juce::CriticalSection lock;
+        std::vector<int> freeIndices;
+        /// Auto-reset event, signaled on release and on cancellation.
+        juce::WaitableEvent available {false};
+    };
+
     /// Invokes the completion callback, unless the run has been superseded or cancelled.
     void publishCompletion(int totalFiles, int runId) const;
 
@@ -83,22 +116,17 @@ private:
     void reportStartError(const juce::String& message) const;
 
     /// Processes one queued file on a worker thread.
-    /// Waits for a free chain, runs the file through it, publishes the result,
+    /// Waits for a free chain of the run, runs the file through it, publishes the result,
     /// and publishes completion when it was the last pending file of the run, counted in pendingFiles.
-    /// The caller keeps the counter alive for as long as the job may run.
+    /// The caller keeps the chains and the counter alive for as long as the job may run.
     void runFileJob(
         const AudioAnalysisRecord& record,
         const PluginProcessingOptions& options,
         int runId,
         int totalFiles,
+        RunChains& runChains,
         std::atomic<int>& pendingFiles
     );
-
-    /// Returns the index of a free chain, or -1 when none are available.
-    int acquireChain();
-
-    /// Returns a chain to the free pool and wakes one worker waiting for a chain.
-    void releaseChain(int chainIndex);
 
     juce::ThreadPool threadPool;
     juce::CriticalSection callbackLock;
@@ -106,11 +134,8 @@ private:
     CompletionCallback completionCallback;
     StartErrorCallback startErrorCallback;
 
-    juce::CriticalSection instanceLock;
-    /// Auto-reset event, signaled on releaseChain().
-    juce::WaitableEvent instanceAvailable {false};
-    std::vector<PluginChainInstances> ownedChains;
-    std::vector<int> freeChainIndices;
+    /// Chains of the current run. Only accessed on the message thread.
+    std::shared_ptr<RunChains> currentChains;
 
     std::atomic<int> currentRunId {0};
 };

@@ -1,6 +1,6 @@
 /// Implementation of PluginProcessingCoordinator.
 /// Covers queuing one thread-pool job per file,
-/// the free pool of pre-instantiated plugin chains that workers acquire and release between files,
+/// the per-run free pool of pre-instantiated plugin chains that workers acquire and release between files,
 /// run-id based cancellation, and publishing results and completion to the message thread.
 /// Cancellation also releases workers waiting for plugin setup on the message thread,
 /// so cancelAndWait can block the message thread without deadlocking.
@@ -29,26 +29,70 @@ PluginProcessingCoordinator::PluginProcessingCoordinator(const int workerCount) 
 PluginProcessingCoordinator::~PluginProcessingCoordinator()
 {
     cancelAndWait();
+    currentChains.reset();
+}
 
-    // Destroy plugin instances on the message thread to keep VST3/AU happy.
-    {
-        const juce::ScopedLock lock(instanceLock);
-        if (!ownedChains.empty()) {
-            if (juce::MessageManager::getInstance()->isThisTheMessageThread()) {
-                ownedChains.clear();
-                freeChainIndices.clear();
-            } else {
-                // Move instances out so they can be cleaned up on the message thread.
-                auto chains = std::move(ownedChains);
-                ownedChains.clear();
-                freeChainIndices.clear();
-                juce::MessageManager::callAsync([chainsCaptured
-                                                 = std::make_shared<decltype(chains)>(std::move(chains))] mutable {
-                    chainsCaptured->clear();
-                });
-            }
+PluginProcessingCoordinator::RunChains::RunChains(std::vector<PluginChainInstances> chainInstances, const bool usable) :
+    chains(std::move(chainInstances))
+{
+    if (usable) {
+        freeIndices.reserve(chains.size());
+
+        for (int chainIndex = 0; std::cmp_less(chainIndex, chains.size()); ++chainIndex) {
+            freeIndices.push_back(chainIndex);
         }
     }
+}
+
+PluginProcessingCoordinator::RunChains::~RunChains()
+{
+    if (chains.empty() || juce::MessageManager::existsAndIsCurrentThread()) {
+        return;
+    }
+
+    juce::MessageManager::callAsync([chainsCaptured = std::make_shared<decltype(chains)>(std::move(chains))] {
+        chainsCaptured->clear();
+    });
+}
+
+int PluginProcessingCoordinator::RunChains::acquire()
+{
+    const juce::ScopedLock scopedLock(lock);
+
+    if (freeIndices.empty()) {
+        return -1;
+    }
+
+    const auto chainIndex = freeIndices.back();
+    freeIndices.pop_back();
+    return chainIndex;
+}
+
+void PluginProcessingCoordinator::RunChains::release(const int chainIndex)
+{
+    if (chainIndex < 0) {
+        return;
+    }
+
+    {
+        const juce::ScopedLock scopedLock(lock);
+        freeIndices.push_back(chainIndex);
+    }
+
+    available.signal();
+}
+
+std::vector<juce::AudioPluginInstance*> PluginProcessingCoordinator::RunChains::getChainView(const int chainIndex) const
+{
+    const auto& chain = chains[static_cast<std::size_t>(chainIndex)];
+    std::vector<juce::AudioPluginInstance*> chainView;
+    chainView.reserve(chain.size());
+
+    for (const auto& instance : chain) {
+        chainView.push_back(instance.get());
+    }
+
+    return chainView;
 }
 
 void PluginProcessingCoordinator::setResultCallback(ResultCallback callback)
@@ -106,36 +150,13 @@ void PluginProcessingCoordinator::publishCompletion(const int totalFiles, const 
 void PluginProcessingCoordinator::cancelAndWait()
 {
     ++currentRunId;
-    // Wake any workers blocked waiting for an instance.
-    instanceAvailable.signal();
+
+    // Wake any workers blocked waiting for a chain.
+    if (currentChains != nullptr) {
+        currentChains->available.signal();
+    }
+
     threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
-}
-
-int PluginProcessingCoordinator::acquireChain()
-{
-    const juce::ScopedLock lock(instanceLock);
-
-    if (freeChainIndices.empty()) {
-        return -1;
-    }
-
-    const auto chainIndex = freeChainIndices.back();
-    freeChainIndices.pop_back();
-    return chainIndex;
-}
-
-void PluginProcessingCoordinator::releaseChain(const int chainIndex)
-{
-    if (chainIndex < 0) {
-        return;
-    }
-
-    {
-        const juce::ScopedLock lock(instanceLock);
-        freeChainIndices.push_back(chainIndex);
-    }
-
-    instanceAvailable.signal();
 }
 
 /// Returns whether every chain aligns index-for-index with options.plugins and contains no null instances.
@@ -191,6 +212,7 @@ void PluginProcessingCoordinator::runFileJob(
     const PluginProcessingOptions& options,
     const int runId,
     const int totalFiles,
+    RunChains& runChains,
     std::atomic<int>& pendingFiles
 )
 {
@@ -198,36 +220,26 @@ void PluginProcessingCoordinator::runFileJob(
         return;
     }
 
-    auto chainIndex = acquireChain();
+    auto chainIndex = runChains.acquire();
 
     // Wait for a chain to become free (worker count > chain count is unusual).
     while (chainIndex < 0 && runId == currentRunId.load()) {
-        instanceAvailable.wait(chainWaitIntervalMilliseconds);
-        chainIndex = acquireChain();
+        runChains.available.wait(chainWaitIntervalMilliseconds);
+        chainIndex = runChains.acquire();
     }
 
     if (runId != currentRunId.load()) {
-        releaseChain(chainIndex);
+        runChains.release(chainIndex);
         return;
-    }
-
-    // Build a raw-pointer view of the chain for the service call.
-    std::vector<juce::AudioPluginInstance*> chainView;
-    {
-        const juce::ScopedLock lock(instanceLock);
-        const auto& chain = ownedChains[static_cast<std::size_t>(chainIndex)];
-        chainView.reserve(chain.size());
-        for (const auto& instance : chain) {
-            chainView.push_back(instance.get());
-        }
     }
 
     // Cancellation lets the worker stop waiting for the message thread,
     // which cancelAndWait blocks while it waits for the workers to finish.
-    const auto result = PluginProcessingService::processFile(record, options, chainView, [this, runId] {
-        return runId != currentRunId.load();
-    });
-    releaseChain(chainIndex);
+    const auto result
+        = PluginProcessingService::processFile(record, options, runChains.getChainView(chainIndex), [this, runId] {
+              return runId != currentRunId.load();
+          });
+    runChains.release(chainIndex);
 
     publishResult(result, runId);
 
@@ -245,18 +257,9 @@ int PluginProcessingCoordinator::start(
     cancelAndWait();
 
     const auto chainsUsable = areChainsUsable(chainInstances, options);
-
-    {
-        const juce::ScopedLock lock(instanceLock);
-        ownedChains = std::move(chainInstances);
-        freeChainIndices.clear();
-        freeChainIndices.reserve(ownedChains.size());
-        if (chainsUsable) {
-            for (int chainIndex = 0; std::cmp_less(chainIndex, ownedChains.size()); ++chainIndex) {
-                freeChainIndices.push_back(chainIndex);
-            }
-        }
-    }
+    // Replacing the previous run's chains destroys them here on the message thread,
+    // unless a job that outlived the cancellation timeout still holds them.
+    currentChains = std::make_shared<RunChains>(std::move(chainInstances), chainsUsable);
 
     if (!chainsUsable) {
         reportStartError("No plugin chain instances were available to start processing.");
@@ -298,8 +301,8 @@ int PluginProcessingCoordinator::start(
             continue;
         }
 
-        threadPool.addJob([this, record, options, runId, totalFiles, pendingFiles] {
-            runFileJob(record, options, runId, totalFiles, *pendingFiles);
+        threadPool.addJob([this, record, options, runId, totalFiles, runChains = currentChains, pendingFiles] {
+            runFileJob(record, options, runId, totalFiles, *runChains, *pendingFiles);
         });
     }
 
