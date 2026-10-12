@@ -63,6 +63,7 @@ void AudioBatchComponent::clearAllRecords()
 
     analysisResults.clear();
     fileActivity.clearAllActive();
+    fileActivity.clearAllMessages();
     clearCurrentAudioPreview();
     audioInfo->clear();
     expectedResults = 0;
@@ -375,6 +376,10 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
 
     const auto currentFileRemoved
         = currentAudioFile.exists() && removedPaths.contains(currentAudioFile.getFullPathName());
+
+    for (const auto& removedPath : removedPaths) {
+        fileActivity.clearMessage(removedPath);
+    }
 
     analysisResults.erase(
         std::ranges::remove_if(
