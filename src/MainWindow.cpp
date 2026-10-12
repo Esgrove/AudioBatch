@@ -1,4 +1,5 @@
-/// Implementation of MainWindow: window setup and teardown, and the menu bar model
+/// Implementation of MainWindow:
+/// window setup and teardown, and the menu bar model
 /// that dispatches menu commands to the AudioBatchComponent and the plugin chain.
 
 #include "MainWindow.h"

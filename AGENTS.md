@@ -79,9 +79,9 @@ GUI only:
 - `src/FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
 - `src/AudioInfoPanel.*`, `src/NormalizationTargetControl.*`, `src/CustomLookAndFeel.*`,
   `src/ThumbnailComponent.*`, and `src/IntervalStepSlider.h` are UI pieces.
-- `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginChainPreparation.*`, `src/PluginProcessing.h`,
-  `src/PluginProcessingCoordinator.*`, and `src/PluginProcessingService.*`
-  implement VST3 / Audio Unit plugin hosting and the plugin chain.
+- `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginChainPreparation.*`,
+  `src/PluginProcessing.h`, `src/PluginProcessingCoordinator.*`,
+  and `src/PluginProcessingService.*` implement VST3 / Audio Unit plugin hosting and the plugin chain.
 
 The source lists are defined in `CMakeLists.txt`.
 `AUDIOBATCH_CORE_SOURCES` holds the shared core and `AUDIOBATCH_CLI_SOURCES` the CLI front end,
@@ -95,9 +95,9 @@ Tests:
 
 - `tests/` holds the `AudioBatchTests` executable, which links the shared core and the CLI front end.
   Suites are `juce::UnitTest` classes, one per file, created through the factories in `tests/TestSuites.h`.
-- `tests/fixtures/` holds small committed audio files: one second 1 kHz tones at -6.02 dBFS
-  in WAV, AIFF, FLAC, MP3, and Ogg, mono and stereo, at several sample rates and bit depths,
-  plus a tagged FLAC file, digital silence, and a broken file.
+- `tests/fixtures/` holds small committed audio files:
+  one second 1 kHz tones at -6.02 dBFS in WAV, AIFF, FLAC, MP3, and Ogg, mono and stereo,
+  at several sample rates and bit depths, plus a tagged FLAC file, digital silence, and a broken file.
   `tests/fixtures/generate.sh` regenerates them with ffmpeg.
   Tests that modify files work on copies in a temporary directory.
 
@@ -167,8 +167,8 @@ Tests:
   use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
 - Both `AudioBatch` and `AudioBatchCli` build with warnings as errors, so all warnings must be resolved.
 - On top of the JUCE recommended warning flags,
-  `audiobatch_set_source_warnings` in `CMakeLists.txt` adds a stricter warning set
-  to the project's own `src/*.cpp` files only.
+  `audiobatch_set_source_warnings` in `CMakeLists.txt` adds a
+  stricter warning set to the project's own `src/*.cpp` files only.
   JUCE module sources do not get it,
   and the JUCE headers are included as system headers so their warnings are not reported.
   Several of those flags are Clang-specific, so GCC is not a supported compiler.

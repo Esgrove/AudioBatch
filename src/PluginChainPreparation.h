@@ -1,6 +1,6 @@
 /// Per-file preparation of a hosted plugin chain for offline processing.
-/// Declares prepareChain, which configures the buses, offline mode, saved state, and processing setup
-/// of every plugin for one file, and releasePluginResources, which undoes it.
+/// Declares prepareChain, which configures the buses, offline mode, saved state,
+/// and processing setup of every plugin for one file, and releasePluginResources, which undoes it.
 
 #pragma once
 

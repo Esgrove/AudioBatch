@@ -158,8 +158,8 @@ private:
                 0.01
             );
 
-            // Reaching 0 LUFS would put the true peak at about 0 dBTP, above the ceiling, so the gain stops at the
-            // ceiling.
+            // Reaching 0 LUFS would put the true peak at about 0 dBTP,
+            // above the ceiling, so the gain stops at the ceiling.
             options.targetLufs = 0.0;
             gain = AudioNormalizationService::getNormalizationGain(record, options, errorMessage);
             expect(gain.has_value(), errorMessage);

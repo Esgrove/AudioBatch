@@ -1,6 +1,6 @@
 /// GUI control for choosing the normalization target.
-/// Declares NormalizationTargetControl, a mode selector for peak or loudness normalization
-/// next to a slider for the target level, with both targets persisted in the user settings.
+/// Declares NormalizationTargetControl, a mode selector for peak
+/// or loudness normalization next to a slider for the target level, with both targets persisted in the user settings.
 
 #pragma once
 

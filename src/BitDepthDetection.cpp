@@ -1,6 +1,7 @@
 /// Implementation of the source bit depth detection.
-/// Reads the bit depth from the reader for lossless formats, and for MP3 files searches the ID3v2 tag text
-/// for a bit depth noted by the encoder, since the decoder output depth says nothing about the source.
+/// Reads the bit depth from the reader for lossless formats,
+/// and for MP3 files searches the ID3v2 tag text for a bit depth noted by the encoder,
+/// since the decoder output depth says nothing about the source.
 
 #include "BitDepthDetection.h"
 
