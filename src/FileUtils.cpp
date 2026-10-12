@@ -100,6 +100,19 @@ juce::String existingOutputMessage(const juce::File& outputFile)
     return format("Output file {} already exists. Use force overwrite to replace it.", outputFile.getFileName());
 }
 
+juce::String checkOutputPath(const juce::File& sourceFile, const juce::File& outputFile, const bool overwriteExisting)
+{
+    if (outputFile == sourceFile || !outputFile.exists()) {
+        return {};
+    }
+
+    if (!outputFile.existsAsFile()) {
+        return format("Output path {} is not a file and cannot be replaced.", outputFile.getFileName());
+    }
+
+    return overwriteExisting ? juce::String() : existingOutputMessage(outputFile);
+}
+
 /// Renames the backup of a replaced output back to the output path after a failed commit.
 /// Logs where the previous output is when the rename fails, so it can still be recovered by hand.
 static void restoreOutputBackup(const juce::File& backupFile, const juce::File& outputFile)
@@ -128,15 +141,11 @@ juce::String commitTemporaryOutput(
     const bool replacingSource = outputFile == sourceFile;
     juce::File backupFile;
 
+    if (const auto outputError = checkOutputPath(sourceFile, outputFile, overwriteExisting); outputError.isNotEmpty()) {
+        return outputError;
+    }
+
     if (!replacingSource && outputFile.exists()) {
-        if (!overwriteExisting) {
-            return existingOutputMessage(outputFile);
-        }
-
-        if (!outputFile.existsAsFile()) {
-            return format("Output path {} is not a file and cannot be replaced.", outputFile.getFileName());
-        }
-
         // A rename within the folder is atomic and can be undone,
         // unlike moving the previous output to the trash before the new one is in place.
         // The dot prefix keeps the backup out of folder scans.

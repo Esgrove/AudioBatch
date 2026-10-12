@@ -287,8 +287,10 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
         return failNormalization(file, "File does not exist");
     }
 
-    if (outputFile != file && outputFile.exists() && !options.overwriteExisting) {
-        return failNormalization(file, utils::existingOutputMessage(outputFile));
+    if (const auto outputError = utils::checkOutputPath(file, outputFile, options.overwriteExisting);
+        outputError.isNotEmpty())
+    {
+        return failNormalization(file, outputError);
     }
 
     if (!sourceRecord.isReady()) {

@@ -109,6 +109,28 @@ private:
             expectEquals(existingOutput.loadFileAsString(), juce::String("unrelated"));
         }
 
+        beginTest("A folder at the output path fails before rendering, even with force overwrite");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "folder_output.wav");
+            const auto folder = directory.getChildFile("folder_output.aif");
+            expect(folder.createDirectory());
+
+            AudioNormalizationOptions options;
+            options.overwriteExisting = true;
+            int cancellationChecks = 0;
+            const auto result
+                = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), options, [&] {
+                      ++cancellationChecks;
+                      return false;
+                  });
+
+            expect(result.hasError());
+            expect(result.errorMessage.contains("not a file"), result.errorMessage);
+            expectEquals(cancellationChecks, 0);
+            expect(folder.isDirectory());
+            expect(source.existsAsFile());
+        }
+
         beginTest("A cancelled run leaves the source untouched");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cancelled.aif");
