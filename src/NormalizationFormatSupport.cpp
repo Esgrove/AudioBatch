@@ -199,8 +199,8 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
     // The summary is only shown in GUI dialogs, so plain '\n' line breaks are fine.
     auto message = utils::format(
         "{}\n\n"
-        "Normalization rewrites files in place when they are already AIFF, "
-        "and converts every other supported format to an AIFF file of the same base name. "
+        "Normalization rewrites .aif files in place and converts every other supported file, "
+        "including other AIFF extensions, to a .aif file of the same base name. "
         "Metadata (tags, album art, custom frames) is read from the source via TagLib "
         "and written back to the AIFF output as ID3v2.4.\n\n",
         getNormalizationStatusLine()
