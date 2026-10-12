@@ -117,7 +117,7 @@ static float getInputGain(const AudioAnalysisRecord& record, const PluginProcess
 
 /// Reads `samplesToRead` frames starting at `samplePosition` into the start of `buffer` and applies `inputGain`.
 /// `readBuffer` and `readChannelPointers` are scratch storage reused across blocks.
-/// Returns false when the reader reports a failure, in which case the block holds what was decoded before it.
+/// Returns false when the reader reports a failure, following the rules of utils::readFloatSamples.
 static bool readInputBlock(
     juce::AudioFormatReader& reader,
     juce::AudioBuffer<float>& buffer,
@@ -135,7 +135,8 @@ static bool readInputBlock(
         readChannelPointers[static_cast<std::size_t>(channel)] = readBuffer.getWritePointer(channel);
     }
 
-    const auto readSucceeded = reader.read(readChannelPointers.data(), channelCount, samplePosition, samplesToRead);
+    const auto readSucceeded
+        = utils::readFloatSamples(reader, readChannelPointers.data(), channelCount, samplePosition, samplesToRead);
 
     for (int channel = 0; channel < channelCount; ++channel) {
         buffer.copyFrom(channel, 0, readBuffer, channel, 0, samplesToRead);
