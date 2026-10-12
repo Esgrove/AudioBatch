@@ -294,6 +294,10 @@ void AudioAnalysisCli::attachNegativeOptionValues(juce::ArgumentList& arguments)
             continue;
         }
 
+        if (optionText != "--jobs" && optionText != "--peak" && optionText != "--lufs") {
+            continue;
+        }
+
         arguments.arguments.set(index, {utils::format("{}={}", optionText, next.text)});
         arguments.arguments.remove(index + 1);
     }
