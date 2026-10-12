@@ -6,6 +6,8 @@
 
 #include <JuceHeader.h>
 
+#include <functional>
+
 namespace utils
 {
 /// Moves a file or folder to the OS trash or recycle bin.
@@ -22,19 +24,26 @@ bool deleteFile(const juce::File& file);
 /// Returns the user-facing error for an output path that is already taken by a file other than the source.
 juce::String existingOutputMessage(const juce::File& outputFile);
 
+/// Disposes of a file that a committed output replaces, and returns true when the file is gone.
+using FileDisposer = std::function<bool(const juce::File&)>;
+
 /// Moves a finished temporary output into place next to its source and disposes of the source.
 /// When the output path is the source itself, the source is replaced in place.
 /// Otherwise a different file already at the output path fails with existingOutputMessage,
-/// unless overwriteExisting is set, in which case that file is moved to the system trash first.
-/// After the output is in place, a source with a different path is moved to the system trash,
-/// and when that fails the output is removed again, so no duplicate is left next to the source.
+/// unless overwriteExisting is set, in which case that file is renamed to a hidden backup next to it first.
+/// After the output is in place, a source with a different path is disposed of,
+/// and when that fails the output is removed again and the backup is renamed back,
+/// so the folder is left as it was.
+/// The backup is disposed of last, once everything else succeeded.
+/// `disposeFile` moves files to the system trash unless a caller such as a test passes another function.
 /// Returns an empty string on success, or a user-facing error message.
 /// The temporary file is deleted by its own destructor on failure.
 juce::String commitTemporaryOutput(
     const juce::TemporaryFile& temporaryFile,
     const juce::File& sourceFile,
     const juce::File& outputFile,
-    bool overwriteExisting
+    bool overwriteExisting,
+    const FileDisposer& disposeFile = moveToTrash
 );
 
 /// Returns the extension text trimmed, lowercased, and without the leading dot, for example "mp3".
