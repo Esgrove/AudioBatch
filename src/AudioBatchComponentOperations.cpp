@@ -425,8 +425,8 @@ void AudioBatchComponent::startAnalysis(
     const bool clearResults
 )
 {
-    if (normalizeInProgress) {
-        statusLabel.setText("Normalization in progress", juce::dontSendNotification);
+    if (const auto blockedReason = getFileOperationBlockedReason(); blockedReason.isNotEmpty()) {
+        statusLabel.setText(blockedReason, juce::dontSendNotification);
         return;
     }
 
@@ -503,6 +503,30 @@ void AudioBatchComponent::handleAnalysisPlan(const AnalysisCoordinator::Analysis
 bool AudioBatchComponent::isAnalysisInProgress() const
 {
     return completedResults < expectedResults;
+}
+
+bool AudioBatchComponent::isFileOperationInProgress() const noexcept
+{
+    return normalizeInProgress || pluginProcessingInProgress;
+}
+
+juce::String AudioBatchComponent::getFileOperationBlockedReason() const
+{
+    if (normalizeInProgress) {
+        return "Normalization in progress";
+    }
+
+    if (pluginProcessingInProgress) {
+        return "Plugin processing in progress";
+    }
+
+    return {};
+}
+
+bool AudioBatchComponent::isFileBeingRewritten(const juce::String& fullPath) const
+{
+    const auto activeLabel = fileActivity.getActiveLabel(fullPath);
+    return activeLabel == "Normalizing" || activeLabel == "Processing";
 }
 
 void AudioBatchComponent::showPluginProcessingWarning(const juce::String& message)

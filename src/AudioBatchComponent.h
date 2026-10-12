@@ -57,9 +57,11 @@ public:
     void rescanCurrentRoot();
 
     /// Removes every analyzed file from the table without touching the files on disk.
+    /// Refused while files are normalized or processed, since their results would add rows back.
     void clearAllRecords();
 
     /// Removes the currently selected files from the table without touching the files on disk.
+    /// Files that are being normalized or processed stay in the table.
     void removeSelectedRecords();
 
     /// Reveals the file of the selected row in the platform file manager.
@@ -69,9 +71,12 @@ public:
 
     /// Moves the selected files to the OS trash, optionally asking for confirmation first.
     /// The rows of the files that were trashed are removed from the table.
+    /// Files that are being normalized or processed are skipped,
+    /// because the running operation would write its output back to the same path.
     void moveSelectedRecordsToTrash(bool promptForConfirmation);
 
     /// Forces re-analysis of the currently selected files, bypassing the analysis cache.
+    /// Refused while analysis, normalization, or plugin processing is running.
     void reanalyzeSelectedRecords();
 
     /// Opens the audio-device settings dialog.
@@ -239,6 +244,16 @@ private:
     /// True while analysis results are still expected from the coordinator.
     [[nodiscard]] bool isAnalysisInProgress() const;
 
+    /// True while normalization or plugin processing is rewriting files.
+    [[nodiscard]] bool isFileOperationInProgress() const noexcept;
+
+    /// Returns the reason analysis or a change to the list cannot happen right now
+    /// because files are being normalized or processed, or an empty string when it can.
+    [[nodiscard]] juce::String getFileOperationBlockedReason() const;
+
+    /// True when the file is being normalized or processed right now.
+    [[nodiscard]] bool isFileBeingRewritten(const juce::String& fullPath) const;
+
     /// Creates a reader for the URL and attaches it to the transport, replacing any previous source.
     /// Returns false when no reader could be created, leaving the transport empty.
     bool loadURLIntoTransport(const juce::URL& audioUrl);
@@ -332,7 +347,8 @@ private:
 
     /// Kicks off a background analysis run,
     /// adding pending placeholder rows for files that are not already cached.
-    /// Refuses to start while a normalization pass is running.
+    /// Refuses to start while normalization or plugin processing is running,
+    /// since the analysis would read files that are being replaced or moved to the trash.
     void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
 
     /// Distributes leftover table width between the name and path columns while preserving their current ratio.
