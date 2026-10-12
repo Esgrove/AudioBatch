@@ -133,6 +133,52 @@ public:
             expectEquals(source.loadFileAsString(), juce::String("source"));
         }
 
+        beginTest("Force overwrite replaces the existing output and disposes of it and the source");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.wav");
+            const auto output = directory.getChildFile("song.aif");
+            expect(source.replaceWithText("source"));
+            expect(output.replaceWithText("previous"));
+
+            const juce::TemporaryFile temporaryFile(output);
+            expect(temporaryFile.getFile().replaceWithText("new"));
+
+            juce::StringArray disposedContents;
+            const auto error
+                = utils::commitTemporaryOutput(temporaryFile, source, output, true, [&](const juce::File& file) {
+                      disposedContents.add(file.loadFileAsString());
+                      return file.deleteFile();
+                  });
+
+            expectEquals(error, juce::String());
+            expectEquals(output.loadFileAsString(), juce::String("new"));
+            expect(!source.exists());
+            expectEquals(disposedContents.joinIntoString(","), juce::String("source,previous"));
+            expectEquals(output.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 1);
+        }
+
+        beginTest("A forced commit that cannot dispose of the source restores the previous output");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.wav");
+            const auto output = directory.getChildFile("song.aif");
+            expect(source.replaceWithText("source"));
+            expect(output.replaceWithText("previous"));
+
+            const juce::TemporaryFile temporaryFile(output);
+            expect(temporaryFile.getFile().replaceWithText("new"));
+
+            const auto error = utils::commitTemporaryOutput(temporaryFile, source, output, true, [](const juce::File&) {
+                return false;
+            });
+
+            expect(error.contains("original audio file"), error);
+            expectEquals(output.loadFileAsString(), juce::String("previous"));
+            expectEquals(source.loadFileAsString(), juce::String("source"));
+            expectEquals(output.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 2);
+        }
+
         beginTest("Names match case-insensitively and CSV fields are escaped");
         {
             expectEquals(utils::normalizedToken("  JSON "), juce::String("json"));

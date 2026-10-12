@@ -100,14 +100,33 @@ juce::String existingOutputMessage(const juce::File& outputFile)
     return format("Output file {} already exists. Use force overwrite to replace it.", outputFile.getFileName());
 }
 
+/// Renames the backup of a replaced output back to the output path after a failed commit.
+/// Logs where the previous output is when the rename fails, so it can still be recovered by hand.
+static void restoreOutputBackup(const juce::File& backupFile, const juce::File& outputFile)
+{
+    if (backupFile == juce::File() || !backupFile.existsAsFile()) {
+        return;
+    }
+
+    if (!backupFile.moveFileTo(outputFile)) {
+        logError(
+            "Could not restore the previous output {} from its backup {}",
+            outputFile.getFullPathName().quoted(),
+            backupFile.getFullPathName().quoted()
+        );
+    }
+}
+
 juce::String commitTemporaryOutput(
     const juce::TemporaryFile& temporaryFile,
     const juce::File& sourceFile,
     const juce::File& outputFile,
-    const bool overwriteExisting
+    const bool overwriteExisting,
+    const FileDisposer& disposeFile
 )
 {
     const bool replacingSource = outputFile == sourceFile;
+    juce::File backupFile;
 
     if (!replacingSource && outputFile.exists()) {
         if (!overwriteExisting) {
@@ -118,19 +137,34 @@ juce::String commitTemporaryOutput(
             return format("Output path {} is not a file and cannot be replaced.", outputFile.getFileName());
         }
 
-        if (!moveToTrash(outputFile)) {
-            return "Could not move the existing output file to the system trash";
+        // A rename within the folder is atomic and can be undone,
+        // unlike moving the previous output to the trash before the new one is in place.
+        // The dot prefix keeps the backup out of folder scans.
+        backupFile = outputFile.getSiblingFile("." + outputFile.getFileName() + ".backup").getNonexistentSibling(false);
+
+        if (!outputFile.moveFileTo(backupFile)) {
+            return "Could not move the existing output file aside";
         }
     }
 
     if (!temporaryFile.overwriteTargetFileWithTemporary()) {
+        restoreOutputBackup(backupFile, outputFile);
         return replacingSource ? "Could not replace the original file with the new audio"
                                : "Could not move the new audio file into place";
     }
 
-    if (!replacingSource && sourceFile.existsAsFile() && !moveToTrash(sourceFile)) {
+    if (!replacingSource && sourceFile.existsAsFile() && !disposeFile(sourceFile)) {
         deleteFile(outputFile);
+        restoreOutputBackup(backupFile, outputFile);
         return "Could not move the original audio file to the system trash";
+    }
+
+    if (backupFile.existsAsFile() && !disposeFile(backupFile)) {
+        // The new output and the source are already settled, so only the leftover backup is reported.
+        logWarn(
+            "Could not move the replaced output to the system trash, it was kept as {}",
+            backupFile.getFullPathName().quoted()
+        );
     }
 
     return {};
