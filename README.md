@@ -138,7 +138,8 @@ Moving them to the trash fails instead, and so do normalization and processing t
 Keyboard shortcuts in the results list:
 
 - `Delete` or `Backspace` removes the selected rows from the list.
-- `Ctrl-Backspace` moves the selected files to the system trash.
+- `Cmd-Backspace` or `Ctrl-Backspace` moves the selected files to the system trash.
+  The menu shows `Cmd-Backspace` on macOS and `Ctrl-Backspace` on other platforms.
 - `Cmd-R` or `Ctrl-R` reveals the selected file in Finder or Explorer.
 - `F5` refreshes the analysis for all root folders.
 - `Space` starts or stops the background analysis.
