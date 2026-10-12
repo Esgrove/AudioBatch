@@ -110,6 +110,7 @@ private:
 
             const auto result = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), {});
             expect(result.hasError());
+            expect(!result.committed);
             expect(result.errorMessage.contains("already exists"), result.errorMessage);
             expect(source.existsAsFile());
             expectEquals(existingOutput.loadFileAsString(), juce::String("unrelated"));

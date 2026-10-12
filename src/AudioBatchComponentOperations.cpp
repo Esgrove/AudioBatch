@@ -240,15 +240,20 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
     ++normalizedResultsCompleted;
     fileActivity.clearActive(result.fullPath);
 
-    if (result.succeeded) {
-        if (result.notice.isNotEmpty()) {
-            fileActivity.setMessage(result.analysisRecord.fullPath, {.text = result.notice, .isError = false});
-        }
+    if (result.succeeded && result.notice.isNotEmpty()) {
+        fileActivity.setMessage(result.analysisRecord.fullPath, {.text = result.notice, .isError = false});
+    }
 
+    // A committed output replaces its source even when its re-analysis failed,
+    // since a converted source is already in the trash.
+    if (result.committed) {
         replaceRecordAfterOperation(result.file, result.analysisRecord);
-    } else {
+    }
+
+    if (!result.succeeded) {
         normalizationFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
-        fileActivity.setMessage(result.fullPath, {.text = result.errorMessage, .isError = true});
+        const auto& failedPath = result.committed ? result.analysisRecord.fullPath : result.fullPath;
+        fileActivity.setMessage(failedPath, {.text = result.errorMessage, .isError = true});
         resultsTable.repaint();
     }
 
@@ -617,17 +622,22 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
     ++processedResultsCompleted;
     fileActivity.clearActive(result.originalFullPath);
 
-    if (result.succeeded) {
-        if (result.notice.isNotEmpty()) {
-            fileActivity.setMessage(result.analysisRecord.fullPath, {.text = result.notice, .isError = false});
-        }
+    if (result.succeeded && result.notice.isNotEmpty()) {
+        fileActivity.setMessage(result.analysisRecord.fullPath, {.text = result.notice, .isError = false});
+    }
 
+    // A committed output replaces its source even when its re-analysis failed,
+    // since a converted source is already in the trash.
+    if (result.committed) {
         replaceRecordAfterOperation(result.originalFile, result.analysisRecord);
         // The custom gain is baked into the processed audio, so the new output starts without one.
         analysisCache.storeCustomGain(result.analysisRecord.file, 0.0f, false);
-    } else {
+    }
+
+    if (!result.succeeded) {
         processingFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
-        fileActivity.setMessage(result.originalFullPath, {.text = result.errorMessage, .isError = true});
+        const auto& failedPath = result.committed ? result.analysisRecord.fullPath : result.originalFullPath;
+        fileActivity.setMessage(failedPath, {.text = result.errorMessage, .isError = true});
         resultsTable.repaint();
         utils::logError("Plugin processing failed for {}: {}", result.originalFullPath.quoted(), result.errorMessage);
     }

@@ -96,6 +96,12 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
         normalizationOptions.overwriteExisting = options.force;
         const auto normalization = AudioNormalizationService::normalizeFile(result, normalizationOptions);
 
+        // A converted original was moved to the trash, so its cached row is no longer needed,
+        // even when the re-analysis of the committed output failed.
+        if (normalization.committed && normalization.analysisRecord.fullPath != result.fullPath) {
+            cache.removeAnalysis(result.file);
+        }
+
         if (normalization.hasError()) {
             ++failureCount;
             utils::logError("{}: {}", result.file.getFullPathName().quoted(), normalization.errorMessage);
@@ -103,11 +109,6 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
         }
 
         cache.storeAnalysis(normalization.analysisRecord);
-
-        // A converted original was moved to the trash, so its cached row is no longer needed.
-        if (normalization.analysisRecord.fullPath != result.fullPath) {
-            cache.removeAnalysis(result.file);
-        }
 
         normalizedResults.push_back(normalization.analysisRecord);
     }
