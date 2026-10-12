@@ -434,6 +434,24 @@ public:
             expectEquals(source.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 1);
         }
 
+        beginTest("Cancellation stops changed-source analysis before preparing the plugin chain");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cancelled_refresh.aif");
+            auto staleRecord = AudioAnalysisService::analyzeFile(source);
+            staleRecord.modifiedTimeMs -= 1000;
+            TestPlugin plugin({});
+            const auto cancelledAnalysis = AudioAnalysisService::analyzeFile(source, [] { return true; });
+            const auto result
+                = PluginProcessingService::processFile(staleRecord, makeOptions({&plugin}), {&plugin}, [] {
+                      return true;
+                  });
+
+            expect(result.hasError());
+            expectEquals(result.errorMessage, cancelledAnalysis.errorMessage);
+            expect(!result.committed);
+            expectEquals(plugin.getWidestBufferChannels(), 0);
+        }
+
         beginTest("Normalization before the chain follows the selected peak target");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "pre_peak.aif");
