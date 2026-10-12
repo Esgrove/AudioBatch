@@ -388,6 +388,8 @@ bool AnalysisCache::openUnlocked()
 
 bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& record)
 {
+    // The file system is queried before taking the lock, so a slow network share does not block other cache calls.
+    auto fileRecord = AudioAnalysisRecord::fromFile(file);
     const juce::ScopedLock lock(mutex);
 
     if (database == nullptr && !openUnlocked()) {
@@ -420,14 +422,14 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
     const auto cachedModifiedTime = sqlite3_column_int64(statement, analysis_column::modifiedTimeMs);
     const auto cachedVersion = sqlite3_column_int(statement, analysis_column::analysisVersion);
 
-    if (cachedFileSize != file.getSize() || cachedModifiedTime != file.getLastModificationTime().toMilliseconds()
+    if (cachedFileSize != fileRecord.fileSize || cachedModifiedTime != fileRecord.modifiedTimeMs
         || cachedVersion != analysisVersion)
     {
         sqlite3_finalize(statement);
         return false;
     }
 
-    record = AudioAnalysisRecord::fromFile(file);
+    record = std::move(fileRecord);
     record.fileName = columnText(statement, analysis_column::fileName);
     record.formatName = columnText(statement, analysis_column::formatName);
     record.lengthInSamples = sqlite3_column_int64(statement, analysis_column::lengthInSamples);
@@ -732,6 +734,9 @@ bool AnalysisCache::removeRowVersion(
 
 bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& waveformData)
 {
+    // The file system is queried before taking the lock, so a slow network share does not block other cache calls.
+    const auto fileSize = file.getSize();
+    const auto modifiedTimeMs = file.getLastModificationTime().toMilliseconds();
     const juce::ScopedLock lock(mutex);
 
     waveformData.reset();
@@ -763,8 +768,8 @@ bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& w
     const auto cachedWaveformVersion = sqlite3_column_int(statement, 3);
     const auto cachedAnalysisVersion = sqlite3_column_int(statement, 4);
 
-    if (cachedFileSize != file.getSize() || cachedModifiedTime != file.getLastModificationTime().toMilliseconds()
-        || cachedWaveformVersion != waveformVersion || cachedAnalysisVersion != analysisVersion)
+    if (cachedFileSize != fileSize || cachedModifiedTime != modifiedTimeMs || cachedWaveformVersion != waveformVersion
+        || cachedAnalysisVersion != analysisVersion)
     {
         sqlite3_finalize(statement);
         return false;
@@ -777,6 +782,9 @@ bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& w
 
 bool AnalysisCache::storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData)
 {
+    // The file system is queried before taking the lock, so a slow network share does not block other cache calls.
+    const auto fileSize = file.getSize();
+    const auto modifiedTimeMs = file.getLastModificationTime().toMilliseconds();
     const juce::ScopedLock lock(mutex);
 
     if (database == nullptr && !openUnlocked()) {
@@ -803,8 +811,8 @@ bool AnalysisCache::storeWaveformData(const juce::File& file, const juce::Memory
     sqlite3_bind_int(statement, waveform_parameter::waveformVersion, waveformVersion);
     sqlite3_bind_int64(statement, waveform_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
     bindText(statement, waveform_parameter::filePath, normalizedPath(file));
-    sqlite3_bind_int64(statement, waveform_parameter::fileSize, file.getSize());
-    sqlite3_bind_int64(statement, waveform_parameter::modifiedTimeMs, file.getLastModificationTime().toMilliseconds());
+    sqlite3_bind_int64(statement, waveform_parameter::fileSize, fileSize);
+    sqlite3_bind_int64(statement, waveform_parameter::modifiedTimeMs, modifiedTimeMs);
     sqlite3_bind_int(statement, waveform_parameter::analysisVersion, analysisVersion);
 
     const auto completed = stepToCompletion(statement);
