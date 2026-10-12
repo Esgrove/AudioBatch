@@ -62,6 +62,10 @@ public:
     /// Removes the currently selected files from the table without touching the files on disk.
     void removeSelectedRecords();
 
+    /// Moves the selected files to the OS trash, optionally asking for confirmation first.
+    /// The rows of the files that were trashed are removed from the table.
+    void moveSelectedRecordsToTrash(bool promptForConfirmation);
+
     /// Forces re-analysis of the currently selected files, bypassing the analysis cache.
     void reanalyzeSelectedRecords();
 
@@ -237,9 +241,6 @@ private:
     /// Starts peak normalization for the selected files
     /// after checking that no other pass is running and that every selected format is supported.
     void normalizeSelectedRecords();
-
-    /// Moves the selected files to the OS trash, optionally asking for confirmation first.
-    void moveSelectedRecordsToTrash(bool promptForConfirmation);
 
     /// True when the table has at least one selected row.
     [[nodiscard]] bool hasSelectedRecords() const;

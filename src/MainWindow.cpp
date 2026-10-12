@@ -28,6 +28,7 @@ enum MenuItemId : std::uint8_t {
     clearChainMenuItemId,
     scanPluginsMenuItemId,
     addFolderMenuItemId,
+    moveSelectedToTrashMenuItemId,
 };
 
 /// Smallest width in pixels the main window can be resized to,
@@ -66,6 +67,9 @@ MainWindow::MainWindow(const juce::String& name) :
     logStartupCheckpoint("creating main content component");
     setContentOwned(new AudioBatchComponent(), true);
     logStartupCheckpoint("main content component created");
+
+    commandManager.registerAllCommandsForTarget(this);
+    commandManager.setFirstCommandTarget(this);
 
 #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu(this);
@@ -145,10 +149,11 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
         case 1:
             menu.addItem(chooseFolderMenuItemId, "Choose Folder...");
             menu.addItem(addFolderMenuItemId, "Add Folder...");
-            menu.addItem(rescanMenuItemId, "Rescan");
+            menu.addCommandItem(&commandManager, rescanMenuItemId, "Rescan");
             menu.addSeparator();
             menu.addItem(reanalyzeSelectedMenuItemId, "Re-analyze Selected");
-            menu.addItem(removeSelectedMenuItemId, "Remove Selected from List");
+            menu.addCommandItem(&commandManager, removeSelectedMenuItemId, "Remove Selected from List");
+            menu.addCommandItem(&commandManager, moveSelectedToTrashMenuItemId, "Move Selected to Trash");
             menu.addItem(clearFilesMenuItemId, "Clear All Files");
             break;
         case 2:
@@ -171,10 +176,11 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
         case 0:
             menu.addItem(chooseFolderMenuItemId, "Choose Folder...");
             menu.addItem(addFolderMenuItemId, "Add Folder...");
-            menu.addItem(rescanMenuItemId, "Rescan");
+            menu.addCommandItem(&commandManager, rescanMenuItemId, "Rescan");
             menu.addSeparator();
             menu.addItem(reanalyzeSelectedMenuItemId, "Re-analyze Selected");
-            menu.addItem(removeSelectedMenuItemId, "Remove Selected from List");
+            menu.addCommandItem(&commandManager, removeSelectedMenuItemId, "Remove Selected from List");
+            menu.addCommandItem(&commandManager, moveSelectedToTrashMenuItemId, "Move Selected to Trash");
             menu.addItem(clearFilesMenuItemId, "Clear All Files");
             menu.addSeparator();
             menu.addItem(quitMenuItemId, "Quit");
@@ -210,14 +216,13 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
         case addFolderMenuItemId:
             getAudioBatch().addRootFolder();
             break;
-        case rescanMenuItemId:
-            getAudioBatch().rescanCurrentRoot();
-            break;
         case clearFilesMenuItemId:
             getAudioBatch().clearAllRecords();
             break;
+        case rescanMenuItemId:
         case removeSelectedMenuItemId:
-            getAudioBatch().removeSelectedRecords();
+        case moveSelectedToTrashMenuItemId:
+            // Handled by perform, the menu invokes the command before it reports the choice here.
             break;
         case reanalyzeSelectedMenuItemId:
             getAudioBatch().reanalyzeSelectedRecords();
@@ -264,6 +269,56 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
         default:
             handlePluginChoiceMenuItem(menuItemID);
             break;
+    }
+}
+
+juce::ApplicationCommandTarget* MainWindow::getNextCommandTarget()
+{
+    return nullptr;
+}
+
+void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
+{
+    commands.addArray({rescanMenuItemId, removeSelectedMenuItemId, moveSelectedToTrashMenuItemId});
+}
+
+void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::ApplicationCommandInfo& result)
+{
+    constexpr auto fileCategory = "File";
+
+    switch (commandID) {
+        case rescanMenuItemId:
+            result.setInfo("Rescan", "Re-runs analysis for all root folders", fileCategory, 0);
+            result.addDefaultKeypress(juce::KeyPress::F5Key, juce::ModifierKeys::noModifiers);
+            break;
+        case removeSelectedMenuItemId:
+            result.setInfo("Remove Selected from List", "Removes the selected files from the list", fileCategory, 0);
+            result.addDefaultKeypress(juce::KeyPress::deleteKey, juce::ModifierKeys::noModifiers);
+            result.addDefaultKeypress(juce::KeyPress::backspaceKey, juce::ModifierKeys::noModifiers);
+            break;
+        case moveSelectedToTrashMenuItemId:
+            result.setInfo("Move Selected to Trash", "Moves the selected files to the system trash", fileCategory, 0);
+            result.addDefaultKeypress(juce::KeyPress::backspaceKey, juce::ModifierKeys::ctrlModifier);
+            break;
+        default:
+            break;
+    }
+}
+
+bool MainWindow::perform(const InvocationInfo& info)
+{
+    switch (info.commandID) {
+        case rescanMenuItemId:
+            getAudioBatch().rescanCurrentRoot();
+            return true;
+        case removeSelectedMenuItemId:
+            getAudioBatch().removeSelectedRecords();
+            return true;
+        case moveSelectedToTrashMenuItemId:
+            getAudioBatch().moveSelectedRecordsToTrash(true);
+            return true;
+        default:
+            return false;
     }
 }
 
