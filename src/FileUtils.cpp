@@ -3,6 +3,13 @@
 /// with a progress sink that refuses deletes the shell would perform permanently,
 /// and juce::File::moveToTrash elsewhere.
 
+// _WIN32_IE selects which Windows shell APIs the SDK headers declare.
+// JUCE/modules/juce_core/native/juce_BasicNativeHeaders.h defaults it to 0x0501.
+// IFileOperation needs 0x0700, so set it before FileUtils.h includes JUCE.
+#if defined(_WIN32) && !defined(_WIN32_IE)
+#define _WIN32_IE 0x0700
+#endif
+
 #include "FileUtils.h"
 
 #include "Log.h"
