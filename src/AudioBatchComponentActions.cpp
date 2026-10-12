@@ -61,6 +61,11 @@ void AudioBatchComponent::clearAllRecords()
         return;
     }
 
+    if (const auto blockedReason = getFileOperationBlockedReason(); blockedReason.isNotEmpty()) {
+        statusLabel.setText(blockedReason, juce::dontSendNotification);
+        return;
+    }
+
     analysisResults.clear();
     fileActivity.clearAllActive();
     fileActivity.clearAllMessages();
@@ -80,7 +85,13 @@ void AudioBatchComponent::clearAllRecords()
 
 void AudioBatchComponent::removeSelectedRecords()
 {
-    const auto selectedPaths = getSelectedRecordPaths();
+    auto selectedPaths = getSelectedRecordPaths();
+    // A file being rewritten keeps its row, which the running operation updates with its output.
+    for (int index = selectedPaths.size(); --index >= 0;) {
+        if (isFileBeingRewritten(selectedPaths[index])) {
+            selectedPaths.remove(index);
+        }
+    }
 
     if (selectedPaths.isEmpty()) {
         return;
@@ -98,7 +109,7 @@ void AudioBatchComponent::removeSelectedRecords()
 
 void AudioBatchComponent::reanalyzeSelectedRecords()
 {
-    if (isAnalysisInProgress() || normalizeInProgress) {
+    if (isAnalysisInProgress() || isFileOperationInProgress()) {
         return;
     }
 
@@ -156,7 +167,7 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
     menu.addItem(revealFileMenuItemId, utils::revealInFileManagerLabel(), record.file.exists());
     menu.addItem(openParentDirectoryMenuItemId, "Open Parent Folder", parentDirectory.isDirectory());
     menu.addSeparator();
-    menu.addItem(reanalyzeMenuItemId, "Re-analyze Selected", !isAnalysisInProgress() && !normalizeInProgress);
+    menu.addItem(reanalyzeMenuItemId, "Re-analyze Selected", !isAnalysisInProgress() && !isFileOperationInProgress());
     menu.addItem(
         normalizeMenuItemId, utils::format("Normalize to {}", normalizationTargetControl.describeTarget()), canNormalize
     );
@@ -274,7 +285,8 @@ void AudioBatchComponent::moveSelectedRecordsToTrash(const bool promptForConfirm
 
         const auto& record = analysisResults[static_cast<std::size_t>(rowNumber)];
 
-        if (!record.file.exists()) {
+        // The running operation would write its output back to the path of a file being rewritten.
+        if (!record.file.exists() || isFileBeingRewritten(record.fullPath)) {
             continue;
         }
 
