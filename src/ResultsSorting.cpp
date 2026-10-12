@@ -9,6 +9,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <compare>
+#include <concepts>
 #include <utility>
 
 SecondarySortTableHeader::SecondarySortTableHeader(SecondarySortCallback secondarySortRequestedCallback) :
@@ -65,31 +67,35 @@ static int compareNatural(const juce::String& left, const juce::String& right)
     return left.compareNatural(right);
 }
 
-/// Three-way comparison of peak values by magnitude, ignoring polarity.
-template<typename Value>
-int comparePeaks(Value left, Value right)
+/// Three-way comparison of floating point values using the IEEE total order.
+/// Only identical values compare equal, because a tolerance based equality is not transitive
+/// and would break the strict weak ordering that std::ranges::sort requires.
+template<std::floating_point Value>
+int compareValues(const Value left, const Value right)
 {
-    const auto leftMagnitude = std::abs(left);
-    const auto rightMagnitude = std::abs(right);
+    const auto ordering = std::strong_order(left, right);
 
-    if (juce::approximatelyEqual(leftMagnitude, rightMagnitude)) {
-        return 0;
+    if (ordering < 0) {
+        return -1;
     }
 
-    return leftMagnitude < rightMagnitude ? -1 : 1;
+    return ordering > 0 ? 1 : 0;
 }
 
-/// Three-way comparison by average bitrate, treating nearly equal bitrates as equal.
+/// Three-way comparison of peak values by magnitude, ignoring polarity.
+template<std::floating_point Value>
+int comparePeaks(const Value left, const Value right)
+{
+    return compareValues(std::abs(left), std::abs(right));
+}
+
+/// Three-way comparison by average bitrate.
 static int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
 {
     const auto leftBitrate = AudioAnalysisService::getAverageBitrateKbps(lhs);
     const auto rightBitrate = AudioAnalysisService::getAverageBitrateKbps(rhs);
 
-    if (juce::approximatelyEqual(leftBitrate, rightBitrate)) {
-        return 0;
-    }
-
-    return leftBitrate < rightBitrate ? -1 : 1;
+    return compareValues(leftBitrate, rightBitrate);
 }
 
 /// Three-way comparison by sample rate.
@@ -116,11 +122,7 @@ static int compareLoudness(const double left, const double right)
         return leftIsNegativeInfinity ? -1 : 1;
     }
 
-    if (juce::approximatelyEqual(left, right)) {
-        return 0;
-    }
-
-    return left < right ? -1 : 1;
+    return compareValues(left, right);
 }
 
 int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, const int columnId)
@@ -165,10 +167,7 @@ int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
             if (!lhs.hasCustomGain) {
                 return 0;
             }
-            if (juce::approximatelyEqual(lhs.customGainDb, rhs.customGainDb)) {
-                return 0;
-            }
-            return lhs.customGainDb < rhs.customGainDb ? -1 : 1;
+            return compareValues(lhs.customGainDb, rhs.customGainDb);
         }
 
         case AudioFileTableModel::columnStatus:
