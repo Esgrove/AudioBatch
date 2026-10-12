@@ -122,27 +122,10 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
             continue;
         }
 
-        if (!record.file.existsAsFile()) {
-            record.status = AudioAnalysisStatus::failed;
-            record.errorMessage = "File does not exist";
-            utils::logError("Analysis failed for {}: {}", record.fullPath.quoted(), record.errorMessage);
-            resultsChanged = true;
-            continue;
-        }
-
-        auto analyzedRecord = AudioAnalysisService::analyzeFile(record.file);
-
-        // An unchanged file keeps the custom gain the user set for it.
-        if (float customGainDb = 0.0f; analysisCache.getCustomGain(
-                record.file, analyzedRecord.fileSize, analyzedRecord.modifiedTimeMs, customGainDb
-            ))
-        {
-            analyzedRecord.customGainDb = customGainDb;
-            analyzedRecord.hasCustomGain = true;
-        }
-
-        analysisCache.storeAnalysis(analyzedRecord);
-        record = std::move(analyzedRecord);
+        record.status = AudioAnalysisStatus::failed;
+        record.errorMessage = record.file.existsAsFile() ? "Analysis did not finish. Re-analyze the file to try again."
+                                                         : "File does not exist";
+        utils::logWarn("Analysis failed for {}: {}", record.fullPath.quoted(), record.errorMessage);
         resultsChanged = true;
     }
 
@@ -169,8 +152,15 @@ void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record
         return;
     }
 
-    ++completedResults;
     fileActivity.clearActive(record.fullPath);
+
+    // The expected count already went down when the row was removed.
+    if (pathsRemovedDuringAnalysis.contains(record.fullPath)) {
+        updateStatusLabel();
+        return;
+    }
+
+    ++completedResults;
 
     if (!record.file.exists()) {
         updateStatusLabel();
@@ -317,7 +307,8 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int
     }
 
     analysisRunning = false;
-    expectedResults = totalFiles;
+    expectedResults = juce::jmin(expectedResults, totalFiles);
+    reconcilePendingAnalysisResults();
 
     // The plan handler already reported that no files were found.
     if (totalFiles == 0) {
@@ -325,7 +316,6 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int
         return;
     }
 
-    reconcilePendingAnalysisResults();
     updateStatusLabel();
 
     const auto elapsedMs = juce::Time::getMillisecondCounterHiRes() - analysisStartedAtMs;
@@ -446,6 +436,25 @@ void AudioBatchComponent::startAnalysis(
     options.inputPaths = inputPaths;
     options.recursive = recursive;
     options.refresh = forceRefresh;
+
+    // Starting a run cancels the running one, whose placeholder rows would then never get a result.
+    if (!clearResults && analysisRunning) {
+        for (const auto& path : currentAnalysisOptions.inputPaths) {
+            options.inputPaths.addIfNotAlreadyThere(path);
+        }
+
+        options.recursive = options.recursive || currentAnalysisOptions.recursive;
+        options.refresh = options.refresh || currentAnalysisOptions.refresh;
+
+        // A file the user adds again is wanted back in the table.
+        for (const auto& path : inputPaths) {
+            pathsRemovedDuringAnalysis.erase(path.getFullPathName());
+        }
+    } else {
+        pathsRemovedDuringAnalysis.clear();
+    }
+
+    currentAnalysisOptions = options;
 
     analysisStartedAtMs = juce::Time::getMillisecondCounterHiRes();
     completedResults = 0;

@@ -66,6 +66,14 @@ void AudioBatchComponent::clearAllRecords()
         return;
     }
 
+    // Results of a run still in progress would add the rows back.
+    if (analysisRunning) {
+        analysisCoordinator.cancelAndWait();
+        analysisRunId = -1;
+        analysisRunning = false;
+    }
+
+    pathsRemovedDuringAnalysis.clear();
     analysisResults.clear();
     fileActivity.clearAllActive();
     fileActivity.clearAllMessages();
@@ -99,10 +107,6 @@ void AudioBatchComponent::removeSelectedRecords()
 
     const auto selectedRows = resultsTable.getSelectedRows();
     const int fallbackRow = selectedRows.isEmpty() ? 0 : selectedRows[0];
-
-    for (const auto& path : selectedPaths) {
-        fileActivity.clearActive(path);
-    }
 
     removeRecordsByPath(selectedPaths, fallbackRow);
 }
@@ -390,7 +394,25 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
     const auto currentFileRemoved
         = currentAudioFile.exists() && removedPaths.contains(currentAudioFile.getFullPathName());
 
+    int removedPendingCount = 0;
+
     for (const auto& removedPath : removedPaths) {
+        if (analysisRunning) {
+            const auto activeLabel = fileActivity.getActiveLabel(removedPath);
+            const auto rowIndex = findRecordIndex(removedPath);
+            const auto pending = activeLabel == "Waiting" || activeLabel == "Analyzing"
+                || (rowIndex >= 0
+                    && analysisResults[static_cast<std::size_t>(rowIndex)].status == AudioAnalysisStatus::pending);
+
+            if (pending) {
+                ++removedPendingCount;
+            }
+
+            // A carried over run could deliver a result for a finished row again, so every removed path is kept.
+            pathsRemovedDuringAnalysis.insert(removedPath);
+        }
+
+        fileActivity.clearActive(removedPath);
         fileActivity.clearMessage(removedPath);
     }
 
@@ -402,7 +424,8 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
         analysisResults.end()
     );
 
-    expectedResults = juce::jmax(0, expectedResults - removedPaths.size());
+    // Only rows still waiting for a result lower the expected count, since finished rows were already counted.
+    expectedResults = juce::jmax(0, expectedResults - removedPendingCount);
     completedResults = juce::jmin(completedResults, expectedResults);
 
     if (currentFileRemoved) {

@@ -21,6 +21,7 @@
 
 #include <map>
 #include <memory>
+#include <set>
 #include <thread>
 #include <vector>
 
@@ -57,7 +58,8 @@ public:
     void rescanCurrentRoot();
 
     /// Removes every analyzed file from the table without touching the files on disk.
-    /// Refused while files are normalized or processed, since their results would add rows back.
+    /// Cancels a running analysis, and is refused while files are normalized or processed,
+    /// since their results would add rows back.
     void clearAllRecords();
 
     /// Removes the currently selected files from the table without touching the files on disk.
@@ -296,7 +298,8 @@ private:
     );
 
     /// Resolves rows still marked pending or active after a run completes,
-    /// falling back to the cache or a synchronous re-analysis so no row is left in a stale state.
+    /// from the cache when possible and otherwise as failed, so no row is left waiting.
+    /// Never decodes audio, because it runs on the message thread.
     void reconcilePendingAnalysisResults();
 
     /// Re-sorts the results, refreshes the table, and selects the given paths again.
@@ -308,6 +311,8 @@ private:
     void replaceRecordAfterOperation(const juce::File& originalFile, const AudioAnalysisRecord& newRecord);
 
     /// Removes trashed files from the table and keeps selection and preview state coherent.
+    /// Clears the activity labels and messages of the removed files,
+    /// and while analysis runs, makes sure their results do not add the rows back.
     void removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow);
 
     /// Opens the selected file's parent folder in the platform file manager.
@@ -347,6 +352,8 @@ private:
 
     /// Kicks off a background analysis run,
     /// adding pending placeholder rows for files that are not already cached.
+    /// A run that keeps the results replaces a running one, so it also takes over the inputs of that run,
+    /// which would otherwise leave its placeholder rows waiting forever.
     /// Refuses to start while normalization or plugin processing is running,
     /// since the analysis would read files that are being replaced or moved to the trash.
     void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
@@ -429,6 +436,12 @@ private:
     bool analysisRunning = false;
     /// True once the current run's plan arrived, so the status shows progress instead of the folder scan.
     bool analysisPlanReceived = false;
+    /// Options of the current analysis run.
+    /// A run that keeps the results and replaces a running one carries these inputs over.
+    AudioAnalysisOptions currentAnalysisOptions;
+    /// Full paths of the rows removed while analysis was running.
+    /// Their results are ignored, so a running or carried over run does not add the rows back.
+    std::set<juce::String> pathsRemovedDuringAnalysis;
     /// True when the current run replaces the results list, which picks the message shown when no files are found.
     bool analysisReplacesResults = false;
     int normalizedResultsCompleted = 0;
