@@ -252,7 +252,8 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
     }
 
     // The gain comes from the analyzed peak, so a file that changed since its analysis is measured again first.
-    const auto record = sourceRecord.matchesFileOnDisk() ? sourceRecord : AudioAnalysisService::analyzeFile(file);
+    const auto record
+        = sourceRecord.matchesFileOnDisk() ? sourceRecord : AudioAnalysisService::analyzeFile(file, isCancelled);
 
     if (record.hasError()) {
         return failNormalization(file, record.errorMessage);
@@ -285,7 +286,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
         result.file = file;
         result.fileName = file.getFileName();
         result.fullPath = file.getFullPathName();
-        result.analysisRecord = AudioAnalysisService::analyzeFile(file);
+        result.analysisRecord = AudioAnalysisService::analyzeFile(file, isCancelled);
         result.succeeded = !result.analysisRecord.hasError();
 
         if (!result.succeeded) {

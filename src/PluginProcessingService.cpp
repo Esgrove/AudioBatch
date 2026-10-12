@@ -440,9 +440,13 @@ static juce::String writeFinalOutput(
 /// Returns the record unchanged when the file still matches it on disk,
 /// otherwise analyzes the file again, so the input gain is never computed from an outdated peak.
 /// The custom gain is dropped for a changed file, since it was set for the previous version of the file.
-static AudioAnalysisRecord refreshIfChanged(const AudioAnalysisRecord& record)
+/// The analysis stops when isCancelled returns true, and the returned record then carries the cancellation error.
+static AudioAnalysisRecord refreshIfChanged(
+    const AudioAnalysisRecord& record,
+    const PluginProcessingService::CancellationCheck& isCancelled
+)
 {
-    return record.matchesFileOnDisk() ? record : AudioAnalysisService::analyzeFile(record.file);
+    return record.matchesFileOnDisk() ? record : AudioAnalysisService::analyzeFile(record.file, isCancelled);
 }
 
 /// Prepares the chain, renders the whole file through it into an unquantized 32-bit float WAV file,
@@ -567,7 +571,7 @@ PluginProcessingResult PluginProcessingService::processFile(
         return fail(file, inputError);
     }
 
-    const auto record = refreshIfChanged(sourceRecord);
+    const auto record = refreshIfChanged(sourceRecord, isCancelled);
 
     if (record.hasError()) {
         return fail(file, record.errorMessage);

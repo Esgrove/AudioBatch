@@ -225,6 +225,38 @@ private:
             expectWithinAbsoluteError(result.analysisRecord.integratedLufs, fixtureLoudness - fixturePeakDecibels, 0.1);
         }
 
+        beginTest("Cancellation stops changed-source analysis before an in-place no-op");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cancelled_refresh.aif");
+            auto staleRecord = AudioAnalysisService::analyzeFile(source);
+            juce::MemoryBlock originalBytes;
+            expect(source.loadFileAsData(originalBytes));
+            AudioNormalizationOptions options;
+            options.targetPeakDbfs = peakDecibels(staleRecord);
+            staleRecord.modifiedTimeMs -= 1000;
+
+            const auto result = AudioNormalizationService::normalizeFile(staleRecord, options, [] { return true; });
+            expect(result.hasError());
+            expect(!result.committed);
+            expect(result.errorMessage.containsIgnoreCase("cancel"), result.errorMessage);
+            juce::MemoryBlock remainingBytes;
+            expect(source.loadFileAsData(remainingBytes));
+            expect(remainingBytes == originalBytes);
+        }
+
+        beginTest("Cancellation stops re-analysis of an unchanged in-place no-op");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cancelled_no_op.aif");
+            const auto record = AudioAnalysisService::analyzeFile(source);
+            AudioNormalizationOptions options;
+            options.targetPeakDbfs = peakDecibels(record);
+
+            const auto result = AudioNormalizationService::normalizeFile(record, options, [] { return true; });
+            expect(result.hasError());
+            expect(!result.committed);
+            expect(result.errorMessage.containsIgnoreCase("cancel"), result.errorMessage);
+        }
+
         beginTest("Loudness mode reaches the target loudness unless the true peak ceiling is lower");
         {
             const auto record = AudioAnalysisService::analyzeFile(fixtureFile("sine_stereo_44100_16.wav"));
