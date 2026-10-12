@@ -188,6 +188,10 @@ PluginChain::ChainInstantiation PluginChain::instantiateChains(
                 return instantiation;
             }
 
+            if (worker == 0) {
+                instance->getStateInformation(instantiation.initialStates.emplace_back());
+            }
+
             chainInstances.push_back(std::move(instance));
         }
 

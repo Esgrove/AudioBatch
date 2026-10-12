@@ -585,6 +585,13 @@ void AudioBatchComponent::processSelectedRecords()
         return;
     }
 
+    // A plugin without saved state is reset to its initial state before every file instead.
+    for (std::size_t index = 0; index < options.plugins.size(); ++index) {
+        if (auto& state = options.plugins[index].state; state.isEmpty()) {
+            state = instantiation.initialStates[index];
+        }
+    }
+
     const auto filesToProcess = releasePreviewBeforeProcessing(records);
 
     processingFailures.clear();
