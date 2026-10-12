@@ -9,10 +9,10 @@
 #include <JuceHeader.h>
 
 /// Tracks block read failures for one decode pass over a file.
-/// A failed read in the final block is tolerated, because MP3 files often report a length
-/// that overshoots the decodable audio.
-/// Isolated failures elsewhere are tolerated too, because the built-in MP3 decoder can fail mid-stream
-/// on files that other decoders handle fine, and a failed block still holds the samples decoded before the error.
+/// A failed read in the final block is tolerated,
+/// because MP3 files often report a length that overshoots the decodable audio.
+/// Isolated failures elsewhere are tolerated too, because the built-in MP3 decoder can fail mid-stream on files
+/// that other decoders handle fine, and a failed block still holds the samples decoded before the error.
 /// Several failures in a row mean the rest of the file cannot be decoded, and the pass must stop with an error.
 class DecodeFailureTracker
 {

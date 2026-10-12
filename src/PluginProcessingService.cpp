@@ -10,8 +10,8 @@
 /// with a cancellation-aware wait so a worker never deadlocks against a message thread that waits for it,
 /// while processBlock runs on the calling worker thread.
 /// The chain output is rendered to an unquantized 32-bit float file first,
-/// so the peak and the end of the audible tail are known before the final AIFF file is written
-/// at the source bit depth, turned down when it would clip, trimmed, and dithered when 16-bit.
+/// so the peak and the end of the audible tail are known before the final AIFF file is written at the source bit depth,
+/// turned down when it would clip, trimmed, and dithered when 16-bit.
 /// The AIFF file is validated, given the original file's metadata, and then moved into place,
 /// with the processed file re-analyzed for the result record.
 
