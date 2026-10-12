@@ -1,6 +1,6 @@
 /// Audio format helpers shared by analysis, normalization, and plugin processing.
 /// Declares the per-thread format manager, the AIFF writer lookup,
-/// the float sample read shared by the decode loops,
+/// the float sample read shared by the decode loops, the validation of written output,
 /// the conversion of reader metadata for writer options, and peak magnitude math.
 
 #pragma once
@@ -32,6 +32,18 @@ bool readFloatSamples(
     int numChannels,
     juce::int64 startSample,
     int numSamples
+);
+
+/// Reads back a freshly written audio file and checks that it has the expected channel count, sample rate,
+/// and length, which also catches a short write the writer could not report.
+/// Returns an empty string when it matches, or a user-facing description of the problem.
+/// The services run this before the source is replaced or moved to the trash.
+juce::String validateWrittenAudio(
+    juce::AudioFormatManager& formatManager,
+    const juce::File& file,
+    int expectedChannels,
+    double expectedSampleRate,
+    juce::int64 expectedLength
 );
 
 /// Copies JUCE reader metadata into the map type expected by juce::AudioFormatWriterOptions,

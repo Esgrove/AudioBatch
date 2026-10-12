@@ -84,6 +84,24 @@ public:
             expectEquals(utils::peakMagnitude(-0.5f), 0.5f);
         }
 
+        beginTest("Written audio is validated against the expected layout and length");
+        {
+            auto& formatManager = utils::threadLocalFormatManager();
+            const auto fixture = fixtureFile("sine_stereo_44100_16.wav");
+            const std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(fixture));
+            expect(reader != nullptr);
+            const auto length = reader->lengthInSamples;
+
+            expectEquals(utils::validateWrittenAudio(formatManager, fixture, 2, 44100.0, length), juce::String());
+            expect(utils::validateWrittenAudio(formatManager, fixture, 1, 44100.0, length).contains("channels"));
+            expect(utils::validateWrittenAudio(formatManager, fixture, 2, 48000.0, length).contains("sample rate"));
+            expect(utils::validateWrittenAudio(formatManager, fixture, 2, 44100.0, length + 1).contains("samples"));
+            expect(
+                utils::validateWrittenAudio(formatManager, root.getChildFile("missing.aif"), 2, 44100.0, length)
+                    .contains("cannot be read")
+            );
+        }
+
         beginTest("A temporary output replaces its source in place");
         {
             const TemporaryDirectory directory;

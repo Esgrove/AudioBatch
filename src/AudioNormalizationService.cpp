@@ -100,28 +100,6 @@ static bool preserveOutputMetadata(const juce::File& sourceFile, const juce::Fil
     return true;
 }
 
-/// Verifies that the temporary output file exists and decodes to a non-empty audio stream.
-/// Returns an empty string on success, or a user-facing error message.
-static juce::String validateTemporaryNormalizedOutput(
-    juce::AudioFormatManager& formatManager,
-    const juce::File& temporaryOutputFile
-)
-{
-    if (!temporaryOutputFile.existsAsFile() || temporaryOutputFile.getSize() <= 0) {
-        return "Normalization failed to produce a valid output file. The original file was left unchanged.";
-    }
-
-    if (const std::unique_ptr<juce::AudioFormatReader> encodedReader(
-            formatManager.createReaderFor(temporaryOutputFile)
-        );
-        encodedReader == nullptr || encodedReader->lengthInSamples <= 0)
-    {
-        return "Normalization failed before the output file could be verified. The original file was left unchanged.";
-    }
-
-    return {};
-}
-
 /// Streams the source through the writer block by block, applying the normalization gain.
 /// Read failures follow the shared DecodeFailureTracker rules,
 /// and `decodeNotice` receives the tracker's notice about tolerated failures.
@@ -381,10 +359,21 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
         return failNormalization(file, "Could not preserve metadata while writing normalized audio");
     }
 
-    if (const auto validationError = validateTemporaryNormalizedOutput(formatManager, temporaryFile.getFile());
+    if (const auto validationError = utils::validateWrittenAudio(
+            formatManager,
+            temporaryFile.getFile(),
+            static_cast<int>(reader->numChannels),
+            reader->sampleRate,
+            reader->lengthInSamples
+        );
         validationError.isNotEmpty())
     {
-        return failNormalization(file, validationError);
+        return failNormalization(
+            file,
+            utils::format(
+                "Normalized output failed validation: {}. The original file was left unchanged.", validationError
+            )
+        );
     }
 
     // Check again before touching the original, since cancellation may arrive during the last block.
