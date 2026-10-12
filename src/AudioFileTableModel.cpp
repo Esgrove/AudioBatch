@@ -7,7 +7,6 @@
 
 #include "CustomLookAndFeel.h"
 #include "StringFormat.h"
-#include <string_view>
 
 namespace audiobatch::table
 {
