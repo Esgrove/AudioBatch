@@ -188,6 +188,7 @@ private:
         beginTest("JSON output writes null for silence and keeps failed records");
         {
             const auto json = cli::formatRecordsAsJson(records);
+            expect(!json.containsChar('\r'));
             const auto parsed = juce::JSON::parse(json);
             expect(parsed.isArray());
             expectEquals(parsed.size(), 3);

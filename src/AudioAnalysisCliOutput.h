@@ -14,7 +14,7 @@ namespace audiobatch::cli
 /// The header is written even when there are no records, so scripts can always parse the columns.
 juce::String formatRecordsAsCsv(const std::vector<AudioAnalysisRecord>& records);
 
-/// Returns the records as a JSON array with a trailing newline, with null for silent levels.
+/// Returns the records as a JSON array with LF line endings and a trailing newline, with null for silent levels.
 juce::String formatRecordsAsJson(const std::vector<AudioAnalysisRecord>& records);
 
 /// Prints the records in the requested format to stdout.

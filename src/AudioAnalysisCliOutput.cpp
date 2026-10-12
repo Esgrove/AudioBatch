@@ -156,7 +156,9 @@ juce::String formatRecordsAsJson(const std::vector<AudioAnalysisRecord>& records
         array.add(juce::var(buildRecordObject(record).get()));
     }
 
-    return juce::JSON::toString(juce::var(array)) + "\n";
+    // juce::JSON separates lines with juce::newLine, which is CRLF on every platform,
+    // and the text-mode stdout on Windows would turn it into CR CR LF.
+    return juce::JSON::toString(juce::var(array)).replace("\r\n", "\n") + "\n";
 }
 
 void printRecords(
