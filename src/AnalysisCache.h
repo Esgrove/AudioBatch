@@ -74,7 +74,7 @@ public:
     int pruneMissingFiles(const std::function<bool()>& shouldStop = {});
 
 private:
-    static constexpr int analysisVersion = 7;
+    static constexpr int analysisVersion = 8;
     static constexpr int waveformVersion = 1;
 
     /// Returns true when the given table already has the named column.
