@@ -313,7 +313,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
                                    .withSampleRate(writerSampleRate)
                                    .withNumChannels(static_cast<int>(reader->numChannels))
                                    .withBitsPerSample(writerBitDepth)
-                                   .withMetadataValues(utils::copyMetadata(reader->metadataValues));
+                                   .withMetadataValues(utils::aiffWriterMetadata(reader->metadataValues));
 
     auto writer = writerFormat->createWriterFor(outputStream, writerOptions);
 

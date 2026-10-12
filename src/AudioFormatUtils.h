@@ -1,7 +1,7 @@
 /// Audio format helpers shared by analysis, normalization, and plugin processing.
 /// Declares the per-thread format manager, the AIFF writer lookup,
 /// the float sample read shared by the decode loops, the validation of written output,
-/// the conversion of reader metadata for writer options, and peak magnitude math.
+/// the conversion of AIFF reader metadata for the AIFF writer, and peak magnitude math.
 
 #pragma once
 
@@ -46,9 +46,12 @@ juce::String validateWrittenAudio(
     juce::int64 expectedLength
 );
 
-/// Copies JUCE reader metadata into the map type expected by juce::AudioFormatWriterOptions,
-/// so written files keep the metadata JUCE read from the source.
-std::unordered_map<juce::String, juce::String> copyMetadata(const juce::StringPairArray& metadata);
+/// Copies JUCE reader metadata into the map type expected by juce::AudioFormatWriterOptions for the AIFF writer,
+/// so written files keep the markers and loop points JUCE read from an AIFF source.
+/// Metadata from other readers, such as the bext, cue, and smpl chunks of a WAV file, is dropped,
+/// because the AIFF writer would build its chunks from keys meant for another format and asserts on WAV metadata.
+/// Tags and pictures are copied separately through MetadataService.
+std::unordered_map<juce::String, juce::String> aiffWriterMetadata(const juce::StringPairArray& metadata);
 
 /// Returns the magnitude of a peak value, since analysis records store signed peaks.
 template<typename Value>

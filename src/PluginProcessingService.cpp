@@ -540,7 +540,7 @@ static juce::String writeProcessedAiff(
                                    .withSampleRate(sourceReader.sampleRate)
                                    .withNumChannels(static_cast<int>(renderedReader->numChannels))
                                    .withBitsPerSample(bitsPerSample)
-                                   .withMetadataValues(utils::copyMetadata(sourceReader.metadataValues));
+                                   .withMetadataValues(utils::aiffWriterMetadata(sourceReader.metadataValues));
     const auto writer = aiffFormat.createWriterFor(outputStream, writerOptions);
 
     if (writer == nullptr) {
