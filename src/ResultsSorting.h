@@ -53,6 +53,9 @@ struct SortState {
     bool primaryForwards = true;
     int secondaryColumnId = 0;
     bool secondaryForwards = true;
+    /// Returns the text the status column shows for a record, such as the message of its last operation.
+    /// The status column sorts by this text when set, and by the analysis status otherwise.
+    std::function<juce::String(const AudioAnalysisRecord&)> statusText;
 };
 
 /// Returns a negative, zero, or positive value as lhs sorts before, with, or after rhs in the given table column.

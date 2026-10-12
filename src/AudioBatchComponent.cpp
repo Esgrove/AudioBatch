@@ -621,6 +621,11 @@ void AudioBatchComponent::sortResults()
             .primaryForwards = currentSortForwards,
             .secondaryColumnId = secondarySortColumnId,
             .secondaryForwards = secondarySortForwards,
+            // The activity labels change while files are busy, so only the settled text decides the order.
+            .statusText = [this](const AudioAnalysisRecord& record) {
+                const auto message = fileActivity.getMessage(record.fullPath);
+                return message.text.isNotEmpty() ? message.text : AudioAnalysisService::formatStatus(record);
+            },
         }
     );
 }
