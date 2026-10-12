@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <utility>
 #include <vector>
 
 /// Helpers for bit depth selection and chunked normalization.
@@ -371,7 +372,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
     result.fileName = file.getFileName();
     result.fullPath = file.getFullPathName();
     result.committed = true;
-    result.notice = decodeNotice;
+    result.notice = std::move(decodeNotice);
     result.analysisRecord = AudioAnalysisService::analyzeFile(outputFile);
     result.succeeded = !result.analysisRecord.hasError();
 

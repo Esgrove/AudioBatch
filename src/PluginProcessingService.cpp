@@ -33,6 +33,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <span>
 
 namespace audiobatch::plugin_processing
 {
@@ -243,9 +244,9 @@ static juce::AudioBuffer<float> prepareOutputView(
 static bool isBlockFinite(const juce::AudioBuffer<float>& block, const int numSamples)
 {
     for (int channel = 0; channel < block.getNumChannels(); ++channel) {
-        const auto* samples = block.getReadPointer(channel);
+        const std::span samples(block.getReadPointer(channel), static_cast<std::size_t>(numSamples));
 
-        if (!std::all_of(samples, samples + numSamples, [](const float sample) { return std::isfinite(sample); })) {
+        if (!std::ranges::all_of(samples, [](const float sample) { return std::isfinite(sample); })) {
             return false;
         }
     }

@@ -5,6 +5,7 @@
 #include "StringFormat.h"
 
 #include <memory>
+#include <span>
 #include <utility>
 
 namespace utils
@@ -43,8 +44,8 @@ bool readFloatSamples(
     }
 
     if (!reader.usesFloatingPointData) {
-        for (int channel = 0; channel < numChannels; ++channel) {
-            juce::FloatVectorOperations::clear(channels[channel], numSamples);
+        for (auto* const channel : std::span(channels, static_cast<std::size_t>(numChannels))) {
+            juce::FloatVectorOperations::clear(channel, numSamples);
         }
     }
 

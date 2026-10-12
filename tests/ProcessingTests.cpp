@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstring>
 #include <limits>
+#include <utility>
 #include <vector>
 
 namespace audiobatch::tests
@@ -114,7 +115,7 @@ public:
         preparedSampleRate = sampleRate;
         setLatencySamples(settings.latencySamples);
         const auto historyLength
-            = static_cast<std::size_t>(juce::jmax(settings.latencySamples, settings.echoSamples) + 1);
+            = static_cast<std::size_t>(juce::jmax(settings.latencySamples, settings.echoSamples)) + 1;
         history.assign(2, std::vector<float>(historyLength, 0.0f));
         historyPosition = 0;
     }
@@ -189,7 +190,7 @@ public:
     /// Restores the current gain from a state saved by getStateInformation.
     void setStateInformation(const void* data, const int sizeInBytes) override
     {
-        if (sizeInBytes == static_cast<int>(sizeof(currentGain))) {
+        if (std::cmp_equal(sizeInBytes, sizeof(currentGain))) {
             std::memcpy(&currentGain, data, sizeof(currentGain));
         }
     }
