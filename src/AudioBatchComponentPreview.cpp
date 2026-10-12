@@ -44,6 +44,11 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 
 void AudioBatchComponent::showAudioResource(juce::URL resource)
 {
+    if (seratoPreviewLoader) {
+        seratoPreviewLoader->cancel();
+    }
+    thumbnail->setSeratoOverview({});
+
     if (loadURLIntoTransport(resource)) {
         currentAudioUrl = std::move(resource);
         currentWaveformLoadedFromCache = false;
@@ -59,9 +64,33 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
         } else {
             thumbnail->setURL(currentAudioUrl);
         }
+
+        if (seratoPreviewLoader && currentAudioUrl.isLocalFile() && currentAudioUrl.getLocalFile() == currentAudioFile
+            && currentAudioFileSource != nullptr)
+        {
+            const auto* reader = currentAudioFileSource->getAudioFormatReader();
+            const auto duration
+                = reader->sampleRate > 0.0 ? static_cast<double>(reader->lengthInSamples) / reader->sampleRate : 0.0;
+            seratoPreviewLoader->request(currentAudioFile, duration);
+        }
     } else {
         currentAudioUrl = {};
         releasePreviewPlayback();
+    }
+}
+
+void AudioBatchComponent::adoptSeratoPreview(
+    const AnalysisCache::FileIdentity& identity,
+    const audiobatch::serato::SeratoPreviewLoader::Generation generation,
+    audiobatch::serato::SeratoPreviewLoader::Bands bands
+)
+{
+    if (seratoPreviewLoader && thumbnail != nullptr && currentAudioFileSource != nullptr
+        && currentAudioUrl.isWellFormed() && currentAudioUrl.isLocalFile()
+        && currentAudioUrl.getLocalFile() == currentAudioFile
+        && seratoPreviewLoader->canAdopt(identity, generation, currentAudioFile))
+    {
+        thumbnail->setSeratoOverview(std::move(bands));
     }
 }
 
@@ -145,6 +174,10 @@ void AudioBatchComponent::clearCurrentAudioPreview()
 
 void AudioBatchComponent::releasePreviewPlayback()
 {
+    if (seratoPreviewLoader) {
+        seratoPreviewLoader->cancel();
+    }
+    thumbnail->setSeratoOverview({});
     transportSource.stop();
     transportSource.setSource(nullptr);
     currentAudioFileSource.reset();

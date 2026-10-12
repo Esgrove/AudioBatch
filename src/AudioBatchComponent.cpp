@@ -171,6 +171,23 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
 {
     const SafePointer safeThis(this);
 
+    seratoPreviewLoader = std::make_unique<audiobatch::serato::SeratoPreviewLoader>(
+        analysisCache,
+        [safeThis](
+            AnalysisCache::FileIdentity identity,
+            const audiobatch::serato::SeratoPreviewLoader::Generation generation,
+            audiobatch::serato::SeratoPreviewLoader::Bands bands
+        ) {
+            juce::MessageManager::callAsync(
+                [safeThis, identity = std::move(identity), generation, bands = std::move(bands)] {
+                    if (safeThis != nullptr) {
+                        safeThis->adoptSeratoPreview(identity, generation, bands);
+                    }
+                }
+            );
+        }
+    );
+
     // Coordinator callbacks arrive on worker threads.
     // The handler runs on the message thread, and only while this component still exists.
     const auto postToMessageThread = [safeThis](auto handler) {
@@ -286,6 +303,9 @@ AudioBatchComponent::AudioBatchComponent() :
 
 AudioBatchComponent::~AudioBatchComponent()
 {
+    if (seratoPreviewLoader) {
+        seratoPreviewLoader->cancelAndWait();
+    }
     analysisCoordinator.cancelAndWait();
     normalizeCoordinator.cancelAndWait();
     pluginCoordinator.cancelAndWait();

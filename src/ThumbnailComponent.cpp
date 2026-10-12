@@ -7,6 +7,7 @@
 #include "ThumbnailComponent.h"
 
 #include "CustomLookAndFeel.h"
+#include "SeratoWaveformColouring.h"
 
 #include <JuceHeader.h>
 
@@ -52,7 +53,18 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
     graphics.setColour(juce::CustomLookAndFeel::blue());
 
     if (thumbnail.getTotalLength() > 0.0) {
-        const auto reduced = getLocalBounds().reduced(2);
+        const auto reduced = waveformBounds();
+        if (seratoOverview) {
+            if (const auto gradient = audiobatch::serato::makeOverviewGradient(
+                    *seratoOverview, visibleRange, thumbnail.getTotalLength(), reduced, juce::CustomLookAndFeel::blue()
+                ))
+            {
+                audiobatch::serato::drawColouredThumbnail(
+                    graphics, thumbnail, reduced, visibleRange, displayGain, *gradient
+                );
+                return;
+            }
+        }
 
         // drawChannels scales each channel around its own strip midpoint and clamps the waveform to the strip bounds,
         // so over-0 dBFS peaks are naturally clipped at the channel boundary.
@@ -67,6 +79,7 @@ void ThumbnailComponent::resized() { }
 
 bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData)
 {
+    seratoOverview.reset();
     thumbnail.clear();
     hasNotifiedFullyLoaded = false;
 
@@ -134,6 +147,7 @@ void ThumbnailComponent::setMouseWheelGainCallback(std::function<void(float)> ca
 
 void ThumbnailComponent::setURL(const juce::URL& url)
 {
+    seratoOverview.reset();
     hasNotifiedFullyLoaded = false;
 
     if (!url.isWellFormed()) {
@@ -260,18 +274,31 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
 
 float ThumbnailComponent::timeToX(const double time) const
 {
-    if (visibleRange.getLength() <= 0) {
-        return 0;
+    const auto bounds = waveformBounds();
+    if (visibleRange.getLength() <= 0.0 || bounds.getWidth() <= 0) {
+        return static_cast<float>(bounds.getX());
     }
 
-    return static_cast<float>(getWidth())
+    return static_cast<float>(bounds.getX())
+        + static_cast<float>(bounds.getWidth())
         * static_cast<float>((time - visibleRange.getStart()) / visibleRange.getLength());
 }
 
 double ThumbnailComponent::xToTime(const float xPosition) const
 {
-    return static_cast<double>(xPosition / static_cast<float>(getWidth())) * visibleRange.getLength()
+    const auto bounds = waveformBounds();
+    if (bounds.getWidth() <= 0 || visibleRange.getLength() <= 0.0) {
+        return visibleRange.getStart();
+    }
+
+    return static_cast<double>((xPosition - static_cast<float>(bounds.getX())) / static_cast<float>(bounds.getWidth()))
+        * visibleRange.getLength()
         + visibleRange.getStart();
+}
+
+juce::Rectangle<int> ThumbnailComponent::waveformBounds() const
+{
+    return getLocalBounds().reduced(2);
 }
 
 bool ThumbnailComponent::canMoveTransport() const noexcept
@@ -310,6 +337,15 @@ void ThumbnailComponent::setDisplayGain(const float linearGain)
     }
 
     displayGain = clampedGain;
+    repaint();
+}
+
+void ThumbnailComponent::setSeratoOverview(std::shared_ptr<const audiobatch::serato::Overview> overview)
+{
+    if (overview && (overview->slices.empty() || overview->slices.size() > audiobatch::serato::Overview::maxSlices)) {
+        overview.reset();
+    }
+    seratoOverview = std::move(overview);
     repaint();
 }
 

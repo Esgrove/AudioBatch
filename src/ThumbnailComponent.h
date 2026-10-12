@@ -6,9 +6,12 @@
 
 #pragma once
 
+#include "SeratoOverview.h"
+
 #include <JuceHeader.h>
 
 #include <functional>
+#include <memory>
 
 /// Waveform preview component with transport following, scrubbing, zooming, and drag-and-drop.
 class ThumbnailComponent :
@@ -96,7 +99,15 @@ public:
     /// Visually scales the waveform vertically by the given linear gain factor (1.0 = unchanged).
     void setDisplayGain(float linearGain);
 
+    /// Attaches immutable spectral data on the message thread and repaints only.
+    /// Does not reload peaks, reset the viewport or gain, or affect playback.
+    /// Null, empty and oversized data remove colouring. The owner must reject stale asynchronous results.
+    void setSeratoOverview(std::shared_ptr<const audiobatch::serato::Overview> overview);
+
 private:
+    /// Returns the inset rectangle shared by waveform painting, cursor projection and scrubbing.
+    juce::Rectangle<int> waveformBounds() const;
+
     /// Reports whether user interaction may reposition the transport.
     /// Repositioning is blocked while the view is following an actively playing transport.
     bool canMoveTransport() const noexcept;
@@ -126,6 +137,7 @@ private:
     std::function<void()> thumbnailFullyLoadedCallback;
     std::function<void(double)> mouseWheelZoomCallback;
     std::function<void(float)> mouseWheelGainCallback;
+    std::shared_ptr<const audiobatch::serato::Overview> seratoOverview;
 
     bool hasNotifiedFullyLoaded = false;
     bool isFollowingTransport = false;

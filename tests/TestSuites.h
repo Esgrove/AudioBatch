@@ -37,6 +37,18 @@ std::unique_ptr<juce::UnitTest> createNormalizationTests();
 /// Creates the suite that checks the results table column comparators and sort order.
 std::unique_ptr<juce::UnitTest> createSortingTests();
 
+/// Creates the suite that checks bounded Serato Overview parsing and numeric serialization.
+std::unique_ptr<juce::UnitTest> createSeratoOverviewTests();
+
+/// Creates the suite that checks read-only Serato GEOB and FLAC extraction on temporary copies.
+std::unique_ptr<juce::UnitTest> createSeratoTagReaderTests();
+
+/// Creates the suite that checks spectral colours, time mapping and unchanged JUCE waveform geometry.
+std::unique_ptr<juce::UnitTest> createSeratoWaveformColouringTests();
+
+/// Creates the suite that checks bounded preview loading, stale delivery rejection and cache restart.
+std::unique_ptr<juce::UnitTest> createSeratoPreviewLoaderTests();
+
 /// Creates the suite that checks the shared file, format, string, cancellation, and decode failure helpers.
 std::unique_ptr<juce::UnitTest> createUtilsTests();
 }  // namespace audiobatch::tests
