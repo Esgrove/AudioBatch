@@ -91,6 +91,7 @@ public:
                     .primaryForwards = false,
                     .secondaryColumnId = AudioFileTableModel::columnIntegratedLufs,
                     .secondaryForwards = true,
+                    .statusText = {},
                 }
             );
 
@@ -127,6 +128,7 @@ public:
                     .primaryForwards = true,
                     .secondaryColumnId = AudioFileTableModel::columnOverallPeak,
                     .secondaryForwards = true,
+                    .statusText = {},
                 }
             );
 
@@ -143,7 +145,16 @@ public:
             cut.customGainDb = -3.0f;
             std::vector records {boosted, makeRecord("none", 0.5f, -12.0), cut};
 
-            results_sorting::sortRecords(records, {.primaryColumnId = AudioFileTableModel::columnCustomGain});
+            results_sorting::sortRecords(
+                records,
+                {
+                    .primaryColumnId = AudioFileTableModel::columnCustomGain,
+                    .primaryForwards = true,
+                    .secondaryColumnId = 0,
+                    .secondaryForwards = true,
+                    .statusText = {},
+                }
+            );
 
             expectEquals(namesOf(records).joinIntoString(","), juce::String("none,cut,boosted"));
         }
@@ -157,7 +168,14 @@ public:
             };
 
             results_sorting::sortRecords(
-                records, {.primaryColumnId = AudioFileTableModel::columnOverallPeak, .primaryForwards = false}
+                records,
+                {
+                    .primaryColumnId = AudioFileTableModel::columnOverallPeak,
+                    .primaryForwards = false,
+                    .secondaryColumnId = 0,
+                    .secondaryForwards = true,
+                    .statusText = {},
+                }
             );
 
             expectEquals(namesOf(records).joinIntoString(","), juce::String("a,b,c"));
@@ -185,6 +203,9 @@ public:
                 records,
                 {
                     .primaryColumnId = AudioFileTableModel::columnStatus,
+                    .primaryForwards = true,
+                    .secondaryColumnId = 0,
+                    .secondaryForwards = true,
                     .statusText
                     = [&shownText](const AudioAnalysisRecord& record) { return shownText.at(record.fileName); },
                 }
@@ -199,6 +220,33 @@ private:
     /// including NaN, negative zero, silence, and repeated values.
     /// std::ranges::sort has undefined behaviour when its comparator is not a strict weak ordering.
     void checkComparatorsOnRandomRecords()
+    {
+        constexpr std::array columns {
+            AudioFileTableModel::columnName,
+            AudioFileTableModel::columnPath,
+            AudioFileTableModel::columnSampleRate,
+            AudioFileTableModel::columnPeakLeft,
+            AudioFileTableModel::columnPeakRight,
+            AudioFileTableModel::columnOverallPeak,
+            AudioFileTableModel::columnOverallTruePeak,
+            AudioFileTableModel::columnMaxShortTermLufs,
+            AudioFileTableModel::columnIntegratedLufs,
+            AudioFileTableModel::columnCustomGain,
+            AudioFileTableModel::columnStatus,
+        };
+
+        const auto records = makeRandomRecords();
+        int violations = 0;
+
+        for (const auto column : columns) {
+            violations += countOrderingViolations(records, column);
+        }
+
+        expectEquals(violations, 0);
+    }
+
+    /// Builds records with random values that often repeat or hit NaN, negative zero, and silence.
+    static std::vector<AudioAnalysisRecord> makeRandomRecords()
     {
         constexpr int recordCount = 24;
         constexpr std::array specialPeaks {
@@ -216,34 +264,20 @@ private:
             -23.0,
             std::numeric_limits<double>::quiet_NaN(),
         };
-        constexpr std::array columns {
-            AudioFileTableModel::columnName,
-            AudioFileTableModel::columnPath,
-            AudioFileTableModel::columnSampleRate,
-            AudioFileTableModel::columnPeakLeft,
-            AudioFileTableModel::columnPeakRight,
-            AudioFileTableModel::columnOverallPeak,
-            AudioFileTableModel::columnOverallTruePeak,
-            AudioFileTableModel::columnMaxShortTermLufs,
-            AudioFileTableModel::columnIntegratedLufs,
-            AudioFileTableModel::columnCustomGain,
-            AudioFileTableModel::columnStatus,
-        };
 
         juce::Random random(1234);
+        const auto pickPeak = [&random, &specialPeaks] {
+            return random.nextBool() ? specialPeaks[static_cast<std::size_t>(random.nextInt(specialPeaks.size()))]
+                                     : random.nextFloat() * 2.0f - 1.0f;
+        };
+        const auto pickLoudness = [&random, &specialLoudness] {
+            return random.nextBool() ? specialLoudness[static_cast<std::size_t>(random.nextInt(specialLoudness.size()))]
+                                     : random.nextDouble() * -40.0;
+        };
+
         std::vector<AudioAnalysisRecord> records;
 
         for (int index = 0; index < recordCount; ++index) {
-            const auto pickPeak = [&random, &specialPeaks] {
-                return random.nextBool() ? specialPeaks[static_cast<std::size_t>(random.nextInt(specialPeaks.size()))]
-                                         : random.nextFloat() * 2.0f - 1.0f;
-            };
-            const auto pickLoudness = [&random, &specialLoudness] {
-                return random.nextBool()
-                    ? specialLoudness[static_cast<std::size_t>(random.nextInt(specialLoudness.size()))]
-                    : random.nextDouble() * -40.0;
-            };
-
             auto record = makeRecord(utils::format("file {}", random.nextInt(4)), pickPeak(), pickLoudness());
             record.fullPath = utils::format("/music/{}/{}", random.nextInt(3), record.fileName);
             record.peakLeft = pickPeak();
@@ -257,29 +291,30 @@ private:
             records.push_back(record);
         }
 
+        return records;
+    }
+
+    /// Returns how many pairs break antisymmetry and how many triples break transitivity for one column.
+    static int countOrderingViolations(const std::vector<AudioAnalysisRecord>& records, const int column)
+    {
+        const auto compare = [column](const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs) {
+            return juce::jlimit(-1, 1, results_sorting::compareRecordsByColumn(lhs, rhs, column));
+        };
+
         int violations = 0;
 
-        for (const auto column : columns) {
-            const auto compare = [column](const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs) {
-                return results_sorting::compareRecordsByColumn(lhs, rhs, column);
-            };
+        for (const auto& first : records) {
+            for (const auto& second : records) {
+                violations += compare(first, second) != -compare(second, first) ? 1 : 0;
 
-            for (const auto& first : records) {
-                for (const auto& second : records) {
-                    if (juce::jlimit(-1, 1, compare(first, second)) != -juce::jlimit(-1, 1, compare(second, first))) {
-                        ++violations;
-                    }
-
-                    for (const auto& third : records) {
-                        if (compare(first, second) <= 0 && compare(second, third) <= 0 && compare(first, third) > 0) {
-                            ++violations;
-                        }
-                    }
+                for (const auto& third : records) {
+                    const auto ordered = compare(first, second) <= 0 && compare(second, third) <= 0;
+                    violations += ordered && compare(first, third) > 0 ? 1 : 0;
                 }
             }
         }
 
-        expectEquals(violations, 0);
+        return violations;
     }
 };
 

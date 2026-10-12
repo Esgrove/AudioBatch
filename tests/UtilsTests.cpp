@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <span>
 #include <thread>
 
 namespace audiobatch::tests
@@ -42,8 +43,11 @@ public:
         const int numSamples
     ) override
     {
-        for (int channel = 0; channel < numDestChannels; ++channel) {
-            std::fill_n(destSamples[channel] + startOffsetInDestBuffer, numSamples, std::bit_cast<int>(0.5f));
+        for (auto* const channel : std::span(destSamples, static_cast<std::size_t>(numDestChannels))) {
+            const std::span samples(channel, static_cast<std::size_t>(startOffsetInDestBuffer + numSamples));
+            std::ranges::fill(
+                samples.subspan(static_cast<std::size_t>(startOffsetInDestBuffer)), std::bit_cast<int>(0.5f)
+            );
         }
 
         return false;
@@ -259,7 +263,7 @@ public:
         {
             FailingFixedPointReader reader;
             juce::AudioBuffer<float> buffer(1, 64);
-            buffer.getWritePointer(0)[0] = 0.25f;
+            buffer.setSample(0, 0, 0.25f);
 
             expect(!utils::readFloatSamples(reader, buffer.getArrayOfWritePointers(), 1, 0, 64));
             expectEquals(buffer.getMagnitude(0, 0, 64), 0.0f);
@@ -268,22 +272,23 @@ public:
         beginTest("Decode failures are tolerated in isolation and reported in a notice");
         {
             constexpr int blockSize = 1024;
-            DecodeFailureTracker tracker(blockSize * 10);
+            const auto blockStart = [](const juce::int64 block) { return block * blockSize; };
+            DecodeFailureTracker tracker(blockStart(10));
             expect(tracker.recordBlock(true, 0, blockSize));
             expectEquals(tracker.getNotice(), juce::String());
 
-            expect(tracker.recordBlock(false, blockSize, blockSize));
-            expect(tracker.recordBlock(true, blockSize * 2, blockSize));
+            expect(tracker.recordBlock(false, blockStart(1), blockSize));
+            expect(tracker.recordBlock(true, blockStart(2), blockSize));
             // A failed final block is expected for MP3 files and is not reported.
-            expect(tracker.recordBlock(false, blockSize * 9, blockSize));
+            expect(tracker.recordBlock(false, blockStart(9), blockSize));
             expectEquals(tracker.getFailedBlockCount(), 1);
             expectEquals(tracker.getNotice(), juce::String("1 audio block(s) failed to decode, first at sample 1024"));
 
             for (int block = 3; block < 3 + DecodeFailureTracker::maximumConsecutiveFailures - 1; ++block) {
-                expect(tracker.recordBlock(false, blockSize * block, blockSize));
+                expect(tracker.recordBlock(false, blockStart(block), blockSize));
             }
 
-            expect(!tracker.recordBlock(false, blockSize * 5, blockSize));
+            expect(!tracker.recordBlock(false, blockStart(5), blockSize));
             expect(tracker.getErrorMessage().contains("5120"), tracker.getErrorMessage());
         }
     }
