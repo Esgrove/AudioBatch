@@ -6,7 +6,6 @@
 #include "ConsolePrint.h"
 
 #include <algorithm>
-#include <cstdint>
 
 #if JUCE_WINDOWS
 #include <juce_core/native/juce_BasicNativeHeaders.h>
@@ -153,11 +152,12 @@ void printLineToConsole(const juce::String& text)
 
 int displayWidth(const juce::String& text)
 {
-    std::size_t width = 0;
-    for (auto character = text.getCharPointer(); !character.isEmpty();) {
-        width += fmt::detail::display_width_of(static_cast<std::uint32_t>(character.getAndAdvance()));
-    }
+    const std::string_view utf8 {text.toRawUTF8(), text.getNumBytesAsUTF8()};
 
-    return static_cast<int>(width);
+    // fmt has no public width query, so the width is measured by the padding fmt adds to reach a known width.
+    // No character is wider than two columns, so the padded width is always larger than the text.
+    const auto paddedWidth = utf8.size() * 2 + 1;
+    const auto padded = fmt::format("{:<{}}", utf8, paddedWidth);
+    return static_cast<int>(paddedWidth - (padded.size() - utf8.size()));
 }
 }  // namespace console
