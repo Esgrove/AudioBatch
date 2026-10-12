@@ -610,7 +610,8 @@ PluginProcessingResult PluginProcessingService::processFile(
         return fail(file, renderError);
     }
 
-    const juce::TemporaryFile temporaryFile(outputFile);
+    // The hidden name keeps a half-written output out of folder scans, and out of later scans after a crash.
+    const juce::TemporaryFile temporaryFile(outputFile, juce::TemporaryFile::useHiddenFile);
     const auto bitsPerSample = AudioNormalizationService::getOutputBitDepth(record, *reader);
     const auto clipGuardGain = getClipGuardGain(summary, bitsPerSample);
 

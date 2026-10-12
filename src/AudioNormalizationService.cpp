@@ -294,7 +294,8 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
         return result;
     }
 
-    juce::TemporaryFile const temporaryFile(outputFile);
+    // The hidden name keeps a half-written output out of folder scans, and out of later scans after a crash.
+    const juce::TemporaryFile temporaryFile(outputFile, juce::TemporaryFile::useHiddenFile);
     std::unique_ptr<juce::OutputStream> outputStream(temporaryFile.getFile().createOutputStream().release());
 
     if (outputStream == nullptr) {
