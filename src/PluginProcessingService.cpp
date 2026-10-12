@@ -631,18 +631,9 @@ PluginProcessingResult PluginProcessingService::processFile(
         return fail(file, writeError);
     }
 
-    // Preserve metadata from the original input file by copying it onto the temporary AIFF file.
-    // This carries ID3 tags, embedded artwork, and similar information across formats such as MP3 to AIFF.
-    // Failure to read metadata is non-fatal because some inputs may not have any TagLib-readable metadata,
-    // but failing to write metadata that was read is fatal, so the original and its tags are kept.
-    {
-        MetadataService::Metadata metadata;
-        if (MetadataService::readMetadata(file, metadata) && !metadata.isEmpty()
-            && !MetadataService::writeMetadata(temporaryFile.getFile(), metadata))
-        {
-            utils::deleteFile(temporaryFile.getFile());
-            return fail(file, "Could not copy metadata onto the processed output");
-        }
+    // Carries ID3 tags, embedded artwork, and similar information across formats such as MP3 to AIFF.
+    if (!MetadataService::copyMetadata(file, temporaryFile.getFile())) {
+        return fail(file, "Could not copy metadata onto the processed output");
     }
 
     if (const auto validationError = utils::validateWrittenAudio(
@@ -657,7 +648,6 @@ PluginProcessingResult PluginProcessingService::processFile(
     // The coordinator drops results of a cancelled run,
     // so committing here would change files on disk without the caller ever learning about it.
     if (utils::isCancellationRequested(isCancelled)) {
-        utils::deleteFile(temporaryFile.getFile());
         return fail(file, cancelledMessage);
     }
 

@@ -1,7 +1,8 @@
 /// Implementation of MetadataService.
 /// Converts between JUCE and TagLib string and buffer types,
 /// maps tags through TagLib's unified PropertyMap and the generic PICTURE complex property,
-/// and saves tags for AIFF and WAV output as ID3v2.4.
+/// saves tags for AIFF and WAV output as ID3v2.4,
+/// and copies the metadata of a source onto a freshly written output.
 
 #include "MetadataService.h"
 
@@ -271,4 +272,25 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
     }
 
     return fileRef.save();
+}
+
+bool MetadataService::copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile)
+{
+    Metadata metadata;
+
+    if (!readMetadata(sourceFile, metadata)) {
+        utils::logInfo("No metadata could be read from {}", sourceFile.getFullPathName().quoted());
+        return true;
+    }
+
+    if (metadata.isEmpty()) {
+        return true;
+    }
+
+    if (!writeMetadata(destinationFile, metadata)) {
+        utils::logError("Failed to write metadata to {}", destinationFile.getFullPathName().quoted());
+        return false;
+    }
+
+    return true;
 }
