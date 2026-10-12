@@ -68,16 +68,23 @@ static bool canCreateProbeWriter(juce::AudioFormat& format)
 }
 
 /// Describes what normalization does with files of the given format for the support summary.
+/// Every extension of the format is checked, because JUCE lists `.aiff` before `.aif` for AIFF.
 static juce::String getNormalizableFormatDetail(const juce::StringArray& extensions)
 {
-    const auto primaryExtension = extensions.isEmpty() ? juce::String {} : utils::normalizeExtension(extensions[0]);
+    const auto hasExtension = [&extensions](const char* extension) {
+        return std::ranges::any_of(extensions, [extension](const juce::String& formatExtension) {
+            return utils::normalizeExtension(formatExtension) == extension;
+        });
+    };
 
-    if (primaryExtension.equalsIgnoreCase("aif")) {
-        // Output path matches the source path, so the existing file is rewritten in place.
-        return "Rewritten in place as AIFF.";
+    if (hasExtension("aif")) {
+        // The output path of a .aif source is the source path, so the existing file is rewritten in place.
+        return "A .aif file is rewritten in place. "
+               "Other AIFF extensions are converted to a same-name .aif file, "
+               "and the original is moved to the system trash.";
     }
 
-    if (primaryExtension == "mp3") {
+    if (hasExtension("mp3")) {
         return "Converted to a same-name AIFF file. The original MP3 is moved to the system trash.";
     }
 
