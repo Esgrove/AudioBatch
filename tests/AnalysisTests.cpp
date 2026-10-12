@@ -212,13 +212,11 @@ private:
         }
 
         const auto tolerance = fixture.lossy ? lossyTolerance : losslessTolerance;
-        const auto expectedLoudness = fixture.channels == 1 ? fixtureMonoLoudness : fixtureStereoLoudness;
-
         expectWithinAbsoluteError(peakDecibels(record), fixturePeakDecibels, tolerance);
         expectWithinAbsoluteError(
             juce::Decibels::gainToDecibels(record.overallTruePeak), fixturePeakDecibels, tolerance
         );
-        expectWithinAbsoluteError(record.integratedLufs, expectedLoudness, tolerance);
+        expectWithinAbsoluteError(record.integratedLufs, fixtureLoudness, tolerance);
         expectWithinAbsoluteError(record.durationSeconds, 1.0, 0.1);
     }
 };

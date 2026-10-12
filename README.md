@@ -148,6 +148,8 @@ and is remembered between sessions:
   The default is -14 LUFS.
   The gain is limited so the true peak stays at or below -0.3 dBTP,
   so a dense file can end up quieter than the target instead of clipping.
+  Mono files are measured as dual mono, because they play on both speakers,
+  so they reach the same perceived level as stereo files.
 
 Normalization works for every readable input format,
 including AIFF, WAV, FLAC, MP3, and Ogg Vorbis,
