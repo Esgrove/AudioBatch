@@ -158,6 +158,8 @@ struct RenderSummary {
     juce::int64 samplesWritten = 0;
     /// Position of the last sample above the silence threshold, or -1 when the output is silent.
     juce::int64 lastAudibleSample = -1;
+    /// Notice about source blocks that failed to decode but were tolerated, or empty when there were none.
+    juce::String decodeNotice;
 };
 
 /// Replaces the first channel with the average of the first two channels over the given sample range,
@@ -349,14 +351,7 @@ static juce::String renderThroughChain(
         summary.samplesWritten += samplesToWrite;
     }
 
-    if (failureTracker.getFailedBlockCount() > 0) {
-        utils::logWarn(
-            "{} audio block(s) failed to decode and were processed as decoded so far, first at sample {}",
-            failureTracker.getFailedBlockCount(),
-            failureTracker.getFirstFailurePosition()
-        );
-    }
-
+    summary.decodeNotice = failureTracker.getNotice();
     return {};
 }
 
@@ -677,11 +672,21 @@ PluginProcessingResult PluginProcessingService::processFile(
     result.originalFullPath = file.getFullPathName();
     result.outputFile = outputFile;
 
+    juce::StringArray notices;
+
     if (clipGuardGain < 1.0f) {
-        result.notice
+        const auto clipNotice
             = utils::format("Reduced {:.1f} dB to avoid clipping", -juce::Decibels::gainToDecibels(clipGuardGain));
-        utils::logInfo("{}: {}", outputFile.getFullPathName().quoted(), result.notice);
+        notices.add(clipNotice);
+        utils::logInfo("{}: {}", outputFile.getFullPathName().quoted(), clipNotice);
     }
+
+    if (summary.decodeNotice.isNotEmpty()) {
+        notices.add(summary.decodeNotice);
+        utils::logWarn("{}: {}", outputFile.getFullPathName().quoted(), summary.decodeNotice);
+    }
+
+    result.notice = notices.joinIntoString(". ");
 
     result.fileName = outputFile.getFileName();
     result.analysisRecord = AudioAnalysisService::analyzeFile(outputFile);

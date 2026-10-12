@@ -57,6 +57,8 @@ struct AudioNormalizationResult {
     juce::String fileName;
     juce::String fullPath;
     juce::String errorMessage;
+    /// Information about a successful run worth showing to the user, such as blocks that failed to decode.
+    juce::String notice;
     AudioAnalysisRecord analysisRecord;
     bool succeeded = false;
 
@@ -125,6 +127,7 @@ public:
     /// unless options.overwriteExisting is set, in which case the existing output is moved to the system trash.
     /// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.
     /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again before computing the gain.
+    /// Isolated source blocks that fail to decode are written as decoded and reported in the result notice.
     static AudioNormalizationResult normalizeFile(
         const AudioAnalysisRecord& sourceRecord,
         const AudioNormalizationOptions& options,

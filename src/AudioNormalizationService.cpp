@@ -123,14 +123,16 @@ static juce::String validateTemporaryNormalizedOutput(
 }
 
 /// Streams the source through the writer block by block, applying the normalization gain.
-/// Read failures follow the shared DecodeFailureTracker rules.
+/// Read failures follow the shared DecodeFailureTracker rules,
+/// and `decodeNotice` receives the tracker's notice about tolerated failures.
 /// Returns an empty string on success, or a user-facing error message,
 /// including when cancellation is requested between blocks.
 static juce::String renderNormalizedAudio(
     juce::AudioFormatReader& reader,
     juce::AudioFormatWriter& writer,
     const float gain,
-    const AudioNormalizationService::CancellationCheck& isCancelled
+    const AudioNormalizationService::CancellationCheck& isCancelled,
+    juce::String& decodeNotice
 )
 {
     juce::AudioBuffer<float> buffer(static_cast<int>(reader.numChannels), normalizationBlockSize);
@@ -175,14 +177,7 @@ static juce::String renderNormalizedAudio(
         }
     }
 
-    if (failureTracker.getFailedBlockCount() > 0) {
-        utils::logWarn(
-            "{} audio block(s) failed to decode and were written as decoded so far, first at sample {}",
-            failureTracker.getFailedBlockCount(),
-            failureTracker.getFirstFailurePosition()
-        );
-    }
-
+    decodeNotice = failureTracker.getNotice();
     return {};
 }
 }  // namespace audiobatch::normalization
@@ -369,7 +364,11 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
         return failNormalization(file, getNormalizationSupportMessage(file));
     }
 
-    if (const auto renderError = renderNormalizedAudio(*reader, *writer, gain, isCancelled); renderError.isNotEmpty()) {
+    juce::String decodeNotice;
+
+    if (const auto renderError = renderNormalizedAudio(*reader, *writer, gain, isCancelled, decodeNotice);
+        renderError.isNotEmpty())
+    {
         return failNormalization(file, renderError);
     }
 
@@ -403,8 +402,13 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
     result.file = file;
     result.fileName = file.getFileName();
     result.fullPath = file.getFullPathName();
+    result.notice = decodeNotice;
     result.analysisRecord = AudioAnalysisService::analyzeFile(outputFile);
     result.succeeded = !result.analysisRecord.hasError();
+
+    if (result.notice.isNotEmpty()) {
+        utils::logWarn("{}: {}", outputFile.getFullPathName().quoted(), result.notice);
+    }
 
     if (!result.succeeded) {
         result.errorMessage

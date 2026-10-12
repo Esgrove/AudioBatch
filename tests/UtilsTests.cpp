@@ -1,7 +1,8 @@
-/// Tests for the shared helpers in FileUtils, AudioFormatUtils, and Cancellation.
+/// Tests for the shared helpers in FileUtils, AudioFormatUtils, Cancellation, and DecodeFailureTracker.
 
 #include "AudioFormatUtils.h"
 #include "Cancellation.h"
+#include "DecodeFailureTracker.h"
 #include "FileUtils.h"
 #include "StringFormat.h"
 #include "TestHelpers.h"
@@ -109,6 +110,28 @@ public:
         {
             expect(!utils::isCancellationRequested({}));
             expect(utils::isCancellationRequested([] { return true; }));
+        }
+
+        beginTest("Decode failures are tolerated in isolation and reported in a notice");
+        {
+            constexpr int blockSize = 1024;
+            DecodeFailureTracker tracker(blockSize * 10);
+            expect(tracker.recordBlock(true, 0, blockSize));
+            expectEquals(tracker.getNotice(), juce::String());
+
+            expect(tracker.recordBlock(false, blockSize, blockSize));
+            expect(tracker.recordBlock(true, blockSize * 2, blockSize));
+            // A failed final block is expected for MP3 files and is not reported.
+            expect(tracker.recordBlock(false, blockSize * 9, blockSize));
+            expectEquals(tracker.getFailedBlockCount(), 1);
+            expectEquals(tracker.getNotice(), juce::String("1 audio block(s) failed to decode, first at sample 1024"));
+
+            for (int block = 3; block < 3 + DecodeFailureTracker::maximumConsecutiveFailures - 1; ++block) {
+                expect(tracker.recordBlock(false, blockSize * block, blockSize));
+            }
+
+            expect(!tracker.recordBlock(false, blockSize * 5, blockSize));
+            expect(tracker.getErrorMessage().contains("5120"), tracker.getErrorMessage());
         }
     }
 };

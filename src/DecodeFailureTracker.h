@@ -63,6 +63,20 @@ public:
         return failedBlockPosition;
     }
 
+    /// Returns a user-facing notice about the tolerated failures of a completed pass,
+    /// or an empty string when every block before the final one decoded.
+    /// A pass that writes output reports it, because the failed blocks may hold a short dropout.
+    [[nodiscard]] juce::String getNotice() const
+    {
+        if (failedBlocks == 0) {
+            return {};
+        }
+
+        return utils::format(
+            "{} audio block(s) failed to decode, first at sample {}", failedBlocks, failedBlockPosition
+        );
+    }
+
     /// Returns the user-facing error after recordBlock returned false.
     [[nodiscard]] juce::String getErrorMessage() const
     {

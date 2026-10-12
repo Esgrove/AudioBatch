@@ -51,6 +51,7 @@ public:
     /// The chain renders into an unquantized intermediate file first.
     /// When the rendered peak exceeds full scale, the whole output is turned down just enough to avoid clipping,
     /// which is reported in the result notice.
+    /// Isolated source blocks that fail to decode are processed as decoded and reported in the notice too.
     /// Trailing silence from the tail allowance is trimmed, and 16-bit output is dithered.
     /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again first.
     static PluginProcessingResult processFile(
