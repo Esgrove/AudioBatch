@@ -2,7 +2,8 @@
 /// Decodes files in blocks through per-thread JUCE format readers
 /// and feeds the samples to a libebur128 analyzer state to measure sample peak,
 /// true peak, and integrated loudness.
-/// Also implements supported file discovery, the display and CLI formatting helpers, and record sorting.
+/// Also implements supported file discovery and record sorting.
+/// The display formatting helpers live in AudioAnalysisFormatting.cpp.
 
 #include "AudioAnalysisService.h"
 

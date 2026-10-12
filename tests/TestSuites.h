@@ -10,7 +10,7 @@
 
 namespace audiobatch::tests
 {
-/// Creates the suite that analyzes generated audio files and checks the measured levels.
+/// Creates the suite that analyzes the committed audio fixtures and checks the measured levels.
 std::unique_ptr<juce::UnitTest> createAnalysisTests();
 
 /// Creates the suite that checks cache storage and invalidation against a temporary database.
@@ -30,9 +30,10 @@ std::unique_ptr<juce::UnitTest> createProcessingTests();
 
 /// Creates the suite that checks normalization output paths, collisions, and the written audio.
 std::unique_ptr<juce::UnitTest> createNormalizationTests();
+
 /// Creates the suite that checks the results table column comparators and sort order.
 std::unique_ptr<juce::UnitTest> createSortingTests();
 
-/// Creates the suite that checks the shared file, format, string, and cancellation helpers.
+/// Creates the suite that checks the shared file, format, string, cancellation, and decode failure helpers.
 std::unique_ptr<juce::UnitTest> createUtilsTests();
 }  // namespace audiobatch::tests

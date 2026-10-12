@@ -69,6 +69,8 @@ public:
 
     /// Deletes the rows of files that no longer exist, for example after they were trashed or renamed.
     /// Rows whose folder is missing are kept, since that usually means an unmounted drive, not deleted files.
+    /// A drive whose empty mount point folder stays behind, such as after an unclean eject,
+    /// looks like deleted files in that folder, so the rows of files directly in it are removed.
     /// A row is only deleted while it still describes the version that was checked,
     /// so a file recreated in the meantime keeps its new row.
     /// The file system checks run without holding the database lock, so other cache calls are not blocked by them.
