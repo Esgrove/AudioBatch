@@ -55,18 +55,24 @@ public:
 
         beginTest("Progress is kept for started files only and summed across them");
         {
+            // Returns -1 for an idle file or one without progress yet.
+            const auto progressOf = [&tracker](const juce::File& file) {
+                const auto state = tracker.getActivityState(file.getFullPathName());
+                return state.has_value() ? state->progress.value_or(-1.0f) : -1.0f;
+            };
+
             tracker.markActive({first, second}, FileActivity::waiting);
             tracker.setProgress(first.getFullPathName(), 0.5f);
-            expect(!tracker.getActivityState(first.getFullPathName())->progress.has_value());
+            expectEquals(progressOf(first), -1.0f);
 
             tracker.setActive(first.getFullPathName(), FileActivity::processing);
-            expect(!tracker.getActivityState(first.getFullPathName())->progress.has_value());
+            expectEquals(progressOf(first), -1.0f);
             tracker.setProgress(first.getFullPathName(), 0.25f);
             tracker.setActive(second.getFullPathName(), FileActivity::processing);
             tracker.setProgress(second.getFullPathName(), 1.5f);
 
-            expectWithinAbsoluteError(*tracker.getActivityState(first.getFullPathName())->progress, 0.25f, 1.0e-6f);
-            expectWithinAbsoluteError(*tracker.getActivityState(second.getFullPathName())->progress, 1.0f, 1.0e-6f);
+            expectWithinAbsoluteError(progressOf(first), 0.25f, 1.0e-6f);
+            expectWithinAbsoluteError(progressOf(second), 1.0f, 1.0e-6f);
             expectWithinAbsoluteError(tracker.getProgressTotal(), 1.25f, 1.0e-6f);
 
             tracker.clearActive(first.getFullPathName());
