@@ -16,6 +16,7 @@ on:
       - "format.sh"
       - "JUCE"
       - "lint.sh"
+      - "sanitize.sh"
       - "src/**"
       - "tests/**"
   pull_request:
@@ -31,6 +32,7 @@ on:
       - "format.sh"
       - "JUCE"
       - "lint.sh"
+      - "sanitize.sh"
       - "src/**"
       - "tests/**"
 
@@ -184,10 +186,5 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: brew install ninja
 
-      - name: Configure and build with sanitizers
-        run: |
-          cmake --preset macos-asan
-          cmake --build --preset macos-asan --target AudioBatchTests
-
-      - name: Run tests
-        run: ctest --test-dir cmake-build-mac-asan --output-on-failure
+      - name: Build and run tests with sanitizers
+        run: ./sanitize.sh

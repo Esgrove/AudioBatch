@@ -176,9 +176,8 @@ The detailed rules are in `.agents/rules/code-organization.md`.
   so terminal builds reuse the same build directory as the editor or IDE.
 - On macOS, use `cmake --preset macos-debug` then `cmake --build --preset macos-debug`.
 - On Windows, prefer `cmake --preset windows-debug` then `cmake --build --preset windows-debug`.
-- To run the tests under AddressSanitizer and UndefinedBehaviorSanitizer,
-  use `cmake --preset macos-asan`, `cmake --build --preset macos-asan`,
-  then run `ctest --test-dir cmake-build-mac-asan --output-on-failure`.
+- To run the tests under AddressSanitizer and UndefinedBehaviorSanitizer, run `./sanitize.sh`.
+  It configures and builds the `macos-asan` preset in `cmake-build-mac-asan`, then runs ctest.
   The `AUDIOBATCH_SANITIZE` CMake option takes a comma separated list such as `address,undefined`.
 - If you need Ninja and `compile_commands.json` on Windows,
   use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
