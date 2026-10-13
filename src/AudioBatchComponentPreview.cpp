@@ -51,13 +51,10 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 
 void AudioBatchComponent::showAudioResource(juce::URL resource)
 {
+    // Both branches below clear the remaining Serato presentation state.
     if (seratoPreviewLoader) {
         seratoPreviewLoader->cancel();
     }
-    seratoPreviewData.reset();
-    seratoPreviewIdentity.reset();
-    thumbnail->setSeratoOverview({});
-    thumbnail->setSeratoMarkers({});
     audioInfo->clear();
 
     if (loadURLIntoTransport(resource)) {
