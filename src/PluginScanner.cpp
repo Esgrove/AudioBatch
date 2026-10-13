@@ -15,7 +15,9 @@
 
 #include <chrono>
 
-namespace audiobatch::plugin_scanner
+namespace audiobatch
+{
+namespace
 {
 constexpr auto resultsXmlTag = "PLUGINS";
 constexpr auto knownPluginListFileName = "KnownPlugins.xml";
@@ -32,9 +34,7 @@ static juce::MemoryBlock createScanRequest(const juce::String& formatName, const
     stream.writeString(fileOrIdentifier);
     return request;
 }
-}  // namespace audiobatch::plugin_scanner
-
-using namespace audiobatch::plugin_scanner;
+}  // namespace
 
 /// Returns true when the command line launches this executable as a plugin scan worker.
 /// Uses the same check as ChildProcessWorker: the worker prefix must start the command line.
@@ -233,24 +233,24 @@ void PluginScanWorker::sendResults(const juce::OwnedArray<juce::PluginDescriptio
 
 //==============================================================================
 
+/// Outcome of waiting for the reply to one scan request.
+enum class PluginScanResponseState : std::uint8_t { timeout, gotResult, connectionLost };
+
+/// Reply to one scan request.
+struct PluginScanResponse {
+    PluginScanResponseState state = PluginScanResponseState::timeout;
+    std::unique_ptr<juce::XmlElement> xml;
+};
+
 /// Owns one launched worker process and hands its replies to the waiting scan call.
 /// Replies and connection loss arrive on the connection thread,
 /// while the scan call waits on whichever thread KnownPluginList scans from.
-class OutOfProcessPluginScanner::WorkerProcess final : juce::ChildProcessCoordinator
+class PluginScanWorkerProcess final : juce::ChildProcessCoordinator
 {
 public:
-    /// Outcome of waiting for the reply to one scan request.
-    enum class ResponseState : std::uint8_t { timeout, gotResult, connectionLost };
-
-    /// Reply to one scan request.
-    struct Response {
-        ResponseState state = ResponseState::timeout;
-        std::unique_ptr<juce::XmlElement> xml;
-    };
-
     /// Launches this executable as a scan worker.
     /// Check isRunning afterwards, since the launch can fail.
-    WorkerProcess()
+    PluginScanWorkerProcess()
     {
         // The worker's stdout and stderr are not read, so do not capture them.
         // An undrained pipe would block the worker once it fills up.
@@ -260,15 +260,15 @@ public:
     }
 
     /// Kills the worker process.
-    ~WorkerProcess() override
+    ~PluginScanWorkerProcess() override
     {
         killWorkerProcess();
     }
 
-    WorkerProcess(const WorkerProcess&) = delete;
-    WorkerProcess& operator=(const WorkerProcess&) = delete;
-    WorkerProcess(WorkerProcess&&) = delete;
-    WorkerProcess& operator=(WorkerProcess&&) = delete;
+    PluginScanWorkerProcess(const PluginScanWorkerProcess&) = delete;
+    PluginScanWorkerProcess& operator=(const PluginScanWorkerProcess&) = delete;
+    PluginScanWorkerProcess(PluginScanWorkerProcess&&) = delete;
+    PluginScanWorkerProcess& operator=(PluginScanWorkerProcess&&) = delete;
 
     /// True when the worker process was launched and connected.
     [[nodiscard]] bool isRunning() const noexcept
@@ -284,7 +284,7 @@ public:
 
     /// Waits a short while for the reply to the last request.
     /// Returns a timeout response when nothing arrived yet, so the caller can check for cancellation.
-    Response waitForResponse()
+    PluginScanResponse waitForResponse()
     {
         std::unique_lock lock(mutex);
 
@@ -292,8 +292,8 @@ public:
             return {};
         }
 
-        Response response;
-        response.state = connectionLost ? ResponseState::connectionLost : ResponseState::gotResult;
+        PluginScanResponse response;
+        response.state = connectionLost ? PluginScanResponseState::connectionLost : PluginScanResponseState::gotResult;
         response.xml = std::move(resultXml);
         gotResult = false;
         return response;
@@ -324,7 +324,7 @@ private:
     bool connectionLost = false;
     bool running = false;
 
-    JUCE_LEAK_DETECTOR(WorkerProcess)
+    JUCE_LEAK_DETECTOR(PluginScanWorkerProcess)
 };
 
 /// Creates the scanner without starting a worker.
@@ -362,7 +362,7 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
     }
 
     if (worker == nullptr) {
-        worker = std::make_unique<WorkerProcess>();
+        worker = std::make_unique<PluginScanWorkerProcess>();
 
         if (!worker->isRunning()) {
             // Without a worker there is nothing to isolate the plugin with.
@@ -389,15 +389,15 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
         auto response = worker->waitForResponse();
 
         switch (response.state) {
-            case WorkerProcess::ResponseState::timeout:
+            case PluginScanResponseState::timeout:
                 continue;
 
-            case WorkerProcess::ResponseState::connectionLost:
+            case PluginScanResponseState::connectionLost:
                 utils::logWarn("Plugin scan worker crashed while scanning {}", fileOrIdentifier.quoted());
                 worker.reset();
                 return false;
 
-            case WorkerProcess::ResponseState::gotResult:
+            case PluginScanResponseState::gotResult:
                 if (response.xml != nullptr) {
                     for (const auto* element : response.xml->getChildIterator()) {
                         auto description = std::make_unique<juce::PluginDescription>();
@@ -454,3 +454,4 @@ void PluginScanLock::release()
         held = false;
     }
 }
+}  // namespace audiobatch

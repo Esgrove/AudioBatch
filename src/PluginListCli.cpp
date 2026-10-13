@@ -16,7 +16,9 @@
 #include <string>
 #include <vector>
 
-namespace audiobatch::plugin_list
+namespace audiobatch
+{
+namespace
 {
 constexpr auto unknownLabel = "Unknown";
 
@@ -218,15 +220,19 @@ static void printTable(const std::vector<juce::PluginDescription>& plugins)
     printRows(plugins, columns, widths, "");
 }
 
+namespace
+{
+/// The plugins of one group, with the label as first seen.
+struct Group {
+    juce::String label;
+    std::vector<juce::PluginDescription> plugins;
+};
+}  // namespace
+
 /// Prints the plugins in sections, one per group, sorted by group name with Unknown last.
 /// Groups are matched case-insensitively, so differently capitalized manufacturer names end up together.
 static void printGroups(const std::vector<juce::PluginDescription>& plugins, const PluginListGrouping grouping)
 {
-    struct Group {
-        juce::String label;
-        std::vector<juce::PluginDescription> plugins;
-    };
-
     std::map<juce::String, Group> groupsByKey;
     for (const auto& plugin : plugins) {
         const auto label = groupLabel(plugin, grouping);
@@ -370,9 +376,7 @@ static void rescanPlugins(
         console::printWarn(utils::format("No plugins found in {}", file));
     }
 }
-}  // namespace audiobatch::plugin_list
-
-using namespace audiobatch::plugin_list;
+}  // namespace
 
 /// Parses a --group-by value. Returns an empty optional for an unknown value.
 std::optional<PluginListGrouping> PluginListCli::parseGrouping(const juce::String& value)
@@ -465,3 +469,4 @@ int PluginListCli::run(const bool rescan, const PluginListGrouping grouping)
     console::printStyled(stderr, fmt::emphasis::faint, "{} plugins\n", plugins.size());
     return exitCode;
 }
+}  // namespace audiobatch

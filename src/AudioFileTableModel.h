@@ -12,34 +12,37 @@
 #include <functional>
 #include <vector>
 
+namespace audiobatch
+{
 /// Outcome of the last normalize or process run for a file, shown in the status column while the file is idle.
 struct OperationMessage {
+    /// Message shown in the status column.
     juce::String text;
     /// True for a failure, which is highlighted, and false for an informational notice.
     bool isError = false;
+};
+
+/// Stable identifiers shared by the header configuration, painting, and sort logic.
+enum AudioFileTableColumn : std::uint8_t {
+    columnName = 1,
+    columnPath,
+    columnType,
+    columnBitrate,
+    columnSampleRate,
+    columnPeakLeft,
+    columnPeakRight,
+    columnOverallPeak,
+    columnOverallTruePeak,
+    columnMaxShortTermLufs,
+    columnIntegratedLufs,
+    columnCustomGain,
+    columnStatus,
 };
 
 /// Table model for analyzed audio files, including sorting, painting, and row actions.
 class AudioFileTableModel : public juce::TableListBoxModel
 {
 public:
-    /// Stable identifiers shared by the header configuration, painting, and sort logic.
-    enum ColumnId : std::uint8_t {
-        columnName = 1,
-        columnPath,
-        columnType,
-        columnBitrate,
-        columnSampleRate,
-        columnPeakLeft,
-        columnPeakRight,
-        columnOverallPeak,
-        columnOverallTruePeak,
-        columnMaxShortTermLufs,
-        columnIntegratedLufs,
-        columnCustomGain,
-        columnStatus,
-    };
-
     AudioFileTableModel(
         const std::vector<AudioAnalysisRecord>& sourceRecords,
         std::function<void(int row)> onSelectionChanged,
@@ -53,7 +56,7 @@ public:
     /// Returns the compile-time default width for a column.
     /// The defaults are chosen so that all columns together exactly fill the default window width,
     /// which is enforced by a static_assert below.
-    static consteval int initialColumnWidth(const ColumnId columnId)
+    static consteval int initialColumnWidth(const AudioFileTableColumn columnId)
     {
         switch (columnId) {
             case columnName:
@@ -89,7 +92,7 @@ public:
 
     /// Returns the compile-time minimum width a user can shrink a column to.
     /// All metric columns share one minimum so their numeric values stay readable.
-    static consteval int minimumColumnWidth(const ColumnId columnId)
+    static consteval int minimumColumnWidth(const AudioFileTableColumn columnId)
     {
         switch (columnId) {
             case columnName:
@@ -189,3 +192,4 @@ private:
     std::function<OperationMessage(const AudioAnalysisRecord& record)> operationMessageProvider;
     std::function<float()> activityPhaseProvider;
 };
+}  // namespace audiobatch

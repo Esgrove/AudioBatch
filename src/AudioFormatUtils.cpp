@@ -8,7 +8,7 @@
 #include <span>
 #include <utility>
 
-namespace utils
+namespace audiobatch::utils
 {
 /// Returns a format manager private to the calling thread, with the basic formats registered.
 /// Thread-local storage lets worker threads read files concurrently without sharing a manager or locking.
@@ -117,4 +117,4 @@ std::unordered_map<juce::String, juce::String> aiffWriterMetadata(const juce::St
 
     return copiedMetadata;
 }
-}  // namespace utils
+}  // namespace audiobatch::utils

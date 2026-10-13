@@ -48,27 +48,23 @@ public:
         {
             const auto quiet = makeRecord("quiet", -0.25f, -20.0);
             const auto loud = makeRecord("loud", 0.5f, -10.0);
-            expect(results_sorting::compareRecordsByColumn(quiet, loud, AudioFileTableModel::columnOverallPeak) < 0);
+            expect(results_sorting::compareRecordsByColumn(quiet, loud, columnOverallPeak) < 0);
         }
 
         beginTest("Peaks that differ by the smallest step still order strictly");
         {
             const auto lower = makeRecord("lower", 0.5f, -20.0);
             const auto higher = makeRecord("higher", std::nextafter(0.5f, 1.0f), -20.0);
-            expect(results_sorting::compareRecordsByColumn(lower, higher, AudioFileTableModel::columnOverallPeak) < 0);
-            expect(results_sorting::compareRecordsByColumn(higher, lower, AudioFileTableModel::columnOverallPeak) > 0);
-            expectEquals(
-                results_sorting::compareRecordsByColumn(lower, lower, AudioFileTableModel::columnOverallPeak), 0
-            );
+            expect(results_sorting::compareRecordsByColumn(lower, higher, columnOverallPeak) < 0);
+            expect(results_sorting::compareRecordsByColumn(higher, lower, columnOverallPeak) > 0);
+            expectEquals(results_sorting::compareRecordsByColumn(lower, lower, columnOverallPeak), 0);
         }
 
         beginTest("Silent loudness sorts below every measurable value");
         {
             const auto silent = makeRecord("silent", 0.0f, AudioAnalysisRecord::negativeInfinityLoudness);
             const auto quiet = makeRecord("quiet", 0.1f, -40.0);
-            expect(
-                results_sorting::compareRecordsByColumn(silent, quiet, AudioFileTableModel::columnIntegratedLufs) < 0
-            );
+            expect(results_sorting::compareRecordsByColumn(silent, quiet, columnIntegratedLufs) < 0);
         }
 
         beginTest("Primary, secondary, and name ordering, with failed records last");
@@ -87,9 +83,9 @@ public:
             results_sorting::sortRecords(
                 records,
                 {
-                    .primaryColumnId = AudioFileTableModel::columnOverallPeak,
+                    .primaryColumnId = columnOverallPeak,
                     .primaryForwards = false,
-                    .secondaryColumnId = AudioFileTableModel::columnIntegratedLufs,
+                    .secondaryColumnId = columnIntegratedLufs,
                     .secondaryForwards = true,
                     .statusText = {},
                 }
@@ -105,7 +101,7 @@ public:
             const auto negativeZero = makeRecord("negative zero", -0.0f, -20.0);
             const auto positiveZero = makeRecord("positive zero", 0.0f, -20.0);
             const auto half = makeRecord("half", 0.5f, -20.0);
-            constexpr auto column = AudioFileTableModel::columnOverallPeak;
+            constexpr auto column = columnOverallPeak;
 
             expectEquals(results_sorting::compareRecordsByColumn(nan, otherNan, column), 0);
             expect(results_sorting::compareRecordsByColumn(half, nan, column) < 0);
@@ -124,9 +120,9 @@ public:
             results_sorting::sortRecords(
                 records,
                 {
-                    .primaryColumnId = AudioFileTableModel::columnIntegratedLufs,
+                    .primaryColumnId = columnIntegratedLufs,
                     .primaryForwards = true,
-                    .secondaryColumnId = AudioFileTableModel::columnOverallPeak,
+                    .secondaryColumnId = columnOverallPeak,
                     .secondaryForwards = true,
                     .statusText = {},
                 }
@@ -148,7 +144,7 @@ public:
             results_sorting::sortRecords(
                 records,
                 {
-                    .primaryColumnId = AudioFileTableModel::columnCustomGain,
+                    .primaryColumnId = columnCustomGain,
                     .primaryForwards = true,
                     .secondaryColumnId = 0,
                     .secondaryForwards = true,
@@ -170,7 +166,7 @@ public:
             results_sorting::sortRecords(
                 records,
                 {
-                    .primaryColumnId = AudioFileTableModel::columnOverallPeak,
+                    .primaryColumnId = columnOverallPeak,
                     .primaryForwards = false,
                     .secondaryColumnId = 0,
                     .secondaryForwards = true,
@@ -202,7 +198,7 @@ public:
             results_sorting::sortRecords(
                 records,
                 {
-                    .primaryColumnId = AudioFileTableModel::columnStatus,
+                    .primaryColumnId = columnStatus,
                     .primaryForwards = true,
                     .secondaryColumnId = 0,
                     .secondaryForwards = true,
@@ -222,17 +218,17 @@ private:
     void checkComparatorsOnRandomRecords()
     {
         constexpr std::array columns {
-            AudioFileTableModel::columnName,
-            AudioFileTableModel::columnPath,
-            AudioFileTableModel::columnSampleRate,
-            AudioFileTableModel::columnPeakLeft,
-            AudioFileTableModel::columnPeakRight,
-            AudioFileTableModel::columnOverallPeak,
-            AudioFileTableModel::columnOverallTruePeak,
-            AudioFileTableModel::columnMaxShortTermLufs,
-            AudioFileTableModel::columnIntegratedLufs,
-            AudioFileTableModel::columnCustomGain,
-            AudioFileTableModel::columnStatus,
+            columnName,
+            columnPath,
+            columnSampleRate,
+            columnPeakLeft,
+            columnPeakRight,
+            columnOverallPeak,
+            columnOverallTruePeak,
+            columnMaxShortTermLufs,
+            columnIntegratedLufs,
+            columnCustomGain,
+            columnStatus,
         };
 
         const auto records = makeRandomRecords();

@@ -18,8 +18,10 @@
 #include <utility>
 #include <vector>
 
+namespace audiobatch
+{
 /// Helpers for bit depth selection and chunked normalization.
-namespace audiobatch::normalization
+namespace
 {
 /// Logs the failure and builds a failure result for the given file.
 static AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)
@@ -134,9 +136,7 @@ static juce::String renderNormalizedAudio(
     decodeNotice = failureTracker.getNotice();
     return {};
 }
-}  // namespace audiobatch::normalization
-
-using namespace audiobatch::normalization;
+}  // namespace
 
 /// Returns the output path normalization writes for the given source, which is always a sibling `<name>.aif`.
 juce::File AudioNormalizationService::getOutputFile(const juce::File& sourceFile)
@@ -406,3 +406,4 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
 
     return result;
 }
+}  // namespace audiobatch

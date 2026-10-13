@@ -11,7 +11,7 @@
 
 #include <cmath>
 
-namespace utils
+namespace audiobatch::utils
 {
 juce::AudioFormatManager& threadLocalFormatManager();
 
@@ -41,4 +41,4 @@ template<typename Value>
 {
     return std::abs(peak);
 }
-}  // namespace utils
+}  // namespace audiobatch::utils

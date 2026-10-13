@@ -8,11 +8,10 @@
 
 #include <mutex>
 
-namespace
+namespace audiobatch
 {
 /// How long cancelAndWait waits for running analysis jobs to finish before giving up, in milliseconds.
 constexpr int jobShutdownTimeoutMilliseconds = 30000;
-}  // namespace
 
 /// Creates a coordinator with a thread pool sized for the current machine.
 AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& analysisCache, const int workerCount) :
@@ -272,3 +271,4 @@ std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(const Audi
     setCompletionCallback({});
     return results;
 }
+}  // namespace audiobatch

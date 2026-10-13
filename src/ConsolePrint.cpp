@@ -15,6 +15,8 @@
 #include <unistd.h>
 #endif
 
+namespace audiobatch
+{
 namespace console::detail
 {
 /// Returns true when the NO_COLOR convention (https://no-color.org) asks for plain output.
@@ -182,3 +184,4 @@ int displayWidth(const juce::String& text)
     return static_cast<int>(paddedWidth - (padded.size() - utf8.size()));
 }
 }  // namespace console
+}  // namespace audiobatch

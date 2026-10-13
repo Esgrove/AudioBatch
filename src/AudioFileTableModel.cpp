@@ -7,7 +7,7 @@
 #include "CustomLookAndFeel.h"
 #include "StringFormat.h"
 
-namespace audiobatch::table
+namespace audiobatch
 {
 
 /// Maximum widths a user can drag each column to in the results table header.
@@ -75,9 +75,6 @@ static void drawActivityIndicator(juce::Graphics& graphics, const juce::Rectangl
     graphics.setColour(juce::Colours::white.withAlpha(activityIndicatorOutlineAlpha));
     graphics.drawEllipse(ringBounds, 1.0f);
 }
-}  // namespace audiobatch::table
-
-using namespace audiobatch::table;
 
 /// Creates a model backed by the live result list and UI callbacks owned by the main view.
 /// The operation message provider returns the outcome of the last normalize or process run for a record,
@@ -406,8 +403,8 @@ juce::String AudioFileTableModel::getCellTooltip(const int rowNumber, const int 
 
     const auto& record = (*records)[static_cast<std::size_t>(rowNumber)];
 
-    if (const auto operationMessage = getOperationMessage(record); operationMessage.text.isNotEmpty()) {
-        return operationMessage.text;
+    if (const auto [text, isError] = getOperationMessage(record); text.isNotEmpty()) {
+        return text;
     }
 
     return record.hasError() ? record.errorMessage : juce::String();
@@ -418,3 +415,4 @@ OperationMessage AudioFileTableModel::getOperationMessage(const AudioAnalysisRec
 {
     return operationMessageProvider != nullptr ? operationMessageProvider(record) : OperationMessage {};
 }
+}  // namespace audiobatch

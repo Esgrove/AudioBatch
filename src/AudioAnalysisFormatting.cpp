@@ -6,9 +6,10 @@
 #include "FileUtils.h"
 #include "StringFormat.h"
 
-/// Helpers for formatting levels and file properties.
-namespace audiobatch::analysis_formatting
+namespace audiobatch
 {
+/// Helpers for formatting levels and file properties.
+
 constexpr float minimumDisplayDecibels = -100.0f;
 constexpr double kilobitsPerSecondDivisor = 1000.0;
 /// Number of bits in a byte, used to turn a file size into a bit count for the average bitrate.
@@ -37,9 +38,6 @@ static juce::String formatLoudnessValue(const double loudness, const juce::Strin
 
     return utils::format("{:.2f}{}", loudness, unitSuffix);
 }
-}  // namespace audiobatch::analysis_formatting
-
-using namespace audiobatch::analysis_formatting;
 
 /// Formats a peak value for display in the GUI and CLI.
 juce::String AudioAnalysisService::formatPeakDisplay(const float peak)
@@ -158,3 +156,4 @@ juce::String AudioAnalysisService::formatStatus(const AudioAnalysisRecord& recor
 
     std::unreachable();
 }
+}  // namespace audiobatch

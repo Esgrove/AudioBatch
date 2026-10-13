@@ -6,7 +6,7 @@
 #include "StringFormat.h"
 #include "version.h"
 
-namespace utils
+namespace audiobatch::utils
 {
 /// Returns the storage options for the AudioBatch.settings file that holds the GUI settings and plugin chain.
 /// The CLI only reads this file, for example the plugin search folders of the last GUI scan.
@@ -77,4 +77,4 @@ juce::String versionLine(const juce::String& appName)
 {
     return format("{} {} {}", appName, version::VERSION_STRING, juce::SystemStats::getJUCEVersion());
 }
-}  // namespace utils
+}  // namespace audiobatch::utils

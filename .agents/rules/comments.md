@@ -33,3 +33,8 @@ Migration files are permanent:
 their comments should describe what the migration does and why each step exists,
 not the PR that introduced it,
 but they should have the reasoning why the change was made.
+
+## Data member docstrings
+
+When one or more data members of a struct have a `///` docstring, give every data member one.
+This applies to options and result structs in particular.

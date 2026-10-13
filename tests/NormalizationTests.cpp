@@ -175,7 +175,7 @@ private:
         beginTest("Tags and embedded art survive in-place normalization");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "tagged.aif");
-            MetadataService::Metadata metadata;
+            AudioMetadata metadata;
             metadata.properties.push_back({.key = "TITLE", .values = {"Tagged tone"}});
             metadata.properties.push_back({.key = "ARTIST", .values = {"AudioBatch"}});
             const juce::String pictureText("not really a picture");
@@ -190,7 +190,7 @@ private:
             const auto result = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), {});
             expect(!result.hasError(), result.errorMessage);
 
-            MetadataService::Metadata written;
+            AudioMetadata written;
             expect(MetadataService::readMetadata(source, written));
             const auto title
                 = std::ranges::find_if(written.properties, [](const auto& entry) { return entry.key == "TITLE"; });

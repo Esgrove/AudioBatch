@@ -32,14 +32,14 @@ SeratoPreviewLoader::~SeratoPreviewLoader()
 /// Called by the owner thread, never from completion.
 SeratoPreviewLoader::Generation SeratoPreviewLoader::request(const juce::File& file, const double durationSeconds)
 {
-    const AnalysisCache::FileIdentity identity(file);
+    const FileIdentity identity(file);
     Generation nextGeneration = 0;
     {
         const std::scoped_lock lock(mutex);
         nextGeneration = ++generation;
         pending.reset();
         if (!stopped && std::isfinite(durationSeconds) && durationSeconds > 0.0 && identity.matches(file)) {
-            pending = Request {.file = file, .identity = identity, .generation = nextGeneration};
+            pending = SeratoPreviewRequest {.file = file, .identity = identity, .generation = nextGeneration};
         }
     }
     condition.notify_one();
@@ -74,7 +74,7 @@ void SeratoPreviewLoader::cancelAndWait()
 /// Checks the generation, selected path and current file stats again at queued delivery time.
 /// The GUI additionally checks its URL, reader and thumbnail before applying the returned data.
 bool SeratoPreviewLoader::canAdopt(
-    const AnalysisCache::FileIdentity& identity,
+    const FileIdentity& identity,
     const Generation resultGeneration,
     const juce::File& selectedFile
 ) const
@@ -86,7 +86,7 @@ bool SeratoPreviewLoader::canAdopt(
 void SeratoPreviewLoader::run(const std::stop_token& stopToken)
 {
     while (!stopToken.stop_requested()) {
-        std::optional<Request> active;
+        std::optional<SeratoPreviewRequest> active;
         {
             std::unique_lock lock(mutex);
             if (!condition.wait(lock, stopToken, [this] { return pending.has_value(); })) {
@@ -102,7 +102,7 @@ void SeratoPreviewLoader::run(const std::stop_token& stopToken)
 }
 
 /// Performs cache lookup, reading and stable persistence, checking cancellation at each boundary.
-void SeratoPreviewLoader::process(const Request& active, const std::stop_token& stopToken)
+void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std::stop_token& stopToken)
 {
     const utils::CancellationCheck isCancelled = [this, &active, stopToken] {
         return stopToken.stop_requested() || stopped || generation != active.generation;
@@ -142,7 +142,7 @@ void SeratoPreviewLoader::process(const Request& active, const std::stop_token& 
 
 /// Reads missing kinds in one batch and persists only stable results while the request remains current.
 bool SeratoPreviewLoader::readMisses(
-    const Request& active,
+    const SeratoPreviewRequest& active,
     const std::span<const TagKind> misses,
     Results& results,
     const utils::CancellationCheck& isCancelled

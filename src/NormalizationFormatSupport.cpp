@@ -12,8 +12,10 @@
 #include <memory>
 #include <vector>
 
+namespace audiobatch
+{
 /// Helpers for collecting and describing the normalization format support.
-namespace audiobatch::normalization_support
+namespace
 {
 struct AudioNormalizationFormatSupport {
     juce::String formatName;
@@ -146,9 +148,7 @@ static juce::String formatExtensionsToText(const juce::StringArray& extensions)
 
     return normalizedExtensions.joinIntoString(", ");
 }
-}  // namespace audiobatch::normalization_support
-
-using namespace audiobatch::normalization_support;
+}  // namespace
 
 /// Returns true when the file's format can be rewritten by this build during normalization.
 bool AudioNormalizationService::canNormalizeFile(const juce::File& file)
@@ -219,3 +219,4 @@ juce::String AudioNormalizationService::getFormatSupportSummary()
 
     return message.trimEnd();
 }
+}  // namespace audiobatch

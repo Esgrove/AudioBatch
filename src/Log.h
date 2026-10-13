@@ -12,7 +12,7 @@
 #include <memory>
 #include <utility>
 
-namespace utils
+namespace audiobatch::utils
 {
 /// Severity of a log message, which picks its prefix and console colour.
 enum class Level : std::uint8_t { debug, info, warn, error };
@@ -79,4 +79,4 @@ void logError(fmt::format_string<Args...> formatString, Args&&... args)
 }
 
 void logSystemInfo();
-}  // namespace utils
+}  // namespace audiobatch::utils

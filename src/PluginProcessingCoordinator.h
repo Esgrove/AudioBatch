@@ -14,13 +14,44 @@
 #include <memory>
 #include <vector>
 
+namespace audiobatch
+{
+/// One pre-instantiated chain of plugin instances, in processing order.
+using PluginChainInstances = std::vector<std::unique_ptr<juce::AudioPluginInstance>>;
+
+/// The plugin chains of one run and the indices of the chains no worker is using.
+/// Every job of the run shares ownership, so a job that outlives a cancellation timeout keeps its chain alive
+/// and can never return a chain index to the free pool of a later run.
+struct PluginRunChains {
+    PluginRunChains(std::vector<PluginChainInstances> chainInstances, bool usable);
+
+    ~PluginRunChains();
+
+    PluginRunChains(const PluginRunChains&) = delete;
+    PluginRunChains& operator=(const PluginRunChains&) = delete;
+    PluginRunChains(PluginRunChains&&) = delete;
+    PluginRunChains& operator=(PluginRunChains&&) = delete;
+
+    int acquire();
+
+    void release(int chainIndex);
+
+    [[nodiscard]] std::vector<juce::AudioPluginInstance*> getChainView(int chainIndex) const;
+
+    /// The plugin instances of every chain, owned for the whole run.
+    std::vector<PluginChainInstances> chains;
+    /// Guards freeIndices.
+    juce::CriticalSection lock;
+    /// Indices of the chains no worker is using.
+    std::vector<int> freeIndices;
+    /// Auto-reset event, signaled on release and on cancellation.
+    juce::WaitableEvent available {false};
+};
+
 /// Coordinates background plugin-processing jobs and marshals results back to the UI layer.
 class PluginProcessingCoordinator
 {
 public:
-    /// One pre-instantiated chain of plugin instances, in processing order.
-    using PluginChainInstances = std::vector<std::unique_ptr<juce::AudioPluginInstance>>;
-
     /// Called once after a run has published all queued results.
     using CompletionCallback = std::function<void(int totalFiles)>;
 
@@ -55,32 +86,6 @@ public:
     );
 
 private:
-    /// The plugin chains of one run and the indices of the chains no worker is using.
-    /// Every job of the run shares ownership, so a job that outlives a cancellation timeout keeps its chain alive
-    /// and can never return a chain index to the free pool of a later run.
-    struct RunChains {
-        RunChains(std::vector<PluginChainInstances> chainInstances, bool usable);
-
-        ~RunChains();
-
-        RunChains(const RunChains&) = delete;
-        RunChains& operator=(const RunChains&) = delete;
-        RunChains(RunChains&&) = delete;
-        RunChains& operator=(RunChains&&) = delete;
-
-        int acquire();
-
-        void release(int chainIndex);
-
-        [[nodiscard]] std::vector<juce::AudioPluginInstance*> getChainView(int chainIndex) const;
-
-        std::vector<PluginChainInstances> chains;
-        juce::CriticalSection lock;
-        std::vector<int> freeIndices;
-        /// Auto-reset event, signaled on release and on cancellation.
-        juce::WaitableEvent available {false};
-    };
-
     void publishCompletion(int totalFiles, int runId) const;
 
     void publishResult(const PluginProcessingResult& result, int runId) const;
@@ -92,7 +97,7 @@ private:
         const PluginProcessingOptions& options,
         int runId,
         int totalFiles,
-        RunChains& runChains,
+        PluginRunChains& runChains,
         std::atomic<int>& pendingFiles
     ) const;
 
@@ -103,7 +108,8 @@ private:
     StartErrorCallback startErrorCallback;
 
     /// Chains of the current run. Only accessed on the message thread.
-    std::shared_ptr<RunChains> currentChains;
+    std::shared_ptr<PluginRunChains> currentChains;
 
     std::atomic<int> currentRunId {0};
 };
+}  // namespace audiobatch

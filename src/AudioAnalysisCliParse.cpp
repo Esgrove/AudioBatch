@@ -8,9 +8,10 @@
 #include <algorithm>
 #include <map>
 
-/// Helpers for parsing and validating the CLI options.
-namespace audiobatch::cli
+namespace audiobatch
 {
+/// Helpers for parsing and validating the CLI options.
+
 /// Lowest upper limit for the worker count, used on machines with few cores.
 constexpr int minimumWorkerLimit = 64;
 /// Longest worker count text that is parsed, which keeps the number far from the 64-bit limit.
@@ -229,9 +230,6 @@ static juce::String validateOptionCombinations(
 
     return {};
 }
-}  // namespace audiobatch::cli
-
-using namespace audiobatch::cli;
 
 /// Builds the help text shown by the CLI executable.
 juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
@@ -421,3 +419,4 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
 
     return options;
 }
+}  // namespace audiobatch

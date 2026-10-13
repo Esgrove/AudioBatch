@@ -14,6 +14,8 @@
 #include <mutex>
 #include <queue>
 
+namespace audiobatch
+{
 /// Unique id that marks the command line of a plugin scan worker process.
 constexpr auto pluginScanWorkerProcessUid = "audiobatch-plugin-scan-worker";
 
@@ -65,6 +67,8 @@ private:
     JUCE_LEAK_DETECTOR(PluginScanWorker)
 };
 
+class PluginScanWorkerProcess;
+
 /// Main-process side of out-of-process plugin scanning.
 /// Install it with KnownPluginList::setCustomScanner.
 /// Each plugin file is sent to a worker process launched from this executable,
@@ -100,9 +104,7 @@ public:
     void scanFinished() override;
 
 private:
-    class WorkerProcess;
-
-    std::unique_ptr<WorkerProcess> worker;
+    std::unique_ptr<PluginScanWorkerProcess> worker;
     ScanStartingCallback onScanStarting;
     ScanFinishedCallback onScanFinished;
     bool scanStarted = false;
@@ -137,3 +139,4 @@ private:
 
     JUCE_LEAK_DETECTOR(PluginScanLock)
 };
+}  // namespace audiobatch

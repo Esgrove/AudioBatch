@@ -4,6 +4,8 @@
 
 #include <utility>
 
+namespace audiobatch
+{
 namespace
 {
 /// Rate in hertz at which the activity indicators are repainted while files are busy.
@@ -145,3 +147,4 @@ void FileActivityTracker::timerCallback()
         repaint();
     }
 }
+}  // namespace audiobatch

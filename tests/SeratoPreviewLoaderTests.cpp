@@ -23,7 +23,7 @@ using serato::SeratoPreviewLoader;
 
 /// Captures a worker completion without adopting it, like a queued message-thread callback.
 struct PreviewDelivery {
-    AnalysisCache::FileIdentity identity;
+    FileIdentity identity;
     SeratoPreviewLoader::Generation generation;
     SeratoPreviewLoader::Data data;
 };
@@ -111,7 +111,7 @@ public:
     SeratoPreviewLoader::Completion completion()
     {
         return [this](
-                   AnalysisCache::FileIdentity identity,
+                   FileIdentity identity,
                    const SeratoPreviewLoader::Generation generation,
                    SeratoPreviewLoader::Data data
                ) {
@@ -235,7 +235,7 @@ private:
         loader.request(second, 1.0);
         loader.request(third, 1.0);
         const auto latest = loader.request(first, 1.0);
-        expect(!loader.canAdopt(AnalysisCache::FileIdentity(first), original, first));
+        expect(!loader.canAdopt(FileIdentity(first), original, first));
         expectEquals(static_cast<int>(probe.readPaths().size()), 1);
         probe.release();
         expect(probe.waitForDeliveries(1));
@@ -255,8 +255,8 @@ private:
             expect(batch == std::vector<serato::TagKind>(serato::allTagKinds.begin(), serato::allTagKinds.end()));
         }
         for (const auto kind : serato::allTagKinds) {
-            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(second), kind));
-            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(third), kind));
+            expect(!cache.getSeratoTag(FileIdentity(second), kind));
+            expect(!cache.getSeratoTag(FileIdentity(third), kind));
         }
     }
 
@@ -284,7 +284,7 @@ private:
         expect(!loader.canAdopt(original.identity, original.generation, first));
         expect(probe.waitForGeneration(latest));
         loader.cancel();
-        expect(!loader.canAdopt(AnalysisCache::FileIdentity(first), latest, first));
+        expect(!loader.canAdopt(FileIdentity(first), latest, first));
         const auto afterClear = loader.request(first, 1.0);
         expect(probe.waitForGeneration(afterClear));
         results = probe.queued();
@@ -303,7 +303,7 @@ private:
         AnalysisCache cache(directory.getChildFile("cache.db"));
         const auto first = directory.copyFixture("sine_stereo_44100_16.wav", "first.wav");
         const auto second = directory.copyFixture("sine_stereo_44100_16.wav", "second.wav");
-        const AnalysisCache::FileIdentity original(first);
+        const FileIdentity original(first);
         PreviewProbe probe(ReadStatus::present, true);
         SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
         loader.request(first, 1.0);
@@ -320,7 +320,7 @@ private:
         }
         for (const auto kind : serato::allTagKinds) {
             expect(!cache.getSeratoTag(original, kind));
-            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(first), kind));
+            expect(!cache.getSeratoTag(FileIdentity(first), kind));
         }
     }
 
@@ -344,8 +344,8 @@ private:
         expect(probe.queued().empty());
         expectEquals(static_cast<int>(probe.readPaths().size()), 1);
         for (const auto kind : serato::allTagKinds) {
-            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(first), kind));
-            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(second), kind));
+            expect(!cache.getSeratoTag(FileIdentity(first), kind));
+            expect(!cache.getSeratoTag(FileIdentity(second), kind));
         }
     }
 
@@ -394,7 +394,7 @@ private:
                 );
             }
             for (const auto kind : serato::allTagKinds) {
-                const auto cached = cache.getSeratoTag(AnalysisCache::FileIdentity(file), kind);
+                const auto cached = cache.getSeratoTag(FileIdentity(file), kind);
                 expect(cached && cached->kind == kind && cached->status == status);
             }
             AudioAnalysisRecord record;
@@ -436,7 +436,7 @@ private:
         const auto databaseFile = directory.getChildFile("cache.db");
         AnalysisCache cache(databaseFile);
         const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
-        const AnalysisCache::FileIdentity identity(file);
+        const FileIdentity identity(file);
         expect(cache.storeSeratoTag(identity, previewResult(TagKind::overview)));
         expect(cache.storeSeratoTag(identity, previewResult(TagKind::analysis, ReadStatus::absent)));
         expect(cache.storeSeratoTag(identity, previewResult(TagKind::autotags, ReadStatus::unsupported)));
@@ -480,7 +480,7 @@ private:
         const TemporaryDirectory directory;
         AnalysisCache cache(directory.getChildFile("cache.db"));
         const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
-        const AnalysisCache::FileIdentity identity(file);
+        const FileIdentity identity(file);
         PreviewProbe probe;
         std::vector<std::vector<TagKind>> batches;
         const SeratoPreviewLoader::Reader reader
@@ -537,7 +537,7 @@ private:
             const TemporaryDirectory directory;
             AnalysisCache cache(directory.getChildFile("cache.db"));
             const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
-            const AnalysisCache::FileIdentity identity(file);
+            const FileIdentity identity(file);
             expect(cache.storeSeratoTag(identity, previewResult(serato::TagKind::overview, status)));
             PreviewProbe probe;
             SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
@@ -621,7 +621,7 @@ private:
                 }
                 loader.cancelAndWait();
                 for (const auto kind : serato::allTagKinds) {
-                    expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(file), kind));
+                    expect(!cache.getSeratoTag(FileIdentity(file), kind));
                 }
             }
             expectEquals(static_cast<int>(probe.readPaths().size()), 2);

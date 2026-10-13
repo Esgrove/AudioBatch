@@ -5,6 +5,8 @@
 
 #include "StringFormat.h"
 
+namespace audiobatch
+{
 /// Slider steps, combo box ids, and setting keys of the normalization target control.
 /// The target ranges come from AudioNormalizationOptions, which the CLI validates against too.
 namespace normalize_target
@@ -147,3 +149,4 @@ void NormalizationTargetControl::updateSlider()
         targetSlider.setValue(targetPeakDbfs, juce::dontSendNotification);
     }
 }
+}  // namespace audiobatch

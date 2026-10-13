@@ -8,7 +8,7 @@
 
 #include <functional>
 
-namespace utils
+namespace audiobatch::utils
 {
 
 bool moveToTrash(const juce::File& file);
@@ -44,4 +44,4 @@ juce::String normalizeExtension(const juce::String& extension);
 
 juce::String fileExtension(const juce::File& file);
 
-}  // namespace utils
+}  // namespace audiobatch::utils

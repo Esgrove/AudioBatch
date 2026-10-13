@@ -194,7 +194,7 @@ public:
         {
             const TemporaryDirectory directory;
             const auto tagged = directory.copyFixture("sine_stereo_44100_320k.mp3", "tagged.mp3");
-            MetadataService::Metadata metadata;
+            AudioMetadata metadata;
             metadata.properties.push_back({.key = "TITLE", .values = {"Master 24-bit 96 kHz"}});
             metadata.properties.push_back({.key = "COMMENT", .values = {"24 bit"}});
             expect(MetadataService::writeMetadata(tagged, metadata));

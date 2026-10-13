@@ -1,491 +1,38 @@
-/// Implementation of AnalysisCache.
-/// Manages the SQLite database handle, schema creation, and lightweight column migrations,
-/// and implements the load and store paths for analysis records,
-/// waveform previews, and custom gain values using prepared statements.
+/// Analysis, tag and waveform persistence of AnalysisCache.
+/// Implements the load and store paths for analysis records, Serato tag results,
+/// waveform previews and custom gain values using prepared statements,
+/// and the removal and pruning of rows for files that changed or no longer exist.
+/// The database lifecycle and schema live in AnalysisCacheSchema.cpp.
 
 #include "AnalysisCache.h"
 
+#include "AnalysisCacheSql.h"
 #include "Log.h"
 #include "SeratoTags.h"
 #include "StringFormat.h"
-#include "version.h"
 
 #include <algorithm>
-#include <array>
 #include <sqlite3.h>
 #include <utility>
 #include <vector>
 
-/// Helpers for marshalling SQLite values into JUCE types.
-namespace audiobatch::cache
+namespace audiobatch
 {
-/// Divisor that converts the millisecond counter durations into seconds for log output.
-constexpr double millisecondsPerSecond = 1000.0;
-
-/// How long SQLite retries a locked database before failing a statement, in milliseconds.
-constexpr int busyTimeoutMilliseconds = 2000;
-
-/// Maximum numeric tag cache size, including the explicit serializer header fields.
-constexpr std::size_t maximumOverviewBytes
-    = 4 * sizeof(std::uint32_t) + audiobatch::serato::Overview::maxSlices * audiobatch::serato::Overview::bandCount;
-
-/// Zero-based columns for independent tag lookup, including the key's stored SQLite types.
-namespace serato_column
-{
-constexpr int fileSize = 0;
-constexpr int modifiedTimeMs = 1;
-constexpr int parserVersion = 2;
-constexpr int resultState = 3;
-constexpr int decodedData = 4;
-constexpr int updatedAtMs = 5;
-constexpr int filePath = 6;
-constexpr int tagKind = 7;
-}  // namespace serato_column
-
-/// One-based parameters for independent per-kind tag UPSERT.
-namespace serato_parameter
-{
-constexpr int filePath = 1;
-constexpr int tagKind = 2;
-constexpr int fileSize = 3;
-constexpr int modifiedTimeMs = 4;
-constexpr int parserVersion = 5;
-constexpr int resultState = 6;
-constexpr int decodedData = 7;
-constexpr int updatedAtMs = 8;
-}  // namespace serato_parameter
-
-/// Zero-based result column indices for the analysis record SELECT in AnalysisCache::getAnalysis.
-/// The order must match the column list of that query exactly.
-namespace analysis_column
-{
-constexpr int fileName = 0;
-constexpr int formatName = 1;
-constexpr int fileSize = 2;
-constexpr int modifiedTimeMs = 3;
-constexpr int lengthInSamples = 4;
-constexpr int durationSeconds = 5;
-constexpr int peakLeft = 6;
-constexpr int peakRight = 7;
-constexpr int overallPeak = 8;
-constexpr int truePeakLeft = 9;
-constexpr int truePeakRight = 10;
-constexpr int overallTruePeak = 11;
-constexpr int maxShortTermLufs = 12;
-constexpr int integratedLufs = 13;
-constexpr int sampleRate = 14;
-constexpr int channels = 15;
-constexpr int bitsPerSample = 16;
-constexpr int status = 17;
-constexpr int errorMessage = 18;
-constexpr int analysisVersion = 19;
-constexpr int customGainDb = 20;
-constexpr int hasCustomGain = 21;
-}  // namespace analysis_column
-
-/// One-based bind parameter indices for the analysis record upsert in AnalysisCache::storeAnalysis.
-/// The order must match the column list of that INSERT statement exactly.
-namespace analysis_parameter
-{
-constexpr int filePath = 1;
-constexpr int fileName = 2;
-constexpr int formatName = 3;
-constexpr int fileSize = 4;
-constexpr int modifiedTimeMs = 5;
-constexpr int lengthInSamples = 6;
-constexpr int durationSeconds = 7;
-constexpr int peakLeft = 8;
-constexpr int peakRight = 9;
-constexpr int overallPeak = 10;
-constexpr int truePeakLeft = 11;
-constexpr int truePeakRight = 12;
-constexpr int overallTruePeak = 13;
-constexpr int maxShortTermLufs = 14;
-constexpr int integratedLufs = 15;
-constexpr int sampleRate = 16;
-constexpr int channels = 17;
-constexpr int bitsPerSample = 18;
-constexpr int status = 19;
-constexpr int errorMessage = 20;
-constexpr int waveformData = 21;
-constexpr int waveformVersion = 22;
-constexpr int analysisVersion = 23;
-constexpr int updatedAtMs = 24;
-constexpr int customGainDb = 25;
-constexpr int hasCustomGain = 26;
-}  // namespace analysis_parameter
-
-/// One-based bind parameter indices for the waveform UPDATE in AnalysisCache::storeWaveformData.
-/// The order must match the placeholders of that statement exactly.
-namespace waveform_parameter
-{
-constexpr int waveformData = 1;
-constexpr int waveformVersion = 2;
-constexpr int updatedAtMs = 3;
-constexpr int filePath = 4;
-constexpr int fileSize = 5;
-constexpr int modifiedTimeMs = 6;
-constexpr int analysisVersion = 7;
-}  // namespace waveform_parameter
-
-/// Reads a text column as a juce::String, mapping SQL NULL to an empty string.
-static juce::String columnText(sqlite3_stmt* statement, const int columnIndex)
-{
-    const auto* text = sqlite3_column_blob(statement, columnIndex);
-    return text != nullptr ? juce::String::createStringFromData(text, sqlite3_column_bytes(statement, columnIndex))
-                           : juce::String();
-}
-
-/// Copies a blob column into a juce::MemoryBlock, returning an empty block for NULL or empty data.
-static juce::MemoryBlock columnBlob(sqlite3_stmt* statement, const int columnIndex)
-{
-    juce::MemoryBlock data;
-
-    if (const auto* blob = sqlite3_column_blob(statement, columnIndex)) {
-        const auto size = sqlite3_column_bytes(statement, columnIndex);
-
-        if (size > 0) {
-            data.append(blob, static_cast<size_t>(size));
-        }
-    }
-
-    return data;
-}
-
-/// Binds a juce::String as UTF-8 text.
-///
-/// SQLITE_TRANSIENT makes SQLite copy the buffer, so the string does not need to outlive the statement.
-static void bindText(sqlite3_stmt* statement, const int index, const juce::String& value)
-{
-    const auto* utf8 = value.toRawUTF8();
-    sqlite3_bind_text(statement, index, utf8, -1, SQLITE_TRANSIENT);
-}
-
-/// Binds a memory block as a blob.
-///
-/// SQLITE_TRANSIENT makes SQLite copy the data, so the block does not need to outlive the statement.
-static void bindBlob(sqlite3_stmt* statement, const int index, const juce::MemoryBlock& data)
-{
-    sqlite3_bind_blob(statement, index, data.getData(), static_cast<int>(data.getSize()), SQLITE_TRANSIENT);
-}
-}  // namespace audiobatch::cache
-
-using namespace audiobatch::cache;
-
-/// Captures the absolute path and current file stats without accessing the database.
-AnalysisCache::FileIdentity::FileIdentity(const juce::File& file) :
-    path(file.getFullPathName()),
-    fileSize(file.getSize()),
-    modifiedTimeMs(file.getLastModificationTime().toMilliseconds())
-{}
-
-/// Requires the same existing file path, size and modification time, with valid captured stats.
-bool AnalysisCache::FileIdentity::matches(const juce::File& file) const
-{
-    return juce::File::isAbsolutePath(path) && path == file.getFullPathName() && fileSize >= 0 && modifiedTimeMs > 0
-        && file.existsAsFile() && file.getSize() == fileSize
-        && file.getLastModificationTime().toMilliseconds() == modifiedTimeMs;
-}
-
-/// Resolves the default cache database location.
-AnalysisCache::AnalysisCache()
-{
-    const auto appDataDirectory
-        = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile(version::APP_NAME);
-    databaseFile = appDataDirectory.getChildFile("analysis.db");
-}
-
-/// Uses the given SQLite database file instead of the default location, for example in tests.
-AnalysisCache::AnalysisCache(juce::File cacheDatabaseFile) : databaseFile(std::move(cacheDatabaseFile)) {}
-
-/// Closes the database if it is currently open.
-AnalysisCache::~AnalysisCache()
-{
-    const juce::ScopedLock lock(mutex);
-    closeUnlocked();
-}
-
-/// Returns the on-disk SQLite file used by the cache.
-juce::File AnalysisCache::getDatabaseFile() const
-{
-    return databaseFile;
-}
-
-/// Returns the canonical path string used as the cache key for a file.
-juce::String AnalysisCache::normalizedPath(const juce::File& file)
-{
-    return file.getFullPathName();
-}
-
-/// Runs a statement that returns no rows, logging any SQLite error.
-bool AnalysisCache::execute(const juce::String& sql) const
-{
-    char* errorMessage = nullptr;
-
-    if (const auto result = sqlite3_exec(database, sql.toRawUTF8(), nullptr, nullptr, &errorMessage);
-        result != SQLITE_OK)
-    {
-        const auto error
-            = errorMessage != nullptr ? juce::String::fromUTF8(errorMessage) : juce::String("Unknown SQLite error");
-        utils::logError("SQLite error: {}", error);
-        sqlite3_free(errorMessage);
-        return false;
-    }
-
-    return true;
-}
-
-/// Prepares a statement, logging the SQLite error when it fails.
-bool AnalysisCache::prepare(const char* sql, sqlite3_stmt*& statement) const
-{
-    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) == SQLITE_OK) {
-        return true;
-    }
-
-    utils::logError(
-        "SQLite could not prepare an analysis cache query: {}", juce::String::fromUTF8(sqlite3_errmsg(database))
-    );
-    return false;
-}
-
-/// Steps a statement that returns no rows to completion, logging the SQLite error when it fails.
-/// Returns true when the statement completed.
-bool AnalysisCache::stepToCompletion(sqlite3_stmt* statement) const
-{
-    if (sqlite3_step(statement) == SQLITE_DONE) {
-        return true;
-    }
-
-    utils::logError(
-        "SQLite could not complete an analysis cache update: {}", juce::String::fromUTF8(sqlite3_errmsg(database))
-    );
-    return false;
-}
-
-/// Opens the cache database and creates or migrates tables as needed.
-bool AnalysisCache::open()
-{
-    const juce::ScopedLock lock(mutex);
-
-    return openUnlocked();
-}
-
-/// Closes the database handle if it is open. The caller must hold the mutex.
-void AnalysisCache::closeUnlocked()
-{
-    if (database == nullptr) {
-        utils::logDebug("Analysis cache close skipped: database was not open");
-        return;
-    }
-
-    const auto startedAtMs = juce::Time::getMillisecondCounterHiRes();
-    const auto databasePath = databaseFile.getFullPathName();
-
-    sqlite3_close(database);
-    database = nullptr;
-
-    utils::logDebug(
-        "Closed analysis cache at {} in {:.3f} s",
-        databasePath.quoted(),
-        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / millisecondsPerSecond
-    );
-}
-
-/// Returns true when the given table already has the named column.
-/// Used for lightweight schema migrations when opening the database.
-bool AnalysisCache::columnExists(const juce::String& tableName, const juce::String& columnName) const
-{
-    const auto sql = utils::format("PRAGMA table_info({});", tableName);
-
-    sqlite3_stmt* statement = nullptr;
-    if (!prepare(sql.toRawUTF8(), statement)) {
-        return false;
-    }
-
-    bool found = false;
-
-    while (sqlite3_step(statement) == SQLITE_ROW) {
-        if (columnText(statement, 1) == columnName) {
-            found = true;
-            break;
-        }
-    }
-
-    sqlite3_finalize(statement);
-    return found;
-}
-
-/// Adds every column that a database created by an older version lacks, with its default value.
-/// Returns false when a migration statement fails.
-bool AnalysisCache::addMissingColumns() const
-{
-    struct ColumnMigration {
-        const char* name;
-        const char* definition;
-    };
-
-    constexpr std::array migrations {
-        ColumnMigration {.name = "waveform_data", .definition = "BLOB"},
-        ColumnMigration {.name = "waveform_version", .definition = "INTEGER NOT NULL DEFAULT 0"},
-        ColumnMigration {.name = "true_peak_left", .definition = "REAL NOT NULL DEFAULT 0"},
-        ColumnMigration {.name = "true_peak_right", .definition = "REAL NOT NULL DEFAULT 0"},
-        ColumnMigration {.name = "overall_true_peak", .definition = "REAL NOT NULL DEFAULT 0"},
-        ColumnMigration {.name = "max_short_term_lufs", .definition = "REAL NOT NULL DEFAULT -1000"},
-        ColumnMigration {.name = "integrated_lufs", .definition = "REAL NOT NULL DEFAULT -1000"},
-        ColumnMigration {.name = "custom_gain_db", .definition = "REAL NOT NULL DEFAULT 0"},
-        ColumnMigration {.name = "has_custom_gain", .definition = "INTEGER NOT NULL DEFAULT 0"},
-    };
-
-    return std::ranges::all_of(migrations, [this](const ColumnMigration& migration) {
-        return columnExists("file_analysis", migration.name)
-            || execute(
-                   utils::format("ALTER TABLE file_analysis ADD COLUMN {} {};", migration.name, migration.definition)
-            );
-    });
-}
-
-/// Opens the database and ensures the schema is current. The caller must hold the mutex.
-/// Closes the connection again when the schema cannot be prepared, so the next call retries the open.
-bool AnalysisCache::openUnlocked()
-{
-    if (database != nullptr) {
-        utils::logDebug(
-            "Analysis cache open skipped: database already open at {}", databaseFile.getFullPathName().quoted()
-        );
-        return true;
-    }
-
-    const auto startedAtMs = juce::Time::getMillisecondCounterHiRes();
-    const auto& databasePath = databaseFile.getFullPathName();
-    const auto databaseFound = databaseFile.existsAsFile();
-
-    utils::logDebug("Analysis cache startup: ensuring directory for {}", databasePath.quoted());
-    if (const auto createResult = databaseFile.getParentDirectory().createDirectory(); createResult.failed()) {
-        utils::logError(
-            "Failed to create analysis cache directory {}: {}",
-            databaseFile.getParentDirectory().getFullPathName().quoted(),
-            createResult.getErrorMessage()
-        );
-    }
-
-    utils::logDebug("Analysis cache startup: calling sqlite3_open_v2");
-    const auto result = sqlite3_open_v2(
-        databaseFile.getFullPathName().toRawUTF8(),
-        &database,
-        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
-        nullptr
-    );
-
-    if (result != SQLITE_OK || database == nullptr) {
-        utils::logError(
-            "Failed to open analysis cache at {} in {:.3f} s",
-            databasePath.quoted(),
-            (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / millisecondsPerSecond
-        );
-        if (database != nullptr) {
-            sqlite3_close(database);
-            database = nullptr;
-        }
-        return false;
-    }
-
-    utils::logDebug("Analysis cache startup: sqlite3_open_v2 returned successfully");
-    sqlite3_busy_timeout(database, busyTimeoutMilliseconds);
-
-    // Any failure from here on closes the connection again,
-    // so a later call retries the whole open instead of using a database with an incomplete schema.
-    utils::logDebug("Analysis cache startup: applying SQLite pragmas");
-    if (!execute("PRAGMA journal_mode=WAL;") || !execute("PRAGMA synchronous=NORMAL;")) {
-        closeUnlocked();
-        return false;
-    }
-
-    utils::logDebug("Analysis cache startup: ensuring schema");
-    if (!execute(R"SQL(
-        CREATE TABLE IF NOT EXISTS file_analysis (
-            file_path TEXT PRIMARY KEY,
-            file_name TEXT NOT NULL,
-            format_name TEXT,
-            file_size INTEGER NOT NULL,
-            modified_time_ms INTEGER NOT NULL,
-            length_in_samples INTEGER NOT NULL,
-            duration_seconds REAL NOT NULL,
-            peak_left REAL NOT NULL,
-            peak_right REAL NOT NULL,
-            overall_peak REAL NOT NULL,
-            true_peak_left REAL NOT NULL DEFAULT 0,
-            true_peak_right REAL NOT NULL DEFAULT 0,
-            overall_true_peak REAL NOT NULL DEFAULT 0,
-            max_short_term_lufs REAL NOT NULL DEFAULT -1000,
-            integrated_lufs REAL NOT NULL DEFAULT -1000,
-            sample_rate INTEGER NOT NULL,
-            channels INTEGER NOT NULL,
-            bits_per_sample INTEGER NOT NULL,
-            custom_gain_db REAL NOT NULL DEFAULT 0,
-            has_custom_gain INTEGER NOT NULL DEFAULT 0,
-            status INTEGER NOT NULL,
-            error_message TEXT,
-            waveform_data BLOB,
-            waveform_version INTEGER NOT NULL DEFAULT 0,
-            analysis_version INTEGER NOT NULL,
-            updated_at_ms INTEGER NOT NULL
-        );
-    )SQL"))
-    {
-        closeUnlocked();
-        return false;
-    }
-
-    if (!addMissingColumns()) {
-        closeUnlocked();
-        return false;
-    }
-
-    if (!execute(R"SQL(
-        CREATE TABLE IF NOT EXISTS serato_tag_cache (
-            file_path TEXT NOT NULL,
-            tag_kind INTEGER NOT NULL,
-            file_size INTEGER NOT NULL,
-            modified_time_ms INTEGER NOT NULL,
-            parser_version INTEGER NOT NULL,
-            result_state INTEGER NOT NULL,
-            decoded_data BLOB,
-            updated_at_ms INTEGER NOT NULL,
-            PRIMARY KEY (file_path, tag_kind)
-        );
-    )SQL"))
-    {
-        closeUnlocked();
-        return false;
-    }
-
-    utils::logDebug("Analysis cache startup: schema ready");
-    utils::logDebug(
-        "Opened analysis cache at {} ({}) in {:.3f} s",
-        databasePath.quoted(),
-        databaseFound ? "existing" : "new",
-        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / millisecondsPerSecond
-    );
-
-    return true;
-}
-
 /// Returns an independently versioned stable tag result, or a miss for stale or corrupt data.
 /// Validates file identity after the read. Unknown kinds and transient outcomes are never returned.
-std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
+std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
     const FileIdentity& identity,
-    const audiobatch::serato::TagKind kind
+    const serato::TagKind kind
 )
 {
-    using namespace audiobatch::serato;
-    if (!supportsTagKind(kind) || !juce::File::isAbsolutePath(identity.path)) {
+    if (!serato::supportsTagKind(kind) || !juce::File::isAbsolutePath(identity.path)) {
         return std::nullopt;
     }
     const juce::File file(identity.path);
     if (!identity.matches(file)) {
         return std::nullopt;
     }
-    TagReadResult result {.kind = kind, .status = ReadStatus::absent, .overview = std::nullopt};
+    serato::TagReadResult result {.kind = kind, .status = serato::ReadStatus::absent, .overview = std::nullopt};
     juce::MemoryBlock data;
     {
         const juce::ScopedLock lock(mutex);
@@ -518,13 +65,13 @@ std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
         }
         valid = valid && sqlite3_column_int64(statement, serato_column::fileSize) == identity.fileSize
             && sqlite3_column_int64(statement, serato_column::modifiedTimeMs) == identity.modifiedTimeMs
-            && sqlite3_column_int64(statement, serato_column::parserVersion) == parserVersion(kind)
+            && sqlite3_column_int64(statement, serato_column::parserVersion) == serato::parserVersion(kind)
             && sqlite3_column_int64(statement, serato_column::updatedAtMs) > 0
             && sqlite3_column_type(statement, serato_column::filePath) == SQLITE_TEXT
             && columnText(statement, serato_column::filePath) == identity.path
             && sqlite3_column_int64(statement, serato_column::tagKind) == static_cast<std::uint32_t>(kind);
         const auto state = sqlite3_column_int64(statement, serato_column::resultState);
-        if (valid && state == static_cast<int>(ReadStatus::present)) {
+        if (valid && state == static_cast<int>(serato::ReadStatus::present)) {
             const auto bytes = sqlite3_column_bytes(statement, serato_column::decodedData);
             valid = sqlite3_column_type(statement, serato_column::decodedData) == SQLITE_BLOB && bytes > 0
                 && std::cmp_less_equal(bytes, maximumOverviewBytes);
@@ -533,18 +80,19 @@ std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
             }
         } else {
             valid = valid
-                && (state == static_cast<int>(ReadStatus::absent) || state == static_cast<int>(ReadStatus::unsupported)
-                    || state == static_cast<int>(ReadStatus::invalid))
+                && (state == static_cast<int>(serato::ReadStatus::absent)
+                    || state == static_cast<int>(serato::ReadStatus::unsupported)
+                    || state == static_cast<int>(serato::ReadStatus::invalid))
                 && sqlite3_column_type(statement, serato_column::decodedData) == SQLITE_NULL;
         }
         sqlite3_finalize(statement);
         if (!valid) {
             return std::nullopt;
         }
-        result.status = static_cast<ReadStatus>(state);
+        result.status = static_cast<serato::ReadStatus>(state);
     }
-    if (result.status == ReadStatus::present) {
-        const auto decoded = deserializeTag(kind, data);
+    if (result.status == serato::ReadStatus::present) {
+        const auto decoded = serato::deserializeTag(kind, data);
         if (!decoded) {
             return std::nullopt;
         }
@@ -556,33 +104,32 @@ std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
 /// Stores independently serialized tag data or a stable negative without requiring an analysis row.
 /// Serializes outside the database lock and checks the captured identity before writing.
 /// Returns false for stale identities, inconsistent results, transient outcomes or database failures.
-bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const audiobatch::serato::TagReadResult& result)
+bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const serato::TagReadResult& result)
 {
-    using namespace audiobatch::serato;
-    if (!supportsTagKind(result.kind) || result.status < ReadStatus::present || result.status > ReadStatus::cancelled
-        || !juce::File::isAbsolutePath(identity.path))
+    if (!serato::supportsTagKind(result.kind) || result.status < serato::ReadStatus::present
+        || result.status > serato::ReadStatus::cancelled || !juce::File::isAbsolutePath(identity.path))
     {
         return false;
     }
     juce::MemoryBlock data;
     switch (result.status) {
-        case ReadStatus::present:
-            data = serializeTag(result);
+        case serato::ReadStatus::present:
+            data = serato::serializeTag(result);
             if (data.isEmpty() || data.getSize() > maximumOverviewBytes) {
                 return false;
             }
             break;
-        case ReadStatus::absent:
-        case ReadStatus::unsupported:
-        case ReadStatus::invalid:
+        case serato::ReadStatus::absent:
+        case serato::ReadStatus::unsupported:
+        case serato::ReadStatus::invalid:
             if (result.overview || result.analysis || result.autotags || result.beatGrid || result.markers
                 || result.trackInfo)
             {
                 return false;
             }
             break;
-        case ReadStatus::ioError:
-        case ReadStatus::cancelled:
+        case serato::ReadStatus::ioError:
+        case serato::ReadStatus::cancelled:
             return false;
     }
     const juce::File file(identity.path);
@@ -610,9 +157,9 @@ bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const audiobatc
     sqlite3_bind_int64(statement, serato_parameter::tagKind, static_cast<std::uint32_t>(result.kind));
     sqlite3_bind_int64(statement, serato_parameter::fileSize, identity.fileSize);
     sqlite3_bind_int64(statement, serato_parameter::modifiedTimeMs, identity.modifiedTimeMs);
-    sqlite3_bind_int64(statement, serato_parameter::parserVersion, parserVersion(result.kind));
+    sqlite3_bind_int64(statement, serato_parameter::parserVersion, serato::parserVersion(result.kind));
     sqlite3_bind_int(statement, serato_parameter::resultState, static_cast<int>(result.status));
-    if (result.status == ReadStatus::present) {
+    if (result.status == serato::ReadStatus::present) {
         bindBlob(statement, serato_parameter::decodedData, data);
     } else {
         sqlite3_bind_null(statement, serato_parameter::decodedData);
@@ -883,23 +430,34 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
     {
         sqlite3_stmt* statement = nullptr;
         if (!prepare(sql, statement)) {
-            execute("ROLLBACK;");
+            static_cast<void>(execute("ROLLBACK;"));
             return false;
         }
         bindText(statement, 1, normalizedPath(file));
         const auto completed = stepToCompletion(statement);
         sqlite3_finalize(statement);
         if (!completed) {
-            execute("ROLLBACK;");
+            static_cast<void>(execute("ROLLBACK;"));
             return false;
         }
     }
     if (execute("COMMIT;")) {
         return true;
     }
-    execute("ROLLBACK;");
+    static_cast<void>(execute("ROLLBACK;"));
     return false;
 }
+
+namespace
+{
+/// One cached row, identified by path and the file version it describes.
+struct CachedRow {
+    juce::String path;
+    std::int64_t fileSize = 0;
+    std::int64_t modifiedTimeMs = 0;
+    std::optional<std::int64_t> tagKind;
+};
+}  // namespace
 
 /// Deletes the rows of files that no longer exist, for example after they were trashed or renamed.
 /// Rows whose folder is missing are kept, since that usually means an unmounted drive, not deleted files.
@@ -912,14 +470,6 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
 /// Returns the number of deleted rows across analysis and tag tables, including tag-only files.
 int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
 {
-    /// One cached row, identified by path and the file version it describes.
-    struct CachedRow {
-        juce::String path;
-        std::int64_t fileSize = 0;
-        std::int64_t modifiedTimeMs = 0;
-        std::optional<std::int64_t> tagKind;
-    };
-
     std::vector<CachedRow> cachedRows;
 
     {
@@ -955,23 +505,23 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
 
     int removedRows = 0;
 
-    for (const auto& row : cachedRows) {
+    for (const auto& [path, fileSize, modifiedTimeMs, tagKind] : cachedRows) {
         if (shouldStop != nullptr && shouldStop()) {
             break;
         }
 
-        if (!juce::File::isAbsolutePath(row.path)) {
+        if (!juce::File::isAbsolutePath(path)) {
             continue;
         }
 
         // A missing folder usually means an unmounted drive or network share rather than deleted files,
         // and those rows hold custom gains that would be lost for good.
-        const juce::File file(row.path);
+        const juce::File file(path);
         if (file.existsAsFile() || !file.getParentDirectory().isDirectory()) {
             continue;
         }
 
-        if (removeRowVersion(row.path, row.fileSize, row.modifiedTimeMs, row.tagKind)) {
+        if (removeRowVersion(path, fileSize, modifiedTimeMs, tagKind)) {
             ++removedRows;
         }
     }
@@ -1110,3 +660,4 @@ bool AnalysisCache::storeWaveformData(const juce::File& file, const juce::Memory
     sqlite3_finalize(statement);
     return completed && changedRows > 0;
 }
+}  // namespace audiobatch

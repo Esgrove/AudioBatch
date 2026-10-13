@@ -6,13 +6,11 @@
 
 #include <JuceHeader.h>
 
-namespace utils
+namespace audiobatch::utils
 {
 juce::PropertiesFile::Options createApplicationSettingsOptions();
 
-juce::StringArray systemInfo();
-
 juce::String aboutMessage(const juce::String& appName);
-
 juce::String versionLine(const juce::String& appName);
-}  // namespace utils
+juce::StringArray systemInfo();
+}  // namespace audiobatch::utils

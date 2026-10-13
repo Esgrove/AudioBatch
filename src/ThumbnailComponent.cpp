@@ -13,6 +13,8 @@
 
 #include <algorithm>
 
+namespace audiobatch
+{
 namespace
 {
 /// Alpha of the white playback position marker drawn over the waveform.
@@ -75,14 +77,12 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
     if (thumbnail.getTotalLength() > 0.0) {
         const auto reduced = waveformBounds();
         const auto gradient = seratoOverview
-            ? audiobatch::serato::makeOverviewGradient(
+            ? serato::makeOverviewGradient(
                   *seratoOverview, visibleRange, thumbnail.getTotalLength(), reduced, juce::CustomLookAndFeel::blue()
               )
             : std::nullopt;
         if (gradient) {
-            audiobatch::serato::drawColouredThumbnail(
-                graphics, thumbnail, reduced, visibleRange, displayGain, *gradient
-            );
+            serato::drawColouredThumbnail(graphics, thumbnail, reduced, visibleRange, displayGain, *gradient);
         } else {
             thumbnail.drawChannels(graphics, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
         }
@@ -449,9 +449,9 @@ void ThumbnailComponent::setDisplayGain(const float linearGain)
 /// Attaches immutable spectral data on the message thread and repaints only.
 /// Does not reload peaks, reset the viewport or gain, or affect playback.
 /// Null, empty and oversized data remove colouring. The owner must reject stale asynchronous results.
-void ThumbnailComponent::setSeratoOverview(std::shared_ptr<const audiobatch::serato::Overview> overview)
+void ThumbnailComponent::setSeratoOverview(std::shared_ptr<const serato::Overview> overview)
 {
-    if (overview && (overview->slices.empty() || overview->slices.size() > audiobatch::serato::Overview::maxSlices)) {
+    if (overview && (overview->slices.empty() || overview->slices.size() > serato::Overview::maxSlices)) {
         overview.reset();
     }
     seratoOverview = std::move(overview);
@@ -460,7 +460,7 @@ void ThumbnailComponent::setSeratoOverview(std::shared_ptr<const audiobatch::ser
 
 /// Attaches owned cue positions and colours without altering peaks, playback or the viewport.
 /// Null data removes the arrows. The owner must reject stale asynchronous results before adoption.
-void ThumbnailComponent::setSeratoMarkers(std::shared_ptr<const audiobatch::serato::Markers> markers)
+void ThumbnailComponent::setSeratoMarkers(std::shared_ptr<const serato::Markers> markers)
 {
     seratoMarkers = std::move(markers);
     repaint();
@@ -525,3 +525,4 @@ void ThumbnailComponent::setZoom(const double zoomLevel)
         setRange(juce::Range(thumbnail.getTotalLength() - zoom, end));
     }
 }
+}  // namespace audiobatch

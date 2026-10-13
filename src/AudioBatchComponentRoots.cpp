@@ -8,8 +8,8 @@
 
 #include <algorithm>
 
-using namespace audiobatch::gui;
-
+namespace audiobatch
+{
 /// Accepts any external drag that contains at least one file.
 bool AudioBatchComponent::isInterestedInFileDrag(const juce::StringArray& files)
 {
@@ -289,3 +289,4 @@ bool AudioBatchComponent::shouldDropFilesWhenDraggedExternally(
     canMoveFiles = false;
     return !files.isEmpty();
 }
+}  // namespace audiobatch

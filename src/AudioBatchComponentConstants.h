@@ -8,15 +8,17 @@
 
 #include <cstdint>
 
+namespace audiobatch
+{
 /// Main-view constants shared by the AudioBatchComponent implementation files.
-namespace audiobatch::gui
+namespace
 {
 constexpr auto supportedAudioFilePatterns = "*.wav;*.aif;*.aiff;*.flac;*.mp3";
-constexpr int nameColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(AudioFileTableModel::columnName);
-constexpr int pathColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(AudioFileTableModel::columnPath);
+constexpr int nameColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(columnName);
+constexpr int pathColumnMinimumWidth = AudioFileTableModel::minimumColumnWidth(columnPath);
 
-constexpr int nameColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnName);
-constexpr int pathColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(AudioFileTableModel::columnPath);
+constexpr int nameColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(columnName);
+constexpr int pathColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(columnPath);
 
 /// Pixel sizes, spacing, and timing used to lay out and configure the main view.
 namespace layout
@@ -104,4 +106,5 @@ enum FileMenuItemId : std::uint8_t {
     removeFromListMenuItemId,
     reanalyzeMenuItemId,
 };
-}  // namespace audiobatch::gui
+}  // namespace
+}  // namespace audiobatch

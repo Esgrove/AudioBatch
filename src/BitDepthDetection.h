@@ -9,4 +9,4 @@
 namespace audiobatch::analysis
 {
 int resolveSourceBitsPerSample(const juce::AudioFormatReader& reader, const juce::File& file);
-}  // namespace audiobatch::analysis
+}

@@ -11,8 +11,8 @@
 
 #include <algorithm>
 
-using namespace audiobatch::gui;
-
+namespace audiobatch
+{
 /// Forwards key presses from the results table to the main shortcut handler.
 bool AudioBatchComponent::keyPressed(const juce::KeyPress& key, juce::Component* /*originator*/)
 {
@@ -461,3 +461,4 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
     resultsTable.repaint();
     updateProcessButtonState();
 }
+}  // namespace audiobatch

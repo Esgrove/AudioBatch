@@ -14,8 +14,8 @@
 #include "ResultsSorting.h"
 #include "StringFormat.h"
 
-using namespace audiobatch::gui;
-
+namespace audiobatch
+{
 /// Creates the results table header, model, and selection behavior.
 void AudioBatchComponent::configureResultsTable()
 {
@@ -175,12 +175,12 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
 {
     const SafePointer safeThis(this);
 
-    seratoPreviewLoader = std::make_unique<audiobatch::serato::SeratoPreviewLoader>(
+    seratoPreviewLoader = std::make_unique<serato::SeratoPreviewLoader>(
         analysisCache,
         [safeThis](
-            AnalysisCache::FileIdentity identity,
-            const audiobatch::serato::SeratoPreviewLoader::Generation generation,
-            audiobatch::serato::SeratoPreviewLoader::Data data
+            FileIdentity identity,
+            const serato::SeratoPreviewLoader::Generation generation,
+            serato::SeratoPreviewLoader::Data data
         ) {
             juce::MessageManager::callAsync(
                 [safeThis, previewIdentity = std::move(identity), generation, previewData = std::move(data)] {
@@ -431,41 +431,21 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
 {
     auto& header = resultsTable.getHeader();
 
-    const auto fixedColumnWidth = header.getColumnWidth(AudioFileTableModel::columnOverallPeak)
-        + (header.isColumnVisible(AudioFileTableModel::columnType)
-               ? header.getColumnWidth(AudioFileTableModel::columnType)
-               : 0)
-        + (header.isColumnVisible(AudioFileTableModel::columnBitrate)
-               ? header.getColumnWidth(AudioFileTableModel::columnBitrate)
-               : 0)
-        + (header.isColumnVisible(AudioFileTableModel::columnSampleRate)
-               ? header.getColumnWidth(AudioFileTableModel::columnSampleRate)
-               : 0)
-        + (header.isColumnVisible(AudioFileTableModel::columnPeakLeft)
-               ? header.getColumnWidth(AudioFileTableModel::columnPeakLeft)
-               : 0)
-        + (header.isColumnVisible(AudioFileTableModel::columnPeakRight)
-               ? header.getColumnWidth(AudioFileTableModel::columnPeakRight)
-               : 0)
-        + (header.isColumnVisible(AudioFileTableModel::columnOverallTruePeak)
-               ? header.getColumnWidth(AudioFileTableModel::columnOverallTruePeak)
-               : 0)
-        + (header.isColumnVisible(AudioFileTableModel::columnMaxShortTermLufs)
-               ? header.getColumnWidth(AudioFileTableModel::columnMaxShortTermLufs)
-               : 0)
-        + (header.isColumnVisible(AudioFileTableModel::columnIntegratedLufs)
-               ? header.getColumnWidth(AudioFileTableModel::columnIntegratedLufs)
-               : 0)
-        + (header.isColumnVisible(AudioFileTableModel::columnCustomGain)
-               ? header.getColumnWidth(AudioFileTableModel::columnCustomGain)
-               : 0)
-        + (header.isColumnVisible(AudioFileTableModel::columnStatus)
-               ? header.getColumnWidth(AudioFileTableModel::columnStatus)
-               : 0);
+    const auto fixedColumnWidth = header.getColumnWidth(columnOverallPeak)
+        + (header.isColumnVisible(columnType) ? header.getColumnWidth(columnType) : 0)
+        + (header.isColumnVisible(columnBitrate) ? header.getColumnWidth(columnBitrate) : 0)
+        + (header.isColumnVisible(columnSampleRate) ? header.getColumnWidth(columnSampleRate) : 0)
+        + (header.isColumnVisible(columnPeakLeft) ? header.getColumnWidth(columnPeakLeft) : 0)
+        + (header.isColumnVisible(columnPeakRight) ? header.getColumnWidth(columnPeakRight) : 0)
+        + (header.isColumnVisible(columnOverallTruePeak) ? header.getColumnWidth(columnOverallTruePeak) : 0)
+        + (header.isColumnVisible(columnMaxShortTermLufs) ? header.getColumnWidth(columnMaxShortTermLufs) : 0)
+        + (header.isColumnVisible(columnIntegratedLufs) ? header.getColumnWidth(columnIntegratedLufs) : 0)
+        + (header.isColumnVisible(columnCustomGain) ? header.getColumnWidth(columnCustomGain) : 0)
+        + (header.isColumnVisible(columnStatus) ? header.getColumnWidth(columnStatus) : 0);
 
     const auto availableFlexibleWidth = resultsTable.getVisibleContentWidth() - fixedColumnWidth;
-    const auto currentNameWidth = header.getColumnWidth(AudioFileTableModel::columnName);
-    const auto currentPathWidth = header.getColumnWidth(AudioFileTableModel::columnPath);
+    const auto currentNameWidth = header.getColumnWidth(columnName);
+    const auto currentPathWidth = header.getColumnWidth(columnPath);
     const auto currentFlexibleWidth = currentNameWidth + currentPathWidth;
     constexpr auto defaultFlexibleWidth = nameColumnDefaultWidth + pathColumnDefaultWidth;
     const auto widthRatio = static_cast<double>(currentFlexibleWidth > 0 ? currentNameWidth : nameColumnDefaultWidth)
@@ -480,8 +460,8 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
         pathWidth = availableFlexibleWidth - nameWidth;
     }
 
-    header.setColumnWidth(AudioFileTableModel::columnName, nameWidth);
-    header.setColumnWidth(AudioFileTableModel::columnPath, pathWidth);
+    header.setColumnWidth(columnName, nameWidth);
+    header.setColumnWidth(columnPath, pathWidth);
 }
 
 /// True when the table has at least one selected row.
@@ -833,3 +813,4 @@ std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedProcessableReco
 
     return selected;
 }
+}  // namespace audiobatch

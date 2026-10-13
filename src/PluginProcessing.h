@@ -15,13 +15,17 @@
 #include <optional>
 #include <vector>
 
+namespace audiobatch
+{
 /// Lightweight reference describing which plugin to instantiate and its saved state.
 struct PluginDescriptorRef {
     /// "VST3", "AudioUnit", etc.
     juce::String pluginFormatName;
     /// juce::PluginDescription::createIdentifierString()
     juce::String identifierString;
+    /// Display name of the plugin.
     juce::String name;
+    /// Name of the plugin vendor.
     juce::String manufacturer;
     /// Result of AudioProcessor::getStateInformation()
     juce::MemoryBlock state;
@@ -62,15 +66,20 @@ struct PluginProcessingOptions {
 struct PluginProcessingResult {
     /// Source file path before processing.
     juce::File originalFile;
+    /// Absolute path of the source file, which identifies its table row.
     juce::String originalFullPath;
     /// Final on-disk file after processing (.aif).
     juce::File outputFile;
+    /// Name of the source file.
     juce::String fileName;
+    /// Empty on success, otherwise the reason processing failed.
     juce::String errorMessage;
     /// Information about a successful run worth showing to the user,
     /// such as gain reduced to avoid clipping or source blocks that failed to decode.
     juce::String notice;
+    /// Analysis of the output file, valid when the re-analysis succeeded.
     AudioAnalysisRecord analysisRecord;
+    /// True when the plugin chain rendered the output file.
     bool succeeded = false;
     /// True once the output was moved into place, which can happen even when re-analysis then failed.
     /// A converted source is in the trash by then, so callers move the record to the output either way.
@@ -94,3 +103,4 @@ struct PluginProcessingResult {
         return result;
     }
 };
+}  // namespace audiobatch

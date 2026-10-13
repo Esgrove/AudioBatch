@@ -8,7 +8,7 @@
 namespace audiobatch::tests
 {
 /// Returns the first value of a property, or an empty string when the metadata does not have it.
-static juce::String firstPropertyValue(const MetadataService::Metadata& metadata, const juce::String& key)
+static juce::String firstPropertyValue(const AudioMetadata& metadata, const juce::String& key)
 {
     for (const auto& property : metadata.properties) {
         if (property.key == key && !property.values.isEmpty()) {
@@ -28,7 +28,7 @@ public:
     /// Runs the metadata checks.
     void runTest() override
     {
-        MetadataService::Metadata metadata;
+        AudioMetadata metadata;
 
         beginTest("Tags are read from a FLAC file");
         {
@@ -44,7 +44,7 @@ public:
             const auto output = directory.copyFixture("sine_stereo_44100_16.aif");
             expect(MetadataService::writeMetadata(output, metadata));
 
-            MetadataService::Metadata written;
+            AudioMetadata written;
             expect(MetadataService::readMetadata(output, written));
             expectEquals(firstPropertyValue(written, "TITLE"), juce::String("Test Tone"));
             expectEquals(firstPropertyValue(written, "ARTIST"), juce::String("AudioBatch"));
@@ -55,7 +55,7 @@ public:
 
         beginTest("An untagged file has no metadata");
         {
-            MetadataService::Metadata untagged;
+            AudioMetadata untagged;
             MetadataService::readMetadata(fixtureFile("sine_stereo_44100_16.wav"), untagged);
             expect(untagged.isEmpty());
         }

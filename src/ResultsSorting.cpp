@@ -13,6 +13,8 @@
 #include <concepts>
 #include <utility>
 
+namespace audiobatch
+{
 /// Stores the callback invoked when a column is clicked with ctrl or cmd held down.
 SecondarySortTableHeader::SecondarySortTableHeader(SecondarySortCallback secondarySortRequestedCallback) :
     secondarySortRequested(std::move(secondarySortRequestedCallback))
@@ -137,39 +139,39 @@ static int compareLoudness(const double left, const double right)
 int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, const int columnId)
 {
     switch (columnId) {
-        case AudioFileTableModel::columnName:
+        case columnName:
             return compareNatural(lhs.fileName, rhs.fileName);
 
-        case AudioFileTableModel::columnPath:
+        case columnPath:
             return compareNatural(lhs.fullPath, rhs.fullPath);
 
-        case AudioFileTableModel::columnType:
+        case columnType:
             return compareNatural(
                 AudioAnalysisService::formatTypeLabel(lhs), AudioAnalysisService::formatTypeLabel(rhs)
             );
 
-        case AudioFileTableModel::columnBitrate:
+        case columnBitrate:
             return compareBitrates(lhs, rhs);
 
-        case AudioFileTableModel::columnSampleRate:
+        case columnSampleRate:
             return compareSampleRates(lhs, rhs);
 
-        case AudioFileTableModel::columnPeakLeft:
+        case columnPeakLeft:
             return comparePeaks(lhs.peakLeft, rhs.peakLeft);
 
-        case AudioFileTableModel::columnPeakRight:
+        case columnPeakRight:
             return comparePeaks(lhs.peakRight, rhs.peakRight);
 
-        case AudioFileTableModel::columnOverallTruePeak:
+        case columnOverallTruePeak:
             return comparePeaks(lhs.overallTruePeak, rhs.overallTruePeak);
 
-        case AudioFileTableModel::columnMaxShortTermLufs:
+        case columnMaxShortTermLufs:
             return compareLoudness(lhs.maxShortTermLufs, rhs.maxShortTermLufs);
 
-        case AudioFileTableModel::columnIntegratedLufs:
+        case columnIntegratedLufs:
             return compareLoudness(lhs.integratedLufs, rhs.integratedLufs);
 
-        case AudioFileTableModel::columnCustomGain: {
+        case columnCustomGain: {
             if (lhs.hasCustomGain != rhs.hasCustomGain) {
                 return lhs.hasCustomGain ? 1 : -1;
             }
@@ -179,10 +181,10 @@ int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
             return compareValues(lhs.customGainDb, rhs.customGainDb);
         }
 
-        case AudioFileTableModel::columnStatus:
+        case columnStatus:
             return compareNatural(AudioAnalysisService::formatStatus(lhs), AudioAnalysisService::formatStatus(rhs));
 
-        case AudioFileTableModel::columnOverallPeak:
+        case columnOverallPeak:
         default:
             return comparePeaks(lhs.overallPeak, rhs.overallPeak);
     }
@@ -203,7 +205,7 @@ void sortRecords(std::vector<AudioAnalysisRecord>& records, const SortState& sta
                 return 0;
             }
 
-            const auto comparison = columnId == AudioFileTableModel::columnStatus && state.statusText != nullptr
+            const auto comparison = columnId == columnStatus && state.statusText != nullptr
                 ? compareNatural(state.statusText(lhs), state.statusText(rhs))
                 : compareRecordsByColumn(lhs, rhs, columnId);
             return isForwards ? comparison : -comparison;
@@ -236,3 +238,4 @@ SecondarySortTableHeader& getSecondarySortHeader(const juce::TableListBox& table
     return dynamic_cast<SecondarySortTableHeader&>(table.getHeader());
 }
 }  // namespace results_sorting
+}  // namespace audiobatch

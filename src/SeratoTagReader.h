@@ -3,8 +3,8 @@
 
 #pragma once
 
-#include "Cancellation.h"
 #include "SeratoTags.h"
+#include "ThreadUtils.h"
 
 namespace audiobatch::serato
 {

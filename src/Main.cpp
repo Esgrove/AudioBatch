@@ -10,7 +10,9 @@
 
 #include <JuceHeader.h>
 
-namespace audiobatch::app
+namespace audiobatch
+{
+namespace
 {
 /// Returns true when the command line contains the version flag.
 static bool isVersionRequest(const juce::String& commandLine)
@@ -18,9 +20,7 @@ static bool isVersionRequest(const juce::String& commandLine)
     const juce::ArgumentList arguments {"AudioBatch", commandLine};
     return arguments.containsOption("--version|-V");
 }
-}  // namespace audiobatch::app
-
-using namespace audiobatch::app;
+}  // namespace
 
 /// JUCE application entry point for the desktop GUI build.
 class AudioBatchApplication : public juce::JUCEApplication
@@ -176,5 +176,6 @@ private:
     std::unique_ptr<PluginScanWorker> pluginScanWorker;
     std::unique_ptr<juce::FileLogger> logger;
 };
+}  // namespace audiobatch
 
-START_JUCE_APPLICATION(AudioBatchApplication)
+START_JUCE_APPLICATION(audiobatch::AudioBatchApplication)

@@ -12,8 +12,10 @@
 
 #include <algorithm>
 
+namespace audiobatch
+{
 /// Helpers local to the operation handlers.
-namespace audiobatch::gui
+namespace
 {
 /// Copies the custom gain of the record in the table onto a new record for the same path,
 /// when the file still has the size and modification time the gain was set for.
@@ -52,9 +54,7 @@ static juce::String buildFailureListMessage(const juce::StringArray& failures)
     // The message is only shown inside the app, so plain '\n' line breaks are fine.
     return lines.joinIntoString("\n");
 }
-}  // namespace audiobatch::gui
-
-using namespace audiobatch::gui;
+}  // namespace
 
 /// True when the list is non-empty and every record's format can be normalized in this build.
 bool AudioBatchComponent::canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records)
@@ -497,7 +497,7 @@ void AudioBatchComponent::startAnalysis(
 
 /// Adds pending rows for the files the run analyzes and shows the progress text.
 /// Called once per run on the message thread, after the coordinator has scanned the input folders.
-void AudioBatchComponent::handleAnalysisPlan(const AnalysisCoordinator::AnalysisPlan& plan)
+void AudioBatchComponent::handleAnalysisPlan(const AnalysisPlan& plan)
 {
     if (plan.runId != analysisRunId) {
         return;
@@ -776,3 +776,4 @@ void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
 
     updateStatusLabel();
 }
+}  // namespace audiobatch

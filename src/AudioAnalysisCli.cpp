@@ -15,14 +15,12 @@
 #include <utility>
 #include <vector>
 
-/// Constants of the CLI analysis workflow.
-namespace audiobatch::cli
+namespace audiobatch
 {
+/// Constants of the CLI analysis workflow.
+
 /// Divisor that converts the millisecond counter durations into seconds for log output.
 constexpr double millisecondsPerSecond = 1000.0;
-}  // namespace audiobatch::cli
-
-using namespace audiobatch::cli;
 
 /// Executes the CLI analysis workflow and returns the process exit code.
 int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
@@ -130,10 +128,11 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
     if (options.normalize) {
         AudioAnalysisService::sortRecords(normalizedResults, options.sortMode, !options.reverse);
-        printRecords(normalizedResults, options.outputFormat, true);
+        cli::printRecords(normalizedResults, options.outputFormat, true);
     } else {
-        printRecords(results, options.outputFormat, false);
+        cli::printRecords(results, options.outputFormat, false);
     }
 
     return failureCount == 0 ? 0 : 2;
 }
+}  // namespace audiobatch

@@ -14,6 +14,8 @@
 #include <memory>
 #include <vector>
 
+namespace audiobatch
+{
 /// Coordinates background normalize jobs and marshals results back to the UI layer.
 class NormalizeCoordinator
 {
@@ -52,3 +54,4 @@ private:
     CompletionCallback completionCallback;
     std::atomic<int> currentRunId {0};
 };
+}  // namespace audiobatch

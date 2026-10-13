@@ -9,6 +9,8 @@
 
 #include <cstdint>
 
+namespace audiobatch
+{
 /// Lifecycle states for a file analysis record.
 enum class AudioAnalysisStatus : std::uint8_t {
     pending = 0,
@@ -93,3 +95,4 @@ struct AudioAnalysisRecord {
         return record;
     }
 };
+}  // namespace audiobatch

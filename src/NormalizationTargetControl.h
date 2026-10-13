@@ -8,6 +8,8 @@
 
 #include <JuceHeader.h>
 
+namespace audiobatch
+{
 /// Mode selector and target slider for normalization, laid out side by side.
 /// Each mode remembers its own target, and the mode and both targets are saved in the user settings.
 class NormalizationTargetControl final : public juce::Component
@@ -38,3 +40,4 @@ private:
     /// Remembered loudness mode target, in LUFS, kept while peak mode is selected.
     double targetLufs = AudioNormalizationOptions::defaultTargetLufs;
 };
+}  // namespace audiobatch

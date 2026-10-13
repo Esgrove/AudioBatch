@@ -16,6 +16,8 @@
 #include <map>
 #include <utility>
 
+namespace audiobatch
+{
 namespace
 {
 /// How long cancelAndWait waits for running plugin processing jobs to finish before giving up, in milliseconds.
@@ -40,7 +42,7 @@ PluginProcessingCoordinator::~PluginProcessingCoordinator()
 }
 
 /// Takes ownership of the run's chains, with all of them free when `usable` is true.
-PluginProcessingCoordinator::RunChains::RunChains(std::vector<PluginChainInstances> chainInstances, const bool usable) :
+PluginRunChains::PluginRunChains(std::vector<PluginChainInstances> chainInstances, const bool usable) :
     chains(std::move(chainInstances))
 {
     if (usable) {
@@ -54,7 +56,7 @@ PluginProcessingCoordinator::RunChains::RunChains(std::vector<PluginChainInstanc
 
 /// Destroys the plugin instances on the message thread, as VST3 and Audio Unit hosting require.
 /// When the last owner is a worker, the instances are handed to the message thread instead.
-PluginProcessingCoordinator::RunChains::~RunChains()
+PluginRunChains::~PluginRunChains()
 {
     if (chains.empty() || juce::MessageManager::existsAndIsCurrentThread()) {
         return;
@@ -66,7 +68,7 @@ PluginProcessingCoordinator::RunChains::~RunChains()
 }
 
 /// Returns the index of a free chain, or -1 when none are available.
-int PluginProcessingCoordinator::RunChains::acquire()
+int PluginRunChains::acquire()
 {
     const juce::ScopedLock scopedLock(lock);
 
@@ -80,7 +82,7 @@ int PluginProcessingCoordinator::RunChains::acquire()
 }
 
 /// Returns a chain to the free pool and wakes one worker waiting for a chain.
-void PluginProcessingCoordinator::RunChains::release(const int chainIndex)
+void PluginRunChains::release(const int chainIndex)
 {
     if (chainIndex < 0) {
         return;
@@ -95,7 +97,7 @@ void PluginProcessingCoordinator::RunChains::release(const int chainIndex)
 }
 
 /// Returns a raw pointer view of the given chain for the service call.
-std::vector<juce::AudioPluginInstance*> PluginProcessingCoordinator::RunChains::getChainView(const int chainIndex) const
+std::vector<juce::AudioPluginInstance*> PluginRunChains::getChainView(const int chainIndex) const
 {
     const auto& chain = chains[static_cast<std::size_t>(chainIndex)];
     std::vector<juce::AudioPluginInstance*> chainView;
@@ -183,12 +185,9 @@ void PluginProcessingCoordinator::cancelAndWait()
 
 /// Returns whether every chain aligns index-for-index with options.plugins and contains no null instances.
 /// At least one chain is required.
-static bool areChainsUsable(
-    const std::vector<PluginProcessingCoordinator::PluginChainInstances>& chains,
-    const PluginProcessingOptions& options
-)
+static bool areChainsUsable(const std::vector<PluginChainInstances>& chains, const PluginProcessingOptions& options)
 {
-    const auto isUsableChain = [&options](const PluginProcessingCoordinator::PluginChainInstances& chain) {
+    const auto isUsableChain = [&options](const PluginChainInstances& chain) {
         return !chain.empty() && chain.size() == options.plugins.size()
             && std::ranges::none_of(chain, [](const auto& instance) { return instance == nullptr; });
     };
@@ -239,7 +238,7 @@ void PluginProcessingCoordinator::runFileJob(
     const PluginProcessingOptions& options,
     const int runId,
     const int totalFiles,
-    RunChains& runChains,
+    PluginRunChains& runChains,
     std::atomic<int>& pendingFiles
 ) const
 {
@@ -293,7 +292,7 @@ int PluginProcessingCoordinator::start(
     const auto chainsUsable = areChainsUsable(chainInstances, options);
     // Replacing the previous run's chains destroys them here on the message thread,
     // unless a job that outlived the cancellation timeout still holds them.
-    currentChains = std::make_shared<RunChains>(std::move(chainInstances), chainsUsable);
+    currentChains = std::make_shared<PluginRunChains>(std::move(chainInstances), chainsUsable);
 
     if (!chainsUsable) {
         reportStartError("No plugin chain instances were available to start processing.");
@@ -342,3 +341,4 @@ int PluginProcessingCoordinator::start(
 
     return totalFiles;
 }
+}  // namespace audiobatch

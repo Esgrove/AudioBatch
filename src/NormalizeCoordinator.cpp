@@ -7,6 +7,8 @@
 
 #include <map>
 
+namespace audiobatch
+{
 namespace
 {
 /// How long cancelAndWait waits for running normalization jobs to finish before giving up, in milliseconds.
@@ -162,3 +164,4 @@ int NormalizeCoordinator::start(
 
     return static_cast<int>(normalizedRecords.size());
 }
+}  // namespace audiobatch

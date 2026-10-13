@@ -5,14 +5,16 @@
 
 #pragma once
 
-#include "Cancellation.h"
 #include "PluginProcessing.h"
+#include "ThreadUtils.h"
 
 #include <JuceHeader.h>
 
 #include <functional>
 #include <vector>
 
+namespace audiobatch
+{
 /// Stateless audio-file processing through a chain of plugin instances.
 /// Output is always written as `<name>.aif` next to the original file, at the source bit depth up to 24 bits.
 class PluginProcessingService
@@ -32,3 +34,4 @@ public:
         const CancellationCheck& isCancelled = {}
     );
 };
+}  // namespace audiobatch

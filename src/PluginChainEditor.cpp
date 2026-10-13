@@ -1,4 +1,4 @@
-/// Implementation of PluginChainEditor and its SlotRow component.
+/// Implementation of PluginChainEditor and its PluginChainSlotRow component.
 /// Covers building the rows and wiring their controls to the owning PluginChain,
 /// laying out the hint label and the scrolling row list with its add button,
 /// drag-to-reorder gestures with a live drop-position preview,
@@ -9,7 +9,9 @@
 #include "CustomLookAndFeel.h"
 #include "StringFormat.h"
 
-namespace audiobatch::plugin_chain_editor
+namespace audiobatch
+{
+namespace
 {
 constexpr int rowHeight = 36;
 constexpr int rowPadding = 4;
@@ -24,21 +26,19 @@ constexpr int rowEditButtonWidth = 48;
 
 /// Corner radius of the rounded row background.
 constexpr float rowCornerRadius = 4.0f;
-}  // namespace audiobatch::plugin_chain_editor
-
-using namespace audiobatch::plugin_chain_editor;
+}  // namespace
 
 /// Builds the row for the given slot and wires its controls to the owning chain.
-PluginChainEditor::SlotRow::SlotRow(PluginChainEditor& ownerEditor, const int slotIndex) :
-    editor(ownerEditor),
+PluginChainSlotRow::PluginChainSlotRow(PluginChain& ownerChain, const int slotIndex) :
+    pluginChain(ownerChain),
     index(slotIndex)
 {
-    const auto description = editor.pluginChain.getSlotDescription(index);
-    const bool enabled = editor.pluginChain.isSlotEnabled(index);
+    const auto description = pluginChain.getSlotDescription(index);
+    const bool enabled = pluginChain.isSlotEnabled(index);
 
     enabledToggle.setToggleState(enabled, juce::dontSendNotification);
     enabledToggle.setTooltip("Enable or disable this plugin in the chain.");
-    enabledToggle.onClick = [this] { editor.pluginChain.setSlotEnabled(index, enabledToggle.getToggleState()); };
+    enabledToggle.onClick = [this] { pluginChain.setSlotEnabled(index, enabledToggle.getToggleState()); };
     addAndMakeVisible(enabledToggle);
 
     nameLabel.setText(
@@ -53,27 +53,27 @@ PluginChainEditor::SlotRow::SlotRow(PluginChainEditor& ownerEditor, const int sl
     addAndMakeVisible(nameLabel);
 
     editButton.setTooltip("Open this plugin's editor window.");
-    editButton.onClick = [this] { editor.pluginChain.openEditorForSlot(index); };
+    editButton.onClick = [this] { pluginChain.openEditorForSlot(index); };
     addAndMakeVisible(editButton);
 
     upButton.setButtonText(juce::String::fromUTF8("\xE2\x86\x91"));
     upButton.setTooltip("Move this plugin earlier in the chain.");
-    upButton.onClick = [this] { editor.pluginChain.moveSlot(index, index - 1); };
+    upButton.onClick = [this] { pluginChain.moveSlot(index, index - 1); };
     addAndMakeVisible(upButton);
 
     downButton.setButtonText(juce::String::fromUTF8("\xE2\x86\x93"));
     downButton.setTooltip("Move this plugin later in the chain.");
-    downButton.onClick = [this] { editor.pluginChain.moveSlot(index, index + 1); };
+    downButton.onClick = [this] { pluginChain.moveSlot(index, index + 1); };
     addAndMakeVisible(downButton);
 
     removeButton.setTooltip("Remove this plugin from the chain.");
     removeButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMediumDark());
-    removeButton.onClick = [this] { editor.pluginChain.removeSlot(index); };
+    removeButton.onClick = [this] { pluginChain.removeSlot(index); };
     addAndMakeVisible(removeButton);
 }
 
 /// Lays out the toggle, name label, and action buttons within the row.
-void PluginChainEditor::SlotRow::resized()
+void PluginChainSlotRow::resized()
 {
     auto area = getLocalBounds().reduced(rowPadding);
 
@@ -89,14 +89,14 @@ void PluginChainEditor::SlotRow::resized()
 }
 
 /// Fills the row background, using a lighter shade while the row is being dragged.
-void PluginChainEditor::SlotRow::paint(juce::Graphics& graphics)
+void PluginChainSlotRow::paint(juce::Graphics& graphics)
 {
     graphics.setColour(dragging ? juce::CustomLookAndFeel::greyMedium() : juce::CustomLookAndFeel::greyMediumDark());
     graphics.fillRoundedRectangle(getLocalBounds().reduced(1).toFloat(), rowCornerRadius);
 }
 
 /// Starts a drag-reorder gesture and brings the row to the front.
-void PluginChainEditor::SlotRow::mouseDown(const juce::MouseEvent& event)
+void PluginChainSlotRow::mouseDown(const juce::MouseEvent& event)
 {
     dragging = true;
     dragGrabOffsetY = event.getPosition().y;
@@ -105,7 +105,7 @@ void PluginChainEditor::SlotRow::mouseDown(const juce::MouseEvent& event)
 }
 
 /// Moves the row with the pointer and asks the editor to preview the drop position.
-void PluginChainEditor::SlotRow::mouseDrag(const juce::MouseEvent& event)
+void PluginChainSlotRow::mouseDrag(const juce::MouseEvent& event)
 {
     if (!dragging) {
         return;
@@ -115,12 +115,12 @@ void PluginChainEditor::SlotRow::mouseDrag(const juce::MouseEvent& event)
     const auto maximumY = juce::jmax(0, getParentComponent()->getHeight() - getHeight());
     setTopLeftPosition(getX(), juce::jlimit(0, maximumY, containerY));
 
-    const auto targetIndex = editor.rowIndexForPosition(getY() + getHeight() / 2);
-    editor.rowDragged(*this, targetIndex);
+    const auto targetIndex = getDropIndex(getY() + getHeight() / 2);
+    onDragged(*this, targetIndex);
 }
 
 /// Ends the drag gesture and asks the editor to commit the reorder.
-void PluginChainEditor::SlotRow::mouseUp(const juce::MouseEvent& event)
+void PluginChainSlotRow::mouseUp(const juce::MouseEvent& event)
 {
     juce::ignoreUnused(event);
 
@@ -131,12 +131,12 @@ void PluginChainEditor::SlotRow::mouseUp(const juce::MouseEvent& event)
     dragging = false;
     repaint();
 
-    const auto targetIndex = editor.rowIndexForPosition(getY() + getHeight() / 2);
-    editor.rowDropped(*this, targetIndex);
+    const auto targetIndex = getDropIndex(getY() + getHeight() / 2);
+    onDropped(*this, targetIndex);
 }
 
 /// Updates the enabled state of the reorder buttons for the row's position in the chain.
-void PluginChainEditor::SlotRow::updateMoveButtonStates(const int numRows)
+void PluginChainSlotRow::updateMoveButtonStates(const int numRows)
 {
     upButton.setEnabled(index > 0);
     downButton.setEnabled(index < numRows - 1);
@@ -215,7 +215,12 @@ void PluginChainEditor::rebuildRows()
     rows.reserve(static_cast<std::size_t>(numSlots));
 
     for (int index = 0; index < numSlots; ++index) {
-        auto row = std::make_unique<SlotRow>(*this, index);
+        auto row = std::make_unique<PluginChainSlotRow>(pluginChain, index);
+        row->getDropIndex = [this](const int containerY) { return rowIndexForPosition(containerY); };
+        row->onDragged
+            = [this](PluginChainSlotRow& draggedRow, const int targetIndex) { rowDragged(draggedRow, targetIndex); };
+        row->onDropped
+            = [this](PluginChainSlotRow& droppedRow, const int targetIndex) { rowDropped(droppedRow, targetIndex); };
         row->updateMoveButtonStates(numSlots);
         rowContainer.addAndMakeVisible(row.get());
         rows.push_back(std::move(row));
@@ -227,7 +232,7 @@ void PluginChainEditor::rebuildRows()
 
 /// Positions all rows in the container.
 /// While a row is being dragged it is excluded and a gap is left at the given visual index.
-void PluginChainEditor::layoutRows(const SlotRow* draggedRow, const int gapIndex)
+void PluginChainEditor::layoutRows(const PluginChainSlotRow* draggedRow, const int gapIndex)
 {
     int visualIndex = 0;
 
@@ -251,13 +256,13 @@ void PluginChainEditor::layoutRows(const SlotRow* draggedRow, const int gapIndex
 }
 
 /// Called by a row while it is being dragged to preview the drop position.
-void PluginChainEditor::rowDragged(SlotRow& row, const int targetIndex)
+void PluginChainEditor::rowDragged(PluginChainSlotRow& row, const int targetIndex)
 {
     layoutRows(&row, targetIndex);
 }
 
 /// Called by a row when a drag ends to commit the reorder.
-void PluginChainEditor::rowDropped(SlotRow& row, const int targetIndex)
+void PluginChainEditor::rowDropped(PluginChainSlotRow& row, const int targetIndex)
 {
     if (targetIndex == row.getSlotIndex()) {
         // Nothing moved. Restore the resting layout.
@@ -318,3 +323,4 @@ void PluginChainEditor::updateHintLabel()
     );
     hintLabel.setVisible(true);
 }
+}  // namespace audiobatch

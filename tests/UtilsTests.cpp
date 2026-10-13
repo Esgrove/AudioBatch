@@ -1,15 +1,14 @@
-/// Tests for the shared helpers in FileUtils, AudioFormatUtils, Cancellation, MessageThreadCall, ConsolePrint,
+/// Tests for the shared helpers in FileUtils, AudioFormatUtils, ThreadUtils, ConsolePrint,
 /// and DecodeFailureTracker.
 
 #include "AudioFormatUtils.h"
-#include "Cancellation.h"
 #include "ConsolePrint.h"
 #include "DecodeFailureTracker.h"
 #include "FileUtils.h"
-#include "MessageThreadCall.h"
 #include "StringFormat.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "ThreadUtils.h"
 
 #include <algorithm>
 #include <atomic>

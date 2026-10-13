@@ -9,8 +9,67 @@
 
 #include <JuceHeader.h>
 
+#include <functional>
 #include <memory>
 #include <vector>
+
+namespace audiobatch
+{
+/// One row in the chain list, bound to a slot index.
+class PluginChainSlotRow : public juce::Component
+{
+public:
+    PluginChainSlotRow(PluginChain& ownerChain, int slotIndex);
+
+    ~PluginChainSlotRow() override = default;
+
+    PluginChainSlotRow(const PluginChainSlotRow&) = delete;
+    PluginChainSlotRow& operator=(const PluginChainSlotRow&) = delete;
+    PluginChainSlotRow(PluginChainSlotRow&&) = delete;
+    PluginChainSlotRow& operator=(PluginChainSlotRow&&) = delete;
+
+    void resized() override;
+
+    void paint(juce::Graphics& graphics) override;
+
+    void mouseDown(const juce::MouseEvent& event) override;
+
+    void mouseDrag(const juce::MouseEvent& event) override;
+
+    void mouseUp(const juce::MouseEvent& event) override;
+
+    void updateMoveButtonStates(int numRows);
+
+    /// Returns the chain slot index this row is bound to.
+    [[nodiscard]] int getSlotIndex() const noexcept
+    {
+        return index;
+    }
+
+    /// Maps the vertical centre of the row in its container to the slot index it would drop onto.
+    std::function<int(int containerY)> getDropIndex;
+    /// Called while the row is dragged, so the editor can preview the drop position.
+    std::function<void(PluginChainSlotRow& row, int targetIndex)> onDragged;
+    /// Called when the drag ends, so the editor can commit the reorder.
+    std::function<void(PluginChainSlotRow& row, int targetIndex)> onDropped;
+
+private:
+    PluginChain& pluginChain;
+    int index;
+
+    juce::ToggleButton enabledToggle;
+    juce::Label nameLabel;
+    juce::TextButton editButton {"Edit"};
+    /// Reorder buttons, labelled with Unicode arrows in the constructor.
+    juce::TextButton upButton;
+    juce::TextButton downButton;
+    juce::TextButton removeButton {"X"};
+
+    bool dragging = false;
+    int dragGrabOffsetY = 0;
+
+    JUCE_LEAK_DETECTOR(PluginChainSlotRow)
+};
 
 /// Editor window content for the plugin chain.
 /// Shows one row per slot with enable, edit, reorder, and remove controls,
@@ -33,64 +92,15 @@ public:
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
 private:
-    /// One row in the chain list, bound to a slot index.
-    class SlotRow : public juce::Component
-    {
-    public:
-        SlotRow(PluginChainEditor& ownerEditor, int slotIndex);
-
-        ~SlotRow() override = default;
-
-        SlotRow(const SlotRow&) = delete;
-        SlotRow& operator=(const SlotRow&) = delete;
-        SlotRow(SlotRow&&) = delete;
-        SlotRow& operator=(SlotRow&&) = delete;
-
-        void resized() override;
-
-        void paint(juce::Graphics& graphics) override;
-
-        void mouseDown(const juce::MouseEvent& event) override;
-
-        void mouseDrag(const juce::MouseEvent& event) override;
-
-        void mouseUp(const juce::MouseEvent& event) override;
-
-        void updateMoveButtonStates(int numRows);
-
-        /// Returns the chain slot index this row is bound to.
-        [[nodiscard]] int getSlotIndex() const noexcept
-        {
-            return index;
-        }
-
-    private:
-        PluginChainEditor& editor;
-        int index;
-
-        juce::ToggleButton enabledToggle;
-        juce::Label nameLabel;
-        juce::TextButton editButton {"Edit"};
-        /// Reorder buttons, labelled with Unicode arrows in the constructor.
-        juce::TextButton upButton;
-        juce::TextButton downButton;
-        juce::TextButton removeButton {"X"};
-
-        bool dragging = false;
-        int dragGrabOffsetY = 0;
-
-        JUCE_LEAK_DETECTOR(SlotRow)
-    };
-
     void handleAsyncUpdate() override;
 
     void rebuildRows();
 
-    void layoutRows(const SlotRow* draggedRow = nullptr, int gapIndex = -1);
+    void layoutRows(const PluginChainSlotRow* draggedRow = nullptr, int gapIndex = -1);
 
-    void rowDragged(SlotRow& row, int targetIndex);
+    void rowDragged(PluginChainSlotRow& row, int targetIndex);
 
-    void rowDropped(SlotRow& row, int targetIndex);
+    void rowDropped(PluginChainSlotRow& row, int targetIndex);
 
     [[nodiscard]] int rowIndexForPosition(int containerY) const;
 
@@ -107,7 +117,7 @@ private:
 
     juce::Viewport viewport;
     juce::Component rowContainer;
-    std::vector<std::unique_ptr<SlotRow>> rows;
+    std::vector<std::unique_ptr<PluginChainSlotRow>> rows;
 
     /// Hover time before a tooltip appears in this window, in milliseconds.
     static constexpr int tooltipDelayMilliseconds {700};
@@ -118,3 +128,4 @@ private:
 
     JUCE_LEAK_DETECTOR(PluginChainEditor)
 };
+}  // namespace audiobatch

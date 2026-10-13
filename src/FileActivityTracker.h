@@ -12,6 +12,8 @@
 #include <functional>
 #include <map>
 
+namespace audiobatch
+{
 /// Tracks which files are busy and what their last operation reported, keyed by full path.
 /// Runs a repaint timer while any file is busy and stops it once all files are idle.
 /// Must only be used on the message thread.
@@ -60,3 +62,4 @@ private:
     std::map<juce::String, juce::String> activeLabels;
     std::map<juce::String, OperationMessage> messages;
 };
+}  // namespace audiobatch

@@ -8,7 +8,7 @@
 #include "ConsolePrint.h"
 #include "version.h"
 
-namespace utils
+namespace audiobatch::utils
 {
 /// Creates the default rolling file logger for the application.
 /// The log file goes into the application's log folder and is named after the log name,
@@ -65,4 +65,4 @@ void logSystemInfo()
         juce::Logger::writeToLog(format("    {}", line));
     }
 }
-}  // namespace utils
+}  // namespace audiobatch::utils

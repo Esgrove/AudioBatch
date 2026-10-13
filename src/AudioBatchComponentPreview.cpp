@@ -6,6 +6,8 @@
 #include "CustomLookAndFeel.h"
 #include "Log.h"
 
+namespace audiobatch
+{
 /// Requests audio input permission and initialises the audio device manager once it is answered.
 void AudioBatchComponent::requestAudioDeviceAccess()
 {
@@ -107,9 +109,9 @@ void AudioBatchComponent::requestSeratoPreview()
 /// Adopts immutable colours, cues and track info only while the generation, file and URL still match.
 /// Never reloads playback or changes waveform geometry, gain, zoom or peak-cache data.
 void AudioBatchComponent::adoptSeratoPreview(
-    const AnalysisCache::FileIdentity& identity,
-    const audiobatch::serato::SeratoPreviewLoader::Generation generation,
-    audiobatch::serato::SeratoPreviewLoader::Data data
+    const FileIdentity& identity,
+    const serato::SeratoPreviewLoader::Generation generation,
+    serato::SeratoPreviewLoader::Data data
 )
 {
     if (seratoPreviewLoader && thumbnail != nullptr && currentAudioFileSource != nullptr
@@ -121,12 +123,12 @@ void AudioBatchComponent::adoptSeratoPreview(
         seratoPreviewData = std::move(data);
         thumbnail->setSeratoOverview(
             seratoPreviewData && seratoPreviewData->overview
-                ? std::shared_ptr<const audiobatch::serato::Overview>(seratoPreviewData, &*seratoPreviewData->overview)
+                ? std::shared_ptr<const serato::Overview>(seratoPreviewData, &*seratoPreviewData->overview)
                 : nullptr
         );
         thumbnail->setSeratoMarkers(
             seratoPreviewData && seratoPreviewData->markers
-                ? std::shared_ptr<const audiobatch::serato::Markers>(seratoPreviewData, &*seratoPreviewData->markers)
+                ? std::shared_ptr<const serato::Markers>(seratoPreviewData, &*seratoPreviewData->markers)
                 : nullptr
         );
         const auto row = findRecordIndex(currentAudioFile.getFullPathName());
@@ -350,3 +352,4 @@ void AudioBatchComponent::updateThumbnailDisplayGain() const
     const auto gain = record.hasCustomGain ? juce::Decibels::decibelsToGain(record.customGainDb) : 1.0f;
     thumbnail->setDisplayGain(gain);
 }
+}  // namespace audiobatch

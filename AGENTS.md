@@ -171,6 +171,9 @@ The detailed rules are in `.agents/rules/code-organization.md`.
 - Group functions and variables by return type and topic.
 - Do not define structs, classes or enums inside classes.
   Declare them at namespace level before the class, or in the anonymous namespace of the `.cpp` that alone uses them.
+- All project code lives in `namespace audiobatch`, with the helper namespaces such as `utils` and `console` nested inside it.
+  Wrap whole headers and sources, so definitions of classes need no qualification.
+  Only `main`, the JUCE application macro, and code that must be in the `juce` namespace stay outside.
 - Do not use `using namespace`. Wrap definitions in the matching namespace block or qualify names.
 - Split files that reach about 1000 lines into focused parts by topic, but avoid very small files.
   Fold tiny files into the file of the closest topic.

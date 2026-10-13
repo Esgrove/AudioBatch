@@ -16,7 +16,39 @@
 #include <optional>
 #include <vector>
 
+namespace audiobatch
+{
 [[nodiscard]] juce::String formatPluginDescription(const juce::PluginDescription& description);
+
+/// Description plus descriptor reference for one enabled slot, in chain order.
+struct EnabledChainPlugin {
+    juce::PluginDescription description;
+    PluginDescriptorRef descriptorRef;
+};
+
+/// Plugin chains created for one processing run, or the reason they could not be created.
+struct ChainInstantiation {
+    /// One chain of plugin instances per worker.
+    std::vector<std::vector<std::unique_ptr<juce::AudioPluginInstance>>> chains;
+    /// State of each enabled plugin right after it was created, in chain order.
+    /// Restored before every file for a plugin without saved state,
+    /// so adaptive state from one file does not carry over to the next.
+    std::vector<juce::MemoryBlock> initialStates;
+    /// Empty when every plugin of every chain was created.
+    juce::String errorMessage;
+    /// Name of the plugin that failed to load, when errorMessage is not empty.
+    juce::String failedPluginName;
+};
+
+/// One slot in the chain, owning its editor instance and window while the editor is open.
+struct PluginChainEntry {
+    juce::PluginDescription description;
+    juce::MemoryBlock state;
+    bool enabled = true;
+    std::unique_ptr<juce::AudioPluginInstance> editorInstance;
+    juce::Component::SafePointer<juce::DialogWindow> editorWindow;
+    bool wasEditorOpen = false;
+};
 
 /// Owns the user's plugin chain, the known-plugins database, scanning, and the editor windows.
 /// The chain is an ordered list of plugins that files are processed through in sequence.
@@ -25,26 +57,6 @@ class PluginChain : public juce::ChangeListener, public juce::ChangeBroadcaster,
 {
 public:
     using ChainChangedCallback = std::function<void()>;
-
-    /// Description plus descriptor reference for one enabled slot, in chain order.
-    struct EnabledChainPlugin {
-        juce::PluginDescription description;
-        PluginDescriptorRef descriptorRef;
-    };
-
-    /// Plugin chains created for one processing run, or the reason they could not be created.
-    struct ChainInstantiation {
-        /// One chain of plugin instances per worker.
-        std::vector<std::vector<std::unique_ptr<juce::AudioPluginInstance>>> chains;
-        /// State of each enabled plugin right after it was created, in chain order.
-        /// Restored before every file for a plugin without saved state,
-        /// so adaptive state from one file does not carry over to the next.
-        std::vector<juce::MemoryBlock> initialStates;
-        /// Empty when every plugin of every chain was created.
-        juce::String errorMessage;
-        /// Name of the plugin that failed to load, when errorMessage is not empty.
-        juce::String failedPluginName;
-    };
 
     explicit PluginChain(juce::ApplicationProperties& applicationProperties);
 
@@ -109,36 +121,26 @@ public:
     void timerCallback() override;
 
 private:
-    /// One slot in the chain, owning its editor instance and window while the editor is open.
-    struct ChainEntry {
-        juce::PluginDescription description;
-        juce::MemoryBlock state;
-        bool enabled = true;
-        std::unique_ptr<juce::AudioPluginInstance> editorInstance;
-        juce::Component::SafePointer<juce::DialogWindow> editorWindow;
-        bool wasEditorOpen = false;
-    };
+    [[nodiscard]] static bool isEditorWindowClosed(const PluginChainEntry& entry);
 
-    [[nodiscard]] static bool isEditorWindowClosed(const ChainEntry& entry);
-
-    static bool reapClosedEditor(ChainEntry& entry);
+    static bool reapClosedEditor(PluginChainEntry& entry);
 
     [[nodiscard]] bool anyEditorOpen() const noexcept;
 
     bool beginPluginScan();
 
-    [[nodiscard]] static std::optional<ChainEntry> parseSlot(const juce::XmlElement& slotElement);
+    [[nodiscard]] static std::optional<PluginChainEntry> parseSlot(const juce::XmlElement& slotElement);
 
-    [[nodiscard]] static std::optional<ChainEntry> parseLegacyEntry(
+    [[nodiscard]] static std::optional<PluginChainEntry> parseLegacyEntry(
         const juce::String& pluginXml,
         const juce::String& stateBase64
     );
 
     void captureOpenEditorStates();
 
-    static void closeEditorForEntry(ChainEntry& entry);
+    static void closeEditorForEntry(PluginChainEntry& entry);
 
-    static void restoreState(ChainEntry& entry, const juce::String& stateBase64);
+    static void restoreState(PluginChainEntry& entry, const juce::String& stateBase64);
 
     void loadPersistedChain();
 
@@ -156,7 +158,7 @@ private:
     PluginScanLock pluginScanLock;
     juce::KnownPluginList knownPluginList;
 
-    std::vector<ChainEntry> chain;
+    std::vector<PluginChainEntry> chain;
 
     juce::Component::SafePointer<juce::DialogWindow> chainEditorWindow;
     juce::Component::SafePointer<juce::DialogWindow> scanWindow;
@@ -166,3 +168,4 @@ private:
     JUCE_DECLARE_WEAK_REFERENCEABLE(PluginChain)
     JUCE_LEAK_DETECTOR(PluginChain)
 };
+}  // namespace audiobatch

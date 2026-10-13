@@ -15,6 +15,18 @@
 #include <memory>
 #include <vector>
 
+namespace audiobatch
+{
+/// The files of a run, published once the input paths are expanded and checked against the cache.
+struct AnalysisPlan {
+    /// The run the plan belongs to.
+    int runId = 0;
+    /// Every supported file found in the input paths.
+    juce::Array<juce::File> files;
+    /// The files without a current cache entry, which are analyzed in this run.
+    juce::Array<juce::File> staleFiles;
+};
+
 /// Coordinates background audio analysis jobs and marshals result callbacks to the UI layer.
 class AnalysisCoordinator
 {
@@ -31,16 +43,6 @@ public:
     /// Called right before a file's analysis begins, from the worker thread.
     using StartingCallback = std::function<void(const juce::File& file, int runId)>;
 
-    /// The files of a run, published once the input paths are expanded and checked against the cache.
-    struct AnalysisPlan {
-        /// The run the plan belongs to.
-        int runId = 0;
-        /// Every supported file found in the input paths.
-        juce::Array<juce::File> files;
-        /// The files without a current cache entry, which are analyzed in this run.
-        juce::Array<juce::File> staleFiles;
-    };
-
     /// Called once per run from a worker thread, before any of its results.
     using PlanCallback = std::function<void(const AnalysisPlan& plan)>;
 
@@ -55,24 +57,20 @@ public:
 
     std::vector<AudioAnalysisRecord> analyzeBlocking(const AudioAnalysisOptions& options);
 
-    void cancelAndWait();
-
-    void setCompletionCallback(CompletionCallback callback);
-
-    void setResultCallback(ResultCallback callback);
-
-    void setStartingCallback(StartingCallback callback);
-
-    void setPlanCallback(PlanCallback callback);
-
     int start(const AudioAnalysisOptions& options);
 
+    void cancelAndWait();
+    void setCompletionCallback(CompletionCallback callback);
+    void setPlanCallback(PlanCallback callback);
+    void setResultCallback(ResultCallback callback);
+    void setStartingCallback(StartingCallback callback);
+
 private:
-    void publishCompletion(int totalFiles, int runId) const;
-
-    void publishResult(const AudioAnalysisRecord& result, int runId) const;
-
     void planRun(const AudioAnalysisOptions& options, int runId);
+    void publishCompletion(int totalFiles, int runId) const;
+    void publishPlan(const AnalysisPlan& plan, int runId) const;
+    void publishResult(const AudioAnalysisRecord& result, int runId) const;
+    void publishStarting(const juce::File& file, int runId) const;
 
     void analyzeStaleFile(
         const juce::File& file,
@@ -81,18 +79,15 @@ private:
         const std::shared_ptr<std::atomic<int>>& pendingFiles
     ) const;
 
-    void publishPlan(const AnalysisPlan& plan, int runId) const;
-
-    void publishStarting(const juce::File& file, int runId) const;
-
     [[nodiscard]] bool isRunCancelled(int runId) const noexcept;
 
     AnalysisCache& cache;
     CompletionCallback completionCallback;
+    PlanCallback planCallback;
     ResultCallback resultCallback;
     StartingCallback startingCallback;
-    PlanCallback planCallback;
     juce::CriticalSection callbackLock;
     juce::ThreadPool threadPool;
     std::atomic<int> currentRunId {0};
 };
+}  // namespace audiobatch

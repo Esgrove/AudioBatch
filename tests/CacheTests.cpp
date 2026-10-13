@@ -41,13 +41,13 @@ public:
         beginTest("Numeric Overview data round trips without an analysis row");
         {
             const auto tagFile = directory.copyFixture("sine_stereo_44100_16.wav", "tag_only.wav");
-            const AnalysisCache::FileIdentity identity(tagFile);
-            audiobatch::serato::Overview overview;
+            const FileIdentity identity(tagFile);
+            serato::Overview overview;
             overview.slices.resize(2);
             overview.slices.front().fill(7);
             overview.slices.back().fill(19);
-            const audiobatch::serato::TagReadResult result {
-                .status = audiobatch::serato::ReadStatus::present,
+            const serato::TagReadResult result {
+                .status = serato::ReadStatus::present,
                 .overview = overview,
             };
             expect(cache.storeSeratoTag(identity, result));
@@ -107,7 +107,7 @@ public:
             expect(cached.hasCustomGain);
             expectEquals(cached.customGainDb, 1.5f);
 
-            const AnalysisCache::FileIdentity identity(migratedFile);
+            const FileIdentity identity(migratedFile);
             expect(migratedCache.storeSeratoTag(identity, {}));
             expect(migratedCache.getSeratoTag(identity).has_value());
         }
@@ -210,9 +210,7 @@ public:
             AnalysisCoordinator coordinator(cache, 2);
             int planFileCount = -1;
             bool planCameFirst = false;
-            coordinator.setPlanCallback([&](const AnalysisCoordinator::AnalysisPlan& plan) {
-                planFileCount = plan.files.size();
-            });
+            coordinator.setPlanCallback([&](const AnalysisPlan& plan) { planFileCount = plan.files.size(); });
             coordinator.setStartingCallback([&](const juce::File&, int) { planCameFirst = planFileCount >= 0; });
 
             AudioAnalysisOptions options;
@@ -312,17 +310,16 @@ private:
     /// Exercises tag-only lifecycle, stable outcomes, corruption and independence using fixture copies.
     void runSeratoTests()
     {
-        using namespace audiobatch::serato;
         const TemporaryDirectory directory;
         const auto databaseFile = directory.getChildFile("tag_cache.db");
         AnalysisCache cache(databaseFile);
         const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "tag.wav");
-        const AnalysisCache::FileIdentity identity(file);
-        Overview overview;
+        const FileIdentity identity(file);
+        serato::Overview overview;
         overview.slices.resize(3);
         overview.slices.front().fill(3);
         overview.slices.back().fill(255);
-        const TagReadResult positive {.status = ReadStatus::present, .overview = overview};
+        const serato::TagReadResult positive {.status = serato::ReadStatus::present, .overview = overview};
 
         beginTest("Tag results survive a database reopen without an analysis row");
         {
@@ -331,12 +328,14 @@ private:
         }
         const auto reopened = cache.getSeratoTag(identity);
         expect(
-            reopened && reopened->status == ReadStatus::present && reopened->overview
+            reopened && reopened->status == serato::ReadStatus::present && reopened->overview
             && reopened->overview->slices == overview.slices
         );
 
         beginTest("All stable negatives round trip with SQL NULL data");
-        for (const auto status : {ReadStatus::absent, ReadStatus::invalid, ReadStatus::unsupported}) {
+        for (const auto status :
+             {serato::ReadStatus::absent, serato::ReadStatus::invalid, serato::ReadStatus::unsupported})
+        {
             expect(cache.storeSeratoTag(identity, {.status = status, .overview = std::nullopt}));
             const auto loaded = cache.getSeratoTag(identity);
             expect(loaded && loaded->status == status && !loaded->overview);
@@ -346,29 +345,35 @@ private:
         beginTest("Transient and inconsistent results never overwrite a stable result");
         expect(cache.storeSeratoTag(identity, positive));
         for (const auto status :
-             {ReadStatus::ioError, ReadStatus::cancelled, std::bit_cast<ReadStatus>(std::uint8_t {99})})
+             {serato::ReadStatus::ioError,
+              serato::ReadStatus::cancelled,
+              std::bit_cast<serato::ReadStatus>(std::uint8_t {99})})
         {
             expect(!cache.storeSeratoTag(identity, {.status = status, .overview = std::nullopt}));
         }
-        expect(!cache.storeSeratoTag(identity, {.status = ReadStatus::present, .overview = std::nullopt}));
-        expect(!cache.storeSeratoTag(identity, {.status = ReadStatus::present, .overview = Overview {}}));
-        Overview oversized;
-        oversized.slices.resize(Overview::maxSlices + 1);
-        expect(!cache.storeSeratoTag(identity, {.status = ReadStatus::present, .overview = std::move(oversized)}));
-        expect(!cache.storeSeratoTag(identity, {.status = ReadStatus::absent, .overview = overview}));
+        expect(!cache.storeSeratoTag(identity, {.status = serato::ReadStatus::present, .overview = std::nullopt}));
+        expect(
+            !cache.storeSeratoTag(identity, {.status = serato::ReadStatus::present, .overview = serato::Overview {}})
+        );
+        serato::Overview oversized;
+        oversized.slices.resize(serato::Overview::maxSlices + 1);
+        expect(
+            !cache.storeSeratoTag(identity, {.status = serato::ReadStatus::present, .overview = std::move(oversized)})
+        );
+        expect(!cache.storeSeratoTag(identity, {.status = serato::ReadStatus::absent, .overview = overview}));
         const auto retained = cache.getSeratoTag(identity);
         expect(retained && retained->overview && retained->overview->slices == overview.slices);
         expect(cache.removeAnalysis(file));
-        expect(!cache.storeSeratoTag(identity, {.status = ReadStatus::ioError, .overview = std::nullopt}));
-        expect(!cache.storeSeratoTag(identity, {.status = ReadStatus::cancelled, .overview = std::nullopt}));
+        expect(!cache.storeSeratoTag(identity, {.status = serato::ReadStatus::ioError, .overview = std::nullopt}));
+        expect(!cache.storeSeratoTag(identity, {.status = serato::ReadStatus::cancelled, .overview = std::nullopt}));
         expect(!cache.getSeratoTag(identity));
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
 
         beginTest("Unknown tag kinds miss and cannot be stored");
-        const auto unknownKind = std::bit_cast<TagKind>(std::uint8_t {99});
+        const auto unknownKind = std::bit_cast<serato::TagKind>(std::uint8_t {99});
         expect(!cache.getSeratoTag(identity, unknownKind));
         expect(!cache.storeSeratoTag(
-            identity, {.kind = unknownKind, .status = ReadStatus::absent, .overview = std::nullopt}
+            identity, {.kind = unknownKind, .status = serato::ReadStatus::absent, .overview = std::nullopt}
         ));
 
         beginTest("Corrupt state, blob, parser, path and stat fields are cache misses");
@@ -445,19 +450,19 @@ private:
         beginTest("Modification time alone invalidates captured identities and rejects stale writes");
         expect(cache.storeSeratoTag(identity, positive));
         expect(file.setLastModificationTime(juce::Time(identity.modifiedTimeMs + 10000)));
-        const AnalysisCache::FileIdentity changedTime(file);
+        const FileIdentity changedTime(file);
         expect(!identity.matches(file));
         expect(!cache.getSeratoTag(identity));
         expect(!cache.getSeratoTag(changedTime));
         expect(!cache.storeSeratoTag(identity, positive));
-        expect(cache.storeSeratoTag(changedTime, {.status = ReadStatus::absent, .overview = std::nullopt}));
+        expect(cache.storeSeratoTag(changedTime, {.status = serato::ReadStatus::absent, .overview = std::nullopt}));
         expect(!cache.storeSeratoTag(identity, positive));
         expect(cache.getSeratoTag(changedTime).has_value());
 
         beginTest("Size alone invalidates captured identities even if the time is restored");
         expect(fixtureFile("sine_mono_44100_16.wav").copyFileTo(file));
         expect(file.setLastModificationTime(juce::Time(changedTime.modifiedTimeMs)));
-        const AnalysisCache::FileIdentity changedSize(file);
+        const FileIdentity changedSize(file);
         expect(changedSize.fileSize != changedTime.fileSize);
         expect(!cache.getSeratoTag(changedTime));
         expect(!cache.getSeratoTag(changedSize));
@@ -466,8 +471,8 @@ private:
         expect(cache.getSeratoTag(changedSize).has_value());
 
         beginTest("Missing files and directories cannot be looked up or stored");
-        const AnalysisCache::FileIdentity missing(directory.getChildFile("missing.wav"));
-        const AnalysisCache::FileIdentity folder(file.getParentDirectory());
+        const FileIdentity missing(directory.getChildFile("missing.wav"));
+        const FileIdentity folder(file.getParentDirectory());
         expect(!cache.storeSeratoTag(missing, positive));
         expect(!cache.storeSeratoTag(folder, positive));
         expect(!cache.getSeratoTag(missing));
@@ -488,7 +493,7 @@ private:
         expect(parent.createDirectory());
         const auto detachedFile = parent.getChildFile("tone.wav");
         expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(detachedFile));
-        const AnalysisCache::FileIdentity detachedIdentity(detachedFile);
+        const FileIdentity detachedIdentity(detachedFile);
         expect(cache.storeSeratoTag(detachedIdentity, positive));
         expect(parent.deleteRecursively());
         expectEquals(cache.pruneMissingFiles(), 0);
@@ -500,13 +505,13 @@ private:
 
         beginTest("A tag row replaced after the pruning snapshot retains its new identity");
         expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(file));
-        const AnalysisCache::FileIdentity beforePrune(file);
+        const FileIdentity beforePrune(file);
         expect(cache.storeSeratoTag(beforePrune, positive));
         expect(file.deleteFile());
         expectEquals(
             cache.pruneMissingFiles([&] {
                 expect(fixtureFile("sine_stereo_48000_24.wav").copyFileTo(file));
-                expect(cache.storeSeratoTag(AnalysisCache::FileIdentity(file), positive));
+                expect(cache.storeSeratoTag(FileIdentity(file), positive));
                 expect(file.deleteFile());
                 return false;
             }),
@@ -518,7 +523,7 @@ private:
         beginTest("Pruning counts analysis and tag rows independently for the same deleted file");
         expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(file));
         expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(file)));
-        expect(cache.storeSeratoTag(AnalysisCache::FileIdentity(file), positive));
+        expect(cache.storeSeratoTag(FileIdentity(file), positive));
         expect(file.deleteFile());
         expectEquals(cache.pruneMissingFiles(), 2);
 
@@ -538,42 +543,41 @@ private:
     /// Verifies independently versioned owned values, negatives and tag-only coexistence for every supported kind.
     void runMultiKindSeratoTests()
     {
-        using namespace audiobatch::serato;
         const TemporaryDirectory directory;
         const auto databaseFile = directory.getChildFile("multi_kind.db");
         AnalysisCache cache(databaseFile);
         const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "multi_kind.wav");
-        const AnalysisCache::FileIdentity identity(file);
-        Overview overview;
+        const FileIdentity identity(file);
+        serato::Overview overview;
         overview.slices.resize(2);
         overview.slices.front().fill(7);
         overview.slices.back().fill(19);
         const std::array positives {
-            TagReadResult {.kind = TagKind::overview, .status = ReadStatus::present, .overview = overview},
-            TagReadResult {
-                .kind = TagKind::analysis,
-                .status = ReadStatus::present,
-                .analysis = Analysis {.majorVersion = 2, .minorVersion = 5},
+            serato::TagReadResult {.kind = serato::TagKind::overview, .status = serato::ReadStatus::present, .overview = overview},
+            serato::TagReadResult {
+                .kind = serato::TagKind::analysis,
+                .status = serato::ReadStatus::present,
+                .analysis = serato::Analysis {.majorVersion = 2, .minorVersion = 5},
             },
-            TagReadResult {
-                .kind = TagKind::autotags,
-                .status = ReadStatus::present,
-                .autotags = Autotags {.bpm = 128.25, .autoGain = -3.5, .gain = 1.25},
+            serato::TagReadResult {
+                .kind = serato::TagKind::autotags,
+                .status = serato::ReadStatus::present,
+                .autotags = serato::Autotags {.bpm = 128.25, .autoGain = -3.5, .gain = 1.25},
             },
-            TagReadResult {
-                .kind = TagKind::beatGrid,
-                .status = ReadStatus::present,
-                .beatGrid = BeatGrid {
+            serato::TagReadResult {
+                .kind = serato::TagKind::beatGrid,
+                .status = serato::ReadStatus::present,
+                .beatGrid = serato::BeatGrid {
                     .markers = {
                         {.positionSeconds = 0.5, .beatsUntilNext = 16, .bpm = std::nullopt},
                         {.positionSeconds = 8.0, .beatsUntilNext = 0, .bpm = 128.25},
                     },
                 },
             },
-            TagReadResult {
-                .kind = TagKind::markers,
-                .status = ReadStatus::present,
-                .markers = Markers {
+            serato::TagReadResult {
+                .kind = serato::TagKind::markers,
+                .status = serato::ReadStatus::present,
+                .markers = serato::Markers {
                     .cues = {
                         {.positionMilliseconds = 1500, .index = 3, .colour = juce::Colours::red, .name = "Intro"},
                     },
@@ -591,10 +595,10 @@ private:
                     .bpmLocked = false,
                 },
             },
-            TagReadResult {
-                .kind = TagKind::trackInfo,
-                .status = ReadStatus::present,
-                .trackInfo = TrackInfo {.bpm = 128.25, .key = "Am"},
+            serato::TagReadResult {
+                .kind = serato::TagKind::trackInfo,
+                .status = serato::ReadStatus::present,
+                .trackInfo = serato::TrackInfo {.bpm = 128.25, .key = "Am"},
             },
         };
 
@@ -610,11 +614,10 @@ private:
         AnalysisCache& cache,
         const juce::File& databaseFile,
         const juce::File& file,
-        const AnalysisCache::FileIdentity& identity,
-        const std::span<const audiobatch::serato::TagReadResult> positives
+        const FileIdentity& identity,
+        const std::span<const serato::TagReadResult> positives
     )
     {
-        using namespace audiobatch::serato;
         beginTest("All positive kinds round trip independently after reopening without analysis rows");
         {
             AnalysisCache writer(databaseFile);
@@ -624,30 +627,33 @@ private:
         }
         for (const auto& positive : positives) {
             const auto loaded = cache.getSeratoTag(identity, positive.kind);
-            expect(loaded && loaded->kind == positive.kind && loaded->status == ReadStatus::present);
+            expect(loaded && loaded->kind == positive.kind && loaded->status == serato::ReadStatus::present);
             if (loaded) {
-                expect(serializeTag(*loaded) == serializeTag(positive));
-                expect(!serializeTag(*loaded).isEmpty());
+                expect(serato::serializeTag(*loaded) == serato::serializeTag(positive));
+                expect(!serato::serializeTag(*loaded).isEmpty());
             }
         }
         AudioAnalysisRecord analysis;
         expect(!cache.getAnalysis(file, analysis));
         expectSqlScalar(databaseFile, "SELECT count(*) FROM file_analysis;", 0);
-        expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", static_cast<int>(allTagKinds.size()));
+        expectSqlScalar(
+            databaseFile, "SELECT count(*) FROM serato_tag_cache;", static_cast<int>(serato::allTagKinds.size())
+        );
     }
 
     /// Replaces each kind with stable negatives while preserving the other positive rows and SQL NULL payloads.
     void runMultiKindNegativeTests(
         AnalysisCache& cache,
         const juce::File& databaseFile,
-        const AnalysisCache::FileIdentity& identity,
-        const std::span<const audiobatch::serato::TagReadResult> positives
+        const FileIdentity& identity,
+        const std::span<const serato::TagReadResult> positives
     )
     {
-        using namespace audiobatch::serato;
         beginTest("Each stable negative replaces only its own kind and has SQL NULL data");
-        for (const auto kind : allTagKinds) {
-            for (const auto status : {ReadStatus::absent, ReadStatus::invalid, ReadStatus::unsupported}) {
+        for (const auto kind : serato::allTagKinds) {
+            for (const auto status :
+                 {serato::ReadStatus::absent, serato::ReadStatus::invalid, serato::ReadStatus::unsupported})
+            {
                 expect(cache.storeSeratoTag(identity, {.kind = kind, .status = status}));
                 const auto negative = cache.getSeratoTag(identity, kind);
                 expect(negative && negative->kind == kind && negative->status == status);
@@ -665,7 +671,7 @@ private:
                 for (const auto& positive : positives) {
                     if (positive.kind != kind) {
                         const auto retained = cache.getSeratoTag(identity, positive.kind);
-                        expect(retained && serializeTag(*retained) == serializeTag(positive));
+                        expect(retained && serato::serializeTag(*retained) == serato::serializeTag(positive));
                     } else {
                         expect(cache.storeSeratoTag(identity, positive));
                     }
@@ -678,20 +684,19 @@ private:
     void runMultiKindVersionTests(
         AnalysisCache& cache,
         const juce::File& databaseFile,
-        const AnalysisCache::FileIdentity& identity,
-        const std::span<const audiobatch::serato::TagReadResult> positives
+        const FileIdentity& identity,
+        const std::span<const serato::TagReadResult> positives
     )
     {
-        using namespace audiobatch::serato;
         beginTest("A parser version mismatch invalidates only the matching positive or negative kind");
-        for (const auto kind : allTagKinds) {
-            for (const auto status : {ReadStatus::present, ReadStatus::absent}) {
-                if (status == ReadStatus::absent) {
+        for (const auto kind : serato::allTagKinds) {
+            for (const auto status : {serato::ReadStatus::present, serato::ReadStatus::absent}) {
+                if (status == serato::ReadStatus::absent) {
                     expect(cache.storeSeratoTag(identity, {.kind = kind, .status = status}));
                 }
                 const auto mismatch = utils::format(
                     "UPDATE serato_tag_cache SET parser_version = {} WHERE tag_kind = {};",
-                    parserVersion(kind) + 1,
+                    serato::parserVersion(kind) + 1,
                     static_cast<std::uint32_t>(kind)
                 );
                 expect(executeSql(databaseFile, mismatch.toRawUTF8()));
@@ -701,7 +706,7 @@ private:
                         expect(cache.storeSeratoTag(identity, positive));
                     } else {
                         const auto retained = cache.getSeratoTag(identity, positive.kind);
-                        expect(retained && serializeTag(*retained) == serializeTag(positive));
+                        expect(retained && serato::serializeTag(*retained) == serato::serializeTag(positive));
                     }
                 }
             }
@@ -712,18 +717,17 @@ private:
     void runMultiKindRetentionTests(
         AnalysisCache& cache,
         const juce::File& databaseFile,
-        const AnalysisCache::FileIdentity& identity,
-        const std::span<const audiobatch::serato::TagReadResult> positives
+        const FileIdentity& identity,
+        const std::span<const serato::TagReadResult> positives
     )
     {
-        using namespace audiobatch::serato;
         beginTest("Corrupt marker data does not lose overview or any other kind");
         expect(executeSql(databaseFile, "UPDATE serato_tag_cache SET decoded_data = X'0105' WHERE tag_kind = 5;"));
-        expect(!cache.getSeratoTag(identity, TagKind::markers));
+        expect(!cache.getSeratoTag(identity, serato::TagKind::markers));
         for (const auto& positive : positives) {
-            if (positive.kind != TagKind::markers) {
+            if (positive.kind != serato::TagKind::markers) {
                 const auto retained = cache.getSeratoTag(identity, positive.kind);
-                expect(retained && serializeTag(*retained) == serializeTag(positive));
+                expect(retained && serato::serializeTag(*retained) == serato::serializeTag(positive));
             } else {
                 expect(cache.storeSeratoTag(identity, positive));
             }
@@ -731,10 +735,10 @@ private:
 
         beginTest("Transient results cannot overwrite any independently cached positive kind");
         for (const auto& positive : positives) {
-            for (const auto status : {ReadStatus::ioError, ReadStatus::cancelled}) {
+            for (const auto status : {serato::ReadStatus::ioError, serato::ReadStatus::cancelled}) {
                 expect(!cache.storeSeratoTag(identity, {.kind = positive.kind, .status = status}));
                 const auto retained = cache.getSeratoTag(identity, positive.kind);
-                expect(retained && serializeTag(*retained) == serializeTag(positive));
+                expect(retained && serato::serializeTag(*retained) == serato::serializeTag(positive));
             }
         }
     }
@@ -744,11 +748,10 @@ private:
         AnalysisCache& cache,
         const juce::File& databaseFile,
         const juce::File& file,
-        const AnalysisCache::FileIdentity& identity,
-        const std::span<const audiobatch::serato::TagReadResult> positives
+        const FileIdentity& identity,
+        const std::span<const serato::TagReadResult> positives
     )
     {
-        using namespace audiobatch::serato;
         beginTest("All kinds coexist with analysis and waveform writes and independent version changes");
         const auto analyzed = AudioAnalysisService::analyzeFile(file);
         expect(cache.storeAnalysis(analyzed));
@@ -767,12 +770,12 @@ private:
         expect(executeSql(databaseFile, "UPDATE file_analysis SET analysis_version = 0;"));
         for (const auto& positive : positives) {
             const auto retained = cache.getSeratoTag(identity, positive.kind);
-            expect(retained && serializeTag(*retained) == serializeTag(positive));
+            expect(retained && serato::serializeTag(*retained) == serato::serializeTag(positive));
         }
 
         beginTest("Explicit eviction removes every independently populated kind");
         expect(cache.removeAnalysis(file));
-        for (const auto kind : allTagKinds) {
+        for (const auto kind : serato::allTagKinds) {
             expect(!cache.getSeratoTag(identity, kind));
         }
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
@@ -783,8 +786,10 @@ private:
         }
         expect(file.deleteFile());
         expectEquals(cache.pruneMissingFiles([] { return true; }), 0);
-        expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", static_cast<int>(allTagKinds.size()));
-        expectEquals(cache.pruneMissingFiles(), static_cast<int>(allTagKinds.size()));
+        expectSqlScalar(
+            databaseFile, "SELECT count(*) FROM serato_tag_cache;", static_cast<int>(serato::allTagKinds.size())
+        );
+        expectEquals(cache.pruneMissingFiles(), static_cast<int>(serato::allTagKinds.size()));
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
     }
 

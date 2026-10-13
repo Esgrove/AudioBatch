@@ -23,6 +23,8 @@ Within a struct or class:
   Do not define structs, classes or enums inside a class.
 - A type that only one `.cpp` file uses goes in that file's anonymous namespace.
   This includes types that would otherwise be local to a function.
+- Put all project code in `namespace audiobatch`, so classes and their member definitions share it.
+  Keep `main`, the JUCE application macro, and forward declarations of third-party types outside it.
 - Do not use `using namespace`, in headers or sources, at file or function scope.
   Wrap the definitions in the matching `namespace x { ... }` block or qualify the names.
 

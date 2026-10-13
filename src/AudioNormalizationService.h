@@ -6,12 +6,14 @@
 #pragma once
 
 #include "AudioAnalysisService.h"
-#include "Cancellation.h"
+#include "ThreadUtils.h"
 
 #include <cstdint>
 #include <optional>
 #include <vector>
 
+namespace audiobatch
+{
 /// What normalization aims the file's level at.
 enum class AudioNormalizationMode : std::uint8_t {
     /// Scale the file so its sample peak reaches the target peak.
@@ -40,6 +42,7 @@ struct AudioNormalizationOptions {
     /// Replace an existing output file that is not the source itself.
     /// When false, a file whose output path is already taken fails instead of overwriting it.
     bool overwriteExisting = false;
+    /// Whether the target is a sample peak or an integrated loudness.
     AudioNormalizationMode mode = AudioNormalizationMode::peak;
     /// Target sample peak in peak mode, in dBFS.
     double targetPeakDbfs = defaultTargetPeakDbfs;
@@ -69,13 +72,19 @@ struct AudioNormalizationResult {
         return result;
     }
 
+    /// The source file the operation ran on.
     juce::File file;
+    /// Name of the source file, shown in the results table.
     juce::String fileName;
+    /// Absolute path of the source file, which identifies its table row.
     juce::String fullPath;
+    /// Empty on success, otherwise the reason the operation failed.
     juce::String errorMessage;
     /// Information about a successful run worth showing to the user, such as blocks that failed to decode.
     juce::String notice;
+    /// Analysis of the normalized file, valid when the re-analysis succeeded.
     AudioAnalysisRecord analysisRecord;
+    /// True when the normalization pass completed.
     bool succeeded = false;
     /// True once the output was moved into place, which can happen even when re-analysis then failed.
     /// A converted source is in the trash by then, so callers move the record to the output either way.
@@ -115,3 +124,4 @@ public:
         const CancellationCheck& isCancelled = {}
     );
 };
+}  // namespace audiobatch

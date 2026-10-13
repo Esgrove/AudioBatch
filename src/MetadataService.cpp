@@ -23,6 +23,8 @@
 #include <tvariant.h>
 #include <wavfile.h>
 
+namespace audiobatch
+{
 namespace
 {
 /// Converts a TagLib string to a juce::String, preserving UTF-8 content.
@@ -38,13 +40,13 @@ TagLib::String toTagLib(const juce::String& juceString)
 }
 
 /// Translates a TagLib PropertyMap into our format-agnostic representation.
-std::vector<MetadataService::PropertyEntry> readProperties(const TagLib::PropertyMap& propertyMap)
+std::vector<MetadataProperty> readProperties(const TagLib::PropertyMap& propertyMap)
 {
-    std::vector<MetadataService::PropertyEntry> entries;
+    std::vector<MetadataProperty> entries;
     entries.reserve(propertyMap.size());
 
     for (const auto& [key, values] : propertyMap) {
-        MetadataService::PropertyEntry entry;
+        MetadataProperty entry;
         entry.key = toJuce(key);
 
         for (const auto& value : values) {
@@ -60,7 +62,7 @@ std::vector<MetadataService::PropertyEntry> readProperties(const TagLib::Propert
 }
 
 /// Translates our representation back into a TagLib PropertyMap.
-TagLib::PropertyMap buildPropertyMap(const std::vector<MetadataService::PropertyEntry>& properties)
+TagLib::PropertyMap buildPropertyMap(const std::vector<MetadataProperty>& properties)
 {
     TagLib::PropertyMap propertyMap;
 
@@ -83,9 +85,9 @@ TagLib::PropertyMap buildPropertyMap(const std::vector<MetadataService::Property
 
 /// Reads embedded pictures via TagLib's generic "PICTURE" complex property.
 /// Pictures without image data are skipped.
-std::vector<MetadataService::Picture> readPictures(const TagLib::File& file)
+std::vector<MetadataPicture> readPictures(const TagLib::File& file)
 {
-    std::vector<MetadataService::Picture> pictures;
+    std::vector<MetadataPicture> pictures;
 
     const auto keys = file.complexPropertyKeys();
     const bool hasPictureKey = std::ranges::any_of(keys, [](const TagLib::String& key) { return key == "PICTURE"; });
@@ -98,7 +100,7 @@ std::vector<MetadataService::Picture> readPictures(const TagLib::File& file)
     pictures.reserve(pictureMaps.size());
 
     for (const auto& pictureMap : pictureMaps) {
-        MetadataService::Picture picture;
+        MetadataPicture picture;
 
         for (const auto& [fieldKey, value] : pictureMap) {
             if (fieldKey == "data") {
@@ -126,7 +128,7 @@ std::vector<MetadataService::Picture> readPictures(const TagLib::File& file)
 
 /// Converts pictures into TagLib complex property maps for writing.
 /// A missing MIME type defaults to JPEG and a missing picture type to "Front Cover".
-TagLib::List<TagLib::VariantMap> buildPictureList(const std::vector<MetadataService::Picture>& pictures)
+TagLib::List<TagLib::VariantMap> buildPictureList(const std::vector<MetadataPicture>& pictures)
 {
     TagLib::List<TagLib::VariantMap> pictureList;
 
@@ -161,9 +163,9 @@ TagLib::List<TagLib::VariantMap> buildPictureList(const std::vector<MetadataServ
 
 /// Reads all metadata (text properties and pictures) from the given file.
 /// Returns true on success. Output is cleared on entry.
-bool MetadataService::readMetadata(const juce::File& file, Metadata& outMetadata)
+bool MetadataService::readMetadata(const juce::File& file, AudioMetadata& outMetadata)
 {
-    outMetadata = Metadata {};
+    outMetadata = AudioMetadata {};
 
     if (!file.existsAsFile()) {
         return false;
@@ -187,7 +189,7 @@ bool MetadataService::readMetadata(const juce::File& file, Metadata& outMetadata
 /// Writes the given metadata to the file.
 /// The file must exist and be in a format TagLib can write.
 /// For AIFF and WAV output the tag is saved as ID3v2.4.
-bool MetadataService::writeMetadata(const juce::File& file, const Metadata& metadata)
+bool MetadataService::writeMetadata(const juce::File& file, const AudioMetadata& metadata)
 {
     if (!file.existsAsFile()) {
         utils::logError("Cannot write metadata, target file is missing: {}", file.getFullPathName().quoted());
@@ -267,7 +269,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const Metadata& meta
 /// Returns false only when writing failed.
 bool MetadataService::copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile)
 {
-    Metadata metadata;
+    AudioMetadata metadata;
 
     if (!readMetadata(sourceFile, metadata)) {
         utils::logInfo("No metadata could be read from {}", sourceFile.getFullPathName().quoted());
@@ -285,3 +287,4 @@ bool MetadataService::copyMetadata(const juce::File& sourceFile, const juce::Fil
 
     return true;
 }
+}  // namespace audiobatch

@@ -27,8 +27,10 @@ extern "C" {
 #include <utility>
 #include <vector>
 
+namespace audiobatch
+{
 /// Internal helpers for peak comparisons and stable record sorting.
-namespace audiobatch::analysis
+namespace
 {
 /// How often the short-term loudness is sampled while decoding, in hertz.
 /// EBU R128 updates short-term loudness at least ten times per second,
@@ -36,8 +38,6 @@ namespace audiobatch::analysis
 constexpr double shortTermUpdateRateHz = 10.0;
 constexpr auto cancelledMessage = "Analysis was cancelled";
 
-namespace
-{
 /// Left, right, and overall peak reduced from per-channel peaks.
 template<typename Value>
 struct PeakSummary {
@@ -199,9 +199,6 @@ static std::weak_ordering compareBySortMode(
 
     std::unreachable();
 }
-}  // namespace audiobatch::analysis
-
-using namespace audiobatch::analysis;
 
 /// Returns true when the path is a supported audio file for analysis.
 bool AudioAnalysisService::isSupportedAudioFile(const juce::File& file)
@@ -455,7 +452,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(
     record.formatName = reader->getFormatName();
     record.sampleRate = sampleRate;
     record.channels = channelCount;
-    record.bitsPerSample = resolveSourceBitsPerSample(*reader, file);
+    record.bitsPerSample = analysis::resolveSourceBitsPerSample(*reader, file);
     record.lengthInSamples = reader->lengthInSamples;
     record.durationSeconds
         = reader->sampleRate > 0.0 ? static_cast<double>(reader->lengthInSamples) / reader->sampleRate : 0.0;
@@ -488,3 +485,4 @@ void AudioAnalysisService::sortRecords(
         return ascending ? ordering < 0 : ordering > 0;
     });
 }
+}  // namespace audiobatch

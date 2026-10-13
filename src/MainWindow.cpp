@@ -10,8 +10,10 @@
 #include "PluginChain.h"
 #include "StringFormat.h"
 
+namespace audiobatch
+{
 /// Menu ids and window limits of the main window.
-namespace audiobatch::main_window
+namespace
 {
 enum MenuItemId : std::uint8_t {
     chooseFolderMenuItemId = 1,
@@ -36,9 +38,7 @@ enum MenuItemId : std::uint8_t {
 constexpr int minimumWindowWidth = 800;
 /// Smallest height in pixels the main window can be resized to.
 constexpr int minimumWindowHeight = 600;
-}  // namespace audiobatch::main_window
-
-using namespace audiobatch::main_window;
+}  // namespace
 
 /// Builds the window, installs the custom look-and-feel as the global default,
 /// creates the owned AudioBatchComponent content, and configures the platform menu bar.
@@ -414,3 +414,4 @@ AudioBatchComponent& MainWindow::getAudioBatch() const
 {
     return *dynamic_cast<AudioBatchComponent*>(getContentComponent());
 }
+}  // namespace audiobatch

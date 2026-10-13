@@ -12,13 +12,6 @@
 
 namespace audiobatch::serato
 {
-namespace
-{
-/// Retains decoded RGB sums and foreground cell weight until the final arithmetic mean.
-struct ColourContributions {
-    std::array<double, 3> components {};
-    double weight = 0.0;
-};
 
 constexpr int paletteLevels = 6;
 constexpr int palettePlaneSize = paletteLevels * paletteLevels;
@@ -26,10 +19,19 @@ constexpr int paletteSize = palettePlaneSize * paletteLevels;
 constexpr int paletteComponentStep = 51;
 constexpr double maximumColourComponent = 255.0;
 
+namespace
+{
+/// Retains decoded RGB sums and foreground cell weight until the final arithmetic mean.
+struct ColourContributions {
+    std::array<double, 3> components {};
+    double weight = 0.0;
+};
+}  // namespace
+
 /// Decodes every vertical cell with a time-sample weight, independently of its row position.
 /// Indices 0 and 1 are background. Indices 216 through 255 remain provisionally unknown or reserved.
 /// Reserved values are skipped rather than assigned an unverified grayscale palette.
-void accumulateSlice(
+static void accumulateSlice(
     const std::array<std::uint8_t, Overview::bandCount>& cells,
     const double sampleWeight,
     ColourContributions& contributions
@@ -39,9 +41,9 @@ void accumulateSlice(
         if (paletteIndex <= 1 || paletteIndex >= paletteSize) {
             continue;
         }
-        const auto red = (paletteIndex / palettePlaneSize) * paletteComponentStep;
-        const auto green = ((paletteIndex % palettePlaneSize) / paletteLevels) * paletteComponentStep;
-        const auto blue = (paletteIndex % paletteLevels) * paletteComponentStep;
+        const auto red = paletteIndex / palettePlaneSize * paletteComponentStep;
+        const auto green = paletteIndex % palettePlaneSize / paletteLevels * paletteComponentStep;
+        const auto blue = paletteIndex % paletteLevels * paletteComponentStep;
         contributions.components[0] += static_cast<double>(red) * sampleWeight;
         contributions.components[1] += static_cast<double>(green) * sampleWeight;
         contributions.components[2] += static_cast<double>(blue) * sampleWeight;
@@ -50,7 +52,7 @@ void accumulateSlice(
 }
 
 /// Produces the opaque arithmetic mean RGB without contrast adjustment, or opaque fallback for no valid cells.
-juce::Colour colourForContributions(const ColourContributions& contributions, const juce::Colour fallback)
+static juce::Colour colourForContributions(const ColourContributions& contributions, const juce::Colour fallback)
 {
     if (contributions.weight <= 0.0) {
         return fallback.withAlpha(1.0f);
@@ -67,7 +69,7 @@ juce::Colour colourForContributions(const ColourContributions& contributions, co
 
 /// Decodes adjacent slices before interpolating RGB sums and valid-cell weights between their centres.
 /// Clamps before the first and after the last centre without interpolating numeric palette indices.
-ColourContributions contributionsAtTime(const Overview& overview, const double time, const double totalLength)
+static ColourContributions contributionsAtTime(const Overview& overview, const double time, const double totalLength)
 {
     const auto lastIndex = overview.slices.size() - 1;
     const auto position = std::clamp(
@@ -92,7 +94,7 @@ ColourContributions contributionsAtTime(const Overview& overview, const double t
 
 /// Accumulates decoded RGB and foreground weights over exact overlaps before computing their mean.
 /// Avoids allocation or iteration over offscreen slices.
-ColourContributions contributionsOverInterval(
+static ColourContributions contributionsOverInterval(
     const Overview& overview,
     const double startTime,
     const double endTime,
@@ -116,7 +118,6 @@ ColourContributions contributionsOverInterval(
     }
     return result;
 }
-}  // namespace
 
 /// Produces the opaque arithmetic mean RGB of valid nonbackground raster cells, independent of row position.
 /// The zero-based 6x6x6 cube is R=(index/36)*51, G=((index%36)/6)*51, B=(index%6)*51 using integer division.

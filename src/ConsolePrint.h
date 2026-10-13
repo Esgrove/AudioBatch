@@ -16,7 +16,7 @@
 #include <string>
 #include <utility>
 
-namespace console
+namespace audiobatch::console
 {
 [[nodiscard]] int displayWidth(const juce::String& text);
 
@@ -142,4 +142,4 @@ template<typename T>
 
     return fmt::format("{}", value);
 }
-}  // namespace console
+}  // namespace audiobatch::console

@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <optional>
 
+namespace audiobatch
+{
 /// How the plugin listing is grouped.
 enum class PluginListGrouping : std::uint8_t {
     /// One alphabetical table of all plugins.
@@ -30,3 +32,4 @@ public:
 
     static int run(bool rescan, PluginListGrouping grouping);
 };
+}  // namespace audiobatch

@@ -42,7 +42,7 @@ struct fmt::formatter<juce::File> : fmt::formatter<juce::String> {
     }
 };
 
-namespace utils
+namespace audiobatch::utils
 {
 /// Formats the arguments with fmt using a compile-time checked format string
 /// and returns the result as a juce::String decoded from UTF-8.
@@ -69,4 +69,4 @@ template<typename... Args>
 
     return format("\"{}\"", field.replace("\"", "\"\""));
 }
-}  // namespace utils
+}  // namespace audiobatch::utils

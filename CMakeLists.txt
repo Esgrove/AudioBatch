@@ -284,6 +284,8 @@ juce_generate_juce_header(AudioBatchCli)
 set(AUDIOBATCH_CORE_SOURCES
     "src/AnalysisCache.cpp"
     "src/AnalysisCache.h"
+    "src/AnalysisCacheSchema.cpp"
+    "src/AnalysisCacheSql.h"
     "src/AnalysisCoordinator.cpp"
     "src/AnalysisCoordinator.h"
     "src/AppInfo.cpp"
@@ -298,7 +300,6 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/AudioNormalizationService.h"
     "src/BitDepthDetection.cpp"
     "src/BitDepthDetection.h"
-    "src/Cancellation.h"
     "src/ConsolePrint.cpp"
     "src/ConsolePrint.h"
     "src/DecodeFailureTracker.h"
@@ -306,8 +307,6 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/FileUtils.h"
     "src/Log.cpp"
     "src/Log.h"
-    "src/MessageThreadCall.cpp"
-    "src/MessageThreadCall.h"
     "src/MetadataService.cpp"
     "src/MetadataService.h"
     "src/NormalizationFormatSupport.cpp"
@@ -324,6 +323,8 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/SeratoTagTypes.h"
     "src/StringFormat.h"
     "src/TagLibUtils.h"
+    "src/ThreadUtils.cpp"
+    "src/ThreadUtils.h"
     "src/version.h"
 )
 

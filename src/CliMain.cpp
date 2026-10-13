@@ -14,7 +14,9 @@
 
 #include <span>
 
-namespace audiobatch::cli
+namespace audiobatch
+{
+namespace cli
 {
 /// Detaches the logger before returning the process exit code,
 /// so the juce::Logger never points at a logger that is about to be destroyed.
@@ -42,10 +44,10 @@ static int runPluginScanWorker(const juce::String& executableName, const juce::S
     juce::MessageManager::getInstance()->runDispatchLoop();
     return exitCli(0);
 }
-}  // namespace audiobatch::cli
+}  // namespace cli
 
-/// Entry point for the headless batch analysis executable.
-int main(const int argc, char* argv[])
+/// Runs the headless batch analysis executable and returns its process exit code.
+static int runCliMain(const int argc, char* argv[])
 {
     juce::ArgumentList arguments(argc, argv);
     AudioAnalysisCli::attachNegativeOptionValues(arguments);
@@ -59,7 +61,7 @@ int main(const int argc, char* argv[])
     const auto commandLine
         = juce::StringArray(argumentSpan.data(), static_cast<int>(argumentSpan.size())).joinIntoString(" ");
     if (isPluginScanWorkerCommandLine(commandLine)) {
-        return audiobatch::cli::runPluginScanWorker(executableName, commandLine);
+        return cli::runPluginScanWorker(executableName, commandLine);
     }
 
     // Help and version only print to the console.
@@ -85,7 +87,7 @@ int main(const int argc, char* argv[])
         utils::logError(parseError);
         console::printError(parseError);
         fmt::print("\n{}\n", AudioAnalysisCli::buildUsage(executableName));
-        return audiobatch::cli::exitCli(1);
+        return cli::exitCli(1);
     }
 
     int exitCode = 0;
@@ -95,8 +97,15 @@ int main(const int argc, char* argv[])
     } catch (const std::system_error& error) {
         // fmt::print throws when stdout is closed early, for example when piping into head.
         utils::logError("Writing output failed: {}", error.what());
-        return audiobatch::cli::exitCli(1);
+        return cli::exitCli(1);
     }
 
-    return audiobatch::cli::exitCli(exitCode);
+    return cli::exitCli(exitCode);
+}
+}  // namespace audiobatch
+
+/// Entry point for the headless batch analysis executable.
+int main(const int argc, char* argv[])
+{
+    return audiobatch::runCliMain(argc, argv);
 }

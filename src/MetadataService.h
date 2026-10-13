@@ -8,6 +8,38 @@
 
 #include <vector>
 
+namespace audiobatch
+{
+/// One text tag property, with one or more values.
+struct MetadataProperty {
+    juce::String key;
+    juce::StringArray values;
+};
+
+/// One embedded picture, such as album art.
+struct MetadataPicture {
+    /// Encoded image bytes.
+    juce::MemoryBlock data;
+    /// Image type such as "image/jpeg" or "image/png".
+    juce::String mimeType;
+    /// Free text description stored with the picture.
+    juce::String description;
+    /// ID3v2 picture type name, e.g. "Front Cover", "Back Cover", "Band".
+    juce::String pictureType;
+};
+
+/// Format-agnostic tag properties and embedded pictures of one audio file.
+struct AudioMetadata {
+    /// Returns true when there are no properties and no pictures to write.
+    [[nodiscard]] bool isEmpty() const noexcept
+    {
+        return properties.empty() && pictures.empty();
+    }
+
+    std::vector<MetadataProperty> properties;
+    std::vector<MetadataPicture> pictures;
+};
+
 /// Reads and writes audio file metadata (tags + embedded pictures) using TagLib.
 ///
 /// Metadata is represented in a format-agnostic way:
@@ -19,33 +51,10 @@
 class MetadataService
 {
 public:
-    struct PropertyEntry {
-        juce::String key;
-        juce::StringArray values;
-    };
+    static bool readMetadata(const juce::File& file, AudioMetadata& outMetadata);
 
-    struct Picture {
-        juce::MemoryBlock data;
-        juce::String mimeType;
-        juce::String description;
-        /// ID3v2 picture type name, e.g. "Front Cover", "Back Cover", "Band".
-        juce::String pictureType;
-    };
-
-    struct Metadata {
-        /// Returns true when there are no properties and no pictures to write.
-        [[nodiscard]] bool isEmpty() const noexcept
-        {
-            return properties.empty() && pictures.empty();
-        }
-
-        std::vector<PropertyEntry> properties;
-        std::vector<Picture> pictures;
-    };
-
-    static bool readMetadata(const juce::File& file, Metadata& outMetadata);
-
-    static bool writeMetadata(const juce::File& file, const Metadata& metadata);
+    static bool writeMetadata(const juce::File& file, const AudioMetadata& metadata);
 
     static bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile);
 };
+}  // namespace audiobatch

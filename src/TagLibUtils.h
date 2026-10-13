@@ -7,7 +7,7 @@
 
 #include <tfile.h>
 
-namespace utils
+namespace audiobatch::utils
 {
 /// Converts a JUCE path to TagLib's platform filename representation.
 /// Windows copies the wide buffer. Elsewhere the returned pointer aliases fullPath,
@@ -20,4 +20,4 @@ namespace utils
     return fullPath.toRawUTF8();
 #endif
 }
-}  // namespace utils
+}  // namespace audiobatch::utils

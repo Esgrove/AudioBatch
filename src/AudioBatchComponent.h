@@ -25,6 +25,8 @@
 #include <thread>
 #include <vector>
 
+namespace audiobatch
+{
 class AudioInfoPanel;
 
 /// Main application view that coordinates analysis, playback preview, and file-list interactions.
@@ -156,9 +158,9 @@ private:
     void requestSeratoPreview();
 
     void adoptSeratoPreview(
-        const AnalysisCache::FileIdentity& identity,
-        audiobatch::serato::SeratoPreviewLoader::Generation generation,
-        audiobatch::serato::SeratoPreviewLoader::Data data
+        const FileIdentity& identity,
+        serato::SeratoPreviewLoader::Generation generation,
+        serato::SeratoPreviewLoader::Data data
     );
 
     void startOrStop();
@@ -185,7 +187,7 @@ private:
 
     void refreshAnalysis(bool forceRefresh);
 
-    void handleAnalysisPlan(const AnalysisCoordinator::AnalysisPlan& plan);
+    void handleAnalysisPlan(const AnalysisPlan& plan);
 
     void handleAnalysisResult(const AudioAnalysisRecord& record, int runId);
 
@@ -257,11 +259,11 @@ private:
 
     AnalysisCache analysisCache;
     /// Owns the tag worker, stopped explicitly before GUI cleanup and before the cache is destroyed.
-    std::unique_ptr<audiobatch::serato::SeratoPreviewLoader> seratoPreviewLoader;
+    std::unique_ptr<serato::SeratoPreviewLoader> seratoPreviewLoader;
     /// Holds the selected preview's metadata so analysis refreshes retain BPM and key until the selection changes.
-    audiobatch::serato::SeratoPreviewLoader::Data seratoPreviewData;
+    serato::SeratoPreviewLoader::Data seratoPreviewData;
     /// Records the requested or adopted file version, including stable negative outcomes.
-    std::optional<AnalysisCache::FileIdentity> seratoPreviewIdentity;
+    std::optional<FileIdentity> seratoPreviewIdentity;
     /// Removes cached rows of deleted files in the background after startup.
     /// Declared after the cache, so it is stopped and joined before the cache is destroyed.
     std::jthread cachePruneThread;
@@ -312,7 +314,7 @@ private:
     bool analysisReplacesResults = false;
     int normalizedResultsCompleted = 0;
     int normalizedResultsExpected = 0;
-    int currentSortColumnId = AudioFileTableModel::columnOverallPeak;
+    int currentSortColumnId = columnOverallPeak;
     bool currentSortForwards = true;
     int secondarySortColumnId = 0;
     bool secondarySortForwards = true;
@@ -351,3 +353,4 @@ private:
 
     JUCE_LEAK_DETECTOR(AudioBatchComponent)
 };
+}  // namespace audiobatch

@@ -33,9 +33,12 @@ struct Overview {
 
     /// Number of vertical raster cells, retaining the existing serialized column layout.
     static constexpr std::size_t bandCount = 16;
+    /// Highest number of horizontal slices accepted when parsing or deserializing.
     static constexpr std::size_t maxSlices = 65536;
+    /// Largest valid payload size, including the two byte header.
     static constexpr std::size_t maxPayloadBytes = 2 + maxSlices * bandCount;
 
+    /// Palette indices of the raster, one array of bandCount cells per horizontal slice.
     std::vector<std::array<std::uint8_t, bandCount>> slices;
 };
 }  // namespace audiobatch::serato

@@ -8,6 +8,8 @@
 
 #include <JuceHeader.h>
 
+namespace audiobatch
+{
 /// Tracks block read failures for one decode pass over a file.
 /// A failed read in the final block is tolerated,
 /// because MP3 files often report a length that overshoots the decodable audio.
@@ -92,3 +94,4 @@ private:
     int failedBlocks = 0;
     int consecutiveFailures = 0;
 };
+}  // namespace audiobatch

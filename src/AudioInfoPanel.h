@@ -14,6 +14,8 @@
 #include <utility>
 #include <vector>
 
+namespace audiobatch
+{
 /// One row of the panel: the field name and its value.
 using AudioInfoRow = std::pair<juce::String, juce::String>;
 
@@ -26,7 +28,7 @@ public:
     void showRecord(
         const AudioAnalysisRecord& record,
         const juce::String& activeStatusLabel,
-        const audiobatch::serato::SeratoData* data = nullptr
+        const serato::SeratoData* data = nullptr
     );
 
     [[nodiscard]] int getPreferredHeight() const;
@@ -54,3 +56,4 @@ private:
     std::vector<std::unique_ptr<juce::Label>> valueLabels;
     std::function<void()> onPreferredHeightChanged;
 };
+}  // namespace audiobatch

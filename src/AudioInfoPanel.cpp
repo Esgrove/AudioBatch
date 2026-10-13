@@ -7,6 +7,8 @@
 #include "CustomLookAndFeel.h"
 #include "StringFormat.h"
 
+namespace audiobatch
+{
 namespace
 {
 /// Opacity of the panel background fill.
@@ -21,7 +23,7 @@ constexpr float valueTextAlpha = 0.95f;
 constexpr float fieldColumnProportion = 0.55f;
 
 /// Appends available musical metadata, preferring Serato's analyzed tempo over standard BPM and grid fallback.
-void appendTrackInfo(std::vector<AudioInfoRow>& rows, const audiobatch::serato::SeratoData* data)
+void appendTrackInfo(std::vector<AudioInfoRow>& rows, const serato::SeratoData* data)
 {
     if (data == nullptr) {
         return;
@@ -57,7 +59,7 @@ void AudioInfoPanel::clear()
 void AudioInfoPanel::showRecord(
     const AudioAnalysisRecord& record,
     const juce::String& activeStatusLabel,
-    const audiobatch::serato::SeratoData* data
+    const serato::SeratoData* data
 )
 {
     std::vector<AudioInfoRow> newRows;
@@ -190,3 +192,4 @@ void AudioInfoPanel::ensureLabelCount(const std::size_t requiredCount)
         valueLabels.push_back(std::move(valueLabel));
     }
 }
+}  // namespace audiobatch

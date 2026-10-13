@@ -18,13 +18,20 @@
 
 namespace audiobatch::serato
 {
+/// Owns the immutable pre-read file identity for a single preview generation.
+struct SeratoPreviewRequest {
+    juce::File file;
+    FileIdentity identity;
+    std::uint64_t generation;
+};
+
 /// Loads the active selection with at most one active read and one replaceable pending request.
 class SeratoPreviewLoader final
 {
 public:
     using Generation = std::uint64_t;
     using Data = std::shared_ptr<const SeratoData>;
-    using Completion = std::function<void(AnalysisCache::FileIdentity, Generation, Data)>;
+    using Completion = std::function<void(FileIdentity, Generation, Data)>;
     using Reader = std::function<
         std::vector<TagReadResult>(const juce::File&, std::span<const TagKind>, const utils::CancellationCheck&)>;
 
@@ -44,7 +51,7 @@ public:
     void cancelAndWait();
 
     [[nodiscard]] bool canAdopt(
-        const AnalysisCache::FileIdentity& identity,
+        const FileIdentity& identity,
         Generation resultGeneration,
         const juce::File& selectedFile
     ) const;
@@ -52,19 +59,12 @@ public:
 private:
     using Results = std::array<std::optional<TagReadResult>, allTagKinds.size()>;
 
-    /// Owns the immutable pre-read file identity for a single preview generation.
-    struct Request {
-        juce::File file;
-        AnalysisCache::FileIdentity identity;
-        Generation generation;
-    };
-
     void run(const std::stop_token& stopToken);
 
-    void process(const Request& active, const std::stop_token& stopToken);
+    void process(const SeratoPreviewRequest& active, const std::stop_token& stopToken);
 
     bool readMisses(
-        const Request& active,
+        const SeratoPreviewRequest& active,
         std::span<const TagKind> misses,
         Results& results,
         const utils::CancellationCheck& isCancelled
@@ -79,7 +79,7 @@ private:
     std::atomic<bool> stopped {false};
     std::mutex mutex;
     std::condition_variable_any condition;
-    std::optional<Request> pending;
+    std::optional<SeratoPreviewRequest> pending;
     std::jthread worker;
 };
 }  // namespace audiobatch::serato

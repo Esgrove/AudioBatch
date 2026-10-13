@@ -11,6 +11,8 @@
 
 #include <memory>
 
+namespace audiobatch
+{
 /// Top-level application window that hosts the main AudioBatch component.
 /// The menu items that have a keyboard shortcut are application commands,
 /// because the menu only displays shortcuts for items that are backed by a command manager.
@@ -58,3 +60,4 @@ private:
 
     JUCE_LEAK_DETECTOR(MainWindow)
 };
+}  // namespace audiobatch

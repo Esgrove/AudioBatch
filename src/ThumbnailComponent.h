@@ -13,6 +13,8 @@
 #include <functional>
 #include <memory>
 
+namespace audiobatch
+{
 /// Waveform preview component with transport following, scrubbing, zooming, and drag-and-drop.
 class ThumbnailComponent :
     public juce::Component,
@@ -79,9 +81,9 @@ public:
 
     void setDisplayGain(float linearGain);
 
-    void setSeratoOverview(std::shared_ptr<const audiobatch::serato::Overview> overview);
+    void setSeratoOverview(std::shared_ptr<const serato::Overview> overview);
 
-    void setSeratoMarkers(std::shared_ptr<const audiobatch::serato::Markers> markers);
+    void setSeratoMarkers(std::shared_ptr<const serato::Markers> markers);
 
 private:
     [[nodiscard]] bool canMoveTransport() const noexcept;
@@ -111,10 +113,11 @@ private:
     std::function<void()> thumbnailFullyLoadedCallback;
     std::function<void(double)> mouseWheelZoomCallback;
     std::function<void(float)> mouseWheelGainCallback;
-    std::shared_ptr<const audiobatch::serato::Overview> seratoOverview;
-    std::shared_ptr<const audiobatch::serato::Markers> seratoMarkers;
+    std::shared_ptr<const serato::Overview> seratoOverview;
+    std::shared_ptr<const serato::Markers> seratoMarkers;
 
     bool hasNotifiedFullyLoaded = false;
     bool isFollowingTransport = false;
     float displayGain = 1.0f;
 };
+}  // namespace audiobatch

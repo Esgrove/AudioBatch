@@ -14,7 +14,9 @@
 
 #include <algorithm>
 
-namespace audiobatch::plugin_chain
+namespace audiobatch
+{
+namespace
 {
 constexpr auto pluginChainPropertyKey = "pluginChain";
 constexpr auto legacySelectedPluginIdPropertyKey = "selectedPluginIdentifier";
@@ -61,9 +63,7 @@ static PluginDescriptorRef makeDescriptorRef(const juce::PluginDescription& desc
     descriptorRef.state = state;
     return descriptorRef;
 }
-}  // namespace audiobatch::plugin_chain
-
-using namespace audiobatch::plugin_chain;
+}  // namespace
 
 /// Formats a plugin description as "Manufacturer Name (Format)" for chain editor rows, menus, and log messages.
 juce::String formatPluginDescription(const juce::PluginDescription& description)
@@ -151,7 +151,7 @@ bool PluginChain::isSlotEnabled(const int index) const
 
 /// Returns the enabled plugins in chain order.
 /// Captures live state from any open editor windows first, so a processing run always uses the latest tweaks.
-std::vector<PluginChain::EnabledChainPlugin> PluginChain::getEnabledPlugins()
+std::vector<EnabledChainPlugin> PluginChain::getEnabledPlugins()
 {
     // Capture live state from open editors so a processing run uses the latest tweaks.
     captureOpenEditorStates();
@@ -174,7 +174,7 @@ std::vector<PluginChain::EnabledChainPlugin> PluginChain::getEnabledPlugins()
 /// Must run on the message thread.
 /// Stops at the first plugin that fails, since a chain missing any plugin must not run.
 /// Captures the initial state of each plugin from the first chain.
-PluginChain::ChainInstantiation PluginChain::instantiateChains(
+ChainInstantiation PluginChain::instantiateChains(
     const std::vector<EnabledChainPlugin>& enabledPlugins,
     const int workerCount
 ) const
@@ -278,14 +278,14 @@ void PluginChain::timerCallback()
 /// Returns true when the entry's editor window has been closed by the user.
 /// The dialog window hides itself when its close button is pressed instead of deleting itself,
 /// so a hidden window also counts as closed.
-bool PluginChain::isEditorWindowClosed(const ChainEntry& entry)
+bool PluginChain::isEditorWindowClosed(const PluginChainEntry& entry)
 {
     return entry.editorWindow == nullptr || !entry.editorWindow->isVisible();
 }
 
 /// Captures plugin state from a closed editor into its entry, then destroys the window and the instance.
 /// Returns true when plugin state was captured.
-bool PluginChain::reapClosedEditor(ChainEntry& entry)
+bool PluginChain::reapClosedEditor(PluginChainEntry& entry)
 {
     entry.wasEditorOpen = false;
 
@@ -361,7 +361,7 @@ void PluginChain::showMenu(juce::Component& anchor)
 /// Appends the given plugin to the chain as an enabled slot and opens its editor.
 void PluginChain::addPlugin(const juce::PluginDescription& description)
 {
-    ChainEntry entry;
+    PluginChainEntry entry;
     entry.description = description;
     chain.push_back(std::move(entry));
 
@@ -619,7 +619,7 @@ void PluginChain::captureOpenEditorStates()
 }
 
 /// Closes the given entry's editor window and destroys its instance without capturing state.
-void PluginChain::closeEditorForEntry(ChainEntry& entry)
+void PluginChain::closeEditorForEntry(PluginChainEntry& entry)
 {
     if (entry.editorWindow != nullptr) {
         entry.editorWindow.deleteAndZero();
@@ -636,7 +636,7 @@ bool PluginChain::anyEditorOpen() const noexcept
 }
 
 /// Decodes a base64 plugin state onto the entry, leaving the state empty when the text is not valid base64.
-void PluginChain::restoreState(ChainEntry& entry, const juce::String& stateBase64)
+void PluginChain::restoreState(PluginChainEntry& entry, const juce::String& stateBase64)
 {
     if (stateBase64.isEmpty()) {
         return;
@@ -649,14 +649,14 @@ void PluginChain::restoreState(ChainEntry& entry, const juce::String& stateBase6
 }
 
 /// Parses one stored chain slot, or returns an empty optional when its plugin description cannot be loaded.
-std::optional<PluginChain::ChainEntry> PluginChain::parseSlot(const juce::XmlElement& slotElement)
+std::optional<PluginChainEntry> PluginChain::parseSlot(const juce::XmlElement& slotElement)
 {
     const auto* descriptionElement = slotElement.getFirstChildElement();
     if (descriptionElement == nullptr) {
         return std::nullopt;
     }
 
-    ChainEntry entry;
+    PluginChainEntry entry;
     if (!entry.description.loadFromXml(*descriptionElement)) {
         return std::nullopt;
     }
@@ -667,7 +667,7 @@ std::optional<PluginChain::ChainEntry> PluginChain::parseSlot(const juce::XmlEle
 }
 
 /// Parses a legacy single-plugin selection, or returns an empty optional when its description cannot be loaded.
-std::optional<PluginChain::ChainEntry> PluginChain::parseLegacyEntry(
+std::optional<PluginChainEntry> PluginChain::parseLegacyEntry(
     const juce::String& pluginXml,
     const juce::String& stateBase64
 )
@@ -677,7 +677,7 @@ std::optional<PluginChain::ChainEntry> PluginChain::parseLegacyEntry(
         return std::nullopt;
     }
 
-    ChainEntry entry;
+    PluginChainEntry entry;
     if (!entry.description.loadFromXml(*element)) {
         return std::nullopt;
     }
@@ -788,7 +788,7 @@ void PluginChain::loadKnownPluginList()
     }
 
     migrateKnownPluginList(*settings);
-    ::loadKnownPluginList(*settings, knownPluginList);
+    audiobatch::loadKnownPluginList(*settings, knownPluginList);
 }
 
 /// Prepares a scan from the plugin manager before its first plugin is loaded.
@@ -825,3 +825,4 @@ void PluginChain::notifyChainChanged()
         chainChangedCallback();
     }
 }
+}  // namespace audiobatch

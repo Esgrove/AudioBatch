@@ -12,6 +12,8 @@
 #include <map>
 #include <vector>
 
+namespace audiobatch
+{
 /// Table header that maps ctrl or cmd clicks to a secondary sort request
 /// and renders the secondary sort indicator inside the column name text.
 class SecondarySortTableHeader final : public juce::TableHeaderComponent
@@ -56,3 +58,4 @@ void sortRecords(std::vector<AudioAnalysisRecord>& records, const SortState& sta
 
 SecondarySortTableHeader& getSecondarySortHeader(const juce::TableListBox& table);
 }  // namespace results_sorting
+}  // namespace audiobatch

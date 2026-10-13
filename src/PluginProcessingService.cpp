@@ -22,10 +22,10 @@
 #include "DecodeFailureTracker.h"
 #include "FileUtils.h"
 #include "Log.h"
-#include "MessageThreadCall.h"
 #include "MetadataService.h"
 #include "PluginChainPreparation.h"
 #include "StringFormat.h"
+#include "ThreadUtils.h"
 
 #include <algorithm>
 #include <cmath>
@@ -33,7 +33,9 @@
 #include <memory>
 #include <span>
 
-namespace audiobatch::plugin_processing
+namespace audiobatch
+{
+namespace
 {
 /// Block size for copying the rendered intermediate file into the final output.
 constexpr int finalizeBlockSize = 32768;
@@ -58,9 +60,7 @@ static int clampChannelCount(const int channels)
     return juce::jlimit(1, 8, channels);
 }
 
-}  // namespace audiobatch::plugin_processing
-
-using namespace audiobatch::plugin_processing;
+}  // namespace
 
 /// Returns true when the file's format can be read for processing.
 bool PluginProcessingService::canProcessFile(const juce::File& file)
@@ -283,7 +283,7 @@ static juce::String renderThroughChain(
     juce::AudioFormatReader& reader,
     juce::AudioFormatWriter& writer,
     const std::vector<juce::AudioPluginInstance*>& chainInstances,
-    const ChainPreparation& preparation,
+    const plugin_processing::ChainPreparation& preparation,
     const int numChannels,
     const float inputGain,
     const PluginProcessingService::CancellationCheck& isCancelled,
@@ -292,21 +292,24 @@ static juce::String renderThroughChain(
 {
     const auto latencySamples = preparation.latencySamples;
 
-    juce::AudioBuffer<float> buffer(preparation.processChannelCount, processingBlockSize);
-    juce::AudioBuffer<float> readBuffer(numChannels, processingBlockSize);
+    juce::AudioBuffer<float> buffer(preparation.processChannelCount, plugin_processing::processingBlockSize);
+    juce::AudioBuffer<float> readBuffer(numChannels, plugin_processing::processingBlockSize);
     juce::MidiBuffer midi;
     std::vector<float*> readChannelPointers(static_cast<std::size_t>(numChannels));
     DecodeFailureTracker failureTracker(reader.lengthInSamples);
 
     const auto totalSamples = reader.lengthInSamples + latencySamples + preparation.tailSamples;
 
-    for (juce::int64 samplePosition = 0; samplePosition < totalSamples; samplePosition += processingBlockSize) {
+    for (juce::int64 samplePosition = 0; samplePosition < totalSamples;
+         samplePosition += plugin_processing::processingBlockSize)
+    {
         if (utils::isCancellationRequested(isCancelled)) {
             return cancelledMessage;
         }
 
-        const auto samplesThisBlock
-            = static_cast<int>(juce::jmin<juce::int64>(processingBlockSize, totalSamples - samplePosition));
+        const auto samplesThisBlock = static_cast<int>(
+            juce::jmin<juce::int64>(plugin_processing::processingBlockSize, totalSamples - samplePosition)
+        );
 
         // Clearing the whole block also pads a short final block with silence up to the prepared block size,
         // since many plugins assume a constant block size.
@@ -481,9 +484,10 @@ static juce::String renderChainToFile(
         return "Could not create the temporary render file";
     }
 
-    ChainPreparation preparation;
+    plugin_processing::ChainPreparation preparation;
     const bool prepared = utils::callOnMessageThread(
-        [&] { preparation = prepareChain(chainInstances, options, numChannels, reader.sampleRate); }, isCancelled
+        [&] { preparation = plugin_processing::prepareChain(chainInstances, options, numChannels, reader.sampleRate); },
+        isCancelled
     );
 
     if (!prepared || preparation.errorMessage.isNotEmpty()) {
@@ -501,7 +505,9 @@ static juce::String renderChainToFile(
     // Release on every path so a failed file does not leave the chain active for the next one.
     // After cancellation the message thread may be blocked waiting for this worker, so the release is skipped,
     // and the plugin instances release their resources when they are destroyed instead.
-    utils::callOnMessageThread([&chainInstances] { releasePluginResources(chainInstances); }, isCancelled);
+    utils::callOnMessageThread(
+        [&chainInstances] { plugin_processing::releasePluginResources(chainInstances); }, isCancelled
+    );
 
     return renderError;
 }
@@ -733,3 +739,4 @@ PluginProcessingResult PluginProcessingService::processFile(
 
     return result;
 }
+}  // namespace audiobatch

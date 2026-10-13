@@ -28,7 +28,7 @@
 #endif
 #endif
 
-namespace utils
+namespace audiobatch::utils
 {
 #if JUCE_WINDOWS
 /// Releases a COM interface when its owning pointer goes out of scope.
@@ -524,4 +524,4 @@ juce::String commitTemporaryOutput(
 
     return {};
 }
-}  // namespace utils
+}  // namespace audiobatch::utils
