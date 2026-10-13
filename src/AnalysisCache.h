@@ -66,16 +66,16 @@ public:
         audiobatch::serato::TagKind kind = audiobatch::serato::TagKind::overview
     );
 
-    juce::File getDatabaseFile() const;
+    [[nodiscard]] juce::File getDatabaseFile() const;
 
     int pruneMissingFiles(const std::function<bool()>& shouldStop = {});
 
 private:
-    bool columnExists(const juce::String& tableName, const juce::String& columnName) const;
+    [[nodiscard]] bool columnExists(const juce::String& tableName, const juce::String& columnName) const;
 
-    bool addMissingColumns() const;
+    [[nodiscard]] bool addMissingColumns() const;
 
-    bool execute(const juce::String& sql) const;
+    [[nodiscard]] bool execute(const juce::String& sql) const;
 
     bool prepare(const char* sql, sqlite3_stmt*& statement) const;
 
@@ -83,7 +83,7 @@ private:
 
     bool openUnlocked();
 
-    bool removeRowVersion(
+    [[nodiscard]] bool removeRowVersion(
         const juce::String& path,
         std::int64_t fileSize,
         std::int64_t modifiedTimeMs,

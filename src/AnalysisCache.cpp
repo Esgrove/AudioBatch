@@ -153,6 +153,7 @@ static juce::MemoryBlock columnBlob(sqlite3_stmt* statement, const int columnInd
 }
 
 /// Binds a juce::String as UTF-8 text.
+///
 /// SQLITE_TRANSIENT makes SQLite copy the buffer, so the string does not need to outlive the statement.
 static void bindText(sqlite3_stmt* statement, const int index, const juce::String& value)
 {
@@ -161,6 +162,7 @@ static void bindText(sqlite3_stmt* statement, const int index, const juce::Strin
 }
 
 /// Binds a memory block as a blob.
+///
 /// SQLITE_TRANSIENT makes SQLite copy the data, so the block does not need to outlive the statement.
 static void bindBlob(sqlite3_stmt* statement, const int index, const juce::MemoryBlock& data)
 {
