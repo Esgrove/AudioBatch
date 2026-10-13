@@ -26,7 +26,7 @@ constexpr auto unknownLabel = "Unknown";
 enum class Column : std::uint8_t { name, manufacturer, type, format, version };
 
 /// Returns the short display name of a plugin format, for example AU instead of AudioUnit.
-static juce::String formatLabel(const juce::String& formatName)
+juce::String formatLabel(const juce::String& formatName)
 {
     return formatName == "AudioUnit" ? juce::String("AU") : formatName;
 }
@@ -35,7 +35,7 @@ static juce::String formatLabel(const juce::String& formatName)
 /// VST3 categories are lists like "Fx|Dynamics", where the generic Fx
 /// and Instrument entries are skipped in favour of the first specific one.
 /// Audio Unit categories, such as Effect or Synth, are used as they are.
-static juce::String typeLabel(const juce::PluginDescription& description)
+juce::String typeLabel(const juce::PluginDescription& description)
 {
     auto tokens = juce::StringArray::fromTokens(description.category, "|", "");
     tokens.trim();
@@ -51,7 +51,7 @@ static juce::String typeLabel(const juce::PluginDescription& description)
 }
 
 /// Returns the text shown for a plugin in one column.
-static juce::String columnValue(const juce::PluginDescription& description, const Column column)
+juce::String columnValue(const juce::PluginDescription& description, const Column column)
 {
     switch (column) {
         case Column::name:
@@ -71,7 +71,7 @@ static juce::String columnValue(const juce::PluginDescription& description, cons
 }
 
 /// Returns the header text of a column.
-static juce::String columnHeader(const Column column)
+juce::String columnHeader(const Column column)
 {
     switch (column) {
         case Column::name:
@@ -90,7 +90,7 @@ static juce::String columnHeader(const Column column)
 }
 
 /// Returns the group a plugin belongs to for a grouped listing.
-static juce::String groupLabel(const juce::PluginDescription& description, const PluginListGrouping grouping)
+juce::String groupLabel(const juce::PluginDescription& description, const PluginListGrouping grouping)
 {
     switch (grouping) {
         case PluginListGrouping::manufacturer:
@@ -107,7 +107,7 @@ static juce::String groupLabel(const juce::PluginDescription& description, const
 }
 
 /// Returns the column that a grouping already shows in its group headers, so the rows can leave it out.
-static std::optional<Column> groupedColumn(const PluginListGrouping grouping)
+std::optional<Column> groupedColumn(const PluginListGrouping grouping)
 {
     switch (grouping) {
         case PluginListGrouping::manufacturer:
@@ -124,7 +124,7 @@ static std::optional<Column> groupedColumn(const PluginListGrouping grouping)
 }
 
 /// Sorts plugins by name, then manufacturer, then format, using natural case-insensitive order.
-static void sortPlugins(std::vector<juce::PluginDescription>& plugins)
+void sortPlugins(std::vector<juce::PluginDescription>& plugins)
 {
     std::ranges::sort(plugins, [](const juce::PluginDescription& lhs, const juce::PluginDescription& rhs) {
         if (const auto byName = lhs.name.compareNatural(rhs.name); byName != 0) {
@@ -141,7 +141,7 @@ static void sortPlugins(std::vector<juce::PluginDescription>& plugins)
 }
 
 /// Computes the display width of each column from its header and every value, so rows line up across all groups.
-static std::vector<int> columnWidths(
+std::vector<int> columnWidths(
     const std::vector<juce::PluginDescription>& plugins,
     const std::vector<Column>& columns,
     const bool includeHeaders
@@ -165,7 +165,7 @@ static std::vector<int> columnWidths(
 
 /// Formats one listing line from the given cell texts.
 /// Every column except the last is padded to its width, so lines do not end in spaces.
-static std::string formatLine(
+std::string formatLine(
     const std::string_view indent,
     const std::vector<juce::String>& cells,
     const std::vector<int>& widths
@@ -185,7 +185,7 @@ static std::string formatLine(
 }
 
 /// Prints the plugins as aligned rows with the given columns.
-static void printRows(
+void printRows(
     const std::vector<juce::PluginDescription>& plugins,
     const std::vector<Column>& columns,
     const std::vector<int>& widths,
@@ -205,7 +205,7 @@ static void printRows(
 }
 
 /// Prints all plugins as one alphabetical table with a header line.
-static void printTable(const std::vector<juce::PluginDescription>& plugins)
+void printTable(const std::vector<juce::PluginDescription>& plugins)
 {
     const std::vector columns {Column::name, Column::manufacturer, Column::type, Column::format, Column::version};
     const auto widths = columnWidths(plugins, columns, true);
@@ -231,7 +231,7 @@ struct Group {
 
 /// Prints the plugins in sections, one per group, sorted by group name with Unknown last.
 /// Groups are matched case-insensitively, so differently capitalized manufacturer names end up together.
-static void printGroups(const std::vector<juce::PluginDescription>& plugins, const PluginListGrouping grouping)
+void printGroups(const std::vector<juce::PluginDescription>& plugins, const PluginListGrouping grouping)
 {
     std::map<juce::String, Group> groupsByKey;
     for (const auto& plugin : plugins) {
@@ -286,10 +286,7 @@ static void printGroups(const std::vector<juce::PluginDescription>& plugins, con
 }
 
 /// Returns the registered format with the given name, or nullptr.
-static juce::AudioPluginFormat* findFormat(
-    const juce::AudioPluginFormatManager& formatManager,
-    const juce::String& name
-)
+juce::AudioPluginFormat* findFormat(const juce::AudioPluginFormatManager& formatManager, const juce::String& name)
 {
     for (auto* format : formatManager.getFormats()) {
         if (format->getName() == name) {
@@ -304,7 +301,7 @@ static juce::AudioPluginFormat* findFormat(
 /// and removes plugins whose files no longer exist.
 /// Each format uses the same search folders as the last GUI scan, or its default folders.
 /// Progress goes to stderr, and only to an interactive terminal.
-static void rescanPlugins(
+void rescanPlugins(
     juce::PropertiesFile& settings,
     juce::KnownPluginList& knownPluginList,
     const juce::AudioPluginFormatManager& formatManager

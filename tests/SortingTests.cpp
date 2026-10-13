@@ -212,7 +212,7 @@ public:
 
         beginTest("A new primary sort clears a secondary sort on the same column");
         {
-            results_sorting::SortState state {.primaryColumnId = columnOverallPeak};
+            results_sorting::SortState state {.primaryColumnId = columnOverallPeak, .statusText = {}};
             results_sorting::toggleSecondarySort(state, columnIntegratedLufs);
             results_sorting::setPrimarySort(state, columnIntegratedLufs, false);
 
@@ -228,7 +228,7 @@ public:
 
         beginTest("Secondary sort clicks set, flip, and clear the secondary column");
         {
-            results_sorting::SortState state {.primaryColumnId = columnOverallPeak};
+            results_sorting::SortState state {.primaryColumnId = columnOverallPeak, .statusText = {}};
 
             results_sorting::toggleSecondarySort(state, columnIntegratedLufs);
             expectEquals(state.secondaryColumnId, static_cast<int>(columnIntegratedLufs));

@@ -47,9 +47,9 @@ static int runPluginScanWorker(const juce::String& executableName, const juce::S
 }  // namespace cli
 
 /// Runs the headless batch analysis executable and returns its process exit code.
-static int runCliMain(const int argc, char* argv[])
+static int runCliMain(const std::span<char*> argv)
 {
-    juce::ArgumentList arguments(argc, argv);
+    juce::ArgumentList arguments(static_cast<int>(argv.size()), argv.data());
     cli::attachNegativeOptionValues(arguments);
     // argv[0] is often a relative path, which juce::File asserts on, so resolve it against the working directory.
     // An absolute path is kept as it is.
@@ -57,7 +57,7 @@ static int runCliMain(const int argc, char* argv[])
         = juce::File::getCurrentWorkingDirectory().getChildFile(arguments.executableName).getFileNameWithoutExtension();
 
     // The plugin rescan relaunches this executable as its scan worker.
-    const auto argumentSpan = std::span(argv, static_cast<std::size_t>(argc)).subspan(1);
+    const auto argumentSpan = argv.subspan(1);
     const auto commandLine
         = juce::StringArray(argumentSpan.data(), static_cast<int>(argumentSpan.size())).joinIntoString(" ");
     if (isPluginScanWorkerCommandLine(commandLine)) {
@@ -107,5 +107,5 @@ static int runCliMain(const int argc, char* argv[])
 /// Entry point for the headless batch analysis executable.
 int main(const int argc, char* argv[])
 {
-    return audiobatch::runCliMain(argc, argv);
+    return audiobatch::runCliMain(std::span(argv, static_cast<std::size_t>(argc)));
 }

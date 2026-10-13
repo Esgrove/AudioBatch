@@ -19,7 +19,13 @@ namespace audiobatch
 class PluginChainSlotRow : public juce::Component
 {
 public:
-    PluginChainSlotRow(PluginChain& ownerChain, int slotIndex);
+    PluginChainSlotRow(
+        PluginChain& ownerChain,
+        int slotIndex,
+        std::function<int(int containerY)> dropIndexCallback,
+        std::function<void(PluginChainSlotRow& row, int targetIndex)> draggedCallback,
+        std::function<void(PluginChainSlotRow& row, int targetIndex)> droppedCallback
+    );
 
     ~PluginChainSlotRow() override = default;
 
@@ -46,16 +52,16 @@ public:
         return index;
     }
 
+private:
+    PluginChain& pluginChain;
+    int index;
+
     /// Maps the vertical centre of the row in its container to the slot index it would drop onto.
     std::function<int(int containerY)> getDropIndex;
     /// Called while the row is dragged, so the editor can preview the drop position.
     std::function<void(PluginChainSlotRow& row, int targetIndex)> onDragged;
     /// Called when the drag ends, so the editor can commit the reorder.
     std::function<void(PluginChainSlotRow& row, int targetIndex)> onDropped;
-
-private:
-    PluginChain& pluginChain;
-    int index;
 
     juce::ToggleButton enabledToggle;
     juce::Label nameLabel;

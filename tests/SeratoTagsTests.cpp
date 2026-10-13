@@ -78,8 +78,9 @@ std::vector<std::uint8_t> markerPayload()
         'e',
         0,
     };
-    constexpr std::array<std::uint8_t, 26> loop {0,   2, 0,  0,   3,   232, 0, 0,   7,   208, 255, 255, 255,
-                                                 255, 0, 39, 170, 225, 0,   1, 'I', 'n', 't', 'r', 'o', 0};
+    constexpr std::array<std::uint8_t, 26> loop {
+        0, 2, 0, 0, 3, 232, 0, 0, 7, 208, 255, 255, 255, 255, 0, 39, 170, 225, 0, 1, 'I', 'n', 't', 'r', 'o', 0,
+    };
     constexpr std::array<std::uint8_t, 3> unknown {255, 0, 99};
     constexpr std::array<std::uint8_t, 4> colour {0, 20, 40, 60};
     constexpr std::array<std::uint8_t, 1> lock {1};
