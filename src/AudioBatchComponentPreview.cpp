@@ -39,11 +39,24 @@ void AudioBatchComponent::requestAudioDeviceAccess()
 
 void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 {
-    audioInfo->showRecord(record, fileActivity.getActiveLabel(record.fullPath));
+    if (record.file == currentAudioFile && seratoPreviewIdentity && !seratoPreviewIdentity->matches(record.file)) {
+        requestSeratoPreview();
+    }
+    audioInfo->showRecord(
+        record,
+        fileActivity.getActiveLabel(record.fullPath),
+        record.file == currentAudioFile ? seratoPreviewData.get() : nullptr
+    );
 }
 
 void AudioBatchComponent::showAudioResource(juce::URL resource)
 {
+    // Both branches below clear the remaining Serato presentation state.
+    if (seratoPreviewLoader) {
+        seratoPreviewLoader->cancel();
+    }
+    audioInfo->clear();
+
     if (loadURLIntoTransport(resource)) {
         currentAudioUrl = std::move(resource);
         currentWaveformLoadedFromCache = false;
@@ -59,9 +72,60 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
         } else {
             thumbnail->setURL(currentAudioUrl);
         }
+
+        requestSeratoPreview();
     } else {
         currentAudioUrl = {};
         releasePreviewPlayback();
+    }
+}
+
+void AudioBatchComponent::requestSeratoPreview()
+{
+    seratoPreviewData.reset();
+    seratoPreviewIdentity.reset();
+    thumbnail->setSeratoOverview({});
+    thumbnail->setSeratoMarkers({});
+    if (seratoPreviewLoader && currentAudioUrl.isLocalFile() && currentAudioUrl.getLocalFile() == currentAudioFile
+        && currentAudioFileSource != nullptr)
+    {
+        const auto* reader = currentAudioFileSource->getAudioFormatReader();
+        const auto duration
+            = reader->sampleRate > 0.0 ? static_cast<double>(reader->lengthInSamples) / reader->sampleRate : 0.0;
+        seratoPreviewIdentity.emplace(currentAudioFile);
+        seratoPreviewLoader->request(currentAudioFile, duration);
+    } else if (seratoPreviewLoader) {
+        seratoPreviewLoader->cancel();
+    }
+}
+
+void AudioBatchComponent::adoptSeratoPreview(
+    const AnalysisCache::FileIdentity& identity,
+    const audiobatch::serato::SeratoPreviewLoader::Generation generation,
+    audiobatch::serato::SeratoPreviewLoader::Data data
+)
+{
+    if (seratoPreviewLoader && thumbnail != nullptr && currentAudioFileSource != nullptr
+        && currentAudioUrl.isWellFormed() && currentAudioUrl.isLocalFile()
+        && currentAudioUrl.getLocalFile() == currentAudioFile
+        && seratoPreviewLoader->canAdopt(identity, generation, currentAudioFile))
+    {
+        seratoPreviewIdentity = identity;
+        seratoPreviewData = std::move(data);
+        thumbnail->setSeratoOverview(
+            seratoPreviewData && seratoPreviewData->overview
+                ? std::shared_ptr<const audiobatch::serato::Overview>(seratoPreviewData, &*seratoPreviewData->overview)
+                : nullptr
+        );
+        thumbnail->setSeratoMarkers(
+            seratoPreviewData && seratoPreviewData->markers
+                ? std::shared_ptr<const audiobatch::serato::Markers>(seratoPreviewData, &*seratoPreviewData->markers)
+                : nullptr
+        );
+        const auto row = findRecordIndex(currentAudioFile.getFullPathName());
+        if (juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
+            updateAudioInfo(analysisResults[static_cast<std::size_t>(row)]);
+        }
     }
 }
 
@@ -145,6 +209,14 @@ void AudioBatchComponent::clearCurrentAudioPreview()
 
 void AudioBatchComponent::releasePreviewPlayback()
 {
+    if (seratoPreviewLoader) {
+        seratoPreviewLoader->cancel();
+    }
+    seratoPreviewData.reset();
+    seratoPreviewIdentity.reset();
+    thumbnail->setSeratoOverview({});
+    thumbnail->setSeratoMarkers({});
+    audioInfo->clear();
     transportSource.stop();
     transportSource.setSource(nullptr);
     currentAudioFileSource.reset();

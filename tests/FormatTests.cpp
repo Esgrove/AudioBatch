@@ -12,7 +12,7 @@ namespace audiobatch::tests
 class FormatTests final : public juce::UnitTest
 {
 public:
-    FormatTests() : juce::UnitTest("Display formatting", "AudioBatch") { }
+    FormatTests() : juce::UnitTest("Display formatting", "AudioBatch") {}
 
     /// Runs the formatting and sorting checks.
     void runTest() override

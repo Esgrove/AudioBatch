@@ -96,7 +96,7 @@ AudioFileTableModel::AudioFileTableModel(
     activeStatusLabelProvider(std::move(statusLabelProvider)),
     operationMessageProvider(std::move(messageProvider)),
     activityPhaseProvider(std::move(phaseProvider))
-{ }
+{}
 
 void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
 {

@@ -141,7 +141,7 @@ constexpr double lossyTolerance = 0.5;
 class AnalysisTests final : public juce::UnitTest
 {
 public:
-    AnalysisTests() : juce::UnitTest("Audio analysis", "AudioBatch") { }
+    AnalysisTests() : juce::UnitTest("Audio analysis", "AudioBatch") {}
 
     /// Runs the analysis checks.
     void runTest() override

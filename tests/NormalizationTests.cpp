@@ -29,7 +29,7 @@ static AudioAnalysisRecord recordForPath(const juce::String& path)
 class NormalizationTests final : public juce::UnitTest
 {
 public:
-    NormalizationTests() : juce::UnitTest("Normalization", "AudioBatch") { }
+    NormalizationTests() : juce::UnitTest("Normalization", "AudioBatch") {}
 
     /// Runs the normalization checks.
     void runTest() override

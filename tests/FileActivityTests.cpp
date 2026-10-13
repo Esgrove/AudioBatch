@@ -10,7 +10,7 @@ namespace audiobatch::tests
 class FileActivityTests final : public juce::UnitTest
 {
 public:
-    FileActivityTests() : juce::UnitTest("File activity", "AudioBatch") { }
+    FileActivityTests() : juce::UnitTest("File activity", "AudioBatch") {}
 
     /// Runs the activity tracker checks.
     void runTest() override

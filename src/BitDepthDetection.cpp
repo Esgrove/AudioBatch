@@ -1,7 +1,8 @@
 /// Implementation of the source bit depth detection.
 /// Reads the bit depth from the reader for lossless formats.
-/// MP3 files have no source bit depth, since the format stores no sample depth and the decoder output says nothing
-/// about the original encoding, so they get a fixed default instead of a value read from the tags.
+/// MP3 files have no source bit depth, since the format stores no sample depth
+/// and the decoder output says nothing about the original encoding,
+/// so they get a fixed default instead of a value read from the tags.
 
 #include "BitDepthDetection.h"
 

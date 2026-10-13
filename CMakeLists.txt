@@ -6,8 +6,8 @@ cmake_minimum_required(VERSION 4.2)
 
 project(
     "AudioBatch"
-    VERSION 0.10.0
-    DESCRIPTION "App for batch processing audio files"
+    VERSION 0.11.0
+    DESCRIPTION "Batch analyze and process audio files"
     HOMEPAGE_URL "https://github.com/Esgrove/AudioBatch"
     LANGUAGES CXX C
 )
@@ -298,7 +298,15 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/NormalizeCoordinator.h"
     "src/PluginScanner.cpp"
     "src/PluginScanner.h"
+    "src/SeratoOverview.cpp"
+    "src/SeratoOverview.h"
+    "src/SeratoTags.cpp"
+    "src/SeratoTags.h"
+    "src/SeratoTagReader.cpp"
+    "src/SeratoTagReader.h"
+    "src/SeratoTagTypes.h"
     "src/StringFormat.h"
+    "src/TagLibUtils.h"
     "src/version.h"
 )
 
@@ -353,6 +361,10 @@ target_sources(
         "src/PluginProcessingService.h"
         "src/ResultsSorting.cpp"
         "src/ResultsSorting.h"
+        "src/SeratoPreviewLoader.cpp"
+        "src/SeratoPreviewLoader.h"
+        "src/SeratoWaveformColouring.cpp"
+        "src/SeratoWaveformColouring.h"
         "src/ThumbnailComponent.cpp"
         "src/ThumbnailComponent.h"
 )
@@ -573,6 +585,8 @@ target_sources(
     PRIVATE
         ${AUDIOBATCH_CORE_SOURCES}
         ${AUDIOBATCH_CLI_SOURCES}
+        "src/AudioInfoPanel.cpp"
+        "src/AudioInfoPanel.h"
         "src/FileActivityTracker.cpp"
         "src/FileActivityTracker.h"
         "src/PluginChainPreparation.cpp"
@@ -582,6 +596,12 @@ target_sources(
         "src/PluginProcessingService.h"
         "src/ResultsSorting.cpp"
         "src/ResultsSorting.h"
+        "src/SeratoPreviewLoader.cpp"
+        "src/SeratoPreviewLoader.h"
+        "src/SeratoWaveformColouring.cpp"
+        "src/SeratoWaveformColouring.h"
+        "src/ThumbnailComponent.cpp"
+        "src/ThumbnailComponent.h"
         "tests/AnalysisTests.cpp"
         "tests/CacheTests.cpp"
         "tests/CliTests.cpp"
@@ -590,6 +610,12 @@ target_sources(
         "tests/MetadataTests.cpp"
         "tests/NormalizationTests.cpp"
         "tests/ProcessingTests.cpp"
+        "tests/SeratoOverviewTests.cpp"
+        "tests/SeratoPreviewLoaderTests.cpp"
+        "tests/SeratoPreviewTests.cpp"
+        "tests/SeratoTagReaderTests.cpp"
+        "tests/SeratoTagsTests.cpp"
+        "tests/SeratoWaveformColouringTests.cpp"
         "tests/SortingTests.cpp"
         "tests/TestHelpers.cpp"
         "tests/TestHelpers.h"
@@ -623,6 +649,7 @@ target_link_libraries(
         juce::juce_audio_basics
         juce::juce_audio_formats
         juce::juce_audio_processors
+        juce::juce_audio_utils
         juce::juce_core
         juce::juce_data_structures
         juce::juce_events
@@ -632,7 +659,8 @@ target_link_libraries(
 )
 # cmake-format: on
 
-enable_testing()
+set(BUILD_TESTING ON)
+include(CTest)
 add_test(NAME AudioBatchTests COMMAND AudioBatchTests)
 
 audiobatch_set_source_warnings(AudioBatch AudioBatchCli AudioBatchTests)

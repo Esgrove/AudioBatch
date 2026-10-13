@@ -5,6 +5,7 @@
 #pragma once
 
 #include "AudioAnalysisTypes.h"
+#include "SeratoTagTypes.h"
 
 #include <JuceHeader.h>
 
@@ -33,7 +34,12 @@ public:
     /// Shows the details of an analysis record.
     /// A record still being analyzed shows its name and activeStatusLabel, or "Pending" when that is empty,
     /// and a failed record shows its name and error.
-    void showRecord(const AudioAnalysisRecord& record, const juce::String& activeStatusLabel);
+    /// Optional selected-file metadata adds BPM and key rows only when those values are available.
+    void showRecord(
+        const AudioAnalysisRecord& record,
+        const juce::String& activeStatusLabel,
+        const audiobatch::serato::SeratoData* data = nullptr
+    );
 
     /// Returns the height needed to show every row plus padding,
     /// used to size the panel inside its scrolling viewport.

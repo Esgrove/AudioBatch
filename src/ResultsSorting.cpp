@@ -15,7 +15,7 @@
 
 SecondarySortTableHeader::SecondarySortTableHeader(SecondarySortCallback secondarySortRequestedCallback) :
     secondarySortRequested(std::move(secondarySortRequestedCallback))
-{ }
+{}
 
 void SecondarySortTableHeader::columnClicked(const int columnId, const juce::ModifierKeys& modifiers)
 {

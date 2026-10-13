@@ -1,14 +1,17 @@
 /// Waveform preview for the currently loaded audio file.
 /// Declares ThumbnailComponent, a JUCE component that draws the audio thumbnail,
 /// follows and scrubs the shared transport source,
-/// supports zoom and gain mouse-wheel gestures, file drag-and-drop,
+/// supports zoom and gain mouse-wheel gestures, Serato hot cue jumps with the number keys, file drag-and-drop,
 /// and caching of the rendered waveform data.
 
 #pragma once
 
+#include "SeratoTagTypes.h"
+
 #include <JuceHeader.h>
 
 #include <functional>
+#include <memory>
 
 /// Waveform preview component with transport following, scrubbing, zooming, and drag-and-drop.
 class ThumbnailComponent :
@@ -49,8 +52,18 @@ public:
     /// Restarts playback from the beginning of the file.
     void mouseDoubleClick(const juce::MouseEvent& event) override;
 
-    /// Starts scrubbing by forwarding the press to the drag handler.
+    /// Takes keyboard focus so the hot cue keys apply, then starts scrubbing through the drag handler.
     void mouseDown(const juce::MouseEvent& event) override;
+
+    /// Handles the number keys 1 to 8 without command, ctrl or alt modifiers as Serato hot cue jumps.
+    /// Every other key returns false, so JUCE passes it on to the parent component's shortcuts.
+    bool keyPressed(const juce::KeyPress& key) override;
+
+    /// Repaints to show the keyboard focus outline.
+    void focusGained(FocusChangeType cause) override;
+
+    /// Repaints to remove the keyboard focus outline.
+    void focusLost(FocusChangeType cause) override;
 
     /// Scrubs the transport to the time under the cursor while the mouse is held down.
     void mouseDrag(const juce::MouseEvent& event) override;
@@ -96,7 +109,27 @@ public:
     /// Visually scales the waveform vertically by the given linear gain factor (1.0 = unchanged).
     void setDisplayGain(float linearGain);
 
+    /// Attaches immutable spectral data on the message thread and repaints only.
+    /// Does not reload peaks, reset the viewport or gain, or affect playback.
+    /// Null, empty and oversized data remove colouring. The owner must reject stale asynchronous results.
+    void setSeratoOverview(std::shared_ptr<const audiobatch::serato::Overview> overview);
+
+    /// Attaches owned cue positions and colours without altering peaks, playback or the viewport.
+    /// Null data removes the arrows. The owner must reject stale asynchronous results before adoption.
+    void setSeratoMarkers(std::shared_ptr<const audiobatch::serato::Markers> markers);
+
 private:
+    /// Moves the transport to the Serato hot cue in the given zero-based slot and starts playback,
+    /// matching the click and double-click behaviour. Does nothing when that slot has no cue.
+    void jumpToHotCue(int slot);
+
+    /// Draws inward-facing cue arrows over the waveform, below the child playback cursor.
+    /// Millisecond positions use the same seconds-based projection as scrubbing and the playhead.
+    void drawCueMarkers(juce::Graphics& graphics) const;
+
+    /// Returns the inset rectangle shared by waveform painting, cursor projection and scrubbing.
+    juce::Rectangle<int> waveformBounds() const;
+
     /// Reports whether user interaction may reposition the transport.
     /// Repositioning is blocked while the view is following an actively playing transport.
     bool canMoveTransport() const noexcept;
@@ -126,6 +159,8 @@ private:
     std::function<void()> thumbnailFullyLoadedCallback;
     std::function<void(double)> mouseWheelZoomCallback;
     std::function<void(float)> mouseWheelGainCallback;
+    std::shared_ptr<const audiobatch::serato::Overview> seratoOverview;
+    std::shared_ptr<const audiobatch::serato::Markers> seratoMarkers;
 
     bool hasNotifiedFullyLoaded = false;
     bool isFollowingTransport = false;

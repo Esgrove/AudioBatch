@@ -15,6 +15,7 @@
 #include "PluginChain.h"
 #include "PluginProcessing.h"
 #include "PluginProcessingCoordinator.h"
+#include "SeratoPreviewLoader.h"
 #include "ThumbnailComponent.h"
 
 #include <JuceHeader.h>
@@ -388,6 +389,18 @@ private:
     /// preferring cached waveform data over decoding the file again.
     void showAudioResource(juce::URL resource);
 
+    /// Clears stale tag presentation and requests the current preview's independent metadata.
+    /// Captures file identity so same-path changes detected during reanalysis trigger a fresh read.
+    void requestSeratoPreview();
+
+    /// Adopts immutable colours, cues and track info only while the generation, file and URL still match.
+    /// Never reloads playback or changes waveform geometry, gain, zoom or peak-cache data.
+    void adoptSeratoPreview(
+        const AnalysisCache::FileIdentity& identity,
+        audiobatch::serato::SeratoPreviewLoader::Generation generation,
+        audiobatch::serato::SeratoPreviewLoader::Data data
+    );
+
     /// Toggles preview playback of the current file.
     void startOrStop();
 
@@ -398,6 +411,12 @@ private:
     void zoomLevelChanged(double zoomLevel);
 
     AnalysisCache analysisCache;
+    /// Owns the tag worker, stopped explicitly before GUI cleanup and before the cache is destroyed.
+    std::unique_ptr<audiobatch::serato::SeratoPreviewLoader> seratoPreviewLoader;
+    /// Holds the selected preview's metadata so analysis refreshes retain BPM and key until the selection changes.
+    audiobatch::serato::SeratoPreviewLoader::Data seratoPreviewData;
+    /// Records the requested or adopted file version, including stable negative outcomes.
+    std::optional<AnalysisCache::FileIdentity> seratoPreviewIdentity;
     /// Removes cached rows of deleted files in the background after startup.
     /// Declared after the cache, so it is stopped and joined before the cache is destroyed.
     std::jthread cachePruneThread;
