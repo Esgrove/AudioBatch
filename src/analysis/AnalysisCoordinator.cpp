@@ -73,6 +73,33 @@ void AnalysisCoordinator::publishStarting(const juce::File& file, const int runI
     }
 }
 
+/// Sets the callback invoked with the analyzed fraction of each file.
+void AnalysisCoordinator::setProgressCallback(ProgressCallback callback)
+{
+    const juce::ScopedLock lock(callbackLock);
+    progressCallback = std::move(callback);
+}
+
+/// Invokes the progress callback when the given run id is still current.
+/// Runs on the worker thread while a file is being decoded.
+void AnalysisCoordinator::publishProgress(const juce::File& file, const float progress, const int runId) const
+{
+    if (isRunCancelled(runId)) {
+        return;
+    }
+
+    ProgressCallback callbackCopy;
+
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = progressCallback;
+    }
+
+    if (callbackCopy != nullptr) {
+        callbackCopy(file, progress, runId);
+    }
+}
+
 /// Invokes the result callback when the given run id is still current.
 /// Runs on the worker thread, so the callback must marshal to the message thread itself if needed.
 void AnalysisCoordinator::publishResult(const AudioAnalysisRecord& result, const int runId) const
@@ -202,7 +229,10 @@ void AnalysisCoordinator::analyzeStaleFile(
 
     publishStarting(file, runId);
 
-    auto result = analyzeFile(file, [this, runId] { return isRunCancelled(runId); });
+    const auto onProgress = utils::makeThrottledProgress([this, &file, runId](const float progress) {
+        publishProgress(file, progress, runId);
+    });
+    auto result = analyzeFile(file, [this, runId] { return isRunCancelled(runId); }, onProgress);
 
     if (isRunCancelled(runId)) {
         return;

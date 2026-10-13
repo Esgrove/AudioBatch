@@ -258,6 +258,42 @@ public:
             expect(utils::isCancellationRequested([] { return true; }));
         }
 
+        beginTest("A progress range maps a phase into part of the whole operation");
+        {
+            std::vector<float> reported;
+            const utils::ProgressCallback onProgress
+                = [&reported](const float progress) { reported.push_back(progress); };
+            const auto phase = utils::makeProgressRange(onProgress, 0.2f, 0.6f);
+            phase(0.0f);
+            phase(0.5f);
+            phase(2.0f);
+
+            expectEquals(static_cast<int>(reported.size()), 3);
+            expectWithinAbsoluteError(reported[0], 0.2f, 1.0e-6f);
+            expectWithinAbsoluteError(reported[1], 0.4f, 1.0e-6f);
+            expectWithinAbsoluteError(reported[2], 0.6f, 1.0e-6f);
+            expect(utils::makeProgressRange({}, 0.0f, 1.0f) == nullptr);
+            expectWithinAbsoluteError(utils::progressFraction(1, 4), 0.25f, 1.0e-6f);
+            expectEquals(utils::progressFraction(0, 0), 1.0f);
+        }
+
+        beginTest("Throttled progress skips small steps but always reports completion");
+        {
+            std::vector<float> reported;
+            const auto onProgress
+                = utils::makeThrottledProgress([&reported](const float progress) { reported.push_back(progress); });
+
+            for (int step = 0; step <= 1000; ++step) {
+                onProgress(static_cast<float>(step) / 1000.0f);
+            }
+
+            expect(!reported.empty());
+            expect(reported.size() < 1000, juce::String(static_cast<int>(reported.size())));
+            expectEquals(reported.back(), 1.0f);
+            expect(std::ranges::is_sorted(reported));
+            expect(utils::makeThrottledProgress({}) == nullptr);
+        }
+
         beginTest("A failed read from a fixed-point reader leaves silence instead of raw integers");
         {
             FailingFixedPointReader reader;

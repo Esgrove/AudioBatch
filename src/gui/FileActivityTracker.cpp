@@ -1,7 +1,8 @@
-/// Implementation of FileActivityTracker: the label and message maps and the animation timer.
+/// Implementation of FileActivityTracker: the activity and message maps, the progress sum, and the animation timer.
 
 #include "gui/FileActivityTracker.h"
 
+#include <algorithm>
 #include <utility>
 
 namespace audiobatch
@@ -12,7 +13,25 @@ namespace
 constexpr int animationTimerHz = 24;
 }  // namespace
 
+/// Returns the text shown in the status column for a file busy with the activity.
+juce::String getFileActivityLabel(const FileActivity activity)
+{
+    switch (activity) {
+        case FileActivity::waiting:
+            return "Waiting";
+        case FileActivity::analyzing:
+            return "Analyzing";
+        case FileActivity::normalizing:
+            return "Normalizing";
+        case FileActivity::processing:
+            return "Processing";
+    }
+
+    return {};
+}
+
 /// Creates the tracker with the callback that repaints the view showing the activity.
+/// The callback also runs on every animation tick while any file is busy.
 FileActivityTracker::FileActivityTracker(std::function<void()> repaintCallback) : repaint(std::move(repaintCallback)) {}
 
 /// Stops the animation timer.
@@ -21,57 +40,102 @@ FileActivityTracker::~FileActivityTracker()
     stopTimer();
 }
 
-/// Marks the files busy with the activity label and clears their previous operation messages,
+/// Marks the files busy with the activity and clears their previous operation messages,
 /// since a new operation replaces the outcome of the last one.
-void FileActivityTracker::markActive(const juce::Array<juce::File>& files, const juce::String& activityLabel)
+void FileActivityTracker::markActive(const juce::Array<juce::File>& files, const FileActivity activity)
 {
     for (const auto& file : files) {
-        activeLabels[file.getFullPathName()] = activityLabel;
+        activeStates[file.getFullPathName()] = {.activity = activity};
         messages.erase(file.getFullPathName());
     }
 
     activityChanged();
 }
 
-/// Sets the activity label of one file, for example when its analysis starts.
-void FileActivityTracker::setActive(const juce::String& fullPath, const juce::String& activityLabel)
+/// Sets the activity of one file, for example when its analysis starts.
+/// The progress is unknown until the first progress report for the new activity arrives.
+void FileActivityTracker::setActive(const juce::String& fullPath, const FileActivity activity)
 {
-    activeLabels[fullPath] = activityLabel;
+    activeStates[fullPath] = {.activity = activity};
     activityChanged();
+}
+
+/// Stores the completed fraction of a busy file.
+/// Ignored for an idle or waiting file, since a late report from a finished or cancelled file must not revive it.
+/// The animation timer repaints the change.
+void FileActivityTracker::setProgress(const juce::String& fullPath, const float progress)
+{
+    const auto iterator = activeStates.find(fullPath);
+
+    if (iterator == activeStates.end() || iterator->second.activity == FileActivity::waiting) {
+        return;
+    }
+
+    iterator->second.progress = juce::jlimit(0.0f, 1.0f, progress);
 }
 
 /// Marks one file idle.
 void FileActivityTracker::clearActive(const juce::String& fullPath)
 {
-    activeLabels.erase(fullPath);
+    activeStates.erase(fullPath);
     activityChanged();
 }
 
 /// Marks every file idle.
 void FileActivityTracker::clearAllActive()
 {
-    activeLabels.clear();
+    activeStates.clear();
     activityChanged();
 }
 
-/// Marks idle every file whose activity label is one of the given labels.
-void FileActivityTracker::clearActiveWithLabels(const juce::StringArray& activityLabels)
+/// Marks idle every file whose activity is one of the given activities.
+void FileActivityTracker::clearActiveWithActivities(const std::initializer_list<FileActivity> activities)
 {
-    std::erase_if(activeLabels, [&activityLabels](const auto& entry) { return activityLabels.contains(entry.second); });
+    std::erase_if(activeStates, [&activities](const auto& entry) {
+        return std::ranges::find(activities, entry.second.activity) != activities.end();
+    });
     activityChanged();
 }
 
-/// Returns the activity label of a file, or an empty string when it is idle.
+/// Returns the display label of a file's activity, or an empty string when it is idle.
 juce::String FileActivityTracker::getActiveLabel(const juce::String& fullPath) const
 {
-    const auto iterator = activeLabels.find(fullPath);
-    return iterator != activeLabels.end() ? iterator->second : juce::String();
+    const auto activity = getActivity(fullPath);
+    return activity.has_value() ? getFileActivityLabel(*activity) : juce::String();
+}
+
+/// Returns the activity of a file, or an empty optional when it is idle.
+std::optional<FileActivity> FileActivityTracker::getActivity(const juce::String& fullPath) const
+{
+    const auto state = getActivityState(fullPath);
+    return state.has_value() ? std::optional(state->activity) : std::nullopt;
+}
+
+/// Returns the activity and progress of a file, or an empty optional when it is idle.
+std::optional<FileActivityState> FileActivityTracker::getActivityState(const juce::String& fullPath) const
+{
+    const auto iterator = activeStates.find(fullPath);
+    return iterator != activeStates.end() ? std::optional(iterator->second) : std::nullopt;
+}
+
+/// Returns the sum of the completed fractions of the busy files,
+/// which added to the number of finished files gives the progress of the whole run in files.
+float FileActivityTracker::getProgressTotal() const
+{
+    float total = 0.0f;
+
+    for (const auto& [path, state] : activeStates) {
+        juce::ignoreUnused(path);
+        total += state.progress.value_or(0.0f);
+    }
+
+    return total;
 }
 
 /// Returns true while any file is busy.
 bool FileActivityTracker::isAnyActive() const
 {
-    return !activeLabels.empty();
+    return !activeStates.empty();
 }
 
 /// Stores the outcome message of a file's last operation, such as an error or a clipping notice.
@@ -124,10 +188,10 @@ float FileActivityTracker::getAnimationPhase()
 /// Starts or stops the repaint timer depending on whether any file is busy, and repaints once.
 void FileActivityTracker::activityChanged()
 {
-    if (isAnyActive()) {
-        startTimerHz(animationTimerHz);
-    } else {
+    if (!isAnyActive()) {
         stopTimer();
+    } else if (!isTimerRunning()) {
+        startTimerHz(animationTimerHz);
     }
 
     if (repaint != nullptr) {
@@ -135,7 +199,7 @@ void FileActivityTracker::activityChanged()
     }
 }
 
-/// Repaints to animate the activity indicators, and stops itself once all files are idle.
+/// Repaints to animate the activity indicators and show progress, and stops itself once all files are idle.
 void FileActivityTracker::timerCallback()
 {
     if (!isAnyActive()) {

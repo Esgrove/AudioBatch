@@ -308,11 +308,13 @@ static void interleaveBlock(
 /// A tolerated failed block still holds the samples decoded before the error with the remainder zeroed.
 /// When decoding has to stop early, the measurement fails instead of reporting levels for part of the file.
 /// Cancellation is checked before each block and also fails the measurement.
+/// The decoded fraction of the file is reported to onProgress after each block.
 static DecodeMeasurements measureDecodedAudio(
     juce::AudioFormatReader& reader,
     ebur128_state* loudnessState,
     const juce::String& fullPath,
-    const utils::CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled,
+    const utils::ProgressCallback& onProgress
 )
 {
     const auto channelCount = static_cast<int>(reader.numChannels);
@@ -374,6 +376,10 @@ static DecodeMeasurements measureDecodedAudio(
             measurements.maxShortTermLoudness
                 = std::max(measurements.maxShortTermLoudness, normalizeLoudness(shortTermLoudness));
         }
+
+        utils::reportProgress(
+            onProgress, utils::progressFraction(samplePosition + framesThisBlock, reader.lengthInSamples)
+        );
     }
 
     return measurements;
@@ -382,7 +388,12 @@ static DecodeMeasurements measureDecodedAudio(
 /// Analyzes a single supported audio file and returns the populated result record.
 /// When isCancelled starts returning true, decoding stops and a failed record is returned,
 /// which callers must not cache.
-AudioAnalysisRecord analyzeFile(const juce::File& file, const utils::CancellationCheck& isCancelled)
+/// The decoded fraction of the file is reported to onProgress while decoding.
+AudioAnalysisRecord analyzeFile(
+    const juce::File& file,
+    const utils::CancellationCheck& isCancelled,
+    const utils::ProgressCallback& onProgress
+)
 {
     auto record = AudioAnalysisRecord::fromFile(file);
 
@@ -411,7 +422,7 @@ AudioAnalysisRecord analyzeFile(const juce::File& file, const utils::Cancellatio
     }
 
     const auto [minSamples, maxSamples, maxShortTermLoudness, errorMessage]
-        = measureDecodedAudio(*reader, loudnessState.get(), record.fullPath, isCancelled);
+        = measureDecodedAudio(*reader, loudnessState.get(), record.fullPath, isCancelled, onProgress);
 
     if (errorMessage.isNotEmpty()) {
         return failAnalysis(std::move(record), errorMessage);

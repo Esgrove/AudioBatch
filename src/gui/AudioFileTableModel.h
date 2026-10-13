@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <vector>
 
 namespace audiobatch
@@ -31,6 +32,22 @@ enum AudioFileTableColumn : std::uint8_t {
     columnStatus,
 };
 
+/// What a busy file is doing, shown with an activity indicator in the status column.
+enum class FileActivity : std::uint8_t {
+    /// Queued for analysis, normalization, or processing, but not started yet.
+    waiting,
+    analyzing,
+    normalizing,
+    processing,
+};
+
+/// Activity of a busy file and how far along it is.
+struct FileActivityState {
+    FileActivity activity = FileActivity::waiting;
+    /// Completed fraction of the file in the range 0 to 1, or empty until the first progress report arrives.
+    std::optional<float> progress;
+};
+
 /// Outcome of the last normalize or process run for a file, shown in the status column while the file is idle.
 struct OperationMessage {
     /// Message shown in the status column.
@@ -48,7 +65,7 @@ public:
         std::function<void(int row)> onSelectionChanged,
         std::function<void(int columnId, bool isForwards)> onSortChanged,
         std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,
-        std::function<juce::String(const AudioAnalysisRecord& record)> statusLabelProvider,
+        std::function<std::optional<FileActivityState>(const AudioAnalysisRecord& record)> activityProvider,
         std::function<OperationMessage(const AudioAnalysisRecord& record)> messageProvider,
         std::function<float()> phaseProvider
     );
@@ -188,7 +205,7 @@ private:
     std::function<void(int row)> selectionChanged;
     std::function<void(int columnId, bool isForwards)> sortChanged;
     std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested;
-    std::function<juce::String(const AudioAnalysisRecord& record)> activeStatusLabelProvider;
+    std::function<std::optional<FileActivityState>(const AudioAnalysisRecord& record)> activityStateProvider;
     std::function<OperationMessage(const AudioAnalysisRecord& record)> operationMessageProvider;
     std::function<float()> activityPhaseProvider;
 };

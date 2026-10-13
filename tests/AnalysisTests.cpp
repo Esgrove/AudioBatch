@@ -182,6 +182,19 @@ public:
             expect(files.isEmpty());
         }
 
+        beginTest("Analysis reports increasing progress up to completion");
+        {
+            std::vector<float> reported;
+            const auto record
+                = analyzeFile(fixtureFile("sine_stereo_44100_16.wav"), {}, [&reported](const float value) {
+                      reported.push_back(value);
+                  });
+            expect(!record.hasError(), record.errorMessage);
+            expect(!reported.empty());
+            expect(std::ranges::is_sorted(reported));
+            expectEquals(reported.back(), 1.0f);
+        }
+
         beginTest("Cancelled analysis fails without measuring");
         {
             const auto record = analyzeFile(fixtureFile("sine_stereo_44100_16.wav"), [] { return true; });

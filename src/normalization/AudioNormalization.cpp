@@ -27,6 +27,11 @@ constexpr auto normalizedAiffOutputExtension = ".aif";
 constexpr int defaultMp3BitsPerSample = 16;
 constexpr auto cancelledMessage = "Normalization was cancelled";
 
+/// Share of a file's progress taken by analyzing a source that changed since its last analysis.
+constexpr float sourceAnalysisProgressShare = 0.3f;
+/// Progress at which rendering the normalized audio ends and analyzing the output begins.
+constexpr float renderProgressEnd = 0.8f;
+
 /// Logs the failure and builds a failure result for the given file.
 AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)
 {
@@ -81,11 +86,13 @@ int resolvePreferredOutputBitDepth(
 /// and `decodeNotice` receives the tracker's notice about tolerated failures.
 /// Returns an empty string on success, or a user-facing error message,
 /// including when cancellation is requested between blocks.
+/// The written fraction of the file is reported to onProgress after each block.
 juce::String renderNormalizedAudio(
     juce::AudioFormatReader& reader,
     juce::AudioFormatWriter& writer,
     const float gain,
     const utils::CancellationCheck& isCancelled,
+    const utils::ProgressCallback& onProgress,
     juce::String& decodeNotice
 )
 {
@@ -131,6 +138,10 @@ juce::String renderNormalizedAudio(
         if (!writer.writeFromAudioSampleBuffer(buffer, 0, samplesThisBlock)) {
             return "Failed while writing normalized audio data";
         }
+
+        utils::reportProgress(
+            onProgress, utils::progressFraction(samplePosition + samplesThisBlock, reader.lengthInSamples)
+        );
     }
 
     decodeNotice = failureTracker.getNotice();
@@ -244,10 +255,13 @@ juce::String batchOutputConflictMessage(const juce::File& sourceFile)
 /// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.
 /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again before computing the gain.
 /// Isolated source blocks that fail to decode are written as decoded and reported in the result notice.
+/// Progress of the whole file, through any source analysis, the render, and the output analysis,
+/// is reported to onProgress.
 AudioNormalizationResult normalizeFile(
     const AudioAnalysisRecord& sourceRecord,
     const AudioNormalizationOptions& options,
-    const utils::CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled,
+    const utils::ProgressCallback& onProgress
 )
 {
     const auto& file = sourceRecord.file;
@@ -268,7 +282,11 @@ AudioNormalizationResult normalizeFile(
     }
 
     // The gain comes from the analyzed peak, so a file that changed since its analysis is measured again first.
-    const auto record = sourceRecord.matchesFileOnDisk() ? sourceRecord : analyzeFile(file, isCancelled);
+    const bool sourceChanged = !sourceRecord.matchesFileOnDisk();
+    const auto renderProgressStart = sourceChanged ? sourceAnalysisProgressShare : 0.0f;
+    const auto record = sourceChanged
+        ? analyzeFile(file, isCancelled, utils::makeProgressRange(onProgress, 0.0f, renderProgressStart))
+        : sourceRecord;
 
     if (record.hasError()) {
         return failNormalization(file, record.errorMessage);
@@ -301,7 +319,8 @@ AudioNormalizationResult normalizeFile(
         result.file = file;
         result.fileName = file.getFileName();
         result.fullPath = file.getFullPathName();
-        result.analysisRecord = analyzeFile(file, isCancelled);
+        result.analysisRecord
+            = analyzeFile(file, isCancelled, utils::makeProgressRange(onProgress, renderProgressStart, 1.0f));
         result.succeeded = !result.analysisRecord.hasError();
 
         if (!result.succeeded) {
@@ -341,7 +360,14 @@ AudioNormalizationResult normalizeFile(
 
     juce::String decodeNotice;
 
-    if (const auto renderError = renderNormalizedAudio(*reader, *writer, gain, isCancelled, decodeNotice);
+    if (const auto renderError = renderNormalizedAudio(
+            *reader,
+            *writer,
+            gain,
+            isCancelled,
+            utils::makeProgressRange(onProgress, renderProgressStart, renderProgressEnd),
+            decodeNotice
+        );
         renderError.isNotEmpty())
     {
         return failNormalization(file, renderError);
@@ -392,7 +418,7 @@ AudioNormalizationResult normalizeFile(
     result.fullPath = file.getFullPathName();
     result.committed = true;
     result.notice = std::move(decodeNotice);
-    result.analysisRecord = analyzeFile(outputFile);
+    result.analysisRecord = analyzeFile(outputFile, {}, utils::makeProgressRange(onProgress, renderProgressEnd, 1.0f));
     result.succeeded = !result.analysisRecord.hasError();
 
     if (result.notice.isNotEmpty()) {

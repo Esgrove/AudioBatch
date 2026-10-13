@@ -1,11 +1,12 @@
 /// Implementation of the AudioFileTableModel results table.
 /// Covers cell text and colour selection, row sorting, the Type column label derivation,
-/// and the animated activity indicator drawn in the Status column.
+/// the activity labels, and the waiting, progress, and spinning activity indicator drawn in the Status column.
 
 #include "gui/AudioFileTableModel.h"
 
 #include "analysis/AudioAnalysisFormatting.h"
 #include "gui/components/CustomLookAndFeel.h"
+#include "gui/FileActivityTracker.h"
 #include "utils/StringFormat.h"
 
 namespace audiobatch
@@ -45,33 +46,50 @@ constexpr float normalCellTextAlpha = 0.95f;
 /// Opacity of the one pixel vertical divider drawn at the right edge of each cell.
 constexpr float cellDividerAlpha = 0.08f;
 
-/// Draws the small spinning arc shown in the Status column while a row is being processed.
-/// The phase argument in the range 0 to 1 controls the arc rotation,
+/// Opacity of the status text of a waiting row, dimmed to set it apart from the rows being worked on.
+constexpr float waitingStatusTextAlpha = 0.55f;
+
+/// Smallest progress drawn as a filled arc, so a just started file does not show a sliver.
+constexpr float minimumDrawnProgress = 0.005f;
+
+/// Draws the small activity indicator shown in the Status column while a row is busy.
+/// A waiting row gets an empty ring.
+/// A row with known progress gets a ring that fills clockwise from the top like a progress bar.
+/// A row whose progress is still unknown gets a spinning arc,
+/// where the phase argument in the range 0 to 1 controls the rotation,
 /// so repeated repaints with an advancing phase animate the spinner.
-static void drawActivityIndicator(juce::Graphics& graphics, const juce::Rectangle<float> bounds, const float phase)
+static void drawActivityIndicator(
+    juce::Graphics& graphics,
+    const juce::Rectangle<float> bounds,
+    const FileActivityState& state,
+    const float phase
+)
 {
     const auto ringBounds = bounds.reduced(1.0f);
     const auto accent = juce::CustomLookAndFeel::blue().withAlpha(0.9f);
     const auto background = juce::CustomLookAndFeel::greyMiddle().withAlpha(0.3f);
-    const auto startAngle = phase * juce::MathConstants<float>::twoPi - juce::MathConstants<float>::halfPi;
-    const auto endAngle = startAngle + juce::MathConstants<float>::pi * 1.2f;
 
     graphics.setColour(background);
     graphics.fillEllipse(ringBounds);
 
-    juce::Path arc;
-    arc.addPieSegment(
-        ringBounds.getX(),
-        ringBounds.getY(),
-        ringBounds.getWidth(),
-        ringBounds.getHeight(),
-        startAngle,
-        endAngle,
-        activityIndicatorInnerRadiusProportion
-    );
+    auto startAngle = 0.0f;
+    auto endAngle = 0.0f;
 
-    graphics.setColour(accent);
-    graphics.fillPath(arc);
+    // A waiting file keeps both angles at zero, which leaves the ring empty.
+    if (state.activity != FileActivity::waiting && state.progress.has_value()) {
+        endAngle = *state.progress >= minimumDrawnProgress ? *state.progress * juce::MathConstants<float>::twoPi : 0.0f;
+    } else if (state.activity != FileActivity::waiting) {
+        startAngle = phase * juce::MathConstants<float>::twoPi;
+        endAngle = startAngle + juce::MathConstants<float>::pi * 1.2f;
+    }
+
+    if (endAngle > startAngle) {
+        juce::Path arc;
+        arc.addPieSegment(ringBounds, startAngle, endAngle, activityIndicatorInnerRadiusProportion);
+
+        graphics.setColour(accent);
+        graphics.fillPath(arc);
+    }
 
     graphics.setColour(juce::Colours::white.withAlpha(activityIndicatorOutlineAlpha));
     graphics.drawEllipse(ringBounds, 1.0f);
@@ -85,7 +103,7 @@ AudioFileTableModel::AudioFileTableModel(
     std::function<void(int row)> onSelectionChanged,
     std::function<void(int columnId, bool isForwards)> onSortChanged,
     std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,
-    std::function<juce::String(const AudioAnalysisRecord& record)> statusLabelProvider,
+    std::function<std::optional<FileActivityState>(const AudioAnalysisRecord& record)> activityProvider,
     std::function<OperationMessage(const AudioAnalysisRecord& record)> messageProvider,
     std::function<float()> phaseProvider
 ) :
@@ -93,7 +111,7 @@ AudioFileTableModel::AudioFileTableModel(
     selectionChanged(std::move(onSelectionChanged)),
     sortChanged(std::move(onSortChanged)),
     contextMenuRequested(std::move(onContextMenuRequested)),
-    activeStatusLabelProvider(std::move(statusLabelProvider)),
+    activityStateProvider(std::move(activityProvider)),
     operationMessageProvider(std::move(messageProvider)),
     activityPhaseProvider(std::move(phaseProvider))
 {}
@@ -277,6 +295,7 @@ void AudioFileTableModel::paintCell(
     const auto& record = (*records)[static_cast<std::size_t>(rowNumber)];
     juce::String text;
     OperationMessage operationMessage;
+    std::optional<FileActivityState> activityState;
     auto justification = juce::Justification::centredLeft;
     auto textBounds = juce::Rectangle(4, 0, width - 8, height);
     auto font = juce::CustomLookAndFeel::getTextFont();
@@ -333,12 +352,13 @@ void AudioFileTableModel::paintCell(
             justification = juce::Justification::centredRight;
             break;
         case columnStatus:
-            text = activeStatusLabelProvider != nullptr ? activeStatusLabelProvider(record) : juce::String();
+            activityState = activityStateProvider != nullptr ? activityStateProvider(record) : std::nullopt;
 
-            if (text.isEmpty()) {
+            if (!activityState.has_value()) {
                 operationMessage = getOperationMessage(record);
                 text = operationMessage.text.isNotEmpty() ? operationMessage.text : formatStatus(record);
             } else {
+                text = getFileActivityLabel(activityState->activity);
                 const auto indicatorSize = static_cast<float>(juce::jmin(height - 8, 14));
                 const auto indicatorArea = juce::Rectangle(
                     static_cast<float>(textBounds.getX()),
@@ -347,7 +367,10 @@ void AudioFileTableModel::paintCell(
                     indicatorSize
                 );
                 drawActivityIndicator(
-                    graphics, indicatorArea, activityPhaseProvider != nullptr ? activityPhaseProvider() : 0.0f
+                    graphics,
+                    indicatorArea,
+                    *activityState,
+                    activityPhaseProvider != nullptr ? activityPhaseProvider() : 0.0f
                 );
                 textBounds.removeFromLeft(static_cast<int>(indicatorSize) + 8);
             }
@@ -358,6 +381,8 @@ void AudioFileTableModel::paintCell(
 
     if (operationMessage.isError) {
         graphics.setColour(juce::Colours::orangered);
+    } else if (activityState.has_value() && activityState->activity == FileActivity::waiting) {
+        graphics.setColour(juce::Colours::white.withAlpha(waitingStatusTextAlpha));
     } else {
         graphics.setColour(
             juce::Colours::white.withAlpha(record.hasError() ? errorCellTextAlpha : normalCellTextAlpha)

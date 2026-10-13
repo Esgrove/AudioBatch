@@ -1,11 +1,14 @@
 /// Helpers for worker threads of the long-running services.
 /// Declares the CancellationCheck callback that analysis, normalization, and plugin processing poll,
-/// the helper that evaluates an optional check, and callOnMessageThread,
+/// the helper that evaluates an optional check,
+/// the ProgressCallback they report per-file progress through with its range and throttling helpers,
+/// and callOnMessageThread,
 /// the blocking call from a worker to the JUCE message thread that can be abandoned on cancellation.
 /// VST3 restricts plugin setup and release to the message thread, which plugin processing relies on.
 
 #pragma once
 
+#include <cstdint>
 #include <functional>
 
 namespace audiobatch::utils
@@ -20,5 +23,27 @@ using CancellationCheck = std::function<bool()>;
     return isCancelled != nullptr && isCancelled();
 }
 
+/// Receives the completed fraction of a long-running operation on one file, in the range 0 to 1.
+/// Called from worker threads, so it must be thread-safe and cheap.
+using ProgressCallback = std::function<void(float progress)>;
+
+/// Returns the done amount as a fraction of the total for progress reporting, or 1 when the total is not positive.
+[[nodiscard]] constexpr float progressFraction(const std::int64_t done, const std::int64_t total)
+{
+    return total > 0 ? static_cast<float>(static_cast<double>(done) / static_cast<double>(total)) : 1.0f;
+}
+
+/// Reports the completed fraction to the callback when one is set.
+inline void reportProgress(const ProgressCallback& onProgress, const float progress)
+{
+    if (onProgress != nullptr) {
+        onProgress(progress);
+    }
+}
+
 bool callOnMessageThread(std::function<void()> function, const CancellationCheck& isCancelled);
+
+ProgressCallback makeProgressRange(const ProgressCallback& onProgress, float start, float end);
+
+ProgressCallback makeThrottledProgress(ProgressCallback onProgress);
 }  // namespace audiobatch::utils

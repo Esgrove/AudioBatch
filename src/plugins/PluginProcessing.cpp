@@ -48,6 +48,13 @@ constexpr int maximumDitheredBitDepth = 16;
 constexpr juce::int64 ditherSeed = 0x41554449;
 constexpr auto cancelledMessage = "Processing was cancelled";
 
+/// Share of a file's progress taken by analyzing a source that changed since its last analysis.
+constexpr float sourceAnalysisProgressShare = 0.1f;
+/// Progress at which rendering through the chain ends and writing the final output begins.
+constexpr float renderProgressEnd = 0.7f;
+/// Progress at which writing the final output ends and analyzing the output begins.
+constexpr float writeProgressEnd = 0.85f;
+
 /// Level and length measurements of the rendered chain output, used to finalize the output file.
 struct RenderSummary {
     /// Largest absolute sample value of the rendered output.
@@ -278,6 +285,7 @@ static void measureOutputBlock(const juce::AudioBuffer<float>& block, const int 
 /// The chain latency and tail are rendered on top of the file length,
 /// and the first `latencySamples` output samples are discarded, so the processed audio lines up with the input
 /// and its end is not cut off. Read failures follow the shared DecodeFailureTracker rules.
+/// The rendered fraction, including the latency and tail, is reported to onProgress after each block.
 /// Returns an error message, or an empty string when the whole file was written.
 static juce::String renderThroughChain(
     juce::AudioFormatReader& reader,
@@ -287,6 +295,7 @@ static juce::String renderThroughChain(
     const int numChannels,
     const float inputGain,
     const utils::CancellationCheck& isCancelled,
+    const utils::ProgressCallback& onProgress,
     RenderSummary& summary
 )
 {
@@ -330,6 +339,7 @@ static juce::String renderThroughChain(
         }
 
         const auto signalChannels = processBlockThroughChain(buffer, chainInstances, numChannels, midi);
+        utils::reportProgress(onProgress, utils::progressFraction(samplePosition + samplesThisBlock, totalSamples));
 
         // Skip the output samples that still fall within the chain latency.
         const auto firstSampleToWrite
@@ -401,6 +411,7 @@ static void addDither(
 
 /// Copies the rendered intermediate audio into the final writer, applying the clip guard gain,
 /// trimming the trailing silence, and dithering 16-bit output.
+/// The written fraction is reported to onProgress after each block.
 /// Returns an error message, or an empty string when the whole output was written.
 static juce::String writeFinalOutput(
     juce::AudioFormatReader& renderedReader,
@@ -408,7 +419,8 @@ static juce::String writeFinalOutput(
     const juce::int64 finalLength,
     const float gain,
     const int bitsPerSample,
-    const utils::CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled,
+    const utils::ProgressCallback& onProgress
 )
 {
     juce::AudioBuffer<float> block(static_cast<int>(renderedReader.numChannels), finalizeBlockSize);
@@ -435,6 +447,8 @@ static juce::String writeFinalOutput(
         if (!writer.writeFromAudioSampleBuffer(block, 0, samplesThisBlock)) {
             return "Failed while writing processed audio data";
         }
+
+        utils::reportProgress(onProgress, utils::progressFraction(samplePosition + samplesThisBlock, finalLength));
     }
 
     return {};
@@ -444,17 +458,20 @@ static juce::String writeFinalOutput(
 /// otherwise analyzes the file again, so the input gain is never computed from an outdated peak.
 /// The custom gain is dropped for a changed file, since it was set for the previous version of the file.
 /// The analysis stops when isCancelled returns true, and the returned record then carries the cancellation error.
+/// The analysis progress is reported to onProgress.
 static AudioAnalysisRecord refreshIfChanged(
     const AudioAnalysisRecord& record,
-    const utils::CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled,
+    const utils::ProgressCallback& onProgress
 )
 {
-    return record.matchesFileOnDisk() ? record : analyzeFile(record.file, isCancelled);
+    return record.matchesFileOnDisk() ? record : analyzeFile(record.file, isCancelled, onProgress);
 }
 
 /// Prepares the chain, renders the whole file through it into an unquantized 32-bit float WAV file,
 /// and releases the chain again.
 /// Plugin setup and release run on the message thread as VST3 requires, and only processBlock runs on this thread.
+/// The render progress is reported to onProgress.
 /// Returns an error message, or an empty string when the whole file was rendered.
 static juce::String renderChainToFile(
     juce::AudioFormatReader& reader,
@@ -464,6 +481,7 @@ static juce::String renderChainToFile(
     const int numChannels,
     const float inputGain,
     const utils::CancellationCheck& isCancelled,
+    const utils::ProgressCallback& onProgress,
     RenderSummary& summary
 )
 {
@@ -500,7 +518,7 @@ static juce::String renderChainToFile(
     }
 
     const auto renderError = renderThroughChain(
-        reader, *writer, chainInstances, preparation, numChannels, inputGain, isCancelled, summary
+        reader, *writer, chainInstances, preparation, numChannels, inputGain, isCancelled, onProgress, summary
     );
 
     // Release on every path so a failed file does not leave the chain active for the next one.
@@ -515,6 +533,7 @@ static juce::String renderChainToFile(
 
 /// Writes the rendered intermediate audio to the AIFF output file at the given bit depth,
 /// with the clip guard gain, the trimmed length, and dither for 16-bit output.
+/// The write progress is reported to onProgress.
 /// Returns an error message, or an empty string when the output was written.
 static juce::String writeProcessedAiff(
     juce::AudioFormat& aiffFormat,
@@ -524,7 +543,8 @@ static juce::String writeProcessedAiff(
     const juce::int64 finalLength,
     const float gain,
     const int bitsPerSample,
-    const utils::CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled,
+    const utils::ProgressCallback& onProgress
 )
 {
     juce::WavAudioFormat wavFormat;
@@ -559,7 +579,7 @@ static juce::String writeProcessedAiff(
         return "Could not create AIFF writer for output";
     }
 
-    return writeFinalOutput(*renderedReader, *writer, finalLength, gain, bitsPerSample, isCancelled);
+    return writeFinalOutput(*renderedReader, *writer, finalLength, gain, bitsPerSample, isCancelled, onProgress);
 }
 
 /// Processes a single file through the given plugin instances in order.
@@ -585,11 +605,14 @@ static juce::String writeProcessedAiff(
 /// Trailing silence from the tail allowance is trimmed, and 16-bit output is dithered.
 /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again first.
 /// An `.aif` source is rewritten in place after a copy of it is disposed of through options.disposeFile.
+/// Progress of the whole file, through any source analysis, the render, the final write, and the output analysis,
+/// is reported to onProgress.
 PluginProcessingResult processFileWithPlugins(
     const AudioAnalysisRecord& sourceRecord,
     const PluginProcessingOptions& options,
     const std::vector<juce::AudioPluginInstance*>& chainInstances,
-    const utils::CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled,
+    const utils::ProgressCallback& onProgress
 )
 {
     const auto& file = sourceRecord.file;
@@ -600,7 +623,9 @@ PluginProcessingResult processFileWithPlugins(
         return fail(file, inputError);
     }
 
-    const auto record = refreshIfChanged(sourceRecord, isCancelled);
+    const auto renderProgressStart = sourceRecord.matchesFileOnDisk() ? 0.0f : sourceAnalysisProgressShare;
+    const auto record
+        = refreshIfChanged(sourceRecord, isCancelled, utils::makeProgressRange(onProgress, 0.0f, renderProgressStart));
 
     if (record.hasError()) {
         return fail(file, record.errorMessage);
@@ -638,6 +663,7 @@ PluginProcessingResult processFileWithPlugins(
             numChannels,
             getInputGain(record, options),
             isCancelled,
+            utils::makeProgressRange(onProgress, renderProgressStart, renderProgressEnd),
             summary
         );
         renderError.isNotEmpty())
@@ -661,7 +687,8 @@ PluginProcessingResult processFileWithPlugins(
             finalLength,
             clipGuardGain,
             bitsPerSample,
-            isCancelled
+            isCancelled,
+            utils::makeProgressRange(onProgress, renderProgressEnd, writeProgressEnd)
         );
         writeError.isNotEmpty())
     {
@@ -725,7 +752,7 @@ PluginProcessingResult processFileWithPlugins(
     result.notice = notices.joinIntoString(". ");
 
     result.fileName = outputFile.getFileName();
-    result.analysisRecord = analyzeFile(outputFile);
+    result.analysisRecord = analyzeFile(outputFile, {}, utils::makeProgressRange(onProgress, writeProgressEnd, 1.0f));
     // Custom gain has been baked in. Clear it on the new record.
     result.analysisRecord.customGainDb = 0.0f;
     result.analysisRecord.hasCustomGain = false;

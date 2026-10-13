@@ -100,6 +100,7 @@ private:
     [[nodiscard]] bool hasAnyRecords() const;
     [[nodiscard]] bool isAnalysisInProgress() const;
     [[nodiscard]] bool isFileBeingRewritten(const juce::String& fullPath) const;
+    [[nodiscard]] juce::Rectangle<int> getOverallProgressBounds() const;
     [[nodiscard]] std::vector<AudioAnalysisRecord> getSelectedProcessableRecords() const;
     int findRecordIndex(const juce::String& fullPath) const;
     int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
@@ -147,6 +148,7 @@ private:
     void updateGainControlsForSelection();
     void updatePlaybackButtonForTransportState();
     void updateProcessButtonState();
+    void updateProgressIndicators();
     void updateResultsTableColumnWidths() const;
     void updateStatusLabel();
     void updateThumbnailDisplayGain() const;
@@ -225,8 +227,16 @@ private:
     /// Primary and secondary sort columns of the results table.
     results_sorting::SortState sortState {.primaryColumnId = columnOverallPeak, .statusText = {}};
 
-    /// Activity labels and last operation messages per file, shown in the status column.
-    FileActivityTracker fileActivity {[this] { resultsTable.repaint(); }};
+    /// Activity, progress, and last operation messages per file, shown in the status column.
+    /// Its callback also runs on every animation tick while files are busy, which keeps the overall progress current.
+    FileActivityTracker fileActivity {[this] {
+        resultsTable.repaint();
+        updateProgressIndicators();
+    }};
+
+    /// Overall progress of the running operation in tenths of a percent, or -1 when nothing with a known size runs.
+    /// Drawn as a thin bar above the results table.
+    int overallProgressPermille = -1;
 
     IntervalStepSlider gainSlider {"GainSlider"};
     juce::Label currentRootLabel {"CurrentRootLabel"};
