@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <iterator>
 #include <utility>
 
 namespace audiobatch::serato
@@ -67,8 +68,7 @@ bool SeratoPreviewLoader::canAdopt(
     const juce::File& selectedFile
 ) const
 {
-    return !stopped && generation == resultGeneration && identity.matches(selectedFile) && !stopped
-        && generation == resultGeneration;
+    return !stopped && generation == resultGeneration && identity.matches(selectedFile);
 }
 
 void SeratoPreviewLoader::run(const std::stop_token& stopToken)
@@ -94,7 +94,7 @@ void SeratoPreviewLoader::process(const Request& active, const std::stop_token& 
     const utils::CancellationCheck isCancelled = [this, &active, stopToken] {
         return stopToken.stop_requested() || stopped || generation != active.generation;
     };
-    if (isCancelled() || !active.identity.matches(active.file) || isCancelled()) {
+    if (isCancelled() || !active.identity.matches(active.file)) {
         return;
     }
 
@@ -103,7 +103,7 @@ void SeratoPreviewLoader::process(const Request& active, const std::stop_token& 
         Results results;
         std::vector<TagKind> misses;
         for (std::size_t index = 0; index < allTagKinds.size(); ++index) {
-            if (isCancelled() || !active.identity.matches(active.file) || isCancelled()) {
+            if (isCancelled()) {
                 return;
             }
             results[index] = cache.getSeratoTag(active.identity, allTagKinds[index]);
@@ -114,7 +114,7 @@ void SeratoPreviewLoader::process(const Request& active, const std::stop_token& 
         if (!readMisses(active, misses, results, isCancelled)) {
             return;
         }
-        if (isCancelled() || !active.identity.matches(active.file) || isCancelled()) {
+        if (isCancelled() || !active.identity.matches(active.file)) {
             return;
         }
         data = collectData(results);
@@ -122,7 +122,7 @@ void SeratoPreviewLoader::process(const Request& active, const std::stop_token& 
         utils::logDebug("Serato preview read failed: {}", exception.what());
     }
 
-    if (!isCancelled() && active.identity.matches(active.file) && !isCancelled() && completion) {
+    if (!isCancelled() && active.identity.matches(active.file) && completion) {
         completion(active.identity, active.generation, std::move(data));
     }
 }
@@ -137,11 +137,11 @@ bool SeratoPreviewLoader::readMisses(
     if (misses.empty()) {
         return true;
     }
-    if (isCancelled() || !active.identity.matches(active.file) || isCancelled()) {
+    if (isCancelled() || !active.identity.matches(active.file)) {
         return false;
     }
     auto fresh = reader(active.file, misses, isCancelled);
-    if (isCancelled() || !active.identity.matches(active.file) || isCancelled()
+    if (isCancelled() || !active.identity.matches(active.file)
         || std::ranges::any_of(fresh, [](const auto& result) { return result.status == ReadStatus::cancelled; }))
     {
         return false;
@@ -150,11 +150,13 @@ bool SeratoPreviewLoader::readMisses(
         if (std::ranges::find(misses, result.kind) == misses.end()) {
             continue;
         }
-        if (isCancelled() || !active.identity.matches(active.file) || isCancelled()) {
+        if (isCancelled()) {
             return false;
         }
-        const auto* position = std::ranges::find(allTagKinds, result.kind);
-        const auto index = static_cast<std::size_t>(position - allTagKinds.begin());
+        // Avoid naming the iterator type, it is a pointer with libc++ but a class with MSVC.
+        const auto index = static_cast<std::size_t>(
+            std::ranges::distance(allTagKinds.begin(), std::ranges::find(allTagKinds, result.kind))
+        );
         if (results[index]) {
             continue;
         }
