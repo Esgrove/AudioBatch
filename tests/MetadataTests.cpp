@@ -23,7 +23,7 @@ static juce::String firstPropertyValue(const MetadataService::Metadata& metadata
 class MetadataTests final : public juce::UnitTest
 {
 public:
-    MetadataTests() : juce::UnitTest("Metadata", "AudioBatch") { }
+    MetadataTests() : juce::UnitTest("Metadata", "AudioBatch") {}
 
     /// Runs the metadata checks.
     void runTest() override

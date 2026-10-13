@@ -39,7 +39,7 @@ static juce::StringArray namesOf(const std::vector<AudioAnalysisRecord>& records
 class SortingTests final : public juce::UnitTest
 {
 public:
-    SortingTests() : juce::UnitTest("Results sorting", "AudioBatch") { }
+    SortingTests() : juce::UnitTest("Results sorting", "AudioBatch") {}
 
     /// Runs the sorting checks.
     void runTest() override

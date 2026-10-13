@@ -117,7 +117,7 @@ public:
         normalShape(std::move(normal)),
         toggledShape(std::move(toggled)),
         useDarkMode(darkMode)
-    { }
+    {}
 
     ~CustomDocumentWindowButton() override = default;
 

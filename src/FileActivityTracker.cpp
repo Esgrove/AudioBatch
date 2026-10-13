@@ -8,8 +8,7 @@
 /// Rate in hertz at which the activity indicators are repainted while files are busy.
 static constexpr int animationTimerHz = 24;
 
-FileActivityTracker::FileActivityTracker(std::function<void()> repaintCallback) :
-    repaint(std::move(repaintCallback)) { }
+FileActivityTracker::FileActivityTracker(std::function<void()> repaintCallback) : repaint(std::move(repaintCallback)) {}
 
 FileActivityTracker::~FileActivityTracker()
 {

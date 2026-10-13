@@ -5,11 +5,13 @@
 #pragma once
 
 #include "AudioAnalysisTypes.h"
+#include "SeratoTagTypes.h"
 
 #include <JuceHeader.h>
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 
 struct sqlite3;
 struct sqlite3_stmt;
@@ -18,6 +20,20 @@ struct sqlite3_stmt;
 class AnalysisCache
 {
 public:
+    /// Captures the cache key before tag reading. Reuse this identity for lookup, delivery and persistence.
+    /// Size and modification time cannot detect external edits that deliberately preserve both values.
+    struct FileIdentity {
+        /// Captures the absolute path and current file stats without accessing the database.
+        explicit FileIdentity(const juce::File& file);
+
+        /// Requires the same existing file path, size and modification time, with valid captured stats.
+        [[nodiscard]] bool matches(const juce::File& file) const;
+
+        juce::String path;
+        std::int64_t fileSize;
+        std::int64_t modifiedTimeMs;
+    };
+
     /// Resolves the default cache database location.
     AnalysisCache();
 
@@ -37,6 +53,18 @@ public:
 
     /// Loads cached thumbnail waveform data for the given file when available.
     bool getWaveformData(const juce::File& file, juce::MemoryBlock& waveformData);
+
+    /// Returns an independently versioned stable tag result, or a miss for stale or corrupt data.
+    /// Validates file identity after the read. Unknown kinds and transient outcomes are never returned.
+    std::optional<audiobatch::serato::TagReadResult> getSeratoTag(
+        const FileIdentity& identity,
+        audiobatch::serato::TagKind kind = audiobatch::serato::TagKind::overview
+    );
+
+    /// Stores independently serialized tag data or a stable negative without requiring an analysis row.
+    /// Serializes outside the database lock and checks the captured identity before writing.
+    /// Returns false for stale identities, inconsistent results, transient outcomes or database failures.
+    bool storeSeratoTag(const FileIdentity& identity, const audiobatch::serato::TagReadResult& result);
 
     /// Returns the on-disk SQLite file used by the cache.
     juce::File getDatabaseFile() const;
@@ -63,7 +91,7 @@ public:
     /// A file without a cached row, such as one still waiting for its analysis, keeps no gain in the cache.
     bool storeCustomGain(const juce::File& file, float customGainDb, bool hasCustomGain);
 
-    /// Removes the cached row for a file (if any).
+    /// Removes the analysis, waveform and all independently cached tag kinds for a file, atomically.
     /// Returns true when the operation completed.
     bool removeAnalysis(const juce::File& file);
 
@@ -75,7 +103,7 @@ public:
     /// so a file recreated in the meantime keeps its new row.
     /// The file system checks run without holding the database lock, so other cache calls are not blocked by them.
     /// Stops early, keeping the remaining rows, when shouldStop returns true.
-    /// Returns the number of deleted rows.
+    /// Returns the number of deleted rows across analysis and tag tables, including tag-only files.
     int pruneMissingFiles(const std::function<bool()>& shouldStop = {});
 
 private:
@@ -107,9 +135,14 @@ private:
     /// Closes the connection again when the schema cannot be prepared, so the next call retries the open.
     bool openUnlocked();
 
-    /// Deletes the row for the path only when it still has the given size and modification time.
+    /// Deletes an analysis row, or the specified tag kind, only while its checked size and time still match.
     /// Returns true when a row was deleted.
-    bool removeRowVersion(const juce::String& path, std::int64_t fileSize, std::int64_t modifiedTimeMs);
+    bool removeRowVersion(
+        const juce::String& path,
+        std::int64_t fileSize,
+        std::int64_t modifiedTimeMs,
+        std::optional<std::int64_t> tagKind = std::nullopt
+    );
 
     /// Returns the canonical path string used as the cache key for a file.
     static juce::String normalizedPath(const juce::File& file);

@@ -6,12 +6,14 @@
 #include "AnalysisCache.h"
 
 #include "Log.h"
+#include "SeratoTags.h"
 #include "StringFormat.h"
 #include "version.h"
 
 #include <algorithm>
 #include <array>
 #include <sqlite3.h>
+#include <utility>
 #include <vector>
 
 /// Helpers for marshalling SQLite values into JUCE types.
@@ -22,6 +24,36 @@ constexpr double millisecondsPerSecond = 1000.0;
 
 /// How long SQLite retries a locked database before failing a statement, in milliseconds.
 constexpr int busyTimeoutMilliseconds = 2000;
+
+/// Maximum numeric tag cache size, including the explicit serializer header fields.
+constexpr std::size_t maximumOverviewBytes
+    = 4 * sizeof(std::uint32_t) + audiobatch::serato::Overview::maxSlices * audiobatch::serato::Overview::bandCount;
+
+/// Zero-based columns for independent tag lookup, including the key's stored SQLite types.
+namespace serato_column
+{
+constexpr int fileSize = 0;
+constexpr int modifiedTimeMs = 1;
+constexpr int parserVersion = 2;
+constexpr int resultState = 3;
+constexpr int decodedData = 4;
+constexpr int updatedAtMs = 5;
+constexpr int filePath = 6;
+constexpr int tagKind = 7;
+}  // namespace serato_column
+
+/// One-based parameters for independent per-kind tag UPSERT.
+namespace serato_parameter
+{
+constexpr int filePath = 1;
+constexpr int tagKind = 2;
+constexpr int fileSize = 3;
+constexpr int modifiedTimeMs = 4;
+constexpr int parserVersion = 5;
+constexpr int resultState = 6;
+constexpr int decodedData = 7;
+constexpr int updatedAtMs = 8;
+}  // namespace serato_parameter
 
 /// Zero-based result column indices for the analysis record SELECT in AnalysisCache::getAnalysis.
 /// The order must match the column list of that query exactly.
@@ -138,6 +170,19 @@ static void bindBlob(sqlite3_stmt* statement, const int index, const juce::Memor
 
 using namespace audiobatch::cache;
 
+AnalysisCache::FileIdentity::FileIdentity(const juce::File& file) :
+    path(file.getFullPathName()),
+    fileSize(file.getSize()),
+    modifiedTimeMs(file.getLastModificationTime().toMilliseconds())
+{}
+
+bool AnalysisCache::FileIdentity::matches(const juce::File& file) const
+{
+    return juce::File::isAbsolutePath(path) && path == file.getFullPathName() && fileSize >= 0 && modifiedTimeMs > 0
+        && file.existsAsFile() && file.getSize() == fileSize
+        && file.getLastModificationTime().toMilliseconds() == modifiedTimeMs;
+}
+
 AnalysisCache::AnalysisCache()
 {
     const auto appDataDirectory
@@ -145,7 +190,7 @@ AnalysisCache::AnalysisCache()
     databaseFile = appDataDirectory.getChildFile("analysis.db");
 }
 
-AnalysisCache::AnalysisCache(juce::File cacheDatabaseFile) : databaseFile(std::move(cacheDatabaseFile)) { }
+AnalysisCache::AnalysisCache(juce::File cacheDatabaseFile) : databaseFile(std::move(cacheDatabaseFile)) {}
 
 AnalysisCache::~AnalysisCache()
 {
@@ -375,6 +420,24 @@ bool AnalysisCache::openUnlocked()
         return false;
     }
 
+    if (!execute(R"SQL(
+        CREATE TABLE IF NOT EXISTS serato_tag_cache (
+            file_path TEXT NOT NULL,
+            tag_kind INTEGER NOT NULL,
+            file_size INTEGER NOT NULL,
+            modified_time_ms INTEGER NOT NULL,
+            parser_version INTEGER NOT NULL,
+            result_state INTEGER NOT NULL,
+            decoded_data BLOB,
+            updated_at_ms INTEGER NOT NULL,
+            PRIMARY KEY (file_path, tag_kind)
+        );
+    )SQL"))
+    {
+        closeUnlocked();
+        return false;
+    }
+
     utils::logDebug("Analysis cache startup: schema ready");
     utils::logDebug(
         "Opened analysis cache at {} ({}) in {:.3f} s",
@@ -384,6 +447,154 @@ bool AnalysisCache::openUnlocked()
     );
 
     return true;
+}
+
+std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
+    const FileIdentity& identity,
+    const audiobatch::serato::TagKind kind
+)
+{
+    using namespace audiobatch::serato;
+    if (!supportsTagKind(kind) || !juce::File::isAbsolutePath(identity.path)) {
+        return std::nullopt;
+    }
+    const juce::File file(identity.path);
+    if (!identity.matches(file)) {
+        return std::nullopt;
+    }
+    TagReadResult result {.kind = kind, .status = ReadStatus::absent, .overview = std::nullopt};
+    juce::MemoryBlock data;
+    {
+        const juce::ScopedLock lock(mutex);
+        if (database == nullptr && !openUnlocked()) {
+            return std::nullopt;
+        }
+        constexpr auto sql = R"SQL(
+                 SELECT file_size, modified_time_ms, parser_version, result_state, decoded_data, updated_at_ms,
+                     file_path, tag_kind
+            FROM serato_tag_cache WHERE file_path = ? AND tag_kind = ?;
+        )SQL";
+        sqlite3_stmt* statement = nullptr;
+        if (!prepare(sql, statement)) {
+            return std::nullopt;
+        }
+        bindText(statement, 1, identity.path);
+        sqlite3_bind_int64(statement, 2, static_cast<std::uint32_t>(kind));
+        bool valid = sqlite3_step(statement) == SQLITE_ROW;
+        for (const auto column :
+             std::array {
+                 serato_column::fileSize,
+                 serato_column::modifiedTimeMs,
+                 serato_column::parserVersion,
+                 serato_column::resultState,
+                 serato_column::updatedAtMs,
+                 serato_column::tagKind,
+             })
+        {
+            valid = valid && sqlite3_column_type(statement, column) == SQLITE_INTEGER;
+        }
+        valid = valid && sqlite3_column_int64(statement, serato_column::fileSize) == identity.fileSize
+            && sqlite3_column_int64(statement, serato_column::modifiedTimeMs) == identity.modifiedTimeMs
+            && sqlite3_column_int64(statement, serato_column::parserVersion) == parserVersion(kind)
+            && sqlite3_column_int64(statement, serato_column::updatedAtMs) > 0
+            && sqlite3_column_type(statement, serato_column::filePath) == SQLITE_TEXT
+            && columnText(statement, serato_column::filePath) == identity.path
+            && sqlite3_column_int64(statement, serato_column::tagKind) == static_cast<std::uint32_t>(kind);
+        const auto state = sqlite3_column_int64(statement, serato_column::resultState);
+        if (valid && state == static_cast<int>(ReadStatus::present)) {
+            const auto bytes = sqlite3_column_bytes(statement, serato_column::decodedData);
+            valid = sqlite3_column_type(statement, serato_column::decodedData) == SQLITE_BLOB && bytes > 0
+                && std::cmp_less_equal(bytes, maximumOverviewBytes);
+            if (valid) {
+                data = columnBlob(statement, serato_column::decodedData);
+            }
+        } else {
+            valid = valid
+                && (state == static_cast<int>(ReadStatus::absent) || state == static_cast<int>(ReadStatus::unsupported)
+                    || state == static_cast<int>(ReadStatus::invalid))
+                && sqlite3_column_type(statement, serato_column::decodedData) == SQLITE_NULL;
+        }
+        sqlite3_finalize(statement);
+        if (!valid) {
+            return std::nullopt;
+        }
+        result.status = static_cast<ReadStatus>(state);
+    }
+    if (result.status == ReadStatus::present) {
+        const auto decoded = deserializeTag(kind, data);
+        if (!decoded) {
+            return std::nullopt;
+        }
+        result = *decoded;
+    }
+    return identity.matches(file) ? std::optional {std::move(result)} : std::nullopt;
+}
+
+bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const audiobatch::serato::TagReadResult& result)
+{
+    using namespace audiobatch::serato;
+    if (!supportsTagKind(result.kind) || result.status < ReadStatus::present || result.status > ReadStatus::cancelled
+        || !juce::File::isAbsolutePath(identity.path))
+    {
+        return false;
+    }
+    juce::MemoryBlock data;
+    switch (result.status) {
+        case ReadStatus::present:
+            data = serializeTag(result);
+            if (data.isEmpty() || data.getSize() > maximumOverviewBytes) {
+                return false;
+            }
+            break;
+        case ReadStatus::absent:
+        case ReadStatus::unsupported:
+        case ReadStatus::invalid:
+            if (result.overview || result.analysis || result.autotags || result.beatGrid || result.markers
+                || result.trackInfo)
+            {
+                return false;
+            }
+            break;
+        case ReadStatus::ioError:
+        case ReadStatus::cancelled:
+            return false;
+    }
+    const juce::File file(identity.path);
+    if (!identity.matches(file)) {
+        return false;
+    }
+    const juce::ScopedLock lock(mutex);
+    if (database == nullptr && !openUnlocked()) {
+        return false;
+    }
+    constexpr auto sql = R"SQL(
+        INSERT INTO serato_tag_cache (
+            file_path, tag_kind, file_size, modified_time_ms, parser_version, result_state, decoded_data, updated_at_ms
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(file_path, tag_kind) DO UPDATE SET
+            file_size = excluded.file_size, modified_time_ms = excluded.modified_time_ms,
+            parser_version = excluded.parser_version, result_state = excluded.result_state,
+            decoded_data = excluded.decoded_data, updated_at_ms = excluded.updated_at_ms;
+    )SQL";
+    sqlite3_stmt* statement = nullptr;
+    if (!prepare(sql, statement)) {
+        return false;
+    }
+    bindText(statement, serato_parameter::filePath, identity.path);
+    sqlite3_bind_int64(statement, serato_parameter::tagKind, static_cast<std::uint32_t>(result.kind));
+    sqlite3_bind_int64(statement, serato_parameter::fileSize, identity.fileSize);
+    sqlite3_bind_int64(statement, serato_parameter::modifiedTimeMs, identity.modifiedTimeMs);
+    sqlite3_bind_int64(statement, serato_parameter::parserVersion, parserVersion(result.kind));
+    sqlite3_bind_int(statement, serato_parameter::resultState, static_cast<int>(result.status));
+    if (result.status == ReadStatus::present) {
+        bindBlob(statement, serato_parameter::decodedData, data);
+    } else {
+        sqlite3_bind_null(statement, serato_parameter::decodedData);
+    }
+    sqlite3_bind_int64(statement, serato_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
+    const auto completed = stepToCompletion(statement);
+    sqlite3_finalize(statement);
+    return completed;
 }
 
 bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& record)
@@ -625,18 +836,30 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
         return false;
     }
 
-    constexpr auto sql = "DELETE FROM file_analysis WHERE file_path = ?;";
-
-    sqlite3_stmt* statement = nullptr;
-    if (!prepare(sql, statement)) {
+    if (!execute("BEGIN IMMEDIATE;")) {
         return false;
     }
-
-    bindText(statement, 1, normalizedPath(file));
-
-    const auto completed = stepToCompletion(statement);
-    sqlite3_finalize(statement);
-    return completed;
+    for (const auto* sql :
+         {"DELETE FROM file_analysis WHERE file_path = ?;", "DELETE FROM serato_tag_cache WHERE file_path = ?;"})
+    {
+        sqlite3_stmt* statement = nullptr;
+        if (!prepare(sql, statement)) {
+            execute("ROLLBACK;");
+            return false;
+        }
+        bindText(statement, 1, normalizedPath(file));
+        const auto completed = stepToCompletion(statement);
+        sqlite3_finalize(statement);
+        if (!completed) {
+            execute("ROLLBACK;");
+            return false;
+        }
+    }
+    if (execute("COMMIT;")) {
+        return true;
+    }
+    execute("ROLLBACK;");
+    return false;
 }
 
 int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
@@ -646,6 +869,7 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
         juce::String path;
         std::int64_t fileSize = 0;
         std::int64_t modifiedTimeMs = 0;
+        std::optional<std::int64_t> tagKind;
     };
 
     std::vector<CachedRow> cachedRows;
@@ -657,7 +881,11 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
             return 0;
         }
 
-        constexpr auto sql = "SELECT file_path, file_size, modified_time_ms FROM file_analysis;";
+        constexpr auto sql = R"SQL(
+            SELECT file_path, file_size, modified_time_ms, NULL FROM file_analysis
+            UNION ALL
+            SELECT file_path, file_size, modified_time_ms, tag_kind FROM serato_tag_cache;
+        )SQL";
         sqlite3_stmt* statement = nullptr;
         if (!prepare(sql, statement)) {
             return 0;
@@ -668,6 +896,9 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
                 .path = columnText(statement, 0),
                 .fileSize = sqlite3_column_int64(statement, 1),
                 .modifiedTimeMs = sqlite3_column_int64(statement, 2),
+                .tagKind = sqlite3_column_type(statement, 3) == SQLITE_NULL
+                    ? std::nullopt
+                    : std::optional<std::int64_t> {sqlite3_column_int64(statement, 3)},
             });
         }
 
@@ -692,13 +923,13 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
             continue;
         }
 
-        if (removeRowVersion(row.path, row.fileSize, row.modifiedTimeMs)) {
+        if (removeRowVersion(row.path, row.fileSize, row.modifiedTimeMs, row.tagKind)) {
             ++removedRows;
         }
     }
 
     if (removedRows > 0) {
-        utils::logInfo("Removed {} cached analysis rows for files that no longer exist", removedRows);
+        utils::logInfo("Removed {} cached analysis and tag rows for files that no longer exist", removedRows);
     }
 
     return removedRows;
@@ -707,7 +938,8 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
 bool AnalysisCache::removeRowVersion(
     const juce::String& path,
     const std::int64_t fileSize,
-    const std::int64_t modifiedTimeMs
+    const std::int64_t modifiedTimeMs,
+    const std::optional<std::int64_t> tagKind
 )
 {
     const juce::ScopedLock lock(mutex);
@@ -716,7 +948,10 @@ bool AnalysisCache::removeRowVersion(
         return false;
     }
 
-    constexpr auto sql = "DELETE FROM file_analysis WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;";
+    const auto* sql = tagKind.has_value()
+        ? "DELETE FROM serato_tag_cache WHERE file_path = ? AND file_size = ? AND modified_time_ms = ? AND tag_kind = "
+          "?;"
+        : "DELETE FROM file_analysis WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;";
 
     sqlite3_stmt* statement = nullptr;
     if (!prepare(sql, statement)) {
@@ -726,6 +961,9 @@ bool AnalysisCache::removeRowVersion(
     bindText(statement, 1, path);
     sqlite3_bind_int64(statement, 2, fileSize);
     sqlite3_bind_int64(statement, 3, modifiedTimeMs);
+    if (tagKind) {
+        sqlite3_bind_int64(statement, 4, *tagKind);
+    }
 
     const auto completed = stepToCompletion(statement);
     sqlite3_finalize(statement);

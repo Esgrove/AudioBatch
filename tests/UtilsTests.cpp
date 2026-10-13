@@ -58,7 +58,7 @@ public:
 class UtilsTests final : public juce::UnitTest
 {
 public:
-    UtilsTests() : juce::UnitTest("Shared helpers", "AudioBatch") { }
+    UtilsTests() : juce::UnitTest("Shared helpers", "AudioBatch") {}
 
     /// Runs the helper checks.
     void runTest() override

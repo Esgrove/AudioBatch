@@ -15,7 +15,7 @@ static constexpr int jobShutdownTimeoutMilliseconds = 30000;
 AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& analysisCache, const int workerCount) :
     cache(analysisCache),
     threadPool(juce::jmax(1, workerCount))
-{ }
+{}
 
 AnalysisCoordinator::~AnalysisCoordinator()
 {

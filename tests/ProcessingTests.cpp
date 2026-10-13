@@ -55,7 +55,7 @@ public:
         ),
         settings(pluginSettings),
         currentGain(pluginSettings.gain)
-    { }
+    {}
 
     /// Applies the gain and the optional channel swap to the main bus channels only,
     /// like a hosted plugin, which never touches buffer channels outside its own buses.
@@ -131,7 +131,7 @@ public:
     }
 
     /// Holds no resources.
-    void releaseResources() override { }
+    void releaseResources() override {}
 
     /// Returns the echo length, or the reported tail when there is no echo.
     double getTailLengthSeconds() const override
@@ -170,7 +170,7 @@ public:
     }
 
     /// Ignores program changes.
-    void setCurrentProgram(int /*index*/) override { }
+    void setCurrentProgram(int /*index*/) override {}
 
     /// Returns no program name.
     const juce::String getProgramName(int /*index*/) override
@@ -179,7 +179,7 @@ public:
     }
 
     /// Ignores program renames.
-    void changeProgramName(int /*index*/, const juce::String& /*newName*/) override { }
+    void changeProgramName(int /*index*/, const juce::String& /*newName*/) override {}
 
     /// Saves the current gain as the plugin state.
     void getStateInformation(juce::MemoryBlock& destData) override
@@ -257,7 +257,7 @@ private:
 class ProcessingTests final : public juce::UnitTest
 {
 public:
-    ProcessingTests() : juce::UnitTest("Plugin processing", "AudioBatch") { }
+    ProcessingTests() : juce::UnitTest("Plugin processing", "AudioBatch") {}
 
     /// Runs the processing checks.
     void runTest() override

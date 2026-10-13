@@ -18,6 +18,43 @@ Current implementation focus:
 Analysis scope currently assumes mono or stereo source files, including MP3 joint stereo.
 Multichannel files are not a target for this tool.
 
+### Waveform Preview
+
+JUCE supplies the waveform peaks, stereo channel shapes and detail at every zoom level.
+Supported embedded Serato Overview tags add a combined colour over those same peaks.
+The tag stores a small indexed-colour raster, usually 240 time columns with 16 vertical cells each,
+not sixteen independent frequency strengths.
+Foreground cells decode through a 6x6x6 RGB palette and are combined into one colour per time column,
+retaining the tag's reds, oranges, greens, blues and mixed colours without replacing JUCE geometry.
+Background and unverified reserved palette entries do not contribute to the colour mix.
+Both stereo channels share the same colour field.
+Overview colours are coarse, so zooming reveals finer peaks but no additional colour detail.
+
+Tag loading runs asynchronously with one active read and only the latest pending selection.
+The preview remains blue while loading and when tags are absent, unsupported or unusable.
+Late colours do not restart playback or change zoom or gain.
+Cue points use their stored colours for arrows at the top and bottom of the waveform, pointing toward its centre.
+Their millisecond positions share the waveform and playhead time projection,
+so they stay aligned while zooming or scrolling.
+Cue arrows render above both solid and coloured waveforms, below the playback cursor, even when Overview is absent.
+The info panel shows BPM and musical key when embedded metadata supplies them.
+Tempo prefers Serato Autotags, then standard BPM, then the final beatgrid anchor.
+Musical key comes from the standard INITIALKEY property, not the Serato Analysis version.
+
+Overview, Analysis, Autotags, BeatGrid and Markers2 have independent parsers, numeric serializers and cache versions.
+Legacy Markers are a fallback when usable Markers2 data is unavailable.
+Saved loops, track colour and BPM lock are parsed and cached but do not add waveform overlays or editing controls.
+Raw tag data and stable negative outcomes are cached independently of analysis results and JUCE peak data.
+MP3, AIFF and compatible WAV ID3v2 GEOB tags, and documented FLAC Serato comment wrappers, are supported read-only.
+The palette interpretation was checked against matching Serato overview screenshots.
+Serato's detailed zoomed waveform contains finer colour changes that cannot be recovered from this small tag.
+Its detailed analysis source and the reserved palette remain unverified.
+See [Serato Overview Color Validation](docs/plans/serato-overview/visual-validation.md)
+for the decoding evidence, validation results and remaining limitations.
+
+Future Serato tag kinds need their own parser, numeric serialization and cache version.
+Future loop and beatgrid overlays should use playback seconds rather than the Overview slice grid.
+
 ## Dependencies
 
 - [JUCE](https://juce.com/)
