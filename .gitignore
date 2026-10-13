@@ -52,3 +52,6 @@
 !/.vscode/
 /.vscode/*
 !/.vscode/settings.json
+
+# Local agent settings
+/.claude/settings.local.json

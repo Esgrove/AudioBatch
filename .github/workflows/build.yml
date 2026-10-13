@@ -16,6 +16,7 @@ on:
       - "format.sh"
       - "JUCE"
       - "lint.sh"
+      - "sanitize.sh"
       - "src/**"
       - "tests/**"
   pull_request:
@@ -31,6 +32,7 @@ on:
       - "format.sh"
       - "JUCE"
       - "lint.sh"
+      - "sanitize.sh"
       - "src/**"
       - "tests/**"
 
@@ -169,3 +171,20 @@ jobs:
         run: |
           clang-format --version
           ./format.sh --check
+
+  sanitize:
+    # Runs the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer.
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Ninja
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: brew install ninja
+
+      - name: Build and run tests with sanitizers
+        run: ./sanitize.sh

@@ -1,8 +1,8 @@
-/// Tests for the CLI argument parsing in AudioAnalysisCli::parse and the CSV and JSON output.
+/// Tests for the CLI argument parsing in cli::parseArguments and the CSV and JSON output.
 /// Covers option values, aliases, the combinations the CLI rejects, and the machine-readable record fields.
 
-#include "AudioAnalysisCli.h"
-#include "AudioAnalysisCliOutput.h"
+#include "cli/AudioAnalysisCli.h"
+#include "cli/AudioAnalysisCliOutput.h"
 #include "TestSuites.h"
 
 #include <optional>
@@ -16,7 +16,7 @@ static std::optional<AudioAnalysisCliOptions> parseArguments(
     juce::String& errorMessage
 )
 {
-    return AudioAnalysisCli::parse(juce::ArgumentList("audiobatch", arguments), errorMessage);
+    return cli::parseArguments(juce::ArgumentList("audiobatch", arguments), errorMessage);
 }
 
 /// Checks CLI parsing results for valid and invalid argument lists.
@@ -63,9 +63,9 @@ public:
             expect(errorMessage.contains("Unexpected number -12"), errorMessage);
 
             const juce::ArgumentList negativeValue("audiobatch", juce::StringArray {"-j", "-1"});
-            expect(!AudioAnalysisCli::containsExactOption(negativeValue, {"--help", "-h"}));
+            expect(!cli::containsExactOption(negativeValue, {"--help", "-h"}));
             const juce::ArgumentList help("audiobatch", juce::StringArray {"-h"});
-            expect(AudioAnalysisCli::containsExactOption(help, {"--help", "-h"}));
+            expect(cli::containsExactOption(help, {"--help", "-h"}));
         }
 
         beginTest("Boolean options never absorb following negative numbers");

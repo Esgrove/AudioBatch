@@ -1,15 +1,15 @@
-/// Tests for AudioNormalizationService.
-/// Covers output path resolution, batch output conflicts, refusal to overwrite unrelated files,
-/// cancellation, the level and sample rate of the written output, and the tags and art carried over to it.
+/// Tests for the normalization functions.
+/// Covers output path resolution, batch output conflicts, refusal to overwrite unrelated files, cancellation, the level
+/// and sample rate of the written output, and the tags and art carried over to it.
 /// Only in-place `.aif` sources are normalized successfully here,
 /// because converting other formats moves the original to the system trash.
 
-#include "AudioAnalysisService.h"
-#include "AudioNormalizationService.h"
-#include "MetadataService.h"
-#include "StringFormat.h"
+#include "analysis/AudioAnalysis.h"
+#include "normalization/AudioNormalization.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/AudioMetadata.h"
+#include "utils/StringFormat.h"
 
 #include <algorithm>
 #include <vector>
@@ -46,22 +46,15 @@ private:
         beginTest("Output is always a sibling .aif file");
 
         const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory);
+        expectEquals(getNormalizationOutputFile(root.getChildFile("song.mp3")).getFileName(), juce::String("song.aif"));
         expectEquals(
-            AudioNormalizationService::getOutputFile(root.getChildFile("song.mp3")).getFileName(),
-            juce::String("song.aif")
+            getNormalizationOutputFile(root.getChildFile("song.aiff")).getFileName(), juce::String("song.aif")
         );
-        expectEquals(
-            AudioNormalizationService::getOutputFile(root.getChildFile("song.aiff")).getFileName(),
-            juce::String("song.aif")
-        );
-        expectEquals(
-            AudioNormalizationService::getOutputFile(root.getChildFile("song.aif")).getFileName(),
-            juce::String("song.aif")
-        );
+        expectEquals(getNormalizationOutputFile(root.getChildFile("song.aif")).getFileName(), juce::String("song.aif"));
 
         beginTest("The format summary describes .aif sources as rewritten in place");
         {
-            const auto summary = AudioNormalizationService::getFormatSupportSummary();
+            const auto summary = getFormatSupportSummary();
             expect(summary.contains("A .aif file is rewritten in place"), summary);
             expect(summary.contains("including other AIFF extensions, to a .aif file"), summary);
             expect(!summary.contains("when they are already AIFF"), summary);
@@ -82,33 +75,39 @@ private:
                 recordForPath(root.getChildFile("other.wav").getFullPathName()),
             };
 
-            const auto conflicts = AudioNormalizationService::findBatchOutputConflicts(records);
+            const auto conflicts = findBatchOutputConflicts(records);
             expectEquals(conflicts.size(), 2);
             expect(conflicts.contains(root.getChildFile("song.mp3").getFullPathName()));
             expect(conflicts.contains(root.getChildFile("song.flac").getFullPathName()));
         }
 
-        beginTest("Without an in-place source, the first path wins regardless of input order");
+        beginTest(
+            "Without an in-place source, the first path wins regardless of "
+            "input order"
+        );
         {
             const std::vector records {
                 recordForPath(root.getChildFile("song.mp3").getFullPathName()),
                 recordForPath(root.getChildFile("song.flac").getFullPathName()),
             };
 
-            const auto conflicts = AudioNormalizationService::findBatchOutputConflicts(records);
+            const auto conflicts = findBatchOutputConflicts(records);
             expectEquals(conflicts.size(), 1);
             expect(conflicts.contains(root.getChildFile("song.mp3").getFullPathName()));
         }
 
         if (!juce::File::areFileNamesCaseSensitive()) {
-            beginTest("Outputs that differ only in case conflict where file names ignore case");
+            beginTest(
+                "Outputs that differ only in case conflict where file names "
+                "ignore case"
+            );
             {
                 const std::vector records {
                     recordForPath(root.getChildFile("song.mp3").getFullPathName()),
                     recordForPath(root.getChildFile("SONG.flac").getFullPathName()),
                 };
 
-                const auto conflicts = AudioNormalizationService::findBatchOutputConflicts(records);
+                const auto conflicts = findBatchOutputConflicts(records);
                 expectEquals(conflicts.size(), 1);
             }
         }
@@ -125,7 +124,7 @@ private:
             const auto existingOutput = directory.getChildFile("collision.aif");
             expect(existingOutput.replaceWithText("unrelated"));
 
-            const auto result = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), {});
+            const auto result = normalizeFile(analyzeFile(source), {});
             expect(result.hasError());
             expect(!result.committed);
             expect(result.errorMessage.contains("already exists"), result.errorMessage);
@@ -133,7 +132,10 @@ private:
             expectEquals(existingOutput.loadFileAsString(), juce::String("unrelated"));
         }
 
-        beginTest("A folder at the output path fails before rendering, even with force overwrite");
+        beginTest(
+            "A folder at the output path fails before rendering, even with "
+            "force overwrite"
+        );
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "folder_output.wav");
             const auto folder = directory.getChildFile("folder_output.aif");
@@ -142,11 +144,10 @@ private:
             AudioNormalizationOptions options;
             options.overwriteExisting = true;
             int cancellationChecks = 0;
-            const auto result
-                = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), options, [&] {
-                      ++cancellationChecks;
-                      return false;
-                  });
+            const auto result = normalizeFile(analyzeFile(source), options, [&] {
+                ++cancellationChecks;
+                return false;
+            });
 
             expect(result.hasError());
             expect(result.errorMessage.contains("not a file"), result.errorMessage);
@@ -159,13 +160,13 @@ private:
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cancelled.aif");
             const auto sizeBefore = source.getSize();
-            const auto record = AudioAnalysisService::analyzeFile(source);
+            const auto record = analyzeFile(source);
 
             const AudioNormalizationOptions options;
-            const auto result = AudioNormalizationService::normalizeFile(record, options, [] { return true; });
+            const auto result = normalizeFile(record, options, [] { return true; });
             expect(result.hasError());
             expectEquals(source.getSize(), sizeBefore);
-            expectEquals(AudioAnalysisService::analyzeFile(source).overallPeak, record.overallPeak);
+            expectEquals(analyzeFile(source).overallPeak, record.overallPeak);
         }
 
         checkInPlaceNormalization(directory, "sine_mono_24000_16.aif", 1, 24000, 16);
@@ -175,7 +176,7 @@ private:
         beginTest("Tags and embedded art survive in-place normalization");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "tagged.aif");
-            MetadataService::Metadata metadata;
+            AudioMetadata metadata;
             metadata.properties.push_back({.key = "TITLE", .values = {"Tagged tone"}});
             metadata.properties.push_back({.key = "ARTIST", .values = {"AudioBatch"}});
             const juce::String pictureText("not really a picture");
@@ -185,13 +186,13 @@ private:
                 .description = "cover",
                 .pictureType = "Front Cover",
             });
-            expect(MetadataService::writeMetadata(source, metadata));
+            expect(writeMetadata(source, metadata));
 
-            const auto result = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), {});
+            const auto result = normalizeFile(analyzeFile(source), {});
             expect(!result.hasError(), result.errorMessage);
 
-            MetadataService::Metadata written;
-            expect(MetadataService::readMetadata(source, written));
+            AudioMetadata written;
+            expect(readMetadata(source, written));
             const auto title
                 = std::ranges::find_if(written.properties, [](const auto& entry) { return entry.key == "TITLE"; });
             expect(title != written.properties.end() && title->values[0] == "Tagged tone");
@@ -200,11 +201,13 @@ private:
         }
 
         if (!juce::File::areFileNamesCaseSensitive()) {
-            beginTest("A source whose extension differs only in case is normalized in place");
+            beginTest(
+                "A source whose extension differs only in case is normalized "
+                "in place"
+            );
             {
                 const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "Upper.AIF");
-                const auto result
-                    = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), {});
+                const auto result = normalizeFile(analyzeFile(source), {});
 
                 expect(!result.hasError(), result.errorMessage);
                 expect(result.analysisRecord.file == source);
@@ -213,16 +216,19 @@ private:
             }
         }
 
-        beginTest("A file that changed since analysis is analyzed again before computing the gain");
+        beginTest(
+            "A file that changed since analysis is analyzed again before "
+            "computing the gain"
+        );
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "changed.aif");
-            auto staleRecord = AudioAnalysisService::analyzeFile(source);
+            auto staleRecord = analyzeFile(source);
             // Pretend the file was a quieter one when it was analyzed.
             // Trusting this peak would apply 12 dB of gain and clip the output.
             staleRecord.overallPeak = 0.125f;
             staleRecord.modifiedTimeMs -= 1000;
 
-            const auto result = AudioNormalizationService::normalizeFile(staleRecord, {});
+            const auto result = normalizeFile(staleRecord, {});
             expect(!result.hasError(), result.errorMessage);
             expectWithinAbsoluteError(result.analysisRecord.integratedLufs, fixtureLoudness - fixturePeakDecibels, 0.1);
         }
@@ -230,14 +236,14 @@ private:
         beginTest("Cancellation stops changed-source analysis before an in-place no-op");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cancelled_refresh.aif");
-            auto staleRecord = AudioAnalysisService::analyzeFile(source);
+            auto staleRecord = analyzeFile(source);
             juce::MemoryBlock originalBytes;
             expect(source.loadFileAsData(originalBytes));
             AudioNormalizationOptions options;
             options.targetPeakDbfs = peakDecibels(staleRecord);
             staleRecord.modifiedTimeMs -= 1000;
 
-            const auto result = AudioNormalizationService::normalizeFile(staleRecord, options, [] { return true; });
+            const auto result = normalizeFile(staleRecord, options, [] { return true; });
             expect(result.hasError());
             expect(!result.committed);
             expect(result.errorMessage.containsIgnoreCase("cancel"), result.errorMessage);
@@ -246,16 +252,19 @@ private:
             expect(remainingBytes == originalBytes);
         }
 
-        beginTest("A successful in-place no-op returns refreshed analysis without committing output");
+        beginTest(
+            "A successful in-place no-op returns refreshed analysis without "
+            "committing output"
+        );
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "refreshed_no_op.aif");
-            auto staleRecord = AudioAnalysisService::analyzeFile(source);
+            auto staleRecord = analyzeFile(source);
             AudioNormalizationOptions options;
             options.targetPeakDbfs = peakDecibels(staleRecord);
             staleRecord.modifiedTimeMs -= 1000;
             staleRecord.overallPeak = 0.125f;
 
-            const auto result = AudioNormalizationService::normalizeFile(staleRecord, options);
+            const auto result = normalizeFile(staleRecord, options);
             expect(result.succeeded, result.errorMessage);
             expect(!result.committed);
             expect(result.analysisRecord.matchesFileOnDisk());
@@ -265,25 +274,28 @@ private:
         beginTest("Cancellation stops re-analysis of an unchanged in-place no-op");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cancelled_no_op.aif");
-            const auto record = AudioAnalysisService::analyzeFile(source);
+            const auto record = analyzeFile(source);
             AudioNormalizationOptions options;
             options.targetPeakDbfs = peakDecibels(record);
 
-            const auto result = AudioNormalizationService::normalizeFile(record, options, [] { return true; });
+            const auto result = normalizeFile(record, options, [] { return true; });
             expect(result.hasError());
             expect(!result.committed);
             expect(result.errorMessage.containsIgnoreCase("cancel"), result.errorMessage);
         }
 
-        beginTest("Loudness mode reaches the target loudness unless the true peak ceiling is lower");
+        beginTest(
+            "Loudness mode reaches the target loudness unless the true peak "
+            "ceiling is lower"
+        );
         {
-            const auto record = AudioAnalysisService::analyzeFile(fixtureFile("sine_stereo_44100_16.wav"));
+            const auto record = analyzeFile(fixtureFile("sine_stereo_44100_16.wav"));
             AudioNormalizationOptions options;
             options.mode = AudioNormalizationMode::loudness;
             juce::String errorMessage;
 
             options.targetLufs = -14.0;
-            auto gain = AudioNormalizationService::getNormalizationGain(record, options, errorMessage);
+            auto gain = getNormalizationGain(record, options, errorMessage);
             expect(gain.has_value(), errorMessage);
             expectWithinAbsoluteError(
                 static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(0.0f))),
@@ -294,7 +306,7 @@ private:
             // Reaching 0 LUFS would put the true peak at about 0 dBTP,
             // above the ceiling, so the gain stops at the ceiling.
             options.targetLufs = 0.0;
-            gain = AudioNormalizationService::getNormalizationGain(record, options, errorMessage);
+            gain = getNormalizationGain(record, options, errorMessage);
             expect(gain.has_value(), errorMessage);
             expectWithinAbsoluteError(
                 static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(0.0f))),
@@ -311,8 +323,7 @@ private:
             options.mode = AudioNormalizationMode::loudness;
             options.targetLufs = -14.0;
 
-            const auto result
-                = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), options);
+            const auto result = normalizeFile(analyzeFile(source), options);
             expect(!result.hasError(), result.errorMessage);
             expectWithinAbsoluteError(result.analysisRecord.integratedLufs, -14.0, 0.1);
         }
@@ -323,8 +334,7 @@ private:
             AudioNormalizationOptions options;
             options.targetPeakDbfs = -1.0;
 
-            const auto result
-                = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), options);
+            const auto result = normalizeFile(analyzeFile(source), options);
             expect(!result.hasError(), result.errorMessage);
             expectWithinAbsoluteError(peakDecibels(result.analysisRecord), -1.0, peakTolerance);
         }
@@ -332,7 +342,7 @@ private:
         beginTest("A silent file cannot be normalized");
         {
             const auto source = directory.copyFixture("silence_stereo_44100_16.wav");
-            const auto result = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), {});
+            const auto result = normalizeFile(analyzeFile(source), {});
             expect(result.hasError());
             expect(source.existsAsFile());
         }
@@ -351,7 +361,7 @@ private:
         beginTest(utils::format("In-place normalization of {}", fixtureName));
 
         const auto source = directory.copyFixture(fixtureName);
-        const auto result = AudioNormalizationService::normalizeFile(AudioAnalysisService::analyzeFile(source), {});
+        const auto result = normalizeFile(analyzeFile(source), {});
         expect(!result.hasError(), result.errorMessage);
         expectEquals(result.analysisRecord.fullPath, source.getFullPathName());
         expectEquals(result.analysisRecord.channels, channels);

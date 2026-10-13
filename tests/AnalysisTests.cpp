@@ -1,11 +1,11 @@
-/// Integration tests for AudioAnalysisService::analyzeFile on the committed fixtures.
-/// Every fixture tone has the same level, so the tests check that each format, channel count,
-/// sample rate, and bit depth is decoded and measured consistently.
+/// Integration tests for analyzeFile on the committed fixtures.
+/// Every fixture tone has the same level, so the tests check that each format,
+/// channel count, sample rate, and bit depth is decoded and measured consistently.
 
-#include "AudioAnalysisService.h"
-#include "MetadataService.h"
+#include "analysis/AudioAnalysis.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/AudioMetadata.h"
 
 #include <array>
 
@@ -152,7 +152,7 @@ public:
 
         beginTest("Digital silence has no peak and no measurable loudness");
         {
-            const auto record = AudioAnalysisService::analyzeFile(fixtureFile("silence_stereo_44100_16.wav"));
+            const auto record = analyzeFile(fixtureFile("silence_stereo_44100_16.wav"));
             expect(!record.hasError(), record.errorMessage);
             expectEquals(record.overallPeak, 0.0f);
             expectEquals(record.integratedLufs, AudioAnalysisRecord::negativeInfinityLoudness);
@@ -165,27 +165,26 @@ public:
             juce::ignoreUnused(directory.copyFixture("sine_stereo_44100_16.wav", "._visible.wav"));
             juce::ignoreUnused(directory.copyFixture("sine_stereo_44100_16.wav", ".hidden.wav"));
 
-            const auto files = AudioAnalysisService::collectInputFiles({visible.getParentDirectory()}, false);
+            const auto files = collectInputFiles({visible.getParentDirectory()}, false);
             expectEquals(files.size(), 1);
             expectEquals(files[0].getFileName(), juce::String("visible.wav"));
 
-            const auto explicitFiles
-                = AudioAnalysisService::collectInputFiles({directory.getChildFile("._visible.wav")}, false);
+            const auto explicitFiles = collectInputFiles({directory.getChildFile("._visible.wav")}, false);
             expect(explicitFiles.isEmpty());
         }
 
         beginTest("A cancelled folder scan stops without collecting files");
         {
-            const auto files = AudioAnalysisService::collectInputFiles(
-                {fixtureFile("sine_stereo_44100_16.wav").getParentDirectory()}, true, [] { return true; }
-            );
+            const auto files
+                = collectInputFiles({fixtureFile("sine_stereo_44100_16.wav").getParentDirectory()}, true, [] {
+                      return true;
+                  });
             expect(files.isEmpty());
         }
 
         beginTest("Cancelled analysis fails without measuring");
         {
-            const auto record
-                = AudioAnalysisService::analyzeFile(fixtureFile("sine_stereo_44100_16.wav"), [] { return true; });
+            const auto record = analyzeFile(fixtureFile("sine_stereo_44100_16.wav"), [] { return true; });
             expect(record.hasError());
             expect(record.errorMessage.contains("cancelled"), record.errorMessage);
         }
@@ -194,19 +193,19 @@ public:
         {
             const TemporaryDirectory directory;
             const auto tagged = directory.copyFixture("sine_stereo_44100_320k.mp3", "tagged.mp3");
-            MetadataService::Metadata metadata;
+            AudioMetadata metadata;
             metadata.properties.push_back({.key = "TITLE", .values = {"Master 24-bit 96 kHz"}});
             metadata.properties.push_back({.key = "COMMENT", .values = {"24 bit"}});
-            expect(MetadataService::writeMetadata(tagged, metadata));
+            expect(writeMetadata(tagged, metadata));
 
-            const auto record = AudioAnalysisService::analyzeFile(tagged);
+            const auto record = analyzeFile(tagged);
             expect(!record.hasError(), record.errorMessage);
             expectEquals(record.bitsPerSample, 16);
         }
 
         beginTest("A file that is not audio fails analysis");
         {
-            const auto record = AudioAnalysisService::analyzeFile(fixtureFile("broken.wav"));
+            const auto record = analyzeFile(fixtureFile("broken.wav"));
             expect(record.hasError());
             expect(record.errorMessage.isNotEmpty());
         }
@@ -218,7 +217,7 @@ private:
     {
         beginTest(fixture.fileName);
 
-        const auto record = AudioAnalysisService::analyzeFile(fixtureFile(fixture.fileName));
+        const auto record = analyzeFile(fixtureFile(fixture.fileName));
         expect(!record.hasError(), record.errorMessage);
         expectEquals(record.channels, fixture.channels);
         expectEquals(record.sampleRate, fixture.sampleRate);
