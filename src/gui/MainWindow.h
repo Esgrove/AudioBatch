@@ -28,34 +28,23 @@ public:
     MainWindow(MainWindow&&) = delete;
     MainWindow& operator=(MainWindow&&) = delete;
 
+    void closeButtonPressed() override;
     void showAndActivate();
 
-    void closeButtonPressed() override;
-
 private:
-    juce::StringArray getMenuBarNames() override;
-
+    ApplicationCommandTarget* getNextCommandTarget() override;
+    bool perform(const InvocationInfo& info) override;
     juce::PopupMenu getMenuForIndex(int topLevelMenuIndex, const juce::String& menuName) override;
-
+    juce::StringArray getMenuBarNames() override;
+    void getAllCommands(juce::Array<juce::CommandID>& commands) override;
+    void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override;
     void menuItemSelected(int menuItemID, int topLevelMenuIndex) override;
 
-    ApplicationCommandTarget* getNextCommandTarget() override;
-
-    void getAllCommands(juce::Array<juce::CommandID>& commands) override;
-
-    void getCommandInfo(juce::CommandID commandID, juce::ApplicationCommandInfo& result) override;
-
-    bool perform(const InvocationInfo& info) override;
-
+    AudioBatchComponent& getAudioBatch() const;
     void appendPluginOptionsMenuItems(juce::PopupMenu& menu) const;
-
     void handlePluginChoiceMenuItem(int menuItemID) const;
 
-    AudioBatchComponent& getAudioBatch() const;
-
-    /// Registry of the menu commands, used by the menu to look up and display their shortcuts.
     juce::ApplicationCommandManager commandManager;
-
     std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel = std::make_unique<juce::CustomLookAndFeel>(true);
 
     JUCE_LEAK_DETECTOR(MainWindow)

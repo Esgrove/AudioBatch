@@ -25,16 +25,15 @@ public:
     explicit SecondarySortTableHeader(SecondarySortCallback secondarySortRequestedCallback);
 
     void columnClicked(int columnId, const juce::ModifierKeys& modifiers) override;
-
     void setSecondarySortIndicator(int columnId, bool isForwards);
 
 private:
     void cacheBaseColumnNames();
 
     SecondarySortCallback secondarySortRequested;
-    std::map<int, juce::String> baseColumnNames;
-    int secondarySortColumnId = 0;
     bool secondarySortForwards = true;
+    int secondarySortColumnId = 0;
+    std::map<int, juce::String> baseColumnNames;
 };
 
 /// Comparators and sorting for the results table columns.
@@ -54,10 +53,8 @@ struct SortState {
 
 int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, int columnId);
 
-void sortRecords(std::vector<AudioAnalysisRecord>& records, const SortState& state);
-
 void setPrimarySort(SortState& state, int columnId, bool isForwards);
-
+void sortRecords(std::vector<AudioAnalysisRecord>& records, const SortState& state);
 void toggleSecondarySort(SortState& state, int columnId);
 
 SecondarySortTableHeader& getSecondarySortHeader(const juce::TableListBox& table);

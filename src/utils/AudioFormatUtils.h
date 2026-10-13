@@ -13,17 +13,15 @@
 
 namespace audiobatch::utils
 {
-juce::AudioFormatManager& threadLocalFormatManager();
+/// Returns the magnitude of a peak value, since analysis records store signed peaks.
+template<typename Value>
+[[nodiscard]] Value peakMagnitude(const Value peak)
+{
+    return std::abs(peak);
+}
 
 juce::AudioFormat* findAiffFormat(const juce::AudioFormatManager& formatManager);
-
-bool readFloatSamples(
-    juce::AudioFormatReader& reader,
-    float* const* channels,
-    int numChannels,
-    juce::int64 startSample,
-    int numSamples
-);
+juce::AudioFormatManager& threadLocalFormatManager();
 
 juce::String validateWrittenAudio(
     juce::AudioFormatManager& formatManager,
@@ -35,10 +33,11 @@ juce::String validateWrittenAudio(
 
 std::unordered_map<juce::String, juce::String> aiffWriterMetadata(const juce::StringPairArray& metadata);
 
-/// Returns the magnitude of a peak value, since analysis records store signed peaks.
-template<typename Value>
-[[nodiscard]] Value peakMagnitude(const Value peak)
-{
-    return std::abs(peak);
-}
+bool readFloatSamples(
+    juce::AudioFormatReader& reader,
+    float* const* channels,
+    int numChannels,
+    juce::int64 startSample,
+    int numSamples
+);
 }  // namespace audiobatch::utils

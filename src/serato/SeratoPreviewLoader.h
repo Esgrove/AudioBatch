@@ -29,9 +29,7 @@ struct SeratoPreviewRequest {
 class SeratoPreviewLoader final
 {
 public:
-    using Generation = std::uint64_t;
-    using Data = std::shared_ptr<const SeratoData>;
-    using Completion = std::function<void(FileIdentity, Generation, Data)>;
+    using Completion = std::function<void(FileIdentity, std::uint64_t, std::shared_ptr<const SeratoData>)>;
     using Reader = std::function<
         std::vector<TagReadResult>(const juce::File&, std::span<const TagKind>, const utils::CancellationCheck&)>;
 
@@ -44,24 +42,24 @@ public:
     SeratoPreviewLoader(SeratoPreviewLoader&&) = delete;
     SeratoPreviewLoader& operator=(SeratoPreviewLoader&&) = delete;
 
-    Generation request(const juce::File& file, double durationSeconds);
+    std::uint64_t request(const juce::File& file, double durationSeconds);
 
     void cancel();
-
     void cancelAndWait();
 
     [[nodiscard]] bool canAdopt(
         const FileIdentity& identity,
-        Generation resultGeneration,
+        std::uint64_t resultGeneration,
         const juce::File& selectedFile
     ) const;
 
 private:
     using Results = std::array<std::optional<TagReadResult>, allTagKinds.size()>;
 
-    void run(const std::stop_token& stopToken);
+    static std::shared_ptr<const SeratoData> collectData(Results& results);
 
-    void process(const SeratoPreviewRequest& active, const std::stop_token& stopToken);
+    void run(const std::stop_token& stopToken);
+    void process(const SeratoPreviewRequest& active, const std::stop_token& stopToken) const;
 
     bool readMisses(
         const SeratoPreviewRequest& active,
@@ -70,16 +68,15 @@ private:
         const utils::CancellationCheck& isCancelled
     ) const;
 
-    static Data collectData(Results& results);
-
     AnalysisCache& cache;
     Completion completion;
     Reader reader;
-    std::atomic<Generation> generation {0};
+
+    std::atomic<std::uint64_t> generation {0};
     std::atomic<bool> stopped {false};
-    std::mutex mutex;
     std::condition_variable_any condition;
-    std::optional<SeratoPreviewRequest> pending;
     std::jthread worker;
+    std::mutex mutex;
+    std::optional<SeratoPreviewRequest> pending;
 };
 }  // namespace audiobatch::serato

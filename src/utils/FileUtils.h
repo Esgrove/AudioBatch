@@ -11,30 +11,24 @@
 namespace audiobatch::utils
 {
 
-bool moveToTrash(const juce::File& file);
-
 /// Disposes of a file that a committed output replaces, and returns true when the file is gone.
 using FileDisposer = std::function<bool(const juce::File&)>;
 
 bool deleteFile(const juce::File& file);
-
 bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile);
-
-bool isMp3File(const juce::File& file);
-
 bool isAiffFile(const juce::File& file);
-
+bool isMp3File(const juce::File& file);
 bool isWavFile(const juce::File& file);
-
-juce::String revealInFileManagerLabel();
+bool moveToTrash(const juce::File& file);
 
 void revealFileInFileManager(const juce::File& file);
-
 void revealParentDirectory(const juce::File& file);
 
-juce::String existingOutputMessage(const juce::File& outputFile);
-
 juce::String checkOutputPath(const juce::File& sourceFile, const juce::File& outputFile, bool overwriteExisting);
+juce::String existingOutputMessage(const juce::File& outputFile);
+juce::String fileExtension(const juce::File& file);
+juce::String normalizeExtension(const juce::String& extension);
+juce::String revealInFileManagerLabel();
 
 juce::String commitTemporaryOutput(
     const juce::TemporaryFile& temporaryFile,
@@ -43,9 +37,4 @@ juce::String commitTemporaryOutput(
     bool overwriteExisting,
     const FileDisposer& disposeFile = moveToTrash
 );
-
-juce::String normalizeExtension(const juce::String& extension);
-
-juce::String fileExtension(const juce::File& file);
-
 }  // namespace audiobatch::utils

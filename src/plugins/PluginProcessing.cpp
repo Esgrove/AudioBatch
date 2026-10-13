@@ -48,18 +48,29 @@ constexpr int maximumDitheredBitDepth = 16;
 constexpr juce::int64 ditherSeed = 0x41554449;
 constexpr auto cancelledMessage = "Processing was cancelled";
 
+/// Level and length measurements of the rendered chain output, used to finalize the output file.
+struct RenderSummary {
+    /// Largest absolute sample value of the rendered output.
+    float peak = 0.0f;
+    /// Number of samples written to the intermediate file.
+    juce::int64 samplesWritten = 0;
+    /// Position of the last sample above the silence threshold, or -1 when the output is silent.
+    juce::int64 lastAudibleSample = -1;
+    /// Notice about source blocks that failed to decode but were tolerated, or empty when there were none.
+    juce::String decodeNotice;
+};
+
 /// Shorthand for building a failure result, keeping the early-return error paths compact.
-static PluginProcessingResult fail(const juce::File& file, const juce::String& message)
+PluginProcessingResult fail(const juce::File& file, const juce::String& message)
 {
     return PluginProcessingResult::failure(file, message);
 }
 
 /// Clamps a file's channel count to a sane range before it is used for buffer allocation and bus configuration.
-static int clampChannelCount(const int channels)
+int clampChannelCount(const int channels)
 {
     return juce::jlimit(1, 8, channels);
 }
-
 }  // namespace
 
 /// Returns true when the file's format can be read for processing.
@@ -150,18 +161,6 @@ static bool readInputBlock(
 
     return readSucceeded;
 }
-
-/// Level and length measurements of the rendered chain output, used to finalize the output file.
-struct RenderSummary {
-    /// Largest absolute sample value of the rendered output.
-    float peak = 0.0f;
-    /// Number of samples written to the intermediate file.
-    juce::int64 samplesWritten = 0;
-    /// Position of the last sample above the silence threshold, or -1 when the output is silent.
-    juce::int64 lastAudibleSample = -1;
-    /// Notice about source blocks that failed to decode but were tolerated, or empty when there were none.
-    juce::String decodeNotice;
-};
 
 /// Replaces the first channel with the average of the first two channels over the given sample range,
 /// so a stereo signal derived from a mono source keeps both of its channels when it continues as mono.
@@ -477,7 +476,7 @@ static juce::String renderChainToFile(
                                    .withNumChannels(numChannels)
                                    .withBitsPerSample(32)
                                    .withSampleFormat(juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
-    auto writer = wavFormat.createWriterFor(outputStream, writerOptions);
+    const auto writer = wavFormat.createWriterFor(outputStream, writerOptions);
 
     if (writer == nullptr) {
         return "Could not create the temporary render file";
@@ -608,7 +607,7 @@ PluginProcessingResult processFileWithPlugins(
     }
 
     auto& formatManager = utils::threadLocalFormatManager();
-    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+    std::unique_ptr<juce::AudioFormatReader> const reader(formatManager.createReaderFor(file));
 
     if (reader == nullptr) {
         return fail(file, "Unsupported or unreadable audio file");

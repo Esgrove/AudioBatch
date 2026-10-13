@@ -35,23 +35,20 @@ public:
     NormalizeCoordinator(NormalizeCoordinator&&) = delete;
     NormalizeCoordinator& operator=(NormalizeCoordinator&&) = delete;
 
-    void cancelAndWait();
-
-    void setCompletionCallback(CompletionCallback callback);
-
-    void setResultCallback(ResultCallback callback);
-
     int start(const std::vector<AudioAnalysisRecord>& records, const AudioNormalizationOptions& options);
+
+    void cancelAndWait();
+    void setCompletionCallback(CompletionCallback callback);
+    void setResultCallback(ResultCallback callback);
 
 private:
     void publishCompletion(int totalFiles, int runId) const;
-
     void publishResult(const AudioNormalizationResult& result, int runId) const;
 
-    juce::ThreadPool threadPool;
-    juce::CriticalSection callbackLock;
-    ResultCallback resultCallback;
     CompletionCallback completionCallback;
+    ResultCallback resultCallback;
+    juce::CriticalSection callbackLock;
+    juce::ThreadPool threadPool;
     std::atomic<int> currentRunId {0};
 };
 }  // namespace audiobatch

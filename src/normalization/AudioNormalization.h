@@ -91,23 +91,18 @@ struct AudioNormalizationResult {
     bool committed = false;
 };
 
+AudioNormalizationResult normalizeFile(
+    const AudioAnalysisRecord& sourceRecord,
+    const AudioNormalizationOptions& options,
+    const utils::CancellationCheck& isCancelled = {}
+);
+
 juce::File getNormalizationOutputFile(const juce::File& sourceFile);
-
-juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records);
-
 juce::String batchOutputConflictMessage(const juce::File& sourceFile);
-
-juce::String getNormalizationSupportMessage(const juce::File& file);
-
-juce::String getFormatSupportSummary();
-
-bool canNormalizeFile(const juce::File& file);
-
-bool canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records);
-
 juce::String buildNormalizationUnavailableMessage(const std::vector<AudioAnalysisRecord>& records);
-
-int getNormalizationOutputBitDepth(const AudioAnalysisRecord& record, const juce::AudioFormatReader& reader);
+juce::String getFormatSupportSummary();
+juce::String getNormalizationSupportMessage(const juce::File& file);
+juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records);
 
 std::optional<float> getNormalizationGain(
     const AudioAnalysisRecord& record,
@@ -115,9 +110,8 @@ std::optional<float> getNormalizationGain(
     juce::String& errorMessage
 );
 
-AudioNormalizationResult normalizeFile(
-    const AudioAnalysisRecord& sourceRecord,
-    const AudioNormalizationOptions& options,
-    const utils::CancellationCheck& isCancelled = {}
-);
+bool canNormalizeFile(const juce::File& file);
+bool canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records);
+
+int getNormalizationOutputBitDepth(const AudioAnalysisRecord& record, const juce::AudioFormatReader& reader);
 }  // namespace audiobatch

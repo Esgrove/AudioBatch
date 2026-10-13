@@ -89,39 +89,29 @@ private:
     bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
-    [[nodiscard]] bool isAnalysisInProgress() const;
-    [[nodiscard]] bool isFileBeingRewritten(const juce::String& fullPath) const;
-    [[nodiscard]] bool hasAnyRecords() const;
-    [[nodiscard]] juce::String getProcessingBlockedReason() const;
+    juce::Array<juce::File> getSelectedRecordFiles() const;
+    juce::StringArray getSelectedRecordPaths() const;
     [[nodiscard]] juce::String getFileOperationBlockedReason() const;
-    int findRecordIndex(const juce::String& fullPath) const;
-    int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
-    void configureResultsTable();
-    void configurePreviewControls();
-    void configureProcessingControls();
-    void connectCoordinatorCallbacks();
-    void clearCurrentAudioPreview();
-    void releasePreviewPlayback();
-    void showAudioResource(juce::URL resource);
-    void requestSeratoPreview();
-
+    [[nodiscard]] juce::String getProcessingBlockedReason() const;
     [[nodiscard]] juce::Array<juce::File> releasePreviewBeforeProcessing(
         const std::vector<AudioAnalysisRecord>& records
     );
 
+    [[nodiscard]] bool hasAnyRecords() const;
+    [[nodiscard]] bool isAnalysisInProgress() const;
+    [[nodiscard]] bool isFileBeingRewritten(const juce::String& fullPath) const;
     [[nodiscard]] std::vector<AudioAnalysisRecord> getSelectedProcessableRecords() const;
-    juce::Array<juce::File> getSelectedRecordFiles() const;
+    int findRecordIndex(const juce::String& fullPath) const;
+    int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
     std::vector<AudioAnalysisRecord> getSelectedNormalizableRecords() const;
-    juce::StringArray getSelectedRecordPaths() const;
-
-    void adoptSeratoPreview(
-        const FileIdentity& identity,
-        serato::SeratoPreviewLoader::Generation generation,
-        serato::SeratoPreviewLoader::Data data
-    );
 
     void addRoots(const juce::Array<juce::File>& folders);
     void applyCustomGainToSelection(float gainDb, bool hasGain);
+    void clearCurrentAudioPreview();
+    void configurePreviewControls();
+    void configureProcessingControls();
+    void configureResultsTable();
+    void connectCoordinatorCallbacks();
     void handleAnalysisComplete(int totalFiles, int runId);
     void handleAnalysisPlan(const AnalysisPlan& plan);
     void handleAnalysisResult(const AudioAnalysisRecord& record, int runId);
@@ -141,10 +131,13 @@ private:
     void refreshAnalysis(bool forceRefresh);
     void refreshSortIndicators() const;
     void refreshTablePreservingSelection(const juce::StringArray& selectedPaths);
+    void releasePreviewPlayback();
     void removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow);
     void replaceRecordAfterOperation(const juce::File& originalFile, const AudioAnalysisRecord& newRecord);
+    void requestSeratoPreview();
     void restoreSelectionByPaths(const juce::StringArray& selectedPaths);
     void setRoots(const juce::Array<juce::File>& folders);
+    void showAudioResource(juce::URL resource);
     void showFileContextMenu(int row, juce::Point<int> screenPosition);
     void showPluginProcessingWarning(const juce::String& message);
     void sortResults();
@@ -171,13 +164,19 @@ private:
         const juce::String& title
     );
 
+    void adoptSeratoPreview(
+        const FileIdentity& identity,
+        std::uint64_t generation,
+        std::shared_ptr<const serato::SeratoData> data
+    );
+
     AnalysisCache analysisCache;
 
     /// Owns the tag worker, stopped explicitly before GUI cleanup and before the cache is destroyed.
     std::unique_ptr<serato::SeratoPreviewLoader> seratoPreviewLoader;
 
     /// Holds the selected preview's metadata so analysis refreshes retain BPM and key until the selection changes.
-    serato::SeratoPreviewLoader::Data seratoPreviewData;
+    std::shared_ptr<const serato::SeratoData> seratoPreviewData;
 
     /// Records the requested or adopted file version, including stable negative outcomes.
     std::optional<FileIdentity> seratoPreviewIdentity;
@@ -187,30 +186,35 @@ private:
     std::jthread cachePruneThread;
 
     AnalysisCoordinator analysisCoordinator;
+    AudioFileTableModel fileTableModel;
     NormalizeCoordinator normalizeCoordinator;
     PluginProcessingCoordinator pluginCoordinator;
     juce::ApplicationProperties pluginAppProperties;
-    std::unique_ptr<PluginChain> pluginChain;
-    std::vector<AudioAnalysisRecord> analysisResults;
     juce::StretchableLayoutManager mainVerticalLayout;
     juce::StretchableLayoutResizerBar waveformResizeBar {&mainVerticalLayout, 1, false};
-    AudioFileTableModel fileTableModel;
+    std::unique_ptr<PluginChain> pluginChain;
+    std::vector<AudioAnalysisRecord> analysisResults;
 
     /// Plays the previewed file.
     /// Declared before the thumbnail and the audio settings component, which hold references into it.
     AudioPreviewPlayer previewPlayer;
 
-    std::unique_ptr<juce::FileChooser> directoryChooser;
-    std::unique_ptr<ThumbnailComponent> thumbnail;
+    /// Normalization mode and target, persisted in pluginAppProperties, which is declared before it.
+    NormalizationTargetControl normalizationTargetControl {pluginAppProperties};
+
+    AnalysisRunState analysisRun;
     SafePointer<juce::DialogWindow> settingsWindow;
     juce::Array<SafePointer<juce::DialogWindow>> childWindows;
+    juce::Array<juce::File> currentRoots;
     juce::AudioDeviceSelectorComponent audioSetupComponent;
     juce::File currentAudioFile;
-    juce::Array<juce::File> currentRoots;
     juce::TableListBox resultsTable;
     juce::URL currentAudioUrl;
-    /// Progress and inputs of the current or last analysis run.
-    AnalysisRunState analysisRun;
+    juce::Viewport audioInfoViewport;
+    std::unique_ptr<AudioInfoPanel> audioInfo;
+    std::unique_ptr<ThumbnailComponent> thumbnail;
+    std::unique_ptr<juce::FileChooser> directoryChooser;
+    std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 
     /// Progress and failures of the current or last normalization pass.
     OperationProgress normalizeProgress;
@@ -218,38 +222,27 @@ private:
     /// Progress and failures of the current or last plugin processing pass.
     OperationProgress processingProgress;
 
-    bool currentWaveformLoadedFromCache = false;
-
     /// Primary and secondary sort columns of the results table.
     results_sorting::SortState sortState {.primaryColumnId = columnOverallPeak};
 
     /// Activity labels and last operation messages per file, shown in the status column.
     FileActivityTracker fileActivity {[this] { resultsTable.repaint(); }};
 
+    IntervalStepSlider gainSlider {"GainSlider"};
     juce::Label currentRootLabel {"CurrentRootLabel"};
+    juce::Label gainLabel {"GainLabel"};
     juce::Label statusLabel {"StatusLabel"};
     juce::Label zoomLabel {"Zoom"};
-    juce::Label gainLabel {"GainLabel"};
     juce::Slider zoomSlider {"ZoomSlider"};
-
-    IntervalStepSlider gainSlider {"GainSlider"};
     juce::TextButton gainClearButton {"x"};
-    juce::TextButton settingsButton {"Audio Settings"};
     juce::TextButton pluginButton {"Plugins"};
-    juce::TextButton startStopButton {"Play/Stop"};
     juce::TextButton processButton {"Process"};
+    juce::TextButton settingsButton {"Audio Settings"};
+    juce::TextButton startStopButton {"Play/Stop"};
+    juce::ToggleButton forceOverwriteToggle {"Force overwrite"};
     juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
 
-    /// Lets normalization and plugin processing replace an existing output file.
-    /// Not persisted, so every session starts with overwriting disabled.
-    juce::ToggleButton forceOverwriteToggle {"Force overwrite"};
-
-    /// Normalization mode and target, persisted in pluginAppProperties, which is declared before it.
-    NormalizationTargetControl normalizationTargetControl {pluginAppProperties};
-
-    juce::Viewport audioInfoViewport;
-    std::unique_ptr<AudioInfoPanel> audioInfo;
-    std::unique_ptr<juce::TooltipWindow> tooltipWindow;
+    bool currentWaveformLoadedFromCache {false};
 
     JUCE_LEAK_DETECTOR(AudioBatchComponent)
 };

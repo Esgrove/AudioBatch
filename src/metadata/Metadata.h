@@ -45,9 +45,7 @@ struct AudioMetadata {
     std::vector<MetadataPicture> pictures;
 };
 
-bool readMetadata(const juce::File& file, AudioMetadata& outMetadata);
-
-bool writeMetadata(const juce::File& file, const AudioMetadata& metadata);
-
 bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile);
+bool readMetadata(const juce::File& file, AudioMetadata& outMetadata);
+bool writeMetadata(const juce::File& file, const AudioMetadata& metadata);
 }  // namespace audiobatch

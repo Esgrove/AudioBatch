@@ -183,9 +183,7 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
     seratoPreviewLoader = std::make_unique<serato::SeratoPreviewLoader>(
         analysisCache,
         [safeThis](
-            FileIdentity identity,
-            const serato::SeratoPreviewLoader::Generation generation,
-            serato::SeratoPreviewLoader::Data data
+            FileIdentity identity, const std::uint64_t generation, std::shared_ptr<const serato::SeratoData> data
         ) {
             juce::MessageManager::callAsync(
                 [safeThis, previewIdentity = std::move(identity), generation, previewData = std::move(data)] {
@@ -733,13 +731,13 @@ void AudioBatchComponent::openDialogWindow(
 #if JUCE_WINDOWS
     window->setUsingNativeTitleBar(false);
     window->setTitleBarTextCentred(false);
-    window->setTitleBarHeight(30);
+    window->setTitleBarHeight(layout::titleBarHeight);
 #else
     window->setUsingNativeTitleBar(true);
 #endif
     window->setSize(window->getWidth(), window->getHeight());
     window->setResizable(true, true);
-    window->setResizeLimits(window->getWidth(), window->getHeight(), 4096, 4096);
+    window->setResizeLimits(window->getWidth(), window->getHeight(), layout::maxWindowSize, layout::maxWindowSize);
     window->setColour(juce::DialogWindow::backgroundColourId, juce::CustomLookAndFeel::greySemiDark());
     window->setVisible(true);
     window->toFront(true);

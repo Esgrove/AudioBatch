@@ -53,7 +53,7 @@ constexpr int pluginManagerWidth = 720;
 constexpr int pluginManagerHeight = 520;
 
 /// Builds the descriptor ref for one chain entry.
-static PluginDescriptorRef makeDescriptorRef(const juce::PluginDescription& description, const juce::MemoryBlock& state)
+PluginDescriptorRef makeDescriptorRef(const juce::PluginDescription& description, const juce::MemoryBlock& state)
 {
     PluginDescriptorRef descriptorRef;
     descriptorRef.pluginFormatName = description.pluginFormatName;
@@ -190,15 +190,13 @@ ChainInstantiation PluginChain::instantiateChains(
         std::vector<std::unique_ptr<juce::AudioPluginInstance>> chainInstances;
         chainInstances.reserve(enabledPlugins.size());
 
-        for (const auto& enabledPlugin : enabledPlugins) {
+        for (const auto& [description, descriptorRef] : enabledPlugins) {
             juce::String error;
-            auto instance = formatManager.createPluginInstance(
-                enabledPlugin.description, defaultSampleRate, defaultBlockSize, error
-            );
+            auto instance = formatManager.createPluginInstance(description, defaultSampleRate, defaultBlockSize, error);
 
             if (instance == nullptr) {
                 instantiation.errorMessage = error.isNotEmpty() ? error : juce::String("Plugin instantiation failed");
-                instantiation.failedPluginName = enabledPlugin.description.name;
+                instantiation.failedPluginName = description.name;
                 return instantiation;
             }
 

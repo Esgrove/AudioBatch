@@ -42,18 +42,6 @@ inline constexpr std::array allTagKinds {
     TagKind::trackInfo,
 };
 
-/// Reports the independent numeric cache schema version for a supported kind.
-[[nodiscard]] constexpr std::uint32_t parserVersion(TagKind kind)
-{
-    return kind == TagKind::overview ? overviewParserVersion : 1;
-}
-
-/// Rejects unrecognized persisted kind identifiers.
-[[nodiscard]] constexpr bool supportsTagKind(TagKind kind)
-{
-    return std::ranges::any_of(allTagKinds, [kind](const auto supported) { return kind == supported; });
-}
-
 /// Serato's analysis engine version, not the musical key of the track.
 struct Analysis {
     std::uint8_t majorVersion = 0;
@@ -132,4 +120,16 @@ struct TagReadResult {
     std::optional<Markers> markers = std::nullopt;
     std::optional<TrackInfo> trackInfo = std::nullopt;
 };
+
+/// Reports the independent numeric cache schema version for a supported kind.
+[[nodiscard]] constexpr std::uint32_t parserVersion(const TagKind kind)
+{
+    return kind == TagKind::overview ? overviewParserVersion : 1;
+}
+
+/// Rejects unrecognized persisted kind identifiers.
+[[nodiscard]] constexpr bool supportsTagKind(TagKind kind)
+{
+    return std::ranges::any_of(allTagKinds, [kind](const auto supported) { return kind == supported; });
+}
 }  // namespace audiobatch::serato

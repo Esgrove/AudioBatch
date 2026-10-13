@@ -29,37 +29,26 @@ public:
     FileActivityTracker(FileActivityTracker&&) = delete;
     FileActivityTracker& operator=(FileActivityTracker&&) = delete;
 
-    void markActive(const juce::Array<juce::File>& files, const juce::String& activityLabel);
-
-    void setActive(const juce::String& fullPath, const juce::String& activityLabel);
-
     void clearActive(const juce::String& fullPath);
-
-    void clearAllActive();
-
     void clearActiveWithLabels(const juce::StringArray& activityLabels);
-
+    void clearAllActive();
+    void clearAllMessages();
+    void clearMessage(const juce::String& fullPath);
+    void markActive(const juce::Array<juce::File>& files, const juce::String& activityLabel);
+    void setActive(const juce::String& fullPath, const juce::String& activityLabel);
     void setMessage(const juce::String& fullPath, const OperationMessage& message);
 
-    void clearMessage(const juce::String& fullPath);
-
-    void clearAllMessages();
-
-    [[nodiscard]] juce::String getActiveLabel(const juce::String& fullPath) const;
-
-    [[nodiscard]] bool isAnyActive() const;
-
     [[nodiscard]] OperationMessage getMessage(const juce::String& fullPath) const;
-
+    [[nodiscard]] bool isAnyActive() const;
+    [[nodiscard]] juce::String getActiveLabel(const juce::String& fullPath) const;
     [[nodiscard]] static float getAnimationPhase();
 
 private:
     void activityChanged();
-
     void timerCallback() override;
 
     std::function<void()> repaint;
-    std::map<juce::String, juce::String> activeLabels;
     std::map<juce::String, OperationMessage> messages;
+    std::map<juce::String, juce::String> activeLabels;
 };
 }  // namespace audiobatch

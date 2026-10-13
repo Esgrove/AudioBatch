@@ -21,20 +21,20 @@ constexpr std::size_t countOffset = 12;
 constexpr std::size_t fieldBytes = sizeof(std::uint32_t);
 
 /// Reads a validated four-byte big-endian field without alignment assumptions.
-std::uint32_t readBigEndian(std::span<const std::uint8_t> bytes)
+std::uint32_t readBigEndian(const std::span<const std::uint8_t> bytes)
 {
     return juce::ByteOrder::bigEndianInt(bytes.data());
 }
 
 /// Writes a four-byte big-endian field to an already allocated cache header.
-void writeBigEndian(std::span<std::uint8_t> output, std::uint32_t value)
+void writeBigEndian(std::span<std::uint8_t> output, const std::uint32_t value)
 {
     const auto bytes = std::bit_cast<std::array<std::uint8_t, fieldBytes>>(juce::ByteOrder::swapIfLittleEndian(value));
     std::ranges::copy(bytes, output.begin());
 }
 
 /// Copies already validated complete slices into independent storage.
-Overview copySlices(std::span<const std::uint8_t> bands)
+Overview copySlices(const std::span<const std::uint8_t> bands)
 {
     Overview overview;
     overview.slices.resize(bands.size() / Overview::bandCount);
@@ -61,7 +61,7 @@ Overview copySlices(std::span<const std::uint8_t> bands)
 /// A payload with N slices occupies 2 + 16 * N bytes, or 3842 bytes for 240 slices.
 /// Accepts header 01 05 and one to maxSlices complete slices, rejecting tails and unknown headers.
 /// The returned slices own their data independently of the input buffer.
-std::optional<Overview> Overview::parse(std::span<const std::uint8_t> bytes)
+std::optional<Overview> Overview::parse(const std::span<const std::uint8_t> bytes)
 {
     if (bytes.size() < payloadHeader.size() + bandCount || bytes.size() > maxPayloadBytes
         || !std::ranges::equal(bytes.first(payloadHeader.size()), payloadHeader)
@@ -93,7 +93,7 @@ juce::MemoryBlock Overview::serialize() const
 
 /// Validates the complete numeric cache representation before allocating owned slices.
 /// Unknown magic, kind, version, count or an inexact length is a cache miss.
-std::optional<Overview> Overview::deserialize(std::span<const std::uint8_t> bytes)
+std::optional<Overview> Overview::deserialize(const std::span<const std::uint8_t> bytes)
 {
     if (bytes.size() < cacheHeaderBytes || !std::ranges::equal(bytes.first(cacheMagic.size()), cacheMagic)
         || readBigEndian(bytes.subspan(kindOffset, fieldBytes)) != static_cast<std::uint32_t>(TagKind::overview)

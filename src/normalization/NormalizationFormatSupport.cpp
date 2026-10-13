@@ -26,7 +26,7 @@ struct AudioNormalizationFormatSupport {
 };
 
 /// Returns the one-line summary of normalization output behavior used in the support summary.
-static juce::String getNormalizationStatusLine()
+juce::String getNormalizationStatusLine()
 {
     return "Normalization output: same-name AIF files. "
            "Originals with a different extension are moved to the system trash.";
@@ -34,7 +34,7 @@ static juce::String getNormalizationStatusLine()
 
 /// Builds minimal writer options from the format's advertised capabilities.
 /// Returns default constructed options when the format advertises no usable configuration.
-static juce::AudioFormatWriterOptions buildProbeWriterOptions(juce::AudioFormat& format)
+juce::AudioFormatWriterOptions buildProbeWriterOptions(juce::AudioFormat& format)
 {
     const auto sampleRates = format.getPossibleSampleRates();
     const auto bitDepths = format.getPossibleBitDepths();
@@ -57,7 +57,7 @@ static juce::AudioFormatWriterOptions buildProbeWriterOptions(juce::AudioFormat&
 
 /// Checks whether the format can actually create a writer by probing with an in-memory stream.
 /// Some formats are read-only in JUCE even though they are registered with the format manager.
-static bool canCreateProbeWriter(juce::AudioFormat& format)
+bool canCreateProbeWriter(juce::AudioFormat& format)
 {
     const auto options = buildProbeWriterOptions(format);
 
@@ -72,7 +72,7 @@ static bool canCreateProbeWriter(juce::AudioFormat& format)
 
 /// Describes what normalization does with files of the given format for the support summary.
 /// Every extension of the format is checked, because JUCE lists `.aiff` before `.aif` for AIFF.
-static juce::String getNormalizableFormatDetail(const juce::StringArray& extensions)
+juce::String getNormalizableFormatDetail(const juce::StringArray& extensions)
 {
     const auto hasExtension = [&extensions](const char* extension) {
         return std::ranges::any_of(extensions, [extension](const juce::String& formatExtension) {
@@ -96,7 +96,7 @@ static juce::String getNormalizableFormatDetail(const juce::StringArray& extensi
 
 /// Gathers per-format normalization support information for the support summary.
 /// Normalizable formats sort before read-only ones, then alphabetically by name.
-static std::vector<AudioNormalizationFormatSupport> collectFormatSupport()
+std::vector<AudioNormalizationFormatSupport> collectFormatSupport()
 {
     std::vector<AudioNormalizationFormatSupport> support;
     support.reserve(static_cast<std::size_t>(utils::threadLocalFormatManager().getNumKnownFormats()));
@@ -139,7 +139,7 @@ static std::vector<AudioNormalizationFormatSupport> collectFormatSupport()
 }
 
 /// Joins the format's extensions into a lowercase, de-duplicated display string.
-static juce::String formatExtensionsToText(const juce::StringArray& extensions)
+juce::String formatExtensionsToText(const juce::StringArray& extensions)
 {
     juce::StringArray normalizedExtensions;
 

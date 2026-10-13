@@ -80,7 +80,7 @@ static int compareNatural(const juce::String& left, const juce::String& right)
 /// Only identical values compare equal, because a tolerance based equality is not transitive
 /// and would break the strict weak ordering that std::ranges::sort requires.
 template<std::floating_point Value>
-int compareValues(const Value left, const Value right)
+static int compareValues(const Value left, const Value right)
 {
     const auto ordering = std::strong_order(left, right);
 
@@ -93,7 +93,7 @@ int compareValues(const Value left, const Value right)
 
 /// Three-way comparison of peak values by magnitude, ignoring polarity.
 template<std::floating_point Value>
-int comparePeaks(const Value left, const Value right)
+static int comparePeaks(const Value left, const Value right)
 {
     return compareValues(std::abs(left), std::abs(right));
 }

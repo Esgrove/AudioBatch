@@ -76,7 +76,7 @@ std::optional<juce::String> markerName(std::span<const std::uint8_t> bytes)
 }
 
 /// Decodes a length-checked big-endian integer without alignment assumptions.
-std::uint32_t integer(std::span<const std::uint8_t> bytes)
+std::uint32_t integer(const std::span<const std::uint8_t> bytes)
 {
     return juce::ByteOrder::bigEndianInt(bytes.data());
 }
@@ -103,7 +103,7 @@ std::optional<double> fixedNumber(std::span<const std::uint8_t> bytes)
 }
 
 /// Adds a supported record, rejecting invalid known records instead of partially displaying them.
-bool addMarker(Markers& markers, const juce::String& type, std::span<const std::uint8_t> bytes)
+bool addMarker(Markers& markers, const juce::String& type, const std::span<const std::uint8_t> bytes)
 {
     if (type == "BPMLOCK") {
         if (bytes.size() != 1 || bytes[0] > 1) {
@@ -154,9 +154,9 @@ bool addMarker(Markers& markers, const juce::String& type, std::span<const std::
 /// A fail-closed cursor for cache fields. Failed reads never advance outside the supplied span.
 struct Cursor {
     /// Borrows an already bounded block for this synchronous decode.
-    explicit Cursor(std::span<const std::uint8_t> input) : remaining(input) {}
+    explicit Cursor(const std::span<const std::uint8_t> input) : remaining(input) {}
     /// Takes a bounded field, remembering truncation for the final validity check.
-    std::span<const std::uint8_t> take(std::size_t count)
+    std::span<const std::uint8_t> take(const std::size_t count)
     {
         if (count > remaining.size()) {
             valid = false;
@@ -242,7 +242,7 @@ bool finishMarkerPadding(Cursor& input)
 }
 
 /// Validates the decoded Markers2 record body independently of its Base64 envelope.
-std::optional<Markers> readMarkerBody(std::span<const std::uint8_t> payload)
+std::optional<Markers> readMarkerBody(const std::span<const std::uint8_t> payload)
 {
     Cursor input(payload);
     if (input.byte() != 1 || input.byte() != 1 || !input.valid) {
@@ -294,7 +294,7 @@ BeatGrid readCacheGrid(Cursor& input)
 }
 
 /// Writes binary64 bits rather than native floating point layout.
-void writeReal(juce::MemoryOutputStream& output, double value)
+void writeReal(juce::MemoryOutputStream& output, const double value)
 {
     output.writeInt64BigEndian(std::bit_cast<std::int64_t>(value));
 }
@@ -334,20 +334,20 @@ bool boundedMarkers(const Markers& markers)
 void writeMarkers(juce::MemoryOutputStream& output, const Markers& markers)
 {
     output.writeIntBigEndian(static_cast<int>(markers.cues.size()));
-    for (const auto& cue : markers.cues) {
-        output.writeIntBigEndian(std::bit_cast<int>(cue.positionMilliseconds));
-        output.writeByte(static_cast<char>(cue.index));
-        output.writeIntBigEndian(std::bit_cast<int>(cue.colour.getARGB()));
-        writeText(output, cue.name);
+    for (const auto& [positionMilliseconds, index, colour, name] : markers.cues) {
+        output.writeIntBigEndian(std::bit_cast<int>(positionMilliseconds));
+        output.writeByte(static_cast<char>(index));
+        output.writeIntBigEndian(std::bit_cast<int>(colour.getARGB()));
+        writeText(output, name);
     }
     output.writeIntBigEndian(static_cast<int>(markers.loops.size()));
-    for (const auto& loop : markers.loops) {
-        output.writeIntBigEndian(std::bit_cast<int>(loop.startMilliseconds));
-        output.writeIntBigEndian(std::bit_cast<int>(loop.endMilliseconds));
-        output.writeByte(static_cast<char>(loop.index));
-        output.writeIntBigEndian(std::bit_cast<int>(loop.colour.getARGB()));
-        output.writeBool(loop.locked);
-        writeText(output, loop.name);
+    for (const auto& [startMilliseconds, endMilliseconds, index, colour, locked, name] : markers.loops) {
+        output.writeIntBigEndian(std::bit_cast<int>(startMilliseconds));
+        output.writeIntBigEndian(std::bit_cast<int>(endMilliseconds));
+        output.writeByte(static_cast<char>(index));
+        output.writeIntBigEndian(std::bit_cast<int>(colour.getARGB()));
+        output.writeBool(locked);
+        writeText(output, name);
     }
     output.writeBool(markers.colour.has_value());
     if (markers.colour) {
@@ -407,7 +407,7 @@ Markers readMarkers(Cursor& input)
 }
 
 /// Recovers the 24-bit legacy value from its four seven-bit groups.
-std::uint32_t legacyNumber(std::span<const std::uint8_t> bytes)
+std::uint32_t legacyNumber(const std::span<const std::uint8_t> bytes)
 {
     return ((bytes[0] & seratoHighMask) << (3 * seratoGroupBits))
         | ((bytes[1] & seratoGroupMask) << (2 * seratoGroupBits)) | ((bytes[2] & seratoGroupMask) << seratoGroupBits)
@@ -440,7 +440,7 @@ std::optional<double> parseTagNumber(std::string_view text)
     // Stream extraction can silently round an underflowing nonzero significand to zero.
     const auto significand = text.substr(0, text.find_first_of("eE"));
     if (std::fpclassify(value) == FP_ZERO
-        && std::ranges::any_of(significand, [](char character) { return character >= '1' && character <= '9'; }))
+        && std::ranges::any_of(significand, [](const char character) { return character >= '1' && character <= '9'; }))
     {
         return std::nullopt;
     }
@@ -449,7 +449,10 @@ std::optional<double> parseTagNumber(std::string_view text)
 
 /// Decodes bounded ASCII Base64, allowing whitespace and omitted padding.
 /// The optional Serato workaround accepts the documented one-character remainder only for Markers2.
-std::optional<juce::MemoryBlock> decodeTagBase64(std::span<const std::uint8_t> bytes, bool markersWorkaround)
+std::optional<juce::MemoryBlock> decodeTagBase64(
+    const std::span<const std::uint8_t> bytes,
+    const bool markersWorkaround
+)
 {
     if (bytes.size() > maxEncodedBytes) {
         return std::nullopt;
@@ -496,14 +499,14 @@ std::optional<juce::MemoryBlock> decodeTagBase64(std::span<const std::uint8_t> b
 }
 
 /// Parses the two-byte Serato analysis version, rejecting truncated or extended payloads.
-std::optional<Analysis> parseAnalysis(std::span<const std::uint8_t> bytes)
+std::optional<Analysis> parseAnalysis(const std::span<const std::uint8_t> bytes)
 {
     return bytes.size() == 2 ? std::optional(Analysis {.majorVersion = bytes[0], .minorVersion = bytes[1]})
                              : std::nullopt;
 }
 
 /// Parses fixed-width ASCII tempo and gain fields with a supported version header.
-std::optional<Autotags> parseAutotags(std::span<const std::uint8_t> bytes)
+std::optional<Autotags> parseAutotags(const std::span<const std::uint8_t> bytes)
 {
     if ((bytes.size() != gainOffset && bytes.size() != fullAutotagsBytes) || bytes[0] != 1 || bytes[1] != 1) {
         return std::nullopt;
@@ -518,7 +521,7 @@ std::optional<Autotags> parseAutotags(std::span<const std::uint8_t> bytes)
 }
 
 /// Parses counted big-endian grid anchors and the opaque footer. Only the final anchor carries BPM.
-std::optional<BeatGrid> parseBeatGrid(std::span<const std::uint8_t> bytes)
+std::optional<BeatGrid> parseBeatGrid(const std::span<const std::uint8_t> bytes)
 {
     if (bytes.size() < gridHeaderBytes || bytes.size() > maxTagPayloadBytes || bytes[0] != 1 || bytes[1] != 0) {
         return std::nullopt;
@@ -555,7 +558,7 @@ std::optional<BeatGrid> parseBeatGrid(std::span<const std::uint8_t> bytes)
 }
 
 /// Parses the Markers2 envelope and known records, skipping bounded unknown records by their lengths.
-std::optional<Markers> parseMarkers2(std::span<const std::uint8_t> bytes)
+std::optional<Markers> parseMarkers2(const std::span<const std::uint8_t> bytes)
 {
     if (bytes.size() < 3 || bytes.size() > maxTagPayloadBytes || bytes[0] != 1 || bytes[1] != 1) {
         return std::nullopt;
@@ -575,7 +578,7 @@ std::optional<Markers> parseMarkers2(std::span<const std::uint8_t> bytes)
 }
 
 /// Parses the fixed legacy fourteen-slot layout as a fallback, without inventing cue names or BPM lock.
-std::optional<Markers> parseLegacyMarkers(std::span<const std::uint8_t> bytes)
+std::optional<Markers> parseLegacyMarkers(const std::span<const std::uint8_t> bytes)
 {
     constexpr auto expected = gridHeaderBytes + legacyCount * legacyRecordBytes + sizeof(std::uint32_t);
     if (bytes.size() != expected || bytes[0] != 2 || bytes[1] != legacyMinorVersion
@@ -623,7 +626,7 @@ std::optional<Markers> parseLegacyMarkers(std::span<const std::uint8_t> bytes)
 }
 
 /// Dispatches a stripped GEOB payload. Invalid data affects only the requested kind.
-TagReadResult parseTagPayload(TagKind kind, std::span<const std::uint8_t> bytes, bool legacyMarkers)
+TagReadResult parseTagPayload(const TagKind kind, const std::span<const std::uint8_t> bytes, const bool legacyMarkers)
 {
     TagReadResult result;
     result.kind = kind;
@@ -685,12 +688,12 @@ bool writeCachePayload(juce::MemoryOutputStream& payload, const TagReadResult& r
                 return false;
             }
             payload.writeIntBigEndian(static_cast<int>(result.beatGrid->markers.size()));
-            for (const auto& marker : result.beatGrid->markers) {
-                writeReal(payload, marker.positionSeconds);
-                payload.writeIntBigEndian(std::bit_cast<int>(marker.beatsUntilNext));
-                payload.writeBool(marker.bpm.has_value());
-                if (marker.bpm) {
-                    writeReal(payload, *marker.bpm);
+            for (const auto& [positionSeconds, beatsUntilNext, bpm] : result.beatGrid->markers) {
+                writeReal(payload, positionSeconds);
+                payload.writeIntBigEndian(std::bit_cast<int>(beatsUntilNext));
+                payload.writeBool(bpm.has_value());
+                if (bpm) {
+                    writeReal(payload, *bpm);
                 }
             }
             return true;

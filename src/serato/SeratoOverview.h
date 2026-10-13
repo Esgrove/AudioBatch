@@ -25,18 +25,17 @@ inline constexpr std::uint32_t overviewParserVersion = 1;
 /// skips background cells and leaves the reserved palette unverified.
 /// The raster provides neither finer spectral detail on zoom nor separate left and right channel data.
 struct Overview {
-    [[nodiscard]] static std::optional<Overview> parse(std::span<const std::uint8_t> bytes);
-
-    [[nodiscard]] juce::MemoryBlock serialize() const;
-
-    [[nodiscard]] static std::optional<Overview> deserialize(std::span<const std::uint8_t> bytes);
-
     /// Number of vertical raster cells, retaining the existing serialized column layout.
     static constexpr std::size_t bandCount = 16;
     /// Highest number of horizontal slices accepted when parsing or deserializing.
     static constexpr std::size_t maxSlices = 65536;
     /// Largest valid payload size, including the two byte header.
     static constexpr std::size_t maxPayloadBytes = 2 + maxSlices * bandCount;
+
+    [[nodiscard]] static std::optional<Overview> deserialize(std::span<const std::uint8_t> bytes);
+    [[nodiscard]] static std::optional<Overview> parse(std::span<const std::uint8_t> bytes);
+
+    [[nodiscard]] juce::MemoryBlock serialize() const;
 
     /// Palette indices of the raster, one array of bandCount cells per horizontal slice.
     std::vector<std::array<std::uint8_t, bandCount>> slices;

@@ -21,6 +21,10 @@ constexpr int pathColumnDefaultWidth = AudioFileTableModel::initialColumnWidth(c
 /// Pixel sizes, spacing, and timing used to lay out and configure the main view.
 namespace layout
 {
+#if JUCE_WINDOWS
+constexpr int titleBarHeight = 30;
+#endif
+
 /// Initial width in pixels of the main component before the window is resized by the user.
 constexpr int initialComponentWidth = 1024;
 /// Initial height in pixels of the main component.
@@ -64,6 +68,8 @@ constexpr int zoomTextBoxWidth = 50;
 constexpr int dialogContentWidth = 500;
 /// Height in pixels of the content component in child dialog windows.
 constexpr int dialogContentHeight = 150;
+
+constexpr int maxWindowSize = 4096;
 }  // namespace layout
 
 /// Range of the waveform zoom slider in percent of the unzoomed view and its conversion to a scale factor.

@@ -15,12 +15,11 @@ namespace audiobatch
 namespace
 {
 /// Returns true when the command line contains the version flag.
-static bool isVersionRequest(const juce::String& commandLine)
+bool isVersionRequest(const juce::String& commandLine)
 {
     const juce::ArgumentList arguments {"AudioBatch", commandLine};
     return arguments.containsOption("--version|-V");
 }
-}  // namespace
 
 /// JUCE application entry point for the desktop GUI build.
 class AudioBatchApplication : public juce::JUCEApplication
@@ -176,6 +175,7 @@ private:
     std::unique_ptr<PluginScanWorker> pluginScanWorker;
     std::unique_ptr<juce::FileLogger> logger;
 };
+}  // namespace
 }  // namespace audiobatch
 
 START_JUCE_APPLICATION(audiobatch::AudioBatchApplication)

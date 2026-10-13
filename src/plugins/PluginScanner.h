@@ -20,15 +20,11 @@ namespace audiobatch
 constexpr auto pluginScanWorkerProcessUid = "audiobatch-plugin-scan-worker";
 
 [[nodiscard]] bool isPluginScanWorkerCommandLine(const juce::String& commandLine);
-
 [[nodiscard]] bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList);
-
 [[nodiscard]] juce::File getKnownPluginListFile();
-
 [[nodiscard]] juce::File getPluginScanCrashLogFile();
 
 void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList);
-
 void migrateKnownPluginList(juce::PropertiesFile& settings);
 
 /// Child side of out-of-process plugin scanning.

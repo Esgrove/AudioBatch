@@ -12,15 +12,14 @@
 
 namespace audiobatch::serato
 {
-
+namespace
+{
 constexpr int paletteLevels = 6;
 constexpr int palettePlaneSize = paletteLevels * paletteLevels;
 constexpr int paletteSize = palettePlaneSize * paletteLevels;
 constexpr int paletteComponentStep = 51;
 constexpr double maximumColourComponent = 255.0;
 
-namespace
-{
 /// Retains decoded RGB sums and foreground cell weight until the final arithmetic mean.
 struct ColourContributions {
     std::array<double, 3> components {};

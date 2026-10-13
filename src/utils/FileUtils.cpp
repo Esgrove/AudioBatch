@@ -31,6 +31,8 @@
 namespace audiobatch::utils
 {
 #if JUCE_WINDOWS
+namespace
+{
 /// Releases a COM interface when its owning pointer goes out of scope.
 struct ComReleaser {
     /// Releases the interface, ignoring null pointers.
@@ -41,9 +43,6 @@ struct ComReleaser {
         }
     }
 };
-
-template<typename Interface>
-using ComPointer = std::unique_ptr<Interface, ComReleaser>;
 
 /// Progress sink that aborts a delete the shell would perform permanently instead of recycling it.
 /// Drives without a recycle bin, such as network shares and some removable drives,
@@ -224,6 +223,11 @@ public:
     /// True when a delete was aborted because the shell would not have recycled the item.
     bool refusedPermanentDelete = false;
 };
+
+}  // namespace
+
+template<typename Interface>
+using ComPointer = std::unique_ptr<Interface, ComReleaser>;
 
 /// Moves the file or folder to the recycle bin through IFileOperation,
 /// refusing to delete it when the drive has no recycle bin.

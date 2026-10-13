@@ -14,14 +14,6 @@
 
 namespace audiobatch
 {
-/// Outcome of the last normalize or process run for a file, shown in the status column while the file is idle.
-struct OperationMessage {
-    /// Message shown in the status column.
-    juce::String text;
-    /// True for a failure, which is highlighted, and false for an informational notice.
-    bool isError = false;
-};
-
 /// Stable identifiers shared by the header configuration, painting, and sort logic.
 enum AudioFileTableColumn : std::uint8_t {
     columnName = 1,
@@ -37,6 +29,14 @@ enum AudioFileTableColumn : std::uint8_t {
     columnIntegratedLufs,
     columnCustomGain,
     columnStatus,
+};
+
+/// Outcome of the last normalize or process run for a file, shown in the status column while the file is idle.
+struct OperationMessage {
+    /// Message shown in the status column.
+    juce::String text;
+    /// True for a failure, which is highlighted, and false for an informational notice.
+    bool isError = false;
 };
 
 /// Table model for analyzed audio files, including sorting, painting, and row actions.

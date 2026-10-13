@@ -1,7 +1,7 @@
 /// Implementation of the normalization functions.
 /// Reads source files through per-thread JUCE format readers, applies the peak or loudness gain in chunks,
 /// and writes AIFF output.
-/// Carries source tags and embedded art across through MetadataService.
+/// Carries source tags and embedded art across through Metadata handling.
 /// The format support reporting lives in NormalizationFormatSupport.cpp.
 
 #include "normalization/AudioNormalization.h"
@@ -23,21 +23,21 @@ namespace audiobatch
 /// Helpers for bit depth selection and chunked normalization.
 namespace
 {
-/// Logs the failure and builds a failure result for the given file.
-static AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)
-{
-    utils::logError("Normalization failed for {}: {}", file.getFullPathName().quoted(), message);
-    return AudioNormalizationResult::failure(file, message);
-}
-
 constexpr int normalizationBlockSize = 32768;
 constexpr auto normalizedAiffOutputExtension = ".aif";
 constexpr int defaultMp3BitsPerSample = 16;
 constexpr auto cancelledMessage = "Normalization was cancelled";
 
+/// Logs the failure and builds a failure result for the given file.
+AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)
+{
+    utils::logError("Normalization failed for {}: {}", file.getFullPathName().quoted(), message);
+    return AudioNormalizationResult::failure(file, message);
+}
+
 /// Picks a bit depth the writer format supports, preferring the requested depth.
 /// Falls back to the format's highest supported depth so no precision is lost.
-static int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredBitsPerSample)
+int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredBitsPerSample)
 {
     const auto bitDepths = format.getPossibleBitDepths();
 
@@ -60,7 +60,7 @@ static int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredB
 
 /// Chooses the output bit depth for the normalized file.
 /// Prefers the analyzed source depth, then the MP3 default, then the reader's reported depth.
-static int resolvePreferredOutputBitDepth(
+int resolvePreferredOutputBitDepth(
     const AudioAnalysisRecord& sourceRecord,
     const juce::AudioFormatReader& reader,
     const juce::File& sourceFile
@@ -82,7 +82,7 @@ static int resolvePreferredOutputBitDepth(
 /// and `decodeNotice` receives the tracker's notice about tolerated failures.
 /// Returns an empty string on success, or a user-facing error message,
 /// including when cancellation is requested between blocks.
-static juce::String renderNormalizedAudio(
+juce::String renderNormalizedAudio(
     juce::AudioFormatReader& reader,
     juce::AudioFormatWriter& writer,
     const float gain,
@@ -281,7 +281,7 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, "Unsupported audio format");
     }
 
-    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+    std::unique_ptr<juce::AudioFormatReader> const reader(formatManager.createReaderFor(file));
 
     if (reader == nullptr) {
         return failNormalization(file, "Unsupported or unreadable audio file");

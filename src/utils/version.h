@@ -4,10 +4,8 @@
 
 #pragma once
 
-namespace audiobatch
-{
 /// Build metadata injected by CMake at compile time.
-namespace version
+namespace audiobatch::version
 {
 constexpr auto APP_NAME = BUILDTIME_APP_NAME;
 constexpr auto BRANCH = BUILDTIME_BRANCH;
@@ -18,5 +16,4 @@ constexpr auto VERSION_INFO = BUILDTIME_VERSION_INFO;
 constexpr auto VERSION_NUMBER = BUILDTIME_VERSION_NUMBER;
 /// Version, build date, commit, and branch, as printed by the --version flag.
 constexpr auto VERSION_STRING = BUILDTIME_VERSION_STRING;
-}  // namespace version
-}  // namespace audiobatch
+}  // namespace audiobatch::version

@@ -96,74 +96,52 @@ public:
         return knownPluginList;
     }
 
-    void setChainChangedCallback(ChainChangedCallback callback);
-
-    void showMenu(juce::Component& anchor);
-
     void addPlugin(const juce::PluginDescription& description);
-
-    void removeSlot(int index);
-
-    void moveSlot(int fromIndex, int toIndex);
-
-    void setSlotEnabled(int index, bool enabled);
-
-    void clearChain();
-
-    void openEditorForSlot(int index);
-
-    void showChainEditor();
-
-    void showScanWindow();
-
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
-
+    void clearChain();
+    void moveSlot(int fromIndex, int toIndex);
+    void openEditorForSlot(int index);
+    void removeSlot(int index);
+    void setChainChangedCallback(ChainChangedCallback callback);
+    void setSlotEnabled(int index, bool enabled);
+    void showChainEditor();
+    void showMenu(juce::Component& anchor);
+    void showScanWindow();
     void timerCallback() override;
 
 private:
     [[nodiscard]] static bool isEditorWindowClosed(const PluginChainEntry& entry);
-
-    static bool reapClosedEditor(PluginChainEntry& entry);
-
-    [[nodiscard]] bool anyEditorOpen() const noexcept;
-
-    bool beginPluginScan();
-
     [[nodiscard]] static std::optional<PluginChainEntry> parseSlot(const juce::XmlElement& slotElement);
+    static bool reapClosedEditor(PluginChainEntry& entry);
+    static void closeEditorForEntry(PluginChainEntry& entry);
+    static void restoreState(PluginChainEntry& entry, const juce::String& stateBase64);
 
     [[nodiscard]] static std::optional<PluginChainEntry> parseLegacyEntry(
         const juce::String& pluginXml,
         const juce::String& stateBase64
     );
 
+    [[nodiscard]] bool anyEditorOpen() const noexcept;
+    bool beginPluginScan();
+
     void captureOpenEditorStates();
-
-    static void closeEditorForEntry(PluginChainEntry& entry);
-
-    static void restoreState(PluginChainEntry& entry, const juce::String& stateBase64);
-
-    void loadPersistedChain();
-
-    void persistChain();
-
     void loadKnownPluginList();
-
+    void loadPersistedChain();
+    void notifyChainChanged();
+    void persistChain();
     void persistKnownPluginList() const;
 
-    void notifyChainChanged();
+    // Declared before the list, so it outlives the scanner that the list owns.
+    PluginScanLock pluginScanLock;
+
+    ChainChangedCallback chainChangedCallback;
 
     juce::ApplicationProperties& appProperties;
     juce::AudioPluginFormatManager formatManager;
-    // Declared before the list, so it outlives the scanner that the list owns.
-    PluginScanLock pluginScanLock;
-    juce::KnownPluginList knownPluginList;
-
-    std::vector<PluginChainEntry> chain;
-
     juce::Component::SafePointer<juce::DialogWindow> chainEditorWindow;
     juce::Component::SafePointer<juce::DialogWindow> scanWindow;
-
-    ChainChangedCallback chainChangedCallback;
+    juce::KnownPluginList knownPluginList;
+    std::vector<PluginChainEntry> chain;
 
     JUCE_DECLARE_WEAK_REFERENCEABLE(PluginChain)
     JUCE_LEAK_DETECTOR(PluginChain)

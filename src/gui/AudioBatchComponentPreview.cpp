@@ -77,8 +77,8 @@ void AudioBatchComponent::requestSeratoPreview()
 /// Never reloads playback or changes waveform geometry, gain, zoom or peak-cache data.
 void AudioBatchComponent::adoptSeratoPreview(
     const FileIdentity& identity,
-    const serato::SeratoPreviewLoader::Generation generation,
-    serato::SeratoPreviewLoader::Data data
+    const std::uint64_t generation,
+    std::shared_ptr<const serato::SeratoData> data
 )
 {
     if (seratoPreviewLoader && thumbnail != nullptr && previewPlayer.hasLoadedSource() && currentAudioUrl.isWellFormed()
@@ -144,7 +144,6 @@ void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source
 
         if (!droppedFiles.isEmpty()) {
             handleDroppedPaths(droppedFiles);
-            return;
         }
     }
 }

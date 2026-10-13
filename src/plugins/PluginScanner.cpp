@@ -25,8 +25,17 @@ constexpr auto legacyKnownPluginListPropertyKey = "knownPluginList";
 constexpr auto crashLogFileName = "audiobatch_plugin_scan_crash_log.txt";
 constexpr auto responsePollInterval = std::chrono::milliseconds(50);
 
+/// Outcome of waiting for the reply to one scan request.
+enum class PluginScanResponseState : std::uint8_t { timeout, gotResult, connectionLost };
+
+/// Reply to one scan request.
+struct PluginScanResponse {
+    PluginScanResponseState state = PluginScanResponseState::timeout;
+    std::unique_ptr<juce::XmlElement> xml;
+};
+
 /// Builds a scan request for one plugin file or identifier.
-static juce::MemoryBlock createScanRequest(const juce::String& formatName, const juce::String& fileOrIdentifier)
+juce::MemoryBlock createScanRequest(const juce::String& formatName, const juce::String& fileOrIdentifier)
 {
     juce::MemoryBlock request;
     juce::MemoryOutputStream stream(request, false);
@@ -231,17 +240,6 @@ void PluginScanWorker::sendResults(const juce::OwnedArray<juce::PluginDescriptio
     sendMessageToCoordinator({text.toRawUTF8(), text.getNumBytesAsUTF8()});
 }
 
-//==============================================================================
-
-/// Outcome of waiting for the reply to one scan request.
-enum class PluginScanResponseState : std::uint8_t { timeout, gotResult, connectionLost };
-
-/// Reply to one scan request.
-struct PluginScanResponse {
-    PluginScanResponseState state = PluginScanResponseState::timeout;
-    std::unique_ptr<juce::XmlElement> xml;
-};
-
 /// Owns one launched worker process and hands its replies to the waiting scan call.
 /// Replies and connection loss arrive on the connection thread,
 /// while the scan call waits on whichever thread KnownPluginList scans from.
@@ -386,9 +384,9 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
             return true;
         }
 
-        auto response = worker->waitForResponse();
+        auto [state, xml] = worker->waitForResponse();
 
-        switch (response.state) {
+        switch (state) {
             case PluginScanResponseState::timeout:
                 continue;
 
@@ -398,8 +396,8 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
                 return false;
 
             case PluginScanResponseState::gotResult:
-                if (response.xml != nullptr) {
-                    for (const auto* element : response.xml->getChildIterator()) {
+                if (xml != nullptr) {
+                    for (const auto* element : xml->getChildIterator()) {
                         auto description = std::make_unique<juce::PluginDescription>();
 
                         if (description->loadFromXml(*element)) {

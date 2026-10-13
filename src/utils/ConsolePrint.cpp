@@ -157,7 +157,7 @@ void printWarn(const juce::String& message)
 void printLineToConsole(const juce::String& text)
 {
 #if JUCE_WINDOWS
-    if (auto* const outputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (const auto* outputHandle = GetStdHandle(STD_OUTPUT_HANDLE);
         outputHandle == nullptr || outputHandle == INVALID_HANDLE_VALUE)
     {
         if (AttachConsole(ATTACH_PARENT_PROCESS) != 0) {

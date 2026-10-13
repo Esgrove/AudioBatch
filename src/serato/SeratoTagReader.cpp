@@ -124,7 +124,7 @@ std::optional<Overview> decodeFlacOverview(const TagLib::String& value)
 }
 
 /// Maps stable kinds to documented GEOB descriptions and native FLAC wrapper names.
-TagLib::String description(TagKind kind)
+TagLib::String description(const TagKind kind)
 {
     switch (kind) {
         case TagKind::overview:
@@ -144,7 +144,7 @@ TagLib::String description(TagKind kind)
 }
 
 /// Creates an empty outcome while retaining the requested stable kind.
-TagReadResult outcome(TagKind kind, ReadStatus status)
+TagReadResult outcome(const TagKind kind, const ReadStatus status)
 {
     TagReadResult result;
     result.kind = kind;
@@ -153,7 +153,7 @@ TagReadResult outcome(TagKind kind, ReadStatus status)
 }
 
 /// Parses one bounded GEOB object, retaining the existing Overview payload decoder.
-TagReadResult parseId3Payload(TagKind kind, const TagLib::ByteVector& payload, bool legacy)
+TagReadResult parseId3Payload(const TagKind kind, const TagLib::ByteVector& payload, const bool legacy)
 {
     auto result = outcome(kind, ReadStatus::invalid);
     if (payload.size() > maxTagPayloadBytes) {
@@ -173,8 +173,8 @@ TagReadResult parseId3Payload(TagKind kind, const TagLib::ByteVector& payload, b
 /// Searches one GEOB description, recovering malformed duplicates within the existing record bound.
 TagReadResult readId3Frames(
     const TagLib::ID3v2::Tag& tag,
-    TagKind kind,
-    bool legacy,
+    const TagKind kind,
+    const bool legacy,
     const utils::CancellationCheck& isCancelled
 )
 {
@@ -202,7 +202,7 @@ TagReadResult readId3Frames(
 }
 
 /// Prefers valid Markers2 over legacy fallback regardless of frame order, preserving earlier invalid outcomes.
-TagReadResult readId3Tag(const TagLib::ID3v2::Tag* tag, TagKind kind, const utils::CancellationCheck& isCancelled)
+TagReadResult readId3Tag(const TagLib::ID3v2::Tag* tag, const TagKind kind, const utils::CancellationCheck& isCancelled)
 {
     if (tag == nullptr) {
         return outcome(kind, ReadStatus::absent);
@@ -216,7 +216,7 @@ TagReadResult readId3Tag(const TagLib::ID3v2::Tag* tag, TagKind kind, const util
 }
 
 /// Decodes a documented FLAC wrapper with an exact MIME, filename and matching per-kind description.
-TagReadResult decodeFlacTag(TagKind kind, const TagLib::String& value, bool legacy)
+TagReadResult decodeFlacTag(const TagKind kind, const TagLib::String& value, const bool legacy)
 {
     auto result = outcome(kind, ReadStatus::invalid);
     if (kind == TagKind::overview) {
@@ -256,7 +256,7 @@ TagReadResult decodeFlacTag(TagKind kind, const TagLib::String& value, bool lega
 }
 
 /// Maps each kind to its documented native property, independent of optional FLAC ID3 tags.
-TagLib::String propertyName(TagKind kind)
+TagLib::String propertyName(const TagKind kind)
 {
     switch (kind) {
         case TagKind::overview:
@@ -278,7 +278,7 @@ TagLib::String propertyName(TagKind kind)
 /// Reads native FLAC values with independent duplicate recovery and optional legacy markers fallback.
 TagReadResult readFlacTag(
     const TagLib::PropertyMap& properties,
-    TagKind kind,
+    const TagKind kind,
     const utils::CancellationCheck& isCancelled
 )
 {
@@ -309,7 +309,7 @@ TagReadResult readFlacTag(
 }
 
 /// Validates one bounded standard property and stores the first usable tempo or musical key.
-bool readTrackInfoValue(TrackInfo& info, std::string_view name, const TagLib::String& value)
+bool readTrackInfoValue(TrackInfo& info, const std::string_view name, const TagLib::String& value)
 {
     if (value.size() > maxTagTextBytes) {
         return false;
@@ -381,10 +381,10 @@ const TagLib::ID3v2::Tag* findId3Tag(TagLib::File& file)
 
 /// Dispatches one requested kind using properties and ID3 tags borrowed from an already open file.
 TagReadResult readOpenedTag(
-    TagKind kind,
+    const TagKind kind,
     const TagLib::PropertyMap& properties,
     const TagLib::ID3v2::Tag* id3,
-    bool isFlac,
+    const bool isFlac,
     const utils::CancellationCheck& isCancelled
 )
 {
@@ -398,7 +398,7 @@ TagReadResult readOpenedTag(
 }
 
 /// Replaces supported outcomes after a file-level failure while retaining unsupported requested kinds.
-std::vector<TagReadResult> failedReads(std::vector<TagReadResult> results, ReadStatus status)
+std::vector<TagReadResult> failedReads(std::vector<TagReadResult> results, const ReadStatus status)
 {
     for (auto& result : results) {
         if (supportsTagKind(result.kind)) {
@@ -482,7 +482,7 @@ std::vector<TagReadResult> readTags(
 /// The first valid duplicate wins. Ogg and other containers are unsupported.
 /// Cancellation is checked around TagLib operations, which cannot be interrupted internally.
 /// Missing/unreadable files return ioError, never a stable absent result.
-TagReadResult readTag(const juce::File& file, TagKind kind, const utils::CancellationCheck& isCancelled)
+TagReadResult readTag(const juce::File& file, const TagKind kind, const utils::CancellationCheck& isCancelled)
 {
     const std::array kinds {kind};
     return readTags(file, kinds, isCancelled).front();

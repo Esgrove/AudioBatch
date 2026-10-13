@@ -30,10 +30,10 @@ SeratoPreviewLoader::~SeratoPreviewLoader()
 /// Replaces pending work and invalidates earlier reads and deliveries, including selection A to B to A.
 /// Invalid duration or file identity cancels prior work without scheduling a read.
 /// Called by the owner thread, never from completion.
-SeratoPreviewLoader::Generation SeratoPreviewLoader::request(const juce::File& file, const double durationSeconds)
+std::uint64_t SeratoPreviewLoader::request(const juce::File& file, const double durationSeconds)
 {
     const FileIdentity identity(file);
-    Generation nextGeneration = 0;
+    std::uint64_t nextGeneration = 0;
     {
         const std::scoped_lock lock(mutex);
         nextGeneration = ++generation;
@@ -75,7 +75,7 @@ void SeratoPreviewLoader::cancelAndWait()
 /// The GUI additionally checks its URL, reader and thumbnail before applying the returned data.
 bool SeratoPreviewLoader::canAdopt(
     const FileIdentity& identity,
-    const Generation resultGeneration,
+    const std::uint64_t resultGeneration,
     const juce::File& selectedFile
 ) const
 {
@@ -102,7 +102,7 @@ void SeratoPreviewLoader::run(const std::stop_token& stopToken)
 }
 
 /// Performs cache lookup, reading and stable persistence, checking cancellation at each boundary.
-void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std::stop_token& stopToken)
+void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std::stop_token& stopToken) const
 {
     const utils::CancellationCheck isCancelled = [this, &active, stopToken] {
         return stopToken.stop_requested() || stopped || generation != active.generation;
@@ -111,7 +111,7 @@ void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std:
         return;
     }
 
-    Data data;
+    std::shared_ptr<const SeratoData> data;
     try {
         Results results;
         std::vector<TagKind> misses;
@@ -183,7 +183,7 @@ bool SeratoPreviewLoader::readMisses(
 }
 
 /// Moves independently present values into an immutable aggregate, leaving negative kinds unset.
-SeratoPreviewLoader::Data SeratoPreviewLoader::collectData(Results& results)
+std::shared_ptr<const SeratoData> SeratoPreviewLoader::collectData(Results& results)
 {
     SeratoData loaded;
     for (auto& result : results) {
