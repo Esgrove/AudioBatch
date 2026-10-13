@@ -36,6 +36,8 @@ constexpr int topBarHeight = 34;
 constexpr int statusLabelWidth = 220;
 /// Spacing in pixels between the main sections and between the stacked preview controls.
 constexpr int sectionSpacing = 6;
+/// Height in pixels of the overall progress bar drawn in the gap above the results table.
+constexpr int overallProgressBarHeight = 3;
 
 /// Height in pixels of each row in the results table.
 constexpr int resultsTableRowHeight = 24;

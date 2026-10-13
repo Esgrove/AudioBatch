@@ -1,6 +1,6 @@
 /// Background orchestration for audio analysis runs.
 /// AnalysisCoordinator runs analysis jobs on a thread pool, serves cached results first,
-/// and publishes starting, per-result, and completion callbacks tagged with a run id
+/// and publishes starting, progress, per-result, and completion callbacks tagged with a run id
 /// so results from cancelled runs are ignored.
 
 #pragma once
@@ -43,6 +43,9 @@ public:
     /// Called right before a file's analysis begins, from the worker thread.
     using StartingCallback = std::function<void(const juce::File& file, int runId)>;
 
+    /// Called from the worker thread with the analyzed fraction of a file, throttled to a few updates per second.
+    using ProgressCallback = std::function<void(const juce::File& file, float progress, int runId)>;
+
     /// Called once per run from a worker thread, before any of its results.
     using PlanCallback = std::function<void(const AnalysisPlan& plan)>;
 
@@ -62,6 +65,7 @@ public:
     void cancelAndWait();
     void setCompletionCallback(CompletionCallback callback);
     void setPlanCallback(PlanCallback callback);
+    void setProgressCallback(ProgressCallback callback);
     void setResultCallback(ResultCallback callback);
     void setStartingCallback(StartingCallback callback);
 
@@ -69,6 +73,7 @@ private:
     void planRun(const AudioAnalysisOptions& options, int runId);
     void publishCompletion(int totalFiles, int runId) const;
     void publishPlan(const AnalysisPlan& plan, int runId) const;
+    void publishProgress(const juce::File& file, float progress, int runId) const;
     void publishResult(const AudioAnalysisRecord& result, int runId) const;
     void publishStarting(const juce::File& file, int runId) const;
 
@@ -84,6 +89,7 @@ private:
     AnalysisCache& cache;
     CompletionCallback completionCallback;
     PlanCallback planCallback;
+    ProgressCallback progressCallback;
     ResultCallback resultCallback;
     StartingCallback startingCallback;
     juce::CriticalSection callbackLock;

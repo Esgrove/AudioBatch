@@ -12,7 +12,11 @@
 
 namespace audiobatch
 {
-AudioAnalysisRecord analyzeFile(const juce::File& file, const utils::CancellationCheck& isCancelled = {});
+AudioAnalysisRecord analyzeFile(
+    const juce::File& file,
+    const utils::CancellationCheck& isCancelled = {},
+    const utils::ProgressCallback& onProgress = {}
+);
 
 juce::Array<juce::File> collectInputFiles(
     const juce::Array<juce::File>& inputPaths,

@@ -1,12 +1,13 @@
-/// Tests for FileActivityTracker, which holds the activity labels and operation messages of the results table.
-/// Covers marking files busy, clearing labels by name, and how a new operation replaces the last message.
+/// Tests for FileActivityTracker, which holds the activities, progress, and operation messages of the results table.
+/// Covers marking files busy, clearing activities by kind, progress reporting,
+/// and how a new operation replaces the last message.
 
 #include "gui/FileActivityTracker.h"
 #include "TestSuites.h"
 
 namespace audiobatch::tests
 {
-/// Checks the activity labels, the operation messages, and the repaint callback.
+/// Checks the activities, the progress, the operation messages, and the repaint callback.
 class FileActivityTests final : public juce::UnitTest
 {
 public:
@@ -21,17 +22,19 @@ public:
         int repaints = 0;
         FileActivityTracker tracker([&repaints] { ++repaints; });
 
-        beginTest("Marked files are busy with their label until cleared");
+        beginTest("Marked files are busy with their activity until cleared");
         {
-            tracker.markActive({first, second}, "Waiting");
+            tracker.markActive({first, second}, FileActivity::waiting);
             expect(tracker.isAnyActive());
+            expect(tracker.getActivity(first.getFullPathName()) == FileActivity::waiting);
             expectEquals(tracker.getActiveLabel(first.getFullPathName()), juce::String("Waiting"));
             expect(repaints > 0);
 
-            tracker.setActive(first.getFullPathName(), "Analyzing");
+            tracker.setActive(first.getFullPathName(), FileActivity::analyzing);
             expectEquals(tracker.getActiveLabel(first.getFullPathName()), juce::String("Analyzing"));
 
             tracker.clearActive(first.getFullPathName());
+            expect(!tracker.getActivity(first.getFullPathName()).has_value());
             expectEquals(tracker.getActiveLabel(first.getFullPathName()), juce::String());
             expect(tracker.isAnyActive());
 
@@ -39,14 +42,37 @@ public:
             expect(!tracker.isAnyActive());
         }
 
-        beginTest("Only the given labels are cleared");
+        beginTest("Only the given activities are cleared");
         {
-            tracker.markActive({first}, "Analyzing");
-            tracker.markActive({second}, "Normalizing");
-            tracker.clearActiveWithLabels({"Analyzing", "Waiting"});
+            tracker.markActive({first}, FileActivity::analyzing);
+            tracker.markActive({second}, FileActivity::normalizing);
+            tracker.clearActiveWithActivities({FileActivity::analyzing, FileActivity::waiting});
 
-            expectEquals(tracker.getActiveLabel(first.getFullPathName()), juce::String());
-            expectEquals(tracker.getActiveLabel(second.getFullPathName()), juce::String("Normalizing"));
+            expect(!tracker.getActivity(first.getFullPathName()).has_value());
+            expect(tracker.getActivity(second.getFullPathName()) == FileActivity::normalizing);
+            tracker.clearAllActive();
+        }
+
+        beginTest("Progress is kept for started files only and summed across them");
+        {
+            tracker.markActive({first, second}, FileActivity::waiting);
+            tracker.setProgress(first.getFullPathName(), 0.5f);
+            expect(!tracker.getActivityState(first.getFullPathName())->progress.has_value());
+
+            tracker.setActive(first.getFullPathName(), FileActivity::processing);
+            expect(!tracker.getActivityState(first.getFullPathName())->progress.has_value());
+            tracker.setProgress(first.getFullPathName(), 0.25f);
+            tracker.setActive(second.getFullPathName(), FileActivity::processing);
+            tracker.setProgress(second.getFullPathName(), 1.5f);
+
+            expectWithinAbsoluteError(*tracker.getActivityState(first.getFullPathName())->progress, 0.25f, 1.0e-6f);
+            expectWithinAbsoluteError(*tracker.getActivityState(second.getFullPathName())->progress, 1.0f, 1.0e-6f);
+            expectWithinAbsoluteError(tracker.getProgressTotal(), 1.25f, 1.0e-6f);
+
+            tracker.clearActive(first.getFullPathName());
+            tracker.setProgress(first.getFullPathName(), 0.75f);
+            expect(!tracker.getActivityState(first.getFullPathName()).has_value());
+            expectWithinAbsoluteError(tracker.getProgressTotal(), 1.0f, 1.0e-6f);
             tracker.clearAllActive();
         }
 
@@ -56,7 +82,7 @@ public:
             tracker.setMessage(second.getFullPathName(), {.text = "Could not write", .isError = true});
             expect(tracker.getMessage(second.getFullPathName()).isError);
 
-            tracker.markActive({first}, "Processing");
+            tracker.markActive({first}, FileActivity::processing);
             expectEquals(tracker.getMessage(first.getFullPathName()).text, juce::String());
             expectEquals(tracker.getMessage(second.getFullPathName()).text, juce::String("Could not write"));
 

@@ -1,7 +1,8 @@
 /// Background job coordination for batch plugin processing.
 /// Declares PluginProcessingCoordinator,
 /// which runs files through pre-instantiated plugin chains on a worker thread pool
-/// and marshals per-file results, completion, and start errors back to the message thread through callbacks.
+/// and marshals per-file starts, progress, results, completion, and start errors back to the message thread through
+/// callbacks.
 
 #pragma once
 
@@ -55,8 +56,14 @@ public:
     /// Called once after a run has published all queued results.
     using CompletionCallback = std::function<void(int totalFiles)>;
 
+    /// Called from the worker thread with the processed fraction of a file, throttled to a few updates per second.
+    using ProgressCallback = std::function<void(const juce::File& file, float progress)>;
+
     /// Called for each processed file as plugin-processing results become available.
     using ResultCallback = std::function<void(const PluginProcessingResult& result)>;
+
+    /// Called from the worker thread once a file has a plugin chain and its processing begins.
+    using StartingCallback = std::function<void(const juce::File& file)>;
 
     /// Called on the message thread when the coordinator could not start a run.
     /// Receives the error message.
@@ -75,9 +82,13 @@ public:
 
     void setCompletionCallback(CompletionCallback callback);
 
+    void setProgressCallback(ProgressCallback callback);
+
     void setResultCallback(ResultCallback callback);
 
     void setStartErrorCallback(StartErrorCallback callback);
+
+    void setStartingCallback(StartingCallback callback);
 
     int start(
         const std::vector<AudioAnalysisRecord>& records,
@@ -88,7 +99,11 @@ public:
 private:
     void publishCompletion(int totalFiles, int runId) const;
 
+    void publishProgress(const juce::File& file, float progress, int runId) const;
+
     void publishResult(const PluginProcessingResult& result, int runId) const;
+
+    void publishStarting(const juce::File& file, int runId) const;
 
     void reportStartError(const juce::String& message) const;
 
@@ -105,7 +120,9 @@ private:
     juce::CriticalSection callbackLock;
     ResultCallback resultCallback;
     CompletionCallback completionCallback;
+    ProgressCallback progressCallback;
     StartErrorCallback startErrorCallback;
+    StartingCallback startingCallback;
 
     /// Chains of the current run. Only accessed on the message thread.
     std::shared_ptr<PluginRunChains> currentChains;

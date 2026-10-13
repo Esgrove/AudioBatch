@@ -131,6 +131,56 @@ void PluginProcessingCoordinator::setStartErrorCallback(StartErrorCallback callb
     startErrorCallback = std::move(callback);
 }
 
+/// Sets the callback that is invoked with the processed fraction of each file.
+void PluginProcessingCoordinator::setProgressCallback(ProgressCallback callback)
+{
+    const juce::ScopedLock lock(callbackLock);
+    progressCallback = std::move(callback);
+}
+
+/// Sets the callback that is invoked when a file's processing begins.
+void PluginProcessingCoordinator::setStartingCallback(StartingCallback callback)
+{
+    const juce::ScopedLock lock(callbackLock);
+    startingCallback = std::move(callback);
+}
+
+/// Invokes the progress callback for one file being processed, unless the run has been superseded or cancelled.
+void PluginProcessingCoordinator::publishProgress(const juce::File& file, const float progress, const int runId) const
+{
+    if (runId != currentRunId.load()) {
+        return;
+    }
+
+    ProgressCallback callbackCopy;
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = progressCallback;
+    }
+
+    if (callbackCopy != nullptr) {
+        callbackCopy(file, progress);
+    }
+}
+
+/// Invokes the starting callback for a file whose processing begins, unless the run has been superseded or cancelled.
+void PluginProcessingCoordinator::publishStarting(const juce::File& file, const int runId) const
+{
+    if (runId != currentRunId.load()) {
+        return;
+    }
+
+    StartingCallback callbackCopy;
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = startingCallback;
+    }
+
+    if (callbackCopy != nullptr) {
+        callbackCopy(file);
+    }
+}
+
 /// Invokes the result callback for one processed file, unless the run has been superseded or cancelled.
 void PluginProcessingCoordinator::publishResult(const PluginProcessingResult& result, const int runId) const
 {
@@ -259,11 +309,20 @@ void PluginProcessingCoordinator::runFileJob(
         return;
     }
 
+    publishStarting(record.file, runId);
+    const auto onProgress = utils::makeThrottledProgress([this, &record, runId](const float progress) {
+        publishProgress(record.file, progress, runId);
+    });
+
     // Cancellation lets the worker stop waiting for the message thread,
     // which cancelAndWait blocks while it waits for the workers to finish.
-    const auto result = processFileWithPlugins(record, options, runChains.getChainView(chainIndex), [this, runId] {
-        return runId != currentRunId.load();
-    });
+    const auto result = processFileWithPlugins(
+        record,
+        options,
+        runChains.getChainView(chainIndex),
+        [this, runId] { return runId != currentRunId.load(); },
+        onProgress
+    );
     runChains.release(chainIndex);
 
     publishResult(result, runId);

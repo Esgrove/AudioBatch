@@ -389,9 +389,9 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
 
     for (const auto& removedPath : removedPaths) {
         if (analysisRun.running) {
-            const auto activeLabel = fileActivity.getActiveLabel(removedPath);
+            const auto activity = fileActivity.getActivity(removedPath);
             const auto rowIndex = findRecordIndex(removedPath);
-            const auto pending = activeLabel == "Waiting" || activeLabel == "Analyzing"
+            const auto pending = activity == FileActivity::waiting || activity == FileActivity::analyzing
                 || (rowIndex >= 0
                     && analysisResults[static_cast<std::size_t>(rowIndex)].status == AudioAnalysisStatus::pending);
 

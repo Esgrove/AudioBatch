@@ -213,7 +213,45 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
     analysisCoordinator.setStartingCallback([safeThis](const juce::File& file, const int runId) {
         juce::MessageManager::callAsync([safeThis, file, runId] {
             if (safeThis != nullptr && runId == safeThis->analysisRun.runId) {
-                safeThis->fileActivity.setActive(file.getFullPathName(), "Analyzing");
+                safeThis->fileActivity.setActive(file.getFullPathName(), FileActivity::analyzing);
+            }
+        });
+    });
+    analysisCoordinator.setProgressCallback([safeThis](const juce::File& file, const float progress, const int runId) {
+        juce::MessageManager::callAsync([safeThis, file, progress, runId] {
+            if (safeThis != nullptr && runId == safeThis->analysisRun.runId) {
+                safeThis->fileActivity.setProgress(file.getFullPathName(), progress);
+            }
+        });
+    });
+
+    // Starts arriving after a pass ended belong to no pass, so they must not mark the file busy again.
+    normalizeCoordinator.setStartingCallback([safeThis](const juce::File& file) {
+        juce::MessageManager::callAsync([safeThis, file] {
+            if (safeThis != nullptr && safeThis->normalizeProgress.inProgress) {
+                safeThis->fileActivity.setActive(file.getFullPathName(), FileActivity::normalizing);
+            }
+        });
+    });
+    normalizeCoordinator.setProgressCallback([safeThis](const juce::File& file, const float progress) {
+        juce::MessageManager::callAsync([safeThis, file, progress] {
+            if (safeThis != nullptr) {
+                safeThis->fileActivity.setProgress(file.getFullPathName(), progress);
+            }
+        });
+    });
+
+    pluginCoordinator.setStartingCallback([safeThis](const juce::File& file) {
+        juce::MessageManager::callAsync([safeThis, file] {
+            if (safeThis != nullptr && safeThis->processingProgress.inProgress) {
+                safeThis->fileActivity.setActive(file.getFullPathName(), FileActivity::processing);
+            }
+        });
+    });
+    pluginCoordinator.setProgressCallback([safeThis](const juce::File& file, const float progress) {
+        juce::MessageManager::callAsync([safeThis, file, progress] {
+            if (safeThis != nullptr) {
+                safeThis->fileActivity.setProgress(file.getFullPathName(), progress);
             }
         });
     });
@@ -245,7 +283,7 @@ AudioBatchComponent::AudioBatchComponent() :
         [this](const int row, const int columnId, const juce::MouseEvent& event) {
             handleFileContextMenuRequested(row, columnId, event);
         },
-        [this](const AudioAnalysisRecord& record) { return fileActivity.getActiveLabel(record.fullPath); },
+        [this](const AudioAnalysisRecord& record) { return fileActivity.getActivityState(record.fullPath); },
         [this](const AudioAnalysisRecord& record) { return fileActivity.getMessage(record.fullPath); },
         [] { return FileActivityTracker::getAnimationPhase(); }
     ),
@@ -326,10 +364,38 @@ AudioBatchComponent::~AudioBatchComponent()
     }
 }
 
-/// Fills the background with the look-and-feel window colour.
+/// Fills the background with the look-and-feel window colour,
+/// and draws the overall progress bar above the results table while a pass of known size runs.
 void AudioBatchComponent::paint(juce::Graphics& graphics)
 {
     graphics.fillAll(juce::LookAndFeel::getDefaultLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
+
+    if (overallProgressPermille < 0) {
+        return;
+    }
+
+    /// Converts the stored tenths of a percent to a fraction.
+    constexpr float permillePerUnit = 1000.0f;
+    /// Opacity of the unfilled track behind the overall progress bar.
+    constexpr float progressTrackAlpha = 0.25f;
+
+    const auto bar = getOverallProgressBounds().toFloat();
+    graphics.setColour(juce::CustomLookAndFeel::greyMiddle().withAlpha(progressTrackAlpha));
+    graphics.fillRect(bar);
+    graphics.setColour(juce::CustomLookAndFeel::blue());
+    graphics.fillRect(bar.withWidth(bar.getWidth() * static_cast<float>(overallProgressPermille) / permillePerUnit));
+}
+
+/// Returns the area of the thin overall progress bar, in the gap between the top bar and the results table.
+juce::Rectangle<int> AudioBatchComponent::getOverallProgressBounds() const
+{
+    const auto tableBounds = resultsTable.getBounds();
+    return {
+        tableBounds.getX(),
+        tableBounds.getY() - (layout::sectionSpacing + layout::overallProgressBarHeight) / 2,
+        tableBounds.getWidth(),
+        layout::overallProgressBarHeight,
+    };
 }
 
 /// Lays out the top bar, results table, resize bar, waveform preview, and the control column.
@@ -584,6 +650,8 @@ void AudioBatchComponent::updateProcessButtonState()
 /// Shows the most relevant progress or summary text for the current background activity.
 void AudioBatchComponent::updateStatusLabel()
 {
+    updateProgressIndicators();
+
     if (processingProgress.inProgress && processingProgress.expected > 0) {
         statusLabel.setText(
             utils::format("Processing {}/{}", processingProgress.completed, processingProgress.expected),
@@ -615,6 +683,65 @@ void AudioBatchComponent::updateStatusLabel()
     }
 
     statusLabel.setText(utils::format("Loaded {} files", analysisResults.size()), juce::dontSendNotification);
+}
+
+/// Shows the overall progress of the running analysis, normalization, or processing pass
+/// in the window title and as the thin bar above the results table, and restores the plain title when idle.
+/// The progress counts finished files plus the completed fractions of the files being worked on,
+/// so it advances smoothly within long files instead of jumping once per file.
+/// Runs on every activity animation tick, so it only touches the title and the bar when their values change.
+void AudioBatchComponent::updateProgressIndicators()
+{
+    juce::String activityName;
+    std::optional<float> fraction;
+
+    const auto getRunFraction = [this](const int completed, const int expected) -> std::optional<float> {
+        if (expected <= 0) {
+            return std::nullopt;
+        }
+
+        const auto done = static_cast<float>(completed) + fileActivity.getProgressTotal();
+        return juce::jlimit(0.0f, 1.0f, done / static_cast<float>(expected));
+    };
+
+    if (processingProgress.inProgress) {
+        activityName = "Processing";
+        fraction = getRunFraction(processingProgress.completed, processingProgress.expected);
+    } else if (normalizeProgress.inProgress) {
+        activityName = "Normalizing";
+        fraction = getRunFraction(normalizeProgress.completed, normalizeProgress.expected);
+    } else if (analysisRun.running && analysisRun.planReceived) {
+        activityName = "Analyzing";
+        fraction = getRunFraction(analysisRun.completed, analysisRun.expected);
+    } else if (analysisRun.running) {
+        activityName = "Scanning";
+    }
+
+    /// Converts a fraction to the stored tenths of a percent.
+    constexpr float permillePerUnit = 1000.0f;
+    /// Converts a fraction to the whole percent shown in the title.
+    constexpr float percentPerUnit = 100.0f;
+
+    juce::String title = ProjectInfo::projectName;
+
+    if (fraction.has_value()) {
+        title = utils::format("{} - {} {}%", title, activityName, static_cast<int>(*fraction * percentPerUnit));
+    } else if (activityName.isNotEmpty()) {
+        title = utils::format("{} - {}", title, activityName);
+    }
+
+    if (auto* window = findParentComponentOfClass<juce::DocumentWindow>();
+        window != nullptr && window->getName() != title)
+    {
+        window->setName(title);
+    }
+
+    const auto permille = fraction.has_value() ? juce::roundToInt(*fraction * permillePerUnit) : -1;
+
+    if (permille != overallProgressPermille) {
+        overallProgressPermille = permille;
+        repaint(getOverallProgressBounds());
+    }
 }
 
 /// Sorts the records by the primary and secondary sort columns.

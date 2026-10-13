@@ -94,7 +94,8 @@ struct AudioNormalizationResult {
 AudioNormalizationResult normalizeFile(
     const AudioAnalysisRecord& sourceRecord,
     const AudioNormalizationOptions& options,
-    const utils::CancellationCheck& isCancelled = {}
+    const utils::CancellationCheck& isCancelled = {},
+    const utils::ProgressCallback& onProgress = {}
 );
 
 juce::File getNormalizationOutputFile(const juce::File& sourceFile);

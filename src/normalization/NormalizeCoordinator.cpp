@@ -40,6 +40,60 @@ void NormalizeCoordinator::setCompletionCallback(CompletionCallback callback)
     completionCallback = std::move(callback);
 }
 
+/// Sets the callback that is invoked with the normalized fraction of each file.
+void NormalizeCoordinator::setProgressCallback(ProgressCallback callback)
+{
+    const juce::ScopedLock lock(callbackLock);
+    progressCallback = std::move(callback);
+}
+
+/// Sets the callback that is invoked right before each file's normalization begins.
+void NormalizeCoordinator::setStartingCallback(StartingCallback callback)
+{
+    const juce::ScopedLock lock(callbackLock);
+    startingCallback = std::move(callback);
+}
+
+/// Invokes the progress callback when the given run id is still current.
+/// Runs on the worker thread while a file is being normalized.
+void NormalizeCoordinator::publishProgress(const juce::File& file, const float progress, const int runId) const
+{
+    if (runId != currentRunId.load()) {
+        return;
+    }
+
+    ProgressCallback callbackCopy;
+
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = progressCallback;
+    }
+
+    if (callbackCopy != nullptr) {
+        callbackCopy(file, progress);
+    }
+}
+
+/// Invokes the starting callback when the given run id is still current.
+/// Runs on the worker thread right before a file's normalization begins.
+void NormalizeCoordinator::publishStarting(const juce::File& file, const int runId) const
+{
+    if (runId != currentRunId.load()) {
+        return;
+    }
+
+    StartingCallback callbackCopy;
+
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = startingCallback;
+    }
+
+    if (callbackCopy != nullptr) {
+        callbackCopy(file);
+    }
+}
+
 /// Invokes the result callback when the given run id is still current.
 /// Runs on the worker thread, so the callback must marshal to the message thread itself if needed.
 void NormalizeCoordinator::publishResult(const AudioNormalizationResult& result, const int runId) const
@@ -145,8 +199,15 @@ int NormalizeCoordinator::start(
                     AudioNormalizationResult::failure(record.file, batchOutputConflictMessage(record.file)), runId
                 );
             } else {
+                publishStarting(record.file, runId);
+                const auto onProgress = utils::makeThrottledProgress([this, &record, runId](const float progress) {
+                    publishProgress(record.file, progress, runId);
+                });
                 publishResult(
-                    normalizeFile(record, options, [this, runId] { return runId != currentRunId.load(); }), runId
+                    normalizeFile(
+                        record, options, [this, runId] { return runId != currentRunId.load(); }, onProgress
+                    ),
+                    runId
                 );
             }
 

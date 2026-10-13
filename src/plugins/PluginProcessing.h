@@ -116,6 +116,7 @@ PluginProcessingResult processFileWithPlugins(
     const AudioAnalysisRecord& sourceRecord,
     const PluginProcessingOptions& options,
     const std::vector<juce::AudioPluginInstance*>& chainInstances,
-    const utils::CancellationCheck& isCancelled = {}
+    const utils::CancellationCheck& isCancelled = {},
+    const utils::ProgressCallback& onProgress = {}
 );
 }  // namespace audiobatch

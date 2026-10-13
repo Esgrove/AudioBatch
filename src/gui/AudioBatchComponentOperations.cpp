@@ -90,9 +90,9 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
     bool resultsChanged = false;
 
     for (auto& record : analysisResults) {
-        const auto activeStatus = fileActivity.getActiveLabel(record.fullPath);
-        const auto needsRefresh
-            = activeStatus == "Analyzing" || activeStatus == "Waiting" || record.status == AudioAnalysisStatus::pending;
+        const auto activity = fileActivity.getActivity(record.fullPath);
+        const auto needsRefresh = activity == FileActivity::analyzing || activity == FileActivity::waiting
+            || record.status == AudioAnalysisStatus::pending;
 
         if (!needsRefresh) {
             continue;
@@ -113,7 +113,7 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
         resultsChanged = true;
     }
 
-    fileActivity.clearActiveWithLabels({"Analyzing", "Waiting"});
+    fileActivity.clearActiveWithActivities({FileActivity::analyzing, FileActivity::waiting});
 
     analysisRun.completed = analysisRun.expected;
 
@@ -390,7 +390,8 @@ void AudioBatchComponent::normalizeSelectedRecords()
         return;
     }
 
-    fileActivity.markActive(filesToNormalize, "Normalizing");
+    // Each file switches to normalizing when a worker picks it up.
+    fileActivity.markActive(filesToNormalize, FileActivity::waiting);
 
     updateStatusLabel();
 }
@@ -499,7 +500,7 @@ void AudioBatchComponent::handleAnalysisPlan(const AnalysisPlan& plan)
     sortResults();
     resultsTable.updateContent();
     updateResultsTableColumnWidths();
-    fileActivity.markActive(plan.staleFiles, "Waiting");
+    fileActivity.markActive(plan.staleFiles, FileActivity::waiting);
 
     statusLabel.setText(
         utils::format("Analyzing {}/{}", analysisRun.completed, analysisRun.expected), juce::dontSendNotification
@@ -533,11 +534,13 @@ juce::String AudioBatchComponent::getFileOperationBlockedReason() const
     return {};
 }
 
-/// True when the file is being normalized or processed right now.
+/// True when the file is being normalized or processed right now, or is queued to be.
+/// Analysis never runs alongside normalization or processing, so a waiting file during either pass is queued for it.
 bool AudioBatchComponent::isFileBeingRewritten(const juce::String& fullPath) const
 {
-    const auto activeLabel = fileActivity.getActiveLabel(fullPath);
-    return activeLabel == "Normalizing" || activeLabel == "Processing";
+    const auto activity = fileActivity.getActivity(fullPath);
+    return activity == FileActivity::normalizing || activity == FileActivity::processing
+        || (activity == FileActivity::waiting && isFileOperationInProgress());
 }
 
 /// Shows a non-blocking warning dialog titled "Plugin Processing" with the given message.
@@ -676,7 +679,8 @@ void AudioBatchComponent::processSelectedRecords()
         return;
     }
 
-    fileActivity.markActive(filesToProcess, "Processing");
+    // Each file switches to processing when a worker picks it up with a free plugin chain.
+    fileActivity.markActive(filesToProcess, FileActivity::waiting);
     updateStatusLabel();
 }
 
