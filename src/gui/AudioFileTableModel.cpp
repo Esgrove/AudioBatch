@@ -24,7 +24,7 @@ constexpr int pathMaximumWidth = 1200;
 /// Shared maximum width of the Type, Bitrate, Rate, and metric columns in pixels.
 constexpr int metricMaximumWidth = 160;
 /// Maximum width of the Status column in pixels.
-constexpr int statusMaximumWidth = 200;
+constexpr int statusMaximumWidth = 800;
 }  // namespace column_limits
 
 /// Inner radius of the activity indicator arc as a proportion of the outer radius,
