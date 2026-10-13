@@ -506,7 +506,8 @@ void PluginChain::openEditorForSlot(const int index)
     launchOptions.content.setOwned(editor);
     launchOptions.escapeKeyTriggersCloseButton = true;
     launchOptions.useNativeTitleBar = true;
-    launchOptions.resizable = false;
+    launchOptions.resizable = editor->isResizable();
+    launchOptions.useBottomRightCornerResizer = false;
     launchOptions.dialogBackgroundColour = juce::CustomLookAndFeel::greySemiDark();
 
     entry.editorWindow = launchOptions.create();
