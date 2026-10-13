@@ -299,7 +299,7 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, "Unsupported audio format");
     }
 
-    std::unique_ptr<juce::AudioFormatReader> const reader(formatManager.createReaderFor(file));
+    const auto reader = utils::createAudioReader(file);
 
     if (reader == nullptr) {
         return failNormalization(file, "Unsupported or unreadable audio file");

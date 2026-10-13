@@ -9,6 +9,7 @@
 #include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
+#include <string_view>
 
 #include <algorithm>
 #include <atomic>
@@ -292,6 +293,63 @@ public:
             expectEquals(reported.back(), 1.0f);
             expect(std::ranges::is_sorted(reported));
             expect(utils::makeThrottledProgress({}) == nullptr);
+        }
+
+        beginTest("Padded MP3 frames without a frame-count header have an exact readable length");
+        {
+            TemporaryDirectory temporary;
+            const auto file = temporary.copyFixture("sine_stereo_44100_320k.mp3");
+            juce::MemoryBlock data;
+            expect(file.loadFileAsData(data));
+            auto* bytes = static_cast<char*>(data.getData());
+
+            for (const std::string_view marker : {"Info", "Xing"}) {
+                const auto found = std::search(bytes, bytes + data.getSize(), marker.begin(), marker.end());
+                if (found != bytes + data.getSize()) {
+                    std::fill_n(found, marker.size(), '\0');
+                }
+            }
+
+            expect(file.replaceWithData(data.getData(), data.getSize()));
+            auto reader = utils::createAudioReader(file);
+            expect(reader != nullptr);
+
+            if (reader != nullptr) {
+                expectEquals(reader->lengthInSamples, juce::int64(41 * 1152));
+                juce::AudioBuffer<float> buffer(2, 512);
+                for (juce::int64 position = 0; position < reader->lengthInSamples; position += 512) {
+                    const auto samples
+                        = static_cast<int>(juce::jmin<juce::int64>(512, reader->lengthInSamples - position));
+                    expect(utils::readFloatSamples(*reader, buffer.getArrayOfWritePointers(), 2, position, samples));
+                }
+            }
+
+            reader.reset();
+            juce::MemoryBlock trailingTag(128, true);
+            std::copy_n("TAG", 3, static_cast<char*>(trailingTag.getData()));
+            data.append(trailingTag.getData(), trailingTag.getSize());
+            expect(file.replaceWithData(data.getData(), data.getSize()));
+            reader = utils::createAudioReader(file);
+            expect(reader != nullptr);
+            if (reader != nullptr) {
+                expectEquals(reader->lengthInSamples, juce::int64(41 * 1152));
+            }
+        }
+
+        beginTest("Readers retain indexed MP3 and PCM lengths and reject unreadable files");
+        {
+            for (const auto* fixtureName : {"sine_stereo_44100_320k.mp3", "sine_stereo_44100_16.aif"}) {
+                const auto file = fixtureFile(fixtureName);
+                const std::unique_ptr<juce::AudioFormatReader> original(
+                    utils::threadLocalFormatManager().createReaderFor(file)
+                );
+                const auto reader = utils::createAudioReader(file);
+                expect(original != nullptr && reader != nullptr);
+                if (original != nullptr && reader != nullptr) {
+                    expectEquals(reader->lengthInSamples, original->lengthInSamples);
+                }
+            }
+            expect(utils::createAudioReader(fixtureFile("broken.wav")) == nullptr);
         }
 
         beginTest("A failed read from a fixed-point reader leaves silence instead of raw integers");

@@ -4,6 +4,7 @@
 
 #include "gui/AudioPreviewPlayer.h"
 
+#include "utils/AudioFormatUtils.h"
 #include "utils/Log.h"
 
 namespace audiobatch
@@ -64,9 +65,11 @@ bool AudioPreviewPlayer::load(const juce::URL& audioUrl)
 {
     release();
 
-    auto* reader = formatManager.createReaderFor(
-        audioUrl.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress))
-    );
+    auto* reader = audioUrl.isLocalFile()
+        ? utils::createAudioReader(audioUrl.getLocalFile()).release()
+        : formatManager.createReaderFor(
+              audioUrl.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress))
+          );
 
     if (reader == nullptr) {
         return false;

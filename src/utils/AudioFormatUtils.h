@@ -1,5 +1,5 @@
 /// Audio format helpers shared by analysis, normalization, and plugin processing.
-/// Declares the per-thread format manager, the AIFF writer lookup,
+/// Declares the per-thread format manager, readers with exact unindexed MP3 lengths, the AIFF writer lookup,
 /// the float sample read shared by the decode loops, the validation of written output,
 /// the conversion of AIFF reader metadata for the AIFF writer, and peak magnitude math.
 
@@ -10,6 +10,7 @@
 #include <JuceHeader.h>
 
 #include <cmath>
+#include <memory>
 
 namespace audiobatch::utils
 {
@@ -22,6 +23,7 @@ template<typename Value>
 
 juce::AudioFormat* findAiffFormat(const juce::AudioFormatManager& formatManager);
 juce::AudioFormatManager& threadLocalFormatManager();
+std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& file);
 
 juce::String validateWrittenAudio(
     juce::AudioFormatManager& formatManager,

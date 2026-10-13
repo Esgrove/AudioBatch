@@ -2,9 +2,13 @@
 
 #include "utils/AudioFormatUtils.h"
 
+#include "utils/AudioMetadata.h"
+#include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 
 #include <memory>
+#include <mpegfile.h>
+#include <mpegheader.h>
 #include <span>
 #include <utility>
 
@@ -32,6 +36,55 @@ juce::AudioFormat* findAiffFormat(const juce::AudioFormatManager& formatManager)
     }
 
     return formatManager.findFormatForFileExtension("aiff");
+}
+
+/// Opens an audio reader and corrects the estimated length of MPEG-1 Layer III files without a VBR header.
+/// JUCE estimates their frame count using one frame's byte size, which ignores varying frame padding and trailing tags.
+/// Counting complete, contiguous frames avoids decoding past the audio during small-block plugin processing.
+/// Files with a frame-count header retain the decoder's length, as do damaged or unsupported MPEG streams.
+std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& file)
+{
+    std::unique_ptr<juce::AudioFormatReader> reader(threadLocalFormatManager().createReaderFor(file));
+
+    if (reader == nullptr || !isMp3File(file)) {
+        return reader;
+    }
+
+    const auto fullPath = file.getFullPathName();
+    TagLib::MPEG::File mpegFile(tagLibFileName(fullPath));
+    const auto* properties = mpegFile.audioProperties();
+
+    if (!mpegFile.isValid() || properties == nullptr || properties->xingHeader() != nullptr
+        || properties->version() != TagLib::MPEG::Header::Version1 || properties->layer() != 3)
+    {
+        return reader;
+    }
+
+    const auto firstFrame = mpegFile.firstFrameOffset();
+    const auto lastFrame = mpegFile.lastFrameOffset();
+
+    if (firstFrame < 0 || lastFrame < firstFrame) {
+        return reader;
+    }
+
+    juce::int64 sampleCount = 0;
+
+    for (auto position = firstFrame; position <= lastFrame;) {
+        const TagLib::MPEG::Header header(&mpegFile, position, false);
+
+        if (!header.isValid() || header.version() != TagLib::MPEG::Header::Version1 || header.layer() != 3
+            || header.sampleRate() != properties->sampleRate() || header.frameLength() <= 0
+            || position + header.frameLength() > mpegFile.length())
+        {
+            return reader;
+        }
+
+        sampleCount += header.samplesPerFrame();
+        position += header.frameLength();
+    }
+
+    reader->lengthInSamples = sampleCount;
+    return reader;
 }
 
 /// Reads back a freshly written audio file and checks that it has the expected channel count,
