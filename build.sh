@@ -23,6 +23,9 @@ OPTIONS: All options are optional
     -b | --build-type <type>
         Specify build type for CMake. Default is 'Release'.
 
+    -t | --test
+        Also build and run the tests.
+
     -v | --verbose
         Display commands being executed.
 "
@@ -37,6 +40,7 @@ init_options() {
     USE_NINJA=false
     USE_XCODE=false
     REUSE_BUILD_DIR=false
+    RUN_TESTS=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -56,6 +60,9 @@ init_options() {
             -b | --build-type)
                 BUILD_TYPE="$2"
                 shift
+                ;;
+            -t | --test)
+                RUN_TESTS=true
                 ;;
             -v | --verbose)
                 set -x
@@ -280,3 +287,10 @@ else
 fi
 
 build_app
+
+if [ "$RUN_TESTS" = true ]; then
+    print_magenta "Building tests..."
+    cmake --build "$CMAKE_BUILD_DIR" --target AudioBatchTests --config "$BUILD_TYPE"
+    print_magenta "Running tests..."
+    ctest --test-dir "$CMAKE_BUILD_DIR" --build-config "$BUILD_TYPE" --output-on-failure --no-tests=error
+fi
