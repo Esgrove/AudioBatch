@@ -84,8 +84,7 @@ int clampChannelCount(const int channels)
 /// Returns true when the file's format can be read for processing.
 bool canProcessFileWithPlugins(const juce::File& file)
 {
-    auto& formatManager = utils::threadLocalFormatManager();
-    const std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+    const auto reader = utils::createAudioReader(file);
     return reader != nullptr;
 }
 
@@ -632,7 +631,7 @@ PluginProcessingResult processFileWithPlugins(
     }
 
     auto& formatManager = utils::threadLocalFormatManager();
-    std::unique_ptr<juce::AudioFormatReader> const reader(formatManager.createReaderFor(file));
+    const auto reader = utils::createAudioReader(file);
 
     if (reader == nullptr) {
         return fail(file, "Unsupported or unreadable audio file");

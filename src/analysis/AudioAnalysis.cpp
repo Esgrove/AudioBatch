@@ -401,8 +401,7 @@ AudioAnalysisRecord analyzeFile(
         return failAnalysis(std::move(record), "File does not exist");
     }
 
-    auto& formatManager = utils::threadLocalFormatManager();
-    std::unique_ptr<juce::AudioFormatReader> const reader(formatManager.createReaderFor(file));
+    const auto reader = utils::createAudioReader(file);
 
     if (reader == nullptr) {
         return failAnalysis(std::move(record), "Unsupported or unreadable audio file");
