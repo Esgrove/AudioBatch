@@ -131,9 +131,10 @@ Tests:
   Focus on what the function does and why, and document non-obvious behaviour,
   side effects, threading constraints, and ownership rules.
   Do not simply restate the signature in prose.
-  Document a function where it is declared:
-  on the declaration in the header for class members,
-  and on the definition for free and file-local functions in `.cpp` files.
+  Document a function on its definition in the `.cpp` file when the header has a matching `.cpp`.
+  Do not repeat the docstring on the declaration in the header.
+  Header-only code, inline functions, and templates are documented where they are defined.
+  Types, enums, aliases, constants, and data members keep their docs in the header.
 - Prefer full names instead of abbreviations in identifiers,
   for example `directories` instead of `dirs` and `description` instead of `desc`.
   Established domain terms and API names (`midi`, `xml`, `id`, `dB`) are fine.
@@ -156,6 +157,18 @@ Tests:
   `utils::logError("Analysis failed for {}: {}", path.quoted(), message)`.
   Do not wrap the message in a `utils::format` call first.
 
+## Code Organization
+
+The detailed rules are in `.agents/rules/code-organization.md`.
+`.claude/rules` is a symlink to `.agents/rules`, so Claude Code reads the same files.
+
+- Declare enums first, then structs, then classes.
+- Within a class or struct, put `public` before `protected` before `private`.
+- Put member functions before data members.
+- Group functions and variables by return type and topic.
+- Use `constexpr` and `consteval` whenever possible.
+- Include order is handled by clang-format, so do not sort includes by hand.
+
 ## Build And Verification
 
 - Do not use `build.sh`, it is only for making final release builds.
@@ -163,6 +176,10 @@ Tests:
   so terminal builds reuse the same build directory as the editor or IDE.
 - On macOS, use `cmake --preset macos-debug` then `cmake --build --preset macos-debug`.
 - On Windows, prefer `cmake --preset windows-debug` then `cmake --build --preset windows-debug`.
+- To run the tests under AddressSanitizer and UndefinedBehaviorSanitizer,
+  use `cmake --preset macos-asan`, `cmake --build --preset macos-asan`,
+  then run `ctest --test-dir cmake-build-mac-asan --output-on-failure`.
+  The `AUDIOBATCH_SANITIZE` CMake option takes a comma separated list such as `address,undefined`.
 - If you need Ninja and `compile_commands.json` on Windows,
   use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
 - Both `AudioBatch` and `AudioBatchCli` build with warnings as errors, so all warnings must be resolved.
