@@ -1,6 +1,7 @@
 /// Deterministic lifecycle tests for bounded asynchronous Serato preview loading.
 /// Injected readers and queued deliveries exercise cancellation, identity validation and cache restart.
-/// All files and databases live in temporary directories, with no local music or sibling repository dependency.
+/// All files and databases live in temporary directories,
+/// with no local music or sibling repository dependency.
 
 #include "serato/SeratoPreviewLoader.h"
 #include "TestHelpers.h"
@@ -10,8 +11,10 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <cstdint>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <sqlite3.h>
 #include <vector>
@@ -24,8 +27,8 @@ using serato::SeratoPreviewLoader;
 /// Captures a worker completion without adopting it, like a queued message-thread callback.
 struct PreviewDelivery {
     FileIdentity identity;
-    SeratoPreviewLoader::Generation generation;
-    SeratoPreviewLoader::Data data;
+    std::uint64_t generation;
+    std::shared_ptr<const serato::SeratoData> data;
 };
 
 /// Builds representative owned values for every independently cached kind.
@@ -51,18 +54,25 @@ static serato::TagReadResult previewResult(const serato::TagKind kind, const Rea
             result.beatGrid = serato::BeatGrid {{{.positionSeconds = 0.5, .beatsUntilNext = 0, .bpm = 128.0}}};
             break;
         case serato::TagKind::markers:
-            result.markers = serato::Markers {
-                .cues = {{.positionMilliseconds = 1000, .index = 2, .colour = juce::Colours::red, .name = "Intro"}},
-                .loops
-                = {{.startMilliseconds = 2000,
+            result.markers = serato::Markers{
+        .cues = {{.positionMilliseconds = 1000,
+                  .index = 2,
+                  .colour = juce::Colours::red,
+                  .name = "Intro"}},
+        .loops =
+            {
+                {
+                    .startMilliseconds = 2000,
                     .endMilliseconds = 4000,
                     .index = 1,
                     .colour = juce::Colours::green,
                     .locked = true,
-                    .name = "Loop",},},
-                .colour = juce::Colours::blue,
-                .bpmLocked = false,
-            };
+                    .name = "Loop",
+                },
+            },
+        .colour = juce::Colours::blue,
+        .bpmLocked = false,
+    };
             break;
         case serato::TagKind::trackInfo:
             result.trackInfo = serato::TrackInfo {.bpm = 128.0, .key = "Am"};
@@ -111,9 +121,7 @@ public:
     SeratoPreviewLoader::Completion completion()
     {
         return [this](
-                   FileIdentity identity,
-                   const SeratoPreviewLoader::Generation generation,
-                   SeratoPreviewLoader::Data data
+                   FileIdentity identity, const std::uint64_t generation, std::shared_ptr<const serato::SeratoData> data
                ) {
             const std::scoped_lock lock(mutex);
             deliveries.push_back({.identity = std::move(identity), .generation = generation, .data = std::move(data)});
@@ -136,7 +144,7 @@ public:
     }
 
     /// Waits for the exact latest generation even if an intervening completion was also queued.
-    bool waitForGeneration(const SeratoPreviewLoader::Generation generation)
+    bool waitForGeneration(const std::uint64_t generation)
     {
         std::unique_lock lock(mutex);
         return condition.wait_for(lock, watchdog, [this, generation] {
@@ -404,8 +412,8 @@ private:
 
     /// Verifies identical owned overview values after restart, or absent aggregates for stable negatives.
     void expectRestartData(
-        const SeratoPreviewLoader::Data& original,
-        const SeratoPreviewLoader::Data& restarted,
+        const std::shared_ptr<const serato::SeratoData>& original,
+        const std::shared_ptr<const serato::SeratoData>& restarted,
         const ReadStatus status
     )
     {
@@ -566,7 +574,7 @@ private:
     }
 
     /// Verifies the complete immutable aggregate and the representative values returned by the batch probe.
-    void expectEveryKind(const SeratoPreviewLoader::Data& data)
+    void expectEveryKind(const std::shared_ptr<const serato::SeratoData>& data)
     {
         expect(data != nullptr);
         if (!data) {
