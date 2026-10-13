@@ -1,9 +1,11 @@
 /// Entry point for the AudioBatch test executable.
-/// Runs every test suite through juce::UnitTestRunner and returns a non-zero exit code when any test fails,
-/// which is what CTest checks.
+/// Registers the JUCE suites with GoogleTest for automatic CTest discovery and filtering.
+/// Each discovered test runs its suite through juce::UnitTestRunner and reports any failures to GoogleTest.
 
 #include "TestSuites.h"
 #include "utils/StringFormat.h"
+
+#include <gtest/gtest.h>
 
 #include <cstdio>
 #include <memory>
@@ -22,8 +24,40 @@ protected:
     }
 };
 
-/// Runs all test suites and returns 1 when any test failed, otherwise 0.
-int main()
+namespace audiobatch::tests
+{
+/// Adapts a registered JUCE suite to GoogleTest without changing its assertions or fixtures.
+class JuceSuiteTest : public testing::Test
+{
+public:
+    /// Refers to a suite owned by main for the entire test run.
+    explicit JuceSuiteTest(juce::UnitTest& testSuite) : suite(testSuite) {}
+
+protected:
+    /// Runs the suite and forwards its total failure count to GoogleTest.
+    void TestBody() override
+    {
+        juce::Array<juce::UnitTest*> tests;
+        tests.add(&suite);
+        juce::UnitTestRunner runner;
+        runner.setAssertOnFailure(false);
+        runner.runTests(tests);
+
+        int failures = 0;
+        for (int index = 0; index < runner.getNumResults(); ++index) {
+            failures += runner.getResult(index)->failures;
+        }
+
+        EXPECT_EQ(failures, 0);
+    }
+
+private:
+    juce::UnitTest& suite;
+};
+}  // namespace audiobatch::tests
+
+/// Registers all compiled suites and delegates discovery, selection and results to GoogleTest.
+int main(int argumentCount, char* arguments[])
 {
     const juce::ScopedJuceInitialiser_GUI juceInitialiser;
 
@@ -48,20 +82,17 @@ int main()
     suites.push_back(audiobatch::tests::createSeratoPreviewTests());
     suites.push_back(audiobatch::tests::createUtilsTests());
 
-    juce::Array<juce::UnitTest*> tests;
     for (const auto& suite : suites) {
-        tests.add(suite.get());
+        const auto name = suite->getName().replaceCharacter(' ', '_');
+        testing::RegisterTest(
+            "AudioBatch", name.toRawUTF8(), nullptr, nullptr, __FILE__, __LINE__, [testSuite = suite.get()] {
+                return new audiobatch::tests::JuceSuiteTest(*testSuite);
+            }
+        );
     }
 
-    juce::UnitTestRunner runner;
-    runner.setAssertOnFailure(false);
-    runner.runTests(tests);
-
-    int failures = 0;
-    for (int index = 0; index < runner.getNumResults(); ++index) {
-        failures += runner.getResult(index)->failures;
-    }
-
+    testing::InitGoogleTest(&argumentCount, arguments);
+    const auto exitCode = RUN_ALL_TESTS();
     juce::Logger::setCurrentLogger(nullptr);
-    return failures > 0 ? 1 : 0;
+    return exitCode;
 }

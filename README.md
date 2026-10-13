@@ -63,6 +63,7 @@ Future loop and beatgrid overlays should use playback seconds rather than the Ov
 - [libebur128](https://github.com/jiixyj/libebur128)
 - [TagLib](https://taglib.org/) for cross-format metadata handling.
 - [{fmt}](https://github.com/fmtlib/fmt) for string formatting.
+- [GoogleTest](https://github.com/google/googletest) for test discovery and filtering, linked only into the tests.
 
 `SQLite3` is resolved through CMake.
 If a system `SQLite3` package is available it will be used,
@@ -111,6 +112,8 @@ cmake --build --preset macos-debug
 ```
 
 Add `-t` or `--test` to also build and run the tests in the selected build configuration.
+The script configures GoogleTest and the test target only when this flag is set.
+For direct CMake builds, use `-DBUILD_TESTING=OFF` to skip all test setup.
 
 This produces two binaries:
 
@@ -130,6 +133,8 @@ Formatting and linting run through scripts in the repository root:
 - `ctest --test-dir cmake-build-mac-debug --output-on-failure` runs the unit and integration tests
   after a debug build.
   They use the audio fixtures in `tests/fixtures`, which `tests/fixtures/generate.sh` regenerates with ffmpeg.
+  GoogleTest adapts the existing JUCE suites, and CMake discovers them automatically with `gtest_discover_tests`.
+  Each suite has its own CTest pass/fail line. Detailed test logs are shown only on failure.
 - `.pre-commit-config.yaml` runs the basic file checks, clang-format, and cmake-format through [prek](https://prek.j178.dev).
 
 The project sources compile with warnings as errors and a stricter warning set than the JUCE defaults.
