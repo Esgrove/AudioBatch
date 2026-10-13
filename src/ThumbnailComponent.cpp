@@ -11,6 +11,8 @@
 
 #include <JuceHeader.h>
 
+#include <algorithm>
+
 namespace
 {
 /// Alpha of the white playback position marker drawn over the waveform.
@@ -32,12 +34,18 @@ constexpr double horizontalScrollStepRatio {0.10};
 constexpr double zoomStartAnchorRatio {0.05};
 
 /// Fixed cue arrow dimensions keep overlays readable without changing waveform channel bounds.
-constexpr float cueArrowHeight {12.0f};
+constexpr float cueArrowHeight {8.0f};
 constexpr float cueArrowWidth {10.0f};
 constexpr float cueArrowOutlineWidth {1.5f};
 constexpr float cueArrowOutlineAlpha {0.8f};
-constexpr float cueArrowShaftRatio {1.0f / 3.0f};
 constexpr double millisecondsPerSecond {1000.0};
+
+/// Number of Serato hot cue slots reachable with the number keys 1 to 8.
+constexpr int hotCueSlotCount {8};
+
+/// Alpha and width of the outline drawn while the waveform has keyboard focus.
+constexpr float focusOutlineAlpha {0.6f};
+constexpr float focusOutlineWidth {1.0f};
 }  // namespace
 
 ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source) :
@@ -48,6 +56,7 @@ ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, 
 
     currentPositionMarker.setFill(juce::Colours::white.withAlpha(positionMarkerAlpha));
     addAndMakeVisible(currentPositionMarkerComponent);
+    setWantsKeyboardFocus(true);
 }
 
 ThumbnailComponent::~ThumbnailComponent()
@@ -78,6 +87,11 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
     } else {
         graphics.setFont(placeholderFontHeight);
         graphics.drawFittedText("No audio file selected", getLocalBounds(), juce::Justification::centred, 2);
+    }
+
+    if (hasKeyboardFocus(false)) {
+        graphics.setColour(juce::CustomLookAndFeel::blue().withAlpha(focusOutlineAlpha));
+        graphics.drawRect(getLocalBounds().toFloat(), focusOutlineWidth);
     }
 }
 
@@ -228,7 +242,51 @@ void ThumbnailComponent::filesDropped(const juce::StringArray& files, int /*x*/,
 
 void ThumbnailComponent::mouseDown(const juce::MouseEvent& event)
 {
+    grabKeyboardFocus();
     mouseDrag(event);
+}
+
+bool ThumbnailComponent::keyPressed(const juce::KeyPress& key)
+{
+    const auto modifiers = key.getModifiers();
+    const auto character = key.getTextCharacter();
+    if (modifiers.isCommandDown() || modifiers.isCtrlDown() || modifiers.isAltDown() || character < '1'
+        || character >= '1' + hotCueSlotCount)
+    {
+        return false;
+    }
+
+    jumpToHotCue(static_cast<int>(character - '1'));
+    return true;
+}
+
+void ThumbnailComponent::focusGained(const FocusChangeType /*cause*/)
+{
+    repaint();
+}
+
+void ThumbnailComponent::focusLost(const FocusChangeType /*cause*/)
+{
+    repaint();
+}
+
+void ThumbnailComponent::jumpToHotCue(const int slot)
+{
+    if (!seratoMarkers || thumbnail.getTotalLength() <= 0.0) {
+        return;
+    }
+
+    const auto cue = std::ranges::find_if(seratoMarkers->cues, [slot](const auto& candidate) {
+        return static_cast<int>(candidate.index) == slot;
+    });
+    if (cue == seratoMarkers->cues.end()) {
+        return;
+    }
+
+    const auto seconds = static_cast<double>(cue->positionMilliseconds) / millisecondsPerSecond;
+    transportSource.setPosition(juce::jlimit(0.0, thumbnail.getTotalLength(), seconds));
+    transportSource.start();
+    updateCursorPosition();
 }
 
 void ThumbnailComponent::mouseDoubleClick(const juce::MouseEvent& /*event*/)
@@ -372,7 +430,7 @@ void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
     const juce::Graphics::ScopedSaveState savedState(graphics);
     graphics.reduceClipRegion(bounds);
     const auto arrowHeight = std::min(cueArrowHeight, static_cast<float>(bounds.getHeight()) / 4.0f);
-    const auto arrowWidth = std::min(cueArrowWidth, arrowHeight);
+    const auto halfWidth = std::min(cueArrowWidth, arrowHeight * cueArrowWidth / cueArrowHeight) / 2.0f;
     for (const auto& cue : seratoMarkers->cues) {
         const auto seconds = static_cast<double>(cue.positionMilliseconds) / millisecondsPerSecond;
         if (seconds > thumbnail.getTotalLength() || seconds < visibleRange.getStart()
@@ -384,17 +442,21 @@ void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
         const auto top = static_cast<float>(bounds.getY());
         const auto bottom = static_cast<float>(bounds.getBottom());
         juce::Path arrows;
-        arrows.addArrow(
-            {horizontalPosition, top, horizontalPosition, top + arrowHeight},
-            arrowWidth * cueArrowShaftRatio,
-            arrowWidth,
-            arrowHeight / 2.0f
+        arrows.addTriangle(
+            horizontalPosition - halfWidth,
+            top,
+            horizontalPosition + halfWidth,
+            top,
+            horizontalPosition,
+            top + arrowHeight
         );
-        arrows.addArrow(
-            {horizontalPosition, bottom, horizontalPosition, bottom - arrowHeight},
-            arrowWidth * cueArrowShaftRatio,
-            arrowWidth,
-            arrowHeight / 2.0f
+        arrows.addTriangle(
+            horizontalPosition - halfWidth,
+            bottom,
+            horizontalPosition + halfWidth,
+            bottom,
+            horizontalPosition,
+            bottom - arrowHeight
         );
         graphics.setColour(juce::Colours::black.withAlpha(cueArrowOutlineAlpha));
         graphics.strokePath(arrows, juce::PathStrokeType(cueArrowOutlineWidth));

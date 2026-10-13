@@ -81,6 +81,7 @@ public:
     {
         testCueArrows();
         testCueReset();
+        testHotCueKeys();
         testTrackInfo();
     }
 
@@ -118,13 +119,16 @@ private:
             }
         }
         thumbnail.setDisplayGain(1.0f);
+        // Each arrow is widest at the waveform edge and narrows towards its tip at the centre.
         const auto full = renderPreview(thumbnail);
         expect(full.getPixelAt(130, 3) == colour);
-        expect(full.getPixelAt(132, 9) == colour);
-        expect(full.getPixelAt(132, 3) != colour);
+        expect(full.getPixelAt(132, 3) == colour);
+        expect(full.getPixelAt(130, 7) == colour);
+        expect(full.getPixelAt(132, 7) != colour);
         expect(full.getPixelAt(130, 100) == colour);
-        expect(full.getPixelAt(132, 94) == colour);
-        expect(full.getPixelAt(132, 100) != colour);
+        expect(full.getPixelAt(132, 100) == colour);
+        expect(full.getPixelAt(130, 96) == colour);
+        expect(full.getPixelAt(132, 96) != colour);
 
         beginTest("Millisecond cues stay aligned through zoom and pan, and outside cues are clipped");
         thumbnail.setRange({0.25, 0.75});
@@ -182,6 +186,43 @@ private:
         thumbnail.setURL({});
         expectEquals(colourPixels(renderPreview(thumbnail), colour), 0);
         expect(!thumbnail.loadFromCacheData({}));
+    }
+
+    /// Maps the number keys to Serato hot cue slots and leaves other keys to the parent component.
+    void testHotCueKeys()
+    {
+        beginTest("Number keys jump to their Serato hot cue slot and other keys pass through");
+        constexpr double sampleRate = 44100.0;
+        juce::AudioFormatManager formats;
+        juce::AudioBuffer<float> silence(1, static_cast<int>(sampleRate * 2.0));
+        silence.clear();
+        juce::MemoryAudioSource memorySource(silence, false);
+        juce::AudioTransportSource transport;
+        transport.setSource(&memorySource, 0, nullptr, sampleRate);
+        transport.prepareToPlay(512, sampleRate);
+        ThumbnailComponent thumbnail(formats, transport);
+        thumbnail.setSize(260, 104);
+        expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
+        const auto markers = std::make_shared<serato::Markers>();
+        markers->cues.push_back({.positionMilliseconds = 250, .index = 0, .colour = juce::Colours::red, .name = {}});
+        markers->cues.push_back({.positionMilliseconds = 750, .index = 2, .colour = juce::Colours::green, .name = {}});
+        thumbnail.setSeratoMarkers(markers);
+
+        expect(thumbnail.keyPressed(juce::KeyPress('3', juce::ModifierKeys::noModifiers, '3')));
+        expectWithinAbsoluteError(transport.getCurrentPosition(), 0.75, 0.001);
+        expect(thumbnail.keyPressed(juce::KeyPress('1', juce::ModifierKeys::noModifiers, '1')));
+        expectWithinAbsoluteError(transport.getCurrentPosition(), 0.25, 0.001);
+        transport.stop();
+        transport.setPosition(0.5);
+        expect(thumbnail.keyPressed(juce::KeyPress('2', juce::ModifierKeys::noModifiers, '2')));
+        expectWithinAbsoluteError(transport.getCurrentPosition(), 0.5, 0.001);
+        expect(!thumbnail.keyPressed(juce::KeyPress('9', juce::ModifierKeys::noModifiers, '9')));
+        expect(!thumbnail.keyPressed(juce::KeyPress(juce::KeyPress::spaceKey, juce::ModifierKeys::noModifiers, ' ')));
+        expect(!thumbnail.keyPressed(juce::KeyPress('1', juce::ModifierKeys::commandModifier, '1')));
+        expectWithinAbsoluteError(transport.getCurrentPosition(), 0.5, 0.001);
+
+        transport.stop();
+        transport.setSource(nullptr);
     }
 
     /// Shows metadata only when available, preserving it during pending/failed analysis and clearing it on replacement.
