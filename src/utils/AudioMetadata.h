@@ -1,11 +1,13 @@
 /// Audio file metadata handling built on TagLib.
-/// The metadata functions read and write text tag properties and embedded pictures in a format-agnostic way,
+/// The metadata functions read and write text tag properties
+/// and embedded pictures in a format-agnostic way,
 /// so normalized output files keep the tags and album art of their sources.
 
 #pragma once
 
 #include <juce_core/juce_core.h>
 
+#include <tfile.h>
 #include <vector>
 
 namespace audiobatch
@@ -28,10 +30,12 @@ struct MetadataPicture {
     juce::String pictureType;
 };
 
-/// Format-agnostic tag properties and embedded pictures of one audio file, read and written through TagLib.
+/// Format-agnostic tag properties and embedded pictures of one audio file, read
+/// and written through TagLib.
 /// - `properties` mirrors TagLib's unified `PropertyMap` (uppercase keys, one or more values).
 /// - `pictures` mirrors TagLib's generic `PICTURE` complex property
-///   and works across ID3v2 (MP3, AIFF, WAV), Vorbis Comments (FLAC, OGG), MP4, APE, etc.
+///   and works across ID3v2 (MP3, AIFF, WAV), Vorbis Comments (FLAC, OGG), MP4,
+///   APE, etc.
 ///
 /// When writing, AIFF output is stored as an ID3v2.4 tag.
 struct AudioMetadata {
@@ -48,4 +52,9 @@ struct AudioMetadata {
 bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile);
 bool readMetadata(const juce::File& file, AudioMetadata& outMetadata);
 bool writeMetadata(const juce::File& file, const AudioMetadata& metadata);
+
+namespace utils
+{
+[[nodiscard]] TagLib::FileName tagLibFileName(const juce::String& fullPath);
+}  // namespace utils
 }  // namespace audiobatch

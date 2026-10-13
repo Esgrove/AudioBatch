@@ -1,11 +1,11 @@
 /// Integration tests for analyzeFile on the committed fixtures.
-/// Every fixture tone has the same level, so the tests check that each format, channel count,
-/// sample rate, and bit depth is decoded and measured consistently.
+/// Every fixture tone has the same level, so the tests check that each format,
+/// channel count, sample rate, and bit depth is decoded and measured consistently.
 
 #include "analysis/AudioAnalysis.h"
-#include "metadata/Metadata.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/AudioMetadata.h"
 
 #include <array>
 

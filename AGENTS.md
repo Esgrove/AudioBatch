@@ -32,60 +32,62 @@ Directories describe what the code does, not which target links it.
 The source lists in `CMakeLists.txt` decide which target builds each file.
 
 - `src/analysis/` holds audio analysis and its result cache.
-  - `AudioAnalysis.*` and `AudioAnalysisTypes.h` perform audio analysis as free functions.
-    `AudioAnalysisFormatting.*` implement the display formatting,
-    and `BitDepthDetection.*` detects the source bit depth from the audio file, with a fixed default for MP3 files.
-    `DecodeFailureTracker.h` holds the shared rules for read failures while decoding a file block by block.
-  - `AnalysisCache.*` manage the SQLite result cache.
-    Its implementation is split into `AnalysisCache.cpp` (analysis, tag and waveform persistence)
-    and `AnalysisCacheSchema.cpp` (database lifecycle and schema),
-    which share the constants and helpers in `AnalysisCacheSql.h`.
-  - `AnalysisCoordinator.*` orchestrates background analysis.
+    - `AudioAnalysis.*` and `AudioAnalysisTypes.h` perform audio analysis as free functions.
+      `AudioAnalysisFormatting.*` implement the display formatting,
+      and `BitDepthDetection.*` detects the source bit depth from the audio file, with a fixed default for MP3 files.
+      `DecodeFailureTracker.h` holds the shared rules for read failures while decoding a file block by block.
+    - `AnalysisCache.*` manage the SQLite result cache.
+      Its implementation is split into `AnalysisCache.cpp` (analysis, tag and waveform persistence)
+      and `AnalysisCacheSchema.cpp` (database lifecycle and schema),
+      which share the constants and helpers in `AnalysisCacheSql.h`.
+    - `AnalysisCoordinator.*` orchestrates background analysis.
 - `src/normalization/` holds `AudioNormalization.*` for normalization and AIFF conversion,
   `NormalizationFormatSupport.cpp`, which reports which formats this build can normalize,
   and `NormalizeCoordinator.*`, which orchestrates background normalization.
-- `src/metadata/` holds `Metadata.*`, which read and write tags and embedded art through TagLib,
-  and the TagLib helpers in `TagLibUtils.h`.
+
 - `src/serato/` holds the Serato tag parsing (`SeratoTags.*`, `SeratoTagReader.*`, `SeratoTagTypes.h`),
   the overview waveform (`SeratoOverview.*`, `SeratoWaveformColouring.*`),
   and the background preview loading in `SeratoPreviewLoader.*`.
 - `src/plugins/` holds VST3 / Audio Unit plugin hosting.
-  - `PluginScanner.*` implement out-of-process plugin scanning and the known-plugins list persistence.
-    Each executable relaunches itself as its scan worker:
-    `gui/Main.cpp` and `cli/CliMain.cpp` detect the worker command line before doing anything else.
-    The CLI links `juce_audio_processors` for this, which also pulls in the JUCE GUI modules.
-  - `PluginChain.*`, `PluginChainPreparation.*`, `PluginProcessing.*`, and `PluginProcessingCoordinator.*`
-    implement the plugin chain and batch processing through it.
+    - `PluginScanner.*` implement out-of-process plugin scanning and the known-plugins list persistence.
+      Each executable relaunches itself as its scan worker:
+      `gui/Main.cpp` and `cli/CliMain.cpp` detect the worker command line before doing anything else.
+      The CLI links `juce_audio_processors` for this, which also pulls in the JUCE GUI modules.
+    - `PluginChain.*`, `PluginChainPreparation.*`, `PluginProcessing.*`, and `PluginProcessingCoordinator.*`
+      implement the plugin chain and batch processing through it.
 - `src/utils/` holds the shared helpers, split by area, all in the `utils` namespace unless noted:
-  - `Log.*` holds the leveled logging functions.
-  - `AppInfo.*` holds the version line, the About text, system information, and the settings file options.
-  - `FileUtils.*` holds the file system helpers, such as moving files to the trash and extension checks.
-  - `AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, and peak math.
-  - `ThreadUtils.*` holds the `CancellationCheck` callback the services poll
-    and the cancellable blocking call from a worker to the message thread.
-  - `StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
-  - `ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
-  - `version.h` holds the build version constants.
-  Put new generic helpers in the matching file instead of a file-local `static` function,
-  so they are not duplicated across services.
+    - `Log.*` holds the leveled logging functions.
+    - `AppInfo.*` holds the version line, the About text, system information, and the settings file options.
+    - `FileUtils.*` holds the file system helpers, such as moving files to the trash and extension checks.
+    - `AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, and peak math.
+    - `AudioMetadata.*` reads and writes tags and embedded art through TagLib
+      and provides shared TagLib filename conversion.
+      Metadata types and operations remain in `audiobatch`, with filename conversion in `utils`.
+    - `ThreadUtils.*` holds the `CancellationCheck` callback the services poll
+      and the cancellable blocking call from a worker to the message thread.
+    - `StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
+    - `ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
+    - `version.h` holds the build version constants.
+      Put new generic helpers in the matching file instead of a file-local `static` function,
+      so they are not duplicated across services.
 - `src/cli/` holds the CLI front end.
-  - `CliMain.cpp` is the CLI entry point.
-  - `AudioAnalysisCli.{h,cpp}` declare the CLI options and the `cli` functions that run the analysis workflow,
-    `AudioAnalysisCliParse.cpp` parses and validates the arguments,
-    and `AudioAnalysisCliOutput.*` prints the results as a table, CSV, or JSON.
-  - `PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
+    - `CliMain.cpp` is the CLI entry point.
+    - `AudioAnalysisCli.{h,cpp}` declare the CLI options and the `cli` functions that run the analysis workflow,
+      `AudioAnalysisCliParse.cpp` parses and validates the arguments,
+      and `AudioAnalysisCliOutput.*` prints the results as a table, CSV, or JSON.
+    - `PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
 - `src/gui/` holds the GUI application shell and its main screen.
-  - `Main.cpp` is the GUI application entry point, and `MainWindow.*` is its top-level window and menu bar.
-  - `AudioBatchComponent.*` is the main GUI component.
-    Its implementation is split by topic into `AudioBatchComponent.cpp` (construction, layout, table, selection),
-    `AudioBatchComponentActions.cpp`, `AudioBatchComponentOperations.cpp`, `AudioBatchComponentPreview.cpp`,
-    and `AudioBatchComponentRoots.cpp`, which share the constants in `AudioBatchComponentConstants.h`.
-    Put new member functions in the file of their topic.
-    `AudioBatchComponentState.h` holds the progress state of the analysis run and of the normalization
-    and plugin processing passes.
-  - `AudioPreviewPlayer.*` owns the audio device, transport, and read-ahead thread of the file preview.
-  - `AudioFileTableModel.*` backs the sortable results table, and `ResultsSorting.*` sorts it.
-  - `FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
+    - `Main.cpp` is the GUI application entry point, and `MainWindow.*` is its top-level window and menu bar.
+    - `AudioBatchComponent.*` is the main GUI component.
+      Its implementation is split by topic into `AudioBatchComponent.cpp` (construction, layout, table, selection),
+      `AudioBatchComponentActions.cpp`, `AudioBatchComponentOperations.cpp`, `AudioBatchComponentPreview.cpp`,
+      and `AudioBatchComponentRoots.cpp`, which share the constants in `AudioBatchComponentConstants.h`.
+      Put new member functions in the file of their topic.
+      `AudioBatchComponentState.h` holds the progress state of the analysis run and of the normalization
+      and plugin processing passes.
+    - `AudioPreviewPlayer.*` owns the audio device, transport, and read-ahead thread of the file preview.
+    - `AudioFileTableModel.*` backs the sortable results table, and `ResultsSorting.*` sorts it.
+    - `FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
 - `src/gui/components/` holds the reusable UI pieces the main component is built from:
   `AudioInfoPanel.*`, `NormalizationTargetControl.*`, `CustomLookAndFeel.*`, `ThumbnailComponent.*`,
   `IntervalStepSlider.h`, and the plugin chain editor in `PluginChainEditor.*`.
@@ -97,7 +99,7 @@ also from within the same directory, and never with `../`.
 The source lists are defined in `CMakeLists.txt`.
 `AUDIOBATCH_CORE_SOURCES` holds the shared core and `AUDIOBATCH_CLI_SOURCES` the CLI front end,
 and each target adds its own entry point and target-specific files.
-The shared core is everything in `analysis/`, `normalization/`, `metadata/`, and `utils/`,
+The shared core is everything in `analysis/`, `normalization/`, and `utils/`,
 plus `plugins/PluginScanner.*` and the Serato tag and overview files.
 Add new shared files to the core list, not to each target,
 and remember that a shared file must compile cleanly for both the GUI and the CLI.

@@ -1,10 +1,10 @@
 /// Portable Serato container tests write synthetic tags only to temporary fixture copies.
 /// Reader coverage depends only on committed fixtures and generated payloads.
 
-#include "metadata/TagLibUtils.h"
 #include "serato/SeratoTagReader.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/AudioMetadata.h"
 #include "utils/StringFormat.h"
 
 #include <aifffile.h>
@@ -50,7 +50,8 @@ void addGeob(
     tag.addFrame(frame.release());
 }
 
-/// Writes existing ID3v2 containers on temporary copies, including an unrelated Unicode description.
+/// Writes existing ID3v2 containers on temporary copies, including an unrelated
+/// Unicode description.
 bool writeGeob(
     const juce::File& file,
     std::span<const std::uint8_t> bytes,
@@ -339,7 +340,10 @@ private:
         const auto expected = serato::Overview::parse(payload);
         const TemporaryDirectory directory;
 
-        beginTest("GEOB extraction supports MP3, AIFF, WAV, ID3v2.3/v2.4 and text encodings");
+        beginTest(
+            "GEOB extraction supports MP3, AIFF, WAV, ID3v2.3/v2.4 and text "
+            "encodings"
+        );
         for (const auto* fixture :
              {"sine_stereo_44100_320k.mp3", "sine_stereo_44100_16.aif", "sine_stereo_44100_16.wav"})
         {
@@ -380,7 +384,10 @@ private:
             expectStatus(serato::readTag(file), serato::ReadStatus::invalid);
         }
 
-        beginTest("FLAC comments support padding, whitespace, omitted padding and valid later duplicates");
+        beginTest(
+            "FLAC comments support padding, whitespace, omitted padding and "
+            "valid later duplicates"
+        );
         const auto flacFile = directory.copyFixture("sine_stereo_44100_16.flac");
         const auto wrapper = flacWrapper(payload);
         const auto encoded = juce::Base64::toBase64(wrapper.getData(), wrapper.getSize());
@@ -401,7 +408,10 @@ private:
             expect(before.has_value() && before == fileChecksum(flacFile));
         }
 
-        beginTest("FLAC rejects missing wrapper fields, wrong descriptions, invalid padding and oversized values");
+        beginTest(
+            "FLAC rejects missing wrapper fields, wrong descriptions, "
+            "invalid padding and oversized values"
+        );
         {
             std::vector<juce::String> invalidValues {"A", "AAAA=AAA", "AA===", encoded + "!"};
             const juce::MemoryBlock missingTerminator("application/octet-stream", 24);
@@ -442,7 +452,10 @@ private:
     void testMetadata()
     {
         const TemporaryDirectory directory;
-        beginTest("Synthetic containers return all kinds independently and recover later valid duplicates");
+        beginTest(
+            "Synthetic containers return all kinds independently and recover "
+            "later valid duplicates"
+        );
         for (const auto* extension : {"mp3", "aif", "wav", "flac"}) {
             const auto file = directory.getChildFile(utils::format("synthetic.{}", extension));
             expect(createSyntheticContainer(file));
@@ -482,7 +495,10 @@ private:
             }
         }
 
-        beginTest("Legacy marker fallback, unrelated frame count and repeated requested kinds remain independent");
+        beginTest(
+            "Legacy marker fallback, unrelated frame count and repeated "
+            "requested kinds remain independent"
+        );
         {
             const auto file = directory.getChildFile("fallback.wav");
             expect(createSyntheticContainer(file));
@@ -508,7 +524,10 @@ private:
             expect(serato::readTags(file, {}).empty());
         }
 
-        beginTest("Standard key survives invalid BPM and Analysis alone never supplies musical key");
+        beginTest(
+            "Standard key survives invalid BPM and Analysis alone never "
+            "supplies musical key"
+        );
         {
             const auto file = directory.getChildFile("properties.wav");
             expect(createSyntheticContainer(file));

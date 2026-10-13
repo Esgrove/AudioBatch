@@ -1,12 +1,10 @@
 /// Implementation of the metadata functions.
-/// Converts between JUCE and TagLib string and buffer types,
-/// maps tags through TagLib's unified PropertyMap and the generic PICTURE complex property,
-/// saves tags for AIFF and WAV output as ID3v2.4,
+/// Converts between JUCE and TagLib string and buffer types, maps tags through TagLib's unified PropertyMap
+/// and the generic PICTURE complex property, saves tags for AIFF and WAV output as ID3v2.4,
 /// and copies the metadata of a source onto a freshly written output.
 
-#include "metadata/Metadata.h"
+#include "utils/AudioMetadata.h"
 
-#include "metadata/TagLibUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 
@@ -25,6 +23,21 @@
 
 namespace audiobatch
 {
+namespace utils
+{
+/// Converts a JUCE path to TagLib's platform filename representation.
+/// Windows copies the wide buffer.
+/// Elsewhere the returned pointer aliases fullPath, which must remain alive for the entire TagLib operation.
+TagLib::FileName tagLibFileName(const juce::String& fullPath)
+{
+#if JUCE_WINDOWS
+    return {fullPath.toWideCharPointer()};
+#else
+    return fullPath.toRawUTF8();
+#endif
+}
+}  // namespace utils
+
 namespace
 {
 /// Converts a TagLib string to a juce::String, preserving UTF-8 content.

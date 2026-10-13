@@ -1,14 +1,14 @@
 /// Tests for the normalization functions.
-/// Covers output path resolution, batch output conflicts, refusal to overwrite unrelated files,
-/// cancellation, the level and sample rate of the written output, and the tags and art carried over to it.
+/// Covers output path resolution, batch output conflicts, refusal to overwrite unrelated files, cancellation, the level
+/// and sample rate of the written output, and the tags and art carried over to it.
 /// Only in-place `.aif` sources are normalized successfully here,
 /// because converting other formats moves the original to the system trash.
 
 #include "analysis/AudioAnalysis.h"
-#include "metadata/Metadata.h"
 #include "normalization/AudioNormalization.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/AudioMetadata.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
@@ -81,7 +81,10 @@ private:
             expect(conflicts.contains(root.getChildFile("song.flac").getFullPathName()));
         }
 
-        beginTest("Without an in-place source, the first path wins regardless of input order");
+        beginTest(
+            "Without an in-place source, the first path wins regardless of "
+            "input order"
+        );
         {
             const std::vector records {
                 recordForPath(root.getChildFile("song.mp3").getFullPathName()),
@@ -94,7 +97,10 @@ private:
         }
 
         if (!juce::File::areFileNamesCaseSensitive()) {
-            beginTest("Outputs that differ only in case conflict where file names ignore case");
+            beginTest(
+                "Outputs that differ only in case conflict where file names "
+                "ignore case"
+            );
             {
                 const std::vector records {
                     recordForPath(root.getChildFile("song.mp3").getFullPathName()),
@@ -126,7 +132,10 @@ private:
             expectEquals(existingOutput.loadFileAsString(), juce::String("unrelated"));
         }
 
-        beginTest("A folder at the output path fails before rendering, even with force overwrite");
+        beginTest(
+            "A folder at the output path fails before rendering, even with "
+            "force overwrite"
+        );
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "folder_output.wav");
             const auto folder = directory.getChildFile("folder_output.aif");
@@ -192,7 +201,10 @@ private:
         }
 
         if (!juce::File::areFileNamesCaseSensitive()) {
-            beginTest("A source whose extension differs only in case is normalized in place");
+            beginTest(
+                "A source whose extension differs only in case is normalized "
+                "in place"
+            );
             {
                 const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "Upper.AIF");
                 const auto result = normalizeFile(analyzeFile(source), {});
@@ -204,7 +216,10 @@ private:
             }
         }
 
-        beginTest("A file that changed since analysis is analyzed again before computing the gain");
+        beginTest(
+            "A file that changed since analysis is analyzed again before "
+            "computing the gain"
+        );
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "changed.aif");
             auto staleRecord = analyzeFile(source);
@@ -237,7 +252,10 @@ private:
             expect(remainingBytes == originalBytes);
         }
 
-        beginTest("A successful in-place no-op returns refreshed analysis without committing output");
+        beginTest(
+            "A successful in-place no-op returns refreshed analysis without "
+            "committing output"
+        );
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "refreshed_no_op.aif");
             auto staleRecord = analyzeFile(source);
@@ -266,7 +284,10 @@ private:
             expect(result.errorMessage.containsIgnoreCase("cancel"), result.errorMessage);
         }
 
-        beginTest("Loudness mode reaches the target loudness unless the true peak ceiling is lower");
+        beginTest(
+            "Loudness mode reaches the target loudness unless the true peak "
+            "ceiling is lower"
+        );
         {
             const auto record = analyzeFile(fixtureFile("sine_stereo_44100_16.wav"));
             AudioNormalizationOptions options;

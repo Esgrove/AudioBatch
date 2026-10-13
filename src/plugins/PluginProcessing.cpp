@@ -6,22 +6,22 @@
 /// restoring their state and preparing them per file,
 /// and rendering block by block through the chain including plugin tails,
 /// with the chain's reported latency removed from the start of the output.
-/// Plugin setup and release are posted to the message thread as VST3 requires,
-/// with a cancellation-aware wait so a worker never deadlocks against a message thread that waits for it,
+/// Plugin setup and release are posted to the message thread as VST3 requires, with a cancellation-aware wait
+/// so a worker never deadlocks against a message thread that waits for it,
 /// while processBlock runs on the calling worker thread.
 /// The chain output is rendered to an unquantized 32-bit float file first,
 /// so the peak and the end of the audible tail are known before the final AIFF file is written at the source bit depth,
 /// turned down when it would clip, trimmed, and dithered when 16-bit.
-/// The AIFF file is validated, given the original file's metadata, and then moved into place,
-/// with the processed file re-analyzed for the result record.
+/// The AIFF file is validated, given the original file's metadata,
+/// and then moved into place, with the processed file re-analyzed for the result record.
 
 #include "plugins/PluginProcessing.h"
 
 #include "analysis/DecodeFailureTracker.h"
-#include "metadata/Metadata.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginChainPreparation.h"
 #include "utils/AudioFormatUtils.h"
+#include "utils/AudioMetadata.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
@@ -66,7 +66,8 @@ PluginProcessingResult fail(const juce::File& file, const juce::String& message)
     return PluginProcessingResult::failure(file, message);
 }
 
-/// Clamps a file's channel count to a sane range before it is used for buffer allocation and bus configuration.
+/// Clamps a file's channel count to a sane range
+/// before it is used for buffer allocation and bus configuration.
 int clampChannelCount(const int channels)
 {
     return juce::jlimit(1, 8, channels);
@@ -87,7 +88,8 @@ juce::File getProcessingOutputFile(const juce::File& input)
     return getNormalizationOutputFile(input);
 }
 
-/// Returns an error message when the record or the plugin chain cannot be processed, or an empty string when it can.
+/// Returns an error message when the record or the plugin chain cannot be processed,
+/// or an empty string when it can.
 static juce::String validateProcessingInputs(
     const AudioAnalysisRecord& record,
     const PluginProcessingOptions& options,
@@ -126,9 +128,10 @@ static float getInputGain(const AudioAnalysisRecord& record, const PluginProcess
     return 1.0f;
 }
 
-/// Reads `samplesToRead` frames starting at `samplePosition` into the start of `buffer` and applies `inputGain`.
-/// `readBuffer` and `readChannelPointers` are scratch storage reused across blocks.
-/// Returns false when the reader reports a failure, following the rules of utils::readFloatSamples.
+/// Reads `samplesToRead` frames starting at `samplePosition` into the start of
+/// `buffer` and applies `inputGain`. `readBuffer` and `readChannelPointers` are
+/// scratch storage reused across blocks. Returns false when the reader reports
+/// a failure, following the rules of utils::readFloatSamples.
 static bool readInputBlock(
     juce::AudioFormatReader& reader,
     juce::AudioBuffer<float>& buffer,
@@ -270,12 +273,11 @@ static void measureOutputBlock(const juce::AudioBuffer<float>& block, const int 
     }
 }
 
-/// Streams the whole file through every plugin in chain order and writes the processed audio,
-/// unquantized, to the intermediate writer.
+/// Streams the whole file through every plugin in chain order
+/// and writes the processed audio, unquantized, to the intermediate writer.
 /// The chain latency and tail are rendered on top of the file length,
-/// and the first `latencySamples` output samples are discarded,
-/// so the processed audio lines up with the input and its end is not cut off.
-/// Read failures follow the shared DecodeFailureTracker rules.
+/// and the first `latencySamples` output samples are discarded, so the processed audio lines up with the input
+/// and its end is not cut off. Read failures follow the shared DecodeFailureTracker rules.
 /// Returns an error message, or an empty string when the whole file was written.
 static juce::String renderThroughChain(
     juce::AudioFormatReader& reader,
@@ -377,8 +379,9 @@ static juce::int64 getFinalLength(const RenderSummary& summary, const juce::int6
     );
 }
 
-/// Adds triangular (TPDF) dither of one least significant bit to the block before it is quantized,
-/// which turns the quantization error into benign noise instead of distortion on quiet material.
+/// Adds triangular (TPDF) dither of one least significant bit to the block
+/// before it is quantized, which turns the quantization error into benign noise
+/// instead of distortion on quiet material.
 static void addDither(
     juce::AudioBuffer<float>& block,
     const int numSamples,
@@ -396,8 +399,8 @@ static void addDither(
     }
 }
 
-/// Copies the rendered intermediate audio into the final writer,
-/// applying the clip guard gain, trimming the trailing silence, and dithering 16-bit output.
+/// Copies the rendered intermediate audio into the final writer, applying the clip guard gain,
+/// trimming the trailing silence, and dithering 16-bit output.
 /// Returns an error message, or an empty string when the whole output was written.
 static juce::String writeFinalOutput(
     juce::AudioFormatReader& renderedReader,
@@ -561,15 +564,13 @@ static juce::String writeProcessedAiff(
 
 /// Processes a single file through the given plugin instances in order.
 /// The instances must align index-for-index with options.plugins.
-/// The function restores state on each plugin, prepares it in offline mode, and resets it before processing,
-/// compensates for the chain's total reported latency,
-/// and releases the plugins' resources afterwards, also when processing fails.
-/// Intended to run on a worker thread.
+/// The function restores state on each plugin, prepares it in offline mode, and resets it
+/// before processing, compensates for the chain's total reported latency, and releases the plugins'
+/// resources afterwards, also when processing fails. Intended to run on a worker thread.
 /// Plugin setup and release are marshalled to the message thread,
 /// because VST3 restricts bus arrangement, setupProcessing, setActive, and setState to the UI thread,
 /// so only processBlock runs on the calling thread.
-/// The message loop must keep running while a worker is inside this call,
-/// unless isCancelled starts returning true:
+/// The message loop must keep running while a worker is inside this call, unless isCancelled starts returning true:
 /// a worker waiting for the message thread then gives up instead of blocking,
 /// so the message thread may wait for workers after requesting cancellation without deadlocking.
 /// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.
@@ -577,10 +578,9 @@ static juce::String writeProcessedAiff(
 /// The caller owns the plugin instances and is responsible for thread-safety:
 /// a chain of instances must only be in use by one thread at a time.
 /// A mono file running through a stereo chain feeds both plugin inputs and is written back as mono,
-/// using the average of both output channels.
-/// The chain renders into an unquantized intermediate file first.
-/// When the rendered peak exceeds full scale, the whole output is turned down just enough to avoid clipping,
-/// which is reported in the result notice.
+/// using the average of both output channels. The chain renders into an unquantized intermediate file first.
+/// When the rendered peak exceeds full scale,
+/// the whole output is turned down just enough to avoid clipping, which is reported in the result notice.
 /// Isolated source blocks that fail to decode are processed as decoded and reported in the notice too.
 /// Trailing silence from the tail allowance is trimmed, and 16-bit output is dithered.
 /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again first.
@@ -645,7 +645,8 @@ PluginProcessingResult processFileWithPlugins(
         return fail(file, renderError);
     }
 
-    // The hidden name keeps a half-written output out of folder scans, and out of later scans after a crash.
+    // The hidden name keeps a half-written output out of folder scans,
+    // and out of later scans after a crash.
     const juce::TemporaryFile temporaryFile(outputFile, juce::TemporaryFile::useHiddenFile);
     const auto bitsPerSample = getNormalizationOutputBitDepth(record, *reader);
     const auto clipGuardGain = getClipGuardGain(summary, bitsPerSample);
@@ -667,7 +668,8 @@ PluginProcessingResult processFileWithPlugins(
         return fail(file, writeError);
     }
 
-    // Carries ID3 tags, embedded artwork, and similar information across formats such as MP3 to AIFF.
+    // Carries ID3 tags, embedded artwork, and similar information across formats
+    // such as MP3 to AIFF.
     if (!copyMetadata(file, temporaryFile.getFile())) {
         return fail(file, "Could not copy metadata onto the processed output");
     }
@@ -681,8 +683,8 @@ PluginProcessingResult processFileWithPlugins(
     }
 
     // Check again before touching the original, since cancellation may arrive during the last render block.
-    // The coordinator drops results of a cancelled run,
-    // so committing here would change files on disk without the caller ever learning about it.
+    // The coordinator drops results of a cancelled run, so committing here would change files on disk
+    // without the caller ever learning about it.
     if (utils::isCancellationRequested(isCancelled)) {
         return fail(file, cancelledMessage);
     }

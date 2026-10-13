@@ -3,7 +3,7 @@
 
 #include "serato/SeratoTagReader.h"
 
-#include "metadata/TagLibUtils.h"
+#include "utils/AudioMetadata.h"
 #include "utils/Log.h"
 #include <string_view>
 
@@ -201,7 +201,8 @@ TagReadResult readId3Frames(
     return result;
 }
 
-/// Prefers valid Markers2 over legacy fallback regardless of frame order, preserving earlier invalid outcomes.
+/// Prefers valid Markers2 over legacy fallback regardless of frame order,
+/// preserving earlier invalid outcomes.
 TagReadResult readId3Tag(const TagLib::ID3v2::Tag* tag, const TagKind kind, const utils::CancellationCheck& isCancelled)
 {
     if (tag == nullptr) {
@@ -255,7 +256,8 @@ TagReadResult decodeFlacTag(const TagKind kind, const TagLib::String& value, con
     return parseTagPayload(kind, bytes.subspan(offset), legacy);
 }
 
-/// Maps each kind to its documented native property, independent of optional FLAC ID3 tags.
+/// Maps each kind to its documented native property, independent of optional
+/// FLAC ID3 tags.
 TagLib::String propertyName(const TagKind kind)
 {
     switch (kind) {
@@ -478,8 +480,8 @@ std::vector<TagReadResult> readTags(
     return results;
 }
 
-/// Reads one requested kind from MPEG, AIFF or WAV ID3v2 GEOB, or native FLAC comments.
-/// The first valid duplicate wins. Ogg and other containers are unsupported.
+/// Reads one requested kind from MPEG, AIFF or WAV ID3v2 GEOB, or native FLAC comments. The first valid duplicate wins.
+/// Ogg and other containers are unsupported.
 /// Cancellation is checked around TagLib operations, which cannot be interrupted internally.
 /// Missing/unreadable files return ioError, never a stable absent result.
 TagReadResult readTag(const juce::File& file, const TagKind kind, const utils::CancellationCheck& isCancelled)

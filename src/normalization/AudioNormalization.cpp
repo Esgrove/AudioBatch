@@ -1,14 +1,13 @@
 /// Implementation of the normalization functions.
 /// Reads source files through per-thread JUCE format readers, applies the peak or loudness gain in chunks,
-/// and writes AIFF output.
-/// Carries source tags and embedded art across through Metadata handling.
+/// and writes AIFF output. Carries source tags and embedded art across through Metadata handling.
 /// The format support reporting lives in NormalizationFormatSupport.cpp.
 
 #include "normalization/AudioNormalization.h"
 
 #include "analysis/DecodeFailureTracker.h"
-#include "metadata/Metadata.h"
 #include "utils/AudioFormatUtils.h"
+#include "utils/AudioMetadata.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
@@ -110,10 +109,11 @@ juce::String renderNormalizedAudio(
             juce::jmin<juce::int64>(normalizationBlockSize, reader.lengthInSamples - samplePosition)
         );
 
-        // A failed read leaves the destination untouched, so without clearing, a tolerated failure would write
-        // the previous, already gained block again.
-        // The samples are zeroed through the channel pointers, because AudioBuffer::clear marks the whole buffer as
-        // clear and applyGain would then skip the samples the reader writes through those pointers.
+        // A failed read leaves the destination untouched, so without clearing, a
+        // tolerated failure would write the previous, already gained block again.
+        // The samples are zeroed through the channel pointers, because
+        // AudioBuffer::clear marks the whole buffer as clear and applyGain would
+        // then skip the samples the reader writes through those pointers.
         for (auto* const channelPointer : channelPointers) {
             juce::FloatVectorOperations::clear(channelPointer, samplesThisBlock);
         }
@@ -311,7 +311,8 @@ AudioNormalizationResult normalizeFile(
         return result;
     }
 
-    // The hidden name keeps a half-written output out of folder scans, and out of later scans after a crash.
+    // The hidden name keeps a half-written output out of folder scans,
+    // and out of later scans after a crash.
     const juce::TemporaryFile temporaryFile(outputFile, juce::TemporaryFile::useHiddenFile);
     std::unique_ptr<juce::OutputStream> outputStream(temporaryFile.getFile().createOutputStream().release());
 
@@ -364,14 +365,16 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(
             file,
             utils::format(
-                "Normalized output failed validation: {}. The original file was left unchanged.", validationError
+                "Normalized output failed validation: {}. The "
+                "original file was left unchanged.",
+                validationError
             )
         );
     }
 
     // Check again before touching the original, since cancellation may arrive during the last block.
-    // The coordinator drops results of a cancelled run,
-    // so committing here would change files on disk without the caller ever learning about it.
+    // The coordinator drops results of a cancelled run, so committing here would change files on disk
+    // without the caller ever learning about it.
     if (utils::isCancellationRequested(isCancelled)) {
         return failNormalization(file, cancelledMessage);
     }
