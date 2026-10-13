@@ -96,6 +96,23 @@ if(CMAKE_GENERATOR MATCHES "Ninja|Unix Makefiles" AND NOT CMAKE_CXX_COMPILER_LAU
     endif()
 endif()
 
+# Comma separated sanitizer list such as "address,undefined", empty to disable.
+# The flags are global so JUCE and the fetched dependencies are instrumented the same way as project code.
+# Must be set before any targets are made. LeakSanitizer is not supported on Apple Silicon.
+set(AUDIOBATCH_SANITIZE "" CACHE STRING "Comma separated list of sanitizers to enable, for example address,undefined")
+
+if(AUDIOBATCH_SANITIZE)
+    if(MSVC)
+        if(NOT AUDIOBATCH_SANITIZE STREQUAL "address")
+            message(FATAL_ERROR "MSVC only supports AUDIOBATCH_SANITIZE=address")
+        endif()
+        add_compile_options(/fsanitize=address)
+    else()
+        add_compile_options(-fsanitize=${AUDIOBATCH_SANITIZE} -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=${AUDIOBATCH_SANITIZE})
+    endif()
+endif()
+
 # Adds all the module sources so they appear correctly in the IDE
 # Must be set before JUCE is added as a sub-dir (or any targets are made)
 # https://github.com/juce-framework/JUCE/commit/6b1b4cf7f6b1008db44411f2c8887d71a3348889
