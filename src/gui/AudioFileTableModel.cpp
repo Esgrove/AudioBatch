@@ -52,6 +52,9 @@ constexpr float waitingStatusTextAlpha = 0.55f;
 /// Smallest progress drawn as a filled arc, so a just started file does not show a sliver.
 constexpr float minimumDrawnProgress = 0.005f;
 
+/// Length of the spinning arc shown while a busy file's progress is unknown, as a fraction of a full turn.
+constexpr float spinnerArcTurns = 0.6f;
+
 /// Draws the small activity indicator shown in the Status column while a row is busy.
 /// A waiting row gets an empty ring.
 /// A row with known progress gets a ring that fills clockwise from the top like a progress bar.
@@ -80,7 +83,7 @@ static void drawActivityIndicator(
         endAngle = *state.progress >= minimumDrawnProgress ? *state.progress * juce::MathConstants<float>::twoPi : 0.0f;
     } else if (state.activity != FileActivity::waiting) {
         startAngle = phase * juce::MathConstants<float>::twoPi;
-        endAngle = startAngle + juce::MathConstants<float>::pi * 1.2f;
+        endAngle = startAngle + juce::MathConstants<float>::twoPi * spinnerArcTurns;
     }
 
     if (endAngle > startAngle) {

@@ -45,7 +45,7 @@ FileActivityTracker::~FileActivityTracker()
 void FileActivityTracker::markActive(const juce::Array<juce::File>& files, const FileActivity activity)
 {
     for (const auto& file : files) {
-        activeStates[file.getFullPathName()] = {.activity = activity};
+        activeStates[file.getFullPathName()] = {.activity = activity, .progress = std::nullopt};
         messages.erase(file.getFullPathName());
     }
 
@@ -56,7 +56,7 @@ void FileActivityTracker::markActive(const juce::Array<juce::File>& files, const
 /// The progress is unknown until the first progress report for the new activity arrives.
 void FileActivityTracker::setActive(const juce::String& fullPath, const FileActivity activity)
 {
-    activeStates[fullPath] = {.activity = activity};
+    activeStates[fullPath] = {.activity = activity, .progress = std::nullopt};
     activityChanged();
 }
 

@@ -113,6 +113,7 @@ private:
     void configureProcessingControls();
     void configureResultsTable();
     void connectCoordinatorCallbacks();
+    void connectProgressCallbacks();
     void handleAnalysisComplete(int totalFiles, int runId);
     void handleAnalysisPlan(const AnalysisPlan& plan);
     void handleAnalysisResult(const AudioAnalysisRecord& record, int runId);

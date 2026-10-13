@@ -175,6 +175,45 @@ void AudioBatchComponent::configureProcessingControls()
     addAndMakeVisible(settingsButton);
 }
 
+/// Connects the per-file progress reports of the coordinators to the activity tracker on the message thread.
+/// Normalization and processing files switch from waiting to busy when a worker starts on them.
+/// A start arriving after its pass ended belongs to no pass, so it does not mark the file busy again.
+void AudioBatchComponent::connectProgressCallbacks()
+{
+    const SafePointer safeThis(this);
+
+    analysisCoordinator.setProgressCallback([safeThis](const juce::File& file, const float progress, const int runId) {
+        juce::MessageManager::callAsync([safeThis, file, progress, runId] {
+            if (safeThis != nullptr && runId == safeThis->analysisRun.runId) {
+                safeThis->fileActivity.setProgress(file.getFullPathName(), progress);
+            }
+        });
+    });
+
+    const auto postStarting = [safeThis](const FileActivity activity) {
+        return [safeThis, activity](const juce::File& file) {
+            juce::MessageManager::callAsync([safeThis, file, activity] {
+                if (safeThis != nullptr && safeThis->isFileOperationInProgress()) {
+                    safeThis->fileActivity.setActive(file.getFullPathName(), activity);
+                }
+            });
+        };
+    };
+
+    const auto postProgress = [safeThis](const juce::File& file, const float progress) {
+        juce::MessageManager::callAsync([safeThis, file, progress] {
+            if (safeThis != nullptr) {
+                safeThis->fileActivity.setProgress(file.getFullPathName(), progress);
+            }
+        });
+    };
+
+    normalizeCoordinator.setStartingCallback(postStarting(FileActivity::normalizing));
+    normalizeCoordinator.setProgressCallback(postProgress);
+    pluginCoordinator.setStartingCallback(postStarting(FileActivity::processing));
+    pluginCoordinator.setProgressCallback(postProgress);
+}
+
 /// Connects the analysis, normalization, and plugin coordinators to the message thread handlers.
 void AudioBatchComponent::connectCoordinatorCallbacks()
 {
@@ -217,44 +256,7 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
             }
         });
     });
-    analysisCoordinator.setProgressCallback([safeThis](const juce::File& file, const float progress, const int runId) {
-        juce::MessageManager::callAsync([safeThis, file, progress, runId] {
-            if (safeThis != nullptr && runId == safeThis->analysisRun.runId) {
-                safeThis->fileActivity.setProgress(file.getFullPathName(), progress);
-            }
-        });
-    });
-
-    // Starts arriving after a pass ended belong to no pass, so they must not mark the file busy again.
-    normalizeCoordinator.setStartingCallback([safeThis](const juce::File& file) {
-        juce::MessageManager::callAsync([safeThis, file] {
-            if (safeThis != nullptr && safeThis->normalizeProgress.inProgress) {
-                safeThis->fileActivity.setActive(file.getFullPathName(), FileActivity::normalizing);
-            }
-        });
-    });
-    normalizeCoordinator.setProgressCallback([safeThis](const juce::File& file, const float progress) {
-        juce::MessageManager::callAsync([safeThis, file, progress] {
-            if (safeThis != nullptr) {
-                safeThis->fileActivity.setProgress(file.getFullPathName(), progress);
-            }
-        });
-    });
-
-    pluginCoordinator.setStartingCallback([safeThis](const juce::File& file) {
-        juce::MessageManager::callAsync([safeThis, file] {
-            if (safeThis != nullptr && safeThis->processingProgress.inProgress) {
-                safeThis->fileActivity.setActive(file.getFullPathName(), FileActivity::processing);
-            }
-        });
-    });
-    pluginCoordinator.setProgressCallback([safeThis](const juce::File& file, const float progress) {
-        juce::MessageManager::callAsync([safeThis, file, progress] {
-            if (safeThis != nullptr) {
-                safeThis->fileActivity.setProgress(file.getFullPathName(), progress);
-            }
-        });
-    });
+    connectProgressCallbacks();
 
     normalizeCoordinator.setResultCallback(postToMessageThread(&AudioBatchComponent::handleNormalizeResult));
     normalizeCoordinator.setCompletionCallback(postToMessageThread(&AudioBatchComponent::handleNormalizeComplete));
