@@ -50,19 +50,22 @@ Shared core (linked into both targets):
   and `src/NormalizationFormatSupport.cpp` reports which formats this build can normalize.
 - `src/MetadataService.*` read and write tags and embedded art through TagLib.
 - `src/AnalysisCache.*` manage the SQLite result cache.
+  Its implementation is split into `AnalysisCache.cpp` (analysis, tag and waveform persistence)
+  and `AnalysisCacheSchema.cpp` (database lifecycle and schema),
+  which share the constants and helpers in `AnalysisCacheSql.h`.
 - `src/AnalysisCoordinator.*` and `src/NormalizeCoordinator.*` orchestrate background work.
 - Shared helpers are split by area, all in the `utils` namespace unless noted:
   - `src/Log.*` holds the leveled logging functions.
   - `src/AppInfo.*` holds the version line, the About text, system information, and the settings file options.
   - `src/FileUtils.*` holds the file system helpers, such as moving files to the trash and extension checks.
   - `src/AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, and peak math.
-  - `src/Cancellation.h` holds the `CancellationCheck` callback the services poll.
-  - `src/MessageThreadCall.*` holds the cancellable blocking call from a worker to the message thread.
+  - `src/ThreadUtils.*` holds the `CancellationCheck` callback the services poll
+    and the cancellable blocking call from a worker to the message thread.
   - `src/StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
   - `src/ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
   - `src/version.h` holds the build version constants.
   Put new generic helpers in the matching file instead of a file-local `static` function,
-  so they are not duplicated across services, and keep each file well under 1000 lines.
+  so they are not duplicated across services.
 - `src/PluginScanner.*` implement out-of-process plugin scanning and the known-plugins list persistence.
   Each executable relaunches itself as its scan worker:
   `src/Main.cpp` and `src/CliMain.cpp` detect the worker command line before doing anything else.
@@ -74,7 +77,7 @@ GUI only:
   Its implementation is split by topic into `AudioBatchComponent.cpp` (construction, layout, table, selection),
   `AudioBatchComponentActions.cpp`, `AudioBatchComponentOperations.cpp`, `AudioBatchComponentPreview.cpp`,
   and `AudioBatchComponentRoots.cpp`, which share the constants in `AudioBatchComponentConstants.h`.
-  Put new member functions in the file of their topic, and keep each file under about 1000 lines.
+  Put new member functions in the file of their topic.
 - `src/AudioFileTableModel.*` backs the sortable results table, and `src/ResultsSorting.*` sorts it.
 - `src/FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
 - `src/AudioInfoPanel.*`, `src/NormalizationTargetControl.*`, `src/CustomLookAndFeel.*`,
@@ -166,6 +169,11 @@ The detailed rules are in `.agents/rules/code-organization.md`.
 - Within a class or struct, put `public` before `protected` before `private`.
 - Put member functions before data members.
 - Group functions and variables by return type and topic.
+- Do not define structs, classes or enums inside classes.
+  Declare them at namespace level before the class, or in the anonymous namespace of the `.cpp` that alone uses them.
+- Do not use `using namespace`. Wrap definitions in the matching namespace block or qualify names.
+- Split files that reach about 1000 lines into focused parts by topic, but avoid very small files.
+  Fold tiny files into the file of the closest topic.
 - Use `constexpr` and `consteval` whenever possible.
 - Include order is handled by clang-format, so do not sort includes by hand.
 

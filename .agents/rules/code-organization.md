@@ -17,6 +17,23 @@ Within a struct or class:
 3. Group functions and variables by return type and topic.
    Keep related functions together, and keep functions that return the same kind of value next to each other.
 
+## Types and namespaces
+
+- Declare structs, classes and enums at namespace level, before the class that uses them.
+  Do not define structs, classes or enums inside a class.
+- A type that only one `.cpp` file uses goes in that file's anonymous namespace.
+  This includes types that would otherwise be local to a function.
+- Do not use `using namespace`, in headers or sources, at file or function scope.
+  Wrap the definitions in the matching `namespace x { ... }` block or qualify the names.
+
+## File size and structure
+
+- Split a file that reaches about 1000 lines into focused parts by topic.
+  Each part should be a few hundred lines, with a shared internal header for constants and helpers used by several parts.
+- Avoid very small files.
+  Fold a tiny header or source into the file of the closest topic,
+  or merge small related files into one.
+
 ## Documentation placement
 
 - When a `.cpp` file exists for a header, document each function on its definition in the `.cpp`.
