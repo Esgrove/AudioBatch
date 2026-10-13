@@ -6,8 +6,6 @@
 
 #include <JuceHeader.h>
 
-#include <cmath>
-
 /// Slider that steps by exactly one interval per mouse-wheel notch, regardless of wheel velocity.
 class IntervalStepSlider : public juce::Slider
 {

@@ -14,7 +14,6 @@
 #include "StringFormat.h"
 
 #include <algorithm>
-#include <cmath>
 #include <memory>
 #include <utility>
 #include <vector>

@@ -28,9 +28,7 @@
 #include "StringFormat.h"
 
 #include <algorithm>
-#include <atomic>
 #include <cmath>
-#include <cstdint>
 #include <functional>
 #include <memory>
 #include <span>
@@ -210,7 +208,7 @@ static int processBlockThroughChain(
         const auto pluginChannels = juce::jmin(
             buffer.getNumChannels(), juce::jmax(plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels())
         );
-        juce::AudioBuffer<float> pluginBuffer(buffer.getArrayOfWritePointers(), pluginChannels, buffer.getNumSamples());
+        juce::AudioBuffer pluginBuffer(buffer.getArrayOfWritePointers(), pluginChannels, buffer.getNumSamples());
 
         midi.clear();
         plugin->processBlock(pluginBuffer, midi);

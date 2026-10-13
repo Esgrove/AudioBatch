@@ -9,6 +9,7 @@
 namespace audiobatch::analysis
 {
 /// Determines the best available source bit depth for the analyzed file.
+///
 /// Lossless formats report the depth stored in the file.
 /// MP3 files use the default of 16,
 /// because the format stores no sample depth and the decoder does not expose the original encoding depth.

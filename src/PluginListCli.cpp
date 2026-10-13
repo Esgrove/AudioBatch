@@ -12,7 +12,6 @@
 #include "StringFormat.h"
 
 #include <algorithm>
-#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -449,7 +448,7 @@ int PluginListCli::run(const bool rescan, const PluginListGrouping grouping)
         return exitCode;
     }
 
-    std::vector<juce::PluginDescription> plugins(types.begin(), types.end());
+    std::vector plugins(types.begin(), types.end());
     sortPlugins(plugins);
 
     if (grouping == PluginListGrouping::name) {

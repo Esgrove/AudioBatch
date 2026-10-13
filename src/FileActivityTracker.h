@@ -15,7 +15,7 @@
 /// Tracks which files are busy and what their last operation reported, keyed by full path.
 /// Runs a repaint timer while any file is busy and stops it once all files are idle.
 /// Must only be used on the message thread.
-class FileActivityTracker final : private juce::Timer
+class FileActivityTracker final : juce::Timer
 {
 public:
     /// Creates the tracker with the callback that repaints the view showing the activity.

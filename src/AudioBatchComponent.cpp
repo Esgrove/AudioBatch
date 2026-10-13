@@ -360,7 +360,7 @@ void AudioBatchComponent::resized()
     const auto space = juce::jmin(280, juce::jmax(180, juce::roundToIntAccurate(bounds.getWidth() * 0.22)));
     auto control = previewArea.removeFromLeft(space);
 
-    const auto buttonGap = layout::sectionSpacing;
+    constexpr auto buttonGap = layout::sectionSpacing;
 
     // Bottom row: Process and Play/Stop.
     auto buttonsBottom = control.removeFromBottom(layout::controlButtonHeight);
@@ -401,7 +401,7 @@ void AudioBatchComponent::resized()
     auto gainRow = control.removeFromBottom(gainSlider.getTextBoxHeight());
     gainClearButton.setBounds(gainRow.removeFromRight(layout::gainClearButtonWidth));
     gainRow.removeFromRight(4);
-    const auto gainLabelWidth = 36;
+    constexpr auto gainLabelWidth = 36;
     gainLabel.setBounds(gainRow.removeFromLeft(gainLabelWidth));
     gainSlider.setBounds(gainRow);
 
@@ -458,7 +458,7 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
     const auto currentNameWidth = header.getColumnWidth(AudioFileTableModel::columnName);
     const auto currentPathWidth = header.getColumnWidth(AudioFileTableModel::columnPath);
     const auto currentFlexibleWidth = currentNameWidth + currentPathWidth;
-    const auto defaultFlexibleWidth = nameColumnDefaultWidth + pathColumnDefaultWidth;
+    constexpr auto defaultFlexibleWidth = nameColumnDefaultWidth + pathColumnDefaultWidth;
     const auto widthRatio = static_cast<double>(currentFlexibleWidth > 0 ? currentNameWidth : nameColumnDefaultWidth)
         / static_cast<double>(currentFlexibleWidth > 0 ? currentFlexibleWidth : defaultFlexibleWidth);
 
@@ -639,8 +639,8 @@ void AudioBatchComponent::sortResults()
             .secondaryForwards = secondarySortForwards,
             // The activity labels change while files are busy, so only the settled text decides the order.
             .statusText = [this](const AudioAnalysisRecord& record) {
-                const auto message = fileActivity.getMessage(record.fullPath);
-                return message.text.isNotEmpty() ? message.text : AudioAnalysisService::formatStatus(record);
+                const auto [text, isError] = fileActivity.getMessage(record.fullPath);
+                return text.isNotEmpty() ? text : AudioAnalysisService::formatStatus(record);
             },
         }
     );
@@ -686,7 +686,7 @@ void AudioBatchComponent::handleSecondarySortRequested(const int columnId)
     refreshTablePreservingSelection(selectedPaths);
 }
 
-void AudioBatchComponent::refreshSortIndicators()
+void AudioBatchComponent::refreshSortIndicators() const
 {
     results_sorting::getSecondarySortHeader(resultsTable)
         .setSecondarySortIndicator(secondarySortColumnId, secondarySortForwards);

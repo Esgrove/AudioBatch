@@ -108,7 +108,7 @@ bool NormalizationTargetControl::isLoudnessMode() const
     return modeBox.getSelectedId() == normalize_target::loudnessModeItemId;
 }
 
-void NormalizationTargetControl::saveSettings()
+void NormalizationTargetControl::saveSettings() const
 {
     auto* settings = properties.getUserSettings();
     settings->setValue(normalize_target::modeSettingKey, isLoudnessMode() ? "loudness" : "peak");

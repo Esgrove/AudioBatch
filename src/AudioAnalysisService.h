@@ -14,13 +14,10 @@
 class AudioAnalysisService
 {
 public:
-    /// Returns true when the caller wants analysis to stop as soon as possible.
-    using CancellationCheck = utils::CancellationCheck;
-
     /// Analyzes a single supported audio file and returns the populated result record.
     /// When isCancelled starts returning true, decoding stops and a failed record is returned,
     /// which callers must not cache.
-    static AudioAnalysisRecord analyzeFile(const juce::File& file, const CancellationCheck& isCancelled = {});
+    static AudioAnalysisRecord analyzeFile(const juce::File& file, const utils::CancellationCheck& isCancelled = {});
 
     /// Expands the input paths into a de-duplicated list of supported files.
     /// The directory walk checks isCancelled between entries and returns the files found so far when it is set,
@@ -28,7 +25,7 @@ public:
     static juce::Array<juce::File> collectInputFiles(
         const juce::Array<juce::File>& inputPaths,
         bool recursive,
-        const CancellationCheck& isCancelled = {}
+        const utils::CancellationCheck& isCancelled = {}
     );
 
     /// Formats a peak value for display in the GUI and CLI.

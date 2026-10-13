@@ -7,8 +7,6 @@
 #include "CustomLookAndFeel.h"
 #include "StringFormat.h"
 
-#include <cmath>
-
 namespace
 {
 /// Opacity of the panel background fill.

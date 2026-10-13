@@ -7,8 +7,6 @@
 #include "Log.h"
 #include "StringFormat.h"
 
-#include <cmath>
-
 #if JUCE_MAC
 #include <AudioToolbox/AudioToolbox.h>
 #endif

@@ -74,7 +74,7 @@ private:
     bool perform(const InvocationInfo& info) override;
 
     /// Appends the plugin chain section into a menu, mirroring the popup attached to the Plugin toolbar button.
-    void appendPluginOptionsMenuItems(juce::PopupMenu& menu);
+    void appendPluginOptionsMenuItems(juce::PopupMenu& menu) const;
 
     /// Decodes a menu result against the known plugin list and appends the chosen plugin to the chain.
     void handlePluginChoiceMenuItem(int menuItemID) const;

@@ -615,8 +615,8 @@ void AudioBatchComponent::processSelectedRecords()
 
     PluginProcessingOptions options;
     options.plugins.reserve(enabledPlugins.size());
-    for (const auto& enabledPlugin : enabledPlugins) {
-        options.plugins.push_back(enabledPlugin.descriptorRef);
+    for (const auto& [description, descriptorRef] : enabledPlugins) {
+        options.plugins.push_back(descriptorRef);
     }
     if (normalizeBeforePluginToggle.getToggleState()) {
         options.normalizeBeforePlugin = normalizationTargetControl.getOptions();
@@ -629,15 +629,16 @@ void AudioBatchComponent::processSelectedRecords()
 
     statusLabel.setText("Loading plugins...", juce::dontSendNotification);
 
-    auto instantiation = pluginChain->instantiateChains(enabledPlugins, workerCount);
+    auto [chains, initialStates, errorMessage, failedPluginName]
+        = pluginChain->instantiateChains(enabledPlugins, workerCount);
 
-    if (instantiation.chains.empty() || instantiation.errorMessage.isNotEmpty()) {
+    if (chains.empty() || errorMessage.isNotEmpty()) {
         // All-or-nothing: a chain missing any plugin must not run at all.
         showPluginProcessingWarning(
             utils::format(
                 "Could not load plugin {}:\n\n{}",
-                instantiation.failedPluginName.quoted(),
-                instantiation.errorMessage.isNotEmpty() ? instantiation.errorMessage : juce::String("Unknown error")
+                failedPluginName.quoted(),
+                errorMessage.isNotEmpty() ? errorMessage : juce::String("Unknown error")
             )
         );
         statusLabel.setText("Plugin load failed", juce::dontSendNotification);
@@ -647,7 +648,7 @@ void AudioBatchComponent::processSelectedRecords()
     // A plugin without saved state is reset to its initial state before every file instead.
     for (std::size_t index = 0; index < options.plugins.size(); ++index) {
         if (auto& state = options.plugins[index].state; state.isEmpty()) {
-            state = instantiation.initialStates[index];
+            state = initialStates[index];
         }
     }
 
@@ -658,7 +659,7 @@ void AudioBatchComponent::processSelectedRecords()
     pluginProcessingInProgress = true;
     updateProcessButtonState();
 
-    processedResultsExpected = pluginCoordinator.start(records, options, std::move(instantiation.chains));
+    processedResultsExpected = pluginCoordinator.start(records, options, std::move(chains));
 
     if (processedResultsExpected <= 0) {
         pluginProcessingInProgress = false;

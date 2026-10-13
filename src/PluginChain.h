@@ -83,7 +83,7 @@ public:
     [[nodiscard]] ChainInstantiation instantiateChains(
         const std::vector<EnabledChainPlugin>& enabledPlugins,
         int workerCount
-    );
+    ) const;
 
     /// Returns a short human-readable summary of the chain for menu headers,
     /// with disabled slots in parentheses, or an empty string when the chain is empty.

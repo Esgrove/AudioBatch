@@ -2,7 +2,6 @@
 
 #include "FileActivityTracker.h"
 
-#include <cmath>
 #include <utility>
 
 /// Rate in hertz at which the activity indicators are repainted while files are busy.

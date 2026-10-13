@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include "StringFormat.h"
 #include <fmt/color.h>
 #include <string_view>
 
@@ -24,18 +23,18 @@ namespace console
 /// without relying on fmt's internal width function.
 [[nodiscard]] int displayWidth(const juce::String& text);
 
-/// Prints one line of text to stdout and flushes it.
-/// On Windows a GUI subsystem executable has no console of its own,
-/// so when stdout is not already redirected to a pipe or file,
-/// this attaches to the console of the parent process first, so the text shows up in cmd or PowerShell.
-void printLineToConsole(const juce::String& text);
-
 /// Returns true when styled output should be written to the given stream.
 /// That is the case for an interactive terminal when the NO_COLOR environment variable is not set.
 /// On Windows this also enables virtual terminal processing for the console the first time,
 /// and treats a pipe as a terminal when TERM is set, which is how Git Bash (mintty) connects programs.
 /// The result is cached for stdout and stderr.
 [[nodiscard]] bool isColorEnabled(std::FILE* stream);
+
+/// Prints one line of text to stdout and flushes it.
+/// On Windows a GUI subsystem executable has no console of its own,
+/// so when stdout is not already redirected to a pipe or file,
+/// this attaches to the console of the parent process first, so the text shows up in cmd or PowerShell.
+void printLineToConsole(const juce::String& text);
 
 /// Prints already formatted text to the given stream with a text style.
 /// Trailing newlines are written after the style reset,
@@ -124,19 +123,6 @@ void printMagentaBold(fmt::format_string<Args...> format, Args&&... args)
     printColorBold(fmt::terminal_color::magenta, format, std::forward<Args>(args)...);
 }
 
-/// Formats a value with a colour for building composite lines,
-/// for example a coloured column inside an otherwise plain row printed to stdout.
-/// Returns the plain text when stdout does not support colour.
-template<typename T>
-[[nodiscard]] std::string colored(const T& value, const fmt::terminal_color color)
-{
-    if (isColorEnabled(stdout)) {
-        return fmt::format(fmt::fg(color), "{}", value);
-    }
-
-    return fmt::format("{}", value);
-}
-
 /// Prints "Error: <message>" in red to stderr, followed by a newline.
 /// Leading whitespace in the message is kept in front of the prefix,
 /// so indented messages stay indented.
@@ -164,5 +150,18 @@ void printWarn(const juce::String& message);
 inline void printWarn(const char* message)
 {
     printWarn(std::string_view {message});
+}
+
+/// Formats a value with a colour for building composite lines,
+/// for example a coloured column inside an otherwise plain row printed to stdout.
+/// Returns the plain text when stdout does not support colour.
+template<typename T>
+[[nodiscard]] std::string colored(const T& value, const fmt::terminal_color color)
+{
+    if (isColorEnabled(stdout)) {
+        return fmt::format(fmt::fg(color), "{}", value);
+    }
+
+    return fmt::format("{}", value);
 }
 }  // namespace console

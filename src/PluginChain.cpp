@@ -163,7 +163,7 @@ std::vector<PluginChain::EnabledChainPlugin> PluginChain::getEnabledPlugins()
 PluginChain::ChainInstantiation PluginChain::instantiateChains(
     const std::vector<EnabledChainPlugin>& enabledPlugins,
     const int workerCount
-)
+) const
 {
     // Use a reasonable default sample rate. The chain is prepared again per file with the file's rate.
     constexpr double defaultSampleRate = 48000.0;
@@ -298,7 +298,7 @@ void PluginChain::showMenu(juce::Component& anchor)
     menu.addItem(clearChainMenuItemId, "Clear Chain", !chain.empty());
     menu.addItem(scanMenuItemId, "Scan for Plugins...");
 
-    const juce::WeakReference<PluginChain> safeThis(this);
+    const juce::WeakReference safeThis(this);
     menu.showMenuAsync(
         juce::PopupMenu::Options().withTargetComponent(&anchor).withParentComponent(anchor.getTopLevelComponent()),
         [safeThis, types](const int result) {

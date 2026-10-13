@@ -6,7 +6,6 @@
 #pragma once
 
 #include "PluginProcessing.h"
-#include "PluginProcessingService.h"
 
 #include <JuceHeader.h>
 
@@ -127,7 +126,7 @@ private:
         int totalFiles,
         RunChains& runChains,
         std::atomic<int>& pendingFiles
-    );
+    ) const;
 
     juce::ThreadPool threadPool;
     juce::CriticalSection callbackLock;

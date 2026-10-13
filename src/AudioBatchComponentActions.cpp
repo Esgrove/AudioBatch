@@ -153,7 +153,7 @@ void AudioBatchComponent::handleFileContextMenuRequested(const int row, int colu
     showFileContextMenu(row, event.getScreenPosition());
 }
 
-void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> screenPosition)
+void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<int> screenPosition)
 {
     if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
         return;
@@ -234,7 +234,7 @@ void AudioBatchComponent::showFileContextMenu(int row, const juce::Point<int> sc
     );
 }
 
-void AudioBatchComponent::revealSelectedRecord()
+void AudioBatchComponent::revealSelectedRecord() const
 {
     const auto selectedRows = resultsTable.getSelectedRows();
 

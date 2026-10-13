@@ -12,7 +12,6 @@
 #include "PluginListCli.h"
 #include "PluginScanner.h"
 
-#include <cstddef>
 #include <span>
 
 namespace audiobatch::cli
@@ -57,10 +56,9 @@ int main(const int argc, char* argv[])
 
     // The plugin rescan relaunches this executable as its scan worker.
     const auto argumentSpan = std::span(argv, static_cast<std::size_t>(argc)).subspan(1);
-    if (const auto commandLine
+    const auto commandLine
         = juce::StringArray(argumentSpan.data(), static_cast<int>(argumentSpan.size())).joinIntoString(" ");
-        isPluginScanWorkerCommandLine(commandLine))
-    {
+    if (isPluginScanWorkerCommandLine(commandLine)) {
         return audiobatch::cli::runPluginScanWorker(executableName, commandLine);
     }
 

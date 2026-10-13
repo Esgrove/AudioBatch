@@ -81,7 +81,7 @@ static void drawActivityIndicator(juce::Graphics& graphics, const juce::Rectangl
 using namespace audiobatch::table;
 
 AudioFileTableModel::AudioFileTableModel(
-    std::vector<AudioAnalysisRecord>& sourceRecords,
+    const std::vector<AudioAnalysisRecord>& sourceRecords,
     std::function<void(int row)> onSelectionChanged,
     std::function<void(int columnId, bool isForwards)> onSortChanged,
     std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,

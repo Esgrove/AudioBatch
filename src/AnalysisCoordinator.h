@@ -106,7 +106,7 @@ private:
         int runId,
         int totalFiles,
         const std::shared_ptr<std::atomic<int>>& pendingFiles
-    );
+    ) const;
 
     /// Returns true when the run has been cancelled or replaced by a newer one.
     [[nodiscard]] bool isRunCancelled(int runId) const noexcept;

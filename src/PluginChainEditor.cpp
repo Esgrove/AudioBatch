@@ -262,7 +262,7 @@ void PluginChainEditor::showAddPluginMenu()
     juce::PopupMenu menu;
     juce::KnownPluginList::addToMenu(menu, types, juce::KnownPluginList::sortByManufacturer);
 
-    const juce::Component::SafePointer<PluginChainEditor> safeThis(this);
+    const juce::Component::SafePointer safeThis(this);
     menu.showMenuAsync(
         juce::PopupMenu::Options().withTargetComponent(&addButton).withParentComponent(getTopLevelComponent()),
         [safeThis, types](const int result) {

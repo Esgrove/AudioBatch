@@ -6,7 +6,6 @@
 
 #include <juce_core/juce_core.h>
 
-#include <utility>
 #include <vector>
 
 /// Reads and writes audio file metadata (tags + embedded pictures) using TagLib.

@@ -166,7 +166,7 @@ void AnalysisCoordinator::analyzeStaleFile(
     const int runId,
     const int totalFiles,
     const std::shared_ptr<std::atomic<int>>& pendingFiles
-)
+) const
 {
     if (isRunCancelled(runId)) {
         return;

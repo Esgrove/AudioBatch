@@ -9,7 +9,6 @@
 
 #include <JuceHeader.h>
 
-#include <cstdint>
 #include <memory>
 #include <utility>
 

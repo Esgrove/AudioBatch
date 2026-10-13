@@ -278,9 +278,9 @@ void AudioAnalysisCli::attachNegativeOptionValues(juce::ArgumentList& arguments)
 
     for (int index = 0; index + 1 < arguments.size(); ++index) {
         const auto& argument = arguments.arguments.getReference(index);
-        const auto& next = arguments.arguments.getReference(index + 1);
+        const auto& [text] = arguments.arguments.getReference(index + 1);
 
-        if (!next.text.startsWithChar('-') || !isNumericArgument(next.text)) {
+        if (!text.startsWithChar('-') || !isNumericArgument(text)) {
             continue;
         }
 
@@ -298,7 +298,7 @@ void AudioAnalysisCli::attachNegativeOptionValues(juce::ArgumentList& arguments)
             continue;
         }
 
-        arguments.arguments.set(index, {utils::format("{}={}", optionText, next.text)});
+        arguments.arguments.set(index, {utils::format("{}={}", optionText, text)});
         arguments.arguments.remove(index + 1);
     }
 }

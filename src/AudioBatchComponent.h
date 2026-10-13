@@ -20,7 +20,6 @@
 
 #include <JuceHeader.h>
 
-#include <map>
 #include <memory>
 #include <set>
 #include <thread>
@@ -70,7 +69,7 @@ public:
     /// Reveals the file of the selected row in the platform file manager.
     /// With several rows selected, the row shown in the info panel is used.
     /// Does nothing when no row is selected.
-    void revealSelectedRecord();
+    void revealSelectedRecord() const;
 
     /// Moves the selected files to the OS trash, optionally asking for confirmation first.
     /// The rows of the files that were trashed are removed from the table.
@@ -221,7 +220,7 @@ private:
     void updateGainControlsForSelection();
 
     /// Applies the current file's custom gain to the waveform preview as a display-only scale factor.
-    void updateThumbnailDisplayGain();
+    void updateThumbnailDisplayGain() const;
 
     /// Returns the selected records that exist on disk, are fully analyzed, and have a processable format.
     [[nodiscard]] std::vector<AudioAnalysisRecord> getSelectedProcessableRecords() const;
@@ -343,7 +342,7 @@ private:
     void restoreSelectionByPaths(const juce::StringArray& selectedPaths);
 
     /// Updates the header text so the secondary sort key remains visible.
-    void refreshSortIndicators();
+    void refreshSortIndicators() const;
 
     /// Shows the context menu for the given row at the supplied screen position.
     void showFileContextMenu(int row, juce::Point<int> screenPosition);
@@ -408,7 +407,7 @@ private:
     void updatePlaybackButtonForTransportState();
 
     /// Forwards the zoom slider value to the waveform preview.
-    void zoomLevelChanged(double zoomLevel);
+    void zoomLevelChanged(double zoomLevel) const;
 
     AnalysisCache analysisCache;
     /// Owns the tag worker, stopped explicitly before GUI cleanup and before the cache is destroyed.
@@ -435,7 +434,7 @@ private:
 
     SafePointer<juce::DialogWindow> settingsWindow;
 
-    juce::Array<juce::Component::SafePointer<juce::DialogWindow>> childWindows;
+    juce::Array<SafePointer<juce::DialogWindow>> childWindows;
     juce::AudioDeviceManager audioDeviceManager;
     juce::AudioDeviceSelectorComponent audioSetupComponent;
     juce::AudioFormatManager formatManager;

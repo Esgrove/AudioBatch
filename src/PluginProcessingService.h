@@ -5,14 +5,12 @@
 
 #pragma once
 
-#include "AudioAnalysisService.h"
 #include "Cancellation.h"
 #include "PluginProcessing.h"
 
 #include <JuceHeader.h>
 
 #include <functional>
-#include <memory>
 #include <vector>
 
 /// Stateless audio-file processing through a chain of plugin instances.

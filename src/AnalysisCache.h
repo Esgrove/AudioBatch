@@ -116,7 +116,7 @@ private:
 
     /// Adds every column that a database created by an older version lacks, with its default value.
     /// Returns false when a migration statement fails.
-    bool addMissingColumns();
+    bool addMissingColumns() const;
 
     /// Closes the database handle if it is open. The caller must hold the mutex.
     void closeUnlocked();
@@ -142,7 +142,7 @@ private:
         std::int64_t fileSize,
         std::int64_t modifiedTimeMs,
         std::optional<std::int64_t> tagKind = std::nullopt
-    );
+    ) const;
 
     /// Returns the canonical path string used as the cache key for a file.
     static juce::String normalizedPath(const juce::File& file);

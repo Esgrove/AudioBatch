@@ -215,7 +215,7 @@ void PluginProcessingCoordinator::runFileJob(
     const int totalFiles,
     RunChains& runChains,
     std::atomic<int>& pendingFiles
-)
+) const
 {
     if (runId != currentRunId.load()) {
         return;

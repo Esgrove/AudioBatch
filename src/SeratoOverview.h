@@ -6,7 +6,6 @@
 #include <juce_core/juce_core.h>
 
 #include <array>
-#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>

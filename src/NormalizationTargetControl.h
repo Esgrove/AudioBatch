@@ -35,7 +35,7 @@ private:
     [[nodiscard]] bool isLoudnessMode() const;
 
     /// Writes the mode and both targets to the user settings.
-    void saveSettings();
+    void saveSettings() const;
 
     /// Switches the slider between the peak and loudness ranges for the selected mode,
     /// showing the remembered target of that mode.

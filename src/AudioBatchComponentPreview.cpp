@@ -143,7 +143,7 @@ void AudioBatchComponent::handleThumbnailFullyLoaded()
     currentWaveformLoadedFromCache = analysisCache.storeWaveformData(currentAudioFile, waveformData);
 }
 
-bool AudioBatchComponent::loadURLIntoTransport(const juce::URL& audioURL)
+bool AudioBatchComponent::loadURLIntoTransport(const juce::URL& audioUrl)
 {
     // Unload the previous file source and delete it.
     transportSource.stop();
@@ -151,7 +151,7 @@ bool AudioBatchComponent::loadURLIntoTransport(const juce::URL& audioURL)
     currentAudioFileSource.reset();
 
     auto* reader = formatManager.createReaderFor(
-        audioURL.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress))
+        audioUrl.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress))
     );
 
     if (reader != nullptr) {
@@ -232,7 +232,7 @@ void AudioBatchComponent::mouseMagnify(const juce::MouseEvent& /*event*/, const 
     zoomSlider.setValue(newZoom);
 }
 
-void AudioBatchComponent::zoomLevelChanged(const double zoomLevel)
+void AudioBatchComponent::zoomLevelChanged(const double zoomLevel) const
 {
     thumbnail->setZoom(zoomLevel);
 }
@@ -307,7 +307,7 @@ void AudioBatchComponent::updateGainControlsForSelection()
     gainClearButton.setEnabled(record.hasCustomGain);
 }
 
-void AudioBatchComponent::updateThumbnailDisplayGain()
+void AudioBatchComponent::updateThumbnailDisplayGain() const
 {
     if (thumbnail == nullptr) {
         return;

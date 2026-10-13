@@ -298,7 +298,7 @@ bool AnalysisCache::columnExists(const juce::String& tableName, const juce::Stri
     return found;
 }
 
-bool AnalysisCache::addMissingColumns()
+bool AnalysisCache::addMissingColumns() const
 {
     struct ColumnMigration {
         const char* name;
@@ -817,7 +817,7 @@ bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGa
         return false;
     }
 
-    sqlite3_bind_double(statement, 1, static_cast<double>(customGainDb));
+    sqlite3_bind_double(statement, 1, customGainDb);
     sqlite3_bind_int(statement, 2, hasCustomGain ? 1 : 0);
     sqlite3_bind_int64(statement, 3, juce::Time::getCurrentTime().toMilliseconds());
     bindText(statement, 4, normalizedPath(file));
@@ -898,7 +898,7 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
                 .modifiedTimeMs = sqlite3_column_int64(statement, 2),
                 .tagKind = sqlite3_column_type(statement, 3) == SQLITE_NULL
                     ? std::nullopt
-                    : std::optional<std::int64_t> {sqlite3_column_int64(statement, 3)},
+                    : std::optional {sqlite3_column_int64(statement, 3)},
             });
         }
 
@@ -940,7 +940,7 @@ bool AnalysisCache::removeRowVersion(
     const std::int64_t fileSize,
     const std::int64_t modifiedTimeMs,
     const std::optional<std::int64_t> tagKind
-)
+) const
 {
     const juce::ScopedLock lock(mutex);
 

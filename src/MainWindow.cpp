@@ -10,8 +10,6 @@
 #include "PluginChain.h"
 #include "StringFormat.h"
 
-#include <cstdint>
-
 /// Menu ids and window limits of the main window.
 namespace audiobatch::main_window
 {
@@ -345,7 +343,7 @@ bool MainWindow::perform(const InvocationInfo& info)
     }
 }
 
-void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu)
+void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu) const
 {
     auto* chain = getAudioBatch().getPluginChain();
     if (chain == nullptr) {

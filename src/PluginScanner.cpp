@@ -14,7 +14,6 @@
 #include <condition_variable>
 
 #include <chrono>
-#include <cstdint>
 
 namespace audiobatch::plugin_scanner
 {
@@ -169,7 +168,7 @@ void PluginScanWorker::handleAsyncUpdate()
     }
 }
 
-juce::OwnedArray<juce::PluginDescription> PluginScanWorker::scan(const juce::MemoryBlock& request)
+juce::OwnedArray<juce::PluginDescription> PluginScanWorker::scan(const juce::MemoryBlock& request) const
 {
     juce::MemoryInputStream stream(request, false);
     const auto formatName = stream.readString();

@@ -110,7 +110,7 @@ public:
     /// The operation message provider returns the outcome of the last normalize or process run for a record,
     /// or an empty message, and is shown in the status column when the file is idle.
     AudioFileTableModel(
-        std::vector<AudioAnalysisRecord>& sourceRecords,
+        const std::vector<AudioAnalysisRecord>& sourceRecords,
         std::function<void(int row)> onSelectionChanged,
         std::function<void(int columnId, bool isForwards)> onSortChanged,
         std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,

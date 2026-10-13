@@ -21,9 +21,7 @@ extern "C" {
 #include <initializer_list>
 
 #include <algorithm>
-#include <cmath>
 #include <compare>
-#include <cstdint>
 #include <memory>
 #include <ranges>
 #include <set>
@@ -38,6 +36,43 @@ namespace audiobatch::analysis
 /// so a slower rate can miss the loudest three second window.
 constexpr double shortTermUpdateRateHz = 10.0;
 constexpr auto cancelledMessage = "Analysis was cancelled";
+
+namespace
+{
+/// Left, right, and overall peak reduced from per-channel peaks.
+template<typename Value>
+struct PeakSummary {
+    Value left;
+    Value right;
+    Value overall;
+};
+
+/// Measurements gathered while decoding a file for analysis.
+struct DecodeMeasurements {
+    /// Smallest sample seen on each channel.
+    std::vector<float> minSamples;
+    /// Largest sample seen on each channel.
+    std::vector<float> maxSamples;
+    /// Highest short-term loudness seen across the file.
+    double maxShortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
+    /// Empty when decoding and measuring succeeded.
+    juce::String errorMessage;
+};
+
+/// Deleter that lets a std::unique_ptr own an ebur128 analyzer state.
+struct EbuR128StateDeleter {
+    /// Destroys the analyzer state, safely ignoring null pointers.
+    void operator()(ebur128_state* state) const noexcept
+    {
+        if (state == nullptr) {
+            return;
+        }
+
+        auto* stateToDestroy = state;
+        ebur128_destroy(&stateToDestroy);
+    }
+};
+}  // namespace
 
 /// Marks the record as failed with the given message and logs the error.
 /// Cancellation is logged at debug level only,
@@ -56,22 +91,6 @@ static AudioAnalysisRecord failAnalysis(AudioAnalysisRecord record, const juce::
 
     return record;
 }
-
-/// Deleter that lets a std::unique_ptr own an ebur128 analyzer state.
-struct EbuR128StateDeleter {
-    /// Destroys the analyzer state, safely ignoring null pointers.
-    void operator()(ebur128_state* state) const noexcept
-    {
-        if (state == nullptr) {
-            return;
-        }
-
-        auto* stateToDestroy = state;
-        ebur128_destroy(&stateToDestroy);
-    }
-};
-
-using EbuR128StatePtr = std::unique_ptr<ebur128_state, EbuR128StateDeleter>;
 
 /// Picks the sample extreme with the larger magnitude, preserving its sign.
 static float signedPeakFromExtrema(const float minimum, const float maximum)
@@ -105,13 +124,16 @@ static double normalizeLoudness(const double loudness)
 /// A mono source is measured as dual mono, because it is played on both speakers,
 /// so a mono file reads the same loudness as the same content in stereo
 /// and loudness normalization brings both to the same perceived level.
-static EbuR128StatePtr createLoudnessState(const int channelCount, const int sampleRate)
+static std::unique_ptr<ebur128_state, EbuR128StateDeleter> createLoudnessState(
+    const int channelCount,
+    const int sampleRate
+)
 {
     constexpr auto mode = static_cast<int>(
         static_cast<unsigned int>(EBUR128_MODE_I) | static_cast<unsigned int>(EBUR128_MODE_S)
         | static_cast<unsigned int>(EBUR128_MODE_TRUE_PEAK)
     );
-    EbuR128StatePtr state(
+    std::unique_ptr<ebur128_state, EbuR128StateDeleter> state(
         ebur128_init(static_cast<unsigned int>(channelCount), static_cast<unsigned long>(sampleRate), mode)
     );
 
@@ -196,7 +218,7 @@ bool AudioAnalysisService::isSupportedAudioFile(const juce::File& file)
 juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
     const juce::Array<juce::File>& inputPaths,
     const bool recursive,
-    const CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled
 )
 {
     juce::Array<juce::File> files;
@@ -245,14 +267,6 @@ juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
     return files;
 }
 
-/// Left, right, and overall peak reduced from per-channel peaks.
-template<typename Value>
-struct PeakSummary {
-    Value left;
-    Value right;
-    Value overall;
-};
-
 /// Reduces per-channel peaks to the left, right, and overall peak.
 /// A mono source reports its only channel as both left and right.
 template<typename Value>
@@ -268,18 +282,6 @@ static PeakSummary<Value> summarizePeaks(const std::vector<Value>& channelPeaks)
 
     return {left, right, overall};
 }
-
-/// Measurements gathered while decoding a file for analysis.
-struct DecodeMeasurements {
-    /// Smallest sample seen on each channel.
-    std::vector<float> minSamples;
-    /// Largest sample seen on each channel.
-    std::vector<float> maxSamples;
-    /// Highest short-term loudness seen across the file.
-    double maxShortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
-    /// Empty when decoding and measuring succeeded.
-    juce::String errorMessage;
-};
 
 /// Interleaves one decoded block for the loudness meter and folds its samples into the per-channel extremes.
 static void interleaveBlock(
@@ -310,7 +312,7 @@ static DecodeMeasurements measureDecodedAudio(
     juce::AudioFormatReader& reader,
     ebur128_state* loudnessState,
     const juce::String& fullPath,
-    const AudioAnalysisService::CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled
 )
 {
     const auto channelCount = static_cast<int>(reader.numChannels);
@@ -377,7 +379,10 @@ static DecodeMeasurements measureDecodedAudio(
     return measurements;
 }
 
-AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file, const CancellationCheck& isCancelled)
+AudioAnalysisRecord AudioAnalysisService::analyzeFile(
+    const juce::File& file,
+    const utils::CancellationCheck& isCancelled
+)
 {
     auto record = AudioAnalysisRecord::fromFile(file);
 
@@ -386,7 +391,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file, co
     }
 
     auto& formatManager = utils::threadLocalFormatManager();
-    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+    std::unique_ptr<juce::AudioFormatReader> const reader(formatManager.createReaderFor(file));
 
     if (reader == nullptr) {
         return failAnalysis(std::move(record), "Unsupported or unreadable audio file");
@@ -405,21 +410,21 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file, co
         return failAnalysis(std::move(record), "Could not initialize loudness analyzer");
     }
 
-    const auto measurements = measureDecodedAudio(*reader, loudnessState.get(), record.fullPath, isCancelled);
+    const auto [minSamples, maxSamples, maxShortTermLoudness, errorMessage]
+        = measureDecodedAudio(*reader, loudnessState.get(), record.fullPath, isCancelled);
 
-    if (measurements.errorMessage.isNotEmpty()) {
-        return failAnalysis(std::move(record), measurements.errorMessage);
+    if (errorMessage.isNotEmpty()) {
+        return failAnalysis(std::move(record), errorMessage);
     }
 
     std::vector signedPeaks(static_cast<size_t>(channelCount), 0.0f);
 
     for (int channel = 0; channel < channelCount; ++channel) {
         const auto channelIndex = static_cast<size_t>(channel);
-        signedPeaks[channelIndex]
-            = signedPeakFromExtrema(measurements.minSamples[channelIndex], measurements.maxSamples[channelIndex]);
+        signedPeaks[channelIndex] = signedPeakFromExtrema(minSamples[channelIndex], maxSamples[channelIndex]);
     }
 
-    const auto samplePeaks = summarizePeaks(signedPeaks);
+    const auto [peakLeft, peakRight, peakOverall] = summarizePeaks(signedPeaks);
 
     std::vector truePeaks(static_cast<size_t>(channelCount), 0.0);
 
@@ -439,7 +444,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file, co
         return failAnalysis(std::move(record), "Integrated loudness analysis failed");
     }
 
-    const auto truePeakSummary = summarizePeaks(truePeaks);
+    const auto [truePeakLeft, truePeakRight, truePeakOverall] = summarizePeaks(truePeaks);
 
     record.formatName = reader->getFormatName();
     record.sampleRate = sampleRate;
@@ -448,13 +453,13 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(const juce::File& file, co
     record.lengthInSamples = reader->lengthInSamples;
     record.durationSeconds
         = reader->sampleRate > 0.0 ? static_cast<double>(reader->lengthInSamples) / reader->sampleRate : 0.0;
-    record.peakLeft = samplePeaks.left;
-    record.peakRight = samplePeaks.right;
-    record.overallPeak = samplePeaks.overall;
-    record.truePeakLeft = truePeakSummary.left;
-    record.truePeakRight = truePeakSummary.right;
-    record.overallTruePeak = truePeakSummary.overall;
-    record.maxShortTermLufs = measurements.maxShortTermLoudness;
+    record.peakLeft = peakLeft;
+    record.peakRight = peakRight;
+    record.overallPeak = peakOverall;
+    record.truePeakLeft = truePeakLeft;
+    record.truePeakRight = truePeakRight;
+    record.overallTruePeak = truePeakOverall;
+    record.maxShortTermLufs = maxShortTermLoudness;
     record.integratedLufs = normalizeLoudness(integratedLoudness);
     record.status = AudioAnalysisStatus::analyzed;
     record.fromCache = false;

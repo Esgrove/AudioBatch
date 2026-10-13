@@ -6,9 +6,7 @@
 #include "Log.h"
 
 #include <algorithm>
-#include <cmath>
 #include <exception>
-#include <iterator>
 #include <utility>
 
 namespace audiobatch::serato
@@ -132,7 +130,7 @@ bool SeratoPreviewLoader::readMisses(
     const std::span<const TagKind> misses,
     Results& results,
     const utils::CancellationCheck& isCancelled
-)
+) const
 {
     if (misses.empty()) {
         return true;

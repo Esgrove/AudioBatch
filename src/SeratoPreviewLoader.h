@@ -84,7 +84,7 @@ private:
         std::span<const TagKind> misses,
         Results& results,
         const utils::CancellationCheck& isCancelled
-    );
+    ) const;
 
     /// Moves independently present values into an immutable aggregate, leaving negative kinds unset.
     static Data collectData(Results& results);

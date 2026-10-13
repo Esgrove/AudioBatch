@@ -83,7 +83,7 @@ private:
     void handleAsyncUpdate() override;
 
     /// Loads the requested plugin file and returns the plugin descriptions it contains.
-    [[nodiscard]] juce::OwnedArray<juce::PluginDescription> scan(const juce::MemoryBlock& request);
+    [[nodiscard]] juce::OwnedArray<juce::PluginDescription> scan(const juce::MemoryBlock& request) const;
 
     /// Serializes the descriptions as XML and sends them to the main process.
     void sendResults(const juce::OwnedArray<juce::PluginDescription>& results);
