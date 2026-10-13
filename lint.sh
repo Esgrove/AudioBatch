@@ -6,6 +6,7 @@ USAGE="Usage: $0 [OPTIONS] [-- CLANG_TIDY_ARGS...]
 Lint C++ code in src/ and tests/ with clang-tidy.
 
 Uses the compile_commands.json from an existing CMake build directory.
+If none is found, configures and builds the platform's Ninja debug preset first.
 On macOS the script also passes the active SDK path so that Homebrew's
 clang-tidy can find platform headers like TargetConditionals.h.
 
@@ -82,7 +83,27 @@ for candidate in cmake-build-mac-debug cmake-build-windows-ninja-debug cmake-bui
 done
 
 if [ -z "$BUILD_DIR" ]; then
-    print_error_and_exit "No compile_commands.json found. Configure a CMake build first, for example: cmake --preset macos-debug"
+    case "$BASH_PLATFORM" in
+        mac)
+            BUILD_PRESET="macos-debug"
+            BUILD_DIR="$REPO/cmake-build-mac-debug"
+            ;;
+        windows)
+            BUILD_PRESET="windows-ninja-debug"
+            BUILD_DIR="$REPO/cmake-build-windows-ninja-debug"
+            ;;
+        *)
+            print_error_and_exit "Platform is not supported yet"
+            ;;
+    esac
+
+    print_magenta "No compile database found. Configuring and building $BUILD_PRESET..."
+    cmake --preset "$BUILD_PRESET"
+    cmake --build --preset "$BUILD_PRESET"
+
+    if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
+        print_error_and_exit "Build did not generate $BUILD_DIR/compile_commands.json"
+    fi
 fi
 
 print_magenta "Using compile database at $BUILD_DIR"

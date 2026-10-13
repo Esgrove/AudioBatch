@@ -110,6 +110,8 @@ cmake --build --preset macos-debug
 ./build.sh -b Release
 ```
 
+Add `-t` or `--test` to also build and run the tests in the selected build configuration.
+
 This produces two binaries:
 
 - `AudioBatchApp.exe` / `AudioBatch.app` for the GUI app.
@@ -123,6 +125,7 @@ Formatting and linting run through scripts in the repository root:
   cmake-format runs through `uvx` when it is not installed.
   `./format.sh --check` only verifies formatting, which is what CI runs.
 - `./lint.sh` runs clang-tidy on `src/` and `tests/` using the debug build's `compile_commands.json`.
+  If no compile database is found, it configures and builds the platform's Ninja debug preset first.
   `./lint.sh --check` exits with code 1 on any warning.
 - `ctest --test-dir cmake-build-mac-debug --output-on-failure` runs the unit and integration tests
   after a debug build.
