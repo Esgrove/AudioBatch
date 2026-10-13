@@ -127,8 +127,12 @@ void SeratoPreviewLoader::process(const Request& active, const std::stop_token& 
     }
 }
 
-bool SeratoPreviewLoader::readMisses(const Request& active, const std::span<const TagKind> misses, Results& results,
-                                    const utils::CancellationCheck& isCancelled)
+bool SeratoPreviewLoader::readMisses(
+    const Request& active,
+    const std::span<const TagKind> misses,
+    Results& results,
+    const utils::CancellationCheck& isCancelled
+)
 {
     if (misses.empty()) {
         return true;
@@ -138,7 +142,8 @@ bool SeratoPreviewLoader::readMisses(const Request& active, const std::span<cons
     }
     auto fresh = reader(active.file, misses, isCancelled);
     if (isCancelled() || !active.identity.matches(active.file) || isCancelled()
-        || std::ranges::any_of(fresh, [](const auto& result) { return result.status == ReadStatus::cancelled; })) {
+        || std::ranges::any_of(fresh, [](const auto& result) { return result.status == ReadStatus::cancelled; }))
+    {
         return false;
     }
     for (auto& result : fresh) {
@@ -169,15 +174,28 @@ SeratoPreviewLoader::Data SeratoPreviewLoader::collectData(Results& results)
             continue;
         }
         switch (result->kind) {
-            case TagKind::overview: loaded.overview = std::move(result->overview); break;
-            case TagKind::analysis: loaded.analysis = result->analysis; break;
-            case TagKind::autotags: loaded.autotags = result->autotags; break;
-            case TagKind::beatGrid: loaded.beatGrid = std::move(result->beatGrid); break;
-            case TagKind::markers: loaded.markers = std::move(result->markers); break;
-            case TagKind::trackInfo: loaded.trackInfo = std::move(result->trackInfo); break;
+            case TagKind::overview:
+                loaded.overview = std::move(result->overview);
+                break;
+            case TagKind::analysis:
+                loaded.analysis = result->analysis;
+                break;
+            case TagKind::autotags:
+                loaded.autotags = result->autotags;
+                break;
+            case TagKind::beatGrid:
+                loaded.beatGrid = std::move(result->beatGrid);
+                break;
+            case TagKind::markers:
+                loaded.markers = std::move(result->markers);
+                break;
+            case TagKind::trackInfo:
+                loaded.trackInfo = std::move(result->trackInfo);
+                break;
         }
     }
-    if (loaded.overview || loaded.analysis || loaded.autotags || loaded.beatGrid || loaded.markers || loaded.trackInfo) {
+    if (loaded.overview || loaded.analysis || loaded.autotags || loaded.beatGrid || loaded.markers || loaded.trackInfo)
+    {
         return std::make_shared<const SeratoData>(std::move(loaded));
     }
     return {};

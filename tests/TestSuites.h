@@ -52,6 +52,9 @@ std::unique_ptr<juce::UnitTest> createSeratoWaveformColouringTests();
 /// Creates the suite that checks bounded preview loading, stale delivery rejection and cache restart.
 std::unique_ptr<juce::UnitTest> createSeratoPreviewLoaderTests();
 
+/// Creates the suite that checks cue arrows, selection resets and musical metadata in the GUI preview.
+std::unique_ptr<juce::UnitTest> createSeratoPreviewTests();
+
 /// Creates the suite that checks the shared file, format, string, cancellation, and decode failure helpers.
 std::unique_ptr<juce::UnitTest> createUtilsTests();
 }  // namespace audiobatch::tests

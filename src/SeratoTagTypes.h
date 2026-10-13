@@ -127,11 +127,11 @@ enum class ReadStatus : std::uint8_t {
 struct TagReadResult {
     TagKind kind = TagKind::overview;
     ReadStatus status = ReadStatus::absent;
-    std::optional<Overview> overview;
-    std::optional<Analysis> analysis;
-    std::optional<Autotags> autotags;
-    std::optional<BeatGrid> beatGrid;
-    std::optional<Markers> markers;
-    std::optional<TrackInfo> trackInfo;
+    std::optional<Overview> overview {};
+    std::optional<Analysis> analysis {};
+    std::optional<Autotags> autotags {};
+    std::optional<BeatGrid> beatGrid {};
+    std::optional<Markers> markers {};
+    std::optional<TrackInfo> trackInfo {};
 };
 }  // namespace audiobatch::serato

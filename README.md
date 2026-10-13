@@ -33,8 +33,18 @@ Overview colours are coarse, so zooming reveals finer peaks but no additional co
 Tag loading runs asynchronously with one active read and only the latest pending selection.
 The preview remains blue while loading and when tags are absent, unsupported or unusable.
 Late colours do not restart playback or change zoom or gain.
-Raw palette indices and stable negative tag outcomes are cached independently of analysis results and JUCE peak data.
-MP3, AIFF and compatible WAV ID3v2 GEOB tags, and FLAC SERATO_OVERVIEW comments, are supported read-only.
+Cue points use their stored colours for arrows at the top and bottom of the waveform, pointing toward its centre.
+Their millisecond positions share the waveform and playhead time projection, so they stay aligned while zooming or scrolling.
+Cue arrows render above both solid and coloured waveforms, below the playback cursor, even when Overview is absent.
+The info panel shows BPM and musical key when embedded metadata supplies them.
+Tempo prefers Serato Autotags, then standard BPM, then the final beatgrid anchor.
+Musical key comes from the standard INITIALKEY property, not the Serato Analysis version.
+
+Overview, Analysis, Autotags, BeatGrid and Markers2 have independent parsers, numeric serializers and cache versions.
+Legacy Markers are a fallback when usable Markers2 data is unavailable.
+Saved loops, track colour and BPM lock are parsed and cached but do not add waveform overlays or editing controls.
+Raw tag data and stable negative outcomes are cached independently of analysis results and JUCE peak data.
+MP3, AIFF and compatible WAV ID3v2 GEOB tags, and documented FLAC Serato comment wrappers, are supported read-only.
 The palette interpretation was checked against matching Serato overview screenshots.
 Serato's detailed zoomed waveform contains finer colour changes that cannot be recovered from this small tag.
 Its detailed analysis source and the reserved palette remain unverified.
@@ -42,7 +52,7 @@ See [Serato Overview Color Validation](docs/plans/serato-overview/visual-validat
 for the decoding evidence, validation results and remaining limitations.
 
 Future Serato tag kinds need their own parser, numeric serialization and cache version.
-Cues, loops and beatgrids are not implemented. Future overlays should use playback seconds rather than the slice grid.
+Future loop and beatgrid overlays should use playback seconds rather than the Overview slice grid.
 
 ## Dependencies
 

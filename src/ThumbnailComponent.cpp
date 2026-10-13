@@ -30,6 +30,14 @@ constexpr double horizontalScrollStepRatio {0.10};
 
 /// Fraction of the total length near the start of the file within which zooming always anchors at the playhead.
 constexpr double zoomStartAnchorRatio {0.05};
+
+/// Fixed cue arrow dimensions keep overlays readable without changing waveform channel bounds.
+constexpr float cueArrowHeight {12.0f};
+constexpr float cueArrowWidth {10.0f};
+constexpr float cueArrowOutlineWidth {1.5f};
+constexpr float cueArrowOutlineAlpha {0.8f};
+constexpr float cueArrowShaftRatio {1.0f / 3.0f};
+constexpr double millisecondsPerSecond {1000.0};
 }  // namespace
 
 ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source) :
@@ -54,21 +62,19 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
 
     if (thumbnail.getTotalLength() > 0.0) {
         const auto reduced = waveformBounds();
-        if (seratoOverview) {
-            if (const auto gradient = audiobatch::serato::makeOverviewGradient(
-                    *seratoOverview, visibleRange, thumbnail.getTotalLength(), reduced, juce::CustomLookAndFeel::blue()
-                ))
-            {
-                audiobatch::serato::drawColouredThumbnail(
-                    graphics, thumbnail, reduced, visibleRange, displayGain, *gradient
-                );
-                return;
-            }
+        const auto gradient = seratoOverview
+            ? audiobatch::serato::makeOverviewGradient(
+                  *seratoOverview, visibleRange, thumbnail.getTotalLength(), reduced, juce::CustomLookAndFeel::blue()
+              )
+            : std::nullopt;
+        if (gradient) {
+            audiobatch::serato::drawColouredThumbnail(
+                graphics, thumbnail, reduced, visibleRange, displayGain, *gradient
+            );
+        } else {
+            thumbnail.drawChannels(graphics, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
         }
-
-        // drawChannels scales each channel around its own strip midpoint and clamps the waveform to the strip bounds,
-        // so over-0 dBFS peaks are naturally clipped at the channel boundary.
-        thumbnail.drawChannels(graphics, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
+        drawCueMarkers(graphics);
     } else {
         graphics.setFont(placeholderFontHeight);
         graphics.drawFittedText("No audio file selected", getLocalBounds(), juce::Justification::centred, 2);
@@ -80,6 +86,7 @@ void ThumbnailComponent::resized() { }
 bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData)
 {
     seratoOverview.reset();
+    seratoMarkers.reset();
     thumbnail.clear();
     hasNotifiedFullyLoaded = false;
 
@@ -148,6 +155,7 @@ void ThumbnailComponent::setMouseWheelGainCallback(std::function<void(float)> ca
 void ThumbnailComponent::setURL(const juce::URL& url)
 {
     seratoOverview.reset();
+    seratoMarkers.reset();
     hasNotifiedFullyLoaded = false;
 
     if (!url.isWellFormed()) {
@@ -347,6 +355,52 @@ void ThumbnailComponent::setSeratoOverview(std::shared_ptr<const audiobatch::ser
     }
     seratoOverview = std::move(overview);
     repaint();
+}
+
+void ThumbnailComponent::setSeratoMarkers(std::shared_ptr<const audiobatch::serato::Markers> markers)
+{
+    seratoMarkers = std::move(markers);
+    repaint();
+}
+
+void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
+{
+    const auto bounds = waveformBounds();
+    if (!seratoMarkers || bounds.isEmpty() || visibleRange.getLength() <= 0.0) {
+        return;
+    }
+    const juce::Graphics::ScopedSaveState savedState(graphics);
+    graphics.reduceClipRegion(bounds);
+    const auto arrowHeight = std::min(cueArrowHeight, static_cast<float>(bounds.getHeight()) / 4.0f);
+    const auto arrowWidth = std::min(cueArrowWidth, arrowHeight);
+    for (const auto& cue : seratoMarkers->cues) {
+        const auto seconds = static_cast<double>(cue.positionMilliseconds) / millisecondsPerSecond;
+        if (seconds > thumbnail.getTotalLength() || seconds < visibleRange.getStart()
+            || seconds > visibleRange.getEnd())
+        {
+            continue;
+        }
+        const auto horizontalPosition = timeToX(seconds);
+        const auto top = static_cast<float>(bounds.getY());
+        const auto bottom = static_cast<float>(bounds.getBottom());
+        juce::Path arrows;
+        arrows.addArrow(
+            {horizontalPosition, top, horizontalPosition, top + arrowHeight},
+            arrowWidth * cueArrowShaftRatio,
+            arrowWidth,
+            arrowHeight / 2.0f
+        );
+        arrows.addArrow(
+            {horizontalPosition, bottom, horizontalPosition, bottom - arrowHeight},
+            arrowWidth * cueArrowShaftRatio,
+            arrowWidth,
+            arrowHeight / 2.0f
+        );
+        graphics.setColour(juce::Colours::black.withAlpha(cueArrowOutlineAlpha));
+        graphics.strokePath(arrows, juce::PathStrokeType(cueArrowOutlineWidth));
+        graphics.setColour(cue.colour.withAlpha(1.0f));
+        graphics.fillPath(arrows);
+    }
 }
 
 void ThumbnailComponent::setZoom(const double zoomLevel)

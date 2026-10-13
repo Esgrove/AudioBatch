@@ -61,7 +61,7 @@ public:
         audiobatch::serato::TagKind kind = audiobatch::serato::TagKind::overview
     );
 
-    /// Stores numeric Overview data or a stable negative without requiring an analysis row.
+    /// Stores independently serialized tag data or a stable negative without requiring an analysis row.
     /// Serializes outside the database lock and checks the captured identity before writing.
     /// Returns false for stale identities, inconsistent results, transient outcomes or database failures.
     bool storeSeratoTag(const FileIdentity& identity, const audiobatch::serato::TagReadResult& result);

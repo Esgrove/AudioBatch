@@ -585,6 +585,8 @@ target_sources(
     PRIVATE
         ${AUDIOBATCH_CORE_SOURCES}
         ${AUDIOBATCH_CLI_SOURCES}
+        "src/AudioInfoPanel.cpp"
+        "src/AudioInfoPanel.h"
         "src/FileActivityTracker.cpp"
         "src/FileActivityTracker.h"
         "src/PluginChainPreparation.cpp"
@@ -598,6 +600,8 @@ target_sources(
         "src/SeratoPreviewLoader.h"
         "src/SeratoWaveformColouring.cpp"
         "src/SeratoWaveformColouring.h"
+        "src/ThumbnailComponent.cpp"
+        "src/ThumbnailComponent.h"
         "tests/AnalysisTests.cpp"
         "tests/CacheTests.cpp"
         "tests/CliTests.cpp"
@@ -608,6 +612,7 @@ target_sources(
         "tests/ProcessingTests.cpp"
         "tests/SeratoOverviewTests.cpp"
         "tests/SeratoPreviewLoaderTests.cpp"
+        "tests/SeratoPreviewTests.cpp"
         "tests/SeratoTagReaderTests.cpp"
         "tests/SeratoTagsTests.cpp"
         "tests/SeratoWaveformColouringTests.cpp"
@@ -654,7 +659,8 @@ target_link_libraries(
 )
 # cmake-format: on
 
-enable_testing()
+set(BUILD_TESTING ON)
+include(CTest)
 add_test(NAME AudioBatchTests COMMAND AudioBatchTests)
 
 audiobatch_set_source_warnings(AudioBatch AudioBatchCli AudioBatchTests)

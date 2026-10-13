@@ -8,6 +8,7 @@
 #include <condition_variable>
 
 #include <algorithm>
+#include <bit>
 #include <chrono>
 #include <limits>
 #include <mutex>
@@ -40,10 +41,10 @@ serato::TagReadResult previewResult(const serato::TagKind kind, const ReadStatus
             result.overview->slices.front().fill(32);
             break;
         case serato::TagKind::analysis:
-            result.analysis = serato::Analysis {2, 5};
+            result.analysis = serato::Analysis {.majorVersion = 2, .minorVersion = 5};
             break;
         case serato::TagKind::autotags:
-            result.autotags = serato::Autotags {128.0, -3.0, 1.5};
+            result.autotags = serato::Autotags {.bpm = 128.0, .autoGain = -3.0, .gain = 1.5};
             break;
         case serato::TagKind::beatGrid:
             result.beatGrid = serato::BeatGrid {{{.positionSeconds = 0.5, .beatsUntilNext = 0, .bpm = 128.0}}};
@@ -57,9 +58,9 @@ serato::TagReadResult previewResult(const serato::TagKind kind, const ReadStatus
                     .index = 1,
                     .colour = juce::Colours::green,
                     .locked = true,
-                    .name = "Loop"}},
+                    .name = "Loop",},},
                 .colour = juce::Colours::blue,
-                .bpmLocked = false
+                .bpmLocked = false,
             };
             break;
         case serato::TagKind::trackInfo:
@@ -353,56 +354,75 @@ private:
         for (const auto status :
              {ReadStatus::present, ReadStatus::absent, ReadStatus::unsupported, ReadStatus::invalid})
         {
-            beginTest("Restart reuses all independent positive or stable negative tag outcomes");
-            const TemporaryDirectory directory;
-            const auto database = directory.getChildFile("cache.db");
-            const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
-            PreviewProbe probe(status);
-            {
-                AnalysisCache cache(database);
-                SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
-                loader.request(file, 1.0);
-                expect(probe.waitForDeliveries(1));
+            cacheRestartOutcome(status);
+        }
+    }
+
+    /// Checks a single stable outcome across fresh loader and database instances without another tag read.
+    void cacheRestartOutcome(const ReadStatus status)
+    {
+        beginTest("Restart reuses all independent positive or stable negative tag outcomes");
+        const TemporaryDirectory directory;
+        const auto database = directory.getChildFile("cache.db");
+        const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
+        PreviewProbe probe(status);
+        {
+            AnalysisCache cache(database);
+            SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
+            loader.request(file, 1.0);
+            expect(probe.waitForDeliveries(1));
+        }
+        {
+            AnalysisCache cache(database);
+            SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
+            loader.request(file, 1.0);
+            expect(probe.waitForDeliveries(2));
+            loader.cancelAndWait();
+            const auto results = probe.queued();
+            expectEquals(static_cast<int>(probe.readPaths().size()), 1);
+            expectEquals(static_cast<int>(results.size()), 2);
+            if (results.size() == 2) {
+                expectRestartData(results[0].data, results[1].data, status);
             }
-            {
-                AnalysisCache cache(database);
-                SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
-                loader.request(file, 1.0);
-                expect(probe.waitForDeliveries(2));
-                loader.cancelAndWait();
-                const auto results = probe.queued();
-                expectEquals(static_cast<int>(probe.readPaths().size()), 1);
-                expectEquals(static_cast<int>(results.size()), 2);
-                if (results.size() == 2) {
-                    if (status == ReadStatus::present) {
-                        expect(results[0].data && results[1].data);
-                        expectEveryKind(results[0].data);
-                        expectEveryKind(results[1].data);
-                        if (results[0].data && results[1].data) {
-                            expect(results[0].data->overview && results[1].data->overview);
-                            if (results[0].data->overview && results[1].data->overview) {
-                                expect(results[0].data->overview->slices == results[1].data->overview->slices);
-                            }
-                        }
-                    } else {
-                        expect(!results[0].data && !results[1].data);
-                    }
-                }
-                const auto batches = probe.readBatches();
-                expectEquals(static_cast<int>(batches.size()), 1);
-                if (!batches.empty()) {
-                    expect(
-                        batches.front()
-                        == std::vector<serato::TagKind>(serato::allTagKinds.begin(), serato::allTagKinds.end())
-                    );
-                }
-                for (const auto kind : serato::allTagKinds) {
-                    const auto cached = cache.getSeratoTag(AnalysisCache::FileIdentity(file), kind);
-                    expect(cached && cached->kind == kind && cached->status == status);
-                }
-                AudioAnalysisRecord record;
-                expect(!cache.getAnalysis(file, record));
+            const auto batches = probe.readBatches();
+            expectEquals(static_cast<int>(batches.size()), 1);
+            if (!batches.empty()) {
+                expect(
+                    batches.front()
+                    == std::vector<serato::TagKind>(serato::allTagKinds.begin(), serato::allTagKinds.end())
+                );
             }
+            for (const auto kind : serato::allTagKinds) {
+                const auto cached = cache.getSeratoTag(AnalysisCache::FileIdentity(file), kind);
+                expect(cached && cached->kind == kind && cached->status == status);
+            }
+            AudioAnalysisRecord record;
+            expect(!cache.getAnalysis(file, record));
+        }
+    }
+
+    /// Verifies identical owned overview values after restart, or absent aggregates for stable negatives.
+    void expectRestartData(
+        const SeratoPreviewLoader::Data& original,
+        const SeratoPreviewLoader::Data& restarted,
+        const ReadStatus status
+    )
+    {
+        if (status != ReadStatus::present) {
+            expect(!original && !restarted);
+            return;
+        }
+        expect(original && restarted);
+        expectEveryKind(original);
+        expectEveryKind(restarted);
+        if (!original || !restarted) {
+            return;
+        }
+        const auto& originalOverview = original->overview;
+        const auto& restartedOverview = restarted->overview;
+        expect(originalOverview && restartedOverview);
+        if (originalOverview && restartedOverview) {
+            expect(originalOverview->slices == restartedOverview->slices);
         }
     }
 
@@ -468,14 +488,17 @@ private:
                   std::vector<serato::TagReadResult> results;
                   for (const auto kind : kinds) {
                       if (kind != TagKind::beatGrid) {
-                          const auto status = kind == TagKind::analysis ? ReadStatus::invalid
-                              : kind == TagKind::autotags               ? ReadStatus::ioError
-                                                                        : ReadStatus::present;
+                          auto status = ReadStatus::present;
+                          if (kind == TagKind::analysis) {
+                              status = ReadStatus::invalid;
+                          } else if (kind == TagKind::autotags) {
+                              status = ReadStatus::ioError;
+                          }
                           results.push_back(previewResult(kind, status));
                       }
                   }
                   std::ranges::reverse(results);
-                  results.push_back(previewResult(static_cast<TagKind>(99), ReadStatus::absent));
+                  results.push_back(previewResult(std::bit_cast<TagKind>(std::uint32_t {99}), ReadStatus::absent));
                   return results;
               };
         SeratoPreviewLoader loader(cache, probe.completion(), reader);

@@ -79,8 +79,12 @@ private:
     void process(const Request& active, const std::stop_token& stopToken);
 
     /// Reads missing kinds in one batch and persists only stable results while the request remains current.
-    bool readMisses(const Request& active, std::span<const TagKind> misses, Results& results,
-                    const utils::CancellationCheck& isCancelled);
+    bool readMisses(
+        const Request& active,
+        std::span<const TagKind> misses,
+        Results& results,
+        const utils::CancellationCheck& isCancelled
+    );
 
     /// Moves independently present values into an immutable aggregate, leaving negative kinds unset.
     static Data collectData(Results& results);

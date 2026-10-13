@@ -176,12 +176,12 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
         [safeThis](
             AnalysisCache::FileIdentity identity,
             const audiobatch::serato::SeratoPreviewLoader::Generation generation,
-            audiobatch::serato::SeratoPreviewLoader::Bands bands
+            audiobatch::serato::SeratoPreviewLoader::Data data
         ) {
             juce::MessageManager::callAsync(
-                [safeThis, identity = std::move(identity), generation, bands = std::move(bands)] {
+                [safeThis, identity = std::move(identity), generation, data = std::move(data)] {
                     if (safeThis != nullptr) {
-                        safeThis->adoptSeratoPreview(identity, generation, bands);
+                        safeThis->adoptSeratoPreview(identity, generation, data);
                     }
                 }
             );

@@ -1,5 +1,5 @@
 /// Extracts existing GEOB frames, native FLAC comments and standard properties without saving any file.
-/// Bounded Base64 decoding validates the documented wrapper before passing its payload to Overview.
+/// Bounded Base64 decoding validates documented wrappers before passing payloads to independent tag parsers.
 
 #include "SeratoTagReader.h"
 

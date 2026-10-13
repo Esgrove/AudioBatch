@@ -6,7 +6,7 @@
 
 #pragma once
 
-#include "SeratoOverview.h"
+#include "SeratoTagTypes.h"
 
 #include <JuceHeader.h>
 
@@ -104,7 +104,15 @@ public:
     /// Null, empty and oversized data remove colouring. The owner must reject stale asynchronous results.
     void setSeratoOverview(std::shared_ptr<const audiobatch::serato::Overview> overview);
 
+    /// Attaches owned cue positions and colours without altering peaks, playback or the viewport.
+    /// Null data removes the arrows. The owner must reject stale asynchronous results before adoption.
+    void setSeratoMarkers(std::shared_ptr<const audiobatch::serato::Markers> markers);
+
 private:
+    /// Draws inward-facing cue arrows over the waveform, below the child playback cursor.
+    /// Millisecond positions use the same seconds-based projection as scrubbing and the playhead.
+    void drawCueMarkers(juce::Graphics& graphics) const;
+
     /// Returns the inset rectangle shared by waveform painting, cursor projection and scrubbing.
     juce::Rectangle<int> waveformBounds() const;
 
@@ -138,6 +146,7 @@ private:
     std::function<void(double)> mouseWheelZoomCallback;
     std::function<void(float)> mouseWheelGainCallback;
     std::shared_ptr<const audiobatch::serato::Overview> seratoOverview;
+    std::shared_ptr<const audiobatch::serato::Markers> seratoMarkers;
 
     bool hasNotifiedFullyLoaded = false;
     bool isFollowingTransport = false;

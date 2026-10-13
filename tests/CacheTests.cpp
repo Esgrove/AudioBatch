@@ -12,6 +12,8 @@
 #include "TestSuites.h"
 
 #include <atomic>
+#include <bit>
+#include <span>
 #include <sqlite3.h>
 
 namespace audiobatch::tests
@@ -45,7 +47,8 @@ public:
             overview.slices.front().fill(7);
             overview.slices.back().fill(19);
             const audiobatch::serato::TagReadResult result {
-                .status = audiobatch::serato::ReadStatus::present, .overview = overview
+                .status = audiobatch::serato::ReadStatus::present,
+                .overview = overview,
             };
             expect(cache.storeSeratoTag(identity, result));
             const auto loaded = cache.getSeratoTag(identity);
@@ -342,7 +345,9 @@ private:
 
         beginTest("Transient and inconsistent results never overwrite a stable result");
         expect(cache.storeSeratoTag(identity, positive));
-        for (const auto status : {ReadStatus::ioError, ReadStatus::cancelled, static_cast<ReadStatus>(99)}) {
+        for (const auto status :
+             {ReadStatus::ioError, ReadStatus::cancelled, std::bit_cast<ReadStatus>(std::uint8_t {99})})
+        {
             expect(!cache.storeSeratoTag(identity, {.status = status, .overview = std::nullopt}));
         }
         expect(!cache.storeSeratoTag(identity, {.status = ReadStatus::present, .overview = std::nullopt}));
@@ -360,7 +365,7 @@ private:
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
 
         beginTest("Unknown tag kinds miss and cannot be stored");
-        const auto unknownKind = static_cast<TagKind>(2);
+        const auto unknownKind = std::bit_cast<TagKind>(std::uint32_t {99});
         expect(!cache.getSeratoTag(identity, unknownKind));
         expect(!cache.storeSeratoTag(
             identity, {.kind = unknownKind, .status = ReadStatus::absent, .overview = std::nullopt}
@@ -543,37 +548,73 @@ private:
         overview.slices.resize(2);
         overview.slices.front().fill(7);
         overview.slices.back().fill(19);
-        const std::
-            array
-                positives {
-                    TagReadResult {.kind = TagKind::overview, .status = ReadStatus::present, .overview = overview},
-                    TagReadResult {
-                        .kind = TagKind::analysis, .status = ReadStatus::present, .analysis = Analysis {2, 5}
+        const std::array positives {
+            TagReadResult {.kind = TagKind::overview, .status = ReadStatus::present, .overview = overview},
+            TagReadResult {
+                .kind = TagKind::analysis,
+                .status = ReadStatus::present,
+                .analysis = Analysis {.majorVersion = 2, .minorVersion = 5},
+            },
+            TagReadResult {
+                .kind = TagKind::autotags,
+                .status = ReadStatus::present,
+                .autotags = Autotags {.bpm = 128.25, .autoGain = -3.5, .gain = 1.25},
+            },
+            TagReadResult {
+                .kind = TagKind::beatGrid,
+                .status = ReadStatus::present,
+                .beatGrid = BeatGrid {
+                    .markers = {
+                        {.positionSeconds = 0.5, .beatsUntilNext = 16, .bpm = std::nullopt},
+                        {.positionSeconds = 8.0, .beatsUntilNext = 0, .bpm = 128.25},
                     },
-                    TagReadResult {
-                        .kind = TagKind::autotags,
-                        .status = ReadStatus::present,
-                        .autotags = Autotags {128.25, -3.5, 1.25}
+                },
+            },
+            TagReadResult {
+                .kind = TagKind::markers,
+                .status = ReadStatus::present,
+                .markers = Markers {
+                    .cues = {
+                        {.positionMilliseconds = 1500, .index = 3, .colour = juce::Colours::red, .name = "Intro"},
                     },
-                    TagReadResult {
-                        .kind = TagKind::beatGrid,
-                        .status = ReadStatus::present,
-                        .beatGrid
-                        = BeatGrid {{{.positionSeconds = 0.5, .beatsUntilNext = 16, .bpm = std::nullopt}, {.positionSeconds = 8.0, .beatsUntilNext = 0, .bpm = 128.25}}}
+                    .loops = {
+                        {
+                            .startMilliseconds = 2000,
+                            .endMilliseconds = 4000,
+                            .index = 1,
+                            .colour = juce::Colours::green,
+                            .locked = true,
+                            .name = "Loop",
+                        },
                     },
-                    TagReadResult {
-                        .kind = TagKind::markers,
-                        .status = ReadStatus::present,
-                        .markers
-                        = Markers {.cues = {{.positionMilliseconds = 1500, .index = 3, .colour = juce::Colours::red, .name = "Intro"}}, .loops = {{.startMilliseconds = 2000, .endMilliseconds = 4000, .index = 1, .colour = juce::Colours::green, .locked = true, .name = "Loop"}}, .colour = juce::Colours::blue, .bpmLocked = false}
-                    },
-                    TagReadResult {
-                        .kind = TagKind::trackInfo,
-                        .status = ReadStatus::present,
-                        .trackInfo = TrackInfo {.bpm = 128.25, .key = "Am"}
-                    }
+                    .colour = juce::Colours::blue,
+                    .bpmLocked = false,
+                },
+            },
+            TagReadResult {
+                .kind = TagKind::trackInfo,
+                .status = ReadStatus::present,
+                .trackInfo = TrackInfo {.bpm = 128.25, .key = "Am"},
+            },
         };
 
+        runMultiKindRoundTripTests(cache, databaseFile, file, identity, positives);
+        runMultiKindNegativeTests(cache, databaseFile, identity, positives);
+        runMultiKindVersionTests(cache, databaseFile, identity, positives);
+        runMultiKindRetentionTests(cache, databaseFile, identity, positives);
+        runMultiKindCoexistenceTests(cache, databaseFile, file, identity, positives);
+    }
+
+    /// Reopens positive tag-only rows and checks owned values and row counts for every supported kind.
+    void runMultiKindRoundTripTests(
+        AnalysisCache& cache,
+        const juce::File& databaseFile,
+        const juce::File& file,
+        const AnalysisCache::FileIdentity& identity,
+        const std::span<const audiobatch::serato::TagReadResult> positives
+    )
+    {
+        using namespace audiobatch::serato;
         beginTest("All positive kinds round trip independently after reopening without analysis rows");
         {
             AnalysisCache writer(databaseFile);
@@ -593,7 +634,17 @@ private:
         expect(!cache.getAnalysis(file, analysis));
         expectSqlScalar(databaseFile, "SELECT count(*) FROM file_analysis;", 0);
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", static_cast<int>(allTagKinds.size()));
+    }
 
+    /// Replaces each kind with stable negatives while preserving the other positive rows and SQL NULL payloads.
+    void runMultiKindNegativeTests(
+        AnalysisCache& cache,
+        const juce::File& databaseFile,
+        const AnalysisCache::FileIdentity& identity,
+        const std::span<const audiobatch::serato::TagReadResult> positives
+    )
+    {
+        using namespace audiobatch::serato;
         beginTest("Each stable negative replaces only its own kind and has SQL NULL data");
         for (const auto kind : allTagKinds) {
             for (const auto status : {ReadStatus::absent, ReadStatus::invalid, ReadStatus::unsupported}) {
@@ -621,7 +672,17 @@ private:
                 }
             }
         }
+    }
 
+    /// Invalidates positive and negative rows independently when one kind's parser version changes.
+    void runMultiKindVersionTests(
+        AnalysisCache& cache,
+        const juce::File& databaseFile,
+        const AnalysisCache::FileIdentity& identity,
+        const std::span<const audiobatch::serato::TagReadResult> positives
+    )
+    {
+        using namespace audiobatch::serato;
         beginTest("A parser version mismatch invalidates only the matching positive or negative kind");
         for (const auto kind : allTagKinds) {
             for (const auto status : {ReadStatus::present, ReadStatus::absent}) {
@@ -645,7 +706,17 @@ private:
                 }
             }
         }
+    }
 
+    /// Ensures corruption stays local to one kind and transient results never overwrite stable positive values.
+    void runMultiKindRetentionTests(
+        AnalysisCache& cache,
+        const juce::File& databaseFile,
+        const AnalysisCache::FileIdentity& identity,
+        const std::span<const audiobatch::serato::TagReadResult> positives
+    )
+    {
+        using namespace audiobatch::serato;
         beginTest("Corrupt marker data does not lose overview or any other kind");
         expect(executeSql(databaseFile, "UPDATE serato_tag_cache SET decoded_data = X'0105' WHERE tag_kind = 5;"));
         expect(!cache.getSeratoTag(identity, TagKind::markers));
@@ -666,7 +737,18 @@ private:
                 expect(retained && serializeTag(*retained) == serializeTag(positive));
             }
         }
+    }
 
+    /// Checks shared analysis and waveform lifecycles, explicit eviction and cancellable tag-only pruning.
+    void runMultiKindCoexistenceTests(
+        AnalysisCache& cache,
+        const juce::File& databaseFile,
+        const juce::File& file,
+        const AnalysisCache::FileIdentity& identity,
+        const std::span<const audiobatch::serato::TagReadResult> positives
+    )
+    {
+        using namespace audiobatch::serato;
         beginTest("All kinds coexist with analysis and waveform writes and independent version changes");
         const auto analyzed = AudioAnalysisService::analyzeFile(file);
         expect(cache.storeAnalysis(analyzed));
@@ -678,6 +760,7 @@ private:
         juce::MemoryBlock loadedWaveform;
         expect(cache.getWaveformData(file, loadedWaveform));
         expect(loadedWaveform == waveform);
+        AudioAnalysisRecord analysis;
         expect(cache.getAnalysis(file, analysis));
         expect(cache.storeAnalysis(analyzed));
         expect(!cache.getWaveformData(file, loadedWaveform));

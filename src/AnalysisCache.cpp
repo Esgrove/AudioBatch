@@ -488,7 +488,7 @@ std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
                  serato_column::parserVersion,
                  serato_column::resultState,
                  serato_column::updatedAtMs,
-                 serato_column::tagKind
+                 serato_column::tagKind,
              })
         {
             valid = valid && sqlite3_column_type(statement, column) == SQLITE_INTEGER;
@@ -548,7 +548,8 @@ bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const audiobatc
         case ReadStatus::unsupported:
         case ReadStatus::invalid:
             if (result.overview || result.analysis || result.autotags || result.beatGrid || result.markers
-                || result.trackInfo) {
+                || result.trackInfo)
+            {
                 return false;
             }
             break;
