@@ -53,40 +53,31 @@ static juce::String buildFailureListMessage(const juce::StringArray& failures)
     return lines.joinIntoString("\n");
 }
 
-/// True when the list is non-empty and every record's format can be normalized in this build.
-bool AudioBatchComponent::canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records)
+/// Shows a warning listing the files that failed during a normalization or processing pass.
+/// A single failure is shown as is, and several are summarized with buildFailureListMessage.
+/// Does nothing when there were no failures.
+static void showFailureSummary(
+    const juce::StringArray& failures,
+    const juce::String& title,
+    const juce::String& failedAction,
+    juce::Component* associatedComponent
+)
 {
-    if (records.empty()) {
-        return false;
+    if (failures.isEmpty()) {
+        return;
     }
 
-    return std::ranges::all_of(records, [](const auto& record) { return canNormalizeFile(record.file); });
-}
-
-/// Builds a user-facing explanation of why the selected files cannot be normalized,
-/// listing each unsupported file with its reason.
-juce::String AudioBatchComponent::buildNormalizationUnavailableMessage(const std::vector<AudioAnalysisRecord>& records)
-{
-    juce::StringArray unsupportedLines;
-
-    for (const auto& record : records) {
-        const auto reason = getNormalizationSupportMessage(record.file);
-
-        if (reason.isEmpty()) {
-            continue;
-        }
-
-        unsupportedLines.add(utils::format("{} ({}): {}", record.fileName, formatTypeLabel(record), reason));
-    }
-
-    if (unsupportedLines.isEmpty()) {
-        return {};
-    }
-
-    return utils::format(
-        "The selected files cannot be normalized with the current build:\n\n{}\n\n{}",
-        unsupportedLines.joinIntoString(juce::newLine),
-        getFormatSupportSummary()
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions::makeOptionsOk(
+            juce::MessageBoxIconType::WarningIcon,
+            title,
+            failures.size() == 1
+                ? failures[0]
+                : utils::format("Some files could not be {}:\n\n{}", failedAction, buildFailureListMessage(failures)),
+            "OK",
+            associatedComponent
+        ),
+        nullptr
     );
 }
 
@@ -124,7 +115,7 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
 
     fileActivity.clearActiveWithLabels({"Analyzing", "Waiting"});
 
-    completedResults = expectedResults;
+    analysisRun.completed = analysisRun.expected;
 
     if (resultsChanged) {
         refreshTablePreservingSelection(selectedPaths);
@@ -145,19 +136,19 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
 /// Results from a replaced run are ignored, since their queued messages can arrive after a new run started.
 void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record, const int runId)
 {
-    if (runId != analysisRunId) {
+    if (runId != analysisRun.runId) {
         return;
     }
 
     fileActivity.clearActive(record.fullPath);
 
     // The expected count already went down when the row was removed.
-    if (pathsRemovedDuringAnalysis.contains(record.fullPath)) {
+    if (analysisRun.removedPaths.contains(record.fullPath)) {
         updateStatusLabel();
         return;
     }
 
-    ++completedResults;
+    ++analysisRun.completed;
 
     if (!record.file.exists()) {
         updateStatusLabel();
@@ -251,7 +242,7 @@ void AudioBatchComponent::replaceRecordAfterOperation(
 /// updates the cache, and reloads the preview when the current file was normalized.
 void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& result)
 {
-    ++normalizedResultsCompleted;
+    ++normalizeProgress.completed;
     fileActivity.clearActive(result.fullPath);
 
     if (result.succeeded && result.notice.isNotEmpty()) {
@@ -266,7 +257,7 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
     }
 
     if (!result.succeeded) {
-        normalizationFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
+        normalizeProgress.failures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
         const auto& failedPath = result.committed ? result.analysisRecord.fullPath : result.fullPath;
         fileActivity.setMessage(failedPath, {.text = result.errorMessage, .isError = true});
         resultsTable.repaint();
@@ -278,25 +269,10 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
 /// Ends the normalization pass and reports any accumulated failures to the user.
 void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
 {
-    normalizedResultsExpected = totalFiles;
-    normalizeInProgress = false;
+    normalizeProgress.expected = totalFiles;
+    normalizeProgress.inProgress = false;
 
-    if (!normalizationFailures.isEmpty()) {
-        juce::AlertWindow::showAsync(
-            juce::MessageBoxOptions::makeOptionsOk(
-                juce::MessageBoxIconType::WarningIcon,
-                "Normalize",
-                normalizationFailures.size() == 1
-                    ? normalizationFailures[0]
-                    : utils::format(
-                          "Some files could not be normalized:\n\n{}", buildFailureListMessage(normalizationFailures)
-                      ),
-                "OK",
-                this
-            ),
-            nullptr
-        );
-    }
+    showFailureSummary(normalizeProgress.failures, "Normalize", "normalized", this);
 
     if (!currentAudioFile.existsAsFile() && resultsTable.getSelectedRow() >= 0) {
         handleSelectionChanged(resultsTable.getSelectedRow());
@@ -310,12 +286,12 @@ void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
 /// Completion of a replaced run is ignored.
 void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int runId)
 {
-    if (runId != analysisRunId) {
+    if (runId != analysisRun.runId) {
         return;
     }
 
-    analysisRunning = false;
-    expectedResults = juce::jmin(expectedResults, totalFiles);
+    analysisRun.running = false;
+    analysisRun.expected = juce::jmin(analysisRun.expected, totalFiles);
     reconcilePendingAnalysisResults();
 
     // The plan handler already reported that no files were found.
@@ -326,14 +302,14 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int
 
     updateStatusLabel();
 
-    const auto elapsedMs = juce::Time::getMillisecondCounterHiRes() - analysisStartedAtMs;
-    const auto cachedFileCount = juce::jmax(0, totalFiles - analyzedFilesThisRun);
+    const auto elapsedMs = juce::Time::getMillisecondCounterHiRes() - analysisRun.startedAtMs;
+    const auto cachedFileCount = juce::jmax(0, totalFiles - analysisRun.analyzedFiles);
     const auto failedFileCount
         = std::ranges::count_if(analysisResults, [](const auto& record) { return record.hasError(); });
     utils::logInfo(
         "Analysis complete: loaded {} files ({} analyzed, {} from cache, {} failed) in {:.2f} s",
         totalFiles,
-        analyzedFilesThisRun,
+        analysisRun.analyzedFiles,
         cachedFileCount,
         failedFileCount,
         elapsedMs / millisecondsPerSecond
@@ -352,13 +328,13 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int
 /// after checking that no other pass is running and that every selected format is supported.
 void AudioBatchComponent::normalizeSelectedRecords()
 {
-    if (normalizeInProgress) {
+    if (normalizeProgress.inProgress) {
         utils::logError("Normalization requested while another normalization pass is already in progress");
         statusLabel.setText("Normalization already in progress", juce::dontSendNotification);
         return;
     }
 
-    if (pluginProcessingInProgress) {
+    if (processingProgress.inProgress) {
         utils::logError("Normalization requested while plugin processing is in progress");
         statusLabel.setText("Wait for plugin processing to finish before normalizing", juce::dontSendNotification);
         return;
@@ -401,15 +377,15 @@ void AudioBatchComponent::normalizeSelectedRecords()
         }
     }
 
-    normalizationFailures.clear();
-    normalizedResultsCompleted = 0;
-    normalizeInProgress = true;
+    normalizeProgress.failures.clear();
+    normalizeProgress.completed = 0;
+    normalizeProgress.inProgress = true;
     auto normalizationOptions = normalizationTargetControl.getOptions();
     normalizationOptions.overwriteExisting = forceOverwriteToggle.getToggleState();
-    normalizedResultsExpected = normalizeCoordinator.start(recordsToNormalize, normalizationOptions);
+    normalizeProgress.expected = normalizeCoordinator.start(recordsToNormalize, normalizationOptions);
 
-    if (normalizedResultsExpected <= 0) {
-        normalizeInProgress = false;
+    if (normalizeProgress.expected <= 0) {
+        normalizeProgress.inProgress = false;
         updateStatusLabel();
         return;
     }
@@ -454,37 +430,37 @@ void AudioBatchComponent::startAnalysis(
     options.refresh = forceRefresh;
 
     // Starting a run cancels the running one, whose placeholder rows would then never get a result.
-    if (!clearResults && analysisRunning) {
-        for (const auto& path : currentAnalysisOptions.inputPaths) {
+    if (!clearResults && analysisRun.running) {
+        for (const auto& path : analysisRun.options.inputPaths) {
             options.inputPaths.addIfNotAlreadyThere(path);
         }
 
-        options.recursive = options.recursive || currentAnalysisOptions.recursive;
-        options.refresh = options.refresh || currentAnalysisOptions.refresh;
+        options.recursive = options.recursive || analysisRun.options.recursive;
+        options.refresh = options.refresh || analysisRun.options.refresh;
 
         // A file the user adds again is wanted back in the table.
         for (const auto& path : inputPaths) {
-            pathsRemovedDuringAnalysis.erase(path.getFullPathName());
+            analysisRun.removedPaths.erase(path.getFullPathName());
         }
     } else {
-        pathsRemovedDuringAnalysis.clear();
+        analysisRun.removedPaths.clear();
     }
 
-    currentAnalysisOptions = options;
+    analysisRun.options = options;
 
-    analysisStartedAtMs = juce::Time::getMillisecondCounterHiRes();
-    completedResults = 0;
-    expectedResults = 0;
-    analysisReplacesResults = clearResults;
-    analysisRunning = true;
-    analysisPlanReceived = false;
+    analysisRun.startedAtMs = juce::Time::getMillisecondCounterHiRes();
+    analysisRun.completed = 0;
+    analysisRun.expected = 0;
+    analysisRun.replacesResults = clearResults;
+    analysisRun.running = true;
+    analysisRun.planReceived = false;
     statusLabel.setText("Scanning for audio files...", juce::dontSendNotification);
 
     if (clearResults) {
         updateCurrentRootLabel();
     }
 
-    analysisRunId = analysisCoordinator.start(options);
+    analysisRun.runId = analysisCoordinator.start(options);
     updateProcessButtonState();
 }
 
@@ -492,18 +468,18 @@ void AudioBatchComponent::startAnalysis(
 /// Called once per run on the message thread, after the coordinator has scanned the input folders.
 void AudioBatchComponent::handleAnalysisPlan(const AnalysisPlan& plan)
 {
-    if (plan.runId != analysisRunId) {
+    if (plan.runId != analysisRun.runId) {
         return;
     }
 
-    analysisPlanReceived = true;
-    expectedResults = plan.files.size();
-    analyzedFilesThisRun = plan.staleFiles.size();
-    utils::logInfo("Found {} audio files", expectedResults);
+    analysisRun.planReceived = true;
+    analysisRun.expected = plan.files.size();
+    analysisRun.analyzedFiles = plan.staleFiles.size();
+    utils::logInfo("Found {} audio files", analysisRun.expected);
 
-    if (expectedResults == 0) {
+    if (analysisRun.expected == 0) {
         statusLabel.setText(
-            analysisReplacesResults ? "No supported audio files found" : "No supported dropped files",
+            analysisRun.replacesResults ? "No supported audio files found" : "No supported dropped files",
             juce::dontSendNotification
         );
         updateProcessButtonState();
@@ -526,31 +502,31 @@ void AudioBatchComponent::handleAnalysisPlan(const AnalysisPlan& plan)
     fileActivity.markActive(plan.staleFiles, "Waiting");
 
     statusLabel.setText(
-        utils::format("Analyzing {}/{}", completedResults, expectedResults), juce::dontSendNotification
+        utils::format("Analyzing {}/{}", analysisRun.completed, analysisRun.expected), juce::dontSendNotification
     );
 }
 
 /// True from the start of an analysis run until the coordinator reports its completion.
 bool AudioBatchComponent::isAnalysisInProgress() const
 {
-    return analysisRunning;
+    return analysisRun.running;
 }
 
 /// True while normalization or plugin processing is rewriting files.
 bool AudioBatchComponent::isFileOperationInProgress() const noexcept
 {
-    return normalizeInProgress || pluginProcessingInProgress;
+    return normalizeProgress.inProgress || processingProgress.inProgress;
 }
 
 /// Returns the reason analysis or a change to the list cannot happen right now
 /// because files are being normalized or processed, or an empty string when it can.
 juce::String AudioBatchComponent::getFileOperationBlockedReason() const
 {
-    if (normalizeInProgress) {
+    if (normalizeProgress.inProgress) {
         return "Normalization in progress";
     }
 
-    if (pluginProcessingInProgress) {
+    if (processingProgress.inProgress) {
         return "Plugin processing in progress";
     }
 
@@ -579,11 +555,11 @@ void AudioBatchComponent::showPluginProcessingWarning(const juce::String& messag
 /// or an empty string when a run may start.
 juce::String AudioBatchComponent::getProcessingBlockedReason() const
 {
-    if (pluginProcessingInProgress) {
+    if (processingProgress.inProgress) {
         return "Processing already in progress";
     }
 
-    if (normalizeInProgress) {
+    if (normalizeProgress.inProgress) {
         return "Wait for normalization to finish before processing";
     }
 
@@ -601,9 +577,7 @@ juce::Array<juce::File> AudioBatchComponent::releasePreviewBeforeProcessing(
 )
 {
     // Always stop playback before processing, since files may be replaced on disk.
-    if (transportSource.isPlaying()) {
-        transportSource.stop();
-    }
+    previewPlayer.stop();
     startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green());
 
     juce::Array<juce::File> filesToProcess;
@@ -688,15 +662,15 @@ void AudioBatchComponent::processSelectedRecords()
 
     const auto filesToProcess = releasePreviewBeforeProcessing(records);
 
-    processingFailures.clear();
-    processedResultsCompleted = 0;
-    pluginProcessingInProgress = true;
+    processingProgress.failures.clear();
+    processingProgress.completed = 0;
+    processingProgress.inProgress = true;
     updateProcessButtonState();
 
-    processedResultsExpected = pluginCoordinator.start(records, options, std::move(chains));
+    processingProgress.expected = pluginCoordinator.start(records, options, std::move(chains));
 
-    if (processedResultsExpected <= 0) {
-        pluginProcessingInProgress = false;
+    if (processingProgress.expected <= 0) {
+        processingProgress.inProgress = false;
         updateProcessButtonState();
         updateStatusLabel();
         return;
@@ -710,7 +684,7 @@ void AudioBatchComponent::processSelectedRecords()
 /// Replaces the record, drops stale cache rows and persisted gain, and reloads the preview when needed.
 void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& result)
 {
-    ++processedResultsCompleted;
+    ++processingProgress.completed;
     fileActivity.clearActive(result.originalFullPath);
 
     if (result.succeeded && result.notice.isNotEmpty()) {
@@ -726,7 +700,7 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
     }
 
     if (!result.succeeded) {
-        processingFailures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
+        processingProgress.failures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
         const auto& failedPath = result.committed ? result.analysisRecord.fullPath : result.originalFullPath;
         fileActivity.setMessage(failedPath, {.text = result.errorMessage, .isError = true});
         resultsTable.repaint();
@@ -739,29 +713,14 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
 /// Ends the plugin processing pass and reports any accumulated failures to the user.
 void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
 {
-    processedResultsExpected = totalFiles;
-    pluginProcessingInProgress = false;
+    processingProgress.expected = totalFiles;
+    processingProgress.inProgress = false;
 
     if (pluginChain != nullptr) {
         updateProcessButtonState();
     }
 
-    if (!processingFailures.isEmpty()) {
-        juce::AlertWindow::showAsync(
-            juce::MessageBoxOptions::makeOptionsOk(
-                juce::MessageBoxIconType::WarningIcon,
-                "Plugin Processing",
-                processingFailures.size() == 1
-                    ? processingFailures[0]
-                    : utils::format(
-                          "Some files could not be processed:\n\n{}", buildFailureListMessage(processingFailures)
-                      ),
-                "OK",
-                this
-            ),
-            nullptr
-        );
-    }
+    showFailureSummary(processingProgress.failures, "Plugin Processing", "processed", this);
 
     if (!currentAudioFile.existsAsFile() && resultsTable.getSelectedRow() >= 0) {
         handleSelectionChanged(resultsTable.getSelectedRow());

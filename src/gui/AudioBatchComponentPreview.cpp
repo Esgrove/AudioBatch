@@ -1,5 +1,6 @@
 /// AudioBatchComponent member functions for the audio preview:
-/// audio device access, the transport and waveform, zoom, the info panel, and the custom gain controls.
+/// loading files into the preview player and waveform, the play button state, zoom, the info panel,
+/// and the custom gain controls.
 
 #include "gui/AudioBatchComponent.h"
 #include "gui/components/AudioInfoPanel.h"
@@ -8,38 +9,6 @@
 
 namespace audiobatch
 {
-/// Requests audio input permission and initialises the audio device manager once it is answered.
-void AudioBatchComponent::requestAudioDeviceAccess()
-{
-    utils::logDebug("AudioBatchComponent startup: requesting record-audio permission");
-    juce::RuntimePermissions::request(juce::RuntimePermissions::recordAudio, [this](const bool granted) {
-        const int numInputChannels = granted ? 2 : 0;
-        const auto audioInitialiseStartedAtMs = juce::Time::getMillisecondCounterHiRes();
-
-        utils::logDebug(
-            "AudioBatchComponent startup: audio permission callback granted={}", granted ? "true" : "false"
-        );
-        utils::logDebug(
-            "AudioBatchComponent startup: audio device init begin (inputs={}, outputs=2)", numInputChannels
-        );
-
-        const auto initialiseError = audioDeviceManager.initialise(numInputChannels, 2, nullptr, true, {}, nullptr);
-        const auto audioInitialiseElapsedMs = juce::Time::getMillisecondCounterHiRes() - audioInitialiseStartedAtMs;
-
-        if (initialiseError.isEmpty()) {
-            utils::logDebug(
-                "AudioBatchComponent startup: audio device init succeeded ({:.1f} ms)", audioInitialiseElapsedMs
-            );
-        } else {
-            utils::logError(
-                "AudioBatchComponent startup: audio device init failed ({:.1f} ms): {}",
-                audioInitialiseElapsedMs,
-                initialiseError
-            );
-        }
-    });
-}
-
 /// Rebuilds the info panel rows for a record, with dedicated layouts for pending and failed files.
 void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 {
@@ -62,7 +31,7 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
     }
     audioInfo->clear();
 
-    if (loadURLIntoTransport(resource)) {
+    if (previewPlayer.load(resource)) {
         currentAudioUrl = std::move(resource);
         currentWaveformLoadedFromCache = false;
         startStopButton.setEnabled(true);
@@ -93,14 +62,12 @@ void AudioBatchComponent::requestSeratoPreview()
     seratoPreviewIdentity.reset();
     thumbnail->setSeratoOverview({});
     thumbnail->setSeratoMarkers({});
+    const auto duration = previewPlayer.getLoadedDurationSeconds();
     if (seratoPreviewLoader && currentAudioUrl.isLocalFile() && currentAudioUrl.getLocalFile() == currentAudioFile
-        && currentAudioFileSource != nullptr)
+        && duration.has_value())
     {
-        const auto* reader = currentAudioFileSource->getAudioFormatReader();
-        const auto duration
-            = reader->sampleRate > 0.0 ? static_cast<double>(reader->lengthInSamples) / reader->sampleRate : 0.0;
         seratoPreviewIdentity.emplace(currentAudioFile);
-        seratoPreviewLoader->request(currentAudioFile, duration);
+        seratoPreviewLoader->request(currentAudioFile, *duration);
     } else if (seratoPreviewLoader) {
         seratoPreviewLoader->cancel();
     }
@@ -114,9 +81,8 @@ void AudioBatchComponent::adoptSeratoPreview(
     serato::SeratoPreviewLoader::Data data
 )
 {
-    if (seratoPreviewLoader && thumbnail != nullptr && currentAudioFileSource != nullptr
-        && currentAudioUrl.isWellFormed() && currentAudioUrl.isLocalFile()
-        && currentAudioUrl.getLocalFile() == currentAudioFile
+    if (seratoPreviewLoader && thumbnail != nullptr && previewPlayer.hasLoadedSource() && currentAudioUrl.isWellFormed()
+        && currentAudioUrl.isLocalFile() && currentAudioUrl.getLocalFile() == currentAudioFile
         && seratoPreviewLoader->canAdopt(identity, generation, currentAudioFile))
     {
         seratoPreviewIdentity = identity;
@@ -154,39 +120,6 @@ void AudioBatchComponent::handleThumbnailFullyLoaded()
     currentWaveformLoadedFromCache = analysisCache.storeWaveformData(currentAudioFile, waveformData);
 }
 
-/// Creates a reader for the URL and attaches it to the transport, replacing any previous source.
-/// Returns false when no reader could be created, leaving the transport empty.
-bool AudioBatchComponent::loadURLIntoTransport(const juce::URL& audioUrl)
-{
-    // Unload the previous file source and delete it.
-    transportSource.stop();
-    transportSource.setSource(nullptr);
-    currentAudioFileSource.reset();
-
-    auto* reader = formatManager.createReaderFor(
-        audioUrl.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress))
-    );
-
-    if (reader != nullptr) {
-        currentAudioFileSource = std::make_unique<juce::AudioFormatReaderSource>(reader, true);
-        transportSource.setSource(currentAudioFileSource.get(), 32768, &thread, reader->sampleRate);
-
-        return true;
-    }
-
-    return false;
-}
-
-/// Toggles preview playback of the current file.
-void AudioBatchComponent::startOrStop()
-{
-    if (transportSource.isPlaying()) {
-        transportSource.stop();
-    } else {
-        transportSource.start();
-    }
-}
-
 /// Recolours the play button to match whether the transport is playing.
 void AudioBatchComponent::updatePlaybackButtonForTransportState()
 {
@@ -194,14 +127,14 @@ void AudioBatchComponent::updatePlaybackButtonForTransportState()
         return;
     }
 
-    const auto colour = transportSource.isPlaying() ? juce::CustomLookAndFeel::red() : juce::CustomLookAndFeel::green();
+    const auto colour = previewPlayer.isPlaying() ? juce::CustomLookAndFeel::red() : juce::CustomLookAndFeel::green();
     startStopButton.setColour(juce::TextButton::buttonColourId, colour);
 }
 
 /// Reacts to transport state changes and to files dropped onto the waveform preview.
 void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
-    if (source == &transportSource) {
+    if (source == &previewPlayer.getTransport()) {
         updatePlaybackButtonForTransportState();
         return;
     }
@@ -236,9 +169,7 @@ void AudioBatchComponent::releasePreviewPlayback()
     thumbnail->setSeratoOverview({});
     thumbnail->setSeratoMarkers({});
     audioInfo->clear();
-    transportSource.stop();
-    transportSource.setSource(nullptr);
-    currentAudioFileSource.reset();
+    previewPlayer.release();
     thumbnail->setURL(juce::URL());
     currentWaveformLoadedFromCache = false;
     startStopButton.setEnabled(false);

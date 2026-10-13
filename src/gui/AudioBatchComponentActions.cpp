@@ -45,7 +45,7 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
     }
 
     if (key == juce::KeyPress::spaceKey) {
-        startOrStop();
+        previewPlayer.togglePlayback();
         return true;
     }
 
@@ -72,21 +72,21 @@ void AudioBatchComponent::clearAllRecords()
     }
 
     // Results of a run still in progress would add the rows back.
-    if (analysisRunning) {
+    if (analysisRun.running) {
         analysisCoordinator.cancelAndWait();
-        analysisRunId = -1;
-        analysisRunning = false;
+        analysisRun.runId = -1;
+        analysisRun.running = false;
     }
 
-    pathsRemovedDuringAnalysis.clear();
+    analysisRun.removedPaths.clear();
     analysisResults.clear();
     fileActivity.clearAllActive();
     fileActivity.clearAllMessages();
     clearCurrentAudioPreview();
     audioInfo->clear();
-    expectedResults = 0;
-    completedResults = 0;
-    analyzedFilesThisRun = 0;
+    analysisRun.expected = 0;
+    analysisRun.completed = 0;
+    analysisRun.analyzedFiles = 0;
 
     resultsTable.deselectAllRows();
     resultsTable.updateContent();
@@ -172,7 +172,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     const auto& record = analysisResults[static_cast<std::size_t>(row)];
     const auto parentDirectory = record.file.getParentDirectory();
     const auto selectedRecords = getSelectedNormalizableRecords();
-    const auto canNormalize = !normalizeInProgress && !pluginProcessingInProgress && !isAnalysisInProgress()
+    const auto canNormalize = !normalizeProgress.inProgress && !processingProgress.inProgress && !isAnalysisInProgress()
         && canNormalizeRecords(selectedRecords);
 
     juce::PopupMenu menu;
@@ -185,7 +185,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     );
     menu.addItem(normalizeSupportMenuItemId, "Normalization Format Support...");
     menu.addSeparator();
-    const bool canProcess = !pluginProcessingInProgress && !isAnalysisInProgress() && !normalizeInProgress
+    const bool canProcess = !processingProgress.inProgress && !isAnalysisInProgress() && !normalizeProgress.inProgress
         && pluginChain != nullptr && pluginChain->getNumEnabledValidSlots() > 0;
     menu.addItem(processMenuItemId, "Process With Plugin Chain (output AIFF)", canProcess);
     const bool anyHasGain = std::ranges::any_of(selectedRecords, [](const AudioAnalysisRecord& selectedRecord) {
@@ -209,10 +209,10 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
 
             switch (result) {
                 case revealFileMenuItemId:
-                    revealFileInFileManager(file);
+                    utils::revealFileInFileManager(file);
                     break;
                 case openParentDirectoryMenuItemId:
-                    revealParentDirectory(file);
+                    utils::revealParentDirectory(file);
                     break;
                 case normalizeMenuItemId:
                     safeThis->normalizeSelectedRecords();
@@ -253,25 +253,7 @@ void AudioBatchComponent::revealSelectedRecord() const
     if (const auto row = getSelectionDisplayRow(selectedRows, -1);
         juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size())))
     {
-        revealFileInFileManager(analysisResults[static_cast<std::size_t>(row)].file);
-    }
-}
-
-/// Reveals the file in the platform file manager, or its parent folder when the file no longer exists.
-void AudioBatchComponent::revealFileInFileManager(const juce::File& file)
-{
-    if (file.exists()) {
-        file.revealToUser();
-    } else {
-        file.getParentDirectory().revealToUser();
-    }
-}
-
-/// Opens the file's parent folder in the platform file manager.
-void AudioBatchComponent::revealParentDirectory(const juce::File& file)
-{
-    if (const auto parentDirectory = file.getParentDirectory(); parentDirectory.isDirectory()) {
-        parentDirectory.revealToUser();
+        utils::revealFileInFileManager(analysisResults[static_cast<std::size_t>(row)].file);
     }
 }
 
@@ -406,7 +388,7 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
     int removedPendingCount = 0;
 
     for (const auto& removedPath : removedPaths) {
-        if (analysisRunning) {
+        if (analysisRun.running) {
             const auto activeLabel = fileActivity.getActiveLabel(removedPath);
             const auto rowIndex = findRecordIndex(removedPath);
             const auto pending = activeLabel == "Waiting" || activeLabel == "Analyzing"
@@ -418,7 +400,7 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
             }
 
             // A carried over run could deliver a result for a finished row again, so every removed path is kept.
-            pathsRemovedDuringAnalysis.insert(removedPath);
+            analysisRun.removedPaths.insert(removedPath);
         }
 
         fileActivity.clearActive(removedPath);
@@ -434,8 +416,8 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
     );
 
     // Only rows still waiting for a result lower the expected count, since finished rows were already counted.
-    expectedResults = juce::jmax(0, expectedResults - removedPendingCount);
-    completedResults = juce::jmin(completedResults, expectedResults);
+    analysisRun.expected = juce::jmax(0, analysisRun.expected - removedPendingCount);
+    analysisRun.completed = juce::jmin(analysisRun.completed, analysisRun.expected);
 
     if (currentFileRemoved) {
         clearCurrentAudioPreview();

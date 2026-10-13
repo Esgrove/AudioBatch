@@ -3,6 +3,7 @@
 /// Writer support is checked by creating a probe writer in memory,
 /// since some formats are registered for reading but cannot write.
 
+#include "analysis/AudioAnalysisFormatting.h"
 #include "normalization/AudioNormalization.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
@@ -161,6 +162,44 @@ bool canNormalizeFile(const juce::File& file)
     }
 
     return utils::findAiffFormat(utils::threadLocalFormatManager()) != nullptr;
+}
+
+/// True when the list is non-empty and every record's format can be normalized in this build.
+bool canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records)
+{
+    if (records.empty()) {
+        return false;
+    }
+
+    return std::ranges::all_of(records, [](const auto& record) { return canNormalizeFile(record.file); });
+}
+
+/// Builds a user-facing explanation of why the given files cannot be normalized,
+/// listing each unsupported file with its reason.
+/// Returns an empty string when every file is supported.
+juce::String buildNormalizationUnavailableMessage(const std::vector<AudioAnalysisRecord>& records)
+{
+    juce::StringArray unsupportedLines;
+
+    for (const auto& record : records) {
+        const auto reason = getNormalizationSupportMessage(record.file);
+
+        if (reason.isEmpty()) {
+            continue;
+        }
+
+        unsupportedLines.add(utils::format("{} ({}): {}", record.fileName, formatTypeLabel(record), reason));
+    }
+
+    if (unsupportedLines.isEmpty()) {
+        return {};
+    }
+
+    return utils::format(
+        "The selected files cannot be normalized with the current build:\n\n{}\n\n{}",
+        unsupportedLines.joinIntoString(juce::newLine),
+        getFormatSupportSummary()
+    );
 }
 
 /// Describes why normalization is unavailable for the given file format, or returns an empty string when supported.

@@ -88,8 +88,6 @@ constexpr double stepDecibels = 0.1;
 
 /// Delay in milliseconds before a tooltip appears when hovering over a control.
 constexpr int tooltipDelayMilliseconds = 700;
-/// Time in milliseconds to wait for the audio preview thread to stop during shutdown.
-constexpr int previewThreadStopTimeoutMilliseconds = 2000;
 /// Number of milliseconds in one second, used to report elapsed analysis time in seconds.
 constexpr double millisecondsPerSecond = 1000.0;
 

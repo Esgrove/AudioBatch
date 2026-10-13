@@ -312,6 +312,24 @@ juce::String revealInFileManagerLabel()
 #endif
 }
 
+/// Reveals the file in the platform file manager, or its parent folder when the file no longer exists.
+void revealFileInFileManager(const juce::File& file)
+{
+    if (file.exists()) {
+        file.revealToUser();
+    } else {
+        file.getParentDirectory().revealToUser();
+    }
+}
+
+/// Opens the file's parent folder in the platform file manager.
+void revealParentDirectory(const juce::File& file)
+{
+    if (const auto parentDirectory = file.getParentDirectory(); parentDirectory.isDirectory()) {
+        parentDirectory.revealToUser();
+    }
+}
+
 /// Deletes a file and logs an error if the deletion fails.
 /// Returns true if the file did not exist or was deleted successfully.
 bool deleteFile(const juce::File& file)

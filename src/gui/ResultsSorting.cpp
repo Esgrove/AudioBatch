@@ -230,6 +230,41 @@ void sortRecords(std::vector<AudioAnalysisRecord>& records, const SortState& sta
     });
 }
 
+/// Applies a new primary sort column and direction.
+/// Clears the secondary sort when it targets the same column, since sorting twice by one column adds nothing.
+void setPrimarySort(SortState& state, const int columnId, const bool isForwards)
+{
+    state.primaryColumnId = columnId;
+    state.primaryForwards = isForwards;
+
+    if (state.secondaryColumnId == state.primaryColumnId) {
+        state.secondaryColumnId = 0;
+        state.secondaryForwards = true;
+    }
+}
+
+/// Sets, toggles, or clears the secondary sort column for a ctrl or cmd click on a header.
+/// Clicking the primary column clears the secondary sort,
+/// clicking the current secondary column flips its direction,
+/// and clicking any other column makes it the ascending secondary sort.
+/// Column ids of zero or below are ignored.
+void toggleSecondarySort(SortState& state, const int columnId)
+{
+    if (columnId <= 0) {
+        return;
+    }
+
+    if (columnId == state.primaryColumnId) {
+        state.secondaryColumnId = 0;
+        state.secondaryForwards = true;
+    } else if (state.secondaryColumnId == columnId) {
+        state.secondaryForwards = !state.secondaryForwards;
+    } else {
+        state.secondaryColumnId = columnId;
+        state.secondaryForwards = true;
+    }
+}
+
 /// Returns the table's header downcast to SecondarySortTableHeader.
 /// The table must have been created with that header type.
 SecondarySortTableHeader& getSecondarySortHeader(const juce::TableListBox& table)

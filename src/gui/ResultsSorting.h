@@ -56,6 +56,10 @@ int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
 
 void sortRecords(std::vector<AudioAnalysisRecord>& records, const SortState& state);
 
+void setPrimarySort(SortState& state, int columnId, bool isForwards);
+
+void toggleSecondarySort(SortState& state, int columnId);
+
 SecondarySortTableHeader& getSecondarySortHeader(const juce::TableListBox& table);
 }  // namespace results_sorting
 }  // namespace audiobatch

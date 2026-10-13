@@ -9,7 +9,6 @@
 #include "gui/AudioBatchComponentConstants.h"
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/components/CustomLookAndFeel.h"
-#include "gui/ResultsSorting.h"
 #include "plugins/PluginProcessing.h"
 #include "utils/AppInfo.h"
 #include "utils/Log.h"
@@ -29,7 +28,12 @@ void AudioBatchComponent::configureResultsTable()
     resultsTable.setMultipleSelectionEnabled(true);
     resultsTable.setOutlineThickness(0);
     resultsTable.setRowHeight(layout::resultsTableRowHeight);
-    resultsTable.getHeader().setSortColumnId(currentSortColumnId, currentSortForwards);
+    // The activity labels change while files are busy, so only the settled text decides the status column order.
+    sortState.statusText = [this](const AudioAnalysisRecord& record) {
+        const auto [text, isError] = fileActivity.getMessage(record.fullPath);
+        return text.isNotEmpty() ? text : formatStatus(record);
+    };
+    resultsTable.getHeader().setSortColumnId(sortState.primaryColumnId, sortState.primaryForwards);
     refreshSortIndicators();
     addAndMakeVisible(resultsTable);
     resultsTable.addKeyListener(this);
@@ -51,10 +55,10 @@ void AudioBatchComponent::configurePreviewControls()
     );
     addAndMakeVisible(waveformResizeBar);
 
-    thumbnail = std::make_unique<ThumbnailComponent>(formatManager, transportSource);
+    thumbnail = std::make_unique<ThumbnailComponent>(previewPlayer.getFormatManager(), previewPlayer.getTransport());
     addAndMakeVisible(thumbnail.get());
     thumbnail->addChangeListener(this);
-    transportSource.addChangeListener(this);
+    previewPlayer.getTransport().addChangeListener(this);
     thumbnail->setMouseWheelZoomCallback([this](const double zoomFactor) {
         zoomSlider.setValue(zoomSlider.getValue() * zoomFactor);
     });
@@ -74,7 +78,7 @@ void AudioBatchComponent::configurePreviewControls()
     startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
     startStopButton.setColour(juce::TextButton::buttonOnColourId, juce::CustomLookAndFeel::green());
     startStopButton.setTooltip("Start or stop preview playback for the selected file.");
-    startStopButton.onClick = [this] { startOrStop(); };
+    startStopButton.onClick = [this] { previewPlayer.togglePlayback(); };
     addAndMakeVisible(startStopButton);
 
     zoomSlider.setRange(zoom_range::minimumPercent, zoom_range::maximumPercent, 1);
@@ -210,7 +214,7 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
     analysisCoordinator.setCompletionCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisComplete));
     analysisCoordinator.setStartingCallback([safeThis](const juce::File& file, const int runId) {
         juce::MessageManager::callAsync([safeThis, file, runId] {
-            if (safeThis != nullptr && runId == safeThis->analysisRunId) {
+            if (safeThis != nullptr && runId == safeThis->analysisRun.runId) {
                 safeThis->fileActivity.setActive(file.getFullPathName(), "Analyzing");
             }
         });
@@ -225,7 +229,7 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
     pluginCoordinator.setStartErrorCallback([safeThis](const juce::String& errorMessage) {
         juce::MessageManager::callAsync([safeThis, errorMessage] {
             if (safeThis != nullptr) {
-                safeThis->pluginProcessingInProgress = false;
+                safeThis->processingProgress.inProgress = false;
                 safeThis->statusLabel.setText(errorMessage, juce::dontSendNotification);
                 safeThis->showPluginProcessingWarning(errorMessage);
             }
@@ -247,7 +251,7 @@ AudioBatchComponent::AudioBatchComponent() :
         [this](const AudioAnalysisRecord& record) { return fileActivity.getMessage(record.fullPath); },
         [] { return FileActivityTracker::getAnimationPhase(); }
     ),
-    audioSetupComponent(audioDeviceManager, 0, 0, 0, 2, false, false, true, false)
+    audioSetupComponent(previewPlayer.getDeviceManager(), 0, 0, 0, 2, false, false, true, false)
 {
     const auto constructorStartedAtMs = juce::Time::getMillisecondCounterHiRes();
     const auto logStartupCheckpoint = [constructorStartedAtMs](const juce::String& step) {
@@ -259,9 +263,6 @@ AudioBatchComponent::AudioBatchComponent() :
     };
 
     logStartupCheckpoint("constructor begin");
-    formatManager.registerBasicFormats();
-    logStartupCheckpoint("audio formats registered");
-
     currentRootLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(currentRootLabel);
 
@@ -275,9 +276,6 @@ AudioBatchComponent::AudioBatchComponent() :
 
     tooltipWindow = std::make_unique<juce::TooltipWindow>(this, tooltipDelayMilliseconds);
     logStartupCheckpoint("ui controls created");
-
-    thread.startThread(juce::Thread::Priority::high);
-    logStartupCheckpoint("audio preview thread started");
 
     utils::logDebug("AudioBatchComponent startup: opening analysis cache");
     const auto analysisCacheOpened = analysisCache.open();
@@ -295,11 +293,8 @@ AudioBatchComponent::AudioBatchComponent() :
     connectCoordinatorCallbacks();
     logStartupCheckpoint("analysis and normalization callbacks configured");
 
-    requestAudioDeviceAccess();
-
-    audioDeviceManager.addAudioCallback(&audioSourcePlayer);
-    audioSourcePlayer.setSource(&transportSource);
-    logStartupCheckpoint("audio callback connected");
+    previewPlayer.requestDeviceAccess();
+    logStartupCheckpoint("audio device access requested");
 
     setOpaque(true);
     setSize(layout::initialComponentWidth, layout::initialComponentHeight);
@@ -317,13 +312,8 @@ AudioBatchComponent::~AudioBatchComponent()
     normalizeCoordinator.cancelAndWait();
     pluginCoordinator.cancelAndWait();
 
-    transportSource.stop();
-    transportSource.setSource(nullptr);
-    audioSourcePlayer.setSource(nullptr);
-
-    audioDeviceManager.removeAudioCallback(&audioSourcePlayer);
-
-    transportSource.removeChangeListener(this);
+    previewPlayer.release();
+    previewPlayer.getTransport().removeChangeListener(this);
     thumbnail->removeChangeListener(this);
     thumbnail->setMouseWheelZoomCallback({});
     thumbnail->setMouseWheelGainCallback({});
@@ -336,8 +326,6 @@ AudioBatchComponent::~AudioBatchComponent()
         }
         childWindows.clear();
     }
-
-    thread.stopThread(previewThreadStopTimeoutMilliseconds);
 }
 
 /// Fills the background with the look-and-feel window colour.
@@ -592,32 +580,32 @@ void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArra
 void AudioBatchComponent::updateProcessButtonState()
 {
     const bool hasChain = pluginChain != nullptr && pluginChain->getNumEnabledValidSlots() > 0;
-    processButton.setEnabled(hasChain && hasAnyRecords() && !pluginProcessingInProgress && !isAnalysisInProgress());
+    processButton.setEnabled(hasChain && hasAnyRecords() && !processingProgress.inProgress && !isAnalysisInProgress());
 }
 
 /// Shows the most relevant progress or summary text for the current background activity.
 void AudioBatchComponent::updateStatusLabel()
 {
-    if (pluginProcessingInProgress && processedResultsExpected > 0) {
+    if (processingProgress.inProgress && processingProgress.expected > 0) {
         statusLabel.setText(
-            utils::format("Processing {}/{}", processedResultsCompleted, processedResultsExpected),
+            utils::format("Processing {}/{}", processingProgress.completed, processingProgress.expected),
             juce::dontSendNotification
         );
         return;
     }
 
-    if (normalizeInProgress && normalizedResultsExpected > 0) {
+    if (normalizeProgress.inProgress && normalizeProgress.expected > 0) {
         statusLabel.setText(
-            utils::format("Normalizing {}/{}", normalizedResultsCompleted, normalizedResultsExpected),
+            utils::format("Normalizing {}/{}", normalizeProgress.completed, normalizeProgress.expected),
             juce::dontSendNotification
         );
         return;
     }
 
-    if (analysisRunning) {
+    if (analysisRun.running) {
         statusLabel.setText(
-            analysisPlanReceived ? utils::format("Analyzing {}/{}", completedResults, expectedResults)
-                                 : juce::String("Scanning for audio files..."),
+            analysisRun.planReceived ? utils::format("Analyzing {}/{}", analysisRun.completed, analysisRun.expected)
+                                     : juce::String("Scanning for audio files..."),
             juce::dontSendNotification
         );
         return;
@@ -636,32 +624,13 @@ void AudioBatchComponent::updateStatusLabel()
 /// keeping the order stable across incremental result updates.
 void AudioBatchComponent::sortResults()
 {
-    results_sorting::sortRecords(
-        analysisResults,
-        {
-            .primaryColumnId = currentSortColumnId,
-            .primaryForwards = currentSortForwards,
-            .secondaryColumnId = secondarySortColumnId,
-            .secondaryForwards = secondarySortForwards,
-            // The activity labels change while files are busy, so only the settled text decides the order.
-            .statusText = [this](const AudioAnalysisRecord& record) {
-                const auto [text, isError] = fileActivity.getMessage(record.fullPath);
-                return text.isNotEmpty() ? text : formatStatus(record);
-            },
-        }
-    );
+    results_sorting::sortRecords(analysisResults, sortState);
 }
 
-/// Applies a new primary sort and clears the secondary sort when it targets the same column.
+/// Applies a new primary sort and refreshes the table, keeping the selected rows selected.
 void AudioBatchComponent::handleSortRequested(const int columnId, const bool isForwards)
 {
-    currentSortColumnId = columnId;
-    currentSortForwards = isForwards;
-
-    if (secondarySortColumnId == currentSortColumnId) {
-        secondarySortColumnId = 0;
-        secondarySortForwards = true;
-    }
+    results_sorting::setPrimarySort(sortState, columnId, isForwards);
 
     refreshSortIndicators();
 
@@ -670,22 +639,14 @@ void AudioBatchComponent::handleSortRequested(const int columnId, const bool isF
     refreshTablePreservingSelection(selectedPaths);
 }
 
-/// Sets, toggles, or clears the secondary sort column requested with a ctrl or cmd click on a header.
+/// Updates the secondary sort requested with a ctrl or cmd click on a header and refreshes the table.
 void AudioBatchComponent::handleSecondarySortRequested(const int columnId)
 {
     if (columnId <= 0) {
         return;
     }
 
-    if (columnId == currentSortColumnId) {
-        secondarySortColumnId = 0;
-        secondarySortForwards = true;
-    } else if (secondarySortColumnId == columnId) {
-        secondarySortForwards = !secondarySortForwards;
-    } else {
-        secondarySortColumnId = columnId;
-        secondarySortForwards = true;
-    }
+    results_sorting::toggleSecondarySort(sortState, columnId);
 
     refreshSortIndicators();
 
@@ -698,7 +659,7 @@ void AudioBatchComponent::handleSecondarySortRequested(const int columnId)
 void AudioBatchComponent::refreshSortIndicators() const
 {
     results_sorting::getSecondarySortHeader(resultsTable)
-        .setSecondarySortIndicator(secondarySortColumnId, secondarySortForwards);
+        .setSecondarySortIndicator(sortState.secondaryColumnId, sortState.secondaryForwards);
 }
 
 /// Picks the row whose details should be shown for a multi-selection:

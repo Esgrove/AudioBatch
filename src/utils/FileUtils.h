@@ -28,6 +28,10 @@ bool isWavFile(const juce::File& file);
 
 juce::String revealInFileManagerLabel();
 
+void revealFileInFileManager(const juce::File& file);
+
+void revealParentDirectory(const juce::File& file);
+
 juce::String existingOutputMessage(const juce::File& outputFile);
 
 juce::String checkOutputPath(const juce::File& sourceFile, const juce::File& outputFile, bool overwriteExisting);

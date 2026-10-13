@@ -209,6 +209,45 @@ public:
 
             expectEquals(namesOf(records).joinIntoString(","), juce::String("second,third,first"));
         }
+
+        beginTest("A new primary sort clears a secondary sort on the same column");
+        {
+            results_sorting::SortState state {.primaryColumnId = columnOverallPeak};
+            results_sorting::toggleSecondarySort(state, columnIntegratedLufs);
+            results_sorting::setPrimarySort(state, columnIntegratedLufs, false);
+
+            expectEquals(state.primaryColumnId, static_cast<int>(columnIntegratedLufs));
+            expect(!state.primaryForwards);
+            expectEquals(state.secondaryColumnId, 0);
+            expect(state.secondaryForwards);
+
+            results_sorting::toggleSecondarySort(state, columnOverallPeak);
+            results_sorting::setPrimarySort(state, columnStatus, true);
+            expectEquals(state.secondaryColumnId, static_cast<int>(columnOverallPeak));
+        }
+
+        beginTest("Secondary sort clicks set, flip, and clear the secondary column");
+        {
+            results_sorting::SortState state {.primaryColumnId = columnOverallPeak};
+
+            results_sorting::toggleSecondarySort(state, columnIntegratedLufs);
+            expectEquals(state.secondaryColumnId, static_cast<int>(columnIntegratedLufs));
+            expect(state.secondaryForwards);
+
+            results_sorting::toggleSecondarySort(state, columnIntegratedLufs);
+            expect(!state.secondaryForwards);
+
+            results_sorting::toggleSecondarySort(state, columnStatus);
+            expectEquals(state.secondaryColumnId, static_cast<int>(columnStatus));
+            expect(state.secondaryForwards);
+
+            results_sorting::toggleSecondarySort(state, 0);
+            expectEquals(state.secondaryColumnId, static_cast<int>(columnStatus));
+
+            results_sorting::toggleSecondarySort(state, columnOverallPeak);
+            expectEquals(state.secondaryColumnId, 0);
+            expect(state.secondaryForwards);
+        }
     }
 
 private:

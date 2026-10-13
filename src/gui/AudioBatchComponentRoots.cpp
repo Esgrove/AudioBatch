@@ -10,6 +10,33 @@
 
 namespace audiobatch
 {
+/// Returns the starting directory for the folder chooser,
+/// favouring a Dropbox folder, then the system Music folder, then the home folder.
+static juce::File getDefaultBrowseDirectory()
+{
+    auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+    // Prefer the Dropbox folder where the music library is usually kept,
+    // then the system Music folder, and finally the home folder.
+    // A user config file for this is listed in the README TODO.
+#if JUCE_WINDOWS
+    auto dropboxDirectory = juce::File("D:\\Dropbox");
+#else
+    auto dropboxDirectory = homeDirectory.getChildFile("Dropbox");
+#endif
+
+    if (dropboxDirectory.isDirectory()) {
+        return dropboxDirectory;
+    }
+
+    if (const auto musicDirectory = juce::File::getSpecialLocation(juce::File::userMusicDirectory);
+        musicDirectory.isDirectory())
+    {
+        return musicDirectory;
+    }
+
+    return homeDirectory;
+}
+
 /// Accepts any external drag that contains at least one file.
 bool AudioBatchComponent::isInterestedInFileDrag(const juce::StringArray& files)
 {
@@ -160,33 +187,6 @@ void AudioBatchComponent::updateCurrentRootLabel()
 void AudioBatchComponent::rescanCurrentRoot()
 {
     refreshAnalysis(true);
-}
-
-/// Returns the starting directory for the folder chooser,
-/// favouring a Dropbox folder, then the system Music folder, then the home folder.
-juce::File AudioBatchComponent::getDefaultBrowseDirectory()
-{
-    auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
-    // Prefer the Dropbox folder where the music library is usually kept,
-    // then the system Music folder, and finally the home folder.
-    // A user config file for this is listed in the README TODO.
-#if JUCE_WINDOWS
-    auto dropboxDirectory = juce::File("D:\\Dropbox");
-#else
-    auto dropboxDirectory = homeDirectory.getChildFile("Dropbox");
-#endif
-
-    if (dropboxDirectory.isDirectory()) {
-        return dropboxDirectory;
-    }
-
-    if (const auto musicDirectory = juce::File::getSpecialLocation(juce::File::userMusicDirectory);
-        musicDirectory.isDirectory())
-    {
-        return musicDirectory;
-    }
-
-    return homeDirectory;
 }
 
 /// Routes dropped paths to a root folder scan when only directories were dropped,

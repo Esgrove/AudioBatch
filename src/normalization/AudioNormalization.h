@@ -103,6 +103,10 @@ juce::String getFormatSupportSummary();
 
 bool canNormalizeFile(const juce::File& file);
 
+bool canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records);
+
+juce::String buildNormalizationUnavailableMessage(const std::vector<AudioAnalysisRecord>& records);
+
 int getNormalizationOutputBitDepth(const AudioAnalysisRecord& record, const juce::AudioFormatReader& reader);
 
 std::optional<float> getNormalizationGain(

@@ -81,6 +81,9 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
     `AudioBatchComponentActions.cpp`, `AudioBatchComponentOperations.cpp`, `AudioBatchComponentPreview.cpp`,
     and `AudioBatchComponentRoots.cpp`, which share the constants in `AudioBatchComponentConstants.h`.
     Put new member functions in the file of their topic.
+    `AudioBatchComponentState.h` holds the progress state of the analysis run and of the normalization
+    and plugin processing passes.
+  - `AudioPreviewPlayer.*` owns the audio device, transport, and read-ahead thread of the file preview.
   - `AudioFileTableModel.*` backs the sortable results table, and `ResultsSorting.*` sorts it.
   - `FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
 - `src/gui/components/` holds the reusable UI pieces the main component is built from:
@@ -204,8 +207,8 @@ The detailed rules are in `.agents/rules/code-organization.md`.
   use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
 - Both `AudioBatch` and `AudioBatchCli` build with warnings as errors, so all warnings must be resolved.
 - On top of the JUCE recommended warning flags,
-  `audiobatch_set_source_warnings` in `CMakeLists.txt` adds a
-  stricter warning set to the project's own `.cpp` files under `src/` and `tests/` only.
+  `audiobatch_set_source_warnings` in `CMakeLists.txt` adds a stricter warning
+  set to the project's own `.cpp` files under `src/` and `tests/` only.
   JUCE module sources do not get it,
   and the JUCE headers are included as system headers so their warnings are not reported.
   Several of those flags are Clang-specific, so GCC is not a supported compiler.
