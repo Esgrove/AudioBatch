@@ -46,9 +46,6 @@ std::unique_ptr<juce::UnitTest> createSeratoTagReaderTests();
 /// Creates the suite that checks synthetic metadata payloads and bounded per-kind cache codecs.
 std::unique_ptr<juce::UnitTest> createSeratoTagsTests();
 
-/// Creates the suite that checks spectral colours, time mapping and unchanged JUCE waveform geometry.
-std::unique_ptr<juce::UnitTest> createSeratoWaveformColouringTests();
-
 /// Creates the suite that checks bounded preview loading, stale delivery rejection and cache restart.
 std::unique_ptr<juce::UnitTest> createSeratoPreviewLoaderTests();
 

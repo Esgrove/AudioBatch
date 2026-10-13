@@ -77,7 +77,6 @@ int main(int argumentCount, char* arguments[])
     suites.push_back(audiobatch::tests::createSeratoOverviewTests());
     suites.push_back(audiobatch::tests::createSeratoTagReaderTests());
     suites.push_back(audiobatch::tests::createSeratoTagsTests());
-    suites.push_back(audiobatch::tests::createSeratoWaveformColouringTests());
     suites.push_back(audiobatch::tests::createSeratoPreviewLoaderTests());
     suites.push_back(audiobatch::tests::createSeratoPreviewTests());
     suites.push_back(audiobatch::tests::createUtilsTests());

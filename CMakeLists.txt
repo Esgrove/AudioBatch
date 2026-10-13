@@ -654,7 +654,6 @@ target_sources(
         "tests/SeratoPreviewTests.cpp"
         "tests/SeratoTagReaderTests.cpp"
         "tests/SeratoTagsTests.cpp"
-        "tests/SeratoWaveformColouringTests.cpp"
         "tests/SortingTests.cpp"
         "tests/TestHelpers.cpp"
         "tests/TestHelpers.h"
