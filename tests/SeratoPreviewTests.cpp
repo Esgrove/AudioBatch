@@ -74,7 +74,7 @@ class SeratoPreviewTests final : public juce::UnitTest
 {
 public:
     /// Registers the portable GUI slice through its explicit factory.
-    SeratoPreviewTests() : juce::UnitTest("Serato preview presentation", "AudioBatch") { }
+    SeratoPreviewTests() : juce::UnitTest("Serato preview presentation", "AudioBatch") {}
 
     /// Checks arrow direction, colour, projection, bounds, gain, resets and info-field precedence.
     void runTest() override
@@ -119,22 +119,22 @@ private:
         }
         thumbnail.setDisplayGain(1.0f);
         const auto full = renderPreview(thumbnail);
-        expectEquals(full.getPixelAt(130, 3).getARGB(), colour.getARGB());
-        expectEquals(full.getPixelAt(132, 9).getARGB(), colour.getARGB());
+        expect(full.getPixelAt(130, 3) == colour);
+        expect(full.getPixelAt(132, 9) == colour);
         expect(full.getPixelAt(132, 3) != colour);
-        expectEquals(full.getPixelAt(130, 100).getARGB(), colour.getARGB());
-        expectEquals(full.getPixelAt(132, 94).getARGB(), colour.getARGB());
+        expect(full.getPixelAt(130, 100) == colour);
+        expect(full.getPixelAt(132, 94) == colour);
         expect(full.getPixelAt(132, 100) != colour);
 
         beginTest("Millisecond cues stay aligned through zoom and pan, and outside cues are clipped");
         thumbnail.setRange({0.25, 0.75});
-        expectEquals(renderPreview(thumbnail).getPixelAt(130, 3).getARGB(), colour.getARGB());
+        expect(renderPreview(thumbnail).getPixelAt(130, 3) == colour);
         thumbnail.setRange({0.4, 0.9});
-        expectEquals(renderPreview(thumbnail).getPixelAt(53, 3).getARGB(), colour.getARGB());
+        expect(renderPreview(thumbnail).getPixelAt(53, 3) == colour);
         thumbnail.setRange({0.6, 1.1});
         expectEquals(colourPixels(renderPreview(thumbnail), colour), 0);
         thumbnail.setRange({-0.25, 0.75});
-        expectEquals(renderPreview(thumbnail).getPixelAt(194, 3).getARGB(), colour.getARGB());
+        expect(renderPreview(thumbnail).getPixelAt(194, 3) == colour);
         markers = std::make_shared<serato::Markers>();
         markers->cues.push_back({.positionMilliseconds = 1500, .colour = colour, .name = "Beyond track"});
         thumbnail.setSeratoMarkers(markers);

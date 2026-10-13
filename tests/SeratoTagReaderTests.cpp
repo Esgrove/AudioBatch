@@ -322,7 +322,7 @@ class SeratoTagReaderTests final : public juce::UnitTest
 {
 public:
     /// Registers the reader suite with the explicit JUCE runner.
-    SeratoTagReaderTests() : juce::UnitTest("Serato tag reader", "AudioBatch") { }
+    SeratoTagReaderTests() : juce::UnitTest("Serato tag reader", "AudioBatch") {}
 
     /// Writes synthetic metadata only on temporary copies and verifies extraction is read-only.
     void runTest() override
@@ -495,7 +495,7 @@ private:
             expectStatus(serato::readTag(file), serato::ReadStatus::present);
             const std::array kinds {
                 serato::TagKind::analysis,
-                std::bit_cast<serato::TagKind>(std::uint32_t {99}),
+                std::bit_cast<serato::TagKind>(std::uint8_t {99}),
                 serato::TagKind::analysis,
             };
             const auto results = serato::readTags(file, kinds);

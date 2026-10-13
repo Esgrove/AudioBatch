@@ -174,7 +174,7 @@ AnalysisCache::FileIdentity::FileIdentity(const juce::File& file) :
     path(file.getFullPathName()),
     fileSize(file.getSize()),
     modifiedTimeMs(file.getLastModificationTime().toMilliseconds())
-{ }
+{}
 
 bool AnalysisCache::FileIdentity::matches(const juce::File& file) const
 {
@@ -190,7 +190,7 @@ AnalysisCache::AnalysisCache()
     databaseFile = appDataDirectory.getChildFile("analysis.db");
 }
 
-AnalysisCache::AnalysisCache(juce::File cacheDatabaseFile) : databaseFile(std::move(cacheDatabaseFile)) { }
+AnalysisCache::AnalysisCache(juce::File cacheDatabaseFile) : databaseFile(std::move(cacheDatabaseFile)) {}
 
 AnalysisCache::~AnalysisCache()
 {
@@ -533,7 +533,9 @@ std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
 bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const audiobatch::serato::TagReadResult& result)
 {
     using namespace audiobatch::serato;
-    if (!supportsTagKind(result.kind) || !juce::File::isAbsolutePath(identity.path)) {
+    if (!supportsTagKind(result.kind) || result.status < ReadStatus::present || result.status > ReadStatus::cancelled
+        || !juce::File::isAbsolutePath(identity.path))
+    {
         return false;
     }
     juce::MemoryBlock data;
@@ -555,7 +557,6 @@ bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const audiobatc
             break;
         case ReadStatus::ioError:
         case ReadStatus::cancelled:
-        default:
             return false;
     }
     const juce::File file(identity.path);

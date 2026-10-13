@@ -7,16 +7,19 @@
 
 #include <juce_graphics/juce_graphics.h>
 
+#include <algorithm>
+
 namespace audiobatch::serato
 {
 /// Persisted kind identifiers remain stable when additional parsers are introduced.
-enum class TagKind : std::uint32_t {
+/// Cache encoding writes explicit 32-bit integers independently of the in-memory enum size.
+enum class TagKind : std::uint8_t {
     overview = 1,
     analysis = 2,
     autotags = 3,
     beatGrid = 4,
     markers = 5,
-    trackInfo = 6
+    trackInfo = 6,
 };
 
 inline constexpr std::array allTagKinds {
@@ -25,7 +28,7 @@ inline constexpr std::array allTagKinds {
     TagKind::autotags,
     TagKind::beatGrid,
     TagKind::markers,
-    TagKind::trackInfo
+    TagKind::trackInfo,
 };
 
 /// Reports the independent numeric cache schema version for a supported kind.
@@ -37,12 +40,7 @@ inline constexpr std::array allTagKinds {
 /// Rejects unrecognized persisted kind identifiers.
 [[nodiscard]] constexpr bool supportsTagKind(TagKind kind)
 {
-    for (const auto supported : allTagKinds) {
-        if (kind == supported) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(allTagKinds, [kind](const auto supported) { return kind == supported; });
 }
 
 /// Serato's analysis engine version, not the musical key of the track.
@@ -120,18 +118,18 @@ enum class ReadStatus : std::uint8_t {
     unsupported = 3,
     invalid = 4,
     ioError = 5,
-    cancelled = 6
+    cancelled = 6,
 };
 
 /// Reports one requested kind. Only present results contain the matching owned value.
 struct TagReadResult {
     TagKind kind = TagKind::overview;
     ReadStatus status = ReadStatus::absent;
-    std::optional<Overview> overview {};
-    std::optional<Analysis> analysis {};
-    std::optional<Autotags> autotags {};
-    std::optional<BeatGrid> beatGrid {};
-    std::optional<Markers> markers {};
-    std::optional<TrackInfo> trackInfo {};
+    std::optional<Overview> overview = std::nullopt;
+    std::optional<Analysis> analysis = std::nullopt;
+    std::optional<Autotags> autotags = std::nullopt;
+    std::optional<BeatGrid> beatGrid = std::nullopt;
+    std::optional<Markers> markers = std::nullopt;
+    std::optional<TrackInfo> trackInfo = std::nullopt;
 };
 }  // namespace audiobatch::serato

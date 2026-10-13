@@ -22,7 +22,7 @@ namespace audiobatch::tests
 class CacheTests final : public juce::UnitTest
 {
 public:
-    CacheTests() : juce::UnitTest("Analysis cache", "AudioBatch") { }
+    CacheTests() : juce::UnitTest("Analysis cache", "AudioBatch") {}
 
     /// Runs the cache checks.
     void runTest() override
@@ -365,7 +365,7 @@ private:
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
 
         beginTest("Unknown tag kinds miss and cannot be stored");
-        const auto unknownKind = std::bit_cast<TagKind>(std::uint32_t {99});
+        const auto unknownKind = std::bit_cast<TagKind>(std::uint8_t {99});
         expect(!cache.getSeratoTag(identity, unknownKind));
         expect(!cache.storeSeratoTag(
             identity, {.kind = unknownKind, .status = ReadStatus::absent, .overview = std::nullopt}

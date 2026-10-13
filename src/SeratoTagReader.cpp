@@ -137,9 +137,10 @@ TagLib::String description(TagKind kind)
             return "Serato BeatGrid";
         case TagKind::markers:
             return "Serato Markers2";
-        default:
-            return {};
+        case TagKind::trackInfo:
+            break;
     }
+    return {};
 }
 
 /// Creates an empty outcome while retaining the requested stable kind.
@@ -268,9 +269,10 @@ TagLib::String propertyName(TagKind kind)
             return "SERATO_BEATGRID";
         case TagKind::markers:
             return "SERATO_MARKERS_V2";
-        default:
-            return {};
+        case TagKind::trackInfo:
+            break;
     }
+    return {};
 }
 
 /// Reads native FLAC values with independent duplicate recovery and optional legacy markers fallback.
@@ -319,7 +321,7 @@ bool readTrackInfoValue(TrackInfo& info, std::string_view name, const TagLib::St
     if (name == "BPM") {
         const auto bpm = parseTagNumber(text);
         if (bpm && *bpm > 0) {
-            info.bpm = *bpm;
+            info.bpm = bpm;
             return true;
         }
     } else if (

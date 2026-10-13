@@ -60,8 +60,15 @@ init_options "$@"
 
 cd "$REPO"
 
-if [ -z "$(command -v clang-tidy)" ]; then
-    print_error_and_exit "clang-tidy not found in path"
+CLANG_TIDY=$(command -v clang-tidy || true)
+if [ -z "$CLANG_TIDY" ] && [ "$BASH_PLATFORM" = "mac" ] && command -v brew > /dev/null 2>&1; then
+    LLVM_PREFIX=$(brew --prefix llvm 2> /dev/null || true)
+    if [ -n "$LLVM_PREFIX" ] && [ -x "$LLVM_PREFIX/bin/clang-tidy" ]; then
+        CLANG_TIDY="$LLVM_PREFIX/bin/clang-tidy"
+    fi
+fi
+if [ -z "$CLANG_TIDY" ]; then
+    print_error_and_exit "clang-tidy not found. Install LLVM (brew install llvm on macOS) or add its bin directory to PATH."
 fi
 
 # Locate a compile_commands.json from one of the known CMake build directories.
@@ -79,7 +86,7 @@ if [ -z "$BUILD_DIR" ]; then
 fi
 
 print_magenta "Using compile database at $BUILD_DIR"
-clang-tidy --version | head -n 2
+"$CLANG_TIDY" --version | head -n 2
 
 # MSVC compile commands contain flags like /MP that clang does not use,
 # which would otherwise be reported as errors.
@@ -94,10 +101,17 @@ fi
 # Collect the C++ sources under src/ and tests/.
 SOURCES=("$REPO"/src/*.cpp "$REPO"/tests/*.cpp)
 
+# Do not let clang-tidy infer flags from an unrelated source when the database is stale.
+for source in "${SOURCES[@]}"; do
+    if ! grep -Fq "\"file\": \"$source\"" "$BUILD_DIR/compile_commands.json"; then
+        print_error_and_exit "Compile database has no entry for $source. Reconfigure and build CMake first, for example: cmake --preset macos-debug && cmake --build --preset macos-debug"
+    fi
+done
+
 print_magenta "Running clang-tidy on ${#SOURCES[@]} source files..."
 
 if [ "$CHECK" = false ]; then
-    clang-tidy -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}"
+    "$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}"
     exit
 fi
 
@@ -105,7 +119,7 @@ OUTPUT_FILE=$(mktemp)
 trap 'rm -f "$OUTPUT_FILE"' EXIT
 
 set +e
-clang-tidy -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}" 2>&1 | tee "$OUTPUT_FILE"
+"$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}" 2>&1 | tee "$OUTPUT_FILE"
 CLANG_TIDY_STATUS=${PIPESTATUS[0]}
 set -e
 

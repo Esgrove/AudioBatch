@@ -34,7 +34,7 @@ class SeratoOverviewTests final : public juce::UnitTest
 {
 public:
     /// Registers the suite with JUCE's explicit factory runner.
-    SeratoOverviewTests() : juce::UnitTest("Serato Overview", "AudioBatch") { }
+    SeratoOverviewTests() : juce::UnitTest("Serato Overview", "AudioBatch") {}
 
     /// Exercises synthetic payloads only, including the exact allocation limit.
     void runTest() override

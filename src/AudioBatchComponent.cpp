@@ -179,9 +179,9 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
             audiobatch::serato::SeratoPreviewLoader::Data data
         ) {
             juce::MessageManager::callAsync(
-                [safeThis, identity = std::move(identity), generation, data = std::move(data)] {
+                [safeThis, previewIdentity = std::move(identity), generation, previewData = std::move(data)] {
                     if (safeThis != nullptr) {
-                        safeThis->adoptSeratoPreview(identity, generation, data);
+                        safeThis->adoptSeratoPreview(previewIdentity, generation, previewData);
                     }
                 }
             );

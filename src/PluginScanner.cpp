@@ -304,7 +304,7 @@ OutOfProcessPluginScanner::OutOfProcessPluginScanner(
 ) :
     onScanStarting(std::move(scanStartingCallback)),
     onScanFinished(std::move(scanFinishedCallback))
-{ }
+{}
 
 OutOfProcessPluginScanner::~OutOfProcessPluginScanner() = default;
 

@@ -4,6 +4,7 @@
 /// Final bitmap compositing can round alpha and premultiplied RGB by one byte, but must not remove any PCM pixels.
 
 #include "SeratoWaveformColouring.h"
+#include "TestSuites.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>
 
@@ -137,7 +138,7 @@ class SeratoWaveformColouringTests final : public juce::UnitTest
 {
 public:
     /// Registers this suite through its explicit factory rather than a static instance.
-    SeratoWaveformColouringTests() : juce::UnitTest("Serato waveform colouring", "AudioBatch") { }
+    SeratoWaveformColouringTests() : juce::UnitTest("Serato waveform colouring", "AudioBatch") {}
 
     /// Runs portable palette, resampling and offscreen brush coverage checks.
     void runTest() override

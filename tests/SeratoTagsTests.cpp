@@ -93,7 +93,7 @@ class SeratoTagsTests final : public juce::UnitTest
 {
 public:
     /// Registers the parser suite with the explicit runner.
-    SeratoTagsTests() : juce::UnitTest("Serato metadata parsers", "AudioBatch") { }
+    SeratoTagsTests() : juce::UnitTest("Serato metadata parsers", "AudioBatch") {}
 
     /// Checks layouts, rejection paths and portable serialization without file I/O.
     void runTest() override
@@ -111,7 +111,7 @@ private:
             expectEquals(static_cast<int>(serato::allTagKinds[index]), static_cast<int>(index + 1));
             expectEquals(static_cast<int>(serato::parserVersion(serato::allTagKinds[index])), 1);
         }
-        expect(!serato::supportsTagKind(std::bit_cast<serato::TagKind>(std::uint32_t {99})));
+        expect(!serato::supportsTagKind(std::bit_cast<serato::TagKind>(std::uint8_t {99})));
         const std::array<std::uint8_t, 2> analysis {2, 1};
         const auto parsedAnalysis = serato::parseAnalysis(analysis);
         expect(parsedAnalysis.has_value());
@@ -137,10 +137,40 @@ private:
             invalid[offset] = 'X';
             expect(!serato::parseAutotags(invalid));
         }
-        for (const auto* text : {"nan", "inf", "128suffix", "", "1e9999", "12,5"}) {
-            expect(!serato::parseTagNumber(text));
+        beginTest("Numeric tags require complete locale-independent finite decimals without range errors");
+        for (const auto* text :
+             {
+                 "nan",
+                 "inf",
+                 "-inf",
+                 "128suffix",
+                 "",
+                 "1e9999",
+                 "1e-9999",
+                 "12,5",
+                 "+128",
+                 "0x1p2",
+                 "1e",
+                 "1e+",
+                 ".",
+                 "\n128",
+                 "128\n",
+                 "1 2",
+             })
+        {
+            expect(!serato::parseTagNumber(text), text);
         }
-        expectEquals(serato::parseTagNumber(" 127.25 ").value_or(0), 127.25);
+        expect(!serato::parseTagNumber(std::string_view("128\0suffix", 10)));
+        expectEquals(serato::parseTagNumber(" \t127.25\t ").value_or(0), 127.25);
+        expectEquals(serato::parseTagNumber("-3.257").value_or(0), -3.257);
+        expectEquals(serato::parseTagNumber(".5").value_or(0), 0.5);
+        expectEquals(serato::parseTagNumber("1.").value_or(0), 1.0);
+        expectEquals(serato::parseTagNumber("1.25e+2").value_or(0), 125.0);
+        expectEquals(serato::parseTagNumber("-0").value_or(1), -0.0);
+        expectEquals(serato::parseTagNumber("0e-9999").value_or(1), 0.0);
+        expectEquals(
+            serato::parseTagNumber("4.9406564584124654e-324").value_or(0), std::numeric_limits<double>::denorm_min()
+        );
 
         beginTest("BeatGrid count distinguishes terminal BPM and accepts negative lead-in");
         const auto grid = gridPayload();

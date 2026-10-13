@@ -17,7 +17,7 @@ SeratoPreviewLoader::SeratoPreviewLoader(AnalysisCache& cacheToUse, Completion o
     completion(std::move(onCompletion)),
     reader(std::move(tagReader)),
     worker([this](const std::stop_token& stopToken) { run(stopToken); })
-{ }
+{}
 
 SeratoPreviewLoader::~SeratoPreviewLoader()
 {
@@ -153,7 +153,7 @@ bool SeratoPreviewLoader::readMisses(
         if (isCancelled() || !active.identity.matches(active.file) || isCancelled()) {
             return false;
         }
-        const auto position = std::ranges::find(allTagKinds, result.kind);
+        const auto* position = std::ranges::find(allTagKinds, result.kind);
         const auto index = static_cast<std::size_t>(position - allTagKinds.begin());
         if (results[index]) {
             continue;

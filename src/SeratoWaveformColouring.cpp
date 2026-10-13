@@ -214,8 +214,9 @@ void drawColouredThumbnail(
     {
         const juce::Image::BitmapData pixels(image, juce::Image::BitmapData::readWrite);
         for (int column = 0; column < image.getWidth(); ++column) {
-            const auto logicalX = static_cast<double>(physicalBounds.getX() + column) / scale;
-            const auto position = (logicalX - gradient.point1.x) / (gradient.point2.x - gradient.point1.x);
+            const auto logicalX = static_cast<double>(physicalBounds.getX() + column) / static_cast<double>(scale);
+            const auto position = (logicalX - static_cast<double>(gradient.point1.x))
+                / static_cast<double>(gradient.point2.x - gradient.point1.x);
             const auto colour = gradient.getColourAtPosition(position);
             for (int row = 0; row < image.getHeight(); ++row) {
                 const auto alpha = pixels.getPixelColour(column, row).getAlpha();

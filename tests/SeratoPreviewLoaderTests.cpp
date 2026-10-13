@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <iterator>
 #include <limits>
 #include <mutex>
 #include <sqlite3.h>
@@ -28,7 +29,7 @@ struct PreviewDelivery {
 };
 
 /// Builds representative owned values for every independently cached kind.
-serato::TagReadResult previewResult(const serato::TagKind kind, const ReadStatus status = ReadStatus::present)
+static serato::TagReadResult previewResult(const serato::TagKind kind, const ReadStatus status = ReadStatus::present)
 {
     serato::TagReadResult result {.kind = kind, .status = status};
     if (status != ReadStatus::present) {
@@ -78,7 +79,7 @@ public:
     explicit PreviewProbe(const ReadStatus resultStatus = ReadStatus::present, const bool gateFirstRead = false) :
         status(resultStatus),
         gateFirst(gateFirstRead)
-    { }
+    {}
 
     /// Returns an owned-input reader with an optional noninterruptible gate resembling a TagLib call.
     SeratoPreviewLoader::Reader reader()
@@ -199,7 +200,7 @@ class SeratoPreviewLoaderTests final : public juce::UnitTest
 {
 public:
     /// Registers the focused lifecycle suite in the standard AudioBatch category.
-    SeratoPreviewLoaderTests() : juce::UnitTest("Serato preview lifecycle", "AudioBatch") { }
+    SeratoPreviewLoaderTests() : juce::UnitTest("Serato preview lifecycle", "AudioBatch") {}
 
     /// Runs lifecycle scenarios with explicit read gates and completion barriers.
     void runTest() override
@@ -498,7 +499,7 @@ private:
                       }
                   }
                   std::ranges::reverse(results);
-                  results.push_back(previewResult(std::bit_cast<TagKind>(std::uint32_t {99}), ReadStatus::absent));
+                  results.push_back(previewResult(std::bit_cast<TagKind>(std::uint8_t {99}), ReadStatus::absent));
                   return results;
               };
         SeratoPreviewLoader loader(cache, probe.completion(), reader);
@@ -548,7 +549,7 @@ private:
             if (!batches.empty()) {
                 expect(
                     batches.front()
-                    == std::vector<serato::TagKind>(serato::allTagKinds.begin() + 1, serato::allTagKinds.end())
+                    == std::vector<serato::TagKind>(std::next(serato::allTagKinds.begin()), serato::allTagKinds.end())
                 );
             }
             for (const auto& delivery : probe.queued()) {

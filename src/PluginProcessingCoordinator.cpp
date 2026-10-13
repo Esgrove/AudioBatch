@@ -24,7 +24,7 @@ static constexpr int chainWaitIntervalMilliseconds = 100;
 
 PluginProcessingCoordinator::PluginProcessingCoordinator(const int workerCount) :
     threadPool(juce::jmax(1, juce::jmin(4, workerCount)))
-{ }
+{}
 
 PluginProcessingCoordinator::~PluginProcessingCoordinator()
 {

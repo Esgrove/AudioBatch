@@ -81,7 +81,7 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
     }
 }
 
-void ThumbnailComponent::resized() { }
+void ThumbnailComponent::resized() {}
 
 bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData)
 {

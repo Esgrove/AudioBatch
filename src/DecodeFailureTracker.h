@@ -23,7 +23,7 @@ public:
     static constexpr int maximumConsecutiveFailures = 3;
 
     /// Creates a tracker for a stream with the given length in samples.
-    explicit DecodeFailureTracker(const juce::int64 streamLength) noexcept : totalSamples(streamLength) { }
+    explicit DecodeFailureTracker(const juce::int64 streamLength) noexcept : totalSamples(streamLength) {}
 
     /// Records the outcome of reading one block.
     /// Returns false when decoding must stop, after which errorMessage describes the failure.

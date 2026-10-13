@@ -5,10 +5,10 @@
 
 #include <algorithm>
 #include <bit>
-#include <charconv>
 #include <cmath>
 #include <limits>
-#include <memory>
+#include <locale>
+#include <sstream>
 #include <string>
 
 namespace audiobatch::serato
@@ -155,7 +155,7 @@ bool addMarker(Markers& markers, const juce::String& type, std::span<const std::
 /// A fail-closed cursor for cache fields. Failed reads never advance outside the supplied span.
 struct Cursor {
     /// Borrows an already bounded block for this synchronous decode.
-    explicit Cursor(std::span<const std::uint8_t> input) : remaining(input) { }
+    explicit Cursor(std::span<const std::uint8_t> input) : remaining(input) {}
     /// Takes a bounded field, remembering truncation for the final validity check.
     std::span<const std::uint8_t> take(std::size_t count)
     {
@@ -424,14 +424,27 @@ std::optional<double> parseTagNumber(std::string_view text)
     while (!text.empty() && (text.back() == ' ' || text.back() == '\t')) {
         text.remove_suffix(1);
     }
-    if (text.empty() || text.size() > maxTagTextBytes) {
+    if (text.empty() || text.size() > maxTagTextBytes || text.front() == '+'
+        || text.find_first_not_of("0123456789.eE+-") != std::string_view::npos)
+    {
         return std::nullopt;
     }
+    std::istringstream input {std::string(text)};
+    input.imbue(std::locale::classic());
     double value = 0;
-    const auto* begin = std::to_address(text.begin());
-    const auto* end = std::to_address(text.end());
-    const auto result = std::from_chars(begin, end, value);
-    return result.ec == std::errc() && result.ptr == end && std::isfinite(value) ? std::optional(value) : std::nullopt;
+    input >> std::noskipws >> value;
+    // libc++ can report a range failure for representable subnormal results.
+    if ((input.fail() && std::fpclassify(value) != FP_SUBNORMAL) || !input.eof() || !std::isfinite(value)) {
+        return std::nullopt;
+    }
+    // Stream extraction can silently round an underflowing nonzero significand to zero.
+    const auto significand = text.substr(0, text.find_first_of("eE"));
+    if (std::fpclassify(value) == FP_ZERO
+        && std::ranges::any_of(significand, [](char character) { return character >= '1' && character <= '9'; }))
+    {
+        return std::nullopt;
+    }
+    return value;
 }
 
 std::optional<juce::MemoryBlock> decodeTagBase64(std::span<const std::uint8_t> bytes, bool markersWorkaround)
@@ -515,12 +528,12 @@ std::optional<BeatGrid> parseBeatGrid(std::span<const std::uint8_t> bytes)
     for (std::uint32_t index = 0; index < count; ++index) {
         const auto record
             = bytes.subspan(gridHeaderBytes + static_cast<std::size_t>(index) * gridRecordBytes, gridRecordBytes);
-        const double position = std::bit_cast<float>(integer(record));
+        const double position = static_cast<double>(std::bit_cast<float>(integer(record)));
         if (!std::isfinite(position) || (!grid.markers.empty() && position < grid.markers.back().positionSeconds)) {
             return std::nullopt;
         }
         if (index + 1 == count) {
-            const double bpm = std::bit_cast<float>(integer(record.subspan(4)));
+            const double bpm = static_cast<double>(std::bit_cast<float>(integer(record.subspan(4))));
             if (!std::isfinite(bpm) || bpm <= 0) {
                 return std::nullopt;
             }
@@ -626,11 +639,13 @@ TagReadResult parseTagPayload(TagKind kind, std::span<const std::uint8_t> bytes,
         case TagKind::markers:
             result.markers = legacyMarkers ? parseLegacyMarkers(bytes) : parseMarkers2(bytes);
             break;
-        default:
+        case TagKind::trackInfo:
             result.status = ReadStatus::unsupported;
             return result;
     }
-    if (result.overview || result.analysis || result.autotags || result.beatGrid || result.markers) {
+    if (!supportsTagKind(kind)) {
+        result.status = ReadStatus::unsupported;
+    } else if (result.overview || result.analysis || result.autotags || result.beatGrid || result.markers) {
         result.status = ReadStatus::present;
     }
     return result;
@@ -648,7 +663,7 @@ bool writeCachePayload(juce::MemoryOutputStream& payload, const TagReadResult& r
             }
             payload.writeByte(static_cast<char>(result.analysis->majorVersion));
             payload.writeByte(static_cast<char>(result.analysis->minorVersion));
-            break;
+            return true;
         case TagKind::autotags:
             if (!result.autotags) {
                 return false;
@@ -656,7 +671,7 @@ bool writeCachePayload(juce::MemoryOutputStream& payload, const TagReadResult& r
             writeReal(payload, result.autotags->bpm);
             writeReal(payload, result.autotags->autoGain);
             writeReal(payload, result.autotags->gain);
-            break;
+            return true;
         case TagKind::beatGrid:
             if (!result.beatGrid || result.beatGrid->markers.size() > maxTagRecords) {
                 return false;
@@ -670,13 +685,13 @@ bool writeCachePayload(juce::MemoryOutputStream& payload, const TagReadResult& r
                     writeReal(payload, *marker.bpm);
                 }
             }
-            break;
+            return true;
         case TagKind::markers:
             if (!result.markers || !boundedMarkers(*result.markers)) {
                 return false;
             }
             writeMarkers(payload, *result.markers);
-            break;
+            return true;
         case TagKind::trackInfo:
             if (!result.trackInfo || result.trackInfo->key.getNumBytesAsUTF8() > maxTagTextBytes) {
                 return false;
@@ -686,11 +701,11 @@ bool writeCachePayload(juce::MemoryOutputStream& payload, const TagReadResult& r
                 writeReal(payload, *result.trackInfo->bpm);
             }
             writeText(payload, result.trackInfo->key);
-            break;
-        default:
+            return true;
+        case TagKind::overview:
             return false;
     }
-    return true;
+    return false;
 }
 }  // namespace
 
@@ -768,7 +783,7 @@ std::optional<TagReadResult> deserializeTag(TagKind kind, const juce::MemoryBloc
             input.valid = input.valid && (!result.trackInfo->bpm || *result.trackInfo->bpm > 0)
                 && (result.trackInfo->bpm || result.trackInfo->key.isNotEmpty());
             break;
-        default:
+        case TagKind::overview:
             return std::nullopt;
     }
     return input.finished() ? std::optional(result) : std::nullopt;

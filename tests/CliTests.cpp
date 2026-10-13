@@ -23,7 +23,7 @@ static std::optional<AudioAnalysisCliOptions> parseArguments(
 class CliTests final : public juce::UnitTest
 {
 public:
-    CliTests() : juce::UnitTest("CLI argument parsing", "AudioBatch") { }
+    CliTests() : juce::UnitTest("CLI argument parsing", "AudioBatch") {}
 
     /// Parses arguments that are expected to be valid, recording a failure with the parse error when they are not.
     /// Returns default options on failure so the caller can keep checking fields.
