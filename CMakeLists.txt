@@ -14,6 +14,7 @@ project(
 
 include(FetchContent)
 include(GNUInstallDirs)
+option(BUILD_TESTING "Build AudioBatch tests" ON)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -172,13 +173,15 @@ FetchContent_Declare(
 # and remain in effect on subsequent re-configures (when the source is already populated).
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(BUILD_BINDINGS OFF CACHE BOOL "" FORCE)
 set(VISIBILITY_HIDDEN ON CACHE BOOL "" FORCE)
 
 # FetchContent_MakeAvailable both populates the source (when needed)
 # and calls add_subdirectory every time CMake runs, so the `tag` target is always defined for the rest of this build.
+block(PROPAGATE taglib_SOURCE_DIR taglib_BINARY_DIR)
+set(BUILD_TESTING OFF)
 FetchContent_MakeAvailable(taglib)
+endblock()
 
 # TagLib does not propagate its build-tree include directories to consumers,
 # so add them explicitly so we can include its public headers.
@@ -596,14 +599,27 @@ function(audiobatch_set_source_warnings)
 endfunction()
 
 # Unit and integration tests for the shared core and the CLI front end, run through CTest.
-juce_add_console_app(
-    AudioBatchTests
-    PRODUCT_NAME "AudioBatchTests"
-    VERSION ${APP_BUILD_VERSION}
-)
-juce_generate_juce_header(AudioBatchTests)
+if(BUILD_TESTING)
+    include(CTest)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.18.0
+        GIT_SHALLOW TRUE
+    )
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+    set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)
+    set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
+    FetchContent_MakeAvailable(googletest)
 
-# cmake-format: off
+    juce_add_console_app(
+        AudioBatchTests
+        PRODUCT_NAME "AudioBatchTests"
+        VERSION ${APP_BUILD_VERSION}
+    )
+    juce_generate_juce_header(AudioBatchTests)
+
+    # cmake-format: off
 target_sources(
     AudioBatchTests
     PRIVATE
@@ -648,23 +664,24 @@ target_sources(
 )
 # cmake-format: on
 
-target_include_directories(AudioBatchTests PRIVATE "${CMAKE_SOURCE_DIR}/src")
-target_compile_definitions(
-    AudioBatchTests PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS}
-                            AUDIOBATCH_TEST_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures"
-)
-set_target_properties(AudioBatchTests PROPERTIES COMPILE_WARNING_AS_ERROR YES CXX_STANDARD 23)
-
-if(APPLE)
-    target_link_libraries(
-        AudioBatchTests PRIVATE "$<LINK_LIBRARY:FRAMEWORK,AudioUnit>" "$<LINK_LIBRARY:FRAMEWORK,CoreAudioKit>"
+    target_include_directories(AudioBatchTests PRIVATE "${CMAKE_SOURCE_DIR}/src")
+    target_compile_definitions(
+        AudioBatchTests PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS}
+                                AUDIOBATCH_TEST_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures"
     )
-endif()
+    set_target_properties(AudioBatchTests PROPERTIES COMPILE_WARNING_AS_ERROR YES CXX_STANDARD 23)
 
-# cmake-format: off
+    if(APPLE)
+        target_link_libraries(
+            AudioBatchTests PRIVATE "$<LINK_LIBRARY:FRAMEWORK,AudioUnit>" "$<LINK_LIBRARY:FRAMEWORK,CoreAudioKit>"
+        )
+    endif()
+
+    # cmake-format: off
 target_link_libraries(
     AudioBatchTests
     PRIVATE
+        GTest::gtest
         ${AUDIOBATCH_SQLITE_TARGET}
         ebur128
         fmt::fmt
@@ -682,17 +699,20 @@ target_link_libraries(
 )
 # cmake-format: on
 
-set(BUILD_TESTING ON)
-include(CTest)
-add_test(NAME AudioBatchTests COMMAND AudioBatchTests)
+    include(GoogleTest)
+    gtest_discover_tests(AudioBatchTests PROPERTIES RUN_SERIAL TRUE)
+    audiobatch_set_source_warnings(AudioBatchTests)
+endif()
 
-audiobatch_set_source_warnings(AudioBatch AudioBatchCli AudioBatchTests)
+audiobatch_set_source_warnings(AudioBatch AudioBatchCli)
 
 # Mirror the src subdirectories as folders in the Visual Studio and Xcode projects.
 foreach(target IN ITEMS AudioBatch AudioBatchCli AudioBatchTests)
-    get_target_property(target_sources ${target} SOURCES)
-    list(FILTER target_sources INCLUDE REGEX "^src/")
-    source_group(TREE "${CMAKE_SOURCE_DIR}" FILES ${target_sources})
+    if(TARGET ${target})
+        get_target_property(target_sources ${target} SOURCES)
+        list(FILTER target_sources INCLUDE REGEX "^src/")
+        source_group(TREE "${CMAKE_SOURCE_DIR}" FILES ${target_sources})
+    endif()
 endforeach()
 
 # START_JUCE_APPLICATION expands to a main function that casts `char**` to `const char**`,

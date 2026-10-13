@@ -238,35 +238,35 @@ export_cmake_project() {
     if [ "$BASH_PLATFORM" = "mac" ]; then
         if [ "$USE_XCODE" = true ]; then
             print_magenta "Generating Xcode project..."
-            if ! cmake -B "$CMAKE_BUILD_DIR" -G "Xcode"; then
+            if ! cmake -B "$CMAKE_BUILD_DIR" -G "Xcode" -DBUILD_TESTING="$RUN_TESTS"; then
                 rm -rf "$CMAKE_BUILD_DIR"
-                cmake -B "$CMAKE_BUILD_DIR" -G "Xcode"
+                cmake -B "$CMAKE_BUILD_DIR" -G "Xcode" -DBUILD_TESTING="$RUN_TESTS"
             fi
         else
             print_magenta "Generating Ninja project..."
             if ! cmake -B "$CMAKE_BUILD_DIR" -G Ninja \
                 -DCMAKE_C_COMPILER=clang \
                 -DCMAKE_CXX_COMPILER=clang++ \
-                -DCMAKE_BUILD_TYPE="$BUILD_TYPE"; then
+                -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DBUILD_TESTING="$RUN_TESTS"; then
                 rm -rf "$CMAKE_BUILD_DIR"
                 cmake -B "$CMAKE_BUILD_DIR" -G Ninja \
                     -DCMAKE_C_COMPILER=clang \
                     -DCMAKE_CXX_COMPILER=clang++ \
-                    -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+                    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DBUILD_TESTING="$RUN_TESTS"
             fi
         fi
     elif [ "$BASH_PLATFORM" = "windows" ]; then
         if [ "$USE_NINJA" = true ]; then
             print_magenta "Generating Ninja project..."
-            if ! cmake -B "$CMAKE_BUILD_DIR" -G Ninja; then
+            if ! cmake -B "$CMAKE_BUILD_DIR" -G Ninja -DBUILD_TESTING="$RUN_TESTS"; then
                 rm -rf "$CMAKE_BUILD_DIR"
-                cmake -B "$CMAKE_BUILD_DIR" -G Ninja
+                cmake -B "$CMAKE_BUILD_DIR" -G Ninja -DBUILD_TESTING="$RUN_TESTS"
             fi
         else
             print_magenta "Generating Visual Studio project..."
-            if ! cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64; then
+            if ! cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64 -DBUILD_TESTING="$RUN_TESTS"; then
                 rm -rf "$CMAKE_BUILD_DIR"
-                cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64
+                cmake -B "$CMAKE_BUILD_DIR" -G "Visual Studio 18 2026" -A x64 -DBUILD_TESTING="$RUN_TESTS"
             fi
         fi
     else
@@ -279,6 +279,9 @@ init_options "$@"
 if [ "$REUSE_BUILD_DIR" = true ]; then
     if [ ! -d "$CMAKE_BUILD_DIR" ]; then
         print_error_and_exit "Build directory does not exist: $CMAKE_BUILD_DIR"
+    fi
+    if [ "$RUN_TESTS" = true ] && ! grep -Eiq '^BUILD_TESTING:BOOL=(ON|TRUE|1)$' "$CMAKE_BUILD_DIR/CMakeCache.txt"; then
+        print_error_and_exit "Tests are disabled in this build directory. Run with --test without --reuse to enable them."
     fi
     print_magenta "Reusing existing build directory: $CMAKE_BUILD_DIR"
 else
