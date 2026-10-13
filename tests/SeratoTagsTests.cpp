@@ -60,7 +60,24 @@ std::vector<std::uint8_t> markerPayload()
     juce::MemoryOutputStream body;
     body.writeByte(1);
     body.writeByte(1);
-    const std::array<std::uint8_t, 16> cue {0, 7, 0, 0, 4, 210, 0, 204, 32, 17, 0, 0, 'C', 'u', 'e', 0};
+    const std::array<std::uint8_t, 16> cue {
+        0,
+        7,
+        0,
+        0,
+        4,
+        210,
+        0,
+        204,
+        32,
+        17,
+        0,
+        0,
+        'C',
+        'u',
+        'e',
+        0,
+    };
     const std::array<std::uint8_t, 26> loop {
         0, 2, 0, 0, 3, 232, 0, 0, 7, 208, 255, 255, 255, 255, 0, 39, 170, 225, 0, 1, 'I', 'n', 't', 'r', 'o', 0,
     };
