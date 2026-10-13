@@ -122,20 +122,40 @@ public:
     /// so teardown messages are still written to the log file.
     void shutdown() override
     {
+        const auto startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
+        utils::logDebug("Application shutdown: releasing main window");
         mainWindow.reset();
+        utils::logDebug("Application shutdown: main window released");
         pluginScanWorker.reset();
+        utils::logDebug(
+            "Application shutdown complete ({:.2f} s)",
+            (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / 1000.0
+        );
         juce::Logger::setCurrentLogger(nullptr);
     }
 
-    /// Logs the pending exit code and then quits the message loop.
+    /// Releases the GUI while the message loop still accepts cleanup callbacks, then quits.
+    /// Teardown is deferred beyond the close-button callback so destroying its window cannot invalidate that callback.
     void systemRequestedQuit() override
     {
+        if (quitRequested) {
+            return;
+        }
+
+        quitRequested = true;
         if (const auto exitCode = getApplicationReturnValue(); exitCode != 0) {
             utils::logInfo("Quit with non-zero exit code: {}", exitCode);
         } else {
             utils::logInfo("Quit");
         }
-        quit();
+        if (!juce::MessageManager::callAsync([this] {
+                utils::logDebug("Application shutdown: closing GUI before stopping the message loop");
+                mainWindow.reset();
+                quit();
+            }))
+        {
+            quit();
+        }
     }
 
     /// Logs launches of a second instance.
@@ -174,6 +194,9 @@ private:
     std::unique_ptr<MainWindow> mainWindow;
     std::unique_ptr<PluginScanWorker> pluginScanWorker;
     std::unique_ptr<juce::FileLogger> logger;
+
+    /// Prevents repeated close requests from scheduling teardown more than once.
+    bool quitRequested = false;
 };
 }  // namespace
 }  // namespace audiobatch
