@@ -1,11 +1,11 @@
-/// Tests for PluginProcessingService::processFile with small in-process test plugins.
+/// Tests for processFileWithPlugins with small in-process test plugins.
 /// Covers mono files through stereo-only and mixed-width chains, the clip guard, the output bit depth,
 /// latency compensation, rendering and trimming the tail, per-file state, cancellation, and the output length.
 /// Replaced files are deleted instead of moved to the system trash, so the tests never touch the user's trash.
 
-#include "AudioAnalysisService.h"
+#include "AudioAnalysis.h"
 #include "AudioFormatUtils.h"
-#include "PluginProcessingService.h"
+#include "PluginProcessing.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
@@ -355,8 +355,7 @@ public:
                 return file.deleteFile();
             };
 
-            const auto result
-                = PluginProcessingService::processFile(AudioAnalysisService::analyzeFile(source), options, {&plugin});
+            const auto result = processFileWithPlugins(analyzeFile(source), options, {&plugin});
 
             expect(!result.hasError(), result.errorMessage);
             expectEquals(disposedNames.joinIntoString(","), juce::String("in_place.aif"));
@@ -381,7 +380,7 @@ public:
         beginTest("Plugin latency is removed from the start of the output");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "latency.aif");
-            const auto sourceLength = AudioAnalysisService::analyzeFile(source).lengthInSamples;
+            const auto sourceLength = analyzeFile(source).lengthInSamples;
             TestPlugin plugin({.latencySamples = 1000});
             const auto result = process(source, {&plugin});
 
@@ -395,7 +394,7 @@ public:
         beginTest("The tail of a plugin is rendered past the end of the source");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "echo.aif");
-            const auto sourceLength = AudioAnalysisService::analyzeFile(source).lengthInSamples;
+            const auto sourceLength = analyzeFile(source).lengthInSamples;
             constexpr int echoSamples = 4410;
             TestPlugin plugin({.echoSamples = echoSamples});
             const auto result = process(source, {&plugin});
@@ -408,7 +407,7 @@ public:
         beginTest("A silent tail allowance is trimmed back to the source length");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "silent_tail.aif");
-            const auto sourceLength = AudioAnalysisService::analyzeFile(source).lengthInSamples;
+            const auto sourceLength = analyzeFile(source).lengthInSamples;
             TestPlugin plugin({.reportedTailSeconds = 0.5});
             const auto result = process(source, {&plugin});
 
@@ -423,9 +422,8 @@ public:
             const auto sourceSize = source.getSize();
             const auto sourceModified = source.getLastModificationTime();
             TestPlugin plugin({.gain = 0.5f});
-            const auto result = PluginProcessingService::processFile(
-                AudioAnalysisService::analyzeFile(source), makeOptions({&plugin}), {&plugin}, [] { return true; }
-            );
+            const auto result
+                = processFileWithPlugins(analyzeFile(source), makeOptions({&plugin}), {&plugin}, [] { return true; });
 
             expect(result.hasError());
             expect(result.errorMessage.contains("cancelled"), result.errorMessage);
@@ -437,14 +435,12 @@ public:
         beginTest("Cancellation stops changed-source analysis before preparing the plugin chain");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cancelled_refresh.aif");
-            auto staleRecord = AudioAnalysisService::analyzeFile(source);
+            auto staleRecord = analyzeFile(source);
             staleRecord.modifiedTimeMs -= 1000;
             TestPlugin plugin({});
-            const auto cancelledAnalysis = AudioAnalysisService::analyzeFile(source, [] { return true; });
+            const auto cancelledAnalysis = analyzeFile(source, [] { return true; });
             const auto result
-                = PluginProcessingService::processFile(staleRecord, makeOptions({&plugin}), {&plugin}, [] {
-                      return true;
-                  });
+                = processFileWithPlugins(staleRecord, makeOptions({&plugin}), {&plugin}, [] { return true; });
 
             expect(result.hasError());
             expectEquals(result.errorMessage, cancelledAnalysis.errorMessage);
@@ -462,8 +458,7 @@ public:
             target.targetPeakDbfs = -3.0;
             options.normalizeBeforePlugin = target;
 
-            const auto result
-                = PluginProcessingService::processFile(AudioAnalysisService::analyzeFile(source), options, {&plugin});
+            const auto result = processFileWithPlugins(analyzeFile(source), options, {&plugin});
 
             expect(!result.hasError(), result.errorMessage);
             expectWithinAbsoluteError(peakDecibels(result.analysisRecord), -3.0, 0.05);
@@ -479,8 +474,7 @@ public:
             target.targetLufs = -20.0;
             options.normalizeBeforePlugin = target;
 
-            const auto result
-                = PluginProcessingService::processFile(AudioAnalysisService::analyzeFile(source), options, {&plugin});
+            const auto result = processFileWithPlugins(analyzeFile(source), options, {&plugin});
 
             expect(!result.hasError(), result.errorMessage);
             expectWithinAbsoluteError(result.analysisRecord.integratedLufs, -20.0, 0.1);
@@ -492,11 +486,11 @@ public:
             TestPlugin plugin({});
             auto options = makeOptions({&plugin});
             options.normalizeBeforePlugin = AudioNormalizationOptions {};
-            auto record = AudioAnalysisService::analyzeFile(source);
+            auto record = analyzeFile(source);
             record.hasCustomGain = true;
             record.customGainDb = -6.0f;
 
-            const auto result = PluginProcessingService::processFile(record, options, {&plugin});
+            const auto result = processFileWithPlugins(record, options, {&plugin});
 
             expect(!result.hasError(), result.errorMessage);
             expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels - 6.0, 0.05);
@@ -505,7 +499,7 @@ public:
         beginTest("Output that would clip is turned down to full scale and reported");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif");
-            const auto sourceLength = AudioAnalysisService::analyzeFile(source).lengthInSamples;
+            const auto sourceLength = analyzeFile(source).lengthInSamples;
             TestPlugin plugin({.gain = juce::Decibels::decibelsToGain(12.0f)});
             const auto result = process(source, {&plugin});
 
@@ -528,9 +522,7 @@ private:
         const std::vector<juce::MemoryBlock>& states = {}
     )
     {
-        return PluginProcessingService::processFile(
-            AudioAnalysisService::analyzeFile(source), makeOptions(chain, states), chain
-        );
+        return processFileWithPlugins(analyzeFile(source), makeOptions(chain, states), chain);
     }
 
     /// Returns the largest absolute sample difference between the first samples of two files,

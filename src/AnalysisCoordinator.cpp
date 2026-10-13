@@ -149,7 +149,7 @@ void AnalysisCoordinator::planRun(const AudioAnalysisOptions& options, const int
 
     AnalysisPlan plan;
     plan.runId = runId;
-    plan.files = AudioAnalysisService::collectInputFiles(options.inputPaths, options.recursive, isCancelled);
+    plan.files = collectInputFiles(options.inputPaths, options.recursive, isCancelled);
     std::vector<AudioAnalysisRecord> cachedRecords;
 
     for (const auto& file : plan.files) {
@@ -202,7 +202,7 @@ void AnalysisCoordinator::analyzeStaleFile(
 
     publishStarting(file, runId);
 
-    auto result = AudioAnalysisService::analyzeFile(file, [this, runId] { return isRunCancelled(runId); });
+    auto result = analyzeFile(file, [this, runId] { return isRunCancelled(runId); });
 
     if (isRunCancelled(runId)) {
         return;

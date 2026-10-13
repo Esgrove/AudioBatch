@@ -36,19 +36,19 @@ Entry points:
 
 CLI only:
 
-- `src/AudioAnalysisCli.{h,cpp}` declares the CLI options and runs the analysis workflow,
+- `src/AudioAnalysisCli.{h,cpp}` declare the CLI options and the `cli` functions that run the analysis workflow,
   `src/AudioAnalysisCliParse.cpp` parses and validates the arguments,
   and `src/AudioAnalysisCliOutput.*` prints the results as a table, CSV, or JSON.
 - `src/PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
 
 Shared core (linked into both targets):
 
-- `src/AudioAnalysisService.*` and `src/AudioAnalysisTypes.h` perform audio analysis.
-  `src/AudioAnalysisFormatting.cpp` implements the service's display formatting,
+- `src/AudioAnalysis.*` and `src/AudioAnalysisTypes.h` perform audio analysis as free functions.
+  `src/AudioAnalysisFormatting.*` implement the display formatting,
   and `src/BitDepthDetection.*` detects the source bit depth from the audio file, with a fixed default for MP3 files.
-- `src/AudioNormalizationService.*` handle normalization and AIFF conversion,
+- `src/AudioNormalization.*` handle normalization and AIFF conversion,
   and `src/NormalizationFormatSupport.cpp` reports which formats this build can normalize.
-- `src/MetadataService.*` read and write tags and embedded art through TagLib.
+- `src/Metadata.*` read and write tags and embedded art through TagLib.
 - `src/AnalysisCache.*` manage the SQLite result cache.
   Its implementation is split into `AnalysisCache.cpp` (analysis, tag and waveform persistence)
   and `AnalysisCacheSchema.cpp` (database lifecycle and schema),
@@ -83,8 +83,8 @@ GUI only:
 - `src/AudioInfoPanel.*`, `src/NormalizationTargetControl.*`, `src/CustomLookAndFeel.*`,
   `src/ThumbnailComponent.*`, and `src/IntervalStepSlider.h` are UI pieces.
 - `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginChainPreparation.*`,
-  `src/PluginProcessing.h`, `src/PluginProcessingCoordinator.*`,
-  and `src/PluginProcessingService.*` implement VST3 / Audio Unit plugin hosting and the plugin chain.
+  `src/PluginProcessing.*`, and `src/PluginProcessingCoordinator.*` implement VST3 / Audio Unit plugin hosting
+  and the plugin chain.
 
 The source lists are defined in `CMakeLists.txt`.
 `AUDIOBATCH_CORE_SOURCES` holds the shared core and `AUDIOBATCH_CLI_SOURCES` the CLI front end,
@@ -171,9 +171,12 @@ The detailed rules are in `.agents/rules/code-organization.md`.
 - Group functions and variables by return type and topic.
 - Do not define structs, classes or enums inside classes.
   Declare them at namespace level before the class, or in the anonymous namespace of the `.cpp` that alone uses them.
-- All project code lives in `namespace audiobatch`, with the helper namespaces such as `utils` and `console` nested inside it.
+- All project code lives in `namespace audiobatch`, with the helper namespaces
+  such as `utils` and `console` nested inside it.
   Wrap whole headers and sources, so definitions of classes need no qualification.
   Only `main`, the JUCE application macro, and code that must be in the `juce` namespace stay outside.
+- Do not write a class that only has static member functions.
+  Use free functions in a namespace instead, and keep classes for types with state or an invariant.
 - Do not use `using namespace`. Wrap definitions in the matching namespace block or qualify names.
 - Split files that reach about 1000 lines into focused parts by topic, but avoid very small files.
   Fold tiny files into the file of the closest topic.

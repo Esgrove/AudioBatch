@@ -1,6 +1,6 @@
 /// Plugin listing for the CLI executable.
 /// Declares PluginListGrouping, the supported listing layouts,
-/// and PluginListCli, which prints the known-plugins list shared with the GUI,
+/// and the cli functions that parse the grouping option and print the known-plugins list shared with the GUI,
 /// optionally after rescanning the plugin folders with the out-of-process scanner.
 
 #pragma once
@@ -24,12 +24,10 @@ enum class PluginListGrouping : std::uint8_t {
     format,
 };
 
-/// Command-line front end for listing the available audio plugins.
-class PluginListCli
+namespace cli
 {
-public:
-    [[nodiscard]] static std::optional<PluginListGrouping> parseGrouping(const juce::String& value);
+[[nodiscard]] std::optional<PluginListGrouping> parsePluginGrouping(const juce::String& value);
 
-    static int run(bool rescan, PluginListGrouping grouping);
-};
+int runPluginList(bool rescan, PluginListGrouping grouping);
+}  // namespace cli
 }  // namespace audiobatch

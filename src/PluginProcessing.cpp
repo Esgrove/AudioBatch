@@ -1,4 +1,4 @@
-/// Implementation of PluginProcessingService.
+/// Implementation of the plugin processing functions.
 /// Covers reading the source file with a thread-local format manager,
 /// applying custom or normalization gain before the chain,
 /// configuring plugin buses for the file's channel layout,
@@ -15,14 +15,14 @@
 /// The AIFF file is validated, given the original file's metadata, and then moved into place,
 /// with the processed file re-analyzed for the result record.
 
-#include "PluginProcessingService.h"
+#include "PluginProcessing.h"
 
 #include "AudioFormatUtils.h"
-#include "AudioNormalizationService.h"
+#include "AudioNormalization.h"
 #include "DecodeFailureTracker.h"
 #include "FileUtils.h"
 #include "Log.h"
-#include "MetadataService.h"
+#include "Metadata.h"
 #include "PluginChainPreparation.h"
 #include "StringFormat.h"
 #include "ThreadUtils.h"
@@ -63,7 +63,7 @@ static int clampChannelCount(const int channels)
 }  // namespace
 
 /// Returns true when the file's format can be read for processing.
-bool PluginProcessingService::canProcessFile(const juce::File& file)
+bool canProcessFileWithPlugins(const juce::File& file)
 {
     auto& formatManager = utils::threadLocalFormatManager();
     const std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
@@ -71,9 +71,9 @@ bool PluginProcessingService::canProcessFile(const juce::File& file)
 }
 
 /// Returns the on-disk output path that processing would produce for the given input.
-juce::File PluginProcessingService::getProcessingOutputFile(const juce::File& input)
+juce::File getProcessingOutputFile(const juce::File& input)
 {
-    return AudioNormalizationService::getOutputFile(input);
+    return getNormalizationOutputFile(input);
 }
 
 /// Returns an error message when the record or the plugin chain cannot be processed, or an empty string when it can.
@@ -109,8 +109,7 @@ static float getInputGain(const AudioAnalysisRecord& record, const PluginProcess
 
     if (options.normalizeBeforePlugin.has_value()) {
         juce::String unusedError;
-        return AudioNormalizationService::getNormalizationGain(record, *options.normalizeBeforePlugin, unusedError)
-            .value_or(1.0f);
+        return getNormalizationGain(record, *options.normalizeBeforePlugin, unusedError).value_or(1.0f);
     }
 
     return 1.0f;
@@ -286,7 +285,7 @@ static juce::String renderThroughChain(
     const plugin_processing::ChainPreparation& preparation,
     const int numChannels,
     const float inputGain,
-    const PluginProcessingService::CancellationCheck& isCancelled,
+    const utils::CancellationCheck& isCancelled,
     RenderSummary& summary
 )
 {
@@ -407,7 +406,7 @@ static juce::String writeFinalOutput(
     const juce::int64 finalLength,
     const float gain,
     const int bitsPerSample,
-    const PluginProcessingService::CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled
 )
 {
     juce::AudioBuffer<float> block(static_cast<int>(renderedReader.numChannels), finalizeBlockSize);
@@ -445,10 +444,10 @@ static juce::String writeFinalOutput(
 /// The analysis stops when isCancelled returns true, and the returned record then carries the cancellation error.
 static AudioAnalysisRecord refreshIfChanged(
     const AudioAnalysisRecord& record,
-    const PluginProcessingService::CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled
 )
 {
-    return record.matchesFileOnDisk() ? record : AudioAnalysisService::analyzeFile(record.file, isCancelled);
+    return record.matchesFileOnDisk() ? record : analyzeFile(record.file, isCancelled);
 }
 
 /// Prepares the chain, renders the whole file through it into an unquantized 32-bit float WAV file,
@@ -462,7 +461,7 @@ static juce::String renderChainToFile(
     const PluginProcessingOptions& options,
     const int numChannels,
     const float inputGain,
-    const PluginProcessingService::CancellationCheck& isCancelled,
+    const utils::CancellationCheck& isCancelled,
     RenderSummary& summary
 )
 {
@@ -523,7 +522,7 @@ static juce::String writeProcessedAiff(
     const juce::int64 finalLength,
     const float gain,
     const int bitsPerSample,
-    const PluginProcessingService::CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled
 )
 {
     juce::WavAudioFormat wavFormat;
@@ -587,11 +586,11 @@ static juce::String writeProcessedAiff(
 /// Trailing silence from the tail allowance is trimmed, and 16-bit output is dithered.
 /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again first.
 /// An `.aif` source is rewritten in place after a copy of it is disposed of through options.disposeFile.
-PluginProcessingResult PluginProcessingService::processFile(
+PluginProcessingResult processFileWithPlugins(
     const AudioAnalysisRecord& sourceRecord,
     const PluginProcessingOptions& options,
     const std::vector<juce::AudioPluginInstance*>& chainInstances,
-    const CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled
 )
 {
     const auto& file = sourceRecord.file;
@@ -649,7 +648,7 @@ PluginProcessingResult PluginProcessingService::processFile(
 
     // The hidden name keeps a half-written output out of folder scans, and out of later scans after a crash.
     const juce::TemporaryFile temporaryFile(outputFile, juce::TemporaryFile::useHiddenFile);
-    const auto bitsPerSample = AudioNormalizationService::getOutputBitDepth(record, *reader);
+    const auto bitsPerSample = getNormalizationOutputBitDepth(record, *reader);
     const auto clipGuardGain = getClipGuardGain(summary, bitsPerSample);
 
     const auto finalLength = getFinalLength(summary, reader->lengthInSamples);
@@ -670,7 +669,7 @@ PluginProcessingResult PluginProcessingService::processFile(
     }
 
     // Carries ID3 tags, embedded artwork, and similar information across formats such as MP3 to AIFF.
-    if (!MetadataService::copyMetadata(file, temporaryFile.getFile())) {
+    if (!copyMetadata(file, temporaryFile.getFile())) {
         return fail(file, "Could not copy metadata onto the processed output");
     }
 
@@ -725,7 +724,7 @@ PluginProcessingResult PluginProcessingService::processFile(
     result.notice = notices.joinIntoString(". ");
 
     result.fileName = outputFile.getFileName();
-    result.analysisRecord = AudioAnalysisService::analyzeFile(outputFile);
+    result.analysisRecord = analyzeFile(outputFile);
     // Custom gain has been baked in. Clear it on the new record.
     result.analysisRecord.customGainDb = 0.0f;
     result.analysisRecord.hasCustomGain = false;

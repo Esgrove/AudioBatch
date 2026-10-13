@@ -5,7 +5,7 @@
 
 #include "AnalysisCache.h"
 #include "AnalysisCoordinator.h"
-#include "AudioAnalysisService.h"
+#include "AudioAnalysis.h"
 #include "SeratoTags.h"
 #include "StringFormat.h"
 #include "TestHelpers.h"
@@ -35,7 +35,7 @@ public:
         expect(directory.getChildFile("analysis.db").existsAsFile());
 
         const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "tone.wav");
-        const auto analyzed = AudioAnalysisService::analyzeFile(file);
+        const auto analyzed = analyzeFile(file);
         expect(!analyzed.hasError(), analyzed.errorMessage);
 
         beginTest("Numeric Overview data round trips without an analysis row");
@@ -99,7 +99,7 @@ public:
             expect(migratedCache.open());
 
             const auto migratedFile = directory.copyFixture("sine_stereo_44100_16.wav", "migrated.wav");
-            expect(migratedCache.storeAnalysis(AudioAnalysisService::analyzeFile(migratedFile)));
+            expect(migratedCache.storeAnalysis(analyzeFile(migratedFile)));
             expect(migratedCache.storeCustomGain(migratedFile, 1.5f, true));
 
             AudioAnalysisRecord cached;
@@ -144,11 +144,11 @@ public:
         beginTest("A custom gain is kept while the file is unchanged");
         {
             const auto gainFile = directory.copyFixture("sine_stereo_44100_16.wav", "gain.wav");
-            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(gainFile)));
+            expect(cache.storeAnalysis(analyzeFile(gainFile)));
             expect(cache.storeCustomGain(gainFile, -3.5f, true));
 
             // Analyzing the unchanged file again must not drop the gain.
-            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(gainFile)));
+            expect(cache.storeAnalysis(analyzeFile(gainFile)));
 
             AudioAnalysisRecord cached;
             expect(cache.getAnalysis(gainFile, cached));
@@ -166,7 +166,7 @@ public:
         {
             const auto gainFile = directory.getChildFile("gain.wav");
             expect(fixtureFile("sine_mono_44100_16.wav").copyFileTo(gainFile));
-            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(gainFile)));
+            expect(cache.storeAnalysis(analyzeFile(gainFile)));
 
             AudioAnalysisRecord cached;
             expect(cache.getAnalysis(gainFile, cached));
@@ -177,8 +177,8 @@ public:
         {
             const auto keptFile = directory.copyFixture("sine_stereo_44100_16.wav", "kept.wav");
             const auto deletedFile = directory.copyFixture("sine_stereo_44100_16.wav", "deleted.wav");
-            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(keptFile)));
-            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(deletedFile)));
+            expect(cache.storeAnalysis(analyzeFile(keptFile)));
+            expect(cache.storeAnalysis(analyzeFile(deletedFile)));
             expect(deletedFile.deleteFile());
 
             expectEquals(cache.pruneMissingFiles(), 1);
@@ -193,7 +193,7 @@ public:
             expect(folder.createDirectory());
             const auto unmountedFile = folder.getChildFile("tone.wav");
             expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(unmountedFile));
-            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(unmountedFile)));
+            expect(cache.storeAnalysis(analyzeFile(unmountedFile)));
             expect(cache.storeCustomGain(unmountedFile, 1.5f, true));
             expect(folder.deleteRecursively());
 
@@ -203,7 +203,7 @@ public:
         beginTest("The coordinator publishes the plan before results and drops the gain of a changed file");
         {
             const auto plannedFile = directory.copyFixture("sine_stereo_44100_16.wav", "planned.wav");
-            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(plannedFile)));
+            expect(cache.storeAnalysis(analyzeFile(plannedFile)));
             expect(cache.storeCustomGain(plannedFile, 2.0f, true));
             expect(fixtureFile("sine_stereo_48000_24.wav").copyFileTo(plannedFile));
 
@@ -227,7 +227,7 @@ public:
         beginTest("A refresh rescan keeps the custom gain of an unchanged file");
         {
             const auto unchangedFile = directory.copyFixture("sine_stereo_44100_16.wav", "unchanged.wav");
-            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(unchangedFile)));
+            expect(cache.storeAnalysis(analyzeFile(unchangedFile)));
             expect(cache.storeCustomGain(unchangedFile, -2.5f, true));
 
             AnalysisCoordinator coordinator(cache, 2);
@@ -244,7 +244,7 @@ public:
         beginTest("Waveform data round trips and is dropped when the analysis is stored again");
         {
             const auto waveformFile = directory.copyFixture("sine_stereo_44100_16.wav", "waveform.wav");
-            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(waveformFile)));
+            expect(cache.storeAnalysis(analyzeFile(waveformFile)));
 
             const juce::String waveformText("waveform bytes");
             const juce::MemoryBlock waveform(waveformText.toRawUTF8(), waveformText.getNumBytesAsUTF8());
@@ -254,7 +254,7 @@ public:
             expect(cache.getWaveformData(waveformFile, loaded));
             expect(loaded == waveform);
 
-            expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(waveformFile)));
+            expect(cache.storeAnalysis(analyzeFile(waveformFile)));
             expect(!cache.getWaveformData(waveformFile, loaded));
         }
 
@@ -294,7 +294,7 @@ public:
 
         beginTest("A removed record is no longer returned");
         {
-            const auto refreshed = AudioAnalysisService::analyzeFile(file);
+            const auto refreshed = analyzeFile(file);
             expect(cache.storeAnalysis(refreshed));
             expect(cache.removeAnalysis(file));
 
@@ -416,7 +416,7 @@ private:
 
         beginTest("Analysis and waveform writes leave independently versioned tags untouched");
         expect(cache.storeSeratoTag(identity, positive));
-        const auto analyzed = AudioAnalysisService::analyzeFile(file);
+        const auto analyzed = analyzeFile(file);
         expect(cache.storeAnalysis(analyzed));
         const juce::MemoryBlock waveform("cached peaks", 12);
         expect(cache.storeWaveformData(file, waveform));
@@ -522,7 +522,7 @@ private:
 
         beginTest("Pruning counts analysis and tag rows independently for the same deleted file");
         expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(file));
-        expect(cache.storeAnalysis(AudioAnalysisService::analyzeFile(file)));
+        expect(cache.storeAnalysis(analyzeFile(file)));
         expect(cache.storeSeratoTag(FileIdentity(file), positive));
         expect(file.deleteFile());
         expectEquals(cache.pruneMissingFiles(), 2);
@@ -753,7 +753,7 @@ private:
     )
     {
         beginTest("All kinds coexist with analysis and waveform writes and independent version changes");
-        const auto analyzed = AudioAnalysisService::analyzeFile(file);
+        const auto analyzed = analyzeFile(file);
         expect(cache.storeAnalysis(analyzed));
         const juce::MemoryBlock waveform("cached peaks", 12);
         expect(cache.storeWaveformData(file, waveform));

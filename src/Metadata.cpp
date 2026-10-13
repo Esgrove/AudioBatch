@@ -1,10 +1,10 @@
-/// Implementation of MetadataService.
+/// Implementation of the metadata functions.
 /// Converts between JUCE and TagLib string and buffer types,
 /// maps tags through TagLib's unified PropertyMap and the generic PICTURE complex property,
 /// saves tags for AIFF and WAV output as ID3v2.4,
 /// and copies the metadata of a source onto a freshly written output.
 
-#include "MetadataService.h"
+#include "Metadata.h"
 
 #include "FileUtils.h"
 #include "Log.h"
@@ -163,7 +163,7 @@ TagLib::List<TagLib::VariantMap> buildPictureList(const std::vector<MetadataPict
 
 /// Reads all metadata (text properties and pictures) from the given file.
 /// Returns true on success. Output is cleared on entry.
-bool MetadataService::readMetadata(const juce::File& file, AudioMetadata& outMetadata)
+bool readMetadata(const juce::File& file, AudioMetadata& outMetadata)
 {
     outMetadata = AudioMetadata {};
 
@@ -189,7 +189,7 @@ bool MetadataService::readMetadata(const juce::File& file, AudioMetadata& outMet
 /// Writes the given metadata to the file.
 /// The file must exist and be in a format TagLib can write.
 /// For AIFF and WAV output the tag is saved as ID3v2.4.
-bool MetadataService::writeMetadata(const juce::File& file, const AudioMetadata& metadata)
+bool writeMetadata(const juce::File& file, const AudioMetadata& metadata)
 {
     if (!file.existsAsFile()) {
         utils::logError("Cannot write metadata, target file is missing: {}", file.getFullPathName().quoted());
@@ -267,7 +267,7 @@ bool MetadataService::writeMetadata(const juce::File& file, const AudioMetadata&
 /// A source without readable metadata is not an error, because some inputs have none that TagLib can read,
 /// but failing to write metadata that was read is, so the caller can keep the original and its tags.
 /// Returns false only when writing failed.
-bool MetadataService::copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile)
+bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile)
 {
     AudioMetadata metadata;
 

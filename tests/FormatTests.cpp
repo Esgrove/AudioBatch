@@ -1,7 +1,8 @@
-/// Tests for the display formatting helpers in AudioAnalysisService
+/// Tests for the display formatting helpers in AudioAnalysisFormatting
 /// and the record sorting used by the GUI table and the CLI output.
 
-#include "AudioAnalysisService.h"
+#include "AudioAnalysis.h"
+#include "AudioAnalysisFormatting.h"
 #include "TestSuites.h"
 
 #include <vector>
@@ -19,59 +20,58 @@ public:
     {
         beginTest("Peaks format as dBFS, with silence as -INF");
         {
-            expectEquals(AudioAnalysisService::formatPeakCompact(1.0), juce::String("0.00"));
-            expectEquals(AudioAnalysisService::formatPeakCompact(0.5), juce::String("-6.02"));
-            expectEquals(AudioAnalysisService::formatPeakCompact(-0.5), juce::String("-6.02"));
-            expectEquals(AudioAnalysisService::formatPeakCompact(0.0), juce::String("-INF"));
-            expectEquals(AudioAnalysisService::formatPeakDisplay(0.5f), juce::String("-6.02 dBFS"));
-            expectEquals(AudioAnalysisService::formatTruePeakDisplay(0.0), juce::String("-INF dBTP"));
+            expectEquals(formatPeakCompact(1.0), juce::String("0.00"));
+            expectEquals(formatPeakCompact(0.5), juce::String("-6.02"));
+            expectEquals(formatPeakCompact(-0.5), juce::String("-6.02"));
+            expectEquals(formatPeakCompact(0.0), juce::String("-INF"));
+            expectEquals(formatPeakDisplay(0.5f), juce::String("-6.02 dBFS"));
+            expectEquals(formatTruePeakDisplay(0.0), juce::String("-INF dBTP"));
         }
 
         beginTest("Very quiet peaks are floored at -100 dB");
         {
-            expectEquals(AudioAnalysisService::formatPeakCompact(1.0e-9), juce::String("-100.00"));
+            expectEquals(formatPeakCompact(1.0e-9), juce::String("-100.00"));
         }
 
         beginTest("Loudness formats as LUFS, with the sentinel as -INF");
         {
-            expectEquals(AudioAnalysisService::formatLoudnessCompact(-14.25), juce::String("-14.25"));
+            expectEquals(formatLoudnessCompact(-14.25), juce::String("-14.25"));
             expectEquals(
-                AudioAnalysisService::formatLoudnessDisplay(AudioAnalysisRecord::negativeInfinityLoudness),
-                juce::String("-INF LUFS")
+                formatLoudnessDisplay(AudioAnalysisRecord::negativeInfinityLoudness), juce::String("-INF LUFS")
             );
         }
 
         beginTest("Sample rates format in kHz");
         {
             AudioAnalysisRecord record;
-            expectEquals(AudioAnalysisService::formatSampleRateDisplay(record), juce::String("-"));
+            expectEquals(formatSampleRateDisplay(record), juce::String("-"));
             record.sampleRate = 48000;
-            expectEquals(AudioAnalysisService::formatSampleRateDisplay(record), juce::String("48 kHz"));
+            expectEquals(formatSampleRateDisplay(record), juce::String("48 kHz"));
             record.sampleRate = 44100;
-            expectEquals(AudioAnalysisService::formatSampleRateDisplay(record), juce::String("44.1 kHz"));
+            expectEquals(formatSampleRateDisplay(record), juce::String("44.1 kHz"));
         }
 
         beginTest("Bitrate is derived from file size and duration");
         {
             AudioAnalysisRecord record;
-            expectEquals(AudioAnalysisService::formatBitrateDisplay(record), juce::String("-"));
+            expectEquals(formatBitrateDisplay(record), juce::String("-"));
             record.fileSize = 40000;
             record.durationSeconds = 1.0;
-            expectEquals(AudioAnalysisService::formatBitrateDisplay(record), juce::String("320 kbps"));
+            expectEquals(formatBitrateDisplay(record), juce::String("320 kbps"));
         }
 
         beginTest("The type label prefers the extension, then the format name");
         {
             AudioAnalysisRecord record;
             record.file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("song.flac");
-            expectEquals(AudioAnalysisService::formatTypeLabel(record), juce::String("FLAC"));
+            expectEquals(formatTypeLabel(record), juce::String("FLAC"));
 
             record.file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("no_extension");
             record.formatName = "WAV file";
-            expectEquals(AudioAnalysisService::formatTypeLabel(record), juce::String("WAV"));
+            expectEquals(formatTypeLabel(record), juce::String("WAV"));
 
             record.formatName = {};
-            expectEquals(AudioAnalysisService::formatTypeLabel(record), juce::String("Unknown"));
+            expectEquals(formatTypeLabel(record), juce::String("Unknown"));
         }
 
         beginTest("Records sort by peak and by name");
@@ -88,11 +88,11 @@ public:
                 record.status = AudioAnalysisStatus::analyzed;
             }
 
-            AudioAnalysisService::sortRecords(records, AudioAnalysisSortMode::peak, true);
+            sortRecords(records, AudioAnalysisSortMode::peak, true);
             expectEquals(records[0].fileName, juce::String("a.wav"));
             expectEquals(records[2].fileName, juce::String("b.wav"));
 
-            AudioAnalysisService::sortRecords(records, AudioAnalysisSortMode::name, false);
+            sortRecords(records, AudioAnalysisSortMode::name, false);
             expectEquals(records[0].fileName, juce::String("c.wav"));
             expectEquals(records[2].fileName, juce::String("a.wav"));
         }

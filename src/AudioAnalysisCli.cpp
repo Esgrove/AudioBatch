@@ -1,12 +1,12 @@
-/// Implementation of the CLI analysis workflow in AudioAnalysisCli::run:
+/// Implementation of the CLI analysis workflow in cli::runAnalysis:
 /// analyzing the inputs, normalizing them when requested, and printing the results.
 /// The argument parsing is in AudioAnalysisCliParse.cpp and the output formatting in AudioAnalysisCliOutput.cpp.
 
 #include "AudioAnalysisCli.h"
 
+#include "AudioAnalysis.h"
 #include "AudioAnalysisCliOutput.h"
-#include "AudioAnalysisService.h"
-#include "AudioNormalizationService.h"
+#include "AudioNormalization.h"
 #include "Log.h"
 #include "StringFormat.h"
 
@@ -23,7 +23,7 @@ namespace audiobatch
 constexpr double millisecondsPerSecond = 1000.0;
 
 /// Executes the CLI analysis workflow and returns the process exit code.
-int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
+int cli::runAnalysis(const AudioAnalysisCliOptions& options)
 {
     auto inputPaths = options.inputPaths;
 
@@ -55,7 +55,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
         analysisElapsedMs / millisecondsPerSecond
     );
 
-    AudioAnalysisService::sortRecords(results, options.sortMode, !options.reverse);
+    sortRecords(results, options.sortMode, !options.reverse);
 
     int failureCount = 0;
     std::vector<AudioAnalysisRecord> normalizedResults;
@@ -68,7 +68,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
         std::ranges::copy_if(results, std::back_inserter(normalizableResults), [](const auto& record) {
             return !record.hasError();
         });
-        normalizationConflicts = AudioNormalizationService::findBatchOutputConflicts(normalizableResults);
+        normalizationConflicts = findBatchOutputConflicts(normalizableResults);
     }
 
     // The CSV and JSON output of a normalize run lists failed files too, with their error.
@@ -95,7 +95,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
         if (normalizationConflicts.contains(result.file.getFullPathName())) {
             ++failureCount;
-            const auto conflictMessage = AudioNormalizationService::batchOutputConflictMessage(result.file);
+            const auto conflictMessage = batchOutputConflictMessage(result.file);
             utils::logError("{}: {}", result.file.getFullPathName().quoted(), conflictMessage);
             addNormalizationFailure(result, conflictMessage);
             continue;
@@ -103,7 +103,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 
         auto normalizationOptions = options.normalization;
         normalizationOptions.overwriteExisting = options.force;
-        const auto normalization = AudioNormalizationService::normalizeFile(result, normalizationOptions);
+        const auto normalization = normalizeFile(result, normalizationOptions);
 
         // A converted original was moved to the trash, so its cached row is no longer needed,
         // even when the re-analysis of the committed output failed.
@@ -127,7 +127,7 @@ int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
     }
 
     if (options.normalize) {
-        AudioAnalysisService::sortRecords(normalizedResults, options.sortMode, !options.reverse);
+        sortRecords(normalizedResults, options.sortMode, !options.reverse);
         cli::printRecords(normalizedResults, options.outputFormat, true);
     } else {
         cli::printRecords(results, options.outputFormat, false);

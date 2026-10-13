@@ -1,5 +1,5 @@
 /// Implementation of NormalizeCoordinator.
-/// Queues one thread pool job per file, runs AudioNormalizationService on worker threads,
+/// Queues one thread pool job per file, runs normalizeFile on worker threads,
 /// and guards callback publication with run id checks and a callback lock
 /// so cancelled runs stop publishing results.
 
@@ -122,7 +122,7 @@ int NormalizeCoordinator::start(
         return 0;
     }
 
-    const auto conflicts = AudioNormalizationService::findBatchOutputConflicts(normalizedRecords);
+    const auto conflicts = findBatchOutputConflicts(normalizedRecords);
     // The counter belongs to this run, so a job that outlives a cancellation timeout cannot change a later run's count.
     const auto pendingFiles = std::make_shared<std::atomic<int>>(static_cast<int>(normalizedRecords.size()));
 
@@ -142,17 +142,11 @@ int NormalizeCoordinator::start(
 
             if (hasConflict) {
                 publishResult(
-                    AudioNormalizationResult::failure(
-                        record.file, AudioNormalizationService::batchOutputConflictMessage(record.file)
-                    ),
-                    runId
+                    AudioNormalizationResult::failure(record.file, batchOutputConflictMessage(record.file)), runId
                 );
             } else {
                 publishResult(
-                    AudioNormalizationService::normalizeFile(
-                        record, options, [this, runId] { return runId != currentRunId.load(); }
-                    ),
-                    runId
+                    normalizeFile(record, options, [this, runId] { return runId != currentRunId.load(); }), runId
                 );
             }
 

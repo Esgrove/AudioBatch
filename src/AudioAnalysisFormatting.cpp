@@ -1,7 +1,8 @@
-/// AudioAnalysisService member functions that format analysis values for display in the GUI and CLI:
+/// Implementation of the functions that format analysis values for display in the GUI and CLI:
 /// peak, true peak, and loudness levels, bitrate, sample rate, bit depth, file type, and status.
 
-#include "AudioAnalysisService.h"
+#include "AudioAnalysisFormatting.h"
+
 #include "AudioFormatUtils.h"
 #include "FileUtils.h"
 #include "StringFormat.h"
@@ -40,43 +41,43 @@ static juce::String formatLoudnessValue(const double loudness, const juce::Strin
 }
 
 /// Formats a peak value for display in the GUI and CLI.
-juce::String AudioAnalysisService::formatPeakDisplay(const float peak)
+juce::String formatPeakDisplay(const float peak)
 {
     return formatAmplitudeDisplay(utils::peakMagnitude(static_cast<double>(peak)), " dBFS");
 }
 
 /// Formats a true-peak value for display in the GUI.
-juce::String AudioAnalysisService::formatTruePeakDisplay(const double truePeak)
+juce::String formatTruePeakDisplay(const double truePeak)
 {
     return formatAmplitudeDisplay(utils::peakMagnitude(truePeak), " dBTP");
 }
 
 /// Formats a loudness value for display in the GUI.
-juce::String AudioAnalysisService::formatLoudnessDisplay(const double loudness)
+juce::String formatLoudnessDisplay(const double loudness)
 {
     return formatLoudnessValue(loudness, " LUFS");
 }
 
 /// Formats a peak value for compact CLI display without a unit suffix.
-juce::String AudioAnalysisService::formatPeakCompact(const double peak)
+juce::String formatPeakCompact(const double peak)
 {
     return formatAmplitudeDisplay(utils::peakMagnitude(peak), {});
 }
 
 /// Formats a true-peak value for compact CLI display without a unit suffix.
-juce::String AudioAnalysisService::formatTruePeakCompact(const double truePeak)
+juce::String formatTruePeakCompact(const double truePeak)
 {
     return formatAmplitudeDisplay(utils::peakMagnitude(truePeak), {});
 }
 
 /// Formats a loudness value for compact CLI display without a unit suffix.
-juce::String AudioAnalysisService::formatLoudnessCompact(const double loudness)
+juce::String formatLoudnessCompact(const double loudness)
 {
     return formatLoudnessValue(loudness, {});
 }
 
 /// Returns the average file bitrate in kbps when it can be derived from the analyzed file.
-double AudioAnalysisService::getAverageBitrateKbps(const AudioAnalysisRecord& record)
+double getAverageBitrateKbps(const AudioAnalysisRecord& record)
 {
     if (record.durationSeconds <= 0.0 || record.fileSize <= 0) {
         return 0.0;
@@ -86,7 +87,7 @@ double AudioAnalysisService::getAverageBitrateKbps(const AudioAnalysisRecord& re
 }
 
 /// Formats the reported source bit depth for display, or "-" when unavailable.
-juce::String AudioAnalysisService::formatBitsPerSampleDisplay(const AudioAnalysisRecord& record)
+juce::String formatBitsPerSampleDisplay(const AudioAnalysisRecord& record)
 {
     if (record.bitsPerSample <= 0) {
         return utils::isMp3File(record.file) ? "Unknown" : "-";
@@ -96,7 +97,7 @@ juce::String AudioAnalysisService::formatBitsPerSampleDisplay(const AudioAnalysi
 }
 
 /// Formats the average bitrate for display in the GUI.
-juce::String AudioAnalysisService::formatBitrateDisplay(const AudioAnalysisRecord& record)
+juce::String formatBitrateDisplay(const AudioAnalysisRecord& record)
 {
     const auto bitrateKbps = getAverageBitrateKbps(record);
 
@@ -108,7 +109,7 @@ juce::String AudioAnalysisService::formatBitrateDisplay(const AudioAnalysisRecor
 }
 
 /// Formats the sample rate for display in the GUI.
-juce::String AudioAnalysisService::formatSampleRateDisplay(const AudioAnalysisRecord& record)
+juce::String formatSampleRateDisplay(const AudioAnalysisRecord& record)
 {
     if (record.sampleRate <= 0) {
         return "-";
@@ -123,7 +124,7 @@ juce::String AudioAnalysisService::formatSampleRateDisplay(const AudioAnalysisRe
 
 /// Returns the short file type label for display: the uppercase extension, for example "FLAC",
 /// then the reader's format name without its " file" suffix, and "Unknown" when neither is known.
-juce::String AudioAnalysisService::formatTypeLabel(const AudioAnalysisRecord& record)
+juce::String formatTypeLabel(const AudioAnalysisRecord& record)
 {
     if (const auto extension = utils::fileExtension(record.file); extension.isNotEmpty()) {
         return extension.toUpperCase();
@@ -141,7 +142,7 @@ juce::String AudioAnalysisService::formatTypeLabel(const AudioAnalysisRecord& re
 }
 
 /// Formats the human-readable status text for a record.
-juce::String AudioAnalysisService::formatStatus(const AudioAnalysisRecord& record)
+juce::String formatStatus(const AudioAnalysisRecord& record)
 {
     switch (record.status) {
         case AudioAnalysisStatus::cached:

@@ -1,5 +1,8 @@
-/// Shared data types for the plugin processing feature.
-/// Defines PluginDescriptorRef for identifying a plugin and carrying its saved state,
+/// Offline rendering of audio files through a plugin chain.
+/// Declares the free functions that process one file at a time through a caller-owned sequence of plugin instances
+/// and write the result as `<name>.aif` next to the original file.
+/// Also defines the shared data types of the feature:
+/// PluginDescriptorRef for identifying a plugin and carrying its saved state,
 /// PluginChainSlot for one entry in the chain,
 /// PluginProcessingOptions for configuring a batch run,
 /// and PluginProcessingResult for reporting the outcome of processing one file.
@@ -7,8 +10,9 @@
 #pragma once
 
 #include "AudioAnalysisTypes.h"
-#include "AudioNormalizationService.h"
+#include "AudioNormalization.h"
 #include "FileUtils.h"
+#include "ThreadUtils.h"
 
 #include <JuceHeader.h>
 
@@ -103,4 +107,15 @@ struct PluginProcessingResult {
         return result;
     }
 };
+
+bool canProcessFileWithPlugins(const juce::File& file);
+
+juce::File getProcessingOutputFile(const juce::File& input);
+
+PluginProcessingResult processFileWithPlugins(
+    const AudioAnalysisRecord& sourceRecord,
+    const PluginProcessingOptions& options,
+    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    const utils::CancellationCheck& isCancelled = {}
+);
 }  // namespace audiobatch

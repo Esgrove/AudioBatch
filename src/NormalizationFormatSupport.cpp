@@ -1,10 +1,10 @@
-/// AudioNormalizationService member functions that report which formats normalization supports:
+/// Functions that report which formats normalization supports:
 /// whether a file can be normalized, why not, and the summary of readable and writable formats in this build.
 /// Writer support is checked by creating a probe writer in memory,
 /// since some formats are registered for reading but cannot write.
 
 #include "AudioFormatUtils.h"
-#include "AudioNormalizationService.h"
+#include "AudioNormalization.h"
 #include "FileUtils.h"
 #include "StringFormat.h"
 
@@ -151,7 +151,7 @@ static juce::String formatExtensionsToText(const juce::StringArray& extensions)
 }  // namespace
 
 /// Returns true when the file's format can be rewritten by this build during normalization.
-bool AudioNormalizationService::canNormalizeFile(const juce::File& file)
+bool canNormalizeFile(const juce::File& file)
 {
     // Source must be readable by JUCE and AIFF output must be writable.
     const auto* readerFormat = utils::threadLocalFormatManager().findFormatForFileExtension(utils::fileExtension(file));
@@ -164,7 +164,7 @@ bool AudioNormalizationService::canNormalizeFile(const juce::File& file)
 }
 
 /// Describes why normalization is unavailable for the given file format, or returns an empty string when supported.
-juce::String AudioNormalizationService::getNormalizationSupportMessage(const juce::File& file)
+juce::String getNormalizationSupportMessage(const juce::File& file)
 {
     const auto* format = utils::threadLocalFormatManager().findFormatForFileExtension(utils::fileExtension(file));
 
@@ -180,7 +180,7 @@ juce::String AudioNormalizationService::getNormalizationSupportMessage(const juc
 }
 
 /// Summarizes the readable and writable formats available for in-place normalization in this build.
-juce::String AudioNormalizationService::getFormatSupportSummary()
+juce::String getFormatSupportSummary()
 {
     const auto support = collectFormatSupport();
 

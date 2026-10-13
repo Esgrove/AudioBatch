@@ -4,6 +4,7 @@
 
 #include "AudioFileTableModel.h"
 
+#include "AudioAnalysisFormatting.h"
 #include "CustomLookAndFeel.h"
 #include "StringFormat.h"
 
@@ -288,39 +289,39 @@ void AudioFileTableModel::paintCell(
             text = record.fullPath;
             break;
         case columnType:
-            text = AudioAnalysisService::formatTypeLabel(record);
+            text = formatTypeLabel(record);
             font = juce::CustomLookAndFeel::get_mono_font();
             break;
         case columnBitrate:
-            text = AudioAnalysisService::formatBitrateDisplay(record);
+            text = formatBitrateDisplay(record);
             justification = juce::Justification::centredRight;
             break;
         case columnSampleRate:
-            text = AudioAnalysisService::formatSampleRateDisplay(record);
+            text = formatSampleRateDisplay(record);
             justification = juce::Justification::centredRight;
             break;
         case columnPeakLeft:
-            text = AudioAnalysisService::formatPeakDisplay(record.peakLeft);
+            text = formatPeakDisplay(record.peakLeft);
             justification = juce::Justification::centredRight;
             break;
         case columnPeakRight:
-            text = AudioAnalysisService::formatPeakDisplay(record.peakRight);
+            text = formatPeakDisplay(record.peakRight);
             justification = juce::Justification::centredRight;
             break;
         case columnOverallPeak:
-            text = AudioAnalysisService::formatPeakDisplay(record.overallPeak);
+            text = formatPeakDisplay(record.overallPeak);
             justification = juce::Justification::centredRight;
             break;
         case columnOverallTruePeak:
-            text = AudioAnalysisService::formatTruePeakDisplay(record.overallTruePeak);
+            text = formatTruePeakDisplay(record.overallTruePeak);
             justification = juce::Justification::centredRight;
             break;
         case columnMaxShortTermLufs:
-            text = AudioAnalysisService::formatLoudnessDisplay(record.maxShortTermLufs);
+            text = formatLoudnessDisplay(record.maxShortTermLufs);
             justification = juce::Justification::centredRight;
             break;
         case columnIntegratedLufs:
-            text = AudioAnalysisService::formatLoudnessDisplay(record.integratedLufs);
+            text = formatLoudnessDisplay(record.integratedLufs);
             justification = juce::Justification::centredRight;
             break;
         case columnCustomGain:
@@ -336,8 +337,7 @@ void AudioFileTableModel::paintCell(
 
             if (text.isEmpty()) {
                 operationMessage = getOperationMessage(record);
-                text = operationMessage.text.isNotEmpty() ? operationMessage.text
-                                                          : AudioAnalysisService::formatStatus(record);
+                text = operationMessage.text.isNotEmpty() ? operationMessage.text : formatStatus(record);
             } else {
                 const auto indicatorSize = static_cast<float>(juce::jmin(height - 8, 14));
                 const auto indicatorArea = juce::Rectangle(

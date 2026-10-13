@@ -6,7 +6,7 @@
 #pragma once
 
 #include "AnalysisCache.h"
-#include "AudioAnalysisService.h"
+#include "AudioAnalysis.h"
 
 #include <JuceHeader.h>
 

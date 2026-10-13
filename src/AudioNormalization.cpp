@@ -1,16 +1,16 @@
-/// Implementation of AudioNormalizationService.
+/// Implementation of the normalization functions.
 /// Reads source files through per-thread JUCE format readers, applies the peak or loudness gain in chunks,
 /// and writes AIFF output.
 /// Carries source tags and embedded art across through MetadataService.
 /// The format support reporting lives in NormalizationFormatSupport.cpp.
 
-#include "AudioNormalizationService.h"
+#include "AudioNormalization.h"
 
 #include "AudioFormatUtils.h"
 #include "DecodeFailureTracker.h"
 #include "FileUtils.h"
 #include "Log.h"
-#include "MetadataService.h"
+#include "Metadata.h"
 #include "StringFormat.h"
 
 #include <algorithm>
@@ -86,7 +86,7 @@ static juce::String renderNormalizedAudio(
     juce::AudioFormatReader& reader,
     juce::AudioFormatWriter& writer,
     const float gain,
-    const AudioNormalizationService::CancellationCheck& isCancelled,
+    const utils::CancellationCheck& isCancelled,
     juce::String& decodeNotice
 )
 {
@@ -139,7 +139,7 @@ static juce::String renderNormalizedAudio(
 }  // namespace
 
 /// Returns the output path normalization writes for the given source, which is always a sibling `<name>.aif`.
-juce::File AudioNormalizationService::getOutputFile(const juce::File& sourceFile)
+juce::File getNormalizationOutputFile(const juce::File& sourceFile)
 {
     return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + normalizedAiffOutputExtension);
 }
@@ -148,7 +148,7 @@ juce::File AudioNormalizationService::getOutputFile(const juce::File& sourceFile
 /// because an earlier record in the batch writes the same output file.
 /// A source that is already the output file, such as `<name>.aif` normalized in place, always wins.
 /// Otherwise the record that sorts first by path wins, so the result does not depend on input order.
-juce::StringArray AudioNormalizationService::findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records)
+juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records)
 {
     std::vector<const AudioAnalysisRecord*> ordered;
     ordered.reserve(records.size());
@@ -159,8 +159,8 @@ juce::StringArray AudioNormalizationService::findBatchOutputConflicts(const std:
 
     // In-place sources claim their output first, then the rest in path order.
     std::ranges::sort(ordered, [](const AudioAnalysisRecord* lhs, const AudioAnalysisRecord* rhs) {
-        const bool lhsInPlace = getOutputFile(lhs->file) == lhs->file;
-        const bool rhsInPlace = getOutputFile(rhs->file) == rhs->file;
+        const bool lhsInPlace = getNormalizationOutputFile(lhs->file) == lhs->file;
+        const bool rhsInPlace = getNormalizationOutputFile(rhs->file) == rhs->file;
 
         if (lhsInPlace != rhsInPlace) {
             return lhsInPlace;
@@ -173,7 +173,7 @@ juce::StringArray AudioNormalizationService::findBatchOutputConflicts(const std:
     juce::StringArray conflicts;
 
     for (const auto* record : ordered) {
-        const auto outputPath = getOutputFile(record->file).getFullPathName();
+        const auto outputPath = getNormalizationOutputFile(record->file).getFullPathName();
 
         if (claimedOutputs.contains(outputPath, !juce::File::areFileNamesCaseSensitive())) {
             conflicts.add(record->file.getFullPathName());
@@ -187,7 +187,7 @@ juce::StringArray AudioNormalizationService::findBatchOutputConflicts(const std:
 
 /// Returns the linear gain that brings the analyzed file to the target in the options,
 /// or an empty optional with errorMessage set when the file has no measurable level for that mode.
-std::optional<float> AudioNormalizationService::getNormalizationGain(
+std::optional<float> getNormalizationGain(
     const AudioAnalysisRecord& record,
     const AudioNormalizationOptions& options,
     juce::String& errorMessage
@@ -223,10 +223,7 @@ std::optional<float> AudioNormalizationService::getNormalizationGain(
 /// Keeps the analyzed source depth when the AIFF writer supports it,
 /// uses 16 bits for MP3 sources, and falls back to the highest supported depth,
 /// so for example 32-bit float sources are written as 24-bit.
-int AudioNormalizationService::getOutputBitDepth(
-    const AudioAnalysisRecord& record,
-    const juce::AudioFormatReader& reader
-)
+int getNormalizationOutputBitDepth(const AudioAnalysisRecord& record, const juce::AudioFormatReader& reader)
 {
     auto* writerFormat = utils::findAiffFormat(utils::threadLocalFormatManager());
     const auto preferredBitDepth = resolvePreferredOutputBitDepth(record, reader, record.file);
@@ -234,9 +231,11 @@ int AudioNormalizationService::getOutputBitDepth(
 }
 
 /// Returns the user-facing error message for a record that lost a batch output conflict.
-juce::String AudioNormalizationService::batchOutputConflictMessage(const juce::File& sourceFile)
+juce::String batchOutputConflictMessage(const juce::File& sourceFile)
 {
-    return utils::format("Another selected file is also written to {}", getOutputFile(sourceFile).getFileName());
+    return utils::format(
+        "Another selected file is also written to {}", getNormalizationOutputFile(sourceFile).getFileName()
+    );
 }
 
 /// Rewrites a file to the target level in the options, then re-analyzes the result.
@@ -245,14 +244,14 @@ juce::String AudioNormalizationService::batchOutputConflictMessage(const juce::F
 /// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.
 /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again before computing the gain.
 /// Isolated source blocks that fail to decode are written as decoded and reported in the result notice.
-AudioNormalizationResult AudioNormalizationService::normalizeFile(
+AudioNormalizationResult normalizeFile(
     const AudioAnalysisRecord& sourceRecord,
     const AudioNormalizationOptions& options,
-    const CancellationCheck& isCancelled
+    const utils::CancellationCheck& isCancelled
 )
 {
     const auto& file = sourceRecord.file;
-    const auto outputFile = getOutputFile(file);
+    const auto outputFile = getNormalizationOutputFile(file);
 
     if (!file.existsAsFile()) {
         return failNormalization(file, "File does not exist");
@@ -269,8 +268,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
     }
 
     // The gain comes from the analyzed peak, so a file that changed since its analysis is measured again first.
-    const auto record
-        = sourceRecord.matchesFileOnDisk() ? sourceRecord : AudioAnalysisService::analyzeFile(file, isCancelled);
+    const auto record = sourceRecord.matchesFileOnDisk() ? sourceRecord : analyzeFile(file, isCancelled);
 
     if (record.hasError()) {
         return failNormalization(file, record.errorMessage);
@@ -303,7 +301,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
         result.file = file;
         result.fileName = file.getFileName();
         result.fullPath = file.getFullPathName();
-        result.analysisRecord = AudioAnalysisService::analyzeFile(file, isCancelled);
+        result.analysisRecord = analyzeFile(file, isCancelled);
         result.succeeded = !result.analysisRecord.hasError();
 
         if (!result.succeeded) {
@@ -324,7 +322,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
     // The AIFF writer accepts any sample rate, and keeping the source rate avoids a pitch change,
     // since normalization does not resample.
     const auto writerSampleRate = reader->sampleRate;
-    const auto writerBitDepth = getOutputBitDepth(record, *reader);
+    const auto writerBitDepth = getNormalizationOutputBitDepth(record, *reader);
 
     // Tags and pictures are copied separately through TagLib after the audio is rendered,
     // and the reader metadata passed here only covers what the JUCE AIFF writer itself stores.
@@ -350,7 +348,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
 
     writer.reset();
 
-    if (!MetadataService::copyMetadata(file, temporaryFile.getFile())) {
+    if (!copyMetadata(file, temporaryFile.getFile())) {
         return failNormalization(file, "Could not preserve metadata while writing normalized audio");
     }
 
@@ -391,7 +389,7 @@ AudioNormalizationResult AudioNormalizationService::normalizeFile(
     result.fullPath = file.getFullPathName();
     result.committed = true;
     result.notice = std::move(decodeNotice);
-    result.analysisRecord = AudioAnalysisService::analyzeFile(outputFile);
+    result.analysisRecord = analyzeFile(outputFile);
     result.succeeded = !result.analysisRecord.hasError();
 
     if (result.notice.isNotEmpty()) {

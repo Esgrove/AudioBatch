@@ -1,5 +1,5 @@
 /// Console application entry point for the headless batch analysis executable.
-/// Parses arguments through AudioAnalysisCli and answers the help and version flags
+/// Parses arguments through the cli functions and answers the help and version flags
 /// before any logging starts, so those flags only print to the console.
 /// Every other invocation sets up file logging and runs the analysis workflow or the plugin listing,
 /// translating the outcome into a process exit code.
@@ -50,7 +50,7 @@ static int runPluginScanWorker(const juce::String& executableName, const juce::S
 static int runCliMain(const int argc, char* argv[])
 {
     juce::ArgumentList arguments(argc, argv);
-    AudioAnalysisCli::attachNegativeOptionValues(arguments);
+    cli::attachNegativeOptionValues(arguments);
     // argv[0] is often a relative path, which juce::File asserts on, so resolve it against the working directory.
     // An absolute path is kept as it is.
     const auto executableName
@@ -67,18 +67,18 @@ static int runCliMain(const int argc, char* argv[])
     // Help and version only print to the console.
     // They are checked before parsing, so they win over any other argument, even an invalid one,
     // and return before the logger is created, so they never touch the log file.
-    if (AudioAnalysisCli::containsExactOption(arguments, {"--version", "-V"})) {
+    if (cli::containsExactOption(arguments, {"--version", "-V"})) {
         fmt::print("{}\n", utils::versionLine(executableName));
         return 0;
     }
 
-    if (AudioAnalysisCli::containsExactOption(arguments, {"--help", "-h"})) {
-        fmt::print("{}\n", AudioAnalysisCli::buildUsage(executableName));
+    if (cli::containsExactOption(arguments, {"--help", "-h"})) {
+        fmt::print("{}\n", cli::buildUsage(executableName));
         return 0;
     }
 
     juce::String parseError;
-    const auto cliOptions = AudioAnalysisCli::parse(arguments, parseError);
+    const auto cliOptions = cli::parseArguments(arguments, parseError);
 
     const auto logger = utils::createDefaultLogger(executableName);
     juce::Logger::setCurrentLogger(logger.get());
@@ -86,14 +86,14 @@ static int runCliMain(const int argc, char* argv[])
     if (!cliOptions.has_value()) {
         utils::logError(parseError);
         console::printError(parseError);
-        fmt::print("\n{}\n", AudioAnalysisCli::buildUsage(executableName));
+        fmt::print("\n{}\n", cli::buildUsage(executableName));
         return cli::exitCli(1);
     }
 
     int exitCode = 0;
     try {
-        exitCode = cliOptions->listPlugins ? PluginListCli::run(cliOptions->rescanPlugins, cliOptions->pluginGrouping)
-                                           : AudioAnalysisCli::run(*cliOptions);
+        exitCode = cliOptions->listPlugins ? cli::runPluginList(cliOptions->rescanPlugins, cliOptions->pluginGrouping)
+                                           : cli::runAnalysis(*cliOptions);
     } catch (const std::system_error& error) {
         // fmt::print throws when stdout is closed early, for example when piping into head.
         utils::logError("Writing output failed: {}", error.what());

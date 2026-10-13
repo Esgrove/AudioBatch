@@ -232,7 +232,7 @@ static juce::String validateOptionCombinations(
 }
 
 /// Builds the help text shown by the CLI executable.
-juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
+juce::String cli::buildUsage(const juce::String& executableName)
 {
     // Lines are joined with juce::newLine outside the format strings,
     // so the text uses the platform line ending when printed.
@@ -267,7 +267,7 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
 /// for example "--lufs -14" into "--lufs=-14" and "-j -1" into "--jobs=-1".
 /// Must run before any juce::ArgumentList option matching:
 /// its short option check converts the option letter to a number string, so "-14" would match "-h" or "-n".
-void AudioAnalysisCli::attachNegativeOptionValues(juce::ArgumentList& arguments)
+void cli::attachNegativeOptionValues(juce::ArgumentList& arguments)
 {
     // Short options cannot carry a value after an equals sign, so the ones that take a value use their long form.
     const std::map<juce::String, juce::String> longFormOfShortValueOptions {
@@ -306,7 +306,7 @@ void AudioAnalysisCli::attachNegativeOptionValues(juce::ArgumentList& arguments)
 
 /// Returns true when an argument is exactly one of the given option names, such as "--help" or "-h".
 /// Unlike juce::ArgumentList::containsOption, a number such as "-1" never matches a short option.
-bool AudioAnalysisCli::containsExactOption(const juce::ArgumentList& arguments, const juce::StringArray& optionNames)
+bool cli::containsExactOption(const juce::ArgumentList& arguments, const juce::StringArray& optionNames)
 {
     return std::ranges::any_of(arguments.arguments, [&optionNames](const juce::ArgumentList::Argument& argument) {
         return optionNames.contains(argument.text);
@@ -315,7 +315,7 @@ bool AudioAnalysisCli::containsExactOption(const juce::ArgumentList& arguments, 
 
 /// Parses command-line arguments into a validated options object.
 /// The help and version flags are handled by the caller before parsing.
-std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentList arguments, juce::String& errorMessage)
+std::optional<AudioAnalysisCliOptions> cli::parseArguments(juce::ArgumentList arguments, juce::String& errorMessage)
 {
     AudioAnalysisCliOptions options;
     attachNegativeOptionValues(arguments);
@@ -389,7 +389,7 @@ std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentLis
 
     const auto groupingValue = removeOptionWithValue(arguments, "--group-by|-g");
     if (groupingValue.has_value()) {
-        const auto grouping = PluginListCli::parseGrouping(*groupingValue);
+        const auto grouping = cli::parsePluginGrouping(*groupingValue);
 
         if (!grouping.has_value()) {
             errorMessage = "Plugin grouping must be one of: name, manufacturer, type, format";

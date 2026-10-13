@@ -5,7 +5,7 @@
 
 #pragma once
 
-#include "AudioNormalizationService.h"
+#include "AudioNormalization.h"
 
 #include <JuceHeader.h>
 

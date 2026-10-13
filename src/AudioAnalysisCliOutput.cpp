@@ -3,7 +3,8 @@
 
 #include "AudioAnalysisCliOutput.h"
 
-#include "AudioAnalysisService.h"
+#include "AudioAnalysis.h"
+#include "AudioAnalysisFormatting.h"
 #include "ConsolePrint.h"
 #include "StringFormat.h"
 
@@ -20,20 +21,19 @@ constexpr double millisecondsPerSecond = 1000.0;
 /// Formats the sample peak value right-aligned to the fixed dBFS column width.
 static juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
 {
-    return AudioAnalysisService::formatPeakCompact(static_cast<double>(record.overallPeak))
-        .paddedLeft(' ', cliPeakColumnWidth);
+    return formatPeakCompact(static_cast<double>(record.overallPeak)).paddedLeft(' ', cliPeakColumnWidth);
 }
 
 /// Formats the true peak value right-aligned to the fixed dBTP column width.
 static juce::String formattedTruePeakColumn(const AudioAnalysisRecord& record)
 {
-    return AudioAnalysisService::formatTruePeakCompact(record.overallTruePeak).paddedLeft(' ', cliTruePeakColumnWidth);
+    return formatTruePeakCompact(record.overallTruePeak).paddedLeft(' ', cliTruePeakColumnWidth);
 }
 
 /// Formats the integrated loudness value right-aligned to the fixed LUFS column width.
 static juce::String formattedIntegratedLoudnessColumn(const AudioAnalysisRecord& record)
 {
-    return AudioAnalysisService::formatLoudnessCompact(record.integratedLufs).paddedLeft(' ', cliLoudnessColumnWidth);
+    return formatLoudnessCompact(record.integratedLufs).paddedLeft(' ', cliLoudnessColumnWidth);
 }
 
 /// Prints the bold column header line to stdout, matching the widths used by the result rows.
@@ -120,7 +120,7 @@ static juce::DynamicObject::Ptr buildRecordObject(const AudioAnalysisRecord& rec
     object->setProperty("truePeakDbtp", decibelsOrNull(record.overallTruePeak));
     object->setProperty("integratedLufs", loudnessOrNull(record.integratedLufs));
     object->setProperty("maxShortTermLufs", loudnessOrNull(record.maxShortTermLufs));
-    object->setProperty("status", AudioAnalysisService::formatStatus(record).toLowerCase());
+    object->setProperty("status", formatStatus(record).toLowerCase());
     object->setProperty("error", record.errorMessage);
     return object;
 }

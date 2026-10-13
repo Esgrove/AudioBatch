@@ -3,7 +3,8 @@
 
 #include "AudioInfoPanel.h"
 
-#include "AudioAnalysisService.h"
+#include "AudioAnalysis.h"
+#include "AudioAnalysisFormatting.h"
 #include "CustomLookAndFeel.h"
 #include "StringFormat.h"
 
@@ -80,21 +81,21 @@ void AudioInfoPanel::showRecord(
         return;
     }
 
-    newRows.emplace_back("Format", AudioAnalysisService::formatTypeLabel(record));
+    newRows.emplace_back("Format", formatTypeLabel(record));
     newRows.emplace_back("Channels", juce::String(record.channels));
-    newRows.emplace_back("Bits per sample", AudioAnalysisService::formatBitsPerSampleDisplay(record));
+    newRows.emplace_back("Bits per sample", formatBitsPerSampleDisplay(record));
     newRows.emplace_back("Sample rate", juce::String(record.sampleRate));
-    newRows.emplace_back("Bitrate", AudioAnalysisService::formatBitrateDisplay(record));
+    newRows.emplace_back("Bitrate", formatBitrateDisplay(record));
     newRows.emplace_back("Duration", juce::RelativeTime(record.durationSeconds).getDescription());
     newRows.emplace_back("Samples", juce::String(record.lengthInSamples));
-    newRows.emplace_back("Peak Max", AudioAnalysisService::formatPeakDisplay(record.overallPeak));
-    newRows.emplace_back("Peak L", AudioAnalysisService::formatPeakDisplay(record.peakLeft));
-    newRows.emplace_back("Peak R", AudioAnalysisService::formatPeakDisplay(record.peakRight));
-    newRows.emplace_back("True Peak Max", AudioAnalysisService::formatTruePeakDisplay(record.overallTruePeak));
-    newRows.emplace_back("Max Short-term", AudioAnalysisService::formatLoudnessDisplay(record.maxShortTermLufs));
-    newRows.emplace_back("Integrated Loudness", AudioAnalysisService::formatLoudnessDisplay(record.integratedLufs));
+    newRows.emplace_back("Peak Max", formatPeakDisplay(record.overallPeak));
+    newRows.emplace_back("Peak L", formatPeakDisplay(record.peakLeft));
+    newRows.emplace_back("Peak R", formatPeakDisplay(record.peakRight));
+    newRows.emplace_back("True Peak Max", formatTruePeakDisplay(record.overallTruePeak));
+    newRows.emplace_back("Max Short-term", formatLoudnessDisplay(record.maxShortTermLufs));
+    newRows.emplace_back("Integrated Loudness", formatLoudnessDisplay(record.integratedLufs));
     appendTrackInfo(newRows, data);
-    newRows.emplace_back("Status", AudioAnalysisService::formatStatus(record));
+    newRows.emplace_back("Status", formatStatus(record));
     setRows(std::move(newRows));
 }
 

@@ -1,8 +1,8 @@
 /// Helpers for worker threads of the long-running services.
 /// Declares the CancellationCheck callback that analysis, normalization, and plugin processing poll,
-/// the helper that evaluates an optional check,
-/// and callOnMessageThread, the blocking call from a worker to the JUCE message thread that can be abandoned on
-/// cancellation. VST3 restricts plugin setup and release to the message thread, which plugin processing relies on.
+/// the helper that evaluates an optional check, and callOnMessageThread,
+/// the blocking call from a worker to the JUCE message thread that can be abandoned on cancellation.
+/// VST3 restricts plugin setup and release to the message thread, which plugin processing relies on.
 
 #pragma once
 

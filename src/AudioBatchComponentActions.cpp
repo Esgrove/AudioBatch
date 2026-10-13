@@ -140,11 +140,7 @@ void AudioBatchComponent::showSupportedNormalizationFormats()
 {
     juce::AlertWindow::showAsync(
         juce::MessageBoxOptions::makeOptionsOk(
-            juce::MessageBoxIconType::InfoIcon,
-            "Normalization Format Support",
-            AudioNormalizationService::getFormatSupportSummary(),
-            "OK",
-            this
+            juce::MessageBoxIconType::InfoIcon, "Normalization Format Support", getFormatSupportSummary(), "OK", this
         ),
         nullptr
     );

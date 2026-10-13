@@ -8,8 +8,8 @@
 
 #include "PluginProcessingCoordinator.h"
 
-#include "AudioNormalizationService.h"
-#include "PluginProcessingService.h"
+#include "AudioNormalization.h"
+#include "PluginProcessing.h"
 #include "StringFormat.h"
 
 #include <algorithm>
@@ -261,10 +261,9 @@ void PluginProcessingCoordinator::runFileJob(
 
     // Cancellation lets the worker stop waiting for the message thread,
     // which cancelAndWait blocks while it waits for the workers to finish.
-    const auto result
-        = PluginProcessingService::processFile(record, options, runChains.getChainView(chainIndex), [this, runId] {
-              return runId != currentRunId.load();
-          });
+    const auto result = processFileWithPlugins(record, options, runChains.getChainView(chainIndex), [this, runId] {
+        return runId != currentRunId.load();
+    });
     runChains.release(chainIndex);
 
     publishResult(result, runId);
@@ -309,7 +308,7 @@ int PluginProcessingCoordinator::start(
         return 0;
     }
 
-    const auto conflicts = AudioNormalizationService::findBatchOutputConflicts(queuedRecords);
+    const auto conflicts = findBatchOutputConflicts(queuedRecords);
     // The counter belongs to this run, so a job that outlives a cancellation timeout cannot change a later run's count.
     const auto pendingFiles = std::make_shared<std::atomic<int>>(totalFiles);
 
@@ -321,10 +320,7 @@ int PluginProcessingCoordinator::start(
                 }
 
                 publishResult(
-                    PluginProcessingResult::failure(
-                        record.file, AudioNormalizationService::batchOutputConflictMessage(record.file)
-                    ),
-                    runId
+                    PluginProcessingResult::failure(record.file, batchOutputConflictMessage(record.file)), runId
                 );
 
                 if (pendingFiles->fetch_sub(1) == 1) {

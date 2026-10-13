@@ -25,6 +25,10 @@ Within a struct or class:
   This includes types that would otherwise be local to a function.
 - Put all project code in `namespace audiobatch`, so classes and their member definitions share it.
   Keep `main`, the JUCE application macro, and forward declarations of third-party types outside it.
+- Do not write a class or struct whose members are all static.
+  Use free functions in a namespace, as with `utils::` and `cli::`, and give them specific names.
+  Keep classes for types that own state or enforce an invariant.
+  Document each function on its definition and group related functions into one header per topic.
 - Do not use `using namespace`, in headers or sources, at file or function scope.
   Wrap the definitions in the matching `namespace x { ... }` block or qualify the names.
 

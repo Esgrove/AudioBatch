@@ -3,7 +3,8 @@
 
 #include "ResultsSorting.h"
 
-#include "AudioAnalysisService.h"
+#include "AudioAnalysis.h"
+#include "AudioAnalysisFormatting.h"
 #include "AudioFileTableModel.h"
 #include "StringFormat.h"
 
@@ -100,8 +101,8 @@ int comparePeaks(const Value left, const Value right)
 /// Three-way comparison by average bitrate.
 static int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
 {
-    const auto leftBitrate = AudioAnalysisService::getAverageBitrateKbps(lhs);
-    const auto rightBitrate = AudioAnalysisService::getAverageBitrateKbps(rhs);
+    const auto leftBitrate = getAverageBitrateKbps(lhs);
+    const auto rightBitrate = getAverageBitrateKbps(rhs);
 
     return compareValues(leftBitrate, rightBitrate);
 }
@@ -146,9 +147,7 @@ int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
             return compareNatural(lhs.fullPath, rhs.fullPath);
 
         case columnType:
-            return compareNatural(
-                AudioAnalysisService::formatTypeLabel(lhs), AudioAnalysisService::formatTypeLabel(rhs)
-            );
+            return compareNatural(formatTypeLabel(lhs), formatTypeLabel(rhs));
 
         case columnBitrate:
             return compareBitrates(lhs, rhs);
@@ -182,7 +181,7 @@ int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
         }
 
         case columnStatus:
-            return compareNatural(AudioAnalysisService::formatStatus(lhs), AudioAnalysisService::formatStatus(rhs));
+            return compareNatural(formatStatus(lhs), formatStatus(rhs));
 
         case columnOverallPeak:
         default:

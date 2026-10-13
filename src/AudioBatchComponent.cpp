@@ -5,12 +5,13 @@
 #include "AudioBatchComponent.h"
 
 #include "AppInfo.h"
-#include "AudioAnalysisService.h"
+#include "AudioAnalysis.h"
+#include "AudioAnalysisFormatting.h"
 #include "AudioBatchComponentConstants.h"
 #include "AudioInfoPanel.h"
 #include "CustomLookAndFeel.h"
 #include "Log.h"
-#include "PluginProcessingService.h"
+#include "PluginProcessing.h"
 #include "ResultsSorting.h"
 #include "StringFormat.h"
 
@@ -645,7 +646,7 @@ void AudioBatchComponent::sortResults()
             // The activity labels change while files are busy, so only the settled text decides the order.
             .statusText = [this](const AudioAnalysisRecord& record) {
                 const auto [text, isError] = fileActivity.getMessage(record.fullPath);
-                return text.isNotEmpty() ? text : AudioAnalysisService::formatStatus(record);
+                return text.isNotEmpty() ? text : formatStatus(record);
             },
         }
     );
@@ -804,7 +805,7 @@ std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedProcessableReco
             continue;
         }
 
-        if (!PluginProcessingService::canProcessFile(record.file)) {
+        if (!canProcessFileWithPlugins(record.file)) {
             continue;
         }
 

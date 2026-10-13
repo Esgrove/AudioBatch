@@ -379,7 +379,7 @@ static void rescanPlugins(
 }  // namespace
 
 /// Parses a --group-by value. Returns an empty optional for an unknown value.
-std::optional<PluginListGrouping> PluginListCli::parseGrouping(const juce::String& value)
+std::optional<PluginListGrouping> cli::parsePluginGrouping(const juce::String& value)
 {
     const auto normalized = utils::normalizedToken(value);
 
@@ -407,7 +407,7 @@ std::optional<PluginListGrouping> PluginListCli::parseGrouping(const juce::Strin
 /// and saves the updated list for the GUI too.
 /// Each plugin is loaded in a worker process launched from this executable,
 /// so a plugin that crashes is blacklisted instead of ending the scan.
-int PluginListCli::run(const bool rescan, const PluginListGrouping grouping)
+int cli::runPluginList(const bool rescan, const PluginListGrouping grouping)
 {
     // Plugin hosting needs a message thread, which this initialiser sets up on the calling thread.
     const juce::ScopedJuceInitialiser_GUI juceInitialiser;

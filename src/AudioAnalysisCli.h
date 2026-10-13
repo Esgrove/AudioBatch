@@ -1,11 +1,11 @@
 /// Command-line interface for the headless batch analysis executable.
 /// Declares AudioAnalysisCliOptions, the parsed and validated CLI options,
-/// and the AudioAnalysisCli class that builds the usage text, parses arguments, and runs the analysis workflow.
+/// and the cli functions that build the usage text, parse arguments, and run the analysis workflow.
 
 #pragma once
 
 #include "AnalysisCoordinator.h"
-#include "AudioNormalizationService.h"
+#include "AudioNormalization.h"
 #include "PluginListCli.h"
 
 #include <cstdint>
@@ -56,18 +56,16 @@ struct AudioAnalysisCliOptions {
     juce::Array<juce::File> inputPaths;
 };
 
-/// Command-line front end for batch audio analysis.
-class AudioAnalysisCli
+namespace cli
 {
-public:
-    static juce::String buildUsage(const juce::String& executableName);
+juce::String buildUsage(const juce::String& executableName);
 
-    static void attachNegativeOptionValues(juce::ArgumentList& arguments);
+void attachNegativeOptionValues(juce::ArgumentList& arguments);
 
-    static bool containsExactOption(const juce::ArgumentList& arguments, const juce::StringArray& optionNames);
+bool containsExactOption(const juce::ArgumentList& arguments, const juce::StringArray& optionNames);
 
-    static std::optional<AudioAnalysisCliOptions> parse(juce::ArgumentList arguments, juce::String& errorMessage);
+std::optional<AudioAnalysisCliOptions> parseArguments(juce::ArgumentList arguments, juce::String& errorMessage);
 
-    static int run(const AudioAnalysisCliOptions& options);
-};
+int runAnalysis(const AudioAnalysisCliOptions& options);
+}  // namespace cli
 }  // namespace audiobatch

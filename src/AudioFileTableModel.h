@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "AudioAnalysisService.h"
+#include "AudioAnalysis.h"
 
 #include <JuceHeader.h>
 

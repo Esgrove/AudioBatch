@@ -2,7 +2,8 @@
 /// analysis runs and their plans, normalization, and plugin processing,
 /// including the result handlers that update the table, cache, and preview.
 
-#include "AudioAnalysisService.h"
+#include "AudioAnalysis.h"
+#include "AudioAnalysisFormatting.h"
 #include "AudioBatchComponent.h"
 #include "AudioBatchComponentConstants.h"
 #include "AudioInfoPanel.h"
@@ -63,9 +64,7 @@ bool AudioBatchComponent::canNormalizeRecords(const std::vector<AudioAnalysisRec
         return false;
     }
 
-    return std::ranges::all_of(records, [](const auto& record) {
-        return AudioNormalizationService::canNormalizeFile(record.file);
-    });
+    return std::ranges::all_of(records, [](const auto& record) { return canNormalizeFile(record.file); });
 }
 
 /// Builds a user-facing explanation of why the selected files cannot be normalized,
@@ -75,15 +74,13 @@ juce::String AudioBatchComponent::buildNormalizationUnavailableMessage(const std
     juce::StringArray unsupportedLines;
 
     for (const auto& record : records) {
-        const auto reason = AudioNormalizationService::getNormalizationSupportMessage(record.file);
+        const auto reason = getNormalizationSupportMessage(record.file);
 
         if (reason.isEmpty()) {
             continue;
         }
 
-        unsupportedLines.add(
-            utils::format("{} ({}): {}", record.fileName, AudioAnalysisService::formatTypeLabel(record), reason)
-        );
+        unsupportedLines.add(utils::format("{} ({}): {}", record.fileName, formatTypeLabel(record), reason));
     }
 
     if (unsupportedLines.isEmpty()) {
@@ -93,7 +90,7 @@ juce::String AudioBatchComponent::buildNormalizationUnavailableMessage(const std
     return utils::format(
         "The selected files cannot be normalized with the current build:\n\n{}\n\n{}",
         unsupportedLines.joinIntoString(juce::newLine),
-        AudioNormalizationService::getFormatSupportSummary()
+        getFormatSupportSummary()
     );
 }
 

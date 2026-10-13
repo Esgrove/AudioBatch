@@ -1,10 +1,10 @@
-/// Implementation of AudioAnalysisService.
+/// Implementation of the audio analysis functions.
 /// Decodes files in blocks through per-thread JUCE format readers
 /// and feeds the samples to a libebur128 analyzer state to measure sample peak, true peak, and integrated loudness.
 /// Also implements supported file discovery and record sorting.
 /// The display formatting helpers live in AudioAnalysisFormatting.cpp.
 
-#include "AudioAnalysisService.h"
+#include "AudioAnalysis.h"
 
 #include "AudioFormatUtils.h"
 #include "BitDepthDetection.h"
@@ -201,7 +201,7 @@ static std::weak_ordering compareBySortMode(
 }
 
 /// Returns true when the path is a supported audio file for analysis.
-bool AudioAnalysisService::isSupportedAudioFile(const juce::File& file)
+bool isSupportedAudioFile(const juce::File& file)
 {
     if (!file.existsAsFile()) {
         return false;
@@ -215,7 +215,7 @@ bool AudioAnalysisService::isSupportedAudioFile(const juce::File& file)
 /// Expands the input paths into a de-duplicated list of supported files.
 /// The directory walk checks isCancelled between entries and returns the files found so far when it is set,
 /// so a scan of a large or slow folder can be abandoned quickly.
-juce::Array<juce::File> AudioAnalysisService::collectInputFiles(
+juce::Array<juce::File> collectInputFiles(
     const juce::Array<juce::File>& inputPaths,
     const bool recursive,
     const utils::CancellationCheck& isCancelled
@@ -382,10 +382,7 @@ static DecodeMeasurements measureDecodedAudio(
 /// Analyzes a single supported audio file and returns the populated result record.
 /// When isCancelled starts returning true, decoding stops and a failed record is returned,
 /// which callers must not cache.
-AudioAnalysisRecord AudioAnalysisService::analyzeFile(
-    const juce::File& file,
-    const utils::CancellationCheck& isCancelled
-)
+AudioAnalysisRecord analyzeFile(const juce::File& file, const utils::CancellationCheck& isCancelled)
 {
     auto record = AudioAnalysisRecord::fromFile(file);
 
@@ -470,11 +467,7 @@ AudioAnalysisRecord AudioAnalysisService::analyzeFile(
 }
 
 /// Sorts records by the requested field and direction.
-void AudioAnalysisService::sortRecords(
-    std::vector<AudioAnalysisRecord>& records,
-    const AudioAnalysisSortMode sortMode,
-    const bool ascending
-)
+void sortRecords(std::vector<AudioAnalysisRecord>& records, const AudioAnalysisSortMode sortMode, const bool ascending)
 {
     std::ranges::sort(records, [sortMode, ascending](const auto& lhs, const auto& rhs) {
         if (const auto stateComparison = compareAnalysisState(lhs, rhs); stateComparison != 0) {

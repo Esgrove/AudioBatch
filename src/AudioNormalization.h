@@ -1,11 +1,11 @@
 /// Normalization interface shared by the GUI and CLI targets.
-/// AudioNormalizationService rewrites audio files to a target sample peak or integrated loudness,
+/// The normalization functions rewrite audio files to a target sample peak or integrated loudness,
 /// renders the output as AIFF, and re-analyzes the result.
 /// AudioNormalizationResult carries the outcome of a single normalize-and-reanalyze pass.
 
 #pragma once
 
-#include "AudioAnalysisService.h"
+#include "AudioAnalysis.h"
 #include "ThreadUtils.h"
 
 #include <cstdint>
@@ -91,37 +91,29 @@ struct AudioNormalizationResult {
     bool committed = false;
 };
 
-/// Stateless helpers for normalizing audio files and refreshing their analysis data.
-class AudioNormalizationService
-{
-public:
-    /// Returns true when the caller wants normalization to stop as soon as possible.
-    using CancellationCheck = utils::CancellationCheck;
+juce::File getNormalizationOutputFile(const juce::File& sourceFile);
 
-    static juce::File getOutputFile(const juce::File& sourceFile);
+juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records);
 
-    static juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records);
+juce::String batchOutputConflictMessage(const juce::File& sourceFile);
 
-    static juce::String batchOutputConflictMessage(const juce::File& sourceFile);
+juce::String getNormalizationSupportMessage(const juce::File& file);
 
-    static juce::String getNormalizationSupportMessage(const juce::File& file);
+juce::String getFormatSupportSummary();
 
-    static juce::String getFormatSupportSummary();
+bool canNormalizeFile(const juce::File& file);
 
-    static bool canNormalizeFile(const juce::File& file);
+int getNormalizationOutputBitDepth(const AudioAnalysisRecord& record, const juce::AudioFormatReader& reader);
 
-    static int getOutputBitDepth(const AudioAnalysisRecord& record, const juce::AudioFormatReader& reader);
+std::optional<float> getNormalizationGain(
+    const AudioAnalysisRecord& record,
+    const AudioNormalizationOptions& options,
+    juce::String& errorMessage
+);
 
-    static std::optional<float> getNormalizationGain(
-        const AudioAnalysisRecord& record,
-        const AudioNormalizationOptions& options,
-        juce::String& errorMessage
-    );
-
-    static AudioNormalizationResult normalizeFile(
-        const AudioAnalysisRecord& sourceRecord,
-        const AudioNormalizationOptions& options,
-        const CancellationCheck& isCancelled = {}
-    );
-};
+AudioNormalizationResult normalizeFile(
+    const AudioAnalysisRecord& sourceRecord,
+    const AudioNormalizationOptions& options,
+    const utils::CancellationCheck& isCancelled = {}
+);
 }  // namespace audiobatch
