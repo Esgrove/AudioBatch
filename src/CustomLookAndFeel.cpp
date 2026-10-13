@@ -77,6 +77,8 @@ constexpr float buttonFontHeightRatio {0.6f};
 namespace juce
 {
 
+/// Returns the proportional font created from the embedded Roboto typeface.
+/// The font is created on first use, so no font construction runs during static initialization.
 const juce::Font& CustomLookAndFeel::getTextFont()
 {
     // The typeface constructor leaves the name and style empty,
@@ -87,6 +89,8 @@ const juce::Font& CustomLookAndFeel::getTextFont()
     return font;
 }
 
+/// Returns the base monospaced font created from the embedded Roboto Mono typeface, before height is applied.
+/// The font is created on first use, so no font construction runs during static initialization.
 const juce::Font& CustomLookAndFeel::getMonoBaseFont()
 {
     // The typeface constructor leaves the name and style empty,
@@ -173,6 +177,7 @@ private:
     JUCE_LEAK_DETECTOR(CustomDocumentWindowButton)
 };
 
+/// Builds the colour palette for the requested light or dark theme variant.
 CustomLookAndFeel::CustomLookAndFeel(const bool darkModeEnabled) : darkTheme(darkModeEnabled)
 {
     setColourScheme(customColourScheme);
@@ -212,6 +217,9 @@ CustomLookAndFeel::CustomLookAndFeel(const bool darkModeEnabled) : darkTheme(dar
     setUsingNativeAlertWindows(true);
 }
 
+/// Creates the close, minimise, and maximise buttons with the project palette
+/// instead of the stock JUCE title bar button colours.
+/// The caller takes ownership of the returned button.
 Button* CustomLookAndFeel::createDocumentWindowButton(const int buttonType)
 {
     Path shape;
@@ -254,6 +262,8 @@ Button* CustomLookAndFeel::createDocumentWindowButton(const int buttonType)
     return nullptr;
 }
 
+/// Draws the custom title bar with the project background colour and text font.
+/// Only used on Windows, where the app opts out of the native title bar.
 void CustomLookAndFeel::drawDocumentWindowTitleBar(
     DocumentWindow& window,
     Graphics& graphics,
@@ -310,6 +320,8 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     graphics.drawText(window.getName(), textX, 0, availableTextWidth, height, Justification::centredLeft, true);
 }
 
+/// Draws popup menu items with the project monospaced font.
+/// JUCE offers no smaller hook for the menu item font, so the whole item painting is replicated here.
 void CustomLookAndFeel::drawPopupMenuItem(
     Graphics& graphics,
     const Rectangle<int>& area,
@@ -396,6 +408,7 @@ void CustomLookAndFeel::drawPopupMenuItem(
     }
 }
 
+/// Returns the button label font, scaled down with the button height and capped at 16 points.
 Font CustomLookAndFeel::getTextButtonFont(TextButton& /*button*/, const int buttonHeight)
 {
     return getTextFont().withHeight(
@@ -403,6 +416,7 @@ Font CustomLookAndFeel::getTextButtonFont(TextButton& /*button*/, const int butt
     );
 }
 
+/// Draws tooltips with the project font and rounded background.
 void CustomLookAndFeel::drawTooltip(Graphics& graphics, const String& text, const int width, const int height)
 {
     const Rectangle bounds {width, height};
@@ -413,6 +427,8 @@ void CustomLookAndFeel::drawTooltip(Graphics& graphics, const String& text, cons
         .draw(graphics, {static_cast<float>(width), static_cast<float>(height)});
 }
 
+/// Lays out tooltip text with balanced line lengths and a capped width.
+/// Shared by drawTooltip so the drawn text and its measured size always agree.
 TextLayout CustomLookAndFeel::layoutTooltipText(const String& text, const Colour colour) noexcept
 {
     const float tooltipFontSize = 13.0f;

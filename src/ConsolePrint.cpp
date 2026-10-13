@@ -5,6 +5,8 @@
 
 #include "ConsolePrint.h"
 
+#include "StringFormat.h"
+
 #include <algorithm>
 
 #if JUCE_WINDOWS
@@ -83,6 +85,11 @@ static void printPrefixedMessage(
 
 namespace console
 {
+/// Returns true when styled output should be written to the given stream.
+/// That is the case for an interactive terminal when the NO_COLOR environment variable is not set.
+/// On Windows this also enables virtual terminal processing for the console the first time,
+/// and treats a pipe as a terminal when TERM is set, which is how Git Bash (mintty) connects programs.
+/// The result is cached for stdout and stderr.
 bool isColorEnabled(std::FILE* stream)
 {
     if (stream == stdout) {
@@ -98,6 +105,8 @@ bool isColorEnabled(std::FILE* stream)
     return detail::computeColorEnabled(stream);
 }
 
+/// Prints already formatted text to the given stream with a text style.
+/// Trailing newlines are written after the style reset, so the reset escape code does not leak onto the next line.
 void printStyledText(std::FILE* stream, const fmt::text_style style, const std::string_view text)
 {
     const auto bodyLength = text.find_last_not_of("\r\n") + 1;
@@ -109,31 +118,40 @@ void printStyledText(std::FILE* stream, const fmt::text_style style, const std::
         return;
     }
 
-    // Write the styled body and the newlines in a single call,
-    // so output from other threads cannot land between them.
+    // Write the styled body and the newlines in a single call, so output from other threads cannot land between them.
     fmt::print(stream, "{}{}", fmt::styled(body, style), trailingNewlines);
 }
 
+/// Prints "Error: <message>" in red to stderr, followed by a newline.
+/// Leading whitespace in the message is kept in front of the prefix, so indented messages stay indented.
 void printError(const std::string_view message)
 {
     detail::printPrefixedMessage("Error: ", fmt::terminal_color::red, message);
 }
 
+/// Prints "Error: <message>" in red to stderr, followed by a newline.
 void printError(const juce::String& message)
 {
     printError(std::string_view {message.toRawUTF8(), message.getNumBytesAsUTF8()});
 }
 
+/// Prints "Warning: <message>" in yellow to stderr, followed by a newline.
+/// Leading whitespace in the message is kept in front of the prefix.
 void printWarn(const std::string_view message)
 {
     detail::printPrefixedMessage("Warning: ", fmt::terminal_color::yellow, message);
 }
 
+/// Prints "Warning: <message>" in yellow to stderr, followed by a newline.
 void printWarn(const juce::String& message)
 {
     printWarn(std::string_view {message.toRawUTF8(), message.getNumBytesAsUTF8()});
 }
 
+/// Prints one line of text to stdout and flushes it.
+/// On Windows a GUI subsystem executable has no console of its own,
+/// so when stdout is not already redirected to a pipe or file,
+/// this attaches to the console of the parent process first, so the text shows up in cmd or PowerShell.
 void printLineToConsole(const juce::String& text)
 {
 #if JUCE_WINDOWS
@@ -150,6 +168,9 @@ void printLineToConsole(const juce::String& text)
     std::fflush(stdout);
 }
 
+/// Returns how many terminal columns the text occupies, for example two for each CJK character.
+/// Measures the width through fmt's own padding, so computed column widths match how fmt pads the cells,
+/// without relying on fmt's internal width function.
 int displayWidth(const juce::String& text)
 {
     const std::string_view utf8 {text.toRawUTF8(), text.getNumBytesAsUTF8()};

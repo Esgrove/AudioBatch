@@ -46,7 +46,6 @@ constexpr juce::uint32 yellow {0xffCEAF6C};
 class CustomLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    /// Builds the colour palette for the requested light or dark theme variant.
     explicit CustomLookAndFeel(bool darkModeEnabled);
 
     /// Switches the active theme palette without rebuilding the look-and-feel object.
@@ -55,13 +54,8 @@ public:
         darkTheme = darkModeEnabled;
     }
 
-    /// Creates the close, minimise, and maximise buttons with the project palette
-    /// instead of the stock JUCE title bar button colours.
-    /// The caller takes ownership of the returned button.
     juce::Button* createDocumentWindowButton(int buttonType) override;
 
-    /// Draws the custom title bar with the project background colour and text font.
-    /// Only used on Windows, where the app opts out of the native title bar.
     void drawDocumentWindowTitleBar(
         DocumentWindow& window,
         Graphics& graphics,
@@ -73,15 +67,10 @@ public:
         bool drawTitleTextOnLeft
     ) override;
 
-    /// Draws tooltips with the project font and rounded background.
     void drawTooltip(Graphics& graphics, const String& text, int width, int height) override;
 
-    /// Lays out tooltip text with balanced line lengths and a capped width.
-    /// Shared by drawTooltip so the drawn text and its measured size always agree.
     static TextLayout layoutTooltipText(const String& text, Colour colour) noexcept;
 
-    /// Draws popup menu items with the project monospaced font.
-    /// JUCE offers no smaller hook for the menu item font, so the whole item painting is replicated here.
     void drawPopupMenuItem(
         Graphics& graphics,
         const Rectangle<int>& area,
@@ -96,7 +85,6 @@ public:
         const Colour* textColourToUse
     ) override;
 
-    /// Returns the button label font, scaled down with the button height and capped at 16 points.
     Font getTextButtonFont(TextButton& button, int buttonHeight) override;
 
     /// Uses the monospaced font for combo box text so numeric choices align.
@@ -111,12 +99,8 @@ public:
         return getMonoBaseFont().withHeight(monoFontHeight);
     }
 
-    /// Returns the proportional font created from the embedded Roboto typeface.
-    /// The font is created on first use, so no font construction runs during static initialization.
     [[nodiscard]] static const juce::Font& getTextFont();
 
-    /// Returns the base monospaced font created from the embedded Roboto Mono typeface, before height is applied.
-    /// The font is created on first use, so no font construction runs during static initialization.
     [[nodiscard]] static const juce::Font& getMonoBaseFont();
 
     /// Palette colour #76A8DA.

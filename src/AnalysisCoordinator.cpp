@@ -1,22 +1,27 @@
 /// Implementation of AnalysisCoordinator.
 /// Plans each run on a worker thread: expands the input paths, publishes cached records,
 /// and queues one thread pool job per stale file.
-/// Stores fresh results back into the cache,
-/// and guards callback publication with run id checks and a callback lock.
+/// Stores fresh results back into the cache, and guards callback publication with run id checks and a callback lock.
 /// Also provides the blocking analysis entry point used by the CLI.
 
 #include "AnalysisCoordinator.h"
 
 #include <mutex>
 
+namespace
+{
 /// How long cancelAndWait waits for running analysis jobs to finish before giving up, in milliseconds.
-static constexpr int jobShutdownTimeoutMilliseconds = 30000;
+constexpr int jobShutdownTimeoutMilliseconds = 30000;
+}  // namespace
 
+/// Creates a coordinator with a thread pool sized for the current machine.
 AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& analysisCache, const int workerCount) :
     cache(analysisCache),
     threadPool(juce::jmax(1, workerCount))
 {}
 
+/// Cancels any in-flight work and destroys the worker pool.
+/// Waits without a timeout so workers cannot access destroyed coordinator state.
 AnalysisCoordinator::~AnalysisCoordinator()
 {
     cancelAndWait();
@@ -28,24 +33,29 @@ AnalysisCoordinator::~AnalysisCoordinator()
     }
 }
 
+/// Sets the callback invoked when a run completes.
 void AnalysisCoordinator::setCompletionCallback(CompletionCallback callback)
 {
     const juce::ScopedLock lock(callbackLock);
     completionCallback = std::move(callback);
 }
 
+/// Sets the callback invoked for each published result.
 void AnalysisCoordinator::setResultCallback(ResultCallback callback)
 {
     const juce::ScopedLock lock(callbackLock);
     resultCallback = std::move(callback);
 }
 
+/// Sets the callback invoked when a file's analysis is about to start.
 void AnalysisCoordinator::setStartingCallback(StartingCallback callback)
 {
     const juce::ScopedLock lock(callbackLock);
     startingCallback = std::move(callback);
 }
 
+/// Invokes the starting callback when the given run id is still current.
+/// Runs on the worker thread right before a file's analysis begins.
 void AnalysisCoordinator::publishStarting(const juce::File& file, const int runId) const
 {
     if (isRunCancelled(runId)) {
@@ -64,6 +74,8 @@ void AnalysisCoordinator::publishStarting(const juce::File& file, const int runI
     }
 }
 
+/// Invokes the result callback when the given run id is still current.
+/// Runs on the worker thread, so the callback must marshal to the message thread itself if needed.
 void AnalysisCoordinator::publishResult(const AudioAnalysisRecord& result, const int runId) const
 {
     if (isRunCancelled(runId)) {
@@ -82,6 +94,9 @@ void AnalysisCoordinator::publishResult(const AudioAnalysisRecord& result, const
     }
 }
 
+/// Invokes the completion callback when the given run id is still current.
+/// The callback is copied under the lock and invoked without it,
+/// so the callback may safely call back into the coordinator.
 void AnalysisCoordinator::publishCompletion(const int totalFiles, const int runId) const
 {
     if (isRunCancelled(runId)) {
@@ -100,17 +115,24 @@ void AnalysisCoordinator::publishCompletion(const int totalFiles, const int runI
     }
 }
 
+/// Cancels queued work and waits for active jobs to finish.
 void AnalysisCoordinator::cancelAndWait()
 {
     ++currentRunId;
     threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
 }
 
+/// Returns true when the run has been cancelled or replaced by a newer one.
 bool AnalysisCoordinator::isRunCancelled(const int runId) const noexcept
 {
     return runId != currentRunId.load();
 }
 
+/// Starts a background analysis run and returns its run id.
+/// Expanding the input paths and the cache lookups also run in the background,
+/// so the caller never waits for the file system.
+/// The plan callback comes first, then cached results, then fresh results, and finally the completion callback,
+/// which is published even when no files are found.
 int AnalysisCoordinator::start(const AudioAnalysisOptions& options)
 {
     cancelAndWait();
@@ -120,6 +142,8 @@ int AnalysisCoordinator::start(const AudioAnalysisOptions& options)
     return runId;
 }
 
+/// Expands the input paths, publishes the plan and the cached results, and queues one job per stale file.
+/// Runs on a worker thread and stops early when the run is cancelled.
 void AnalysisCoordinator::planRun(const AudioAnalysisOptions& options, const int runId)
 {
     const auto isCancelled = [this, runId] { return isRunCancelled(runId); };
@@ -161,6 +185,11 @@ void AnalysisCoordinator::planRun(const AudioAnalysisOptions& options, const int
     }
 }
 
+/// Analyzes one file, caches the result, and publishes it.
+/// The stored custom gain is kept while the file is unchanged on disk.
+/// A file whose analysis is cancelled is neither cached nor published.
+/// pendingFiles counts the run's unfinished files, and the job that finishes the last one publishes completion.
+/// It belongs to the run, so a job that outlives a cancellation timeout cannot change a later run's count.
 void AnalysisCoordinator::analyzeStaleFile(
     const juce::File& file,
     const int runId,
@@ -194,12 +223,14 @@ void AnalysisCoordinator::analyzeStaleFile(
     }
 }
 
+/// Sets the callback invoked with the file list of each run.
 void AnalysisCoordinator::setPlanCallback(PlanCallback callback)
 {
     const juce::ScopedLock lock(callbackLock);
     planCallback = std::move(callback);
 }
 
+/// Invokes the plan callback when the given run id is still current.
 void AnalysisCoordinator::publishPlan(const AnalysisPlan& plan, const int runId) const
 {
     if (isRunCancelled(runId)) {
@@ -218,6 +249,8 @@ void AnalysisCoordinator::publishPlan(const AnalysisPlan& plan, const int runId)
     }
 }
 
+/// Runs a full analysis synchronously and returns all collected results.
+/// Replaces the result and completion callbacks for the run and clears them before returning.
 std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(const AudioAnalysisOptions& options)
 {
     std::vector<AudioAnalysisRecord> results;

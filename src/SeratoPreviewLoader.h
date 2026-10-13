@@ -28,12 +28,8 @@ public:
     using Reader = std::function<
         std::vector<TagReadResult>(const juce::File&, std::span<const TagKind>, const utils::CancellationCheck&)>;
 
-    /// Starts one worker. Completion runs on that worker and must only enqueue delivery, never wait for the UI.
-    /// The cache and callback captures must remain alive until cancelAndWait returns.
-    /// An injected reader allows deterministic lifecycle tests without changing production cache behavior.
     SeratoPreviewLoader(AnalysisCache& cacheToUse, Completion onCompletion, Reader tagReader = readTags);
 
-    /// Invalidates queued deliveries and joins the worker before releasing callback captures.
     ~SeratoPreviewLoader();
 
     SeratoPreviewLoader(const SeratoPreviewLoader&) = delete;
@@ -41,21 +37,12 @@ public:
     SeratoPreviewLoader(SeratoPreviewLoader&&) = delete;
     SeratoPreviewLoader& operator=(SeratoPreviewLoader&&) = delete;
 
-    /// Replaces pending work and invalidates earlier reads and deliveries, including selection A to B to A.
-    /// Invalid duration or file identity cancels prior work without scheduling a read.
-    /// Called by the owner thread, never from completion.
     Generation request(const juce::File& file, double durationSeconds);
 
-    /// Invalidates active and queued completions and drops pending work without waiting for TagLib.
-    /// Called by the owner thread when the preview is cleared or replaced.
     void cancel();
 
-    /// Stops permanently and joins without waiting for any posted message-thread callback.
-    /// Called by the owner thread before destroying the cache or GUI resources. Safe to call repeatedly.
     void cancelAndWait();
 
-    /// Checks the generation, selected path and current file stats again at queued delivery time.
-    /// The GUI additionally checks its URL, reader and thumbnail before applying the returned data.
     [[nodiscard]] bool canAdopt(
         const AnalysisCache::FileIdentity& identity,
         Generation resultGeneration,
@@ -72,13 +59,10 @@ private:
         Generation generation;
     };
 
-    /// Waits interruptibly for the latest request and processes it outside the queue lock.
     void run(const std::stop_token& stopToken);
 
-    /// Performs cache lookup, reading and stable persistence, checking cancellation at each boundary.
     void process(const Request& active, const std::stop_token& stopToken);
 
-    /// Reads missing kinds in one batch and persists only stable results while the request remains current.
     bool readMisses(
         const Request& active,
         std::span<const TagKind> misses,
@@ -86,7 +70,6 @@ private:
         const utils::CancellationCheck& isCancelled
     ) const;
 
-    /// Moves independently present values into an immutable aggregate, leaving negative kinds unset.
     static Data collectData(Results& results);
 
     AnalysisCache& cache;

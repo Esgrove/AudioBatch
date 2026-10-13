@@ -1,6 +1,5 @@
 /// Implementation of the application information helpers:
-/// the settings file options, the system information lines for the log,
-/// the About dialog message, and the version line.
+/// the settings file options, the system information lines for the log, the About dialog message, and the version line.
 
 #include "AppInfo.h"
 
@@ -9,6 +8,8 @@
 
 namespace utils
 {
+/// Returns the storage options for the AudioBatch.settings file that holds the GUI settings and plugin chain.
+/// The CLI only reads this file, for example the plugin search folders of the last GUI scan.
 juce::PropertiesFile::Options createApplicationSettingsOptions()
 {
     juce::PropertiesFile::Options options;
@@ -20,6 +21,7 @@ juce::PropertiesFile::Options createApplicationSettingsOptions()
     return options;
 }
 
+/// Collects build and runtime environment details for logs and diagnostics.
 juce::StringArray systemInfo()
 {
     const auto compileTime = juce::Time::getCompilationDate();
@@ -44,6 +46,7 @@ juce::StringArray systemInfo()
     };
 }
 
+/// Builds the multi-line About dialog message with application, build, and system information.
 juce::String aboutMessage(const juce::String& appName)
 {
     // The message is only shown inside the app, so plain '\n' line breaks are fine.
@@ -68,6 +71,8 @@ juce::String aboutMessage(const juce::String& appName)
     );
 }
 
+/// Returns the line printed by the --version flag of both executables:
+/// the application name, the build version string from CMake, and the JUCE version.
 juce::String versionLine(const juce::String& appName)
 {
     return format("{} {} {}", appName, version::VERSION_STRING, juce::SystemStats::getJUCEVersion());

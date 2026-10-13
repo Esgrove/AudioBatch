@@ -40,6 +40,16 @@ public:
         columnStatus,
     };
 
+    AudioFileTableModel(
+        const std::vector<AudioAnalysisRecord>& sourceRecords,
+        std::function<void(int row)> onSelectionChanged,
+        std::function<void(int columnId, bool isForwards)> onSortChanged,
+        std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,
+        std::function<juce::String(const AudioAnalysisRecord& record)> statusLabelProvider,
+        std::function<OperationMessage(const AudioAnalysisRecord& record)> messageProvider,
+        std::function<float()> phaseProvider
+    );
+
     /// Returns the compile-time default width for a column.
     /// The defaults are chosen so that all columns together exactly fill the default window width,
     /// which is enforced by a static_assert below.
@@ -106,29 +116,12 @@ public:
         return 0;
     }
 
-    /// Creates a model backed by the live result list and UI callbacks owned by the main view.
-    /// The operation message provider returns the outcome of the last normalize or process run for a record,
-    /// or an empty message, and is shown in the status column when the file is idle.
-    AudioFileTableModel(
-        const std::vector<AudioAnalysisRecord>& sourceRecords,
-        std::function<void(int row)> onSelectionChanged,
-        std::function<void(int columnId, bool isForwards)> onSortChanged,
-        std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,
-        std::function<juce::String(const AudioAnalysisRecord& record)> statusLabelProvider,
-        std::function<OperationMessage(const AudioAnalysisRecord& record)> messageProvider,
-        std::function<float()> phaseProvider
-    );
-
-    /// Installs the standard set of columns used by the results table.
     static void configureHeader(juce::TableHeaderComponent& header);
 
-    /// Returns the number of analyzed rows currently available.
     int getNumRows() override;
 
-    /// Packages the selected file paths for external drag-and-drop.
     juce::var getDragSourceDescription(const juce::SparseSet<int>& currentlySelectedRows) override;
 
-    /// Paints the text content for a single table cell.
     void paintCell(
         juce::Graphics& graphics,
         int rowNumber,
@@ -138,7 +131,6 @@ public:
         bool rowIsSelected
     ) override;
 
-    /// Paints alternating row backgrounds and selection highlights.
     void paintRowBackground(
         juce::Graphics& graphics,
         int rowNumber,
@@ -147,21 +139,15 @@ public:
         bool rowIsSelected
     ) override;
 
-    /// Forwards popup-clicks so the owning component can show file actions.
     void cellClicked(int rowNumber, int columnId, const juce::MouseEvent& event) override;
 
-    /// Notifies the owning component when the row selection changes.
     void selectedRowsChanged(int lastRowSelected) override;
 
-    /// Notifies the owning component when the active sort column changes.
     void sortOrderChanged(int newSortColumnId, bool isForwards) override;
 
-    /// Shows the full status text for the status column of a file with an error or notice,
-    /// and no tooltip for other cells.
     juce::String getCellTooltip(int rowNumber, int columnId) override;
 
 private:
-    /// Returns the last normalize or process message for a record from the provider, or an empty message.
     [[nodiscard]] OperationMessage getOperationMessage(const AudioAnalysisRecord& record) const;
 
     static constexpr int defaultWindowWidth = 1096;

@@ -138,8 +138,7 @@ static void sortPlugins(std::vector<juce::PluginDescription>& plugins)
     });
 }
 
-/// Computes the display width of each column from its header and every value,
-/// so rows line up across all groups.
+/// Computes the display width of each column from its header and every value, so rows line up across all groups.
 static std::vector<int> columnWidths(
     const std::vector<juce::PluginDescription>& plugins,
     const std::vector<Column>& columns,
@@ -375,6 +374,7 @@ static void rescanPlugins(
 
 using namespace audiobatch::plugin_list;
 
+/// Parses a --group-by value. Returns an empty optional for an unknown value.
 std::optional<PluginListGrouping> PluginListCli::parseGrouping(const juce::String& value)
 {
     const auto normalized = utils::normalizedToken(value);
@@ -398,6 +398,11 @@ std::optional<PluginListGrouping> PluginListCli::parseGrouping(const juce::Strin
     return std::nullopt;
 }
 
+/// Prints the known plugins, grouped as requested, and returns the process exit code.
+/// With rescan set, scans the plugin folders for new or changed plugins first
+/// and saves the updated list for the GUI too.
+/// Each plugin is loaded in a worker process launched from this executable,
+/// so a plugin that crashes is blacklisted instead of ending the scan.
 int PluginListCli::run(const bool rescan, const PluginListGrouping grouping)
 {
     // Plugin hosting needs a message thread, which this initialiser sets up on the calling thread.

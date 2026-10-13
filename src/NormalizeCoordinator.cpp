@@ -7,29 +7,39 @@
 
 #include <map>
 
+namespace
+{
 /// How long cancelAndWait waits for running normalization jobs to finish before giving up, in milliseconds.
-static constexpr int jobShutdownTimeoutMilliseconds = 30000;
+constexpr int jobShutdownTimeoutMilliseconds = 30000;
+}  // namespace
 
+/// Creates a coordinator with a thread pool sized for the current machine.
 NormalizeCoordinator::NormalizeCoordinator(const int workerCount) : threadPool(juce::jmax(1, workerCount)) {}
 
+/// Cancels any in-flight work and destroys the worker pool.
+/// Waits without a timeout so workers cannot access destroyed coordinator state.
 NormalizeCoordinator::~NormalizeCoordinator()
 {
     cancelAndWait();
     threadPool.removeAllJobs(true, -1);
 }
 
+/// Sets the callback that is invoked for each published result.
 void NormalizeCoordinator::setResultCallback(ResultCallback callback)
 {
     const juce::ScopedLock lock(callbackLock);
     resultCallback = std::move(callback);
 }
 
+/// Sets the callback that is invoked when a run completes.
 void NormalizeCoordinator::setCompletionCallback(CompletionCallback callback)
 {
     const juce::ScopedLock lock(callbackLock);
     completionCallback = std::move(callback);
 }
 
+/// Invokes the result callback when the given run id is still current.
+/// Runs on the worker thread, so the callback must marshal to the message thread itself if needed.
 void NormalizeCoordinator::publishResult(const AudioNormalizationResult& result, const int runId) const
 {
     if (runId != currentRunId.load()) {
@@ -48,6 +58,9 @@ void NormalizeCoordinator::publishResult(const AudioNormalizationResult& result,
     }
 }
 
+/// Invokes the completion callback when the given run id is still current.
+/// The callback is copied under the lock and invoked without it,
+/// so the callback may safely call back into the coordinator.
 void NormalizeCoordinator::publishCompletion(const int totalFiles, const int runId) const
 {
     if (runId != currentRunId.load()) {
@@ -66,12 +79,16 @@ void NormalizeCoordinator::publishCompletion(const int totalFiles, const int run
     }
 }
 
+/// Cancels queued work and waits for active jobs to finish.
 void NormalizeCoordinator::cancelAndWait()
 {
     ++currentRunId;
     threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
 }
 
+/// Starts a background normalize run and returns the number of queued files.
+/// Records that lose a batch output conflict are published as failures without being normalized.
+/// Jobs of a run poll the run id, so cancelAndWait or a new run stops them before they commit any output.
 int NormalizeCoordinator::start(
     const std::vector<AudioAnalysisRecord>& records,
     const AudioNormalizationOptions& options

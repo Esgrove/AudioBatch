@@ -48,6 +48,7 @@ constexpr float focusOutlineAlpha {0.6f};
 constexpr float focusOutlineWidth {1.0f};
 }  // namespace
 
+/// Creates a thumbnail view backed by the shared transport source.
 ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source) :
     thumbnail(1024, formatManager, thumbnailCache),
     transportSource(source)
@@ -59,11 +60,13 @@ ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, 
     setWantsKeyboardFocus(true);
 }
 
+/// Stops timer activity and detaches listeners.
 ThumbnailComponent::~ThumbnailComponent()
 {
     thumbnail.removeChangeListener(this);
 }
 
+/// Draws the waveform for the visible range, or a placeholder text when no file is loaded.
 void ThumbnailComponent::paint(juce::Graphics& graphics)
 {
     graphics.fillAll(juce::CustomLookAndFeel::greyMediumDark());
@@ -95,8 +98,10 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
     }
 }
 
+/// No layout work is needed, the position marker is placed by updateCursorPosition instead.
 void ThumbnailComponent::resized() {}
 
+/// Restores a previously cached waveform without re-reading the audio file.
 bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData)
 {
     seratoOverview.reset();
@@ -134,6 +139,7 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
     return true;
 }
 
+/// Serializes the current waveform so it can be stored in the cache.
 juce::MemoryBlock ThumbnailComponent::saveToCacheData() const
 {
     juce::MemoryBlock waveformData;
@@ -151,21 +157,25 @@ juce::MemoryBlock ThumbnailComponent::saveToCacheData() const
     return waveformData;
 }
 
+/// Sets the callback fired once a full waveform has been loaded from disk.
 void ThumbnailComponent::setThumbnailFullyLoadedCallback(std::function<void()> callback)
 {
     thumbnailFullyLoadedCallback = std::move(callback);
 }
 
+/// Sets the callback used for mouse-wheel zoom gestures.
 void ThumbnailComponent::setMouseWheelZoomCallback(std::function<void(double)> callback)
 {
     mouseWheelZoomCallback = std::move(callback);
 }
 
+/// Sets the callback used for Ctrl/Cmd + mouse-wheel gain gestures. Argument is the delta in dB.
 void ThumbnailComponent::setMouseWheelGainCallback(std::function<void(float)> callback)
 {
     mouseWheelGainCallback = std::move(callback);
 }
 
+/// Loads a new audio resource into the thumbnail display.
 void ThumbnailComponent::setURL(const juce::URL& url)
 {
     seratoOverview.reset();
@@ -194,16 +204,19 @@ void ThumbnailComponent::setURL(const juce::URL& url)
     }
 }
 
+/// Returns the most recently dropped file as a URL for convenience.
 juce::URL ThumbnailComponent::getLastDroppedFile() const noexcept
 {
     return lastFileDropped;
 }
 
+/// Returns the full list of files dropped onto the waveform component.
 juce::StringArray ThumbnailComponent::getLastDroppedFiles() const
 {
     return lastDroppedFiles;
 }
 
+/// Sets the visible time range for the waveform viewport.
 void ThumbnailComponent::setRange(const juce::Range<double> newRange)
 {
     visibleRange = newRange;
@@ -211,6 +224,8 @@ void ThumbnailComponent::setRange(const juce::Range<double> newRange)
     repaint();
 }
 
+/// Reacts to thumbnail load progress by repainting,
+/// and fires the fully-loaded callback exactly once per loaded source.
 void ThumbnailComponent::changeListenerCallback(juce::ChangeBroadcaster* /*source*/)
 {
     if (thumbnail.getTotalLength() > 0.0 && visibleRange.getLength() <= 0.0) {
@@ -228,11 +243,13 @@ void ThumbnailComponent::changeListenerCallback(juce::ChangeBroadcaster* /*sourc
     }
 }
 
+/// Accepts every file drag, validation of the dropped files happens in the owning component.
 bool ThumbnailComponent::isInterestedInFileDrag(const juce::StringArray& /*files*/)
 {
     return true;
 }
 
+/// Records the dropped files and notifies change listeners so the owner can load them.
 void ThumbnailComponent::filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/)
 {
     lastDroppedFiles = files;
@@ -240,12 +257,15 @@ void ThumbnailComponent::filesDropped(const juce::StringArray& files, int /*x*/,
     sendChangeMessage();
 }
 
+/// Takes keyboard focus so the hot cue keys apply, then starts scrubbing through the drag handler.
 void ThumbnailComponent::mouseDown(const juce::MouseEvent& event)
 {
     grabKeyboardFocus();
     mouseDrag(event);
 }
 
+/// Handles the number keys 1 to 8 without command, ctrl or alt modifiers as Serato hot cue jumps.
+/// Every other key returns false, so JUCE passes it on to the parent component's shortcuts.
 bool ThumbnailComponent::keyPressed(const juce::KeyPress& key)
 {
     const auto modifiers = key.getModifiers();
@@ -260,16 +280,20 @@ bool ThumbnailComponent::keyPressed(const juce::KeyPress& key)
     return true;
 }
 
+/// Repaints to show the keyboard focus outline.
 void ThumbnailComponent::focusGained(const FocusChangeType /*cause*/)
 {
     repaint();
 }
 
+/// Repaints to remove the keyboard focus outline.
 void ThumbnailComponent::focusLost(const FocusChangeType /*cause*/)
 {
     repaint();
 }
 
+/// Moves the transport to the Serato hot cue in the given zero-based slot and starts playback,
+/// matching the click and double-click behaviour. Does nothing when that slot has no cue.
 void ThumbnailComponent::jumpToHotCue(const int slot)
 {
     if (!seratoMarkers || thumbnail.getTotalLength() <= 0.0) {
@@ -289,12 +313,14 @@ void ThumbnailComponent::jumpToHotCue(const int slot)
     updateCursorPosition();
 }
 
+/// Restarts playback from the beginning of the file.
 void ThumbnailComponent::mouseDoubleClick(const juce::MouseEvent& /*event*/)
 {
     transportSource.setPosition(0.0);
     transportSource.start();
 }
 
+/// Scrubs the transport to the time under the cursor while the mouse is held down.
 void ThumbnailComponent::mouseDrag(const juce::MouseEvent& event)
 {
     if (canMoveTransport()) {
@@ -303,11 +329,15 @@ void ThumbnailComponent::mouseDrag(const juce::MouseEvent& event)
     }
 }
 
+/// Resumes playback from the scrubbed position when the mouse is released.
 void ThumbnailComponent::mouseUp(const juce::MouseEvent& /*event*/)
 {
     transportSource.start();
 }
 
+/// Handles wheel gestures over the waveform.
+/// Plain vertical wheel zooms, Ctrl/Cmd plus wheel adjusts gain in dB steps,
+/// and horizontal wheel scrolls the visible range.
 void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
 {
     if (thumbnail.getTotalLength() <= 0.0) {
@@ -338,6 +368,7 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
     repaint();
 }
 
+/// Converts a time into a horizontal pixel position within the visible range.
 float ThumbnailComponent::timeToX(const double time) const
 {
     const auto bounds = waveformBounds();
@@ -350,6 +381,7 @@ float ThumbnailComponent::timeToX(const double time) const
         * static_cast<float>((time - visibleRange.getStart()) / visibleRange.getLength());
 }
 
+/// Converts a horizontal pixel position into a time within the visible range.
 double ThumbnailComponent::xToTime(const float xPosition) const
 {
     const auto bounds = waveformBounds();
@@ -362,16 +394,21 @@ double ThumbnailComponent::xToTime(const float xPosition) const
         + visibleRange.getStart();
 }
 
+/// Returns the inset rectangle shared by waveform painting, cursor projection and scrubbing.
 juce::Rectangle<int> ThumbnailComponent::waveformBounds() const
 {
     return getLocalBounds().reduced(2);
 }
 
+/// Reports whether user interaction may reposition the transport.
+/// Repositioning is blocked while the view is following an actively playing transport.
 bool ThumbnailComponent::canMoveTransport() const noexcept
 {
     return !(isFollowingTransport && transportSource.isPlaying());
 }
 
+/// Timer tick that keeps the playback cursor in sync,
+/// scrolling the visible range along with the transport when follow mode is active.
 void ThumbnailComponent::timerCallback()
 {
     if (canMoveTransport()) {
@@ -381,6 +418,8 @@ void ThumbnailComponent::timerCallback()
     }
 }
 
+/// Moves the playback position marker to the current transport time
+/// and shows it only during playback or while the mouse is held down.
 void ThumbnailComponent::updateCursorPosition()
 {
     currentPositionMarkerComponent.setVisible(transportSource.isPlaying() || isMouseButtonDown());
@@ -395,6 +434,7 @@ void ThumbnailComponent::updateCursorPosition()
     );
 }
 
+/// Visually scales the waveform vertically by the given linear gain factor (1.0 = unchanged).
 void ThumbnailComponent::setDisplayGain(const float linearGain)
 {
     const auto clampedGain = juce::jlimit(0.0f, 100.0f, linearGain);
@@ -406,6 +446,9 @@ void ThumbnailComponent::setDisplayGain(const float linearGain)
     repaint();
 }
 
+/// Attaches immutable spectral data on the message thread and repaints only.
+/// Does not reload peaks, reset the viewport or gain, or affect playback.
+/// Null, empty and oversized data remove colouring. The owner must reject stale asynchronous results.
 void ThumbnailComponent::setSeratoOverview(std::shared_ptr<const audiobatch::serato::Overview> overview)
 {
     if (overview && (overview->slices.empty() || overview->slices.size() > audiobatch::serato::Overview::maxSlices)) {
@@ -415,12 +458,16 @@ void ThumbnailComponent::setSeratoOverview(std::shared_ptr<const audiobatch::ser
     repaint();
 }
 
+/// Attaches owned cue positions and colours without altering peaks, playback or the viewport.
+/// Null data removes the arrows. The owner must reject stale asynchronous results before adoption.
 void ThumbnailComponent::setSeratoMarkers(std::shared_ptr<const audiobatch::serato::Markers> markers)
 {
     seratoMarkers = std::move(markers);
     repaint();
 }
 
+/// Draws inward-facing cue arrows over the waveform, below the child playback cursor.
+/// Millisecond positions use the same seconds-based projection as scrubbing and the playhead.
 void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
 {
     const auto bounds = waveformBounds();
@@ -465,6 +512,7 @@ void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
     }
 }
 
+/// Applies a zoom factor to the waveform viewport.
 void ThumbnailComponent::setZoom(const double zoomLevel)
 {
     const auto start = transportSource.getCurrentPosition();

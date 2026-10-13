@@ -170,12 +170,14 @@ static void bindBlob(sqlite3_stmt* statement, const int index, const juce::Memor
 
 using namespace audiobatch::cache;
 
+/// Captures the absolute path and current file stats without accessing the database.
 AnalysisCache::FileIdentity::FileIdentity(const juce::File& file) :
     path(file.getFullPathName()),
     fileSize(file.getSize()),
     modifiedTimeMs(file.getLastModificationTime().toMilliseconds())
 {}
 
+/// Requires the same existing file path, size and modification time, with valid captured stats.
 bool AnalysisCache::FileIdentity::matches(const juce::File& file) const
 {
     return juce::File::isAbsolutePath(path) && path == file.getFullPathName() && fileSize >= 0 && modifiedTimeMs > 0
@@ -183,6 +185,7 @@ bool AnalysisCache::FileIdentity::matches(const juce::File& file) const
         && file.getLastModificationTime().toMilliseconds() == modifiedTimeMs;
 }
 
+/// Resolves the default cache database location.
 AnalysisCache::AnalysisCache()
 {
     const auto appDataDirectory
@@ -190,24 +193,29 @@ AnalysisCache::AnalysisCache()
     databaseFile = appDataDirectory.getChildFile("analysis.db");
 }
 
+/// Uses the given SQLite database file instead of the default location, for example in tests.
 AnalysisCache::AnalysisCache(juce::File cacheDatabaseFile) : databaseFile(std::move(cacheDatabaseFile)) {}
 
+/// Closes the database if it is currently open.
 AnalysisCache::~AnalysisCache()
 {
     const juce::ScopedLock lock(mutex);
     closeUnlocked();
 }
 
+/// Returns the on-disk SQLite file used by the cache.
 juce::File AnalysisCache::getDatabaseFile() const
 {
     return databaseFile;
 }
 
+/// Returns the canonical path string used as the cache key for a file.
 juce::String AnalysisCache::normalizedPath(const juce::File& file)
 {
     return file.getFullPathName();
 }
 
+/// Runs a statement that returns no rows, logging any SQLite error.
 bool AnalysisCache::execute(const juce::String& sql) const
 {
     char* errorMessage = nullptr;
@@ -225,6 +233,7 @@ bool AnalysisCache::execute(const juce::String& sql) const
     return true;
 }
 
+/// Prepares a statement, logging the SQLite error when it fails.
 bool AnalysisCache::prepare(const char* sql, sqlite3_stmt*& statement) const
 {
     if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) == SQLITE_OK) {
@@ -237,6 +246,8 @@ bool AnalysisCache::prepare(const char* sql, sqlite3_stmt*& statement) const
     return false;
 }
 
+/// Steps a statement that returns no rows to completion, logging the SQLite error when it fails.
+/// Returns true when the statement completed.
 bool AnalysisCache::stepToCompletion(sqlite3_stmt* statement) const
 {
     if (sqlite3_step(statement) == SQLITE_DONE) {
@@ -249,6 +260,7 @@ bool AnalysisCache::stepToCompletion(sqlite3_stmt* statement) const
     return false;
 }
 
+/// Opens the cache database and creates or migrates tables as needed.
 bool AnalysisCache::open()
 {
     const juce::ScopedLock lock(mutex);
@@ -256,6 +268,7 @@ bool AnalysisCache::open()
     return openUnlocked();
 }
 
+/// Closes the database handle if it is open. The caller must hold the mutex.
 void AnalysisCache::closeUnlocked()
 {
     if (database == nullptr) {
@@ -276,6 +289,8 @@ void AnalysisCache::closeUnlocked()
     );
 }
 
+/// Returns true when the given table already has the named column.
+/// Used for lightweight schema migrations when opening the database.
 bool AnalysisCache::columnExists(const juce::String& tableName, const juce::String& columnName) const
 {
     const auto sql = utils::format("PRAGMA table_info({});", tableName);
@@ -298,6 +313,8 @@ bool AnalysisCache::columnExists(const juce::String& tableName, const juce::Stri
     return found;
 }
 
+/// Adds every column that a database created by an older version lacks, with its default value.
+/// Returns false when a migration statement fails.
 bool AnalysisCache::addMissingColumns() const
 {
     struct ColumnMigration {
@@ -325,6 +342,8 @@ bool AnalysisCache::addMissingColumns() const
     });
 }
 
+/// Opens the database and ensures the schema is current. The caller must hold the mutex.
+/// Closes the connection again when the schema cannot be prepared, so the next call retries the open.
 bool AnalysisCache::openUnlocked()
 {
     if (database != nullptr) {
@@ -449,6 +468,8 @@ bool AnalysisCache::openUnlocked()
     return true;
 }
 
+/// Returns an independently versioned stable tag result, or a miss for stale or corrupt data.
+/// Validates file identity after the read. Unknown kinds and transient outcomes are never returned.
 std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
     const FileIdentity& identity,
     const audiobatch::serato::TagKind kind
@@ -530,6 +551,9 @@ std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
     return identity.matches(file) ? std::optional {std::move(result)} : std::nullopt;
 }
 
+/// Stores independently serialized tag data or a stable negative without requiring an analysis row.
+/// Serializes outside the database lock and checks the captured identity before writing.
+/// Returns false for stale identities, inconsistent results, transient outcomes or database failures.
 bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const audiobatch::serato::TagReadResult& result)
 {
     using namespace audiobatch::serato;
@@ -597,6 +621,7 @@ bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const audiobatc
     return completed;
 }
 
+/// Loads a cached analysis record for the given file when present and current.
 bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& record)
 {
     // The file system is queried before taking the lock, so a slow network share does not block other cache calls.
@@ -670,6 +695,10 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
     return true;
 }
 
+/// Stores the completed analysis record for a file.
+/// An existing custom gain is kept while the file is unchanged on disk,
+/// and replaced by the record's gain when the file's size or modification time differs,
+/// since a custom gain only applies to the version of the file it was set for.
 bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
 {
     const juce::ScopedLock lock(mutex);
@@ -762,6 +791,9 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     return completed;
 }
 
+/// Loads the custom gain stored for a file when the stored row has the given size and modification time,
+/// so a fresh analysis of an unchanged file keeps the gain the user set.
+/// Returns false when the file has no row, no custom gain, or the row describes another version of the file.
 bool AnalysisCache::getCustomGain(
     const juce::File& file,
     const std::int64_t fileSize,
@@ -798,6 +830,9 @@ bool AnalysisCache::getCustomGain(
     return found;
 }
 
+/// Updates only the user-controlled gain fields for a file.
+/// Returns true when a cached row was updated.
+/// A file without a cached row, such as one still waiting for its analysis, keeps no gain in the cache.
 bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGainDb, const bool hasCustomGain)
 {
     const juce::ScopedLock lock(mutex);
@@ -817,7 +852,7 @@ bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGa
         return false;
     }
 
-    sqlite3_bind_double(statement, 1, customGainDb);
+    sqlite3_bind_double(statement, 1, static_cast<double>(customGainDb));
     sqlite3_bind_int(statement, 2, hasCustomGain ? 1 : 0);
     sqlite3_bind_int64(statement, 3, juce::Time::getCurrentTime().toMilliseconds());
     bindText(statement, 4, normalizedPath(file));
@@ -828,6 +863,8 @@ bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGa
     return completed && updatedRows > 0;
 }
 
+/// Removes the analysis, waveform and all independently cached tag kinds for a file, atomically.
+/// Returns true when the operation completed.
 bool AnalysisCache::removeAnalysis(const juce::File& file)
 {
     const juce::ScopedLock lock(mutex);
@@ -862,6 +899,15 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
     return false;
 }
 
+/// Deletes the rows of files that no longer exist, for example after they were trashed or renamed.
+/// Rows whose folder is missing are kept, since that usually means an unmounted drive, not deleted files.
+/// A drive whose empty mount point folder stays behind, such as after an unclean eject,
+/// looks like deleted files in that folder, so the rows of files directly in it are removed.
+/// A row is only deleted while it still describes the version that was checked,
+/// so a file recreated in the meantime keeps its new row.
+/// The file system checks run without holding the database lock, so other cache calls are not blocked by them.
+/// Stops early, keeping the remaining rows, when shouldStop returns true.
+/// Returns the number of deleted rows across analysis and tag tables, including tag-only files.
 int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
 {
     /// One cached row, identified by path and the file version it describes.
@@ -935,6 +981,8 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
     return removedRows;
 }
 
+/// Deletes an analysis row, or the specified tag kind, only while its checked size and time still match.
+/// Returns true when a row was deleted.
 bool AnalysisCache::removeRowVersion(
     const juce::String& path,
     const std::int64_t fileSize,
@@ -970,6 +1018,7 @@ bool AnalysisCache::removeRowVersion(
     return completed && sqlite3_changes(database) > 0;
 }
 
+/// Loads cached thumbnail waveform data for the given file when available.
 bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& waveformData)
 {
     // The file system is queried before taking the lock, so a slow network share does not block other cache calls.
@@ -1018,6 +1067,7 @@ bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& w
     return waveformData.getSize() > 0;
 }
 
+/// Stores serialized waveform preview data for a file.
 bool AnalysisCache::storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData)
 {
     // The file system is queried before taking the lock, so a slow network share does not block other cache calls.

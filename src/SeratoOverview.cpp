@@ -47,6 +47,20 @@ Overview copySlices(std::span<const std::uint8_t> bands)
 }
 }  // namespace
 
+/// Parses the binary payload after the enclosing GEOB or FLAC wrapper has been removed.
+/// Offsets and lengths below are hexadecimal. The final row illustrates a 240-slice payload.
+///
+/// | Offset | Length | Raw value     | Type         | Description                           |
+/// | ------ | ------ | ------------- | ------------ | ------------------------------------- |
+/// | 0x0000 | 0x0002 | 01 05         | two bytes    | Supported header, meaning unspecified |
+/// | 0x0002 | 0x0010 | sixteen bytes | 16 * uint8_t | Palette indices for time slice 0      |
+/// | 0x0012 | 0x0010 | sixteen bytes | 16 * uint8_t | Palette indices for time slice 1      |
+/// | ...    | ...    | ...           | ...          | Subsequent consecutive time slices    |
+/// | 0x0ef2 | 0x0010 | sixteen bytes | 16 * uint8_t | Palette indices for time slice 239    |
+///
+/// A payload with N slices occupies 2 + 16 * N bytes, or 3842 bytes for 240 slices.
+/// Accepts header 01 05 and one to maxSlices complete slices, rejecting tails and unknown headers.
+/// The returned slices own their data independently of the input buffer.
 std::optional<Overview> Overview::parse(std::span<const std::uint8_t> bytes)
 {
     if (bytes.size() < payloadHeader.size() + bandCount || bytes.size() > maxPayloadBytes
@@ -58,6 +72,8 @@ std::optional<Overview> Overview::parse(std::span<const std::uint8_t> bytes)
     return copySlices(bytes.subspan(payloadHeader.size()));
 }
 
+/// Encodes magic, kind, parser version and count as big-endian fields followed by raw palette indices.
+/// Returns an empty block when the public slice vector is empty or exceeds maxSlices.
 juce::MemoryBlock Overview::serialize() const
 {
     if (slices.empty() || slices.size() > maxSlices) {
@@ -75,6 +91,8 @@ juce::MemoryBlock Overview::serialize() const
     return output;
 }
 
+/// Validates the complete numeric cache representation before allocating owned slices.
+/// Unknown magic, kind, version, count or an inexact length is a cache miss.
 std::optional<Overview> Overview::deserialize(std::span<const std::uint8_t> bytes)
 {
     if (bytes.size() < cacheHeaderBytes || !std::ranges::equal(bytes.first(cacheMagic.size()), cacheMagic)

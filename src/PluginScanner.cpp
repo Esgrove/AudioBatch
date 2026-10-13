@@ -36,6 +36,8 @@ static juce::MemoryBlock createScanRequest(const juce::String& formatName, const
 
 using namespace audiobatch::plugin_scanner;
 
+/// Returns true when the command line launches this executable as a plugin scan worker.
+/// Uses the same check as ChildProcessWorker: the worker prefix must start the command line.
 bool isPluginScanWorkerCommandLine(const juce::String& commandLine)
 {
     // ChildProcessCoordinator passes "--<uid>:<pipe name>" as the first argument.
@@ -44,11 +46,17 @@ bool isPluginScanWorkerCommandLine(const juce::String& commandLine)
     return commandLine.trim().startsWith(utils::format("--{}:", pluginScanWorkerProcessUid));
 }
 
+/// Returns the KnownPlugins.xml file next to the AudioBatch settings file.
+/// The known-plugins list lives in its own file instead of the settings,
+/// so the GUI and the CLI can each update it without overwriting the other one's settings.
 juce::File getKnownPluginListFile()
 {
     return utils::createApplicationSettingsOptions().getDefaultFile().getSiblingFile(knownPluginListFileName);
 }
 
+/// Restores the known-plugins list from KnownPlugins.xml.
+/// When that file does not exist yet, reads the list stored in the settings by older versions instead.
+/// Leaves the list unchanged when nothing has been stored.
 void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList)
 {
     if (const auto file = getKnownPluginListFile(); file.existsAsFile()) {
@@ -68,6 +76,9 @@ void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPlugin
     }
 }
 
+/// Writes the known-plugins list, including blacklisted plugins, to KnownPlugins.xml.
+/// The file is replaced atomically, so a concurrent reader never sees a partial list.
+/// Returns false and logs an error when the file could not be written.
 bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList)
 {
     const auto xml = knownPluginList.createXml();
@@ -83,6 +94,9 @@ bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList)
     return true;
 }
 
+/// Moves a known-plugins list stored in the settings by older versions into KnownPlugins.xml,
+/// and removes it from the settings.
+/// Only the GUI calls this, since it owns the settings file.
 void migrateKnownPluginList(juce::PropertiesFile& settings)
 {
     if (!settings.containsKey(legacyKnownPluginListPropertyKey)) {
@@ -105,6 +119,8 @@ void migrateKnownPluginList(juce::PropertiesFile& settings)
     settings.saveIfNeeded();
 }
 
+/// Returns the dead man's pedal file that records the plugin being scanned,
+/// so a plugin that crashed a scan is blacklisted on the next one.
 juce::File getPluginScanCrashLogFile()
 {
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile(crashLogFileName);
@@ -112,22 +128,30 @@ juce::File getPluginScanCrashLogFile()
 
 //==============================================================================
 
+/// Creates the worker with the default plugin formats.
+/// The connection-lost callback runs when the main process goes away or finishes scanning,
+/// and should shut the worker process down.
 PluginScanWorker::PluginScanWorker(std::function<void()> connectionLostCallback) :
     onConnectionLost(std::move(connectionLostCallback))
 {
     juce::addDefaultFormatsToManager(formatManager);
 }
 
+/// Cancels any pending scan dispatch before the worker is destroyed.
 PluginScanWorker::~PluginScanWorker()
 {
     cancelPendingUpdate();
 }
 
+/// Connects to the main process when the command line identifies a scan worker.
+/// Returns false for any other command line, in which case the worker does nothing.
 bool PluginScanWorker::initialiseFromCommandLine(const juce::String& commandLine)
 {
     return ChildProcessWorker::initialiseFromCommandLine(commandLine, pluginScanWorkerProcessUid);
 }
 
+/// Queues a scan request and schedules it on the message thread.
+/// Called on the connection thread.
 void PluginScanWorker::handleMessageFromCoordinator(const juce::MemoryBlock& message)
 {
     if (message.isEmpty()) {
@@ -142,6 +166,7 @@ void PluginScanWorker::handleMessageFromCoordinator(const juce::MemoryBlock& mes
     triggerAsyncUpdate();
 }
 
+/// Invokes the connection-lost callback so the worker process can exit.
 void PluginScanWorker::handleConnectionLost()
 {
     if (onConnectionLost != nullptr) {
@@ -149,6 +174,9 @@ void PluginScanWorker::handleConnectionLost()
     }
 }
 
+/// Runs queued scan requests on the message thread and sends the results back.
+/// Scanning must happen on the message thread, because copy-protected plugins (for example PACE / iLok wrapped VST3s)
+/// dispatch licensing work to the main thread while their factory is being enumerated.
 void PluginScanWorker::handleAsyncUpdate()
 {
     for (;;) {
@@ -168,6 +196,7 @@ void PluginScanWorker::handleAsyncUpdate()
     }
 }
 
+/// Loads the requested plugin file and returns the plugin descriptions it contains.
 juce::OwnedArray<juce::PluginDescription> PluginScanWorker::scan(const juce::MemoryBlock& request) const
 {
     juce::MemoryInputStream stream(request, false);
@@ -189,6 +218,7 @@ juce::OwnedArray<juce::PluginDescription> PluginScanWorker::scan(const juce::Mem
     return results;
 }
 
+/// Serializes the descriptions as XML and sends them to the main process.
 void PluginScanWorker::sendResults(const juce::OwnedArray<juce::PluginDescription>& results)
 {
     juce::XmlElement xml(resultsXmlTag);
@@ -297,6 +327,10 @@ private:
     JUCE_LEAK_DETECTOR(WorkerProcess)
 };
 
+/// Creates the scanner without starting a worker.
+/// The worker process is launched on the first scan request, and relaunched after a crash or a cancelled scan.
+/// The optional callbacks let the owner coordinate the scan with other processes,
+/// for example through a PluginScanLock.
 OutOfProcessPluginScanner::OutOfProcessPluginScanner(
     ScanStartingCallback scanStartingCallback,
     ScanFinishedCallback scanFinishedCallback
@@ -305,8 +339,12 @@ OutOfProcessPluginScanner::OutOfProcessPluginScanner(
     onScanFinished(std::move(scanFinishedCallback))
 {}
 
+/// Stops the worker process, if one is running.
 OutOfProcessPluginScanner::~OutOfProcessPluginScanner() = default;
 
+/// Scans one plugin file in the worker process and adds the descriptions it found.
+/// Blocks until the worker replies, the worker process dies, or the scan is cancelled.
+/// Returns false only when the worker crashed, which makes KnownPluginList blacklist the plugin.
 bool OutOfProcessPluginScanner::findPluginTypesFor(
     juce::AudioPluginFormat& format,
     juce::OwnedArray<juce::PluginDescription>& result,
@@ -375,6 +413,7 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
     }
 }
 
+/// Stops the worker process once the scan has finished and invokes the scan-finished callback.
 void OutOfProcessPluginScanner::scanFinished()
 {
     worker.reset();
@@ -389,11 +428,15 @@ void OutOfProcessPluginScanner::scanFinished()
 
 //==============================================================================
 
+/// Releases the lock if it is held.
 PluginScanLock::~PluginScanLock()
 {
     release();
 }
 
+/// Tries to take the lock without waiting.
+/// Returns false when another process is scanning.
+/// Taking a lock that is already held by this object succeeds.
 bool PluginScanLock::tryAcquire()
 {
     if (!held) {
@@ -403,6 +446,7 @@ bool PluginScanLock::tryAcquire()
     return held;
 }
 
+/// Releases the lock if it is held.
 void PluginScanLock::release()
 {
     if (held) {

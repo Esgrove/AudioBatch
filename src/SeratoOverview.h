@@ -25,35 +25,17 @@ inline constexpr std::uint32_t overviewParserVersion = 1;
 /// skips background cells and leaves the reserved palette unverified.
 /// The raster provides neither finer spectral detail on zoom nor separate left and right channel data.
 struct Overview {
+    [[nodiscard]] static std::optional<Overview> parse(std::span<const std::uint8_t> bytes);
+
+    [[nodiscard]] juce::MemoryBlock serialize() const;
+
+    [[nodiscard]] static std::optional<Overview> deserialize(std::span<const std::uint8_t> bytes);
+
     /// Number of vertical raster cells, retaining the existing serialized column layout.
     static constexpr std::size_t bandCount = 16;
     static constexpr std::size_t maxSlices = 65536;
     static constexpr std::size_t maxPayloadBytes = 2 + maxSlices * bandCount;
 
     std::vector<std::array<std::uint8_t, bandCount>> slices;
-
-    /// Parses the binary payload after the enclosing GEOB or FLAC wrapper has been removed.
-    /// Offsets and lengths below are hexadecimal. The final row illustrates a 240-slice payload.
-    ///
-    /// | Offset | Length | Raw value     | Type         | Description                           |
-    /// | ------ | ------ | ------------- | ------------ | ------------------------------------- |
-    /// | 0x0000 | 0x0002 | 01 05         | two bytes    | Supported header, meaning unspecified |
-    /// | 0x0002 | 0x0010 | sixteen bytes | 16 * uint8_t | Palette indices for time slice 0      |
-    /// | 0x0012 | 0x0010 | sixteen bytes | 16 * uint8_t | Palette indices for time slice 1      |
-    /// | ...    | ...    | ...           | ...          | Subsequent consecutive time slices    |
-    /// | 0x0ef2 | 0x0010 | sixteen bytes | 16 * uint8_t | Palette indices for time slice 239    |
-    ///
-    /// A payload with N slices occupies 2 + 16 * N bytes, or 3842 bytes for 240 slices.
-    /// Accepts header 01 05 and one to maxSlices complete slices, rejecting tails and unknown headers.
-    /// The returned slices own their data independently of the input buffer.
-    [[nodiscard]] static std::optional<Overview> parse(std::span<const std::uint8_t> bytes);
-
-    /// Encodes magic, kind, parser version and count as big-endian fields followed by raw palette indices.
-    /// Returns an empty block when the public slice vector is empty or exceeds maxSlices.
-    [[nodiscard]] juce::MemoryBlock serialize() const;
-
-    /// Validates the complete numeric cache representation before allocating owned slices.
-    /// Unknown magic, kind, version, count or an inexact length is a cache miss.
-    [[nodiscard]] static std::optional<Overview> deserialize(std::span<const std::uint8_t> bytes);
 };
 }  // namespace audiobatch::serato

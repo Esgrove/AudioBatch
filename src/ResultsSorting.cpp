@@ -13,10 +13,13 @@
 #include <concepts>
 #include <utility>
 
+/// Stores the callback invoked when a column is clicked with ctrl or cmd held down.
 SecondarySortTableHeader::SecondarySortTableHeader(SecondarySortCallback secondarySortRequestedCallback) :
     secondarySortRequested(std::move(secondarySortRequestedCallback))
 {}
 
+/// Routes ctrl or cmd clicks to the secondary sort callback,
+/// while plain clicks fall through to the normal primary sort behaviour.
 void SecondarySortTableHeader::columnClicked(const int columnId, const juce::ModifierKeys& modifiers)
 {
     if ((modifiers.isCtrlDown() || modifiers.isCommandDown()) && secondarySortRequested != nullptr) {
@@ -27,6 +30,8 @@ void SecondarySortTableHeader::columnClicked(const int columnId, const juce::Mod
     juce::TableHeaderComponent::columnClicked(columnId, modifiers);
 }
 
+/// Appends a textual secondary sort marker to the given column's name and restores the base name of every other column.
+/// Passing a column id of zero clears the indicator entirely.
 void SecondarySortTableHeader::setSecondarySortIndicator(const int columnId, const bool isForwards)
 {
     if (baseColumnNames.empty()) {
@@ -49,6 +54,7 @@ void SecondarySortTableHeader::setSecondarySortIndicator(const int columnId, con
     repaint();
 }
 
+/// Captures the original column names once, so indicator suffixes can be re-applied without accumulating in the names.
 void SecondarySortTableHeader::cacheBaseColumnNames()
 {
     const auto columnCount = getNumColumns(false);
@@ -125,6 +131,9 @@ static int compareLoudness(const double left, const double right)
     return compareValues(left, right);
 }
 
+/// Returns a negative, zero, or positive value as lhs sorts before, with, or after rhs in the given table column.
+/// Peaks compare by magnitude, silent loudness sorts below every measurable value,
+/// and unknown column ids compare by overall peak.
 int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, const int columnId)
 {
     switch (columnId) {
@@ -179,6 +188,9 @@ int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
     }
 }
 
+/// Sorts the records for the results table.
+/// Failed records always come last, then the primary and secondary columns decide,
+/// and the file name and path break any remaining ties so the order is stable.
 void sortRecords(std::vector<AudioAnalysisRecord>& records, const SortState& state)
 {
     std::ranges::sort(records, [&state](const auto& lhs, const auto& rhs) {
@@ -217,6 +229,8 @@ void sortRecords(std::vector<AudioAnalysisRecord>& records, const SortState& sta
     });
 }
 
+/// Returns the table's header downcast to SecondarySortTableHeader.
+/// The table must have been created with that header type.
 SecondarySortTableHeader& getSecondarySortHeader(const juce::TableListBox& table)
 {
     return dynamic_cast<SecondarySortTableHeader&>(table.getHeader());

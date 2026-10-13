@@ -65,11 +65,14 @@ static PluginDescriptorRef makeDescriptorRef(const juce::PluginDescription& desc
 
 using namespace audiobatch::plugin_chain;
 
+/// Formats a plugin description as "Manufacturer Name (Format)" for chain editor rows, menus, and log messages.
 juce::String formatPluginDescription(const juce::PluginDescription& description)
 {
     return utils::format("{} {} ({})", description.manufacturerName, description.name, description.pluginFormatName);
 }
 
+/// Registers the default plugin formats and restores the known-plugins list
+/// and the persisted chain from application settings.
 PluginChain::PluginChain(juce::ApplicationProperties& applicationProperties) : appProperties(applicationProperties)
 {
     juce::addDefaultFormatsToManager(formatManager);
@@ -88,6 +91,7 @@ PluginChain::PluginChain(juce::ApplicationProperties& applicationProperties) : a
     loadPersistedChain();
 }
 
+/// Closes all editor, chain-editor, and scan windows and destroys their plugin instances.
 PluginChain::~PluginChain()
 {
     stopTimer();
@@ -106,11 +110,13 @@ PluginChain::~PluginChain()
     }
 }
 
+/// Returns the number of slots in the chain, including disabled ones.
 int PluginChain::getNumSlots() const noexcept
 {
     return static_cast<int>(chain.size());
 }
 
+/// Returns the number of enabled slots that identify a valid plugin.
 int PluginChain::getNumEnabledValidSlots() const noexcept
 {
     int count = 0;
@@ -123,6 +129,7 @@ int PluginChain::getNumEnabledValidSlots() const noexcept
     return count;
 }
 
+/// Returns the plugin description for the given slot, or an empty description when out of range.
 juce::PluginDescription PluginChain::getSlotDescription(const int index) const
 {
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
@@ -132,6 +139,7 @@ juce::PluginDescription PluginChain::getSlotDescription(const int index) const
     return chain[static_cast<std::size_t>(index)].description;
 }
 
+/// Returns true when the given slot exists and is enabled.
 bool PluginChain::isSlotEnabled(const int index) const
 {
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
@@ -141,6 +149,8 @@ bool PluginChain::isSlotEnabled(const int index) const
     return chain[static_cast<std::size_t>(index)].enabled;
 }
 
+/// Returns the enabled plugins in chain order.
+/// Captures live state from any open editor windows first, so a processing run always uses the latest tweaks.
 std::vector<PluginChain::EnabledChainPlugin> PluginChain::getEnabledPlugins()
 {
     // Capture live state from open editors so a processing run uses the latest tweaks.
@@ -160,6 +170,10 @@ std::vector<PluginChain::EnabledChainPlugin> PluginChain::getEnabledPlugins()
     return plugins;
 }
 
+/// Creates one chain of instances of the enabled plugins per worker, for a processing run.
+/// Must run on the message thread.
+/// Stops at the first plugin that fails, since a chain missing any plugin must not run.
+/// Captures the initial state of each plugin from the first chain.
 PluginChain::ChainInstantiation PluginChain::instantiateChains(
     const std::vector<EnabledChainPlugin>& enabledPlugins,
     const int workerCount
@@ -201,6 +215,8 @@ PluginChain::ChainInstantiation PluginChain::instantiateChains(
     return instantiation;
 }
 
+/// Returns a short human-readable summary of the chain for menu headers,
+/// with disabled slots in parentheses, or an empty string when the chain is empty.
 juce::String PluginChain::getChainSummary() const
 {
     if (chain.empty()) {
@@ -221,11 +237,13 @@ juce::String PluginChain::getChainSummary() const
     return summary;
 }
 
+/// Invoked whenever the chain (order, slots, enabled flags, or persisted state) changes.
 void PluginChain::setChainChangedCallback(ChainChangedCallback callback)
 {
     chainChangedCallback = std::move(callback);
 }
 
+/// Persists the known-plugins list whenever the plugin scanner updates it.
 void PluginChain::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
     if (source == &knownPluginList) {
@@ -233,6 +251,9 @@ void PluginChain::changeListenerCallback(juce::ChangeBroadcaster* source)
     }
 }
 
+/// Polls for editor windows the user has closed, capturing their plugin state and releasing their instances.
+/// A window hidden by its close button counts as closed, because the dialog hides itself instead of deleting itself.
+/// Stops itself once no editor windows remain open.
 void PluginChain::timerCallback()
 {
     // Watch for the user closing editor windows so we can capture plugin state.
@@ -254,11 +275,16 @@ void PluginChain::timerCallback()
     }
 }
 
+/// Returns true when the entry's editor window has been closed by the user.
+/// The dialog window hides itself when its close button is pressed instead of deleting itself,
+/// so a hidden window also counts as closed.
 bool PluginChain::isEditorWindowClosed(const ChainEntry& entry)
 {
     return entry.editorWindow == nullptr || !entry.editorWindow->isVisible();
 }
 
+/// Captures plugin state from a closed editor into its entry, then destroys the window and the instance.
+/// Returns true when plugin state was captured.
 bool PluginChain::reapClosedEditor(ChainEntry& entry)
 {
     entry.wasEditorOpen = false;
@@ -278,6 +304,8 @@ bool PluginChain::reapClosedEditor(ChainEntry& entry)
     return stateCaptured;
 }
 
+/// Pops up the plugin menu anchored to the given component.
+/// The menu includes the chain summary, Edit Chain, the Add Plugin submenu, Clear Chain, and a Scan entry.
 void PluginChain::showMenu(juce::Component& anchor)
 {
     juce::PopupMenu menu;
@@ -330,6 +358,7 @@ void PluginChain::showMenu(juce::Component& anchor)
     );
 }
 
+/// Appends the given plugin to the chain as an enabled slot and opens its editor.
 void PluginChain::addPlugin(const juce::PluginDescription& description)
 {
     ChainEntry entry;
@@ -343,6 +372,7 @@ void PluginChain::addPlugin(const juce::PluginDescription& description)
     openEditorForSlot(getNumSlots() - 1);
 }
 
+/// Removes the given slot from the chain, closing its editor window if open.
 void PluginChain::removeSlot(const int index)
 {
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
@@ -361,6 +391,7 @@ void PluginChain::removeSlot(const int index)
     notifyChainChanged();
 }
 
+/// Moves a slot to a new position in the chain.
 void PluginChain::moveSlot(const int fromIndex, const int toIndex)
 {
     const auto numSlots = getNumSlots();
@@ -381,6 +412,7 @@ void PluginChain::moveSlot(const int fromIndex, const int toIndex)
     notifyChainChanged();
 }
 
+/// Enables or disables the given slot without removing it from the chain.
 void PluginChain::setSlotEnabled(const int index, const bool enabled)
 {
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
@@ -397,6 +429,7 @@ void PluginChain::setSlotEnabled(const int index, const bool enabled)
     notifyChainChanged();
 }
 
+/// Removes all slots from the chain, closing any open editor windows.
 void PluginChain::clearChain()
 {
     if (chain.empty()) {
@@ -414,6 +447,8 @@ void PluginChain::clearChain()
     notifyChainChanged();
 }
 
+/// Opens the editor window for the given slot.
+/// Multiple slot editors can be open at the same time.
 void PluginChain::openEditorForSlot(const int index)
 {
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
@@ -431,8 +466,7 @@ void PluginChain::openEditorForSlot(const int index)
         return;
     }
 
-    // A window the user closed is only hidden, not deleted,
-    // and the polling timer may not have reaped it yet.
+    // A window the user closed is only hidden, not deleted, and the polling timer may not have reaped it yet.
     // Capture its state and destroy it now so a fresh editor can open below.
     if (entry.wasEditorOpen && reapClosedEditor(entry)) {
         persistChain();
@@ -489,6 +523,7 @@ void PluginChain::openEditorForSlot(const int index)
     }
 }
 
+/// Opens the chain editor window for adding, reordering, enabling, and removing plugins.
 void PluginChain::showChainEditor()
 {
     if (chainEditorWindow != nullptr) {
@@ -517,6 +552,8 @@ void PluginChain::showChainEditor()
     }
 }
 
+/// Opens the plugin scan dialog.
+/// Reloads the known-plugins list from disk first, so changes from a CLI rescan are kept.
 void PluginChain::showScanWindow()
 {
     // Pick up changes from a CLI rescan since the list was loaded,
@@ -566,6 +603,7 @@ void PluginChain::showScanWindow()
     }
 }
 
+/// Captures live plugin state from every open editor into its entry without closing anything.
 void PluginChain::captureOpenEditorStates()
 {
     for (auto& entry : chain) {
@@ -580,6 +618,7 @@ void PluginChain::captureOpenEditorStates()
     }
 }
 
+/// Closes the given entry's editor window and destroys its instance without capturing state.
 void PluginChain::closeEditorForEntry(ChainEntry& entry)
 {
     if (entry.editorWindow != nullptr) {
@@ -590,11 +629,13 @@ void PluginChain::closeEditorForEntry(ChainEntry& entry)
     entry.wasEditorOpen = false;
 }
 
+/// Returns true when any entry still has an editor window open.
 bool PluginChain::anyEditorOpen() const noexcept
 {
     return std::ranges::any_of(chain, [](const auto& entry) { return entry.wasEditorOpen; });
 }
 
+/// Decodes a base64 plugin state onto the entry, leaving the state empty when the text is not valid base64.
 void PluginChain::restoreState(ChainEntry& entry, const juce::String& stateBase64)
 {
     if (stateBase64.isEmpty()) {
@@ -607,6 +648,7 @@ void PluginChain::restoreState(ChainEntry& entry, const juce::String& stateBase6
     }
 }
 
+/// Parses one stored chain slot, or returns an empty optional when its plugin description cannot be loaded.
 std::optional<PluginChain::ChainEntry> PluginChain::parseSlot(const juce::XmlElement& slotElement)
 {
     const auto* descriptionElement = slotElement.getFirstChildElement();
@@ -624,6 +666,7 @@ std::optional<PluginChain::ChainEntry> PluginChain::parseSlot(const juce::XmlEle
     return entry;
 }
 
+/// Parses a legacy single-plugin selection, or returns an empty optional when its description cannot be loaded.
 std::optional<PluginChain::ChainEntry> PluginChain::parseLegacyEntry(
     const juce::String& pluginXml,
     const juce::String& stateBase64
@@ -643,6 +686,9 @@ std::optional<PluginChain::ChainEntry> PluginChain::parseLegacyEntry(
     return entry;
 }
 
+/// Restores the chain from application settings.
+/// When no chain is stored, migrates a legacy single-plugin selection into a one-slot chain
+/// and removes the legacy keys.
 void PluginChain::loadPersistedChain()
 {
     auto* settings = appProperties.getUserSettings();
@@ -684,6 +730,7 @@ void PluginChain::loadPersistedChain()
     settings->saveIfNeeded();
 }
 
+/// Writes the chain to application settings, capturing the latest state from any open editors first.
 void PluginChain::persistChain()
 {
     auto* settings = appProperties.getUserSettings();
@@ -724,12 +771,15 @@ void PluginChain::persistChain()
     settings->saveIfNeeded();
 }
 
+/// Writes the known-plugins list to its KnownPlugins.xml file.
 void PluginChain::persistKnownPluginList() const
 {
     // Failures are logged by saveKnownPluginList, and the in-memory list stays usable.
     [[maybe_unused]] const auto saved = saveKnownPluginList(knownPluginList);
 }
 
+/// Restores the known-plugins list from its KnownPlugins.xml file,
+/// first moving a list stored in the settings by older versions into that file.
 void PluginChain::loadKnownPluginList()
 {
     auto* settings = appProperties.getUserSettings();
@@ -741,6 +791,9 @@ void PluginChain::loadKnownPluginList()
     ::loadKnownPluginList(*settings, knownPluginList);
 }
 
+/// Prepares a scan from the plugin manager before its first plugin is loaded.
+/// Takes the plugin scan lock and reloads the known-plugins list, so the scan builds on the latest saved list.
+/// Returns false, and tells the user, when another process such as a CLI rescan is scanning.
 bool PluginChain::beginPluginScan()
 {
     if (!pluginScanLock.tryAcquire()) {
@@ -763,6 +816,7 @@ bool PluginChain::beginPluginScan()
     return true;
 }
 
+/// Broadcasts a change message and invokes the chain-changed callback, if one is set.
 void PluginChain::notifyChainChanged()
 {
     sendChangeMessage();

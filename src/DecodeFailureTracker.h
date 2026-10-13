@@ -19,9 +19,6 @@
 class DecodeFailureTracker
 {
 public:
-    /// Number of consecutive failed blocks, outside the final block, after which decoding stops.
-    static constexpr int maximumConsecutiveFailures = 3;
-
     /// Creates a tracker for a stream with the given length in samples.
     explicit DecodeFailureTracker(const juce::int64 streamLength) noexcept : totalSamples(streamLength) {}
 
@@ -84,6 +81,9 @@ public:
     {
         return utils::format("Audio decoding failed at sample {} of {}", stoppedAt, totalSamples);
     }
+
+    /// Number of consecutive failed blocks, outside the final block, after which decoding stops.
+    static constexpr int maximumConsecutiveFailures = 3;
 
 private:
     juce::int64 totalSamples;

@@ -415,6 +415,7 @@ std::uint32_t legacyNumber(std::span<const std::uint8_t> bytes)
 }
 }  // namespace
 
+/// Strictly parses a finite ASCII number without locale dependence or ignored trailing text.
 std::optional<double> parseTagNumber(std::string_view text)
 {
     while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
@@ -446,6 +447,8 @@ std::optional<double> parseTagNumber(std::string_view text)
     return value;
 }
 
+/// Decodes bounded ASCII Base64, allowing whitespace and omitted padding.
+/// The optional Serato workaround accepts the documented one-character remainder only for Markers2.
 std::optional<juce::MemoryBlock> decodeTagBase64(std::span<const std::uint8_t> bytes, bool markersWorkaround)
 {
     if (bytes.size() > maxEncodedBytes) {
@@ -492,12 +495,14 @@ std::optional<juce::MemoryBlock> decodeTagBase64(std::span<const std::uint8_t> b
     return output.getMemoryBlock();
 }
 
+/// Parses the two-byte Serato analysis version, rejecting truncated or extended payloads.
 std::optional<Analysis> parseAnalysis(std::span<const std::uint8_t> bytes)
 {
     return bytes.size() == 2 ? std::optional(Analysis {.majorVersion = bytes[0], .minorVersion = bytes[1]})
                              : std::nullopt;
 }
 
+/// Parses fixed-width ASCII tempo and gain fields with a supported version header.
 std::optional<Autotags> parseAutotags(std::span<const std::uint8_t> bytes)
 {
     if ((bytes.size() != gainOffset && bytes.size() != fullAutotagsBytes) || bytes[0] != 1 || bytes[1] != 1) {
@@ -512,6 +517,7 @@ std::optional<Autotags> parseAutotags(std::span<const std::uint8_t> bytes)
     return Autotags {.bpm = *bpm, .autoGain = *autoGain, .gain = *gain};
 }
 
+/// Parses counted big-endian grid anchors and the opaque footer. Only the final anchor carries BPM.
 std::optional<BeatGrid> parseBeatGrid(std::span<const std::uint8_t> bytes)
 {
     if (bytes.size() < gridHeaderBytes || bytes.size() > maxTagPayloadBytes || bytes[0] != 1 || bytes[1] != 0) {
@@ -548,6 +554,7 @@ std::optional<BeatGrid> parseBeatGrid(std::span<const std::uint8_t> bytes)
     return grid;
 }
 
+/// Parses the Markers2 envelope and known records, skipping bounded unknown records by their lengths.
 std::optional<Markers> parseMarkers2(std::span<const std::uint8_t> bytes)
 {
     if (bytes.size() < 3 || bytes.size() > maxTagPayloadBytes || bytes[0] != 1 || bytes[1] != 1) {
@@ -567,6 +574,7 @@ std::optional<Markers> parseMarkers2(std::span<const std::uint8_t> bytes)
     return readMarkerBody(payload);
 }
 
+/// Parses the fixed legacy fourteen-slot layout as a fallback, without inventing cue names or BPM lock.
 std::optional<Markers> parseLegacyMarkers(std::span<const std::uint8_t> bytes)
 {
     constexpr auto expected = gridHeaderBytes + legacyCount * legacyRecordBytes + sizeof(std::uint32_t);
@@ -614,6 +622,7 @@ std::optional<Markers> parseLegacyMarkers(std::span<const std::uint8_t> bytes)
     return markers;
 }
 
+/// Dispatches a stripped GEOB payload. Invalid data affects only the requested kind.
 TagReadResult parseTagPayload(TagKind kind, std::span<const std::uint8_t> bytes, bool legacyMarkers)
 {
     TagReadResult result;
@@ -708,6 +717,8 @@ bool writeCachePayload(juce::MemoryOutputStream& payload, const TagReadResult& r
 }
 }  // namespace
 
+/// Encodes a present result using a bounded, versioned numeric representation.
+/// Overview delegates to its existing serializer. Invalid or mismatched public values return an empty block.
 juce::MemoryBlock serializeTag(const TagReadResult& result)
 {
     const auto values = static_cast<unsigned int>(result.overview.has_value())
@@ -738,6 +749,8 @@ juce::MemoryBlock serializeTag(const TagReadResult& result)
     return deserializeTag(result.kind, block) ? block : juce::MemoryBlock();
 }
 
+/// Validates kind, version, exact length, counts, UTF-8 and finite numeric values before returning owned data.
+/// Overview delegates to its existing deserializer. Corrupt data is a cache miss.
 std::optional<TagReadResult> deserializeTag(TagKind kind, const juce::MemoryBlock& block)
 {
     const std::span bytes {static_cast<const std::uint8_t*>(block.getData()), block.getSize()};

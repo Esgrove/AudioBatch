@@ -13,11 +13,15 @@
 
 using namespace audiobatch::gui;
 
+/// Forwards key presses from the results table to the main shortcut handler.
 bool AudioBatchComponent::keyPressed(const juce::KeyPress& key, juce::Component* /*originator*/)
 {
     return keyPressed(key);
 }
 
+/// Handles the application shortcuts for trash, remove, reveal, play/stop, and rescan.
+/// Command or Ctrl with Backspace moves the selection to the trash,
+/// and Delete or Backspace without those modifiers removes it from the list.
 bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
 {
     const auto modifiers = key.getModifiers();
@@ -53,6 +57,9 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
     return false;
 }
 
+/// Removes every analyzed file from the table without touching the files on disk.
+/// Cancels a running analysis, and is refused while files are normalized or processed,
+/// since their results would add rows back.
 void AudioBatchComponent::clearAllRecords()
 {
     if (analysisResults.empty()) {
@@ -89,6 +96,8 @@ void AudioBatchComponent::clearAllRecords()
     updateProcessButtonState();
 }
 
+/// Removes the currently selected files from the table without touching the files on disk.
+/// Files that are being normalized or processed stay in the table.
 void AudioBatchComponent::removeSelectedRecords()
 {
     auto selectedPaths = getSelectedRecordPaths();
@@ -109,6 +118,8 @@ void AudioBatchComponent::removeSelectedRecords()
     removeRecordsByPath(selectedPaths, fallbackRow);
 }
 
+/// Forces re-analysis of the currently selected files, bypassing the analysis cache.
+/// Refused while analysis, normalization, or plugin processing is running.
 void AudioBatchComponent::reanalyzeSelectedRecords()
 {
     if (isAnalysisInProgress() || isFileOperationInProgress()) {
@@ -124,6 +135,7 @@ void AudioBatchComponent::reanalyzeSelectedRecords()
     startAnalysis(selectedFiles, false, true, false);
 }
 
+/// Shows which file types can be normalized in the current build.
 void AudioBatchComponent::showSupportedNormalizationFormats()
 {
     juce::AlertWindow::showAsync(
@@ -138,6 +150,7 @@ void AudioBatchComponent::showSupportedNormalizationFormats()
     );
 }
 
+/// Selects the clicked row and opens the per-file action menu.
 void AudioBatchComponent::handleFileContextMenuRequested(const int row, int columnId, const juce::MouseEvent& event)
 {
     juce::ignoreUnused(columnId);
@@ -153,6 +166,7 @@ void AudioBatchComponent::handleFileContextMenuRequested(const int row, int colu
     showFileContextMenu(row, event.getScreenPosition());
 }
 
+/// Shows the context menu for the given row at the supplied screen position.
 void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<int> screenPosition)
 {
     if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
@@ -191,8 +205,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
         juce::PopupMenu::Options()
             .withTargetScreenArea(juce::Rectangle(screenPosition.x, screenPosition.y, 1, 1))
             .withParentComponent(this),
-        // The file is captured instead of the row,
-        // because results arriving while the menu is open re-sort the table.
+        // The file is captured instead of the row, because results arriving while the menu is open re-sort the table.
         [safeThis, file = record.file](const int result) {
             if (safeThis == nullptr) {
                 return;
@@ -234,6 +247,9 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     );
 }
 
+/// Reveals the file of the selected row in the platform file manager.
+/// With several rows selected, the row shown in the info panel is used.
+/// Does nothing when no row is selected.
 void AudioBatchComponent::revealSelectedRecord() const
 {
     const auto selectedRows = resultsTable.getSelectedRows();
@@ -245,6 +261,7 @@ void AudioBatchComponent::revealSelectedRecord() const
     }
 }
 
+/// Reveals the file in the platform file manager, or its parent folder when the file no longer exists.
 void AudioBatchComponent::revealFileInFileManager(const juce::File& file)
 {
     if (file.exists()) {
@@ -254,6 +271,7 @@ void AudioBatchComponent::revealFileInFileManager(const juce::File& file)
     }
 }
 
+/// Opens the file's parent folder in the platform file manager.
 void AudioBatchComponent::revealParentDirectory(const juce::File& file)
 {
     if (const auto parentDirectory = file.getParentDirectory(); parentDirectory.isDirectory()) {
@@ -261,6 +279,10 @@ void AudioBatchComponent::revealParentDirectory(const juce::File& file)
     }
 }
 
+/// Moves the selected files to the OS trash, optionally asking for confirmation first.
+/// The rows of the files that were trashed are removed from the table.
+/// Files that are being normalized or processed are skipped,
+/// because the running operation would write its output back to the same path.
 void AudioBatchComponent::moveSelectedRecordsToTrash(const bool promptForConfirmation)
 {
     const auto selectedRows = resultsTable.getSelectedRows();
@@ -317,6 +339,7 @@ void AudioBatchComponent::moveSelectedRecordsToTrash(const bool promptForConfirm
     );
 }
 
+/// Executes the trash operation and reports any failures back to the user.
 void AudioBatchComponent::runMoveToTrash(
     const juce::Array<juce::File>& filesToTrash,
     const juce::StringArray& removedPaths,
@@ -365,6 +388,9 @@ void AudioBatchComponent::runMoveToTrash(
     }
 }
 
+/// Removes trashed files from the table and keeps selection and preview state coherent.
+/// Clears the activity labels and messages of the removed files,
+/// and while analysis runs, makes sure their results do not add the rows back.
 void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPaths, const int fallbackRow)
 {
     if (removedPaths.isEmpty()) {

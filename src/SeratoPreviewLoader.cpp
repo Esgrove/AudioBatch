@@ -11,6 +11,9 @@
 
 namespace audiobatch::serato
 {
+/// Starts one worker. Completion runs on that worker and must only enqueue delivery, never wait for the UI.
+/// The cache and callback captures must remain alive until cancelAndWait returns.
+/// An injected reader allows deterministic lifecycle tests without changing production cache behavior.
 SeratoPreviewLoader::SeratoPreviewLoader(AnalysisCache& cacheToUse, Completion onCompletion, Reader tagReader) :
     cache(cacheToUse),
     completion(std::move(onCompletion)),
@@ -18,11 +21,15 @@ SeratoPreviewLoader::SeratoPreviewLoader(AnalysisCache& cacheToUse, Completion o
     worker([this](const std::stop_token& stopToken) { run(stopToken); })
 {}
 
+/// Invalidates queued deliveries and joins the worker before releasing callback captures.
 SeratoPreviewLoader::~SeratoPreviewLoader()
 {
     cancelAndWait();
 }
 
+/// Replaces pending work and invalidates earlier reads and deliveries, including selection A to B to A.
+/// Invalid duration or file identity cancels prior work without scheduling a read.
+/// Called by the owner thread, never from completion.
 SeratoPreviewLoader::Generation SeratoPreviewLoader::request(const juce::File& file, const double durationSeconds)
 {
     const AnalysisCache::FileIdentity identity(file);
@@ -39,6 +46,8 @@ SeratoPreviewLoader::Generation SeratoPreviewLoader::request(const juce::File& f
     return nextGeneration;
 }
 
+/// Invalidates active and queued completions and drops pending work without waiting for TagLib.
+/// Called by the owner thread when the preview is cleared or replaced.
 void SeratoPreviewLoader::cancel()
 {
     {
@@ -49,6 +58,8 @@ void SeratoPreviewLoader::cancel()
     condition.notify_one();
 }
 
+/// Stops permanently and joins without waiting for any posted message-thread callback.
+/// Called by the owner thread before destroying the cache or GUI resources. Safe to call repeatedly.
 void SeratoPreviewLoader::cancelAndWait()
 {
     stopped = true;
@@ -60,6 +71,8 @@ void SeratoPreviewLoader::cancelAndWait()
     }
 }
 
+/// Checks the generation, selected path and current file stats again at queued delivery time.
+/// The GUI additionally checks its URL, reader and thumbnail before applying the returned data.
 bool SeratoPreviewLoader::canAdopt(
     const AnalysisCache::FileIdentity& identity,
     const Generation resultGeneration,
@@ -69,6 +82,7 @@ bool SeratoPreviewLoader::canAdopt(
     return !stopped && generation == resultGeneration && identity.matches(selectedFile);
 }
 
+/// Waits interruptibly for the latest request and processes it outside the queue lock.
 void SeratoPreviewLoader::run(const std::stop_token& stopToken)
 {
     while (!stopToken.stop_requested()) {
@@ -87,6 +101,7 @@ void SeratoPreviewLoader::run(const std::stop_token& stopToken)
     }
 }
 
+/// Performs cache lookup, reading and stable persistence, checking cancellation at each boundary.
 void SeratoPreviewLoader::process(const Request& active, const std::stop_token& stopToken)
 {
     const utils::CancellationCheck isCancelled = [this, &active, stopToken] {
@@ -125,6 +140,7 @@ void SeratoPreviewLoader::process(const Request& active, const std::stop_token& 
     }
 }
 
+/// Reads missing kinds in one batch and persists only stable results while the request remains current.
 bool SeratoPreviewLoader::readMisses(
     const Request& active,
     const std::span<const TagKind> misses,
@@ -166,6 +182,7 @@ bool SeratoPreviewLoader::readMisses(
     return true;
 }
 
+/// Moves independently present values into an immutable aggregate, leaving negative kinds unset.
 SeratoPreviewLoader::Data SeratoPreviewLoader::collectData(Results& results)
 {
     SeratoData loaded;

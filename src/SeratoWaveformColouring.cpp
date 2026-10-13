@@ -118,6 +118,11 @@ ColourContributions contributionsOverInterval(
 }
 }  // namespace
 
+/// Produces the opaque arithmetic mean RGB of valid nonbackground raster cells, independent of row position.
+/// The zero-based 6x6x6 cube is R=(index/36)*51, G=((index%36)/6)*51, B=(index%6)*51 using integer division.
+/// Background indices 0 and 1 are skipped. Indices 216 through 255 are provisionally unknown or reserved and skipped.
+/// No grayscale mapping is asserted for reserved values. With no eligible cells, the supplied fallback becomes opaque.
+/// An index is not a strength, so uniform audio gain is not represented by scaling these bytes.
 juce::Colour colourForOverviewSlice(
     const std::array<std::uint8_t, Overview::bandCount>& cells,
     const juce::Colour fallback
@@ -128,6 +133,12 @@ juce::Colour colourForOverviewSlice(
     return colourForContributions(contributions, fallback);
 }
 
+/// Creates an opaque horizontal brush for the same inset bounds and seconds range used by AudioThumbnail.
+/// Endpoint colours sample the exact visible times, clamped to the track.
+/// Interior samples decode adjacent slices before interpolating RGB sums and valid-cell weights at close zoom.
+/// When multiple slices fit a sample interval, their overlap-weighted decoded contributions combine before the mean.
+/// Storage is bounded by visible logical pixels and maxWaveformGradientStops, not offscreen slices.
+/// Empty or oversized overviews, non-finite times and empty viewports return no gradient.
 std::optional<juce::ColourGradient> makeOverviewGradient(
     const Overview& overview,
     const juce::Range<double> visibleRange,
@@ -175,6 +186,10 @@ std::optional<juce::ColourGradient> makeOverviewGradient(
     return gradient;
 }
 
+/// Draws JUCE's solid waveform once at physical resolution and changes only its RGB channels.
+/// Direct gradient fills use different raster paths from solid fills on both software and Direct2D backends.
+/// Preserving the solid mask avoids their changed edge coverage, including disappearing low-alpha pixels.
+/// The temporary image uses the current renderer's backend and is rebuilt as PCM, range, gain or scale changes.
 void drawColouredThumbnail(
     juce::Graphics& graphics,
     juce::AudioThumbnail& thumbnail,

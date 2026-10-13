@@ -6,6 +6,7 @@
 #include "CustomLookAndFeel.h"
 #include "Log.h"
 
+/// Requests audio input permission and initialises the audio device manager once it is answered.
 void AudioBatchComponent::requestAudioDeviceAccess()
 {
     utils::logDebug("AudioBatchComponent startup: requesting record-audio permission");
@@ -37,6 +38,7 @@ void AudioBatchComponent::requestAudioDeviceAccess()
     });
 }
 
+/// Rebuilds the info panel rows for a record, with dedicated layouts for pending and failed files.
 void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 {
     if (record.file == currentAudioFile && seratoPreviewIdentity && !seratoPreviewIdentity->matches(record.file)) {
@@ -49,6 +51,7 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
     );
 }
 
+/// Loads a file URL into the preview player and waveform, preferring cached waveform data over decoding the file again.
 void AudioBatchComponent::showAudioResource(juce::URL resource)
 {
     // Both branches below clear the remaining Serato presentation state.
@@ -80,6 +83,8 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
     }
 }
 
+/// Clears stale tag presentation and requests the current preview's independent metadata.
+/// Captures file identity so same-path changes detected during reanalysis trigger a fresh read.
 void AudioBatchComponent::requestSeratoPreview()
 {
     seratoPreviewData.reset();
@@ -99,6 +104,8 @@ void AudioBatchComponent::requestSeratoPreview()
     }
 }
 
+/// Adopts immutable colours, cues and track info only while the generation, file and URL still match.
+/// Never reloads playback or changes waveform geometry, gain, zoom or peak-cache data.
 void AudioBatchComponent::adoptSeratoPreview(
     const AnalysisCache::FileIdentity& identity,
     const audiobatch::serato::SeratoPreviewLoader::Generation generation,
@@ -129,6 +136,8 @@ void AudioBatchComponent::adoptSeratoPreview(
     }
 }
 
+/// Stores freshly computed waveform data in the analysis cache,
+/// unless the current waveform was itself loaded from the cache.
 void AudioBatchComponent::handleThumbnailFullyLoaded()
 {
     if (currentWaveformLoadedFromCache || !currentAudioFile.existsAsFile()) {
@@ -143,6 +152,8 @@ void AudioBatchComponent::handleThumbnailFullyLoaded()
     currentWaveformLoadedFromCache = analysisCache.storeWaveformData(currentAudioFile, waveformData);
 }
 
+/// Creates a reader for the URL and attaches it to the transport, replacing any previous source.
+/// Returns false when no reader could be created, leaving the transport empty.
 bool AudioBatchComponent::loadURLIntoTransport(const juce::URL& audioUrl)
 {
     // Unload the previous file source and delete it.
@@ -164,6 +175,7 @@ bool AudioBatchComponent::loadURLIntoTransport(const juce::URL& audioUrl)
     return false;
 }
 
+/// Toggles preview playback of the current file.
 void AudioBatchComponent::startOrStop()
 {
     if (transportSource.isPlaying()) {
@@ -173,6 +185,7 @@ void AudioBatchComponent::startOrStop()
     }
 }
 
+/// Recolours the play button to match whether the transport is playing.
 void AudioBatchComponent::updatePlaybackButtonForTransportState()
 {
     if (!startStopButton.isEnabled()) {
@@ -183,6 +196,7 @@ void AudioBatchComponent::updatePlaybackButtonForTransportState()
     startStopButton.setColour(juce::TextButton::buttonColourId, colour);
 }
 
+/// Reacts to transport state changes and to files dropped onto the waveform preview.
 void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
     if (source == &transportSource) {
@@ -200,6 +214,7 @@ void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source
     }
 }
 
+/// Stops playback and releases the preview file, transport source, and waveform so the file can be replaced.
 void AudioBatchComponent::clearCurrentAudioPreview()
 {
     currentAudioFile = juce::File();
@@ -207,6 +222,8 @@ void AudioBatchComponent::clearCurrentAudioPreview()
     releasePreviewPlayback();
 }
 
+/// Stops playback, closes the preview file, and clears the waveform, keeping the current file selected,
+/// so the file on disk can be replaced or the preview reset.
 void AudioBatchComponent::releasePreviewPlayback()
 {
     if (seratoPreviewLoader) {
@@ -226,17 +243,20 @@ void AudioBatchComponent::releasePreviewPlayback()
     startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
 }
 
+/// Maps pinch-zoom gestures onto the waveform zoom slider.
 void AudioBatchComponent::mouseMagnify(const juce::MouseEvent& /*event*/, const float scaleFactor)
 {
     const auto newZoom = zoomSlider.getValue() * static_cast<double>(scaleFactor * scaleFactor);
     zoomSlider.setValue(newZoom);
 }
 
+/// Forwards the zoom slider value to the waveform preview.
 void AudioBatchComponent::zoomLevelChanged(const double zoomLevel) const
 {
     thumbnail->setZoom(zoomLevel);
 }
 
+/// Updates the current selection's custom gain in-memory, in the cache, and the waveform preview.
 void AudioBatchComponent::applyCustomGainToSelection(const float gainDb, const bool hasGain)
 {
     const auto selectedRows = resultsTable.getSelectedRows();
@@ -273,6 +293,7 @@ void AudioBatchComponent::applyCustomGainToSelection(const float gainDb, const b
     }
 }
 
+/// Syncs the gain slider and clear button with the record shown for the current selection.
 void AudioBatchComponent::updateGainControlsForSelection()
 {
     const auto selectedRows = resultsTable.getSelectedRows();
@@ -307,6 +328,7 @@ void AudioBatchComponent::updateGainControlsForSelection()
     gainClearButton.setEnabled(record.hasCustomGain);
 }
 
+/// Applies the current file's custom gain to the waveform preview as a display-only scale factor.
 void AudioBatchComponent::updateThumbnailDisplayGain() const
 {
     if (thumbnail == nullptr) {

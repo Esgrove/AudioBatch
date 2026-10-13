@@ -10,26 +10,34 @@
 
 using namespace audiobatch::gui;
 
+/// Accepts any external drag that contains at least one file.
 bool AudioBatchComponent::isInterestedInFileDrag(const juce::StringArray& files)
 {
     return !files.isEmpty();
 }
 
+/// Starts analysis for dropped files, or switches the root folders when only directories were dropped.
+/// Holding Shift while dropping directories appends them to the current root folders instead.
 void AudioBatchComponent::filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/)
 {
     handleDroppedPaths(files);
 }
 
+/// Opens the folder chooser and replaces the current root folders with the chosen folder.
 void AudioBatchComponent::chooseRootFolder()
 {
     launchFolderChooser(false);
 }
 
+/// Opens the folder chooser and appends the chosen folder to the current root folders,
+/// analyzing its files without clearing the results that are already in the table.
 void AudioBatchComponent::addRootFolder()
 {
     launchFolderChooser(true);
 }
 
+/// Opens the asynchronous folder chooser.
+/// The chosen folder either replaces the root folders or is appended to them.
 void AudioBatchComponent::launchFolderChooser(const bool appendToRoots)
 {
     const auto lastRoot = currentRoots.isEmpty() ? juce::File() : currentRoots.getLast();
@@ -62,6 +70,7 @@ void AudioBatchComponent::launchFolderChooser(const bool appendToRoots)
     );
 }
 
+/// Replaces the root folders and re-analyzes them, clearing the current results.
 void AudioBatchComponent::setRoots(const juce::Array<juce::File>& folders)
 {
     currentRoots.clear();
@@ -80,6 +89,9 @@ void AudioBatchComponent::setRoots(const juce::Array<juce::File>& folders)
     refreshAnalysis(false);
 }
 
+/// Appends folders to the root folders and analyzes them without clearing the current results.
+/// Folders that already are a root or sit inside one are skipped,
+/// and existing roots inside a newly added folder are absorbed into it.
 void AudioBatchComponent::addRoots(const juce::Array<juce::File>& folders)
 {
     bool rootsChanged = false;
@@ -120,6 +132,9 @@ void AudioBatchComponent::addRoots(const juce::Array<juce::File>& folders)
     startAnalysis(existingRoots, true, false, false);
 }
 
+/// Shows the root folders in the top bar label:
+/// the full path for a single root, or the first path and the number of others for several,
+/// with every root listed in the tooltip.
 void AudioBatchComponent::updateCurrentRootLabel()
 {
     if (currentRoots.isEmpty()) {
@@ -141,11 +156,14 @@ void AudioBatchComponent::updateCurrentRootLabel()
     currentRootLabel.setTooltip(rootPaths.joinIntoString("\n"));
 }
 
+/// Re-runs analysis for all current root folders.
 void AudioBatchComponent::rescanCurrentRoot()
 {
     refreshAnalysis(true);
 }
 
+/// Returns the starting directory for the folder chooser,
+/// favouring a Dropbox folder, then the system Music folder, then the home folder.
 juce::File AudioBatchComponent::getDefaultBrowseDirectory()
 {
     auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
@@ -171,6 +189,9 @@ juce::File AudioBatchComponent::getDefaultBrowseDirectory()
     return homeDirectory;
 }
 
+/// Routes dropped paths to a root folder scan when only directories were dropped,
+/// otherwise analyzes the dropped files individually.
+/// Dropped directories replace the root folders, or are appended to them when Shift is held.
 void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
 {
     juce::Array<juce::File> droppedFiles;
@@ -217,6 +238,7 @@ void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
     startAnalysis(droppedFiles, false, false, false);
 }
 
+/// Re-analyzes all root folders that still exist, or the files already in the table when no root folder has been set.
 void AudioBatchComponent::refreshAnalysis(const bool forceRefresh)
 {
     juce::Array<juce::File> existingRoots;
@@ -246,6 +268,8 @@ void AudioBatchComponent::refreshAnalysis(const bool forceRefresh)
     startAnalysis(existingFiles, false, forceRefresh, true);
 }
 
+/// Lets rows dragged out of the application drop as file copies into other applications,
+/// never as moves, so the originals stay in place.
 bool AudioBatchComponent::shouldDropFilesWhenDraggedExternally(
     const juce::DragAndDropTarget::SourceDetails& sourceDetails,
     juce::StringArray& files,

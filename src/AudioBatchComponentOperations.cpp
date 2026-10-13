@@ -56,6 +56,7 @@ static juce::String buildFailureListMessage(const juce::StringArray& failures)
 
 using namespace audiobatch::gui;
 
+/// True when the list is non-empty and every record's format can be normalized in this build.
 bool AudioBatchComponent::canNormalizeRecords(const std::vector<AudioAnalysisRecord>& records)
 {
     if (records.empty()) {
@@ -67,6 +68,8 @@ bool AudioBatchComponent::canNormalizeRecords(const std::vector<AudioAnalysisRec
     });
 }
 
+/// Builds a user-facing explanation of why the selected files cannot be normalized,
+/// listing each unsupported file with its reason.
 juce::String AudioBatchComponent::buildNormalizationUnavailableMessage(const std::vector<AudioAnalysisRecord>& records)
 {
     juce::StringArray unsupportedLines;
@@ -94,6 +97,9 @@ juce::String AudioBatchComponent::buildNormalizationUnavailableMessage(const std
     );
 }
 
+/// Resolves rows still marked pending or active after a run completes,
+/// from the cache when possible and otherwise as failed, so no row is left waiting.
+/// Never decodes audio, because it runs on the message thread.
 void AudioBatchComponent::reconcilePendingAnalysisResults()
 {
     const auto selectedPaths = getSelectedRecordPaths();
@@ -140,6 +146,10 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
     resultsTable.repaint();
 }
 
+/// Merges one analysis result into the table on the message thread,
+/// preserving the custom gain set for the file while the file is unchanged on disk,
+/// and keeping selection and preview in sync.
+/// Results from a replaced run are ignored, since their queued messages can arrive after a new run started.
 void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record, const int runId)
 {
     if (runId != analysisRunId) {
@@ -191,6 +201,9 @@ void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record
     updateProcessButtonState();
 }
 
+/// Replaces the row of a file that a normalize or process run rewrote with the record of its output,
+/// which may have a new path when the source was converted.
+/// Updates the selection, the cache, and the preview to follow the file to its new path.
 void AudioBatchComponent::replaceRecordAfterOperation(
     const juce::File& originalFile,
     const AudioAnalysisRecord& newRecord
@@ -240,6 +253,9 @@ void AudioBatchComponent::replaceRecordAfterOperation(
     }
 }
 
+/// Applies one normalization result on the message thread.
+/// Replaces the record, since the output path may differ from the source,
+/// updates the cache, and reloads the preview when the current file was normalized.
 void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& result)
 {
     ++normalizedResultsCompleted;
@@ -266,6 +282,7 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
     updateStatusLabel();
 }
 
+/// Ends the normalization pass and reports any accumulated failures to the user.
 void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
 {
     normalizedResultsExpected = totalFiles;
@@ -295,6 +312,9 @@ void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
     updateStatusLabel();
 }
 
+/// Finalizes an analysis run on the message thread:
+/// reconciles rows still pending, logs run statistics, and restores a sensible selection.
+/// Completion of a replaced run is ignored.
 void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int runId)
 {
     if (runId != analysisRunId) {
@@ -335,6 +355,8 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int
     updateProcessButtonState();
 }
 
+/// Starts normalization to the selected peak or loudness target for the selected files
+/// after checking that no other pass is running and that every selected format is supported.
 void AudioBatchComponent::normalizeSelectedRecords()
 {
     if (normalizeInProgress) {
@@ -404,6 +426,12 @@ void AudioBatchComponent::normalizeSelectedRecords()
     updateStatusLabel();
 }
 
+/// Kicks off a background analysis run.
+/// Pending placeholder rows for the files that are not already cached are added once the plan arrives.
+/// A run that keeps the results replaces a running one, so it also takes over the inputs of that run,
+/// which would otherwise leave its placeholder rows waiting forever.
+/// Refuses to start while normalization or plugin processing is running,
+/// since the analysis would read files that are being replaced or moved to the trash.
 void AudioBatchComponent::startAnalysis(
     const juce::Array<juce::File>& inputPaths,
     const bool recursive,
@@ -467,6 +495,8 @@ void AudioBatchComponent::startAnalysis(
     updateProcessButtonState();
 }
 
+/// Adds pending rows for the files the run analyzes and shows the progress text.
+/// Called once per run on the message thread, after the coordinator has scanned the input folders.
 void AudioBatchComponent::handleAnalysisPlan(const AnalysisCoordinator::AnalysisPlan& plan)
 {
     if (plan.runId != analysisRunId) {
@@ -507,16 +537,20 @@ void AudioBatchComponent::handleAnalysisPlan(const AnalysisCoordinator::Analysis
     );
 }
 
+/// True from the start of an analysis run until the coordinator reports its completion.
 bool AudioBatchComponent::isAnalysisInProgress() const
 {
     return analysisRunning;
 }
 
+/// True while normalization or plugin processing is rewriting files.
 bool AudioBatchComponent::isFileOperationInProgress() const noexcept
 {
     return normalizeInProgress || pluginProcessingInProgress;
 }
 
+/// Returns the reason analysis or a change to the list cannot happen right now
+/// because files are being normalized or processed, or an empty string when it can.
 juce::String AudioBatchComponent::getFileOperationBlockedReason() const
 {
     if (normalizeInProgress) {
@@ -530,12 +564,14 @@ juce::String AudioBatchComponent::getFileOperationBlockedReason() const
     return {};
 }
 
+/// True when the file is being normalized or processed right now.
 bool AudioBatchComponent::isFileBeingRewritten(const juce::String& fullPath) const
 {
     const auto activeLabel = fileActivity.getActiveLabel(fullPath);
     return activeLabel == "Normalizing" || activeLabel == "Processing";
 }
 
+/// Shows a non-blocking warning dialog titled "Plugin Processing" with the given message.
 void AudioBatchComponent::showPluginProcessingWarning(const juce::String& message)
 {
     juce::AlertWindow::showAsync(
@@ -546,6 +582,8 @@ void AudioBatchComponent::showPluginProcessingWarning(const juce::String& messag
     );
 }
 
+/// Returns the reason a processing run cannot start right now because other work is running,
+/// or an empty string when a run may start.
 juce::String AudioBatchComponent::getProcessingBlockedReason() const
 {
     if (pluginProcessingInProgress) {
@@ -563,6 +601,8 @@ juce::String AudioBatchComponent::getProcessingBlockedReason() const
     return {};
 }
 
+/// Stops playback and releases the preview file handles when the previewed file is about to be replaced.
+/// Returns the files of the given records.
 juce::Array<juce::File> AudioBatchComponent::releasePreviewBeforeProcessing(
     const std::vector<AudioAnalysisRecord>& records
 )
@@ -589,6 +629,7 @@ juce::Array<juce::File> AudioBatchComponent::releasePreviewBeforeProcessing(
     return filesToProcess;
 }
 
+/// Runs the configured plugin (if any) over the currently-selected files.
 void AudioBatchComponent::processSelectedRecords()
 {
     if (const auto blockedReason = getProcessingBlockedReason(); blockedReason.isNotEmpty()) {
@@ -672,6 +713,8 @@ void AudioBatchComponent::processSelectedRecords()
     updateStatusLabel();
 }
 
+/// Applies one plugin processing result on the message thread.
+/// Replaces the record, drops stale cache rows and persisted gain, and reloads the preview when needed.
 void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& result)
 {
     ++processedResultsCompleted;
@@ -700,6 +743,7 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
     updateStatusLabel();
 }
 
+/// Ends the plugin processing pass and reports any accumulated failures to the user.
 void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
 {
     processedResultsExpected = totalFiles;

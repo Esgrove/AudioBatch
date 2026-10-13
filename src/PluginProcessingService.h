@@ -21,38 +21,10 @@ public:
     /// Returns true when the caller wants processing to stop as soon as possible.
     using CancellationCheck = utils::CancellationCheck;
 
-    /// Returns true when the file's format can be read for processing.
     static bool canProcessFile(const juce::File& file);
 
-    /// Returns the on-disk output path that processing would produce for the given input.
     static juce::File getProcessingOutputFile(const juce::File& input);
 
-    /// Processes a single file through the given plugin instances in order.
-    /// The instances must align index-for-index with options.plugins.
-    /// The function restores state on each plugin, prepares it in offline mode, and resets it before processing,
-    /// compensates for the chain's total reported latency,
-    /// and releases the plugins' resources afterwards, also when processing fails.
-    /// Intended to run on a worker thread.
-    /// Plugin setup and release are marshalled to the message thread,
-    /// because VST3 restricts bus arrangement, setupProcessing, setActive, and setState to the UI thread,
-    /// so only processBlock runs on the calling thread.
-    /// The message loop must keep running while a worker is inside this call,
-    /// unless isCancelled starts returning true:
-    /// a worker waiting for the message thread then gives up instead of blocking,
-    /// so the message thread may wait for workers after requesting cancellation without deadlocking.
-    /// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.
-    /// It may leave the chain prepared, in which case the plugin instances release their resources when destroyed.
-    /// The caller owns the plugin instances and is responsible for thread-safety:
-    /// a chain of instances must only be in use by one thread at a time.
-    /// A mono file running through a stereo chain feeds both plugin inputs and is written back as mono,
-    /// using the average of both output channels.
-    /// The chain renders into an unquantized intermediate file first.
-    /// When the rendered peak exceeds full scale, the whole output is turned down just enough to avoid clipping,
-    /// which is reported in the result notice.
-    /// Isolated source blocks that fail to decode are processed as decoded and reported in the notice too.
-    /// Trailing silence from the tail allowance is trimmed, and 16-bit output is dithered.
-    /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again first.
-    /// An `.aif` source is rewritten in place after a copy of it is disposed of through options.disposeFile.
     static PluginProcessingResult processFile(
         const AudioAnalysisRecord& sourceRecord,
         const PluginProcessingOptions& options,

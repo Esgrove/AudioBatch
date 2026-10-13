@@ -150,6 +150,7 @@ static juce::String formatExtensionsToText(const juce::StringArray& extensions)
 
 using namespace audiobatch::normalization_support;
 
+/// Returns true when the file's format can be rewritten by this build during normalization.
 bool AudioNormalizationService::canNormalizeFile(const juce::File& file)
 {
     // Source must be readable by JUCE and AIFF output must be writable.
@@ -162,6 +163,7 @@ bool AudioNormalizationService::canNormalizeFile(const juce::File& file)
     return utils::findAiffFormat(utils::threadLocalFormatManager()) != nullptr;
 }
 
+/// Describes why normalization is unavailable for the given file format, or returns an empty string when supported.
 juce::String AudioNormalizationService::getNormalizationSupportMessage(const juce::File& file)
 {
     const auto* format = utils::threadLocalFormatManager().findFormatForFileExtension(utils::fileExtension(file));
@@ -177,6 +179,7 @@ juce::String AudioNormalizationService::getNormalizationSupportMessage(const juc
     return {};
 }
 
+/// Summarizes the readable and writable formats available for in-place normalization in this build.
 juce::String AudioNormalizationService::getFormatSupportSummary()
 {
     const auto support = collectFormatSupport();

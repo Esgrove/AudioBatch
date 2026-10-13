@@ -24,6 +24,7 @@ constexpr double millisecondsPerSecond = 1000.0;
 
 using namespace audiobatch::cli;
 
+/// Executes the CLI analysis workflow and returns the process exit code.
 int AudioAnalysisCli::run(const AudioAnalysisCliOptions& options)
 {
     auto inputPaths = options.inputPaths;

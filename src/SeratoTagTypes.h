@@ -22,6 +22,17 @@ enum class TagKind : std::uint8_t {
     trackInfo = 6,
 };
 
+/// Present carries owned data. Absent, unsupported and invalid are stable negative outcomes.
+/// I/O failure and cancellation must not be cached as missing tags.
+enum class ReadStatus : std::uint8_t {
+    present = 1,
+    absent = 2,
+    unsupported = 3,
+    invalid = 4,
+    ioError = 5,
+    cancelled = 6,
+};
+
 inline constexpr std::array allTagKinds {
     TagKind::overview,
     TagKind::analysis,
@@ -108,17 +119,6 @@ struct SeratoData {
     std::optional<BeatGrid> beatGrid;
     std::optional<Markers> markers;
     std::optional<TrackInfo> trackInfo;
-};
-
-/// Present carries owned data. Absent, unsupported and invalid are stable negative outcomes.
-/// I/O failure and cancellation must not be cached as missing tags.
-enum class ReadStatus : std::uint8_t {
-    present = 1,
-    absent = 2,
-    unsupported = 3,
-    invalid = 4,
-    ioError = 5,
-    cancelled = 6,
 };
 
 /// Reports one requested kind. Only present results contain the matching owned value.

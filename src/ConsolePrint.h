@@ -18,27 +18,12 @@
 
 namespace console
 {
-/// Returns how many terminal columns the text occupies, for example two for each CJK character.
-/// Measures the width through fmt's own padding, so computed column widths match how fmt pads the cells,
-/// without relying on fmt's internal width function.
 [[nodiscard]] int displayWidth(const juce::String& text);
 
-/// Returns true when styled output should be written to the given stream.
-/// That is the case for an interactive terminal when the NO_COLOR environment variable is not set.
-/// On Windows this also enables virtual terminal processing for the console the first time,
-/// and treats a pipe as a terminal when TERM is set, which is how Git Bash (mintty) connects programs.
-/// The result is cached for stdout and stderr.
 [[nodiscard]] bool isColorEnabled(std::FILE* stream);
 
-/// Prints one line of text to stdout and flushes it.
-/// On Windows a GUI subsystem executable has no console of its own,
-/// so when stdout is not already redirected to a pipe or file,
-/// this attaches to the console of the parent process first, so the text shows up in cmd or PowerShell.
 void printLineToConsole(const juce::String& text);
 
-/// Prints already formatted text to the given stream with a text style.
-/// Trailing newlines are written after the style reset,
-/// so the reset escape code does not leak onto the next line.
 void printStyledText(std::FILE* stream, fmt::text_style style, std::string_view text);
 
 /// Formats and prints to the given stream with a text style.
@@ -123,12 +108,8 @@ void printMagentaBold(fmt::format_string<Args...> format, Args&&... args)
     printColorBold(fmt::terminal_color::magenta, format, std::forward<Args>(args)...);
 }
 
-/// Prints "Error: <message>" in red to stderr, followed by a newline.
-/// Leading whitespace in the message is kept in front of the prefix,
-/// so indented messages stay indented.
 void printError(std::string_view message);
 
-/// Prints "Error: <message>" in red to stderr, followed by a newline.
 void printError(const juce::String& message);
 
 /// Prints "Error: <message>" in red to stderr, followed by a newline.
@@ -138,11 +119,8 @@ inline void printError(const char* message)
     printError(std::string_view {message});
 }
 
-/// Prints "Warning: <message>" in yellow to stderr, followed by a newline.
-/// Leading whitespace in the message is kept in front of the prefix.
 void printWarn(std::string_view message);
 
-/// Prints "Warning: <message>" in yellow to stderr, followed by a newline.
 void printWarn(const juce::String& message);
 
 /// Prints "Warning: <message>" in yellow to stderr, followed by a newline.

@@ -29,8 +29,7 @@ static bool isNumericArgument(const juce::String& text)
 /// Accepts the value as the next argument for both the short and the long form, like "-g type" and "--group-by type",
 /// and also as "--group-by=type".
 /// juce::ArgumentList::removeValueForOption only takes the next argument for the short form.
-/// Returns an empty optional when the option is not present,
-/// and an empty string when it is present without a value.
+/// Returns an empty optional when the option is not present, and an empty string when it is present without a value.
 static std::optional<juce::String> removeOptionWithValue(juce::ArgumentList& arguments, const juce::StringRef option)
 {
     for (int index = 0; index < arguments.size(); ++index) {
@@ -60,8 +59,7 @@ static std::optional<juce::String> removeOptionWithValue(juce::ArgumentList& arg
 }
 
 /// Returns an error message for the first argument that combines several short options, such as "-rf",
-/// or that is a negative number no option took as its value, such as "-12",
-/// or an empty string when there is none.
+/// or that is a negative number no option took as its value, such as "-12", or an empty string when there is none.
 /// juce::ArgumentList matches a short option by searching for its letter anywhere in the argument,
 /// and removes the whole argument on the first match, so "-rf" would silently set only one of the flags.
 /// It also converts the option letter to a number string first, so "-12" would match "-r" and several other flags.
@@ -235,6 +233,7 @@ static juce::String validateOptionCombinations(
 
 using namespace audiobatch::cli;
 
+/// Builds the help text shown by the CLI executable.
 juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
 {
     // Lines are joined with juce::newLine outside the format strings,
@@ -266,6 +265,10 @@ juce::String AudioAnalysisCli::buildUsage(const juce::String& executableName)
     return lines.joinIntoString(juce::newLine) + juce::newLine;
 }
 
+/// Joins an option that takes a value and a following negative number into one "--option=value" argument,
+/// for example "--lufs -14" into "--lufs=-14" and "-j -1" into "--jobs=-1".
+/// Must run before any juce::ArgumentList option matching:
+/// its short option check converts the option letter to a number string, so "-14" would match "-h" or "-n".
 void AudioAnalysisCli::attachNegativeOptionValues(juce::ArgumentList& arguments)
 {
     // Short options cannot carry a value after an equals sign, so the ones that take a value use their long form.
@@ -303,6 +306,8 @@ void AudioAnalysisCli::attachNegativeOptionValues(juce::ArgumentList& arguments)
     }
 }
 
+/// Returns true when an argument is exactly one of the given option names, such as "--help" or "-h".
+/// Unlike juce::ArgumentList::containsOption, a number such as "-1" never matches a short option.
 bool AudioAnalysisCli::containsExactOption(const juce::ArgumentList& arguments, const juce::StringArray& optionNames)
 {
     return std::ranges::any_of(arguments.arguments, [&optionNames](const juce::ArgumentList::Argument& argument) {
@@ -310,6 +315,8 @@ bool AudioAnalysisCli::containsExactOption(const juce::ArgumentList& arguments, 
     });
 }
 
+/// Parses command-line arguments into a validated options object.
+/// The help and version flags are handled by the caller before parsing.
 std::optional<AudioAnalysisCliOptions> AudioAnalysisCli::parse(juce::ArgumentList arguments, juce::String& errorMessage)
 {
     AudioAnalysisCliOptions options;

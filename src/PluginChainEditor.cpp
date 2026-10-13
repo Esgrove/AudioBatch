@@ -28,6 +28,7 @@ constexpr float rowCornerRadius = 4.0f;
 
 using namespace audiobatch::plugin_chain_editor;
 
+/// Builds the row for the given slot and wires its controls to the owning chain.
 PluginChainEditor::SlotRow::SlotRow(PluginChainEditor& ownerEditor, const int slotIndex) :
     editor(ownerEditor),
     index(slotIndex)
@@ -71,6 +72,7 @@ PluginChainEditor::SlotRow::SlotRow(PluginChainEditor& ownerEditor, const int sl
     addAndMakeVisible(removeButton);
 }
 
+/// Lays out the toggle, name label, and action buttons within the row.
 void PluginChainEditor::SlotRow::resized()
 {
     auto area = getLocalBounds().reduced(rowPadding);
@@ -86,12 +88,14 @@ void PluginChainEditor::SlotRow::resized()
     nameLabel.setBounds(area);
 }
 
+/// Fills the row background, using a lighter shade while the row is being dragged.
 void PluginChainEditor::SlotRow::paint(juce::Graphics& graphics)
 {
     graphics.setColour(dragging ? juce::CustomLookAndFeel::greyMedium() : juce::CustomLookAndFeel::greyMediumDark());
     graphics.fillRoundedRectangle(getLocalBounds().reduced(1).toFloat(), rowCornerRadius);
 }
 
+/// Starts a drag-reorder gesture and brings the row to the front.
 void PluginChainEditor::SlotRow::mouseDown(const juce::MouseEvent& event)
 {
     dragging = true;
@@ -100,6 +104,7 @@ void PluginChainEditor::SlotRow::mouseDown(const juce::MouseEvent& event)
     repaint();
 }
 
+/// Moves the row with the pointer and asks the editor to preview the drop position.
 void PluginChainEditor::SlotRow::mouseDrag(const juce::MouseEvent& event)
 {
     if (!dragging) {
@@ -114,6 +119,7 @@ void PluginChainEditor::SlotRow::mouseDrag(const juce::MouseEvent& event)
     editor.rowDragged(*this, targetIndex);
 }
 
+/// Ends the drag gesture and asks the editor to commit the reorder.
 void PluginChainEditor::SlotRow::mouseUp(const juce::MouseEvent& event)
 {
     juce::ignoreUnused(event);
@@ -129,12 +135,15 @@ void PluginChainEditor::SlotRow::mouseUp(const juce::MouseEvent& event)
     editor.rowDropped(*this, targetIndex);
 }
 
+/// Updates the enabled state of the reorder buttons for the row's position in the chain.
 void PluginChainEditor::SlotRow::updateMoveButtonStates(const int numRows)
 {
     upButton.setEnabled(index > 0);
     downButton.setEnabled(index < numRows - 1);
 }
 
+/// Builds the initial rows for the given chain
+/// and registers as a change listener so the rows follow external chain changes.
 PluginChainEditor::PluginChainEditor(PluginChain& chain) : pluginChain(chain)
 {
     addButton.setTooltip("Add a plugin to the end of the chain.");
@@ -154,11 +163,13 @@ PluginChainEditor::PluginChainEditor(PluginChain& chain) : pluginChain(chain)
     rebuildRows();
 }
 
+/// Unregisters from the chain's change notifications.
 PluginChainEditor::~PluginChainEditor()
 {
     pluginChain.removeChangeListener(this);
 }
 
+/// Lays out the hint label and the scrolling row list with its add button.
 void PluginChainEditor::resized()
 {
     const auto area = getLocalBounds().reduced(margin);
@@ -177,6 +188,9 @@ void PluginChainEditor::resized()
     layoutRows();
 }
 
+/// Schedules a deferred row rebuild when the chain changes.
+/// The rebuild is asynchronous because the change may originate from a button on a row
+/// that a synchronous rebuild would delete while its onClick is still executing.
 void PluginChainEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
     if (source == &pluginChain) {
@@ -186,11 +200,13 @@ void PluginChainEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
     }
 }
 
+/// Performs the row rebuild deferred by changeListenerCallback().
 void PluginChainEditor::handleAsyncUpdate()
 {
     rebuildRows();
 }
 
+/// Recreates the slot rows from the current chain state.
 void PluginChainEditor::rebuildRows()
 {
     rows.clear();
@@ -209,6 +225,8 @@ void PluginChainEditor::rebuildRows()
     resized();
 }
 
+/// Positions all rows in the container.
+/// While a row is being dragged it is excluded and a gap is left at the given visual index.
 void PluginChainEditor::layoutRows(const SlotRow* draggedRow, const int gapIndex)
 {
     int visualIndex = 0;
@@ -232,11 +250,13 @@ void PluginChainEditor::layoutRows(const SlotRow* draggedRow, const int gapIndex
     addButton.setBounds(addButtonX, rowsHeight + rowPadding, addButtonSize, addButtonSize);
 }
 
+/// Called by a row while it is being dragged to preview the drop position.
 void PluginChainEditor::rowDragged(SlotRow& row, const int targetIndex)
 {
     layoutRows(&row, targetIndex);
 }
 
+/// Called by a row when a drag ends to commit the reorder.
 void PluginChainEditor::rowDropped(SlotRow& row, const int targetIndex)
 {
     if (targetIndex == row.getSlotIndex()) {
@@ -249,12 +269,14 @@ void PluginChainEditor::rowDropped(SlotRow& row, const int targetIndex)
     pluginChain.moveSlot(row.getSlotIndex(), targetIndex);
 }
 
+/// Returns the visual row index for the given Y position in the row container.
 int PluginChainEditor::rowIndexForPosition(const int containerY) const
 {
     const auto maxIndex = juce::jmax(0, static_cast<int>(rows.size()) - 1);
     return juce::jlimit(0, maxIndex, containerY / rowHeight);
 }
 
+/// Pops up the known-plugins menu and appends the chosen plugin to the chain.
 void PluginChainEditor::showAddPluginMenu()
 {
     const auto& types = pluginChain.getKnownPluginList().getTypes();
@@ -280,6 +302,7 @@ void PluginChainEditor::showAddPluginMenu()
     );
 }
 
+/// Shows a hint label when the chain is empty, suggesting a plugin scan if no plugins are known yet.
 void PluginChainEditor::updateHintLabel()
 {
     if (!rows.empty()) {

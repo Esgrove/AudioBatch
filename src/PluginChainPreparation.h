@@ -27,15 +27,6 @@ struct ChainPreparation {
     juce::int64 latencySamples = 0;
 };
 
-/// Configures the buses, enables offline rendering, restores the saved state,
-/// prepares, and resets every plugin in the chain for one file,
-/// and collects the channel count, tail, and latency of the chain.
-/// Must run on the message thread:
-/// the VST3 specification restricts bus arrangement, setupProcessing, setActive, setState,
-/// and the tail and latency queries to the UI thread,
-/// and JUCE's VST3 host asserts the message thread in prepareToPlay and setStateInformation.
-/// When a plugin rejects the file's channel layout,
-/// the plugins prepared before it are released again so the chain stays usable for the next file.
 ChainPreparation prepareChain(
     const std::vector<juce::AudioPluginInstance*>& chainInstances,
     const PluginProcessingOptions& options,
@@ -43,8 +34,5 @@ ChainPreparation prepareChain(
     double sampleRate
 );
 
-/// Releases the resources of every plugin in the chain, leaving the chain inactive for the next file.
-/// Must run on the message thread, because releasing a VST3 plugin deactivates it through setActive.
-/// Plugins that are not prepared ignore the call.
 void releasePluginResources(const std::vector<juce::AudioPluginInstance*>& chainInstances);
 }  // namespace audiobatch::plugin_processing

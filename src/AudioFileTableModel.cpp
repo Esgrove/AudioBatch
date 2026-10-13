@@ -1,6 +1,5 @@
 /// Implementation of the AudioFileTableModel results table.
-/// Covers cell text and colour selection, row sorting,
-/// the Type column label derivation,
+/// Covers cell text and colour selection, row sorting, the Type column label derivation,
 /// and the animated activity indicator drawn in the Status column.
 
 #include "AudioFileTableModel.h"
@@ -80,6 +79,9 @@ static void drawActivityIndicator(juce::Graphics& graphics, const juce::Rectangl
 
 using namespace audiobatch::table;
 
+/// Creates a model backed by the live result list and UI callbacks owned by the main view.
+/// The operation message provider returns the outcome of the last normalize or process run for a record,
+/// or an empty message, and is shown in the status column when the file is idle.
 AudioFileTableModel::AudioFileTableModel(
     const std::vector<AudioAnalysisRecord>& sourceRecords,
     std::function<void(int row)> onSelectionChanged,
@@ -98,6 +100,7 @@ AudioFileTableModel::AudioFileTableModel(
     activityPhaseProvider(std::move(phaseProvider))
 {}
 
+/// Installs the standard set of columns used by the results table.
 void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
 {
     header.addColumn(
@@ -210,11 +213,13 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
     header.setColumnVisible(columnCustomGain, false);
 }
 
+/// Returns the number of analyzed rows currently available.
 int AudioFileTableModel::getNumRows()
 {
     return static_cast<int>(records->size());
 }
 
+/// Packages the selected file paths for external drag-and-drop.
 juce::var AudioFileTableModel::getDragSourceDescription(const juce::SparseSet<int>& currentlySelectedRows)
 {
     juce::StringArray filePaths;
@@ -234,6 +239,7 @@ juce::var AudioFileTableModel::getDragSourceDescription(const juce::SparseSet<in
     return filePaths.joinIntoString("\n");
 }
 
+/// Paints alternating row backgrounds and selection highlights.
 void AudioFileTableModel::paintRowBackground(
     juce::Graphics& graphics,
     int rowNumber,
@@ -254,6 +260,7 @@ void AudioFileTableModel::paintRowBackground(
     );
 }
 
+/// Paints the text content for a single table cell.
 void AudioFileTableModel::paintCell(
     juce::Graphics& graphics,
     const int rowNumber,
@@ -366,6 +373,7 @@ void AudioFileTableModel::paintCell(
     graphics.fillRect(width - 1, 0, 1, height);
 }
 
+/// Notifies the owning component when the row selection changes.
 void AudioFileTableModel::selectedRowsChanged(const int lastRowSelected)
 {
     if (selectionChanged != nullptr) {
@@ -373,6 +381,7 @@ void AudioFileTableModel::selectedRowsChanged(const int lastRowSelected)
     }
 }
 
+/// Forwards popup-clicks so the owning component can show file actions.
 void AudioFileTableModel::cellClicked(const int rowNumber, const int columnId, const juce::MouseEvent& event)
 {
     if (event.mods.isPopupMenu() && contextMenuRequested != nullptr) {
@@ -380,6 +389,7 @@ void AudioFileTableModel::cellClicked(const int rowNumber, const int columnId, c
     }
 }
 
+/// Notifies the owning component when the active sort column changes.
 void AudioFileTableModel::sortOrderChanged(const int newSortColumnId, const bool isForwards)
 {
     if (sortChanged != nullptr) {
@@ -387,6 +397,7 @@ void AudioFileTableModel::sortOrderChanged(const int newSortColumnId, const bool
     }
 }
 
+/// Shows the full status text for the status column of a file with an error or notice, and no tooltip for other cells.
 juce::String AudioFileTableModel::getCellTooltip(const int rowNumber, const int columnId)
 {
     if (columnId != columnStatus || !juce::isPositiveAndBelow(rowNumber, static_cast<int>(records->size()))) {
@@ -402,6 +413,7 @@ juce::String AudioFileTableModel::getCellTooltip(const int rowNumber, const int 
     return record.hasError() ? record.errorMessage : juce::String();
 }
 
+/// Returns the last normalize or process message for a record from the provider, or an empty message.
 OperationMessage AudioFileTableModel::getOperationMessage(const AudioAnalysisRecord& record) const
 {
     return operationMessageProvider != nullptr ? operationMessageProvider(record) : OperationMessage {};

@@ -16,6 +16,7 @@
 
 using namespace audiobatch::gui;
 
+/// Creates the results table header, model, and selection behavior.
 void AudioBatchComponent::configureResultsTable()
 {
     resultsTable.setHeader(std::make_unique<SecondarySortTableHeader>([this](const int columnId) {
@@ -33,6 +34,7 @@ void AudioBatchComponent::configureResultsTable()
     resultsTable.addKeyListener(this);
 }
 
+/// Creates the waveform preview, transport and zoom controls, and the metadata info panel.
 void AudioBatchComponent::configurePreviewControls()
 {
     // Default to a larger list view while allowing the lower preview area to be resized.
@@ -99,6 +101,7 @@ void AudioBatchComponent::configurePreviewControls()
     audioInfo->setPreferredHeightChangedCallback([this] { resized(); });
 }
 
+/// Creates the plugin chain, per-file gain, normalization toggle, process, and settings controls.
 void AudioBatchComponent::configureProcessingControls()
 {
     pluginAppProperties.setStorageParameters(utils::createApplicationSettingsOptions());
@@ -167,6 +170,7 @@ void AudioBatchComponent::configureProcessingControls()
     addAndMakeVisible(settingsButton);
 }
 
+/// Connects the analysis, normalization, and plugin coordinators to the message thread handlers.
 void AudioBatchComponent::connectCoordinatorCallbacks()
 {
     const SafePointer safeThis(this);
@@ -228,6 +232,7 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
     });
 }
 
+/// Creates the UI, opens the analysis cache, and starts the initial scan.
 AudioBatchComponent::AudioBatchComponent() :
     analysisCoordinator(analysisCache),
     fileTableModel(
@@ -301,6 +306,7 @@ AudioBatchComponent::AudioBatchComponent() :
     logStartupCheckpoint("constructor complete");
 }
 
+/// Stops background work and releases audio and dialog resources.
 AudioBatchComponent::~AudioBatchComponent()
 {
     if (seratoPreviewLoader) {
@@ -333,11 +339,13 @@ AudioBatchComponent::~AudioBatchComponent()
     thread.stopThread(previewThreadStopTimeoutMilliseconds);
 }
 
+/// Fills the background with the look-and-feel window colour.
 void AudioBatchComponent::paint(juce::Graphics& graphics)
 {
     graphics.fillAll(juce::LookAndFeel::getDefaultLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
 }
 
+/// Lays out the top bar, results table, resize bar, waveform preview, and the control column.
 void AudioBatchComponent::resized()
 {
     auto bounds = getLocalBounds().reduced(4);
@@ -418,6 +426,7 @@ void AudioBatchComponent::resized()
     thumbnail->setBounds(previewArea);
 }
 
+/// Distributes leftover table width between the name and path columns while preserving their current ratio.
 void AudioBatchComponent::updateResultsTableColumnWidths() const
 {
     auto& header = resultsTable.getHeader();
@@ -475,21 +484,25 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
     header.setColumnWidth(AudioFileTableModel::columnPath, pathWidth);
 }
 
+/// True when the table has at least one selected row.
 bool AudioBatchComponent::hasSelectedRecords() const
 {
     return resultsTable.getNumSelectedRows() > 0;
 }
 
+/// True when the table currently holds any analyzed records.
 bool AudioBatchComponent::hasAnyRecords() const
 {
     return !analysisResults.empty();
 }
 
+/// Opens the audio-device settings dialog.
 void AudioBatchComponent::showAudioSettingsWindow()
 {
     openDialogWindow(settingsWindow, &audioSetupComponent, "Audio Settings");
 }
 
+/// Returns the current row index of the record with the given full path, or -1 when it is not in the table.
 int AudioBatchComponent::findRecordIndex(const juce::String& fullPath) const
 {
     for (std::size_t index = 0; index < analysisResults.size(); ++index) {
@@ -501,6 +514,7 @@ int AudioBatchComponent::findRecordIndex(const juce::String& fullPath) const
     return -1;
 }
 
+/// Returns the selected files that still exist on disk.
 juce::Array<juce::File> AudioBatchComponent::getSelectedRecordFiles() const
 {
     juce::Array<juce::File> selectedFiles;
@@ -521,6 +535,8 @@ juce::Array<juce::File> AudioBatchComponent::getSelectedRecordFiles() const
     return selectedFiles;
 }
 
+/// Returns the selected records when every one of them exists on disk and is fully analyzed.
+/// Returns an empty list as soon as any selected record is missing or unfinished, so normalization is all-or-nothing.
 std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedNormalizableRecords() const
 {
     std::vector<AudioAnalysisRecord> selectedRecords;
@@ -548,6 +564,7 @@ std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedNormalizableRec
     return selectedRecords;
 }
 
+/// Returns the full paths of the selected rows, used to restore the selection after re-sorting.
 juce::StringArray AudioBatchComponent::getSelectedRecordPaths() const
 {
     juce::StringArray selectedPaths;
@@ -566,6 +583,7 @@ juce::StringArray AudioBatchComponent::getSelectedRecordPaths() const
     return selectedPaths;
 }
 
+/// Re-selects rows by file path after the table order or contents have changed.
 void AudioBatchComponent::restoreSelectionByPaths(const juce::StringArray& selectedPaths)
 {
     juce::SparseSet<int> selectedRows;
@@ -579,6 +597,7 @@ void AudioBatchComponent::restoreSelectionByPaths(const juce::StringArray& selec
     resultsTable.setSelectedRows(selectedRows, juce::dontSendNotification);
 }
 
+/// Re-sorts the results, refreshes the table, and selects the given paths again.
 void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArray& selectedPaths)
 {
     sortResults();
@@ -587,12 +606,15 @@ void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArra
     restoreSelectionByPaths(selectedPaths);
 }
 
+/// Enables the process button only when an enabled plugin chain exists,
+/// records are loaded, and no processing or analysis is running.
 void AudioBatchComponent::updateProcessButtonState()
 {
     const bool hasChain = pluginChain != nullptr && pluginChain->getNumEnabledValidSlots() > 0;
     processButton.setEnabled(hasChain && hasAnyRecords() && !pluginProcessingInProgress && !isAnalysisInProgress());
 }
 
+/// Shows the most relevant progress or summary text for the current background activity.
 void AudioBatchComponent::updateStatusLabel()
 {
     if (pluginProcessingInProgress && processedResultsExpected > 0) {
@@ -628,6 +650,9 @@ void AudioBatchComponent::updateStatusLabel()
     statusLabel.setText(utils::format("Loaded {} files", analysisResults.size()), juce::dontSendNotification);
 }
 
+/// Sorts the records by the primary and secondary sort columns.
+/// Failed files always sort last, and file name plus full path act as the final tie breakers,
+/// keeping the order stable across incremental result updates.
 void AudioBatchComponent::sortResults()
 {
     results_sorting::sortRecords(
@@ -646,6 +671,7 @@ void AudioBatchComponent::sortResults()
     );
 }
 
+/// Applies a new primary sort and clears the secondary sort when it targets the same column.
 void AudioBatchComponent::handleSortRequested(const int columnId, const bool isForwards)
 {
     currentSortColumnId = columnId;
@@ -663,6 +689,7 @@ void AudioBatchComponent::handleSortRequested(const int columnId, const bool isF
     refreshTablePreservingSelection(selectedPaths);
 }
 
+/// Sets, toggles, or clears the secondary sort column requested with a ctrl or cmd click on a header.
 void AudioBatchComponent::handleSecondarySortRequested(const int columnId)
 {
     if (columnId <= 0) {
@@ -686,12 +713,15 @@ void AudioBatchComponent::handleSecondarySortRequested(const int columnId)
     refreshTablePreservingSelection(selectedPaths);
 }
 
+/// Updates the header text so the secondary sort key remains visible.
 void AudioBatchComponent::refreshSortIndicators() const
 {
     results_sorting::getSecondarySortHeader(resultsTable)
         .setSecondarySortIndicator(secondarySortColumnId, secondarySortForwards);
 }
 
+/// Picks the row whose details should be shown for a multi-selection:
+/// the current preview file when it is selected, otherwise the last clicked or the first selected row.
 int AudioBatchComponent::getSelectionDisplayRow(
     const juce::SparseSet<int>& selectedRows,
     const int lastRowSelected
@@ -718,6 +748,7 @@ int AudioBatchComponent::getSelectionDisplayRow(
     return selectedRows[0];
 }
 
+/// Loads the newly selected file into the preview and refreshes the info panel and gain controls.
 void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
 {
     const auto selectedRows = resultsTable.getSelectedRows();
@@ -740,6 +771,8 @@ void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
     updateThumbnailDisplayGain();
 }
 
+/// Shows a reusable dialog window, creating it lazily on first use.
+/// The window does not take ownership of the content component.
 void AudioBatchComponent::openDialogWindow(
     SafePointer<juce::DialogWindow>& window,
     const SafePointer<juce::Component>& component,
@@ -770,6 +803,7 @@ void AudioBatchComponent::openDialogWindow(
     window->toFront(true);
 }
 
+/// Returns the selected records that exist on disk, are fully analyzed, and have a processable format.
 std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedProcessableRecords() const
 {
     std::vector<AudioAnalysisRecord> selected;

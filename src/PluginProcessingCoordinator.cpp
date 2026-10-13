@@ -4,28 +4,34 @@
 /// run-id based cancellation, and publishing results and completion to the message thread.
 /// Cancellation also releases workers waiting for plugin setup on the message thread,
 /// so cancelAndWait can block the message thread without deadlocking.
-/// Plugin instances are always destroyed on the message thread to satisfy VST3
-/// and Audio Unit hosting requirements.
+/// Plugin instances are always destroyed on the message thread to satisfy VST3 and Audio Unit hosting requirements.
 
 #include "PluginProcessingCoordinator.h"
 
 #include "AudioNormalizationService.h"
+#include "PluginProcessingService.h"
 #include "StringFormat.h"
 
 #include <algorithm>
 #include <map>
 #include <utility>
 
+namespace
+{
 /// How long cancelAndWait waits for running plugin processing jobs to finish before giving up, in milliseconds.
-static constexpr int jobShutdownTimeoutMilliseconds = 60000;
+constexpr int jobShutdownTimeoutMilliseconds = 60000;
 
 /// How long a worker waits for a plugin chain to be released before checking for cancellation again, in milliseconds.
-static constexpr int chainWaitIntervalMilliseconds = 100;
+constexpr int chainWaitIntervalMilliseconds = 100;
+}  // namespace
 
+/// Creates a coordinator with a thread pool sized for the current machine.
 PluginProcessingCoordinator::PluginProcessingCoordinator(const int workerCount) :
     threadPool(juce::jmax(1, juce::jmin(4, workerCount)))
 {}
 
+/// Cancels any in-flight work and destroys the worker pool.
+/// Waits without a timeout so workers cannot access destroyed coordinator state.
 PluginProcessingCoordinator::~PluginProcessingCoordinator()
 {
     cancelAndWait();
@@ -33,6 +39,7 @@ PluginProcessingCoordinator::~PluginProcessingCoordinator()
     currentChains.reset();
 }
 
+/// Takes ownership of the run's chains, with all of them free when `usable` is true.
 PluginProcessingCoordinator::RunChains::RunChains(std::vector<PluginChainInstances> chainInstances, const bool usable) :
     chains(std::move(chainInstances))
 {
@@ -45,6 +52,8 @@ PluginProcessingCoordinator::RunChains::RunChains(std::vector<PluginChainInstanc
     }
 }
 
+/// Destroys the plugin instances on the message thread, as VST3 and Audio Unit hosting require.
+/// When the last owner is a worker, the instances are handed to the message thread instead.
 PluginProcessingCoordinator::RunChains::~RunChains()
 {
     if (chains.empty() || juce::MessageManager::existsAndIsCurrentThread()) {
@@ -56,6 +65,7 @@ PluginProcessingCoordinator::RunChains::~RunChains()
     });
 }
 
+/// Returns the index of a free chain, or -1 when none are available.
 int PluginProcessingCoordinator::RunChains::acquire()
 {
     const juce::ScopedLock scopedLock(lock);
@@ -69,6 +79,7 @@ int PluginProcessingCoordinator::RunChains::acquire()
     return chainIndex;
 }
 
+/// Returns a chain to the free pool and wakes one worker waiting for a chain.
 void PluginProcessingCoordinator::RunChains::release(const int chainIndex)
 {
     if (chainIndex < 0) {
@@ -83,6 +94,7 @@ void PluginProcessingCoordinator::RunChains::release(const int chainIndex)
     available.signal();
 }
 
+/// Returns a raw pointer view of the given chain for the service call.
 std::vector<juce::AudioPluginInstance*> PluginProcessingCoordinator::RunChains::getChainView(const int chainIndex) const
 {
     const auto& chain = chains[static_cast<std::size_t>(chainIndex)];
@@ -96,24 +108,28 @@ std::vector<juce::AudioPluginInstance*> PluginProcessingCoordinator::RunChains::
     return chainView;
 }
 
+/// Sets the callback that is invoked for each published result.
 void PluginProcessingCoordinator::setResultCallback(ResultCallback callback)
 {
     const juce::ScopedLock lock(callbackLock);
     resultCallback = std::move(callback);
 }
 
+/// Sets the callback that is invoked when a run completes.
 void PluginProcessingCoordinator::setCompletionCallback(CompletionCallback callback)
 {
     const juce::ScopedLock lock(callbackLock);
     completionCallback = std::move(callback);
 }
 
+/// Sets the callback that is invoked if starting fails.
 void PluginProcessingCoordinator::setStartErrorCallback(StartErrorCallback callback)
 {
     const juce::ScopedLock lock(callbackLock);
     startErrorCallback = std::move(callback);
 }
 
+/// Invokes the result callback for one processed file, unless the run has been superseded or cancelled.
 void PluginProcessingCoordinator::publishResult(const PluginProcessingResult& result, const int runId) const
 {
     if (runId != currentRunId.load()) {
@@ -131,6 +147,7 @@ void PluginProcessingCoordinator::publishResult(const PluginProcessingResult& re
     }
 }
 
+/// Invokes the completion callback, unless the run has been superseded or cancelled.
 void PluginProcessingCoordinator::publishCompletion(const int totalFiles, const int runId) const
 {
     if (runId != currentRunId.load()) {
@@ -148,6 +165,10 @@ void PluginProcessingCoordinator::publishCompletion(const int totalFiles, const 
     }
 }
 
+/// Cancels queued work and waits for active jobs to finish.
+/// Safe to call on the message thread:
+/// workers waiting for plugin setup on the message thread give up once the run is cancelled,
+/// and workers that are rendering stop at the next block.
 void PluginProcessingCoordinator::cancelAndWait()
 {
     ++currentRunId;
@@ -195,6 +216,7 @@ static std::vector<AudioAnalysisRecord> collectQueuedRecords(const std::vector<A
     return queuedRecords;
 }
 
+/// Reports that a run could not start to the start error callback, if one is set.
 void PluginProcessingCoordinator::reportStartError(const juce::String& message) const
 {
     StartErrorCallback errorCallback;
@@ -208,6 +230,10 @@ void PluginProcessingCoordinator::reportStartError(const juce::String& message) 
     }
 }
 
+/// Processes one queued file on a worker thread.
+/// Waits for a free chain of the run, runs the file through it, publishes the result,
+/// and publishes completion when it was the last pending file of the run, counted in pendingFiles.
+/// The caller keeps the chains and the counter alive for as long as the job may run.
 void PluginProcessingCoordinator::runFileJob(
     const AudioAnalysisRecord& record,
     const PluginProcessingOptions& options,
@@ -249,6 +275,13 @@ void PluginProcessingCoordinator::runFileJob(
     }
 }
 
+/// Starts a background processing run.
+/// Plugin chains must be pre-instantiated on the message thread by the caller
+/// and ownership is transferred to the coordinator.
+/// Each chain's instances must align index-for-index with options.plugins.
+/// One chain is consumed by each worker.
+/// Chains are returned to a free pool between files.
+/// Returns the number of queued files.
 int PluginProcessingCoordinator::start(
     const std::vector<AudioAnalysisRecord>& records,
     const PluginProcessingOptions& options,

@@ -10,6 +10,9 @@
 
 namespace utils
 {
+/// Creates the default rolling file logger for the application.
+/// The log file goes into the application's log folder and is named after the log name,
+/// which defaults to the application name.
 std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName, const juce::String& logName)
 {
     /// Size in bytes the log file is trimmed to when it is opened.
@@ -20,6 +23,11 @@ std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appNam
     );
 }
 
+/// Writes a message with a timestamp to the current logger.
+/// In release builds the message is also printed to stderr, coloured by level when stderr is a terminal,
+/// since the file logger only prints to the console in debug builds.
+/// stderr keeps log output apart from the CLI results on stdout.
+/// Prefer the leveled log functions, which add the level prefix.
 void writeToLog(const juce::String& message, [[maybe_unused]] const Level logLevel)
 {
     const auto timestamp = juce::Time::getCurrentTime().formatted("%H:%M:%S ");
@@ -43,6 +51,8 @@ void writeToLog(const juce::String& message, [[maybe_unused]] const Level logLev
     juce::Logger::writeToLog(logMessage);
 }
 
+/// Logs the collected system information as an indented block.
+/// Detail lines are written without the usual timestamp prefix so the block stays readable.
 void logSystemInfo()
 {
     // Get info first to avoid API call debug / error messages in the middle of the log message

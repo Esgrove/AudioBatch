@@ -13,32 +13,21 @@
 class NormalizationTargetControl final : public juce::Component
 {
 public:
-    /// Creates the controls. The settings are read later by loadSettings,
-    /// so the properties can be configured after this control is constructed.
     explicit NormalizationTargetControl(juce::ApplicationProperties& applicationProperties);
 
-    /// Reads the mode and both targets from the user settings into the controls.
     void loadSettings();
 
-    /// Returns the normalization mode and target selected in the controls.
-    /// The caller adds the overwrite setting.
     [[nodiscard]] AudioNormalizationOptions getOptions() const;
 
-    /// Returns the selected target as display text, for example "-14.0 LUFS" or "0.0 dBFS peak".
     [[nodiscard]] juce::String describeTarget() const;
 
-    /// Lays out the mode selector and the target slider in two equal halves.
     void resized() override;
 
 private:
-    /// Returns true when loudness mode is selected.
     [[nodiscard]] bool isLoudnessMode() const;
 
-    /// Writes the mode and both targets to the user settings.
     void saveSettings() const;
 
-    /// Switches the slider between the peak and loudness ranges for the selected mode,
-    /// showing the remembered target of that mode.
     void updateSlider();
 
     juce::ApplicationProperties& properties;

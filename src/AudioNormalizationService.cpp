@@ -138,11 +138,16 @@ static juce::String renderNormalizedAudio(
 
 using namespace audiobatch::normalization;
 
+/// Returns the output path normalization writes for the given source, which is always a sibling `<name>.aif`.
 juce::File AudioNormalizationService::getOutputFile(const juce::File& sourceFile)
 {
     return sourceFile.getSiblingFile(sourceFile.getFileNameWithoutExtension() + normalizedAiffOutputExtension);
 }
 
+/// Returns the full paths of the records that cannot be normalized in this batch
+/// because an earlier record in the batch writes the same output file.
+/// A source that is already the output file, such as `<name>.aif` normalized in place, always wins.
+/// Otherwise the record that sorts first by path wins, so the result does not depend on input order.
 juce::StringArray AudioNormalizationService::findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records)
 {
     std::vector<const AudioAnalysisRecord*> ordered;
@@ -180,6 +185,8 @@ juce::StringArray AudioNormalizationService::findBatchOutputConflicts(const std:
     return conflicts;
 }
 
+/// Returns the linear gain that brings the analyzed file to the target in the options,
+/// or an empty optional with errorMessage set when the file has no measurable level for that mode.
 std::optional<float> AudioNormalizationService::getNormalizationGain(
     const AudioAnalysisRecord& record,
     const AudioNormalizationOptions& options,
@@ -212,6 +219,10 @@ std::optional<float> AudioNormalizationService::getNormalizationGain(
     return static_cast<float>(juce::Decibels::decibelsToGain(gainDecibels));
 }
 
+/// Returns the AIFF bit depth for output written from the given source.
+/// Keeps the analyzed source depth when the AIFF writer supports it,
+/// uses 16 bits for MP3 sources, and falls back to the highest supported depth,
+/// so for example 32-bit float sources are written as 24-bit.
 int AudioNormalizationService::getOutputBitDepth(
     const AudioAnalysisRecord& record,
     const juce::AudioFormatReader& reader
@@ -222,11 +233,18 @@ int AudioNormalizationService::getOutputBitDepth(
     return writerFormat != nullptr ? resolveWriterBitDepth(*writerFormat, preferredBitDepth) : preferredBitDepth;
 }
 
+/// Returns the user-facing error message for a record that lost a batch output conflict.
 juce::String AudioNormalizationService::batchOutputConflictMessage(const juce::File& sourceFile)
 {
     return utils::format("Another selected file is also written to {}", getOutputFile(sourceFile).getFileName());
 }
 
+/// Rewrites a file to the target level in the options, then re-analyzes the result.
+/// Fails without writing anything when the output path already exists and is not the source,
+/// unless options.overwriteExisting is set, in which case the existing output is moved to the system trash.
+/// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.
+/// When the file changed on disk since sourceRecord was analyzed, it is analyzed again before computing the gain.
+/// Isolated source blocks that fail to decode are written as decoded and reported in the result notice.
 AudioNormalizationResult AudioNormalizationService::normalizeFile(
     const AudioAnalysisRecord& sourceRecord,
     const AudioNormalizationOptions& options,

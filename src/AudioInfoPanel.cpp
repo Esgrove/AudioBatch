@@ -44,11 +44,16 @@ void appendTrackInfo(std::vector<AudioInfoRow>& rows, const audiobatch::serato::
 }
 }  // namespace
 
+/// Removes all rows so the panel shows nothing and collapses to its minimum height.
 void AudioInfoPanel::clear()
 {
     setRows({});
 }
 
+/// Shows the details of an analysis record.
+/// A record still being analyzed shows its name and activeStatusLabel, or "Pending" when that is empty,
+/// and a failed record shows its name and error.
+/// Optional selected-file metadata adds BPM and key rows only when those values are available.
 void AudioInfoPanel::showRecord(
     const AudioAnalysisRecord& record,
     const juce::String& activeStatusLabel,
@@ -91,12 +96,15 @@ void AudioInfoPanel::showRecord(
     setRows(std::move(newRows));
 }
 
+/// Returns the height needed to show every row plus padding, used to size the panel inside its scrolling viewport.
 int AudioInfoPanel::getPreferredHeight() const
 {
     const auto rowCount = static_cast<int>(rows.size());
     return verticalPadding * 2 + juce::jmax(0, rowCount) * rowHeight;
 }
 
+/// Replaces the displayed rows, reusing existing labels and hiding any leftover ones.
+/// Notifies the preferred-height callback so the parent can re-run its layout.
 void AudioInfoPanel::setRows(std::vector<AudioInfoRow> newRows)
 {
     rows = std::move(newRows);
@@ -122,11 +130,14 @@ void AudioInfoPanel::setRows(std::vector<AudioInfoRow> newRows)
     repaint();
 }
 
+/// Registers a callback invoked whenever the preferred height changes,
+/// so the owner can resize the surrounding viewport.
 void AudioInfoPanel::setPreferredHeightChangedCallback(std::function<void()> callback)
 {
     onPreferredHeightChanged = std::move(callback);
 }
 
+/// Draws the rounded panel background with a subtle outline.
 void AudioInfoPanel::paint(juce::Graphics& graphics)
 {
     const auto bounds = getLocalBounds().toFloat();
@@ -137,6 +148,7 @@ void AudioInfoPanel::paint(juce::Graphics& graphics)
     graphics.drawRoundedRectangle(bounds.reduced(0.5f), cornerRadius, 1.0f);
 }
 
+/// Positions the field and value labels in two columns, one fixed-height row per entry.
 void AudioInfoPanel::resized()
 {
     auto bounds = getLocalBounds().reduced(horizontalPadding, verticalPadding);
@@ -160,6 +172,8 @@ void AudioInfoPanel::resized()
     }
 }
 
+/// Grows the label pools until at least the required number of field and value label pairs exist.
+/// Labels are only ever added, never destroyed, so row updates stay cheap.
 void AudioInfoPanel::ensureLabelCount(const std::size_t requiredCount)
 {
     while (fieldLabels.size() < requiredCount) {

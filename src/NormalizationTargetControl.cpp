@@ -24,6 +24,8 @@ constexpr auto targetPeakSettingKey = "normalizeTargetPeakDbfs";
 constexpr auto targetLufsSettingKey = "normalizeTargetLufs";
 }  // namespace normalize_target
 
+/// Creates the controls. The settings are read later by loadSettings,
+/// so the properties can be configured after this control is constructed.
 NormalizationTargetControl::NormalizationTargetControl(juce::ApplicationProperties& applicationProperties) :
     properties(applicationProperties)
 {
@@ -54,6 +56,7 @@ NormalizationTargetControl::NormalizationTargetControl(juce::ApplicationProperti
     updateSlider();
 }
 
+/// Reads the mode and both targets from the user settings into the controls.
 void NormalizationTargetControl::loadSettings()
 {
     const auto* settings = properties.getUserSettings();
@@ -77,6 +80,8 @@ void NormalizationTargetControl::loadSettings()
     updateSlider();
 }
 
+/// Returns the normalization mode and target selected in the controls.
+/// The caller adds the overwrite setting.
 AudioNormalizationOptions NormalizationTargetControl::getOptions() const
 {
     AudioNormalizationOptions options;
@@ -86,6 +91,7 @@ AudioNormalizationOptions NormalizationTargetControl::getOptions() const
     return options;
 }
 
+/// Returns the selected target as display text, for example "-14.0 LUFS" or "0.0 dBFS peak".
 juce::String NormalizationTargetControl::describeTarget() const
 {
     if (isLoudnessMode()) {
@@ -95,6 +101,7 @@ juce::String NormalizationTargetControl::describeTarget() const
     return utils::format("{:.1f} dBFS peak", targetPeakDbfs);
 }
 
+/// Lays out the mode selector and the target slider in two equal halves.
 void NormalizationTargetControl::resized()
 {
     auto bounds = getLocalBounds();
@@ -103,11 +110,13 @@ void NormalizationTargetControl::resized()
     targetSlider.setBounds(bounds);
 }
 
+/// Returns true when loudness mode is selected.
 bool NormalizationTargetControl::isLoudnessMode() const
 {
     return modeBox.getSelectedId() == normalize_target::loudnessModeItemId;
 }
 
+/// Writes the mode and both targets to the user settings.
 void NormalizationTargetControl::saveSettings() const
 {
     auto* settings = properties.getUserSettings();
@@ -116,6 +125,8 @@ void NormalizationTargetControl::saveSettings() const
     settings->setValue(normalize_target::targetLufsSettingKey, targetLufs);
 }
 
+/// Switches the slider between the peak and loudness ranges for the selected mode,
+/// showing the remembered target of that mode.
 void NormalizationTargetControl::updateSlider()
 {
     if (isLoudnessMode()) {

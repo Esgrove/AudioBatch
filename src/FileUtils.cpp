@@ -283,6 +283,10 @@ static bool moveToRecycleBin(const juce::File& file)
 }
 #endif
 
+/// Moves a file or folder to the OS trash or recycle bin.
+/// Returns true when the file did not exist or was moved.
+/// On Windows, a file on a drive without a recycle bin, such as a network share, is left in place and fails,
+/// because the shell would otherwise delete it permanently.
 bool moveToTrash(const juce::File& file)
 {
     if (!file.exists()) {
@@ -296,6 +300,7 @@ bool moveToTrash(const juce::File& file)
 #endif
 }
 
+/// Returns the platform-appropriate label for the menu item that reveals a file in the file manager.
 juce::String revealInFileManagerLabel()
 {
 #if JUCE_MAC
@@ -307,6 +312,8 @@ juce::String revealInFileManagerLabel()
 #endif
 }
 
+/// Deletes a file and logs an error if the deletion fails.
+/// Returns true if the file did not exist or was deleted successfully.
 bool deleteFile(const juce::File& file)
 {
     if (!file.exists()) {
@@ -321,6 +328,7 @@ bool deleteFile(const juce::File& file)
     return true;
 }
 
+/// Returns the extension text trimmed, lowercased, and without the leading dot, for example "mp3".
 juce::String normalizeExtension(const juce::String& extension)
 {
     auto value = extension.trim().toLowerCase();
@@ -332,33 +340,43 @@ juce::String normalizeExtension(const juce::String& extension)
     return value;
 }
 
+/// Returns the file's extension lowercased and without the leading dot, for example "mp3".
 juce::String fileExtension(const juce::File& file)
 {
     return normalizeExtension(file.getFileExtension());
 }
 
+/// Returns true for an MP3 file.
 bool isMp3File(const juce::File& file)
 {
     return fileExtension(file) == "mp3";
 }
 
+/// Returns true for an AIFF family file: .aif, .aiff, or .aifc.
 bool isAiffFile(const juce::File& file)
 {
     const auto extension = fileExtension(file);
     return extension == "aif" || extension == "aiff" || extension == "aifc";
 }
 
+/// Returns true for a WAV file: .wav or .wave.
 bool isWavFile(const juce::File& file)
 {
     const auto extension = fileExtension(file);
     return extension == "wav" || extension == "wave";
 }
 
+/// Returns the user-facing error for an output path that is already taken by a file other than the source.
 juce::String existingOutputMessage(const juce::File& outputFile)
 {
     return format("Output file {} already exists. Use force overwrite to replace it.", outputFile.getFileName());
 }
 
+/// Disposes of a copy of the file under the same name, leaving the file itself in place.
+/// Used before an in-place rewrite that cannot be repeated to get back to the original,
+/// so the original stays recoverable from the trash.
+/// The copy is made in a new folder in the system temp directory, which is removed afterwards.
+/// Returns true when the copy was made and disposed of.
 bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile)
 {
     const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
@@ -379,6 +397,11 @@ bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile)
     return disposed;
 }
 
+/// Returns the user-facing error when the output path cannot take the output of the given source,
+/// or an empty string when it can.
+/// A folder at the output path is never replaced, even with overwriteExisting,
+/// and a different file there needs overwriteExisting.
+/// The services check this before rendering, so a doomed file fails before any work is done.
 juce::String checkOutputPath(const juce::File& sourceFile, const juce::File& outputFile, const bool overwriteExisting)
 {
     if (outputFile == sourceFile || !outputFile.exists()) {
@@ -436,6 +459,19 @@ static juce::String keepNewAudioAfterLostOriginal(
     return "Could not replace the original file, and the new audio could not be kept";
 }
 
+/// Moves a finished temporary output into place next to its source and disposes of the source.
+/// When the output path is the source itself, the source is replaced in place.
+/// Otherwise an output path that fails checkOutputPath fails the commit,
+/// and a file allowed to be overwritten is renamed to a hidden backup next to it first.
+/// After the output is in place, a source with a different path is disposed of,
+/// and when that fails the output is removed again and the backup is renamed back,
+/// so the folder is left as it was.
+/// The backup is disposed of last, once everything else succeeded.
+/// When an in-place replace fails after the original was already removed,
+/// the new audio is kept next to it under a "(recovered)" name instead of being deleted with the temporary file.
+/// `disposeFile` moves files to the system trash unless a caller such as a test passes another function.
+/// Returns an empty string on success, or a user-facing error message.
+/// The temporary file is deleted by its own destructor on failure.
 juce::String commitTemporaryOutput(
     const juce::TemporaryFile& temporaryFile,
     const juce::File& sourceFile,

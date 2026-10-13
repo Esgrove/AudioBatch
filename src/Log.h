@@ -17,16 +17,8 @@ namespace utils
 /// Severity of a log message, which picks its prefix and console colour.
 enum class Level : std::uint8_t { debug, info, warn, error };
 
-/// Creates the default rolling file logger for the application.
-/// The log file goes into the application's log folder and is named after the log name,
-/// which defaults to the application name.
 std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName, const juce::String& logName = {});
 
-/// Writes a message with a timestamp to the current logger.
-/// In release builds the message is also printed to stderr, coloured by level when stderr is a terminal,
-/// since the file logger only prints to the console in debug builds.
-/// stderr keeps log output apart from the CLI results on stdout.
-/// Prefer the leveled log functions, which add the level prefix.
 void writeToLog(const juce::String& message, Level logLevel = Level::info);
 
 /// Logs a debug message. Debug messages are only logged in debug builds.
@@ -86,7 +78,5 @@ void logError(fmt::format_string<Args...> formatString, Args&&... args)
     logError(utils::format(formatString, std::forward<Args>(args)...));
 }
 
-/// Logs the collected system information as an indented block.
-/// Detail lines are written without the usual timestamp prefix so the block stays readable.
 void logSystemInfo();
 }  // namespace utils

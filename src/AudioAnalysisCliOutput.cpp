@@ -125,6 +125,8 @@ static juce::DynamicObject::Ptr buildRecordObject(const AudioAnalysisRecord& rec
     return object;
 }
 
+/// Returns the records as CSV text with a header line, one line per record, and a trailing newline.
+/// The header is written even when there are no records, so scripts can always parse the columns.
 juce::String formatRecordsAsCsv(const std::vector<AudioAnalysisRecord>& records)
 {
     juce::StringArray lines;
@@ -148,6 +150,7 @@ juce::String formatRecordsAsCsv(const std::vector<AudioAnalysisRecord>& records)
     return lines.joinIntoString("\n") + "\n";
 }
 
+/// Returns the records as a JSON array with LF line endings and a trailing newline, with null for silent levels.
 juce::String formatRecordsAsJson(const std::vector<AudioAnalysisRecord>& records)
 {
     juce::Array<juce::var> array;
@@ -161,6 +164,10 @@ juce::String formatRecordsAsJson(const std::vector<AudioAnalysisRecord>& records
     return juce::JSON::toString(juce::var(array)).replace("\r\n", "\n") + "\n";
 }
 
+/// Prints the records in the requested format to stdout.
+/// The table shows file names, or full paths when showFullPaths is set, as for normalization output.
+/// The table shows only successful records, since failures are already logged to stderr,
+/// while CSV and JSON include every record with its status and error.
 void printRecords(
     const std::vector<AudioAnalysisRecord>& records,
     const AudioAnalysisOutputFormat format,
