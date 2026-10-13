@@ -614,6 +614,7 @@ PluginProcessingResult processFileWithPlugins(
     const utils::ProgressCallback& onProgress
 )
 {
+    const auto startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     const auto& file = sourceRecord.file;
 
     if (const auto inputError = validateProcessingInputs(sourceRecord, options, chainInstances);
@@ -761,6 +762,12 @@ PluginProcessingResult processFileWithPlugins(
         result.errorMessage
             = utils::format("The file was processed, but re-analysis failed: {}", result.analysisRecord.errorMessage);
         utils::logError("Plugin processing re-analysis failed for {}", result.outputFile.getFullPathName().quoted());
+    } else {
+        utils::logInfo(
+            "{:8.2f} s: Processed {}",
+            (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / 1000.0,
+            result.outputFile.getFileName().quoted()
+        );
     }
 
     return result;

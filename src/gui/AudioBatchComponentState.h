@@ -51,6 +51,9 @@ struct OperationProgress {
     /// One "file: error" line per failed file, shown in a summary when the pass completes.
     juce::StringArray failures;
 
+    /// Time the pass started, in milliseconds from juce::Time::getMillisecondCounterHiRes.
+    double startedAtMilliseconds = 0.0;
+
     int completed = 0;
     int expected = 0;
     bool inProgress = false;

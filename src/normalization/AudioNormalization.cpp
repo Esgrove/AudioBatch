@@ -264,6 +264,7 @@ AudioNormalizationResult normalizeFile(
     const utils::ProgressCallback& onProgress
 )
 {
+    const auto startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     const auto& file = sourceRecord.file;
     const auto outputFile = getNormalizationOutputFile(file);
 
@@ -325,6 +326,12 @@ AudioNormalizationResult normalizeFile(
 
         if (!result.succeeded) {
             result.errorMessage = result.analysisRecord.errorMessage;
+        } else {
+            utils::logInfo(
+                "{:8.2f} s: Normalized {} (already at target)",
+                (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / 1000.0,
+                file.getFileName().quoted()
+            );
         }
 
         return result;
@@ -429,6 +436,12 @@ AudioNormalizationResult normalizeFile(
         result.errorMessage
             = utils::format("The file was normalized, but re-analysis failed: {}", result.analysisRecord.errorMessage);
         utils::logError("Normalization failed for {}: {}", result.fullPath.quoted(), result.errorMessage);
+    } else {
+        utils::logInfo(
+            "{:8.2f} s: Normalized {}",
+            (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / 1000.0,
+            outputFile.getFileName().quoted()
+        );
     }
 
     return result;

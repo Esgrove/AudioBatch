@@ -272,6 +272,14 @@ void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
     normalizeProgress.expected = totalFiles;
     normalizeProgress.inProgress = false;
 
+    utils::logInfo(
+        "{:8.2f} s: Normalization complete: {} succeeded, {} failed ({} files)",
+        (juce::Time::getMillisecondCounterHiRes() - normalizeProgress.startedAtMilliseconds) / 1000.0,
+        totalFiles - normalizeProgress.failures.size(),
+        normalizeProgress.failures.size(),
+        totalFiles
+    );
+
     showFailureSummary(normalizeProgress.failures, "Normalize", "normalized", this);
 
     if (!currentAudioFile.existsAsFile() && resultsTable.getSelectedRow() >= 0) {
@@ -380,6 +388,7 @@ void AudioBatchComponent::normalizeSelectedRecords()
     normalizeProgress.failures.clear();
     normalizeProgress.completed = 0;
     normalizeProgress.inProgress = true;
+    normalizeProgress.startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     auto normalizationOptions = normalizationTargetControl.getOptions();
     normalizationOptions.overwriteExisting = forceOverwriteToggle.getToggleState();
     normalizeProgress.expected = normalizeCoordinator.start(recordsToNormalize, normalizationOptions);
@@ -638,6 +647,7 @@ void AudioBatchComponent::processSelectedRecords()
     const auto workerCount
         = juce::jlimit(1, 4, juce::jmin(static_cast<int>(records.size()), juce::SystemStats::getNumCpus()));
 
+    processingProgress.startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     statusLabel.setText("Loading plugins...", juce::dontSendNotification);
 
     auto [chains, initialStates, errorMessage, failedPluginName]
@@ -719,6 +729,14 @@ void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
 {
     processingProgress.expected = totalFiles;
     processingProgress.inProgress = false;
+
+    utils::logInfo(
+        "{:8.2f} s: Plugin processing complete: {} succeeded, {} failed ({} files)",
+        (juce::Time::getMillisecondCounterHiRes() - processingProgress.startedAtMilliseconds) / 1000.0,
+        totalFiles - processingProgress.failures.size(),
+        processingProgress.failures.size(),
+        totalFiles
+    );
 
     if (pluginChain != nullptr) {
         updateProcessButtonState();
