@@ -1,8 +1,8 @@
 /// Tests for the CLI argument parsing in cli::parseArguments and the CSV and JSON output.
 /// Covers option values, aliases, the combinations the CLI rejects, and the machine-readable record fields.
 
-#include "AudioAnalysisCli.h"
-#include "AudioAnalysisCliOutput.h"
+#include "cli/AudioAnalysisCli.h"
+#include "cli/AudioAnalysisCliOutput.h"
 #include "TestSuites.h"
 
 #include <optional>

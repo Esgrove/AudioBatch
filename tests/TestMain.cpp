@@ -2,8 +2,8 @@
 /// Runs every test suite through juce::UnitTestRunner and returns a non-zero exit code when any test fails,
 /// which is what CTest checks.
 
-#include "StringFormat.h"
 #include "TestSuites.h"
+#include "utils/StringFormat.h"
 
 #include <cstdio>
 #include <memory>

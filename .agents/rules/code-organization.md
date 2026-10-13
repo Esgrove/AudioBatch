@@ -34,6 +34,10 @@ Within a struct or class:
 
 ## File size and structure
 
+- Put each file in the `src/` subdirectory of its domain, as listed in the Source Layout section of `AGENTS.md`.
+  Keep a header next to its source, and add a new directory only for a new domain with several files.
+- Include project headers by their path relative to `src/`, such as `#include "analysis/AudioAnalysis.h"`,
+  also from within the same directory, and never with `../`.
 - Split a file that reaches about 1000 lines into focused parts by topic.
   Each part should be a few hundred lines, with a shared internal header for constants and helpers used by several parts.
 - Avoid very small files.

@@ -98,8 +98,11 @@ if [ "$BASH_PLATFORM" = "mac" ] && command -v xcrun > /dev/null 2>&1; then
     fi
 fi
 
-# Collect the C++ sources under src/ and tests/.
-SOURCES=("$REPO"/src/*.cpp "$REPO"/tests/*.cpp)
+# Collect the C++ sources under src/ and tests/, including subdirectories.
+SOURCES=()
+while IFS= read -r source; do
+    SOURCES+=("$source")
+done < <(find "$REPO/src" "$REPO/tests" -type f -name "*.cpp" | sort)
 
 # Do not let clang-tidy infer flags from an unrelated source when the database is stale.
 for source in "${SOURCES[@]}"; do

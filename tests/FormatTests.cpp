@@ -1,8 +1,8 @@
 /// Tests for the display formatting helpers in AudioAnalysisFormatting
 /// and the record sorting used by the GUI table and the CLI output.
 
-#include "AudioAnalysis.h"
-#include "AudioAnalysisFormatting.h"
+#include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisFormatting.h"
 #include "TestSuites.h"
 
 #include <vector>

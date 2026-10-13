@@ -1,0 +1,741 @@
+/// Implementation of the plugin processing functions.
+/// Covers reading the source file with a thread-local format manager,
+/// applying custom or normalization gain before the chain,
+/// configuring plugin buses for the file's channel layout,
+/// switching plugins to offline (non-realtime) rendering mode,
+/// restoring their state and preparing them per file,
+/// and rendering block by block through the chain including plugin tails,
+/// with the chain's reported latency removed from the start of the output.
+/// Plugin setup and release are posted to the message thread as VST3 requires,
+/// with a cancellation-aware wait so a worker never deadlocks against a message thread that waits for it,
+/// while processBlock runs on the calling worker thread.
+/// The chain output is rendered to an unquantized 32-bit float file first,
+/// so the peak and the end of the audible tail are known before the final AIFF file is written at the source bit depth,
+/// turned down when it would clip, trimmed, and dithered when 16-bit.
+/// The AIFF file is validated, given the original file's metadata, and then moved into place,
+/// with the processed file re-analyzed for the result record.
+
+#include "plugins/PluginProcessing.h"
+
+#include "analysis/DecodeFailureTracker.h"
+#include "metadata/Metadata.h"
+#include "normalization/AudioNormalization.h"
+#include "plugins/PluginChainPreparation.h"
+#include "utils/AudioFormatUtils.h"
+#include "utils/FileUtils.h"
+#include "utils/Log.h"
+#include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
+
+#include <algorithm>
+#include <cmath>
+#include <functional>
+#include <memory>
+#include <span>
+
+namespace audiobatch
+{
+namespace
+{
+/// Block size for copying the rendered intermediate file into the final output.
+constexpr int finalizeBlockSize = 32768;
+/// Level below which rendered tail samples count as silence and are trimmed from the end of the output.
+/// The value is -96 dB, the noise floor of 16-bit audio.
+constexpr float silenceThreshold = 1.5849e-5f;
+/// Output bit depth at and below which TPDF dither is added when quantizing the rendered audio.
+constexpr int maximumDitheredBitDepth = 16;
+/// Seed for the dither noise, so processing the same file twice writes identical output.
+constexpr juce::int64 ditherSeed = 0x41554449;
+constexpr auto cancelledMessage = "Processing was cancelled";
+
+/// Shorthand for building a failure result, keeping the early-return error paths compact.
+static PluginProcessingResult fail(const juce::File& file, const juce::String& message)
+{
+    return PluginProcessingResult::failure(file, message);
+}
+
+/// Clamps a file's channel count to a sane range before it is used for buffer allocation and bus configuration.
+static int clampChannelCount(const int channels)
+{
+    return juce::jlimit(1, 8, channels);
+}
+
+}  // namespace
+
+/// Returns true when the file's format can be read for processing.
+bool canProcessFileWithPlugins(const juce::File& file)
+{
+    auto& formatManager = utils::threadLocalFormatManager();
+    const std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+    return reader != nullptr;
+}
+
+/// Returns the on-disk output path that processing would produce for the given input.
+juce::File getProcessingOutputFile(const juce::File& input)
+{
+    return getNormalizationOutputFile(input);
+}
+
+/// Returns an error message when the record or the plugin chain cannot be processed, or an empty string when it can.
+static juce::String validateProcessingInputs(
+    const AudioAnalysisRecord& record,
+    const PluginProcessingOptions& options,
+    const std::vector<juce::AudioPluginInstance*>& chainInstances
+)
+{
+    if (!record.file.existsAsFile()) {
+        return "File does not exist";
+    }
+
+    if (!record.isReady()) {
+        return "File analysis must finish before processing";
+    }
+
+    const auto chainAvailable = !chainInstances.empty() && chainInstances.size() == options.plugins.size()
+        && std::ranges::none_of(chainInstances, [](const auto* instance) { return instance == nullptr; });
+
+    return chainAvailable ? juce::String() : juce::String("Plugin chain instances are not available");
+}
+
+/// Returns the linear gain applied before the first plugin.
+/// A custom gain wins, otherwise the file is normalized to the requested peak or loudness target,
+/// and otherwise it is left unchanged.
+/// A file without a measurable level for the target, such as silence, is left unchanged too.
+static float getInputGain(const AudioAnalysisRecord& record, const PluginProcessingOptions& options)
+{
+    if (record.hasCustomGain) {
+        return juce::Decibels::decibelsToGain(record.customGainDb);
+    }
+
+    if (options.normalizeBeforePlugin.has_value()) {
+        juce::String unusedError;
+        return getNormalizationGain(record, *options.normalizeBeforePlugin, unusedError).value_or(1.0f);
+    }
+
+    return 1.0f;
+}
+
+/// Reads `samplesToRead` frames starting at `samplePosition` into the start of `buffer` and applies `inputGain`.
+/// `readBuffer` and `readChannelPointers` are scratch storage reused across blocks.
+/// Returns false when the reader reports a failure, following the rules of utils::readFloatSamples.
+static bool readInputBlock(
+    juce::AudioFormatReader& reader,
+    juce::AudioBuffer<float>& buffer,
+    juce::AudioBuffer<float>& readBuffer,
+    std::vector<float*>& readChannelPointers,
+    const juce::int64 samplePosition,
+    const int samplesToRead,
+    const float inputGain
+)
+{
+    const auto channelCount = static_cast<int>(readChannelPointers.size());
+    readBuffer.clear();
+
+    for (int channel = 0; channel < channelCount; ++channel) {
+        readChannelPointers[static_cast<std::size_t>(channel)] = readBuffer.getWritePointer(channel);
+    }
+
+    const auto readSucceeded
+        = utils::readFloatSamples(reader, readChannelPointers.data(), channelCount, samplePosition, samplesToRead);
+
+    for (int channel = 0; channel < channelCount; ++channel) {
+        buffer.copyFrom(channel, 0, readBuffer, channel, 0, samplesToRead);
+    }
+
+    if (!juce::approximatelyEqual(inputGain, 1.0f)) {
+        for (int channel = 0; channel < channelCount; ++channel) {
+            buffer.applyGain(channel, 0, samplesToRead, inputGain);
+        }
+    }
+
+    return readSucceeded;
+}
+
+/// Level and length measurements of the rendered chain output, used to finalize the output file.
+struct RenderSummary {
+    /// Largest absolute sample value of the rendered output.
+    float peak = 0.0f;
+    /// Number of samples written to the intermediate file.
+    juce::int64 samplesWritten = 0;
+    /// Position of the last sample above the silence threshold, or -1 when the output is silent.
+    juce::int64 lastAudibleSample = -1;
+    /// Notice about source blocks that failed to decode but were tolerated, or empty when there were none.
+    juce::String decodeNotice;
+};
+
+/// Replaces the first channel with the average of the first two channels over the given sample range,
+/// so a stereo signal derived from a mono source keeps both of its channels when it continues as mono.
+static void foldStereoToMono(juce::AudioBuffer<float>& buffer, const int firstSample, const int numSamples)
+{
+    buffer.addFrom(0, firstSample, buffer, 1, firstSample, numSamples);
+    buffer.applyGain(0, firstSample, numSamples, 0.5f);
+}
+
+/// Runs one block through every plugin in chain order on the same buffer,
+/// and returns the number of main channels carrying signal after the last plugin.
+/// The signal starts with the file's channel count.
+/// A mono signal reaching a plugin with a stereo main input is copied to the second channel first,
+/// so stereo-linked and mid/side processing see a centred source instead of a hard-left one,
+/// and a mono plugin earlier in the chain still affects both channels.
+/// A stereo signal reaching a plugin with a mono main input is folded to the average of both channels,
+/// the same way the output of a mono file is written, so the order of the plugins does not drop a channel.
+/// Channels beyond a plugin's main input, such as a sidechain, are cleared so no dry signal leaks into them.
+/// The buffer is as wide as the widest plugin, and each plugin only sees the channels of its own buses.
+static int processBlockThroughChain(
+    juce::AudioBuffer<float>& buffer,
+    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    const int numChannels,
+    juce::MidiBuffer& midi
+)
+{
+    auto signalChannels = numChannels;
+
+    for (auto* plugin : chainInstances) {
+        const auto mainInputChannels = juce::jmin(plugin->getMainBusNumInputChannels(), buffer.getNumChannels());
+
+        if (signalChannels == 1 && mainInputChannels >= 2) {
+            buffer.copyFrom(1, 0, buffer, 0, 0, buffer.getNumSamples());
+        } else if (signalChannels >= 2 && mainInputChannels == 1) {
+            foldStereoToMono(buffer, 0, buffer.getNumSamples());
+        }
+
+        for (int channel = juce::jmax(mainInputChannels, 1); channel < buffer.getNumChannels(); ++channel) {
+            buffer.clear(channel, 0, buffer.getNumSamples());
+        }
+
+        // Each plugin gets a view with only as many channels as it was prepared for,
+        // because JUCE's Audio Unit host asserts that the buffer is not wider than the prepared layout.
+        const auto pluginChannels = juce::jmin(
+            buffer.getNumChannels(), juce::jmax(plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels())
+        );
+        juce::AudioBuffer pluginBuffer(buffer.getArrayOfWritePointers(), pluginChannels, buffer.getNumSamples());
+
+        midi.clear();
+        plugin->processBlock(pluginBuffer, midi);
+        signalChannels = juce::jmax(1, juce::jmin(plugin->getMainBusNumOutputChannels(), buffer.getNumChannels()));
+    }
+
+    return signalChannels;
+}
+
+/// Folds the processed channels down to the file's channel count before they are written.
+/// A mono file whose signal ended up in stereo is written as the average of both main channels.
+/// Returns the buffer view to write, which aliases `buffer`.
+static juce::AudioBuffer<float> prepareOutputView(
+    juce::AudioBuffer<float>& buffer,
+    const int numChannels,
+    const int signalChannels,
+    const int firstSample,
+    const int numSamples
+)
+{
+    if (numChannels == 1 && signalChannels >= 2) {
+        foldStereoToMono(buffer, firstSample, numSamples);
+    }
+
+    const auto channelsToWrite = juce::jmin(numChannels, buffer.getNumChannels());
+    return {buffer.getArrayOfWritePointers(), channelsToWrite, firstSample, numSamples};
+}
+
+/// Returns true when every sample of the block is a finite number.
+/// An unstable plugin can produce infinity or NaN,
+/// which would turn the clip guard gain into zero or reach the integer writer unchanged.
+static bool isBlockFinite(const juce::AudioBuffer<float>& block, const int numSamples)
+{
+    for (int channel = 0; channel < block.getNumChannels(); ++channel) {
+        const std::span samples(block.getReadPointer(channel), static_cast<std::size_t>(numSamples));
+
+        if (!std::ranges::all_of(samples, [](const float sample) { return std::isfinite(sample); })) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+/// Updates the peak and the last audible sample position with a block about to be written.
+/// The block must only hold finite samples.
+static void measureOutputBlock(const juce::AudioBuffer<float>& block, const int numSamples, RenderSummary& summary)
+{
+    for (int channel = 0; channel < block.getNumChannels(); ++channel) {
+        summary.peak = juce::jmax(summary.peak, block.getMagnitude(channel, 0, numSamples));
+    }
+
+    for (int sample = numSamples - 1; sample >= 0; --sample) {
+        for (int channel = 0; channel < block.getNumChannels(); ++channel) {
+            if (std::abs(block.getSample(channel, sample)) > silenceThreshold) {
+                summary.lastAudibleSample = summary.samplesWritten + sample;
+                return;
+            }
+        }
+    }
+}
+
+/// Streams the whole file through every plugin in chain order and writes the processed audio,
+/// unquantized, to the intermediate writer.
+/// The chain latency and tail are rendered on top of the file length,
+/// and the first `latencySamples` output samples are discarded,
+/// so the processed audio lines up with the input and its end is not cut off.
+/// Read failures follow the shared DecodeFailureTracker rules.
+/// Returns an error message, or an empty string when the whole file was written.
+static juce::String renderThroughChain(
+    juce::AudioFormatReader& reader,
+    juce::AudioFormatWriter& writer,
+    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    const plugin_processing::ChainPreparation& preparation,
+    const int numChannels,
+    const float inputGain,
+    const utils::CancellationCheck& isCancelled,
+    RenderSummary& summary
+)
+{
+    const auto latencySamples = preparation.latencySamples;
+
+    juce::AudioBuffer<float> buffer(preparation.processChannelCount, plugin_processing::processingBlockSize);
+    juce::AudioBuffer<float> readBuffer(numChannels, plugin_processing::processingBlockSize);
+    juce::MidiBuffer midi;
+    std::vector<float*> readChannelPointers(static_cast<std::size_t>(numChannels));
+    DecodeFailureTracker failureTracker(reader.lengthInSamples);
+
+    const auto totalSamples = reader.lengthInSamples + latencySamples + preparation.tailSamples;
+
+    for (juce::int64 samplePosition = 0; samplePosition < totalSamples;
+         samplePosition += plugin_processing::processingBlockSize)
+    {
+        if (utils::isCancellationRequested(isCancelled)) {
+            return cancelledMessage;
+        }
+
+        const auto samplesThisBlock = static_cast<int>(
+            juce::jmin<juce::int64>(plugin_processing::processingBlockSize, totalSamples - samplePosition)
+        );
+
+        // Clearing the whole block also pads a short final block with silence up to the prepared block size,
+        // since many plugins assume a constant block size.
+        buffer.clear();
+
+        const auto samplesToRead = static_cast<int>(juce::jmax<juce::int64>(
+            0, juce::jmin<juce::int64>(samplesThisBlock, reader.lengthInSamples - samplePosition)
+        ));
+
+        if (samplesToRead > 0) {
+            const auto readSucceeded = readInputBlock(
+                reader, buffer, readBuffer, readChannelPointers, samplePosition, samplesToRead, inputGain
+            );
+
+            if (!failureTracker.recordBlock(readSucceeded, samplePosition, samplesToRead)) {
+                return failureTracker.getErrorMessage();
+            }
+        }
+
+        const auto signalChannels = processBlockThroughChain(buffer, chainInstances, numChannels, midi);
+
+        // Skip the output samples that still fall within the chain latency.
+        const auto firstSampleToWrite
+            = static_cast<int>(juce::jlimit<juce::int64>(0, samplesThisBlock, latencySamples - samplePosition));
+        const auto samplesToWrite = samplesThisBlock - firstSampleToWrite;
+
+        if (samplesToWrite <= 0) {
+            continue;
+        }
+
+        const auto writeView
+            = prepareOutputView(buffer, numChannels, signalChannels, firstSampleToWrite, samplesToWrite);
+
+        if (!isBlockFinite(writeView, samplesToWrite)) {
+            return "The plugin chain produced invalid samples (infinity or NaN)";
+        }
+
+        measureOutputBlock(writeView, samplesToWrite, summary);
+
+        if (!writer.writeFromAudioSampleBuffer(writeView, 0, samplesToWrite)) {
+            return "Failed while writing processed audio data";
+        }
+
+        summary.samplesWritten += samplesToWrite;
+    }
+
+    summary.decodeNotice = failureTracker.getNotice();
+    return {};
+}
+
+/// Returns the gain that keeps the rendered output from clipping, which is 1 when the peak is within full scale.
+/// The ceiling leaves room for the dither noise when the output is dithered.
+static float getClipGuardGain(const RenderSummary& summary, const int bitsPerSample)
+{
+    const auto ditherHeadroom
+        = bitsPerSample <= maximumDitheredBitDepth ? 2.0f / std::ldexp(1.0f, bitsPerSample - 1) : 0.0f;
+    const auto ceiling = 1.0f - ditherHeadroom;
+    return summary.peak > ceiling ? ceiling / summary.peak : 1.0f;
+}
+
+/// Returns the number of samples to keep from the rendered output.
+/// Trailing silence from the tail allowance is dropped, but the output is never shorter than the source.
+static juce::int64 getFinalLength(const RenderSummary& summary, const juce::int64 sourceLength)
+{
+    return juce::jlimit<juce::int64>(
+        0, summary.samplesWritten, juce::jmax(sourceLength, summary.lastAudibleSample + 1)
+    );
+}
+
+/// Adds triangular (TPDF) dither of one least significant bit to the block before it is quantized,
+/// which turns the quantization error into benign noise instead of distortion on quiet material.
+static void addDither(
+    juce::AudioBuffer<float>& block,
+    const int numSamples,
+    const int bitsPerSample,
+    juce::Random& random
+)
+{
+    // The JUCE writers scale full scale to 2^(bits - 1) - 1 integer steps.
+    const auto leastSignificantBit = 1.0f / (std::ldexp(1.0f, bitsPerSample - 1) - 1.0f);
+
+    for (int channel = 0; channel < block.getNumChannels(); ++channel) {
+        for (int sample = 0; sample < numSamples; ++sample) {
+            block.addSample(channel, sample, (random.nextFloat() - random.nextFloat()) * leastSignificantBit);
+        }
+    }
+}
+
+/// Copies the rendered intermediate audio into the final writer,
+/// applying the clip guard gain, trimming the trailing silence, and dithering 16-bit output.
+/// Returns an error message, or an empty string when the whole output was written.
+static juce::String writeFinalOutput(
+    juce::AudioFormatReader& renderedReader,
+    juce::AudioFormatWriter& writer,
+    const juce::int64 finalLength,
+    const float gain,
+    const int bitsPerSample,
+    const utils::CancellationCheck& isCancelled
+)
+{
+    juce::AudioBuffer<float> block(static_cast<int>(renderedReader.numChannels), finalizeBlockSize);
+    juce::Random random(ditherSeed);
+
+    for (juce::int64 samplePosition = 0; samplePosition < finalLength; samplePosition += finalizeBlockSize) {
+        if (utils::isCancellationRequested(isCancelled)) {
+            return cancelledMessage;
+        }
+
+        const auto samplesThisBlock
+            = static_cast<int>(juce::jmin<juce::int64>(finalizeBlockSize, finalLength - samplePosition));
+
+        if (!renderedReader.read(&block, 0, samplesThisBlock, samplePosition, true, true)) {
+            return "Failed while reading the rendered audio";
+        }
+
+        block.applyGain(0, samplesThisBlock, gain);
+
+        if (bitsPerSample <= maximumDitheredBitDepth) {
+            addDither(block, samplesThisBlock, bitsPerSample, random);
+        }
+
+        if (!writer.writeFromAudioSampleBuffer(block, 0, samplesThisBlock)) {
+            return "Failed while writing processed audio data";
+        }
+    }
+
+    return {};
+}
+
+/// Returns the record unchanged when the file still matches it on disk,
+/// otherwise analyzes the file again, so the input gain is never computed from an outdated peak.
+/// The custom gain is dropped for a changed file, since it was set for the previous version of the file.
+/// The analysis stops when isCancelled returns true, and the returned record then carries the cancellation error.
+static AudioAnalysisRecord refreshIfChanged(
+    const AudioAnalysisRecord& record,
+    const utils::CancellationCheck& isCancelled
+)
+{
+    return record.matchesFileOnDisk() ? record : analyzeFile(record.file, isCancelled);
+}
+
+/// Prepares the chain, renders the whole file through it into an unquantized 32-bit float WAV file,
+/// and releases the chain again.
+/// Plugin setup and release run on the message thread as VST3 requires, and only processBlock runs on this thread.
+/// Returns an error message, or an empty string when the whole file was rendered.
+static juce::String renderChainToFile(
+    juce::AudioFormatReader& reader,
+    const juce::File& intermediateFile,
+    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    const PluginProcessingOptions& options,
+    const int numChannels,
+    const float inputGain,
+    const utils::CancellationCheck& isCancelled,
+    RenderSummary& summary
+)
+{
+    juce::WavAudioFormat wavFormat;
+    std::unique_ptr<juce::OutputStream> outputStream(intermediateFile.createOutputStream().release());
+
+    if (outputStream == nullptr) {
+        return "Could not create temporary output file";
+    }
+
+    const auto writerOptions = juce::AudioFormatWriterOptions()
+                                   .withSampleRate(reader.sampleRate)
+                                   .withNumChannels(numChannels)
+                                   .withBitsPerSample(32)
+                                   .withSampleFormat(juce::AudioFormatWriterOptions::SampleFormat::floatingPoint);
+    auto writer = wavFormat.createWriterFor(outputStream, writerOptions);
+
+    if (writer == nullptr) {
+        return "Could not create the temporary render file";
+    }
+
+    plugin_processing::ChainPreparation preparation;
+    const bool prepared = utils::callOnMessageThread(
+        [&] { preparation = plugin_processing::prepareChain(chainInstances, options, numChannels, reader.sampleRate); },
+        isCancelled
+    );
+
+    if (!prepared || preparation.errorMessage.isNotEmpty()) {
+        return prepared ? preparation.errorMessage : juce::String(cancelledMessage);
+    }
+
+    if (preparation.latencySamples > 0) {
+        utils::logDebug("Compensating {} samples of plugin chain latency", preparation.latencySamples);
+    }
+
+    const auto renderError = renderThroughChain(
+        reader, *writer, chainInstances, preparation, numChannels, inputGain, isCancelled, summary
+    );
+
+    // Release on every path so a failed file does not leave the chain active for the next one.
+    // After cancellation the message thread may be blocked waiting for this worker, so the release is skipped,
+    // and the plugin instances release their resources when they are destroyed instead.
+    utils::callOnMessageThread(
+        [&chainInstances] { plugin_processing::releasePluginResources(chainInstances); }, isCancelled
+    );
+
+    return renderError;
+}
+
+/// Writes the rendered intermediate audio to the AIFF output file at the given bit depth,
+/// with the clip guard gain, the trimmed length, and dither for 16-bit output.
+/// Returns an error message, or an empty string when the output was written.
+static juce::String writeProcessedAiff(
+    juce::AudioFormat& aiffFormat,
+    const juce::File& intermediateFile,
+    const juce::File& outputFile,
+    const juce::AudioFormatReader& sourceReader,
+    const juce::int64 finalLength,
+    const float gain,
+    const int bitsPerSample,
+    const utils::CancellationCheck& isCancelled
+)
+{
+    juce::WavAudioFormat wavFormat;
+    auto renderedStream = intermediateFile.createInputStream();
+
+    if (renderedStream == nullptr) {
+        return "Could not open the rendered audio";
+    }
+
+    const std::unique_ptr<juce::AudioFormatReader> renderedReader(
+        wavFormat.createReaderFor(renderedStream.release(), true)
+    );
+
+    if (renderedReader == nullptr) {
+        return "Could not read the rendered audio";
+    }
+
+    std::unique_ptr<juce::OutputStream> outputStream(outputFile.createOutputStream().release());
+
+    if (outputStream == nullptr) {
+        return "Could not create temporary output file";
+    }
+
+    const auto writerOptions = juce::AudioFormatWriterOptions()
+                                   .withSampleRate(sourceReader.sampleRate)
+                                   .withNumChannels(static_cast<int>(renderedReader->numChannels))
+                                   .withBitsPerSample(bitsPerSample)
+                                   .withMetadataValues(utils::aiffWriterMetadata(sourceReader.metadataValues));
+    const auto writer = aiffFormat.createWriterFor(outputStream, writerOptions);
+
+    if (writer == nullptr) {
+        return "Could not create AIFF writer for output";
+    }
+
+    return writeFinalOutput(*renderedReader, *writer, finalLength, gain, bitsPerSample, isCancelled);
+}
+
+/// Processes a single file through the given plugin instances in order.
+/// The instances must align index-for-index with options.plugins.
+/// The function restores state on each plugin, prepares it in offline mode, and resets it before processing,
+/// compensates for the chain's total reported latency,
+/// and releases the plugins' resources afterwards, also when processing fails.
+/// Intended to run on a worker thread.
+/// Plugin setup and release are marshalled to the message thread,
+/// because VST3 restricts bus arrangement, setupProcessing, setActive, and setState to the UI thread,
+/// so only processBlock runs on the calling thread.
+/// The message loop must keep running while a worker is inside this call,
+/// unless isCancelled starts returning true:
+/// a worker waiting for the message thread then gives up instead of blocking,
+/// so the message thread may wait for workers after requesting cancellation without deadlocking.
+/// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.
+/// It may leave the chain prepared, in which case the plugin instances release their resources when destroyed.
+/// The caller owns the plugin instances and is responsible for thread-safety:
+/// a chain of instances must only be in use by one thread at a time.
+/// A mono file running through a stereo chain feeds both plugin inputs and is written back as mono,
+/// using the average of both output channels.
+/// The chain renders into an unquantized intermediate file first.
+/// When the rendered peak exceeds full scale, the whole output is turned down just enough to avoid clipping,
+/// which is reported in the result notice.
+/// Isolated source blocks that fail to decode are processed as decoded and reported in the notice too.
+/// Trailing silence from the tail allowance is trimmed, and 16-bit output is dithered.
+/// When the file changed on disk since sourceRecord was analyzed, it is analyzed again first.
+/// An `.aif` source is rewritten in place after a copy of it is disposed of through options.disposeFile.
+PluginProcessingResult processFileWithPlugins(
+    const AudioAnalysisRecord& sourceRecord,
+    const PluginProcessingOptions& options,
+    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    const utils::CancellationCheck& isCancelled
+)
+{
+    const auto& file = sourceRecord.file;
+
+    if (const auto inputError = validateProcessingInputs(sourceRecord, options, chainInstances);
+        inputError.isNotEmpty())
+    {
+        return fail(file, inputError);
+    }
+
+    const auto record = refreshIfChanged(sourceRecord, isCancelled);
+
+    if (record.hasError()) {
+        return fail(file, record.errorMessage);
+    }
+
+    auto& formatManager = utils::threadLocalFormatManager();
+    std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
+
+    if (reader == nullptr) {
+        return fail(file, "Unsupported or unreadable audio file");
+    }
+
+    auto* aiffFormat = utils::findAiffFormat(formatManager);
+    if (aiffFormat == nullptr) {
+        return fail(file, "AIFF writer not available in this build");
+    }
+
+    const auto outputFile = getProcessingOutputFile(file);
+
+    if (const auto outputError = utils::checkOutputPath(file, outputFile, options.overwriteExisting);
+        outputError.isNotEmpty())
+    {
+        return fail(file, outputError);
+    }
+
+    const auto numChannels = clampChannelCount(static_cast<int>(reader->numChannels));
+    const juce::TemporaryFile intermediateFile(".wav");
+    RenderSummary summary;
+
+    if (const auto renderError = renderChainToFile(
+            *reader,
+            intermediateFile.getFile(),
+            chainInstances,
+            options,
+            numChannels,
+            getInputGain(record, options),
+            isCancelled,
+            summary
+        );
+        renderError.isNotEmpty())
+    {
+        return fail(file, renderError);
+    }
+
+    // The hidden name keeps a half-written output out of folder scans, and out of later scans after a crash.
+    const juce::TemporaryFile temporaryFile(outputFile, juce::TemporaryFile::useHiddenFile);
+    const auto bitsPerSample = getNormalizationOutputBitDepth(record, *reader);
+    const auto clipGuardGain = getClipGuardGain(summary, bitsPerSample);
+
+    const auto finalLength = getFinalLength(summary, reader->lengthInSamples);
+
+    if (const auto writeError = writeProcessedAiff(
+            *aiffFormat,
+            intermediateFile.getFile(),
+            temporaryFile.getFile(),
+            *reader,
+            finalLength,
+            clipGuardGain,
+            bitsPerSample,
+            isCancelled
+        );
+        writeError.isNotEmpty())
+    {
+        return fail(file, writeError);
+    }
+
+    // Carries ID3 tags, embedded artwork, and similar information across formats such as MP3 to AIFF.
+    if (!copyMetadata(file, temporaryFile.getFile())) {
+        return fail(file, "Could not copy metadata onto the processed output");
+    }
+
+    if (const auto validationError = utils::validateWrittenAudio(
+            formatManager, temporaryFile.getFile(), numChannels, reader->sampleRate, finalLength
+        );
+        validationError.isNotEmpty())
+    {
+        return fail(file, utils::format("Processed output failed validation: {}", validationError));
+    }
+
+    // Check again before touching the original, since cancellation may arrive during the last render block.
+    // The coordinator drops results of a cancelled run,
+    // so committing here would change files on disk without the caller ever learning about it.
+    if (utils::isCancellationRequested(isCancelled)) {
+        return fail(file, cancelledMessage);
+    }
+
+    // Unlike normalization, processing cannot be repeated to get back to the original,
+    // so an original rewritten in place keeps a copy in the trash like a converted original does.
+    if (outputFile == file && !utils::disposeOfCopy(file, options.disposeFile)) {
+        return fail(file, "Could not move a copy of the original file to the system trash");
+    }
+
+    if (const auto commitError
+        = utils::commitTemporaryOutput(temporaryFile, file, outputFile, options.overwriteExisting, options.disposeFile);
+        commitError.isNotEmpty())
+    {
+        return fail(file, commitError);
+    }
+
+    PluginProcessingResult result;
+    result.originalFile = file;
+    result.originalFullPath = file.getFullPathName();
+    result.outputFile = outputFile;
+    result.committed = true;
+
+    juce::StringArray notices;
+
+    if (clipGuardGain < 1.0f) {
+        const auto clipNotice
+            = utils::format("Reduced {:.1f} dB to avoid clipping", -juce::Decibels::gainToDecibels(clipGuardGain));
+        notices.add(clipNotice);
+        utils::logInfo("{}: {}", outputFile.getFullPathName().quoted(), clipNotice);
+    }
+
+    if (summary.decodeNotice.isNotEmpty()) {
+        notices.add(summary.decodeNotice);
+        utils::logWarn("{}: {}", outputFile.getFullPathName().quoted(), summary.decodeNotice);
+    }
+
+    result.notice = notices.joinIntoString(". ");
+
+    result.fileName = outputFile.getFileName();
+    result.analysisRecord = analyzeFile(outputFile);
+    // Custom gain has been baked in. Clear it on the new record.
+    result.analysisRecord.customGainDb = 0.0f;
+    result.analysisRecord.hasCustomGain = false;
+    result.succeeded = !result.analysisRecord.hasError();
+
+    if (!result.succeeded) {
+        result.errorMessage
+            = utils::format("The file was processed, but re-analysis failed: {}", result.analysisRecord.errorMessage);
+        utils::logError("Plugin processing re-analysis failed for {}", result.outputFile.getFullPathName().quoted());
+    }
+
+    return result;
+}
+}  // namespace audiobatch

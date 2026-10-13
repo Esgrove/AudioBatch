@@ -2,7 +2,7 @@
 /// Injected readers and queued deliveries exercise cancellation, identity validation and cache restart.
 /// All files and databases live in temporary directories, with no local music or sibling repository dependency.
 
-#include "SeratoPreviewLoader.h"
+#include "serato/SeratoPreviewLoader.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include <condition_variable>

@@ -3,13 +3,13 @@
 /// the migration of a database written by an older version, and the delivery of results of replaced runs.
 /// The cached files are copies of the committed fixtures.
 
-#include "AnalysisCache.h"
-#include "AnalysisCoordinator.h"
-#include "AudioAnalysis.h"
-#include "SeratoTags.h"
-#include "StringFormat.h"
+#include "analysis/AnalysisCache.h"
+#include "analysis/AnalysisCoordinator.h"
+#include "analysis/AudioAnalysis.h"
+#include "serato/SeratoTags.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/StringFormat.h"
 
 #include <atomic>
 #include <bit>

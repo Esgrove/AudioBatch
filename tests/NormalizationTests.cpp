@@ -4,12 +4,12 @@
 /// Only in-place `.aif` sources are normalized successfully here,
 /// because converting other formats moves the original to the system trash.
 
-#include "AudioAnalysis.h"
-#include "AudioNormalization.h"
-#include "Metadata.h"
-#include "StringFormat.h"
+#include "analysis/AudioAnalysis.h"
+#include "metadata/Metadata.h"
+#include "normalization/AudioNormalization.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/StringFormat.h"
 
 #include <algorithm>
 #include <vector>

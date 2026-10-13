@@ -25,70 +25,77 @@ Multichannel files are not a target.
 
 ## Source Layout
 
-The application code lives in `src/`.
-The two targets share a core set of sources.
-The CLI adds its front end files, and the GUI adds its components and plugin hosting.
+The application code lives in `src/`, in one subdirectory per domain.
+Headers sit next to their sources, and there is no separate `include/` directory,
+because the project is an application with no public headers.
+Directories describe what the code does, not which target links it.
+The source lists in `CMakeLists.txt` decide which target builds each file.
 
-Entry points:
-
-- `src/Main.cpp` is the GUI application entry point, and `src/MainWindow.*` is its top-level window and menu bar.
-- `src/CliMain.cpp` is the CLI entry point.
-
-CLI only:
-
-- `src/AudioAnalysisCli.{h,cpp}` declare the CLI options and the `cli` functions that run the analysis workflow,
-  `src/AudioAnalysisCliParse.cpp` parses and validates the arguments,
-  and `src/AudioAnalysisCliOutput.*` prints the results as a table, CSV, or JSON.
-- `src/PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
-
-Shared core (linked into both targets):
-
-- `src/AudioAnalysis.*` and `src/AudioAnalysisTypes.h` perform audio analysis as free functions.
-  `src/AudioAnalysisFormatting.*` implement the display formatting,
-  and `src/BitDepthDetection.*` detects the source bit depth from the audio file, with a fixed default for MP3 files.
-- `src/AudioNormalization.*` handle normalization and AIFF conversion,
-  and `src/NormalizationFormatSupport.cpp` reports which formats this build can normalize.
-- `src/Metadata.*` read and write tags and embedded art through TagLib.
-- `src/AnalysisCache.*` manage the SQLite result cache.
-  Its implementation is split into `AnalysisCache.cpp` (analysis, tag and waveform persistence)
-  and `AnalysisCacheSchema.cpp` (database lifecycle and schema),
-  which share the constants and helpers in `AnalysisCacheSql.h`.
-- `src/AnalysisCoordinator.*` and `src/NormalizeCoordinator.*` orchestrate background work.
-- Shared helpers are split by area, all in the `utils` namespace unless noted:
-  - `src/Log.*` holds the leveled logging functions.
-  - `src/AppInfo.*` holds the version line, the About text, system information, and the settings file options.
-  - `src/FileUtils.*` holds the file system helpers, such as moving files to the trash and extension checks.
-  - `src/AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, and peak math.
-  - `src/ThreadUtils.*` holds the `CancellationCheck` callback the services poll
+- `src/analysis/` holds audio analysis and its result cache.
+  - `AudioAnalysis.*` and `AudioAnalysisTypes.h` perform audio analysis as free functions.
+    `AudioAnalysisFormatting.*` implement the display formatting,
+    and `BitDepthDetection.*` detects the source bit depth from the audio file, with a fixed default for MP3 files.
+    `DecodeFailureTracker.h` holds the shared rules for read failures while decoding a file block by block.
+  - `AnalysisCache.*` manage the SQLite result cache.
+    Its implementation is split into `AnalysisCache.cpp` (analysis, tag and waveform persistence)
+    and `AnalysisCacheSchema.cpp` (database lifecycle and schema),
+    which share the constants and helpers in `AnalysisCacheSql.h`.
+  - `AnalysisCoordinator.*` orchestrates background analysis.
+- `src/normalization/` holds `AudioNormalization.*` for normalization and AIFF conversion,
+  `NormalizationFormatSupport.cpp`, which reports which formats this build can normalize,
+  and `NormalizeCoordinator.*`, which orchestrates background normalization.
+- `src/metadata/` holds `Metadata.*`, which read and write tags and embedded art through TagLib,
+  and the TagLib helpers in `TagLibUtils.h`.
+- `src/serato/` holds the Serato tag parsing (`SeratoTags.*`, `SeratoTagReader.*`, `SeratoTagTypes.h`),
+  the overview waveform (`SeratoOverview.*`, `SeratoWaveformColouring.*`),
+  and the background preview loading in `SeratoPreviewLoader.*`.
+- `src/plugins/` holds VST3 / Audio Unit plugin hosting.
+  - `PluginScanner.*` implement out-of-process plugin scanning and the known-plugins list persistence.
+    Each executable relaunches itself as its scan worker:
+    `gui/Main.cpp` and `cli/CliMain.cpp` detect the worker command line before doing anything else.
+    The CLI links `juce_audio_processors` for this, which also pulls in the JUCE GUI modules.
+  - `PluginChain.*`, `PluginChainPreparation.*`, `PluginProcessing.*`, and `PluginProcessingCoordinator.*`
+    implement the plugin chain and batch processing through it.
+- `src/utils/` holds the shared helpers, split by area, all in the `utils` namespace unless noted:
+  - `Log.*` holds the leveled logging functions.
+  - `AppInfo.*` holds the version line, the About text, system information, and the settings file options.
+  - `FileUtils.*` holds the file system helpers, such as moving files to the trash and extension checks.
+  - `AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, and peak math.
+  - `ThreadUtils.*` holds the `CancellationCheck` callback the services poll
     and the cancellable blocking call from a worker to the message thread.
-  - `src/StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
-  - `src/ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
-  - `src/version.h` holds the build version constants.
+  - `StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
+  - `ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
+  - `version.h` holds the build version constants.
   Put new generic helpers in the matching file instead of a file-local `static` function,
   so they are not duplicated across services.
-- `src/PluginScanner.*` implement out-of-process plugin scanning and the known-plugins list persistence.
-  Each executable relaunches itself as its scan worker:
-  `src/Main.cpp` and `src/CliMain.cpp` detect the worker command line before doing anything else.
-  The CLI links `juce_audio_processors` for this, which also pulls in the JUCE GUI modules.
+- `src/cli/` holds the CLI front end.
+  - `CliMain.cpp` is the CLI entry point.
+  - `AudioAnalysisCli.{h,cpp}` declare the CLI options and the `cli` functions that run the analysis workflow,
+    `AudioAnalysisCliParse.cpp` parses and validates the arguments,
+    and `AudioAnalysisCliOutput.*` prints the results as a table, CSV, or JSON.
+  - `PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
+- `src/gui/` holds the GUI application shell and its main screen.
+  - `Main.cpp` is the GUI application entry point, and `MainWindow.*` is its top-level window and menu bar.
+  - `AudioBatchComponent.*` is the main GUI component.
+    Its implementation is split by topic into `AudioBatchComponent.cpp` (construction, layout, table, selection),
+    `AudioBatchComponentActions.cpp`, `AudioBatchComponentOperations.cpp`, `AudioBatchComponentPreview.cpp`,
+    and `AudioBatchComponentRoots.cpp`, which share the constants in `AudioBatchComponentConstants.h`.
+    Put new member functions in the file of their topic.
+  - `AudioFileTableModel.*` backs the sortable results table, and `ResultsSorting.*` sorts it.
+  - `FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
+- `src/gui/components/` holds the reusable UI pieces the main component is built from:
+  `AudioInfoPanel.*`, `NormalizationTargetControl.*`, `CustomLookAndFeel.*`, `ThumbnailComponent.*`,
+  `IntervalStepSlider.h`, and the plugin chain editor in `PluginChainEditor.*`.
 
-GUI only:
-
-- `src/AudioBatchComponent.*` is the main GUI component.
-  Its implementation is split by topic into `AudioBatchComponent.cpp` (construction, layout, table, selection),
-  `AudioBatchComponentActions.cpp`, `AudioBatchComponentOperations.cpp`, `AudioBatchComponentPreview.cpp`,
-  and `AudioBatchComponentRoots.cpp`, which share the constants in `AudioBatchComponentConstants.h`.
-  Put new member functions in the file of their topic.
-- `src/AudioFileTableModel.*` backs the sortable results table, and `src/ResultsSorting.*` sorts it.
-- `src/FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
-- `src/AudioInfoPanel.*`, `src/NormalizationTargetControl.*`, `src/CustomLookAndFeel.*`,
-  `src/ThumbnailComponent.*`, and `src/IntervalStepSlider.h` are UI pieces.
-- `src/PluginChain.*`, `src/PluginChainEditor.*`, `src/PluginChainPreparation.*`,
-  `src/PluginProcessing.*`, and `src/PluginProcessingCoordinator.*` implement VST3 / Audio Unit plugin hosting
-  and the plugin chain.
+Put a new file in the directory of its domain, and add a directory only for a new domain with several files.
+Include project headers by their path relative to `src/`, for example `#include "analysis/AudioAnalysis.h"`,
+also from within the same directory, and never with `../`.
 
 The source lists are defined in `CMakeLists.txt`.
 `AUDIOBATCH_CORE_SOURCES` holds the shared core and `AUDIOBATCH_CLI_SOURCES` the CLI front end,
 and each target adds its own entry point and target-specific files.
+The shared core is everything in `analysis/`, `normalization/`, `metadata/`, and `utils/`,
+plus `plugins/PluginScanner.*` and the Serato tag and overview files.
 Add new shared files to the core list, not to each target,
 and remember that a shared file must compile cleanly for both the GUI and the CLI.
 List sources as relative `src/...` paths,
@@ -110,14 +117,14 @@ Tests:
 - SQLite 3, resolved via CMake (system package if present, otherwise the fetched amalgamation).
 - libebur128, fetched via CMake, for loudness and true peak analysis.
 - TagLib, fetched via CMake, for cross-format metadata handling.
-- {fmt}, fetched via CMake, for string formatting (see `src/StringFormat.h`).
+- {fmt}, fetched via CMake, for string formatting (see `src/utils/StringFormat.h`).
 
 ## Working Rules
 
 - Prefer modern C++23 coding standards and idioms.
 - Do not edit vendored code under `JUCE/` unless the task explicitly requires it.
 - Prefer fixing warnings and build issues in project code or project configuration before considering third-party changes.
-- Preserve the existing source layout under `src/` and the current naming used in `CMakeLists.txt`.
+- Follow the domain directories under `src/` described in Source Layout and the current naming used in `CMakeLists.txt`.
 - Changes to shared services must keep both the GUI and CLI targets building and behaving correctly.
 
 ## Code Style
@@ -144,13 +151,13 @@ Tests:
 - Avoid single character variable names.
   They are only allowed in for loops when it makes sense
   and it is clear what the variable is, for example a plain loop index.
-- Prefer `utils::format` (fmt-based, in `src/StringFormat.h`)
+- Prefer `utils::format` (fmt-based, in `src/utils/StringFormat.h`)
   over chained `juce::String` concatenation when building display and log text.
   Format strings must be literals so fmt's compile-time checking applies.
   Keep `.quoted()` calls on arguments instead of putting quote characters in the format string,
   and keep `juce::newLine` outside format strings in text that leaves the process,
   because it is `\r\n` on Windows.
-- Write console output with `fmt::print` or the `console::` helpers in `src/ConsolePrint.h`.
+- Write console output with `fmt::print` or the `console::` helpers in `src/utils/ConsolePrint.h`.
   `std::format` and `std::print` are also fine.
   Prefer these over `std::cout` / `std::cerr`,
   unless the iostream version is clearly more readable and performant with much less code.
@@ -198,11 +205,11 @@ The detailed rules are in `.agents/rules/code-organization.md`.
 - Both `AudioBatch` and `AudioBatchCli` build with warnings as errors, so all warnings must be resolved.
 - On top of the JUCE recommended warning flags,
   `audiobatch_set_source_warnings` in `CMakeLists.txt` adds a
-  stricter warning set to the project's own `src/*.cpp` files only.
+  stricter warning set to the project's own `.cpp` files under `src/` and `tests/` only.
   JUCE module sources do not get it,
   and the JUCE headers are included as system headers so their warnings are not reported.
   Several of those flags are Clang-specific, so GCC is not a supported compiler.
-  `src/Main.cpp` additionally gets `-Wno-cast-qual`,
+  `src/gui/Main.cpp` additionally gets `-Wno-cast-qual`,
   because the `START_JUCE_APPLICATION` macro casts away `const` in code the project cannot change.
 
 ## Testing

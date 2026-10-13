@@ -1,7 +1,7 @@
 /// Tests for the metadata functions on the committed tagged fixture.
 /// Covers reading Vorbis comments from FLAC and writing them to an AIFF copy as ID3v2.4.
 
-#include "Metadata.h"
+#include "metadata/Metadata.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 

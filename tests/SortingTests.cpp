@@ -1,9 +1,9 @@
 /// Tests for the results table sorting in ResultsSorting.
 
-#include "AudioFileTableModel.h"
-#include "ResultsSorting.h"
-#include "StringFormat.h"
+#include "gui/AudioFileTableModel.h"
+#include "gui/ResultsSorting.h"
 #include "TestSuites.h"
+#include "utils/StringFormat.h"
 
 #include <array>
 #include <cmath>

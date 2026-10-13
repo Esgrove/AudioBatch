@@ -3,11 +3,11 @@
 /// latency compensation, rendering and trimming the tail, per-file state, cancellation, and the output length.
 /// Replaced files are deleted instead of moved to the system trash, so the tests never touch the user's trash.
 
-#include "AudioAnalysis.h"
-#include "AudioFormatUtils.h"
-#include "PluginProcessing.h"
+#include "analysis/AudioAnalysis.h"
+#include "plugins/PluginProcessing.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/AudioFormatUtils.h"
 
 #include <algorithm>
 #include <cstring>

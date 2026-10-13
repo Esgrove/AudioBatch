@@ -1,7 +1,7 @@
 /// Synthetic payload tests cover Serato metadata layouts, malformed input and cache round trips.
 /// No test data comes from local music or from another repository's fixtures.
 
-#include "SeratoTags.h"
+#include "serato/SeratoTags.h"
 #include "TestSuites.h"
 
 #include <algorithm>

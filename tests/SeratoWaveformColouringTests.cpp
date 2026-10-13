@@ -3,7 +3,7 @@
 /// Exact nonzero coverage verifies unchanged mono/stereo geometry at several gains and display scales.
 /// Final bitmap compositing can round alpha and premultiplied RGB by one byte, but must not remove any PCM pixels.
 
-#include "SeratoWaveformColouring.h"
+#include "serato/SeratoWaveformColouring.h"
 #include "TestSuites.h"
 
 #include <juce_audio_utils/juce_audio_utils.h>

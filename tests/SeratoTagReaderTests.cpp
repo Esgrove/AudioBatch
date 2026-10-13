@@ -1,11 +1,11 @@
 /// Portable Serato container tests write synthetic tags only to temporary fixture copies.
 /// Reader coverage depends only on committed fixtures and generated payloads.
 
-#include "SeratoTagReader.h"
-#include "StringFormat.h"
-#include "TagLibUtils.h"
+#include "metadata/TagLibUtils.h"
+#include "serato/SeratoTagReader.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/StringFormat.h"
 
 #include <aifffile.h>
 #include <algorithm>
