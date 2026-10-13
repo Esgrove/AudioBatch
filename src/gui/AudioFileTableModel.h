@@ -71,7 +71,7 @@ public:
     );
 
     /// Returns the compile-time default width for a column.
-    /// The defaults are chosen so that all columns together exactly fill the default window width,
+    /// The defaults are chosen so that the initially visible columns fit the default window width,
     /// which is enforced by a static_assert below.
     static consteval int initialColumnWidth(const AudioFileTableColumn columnId)
     {
@@ -189,7 +189,7 @@ private:
     static constexpr int maxShortTermLufsColumnDefaultWidth = 76;
     static constexpr int integratedLufsColumnDefaultWidth = 76;
     static constexpr int customGainColumnDefaultWidth = 72;
-    static constexpr int statusColumnDefaultWidth = 64;
+    static constexpr int statusColumnDefaultWidth = 240;
     static constexpr int totalInitialColumnWidth = nameColumnDefaultWidth + pathColumnDefaultWidth
         + typeColumnDefaultWidth + bitrateColumnDefaultWidth + sampleRateColumnDefaultWidth
         + overallPeakColumnDefaultWidth + peakLeftColumnDefaultWidth + peakRightColumnDefaultWidth
@@ -197,8 +197,10 @@ private:
         + customGainColumnDefaultWidth + statusColumnDefaultWidth;
 
     static_assert(
-        totalInitialColumnWidth == defaultWindowWidth,
-        "Initial column widths must sum to default window width"
+        totalInitialColumnWidth - peakLeftColumnDefaultWidth - peakRightColumnDefaultWidth
+                - customGainColumnDefaultWidth
+            <= defaultWindowWidth,
+        "Initially visible columns must fit the default window width"
     );
 
     const std::vector<AudioAnalysisRecord>* records;
