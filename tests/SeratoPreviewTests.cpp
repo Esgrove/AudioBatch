@@ -1,9 +1,9 @@
 /// Offscreen cue-arrow and musical-info tests using generated PCM peaks and synthetic metadata.
 /// Exercises the actual preview components without devices, local music or redistributed Serato payloads.
 
-#include "AudioInfoPanel.h"
+#include "gui/components/AudioInfoPanel.h"
+#include "gui/components/ThumbnailComponent.h"
 #include "TestSuites.h"
-#include "ThumbnailComponent.h"
 
 #include <cmath>
 

@@ -1,7 +1,7 @@
 /// Synthetic tests for bounded Overview parsing and explicit-endian numeric serialization.
 /// No extracted music payload or sibling repository is required by this portable suite.
 
-#include "SeratoOverview.h"
+#include "serato/SeratoOverview.h"
 #include "TestSuites.h"
 
 #include <algorithm>

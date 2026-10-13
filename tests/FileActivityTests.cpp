@@ -1,7 +1,7 @@
 /// Tests for FileActivityTracker, which holds the activity labels and operation messages of the results table.
 /// Covers marking files busy, clearing labels by name, and how a new operation replaces the last message.
 
-#include "FileActivityTracker.h"
+#include "gui/FileActivityTracker.h"
 #include "TestSuites.h"
 
 namespace audiobatch::tests

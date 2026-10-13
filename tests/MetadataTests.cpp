@@ -1,14 +1,14 @@
-/// Tests for MetadataService on the committed tagged fixture.
+/// Tests for the metadata functions on the committed tagged fixture.
 /// Covers reading Vorbis comments from FLAC and writing them to an AIFF copy as ID3v2.4.
 
-#include "MetadataService.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/AudioMetadata.h"
 
 namespace audiobatch::tests
 {
 /// Returns the first value of a property, or an empty string when the metadata does not have it.
-static juce::String firstPropertyValue(const MetadataService::Metadata& metadata, const juce::String& key)
+static juce::String firstPropertyValue(const AudioMetadata& metadata, const juce::String& key)
 {
     for (const auto& property : metadata.properties) {
         if (property.key == key && !property.values.isEmpty()) {
@@ -28,11 +28,11 @@ public:
     /// Runs the metadata checks.
     void runTest() override
     {
-        MetadataService::Metadata metadata;
+        AudioMetadata metadata;
 
         beginTest("Tags are read from a FLAC file");
         {
-            expect(MetadataService::readMetadata(fixtureFile("tagged_stereo_44100_16.flac"), metadata));
+            expect(readMetadata(fixtureFile("tagged_stereo_44100_16.flac"), metadata));
             expectEquals(firstPropertyValue(metadata, "TITLE"), juce::String("Test Tone"));
             expectEquals(firstPropertyValue(metadata, "ARTIST"), juce::String("AudioBatch"));
             expectEquals(firstPropertyValue(metadata, "ALBUM"), juce::String("Fixtures"));
@@ -42,10 +42,10 @@ public:
         {
             const TemporaryDirectory directory;
             const auto output = directory.copyFixture("sine_stereo_44100_16.aif");
-            expect(MetadataService::writeMetadata(output, metadata));
+            expect(writeMetadata(output, metadata));
 
-            MetadataService::Metadata written;
-            expect(MetadataService::readMetadata(output, written));
+            AudioMetadata written;
+            expect(readMetadata(output, written));
             expectEquals(firstPropertyValue(written, "TITLE"), juce::String("Test Tone"));
             expectEquals(firstPropertyValue(written, "ARTIST"), juce::String("AudioBatch"));
             // ffmpeg stores the comment of the fixture as the Vorbis DESCRIPTION field,
@@ -55,8 +55,8 @@ public:
 
         beginTest("An untagged file has no metadata");
         {
-            MetadataService::Metadata untagged;
-            MetadataService::readMetadata(fixtureFile("sine_stereo_44100_16.wav"), untagged);
+            AudioMetadata untagged;
+            readMetadata(fixtureFile("sine_stereo_44100_16.wav"), untagged);
             expect(untagged.isEmpty());
         }
     }

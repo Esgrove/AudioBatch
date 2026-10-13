@@ -54,12 +54,18 @@ if [ -z "$(command -v clang-format)" ]; then
     print_error_and_exit "clang-format not found in path"
 fi
 
+# Collect the C++ sources and headers under src/ and tests/, including subdirectories.
+CPP_FILES=()
+while IFS= read -r file; do
+    CPP_FILES+=("$file")
+done < <(find "$REPO/src" "$REPO/tests" -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
+
 if [ "$CHECK" = true ]; then
     print_magenta "Checking C++ formatting..."
-    clang-format --verbose --style=file --dry-run --Werror "$REPO"/src/*.cpp "$REPO"/src/*.h "$REPO"/tests/*.cpp "$REPO"/tests/*.h
+    clang-format --verbose --style=file --dry-run --Werror "${CPP_FILES[@]}"
 else
     print_magenta "Formatting C++ files..."
-    clang-format -i --verbose --style=file "$REPO"/src/*.cpp "$REPO"/src/*.h "$REPO"/tests/*.cpp "$REPO"/tests/*.h
+    clang-format -i --verbose --style=file "${CPP_FILES[@]}"
 fi
 
 # Use an installed cmake-format, or fetch it on demand with uvx.

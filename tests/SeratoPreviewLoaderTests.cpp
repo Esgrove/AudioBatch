@@ -1,8 +1,9 @@
 /// Deterministic lifecycle tests for bounded asynchronous Serato preview loading.
 /// Injected readers and queued deliveries exercise cancellation, identity validation and cache restart.
-/// All files and databases live in temporary directories, with no local music or sibling repository dependency.
+/// All files and databases live in temporary directories,
+/// with no local music or sibling repository dependency.
 
-#include "SeratoPreviewLoader.h"
+#include "serato/SeratoPreviewLoader.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include <condition_variable>
@@ -10,8 +11,10 @@
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <cstdint>
 #include <iterator>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <sqlite3.h>
 #include <vector>
@@ -23,9 +26,9 @@ using serato::SeratoPreviewLoader;
 
 /// Captures a worker completion without adopting it, like a queued message-thread callback.
 struct PreviewDelivery {
-    AnalysisCache::FileIdentity identity;
-    SeratoPreviewLoader::Generation generation;
-    SeratoPreviewLoader::Data data;
+    FileIdentity identity;
+    std::uint64_t generation;
+    std::shared_ptr<const serato::SeratoData> data;
 };
 
 /// Builds representative owned values for every independently cached kind.
@@ -51,18 +54,25 @@ static serato::TagReadResult previewResult(const serato::TagKind kind, const Rea
             result.beatGrid = serato::BeatGrid {{{.positionSeconds = 0.5, .beatsUntilNext = 0, .bpm = 128.0}}};
             break;
         case serato::TagKind::markers:
-            result.markers = serato::Markers {
-                .cues = {{.positionMilliseconds = 1000, .index = 2, .colour = juce::Colours::red, .name = "Intro"}},
-                .loops
-                = {{.startMilliseconds = 2000,
+            result.markers = serato::Markers{
+        .cues = {{.positionMilliseconds = 1000,
+                  .index = 2,
+                  .colour = juce::Colours::red,
+                  .name = "Intro"}},
+        .loops =
+            {
+                {
+                    .startMilliseconds = 2000,
                     .endMilliseconds = 4000,
                     .index = 1,
                     .colour = juce::Colours::green,
                     .locked = true,
-                    .name = "Loop",},},
-                .colour = juce::Colours::blue,
-                .bpmLocked = false,
-            };
+                    .name = "Loop",
+                },
+            },
+        .colour = juce::Colours::blue,
+        .bpmLocked = false,
+    };
             break;
         case serato::TagKind::trackInfo:
             result.trackInfo = serato::TrackInfo {.bpm = 128.0, .key = "Am"};
@@ -111,9 +121,7 @@ public:
     SeratoPreviewLoader::Completion completion()
     {
         return [this](
-                   AnalysisCache::FileIdentity identity,
-                   const SeratoPreviewLoader::Generation generation,
-                   SeratoPreviewLoader::Data data
+                   FileIdentity identity, const std::uint64_t generation, std::shared_ptr<const serato::SeratoData> data
                ) {
             const std::scoped_lock lock(mutex);
             deliveries.push_back({.identity = std::move(identity), .generation = generation, .data = std::move(data)});
@@ -136,7 +144,7 @@ public:
     }
 
     /// Waits for the exact latest generation even if an intervening completion was also queued.
-    bool waitForGeneration(const SeratoPreviewLoader::Generation generation)
+    bool waitForGeneration(const std::uint64_t generation)
     {
         std::unique_lock lock(mutex);
         return condition.wait_for(lock, watchdog, [this, generation] {
@@ -235,7 +243,7 @@ private:
         loader.request(second, 1.0);
         loader.request(third, 1.0);
         const auto latest = loader.request(first, 1.0);
-        expect(!loader.canAdopt(AnalysisCache::FileIdentity(first), original, first));
+        expect(!loader.canAdopt(FileIdentity(first), original, first));
         expectEquals(static_cast<int>(probe.readPaths().size()), 1);
         probe.release();
         expect(probe.waitForDeliveries(1));
@@ -255,8 +263,8 @@ private:
             expect(batch == std::vector<serato::TagKind>(serato::allTagKinds.begin(), serato::allTagKinds.end()));
         }
         for (const auto kind : serato::allTagKinds) {
-            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(second), kind));
-            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(third), kind));
+            expect(!cache.getSeratoTag(FileIdentity(second), kind));
+            expect(!cache.getSeratoTag(FileIdentity(third), kind));
         }
     }
 
@@ -284,7 +292,7 @@ private:
         expect(!loader.canAdopt(original.identity, original.generation, first));
         expect(probe.waitForGeneration(latest));
         loader.cancel();
-        expect(!loader.canAdopt(AnalysisCache::FileIdentity(first), latest, first));
+        expect(!loader.canAdopt(FileIdentity(first), latest, first));
         const auto afterClear = loader.request(first, 1.0);
         expect(probe.waitForGeneration(afterClear));
         results = probe.queued();
@@ -303,7 +311,7 @@ private:
         AnalysisCache cache(directory.getChildFile("cache.db"));
         const auto first = directory.copyFixture("sine_stereo_44100_16.wav", "first.wav");
         const auto second = directory.copyFixture("sine_stereo_44100_16.wav", "second.wav");
-        const AnalysisCache::FileIdentity original(first);
+        const FileIdentity original(first);
         PreviewProbe probe(ReadStatus::present, true);
         SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
         loader.request(first, 1.0);
@@ -320,7 +328,7 @@ private:
         }
         for (const auto kind : serato::allTagKinds) {
             expect(!cache.getSeratoTag(original, kind));
-            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(first), kind));
+            expect(!cache.getSeratoTag(FileIdentity(first), kind));
         }
     }
 
@@ -344,8 +352,8 @@ private:
         expect(probe.queued().empty());
         expectEquals(static_cast<int>(probe.readPaths().size()), 1);
         for (const auto kind : serato::allTagKinds) {
-            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(first), kind));
-            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(second), kind));
+            expect(!cache.getSeratoTag(FileIdentity(first), kind));
+            expect(!cache.getSeratoTag(FileIdentity(second), kind));
         }
     }
 
@@ -394,7 +402,7 @@ private:
                 );
             }
             for (const auto kind : serato::allTagKinds) {
-                const auto cached = cache.getSeratoTag(AnalysisCache::FileIdentity(file), kind);
+                const auto cached = cache.getSeratoTag(FileIdentity(file), kind);
                 expect(cached && cached->kind == kind && cached->status == status);
             }
             AudioAnalysisRecord record;
@@ -404,8 +412,8 @@ private:
 
     /// Verifies identical owned overview values after restart, or absent aggregates for stable negatives.
     void expectRestartData(
-        const SeratoPreviewLoader::Data& original,
-        const SeratoPreviewLoader::Data& restarted,
+        const std::shared_ptr<const serato::SeratoData>& original,
+        const std::shared_ptr<const serato::SeratoData>& restarted,
         const ReadStatus status
     )
     {
@@ -436,7 +444,7 @@ private:
         const auto databaseFile = directory.getChildFile("cache.db");
         AnalysisCache cache(databaseFile);
         const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
-        const AnalysisCache::FileIdentity identity(file);
+        const FileIdentity identity(file);
         expect(cache.storeSeratoTag(identity, previewResult(TagKind::overview)));
         expect(cache.storeSeratoTag(identity, previewResult(TagKind::analysis, ReadStatus::absent)));
         expect(cache.storeSeratoTag(identity, previewResult(TagKind::autotags, ReadStatus::unsupported)));
@@ -480,7 +488,7 @@ private:
         const TemporaryDirectory directory;
         AnalysisCache cache(directory.getChildFile("cache.db"));
         const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
-        const AnalysisCache::FileIdentity identity(file);
+        const FileIdentity identity(file);
         PreviewProbe probe;
         std::vector<std::vector<TagKind>> batches;
         const SeratoPreviewLoader::Reader reader
@@ -537,7 +545,7 @@ private:
             const TemporaryDirectory directory;
             AnalysisCache cache(directory.getChildFile("cache.db"));
             const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
-            const AnalysisCache::FileIdentity identity(file);
+            const FileIdentity identity(file);
             expect(cache.storeSeratoTag(identity, previewResult(serato::TagKind::overview, status)));
             PreviewProbe probe;
             SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
@@ -566,7 +574,7 @@ private:
     }
 
     /// Verifies the complete immutable aggregate and the representative values returned by the batch probe.
-    void expectEveryKind(const SeratoPreviewLoader::Data& data)
+    void expectEveryKind(const std::shared_ptr<const serato::SeratoData>& data)
     {
         expect(data != nullptr);
         if (!data) {
@@ -621,7 +629,7 @@ private:
                 }
                 loader.cancelAndWait();
                 for (const auto kind : serato::allTagKinds) {
-                    expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(file), kind));
+                    expect(!cache.getSeratoTag(FileIdentity(file), kind));
                 }
             }
             expectEquals(static_cast<int>(probe.readPaths().size()), 2);

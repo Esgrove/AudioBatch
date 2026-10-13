@@ -102,6 +102,17 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }
+    },
+    {
+      "name": "macos-asan",
+      "displayName": "macOS ASan",
+      "description": "Debug build with AddressSanitizer and UndefinedBehaviorSanitizer in cmake-build-mac-asan.",
+      "inherits": "macos-ninja-base",
+      "binaryDir": "${sourceDir}/cmake-build-mac-asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "AUDIOBATCH_SANITIZE": "address,undefined"
+      }
     }
   ],
   "buildPresets": [
@@ -130,6 +141,10 @@
     {
       "name": "macos-release",
       "configurePreset": "macos-release"
+    },
+    {
+      "name": "macos-asan",
+      "configurePreset": "macos-asan"
     }
   ]
 }

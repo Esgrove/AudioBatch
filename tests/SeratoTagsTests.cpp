@@ -1,7 +1,7 @@
 /// Synthetic payload tests cover Serato metadata layouts, malformed input and cache round trips.
 /// No test data comes from local music or from another repository's fixtures.
 
-#include "SeratoTags.h"
+#include "serato/SeratoTags.h"
 #include "TestSuites.h"
 
 #include <algorithm>
@@ -60,7 +60,7 @@ std::vector<std::uint8_t> markerPayload()
     juce::MemoryOutputStream body;
     body.writeByte(1);
     body.writeByte(1);
-    const std::array<std::uint8_t, 16> cue {
+    constexpr std::array<std::uint8_t, 16> cue {
         0,
         7,
         0,
@@ -78,11 +78,11 @@ std::vector<std::uint8_t> markerPayload()
         'e',
         0,
     };
-    const std::array<std::uint8_t, 26> loop {0,   2, 0,  0,   3,   232, 0, 0,   7,   208, 255, 255, 255,
-                                             255, 0, 39, 170, 225, 0,   1, 'I', 'n', 't', 'r', 'o', 0};
-    const std::array<std::uint8_t, 3> unknown {255, 0, 99};
-    const std::array<std::uint8_t, 4> colour {0, 20, 40, 60};
-    const std::array<std::uint8_t, 1> lock {1};
+    constexpr std::array<std::uint8_t, 26> loop {0,   2, 0,  0,   3,   232, 0, 0,   7,   208, 255, 255, 255,
+                                                 255, 0, 39, 170, 225, 0,   1, 'I', 'n', 't', 'r', 'o', 0};
+    constexpr std::array<std::uint8_t, 3> unknown {255, 0, 99};
+    constexpr std::array<std::uint8_t, 4> colour {0, 20, 40, 60};
+    constexpr std::array<std::uint8_t, 1> lock {1};
     markerRecord(body, "CUE", cue);
     markerRecord(body, "FUTURE", unknown);
     markerRecord(body, "LOOP", loop);
