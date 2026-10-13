@@ -23,6 +23,8 @@ namespace layout
 {
 #if JUCE_WINDOWS
 constexpr int titleBarHeight = 30;
+constexpr int defaultWindowWidth = 1280;
+constexpr int defaultWindowHeight = 720;
 #endif
 
 /// Initial width in pixels of the main component before the window is resized by the user.

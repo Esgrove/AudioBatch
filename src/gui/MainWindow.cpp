@@ -4,6 +4,7 @@
 
 #include "gui/MainWindow.h"
 
+#include "gui/AudioBatchComponentConstants.h"
 #include "plugins/PluginChain.h"
 #include "utils/AppInfo.h"
 #include "utils/FileUtils.h"
@@ -60,9 +61,7 @@ MainWindow::MainWindow(const juce::String& name) :
 #if JUCE_WINDOWS
     setUsingNativeTitleBar(false);
     setTitleBarTextCentred(false);
-    /// Height in pixels of the custom drawn title bar used on Windows.
-    constexpr int windowsTitleBarHeight = 30;
-    setTitleBarHeight(windowsTitleBarHeight);
+    setTitleBarHeight(layout::titleBarHeight);
 #else
     setUsingNativeTitleBar(true);
 #endif
@@ -85,7 +84,11 @@ MainWindow::MainWindow(const juce::String& name) :
 
     setResizable(true, true);
     setResizeLimits(minimumWindowWidth, minimumWindowHeight, 8192, 8192);
+#if JUCE_WINDOWS
+    centreWithSize(layout::defaultWindowWidth, layout::defaultWindowHeight);
+#else
     centreWithSize(getWidth(), getHeight());
+#endif
     logStartupCheckpoint("constructor complete");
 }
 
