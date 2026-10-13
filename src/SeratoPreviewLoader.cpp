@@ -5,6 +5,7 @@
 
 #include "Log.h"
 
+#include <algorithm>
 #include <cmath>
 #include <exception>
 #include <utility>
@@ -97,35 +98,88 @@ void SeratoPreviewLoader::process(const Request& active, const std::stop_token& 
         return;
     }
 
-    Bands bands;
+    Data data;
     try {
-        auto result = cache.getSeratoTag(active.identity);
-        if (isCancelled()) {
-            return;
-        }
-        if (!result) {
-            result = reader(active.file, TagKind::overview, isCancelled);
-            if (isCancelled() || !active.identity.matches(active.file) || isCancelled()
-                || result->status == ReadStatus::cancelled)
-            {
+        Results results;
+        std::vector<TagKind> misses;
+        for (std::size_t index = 0; index < allTagKinds.size(); ++index) {
+            if (isCancelled() || !active.identity.matches(active.file) || isCancelled()) {
                 return;
             }
-            if (result->status != ReadStatus::ioError) {
-                cache.storeSeratoTag(active.identity, *result);
+            results[index] = cache.getSeratoTag(active.identity, allTagKinds[index]);
+            if (!results[index]) {
+                misses.push_back(allTagKinds[index]);
             }
+        }
+        if (!readMisses(active, misses, results, isCancelled)) {
+            return;
         }
         if (isCancelled() || !active.identity.matches(active.file) || isCancelled()) {
             return;
         }
-        if (result->status == ReadStatus::present && result->overview) {
-            bands = std::make_shared<const Overview>(std::move(*result->overview));
-        }
+        data = collectData(results);
     } catch (const std::exception& exception) {
         utils::logDebug("Serato preview read failed: {}", exception.what());
     }
 
     if (!isCancelled() && active.identity.matches(active.file) && !isCancelled() && completion) {
-        completion(active.identity, active.generation, std::move(bands));
+        completion(active.identity, active.generation, std::move(data));
     }
+}
+
+bool SeratoPreviewLoader::readMisses(const Request& active, const std::span<const TagKind> misses, Results& results,
+                                    const utils::CancellationCheck& isCancelled)
+{
+    if (misses.empty()) {
+        return true;
+    }
+    if (isCancelled() || !active.identity.matches(active.file) || isCancelled()) {
+        return false;
+    }
+    auto fresh = reader(active.file, misses, isCancelled);
+    if (isCancelled() || !active.identity.matches(active.file) || isCancelled()
+        || std::ranges::any_of(fresh, [](const auto& result) { return result.status == ReadStatus::cancelled; })) {
+        return false;
+    }
+    for (auto& result : fresh) {
+        if (std::ranges::find(misses, result.kind) == misses.end()) {
+            continue;
+        }
+        if (isCancelled() || !active.identity.matches(active.file) || isCancelled()) {
+            return false;
+        }
+        const auto position = std::ranges::find(allTagKinds, result.kind);
+        const auto index = static_cast<std::size_t>(position - allTagKinds.begin());
+        if (results[index]) {
+            continue;
+        }
+        if (result.status != ReadStatus::ioError) {
+            cache.storeSeratoTag(active.identity, result);
+        }
+        results[index] = std::move(result);
+    }
+    return true;
+}
+
+SeratoPreviewLoader::Data SeratoPreviewLoader::collectData(Results& results)
+{
+    SeratoData loaded;
+    for (auto& result : results) {
+        if (!result || result->status != ReadStatus::present) {
+            continue;
+        }
+        switch (result->kind) {
+            case TagKind::overview: loaded.overview = std::move(result->overview); break;
+            case TagKind::analysis: loaded.analysis = result->analysis; break;
+            case TagKind::autotags: loaded.autotags = result->autotags; break;
+            case TagKind::beatGrid: loaded.beatGrid = std::move(result->beatGrid); break;
+            case TagKind::markers: loaded.markers = std::move(result->markers); break;
+            case TagKind::trackInfo: loaded.trackInfo = std::move(result->trackInfo); break;
+        }
+    }
+    if (loaded.overview || loaded.analysis || loaded.autotags || loaded.beatGrid || loaded.markers || loaded.trackInfo) {
+        return std::make_shared<const SeratoData>(std::move(loaded));
+    }
+    return {};
 }
 }  // namespace audiobatch::serato

@@ -6,6 +6,8 @@
 #include "AnalysisCache.h"
 #include "AnalysisCoordinator.h"
 #include "AudioAnalysisService.h"
+#include "SeratoTags.h"
+#include "StringFormat.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
@@ -300,6 +302,7 @@ public:
         }
 
         runSeratoTests();
+        runMultiKindSeratoTests();
     }
 
 private:
@@ -525,6 +528,181 @@ private:
         AnalysisCache broken(brokenDatabase);
         expect(!broken.getSeratoTag(detachedIdentity));
         expect(!broken.storeSeratoTag(detachedIdentity, positive));
+    }
+
+    /// Verifies independently versioned owned values, negatives and tag-only coexistence for every supported kind.
+    void runMultiKindSeratoTests()
+    {
+        using namespace audiobatch::serato;
+        const TemporaryDirectory directory;
+        const auto databaseFile = directory.getChildFile("multi_kind.db");
+        AnalysisCache cache(databaseFile);
+        const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "multi_kind.wav");
+        const AnalysisCache::FileIdentity identity(file);
+        Overview overview;
+        overview.slices.resize(2);
+        overview.slices.front().fill(7);
+        overview.slices.back().fill(19);
+        const std::
+            array
+                positives {
+                    TagReadResult {.kind = TagKind::overview, .status = ReadStatus::present, .overview = overview},
+                    TagReadResult {
+                        .kind = TagKind::analysis, .status = ReadStatus::present, .analysis = Analysis {2, 5}
+                    },
+                    TagReadResult {
+                        .kind = TagKind::autotags,
+                        .status = ReadStatus::present,
+                        .autotags = Autotags {128.25, -3.5, 1.25}
+                    },
+                    TagReadResult {
+                        .kind = TagKind::beatGrid,
+                        .status = ReadStatus::present,
+                        .beatGrid
+                        = BeatGrid {{{.positionSeconds = 0.5, .beatsUntilNext = 16, .bpm = std::nullopt}, {.positionSeconds = 8.0, .beatsUntilNext = 0, .bpm = 128.25}}}
+                    },
+                    TagReadResult {
+                        .kind = TagKind::markers,
+                        .status = ReadStatus::present,
+                        .markers
+                        = Markers {.cues = {{.positionMilliseconds = 1500, .index = 3, .colour = juce::Colours::red, .name = "Intro"}}, .loops = {{.startMilliseconds = 2000, .endMilliseconds = 4000, .index = 1, .colour = juce::Colours::green, .locked = true, .name = "Loop"}}, .colour = juce::Colours::blue, .bpmLocked = false}
+                    },
+                    TagReadResult {
+                        .kind = TagKind::trackInfo,
+                        .status = ReadStatus::present,
+                        .trackInfo = TrackInfo {.bpm = 128.25, .key = "Am"}
+                    }
+        };
+
+        beginTest("All positive kinds round trip independently after reopening without analysis rows");
+        {
+            AnalysisCache writer(databaseFile);
+            for (const auto& positive : positives) {
+                expect(writer.storeSeratoTag(identity, positive));
+            }
+        }
+        for (const auto& positive : positives) {
+            const auto loaded = cache.getSeratoTag(identity, positive.kind);
+            expect(loaded && loaded->kind == positive.kind && loaded->status == ReadStatus::present);
+            if (loaded) {
+                expect(serializeTag(*loaded) == serializeTag(positive));
+                expect(!serializeTag(*loaded).isEmpty());
+            }
+        }
+        AudioAnalysisRecord analysis;
+        expect(!cache.getAnalysis(file, analysis));
+        expectSqlScalar(databaseFile, "SELECT count(*) FROM file_analysis;", 0);
+        expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", static_cast<int>(allTagKinds.size()));
+
+        beginTest("Each stable negative replaces only its own kind and has SQL NULL data");
+        for (const auto kind : allTagKinds) {
+            for (const auto status : {ReadStatus::absent, ReadStatus::invalid, ReadStatus::unsupported}) {
+                expect(cache.storeSeratoTag(identity, {.kind = kind, .status = status}));
+                const auto negative = cache.getSeratoTag(identity, kind);
+                expect(negative && negative->kind == kind && negative->status == status);
+                if (negative) {
+                    expect(
+                        !negative->overview && !negative->analysis && !negative->autotags && !negative->beatGrid
+                        && !negative->markers && !negative->trackInfo
+                    );
+                }
+                const auto sql = utils::format(
+                    "SELECT decoded_data IS NULL FROM serato_tag_cache WHERE tag_kind = {};",
+                    static_cast<std::uint32_t>(kind)
+                );
+                expectSqlScalar(databaseFile, sql.toRawUTF8(), 1);
+                for (const auto& positive : positives) {
+                    if (positive.kind != kind) {
+                        const auto retained = cache.getSeratoTag(identity, positive.kind);
+                        expect(retained && serializeTag(*retained) == serializeTag(positive));
+                    } else {
+                        expect(cache.storeSeratoTag(identity, positive));
+                    }
+                }
+            }
+        }
+
+        beginTest("A parser version mismatch invalidates only the matching positive or negative kind");
+        for (const auto kind : allTagKinds) {
+            for (const auto status : {ReadStatus::present, ReadStatus::absent}) {
+                if (status == ReadStatus::absent) {
+                    expect(cache.storeSeratoTag(identity, {.kind = kind, .status = status}));
+                }
+                const auto mismatch = utils::format(
+                    "UPDATE serato_tag_cache SET parser_version = {} WHERE tag_kind = {};",
+                    parserVersion(kind) + 1,
+                    static_cast<std::uint32_t>(kind)
+                );
+                expect(executeSql(databaseFile, mismatch.toRawUTF8()));
+                expect(!cache.getSeratoTag(identity, kind));
+                for (const auto& positive : positives) {
+                    if (positive.kind == kind) {
+                        expect(cache.storeSeratoTag(identity, positive));
+                    } else {
+                        const auto retained = cache.getSeratoTag(identity, positive.kind);
+                        expect(retained && serializeTag(*retained) == serializeTag(positive));
+                    }
+                }
+            }
+        }
+
+        beginTest("Corrupt marker data does not lose overview or any other kind");
+        expect(executeSql(databaseFile, "UPDATE serato_tag_cache SET decoded_data = X'0105' WHERE tag_kind = 5;"));
+        expect(!cache.getSeratoTag(identity, TagKind::markers));
+        for (const auto& positive : positives) {
+            if (positive.kind != TagKind::markers) {
+                const auto retained = cache.getSeratoTag(identity, positive.kind);
+                expect(retained && serializeTag(*retained) == serializeTag(positive));
+            } else {
+                expect(cache.storeSeratoTag(identity, positive));
+            }
+        }
+
+        beginTest("Transient results cannot overwrite any independently cached positive kind");
+        for (const auto& positive : positives) {
+            for (const auto status : {ReadStatus::ioError, ReadStatus::cancelled}) {
+                expect(!cache.storeSeratoTag(identity, {.kind = positive.kind, .status = status}));
+                const auto retained = cache.getSeratoTag(identity, positive.kind);
+                expect(retained && serializeTag(*retained) == serializeTag(positive));
+            }
+        }
+
+        beginTest("All kinds coexist with analysis and waveform writes and independent version changes");
+        const auto analyzed = AudioAnalysisService::analyzeFile(file);
+        expect(cache.storeAnalysis(analyzed));
+        const juce::MemoryBlock waveform("cached peaks", 12);
+        expect(cache.storeWaveformData(file, waveform));
+        for (const auto& positive : positives) {
+            expect(cache.storeSeratoTag(identity, positive));
+        }
+        juce::MemoryBlock loadedWaveform;
+        expect(cache.getWaveformData(file, loadedWaveform));
+        expect(loadedWaveform == waveform);
+        expect(cache.getAnalysis(file, analysis));
+        expect(cache.storeAnalysis(analyzed));
+        expect(!cache.getWaveformData(file, loadedWaveform));
+        expect(executeSql(databaseFile, "UPDATE file_analysis SET analysis_version = 0;"));
+        for (const auto& positive : positives) {
+            const auto retained = cache.getSeratoTag(identity, positive.kind);
+            expect(retained && serializeTag(*retained) == serializeTag(positive));
+        }
+
+        beginTest("Explicit eviction removes every independently populated kind");
+        expect(cache.removeAnalysis(file));
+        for (const auto kind : allTagKinds) {
+            expect(!cache.getSeratoTag(identity, kind));
+        }
+        expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
+
+        beginTest("Pruning counts all tag-only kinds and cancellation preserves every row");
+        for (const auto& positive : positives) {
+            expect(cache.storeSeratoTag(identity, positive));
+        }
+        expect(file.deleteFile());
+        expectEquals(cache.pruneMissingFiles([] { return true; }), 0);
+        expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", static_cast<int>(allTagKinds.size()));
+        expectEquals(cache.pruneMissingFiles(), static_cast<int>(allTagKinds.size()));
+        expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
     }
 
     /// Mutates an isolated test database to exercise rows that normal cache APIs cannot write.

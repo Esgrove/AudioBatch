@@ -42,6 +42,7 @@ int main()
     suites.push_back(audiobatch::tests::createSortingTests());
     suites.push_back(audiobatch::tests::createSeratoOverviewTests());
     suites.push_back(audiobatch::tests::createSeratoTagReaderTests());
+    suites.push_back(audiobatch::tests::createSeratoTagsTests());
     suites.push_back(audiobatch::tests::createSeratoWaveformColouringTests());
     suites.push_back(audiobatch::tests::createSeratoPreviewLoaderTests());
     suites.push_back(audiobatch::tests::createUtilsTests());

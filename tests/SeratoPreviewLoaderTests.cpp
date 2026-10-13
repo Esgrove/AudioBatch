@@ -11,6 +11,7 @@
 #include <chrono>
 #include <limits>
 #include <mutex>
+#include <sqlite3.h>
 #include <vector>
 
 namespace audiobatch::tests
@@ -22,8 +23,51 @@ using serato::SeratoPreviewLoader;
 struct PreviewDelivery {
     AnalysisCache::FileIdentity identity;
     SeratoPreviewLoader::Generation generation;
-    SeratoPreviewLoader::Bands bands;
+    SeratoPreviewLoader::Data data;
 };
+
+/// Builds representative owned values for every independently cached kind.
+serato::TagReadResult previewResult(const serato::TagKind kind, const ReadStatus status = ReadStatus::present)
+{
+    serato::TagReadResult result {.kind = kind, .status = status};
+    if (status != ReadStatus::present) {
+        return result;
+    }
+    switch (kind) {
+        case serato::TagKind::overview:
+            result.overview.emplace();
+            result.overview->slices.resize(1);
+            result.overview->slices.front().fill(32);
+            break;
+        case serato::TagKind::analysis:
+            result.analysis = serato::Analysis {2, 5};
+            break;
+        case serato::TagKind::autotags:
+            result.autotags = serato::Autotags {128.0, -3.0, 1.5};
+            break;
+        case serato::TagKind::beatGrid:
+            result.beatGrid = serato::BeatGrid {{{.positionSeconds = 0.5, .beatsUntilNext = 0, .bpm = 128.0}}};
+            break;
+        case serato::TagKind::markers:
+            result.markers = serato::Markers {
+                .cues = {{.positionMilliseconds = 1000, .index = 2, .colour = juce::Colours::red, .name = "Intro"}},
+                .loops
+                = {{.startMilliseconds = 2000,
+                    .endMilliseconds = 4000,
+                    .index = 1,
+                    .colour = juce::Colours::green,
+                    .locked = true,
+                    .name = "Loop"}},
+                .colour = juce::Colours::blue,
+                .bpmLocked = false
+            };
+            break;
+        case serato::TagKind::trackInfo:
+            result.trackInfo = serato::TrackInfo {.bpm = 128.0, .key = "Am"};
+            break;
+    }
+    return result;
+}
 
 /// Gates the first read and records worker activity without sleeps or message-thread dispatch.
 class PreviewProbe final
@@ -38,23 +82,26 @@ public:
     /// Returns an owned-input reader with an optional noninterruptible gate resembling a TagLib call.
     SeratoPreviewLoader::Reader reader()
     {
-        return [this](const juce::File& file, const serato::TagKind kind, const utils::CancellationCheck& cancelled) {
+        return [this](
+                   const juce::File& file,
+                   const std::span<const serato::TagKind> kinds,
+                   const utils::CancellationCheck& cancelled
+               ) {
             {
                 std::unique_lock lock(mutex);
                 paths.push_back(file.getFullPathName());
+                batches.emplace_back(kinds.begin(), kinds.end());
                 condition.notify_all();
                 if (gateFirst && paths.size() == 1) {
                     condition.wait_for(lock, watchdog, [this] { return released; });
                 }
                 observedCancellation = observedCancellation || cancelled();
             }
-            serato::TagReadResult result {.kind = kind, .status = status, .overview = std::nullopt};
-            if (status == ReadStatus::present) {
-                result.overview.emplace();
-                result.overview->slices.resize(1);
-                result.overview->slices.front().fill(32);
+            std::vector<serato::TagReadResult> results;
+            for (const auto kind : kinds) {
+                results.push_back(previewResult(kind, status));
             }
-            return result;
+            return results;
         };
     }
 
@@ -64,12 +111,10 @@ public:
         return [this](
                    AnalysisCache::FileIdentity identity,
                    const SeratoPreviewLoader::Generation generation,
-                   SeratoPreviewLoader::Bands bands
+                   SeratoPreviewLoader::Data data
                ) {
             const std::scoped_lock lock(mutex);
-            deliveries.push_back(
-                {.identity = std::move(identity), .generation = generation, .bands = std::move(bands)}
-            );
+            deliveries.push_back({.identity = std::move(identity), .generation = generation, .data = std::move(data)});
             condition.notify_all();
         };
     }
@@ -121,6 +166,13 @@ public:
         return paths;
     }
 
+    /// Returns the exact kinds requested in each single-open batch.
+    [[nodiscard]] std::vector<std::vector<serato::TagKind>> readBatches() const
+    {
+        const std::scoped_lock lock(mutex);
+        return batches;
+    }
+
     /// Reports whether the reader saw cancellation at its return boundary.
     [[nodiscard]] bool wasCancelled() const
     {
@@ -137,6 +189,7 @@ private:
     mutable std::mutex mutex;
     std::condition_variable condition;
     std::vector<juce::String> paths;
+    std::vector<std::vector<serato::TagKind>> batches;
     std::vector<PreviewDelivery> deliveries;
 };
 
@@ -155,6 +208,9 @@ public:
         mutationDuringRead();
         clearAndShutdown();
         cacheRestart();
+        independentCacheMisses();
+        mixedBatchResults();
+        missingOverview();
         transientResults();
         invalidInputs();
         unavailableDatabase();
@@ -188,11 +244,18 @@ private:
         expectEquals(static_cast<int>(results.size()), 1);
         if (!results.empty()) {
             expect(results.front().generation == latest);
-            expect(results.front().bands != nullptr);
+            expect(results.front().data != nullptr);
         }
         expect(probe.wasCancelled());
-        expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(second)));
-        expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(third)));
+        const auto batches = probe.readBatches();
+        expectEquals(static_cast<int>(batches.size()), 2);
+        for (const auto& batch : batches) {
+            expect(batch == std::vector<serato::TagKind>(serato::allTagKinds.begin(), serato::allTagKinds.end()));
+        }
+        for (const auto kind : serato::allTagKinds) {
+            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(second), kind));
+            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(third), kind));
+        }
     }
 
     /// Exercises delivery-time generation and identity checks after the worker has already queued a result.
@@ -253,8 +316,10 @@ private:
         if (!results.empty()) {
             expectEquals(results.front().identity.path, second.getFullPathName());
         }
-        expect(!cache.getSeratoTag(original));
-        expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(first)));
+        for (const auto kind : serato::allTagKinds) {
+            expect(!cache.getSeratoTag(original, kind));
+            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(first), kind));
+        }
     }
 
     /// Clears pending work and joins an in-flight reader without running queued GUI callbacks.
@@ -276,17 +341,19 @@ private:
         expect(probe.wasCancelled());
         expect(probe.queued().empty());
         expectEquals(static_cast<int>(probe.readPaths().size()), 1);
-        expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(first)));
-        expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(second)));
+        for (const auto kind : serato::allTagKinds) {
+            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(first), kind));
+            expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(second), kind));
+        }
     }
 
-    /// Reopens real SQLite databases and verifies positive and stable-negative rows avoid another read.
+    /// Reopens real SQLite databases and verifies every positive and stable-negative kind avoids another read.
     void cacheRestart()
     {
         for (const auto status :
              {ReadStatus::present, ReadStatus::absent, ReadStatus::unsupported, ReadStatus::invalid})
         {
-            beginTest("Restart reuses numeric bands or stable negative tag outcomes");
+            beginTest("Restart reuses all independent positive or stable negative tag outcomes");
             const TemporaryDirectory directory;
             const auto database = directory.getChildFile("cache.db");
             const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
@@ -308,17 +375,207 @@ private:
                 expectEquals(static_cast<int>(results.size()), 2);
                 if (results.size() == 2) {
                     if (status == ReadStatus::present) {
-                        expect(results[0].bands && results[1].bands);
-                        if (results[0].bands && results[1].bands) {
-                            expect(results[0].bands->slices == results[1].bands->slices);
+                        expect(results[0].data && results[1].data);
+                        expectEveryKind(results[0].data);
+                        expectEveryKind(results[1].data);
+                        if (results[0].data && results[1].data) {
+                            expect(results[0].data->overview && results[1].data->overview);
+                            if (results[0].data->overview && results[1].data->overview) {
+                                expect(results[0].data->overview->slices == results[1].data->overview->slices);
+                            }
                         }
                     } else {
-                        expect(!results[0].bands && !results[1].bands);
+                        expect(!results[0].data && !results[1].data);
                     }
+                }
+                const auto batches = probe.readBatches();
+                expectEquals(static_cast<int>(batches.size()), 1);
+                if (!batches.empty()) {
+                    expect(
+                        batches.front()
+                        == std::vector<serato::TagKind>(serato::allTagKinds.begin(), serato::allTagKinds.end())
+                    );
+                }
+                for (const auto kind : serato::allTagKinds) {
+                    const auto cached = cache.getSeratoTag(AnalysisCache::FileIdentity(file), kind);
+                    expect(cached && cached->kind == kind && cached->status == status);
                 }
                 AudioAnalysisRecord record;
                 expect(!cache.getAnalysis(file, record));
             }
+        }
+    }
+
+    /// Keeps independent negative hits while batching only missing and corrupt positive rows.
+    void independentCacheMisses()
+    {
+        using serato::TagKind;
+        beginTest("Only corrupt markers and missing track metadata are read alongside independent negative hits");
+        const TemporaryDirectory directory;
+        const auto databaseFile = directory.getChildFile("cache.db");
+        AnalysisCache cache(databaseFile);
+        const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
+        const AnalysisCache::FileIdentity identity(file);
+        expect(cache.storeSeratoTag(identity, previewResult(TagKind::overview)));
+        expect(cache.storeSeratoTag(identity, previewResult(TagKind::analysis, ReadStatus::absent)));
+        expect(cache.storeSeratoTag(identity, previewResult(TagKind::autotags, ReadStatus::unsupported)));
+        expect(cache.storeSeratoTag(identity, previewResult(TagKind::beatGrid, ReadStatus::invalid)));
+        expect(cache.storeSeratoTag(identity, previewResult(TagKind::markers)));
+        sqlite3* database = nullptr;
+        expectEquals(sqlite3_open(databaseFile.getFullPathName().toRawUTF8(), &database), SQLITE_OK);
+        expectEquals(
+            sqlite3_exec(
+                database,
+                "UPDATE serato_tag_cache SET decoded_data = X'0105' WHERE tag_kind = 5;",
+                nullptr,
+                nullptr,
+                nullptr
+            ),
+            SQLITE_OK
+        );
+        sqlite3_close(database);
+        PreviewProbe probe;
+        SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
+        loader.request(file, 1.0);
+        expect(probe.waitForDeliveries(1));
+        loader.request(file, 1.0);
+        expect(probe.waitForDeliveries(2));
+        loader.cancelAndWait();
+        expect(probe.readBatches() == std::vector<std::vector<TagKind>> {{TagKind::markers, TagKind::trackInfo}});
+        for (const auto& delivery : probe.queued()) {
+            expect(delivery.data != nullptr);
+            if (delivery.data) {
+                expect(delivery.data->overview && delivery.data->markers && delivery.data->trackInfo);
+                expect(!delivery.data->analysis && !delivery.data->autotags && !delivery.data->beatGrid);
+            }
+        }
+    }
+
+    /// Matches reordered results by kind, preserving valid values when another result is invalid or omitted.
+    void mixedBatchResults()
+    {
+        using serato::TagKind;
+        beginTest("Reordered, missing and transient kinds cannot hide valid overview, cues or track metadata");
+        const TemporaryDirectory directory;
+        AnalysisCache cache(directory.getChildFile("cache.db"));
+        const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
+        const AnalysisCache::FileIdentity identity(file);
+        PreviewProbe probe;
+        std::vector<std::vector<TagKind>> batches;
+        const SeratoPreviewLoader::Reader reader
+            = [&](const juce::File&, const std::span<const TagKind> kinds, const utils::CancellationCheck&) {
+                  batches.emplace_back(kinds.begin(), kinds.end());
+                  std::vector<serato::TagReadResult> results;
+                  for (const auto kind : kinds) {
+                      if (kind != TagKind::beatGrid) {
+                          const auto status = kind == TagKind::analysis ? ReadStatus::invalid
+                              : kind == TagKind::autotags               ? ReadStatus::ioError
+                                                                        : ReadStatus::present;
+                          results.push_back(previewResult(kind, status));
+                      }
+                  }
+                  std::ranges::reverse(results);
+                  results.push_back(previewResult(static_cast<TagKind>(99), ReadStatus::absent));
+                  return results;
+              };
+        SeratoPreviewLoader loader(cache, probe.completion(), reader);
+        loader.request(file, 1.0);
+        expect(probe.waitForDeliveries(1));
+        loader.request(file, 1.0);
+        expect(probe.waitForDeliveries(2));
+        loader.cancelAndWait();
+        expectEquals(static_cast<int>(batches.size()), 2);
+        if (batches.size() == 2) {
+            expect(batches.front() == std::vector<TagKind>(serato::allTagKinds.begin(), serato::allTagKinds.end()));
+            expect(batches.back() == std::vector<TagKind> {TagKind::autotags, TagKind::beatGrid});
+        }
+        for (const auto& delivery : probe.queued()) {
+            expect(delivery.data != nullptr);
+            if (delivery.data) {
+                expect(delivery.data->overview && delivery.data->markers && delivery.data->trackInfo);
+                expect(!delivery.data->analysis && !delivery.data->autotags && !delivery.data->beatGrid);
+                if (delivery.data->markers) {
+                    expectEquals(delivery.data->markers->cues.front().name, juce::String("Intro"));
+                }
+            }
+        }
+        const auto negative = cache.getSeratoTag(identity, TagKind::analysis);
+        expect(negative && negative->status == ReadStatus::invalid);
+        expect(!cache.getSeratoTag(identity, TagKind::autotags));
+        expect(!cache.getSeratoTag(identity, TagKind::beatGrid));
+    }
+
+    /// Keeps musical metadata and markers available when overview alone has a stable negative outcome.
+    void missingOverview()
+    {
+        for (const auto status : {ReadStatus::absent, ReadStatus::invalid}) {
+            beginTest("Missing or invalid overview does not hide valid metadata from other kinds");
+            const TemporaryDirectory directory;
+            AnalysisCache cache(directory.getChildFile("cache.db"));
+            const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
+            const AnalysisCache::FileIdentity identity(file);
+            expect(cache.storeSeratoTag(identity, previewResult(serato::TagKind::overview, status)));
+            PreviewProbe probe;
+            SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
+            loader.request(file, 1.0);
+            expect(probe.waitForDeliveries(1));
+            loader.cancelAndWait();
+            const auto batches = probe.readBatches();
+            expectEquals(static_cast<int>(batches.size()), 1);
+            if (!batches.empty()) {
+                expect(
+                    batches.front()
+                    == std::vector<serato::TagKind>(serato::allTagKinds.begin() + 1, serato::allTagKinds.end())
+                );
+            }
+            for (const auto& delivery : probe.queued()) {
+                expect(delivery.data != nullptr);
+                if (delivery.data) {
+                    expect(!delivery.data->overview);
+                    expect(
+                        delivery.data->analysis && delivery.data->autotags && delivery.data->beatGrid
+                        && delivery.data->markers && delivery.data->trackInfo
+                    );
+                }
+            }
+        }
+    }
+
+    /// Verifies the complete immutable aggregate and the representative values returned by the batch probe.
+    void expectEveryKind(const SeratoPreviewLoader::Data& data)
+    {
+        expect(data != nullptr);
+        if (!data) {
+            return;
+        }
+        expect(
+            data->overview && data->analysis && data->autotags && data->beatGrid && data->markers && data->trackInfo
+        );
+        if (data->analysis) {
+            expectEquals(static_cast<int>(data->analysis->majorVersion), 2);
+            expectEquals(static_cast<int>(data->analysis->minorVersion), 5);
+        }
+        if (data->autotags) {
+            expectEquals(data->autotags->bpm, 128.0);
+            expectEquals(data->autotags->autoGain, -3.0);
+            expectEquals(data->autotags->gain, 1.5);
+        }
+        if (data->beatGrid) {
+            expectEquals(static_cast<int>(data->beatGrid->markers.size()), 1);
+            if (!data->beatGrid->markers.empty()) {
+                expectEquals(data->beatGrid->markers.front().positionSeconds, 0.5);
+                expect(data->beatGrid->markers.front().bpm == 128.0);
+            }
+        }
+        if (data->markers) {
+            expectEquals(static_cast<int>(data->markers->cues.size()), 1);
+            expectEquals(static_cast<int>(data->markers->loops.size()), 1);
+            expect(data->markers->colour == juce::Colours::blue);
+            expect(data->markers->bpmLocked == false);
+        }
+        if (data->trackInfo) {
+            expect(data->trackInfo->bpm == 128.0);
+            expectEquals(data->trackInfo->key, juce::String("Am"));
         }
     }
 
@@ -339,11 +596,13 @@ private:
                     expect(probe.waitForDeliveries(attempt + 1));
                 }
                 loader.cancelAndWait();
-                expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(file)));
+                for (const auto kind : serato::allTagKinds) {
+                    expect(!cache.getSeratoTag(AnalysisCache::FileIdentity(file), kind));
+                }
             }
             expectEquals(static_cast<int>(probe.readPaths().size()), 2);
             for (const auto& result : probe.queued()) {
-                expect(result.bands == nullptr);
+                expect(result.data == nullptr);
             }
             if (status == ReadStatus::cancelled) {
                 expect(probe.queued().empty());
@@ -389,7 +648,7 @@ private:
         const auto results = probe.queued();
         expectEquals(static_cast<int>(results.size()), 1);
         if (!results.empty()) {
-            expect(results.front().bands != nullptr);
+            expect(results.front().data != nullptr);
         }
     }
 };

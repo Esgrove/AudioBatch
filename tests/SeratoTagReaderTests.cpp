@@ -106,6 +106,176 @@ juce::MemoryBlock flacWrapper(std::span<const std::uint8_t> bytes)
     return wrapper;
 }
 
+/// Creates silence containers or generated MPEG frame headers without borrowing external audio bytes.
+bool createSyntheticContainer(const juce::File& file)
+{
+    if (file.hasFileExtension("mp3")) {
+        juce::MemoryOutputStream output;
+        std::array<std::uint8_t, 417> frame {};
+        frame[0] = 255;
+        frame[1] = 251;
+        frame[2] = 144;
+        frame[3] = 100;
+        for (int index = 0; index < 4; ++index) {
+            output.write(frame.data(), frame.size());
+        }
+        return file.replaceWithData(output.getData(), output.getDataSize());
+    }
+    juce::WavAudioFormat wav;
+    juce::AiffAudioFormat aiff;
+    juce::FlacAudioFormat flac;
+    juce::AudioFormat* format = &wav;
+    if (file.hasFileExtension("flac")) {
+        format = &flac;
+    } else if (file.hasFileExtension("aif")) {
+        format = &aiff;
+    }
+    std::unique_ptr<juce::OutputStream> output = file.createOutputStream();
+    if (!output) {
+        return false;
+    }
+    const auto writer = format->createWriterFor(
+        output, juce::AudioFormatWriterOptions().withSampleRate(44100).withNumChannels(1).withBitsPerSample(16)
+    );
+    juce::AudioBuffer<float> silence(1, 64);
+    silence.clear();
+    return writer != nullptr && writer->writeFromAudioSampleBuffer(silence, 0, silence.getNumSamples());
+}
+
+/// Generates one supported payload for each nonstandard kind in stable kind order.
+std::array<std::vector<std::uint8_t>, 5> syntheticPayloads()
+{
+    const auto autotags = std::to_array(
+        "\x01\x01"
+        "129.50\0-3.257\0"
+        "0.000"
+    );
+    const std::vector<std::uint8_t> grid {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 67, 0, 0, 0, 37};
+    juce::MemoryOutputStream body;
+    body.writeByte(1);
+    body.writeByte(1);
+    body.writeString("CUE");
+    const std::array<std::uint8_t, 13> cue {0, 2, 0, 0, 4, 210, 0, 204, 0, 0, 0, 0, 0};
+    body.writeIntBigEndian(static_cast<int>(cue.size()));
+    body.write(cue.data(), cue.size());
+    body.writeByte(0);
+    juce::MemoryOutputStream envelope;
+    envelope.writeByte(1);
+    envelope.writeByte(1);
+    envelope.writeString(juce::Base64::toBase64(body.getData(), body.getDataSize()));
+    const std::span markerBytes {static_cast<const std::uint8_t*>(envelope.getData()), envelope.getDataSize()};
+    return {
+        readerPayload(),
+        std::vector<std::uint8_t> {2, 1},
+        std::vector<std::uint8_t>(autotags.begin(), autotags.end()),
+        grid,
+        std::vector<std::uint8_t>(markerBytes.begin(), markerBytes.end()),
+    };
+}
+
+/// Creates a legacy fourteen-slot fallback with one cue at 100 milliseconds.
+std::vector<std::uint8_t> syntheticLegacyMarkers()
+{
+    std::vector<std::uint8_t> bytes(6 + 14 * 22 + 4, 0);
+    bytes[0] = 2;
+    bytes[1] = 5;
+    bytes[5] = 14;
+    for (std::size_t index = 0; index < 14; ++index) {
+        bytes[6 + index * 22] = 127;
+        bytes[6 + index * 22 + 20] = index < 5 ? 1 : 3;
+    }
+    bytes[6] = 0;
+    bytes[10] = 100;
+    return bytes;
+}
+
+/// Writes all synthetic kinds, invalid earlier duplicates and standard BPM/key into scratch containers.
+bool writeSyntheticTags(
+    const juce::File& file,
+    bool invalidAutotags = false,
+    bool legacyOnly = false,
+    bool manyUnrelated = false
+)
+{
+    const auto& fullPath = file.getFullPathName();
+    const TagLib::FileRef reference(utils::tagLibFileName(fullPath), false);
+    if (reference.isNull()) {
+        return false;
+    }
+    auto properties = reference.file()->properties();
+    TagLib::StringList bpm;
+    bpm.append("not a number");
+    bpm.append("129.50");
+    properties.replace("BPM", bpm);
+    properties.replace("INITIALKEY", TagLib::StringList("Gm"));
+    const auto payloads = syntheticPayloads();
+    const std::array<const char*, 5> descriptions {
+        "Serato Overview",
+        "Serato Analysis",
+        "Serato Autotags",
+        "Serato BeatGrid",
+        "Serato Markers2",
+    };
+    const std::array<const char*, 5> names {
+        "SERATO_OVERVIEW",
+        "SERATO_ANALYSIS",
+        "SERATO_AUTOGAIN",
+        "SERATO_BEATGRID",
+        "SERATO_MARKERS_V2",
+    };
+    auto* flac = dynamic_cast<TagLib::FLAC::File*>(reference.file());
+    if (flac != nullptr) {
+        for (std::size_t index = 0; index < payloads.size(); ++index) {
+            juce::MemoryOutputStream wrapper;
+            wrapper.writeString("application/octet-stream");
+            wrapper.writeByte(0);
+            wrapper.writeString(descriptions[index]);
+            wrapper.write(payloads[index].data(), payloads[index].size());
+            TagLib::StringList values("!invalid!");
+            if (!invalidAutotags || index != 2) {
+                const auto encoded
+                    = juce::Base64::toBase64(wrapper.getData(), wrapper.getDataSize()).trimCharactersAtEnd("=");
+                const auto spaced = juce::String(" \n") + encoded.substring(0, 12) + "\n" + encoded.substring(12);
+                values.append(TagLib::String(spaced.toRawUTF8(), TagLib::String::UTF8));
+            }
+            properties.replace(names[index], values);
+        }
+        flac->setProperties(properties);
+        return flac->save();
+    }
+    auto* mpeg = dynamic_cast<TagLib::MPEG::File*>(reference.file());
+    const auto* aiff = dynamic_cast<TagLib::RIFF::AIFF::File*>(reference.file());
+    const auto* wav = dynamic_cast<TagLib::RIFF::WAV::File*>(reference.file());
+    TagLib::ID3v2::Tag* tag = nullptr;
+    if (mpeg != nullptr) {
+        tag = mpeg->ID3v2Tag(true);
+    } else if (aiff != nullptr) {
+        tag = aiff->tag();
+    } else if (wav != nullptr) {
+        tag = wav->ID3v2Tag();
+    }
+    if (tag == nullptr) {
+        return false;
+    }
+    tag->setProperties(properties);
+    tag->removeFrames("GEOB");
+    if (manyUnrelated) {
+        const std::array<std::uint8_t, 1> unrelated {0};
+        for (std::size_t index = 0; index <= serato::maxTagRecords; ++index) {
+            addGeob(*tag, "Unrelated", unrelated, TagLib::String::Latin1);
+        }
+    }
+    for (std::size_t index = 0; index < payloads.size(); ++index) {
+        const std::array<std::uint8_t, 1> invalid {0};
+        addGeob(*tag, descriptions[index], invalid, TagLib::String::UTF16);
+        if ((!invalidAutotags || index != 2) && (!legacyOnly || index != 4)) {
+            addGeob(*tag, descriptions[index], payloads[index], TagLib::String::UTF16);
+        }
+    }
+    addGeob(*tag, "Serato Markers_", syntheticLegacyMarkers(), TagLib::String::Latin1);
+    return reference.file()->save();
+}
+
 /// Replaces the native FLAC property on a temporary fixture copy with supplied duplicate values.
 bool writeFlacValues(const juce::File& file, const juce::StringArray& values)
 {
@@ -156,6 +326,14 @@ public:
 
     /// Writes synthetic metadata only on temporary copies and verifies extraction is read-only.
     void runTest() override
+    {
+        testOverview();
+        testMetadata();
+    }
+
+private:
+    /// Preserves existing Overview container and outcome regression coverage.
+    void testOverview()
     {
         const auto payload = readerPayload();
         const auto expected = serato::Overview::parse(payload);
@@ -260,7 +438,114 @@ public:
         }
     }
 
-private:
+    /// Checks multi-kind extraction on generated containers and independent track properties.
+    void testMetadata()
+    {
+        const TemporaryDirectory directory;
+        beginTest("Synthetic containers return all kinds independently and recover later valid duplicates");
+        for (const auto* extension : {"mp3", "aif", "wav", "flac"}) {
+            const auto file = directory.getChildFile(utils::format("synthetic.{}", extension));
+            expect(createSyntheticContainer(file));
+            expect(writeSyntheticTags(file));
+            const auto before = fileChecksum(file);
+            const auto results = serato::readTags(file, serato::allTagKinds);
+            expectEquals(static_cast<int>(results.size()), 6);
+            for (std::size_t index = 0; index < results.size(); ++index) {
+                expectEquals(static_cast<int>(results[index].kind), static_cast<int>(index + 1));
+                expectEquals(static_cast<int>(results[index].status), static_cast<int>(serato::ReadStatus::present));
+                expect(serato::serializeTag(results[index]).getSize() > 0);
+            }
+            if (results.size() == 6) {
+                const auto& info = results[5].trackInfo;
+                if (info) {
+                    expectEquals(info->bpm.value_or(0), 129.5);
+                    expectEquals(info->key, juce::String("Gm"));
+                }
+                const auto& markers = results[4].markers;
+                if (markers && !markers->cues.empty()) {
+                    expectEquals(static_cast<int>(markers->cues.front().positionMilliseconds), 1234);
+                }
+            }
+            expect(before.has_value() && before == fileChecksum(file));
+            expect(writeSyntheticTags(file, true));
+            const auto mixed = serato::readTags(file, serato::allTagKinds);
+            for (std::size_t index = 0; index < mixed.size(); ++index) {
+                expectEquals(
+                    static_cast<int>(mixed[index].status),
+                    static_cast<int>(index == 2 ? serato::ReadStatus::invalid : serato::ReadStatus::present)
+                );
+            }
+            const auto cancelled = serato::readTags(file, serato::allTagKinds, [] { return true; });
+            for (const auto& result : cancelled) {
+                expectEquals(static_cast<int>(result.status), static_cast<int>(serato::ReadStatus::cancelled));
+                expect(serato::serializeTag(result).getSize() == 0);
+            }
+        }
+
+        beginTest("Legacy marker fallback, unrelated frame count and repeated requested kinds remain independent");
+        {
+            const auto file = directory.getChildFile("fallback.wav");
+            expect(createSyntheticContainer(file));
+            expect(writeSyntheticTags(file, false, true, true));
+            const auto markers = serato::readTag(file, serato::TagKind::markers);
+            expectEquals(static_cast<int>(markers.status), static_cast<int>(serato::ReadStatus::present));
+            if (markers.markers && !markers.markers->cues.empty()) {
+                expectEquals(static_cast<int>(markers.markers->cues.front().positionMilliseconds), 100);
+            }
+            expectStatus(serato::readTag(file), serato::ReadStatus::present);
+            const std::array kinds {
+                serato::TagKind::analysis,
+                std::bit_cast<serato::TagKind>(std::uint32_t {99}),
+                serato::TagKind::analysis,
+            };
+            const auto results = serato::readTags(file, kinds);
+            expectEquals(static_cast<int>(results.size()), 3);
+            if (results.size() == 3) {
+                expectEquals(static_cast<int>(results[0].status), static_cast<int>(serato::ReadStatus::present));
+                expectEquals(static_cast<int>(results[1].status), static_cast<int>(serato::ReadStatus::unsupported));
+                expectEquals(static_cast<int>(results[2].status), static_cast<int>(serato::ReadStatus::present));
+            }
+            expect(serato::readTags(file, {}).empty());
+        }
+
+        beginTest("Standard key survives invalid BPM and Analysis alone never supplies musical key");
+        {
+            const auto file = directory.getChildFile("properties.wav");
+            expect(createSyntheticContainer(file));
+            expect(writeSyntheticTags(file));
+            const auto& fullPath = file.getFullPathName();
+            {
+                TagLib::RIFF::WAV::File wav(utils::tagLibFileName(fullPath), false);
+                auto properties = wav.properties();
+                properties.replace("BPM", TagLib::StringList("nan"));
+                wav.setProperties(properties);
+                expect(wav.save());
+            }
+            const auto keyOnly = serato::readTag(file, serato::TagKind::trackInfo);
+            expectEquals(static_cast<int>(keyOnly.status), static_cast<int>(serato::ReadStatus::present));
+            if (keyOnly.trackInfo) {
+                expect(!keyOnly.trackInfo->bpm);
+                expectEquals(keyOnly.trackInfo->key, juce::String("Gm"));
+            }
+            {
+                TagLib::RIFF::WAV::File wav(utils::tagLibFileName(fullPath), false);
+                auto properties = wav.properties();
+                properties.erase("BPM");
+                properties.erase("INITIALKEY");
+                wav.setProperties(properties);
+                expect(wav.save());
+            }
+            expectEquals(
+                static_cast<int>(serato::readTag(file, serato::TagKind::analysis).status),
+                static_cast<int>(serato::ReadStatus::present)
+            );
+            expectEquals(
+                static_cast<int>(serato::readTag(file, serato::TagKind::trackInfo).status),
+                static_cast<int>(serato::ReadStatus::absent)
+            );
+        }
+    }
+
     /// Checks both the outcome and the invariant that only present results own an Overview.
     void expectStatus(const serato::TagReadResult& result, serato::ReadStatus status)
     {

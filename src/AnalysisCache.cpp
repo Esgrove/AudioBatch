@@ -6,6 +6,7 @@
 #include "AnalysisCache.h"
 
 #include "Log.h"
+#include "SeratoTags.h"
 #include "StringFormat.h"
 #include "version.h"
 
@@ -24,7 +25,7 @@ constexpr double millisecondsPerSecond = 1000.0;
 /// How long SQLite retries a locked database before failing a statement, in milliseconds.
 constexpr int busyTimeoutMilliseconds = 2000;
 
-/// Maximum numeric Overview cache size, including its four explicit 32-bit header fields.
+/// Maximum numeric tag cache size, including the explicit serializer header fields.
 constexpr std::size_t maximumOverviewBytes
     = 4 * sizeof(std::uint32_t) + audiobatch::serato::Overview::maxSlices * audiobatch::serato::Overview::bandCount;
 
@@ -454,7 +455,7 @@ std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
 )
 {
     using namespace audiobatch::serato;
-    if (kind != TagKind::overview || !juce::File::isAbsolutePath(identity.path)) {
+    if (!supportsTagKind(kind) || !juce::File::isAbsolutePath(identity.path)) {
         return std::nullopt;
     }
     const juce::File file(identity.path);
@@ -494,7 +495,7 @@ std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
         }
         valid = valid && sqlite3_column_int64(statement, serato_column::fileSize) == identity.fileSize
             && sqlite3_column_int64(statement, serato_column::modifiedTimeMs) == identity.modifiedTimeMs
-            && sqlite3_column_int64(statement, serato_column::parserVersion) == overviewParserVersion
+            && sqlite3_column_int64(statement, serato_column::parserVersion) == parserVersion(kind)
             && sqlite3_column_int64(statement, serato_column::updatedAtMs) > 0
             && sqlite3_column_type(statement, serato_column::filePath) == SQLITE_TEXT
             && columnText(statement, serato_column::filePath) == identity.path
@@ -520,10 +521,11 @@ std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
         result.status = static_cast<ReadStatus>(state);
     }
     if (result.status == ReadStatus::present) {
-        result.overview = Overview::deserialize({static_cast<const std::uint8_t*>(data.getData()), data.getSize()});
-        if (!result.overview) {
+        const auto decoded = deserializeTag(kind, data);
+        if (!decoded) {
             return std::nullopt;
         }
+        result = *decoded;
     }
     return identity.matches(file) ? std::optional {std::move(result)} : std::nullopt;
 }
@@ -531,16 +533,13 @@ std::optional<audiobatch::serato::TagReadResult> AnalysisCache::getSeratoTag(
 bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const audiobatch::serato::TagReadResult& result)
 {
     using namespace audiobatch::serato;
-    if (result.kind != TagKind::overview || !juce::File::isAbsolutePath(identity.path)) {
+    if (!supportsTagKind(result.kind) || !juce::File::isAbsolutePath(identity.path)) {
         return false;
     }
     juce::MemoryBlock data;
     switch (result.status) {
         case ReadStatus::present:
-            if (!result.overview) {
-                return false;
-            }
-            data = result.overview->serialize();
+            data = serializeTag(result);
             if (data.isEmpty() || data.getSize() > maximumOverviewBytes) {
                 return false;
             }
@@ -548,7 +547,8 @@ bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const audiobatc
         case ReadStatus::absent:
         case ReadStatus::unsupported:
         case ReadStatus::invalid:
-            if (result.overview) {
+            if (result.overview || result.analysis || result.autotags || result.beatGrid || result.markers
+                || result.trackInfo) {
                 return false;
             }
             break;
@@ -582,7 +582,7 @@ bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const audiobatc
     sqlite3_bind_int64(statement, serato_parameter::tagKind, static_cast<std::uint32_t>(result.kind));
     sqlite3_bind_int64(statement, serato_parameter::fileSize, identity.fileSize);
     sqlite3_bind_int64(statement, serato_parameter::modifiedTimeMs, identity.modifiedTimeMs);
-    sqlite3_bind_int64(statement, serato_parameter::parserVersion, overviewParserVersion);
+    sqlite3_bind_int64(statement, serato_parameter::parserVersion, parserVersion(result.kind));
     sqlite3_bind_int(statement, serato_parameter::resultState, static_cast<int>(result.status));
     if (result.status == ReadStatus::present) {
         bindBlob(statement, serato_parameter::decodedData, data);
