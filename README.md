@@ -34,7 +34,8 @@ Tag loading runs asynchronously with one active read and only the latest pending
 The preview remains blue while loading and when tags are absent, unsupported or unusable.
 Late colours do not restart playback or change zoom or gain.
 Cue points use their stored colours for arrows at the top and bottom of the waveform, pointing toward its centre.
-Their millisecond positions share the waveform and playhead time projection, so they stay aligned while zooming or scrolling.
+Their millisecond positions share the waveform and playhead time projection,
+so they stay aligned while zooming or scrolling.
 Cue arrows render above both solid and coloured waveforms, below the playback cursor, even when Overview is absent.
 The info panel shows BPM and musical key when embedded metadata supplies them.
 Tempo prefers Serato Autotags, then standard BPM, then the final beatgrid anchor.

@@ -29,8 +29,8 @@ No audio, payload dumps or screenshot assets are part of the portable test suite
 The screenshots' Serato version, display scale and selected color mode were not supplied.
 The narrow overview panes were compared separately from the detailed and zoomed waveform panes.
 
-The zero-based RGB interpretation ranked first among tested offsets, channel permutations and component reversals
-on each of the three AIFF references.
+The zero-based RGB interpretation ranked first among tested offsets,
+channel permutations and component reversals on each of the three AIFF references.
 Normalized RGB comparison used foreground screenshot pixels, excluding dark and near-neutral pixels.
 Nominal whole-track alignment gave the following chromaticity root-mean-square errors:
 
@@ -68,7 +68,8 @@ No additional spectral analysis or guessed per-hit color is introduced.
 
 - Windows debug GUI, CLI and test targets built successfully.
 - CTest passed the complete portable suite, including palette decoding, cell weighting and decoded-color interpolation.
-- Synthetic tests cover palette boundaries, all sixteen row positions, background/reserved fallback and viewport projection.
+- Synthetic tests cover palette boundaries, all sixteen row positions,
+  background/reserved fallback and viewport projection.
 - Offscreen rendering tests preserve JUCE pixel coverage across mono/stereo, gain, zoom/pan and 100/150/200% scales.
 - An ignored local diagnostic exercised production reader, cache, gradient and waveform rendering APIs on seven tracks.
 - All seven tags contained 240 columns. Fresh and reopened-cache bytes and renders matched.
