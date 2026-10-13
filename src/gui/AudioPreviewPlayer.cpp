@@ -30,10 +30,13 @@ AudioPreviewPlayer::AudioPreviewPlayer()
 /// Stops playback and disconnects the transport before the audio callback and the read-ahead thread go away.
 AudioPreviewPlayer::~AudioPreviewPlayer()
 {
+    utils::logDebug("Application shutdown: stopping audio preview transport");
     release();
     sourcePlayer.setSource(nullptr);
     deviceManager.removeAudioCallback(&sourcePlayer);
+    utils::logDebug("Application shutdown: stopping audio preview read-ahead thread");
     readAheadThread.stopThread(readAheadThreadStopTimeoutMilliseconds);
+    utils::logDebug("Application shutdown: releasing audio device manager");
 }
 
 /// Requests audio input permission and initialises the device manager once it is answered.

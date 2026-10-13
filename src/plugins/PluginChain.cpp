@@ -94,6 +94,7 @@ PluginChain::PluginChain(juce::ApplicationProperties& applicationProperties) : a
 /// Closes all editor, chain-editor, and scan windows and destroys their plugin instances.
 PluginChain::~PluginChain()
 {
+    utils::logDebug("Application shutdown: closing plugin windows");
     stopTimer();
     knownPluginList.removeChangeListener(this);
 
@@ -108,6 +109,7 @@ PluginChain::~PluginChain()
     if (scanWindow != nullptr) {
         scanWindow.deleteAndZero();
     }
+    utils::logDebug("Application shutdown: releasing plugin chain members");
 }
 
 /// Returns the number of slots in the chain, including disabled ones.

@@ -343,13 +343,18 @@ AudioBatchComponent::AudioBatchComponent() :
 /// Stops background work and releases audio and dialog resources.
 AudioBatchComponent::~AudioBatchComponent()
 {
+    utils::logDebug("Application shutdown: stopping preview metadata worker");
     if (seratoPreviewLoader) {
         seratoPreviewLoader->cancelAndWait();
     }
+    utils::logDebug("Application shutdown: stopping analysis workers");
     analysisCoordinator.cancelAndWait();
+    utils::logDebug("Application shutdown: stopping normalization workers");
     normalizeCoordinator.cancelAndWait();
+    utils::logDebug("Application shutdown: stopping plugin processing workers");
     pluginCoordinator.cancelAndWait();
 
+    utils::logDebug("Application shutdown: releasing preview and dialogs");
     previewPlayer.release();
     previewPlayer.getTransport().removeChangeListener(this);
     thumbnail->removeChangeListener(this);
@@ -364,6 +369,7 @@ AudioBatchComponent::~AudioBatchComponent()
         }
         childWindows.clear();
     }
+    utils::logDebug("Application shutdown: releasing component members");
 }
 
 /// Fills the background with the look-and-feel window colour,
