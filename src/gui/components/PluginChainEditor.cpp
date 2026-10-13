@@ -9,6 +9,8 @@
 #include "gui/components/CustomLookAndFeel.h"
 #include "utils/StringFormat.h"
 
+#include <utility>
+
 namespace audiobatch
 {
 namespace
@@ -29,9 +31,18 @@ constexpr float rowCornerRadius = 4.0f;
 }  // namespace
 
 /// Builds the row for the given slot and wires its controls to the owning chain.
-PluginChainSlotRow::PluginChainSlotRow(PluginChain& ownerChain, const int slotIndex) :
+PluginChainSlotRow::PluginChainSlotRow(
+    PluginChain& ownerChain,
+    const int slotIndex,
+    std::function<int(int containerY)> dropIndexCallback,
+    std::function<void(PluginChainSlotRow& row, int targetIndex)> draggedCallback,
+    std::function<void(PluginChainSlotRow& row, int targetIndex)> droppedCallback
+) :
     pluginChain(ownerChain),
-    index(slotIndex)
+    index(slotIndex),
+    getDropIndex(std::move(dropIndexCallback)),
+    onDragged(std::move(draggedCallback)),
+    onDropped(std::move(droppedCallback))
 {
     const auto description = pluginChain.getSlotDescription(index);
     const bool enabled = pluginChain.isSlotEnabled(index);
@@ -215,14 +226,15 @@ void PluginChainEditor::rebuildRows()
     rows.reserve(static_cast<std::size_t>(numSlots));
 
     for (int index = 0; index < numSlots; ++index) {
-        auto row = std::make_unique<PluginChainSlotRow>(pluginChain, index);
-        row->getDropIndex = [this](const int containerY) { return rowIndexForPosition(containerY); };
-        row->onDragged = [this](const PluginChainSlotRow& draggedRow, const int targetIndex) {
-            rowDragged(draggedRow, targetIndex);
-        };
-        row->onDropped = [this](const PluginChainSlotRow& droppedRow, const int targetIndex) {
-            rowDropped(droppedRow, targetIndex);
-        };
+        auto row = std::make_unique<PluginChainSlotRow>(
+            pluginChain,
+            index,
+            [this](const int containerY) { return rowIndexForPosition(containerY); },
+            [this](const PluginChainSlotRow& draggedRow, const int targetIndex) {
+                rowDragged(draggedRow, targetIndex);
+            },
+            [this](const PluginChainSlotRow& droppedRow, const int targetIndex) { rowDropped(droppedRow, targetIndex); }
+        );
         row->updateMoveButtonStates(numSlots);
         rowContainer.addAndMakeVisible(row.get());
         rows.push_back(std::move(row));

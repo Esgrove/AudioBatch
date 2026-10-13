@@ -54,25 +54,27 @@ static serato::TagReadResult previewResult(const serato::TagKind kind, const Rea
             result.beatGrid = serato::BeatGrid {{{.positionSeconds = 0.5, .beatsUntilNext = 0, .bpm = 128.0}}};
             break;
         case serato::TagKind::markers:
-            result.markers = serato::Markers{
-        .cues = {{.positionMilliseconds = 1000,
-                  .index = 2,
-                  .colour = juce::Colours::red,
-                  .name = "Intro"}},
-        .loops =
-            {
-                {
-                    .startMilliseconds = 2000,
-                    .endMilliseconds = 4000,
-                    .index = 1,
-                    .colour = juce::Colours::green,
-                    .locked = true,
-                    .name = "Loop",
+            result.markers = serato::Markers {
+                .cues = {
+                    {.positionMilliseconds = 1000,
+                        .index = 2,
+                        .colour = juce::Colours::red,
+                        .name = "Intro",
+                    },
                 },
-            },
-        .colour = juce::Colours::blue,
-        .bpmLocked = false,
-    };
+                .loops = {
+                    {
+                        .startMilliseconds = 2000,
+                        .endMilliseconds = 4000,
+                        .index = 1,
+                        .colour = juce::Colours::green,
+                        .locked = true,
+                        .name = "Loop",
+                    },
+                },
+                .colour = juce::Colours::blue,
+                .bpmLocked = false,
+            };
             break;
         case serato::TagKind::trackInfo:
             result.trackInfo = serato::TrackInfo {.bpm = 128.0, .key = "Am"};

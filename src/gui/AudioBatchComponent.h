@@ -223,7 +223,7 @@ private:
     OperationProgress processingProgress;
 
     /// Primary and secondary sort columns of the results table.
-    results_sorting::SortState sortState {.primaryColumnId = columnOverallPeak};
+    results_sorting::SortState sortState {.primaryColumnId = columnOverallPeak, .statusText = {}};
 
     /// Activity labels and last operation messages per file, shown in the status column.
     FileActivityTracker fileActivity {[this] { resultsTable.repaint(); }};

@@ -345,9 +345,11 @@ private:
         beginTest("Transient and inconsistent results never overwrite a stable result");
         expect(cache.storeSeratoTag(identity, positive));
         for (const auto status :
-             {serato::ReadStatus::ioError,
-              serato::ReadStatus::cancelled,
-              std::bit_cast<serato::ReadStatus>(std::uint8_t {99})})
+             {
+                 serato::ReadStatus::ioError,
+                 serato::ReadStatus::cancelled,
+                 std::bit_cast<serato::ReadStatus>(std::uint8_t {99}),
+             })
         {
             expect(!cache.storeSeratoTag(identity, {.status = status, .overview = std::nullopt}));
         }
