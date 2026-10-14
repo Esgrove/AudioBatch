@@ -48,10 +48,10 @@ fi
 cd "$REPO"
 
 print_magenta "Configuring and building with sanitizers..."
-cmake --preset macos-asan
+cmake --preset macos-asan -DBUILD_TESTING=ON
 cmake --build --preset macos-asan --target AudioBatchTests
 
 print_magenta "Running tests..."
-ctest --test-dir cmake-build-mac-asan --output-on-failure
+ctest --test-dir cmake-build-mac-asan --output-on-failure --no-tests=error
 
 print_green "Sanitizer run passed."
