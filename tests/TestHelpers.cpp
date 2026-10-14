@@ -7,6 +7,32 @@
 
 namespace audiobatch::tests
 {
+/// Installs the capture after saving the runner's logger.
+ScopedLogCapture::ScopedLogCapture() : previousLogger(juce::Logger::getCurrentLogger())
+{
+    juce::Logger::setCurrentLogger(this);
+}
+
+/// Restores the runner's logger after the tested workers have finished.
+ScopedLogCapture::~ScopedLogCapture()
+{
+    juce::Logger::setCurrentLogger(previousLogger);
+}
+
+/// Returns a snapshot without racing worker-thread log messages.
+juce::StringArray ScopedLogCapture::getMessages() const
+{
+    const juce::ScopedLock scopedLock(lock);
+    return messages;
+}
+
+/// Collects one complete message under the capture lock.
+void ScopedLogCapture::logMessage(const juce::String& message)
+{
+    const juce::ScopedLock scopedLock(lock);
+    messages.add(message);
+}
+
 TemporaryDirectory::TemporaryDirectory() :
     directory(
         juce::File::getSpecialLocation(juce::File::tempDirectory)

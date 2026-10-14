@@ -44,10 +44,10 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
     const auto analysisFailureCount
         = std::ranges::count_if(results, [](const auto& record) { return record.hasError(); });
     utils::logInfo(
-        "Analysis complete: {} files ({} failed) in {:.2f} s",
+        "Analysis complete: {:.2f} s, {} files ({} failed)",
+        analysisElapsedMs / utils::millisecondsPerSecond,
         results.size(),
-        analysisFailureCount,
-        analysisElapsedMs / utils::millisecondsPerSecond
+        analysisFailureCount
     );
 
     sortRecords(results, options.sortMode, !options.reverse);
@@ -76,7 +76,7 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
     for (const auto& result : results) {
         if (result.hasError()) {
             ++failureCount;
-            utils::logError("{}: {}", result.file.getFullPathName().quoted(), result.errorMessage);
+            utils::logError("Analysis failed: {}, {}", result.file.getFullPathName().quoted(), result.errorMessage);
 
             if (options.normalize) {
                 normalizedResults.push_back(result);
@@ -91,7 +91,9 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
         if (normalizationConflicts.contains(result.file.getFullPathName())) {
             ++failureCount;
             const auto conflictMessage = batchOutputConflictMessage(result.file);
-            utils::logError("{}: {}", result.file.getFullPathName().quoted(), conflictMessage);
+            utils::logError(
+                "Normalization output conflict: {}, {}", result.file.getFullPathName().quoted(), conflictMessage
+            );
             addNormalizationFailure(result, conflictMessage);
             continue;
         }
@@ -108,7 +110,9 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
 
         if (normalization.hasError()) {
             ++failureCount;
-            utils::logError("{}: {}", result.file.getFullPathName().quoted(), normalization.errorMessage);
+            utils::logError(
+                "Normalization failed: {}, {}", result.file.getFullPathName().quoted(), normalization.errorMessage
+            );
             // A committed output replaced the source, so the failed re-analysis of the output is reported instead.
             addNormalizationFailure(
                 normalization.committed ? normalization.analysisRecord : result, normalization.errorMessage

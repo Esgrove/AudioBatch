@@ -741,12 +741,14 @@ PluginProcessingResult processFileWithPlugins(
         const auto clipNotice
             = utils::format("Reduced {:.1f} dB to avoid clipping", -juce::Decibels::gainToDecibels(clipGuardGain));
         notices.add(clipNotice);
-        utils::logInfo("{}: {}", outputFile.getFullPathName().quoted(), clipNotice);
+        utils::logInfo("Plugin processing notice: {}, {}", outputFile.getFullPathName().quoted(), clipNotice);
     }
 
     if (summary.decodeNotice.isNotEmpty()) {
         notices.add(summary.decodeNotice);
-        utils::logWarn("{}: {}", outputFile.getFullPathName().quoted(), summary.decodeNotice);
+        utils::logWarn(
+            "Plugin processing warning: {}, {}", outputFile.getFullPathName().quoted(), summary.decodeNotice
+        );
     }
 
     result.notice = notices.joinIntoString(". ");
@@ -764,7 +766,7 @@ PluginProcessingResult processFileWithPlugins(
         utils::logError("Plugin processing re-analysis failed for {}", result.outputFile.getFullPathName().quoted());
     } else {
         utils::logInfo(
-            "{:8.2f} s: Processed {}",
+            "Processed: {:.2f} s, {}",
             utils::elapsedSecondsSince(startedAtMilliseconds),
             result.outputFile.getFileName().quoted()
         );

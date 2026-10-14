@@ -17,6 +17,11 @@
 
 namespace audiobatch
 {
+int getPluginProcessingWorkerCount(
+    int physicalCoreCount = juce::SystemStats::getNumPhysicalCpus(),
+    int logicalCoreCount = juce::SystemStats::getNumCpus()
+);
+
 /// One pre-instantiated chain of plugin instances, in processing order.
 using PluginChainInstances = std::vector<std::unique_ptr<juce::AudioPluginInstance>>;
 
@@ -69,7 +74,7 @@ public:
     /// Receives the error message.
     using StartErrorCallback = std::function<void(juce::String errorMessage)>;
 
-    explicit PluginProcessingCoordinator(int workerCount = juce::SystemStats::getNumCpus());
+    explicit PluginProcessingCoordinator(int workerCount = getPluginProcessingWorkerCount());
 
     ~PluginProcessingCoordinator();
 

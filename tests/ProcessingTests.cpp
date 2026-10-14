@@ -5,13 +5,19 @@
 
 #include "analysis/AudioAnalysis.h"
 #include "plugins/PluginProcessing.h"
+#include "plugins/PluginProcessingCoordinator.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
+#include "utils/Log.h"
+#include "utils/StringFormat.h"
+#include <condition_variable>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <limits>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -264,10 +270,45 @@ public:
     {
         const TemporaryDirectory directory;
 
+        beginTest("Plugin worker budgets reserve one physical core and handle unavailable counts");
+        {
+            expectEquals(getPluginProcessingWorkerCount(16, 32), 15);
+            expectEquals(getPluginProcessingWorkerCount(8, 16), 7);
+            expectEquals(getPluginProcessingWorkerCount(1, 2), 1);
+            expectEquals(getPluginProcessingWorkerCount(2, 4), 1);
+            expectEquals(getPluginProcessingWorkerCount(0, 32), 15);
+            expectEquals(getPluginProcessingWorkerCount(-1, 17), 7);
+            expectEquals(getPluginProcessingWorkerCount(0, 1), 1);
+            expectEquals(getPluginProcessingWorkerCount(0, -1), 1);
+            expectEquals(getPluginProcessingWorkerCount(16, 16), 15);
+        }
+
+        beginTest("Coordinator queues selected files in input order and skips duplicates and missing files");
+        testCoordinator(directory, 1);
+
+        beginTest("Coordinator can start six independent files concurrently");
+        testCoordinator(directory, 6);
+
+        beginTest("An empty queue or invalid chain does not announce processing");
+        {
+            const ScopedLogCapture capture;
+            PluginProcessingCoordinator coordinator(1);
+            TestPlugin plugin(TestPluginSettings {});
+            const auto options = makeOptions({&plugin});
+            expectEquals(coordinator.start({}, options, {}), 0);
+            PluginChainInstances chain;
+            chain.push_back(std::make_unique<TestPlugin>(TestPluginSettings {}));
+            std::vector<PluginChainInstances> chains;
+            chains.push_back(std::move(chain));
+            expectEquals(coordinator.start({}, options, std::move(chains)), 0);
+            expect(capture.getMessages().isEmpty());
+        }
+
         beginTest("A mono file feeds both inputs of a stereo-only plugin and stays mono");
         {
             const auto source = directory.copyFixture("sine_mono_48000_24.aif");
             TestPlugin plugin({.swapChannels = true});
+            const ScopedLogCapture capture;
             const auto result = process(source, {&plugin});
 
             expect(!result.hasError(), result.errorMessage);
@@ -275,6 +316,11 @@ public:
             expectEquals(result.analysisRecord.bitsPerSample, 24);
             expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels, 0.05);
             expect(result.notice.isEmpty(), result.notice);
+            const auto messages = capture.getMessages();
+            expect(std::ranges::any_of(messages, [&](const auto& message) {
+                return message.contains("[INFO]: Processed: ")
+                    && message.endsWith(utils::format(" s, {}", source.getFileName().quoted()));
+            }));
         }
 
         beginTest("A mono plugin followed by a stereo-only plugin passes the processed signal to both channels");
@@ -514,6 +560,90 @@ public:
     }
 
 private:
+    /// Checks FIFO pickup with one worker and a bounded start barrier with six workers.
+    /// Existing outputs reject each job before plugin preparation, avoiding message-loop waits and file replacement.
+    void testCoordinator(const TemporaryDirectory& directory, const int workerCount)
+    {
+        const ScopedLogCapture capture;
+        const std::vector<juce::String> names {"zulu", "alpha", "mike", "bravo", "yankee", "charlie"};
+        std::vector<AudioAnalysisRecord> records;
+        std::vector<juce::String> expectedPaths;
+        for (const auto& fileStem : names) {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", fileStem + ".wav");
+            const auto existingOutput = directory.copyFixture("sine_stereo_44100_16.aif", fileStem + ".aif");
+            expect(existingOutput.existsAsFile());
+            records.push_back(analyzeFile(source));
+            expectedPaths.push_back(source.getFullPathName());
+        }
+        records.push_back(records.front());
+        AudioAnalysisRecord missing;
+        missing.file = directory.getChildFile("missing.wav");
+        missing.fullPath = missing.file.getFullPathName();
+        records.push_back(missing);
+
+        std::mutex mutex;
+        std::condition_variable condition;
+        std::vector<juce::String> startedPaths;
+        int completedFiles = 0;
+        int resultCount = 0;
+        bool released = workerCount == 1;
+        PluginProcessingCoordinator coordinator(workerCount);
+        coordinator.setStartingCallback([&](const juce::File& file) {
+            std::unique_lock lock(mutex);
+            utils::logInfo("Test file starting: {}", file.getFileName().quoted());
+            startedPaths.push_back(file.getFullPathName());
+            condition.notify_all();
+            condition.wait_for(lock, std::chrono::seconds(10), [&] { return released; });
+        });
+        coordinator.setResultCallback([&](const PluginProcessingResult&) {
+            const std::scoped_lock lock(mutex);
+            ++resultCount;
+        });
+        coordinator.setCompletionCallback([&](const int totalFiles) {
+            const std::scoped_lock lock(mutex);
+            completedFiles = totalFiles;
+            condition.notify_all();
+        });
+
+        std::vector<PluginChainInstances> chains;
+        for (int index = 0; index < workerCount; ++index) {
+            PluginChainInstances chain;
+            chain.push_back(std::make_unique<TestPlugin>(TestPluginSettings {}));
+            chains.push_back(std::move(chain));
+        }
+        const auto options = makeOptions({chains.front().front().get()});
+        expectEquals(coordinator.start(records, options, std::move(chains)), 6);
+        {
+            std::unique_lock lock(mutex);
+            if (workerCount > 1) {
+                expect(condition.wait_for(lock, std::chrono::seconds(5), [&] { return startedPaths.size() == 6; }));
+                released = true;
+                condition.notify_all();
+            }
+            expect(condition.wait_for(lock, std::chrono::seconds(10), [&] { return completedFiles == 6; }));
+        }
+        coordinator.cancelAndWait();
+        expectEquals(resultCount, 6);
+        const auto messages = capture.getMessages();
+        expect(!messages.isEmpty());
+        if (!messages.isEmpty()) {
+            expect(
+                messages[0].endsWith(
+                    utils::format("[INFO]: Plugin processing started: 6 files, up to {} concurrent", workerCount)
+                )
+            );
+        }
+        expectEquals(
+            static_cast<int>(std::ranges::count_if(
+                messages, [](const auto& message) { return message.contains("Plugin processing started:"); }
+            )),
+            1
+        );
+        if (workerCount == 1) {
+            expect(startedPaths == expectedPaths);
+        }
+    }
+
     /// Processes the file through the given plugin chain on the calling thread.
     /// Each plugin gets the saved state at its index in `states`, or no saved state.
     static PluginProcessingResult process(

@@ -10,10 +10,11 @@
 
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginProcessing.h"
+#include "utils/Log.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
-#include <map>
+#include <set>
 #include <utility>
 
 namespace audiobatch
@@ -27,9 +28,16 @@ constexpr int jobShutdownTimeoutMilliseconds = 60000;
 constexpr int chainWaitIntervalMilliseconds = 100;
 }  // namespace
 
+/// Reserves one physical core for the UI and other work, with a half-logical-core fallback.
+/// At least one worker is available even when the machine has few cores or reports invalid counts.
+int getPluginProcessingWorkerCount(const int physicalCoreCount, const int logicalCoreCount)
+{
+    const auto processingCores = physicalCoreCount > 0 ? physicalCoreCount : juce::jmax(0, logicalCoreCount) / 2;
+    return juce::jmax(1, processingCores - 1);
+}
+
 /// Creates a coordinator with a thread pool sized for the current machine.
-PluginProcessingCoordinator::PluginProcessingCoordinator(const int workerCount) :
-    threadPool(juce::jmax(1, juce::jmin(4, workerCount)))
+PluginProcessingCoordinator::PluginProcessingCoordinator(const int workerCount) : threadPool(juce::jmax(1, workerCount))
 {}
 
 /// Cancels any in-flight work and destroys the worker pool.
@@ -245,21 +253,16 @@ static bool areChainsUsable(const std::vector<PluginChainInstances>& chains, con
     return !chains.empty() && std::ranges::all_of(chains, isUsableChain);
 }
 
-/// Returns the existing records ordered and deduplicated by full path, so each file is processed once.
+/// Returns existing records in caller order, retaining the first occurrence of each full path.
 static std::vector<AudioAnalysisRecord> collectQueuedRecords(const std::vector<AudioAnalysisRecord>& records)
 {
-    std::map<juce::String, AudioAnalysisRecord> recordsByPath;
-    for (const auto& record : records) {
-        if (record.file.existsAsFile()) {
-            recordsByPath.insert_or_assign(record.fullPath, record);
-        }
-    }
-
+    std::set<juce::String> seenPaths;
     std::vector<AudioAnalysisRecord> queuedRecords;
-    queuedRecords.reserve(recordsByPath.size());
-    for (auto& [path, record] : recordsByPath) {
-        juce::ignoreUnused(path);
-        queuedRecords.push_back(std::move(record));
+    queuedRecords.reserve(records.size());
+    for (const auto& record : records) {
+        if (record.file.existsAsFile() && seenPaths.insert(record.fullPath).second) {
+            queuedRecords.push_back(record);
+        }
     }
 
     return queuedRecords;
@@ -370,6 +373,10 @@ int PluginProcessingCoordinator::start(
     const auto conflicts = findBatchOutputConflicts(queuedRecords);
     // The counter belongs to this run, so a job that outlives a cancellation timeout cannot change a later run's count.
     const auto pendingFiles = std::make_shared<std::atomic<int>>(totalFiles);
+
+    const auto concurrentFiles
+        = juce::jmin(totalFiles, threadPool.getNumThreads(), static_cast<int>(currentChains->chains.size()));
+    utils::logInfo("Plugin processing started: {} files, up to {} concurrent", totalFiles, concurrentFiles);
 
     for (const auto& record : queuedRecords) {
         if (conflicts.contains(record.file.getFullPathName())) {
