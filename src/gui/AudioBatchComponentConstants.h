@@ -98,8 +98,6 @@ constexpr double stepDecibels = 0.1;
 
 /// Delay in milliseconds before a tooltip appears when hovering over a control.
 constexpr int tooltipDelayMilliseconds = 700;
-/// Number of milliseconds in one second, used to report elapsed analysis time in seconds.
-constexpr double millisecondsPerSecond = 1000.0;
 
 enum FileMenuItemId : std::uint8_t {
     revealFileMenuItemId = 1,

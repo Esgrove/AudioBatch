@@ -329,7 +329,7 @@ AudioNormalizationResult normalizeFile(
         } else {
             utils::logInfo(
                 "{:8.2f} s: Normalized {} (already at target)",
-                (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / 1000.0,
+                utils::elapsedSecondsSince(startedAtMilliseconds),
                 file.getFileName().quoted()
             );
         }
@@ -439,7 +439,7 @@ AudioNormalizationResult normalizeFile(
     } else {
         utils::logInfo(
             "{:8.2f} s: Normalized {}",
-            (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / 1000.0,
+            utils::elapsedSecondsSince(startedAtMilliseconds),
             outputFile.getFileName().quoted()
         );
     }

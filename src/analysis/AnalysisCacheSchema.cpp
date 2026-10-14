@@ -130,7 +130,7 @@ void AnalysisCache::closeUnlocked()
     utils::logDebug(
         "Closed analysis cache at {} in {:.3f} s",
         databasePath.quoted(),
-        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / millisecondsPerSecond
+        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / utils::millisecondsPerSecond
     );
 }
 
@@ -227,7 +227,7 @@ bool AnalysisCache::openUnlocked()
         utils::logError(
             "Failed to open analysis cache at {} in {:.3f} s",
             databasePath.quoted(),
-            (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / millisecondsPerSecond
+            (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / utils::millisecondsPerSecond
         );
         if (database != nullptr) {
             sqlite3_close(database);
@@ -311,7 +311,7 @@ bool AnalysisCache::openUnlocked()
         "Opened analysis cache at {} ({}) in {:.3f} s",
         databasePath.quoted(),
         databaseFound ? "existing" : "new",
-        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / millisecondsPerSecond
+        (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / utils::millisecondsPerSecond
     );
 
     return true;

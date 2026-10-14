@@ -17,11 +17,6 @@
 
 namespace audiobatch
 {
-/// Constants of the CLI analysis workflow.
-
-/// Divisor that converts the millisecond counter durations into seconds for log output.
-constexpr double millisecondsPerSecond = 1000.0;
-
 /// Executes the CLI analysis workflow and returns the process exit code.
 int cli::runAnalysis(const AudioAnalysisCliOptions& options)
 {
@@ -52,7 +47,7 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
         "Analysis complete: {} files ({} failed) in {:.2f} s",
         results.size(),
         analysisFailureCount,
-        analysisElapsedMs / millisecondsPerSecond
+        analysisElapsedMs / utils::millisecondsPerSecond
     );
 
     sortRecords(results, options.sortMode, !options.reverse);
