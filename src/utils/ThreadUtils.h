@@ -13,6 +13,9 @@
 
 namespace audiobatch::utils
 {
+/// Number of milliseconds in one second, shared by duration conversions and timing output.
+inline constexpr double millisecondsPerSecond = 1000.0;
+
 /// Returns true when the caller wants the work to stop as soon as possible.
 /// Polled from worker threads, so it must be thread-safe and cheap.
 using CancellationCheck = std::function<bool()>;

@@ -274,7 +274,7 @@ void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
 
     utils::logInfo(
         "{:8.2f} s: Normalization complete: {} succeeded, {} failed ({} files)",
-        (juce::Time::getMillisecondCounterHiRes() - normalizeProgress.startedAtMilliseconds) / 1000.0,
+        utils::elapsedSecondsSince(normalizeProgress.startedAtMilliseconds),
         totalFiles - normalizeProgress.failures.size(),
         normalizeProgress.failures.size(),
         totalFiles
@@ -320,7 +320,7 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int
         analysisRun.analyzedFiles,
         cachedFileCount,
         failedFileCount,
-        elapsedMs / millisecondsPerSecond
+        elapsedMs / utils::millisecondsPerSecond
     );
 
     if (resultsTable.getSelectedRow() < 0 && !analysisResults.empty()) {
@@ -732,7 +732,7 @@ void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
 
     utils::logInfo(
         "{:8.2f} s: Plugin processing complete: {} succeeded, {} failed ({} files)",
-        (juce::Time::getMillisecondCounterHiRes() - processingProgress.startedAtMilliseconds) / 1000.0,
+        utils::elapsedSecondsSince(processingProgress.startedAtMilliseconds),
         totalFiles - processingProgress.failures.size(),
         processingProgress.failures.size(),
         totalFiles

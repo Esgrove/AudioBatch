@@ -127,10 +127,7 @@ public:
         mainWindow.reset();
         utils::logDebug("Application shutdown: main window released");
         pluginScanWorker.reset();
-        utils::logDebug(
-            "Application shutdown complete ({:.2f} s)",
-            (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / 1000.0
-        );
+        utils::logDebug("Application shutdown complete ({:.2f} s)", utils::elapsedSecondsSince(startedAtMilliseconds));
         juce::Logger::setCurrentLogger(nullptr);
     }
 

@@ -8,6 +8,7 @@
 
 #include "gui/components/CustomLookAndFeel.h"
 #include "serato/SeratoWaveformColouring.h"
+#include "utils/ThreadUtils.h"
 
 #include <JuceHeader.h>
 
@@ -40,7 +41,6 @@ constexpr float cueArrowHeight {8.0f};
 constexpr float cueArrowWidth {10.0f};
 constexpr float cueArrowOutlineWidth {1.5f};
 constexpr float cueArrowOutlineAlpha {0.8f};
-constexpr double millisecondsPerSecond {1000.0};
 
 /// Number of Serato hot cue slots reachable with the number keys 1 to 8.
 constexpr int hotCueSlotCount {8};
@@ -307,7 +307,7 @@ void ThumbnailComponent::jumpToHotCue(const int slot)
         return;
     }
 
-    const auto seconds = static_cast<double>(cue->positionMilliseconds) / millisecondsPerSecond;
+    const auto seconds = static_cast<double>(cue->positionMilliseconds) / utils::millisecondsPerSecond;
     transportSource.setPosition(juce::jlimit(0.0, thumbnail.getTotalLength(), seconds));
     transportSource.start();
     updateCursorPosition();
@@ -479,7 +479,7 @@ void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
     const auto arrowHeight = std::min(cueArrowHeight, static_cast<float>(bounds.getHeight()) / 4.0f);
     const auto halfWidth = std::min(cueArrowWidth, arrowHeight * cueArrowWidth / cueArrowHeight) / 2.0f;
     for (const auto& cue : seratoMarkers->cues) {
-        const auto seconds = static_cast<double>(cue.positionMilliseconds) / millisecondsPerSecond;
+        const auto seconds = static_cast<double>(cue.positionMilliseconds) / utils::millisecondsPerSecond;
         if (seconds > thumbnail.getTotalLength() || seconds < visibleRange.getStart()
             || seconds > visibleRange.getEnd())
         {

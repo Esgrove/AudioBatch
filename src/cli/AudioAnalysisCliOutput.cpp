@@ -7,6 +7,7 @@
 #include "analysis/AudioAnalysisFormatting.h"
 #include "utils/ConsolePrint.h"
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
 
 #include <cmath>
 
@@ -15,8 +16,6 @@ namespace audiobatch::cli
 constexpr int cliPeakColumnWidth = 7;
 constexpr int cliTruePeakColumnWidth = 7;
 constexpr int cliLoudnessColumnWidth = 8;
-/// Scale that rounds durations to whole milliseconds in the CSV and JSON output.
-constexpr double millisecondsPerSecond = 1000.0;
 
 /// Formats the sample peak value right-aligned to the fixed dBFS column width.
 static juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
@@ -114,7 +113,8 @@ static juce::DynamicObject::Ptr buildRecordObject(const AudioAnalysisRecord& rec
     object->setProperty("channels", record.channels);
     object->setProperty("bitsPerSample", record.bitsPerSample);
     object->setProperty(
-        "durationSeconds", std::round(record.durationSeconds * millisecondsPerSecond) / millisecondsPerSecond
+        "durationSeconds",
+        std::round(record.durationSeconds * utils::millisecondsPerSecond) / utils::millisecondsPerSecond
     );
     object->setProperty("peakDbfs", decibelsOrNull(std::abs(static_cast<double>(record.overallPeak))));
     object->setProperty("truePeakDbtp", decibelsOrNull(record.overallTruePeak));

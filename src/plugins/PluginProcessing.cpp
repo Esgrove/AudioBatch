@@ -765,7 +765,7 @@ PluginProcessingResult processFileWithPlugins(
     } else {
         utils::logInfo(
             "{:8.2f} s: Processed {}",
-            (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / 1000.0,
+            utils::elapsedSecondsSince(startedAtMilliseconds),
             result.outputFile.getFileName().quoted()
         );
     }

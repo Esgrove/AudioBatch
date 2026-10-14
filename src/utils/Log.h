@@ -6,6 +6,7 @@
 #pragma once
 
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
 
 #include <JuceHeader.h>
 
@@ -16,6 +17,13 @@ namespace audiobatch::utils
 {
 /// Severity of a log message, which picks its prefix and console colour.
 enum class Level : std::uint8_t { debug, info, warn, error };
+
+/// Returns elapsed seconds for duration logs without discarding fractional milliseconds.
+/// The start value must come from juce::Time::getMillisecondCounterHiRes.
+inline double elapsedSecondsSince(const double startedAtMilliseconds)
+{
+    return (juce::Time::getMillisecondCounterHiRes() - startedAtMilliseconds) / millisecondsPerSecond;
+}
 
 std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName, const juce::String& logName = {});
 

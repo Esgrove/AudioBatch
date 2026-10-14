@@ -14,9 +14,6 @@
 
 namespace audiobatch
 {
-/// Divisor that converts the millisecond counter durations into seconds for log output.
-constexpr double millisecondsPerSecond = 1000.0;
-
 /// How long SQLite retries a locked database before failing a statement, in milliseconds.
 constexpr int busyTimeoutMilliseconds = 2000;
 
