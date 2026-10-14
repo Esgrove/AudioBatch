@@ -1,7 +1,7 @@
 /// Audio file metadata handling built on TagLib.
 /// The metadata functions read and write text tag properties
-/// and embedded pictures in a format-agnostic way,
-/// so normalized output files keep the tags and album art of their sources.
+/// and embedded pictures in a format-agnostic way, retaining opaque ID3v2 frames too.
+/// Processing copies discard the Serato overview while keeping the remaining source tags.
 
 #pragma once
 
@@ -39,14 +39,18 @@ struct MetadataPicture {
 ///
 /// When writing, AIFF output is stored as an ID3v2.4 tag.
 struct AudioMetadata {
-    /// Returns true when there are no properties and no pictures to write.
+    /// Returns true when there are no properties, pictures or ID3v2 frames to write.
     [[nodiscard]] bool isEmpty() const noexcept
     {
-        return properties.empty() && pictures.empty();
+        return properties.empty() && pictures.empty() && id3v2Frames.empty() && !hasUnsupportedId3Frames;
     }
 
     std::vector<MetadataProperty> properties;
     std::vector<MetadataPicture> pictures;
+    /// Owned ID3v2.4 frame bytes, including custom binary frames outside TagLib's PropertyMap.
+    std::vector<juce::MemoryBlock> id3v2Frames;
+    /// True when TagLib cannot safely reserialize a known frame, so processing must keep the original file.
+    bool hasUnsupportedId3Frames = false;
 };
 
 bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile);
