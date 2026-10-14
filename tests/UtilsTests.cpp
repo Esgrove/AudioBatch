@@ -7,6 +7,7 @@
 #include "utils/AudioFormatUtils.h"
 #include "utils/ConsolePrint.h"
 #include "utils/FileUtils.h"
+#include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
 #include <string_view>
@@ -64,6 +65,22 @@ public:
     void runTest() override
     {
         const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory);
+
+        beginTest("System information retains indented details without padding one-line messages");
+        {
+            const ScopedLogCapture capture;
+            utils::logSystemInfo();
+            utils::logInfo("Processing log check");
+            const auto messages = capture.getMessages();
+            expect(messages.size() >= 3);
+            if (messages.size() >= 3) {
+                expect(messages[0].contains("[INFO]: System info\n    AudioBatch"), messages[0]);
+                for (int index = 1; index < messages.size() - 1; ++index) {
+                    expect(messages[index].startsWith("    "), messages[index]);
+                }
+                expect(messages[messages.size() - 1].endsWith("[INFO]: Processing log check"));
+            }
+        }
 
         beginTest("Extensions are lowercased without the leading dot");
         {

@@ -647,6 +647,8 @@ target_sources(
         "src/plugins/PluginChainPreparation.h"
         "src/plugins/PluginProcessing.cpp"
         "src/plugins/PluginProcessing.h"
+        "src/plugins/PluginProcessingCoordinator.cpp"
+        "src/plugins/PluginProcessingCoordinator.h"
         "src/serato/SeratoPreviewLoader.cpp"
         "src/serato/SeratoPreviewLoader.h"
         "src/serato/SeratoWaveformColouring.cpp"

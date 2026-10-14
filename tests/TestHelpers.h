@@ -17,6 +17,25 @@ constexpr double fixturePeakDecibels = -6.0206;
 /// Mono fixtures are measured as dual mono, so they read the same as the stereo ones.
 constexpr double fixtureLoudness = fixturePeakDecibels;
 
+/// Captures log messages from any worker and restores the previous logger when the scope ends.
+/// All workers using the logger must finish before this object is destroyed.
+class ScopedLogCapture final : public juce::Logger
+{
+public:
+    ScopedLogCapture();
+
+    ~ScopedLogCapture() override;
+
+    [[nodiscard]] juce::StringArray getMessages() const;
+
+private:
+    void logMessage(const juce::String& message) override;
+
+    juce::Logger* previousLogger;
+    juce::CriticalSection lock;
+    juce::StringArray messages;
+};
+
 /// A uniquely named folder in the system temp directory that is deleted recursively on destruction.
 class TemporaryDirectory
 {

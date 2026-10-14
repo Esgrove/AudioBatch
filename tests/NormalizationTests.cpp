@@ -118,6 +118,22 @@ private:
     {
         const TemporaryDirectory directory;
 
+        beginTest("No-op normalization logs the action before unpadded time and filename");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "log_noop.aif");
+            const auto record = analyzeFile(source);
+            AudioNormalizationOptions options;
+            options.targetPeakDbfs = peakDecibels(record);
+            const ScopedLogCapture capture;
+            const auto result = normalizeFile(record, options);
+            expect(!result.hasError(), result.errorMessage);
+            const auto messages = capture.getMessages();
+            expect(std::ranges::any_of(messages, [&](const auto& message) {
+                return message.contains("[INFO]: Normalized: ")
+                    && message.endsWith(utils::format(" s, {} (already at target)", source.getFileName().quoted()));
+            }));
+        }
+
         beginTest("An unrelated existing output file is not overwritten");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "collision.wav");

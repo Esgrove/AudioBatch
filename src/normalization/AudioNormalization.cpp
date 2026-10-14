@@ -328,7 +328,7 @@ AudioNormalizationResult normalizeFile(
             result.errorMessage = result.analysisRecord.errorMessage;
         } else {
             utils::logInfo(
-                "{:8.2f} s: Normalized {} (already at target)",
+                "Normalized: {:.2f} s, {} (already at target)",
                 utils::elapsedSecondsSince(startedAtMilliseconds),
                 file.getFileName().quoted()
             );
@@ -429,7 +429,7 @@ AudioNormalizationResult normalizeFile(
     result.succeeded = !result.analysisRecord.hasError();
 
     if (result.notice.isNotEmpty()) {
-        utils::logWarn("{}: {}", outputFile.getFullPathName().quoted(), result.notice);
+        utils::logWarn("Normalization warning: {}, {}", outputFile.getFullPathName().quoted(), result.notice);
     }
 
     if (!result.succeeded) {
@@ -438,7 +438,7 @@ AudioNormalizationResult normalizeFile(
         utils::logError("Normalization failed for {}: {}", result.fullPath.quoted(), result.errorMessage);
     } else {
         utils::logInfo(
-            "{:8.2f} s: Normalized {}",
+            "Normalized: {:.2f} s, {}",
             utils::elapsedSecondsSince(startedAtMilliseconds),
             outputFile.getFileName().quoted()
         );

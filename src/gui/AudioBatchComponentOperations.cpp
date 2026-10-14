@@ -273,11 +273,11 @@ void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
     normalizeProgress.inProgress = false;
 
     utils::logInfo(
-        "{:8.2f} s: Normalization complete: {} succeeded, {} failed ({} files)",
+        "Normalization complete: {:.2f} s, {} files ({} succeeded, {} failed)",
         utils::elapsedSecondsSince(normalizeProgress.startedAtMilliseconds),
+        totalFiles,
         totalFiles - normalizeProgress.failures.size(),
-        normalizeProgress.failures.size(),
-        totalFiles
+        normalizeProgress.failures.size()
     );
 
     showFailureSummary(normalizeProgress.failures, "Normalize", "normalized", this);
@@ -315,12 +315,12 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int
     const auto failedFileCount
         = std::ranges::count_if(analysisResults, [](const auto& record) { return record.hasError(); });
     utils::logInfo(
-        "Analysis complete: loaded {} files ({} analyzed, {} from cache, {} failed) in {:.2f} s",
+        "Analysis complete: {:.2f} s, {} files ({} analyzed, {} from cache, {} failed)",
+        elapsedMs / utils::millisecondsPerSecond,
         totalFiles,
         analysisRun.analyzedFiles,
         cachedFileCount,
-        failedFileCount,
-        elapsedMs / utils::millisecondsPerSecond
+        failedFileCount
     );
 
     if (resultsTable.getSelectedRow() < 0 && !analysisResults.empty()) {
@@ -644,8 +644,7 @@ void AudioBatchComponent::processSelectedRecords()
     options.overwriteExisting = forceOverwriteToggle.getToggleState();
 
     // Pre-instantiate one chain of plugin instances per worker on the message thread.
-    const auto workerCount
-        = juce::jlimit(1, 4, juce::jmin(static_cast<int>(records.size()), juce::SystemStats::getNumCpus()));
+    const auto workerCount = juce::jmin(static_cast<int>(records.size()), getPluginProcessingWorkerCount());
 
     processingProgress.startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     statusLabel.setText("Loading plugins...", juce::dontSendNotification);
@@ -731,11 +730,11 @@ void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
     processingProgress.inProgress = false;
 
     utils::logInfo(
-        "{:8.2f} s: Plugin processing complete: {} succeeded, {} failed ({} files)",
+        "Plugin processing complete: {:.2f} s, {} files ({} succeeded, {} failed)",
         utils::elapsedSecondsSince(processingProgress.startedAtMilliseconds),
+        totalFiles,
         totalFiles - processingProgress.failures.size(),
-        processingProgress.failures.size(),
-        totalFiles
+        processingProgress.failures.size()
     );
 
     if (pluginChain != nullptr) {
