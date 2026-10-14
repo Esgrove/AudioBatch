@@ -69,6 +69,7 @@ int main(int argumentCount, char* arguments[])
     suites.push_back(audiobatch::tests::createCliTests());
     suites.push_back(audiobatch::tests::createFileActivityTests());
     suites.push_back(audiobatch::tests::createFormatTests());
+    suites.push_back(audiobatch::tests::createGuiFontTests());
     suites.push_back(audiobatch::tests::createMetadataTests());
     suites.push_back(audiobatch::tests::createNormalizationTests());
     suites.push_back(audiobatch::tests::createProcessingTests());

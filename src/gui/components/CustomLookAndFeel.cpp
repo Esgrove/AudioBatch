@@ -72,6 +72,19 @@ constexpr float maximumButtonFontHeight {16.0f};
 
 /// Text button label font height relative to the button height.
 constexpr float buttonFontHeightRatio {0.6f};
+
+/// Table title height relative to the header, matching JUCE's existing layout.
+constexpr float tableHeaderFontHeightRatio {0.5f};
+/// Increase in table title height, in logical pixels.
+constexpr float tableHeaderFontHeightIncrease {1.0f};
+/// Horizontal inset of the table title and sort arrow.
+constexpr int tableHeaderTextInset {4};
+/// Opacity of a column hover highlight relative to its pressed highlight.
+constexpr float tableHeaderHoverAlpha {0.625f};
+/// Vertical tip position of the normalized sort arrow.
+constexpr float tableHeaderSortArrowTip {0.8f};
+/// Sort-arrow colour matching JUCE's existing table header rendering.
+constexpr juce::uint32 tableHeaderSortArrowColour {0x99000000};
 }  // namespace
 
 namespace juce
@@ -356,8 +369,8 @@ void CustomLookAndFeel::drawPopupMenuItem(
 
         itemArea.reduce(jmin(popupMenuItemMaximumPadding, area.getWidth() / popupMenuItemPaddingDivisor), 0);
 
-        auto font = get_mono_font();
-        const auto maxFontHeight = monoFontHeight;
+        auto font = getPopupMenuFont();
+        const auto maxFontHeight = jmin(monoFontHeight, static_cast<float>(area.getHeight()) / 1.3f);
         if (font.getHeight() > maxFontHeight) {
             font.setHeight(maxFontHeight);
         }
@@ -412,6 +425,57 @@ void CustomLookAndFeel::drawPopupMenuItem(
             graphics.drawText(shortcutKeyText, itemArea, Justification::centredRight, true);
         }
     }
+}
+
+/// Draws column titles one logical pixel larger with the embedded Roboto face.
+/// Preserves JUCE's hover feedback, text inset, and reserved sort-arrow space.
+void CustomLookAndFeel::drawTableHeaderColumn(
+    Graphics& graphics,
+    TableHeaderComponent& header,
+    const String& columnName,
+    int /*columnId*/,
+    const int width,
+    const int height,
+    const bool isMouseOver,
+    const bool isMouseDown,
+    const int columnFlags
+)
+{
+    const auto highlightColour = header.findColour(TableHeaderComponent::highlightColourId);
+    if (isMouseDown) {
+        graphics.fillAll(highlightColour);
+    } else if (isMouseOver) {
+        graphics.fillAll(highlightColour.withMultipliedAlpha(tableHeaderHoverAlpha));
+    }
+
+    Rectangle<int> area(width, height);
+    area.reduce(tableHeaderTextInset, 0);
+    const auto flags = static_cast<unsigned int>(columnFlags);
+    constexpr auto sortedForwards = static_cast<unsigned int>(TableHeaderComponent::sortedForwards);
+    constexpr auto sortedBackwards = static_cast<unsigned int>(TableHeaderComponent::sortedBackwards);
+    if ((flags & (sortedForwards | sortedBackwards)) != 0) {
+        Path sortArrow;
+        const auto tip = (flags & sortedForwards) != 0 ? -tableHeaderSortArrowTip : tableHeaderSortArrowTip;
+        sortArrow.addTriangle(0.0f, 0.0f, 0.5f, tip, 1.0f, 0.0f);
+        graphics.setColour(Colour(tableHeaderSortArrowColour));
+        graphics.fillPath(
+            sortArrow, sortArrow.getTransformToScaleToFit(area.removeFromRight(height / 2).reduced(2).toFloat(), true)
+        );
+    }
+
+    graphics.setColour(header.findColour(TableHeaderComponent::textColourId));
+    graphics.setFont(
+        getTextFont().withHeight(
+            static_cast<float>(height) * tableHeaderFontHeightRatio + tableHeaderFontHeightIncrease
+        )
+    );
+    graphics.drawFittedText(columnName, area, Justification::centredLeft, 1);
+}
+
+/// Uses the same embedded monospaced font for popup sizing and item painting.
+Font CustomLookAndFeel::getPopupMenuFont()
+{
+    return get_mono_font();
 }
 
 /// Returns the button label font, scaled down with the button height and capped at 16 points.

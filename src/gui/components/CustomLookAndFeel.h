@@ -69,6 +69,18 @@ public:
 
     void drawTooltip(Graphics& graphics, const String& text, int width, int height) override;
 
+    void drawTableHeaderColumn(
+        Graphics& graphics,
+        TableHeaderComponent& header,
+        const String& columnName,
+        int columnId,
+        int width,
+        int height,
+        bool isMouseOver,
+        bool isMouseDown,
+        int columnFlags
+    ) override;
+
     static TextLayout layoutTooltipText(const String& text, Colour colour) noexcept;
 
     void drawPopupMenuItem(
@@ -86,6 +98,8 @@ public:
     ) override;
 
     Font getTextButtonFont(TextButton& button, int buttonHeight) override;
+
+    Font getPopupMenuFont() override;
 
     /// Uses the monospaced font for combo box text so numeric choices align.
     Font getComboBoxFont(ComboBox& /*comboBox*/) override

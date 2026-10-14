@@ -418,7 +418,7 @@ target_compile_definitions(
         JUCE_USE_WINDOWS_MEDIA_FORMAT=0
         JUCE_WASAPI=0
         JUCE_WEB_BROWSER=0
-        JUCE_WIN_PER_MONITOR_DPI_AWARE=0
+        JUCE_WIN_PER_MONITOR_DPI_AWARE=1
         # Version info
         BUILDTIME_APP_NAME="${CMAKE_PROJECT_NAME}"
         BUILDTIME_BRANCH="${GIT_BRANCH}"
@@ -637,6 +637,8 @@ target_sources(
         ${AUDIOBATCH_CLI_SOURCES}
         "src/gui/components/AudioInfoPanel.cpp"
         "src/gui/components/AudioInfoPanel.h"
+        "src/gui/components/CustomLookAndFeel.cpp"
+        "src/gui/components/CustomLookAndFeel.h"
         "src/gui/components/ThumbnailComponent.cpp"
         "src/gui/components/ThumbnailComponent.h"
         "src/gui/FileActivityTracker.cpp"
@@ -658,6 +660,7 @@ target_sources(
         "tests/CliTests.cpp"
         "tests/FileActivityTests.cpp"
         "tests/FormatTests.cpp"
+        "tests/GuiFontTests.cpp"
         "tests/MetadataTests.cpp"
         "tests/NormalizationTests.cpp"
         "tests/ProcessingTests.cpp"
@@ -676,6 +679,7 @@ target_sources(
 # cmake-format: on
 
     target_include_directories(AudioBatchTests PRIVATE "${CMAKE_SOURCE_DIR}/src")
+    target_link_libraries(AudioBatchTests PRIVATE Assets)
     target_compile_definitions(
         AudioBatchTests PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS}
                                 AUDIOBATCH_TEST_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures"
