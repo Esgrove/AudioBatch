@@ -50,7 +50,7 @@ std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& fil
         return reader;
     }
 
-    const auto fullPath = file.getFullPathName();
+    const auto& fullPath = file.getFullPathName();
     TagLib::MPEG::File mpegFile(tagLibFileName(fullPath));
     const auto* properties = mpegFile.audioProperties();
 

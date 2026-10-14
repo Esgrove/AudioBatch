@@ -33,7 +33,7 @@ public:
     /// Refers to a suite owned by main for the entire test run.
     explicit JuceSuiteTest(juce::UnitTest& testSuite) : suite(testSuite) {}
 
-protected:
+private:
     /// Runs the suite and forwards its total failure count to GoogleTest.
     void TestBody() override
     {
@@ -51,7 +51,6 @@ protected:
         EXPECT_EQ(failures, 0);
     }
 
-private:
     juce::UnitTest& suite;
 };
 }  // namespace audiobatch::tests

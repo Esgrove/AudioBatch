@@ -74,7 +74,10 @@ void AudioBatchComponent::launchFolderChooser(const bool appendToRoots)
     );
 
     directoryChooser->launchAsync(
-        juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+        static_cast<int>(
+            static_cast<unsigned int>(juce::FileBrowserComponent::openMode)
+            | static_cast<unsigned int>(juce::FileBrowserComponent::canSelectDirectories)
+        ),
         [safeThis = SafePointer(this), appendToRoots](const juce::FileChooser& chooser) {
             if (safeThis == nullptr) {
                 return;

@@ -3,13 +3,6 @@
 /// with a progress sink that refuses deletes the shell would perform permanently,
 /// and juce::File::moveToTrash elsewhere.
 
-// _WIN32_IE selects which Windows shell APIs the SDK headers declare.
-// JUCE/modules/juce_core/native/juce_BasicNativeHeaders.h defaults it to 0x0501.
-// IFileOperation needs 0x0700, so set it before FileUtils.h includes JUCE.
-#if defined(_WIN32) && !defined(_WIN32_IE)
-#define _WIN32_IE 0x0700
-#endif
-
 #include "utils/FileUtils.h"
 
 #include "utils/Log.h"
@@ -82,7 +75,7 @@ public:
     /// Aborts the delete when the shell will not recycle the item.
     HRESULT STDMETHODCALLTYPE PreDeleteItem(DWORD flags, IShellItem* /*item*/) override
     {
-        if ((flags & TSF_DELETE_RECYCLE_IF_POSSIBLE) == 0) {
+        if ((flags & static_cast<DWORD>(TSF_DELETE_RECYCLE_IF_POSSIBLE)) == 0) {
             refusedPermanentDelete = true;
             return E_ABORT;
         }
@@ -236,7 +229,9 @@ using ComPointer = std::unique_ptr<Interface, ComReleaser>;
 /// and the move fails on a thread that already joined the multithreaded apartment.
 static bool moveToRecycleBin(const juce::File& file)
 {
-    const auto apartmentResult = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    const auto apartmentResult = CoInitializeEx(
+        nullptr, static_cast<DWORD>(COINIT_APARTMENTTHREADED) | static_cast<DWORD>(COINIT_DISABLE_OLE1DDE)
+    );
 
     if (FAILED(apartmentResult)) {
         logError("Could not initialize COM to move {} to the recycle bin", file.getFullPathName().quoted());
@@ -245,7 +240,10 @@ static bool moveToRecycleBin(const juce::File& file)
 
     const auto recycled = [&file] {
         IFileOperation* rawOperation = nullptr;
-        if (FAILED(CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&rawOperation)))) {
+        constexpr DWORD classContexts = static_cast<DWORD>(CLSCTX_INPROC_SERVER)
+            | static_cast<DWORD>(CLSCTX_INPROC_HANDLER) | static_cast<DWORD>(CLSCTX_LOCAL_SERVER)
+            | static_cast<DWORD>(CLSCTX_REMOTE_SERVER);
+        if (FAILED(CoCreateInstance(CLSID_FileOperation, nullptr, classContexts, IID_PPV_ARGS(&rawOperation)))) {
             return false;
         }
         const ComPointer<IFileOperation> operation(rawOperation);
