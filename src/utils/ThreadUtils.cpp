@@ -95,9 +95,9 @@ bool callOnMessageThread(std::function<void()> function, const CancellationCheck
     return true;
 }
 
-/// Returns a callback that maps the 0 to 1 progress of one phase into the range from start to end
-/// of the whole operation and reports it to onProgress,
-/// or an empty callback when onProgress is empty.
+/// Returns a callback
+/// that maps the 0 to 1 progress of one phase into the range from start to end of the whole operation
+/// and reports it to onProgress, or an empty callback when onProgress is empty.
 /// The returned callback refers to onProgress, so it must not outlive it.
 ProgressCallback makeProgressRange(const ProgressCallback& onProgress, const float start, const float end)
 {

@@ -693,8 +693,8 @@ void AudioBatchComponent::updateStatusLabel()
     statusLabel.setText(utils::format("Loaded {} files", analysisResults.size()), juce::dontSendNotification);
 }
 
-/// Shows the overall progress of the running analysis, normalization, or processing pass
-/// in the window title and as the thin bar above the results table, and restores the plain title when idle.
+/// Shows the overall progress of the running analysis, normalization, or processing pass in the window title
+/// and as the thin bar above the results table, and restores the plain title when idle.
 /// The progress counts finished files plus the completed fractions of the files being worked on,
 /// so it advances smoothly within long files instead of jumping once per file.
 /// Runs on every activity animation tick, so it only touches the title and the bar when their values change.
