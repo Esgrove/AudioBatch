@@ -26,11 +26,17 @@ public:
 
     ~ScopedLogCapture() override;
 
+    ScopedLogCapture(const ScopedLogCapture&) = delete;
+    ScopedLogCapture& operator=(const ScopedLogCapture&) = delete;
+    ScopedLogCapture(ScopedLogCapture&&) = delete;
+    ScopedLogCapture& operator=(ScopedLogCapture&&) = delete;
+
     [[nodiscard]] juce::StringArray getMessages() const;
 
-private:
+protected:
     void logMessage(const juce::String& message) override;
 
+private:
     juce::Logger* previousLogger;
     juce::CriticalSection lock;
     juce::StringArray messages;

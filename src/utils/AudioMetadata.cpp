@@ -186,7 +186,7 @@ void appendSeratoFrames(AudioMetadata& metadata)
         std::pair {"SERATO_MARKERS", "Serato Markers_"},
     };
     for (const auto& property : metadata.properties) {
-        const auto name = std::ranges::find_if(names, [&property](const auto& entry) {
+        const auto* const name = std::ranges::find_if(names, [&property](const auto& entry) {
             return property.key.equalsIgnoreCase(entry.first);
         });
         if (name == names.end()) {
