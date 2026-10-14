@@ -219,7 +219,10 @@ bool AnalysisCache::openUnlocked()
     const auto result = sqlite3_open_v2(
         databaseFile.getFullPathName().toRawUTF8(),
         &database,
-        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+        static_cast<int>(
+            static_cast<unsigned int>(SQLITE_OPEN_READWRITE) | static_cast<unsigned int>(SQLITE_OPEN_CREATE)
+            | static_cast<unsigned int>(SQLITE_OPEN_FULLMUTEX)
+        ),
         nullptr
     );
 

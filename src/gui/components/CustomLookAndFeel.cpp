@@ -368,7 +368,13 @@ void CustomLookAndFeel::drawPopupMenuItem(
 
         if (icon != nullptr) {
             icon->drawWithin(
-                graphics, iconArea, RectanglePlacement::centred | RectanglePlacement::onlyReduceInSize, 1.0f
+                graphics,
+                iconArea,
+                static_cast<int>(
+                    static_cast<unsigned int>(RectanglePlacement::centred)
+                    | static_cast<unsigned int>(RectanglePlacement::onlyReduceInSize)
+                ),
+                1.0f
             );
             itemArea.removeFromLeft(roundToInt(maxFontHeight * 0.5f));
         } else if (isTicked) {

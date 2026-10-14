@@ -250,7 +250,7 @@ void PluginChainEditor::layoutRows(const PluginChainSlotRow* draggedRow, const i
 {
     int visualIndex = 0;
 
-    for (auto& row : rows) {
+    for (const auto& row : rows) {
         if (row.get() == draggedRow) {
             continue;
         }

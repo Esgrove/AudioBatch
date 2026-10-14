@@ -246,7 +246,13 @@ juce::Array<juce::File> collectInputFiles(
 
         if (inputPath.isDirectory()) {
             for (const auto& entry : juce::RangedDirectoryIterator(
-                     inputPath, recursive, "*", juce::File::findFiles | juce::File::ignoreHiddenFiles
+                     inputPath,
+                     recursive,
+                     "*",
+                     static_cast<int>(
+                         static_cast<unsigned int>(juce::File::findFiles)
+                         | static_cast<unsigned int>(juce::File::ignoreHiddenFiles)
+                     )
                  ))
             {
                 if (cancelled()) {

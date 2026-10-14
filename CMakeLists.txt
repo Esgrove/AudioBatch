@@ -476,6 +476,15 @@ set_target_properties(
         OUTPUT_NAME "audiobatch"
 )
 
+if(WIN32)
+    # IFileOperation requires newer shell declarations than JUCE's default _WIN32_IE value.
+    set_property(
+        SOURCE src/utils/FileUtils.cpp
+        APPEND
+        PROPERTY COMPILE_DEFINITIONS _WIN32_IE=0x0700
+    )
+endif()
+
 if(MSVC)
     # /wd4100 disables MSVC warning C4100 (unreferenced formal parameter) for this JUCE source file only.
     set_source_files_properties(
@@ -606,6 +615,7 @@ if(BUILD_TESTING)
         GIT_REPOSITORY https://github.com/google/googletest.git
         GIT_TAG v1.18.0
         GIT_SHALLOW TRUE
+        SYSTEM
     )
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
     set(BUILD_GMOCK OFF CACHE BOOL "" FORCE)

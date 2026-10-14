@@ -1,7 +1,11 @@
 ---
-# Tests use the project configuration with one exception:
+# Tests use the project configuration with these exceptions:
 # readability-magic-numbers is disabled, because tests check against literal expected values
 # such as sample rates and levels, and naming every one of them would hide what is being checked.
+# GoogleTest transfers dynamically registered factories to its process-lifetime registry.
+# NewDeleteLeaks cannot see that ownership across the library boundary and reports a false leak in RegisterTest.
+# Keep this analyzer enabled for application code, but disable it for the test harness.
 InheritParentConfig: true
 Checks: >
-  -readability-magic-numbers
+  -readability-magic-numbers,
+  -clang-analyzer-cplusplus.NewDeleteLeaks
