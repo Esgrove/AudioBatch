@@ -25,6 +25,8 @@ std::unique_ptr<juce::UnitTest> createFileActivityTests();
 /// Creates the suite that checks the peak, loudness, and file property display formatting.
 std::unique_ptr<juce::UnitTest> createFormatTests();
 
+std::unique_ptr<juce::UnitTest> createGuiFontTests();
+
 /// Creates the suite that checks reading and writing tags across formats.
 std::unique_ptr<juce::UnitTest> createMetadataTests();
 

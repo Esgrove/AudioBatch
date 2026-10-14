@@ -88,7 +88,7 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
         }
         drawCueMarkers(graphics);
     } else {
-        graphics.setFont(placeholderFontHeight);
+        graphics.setFont(juce::CustomLookAndFeel::getTextFont().withHeight(placeholderFontHeight));
         graphics.drawFittedText("No audio file selected", getLocalBounds(), juce::Justification::centred, 2);
     }
 
