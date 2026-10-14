@@ -9,6 +9,7 @@
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
+#include "utils/AudioMetadata.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include <condition_variable>
@@ -16,6 +17,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
+#include <generalencapsulatedobjectframe.h>
 #include <limits>
 #include <mutex>
 #include <utility>
@@ -459,6 +461,36 @@ public:
 
             expect(!result.hasError(), result.errorMessage);
             expectEquals(result.analysisRecord.lengthInSamples, sourceLength);
+        }
+
+        beginTest("Plugin processing retains custom tags and Serato markers but drops the overview");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "serato_tags.aif");
+            AudioMetadata metadata;
+            metadata.properties.push_back({.key = "CUSTOM_DATA", .values = {"custom value"}});
+            const TagLib::ByteVector payload("\0\1\2\xff", 4);
+            for (const auto* description : {"Serato Markers2", "Serato BeatGrid", "Serato Overview"}) {
+                TagLib::ID3v2::GeneralEncapsulatedObjectFrame frame;
+                frame.setDescription(description);
+                frame.setObject(payload);
+                const auto bytes = frame.render();
+                metadata.id3v2Frames.emplace_back(bytes.data(), bytes.size());
+            }
+            expect(writeMetadata(source, metadata));
+            TestPlugin plugin({.gain = 0.5f});
+            const auto result = process(source, {&plugin});
+            expect(!result.hasError(), result.errorMessage);
+            AudioMetadata written;
+            expect(readMetadata(result.outputFile, written));
+            metadata.id3v2Frames.pop_back();
+            expect(written.id3v2Frames.size() == metadata.id3v2Frames.size() + 1);
+            for (const auto& frame : metadata.id3v2Frames) {
+                expect(std::ranges::find(written.id3v2Frames, frame) != written.id3v2Frames.end());
+            }
+            const auto custom = std::ranges::find_if(written.properties, [](const auto& property) {
+                return property.key == "CUSTOM_DATA";
+            });
+            expect(custom != written.properties.end() && custom->values[0] == "custom value");
         }
 
         beginTest("A cancelled run leaves the source untouched and removes its temporary files");

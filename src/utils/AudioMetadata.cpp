@@ -1,24 +1,35 @@
 /// Implementation of the metadata functions.
 /// Converts between JUCE and TagLib string and buffer types, maps tags through TagLib's unified PropertyMap
 /// and the generic PICTURE complex property, saves tags for AIFF and WAV output as ID3v2.4,
-/// and copies the metadata of a source onto a freshly written output.
+/// retains opaque ID3v2 frames, and drops stale Serato overviews when copying processed audio.
 
 #include "utils/AudioMetadata.h"
 
+#include "serato/SeratoTags.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 
 #include <aifffile.h>
 #include <algorithm>
+#include <array>
+#include <attachedpictureframe.h>
 #include <fileref.h>
+#include <flacfile.h>
+#include <generalencapsulatedobjectframe.h>
 #include <id3v2.h>
+#include <id3v2framefactory.h>
+#include <id3v2header.h>
+#include <id3v2tag.h>
+#include <mpegfile.h>
 #include <tbytevector.h>
+#include <textidentificationframe.h>
 #include <tfile.h>
 #include <tlist.h>
 #include <tpropertymap.h>
 #include <tstring.h>
 #include <tstringlist.h>
 #include <tvariant.h>
+#include <unknownframe.h>
 #include <wavfile.h>
 
 namespace audiobatch
@@ -40,6 +51,185 @@ TagLib::FileName tagLibFileName(const juce::String& fullPath)
 
 namespace
 {
+/// Finds an existing ID3v2 tag without creating one on an untagged source.
+TagLib::ID3v2::Tag* findId3Tag(TagLib::File& file, const bool create = false)
+{
+    if (auto* mpeg = dynamic_cast<TagLib::MPEG::File*>(&file)) {
+        return mpeg->ID3v2Tag(create);
+    }
+    if (const auto* aiff = dynamic_cast<TagLib::RIFF::AIFF::File*>(&file)) {
+        return create || aiff->hasID3v2Tag() ? aiff->tag() : nullptr;
+    }
+    if (const auto* wav = dynamic_cast<TagLib::RIFF::WAV::File*>(&file)) {
+        return create || wav->hasID3v2Tag() ? wav->ID3v2Tag() : nullptr;
+    }
+    if (auto* flac = dynamic_cast<TagLib::FLAC::File*>(&file)) {
+        return flac->ID3v2Tag(create);
+    }
+    return nullptr;
+}
+
+/// Recreates a serialized ID3v2.4 frame with ownership held by the caller until the destination takes it.
+std::unique_ptr<TagLib::ID3v2::Frame> restoreId3Frame(const juce::MemoryBlock& bytes)
+{
+    const TagLib::ByteVector data(
+        static_cast<const char*>(bytes.getData()), static_cast<unsigned int>(bytes.getSize())
+    );
+    TagLib::ID3v2::Header header;
+    header.setMajorVersion(4);
+    return std::unique_ptr<TagLib::ID3v2::Frame>(TagLib::ID3v2::FrameFactory::instance()->createFrame(data, &header));
+}
+
+/// Serializes frames independently of the source file, preserving unknown custom frame IDs too.
+/// Unsupported known frames fail safely if serialization would reinterpret an opaque payload as decoded fields.
+std::vector<juce::MemoryBlock> readId3Frames(TagLib::File& file, bool& hasUnsupportedFrames)
+{
+    const auto* tag = findId3Tag(file);
+    if (tag == nullptr) {
+        return {};
+    }
+    tag->render(TagLib::ID3v2::v4);
+    std::vector<juce::MemoryBlock> frames;
+    frames.reserve(tag->frameList().size());
+    for (const auto* frame : tag->frameList()) {
+        const auto bytes = frame->render();
+        frames.emplace_back(bytes.data(), bytes.size());
+        if (dynamic_cast<const TagLib::ID3v2::UnknownFrame*>(frame) != nullptr) {
+            const auto restored = restoreId3Frame(frames.back());
+            if (dynamic_cast<const TagLib::ID3v2::UnknownFrame*>(restored.get()) == nullptr) {
+                hasUnsupportedFrames = true;
+            }
+        }
+    }
+    return frames;
+}
+
+/// Matches equivalent generated frames without replacing unrelated native FLAC custom fields or artwork.
+bool equivalentId3Frames(const TagLib::ID3v2::Frame& first, const TagLib::ID3v2::Frame& second)
+{
+    if (first.frameID() != second.frameID()) {
+        return false;
+    }
+    const auto firstBytes = first.render();
+    const auto secondBytes = second.render();
+    if (firstBytes == secondBytes) {
+        return true;
+    }
+    const auto* firstPicture = dynamic_cast<const TagLib::ID3v2::AttachedPictureFrame*>(&first);
+    const auto* secondPicture = dynamic_cast<const TagLib::ID3v2::AttachedPictureFrame*>(&second);
+    if (firstPicture != nullptr && secondPicture != nullptr) {
+        return firstPicture->picture() == secondPicture->picture() && firstPicture->type() == secondPicture->type()
+            && firstPicture->description() == secondPicture->description();
+    }
+    TagLib::ID3v2::Tag firstTag;
+    TagLib::ID3v2::Tag secondTag;
+    firstTag.addFrame(restoreId3Frame(juce::MemoryBlock(firstBytes.data(), firstBytes.size())).release());
+    secondTag.addFrame(restoreId3Frame(juce::MemoryBlock(secondBytes.data(), secondBytes.size())).release());
+    const auto properties = firstTag.properties();
+    return !properties.isEmpty() && properties == secondTag.properties();
+}
+
+/// Replaces equivalent mapped frames with their original forms, retaining duplicates and opaque payloads.
+/// Invalid serialized frames fail the write rather than silently discarding custom data.
+bool writeId3Frames(TagLib::ID3v2::Tag& tag, const std::vector<juce::MemoryBlock>& bytes)
+{
+    std::vector<std::unique_ptr<TagLib::ID3v2::Frame>> frames;
+    frames.reserve(bytes.size());
+    for (const auto& data : bytes) {
+        auto frame = restoreId3Frame(data);
+        if (frame == nullptr) {
+            return false;
+        }
+        frames.push_back(std::move(frame));
+    }
+    for (const auto& frame : frames) {
+        const auto candidates = tag.frameList(frame->frameID());
+        for (auto* candidate : candidates) {
+            if (equivalentId3Frames(*frame, *candidate)) {
+                tag.removeFrame(candidate);
+            }
+        }
+    }
+    for (auto& frame : frames) {
+        tag.addFrame(frame.release());
+    }
+    return true;
+}
+
+/// Discards only the overview whose raster no longer represents the processed audio.
+/// Other Serato fields and unrelated custom frames are retained even when their payloads are unrecognized.
+void removeSeratoOverview(AudioMetadata& metadata)
+{
+    std::erase_if(metadata.properties, [](const MetadataProperty& property) {
+        return property.key.equalsIgnoreCase("SERATO_OVERVIEW");
+    });
+    std::erase_if(metadata.id3v2Frames, [](const juce::MemoryBlock& bytes) {
+        const auto frame = restoreId3Frame(bytes);
+        const auto* object = dynamic_cast<const TagLib::ID3v2::GeneralEncapsulatedObjectFrame*>(frame.get());
+        const auto* text = dynamic_cast<const TagLib::ID3v2::UserTextIdentificationFrame*>(frame.get());
+        return frame != nullptr
+            && ((object != nullptr && object->description() == "Serato Overview")
+                || (text != nullptr && text->description().upper() == "SERATO_OVERVIEW"));
+    });
+}
+
+/// Adds equivalent GEOB frames for documented native Serato properties so converted AIFF tags remain usable.
+/// Original property values are retained too, including malformed or unknown custom fields.
+void appendSeratoFrames(AudioMetadata& metadata)
+{
+    constexpr std::array names {
+        std::pair {"SERATO_OVERVIEW", "Serato Overview"},
+        std::pair {"SERATO_ANALYSIS", "Serato Analysis"},
+        std::pair {"SERATO_AUTOGAIN", "Serato Autotags"},
+        std::pair {"SERATO_BEATGRID", "Serato BeatGrid"},
+        std::pair {"SERATO_MARKERS_V2", "Serato Markers2"},
+        std::pair {"SERATO_MARKERS", "Serato Markers_"},
+    };
+    for (const auto& property : metadata.properties) {
+        const auto name = std::ranges::find_if(names, [&property](const auto& entry) {
+            return property.key.equalsIgnoreCase(entry.first);
+        });
+        if (name == names.end()) {
+            continue;
+        }
+        for (const auto& value : property.values) {
+            const auto encoded = value.toStdString();
+            const std::vector<std::uint8_t> bytes(encoded.begin(), encoded.end());
+            const auto decoded = serato::decodeTagBase64(bytes);
+            if (!decoded) {
+                continue;
+            }
+            juce::MemoryInputStream input(*decoded, false);
+            const auto mimeType = input.readString();
+            const auto fileName = input.readString();
+            const auto description = input.readString();
+            if (mimeType != "application/octet-stream" || fileName.isNotEmpty() || description != name->second
+                || input.isExhausted())
+            {
+                continue;
+            }
+            TagLib::ID3v2::GeneralEncapsulatedObjectFrame frame;
+            frame.setMimeType("application/octet-stream");
+            frame.setDescription(name->second);
+            const auto payload = std::span(static_cast<const char*>(decoded->getData()), decoded->getSize())
+                                     .subspan(static_cast<std::size_t>(input.getPosition()));
+            frame.setObject(TagLib::ByteVector(payload.data(), static_cast<unsigned int>(payload.size())));
+            const auto rendered = frame.render();
+            const juce::MemoryBlock frameBytes(rendered.data(), rendered.size());
+            const bool alreadyPresent = std::ranges::any_of(metadata.id3v2Frames, [&frame](const auto& existing) {
+                const auto restored = restoreId3Frame(existing);
+                const auto* object = dynamic_cast<const TagLib::ID3v2::GeneralEncapsulatedObjectFrame*>(restored.get());
+                return object != nullptr && object->description() == frame.description()
+                    && object->object() == frame.object() && object->mimeType() == frame.mimeType()
+                    && object->fileName() == frame.fileName();
+            });
+            if (!alreadyPresent) {
+                metadata.id3v2Frames.push_back(frameBytes);
+            }
+        }
+    }
+}
+
 /// Converts a TagLib string to a juce::String, preserving UTF-8 content.
 juce::String toJuce(const TagLib::String& tagString)
 {
@@ -172,9 +362,31 @@ TagLib::List<TagLib::VariantMap> buildPictureList(const std::vector<MetadataPict
 
     return pictureList;
 }
+
+/// Applies properties and artwork before restoring original ID3v2 frames.
+/// Fails rather than discarding frames when the destination has no writable ID3v2 tag.
+bool applyMetadata(
+    TagLib::File& file,
+    const TagLib::PropertyMap& properties,
+    const TagLib::List<TagLib::VariantMap>& pictures,
+    const std::vector<juce::MemoryBlock>& frames
+)
+{
+    if (!properties.isEmpty()) {
+        file.setProperties(properties);
+    }
+    if (!pictures.isEmpty()) {
+        file.setComplexProperties("PICTURE", pictures);
+    }
+    if (frames.empty()) {
+        return true;
+    }
+    auto* tag = findId3Tag(file, true);
+    return tag != nullptr && writeId3Frames(*tag, frames);
+}
 }  // namespace
 
-/// Reads all metadata (text properties and pictures) from the given file.
+/// Reads text properties, pictures and opaque ID3v2 frames from the given file.
 /// Returns true on success. Output is cleared on entry.
 bool readMetadata(const juce::File& file, AudioMetadata& outMetadata)
 {
@@ -192,9 +404,13 @@ bool readMetadata(const juce::File& file, AudioMetadata& outMetadata)
         return false;
     }
 
-    const auto* taglibFile = fileRef.file();
+    auto* taglibFile = fileRef.file();
     outMetadata.properties = readProperties(taglibFile->properties());
     outMetadata.pictures = readPictures(*taglibFile);
+    outMetadata.id3v2Frames = readId3Frames(*taglibFile, outMetadata.hasUnsupportedId3Frames);
+    if (dynamic_cast<TagLib::FLAC::File*>(taglibFile) != nullptr) {
+        appendSeratoFrames(outMetadata);
+    }
 
     return true;
 }
@@ -204,6 +420,10 @@ bool readMetadata(const juce::File& file, AudioMetadata& outMetadata)
 /// For AIFF and WAV output the tag is saved as ID3v2.4.
 bool writeMetadata(const juce::File& file, const AudioMetadata& metadata)
 {
+    if (metadata.hasUnsupportedId3Frames) {
+        utils::logError("Cannot safely preserve unsupported ID3v2 frames in {}", file.getFullPathName().quoted());
+        return false;
+    }
     if (!file.existsAsFile()) {
         utils::logError("Cannot write metadata, target file is missing: {}", file.getFullPathName().quoted());
         return false;
@@ -227,15 +447,8 @@ bool writeMetadata(const juce::File& file, const AudioMetadata& metadata)
             return false;
         }
 
-        if (!propertyMap.isEmpty()) {
-            aiffFile.setProperties(propertyMap);
-        }
-
-        if (!pictureList.isEmpty()) {
-            aiffFile.setComplexProperties("PICTURE", pictureList);
-        }
-
-        return aiffFile.save(TagLib::ID3v2::v4);
+        return applyMetadata(aiffFile, propertyMap, pictureList, metadata.id3v2Frames)
+            && aiffFile.save(TagLib::ID3v2::v4);
     }
 
     if (utils::isWavFile(file)) {
@@ -246,15 +459,8 @@ bool writeMetadata(const juce::File& file, const AudioMetadata& metadata)
             return false;
         }
 
-        if (!propertyMap.isEmpty()) {
-            wavFile.setProperties(propertyMap);
-        }
-
-        if (!pictureList.isEmpty()) {
-            wavFile.setComplexProperties("PICTURE", pictureList);
-        }
-
-        return wavFile.save(TagLib::RIFF::WAV::File::AllTags, TagLib::File::StripOthers, TagLib::ID3v2::v4);
+        return applyMetadata(wavFile, propertyMap, pictureList, metadata.id3v2Frames)
+            && wavFile.save(TagLib::RIFF::WAV::File::AllTags, TagLib::File::StripOthers, TagLib::ID3v2::v4);
     }
 
     // Generic fallback for any other writable format.
@@ -265,18 +471,11 @@ bool writeMetadata(const juce::File& file, const AudioMetadata& metadata)
         return false;
     }
 
-    if (!propertyMap.isEmpty()) {
-        fileRef.file()->setProperties(propertyMap);
-    }
-
-    if (!pictureList.isEmpty()) {
-        fileRef.file()->setComplexProperties("PICTURE", pictureList);
-    }
-
-    return fileRef.save();
+    return applyMetadata(*fileRef.file(), propertyMap, pictureList, metadata.id3v2Frames) && fileRef.save();
 }
 
-/// Copies the tags and embedded pictures of the source onto a freshly written output file.
+/// Copies the tags, embedded pictures and opaque ID3v2 frames onto a freshly written processed output.
+/// Drops the Serato overview, which must be regenerated for the changed audio.
 /// A source without readable metadata is not an error, because some inputs have none that TagLib can read,
 /// but failing to write metadata that was read is, so the caller can keep the original and its tags.
 /// Returns false only when writing failed.
@@ -289,6 +488,7 @@ bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFil
         return true;
     }
 
+    removeSeratoOverview(metadata);
     if (metadata.isEmpty()) {
         return true;
     }
