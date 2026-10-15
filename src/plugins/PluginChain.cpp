@@ -449,7 +449,8 @@ void PluginChain::clearChain()
 
 /// Opens the editor window for the given slot.
 /// Multiple slot editors can be open at the same time.
-/// The editor instance is prepared before its editor is created and released in closeEditorForEntry.
+/// The editor instance is prepared before its state is restored and its editor is created,
+/// and released in closeEditorForEntry.
 void PluginChain::openEditorForSlot(const int index)
 {
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
@@ -491,16 +492,16 @@ void PluginChain::openEditorForSlot(const int index)
         return;
     }
 
+    // Prepare the instance before restoring its state and creating its editor, like a DAW does.
+    // JUCE only initializes an Audio Unit in prepareToPlay,
+    // and some plugins, such as iZotope Ozone 12, crash when their state is restored
+    // or their view is attached to a window while the unit is still uninitialized.
+    entry.editorInstance->prepareToPlay(editorSampleRate, editorBlockSize);
+
     // Restore previously saved state, if any, so the editor opens at the user's saved settings.
     if (entry.state.getSize() > 0) {
         entry.editorInstance->setStateInformation(entry.state.getData(), static_cast<int>(entry.state.getSize()));
     }
-
-    // Prepare the instance before creating its editor, like a DAW does when it opens a plugin window.
-    // JUCE only initializes an Audio Unit in prepareToPlay,
-    // and some plugins, such as iZotope Ozone, crash when their view is attached to a window
-    // while the unit is still uninitialized.
-    entry.editorInstance->prepareToPlay(editorSampleRate, editorBlockSize);
 
     auto* editor = entry.editorInstance->createEditorAndMakeActive();
 
