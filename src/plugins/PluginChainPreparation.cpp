@@ -101,17 +101,36 @@ static void enableOfflineRendering(juce::AudioPluginInstance& plugin)
 #endif
 }
 
-/// Restores the saved state of one plugin and prepares it for processing.
-/// VST3 plugins get their state while inactive, before prepareToPlay activates them.
-/// JUCE only initializes an Audio Unit in prepareToPlay,
-/// and some units, such as iZotope Ozone 12, crash when their state is restored while uninitialized.
-/// An Audio Unit is therefore prepared first, gets its state, and is prepared again,
-/// because JUCE only refreshes the reported latency of an Audio Unit when it is prepared,
-/// and settings such as lookahead or linear phase change that latency.
-static void restoreStateAndPrepare(
+#if JUCE_MAC
+/// Refreshes an Audio Unit's latency immediately after state restoration, without reinitializing it.
+/// JUCE also listens for latency notifications, but those may arrive after per-file preparation returns.
+static void refreshAudioUnitLatency(juce::AudioPluginInstance& plugin, const double sampleRate)
+{
+    if (const auto* client = plugin.getAudioUnitClient(); client != nullptr) {
+        if (auto* audioUnit = client->getAudioUnitHandle(); audioUnit != nullptr) {
+            Float64 latencySeconds = 0.0;
+            UInt32 propertySize = sizeof(latencySeconds);
+            if (AudioUnitGetProperty(
+                    audioUnit, kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0, &latencySeconds, &propertySize
+                )
+                == noErr)
+            {
+                plugin.setLatencySamples(juce::jmax(0, juce::roundToInt(latencySeconds * sampleRate)));
+            }
+        }
+    }
+}
+#endif
+
+/// Restores saved settings and prepares an inactive plugin on the message thread.
+/// Audio Units must be initialized before restoring state to avoid crashes in units such as Ozone 12.
+/// Never prepare them again after restoration, because JUCE resets and uninitializes them on every prepare call.
+/// Other formats receive state before activation, preserving the VST3 editor and processing lifecycle.
+void restoreStateAndPrepare(
     juce::AudioPluginInstance& plugin,
     const juce::MemoryBlock& state,
-    const double sampleRate
+    const double sampleRate,
+    const int blockSize
 )
 {
     const bool hasState = state.getSize() > 0;
@@ -121,11 +140,13 @@ static void restoreStateAndPrepare(
         plugin.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
     }
 
-    plugin.prepareToPlay(sampleRate, processingBlockSize);
+    plugin.prepareToPlay(sampleRate, blockSize);
 
     if (hasState && isAudioUnit) {
         plugin.setStateInformation(state.getData(), static_cast<int>(state.getSize()));
-        plugin.prepareToPlay(sampleRate, processingBlockSize);
+#if JUCE_MAC
+        refreshAudioUnitLatency(plugin, sampleRate);
+#endif
     }
 }
 
@@ -177,7 +198,7 @@ ChainPreparation prepareChain(
         enableOfflineRendering(*plugin);
 
         // Restore plugin state per-file so each file starts clean.
-        restoreStateAndPrepare(*plugin, options.plugins[pluginIndex].state, sampleRate);
+        restoreStateAndPrepare(*plugin, options.plugins[pluginIndex].state, sampleRate, processingBlockSize);
         plugin->reset();
         preparation.latencySamples += juce::jmax(0, plugin->getLatencySamples());
 

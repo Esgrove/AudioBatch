@@ -34,5 +34,12 @@ ChainPreparation prepareChain(
     double sampleRate
 );
 
+void restoreStateAndPrepare(
+    juce::AudioPluginInstance& plugin,
+    const juce::MemoryBlock& state,
+    double sampleRate,
+    int blockSize
+);
+
 void releasePluginResources(const std::vector<juce::AudioPluginInstance*>& chainInstances);
 }  // namespace audiobatch::plugin_processing
