@@ -72,13 +72,6 @@ public:
         }
 
         const auto initialiseStartedAtMs = juce::Time::getMillisecondCounterHiRes();
-        const auto logInitialiseCheckpoint = [initialiseStartedAtMs](const juce::String& step) {
-            utils::logInfo(
-                "Application startup: {} ({:.1f} ms)",
-                step,
-                juce::Time::getMillisecondCounterHiRes() - initialiseStartedAtMs
-            );
-        };
         const juce::ArgumentList arguments {getApplicationName(), commandLineParameters};
         const bool startHeadless = arguments.containsOption("--headless|-H");
 
@@ -90,32 +83,23 @@ public:
         juce::Logger::setCurrentLogger(logger.get());
 
         utils::logSystemInfo();
-        logInitialiseCheckpoint("logger ready");
         if (arguments.size() > 0) {
             utils::logInfo("Args: {}", commandLineParameters);
         }
 
-        logInitialiseCheckpoint("creating main window");
         mainWindow = std::make_unique<MainWindow>(getApplicationName());
-        logInitialiseCheckpoint("main window created");
 
         if (startHeadless) {
-            logInitialiseCheckpoint("headless startup requested");
             mainWindow->setVisible(false);
         } else {
-            logInitialiseCheckpoint("showing main window");
             mainWindow->showAndActivate();
 
             juce::MessageManager::callAsync([safeWindow = juce::Component::SafePointer(mainWindow.get())] {
                 if (safeWindow != nullptr) {
-                    utils::logInfo("Application startup: async window activation begin");
                     safeWindow->showAndActivate();
-                    utils::logInfo("Application startup: async window activation end");
                 }
             });
         }
-
-        logInitialiseCheckpoint("initialise complete");
     }
 
     /// Destroys the main window before detaching the logger,
@@ -123,11 +107,8 @@ public:
     void shutdown() override
     {
         const auto startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
-        utils::logDebug("Application shutdown: releasing main window");
         mainWindow.reset();
-        utils::logDebug("Application shutdown: main window released");
         pluginScanWorker.reset();
-        utils::logDebug("Application shutdown complete ({:.2f} s)", utils::elapsedSecondsSince(startedAtMilliseconds));
         juce::Logger::setCurrentLogger(nullptr);
     }
 
@@ -146,7 +127,6 @@ public:
             utils::logInfo("Quit");
         }
         if (!juce::MessageManager::callAsync([this] {
-                utils::logDebug("Application shutdown: closing GUI before stopping the message loop");
                 mainWindow.reset();
                 quit();
             }))
