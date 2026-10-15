@@ -82,6 +82,7 @@ static int runCliMain(const std::span<char*> argv)
 
     const auto logger = utils::createDefaultLogger(executableName);
     juce::Logger::setCurrentLogger(logger.get());
+    utils::installCrashLogging();
 
     if (!cliOptions.has_value()) {
         utils::logError(parseError);
