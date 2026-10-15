@@ -4,6 +4,7 @@
 /// Replaced files are deleted instead of moved to the system trash, so the tests never touch the user's trash.
 
 #include "analysis/AudioAnalysis.h"
+#include "plugins/PluginChainPreparation.h"
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"
 #include "TestHelpers.h"
@@ -51,7 +52,7 @@ struct TestPluginSettings {
 /// A test plugin that applies a fixed gain and can swap the left and right channels.
 /// It is stereo-only by default, like many effect plugins, and can also accept a mono layout.
 /// Swapping exposes whether a mono source reaches the right input of a stereo-only plugin.
-class TestPlugin final : public juce::AudioPluginInstance
+class TestPlugin : public juce::AudioPluginInstance
 {
 public:
     /// Creates the plugin with the given behaviour.
@@ -261,6 +262,109 @@ private:
     std::size_t historyPosition = 0;
 };
 
+/// Records preparation order and emulates an Audio Unit that needs initialization before state restoration.
+/// Its null native handle exercises the AU lifecycle without calling a real Audio Unit.
+class PreparationTestPlugin final : public TestPlugin, public juce::AudioPluginExtensions::AudioUnitClient
+{
+public:
+    /// Starts with a saved gain different from the unity gain reinstated by every AU preparation.
+    explicit PreparationTestPlugin(const bool emulateAudioUnit) :
+        TestPlugin({.gain = 0.25f}),
+        audioUnit(emulateAudioUnit)
+    {}
+
+    /// Advertises AU extensions only when testing the Audio Unit lifecycle.
+    juce::AudioPluginExtensions::AudioUnitClient* getAudioUnitClient() override
+    {
+        return audioUnit ? this : nullptr;
+    }
+
+    /// Exposes the same format identity to const host queries.
+    const juce::AudioPluginExtensions::AudioUnitClient* getAudioUnitClient() const override
+    {
+        return audioUnit ? this : nullptr;
+    }
+
+    /// Prevents native offline-render and latency queries from reaching the operating system.
+    AudioUnit getAudioUnitHandle() const noexcept override
+    {
+        return nullptr;
+    }
+
+    /// Emulates AU initialization resetting parameters, so a second preparation destroys restored state.
+    void prepareToPlay(const double sampleRate, const int blockSize) override
+    {
+        lifecycle.add("prepare");
+        preparedBlockSize = blockSize;
+        lastSampleRate = sampleRate;
+        TestPlugin::prepareToPlay(sampleRate, blockSize);
+        initialized = true;
+        if (audioUnit) {
+            constexpr float defaultGain = 1.0f;
+            TestPlugin::setStateInformation(&defaultGain, sizeof(defaultGain));
+        }
+    }
+
+    /// Rejects premature AU restoration and records whether other formats were restored before activation.
+    void setStateInformation(const void* data, const int sizeInBytes) override
+    {
+        lifecycle.add(initialized ? "restore-initialized" : "restore-inactive");
+        if (!audioUnit || initialized) {
+            TestPlugin::setStateInformation(data, sizeInBytes);
+        }
+    }
+
+    /// Records the chain reset without changing the restored gain.
+    void reset() override
+    {
+        lifecycle.add("reset");
+        TestPlugin::reset();
+    }
+
+    /// Requires the next file to initialize the plugin again before AU state can be restored.
+    void releaseResources() override
+    {
+        lifecycle.add("release");
+        initialized = false;
+        TestPlugin::releaseResources();
+    }
+
+    /// Returns the ordered host lifecycle calls without allowing tests to mutate the record.
+    [[nodiscard]] const juce::StringArray& getLifecycle() const
+    {
+        return lifecycle;
+    }
+
+    /// Returns the block size supplied by the most recent preparation.
+    [[nodiscard]] int getPreparedBlockSize() const
+    {
+        return preparedBlockSize;
+    }
+
+    /// Returns the sample rate supplied by the most recent preparation.
+    [[nodiscard]] double getLastSampleRate() const
+    {
+        return lastSampleRate;
+    }
+
+    /// Starts a fresh lifecycle record without changing the plugin's initialization state.
+    void clearLifecycle()
+    {
+        lifecycle.clear();
+    }
+
+private:
+    /// Ordered host lifecycle calls, excluding audio rendering.
+    juce::StringArray lifecycle;
+    /// Most recent preparation block size, including editor-specific sizes.
+    int preparedBlockSize = 0;
+    /// Most recent preparation sample rate.
+    double lastSampleRate = 0.0;
+
+    bool audioUnit;
+    bool initialized = false;
+};
+
 /// Checks plugin processing output against the committed fixtures.
 class ProcessingTests final : public juce::UnitTest
 {
@@ -368,6 +472,76 @@ public:
             expect(result.errorMessage.contains("invalid samples"), result.errorMessage);
             expectEquals(source.getSize(), sourceSize);
             expect(source.getLastModificationTime() == sourceModified);
+        }
+
+        beginTest("AU saved gain survives one preparation and rendering for each released file");
+        {
+            PreparationTestPlugin plugin(true);
+            juce::MemoryBlock savedState;
+            plugin.getStateInformation(savedState);
+            const auto expectedPeak = peakDecibels(analyzeFile(fixtureFile("sine_stereo_44100_16.aif")))
+                + juce::Decibels::gainToDecibels(0.25);
+
+            for (int fileIndex = 0; fileIndex < 2; ++fileIndex) {
+                const auto source
+                    = directory.copyFixture("sine_stereo_44100_16.aif", utils::format("au_state_{}.aif", fileIndex));
+                plugin.clearLifecycle();
+                const auto result = process(source, {&plugin}, {savedState});
+
+                expect(!result.hasError(), result.errorMessage);
+                expect(result.committed);
+                expectWithinAbsoluteError(peakDecibels(result.analysisRecord), expectedPeak, 0.01);
+                expectEquals(plugin.getPreparedBlockSize(), plugin_processing::processingBlockSize);
+                expectWithinAbsoluteError(plugin.getLastSampleRate(), 44100.0, 0.001);
+                expectEquals(
+                    plugin.getLifecycle().joinIntoString(","), juce::String("prepare,restore-initialized,reset,release")
+                );
+            }
+        }
+
+        beginTest("The editor preparation helper restores AU gain after a single 512-sample preparation");
+        {
+            PreparationTestPlugin plugin(true);
+            juce::MemoryBlock savedState;
+            plugin.getStateInformation(savedState);
+
+            plugin_processing::restoreStateAndPrepare(plugin, savedState, 48000.0, 512);
+
+            expectEquals(plugin.getPreparedBlockSize(), 512);
+            expectWithinAbsoluteError(plugin.getLastSampleRate(), 48000.0, 0.001);
+            expectEquals(plugin.getLifecycle().joinIntoString(","), juce::String("prepare,restore-initialized"));
+            expectPreparedGain(plugin, 0.25f);
+            plugin_processing::releasePluginResources({&plugin});
+        }
+
+        beginTest("An AU with empty saved state is prepared once and reset without restoring");
+        {
+            PreparationTestPlugin plugin(true);
+            const auto preparation = plugin_processing::prepareChain({&plugin}, makeOptions({&plugin}), 2, 44100.0);
+
+            expect(preparation.errorMessage.isEmpty(), preparation.errorMessage);
+            expectEquals(plugin.getLifecycle().joinIntoString(","), juce::String("prepare,reset"));
+            expectEquals(plugin.getPreparedBlockSize(), plugin_processing::processingBlockSize);
+            expectPreparedGain(plugin, 1.0f);
+            plugin_processing::releasePluginResources({&plugin});
+        }
+
+        beginTest("The editor preparation helper restores non-AU state before activation");
+        {
+            PreparationTestPlugin plugin(false);
+            juce::MemoryBlock savedState;
+            plugin.getStateInformation(savedState);
+
+            for (int preparationIndex = 0; preparationIndex < 2; ++preparationIndex) {
+                plugin.clearLifecycle();
+                plugin_processing::restoreStateAndPrepare(plugin, savedState, 48000.0, 512);
+
+                expectEquals(plugin.getLifecycle().joinIntoString(","), juce::String("restore-inactive,prepare"));
+                expectEquals(plugin.getPreparedBlockSize(), 512);
+                expectWithinAbsoluteError(plugin.getLastSampleRate(), 48000.0, 0.001);
+                expectPreparedGain(plugin, 0.25f);
+                plugin_processing::releasePluginResources({&plugin});
+            }
         }
 
         beginTest("The saved plugin state is restored before every file");
@@ -674,6 +848,18 @@ private:
         if (workerCount == 1) {
             expect(startedPaths == expectedPaths);
         }
+    }
+
+    /// Checks the restored gain through audio rendering rather than relying on serialized state alone.
+    void expectPreparedGain(juce::AudioPluginInstance& plugin, const float gain)
+    {
+        juce::AudioBuffer<float> buffer(2, 1);
+        buffer.setSample(0, 0, 0.5f);
+        buffer.setSample(1, 0, 0.5f);
+        juce::MidiBuffer midi;
+        plugin.processBlock(buffer, midi);
+        expectWithinAbsoluteError(buffer.getSample(0, 0), 0.5f * gain, 0.000001f);
+        expectWithinAbsoluteError(buffer.getSample(1, 0), 0.5f * gain, 0.000001f);
     }
 
     /// Processes the file through the given plugin chain on the calling thread.
