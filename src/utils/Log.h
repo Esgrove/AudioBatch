@@ -2,6 +2,7 @@
 /// The utils logging functions write timestamped messages through the current juce::Logger,
 /// and echo them to stderr in release builds where the file logger does not print to the console.
 /// They accept either a finished message or an fmt format string with its arguments.
+/// installCrashLogging makes crashes and uncaught exceptions leave an error with a stack trace in the log.
 
 #pragma once
 
@@ -87,4 +88,6 @@ void logError(fmt::format_string<Args...> formatString, Args&&... args)
 }
 
 void logSystemInfo();
+
+void installCrashLogging();
 }  // namespace audiobatch::utils

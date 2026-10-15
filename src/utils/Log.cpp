@@ -1,15 +1,122 @@
 /// Implementation of the logging helpers:
 /// creating the rolling file logger, writing timestamped messages with the release-build stderr echo,
-/// and logging the system information block at startup.
+/// logging the system information block at startup,
+/// and logging an error with a stack trace when the process crashes or terminates on an uncaught exception.
 
 #include "utils/Log.h"
 
 #include "utils/AppInfo.h"
 #include "utils/ConsolePrint.h"
 #include "utils/version.h"
+#include <string_view>
+
+#include <atomic>
+#include <bit>
+#include <csignal>
+#include <cstdint>
+#include <cstdlib>
+#include <exception>
+
+#if !JUCE_WINDOWS
+#include <pthread.h>
+#endif
 
 namespace audiobatch::utils
 {
+namespace
+{
+/// Set by the first crash log, so a terminate handler followed by the abort signal it raises logs only once.
+constinit std::atomic_flag crashLogged;
+}  // namespace
+
+/// Returns the conventional name of a fatal signal for the crash log.
+static constexpr std::string_view signalName(const int signalNumber)
+{
+    switch (signalNumber) {
+        case SIGSEGV:
+            return "SIGSEGV";
+        case SIGABRT:
+            return "SIGABRT";
+        case SIGILL:
+            return "SIGILL";
+        case SIGFPE:
+            return "SIGFPE";
+#if !JUCE_WINDOWS
+        case SIGBUS:
+            return "SIGBUS";
+        case SIGSYS:
+            return "SIGSYS";
+#endif
+        default:
+            return "unknown signal";
+    }
+}
+
+/// Logs the reason the process is about to die together with the current stack trace.
+/// Runs inside a signal handler or the terminate handler,
+/// so the logging is best effort: it allocates and takes the logger lock, which is not async-signal-safe.
+/// That is acceptable because the process is terminating either way.
+static void logCrash(const juce::String& reason)
+{
+    if (crashLogged.test_and_set()) {
+        return;
+    }
+
+    logError(
+        "Application terminated unexpectedly: {}\nStack trace:\n{}",
+        reason,
+        juce::SystemStats::getStackBacktrace().trimEnd()
+    );
+}
+
+/// Crash handler registered with JUCE for fatal signals, or for unhandled structured exceptions on Windows.
+/// On POSIX systems JUCE passes the signal number and would kill the process with SIGKILL after this returns.
+/// The signal is re-raised with its default action instead,
+/// so the exit status and the system crash report still show the original signal.
+static void handleCrash([[maybe_unused]] void* crashInfo)
+{
+#if JUCE_WINDOWS
+    logCrash("unhandled exception");
+#else
+    const auto signalNumber = static_cast<int>(std::bit_cast<std::intptr_t>(crashInfo));
+    logCrash(format("{} (signal {})", signalName(signalNumber), signalNumber));
+
+    std::signal(signalNumber, SIG_DFL);
+    sigset_t signalSet {};
+    sigemptyset(&signalSet);
+    sigaddset(&signalSet, signalNumber);
+    pthread_sigmask(SIG_UNBLOCK, &signalSet, nullptr);
+    std::raise(signalNumber);
+#endif
+}
+
+/// Terminate handler that logs the uncaught exception, if any, before aborting.
+[[noreturn]] static void handleTerminate()
+{
+    juce::String reason = "std::terminate called without an active exception";
+
+    if (const auto exception = std::current_exception(); exception != nullptr) {
+        try {
+            std::rethrow_exception(exception);
+        } catch (const std::exception& error) {
+            reason = format("uncaught exception: {}", error.what());
+        } catch (...) {
+            reason = "uncaught exception of unknown type";
+        }
+    }
+
+    logCrash(reason);
+    std::abort();
+}
+
+/// Makes crashes and uncaught exceptions write an error with a stack trace to the current logger,
+/// so an unexpected quit, for example inside a hosted plugin, leaves a trace in the application log.
+/// Call once after the logger is set up.
+void installCrashLogging()
+{
+    juce::SystemStats::setApplicationCrashHandler(handleCrash);
+    std::set_terminate(handleTerminate);
+}
 /// Creates the default rolling file logger for the application.
 /// The log file goes into the application's log folder and is named after the log name,
 /// which defaults to the application name.

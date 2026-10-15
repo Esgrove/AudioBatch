@@ -80,6 +80,7 @@ public:
         logger = utils::createDefaultLogger(getApplicationName());
 
         juce::Logger::setCurrentLogger(logger.get());
+        utils::installCrashLogging();
 
         utils::logSystemInfo();
         if (arguments.size() > 0) {
