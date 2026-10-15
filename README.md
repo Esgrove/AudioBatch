@@ -181,4 +181,5 @@ Build and run tests with the script (Release by default):
 
 ## TODO
 
-- User config file.
+- User config file
+- Save and load plugin chains
