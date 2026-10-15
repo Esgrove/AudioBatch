@@ -71,7 +71,6 @@ public:
             return;
         }
 
-        const auto initialiseStartedAtMs = juce::Time::getMillisecondCounterHiRes();
         const juce::ArgumentList arguments {getApplicationName(), commandLineParameters};
         const bool startHeadless = arguments.containsOption("--headless|-H");
 
@@ -106,7 +105,6 @@ public:
     /// so teardown messages are still written to the log file.
     void shutdown() override
     {
-        const auto startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
         mainWindow.reset();
         pluginScanWorker.reset();
         juce::Logger::setCurrentLogger(nullptr);
