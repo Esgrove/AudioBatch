@@ -449,6 +449,7 @@ void PluginChain::clearChain()
 
 /// Opens the editor window for the given slot.
 /// Multiple slot editors can be open at the same time.
+/// The editor instance is prepared before its editor is created and released in closeEditorForEntry.
 void PluginChain::openEditorForSlot(const int index)
 {
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
@@ -494,6 +495,12 @@ void PluginChain::openEditorForSlot(const int index)
     if (entry.state.getSize() > 0) {
         entry.editorInstance->setStateInformation(entry.state.getData(), static_cast<int>(entry.state.getSize()));
     }
+
+    // Prepare the instance before creating its editor, like a DAW does when it opens a plugin window.
+    // JUCE only initializes an Audio Unit in prepareToPlay,
+    // and some plugins, such as iZotope Ozone, crash when their view is attached to a window
+    // while the unit is still uninitialized.
+    entry.editorInstance->prepareToPlay(editorSampleRate, editorBlockSize);
 
     auto* editor = entry.editorInstance->createEditorAndMakeActive();
 
@@ -619,11 +626,17 @@ void PluginChain::captureOpenEditorStates()
     }
 }
 
-/// Closes the given entry's editor window and destroys its instance without capturing state.
+/// Closes the given entry's editor window, releases its instance's resources,
+/// and destroys the instance without capturing state.
 void PluginChain::closeEditorForEntry(PluginChainEntry& entry)
 {
     if (entry.editorWindow != nullptr) {
         entry.editorWindow.deleteAndZero();
+    }
+
+    // The editor is deleted with its window above, so the instance has no editor when it is released.
+    if (entry.editorInstance != nullptr) {
+        entry.editorInstance->releaseResources();
     }
 
     entry.editorInstance = nullptr;
