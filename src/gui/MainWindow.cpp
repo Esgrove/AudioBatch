@@ -275,13 +275,13 @@ juce::ApplicationCommandTarget* MainWindow::getNextCommandTarget()
 /// Lists the commands that appear in the menu bar with a keyboard shortcut.
 void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
 {
-    commands.addArray(
-        {rescanMenuItemId,
-         revealSelectedMenuItemId,
-         removeSelectedMenuItemId,
-         moveSelectedToTrashMenuItemId,
-         aboutMenuItemId}
-    );
+    commands.addArray({
+        rescanMenuItemId,
+        revealSelectedMenuItemId,
+        removeSelectedMenuItemId,
+        moveSelectedToTrashMenuItemId,
+        aboutMenuItemId,
+    });
 }
 
 /// Describes one command, including the default key presses the menu displays next to its item,
