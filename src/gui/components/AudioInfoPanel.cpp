@@ -5,6 +5,8 @@
 
 #include "analysis/AudioAnalysisFormatting.h"
 #include "gui/components/CustomLookAndFeel.h"
+#include "gui/GuiLayout.h"
+#include "utils/GuiUtils.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
@@ -14,24 +16,6 @@ namespace audiobatch
 {
 namespace
 {
-constexpr float cornerRadius = 6.0f;
-constexpr float outlineAlpha = 0.08f;
-constexpr float captionFontHeight = 12.0f;
-constexpr float valueFontHeight = 13.0f;
-constexpr float metricFontHeight = 22.0f;
-constexpr float headingFontHeight = 15.0f;
-constexpr int filenameHeight = 22;
-constexpr int statusHeight = 18;
-constexpr int sectionGap = 6;
-constexpr int metricHeight = 52;
-constexpr int metricPadding = 6;
-constexpr int metricCaptionHeight = 16;
-constexpr int metricUnitWidth = 30;
-constexpr int detailFieldWidth = 60;
-constexpr int compactFieldWidth = 32;
-constexpr int scrollBarThickness = 8;
-constexpr int summaryHeight = filenameHeight + sectionGap + metricHeight * 2 + sectionGap * 2;
-
 /// Appends musical metadata, preferring Serato's analyzed tempo over standard BPM and grid fallback.
 void appendTrackInfo(std::vector<AudioInfoRow>& rows, const serato::SeratoData* data)
 {
@@ -55,14 +39,6 @@ void appendTrackInfo(std::vector<AudioInfoRow>& rows, const serato::SeratoData* 
     }
 }
 
-/// Sets a consistent, readable label style without horizontally compressing long values.
-void styleLabel(juce::Label& label, const float height, const juce::Colour colour)
-{
-    label.setFont(juce::CustomLookAndFeel::getTextFont().withHeight(height));
-    label.setColour(juce::Label::textColourId, colour);
-    label.setBorderSize(juce::BorderSize<int>());
-    label.setMinimumHorizontalScale(1.0f);
-}
 }  // namespace
 
 /// Creates accessible labels for a metric, with the unit separate from the large numeric value.
@@ -72,10 +48,14 @@ AudioInfoMetric::AudioInfoMetric(const juce::String& name, const juce::String& c
     captionLabel.setText(caption, juce::dontSendNotification);
     unitLabel.setText(unit, juce::dontSendNotification);
     valueLabel.setName(name);
-    styleLabel(captionLabel, captionFontHeight, juce::CustomLookAndFeel::greyMiddleLight());
-    styleLabel(unitLabel, captionFontHeight, juce::CustomLookAndFeel::greyMiddleLight());
-    styleLabel(valueLabel, metricFontHeight, juce::CustomLookAndFeel::greySuperLight());
-    valueLabel.setFont(juce::CustomLookAndFeel::getMonoBaseFont().withHeight(metricFontHeight));
+    const auto captionFont = juce::CustomLookAndFeel::getTextFont().withHeight(layout::information::captionFontHeight);
+    utils::styleLabel(captionLabel, captionFont, juce::CustomLookAndFeel::greyMiddleLight());
+    utils::styleLabel(unitLabel, captionFont, juce::CustomLookAndFeel::greyMiddleLight());
+    utils::styleLabel(
+        valueLabel,
+        juce::CustomLookAndFeel::getMonoBaseFont().withHeight(layout::information::metricFontHeight),
+        juce::CustomLookAndFeel::greySuperLight()
+    );
     unitLabel.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(captionLabel);
     addAndMakeVisible(unitLabel);
@@ -99,17 +79,17 @@ void AudioInfoMetric::paint(juce::Graphics& graphics)
 {
     const auto bounds = getLocalBounds().toFloat();
     graphics.setColour(juce::CustomLookAndFeel::greyMediumDark());
-    graphics.fillRoundedRectangle(bounds, cornerRadius);
-    graphics.setColour(juce::Colours::white.withAlpha(outlineAlpha));
-    graphics.drawRoundedRectangle(bounds.reduced(0.5f), cornerRadius, 1.0f);
+    graphics.fillRoundedRectangle(bounds, layout::information::cornerRadius);
+    graphics.setColour(juce::Colours::white.withAlpha(layout::information::outlineAlpha));
+    graphics.drawRoundedRectangle(bounds.reduced(0.5f), layout::information::cornerRadius, 1.0f);
 }
 
 /// Places a small caption and unit above the prominent numeric value.
 void AudioInfoMetric::resized()
 {
-    auto bounds = getLocalBounds().reduced(metricPadding);
-    auto caption = bounds.removeFromTop(metricCaptionHeight);
-    unitLabel.setBounds(caption.removeFromRight(metricUnitWidth));
+    auto bounds = getLocalBounds().reduced(layout::information::metricPadding);
+    auto caption = bounds.removeFromTop(layout::information::metricCaptionHeight);
+    unitLabel.setBounds(caption.removeFromRight(layout::information::metricUnitWidth));
     captionLabel.setBounds(caption);
     valueLabel.setBounds(bounds);
 }
@@ -118,9 +98,20 @@ void AudioInfoMetric::resized()
 AudioInfoPanel::AudioInfoPanel()
 {
     Component::setName("Selected file information");
-    styleLabel(filenameLabel, headingFontHeight, juce::CustomLookAndFeel::greySuperLight());
-    styleLabel(statusLabel, captionFontHeight, juce::CustomLookAndFeel::greyMiddleLight());
-    styleLabel(errorLabel, valueFontHeight, juce::CustomLookAndFeel::red());
+    const auto& textFont = juce::CustomLookAndFeel::getTextFont();
+    utils::styleLabel(
+        filenameLabel,
+        textFont.withHeight(layout::information::headingFontHeight),
+        juce::CustomLookAndFeel::greySuperLight()
+    );
+    utils::styleLabel(
+        statusLabel,
+        textFont.withHeight(layout::information::captionFontHeight),
+        juce::CustomLookAndFeel::greyMiddleLight()
+    );
+    utils::styleLabel(
+        errorLabel, textFont.withHeight(layout::information::valueFontHeight), juce::CustomLookAndFeel::red()
+    );
     errorLabel.setJustificationType(juce::Justification::topLeft);
     addAndMakeVisible(filenameLabel);
     addAndMakeVisible(statusLabel);
@@ -129,7 +120,7 @@ AudioInfoPanel::AudioInfoPanel()
     }
     detailsViewport.setViewedComponent(&detailsContent, false);
     detailsViewport.setScrollBarsShown(true, false);
-    detailsViewport.setScrollBarThickness(scrollBarThickness);
+    detailsViewport.setScrollBarThickness(layout::scrollBarThickness);
     detailsViewport.setName("File details");
     addAndMakeVisible(detailsViewport);
     detailsContent.addAndMakeVisible(errorLabel);
@@ -236,14 +227,16 @@ int AudioInfoPanel::getErrorHeight(const int width) const
     text.append(errorLabel.getText(), errorLabel.getFont(), juce::CustomLookAndFeel::red());
     juce::TextLayout textLayout;
     textLayout.createLayout(text, static_cast<float>(juce::jmax(1, width)));
-    return juce::roundToInt(std::ceil(textLayout.getHeight())) + verticalPadding;
+    return juce::roundToInt(std::ceil(textLayout.getHeight())) + layout::information::verticalPadding;
 }
 
 /// Returns the height that shows the complete summary and details without scrolling.
 int AudioInfoPanel::getPreferredHeight() const
 {
-    return verticalPadding * 2 + summaryHeight + (statusLabel.isVisible() ? statusHeight : 0)
-        + getDetailsRowCount() * rowHeight + getErrorHeight(getWidth() - horizontalPadding * 2 - scrollBarThickness);
+    return layout::information::verticalPadding * 2 + layout::information::summaryHeight
+        + (statusLabel.isVisible() ? layout::information::statusHeight : 0)
+        + getDetailsRowCount() * layout::information::rowHeight
+        + getErrorHeight(getWidth() - layout::information::horizontalPadding * 2 - layout::scrollBarThickness);
 }
 
 /// Reuses detail labels without triggering a parent resize or resetting the table/preview split.
@@ -272,27 +265,28 @@ void AudioInfoPanel::paint(juce::Graphics& graphics)
 {
     const auto bounds = getLocalBounds().toFloat();
     graphics.setColour(juce::CustomLookAndFeel::greySemiDark());
-    graphics.fillRoundedRectangle(bounds, cornerRadius);
-    graphics.setColour(juce::Colours::white.withAlpha(outlineAlpha));
-    graphics.drawRoundedRectangle(bounds.reduced(0.5f), cornerRadius, 1.0f);
+    graphics.fillRoundedRectangle(bounds, layout::information::cornerRadius);
+    graphics.setColour(juce::Colours::white.withAlpha(layout::information::outlineAlpha));
+    graphics.drawRoundedRectangle(bounds.reduced(0.5f), layout::information::cornerRadius, 1.0f);
 }
 
 /// Keeps the heading and cards outside the viewport, reserving scrollbar width to avoid relayout oscillation.
 void AudioInfoPanel::resized()
 {
-    auto bounds = getLocalBounds().reduced(horizontalPadding, verticalPadding);
-    filenameLabel.setBounds(bounds.removeFromTop(filenameHeight));
-    statusLabel.setBounds(bounds.removeFromTop(statusLabel.isVisible() ? statusHeight : 0));
-    bounds.removeFromTop(sectionGap);
+    auto bounds
+        = getLocalBounds().reduced(layout::information::horizontalPadding, layout::information::verticalPadding);
+    filenameLabel.setBounds(bounds.removeFromTop(layout::information::filenameHeight));
+    statusLabel.setBounds(bounds.removeFromTop(statusLabel.isVisible() ? layout::information::statusHeight : 0));
+    bounds.removeFromTop(layout::sectionSpacing);
     for (std::size_t row = 0; row < 2; ++row) {
-        auto metricRow = bounds.removeFromTop(metricHeight);
-        metrics[row * 2].setBounds(metricRow.removeFromLeft((metricRow.getWidth() - sectionGap) / 2));
-        metricRow.removeFromLeft(sectionGap);
+        auto metricRow = bounds.removeFromTop(layout::information::metricHeight);
+        metrics[row * 2].setBounds(metricRow.removeFromLeft((metricRow.getWidth() - layout::sectionSpacing) / 2));
+        metricRow.removeFromLeft(layout::sectionSpacing);
         metrics[row * 2 + 1].setBounds(metricRow);
-        bounds.removeFromTop(sectionGap);
+        bounds.removeFromTop(layout::sectionSpacing);
     }
     detailsViewport.setBounds(bounds);
-    const auto contentWidth = juce::jmax(0, bounds.getWidth() - scrollBarThickness);
+    const auto contentWidth = juce::jmax(0, bounds.getWidth() - layout::scrollBarThickness);
     const auto errorHeight = getErrorHeight(contentWidth);
     errorLabel.setBounds(0, 0, contentWidth, errorHeight);
     errorLabel.setVisible(errorHeight > 0);
@@ -300,17 +294,21 @@ void AudioInfoPanel::resized()
     int compactColumn = 0;
     for (std::size_t index = 0; index < rows.size(); ++index) {
         const auto& row = rows[index];
-        const auto width = row.compact ? (contentWidth - sectionGap) / 2 : contentWidth;
-        auto rowBounds = juce::Rectangle(compactColumn * (width + sectionGap), nextY, width, rowHeight);
-        fieldLabels[index]->setBounds(rowBounds.removeFromLeft(row.compact ? compactFieldWidth : detailFieldWidth));
+        const auto width = row.compact ? (contentWidth - layout::sectionSpacing) / 2 : contentWidth;
+        auto rowBounds = juce::Rectangle(
+            compactColumn * (width + layout::sectionSpacing), nextY, width, layout::information::rowHeight
+        );
+        fieldLabels[index]->setBounds(rowBounds.removeFromLeft(
+            row.compact ? layout::information::compactFieldWidth : layout::information::detailFieldWidth
+        ));
         valueLabels[index]->setBounds(rowBounds);
         compactColumn = row.compact ? 1 - compactColumn : 0;
         if (compactColumn == 0) {
-            nextY += rowHeight;
+            nextY += layout::information::rowHeight;
         }
     }
     if (compactColumn != 0) {
-        nextY += rowHeight;
+        nextY += layout::information::rowHeight;
     }
     detailsContent.setSize(contentWidth, juce::jmax(bounds.getHeight(), nextY));
 }
@@ -320,12 +318,20 @@ void AudioInfoPanel::ensureLabelCount(const std::size_t requiredCount)
 {
     while (fieldLabels.size() < requiredCount) {
         auto fieldLabel = std::make_unique<juce::Label>();
-        styleLabel(*fieldLabel, captionFontHeight, juce::CustomLookAndFeel::greyMiddleLight());
+        utils::styleLabel(
+            *fieldLabel,
+            juce::CustomLookAndFeel::getTextFont().withHeight(layout::information::captionFontHeight),
+            juce::CustomLookAndFeel::greyMiddleLight()
+        );
         detailsContent.addAndMakeVisible(*fieldLabel);
         fieldLabels.push_back(std::move(fieldLabel));
 
         auto valueLabel = std::make_unique<juce::Label>();
-        styleLabel(*valueLabel, valueFontHeight, juce::CustomLookAndFeel::greySuperLight());
+        utils::styleLabel(
+            *valueLabel,
+            juce::CustomLookAndFeel::getTextFont().withHeight(layout::information::valueFontHeight),
+            juce::CustomLookAndFeel::greySuperLight()
+        );
         valueLabel->setJustificationType(juce::Justification::centredRight);
         detailsContent.addAndMakeVisible(*valueLabel);
         valueLabels.push_back(std::move(valueLabel));

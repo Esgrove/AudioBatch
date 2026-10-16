@@ -4,6 +4,8 @@
 /// and styled tooltips, popup menus, buttons, and combo boxes.
 
 #pragma once
+#include "gui/GuiLayout.h"
+
 #include <JuceHeader.h>
 
 namespace juce
@@ -110,7 +112,7 @@ public:
     /// Returns the monospaced font used for tabular values and status text.
     [[nodiscard]] static Font get_mono_font()
     {
-        return getMonoBaseFont().withHeight(monoFontHeight);
+        return getMonoBaseFont().withHeight(audiobatch::layout::theme::monoFontHeight);
     }
 
     [[nodiscard]] static const juce::Font& getTextFont();
@@ -200,8 +202,6 @@ public:
     {
         return juce::Colour {palette_argb::yellow};
     }
-
-    static constexpr float monoFontHeight {15.0f};
 
 private:
     const ColourScheme customColourScheme {

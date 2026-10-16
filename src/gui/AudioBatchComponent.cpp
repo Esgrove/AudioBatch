@@ -9,6 +9,7 @@
 #include "gui/AudioBatchComponentConstants.h"
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/components/CustomLookAndFeel.h"
+#include "gui/GuiLayout.h"
 #include "plugins/PluginProcessing.h"
 #include "utils/AppInfo.h"
 #include "utils/Log.h"
@@ -313,7 +314,7 @@ AudioBatchComponent::AudioBatchComponent() :
     configurePreviewControls();
     configureProcessingControls();
 
-    tooltipWindow = std::make_unique<juce::TooltipWindow>(this, tooltipDelayMilliseconds);
+    tooltipWindow = std::make_unique<juce::TooltipWindow>(this, layout::tooltipDelayMilliseconds);
     logStartupCheckpoint("ui controls created");
 
     utils::logDebug("AudioBatchComponent startup: opening analysis cache");
@@ -421,7 +422,7 @@ juce::Rectangle<int> AudioBatchComponent::getOverallProgressBounds() const
 /// Only secondary controls scroll, leaving Process and the info panel's summary in view.
 void AudioBatchComponent::resized()
 {
-    auto bounds = getLocalBounds().reduced(4);
+    auto bounds = getLocalBounds().reduced(layout::mainContentPadding);
     auto topBar = bounds.removeFromTop(layout::topBarHeight);
 
     statusLabel.setBounds(topBar.removeFromRight(layout::statusLabelWidth));
@@ -495,16 +496,21 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
     const auto currentNameWidth = header.getColumnWidth(columnName);
     const auto currentPathWidth = header.getColumnWidth(columnPath);
     const auto currentFlexibleWidth = currentNameWidth + currentPathWidth;
-    constexpr auto defaultFlexibleWidth = nameColumnDefaultWidth + pathColumnDefaultWidth;
-    const auto widthRatio = static_cast<double>(currentFlexibleWidth > 0 ? currentNameWidth : nameColumnDefaultWidth)
+    constexpr auto defaultFlexibleWidth = layout::table::nameColumnDefaultWidth + layout::table::pathColumnDefaultWidth;
+    const auto widthRatio
+        = static_cast<double>(currentFlexibleWidth > 0 ? currentNameWidth : layout::table::nameColumnDefaultWidth)
         / static_cast<double>(currentFlexibleWidth > 0 ? currentFlexibleWidth : defaultFlexibleWidth);
 
-    int nameWidth = nameColumnMinimumWidth;
-    int pathWidth = pathColumnMinimumWidth;
+    int nameWidth = layout::table::nameColumnMinimumWidth;
+    int pathWidth = layout::table::pathColumnMinimumWidth;
 
-    if (availableFlexibleWidth >= nameColumnMinimumWidth + pathColumnMinimumWidth) {
+    if (availableFlexibleWidth >= layout::table::nameColumnMinimumWidth + layout::table::pathColumnMinimumWidth) {
         nameWidth = juce::roundToInt(static_cast<double>(availableFlexibleWidth) * widthRatio);
-        nameWidth = juce::jlimit(nameColumnMinimumWidth, availableFlexibleWidth - pathColumnMinimumWidth, nameWidth);
+        nameWidth = juce::jlimit(
+            layout::table::nameColumnMinimumWidth,
+            availableFlexibleWidth - layout::table::pathColumnMinimumWidth,
+            nameWidth
+        );
         pathWidth = availableFlexibleWidth - nameWidth;
     }
 
@@ -859,7 +865,9 @@ void AudioBatchComponent::openDialogWindow(
 #endif
     window->setSize(window->getWidth(), window->getHeight());
     window->setResizable(true, true);
-    window->setResizeLimits(window->getWidth(), window->getHeight(), layout::maxWindowSize, layout::maxWindowSize);
+    window->setResizeLimits(
+        window->getWidth(), window->getHeight(), layout::dialogMaximumWindowSize, layout::dialogMaximumWindowSize
+    );
     window->setColour(juce::DialogWindow::backgroundColourId, juce::CustomLookAndFeel::greySemiDark());
     window->setVisible(true);
     window->toFront(true);

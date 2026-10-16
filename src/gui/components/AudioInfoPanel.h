@@ -58,13 +58,6 @@ public:
 
     void resized() override;
 
-    /// Height in pixels of one row.
-    static constexpr int rowHeight = 20;
-    /// Padding in pixels above and below the rows.
-    static constexpr int verticalPadding = 8;
-    /// Padding in pixels left and right of the rows.
-    static constexpr int horizontalPadding = 10;
-
 private:
     [[nodiscard]] int getErrorHeight(int width) const;
     [[nodiscard]] int getDetailsRowCount() const;

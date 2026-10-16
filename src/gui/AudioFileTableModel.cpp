@@ -11,22 +11,8 @@
 
 namespace audiobatch
 {
-
-/// Maximum widths a user can drag each column to in the results table header.
-/// The Name and Path columns may grow wide for long names,
-/// while the metric columns are capped so a single column cannot crowd out the others.
-namespace column_limits
+namespace
 {
-/// Maximum width of the Name column in pixels.
-constexpr int nameMaximumWidth = 600;
-/// Maximum width of the Path column in pixels.
-constexpr int pathMaximumWidth = 1200;
-/// Shared maximum width of the Type, Bitrate, Rate, and metric columns in pixels.
-constexpr int metricMaximumWidth = 160;
-/// Maximum width of the Status column in pixels.
-constexpr int statusMaximumWidth = 800;
-}  // namespace column_limits
-
 /// Inner radius of the activity indicator arc as a proportion of the outer radius,
 /// which turns the pie segment into a ring.
 constexpr float activityIndicatorInnerRadiusProportion = 0.52f;
@@ -61,7 +47,7 @@ constexpr float spinnerArcTurns = 0.6f;
 /// A row whose progress is still unknown gets a spinning arc,
 /// where the phase argument in the range 0 to 1 controls the rotation,
 /// so repeated repaints with an advancing phase animate the spinner.
-static void drawActivityIndicator(
+void drawActivityIndicator(
     juce::Graphics& graphics,
     const juce::Rectangle<float> bounds,
     const FileActivityState& state,
@@ -97,6 +83,7 @@ static void drawActivityIndicator(
     graphics.setColour(juce::Colours::white.withAlpha(activityIndicatorOutlineAlpha));
     graphics.drawEllipse(ringBounds, 1.0f);
 }
+}  // namespace
 
 /// Creates a model backed by the live result list and UI callbacks owned by the main view.
 /// The operation message provider returns the outcome of the last normalize or process run for a record,
@@ -125,105 +112,105 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
     header.addColumn(
         "Name",
         columnName,
-        initialColumnWidth(columnName),
-        minimumColumnWidth(columnName),
-        column_limits::nameMaximumWidth,
+        layout::table::initialColumnWidth(columnName),
+        layout::table::minimumColumnWidth(columnName),
+        layout::table::nameMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
         "Path",
         columnPath,
-        initialColumnWidth(columnPath),
-        minimumColumnWidth(columnPath),
-        column_limits::pathMaximumWidth,
+        layout::table::initialColumnWidth(columnPath),
+        layout::table::minimumColumnWidth(columnPath),
+        layout::table::pathMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
         "Type",
         columnType,
-        initialColumnWidth(columnType),
-        minimumColumnWidth(columnType),
-        column_limits::metricMaximumWidth,
+        layout::table::initialColumnWidth(columnType),
+        layout::table::minimumColumnWidth(columnType),
+        layout::table::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
         "Bitrate",
         columnBitrate,
-        initialColumnWidth(columnBitrate),
-        minimumColumnWidth(columnBitrate),
-        column_limits::metricMaximumWidth,
+        layout::table::initialColumnWidth(columnBitrate),
+        layout::table::minimumColumnWidth(columnBitrate),
+        layout::table::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
         "Rate",
         columnSampleRate,
-        initialColumnWidth(columnSampleRate),
-        minimumColumnWidth(columnSampleRate),
-        column_limits::metricMaximumWidth,
+        layout::table::initialColumnWidth(columnSampleRate),
+        layout::table::minimumColumnWidth(columnSampleRate),
+        layout::table::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
         "Peak",
         columnOverallPeak,
-        initialColumnWidth(columnOverallPeak),
-        minimumColumnWidth(columnOverallPeak),
-        column_limits::metricMaximumWidth,
+        layout::table::initialColumnWidth(columnOverallPeak),
+        layout::table::minimumColumnWidth(columnOverallPeak),
+        layout::table::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
         "Peak L",
         columnPeakLeft,
-        initialColumnWidth(columnPeakLeft),
-        minimumColumnWidth(columnPeakLeft),
-        column_limits::metricMaximumWidth,
+        layout::table::initialColumnWidth(columnPeakLeft),
+        layout::table::minimumColumnWidth(columnPeakLeft),
+        layout::table::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
         "Peak R",
         columnPeakRight,
-        initialColumnWidth(columnPeakRight),
-        minimumColumnWidth(columnPeakRight),
-        column_limits::metricMaximumWidth,
+        layout::table::initialColumnWidth(columnPeakRight),
+        layout::table::minimumColumnWidth(columnPeakRight),
+        layout::table::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
         "True Peak",
         columnOverallTruePeak,
-        initialColumnWidth(columnOverallTruePeak),
-        minimumColumnWidth(columnOverallTruePeak),
-        column_limits::metricMaximumWidth,
+        layout::table::initialColumnWidth(columnOverallTruePeak),
+        layout::table::minimumColumnWidth(columnOverallTruePeak),
+        layout::table::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
         "LUFS-S",
         columnMaxShortTermLufs,
-        initialColumnWidth(columnMaxShortTermLufs),
-        minimumColumnWidth(columnMaxShortTermLufs),
-        column_limits::metricMaximumWidth,
+        layout::table::initialColumnWidth(columnMaxShortTermLufs),
+        layout::table::minimumColumnWidth(columnMaxShortTermLufs),
+        layout::table::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
         "LUFS-I",
         columnIntegratedLufs,
-        initialColumnWidth(columnIntegratedLufs),
-        minimumColumnWidth(columnIntegratedLufs),
-        column_limits::metricMaximumWidth,
+        layout::table::initialColumnWidth(columnIntegratedLufs),
+        layout::table::minimumColumnWidth(columnIntegratedLufs),
+        layout::table::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
         "Gain",
         columnCustomGain,
-        initialColumnWidth(columnCustomGain),
-        minimumColumnWidth(columnCustomGain),
-        column_limits::metricMaximumWidth,
+        layout::table::initialColumnWidth(columnCustomGain),
+        layout::table::minimumColumnWidth(columnCustomGain),
+        layout::table::metricMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
         "Status",
         columnStatus,
-        initialColumnWidth(columnStatus),
-        minimumColumnWidth(columnStatus),
-        column_limits::statusMaximumWidth,
+        layout::table::initialColumnWidth(columnStatus),
+        layout::table::minimumColumnWidth(columnStatus),
+        layout::table::statusMaximumWidth,
         juce::TableHeaderComponent::defaultFlags
     );
 

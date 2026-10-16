@@ -4,20 +4,17 @@
 
 #include "gui/MainWindow.h"
 
-#include "gui/AudioBatchComponentConstants.h"
+#include "gui/GuiLayout.h"
 #include "plugins/PluginChain.h"
 #include "utils/AppInfo.h"
 #include "utils/FileUtils.h"
+#include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
-#if JUCE_WINDOWS
-#include <windows.h>
-#endif
-
 namespace audiobatch
 {
-/// Menu ids and window limits of the main window.
+/// Menu ids used only by the main window's command dispatch.
 namespace
 {
 enum MenuItemId : std::uint8_t {
@@ -74,14 +71,14 @@ MainWindow::MainWindow(const juce::String& name) :
 #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu(this);
 #else
-    /// Height in pixels of the in-window menu bar used on platforms without a global menu bar.
-    constexpr int inWindowMenuBarHeight = 26;
-    setMenuBar(this, inWindowMenuBarHeight);
+    setMenuBar(this, layout::inWindowMenuBarHeight);
 #endif
     logStartupCheckpoint("menu bar configured");
 
     setResizable(true, true);
-    setResizeLimits(layout::minimumWindowWidth, layout::minimumWindowHeight, 8192, 8192);
+    setResizeLimits(
+        layout::minimumWindowWidth, layout::minimumWindowHeight, layout::maximumWindowSize, layout::maximumWindowSize
+    );
     if (const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()) {
         setBounds(layout::initialWindowBounds(display->userBounds.toNearestInt()));
     } else {
@@ -98,18 +95,7 @@ void MainWindow::showAndActivate()
     utils::logDebug("MainWindow startup: showAndActivate begin");
     setVisible(true);
     setMinimised(false);
-    toFront(true);
-
-    if (auto* peer = getPeer()) {
-#if JUCE_WINDOWS
-        // JUCE's Windows peer only calls BringWindowToTop and SetFocus, neither of which requests foreground ownership.
-        auto* const windowHandle = static_cast<HWND>(peer->getNativeHandle());
-        if (SetForegroundWindow(windowHandle) == 0 && GetForegroundWindow() != windowHandle) {
-            utils::logWarn("Windows did not grant foreground activation to the main window");
-        }
-#endif
-        peer->grabFocus();
-    }
+    utils::bringWindowToFront(*this);
 
     if (auto* content = getContentComponent()) {
         content->grabKeyboardFocus();

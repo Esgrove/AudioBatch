@@ -13,23 +13,6 @@
 
 namespace audiobatch
 {
-namespace
-{
-constexpr int rowHeight = 36;
-constexpr int rowPadding = 4;
-constexpr int addButtonSize = 28;
-constexpr int margin = 8;
-
-/// Width of the square row controls: the enabled toggle and the remove, up, and down buttons.
-constexpr int rowIconButtonWidth = 24;
-
-/// Width of the row button that opens the plugin editor.
-constexpr int rowEditButtonWidth = 48;
-
-/// Corner radius of the rounded row background.
-constexpr float rowCornerRadius = 4.0f;
-}  // namespace
-
 /// Builds the row for the given slot and wires its controls to the owning chain.
 PluginChainSlotRow::PluginChainSlotRow(
     PluginChain& ownerChain,
@@ -86,16 +69,16 @@ PluginChainSlotRow::PluginChainSlotRow(
 /// Lays out the toggle, name label, and action buttons within the row.
 void PluginChainSlotRow::resized()
 {
-    auto area = getLocalBounds().reduced(rowPadding);
+    auto area = getLocalBounds().reduced(layout::pluginEditor::rowPadding);
 
-    enabledToggle.setBounds(area.removeFromLeft(rowIconButtonWidth));
-    removeButton.setBounds(area.removeFromRight(rowIconButtonWidth));
-    area.removeFromRight(rowPadding);
-    downButton.setBounds(area.removeFromRight(rowIconButtonWidth));
-    upButton.setBounds(area.removeFromRight(rowIconButtonWidth));
-    area.removeFromRight(rowPadding);
-    editButton.setBounds(area.removeFromRight(rowEditButtonWidth));
-    area.removeFromRight(rowPadding);
+    enabledToggle.setBounds(area.removeFromLeft(layout::pluginEditor::rowIconButtonWidth));
+    removeButton.setBounds(area.removeFromRight(layout::pluginEditor::rowIconButtonWidth));
+    area.removeFromRight(layout::pluginEditor::rowPadding);
+    downButton.setBounds(area.removeFromRight(layout::pluginEditor::rowIconButtonWidth));
+    upButton.setBounds(area.removeFromRight(layout::pluginEditor::rowIconButtonWidth));
+    area.removeFromRight(layout::pluginEditor::rowPadding);
+    editButton.setBounds(area.removeFromRight(layout::pluginEditor::rowEditButtonWidth));
+    area.removeFromRight(layout::pluginEditor::rowPadding);
     nameLabel.setBounds(area);
 }
 
@@ -103,7 +86,7 @@ void PluginChainSlotRow::resized()
 void PluginChainSlotRow::paint(juce::Graphics& graphics)
 {
     graphics.setColour(dragging ? juce::CustomLookAndFeel::greyMedium() : juce::CustomLookAndFeel::greyMediumDark());
-    graphics.fillRoundedRectangle(getLocalBounds().reduced(1).toFloat(), rowCornerRadius);
+    graphics.fillRoundedRectangle(getLocalBounds().reduced(1).toFloat(), layout::pluginEditor::rowCornerRadius);
 }
 
 /// Starts a drag-reorder gesture and brings the row to the front.
@@ -167,7 +150,7 @@ PluginChainEditor::PluginChainEditor(PluginChain& chain) : pluginChain(chain)
 
     viewport.setViewedComponent(&rowContainer, false);
     viewport.setScrollBarsShown(true, false);
-    viewport.setScrollBarThickness(8);
+    viewport.setScrollBarThickness(layout::scrollBarThickness);
     addAndMakeVisible(viewport);
 
     pluginChain.addChangeListener(this);
@@ -183,17 +166,17 @@ PluginChainEditor::~PluginChainEditor()
 /// Lays out the hint label and the scrolling row list with its add button.
 void PluginChainEditor::resized()
 {
-    const auto area = getLocalBounds().reduced(margin);
+    const auto area = getLocalBounds().reduced(layout::pluginEditor::margin);
 
     viewport.setBounds(area);
     hintLabel.setBounds(area);
 
     // Reserve one extra row of space below the plugin rows for the add button.
-    const auto rowsHeight = static_cast<int>(rows.size()) * rowHeight;
-    rowContainer.setSize(viewport.getMaximumVisibleWidth(), rowsHeight + rowHeight);
+    const auto rowsHeight = static_cast<int>(rows.size()) * layout::pluginEditor::rowHeight;
+    rowContainer.setSize(viewport.getMaximumVisibleWidth(), rowsHeight + layout::pluginEditor::rowHeight);
 
     for (const auto& row : rows) {
-        row->setSize(rowContainer.getWidth(), rowHeight);
+        row->setSize(rowContainer.getWidth(), layout::pluginEditor::rowHeight);
     }
 
     layoutRows();
@@ -259,14 +242,19 @@ void PluginChainEditor::layoutRows(const PluginChainSlotRow* draggedRow, const i
             ++visualIndex;
         }
 
-        row->setTopLeftPosition(0, visualIndex * rowHeight);
+        row->setTopLeftPosition(0, visualIndex * layout::pluginEditor::rowHeight);
         ++visualIndex;
     }
 
     // Keep the add button centered below the last row.
-    const auto rowsHeight = static_cast<int>(rows.size()) * rowHeight;
-    const auto addButtonX = (rowContainer.getWidth() - addButtonSize) / 2;
-    addButton.setBounds(addButtonX, rowsHeight + rowPadding, addButtonSize, addButtonSize);
+    const auto rowsHeight = static_cast<int>(rows.size()) * layout::pluginEditor::rowHeight;
+    const auto addButtonX = (rowContainer.getWidth() - layout::pluginEditor::addButtonSize) / 2;
+    addButton.setBounds(
+        addButtonX,
+        rowsHeight + layout::pluginEditor::rowPadding,
+        layout::pluginEditor::addButtonSize,
+        layout::pluginEditor::addButtonSize
+    );
 }
 
 /// Called by a row while it is being dragged to preview the drop position.
@@ -292,7 +280,7 @@ void PluginChainEditor::rowDropped(const PluginChainSlotRow& row, const int targ
 int PluginChainEditor::rowIndexForPosition(const int containerY) const
 {
     const auto maxIndex = juce::jmax(0, static_cast<int>(rows.size()) - 1);
-    return juce::jlimit(0, maxIndex, containerY / rowHeight);
+    return juce::jlimit(0, maxIndex, containerY / layout::pluginEditor::rowHeight);
 }
 
 /// Pops up the known-plugins menu and appends the chosen plugin to the chain.

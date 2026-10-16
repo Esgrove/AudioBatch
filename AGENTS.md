@@ -57,8 +57,13 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       implement the plugin chain and batch processing through it.
 - `src/utils/` holds the shared helpers, split by area, all in the `utils` namespace unless noted:
     - `Log.*` holds the leveled logging functions.
-    - `AppInfo.*` holds the version line, the About text, system information, and the settings file options.
+    - `AppInfo.*` holds startup flag queries, the version line, the About text, system information,
+      and the settings file options.
     - `FileUtils.*` holds the file system helpers, such as moving files to the trash and extension checks.
+      It also chooses the default folder for file browsing.
+    - `GuiUtils.*` holds reusable window activation, foreground permission transfer,
+      read-only label styling, and failure-summary dialogs.
+      Native Windows request types and APIs stay private to its implementation.
     - `AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, and peak math.
     - `AudioMetadata.*` reads and writes tags and embedded art through TagLib
       and provides shared TagLib filename conversion.
@@ -78,10 +83,13 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
     - `PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
 - `src/gui/` holds the GUI application shell and its main screen.
     - `Main.cpp` is the GUI application entry point, and `MainWindow.*` is its top-level window and menu bar.
+      `GuiLayout.h` holds shared UI dimensions and compile-time layout calculations,
+      grouped by the window, workspace, table, inspector, plugin editor, waveform, and theme.
     - `AudioBatchComponent.*` is the main GUI component.
       Its implementation is split by topic into `AudioBatchComponent.cpp` (construction, layout, table, selection),
       `AudioBatchComponentActions.cpp`, `AudioBatchComponentOperations.cpp`, `AudioBatchComponentPreview.cpp`,
-      and `AudioBatchComponentRoots.cpp`, which share the constants in `AudioBatchComponentConstants.h`.
+      and `AudioBatchComponentRoots.cpp`, which share main-view filters, ranges, and menu ids
+      in `AudioBatchComponentConstants.h` and UI geometry in `GuiLayout.h`.
       Put new member functions in the file of their topic.
       `AudioBatchComponentState.h` holds the progress state of the analysis run and of the normalization
       and plugin processing passes.
@@ -130,6 +138,9 @@ Tests:
 - Do not edit vendored code under `JUCE/` unless the task explicitly requires it.
 - Prefer fixing warnings and build issues in project code or project configuration before considering third-party changes.
 - Follow the domain directories under `src/` described in Source Layout and the current naming used in `CMakeLists.txt`.
+- Keep reusable helpers in the matching shared utility files rather than application or component class files.
+  Keep UI sizing constants in `gui/GuiLayout.h`.
+  Component-specific presentation algorithms and private rendering details remain with their owning component.
 - Changes to shared services must keep both the GUI and CLI targets building and behaving correctly.
 
 ## Code Style
@@ -190,6 +201,7 @@ The detailed rules are in `.agents/rules/code-organization.md`.
 - Do not write a class that only has static member functions.
   Use free functions in a namespace instead, and keep classes for types with state or an invariant.
 - Do not use `using namespace`. Wrap definitions in the matching namespace block or qualify names.
+- Do not use namespace aliases. Qualify references with the original namespace path.
 - Split files that reach about 1000 lines into focused parts by topic, but avoid very small files.
   Fold tiny files into the file of the closest topic.
 - Use `constexpr` and `consteval` whenever possible.

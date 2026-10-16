@@ -8,6 +8,7 @@
 #include "gui/AudioBatchComponentConstants.h"
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/components/CustomLookAndFeel.h"
+#include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -30,55 +31,6 @@ static bool keepCustomGainOfUnchangedFile(const AudioAnalysisRecord& existing, A
     incoming.customGainDb = existing.customGainDb;
     incoming.hasCustomGain = true;
     return true;
-}
-
-/// Formats a bounded list of failures for an alert dialog,
-/// truncating with a "...and N more" line so the dialog stays readable.
-static juce::String buildFailureListMessage(const juce::StringArray& failures)
-{
-    /// Most failures listed before the rest are summarized.
-    constexpr int maximumListedFailures = 8;
-    juce::StringArray lines;
-    const auto linesToShow = juce::jmin(maximumListedFailures, failures.size());
-
-    for (int index = 0; index < linesToShow; ++index) {
-        lines.add(utils::format("- {}", failures[index]));
-    }
-
-    if (failures.size() > linesToShow) {
-        lines.add(utils::format("- ...and {} more", failures.size() - linesToShow));
-    }
-
-    // The message is only shown inside the app, so plain '\n' line breaks are fine.
-    return lines.joinIntoString("\n");
-}
-
-/// Shows a warning listing the files that failed during a normalization or processing pass.
-/// A single failure is shown as is, and several are summarized with buildFailureListMessage.
-/// Does nothing when there were no failures.
-static void showFailureSummary(
-    const juce::StringArray& failures,
-    const juce::String& title,
-    const juce::String& failedAction,
-    juce::Component* associatedComponent
-)
-{
-    if (failures.isEmpty()) {
-        return;
-    }
-
-    juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions::makeOptionsOk(
-            juce::MessageBoxIconType::WarningIcon,
-            title,
-            failures.size() == 1
-                ? failures[0]
-                : utils::format("Some files could not be {}:\n\n{}", failedAction, buildFailureListMessage(failures)),
-            "OK",
-            associatedComponent
-        ),
-        nullptr
-    );
 }
 
 /// Resolves rows still marked pending or active after a run completes,
@@ -280,7 +232,7 @@ void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
         normalizeProgress.failures.size()
     );
 
-    showFailureSummary(normalizeProgress.failures, "Normalize", "normalized", this);
+    utils::showFailureSummary(normalizeProgress.failures, "Normalize", "normalized", this);
 
     if (!currentAudioFile.existsAsFile() && resultsTable.getSelectedRow() >= 0) {
         handleSelectionChanged(resultsTable.getSelectedRow());
@@ -741,7 +693,7 @@ void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
         updateProcessButtonState();
     }
 
-    showFailureSummary(processingProgress.failures, "Plugin Processing", "processed", this);
+    utils::showFailureSummary(processingProgress.failures, "Plugin Processing", "processed", this);
 
     if (!currentAudioFile.existsAsFile() && resultsTable.getSelectedRow() >= 0) {
         handleSelectionChanged(resultsTable.getSelectedRow());
