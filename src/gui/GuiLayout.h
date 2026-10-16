@@ -59,13 +59,12 @@ constexpr double resultsTableMaximumProportion = -0.75;
 constexpr double resultsTablePreferredProportion = -0.5;
 constexpr double resizeBarHeight = 6.0;
 constexpr double previewMinimumHeight = 220.0;
-constexpr double previewMaximumProportion = -0.70;
-constexpr double previewPreferredProportion = -0.5;
+constexpr double previewMaximumProportion = -0.7;
+constexpr double previewPreferredProportion = -0.3;
 
 constexpr int controlButtonHeight = 28;
-/// The primary action stays pinned below the independently scrolling controls.
-constexpr int processButtonHeight = 44;
-constexpr int gainClearButtonWidth = 48;
+constexpr int processButtonHeight = 38;
+constexpr int gainClearButtonWidth = 38;
 constexpr int normalizeToggleHeight = 22;
 constexpr int zoomTextBoxWidth = 50;
 constexpr int controlsMinimumWidth = 184;
@@ -73,14 +72,15 @@ constexpr int controlsMaximumWidth = 220;
 constexpr int informationMinimumWidth = 260;
 constexpr int informationMaximumWidth = 300;
 constexpr int controlsContentHeight = 244;
-/// Reserve scrollbar width even when hidden, avoiding width/height relayout feedback.
-constexpr int scrollBarThickness = 8;
 constexpr int sliderRowHeight = 24;
 constexpr int sliderLabelWidth = 38;
 constexpr int dialogContentWidth = 500;
 constexpr int dialogContentHeight = 150;
 constexpr int dialogMaximumWindowSize = 4096;
 constexpr int tooltipDelayMilliseconds = 700;
+
+/// Reserve scrollbar width even when hidden, avoiding width/height relayout feedback.
+constexpr int scrollBarThickness = 8;
 
 /// Fixed summary cards and compact secondary details in the selected-file inspector.
 namespace information
