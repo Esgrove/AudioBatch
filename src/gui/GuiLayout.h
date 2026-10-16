@@ -42,15 +42,15 @@ constexpr int titleBarHeight = 30;
 constexpr int inWindowMenuBarHeight = 26;
 constexpr int defaultWindowWidth = 1920;
 constexpr int defaultWindowHeight = 1080;
-constexpr int minimumWindowWidth = 1024;
-constexpr int minimumWindowHeight = 800;
+constexpr int minimumWindowWidth = 800;
+constexpr int minimumWindowHeight = 600;
 constexpr int maximumWindowSize = 8192;
 constexpr int initialComponentWidth = defaultWindowWidth;
 constexpr int initialComponentHeight = defaultWindowHeight;
 constexpr int mainContentPadding = 4;
-constexpr int topBarHeight = 34;
+constexpr int topBarHeight = 32;
 constexpr int statusLabelWidth = 220;
-constexpr int sectionSpacing = 6;
+constexpr int sectionSpacing = 10;
 constexpr int overallProgressBarHeight = 3;
 constexpr int resultsTableRowHeight = 24;
 
@@ -65,11 +65,11 @@ constexpr double previewPreferredProportion = -0.25;
 
 constexpr int controlButtonHeight = 28;
 constexpr int processButtonHeight = 34;
-constexpr int controlsSectionSpacing = 12;
-constexpr int gainTextBoxWidth = 64;
+constexpr int controlsSectionSpacing = 8;
+constexpr int gainTextBoxWidth = 60;
 constexpr int normalizeToggleHeight = 22;
 constexpr int normalizeTargetSpacing = 8;
-constexpr int zoomTextBoxWidth = 50;
+constexpr int zoomTextBoxWidth = 60;
 constexpr int controlsMinimumWidth = 209;
 constexpr int controlsMaximumWidth = 228;
 constexpr int informationMinimumWidth = 234;
@@ -80,7 +80,7 @@ constexpr int sliderRowHeight = 24;
 constexpr int controlsContentHeight = sliderRowHeight * 4 + normalizeToggleHeight + normalizeTargetSpacing
     + controlButtonHeight * 3 + controlsSectionSpacing * 4;
 constexpr int dialogContentWidth = 500;
-constexpr int dialogContentHeight = 150;
+constexpr int dialogContentHeight = 250;
 constexpr int dialogMaximumWindowSize = 4096;
 constexpr int tooltipDelayMilliseconds = 700;
 
