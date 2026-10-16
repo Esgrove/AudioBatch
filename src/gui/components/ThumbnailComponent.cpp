@@ -62,7 +62,11 @@ ThumbnailComponent::~ThumbnailComponent()
 /// Draws the waveform for the visible range, or a placeholder text when no file is loaded.
 void ThumbnailComponent::paint(juce::Graphics& graphics)
 {
-    graphics.fillAll(juce::CustomLookAndFeel::greyMediumDark());
+    juce::Path outline;
+    outline.addRoundedRectangle(getLocalBounds().toFloat(), layout::waveform::cornerRadius);
+    graphics.reduceClipRegion(outline);
+    graphics.setColour(juce::CustomLookAndFeel::greyMediumDark());
+    graphics.fillPath(outline);
     graphics.setColour(juce::CustomLookAndFeel::blue());
 
     if (thumbnail.getTotalLength() > 0.0) {
@@ -85,7 +89,11 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
 
     if (hasKeyboardFocus(false)) {
         graphics.setColour(juce::CustomLookAndFeel::blue().withAlpha(focusOutlineAlpha));
-        graphics.drawRect(getLocalBounds().toFloat(), layout::waveform::focusOutlineWidth);
+        graphics.drawRoundedRectangle(
+            getLocalBounds().toFloat().reduced(layout::waveform::focusOutlineWidth / 2.0f),
+            layout::waveform::cornerRadius,
+            layout::waveform::focusOutlineWidth
+        );
     }
 }
 
@@ -284,7 +292,8 @@ void ThumbnailComponent::focusLost(const FocusChangeType /*cause*/)
 }
 
 /// Moves the transport to the Serato hot cue in the given zero-based slot and starts playback,
-/// matching the click and double-click behaviour. Does nothing when that slot has no cue.
+/// matching the click and double-click behaviour.
+/// Does nothing when that slot has no cue.
 void ThumbnailComponent::jumpToHotCue(const int slot)
 {
     if (!seratoMarkers || thumbnail.getTotalLength() <= 0.0) {
@@ -418,9 +427,9 @@ void ThumbnailComponent::updateCursorPosition()
     currentPositionMarker.setRectangle(
         juce::Rectangle<float>(
             timeToX(transportSource.getCurrentPosition()) - layout::waveform::positionMarkerWidth / 2.0f,
-            0,
+            layout::waveform::cornerRadius,
             layout::waveform::positionMarkerWidth,
-            static_cast<float>(getHeight())
+            juce::jmax(0.0f, static_cast<float>(getHeight()) - layout::waveform::cornerRadius * 2.0f)
         )
     );
 }
@@ -450,7 +459,8 @@ void ThumbnailComponent::setSeratoOverview(std::shared_ptr<const serato::Overvie
 }
 
 /// Attaches owned cue positions and colours without altering peaks, playback or the viewport.
-/// Null data removes the arrows. The owner must reject stale asynchronous results before adoption.
+/// Null data removes the arrows.
+/// The owner must reject stale asynchronous results before adoption.
 void ThumbnailComponent::setSeratoMarkers(std::shared_ptr<const serato::Markers> markers)
 {
     seratoMarkers = std::move(markers);

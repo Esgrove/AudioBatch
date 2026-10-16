@@ -1,6 +1,7 @@
 /// Shared GUI geometry and compile-time layout calculations.
-/// Groups window, preview, inspector, results-table, plugin-editor, waveform, and theme sizes by topic.
-/// Component implementations consume these values without owning unrelated layout configuration.
+/// Groups window, preview, inspector, results-table, plugin-editor, waveform,
+/// and theme sizes by topic. Component implementations consume these values
+/// without owning unrelated layout configuration.
 
 #pragma once
 
@@ -63,17 +64,17 @@ constexpr double previewMaximumProportion = -0.7;
 constexpr double previewPreferredProportion = -0.25;
 
 constexpr int controlButtonHeight = 28;
-constexpr int processButtonHeight = 38;
-constexpr int gainClearButtonWidth = 38;
+constexpr int processButtonHeight = 28;
+constexpr int gainTextBoxWidth = 64;
 constexpr int normalizeToggleHeight = 22;
 constexpr int zoomTextBoxWidth = 50;
-constexpr int controlsMinimumWidth = 184;
-constexpr int controlsMaximumWidth = 220;
+constexpr int controlsMinimumWidth = 220;
+constexpr int controlsMaximumWidth = 240;
 constexpr int informationMinimumWidth = 260;
 constexpr int informationMaximumWidth = 300;
-constexpr int controlsContentHeight = 244;
 constexpr int sliderRowHeight = 24;
-constexpr int sliderLabelWidth = 38;
+constexpr int controlsContentHeight
+    = sliderRowHeight * 4 + normalizeToggleHeight + controlButtonHeight * 3 + sectionSpacing * 6;
 constexpr int dialogContentWidth = 500;
 constexpr int dialogContentHeight = 150;
 constexpr int dialogMaximumWindowSize = 4096;
@@ -89,8 +90,8 @@ constexpr float cornerRadius = 6.0f;
 constexpr float outlineAlpha = 0.08f;
 constexpr float captionFontHeight = 12.0f;
 constexpr float valueFontHeight = 13.0f;
-constexpr float metricFontHeight = 22.0f;
-constexpr float headingFontHeight = 15.0f;
+constexpr float metricFontHeight = 20.0f;
+constexpr float headingFontHeight = 13.0f;
 constexpr int filenameHeight = 22;
 constexpr int statusHeight = 18;
 constexpr int metricHeight = 52;
@@ -98,7 +99,6 @@ constexpr int metricPadding = 6;
 constexpr int metricCaptionHeight = 16;
 constexpr int metricUnitWidth = 30;
 constexpr int detailFieldWidth = 60;
-constexpr int compactFieldWidth = 32;
 constexpr int rowHeight = 20;
 constexpr int verticalPadding = 8;
 constexpr int horizontalPadding = 10;
@@ -121,6 +121,7 @@ constexpr float rowCornerRadius = 4.0f;
 /// Waveform overlays retain fixed logical sizes independently of channel and zoom geometry.
 namespace waveform
 {
+constexpr float cornerRadius = information::cornerRadius;
 constexpr float positionMarkerWidth = 1.5f;
 constexpr float placeholderFontHeight = 14.0f;
 constexpr float cueArrowHeight = 8.0f;

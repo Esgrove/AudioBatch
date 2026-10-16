@@ -1,5 +1,5 @@
 /// Selected-file inspector beside the waveform preview.
-/// Keeps the filename and four analysis metrics visible above independently scrolling file details.
+/// Keeps the filename, optionally split into artist and title, and four analysis metrics above scrolling file details.
 /// Pending and failed records also show their status.
 
 #pragma once
@@ -15,11 +15,10 @@
 
 namespace audiobatch
 {
-/// One read-only detail. Compact fields share a row with the next compact field.
+/// One full-width read-only detail with a field caption and value.
 struct AudioInfoRow {
     juce::String field;
     juce::String value;
-    bool compact = false;
 };
 
 /// A labelled analysis value with an explicit unit and a restrained card background.
@@ -60,12 +59,12 @@ public:
 
 private:
     [[nodiscard]] int getErrorHeight(int width) const;
-    [[nodiscard]] int getDetailsRowCount() const;
 
     void ensureLabelCount(std::size_t requiredCount);
     void setRows(std::vector<AudioInfoRow> newRows);
 
     juce::Label filenameLabel {"File"};
+    juce::Label titleLabel {"Title"};
     juce::Label statusLabel {"Status"};
     std::array<AudioInfoMetric, 4> metrics {
         AudioInfoMetric {"Sample peak", "Sample peak", "dBFS"},

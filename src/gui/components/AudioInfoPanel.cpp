@@ -1,5 +1,5 @@
 /// Implementation of the selected-file inspector.
-/// Displays fixed analysis cards and compact, scrollable technical and musical metadata without resizing the workspace.
+/// Splits artist/title filenames above fixed analysis cards and full-width, scrollable technical and musical details.
 
 #include "gui/components/AudioInfoPanel.h"
 
@@ -9,7 +9,6 @@
 #include "utils/GuiUtils.h"
 #include "utils/StringFormat.h"
 
-#include <algorithm>
 #include <cmath>
 
 namespace audiobatch
@@ -32,10 +31,10 @@ void appendTrackInfo(std::vector<AudioInfoRow>& rows, const serato::SeratoData* 
         bpm = data->beatGrid->markers.back().bpm;
     }
     if (bpm && std::isfinite(*bpm) && *bpm > 0.0) {
-        rows.push_back({.field = "BPM", .value = utils::format("{:.2f}", *bpm), .compact = true});
+        rows.push_back({.field = "BPM", .value = utils::format("{:.2f}", *bpm)});
     }
     if (data->trackInfo && data->trackInfo->key.isNotEmpty()) {
-        rows.push_back({.field = "Key", .value = data->trackInfo->key, .compact = true});
+        rows.push_back({.field = "Key", .value = data->trackInfo->key});
     }
 }
 
@@ -99,11 +98,13 @@ AudioInfoPanel::AudioInfoPanel()
 {
     Component::setName("Selected file information");
     const auto& textFont = juce::CustomLookAndFeel::getTextFont();
-    utils::styleLabel(
-        filenameLabel,
-        textFont.withHeight(layout::information::headingFontHeight),
-        juce::CustomLookAndFeel::greySuperLight()
-    );
+    for (auto* label : {&filenameLabel, &titleLabel}) {
+        utils::styleLabel(
+            *label,
+            textFont.withHeight(layout::information::headingFontHeight),
+            juce::CustomLookAndFeel::greySuperLight()
+        );
+    }
     utils::styleLabel(
         statusLabel,
         textFont.withHeight(layout::information::captionFontHeight),
@@ -114,6 +115,7 @@ AudioInfoPanel::AudioInfoPanel()
     );
     errorLabel.setJustificationType(juce::Justification::topLeft);
     addAndMakeVisible(filenameLabel);
+    addChildComponent(titleLabel);
     addAndMakeVisible(statusLabel);
     for (auto& metric : metrics) {
         addAndMakeVisible(metric);
@@ -134,6 +136,10 @@ void AudioInfoPanel::clear()
     filenameLabel.setText("No file selected", juce::dontSendNotification);
     filenameLabel.setTooltip({});
     filenameLabel.setDescription({});
+    titleLabel.setText({}, juce::dontSendNotification);
+    titleLabel.setTooltip({});
+    titleLabel.setDescription({});
+    titleLabel.setVisible(false);
     statusLabel.setVisible(false);
     statusLabel.setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddleLight());
     errorLabel.setText({}, juce::dontSendNotification);
@@ -144,7 +150,8 @@ void AudioInfoPanel::clear()
     setRows({});
 }
 
-/// Shows compact file details and fixed metrics, clearing analysis values for pending or failed records.
+/// Shows full-width file details and fixed metrics, clearing analysis values for pending or failed records.
+/// Splits the filename at the first literal " - ", keeping subsequent separators in the title.
 /// Ready records omit the status row to leave more room for file details.
 /// Musical metadata remains independent of analysis readiness.
 /// Same-file updates preserve the detail scroll position.
@@ -159,9 +166,21 @@ void AudioInfoPanel::showRecord(
         detailsViewport.setViewPosition(0, 0);
         displayedPath = path;
     }
-    filenameLabel.setText(record.fileName, juce::dontSendNotification);
-    filenameLabel.setTooltip(path);
-    filenameLabel.setDescription(path);
+    const juce::String separator = " - ";
+    const auto separatorIndex = record.fileName.indexOf(separator);
+    const bool hasTitle = separatorIndex >= 0;
+    filenameLabel.setText(
+        hasTitle ? record.fileName.substring(0, separatorIndex) : record.fileName, juce::dontSendNotification
+    );
+    titleLabel.setText(
+        hasTitle ? record.fileName.substring(separatorIndex + separator.length()) : juce::String(),
+        juce::dontSendNotification
+    );
+    titleLabel.setVisible(hasTitle);
+    for (auto* label : {&filenameLabel, &titleLabel}) {
+        label->setTooltip(path);
+        label->setDescription(path);
+    }
     statusLabel.setVisible(!record.isReady());
     const auto status = !record.isReady() && !record.hasError() && activeStatusLabel.isNotEmpty()
         ? activeStatusLabel
@@ -212,13 +231,6 @@ void AudioInfoPanel::showRecord(
     setRows(std::move(newRows));
 }
 
-/// Counts compact musical fields as pairs so the inspector uses one row for BPM and key.
-int AudioInfoPanel::getDetailsRowCount() const
-{
-    const auto compactCount = static_cast<int>(std::ranges::count_if(rows, &AudioInfoRow::compact));
-    return static_cast<int>(rows.size()) - compactCount + (compactCount + 1) / 2;
-}
-
 /// Measures wrapped errors at the actual content width, keeping the entire message scrollable.
 int AudioInfoPanel::getErrorHeight(const int width) const
 {
@@ -236,8 +248,9 @@ int AudioInfoPanel::getErrorHeight(const int width) const
 int AudioInfoPanel::getPreferredHeight() const
 {
     return layout::information::verticalPadding * 2 + layout::information::summaryHeight
+        + (titleLabel.isVisible() ? layout::information::filenameHeight : 0)
         + (statusLabel.isVisible() ? layout::information::statusHeight : 0)
-        + getDetailsRowCount() * layout::information::rowHeight
+        + static_cast<int>(rows.size()) * layout::information::rowHeight
         + getErrorHeight(getWidth() - layout::information::horizontalPadding * 2 - layout::scrollBarThickness);
 }
 
@@ -278,6 +291,7 @@ void AudioInfoPanel::resized()
     auto bounds
         = getLocalBounds().reduced(layout::information::horizontalPadding, layout::information::verticalPadding);
     filenameLabel.setBounds(bounds.removeFromTop(layout::information::filenameHeight));
+    titleLabel.setBounds(bounds.removeFromTop(titleLabel.isVisible() ? layout::information::filenameHeight : 0));
     statusLabel.setBounds(bounds.removeFromTop(statusLabel.isVisible() ? layout::information::statusHeight : 0));
     bounds.removeFromTop(layout::sectionSpacing);
     for (std::size_t row = 0; row < 2; ++row) {
@@ -293,23 +307,10 @@ void AudioInfoPanel::resized()
     errorLabel.setBounds(0, 0, contentWidth, errorHeight);
     errorLabel.setVisible(errorHeight > 0);
     int nextY = errorHeight;
-    int compactColumn = 0;
     for (std::size_t index = 0; index < rows.size(); ++index) {
-        const auto& row = rows[index];
-        const auto width = row.compact ? (contentWidth - layout::sectionSpacing) / 2 : contentWidth;
-        auto rowBounds = juce::Rectangle(
-            compactColumn * (width + layout::sectionSpacing), nextY, width, layout::information::rowHeight
-        );
-        fieldLabels[index]->setBounds(rowBounds.removeFromLeft(
-            row.compact ? layout::information::compactFieldWidth : layout::information::detailFieldWidth
-        ));
+        auto rowBounds = juce::Rectangle(0, nextY, contentWidth, layout::information::rowHeight);
+        fieldLabels[index]->setBounds(rowBounds.removeFromLeft(layout::information::detailFieldWidth));
         valueLabels[index]->setBounds(rowBounds);
-        compactColumn = row.compact ? 1 - compactColumn : 0;
-        if (compactColumn == 0) {
-            nextY += layout::information::rowHeight;
-        }
-    }
-    if (compactColumn != 0) {
         nextY += layout::information::rowHeight;
     }
     detailsContent.setSize(contentWidth, juce::jmax(bounds.getHeight(), nextY));
