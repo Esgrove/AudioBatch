@@ -48,6 +48,44 @@ constexpr juce::uint32 tableHeaderSortArrowColour {0x99000000};
 
 namespace juce
 {
+/// Aligns checkbox outlines with adjacent controls instead of applying JUCE's extra left inset.
+void CustomLookAndFeel::drawToggleButton(
+    Graphics& graphics,
+    ToggleButton& button,
+    const bool shouldDrawButtonAsHighlighted,
+    const bool shouldDrawButtonAsDown
+)
+{
+    const auto fontHeight = jmin(
+        audiobatch::layout::theme::toggleFontHeight,
+        static_cast<float>(button.getHeight()) * audiobatch::layout::theme::toggleFontHeightRatio
+    );
+    const auto tickWidth = fontHeight * audiobatch::layout::theme::toggleTickWidthRatio;
+    drawTickBox(
+        graphics,
+        button,
+        0.5f,
+        (static_cast<float>(button.getHeight()) - tickWidth) * 0.5f,
+        tickWidth,
+        tickWidth,
+        button.getToggleState(),
+        button.isEnabled(),
+        shouldDrawButtonAsHighlighted,
+        shouldDrawButtonAsDown
+    );
+    graphics.setColour(button.findColour(ToggleButton::textColourId));
+    graphics.setFont(fontHeight);
+    if (!button.isEnabled()) {
+        graphics.setOpacity(0.5f);
+    }
+    graphics.drawFittedText(
+        button.getButtonText(),
+        button.getLocalBounds().withTrimmedLeft(roundToInt(tickWidth) + audiobatch::layout::theme::toggleTextSpacing),
+        Justification::centredLeft,
+        1
+    );
+}
+
 /// Returns the proportional font created from the embedded Roboto typeface.
 /// The font is created on first use, so no font construction runs during static initialization.
 const juce::Font& CustomLookAndFeel::getTextFont()

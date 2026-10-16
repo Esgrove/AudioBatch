@@ -144,14 +144,6 @@ void AudioBatchComponent::configureProcessingControls()
     };
     controlsContent.addAndMakeVisible(gainSlider);
 
-    gainClearButton.setTooltip("Clear per-file gain for the current selection.");
-    gainClearButton.setEnabled(false);
-    gainClearButton.onClick = [this] {
-        gainSlider.setValue(0.0, juce::dontSendNotification);
-        applyCustomGainToSelection(0.0f, false);
-    };
-    controlsContent.addAndMakeVisible(gainClearButton);
-
     normalizeBeforePluginToggle.setTooltip(
         "When enabled, files without a custom gain are normalized to the selected peak or loudness target "
         "before the plugin chain."
@@ -452,34 +444,34 @@ void AudioBatchComponent::resized()
     startStopButton.setBounds(playbackRow.removeFromLeft((playbackRow.getWidth() - layout::sectionSpacing) / 2));
     playbackRow.removeFromLeft(layout::sectionSpacing);
     processButton.setBounds(playbackRow);
-    controls.removeFromBottom(layout::sectionSpacing);
+    controls.removeFromBottom(layout::controlsSectionSpacing);
 
-    // Reserve the scrollbar in the outer padding so scrolling and pinned controls share the same edges.
-    controlsViewport.setBounds(controls.withWidth(controls.getWidth() + layout::scrollBarThickness));
+    // Keep the viewport inside the shared panel padding, reserving scrollbar width as in the audio info details.
+    controlsViewport.setBounds(controls);
     controlsContent.setSize(
-        juce::jmax(0, controls.getWidth()), juce::jmax(controls.getHeight(), layout::controlsContentHeight)
+        juce::jmax(0, controls.getWidth() - layout::scrollBarThickness),
+        juce::jmax(controls.getHeight(), layout::controlsContentHeight)
     );
     auto content = controlsContent.getLocalBounds();
     zoomLabel.setBounds(content.removeFromTop(layout::sliderRowHeight));
     zoomSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
 
-    content.removeFromTop(layout::sectionSpacing * 2);
-    auto gainCaption = content.removeFromTop(layout::sliderRowHeight);
-    gainClearButton.setBounds(gainCaption.removeFromRight(layout::gainTextBoxWidth));
-    gainLabel.setBounds(gainCaption);
+    content.removeFromTop(layout::controlsSectionSpacing);
+    gainLabel.setBounds(content.removeFromTop(layout::sliderRowHeight));
     gainSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
 
-    content.removeFromTop(layout::sectionSpacing * 2);
+    content.removeFromTop(layout::controlsSectionSpacing);
     auto normalizeRow = content.removeFromTop(layout::normalizeToggleHeight);
     normalizeBeforePluginToggle.setBounds(
         normalizeRow.removeFromLeft((normalizeRow.getWidth() - layout::sectionSpacing) / 2)
     );
     normalizeRow.removeFromLeft(layout::sectionSpacing);
     forceOverwriteToggle.setBounds(normalizeRow);
+    content.removeFromTop(layout::normalizeTargetSpacing);
     normalizationTargetControl.setBounds(content.removeFromTop(layout::controlButtonHeight));
-    content.removeFromTop(layout::sectionSpacing);
+    content.removeFromTop(layout::controlsSectionSpacing);
     pluginButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
-    content.removeFromTop(layout::sectionSpacing);
+    content.removeFromTop(layout::controlsSectionSpacing);
     settingsButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
 }
 

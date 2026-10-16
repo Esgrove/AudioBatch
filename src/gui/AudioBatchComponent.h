@@ -247,7 +247,6 @@ private:
     juce::Label statusLabel {"StatusLabel"};
     juce::Label zoomLabel {"Zoom"};
     juce::Slider zoomSlider {"ZoomSlider"};
-    juce::TextButton gainClearButton {"Reset"};
     juce::TextButton pluginButton {"Plugin chain"};
     juce::TextButton processButton {"Process"};
     juce::TextButton settingsButton {"Audio Settings"};

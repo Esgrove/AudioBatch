@@ -221,18 +221,16 @@ void AudioBatchComponent::applyCustomGainToSelection(const float gainDb, const b
     if (anyChanged) {
         resultsTable.repaint();
         updateThumbnailDisplayGain();
-        gainClearButton.setEnabled(hasGain);
     }
 }
 
-/// Syncs the gain slider and clear button with the record shown for the current selection.
+/// Syncs the gain slider with the record shown for the current selection.
 void AudioBatchComponent::updateGainControlsForSelection()
 {
     const auto selectedRows = resultsTable.getSelectedRows();
     const bool hasSelection = selectedRows.size() > 0;
 
     gainSlider.setEnabled(hasSelection);
-    gainClearButton.setEnabled(false);
 
     if (!hasSelection) {
         gainSlider.setValue(0.0, juce::dontSendNotification);
@@ -257,7 +255,6 @@ void AudioBatchComponent::updateGainControlsForSelection()
     gainSlider.setValue(
         record.hasCustomGain ? static_cast<double>(record.customGainDb) : 0.0, juce::dontSendNotification
     );
-    gainClearButton.setEnabled(record.hasCustomGain);
 }
 
 /// Applies the current file's custom gain to the waveform preview as a display-only scale factor.

@@ -64,17 +64,21 @@ constexpr double previewMaximumProportion = -0.7;
 constexpr double previewPreferredProportion = -0.25;
 
 constexpr int controlButtonHeight = 28;
-constexpr int processButtonHeight = 28;
+constexpr int processButtonHeight = 34;
+constexpr int controlsSectionSpacing = 12;
 constexpr int gainTextBoxWidth = 64;
 constexpr int normalizeToggleHeight = 22;
+constexpr int normalizeTargetSpacing = 8;
 constexpr int zoomTextBoxWidth = 50;
-constexpr int controlsMinimumWidth = 220;
-constexpr int controlsMaximumWidth = 240;
-constexpr int informationMinimumWidth = 260;
-constexpr int informationMaximumWidth = 300;
+constexpr int controlsMinimumWidth = 209;
+constexpr int controlsMaximumWidth = 228;
+constexpr int informationMinimumWidth = 234;
+constexpr int informationMaximumWidth = 270;
+constexpr double controlsWidthProportion = 0.14;
+constexpr double informationWidthProportion = 0.22;
 constexpr int sliderRowHeight = 24;
-constexpr int controlsContentHeight
-    = sliderRowHeight * 4 + normalizeToggleHeight + controlButtonHeight * 3 + sectionSpacing * 6;
+constexpr int controlsContentHeight = sliderRowHeight * 4 + normalizeToggleHeight + normalizeTargetSpacing
+    + controlButtonHeight * 3 + controlsSectionSpacing * 4;
 constexpr int dialogContentWidth = 500;
 constexpr int dialogContentHeight = 150;
 constexpr int dialogMaximumWindowSize = 4096;
@@ -145,6 +149,10 @@ constexpr int popupMenuTickInsetDivisor = 5;
 constexpr float subMenuArrowWidthRatio = 0.6f;
 constexpr float shortcutFontHeightRatio = 0.75f;
 constexpr float shortcutFontHorizontalScale = 0.95f;
+constexpr float toggleFontHeight = 15.0f;
+constexpr float toggleFontHeightRatio = 0.75f;
+constexpr float toggleTickWidthRatio = 1.1f;
+constexpr int toggleTextSpacing = 6;
 constexpr float maximumButtonFontHeight = 16.0f;
 constexpr float buttonFontHeightRatio = 0.6f;
 constexpr float tableHeaderFontHeightRatio = 0.5f;
@@ -261,8 +269,14 @@ consteval int minimumColumnWidth(const AudioFileTableColumn columnId)
 /// Widths are bounded even during transient zero-sized construction layouts.
 inline PreviewColumns previewColumns(juce::Rectangle<int> bounds)
 {
-    const auto controlsWidth = juce::jlimit(controlsMinimumWidth, controlsMaximumWidth, bounds.getWidth() / 6);
-    const auto informationWidth = juce::jlimit(informationMinimumWidth, informationMaximumWidth, bounds.getWidth() / 4);
+    const auto controlsWidth = juce::jlimit(
+        controlsMinimumWidth, controlsMaximumWidth, static_cast<int>(bounds.getWidth() * controlsWidthProportion)
+    );
+    const auto informationWidth = juce::jlimit(
+        informationMinimumWidth,
+        informationMaximumWidth,
+        static_cast<int>(bounds.getWidth() * informationWidthProportion)
+    );
     const auto controls = bounds.removeFromLeft(juce::jmin(bounds.getWidth(), controlsWidth));
     bounds.removeFromLeft(juce::jmin(bounds.getWidth(), sectionSpacing));
     const auto information = bounds.removeFromLeft(juce::jmin(bounds.getWidth(), informationWidth));
