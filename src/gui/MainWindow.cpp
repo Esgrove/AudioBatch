@@ -67,6 +67,7 @@ MainWindow::MainWindow(const juce::String& name) :
 
     commandManager.registerAllCommandsForTarget(this);
     commandManager.setFirstCommandTarget(this);
+    addKeyListener(commandManager.getKeyMappings());
 
 #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu(this);
@@ -109,6 +110,7 @@ void MainWindow::showAndActivate()
 /// Detaches the menu bar model and clears the global look-and-feel before the owned look-and-feel object is destroyed.
 MainWindow::~MainWindow()
 {
+    removeKeyListener(commandManager.getKeyMappings());
 #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu(nullptr);
 #else
@@ -146,9 +148,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
 #if JUCE_MAC
     switch (topLevelMenuIndex) {
         case 0:
-            menu.addItem(
-                aboutMenuItemId, utils::format("About {}", juce::JUCEApplication::getInstance()->getApplicationName())
-            );
+            menu.addCommandItem(&commandManager, aboutMenuItemId);
             menu.addSeparator();
             menu.addItem(quitMenuItemId, "Quit");
             break;
@@ -171,9 +171,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
         case 3:
             menu.addItem(supportedFormatsMenuItemId, "Normalization Format Support...");
             menu.addSeparator();
-            menu.addItem(
-                aboutMenuItemId, utils::format("About {}", juce::JUCEApplication::getInstance()->getApplicationName())
-            );
+            menu.addCommandItem(&commandManager, aboutMenuItemId);
             break;
         default:
             break;
@@ -201,9 +199,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
         case 2:
             menu.addItem(supportedFormatsMenuItemId, "Normalization Format Support...");
             menu.addSeparator();
-            menu.addItem(
-                aboutMenuItemId, utils::format("About {}", juce::JUCEApplication::getInstance()->getApplicationName())
-            );
+            menu.addCommandItem(&commandManager, aboutMenuItemId);
             break;
         default:
             break;
@@ -233,6 +229,7 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
         case removeSelectedMenuItemId:
         case moveSelectedToTrashMenuItemId:
         case revealSelectedMenuItemId:
+        case aboutMenuItemId:
             // Handled by perform, the menu invokes the command before it reports the choice here.
             break;
         case reanalyzeSelectedMenuItemId:
@@ -244,21 +241,7 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
         case supportedFormatsMenuItemId:
             getAudioBatch().showSupportedNormalizationFormats();
             break;
-        case aboutMenuItemId: {
-            const auto appName = juce::JUCEApplication::getInstance()->getApplicationName();
 
-            juce::AlertWindow::showAsync(
-                juce::MessageBoxOptions::makeOptionsOk(
-                    juce::MessageBoxIconType::InfoIcon,
-                    utils::format("About {}", appName),
-                    utils::aboutMessage(appName),
-                    "OK",
-                    getContentComponent()
-                ),
-                nullptr
-            );
-            break;
-        }
         case quitMenuItemId:
             juce::JUCEApplication::getInstance()->systemRequestedQuit();
             break;
@@ -293,13 +276,17 @@ juce::ApplicationCommandTarget* MainWindow::getNextCommandTarget()
 void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
 {
     commands.addArray(
-        {rescanMenuItemId, revealSelectedMenuItemId, removeSelectedMenuItemId, moveSelectedToTrashMenuItemId}
+        {rescanMenuItemId,
+         revealSelectedMenuItemId,
+         removeSelectedMenuItemId,
+         moveSelectedToTrashMenuItemId,
+         aboutMenuItemId}
     );
 }
 
 /// Describes one command, including the default key presses the menu displays next to its item,
 /// and whether the command can run right now.
-/// AudioBatchComponent::keyPressed handles the shortcuts while the window has keyboard focus.
+/// The window's key mappings handle shortcuts not already consumed by AudioBatchComponent::keyPressed.
 /// On macOS the menu also installs the shortcuts other than plain Delete and Backspace as key equivalents,
 /// which fire when no component consumes the key press, for example while a dialog is open.
 /// A command is therefore inactive while the window is blocked by a dialog or the command has nothing to act on,
@@ -312,6 +299,19 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
     const auto canActOnSelection = !blockedByDialog && audioBatch.hasSelectedRecords();
 
     switch (commandID) {
+        case aboutMenuItemId:
+            result.setInfo(
+                utils::format("About {}", juce::JUCEApplication::getInstance()->getApplicationName()),
+                "Shows application information",
+                "Help",
+                0
+            );
+            result.addDefaultKeypress('i', juce::ModifierKeys::commandModifier);
+#if JUCE_MAC
+            result.addDefaultKeypress('i', juce::ModifierKeys::ctrlModifier);
+#endif
+            result.setActive(!blockedByDialog);
+            break;
         case rescanMenuItemId:
             result.setInfo("Rescan", "Re-runs analysis for all root folders", fileCategory, 0);
             result.addDefaultKeypress(juce::KeyPress::F5Key, juce::ModifierKeys::noModifiers);
@@ -345,6 +345,20 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
 bool MainWindow::perform(const InvocationInfo& info)
 {
     switch (info.commandID) {
+        case aboutMenuItemId: {
+            const auto appName = juce::JUCEApplication::getInstance()->getApplicationName();
+            juce::AlertWindow::showAsync(
+                juce::MessageBoxOptions::makeOptionsOk(
+                    juce::MessageBoxIconType::InfoIcon,
+                    utils::format("About {}", appName),
+                    utils::aboutMessage(appName),
+                    "OK",
+                    getContentComponent()
+                ),
+                nullptr
+            );
+            return true;
+        }
         case rescanMenuItemId:
             getAudioBatch().rescanCurrentRoot();
             return true;
