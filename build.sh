@@ -17,6 +17,10 @@ OPTIONS: All options are optional
     -x | --xcode
         Use Xcode as the build system (macOS only, default is Ninja).
 
+    -o | --open
+        Generate and open the project in the IDE instead of building or running tests.
+        Selects Xcode on macOS and Visual Studio on Windows. Cannot be used with --ninja.
+
     -r | --reuse
         Skip CMake generation and reuse the existing build directory.
 
@@ -39,6 +43,7 @@ init_options() {
     BUILD_TYPE="Release"
     USE_NINJA=false
     USE_XCODE=false
+    OPEN_PROJECT=false
     REUSE_BUILD_DIR=false
     RUN_TESTS=false
 
@@ -53,6 +58,9 @@ init_options() {
                 ;;
             -x | --xcode)
                 USE_XCODE=true
+                ;;
+            -o | --open)
+                OPEN_PROJECT=true
                 ;;
             -r | --reuse)
                 REUSE_BUILD_DIR=true
@@ -74,6 +82,21 @@ init_options() {
         esac
         shift
     done
+
+    if [ "$USE_XCODE" = true ] && [ "$BASH_PLATFORM" != "mac" ]; then
+        print_error_and_exit "--xcode is only supported on macOS."
+    fi
+    if [ "$USE_XCODE" = true ] && [ "$USE_NINJA" = true ]; then
+        print_error_and_exit "--xcode and --ninja cannot be used together."
+    fi
+    if [ "$OPEN_PROJECT" = true ]; then
+        if [ "$USE_NINJA" = true ]; then
+            print_error_and_exit "--open requires an IDE project and cannot be used with --ninja."
+        fi
+        if [ "$BASH_PLATFORM" = "mac" ]; then
+            USE_XCODE=true
+        fi
+    fi
 
     # On Mac, use Ninja by default unless --xcode was specified
     if [ "$BASH_PLATFORM" = "mac" ] && [ "$USE_XCODE" != true ]; then
@@ -287,6 +310,12 @@ if [ "$REUSE_BUILD_DIR" = true ]; then
 else
     check_juce_submodule
     export_cmake_project
+fi
+
+if [ "$OPEN_PROJECT" = true ]; then
+    print_magenta "Opening project in the IDE..."
+    cmake --open "$CMAKE_BUILD_DIR"
+    exit 0
 fi
 
 build_app
