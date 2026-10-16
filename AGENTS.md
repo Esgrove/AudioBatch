@@ -252,6 +252,7 @@ The detailed rules are in `.agents/rules/code-organization.md`.
 - `./format.sh` also formats `CMakeLists.txt` with cmake-format, configured by `.cmake-format.yaml`,
   and the shell scripts with shfmt when it is installed.
   cmake-format runs through `uvx` when it is not installed.
+  The fallback uses Python 3.14 because cmakelang's token scanner is incompatible with Python 3.15.
   After changing `CMakeLists.txt`, run `./format.sh` or cmake-format on it.
 - `.pre-commit-config.yaml` runs clang-format, cmake-format, and basic file checks through [prek](https://prek.j178.dev).
 - CI runs `./format.sh --check`.
