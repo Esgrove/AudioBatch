@@ -84,6 +84,11 @@ else()
     set(ICON_FILE "${CMAKE_SOURCE_DIR}/assets/icon_mac.png")
 endif()
 
+if(APPLE)
+    # Keep the PNG fallback for older macOS versions alongside the layered Icon Composer artwork.
+    set(ICON_COMPOSER_BUNDLE "${CMAKE_SOURCE_DIR}/assets/icon_mac.icon")
+endif()
+
 # Use ccache for compilation caching when available.
 # Must be set before any targets are created so it also covers JUCE and the fetched dependencies.
 # Only enabled for Ninja and Makefile generators,
@@ -257,14 +262,12 @@ juce_add_gui_app(
     BUNDLE_ID com.esgrove.audiobatch
     COMPANY_NAME "Esgrove"
     COMPANY_WEBSITE "https://github.com/esgrove"
-    ICON_BIG ${ICON_FILE}
+    ICON_BIG ${ICON_FILE} ICON_COMPOSER_BUNDLE "${ICON_COMPOSER_BUNDLE}"
     PRODUCT_NAME "AudioBatch"
     VERSION ${APP_BUILD_VERSION}
     PLIST_TO_MERGE
         "<plist version=\"1.0\">
         <dict>
-            <key>CFBundleIconFile</key>
-            <string>AppIcon.icns</string>
             <key>LSApplicationCategoryType</key>
             <string>public.app-category.developer-tools</string>
         </dict>
@@ -632,54 +635,52 @@ if(BUILD_TESTING)
     )
     juce_generate_juce_header(AudioBatchTests)
 
-    # cmake-format: off
-target_sources(
-    AudioBatchTests
-    PRIVATE
-        ${AUDIOBATCH_CORE_SOURCES}
-        ${AUDIOBATCH_CLI_SOURCES}
-        "src/gui/components/AudioInfoPanel.cpp"
-        "src/gui/components/AudioInfoPanel.h"
-        "src/gui/components/CustomLookAndFeel.cpp"
-        "src/gui/components/CustomLookAndFeel.h"
-        "src/gui/components/ThumbnailComponent.cpp"
-        "src/gui/components/ThumbnailComponent.h"
-        "src/gui/FileActivityTracker.cpp"
-        "src/gui/FileActivityTracker.h"
-        "src/gui/ResultsSorting.cpp"
-        "src/gui/ResultsSorting.h"
-        "src/plugins/PluginChainPreparation.cpp"
-        "src/plugins/PluginChainPreparation.h"
-        "src/plugins/PluginProcessing.cpp"
-        "src/plugins/PluginProcessing.h"
-        "src/plugins/PluginProcessingCoordinator.cpp"
-        "src/plugins/PluginProcessingCoordinator.h"
-        "src/serato/SeratoPreviewLoader.cpp"
-        "src/serato/SeratoPreviewLoader.h"
-        "src/serato/SeratoWaveformColouring.cpp"
-        "src/serato/SeratoWaveformColouring.h"
-        "tests/AnalysisTests.cpp"
-        "tests/CacheTests.cpp"
-        "tests/CliTests.cpp"
-        "tests/FileActivityTests.cpp"
-        "tests/FormatTests.cpp"
-        "tests/GuiFontTests.cpp"
-        "tests/MetadataTests.cpp"
-        "tests/NormalizationTests.cpp"
-        "tests/ProcessingTests.cpp"
-        "tests/SeratoOverviewTests.cpp"
-        "tests/SeratoPreviewLoaderTests.cpp"
-        "tests/SeratoPreviewTests.cpp"
-        "tests/SeratoTagReaderTests.cpp"
-        "tests/SeratoTagsTests.cpp"
-        "tests/SortingTests.cpp"
-        "tests/TestHelpers.cpp"
-        "tests/TestHelpers.h"
-        "tests/TestMain.cpp"
-        "tests/TestSuites.h"
-        "tests/UtilsTests.cpp"
-)
-# cmake-format: on
+    target_sources(
+        AudioBatchTests
+        PRIVATE
+            ${AUDIOBATCH_CORE_SOURCES}
+            ${AUDIOBATCH_CLI_SOURCES}
+            "src/gui/components/AudioInfoPanel.cpp"
+            "src/gui/components/AudioInfoPanel.h"
+            "src/gui/components/CustomLookAndFeel.cpp"
+            "src/gui/components/CustomLookAndFeel.h"
+            "src/gui/components/ThumbnailComponent.cpp"
+            "src/gui/components/ThumbnailComponent.h"
+            "src/gui/FileActivityTracker.cpp"
+            "src/gui/FileActivityTracker.h"
+            "src/gui/ResultsSorting.cpp"
+            "src/gui/ResultsSorting.h"
+            "src/plugins/PluginChainPreparation.cpp"
+            "src/plugins/PluginChainPreparation.h"
+            "src/plugins/PluginProcessing.cpp"
+            "src/plugins/PluginProcessing.h"
+            "src/plugins/PluginProcessingCoordinator.cpp"
+            "src/plugins/PluginProcessingCoordinator.h"
+            "src/serato/SeratoPreviewLoader.cpp"
+            "src/serato/SeratoPreviewLoader.h"
+            "src/serato/SeratoWaveformColouring.cpp"
+            "src/serato/SeratoWaveformColouring.h"
+            "tests/AnalysisTests.cpp"
+            "tests/CacheTests.cpp"
+            "tests/CliTests.cpp"
+            "tests/FileActivityTests.cpp"
+            "tests/FormatTests.cpp"
+            "tests/GuiFontTests.cpp"
+            "tests/MetadataTests.cpp"
+            "tests/NormalizationTests.cpp"
+            "tests/ProcessingTests.cpp"
+            "tests/SeratoOverviewTests.cpp"
+            "tests/SeratoPreviewLoaderTests.cpp"
+            "tests/SeratoPreviewTests.cpp"
+            "tests/SeratoTagReaderTests.cpp"
+            "tests/SeratoTagsTests.cpp"
+            "tests/SortingTests.cpp"
+            "tests/TestHelpers.cpp"
+            "tests/TestHelpers.h"
+            "tests/TestMain.cpp"
+            "tests/TestSuites.h"
+            "tests/UtilsTests.cpp"
+    )
 
     target_include_directories(AudioBatchTests PRIVATE "${CMAKE_SOURCE_DIR}/src")
     target_link_libraries(AudioBatchTests PRIVATE Assets)
@@ -696,26 +697,26 @@ target_sources(
     endif()
 
     # cmake-format: off
-target_link_libraries(
-    AudioBatchTests
-    PRIVATE
-        GTest::gtest
-        ${AUDIOBATCH_SQLITE_TARGET}
-        ebur128
-        fmt::fmt
-        tag
-        juce::juce_audio_basics
-        juce::juce_audio_formats
-        juce::juce_audio_processors
-        juce::juce_audio_utils
-        juce::juce_core
-        juce::juce_data_structures
-        juce::juce_events
-    PUBLIC
-        juce::juce_recommended_config_flags
-        juce::juce_recommended_warning_flags
-)
-# cmake-format: on
+    target_link_libraries(
+        AudioBatchTests
+        PRIVATE
+            GTest::gtest
+            ${AUDIOBATCH_SQLITE_TARGET}
+            ebur128
+            fmt::fmt
+            tag
+            juce::juce_audio_basics
+            juce::juce_audio_formats
+            juce::juce_audio_processors
+            juce::juce_audio_utils
+            juce::juce_core
+            juce::juce_data_structures
+            juce::juce_events
+        PUBLIC
+            juce::juce_recommended_config_flags
+            juce::juce_recommended_warning_flags
+    )
+    # cmake-format: on
 
     include(GoogleTest)
     gtest_discover_tests(AudioBatchTests PROPERTIES RUN_SERIAL TRUE)
@@ -796,7 +797,6 @@ target_link_libraries(
         tag
         juce::juce_audio_basics
         juce::juce_audio_formats
-        # Plugin scanning for the plugin listing, which also pulls in the JUCE GUI modules
         juce::juce_audio_processors
         juce::juce_core
         juce::juce_data_structures
