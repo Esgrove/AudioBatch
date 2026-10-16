@@ -219,6 +219,8 @@ The detailed rules are in `.agents/rules/code-organization.md`.
 
 ## Testing
 
+- Only add lightweight, focused unit tests that complete in under one second.
+  Do not add GUI tests, screenshot comparisons, or rendering-based assertions.
 - Build the debug preset and run `ctest --test-dir cmake-build-mac-debug --output-on-failure`,
   or run the `AudioBatchTests` executable directly for the full test log.
 - Add tests for new behaviour in the shared core and the CLI parsing.

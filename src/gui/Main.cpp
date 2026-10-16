@@ -10,6 +10,12 @@
 
 #include <JuceHeader.h>
 
+#if JUCE_WINDOWS
+#include <array>
+#include <bit>
+#include <windows.h>
+#endif
+
 namespace audiobatch
 {
 namespace
@@ -20,6 +26,64 @@ bool isVersionRequest(const juce::String& commandLine)
     const juce::ArgumentList arguments {"AudioBatch", commandLine};
     return arguments.containsOption("--version|-V");
 }
+
+#if JUCE_WINDOWS
+/// Identifies the existing executable without granting foreground permission to unrelated applications.
+struct ForegroundPermissionRequest {
+    juce::String applicationName;
+    juce::String executablePath;
+    DWORD currentProcessId;
+};
+
+/// Transfers a user launch's foreground permission to an existing instance before JUCE forwards its command line.
+/// Windows otherwise allows the new process, but not the background instance, to activate a window.
+void allowExistingInstanceToActivate()
+{
+    const ForegroundPermissionRequest request {
+        .applicationName = ProjectInfo::projectName,
+        .executablePath = juce::File::getSpecialLocation(juce::File::currentExecutableFile).getFullPathName(),
+        .currentProcessId = GetCurrentProcessId(),
+    };
+    EnumWindows(
+        [](HWND window, const LPARAM context) -> BOOL {
+            const auto& [applicationName, executablePath, currentProcessId]
+                = *std::bit_cast<const ForegroundPermissionRequest*>(context);
+            DWORD processId = 0;
+            GetWindowThreadProcessId(window, &processId);
+            if (processId == 0 || processId == currentProcessId) {
+                return TRUE;
+            }
+            // Scan workers use the same executable, but never create the main application's titled window.
+            constexpr std::size_t maximumWindowTitleLength = 256;
+            std::array<wchar_t, maximumWindowTitleLength> windowTitle {};
+            if (GetWindowTextW(window, windowTitle.data(), static_cast<int>(windowTitle.size())) == 0
+                || juce::String(windowTitle.data()).upToFirstOccurrenceOf(" - ", false, false) != applicationName)
+            {
+                return TRUE;
+            }
+            const std::unique_ptr<void, decltype(&CloseHandle)> process {
+                OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId), &CloseHandle
+            };
+            if (process == nullptr) {
+                return TRUE;
+            }
+            constexpr std::size_t maximumWindowsPathLength = 32768;
+            std::array<wchar_t, maximumWindowsPathLength> executablePathBuffer {};
+            auto length = static_cast<DWORD>(executablePathBuffer.size());
+            if (QueryFullProcessImageNameW(process.get(), 0, executablePathBuffer.data(), &length) != 0
+                && executablePath.equalsIgnoreCase(juce::String(executablePathBuffer.data(), length)))
+            {
+                if (AllowSetForegroundWindow(processId) == 0) {
+                    utils::logDebug("Windows did not transfer foreground permission to the existing instance");
+                }
+                return FALSE;
+            }
+            return TRUE;
+        },
+        std::bit_cast<LPARAM>(&request)
+    );
+}
+#endif
 
 /// JUCE application entry point for the desktop GUI build.
 class AudioBatchApplication : public juce::JUCEApplication
@@ -48,7 +112,14 @@ public:
     bool moreThanOneInstanceAllowed() override
     {
         const auto commandLine = getCommandLineParameters();
-        return isVersionRequest(commandLine) || isPluginScanWorkerCommandLine(commandLine);
+        const auto independent = isVersionRequest(commandLine) || isPluginScanWorkerCommandLine(commandLine);
+#if JUCE_WINDOWS
+        const juce::ArgumentList arguments {getApplicationName(), commandLine};
+        if (!independent && !arguments.containsOption("--headless|-H")) {
+            allowExistingInstanceToActivate();
+        }
+#endif
+        return independent;
     }
 
     /// Starts the application: sets up file logging, creates the main window,
@@ -134,11 +205,17 @@ public:
         }
     }
 
-    /// Logs launches of a second instance.
-    /// The arguments are only recorded, this instance keeps running unchanged.
+    /// Activates the existing Windows window on a normal relaunch, preserving deliberate headless launches.
+    /// macOS keeps its existing platform activation behavior.
     void anotherInstanceStarted(const juce::String& commandLine) override
     {
         utils::logInfo("Another instance started with args: {}", commandLine);
+#if JUCE_WINDOWS
+        const juce::ArgumentList arguments {getApplicationName(), commandLine};
+        if (mainWindow != nullptr && !quitRequested && !arguments.containsOption("--headless|-H")) {
+            mainWindow->showAndActivate();
+        }
+#endif
     }
 
 private:

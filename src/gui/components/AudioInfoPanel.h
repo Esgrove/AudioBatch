@@ -1,6 +1,6 @@
-/// Compact metadata panel shown beside the waveform preview in the GUI.
-/// Declares AudioInfoPanel, a two-column list of field names and values
-/// that shows the format, levels, and status of the selected file.
+/// Selected-file inspector beside the waveform preview.
+/// Keeps the filename and four analysis metrics visible above independently scrolling file details.
+/// Pending and failed records also show their status.
 
 #pragma once
 
@@ -9,20 +9,41 @@
 
 #include <JuceHeader.h>
 
-#include <functional>
+#include <array>
 #include <memory>
-#include <utility>
 #include <vector>
 
 namespace audiobatch
 {
-/// One row of the panel: the field name and its value.
-using AudioInfoRow = std::pair<juce::String, juce::String>;
+/// One read-only detail. Compact fields share a row with the next compact field.
+struct AudioInfoRow {
+    juce::String field;
+    juce::String value;
+    bool compact = false;
+};
 
-/// Compact two-column metadata panel displayed beside the waveform preview.
+/// A labelled analysis value with an explicit unit and a restrained card background.
+class AudioInfoMetric final : public juce::Component
+{
+public:
+    AudioInfoMetric(const juce::String& name, const juce::String& caption, const juce::String& unit);
+
+    void setValue(const juce::String& value);
+    void paint(juce::Graphics& graphics) override;
+    void resized() override;
+
+private:
+    juce::Label captionLabel;
+    juce::Label unitLabel;
+    juce::Label valueLabel;
+};
+
+/// Read-only inspector with a fixed summary and a vertically scrolling details region.
 class AudioInfoPanel : public juce::Component
 {
 public:
+    AudioInfoPanel();
+
     void clear();
 
     void showRecord(
@@ -32,10 +53,6 @@ public:
     );
 
     [[nodiscard]] int getPreferredHeight() const;
-
-    void setRows(std::vector<AudioInfoRow> newRows);
-
-    void setPreferredHeightChangedCallback(std::function<void()> callback);
 
     void paint(juce::Graphics& graphics) override;
 
@@ -49,11 +66,26 @@ public:
     static constexpr int horizontalPadding = 10;
 
 private:
-    void ensureLabelCount(std::size_t requiredCount);
+    [[nodiscard]] int getErrorHeight(int width) const;
+    [[nodiscard]] int getDetailsRowCount() const;
 
+    void ensureLabelCount(std::size_t requiredCount);
+    void setRows(std::vector<AudioInfoRow> newRows);
+
+    juce::Label filenameLabel {"File"};
+    juce::Label statusLabel {"Status"};
+    std::array<AudioInfoMetric, 4> metrics {
+        AudioInfoMetric {"Sample peak", "Sample peak", "dBFS"},
+        AudioInfoMetric {"True peak", "True peak", "dBTP"},
+        AudioInfoMetric {"Integrated loudness", "Integrated", "LUFS"},
+        AudioInfoMetric {"Max short-term", "Short-term", "LUFS"},
+    };
+    juce::Component detailsContent;
+    juce::Viewport detailsViewport;
+    juce::Label errorLabel {"Error"};
     std::vector<AudioInfoRow> rows;
     std::vector<std::unique_ptr<juce::Label>> fieldLabels;
     std::vector<std::unique_ptr<juce::Label>> valueLabels;
-    std::function<void()> onPreferredHeightChanged;
+    juce::String displayedPath;
 };
 }  // namespace audiobatch

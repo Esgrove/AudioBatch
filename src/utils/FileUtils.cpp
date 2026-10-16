@@ -73,7 +73,7 @@ public:
     }
 
     /// Aborts the delete when the shell will not recycle the item.
-    HRESULT STDMETHODCALLTYPE PreDeleteItem(DWORD flags, IShellItem* /*item*/) override
+    HRESULT STDMETHODCALLTYPE PreDeleteItem(const DWORD flags, IShellItem* /*item*/) override
     {
         if ((flags & static_cast<DWORD>(TSF_DELETE_RECYCLE_IF_POSSIBLE)) == 0) {
             refusedPermanentDelete = true;

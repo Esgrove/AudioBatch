@@ -236,7 +236,7 @@ CustomLookAndFeel::CustomLookAndFeel(const bool darkModeEnabled) : darkTheme(dar
 Button* CustomLookAndFeel::createDocumentWindowButton(const int buttonType)
 {
     Path shape;
-    const auto crossThickness = 0.15f;
+    constexpr auto crossThickness = 0.15f;
 
     if (buttonType == DocumentWindow::closeButton) {
         shape.addLineSegment({0.0f, 0.0f, 1.0f, 1.0f}, crossThickness);
@@ -501,8 +501,8 @@ void CustomLookAndFeel::drawTooltip(Graphics& graphics, const String& text, cons
 /// Shared by drawTooltip so the drawn text and its measured size always agree.
 TextLayout CustomLookAndFeel::layoutTooltipText(const String& text, const Colour colour) noexcept
 {
-    const float tooltipFontSize = 13.0f;
-    const int maxToolTipWidth = 400;
+    constexpr float tooltipFontSize = 13.0f;
+    constexpr int maxToolTipWidth = 400;
 
     AttributedString attributedText;
     attributedText.setJustification(Justification::centred);

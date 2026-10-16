@@ -42,7 +42,6 @@ void AudioBatchComponent::configureResultsTable()
 /// Creates the waveform preview, transport and zoom controls, and the metadata info panel.
 void AudioBatchComponent::configurePreviewControls()
 {
-    // Default to a larger list view while allowing the lower preview area to be resized.
     mainVerticalLayout.setItemLayout(
         0,
         layout::resultsTableMinimumHeight,
@@ -54,6 +53,12 @@ void AudioBatchComponent::configurePreviewControls()
         2, layout::previewMinimumHeight, layout::previewMaximumProportion, layout::previewPreferredProportion
     );
     addAndMakeVisible(waveformResizeBar);
+
+    controlsViewport.setViewedComponent(&controlsContent, false);
+    controlsViewport.setScrollBarsShown(true, false);
+    controlsViewport.setScrollBarThickness(layout::scrollBarThickness);
+    controlsViewport.setName("Preview and processing controls");
+    addAndMakeVisible(controlsViewport);
 
     thumbnail = std::make_unique<ThumbnailComponent>(previewPlayer.getFormatManager(), previewPlayer.getTransport());
     addAndMakeVisible(thumbnail.get());
@@ -79,7 +84,7 @@ void AudioBatchComponent::configurePreviewControls()
     startStopButton.setColour(juce::TextButton::buttonOnColourId, juce::CustomLookAndFeel::green());
     startStopButton.setTooltip("Start or stop preview playback for the selected file.");
     startStopButton.onClick = [this] { previewPlayer.togglePlayback(); };
-    addAndMakeVisible(startStopButton);
+    controlsContent.addAndMakeVisible(startStopButton);
 
     zoomSlider.setRange(zoom_range::minimumPercent, zoom_range::maximumPercent, 1);
     zoomSlider.setNumDecimalPlacesToDisplay(0);
@@ -88,22 +93,17 @@ void AudioBatchComponent::configurePreviewControls()
     zoomSlider.setTextValueSuffix("%");
     zoomSlider.setTooltip("Adjust waveform zoom. You can also use the mouse wheel over the waveform.");
     zoomSlider.onValueChange = [this] { zoomLevelChanged(zoomSlider.getValue() * zoom_range::percentToScaleFactor); };
-    addAndMakeVisible(zoomSlider);
+    controlsContent.addAndMakeVisible(zoomSlider);
 
     zoomLabel.setText("Zoom", juce::dontSendNotification);
-    zoomLabel.attachToComponent(&zoomSlider, true);
+    zoomLabel.setJustificationType(juce::Justification::centredLeft);
     zoomSlider.setTextBoxStyle(
-        juce::Slider::TextBoxLeft, false, layout::zoomTextBoxWidth, zoomSlider.getTextBoxHeight()
+        juce::Slider::TextBoxRight, false, layout::zoomTextBoxWidth, zoomSlider.getTextBoxHeight()
     );
-    addAndMakeVisible(zoomLabel);
+    controlsContent.addAndMakeVisible(zoomLabel);
 
     audioInfo = std::make_unique<AudioInfoPanel>();
-    audioInfoViewport.setViewedComponent(audioInfo.get(), false);
-    audioInfoViewport.setScrollBarsShown(true, false);
-    audioInfoViewport.setScrollBarThickness(8);
-    addAndMakeVisible(audioInfoViewport);
-
-    audioInfo->setPreferredHeightChangedCallback([this] { resized(); });
+    addAndMakeVisible(*audioInfo);
 }
 
 /// Creates the plugin chain, per-file gain, normalization toggle, process, and settings controls.
@@ -120,11 +120,11 @@ void AudioBatchComponent::configureProcessingControls()
             pluginChain->showMenu(pluginButton);
         }
     };
-    addAndMakeVisible(pluginButton);
+    controlsContent.addAndMakeVisible(pluginButton);
 
-    gainLabel.setText("Gain", juce::dontSendNotification);
+    gainLabel.setText("Input gain", juce::dontSendNotification);
     gainLabel.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(gainLabel);
+    controlsContent.addAndMakeVisible(gainLabel);
 
     gainSlider.setRange(-gain_range::maximumDecibels, gain_range::maximumDecibels, gain_range::stepDecibels);
     gainSlider.setValue(0.0, juce::dontSendNotification);
@@ -139,7 +139,7 @@ void AudioBatchComponent::configureProcessingControls()
         const auto value = static_cast<float>(gainSlider.getValue());
         applyCustomGainToSelection(value, !juce::approximatelyEqual(value, 0.0f));
     };
-    addAndMakeVisible(gainSlider);
+    controlsContent.addAndMakeVisible(gainSlider);
 
     gainClearButton.setTooltip("Clear per-file gain for the current selection.");
     gainClearButton.setEnabled(false);
@@ -147,32 +147,33 @@ void AudioBatchComponent::configureProcessingControls()
         gainSlider.setValue(0.0, juce::dontSendNotification);
         applyCustomGainToSelection(0.0f, false);
     };
-    addAndMakeVisible(gainClearButton);
+    controlsContent.addAndMakeVisible(gainClearButton);
 
     normalizeBeforePluginToggle.setTooltip(
         "When enabled, files without a custom gain are normalized to the selected peak or loudness target "
         "before the plugin chain."
     );
-    addAndMakeVisible(normalizeBeforePluginToggle);
+    controlsContent.addAndMakeVisible(normalizeBeforePluginToggle);
 
     forceOverwriteToggle.setTooltip(
         "When enabled, normalizing or processing replaces an existing output file with the same name. "
         "The replaced file is moved to the system trash."
     );
-    addAndMakeVisible(forceOverwriteToggle);
+    controlsContent.addAndMakeVisible(forceOverwriteToggle);
 
     normalizationTargetControl.loadSettings();
-    addAndMakeVisible(normalizationTargetControl);
+    controlsContent.addAndMakeVisible(normalizationTargetControl);
 
     processButton.setTooltip("Process selected files through the plugin chain.");
     updateProcessButtonState();
-    processButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
+    processButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::blue());
+    processButton.setColour(juce::TextButton::textColourOffId, juce::CustomLookAndFeel::greyDark());
     processButton.onClick = [this] { processSelectedRecords(); };
     addAndMakeVisible(processButton);
 
     settingsButton.setTooltip("Open audio device settings.");
     settingsButton.onClick = [this] { showAudioSettingsWindow(); };
-    addAndMakeVisible(settingsButton);
+    controlsContent.addAndMakeVisible(settingsButton);
 }
 
 /// Connects the per-file progress reports of the coordinators to the activity tracker on the message thread.
@@ -331,8 +332,18 @@ AudioBatchComponent::AudioBatchComponent() :
     connectCoordinatorCallbacks();
     logStartupCheckpoint("analysis and normalization callbacks configured");
 
+#if JUCE_WINDOWS
+    // Opening Windows audio devices can take seconds and consume the launch's foreground opportunity.
+    // Let the main window activate before running that work on the message thread.
+    juce::MessageManager::callAsync([safeThis = SafePointer(this)] {
+        if (safeThis != nullptr) {
+            safeThis->previewPlayer.requestDeviceAccess();
+        }
+    });
+#else
     previewPlayer.requestDeviceAccess();
-    logStartupCheckpoint("audio device access requested");
+#endif
+    logStartupCheckpoint("audio device access requested or scheduled");
 
     setOpaque(true);
     setSize(layout::initialComponentWidth, layout::initialComponentHeight);
@@ -406,7 +417,8 @@ juce::Rectangle<int> AudioBatchComponent::getOverallProgressBounds() const
     };
 }
 
-/// Lays out the top bar, results table, resize bar, waveform preview, and the control column.
+/// Lays out the table and three preview columns.
+/// Only secondary controls scroll, leaving Process and the info panel's summary in view.
 void AudioBatchComponent::resized()
 {
     auto bounds = getLocalBounds().reduced(4);
@@ -424,67 +436,42 @@ void AudioBatchComponent::resized()
     );
     updateResultsTableColumnWidths();
 
-    auto previewArea = thumbnail->getBounds();
+    const auto columns = layout::previewColumns(thumbnail->getBounds());
+    audioInfo->setBounds(columns.information);
+    thumbnail->setBounds(columns.waveform);
 
-    const auto space = juce::jmin(280, juce::jmax(180, juce::roundToIntAccurate(bounds.getWidth() * 0.22)));
-    auto control = previewArea.removeFromLeft(space);
+    auto controls = columns.controls;
+    processButton.setBounds(controls.removeFromBottom(layout::processButtonHeight));
+    controls.removeFromBottom(layout::sectionSpacing);
+    controlsViewport.setBounds(controls);
+    controlsContent.setSize(
+        juce::jmax(0, controls.getWidth() - layout::scrollBarThickness),
+        juce::jmax(controls.getHeight(), layout::controlsContentHeight)
+    );
+    auto content = controlsContent.getLocalBounds();
+    auto playbackRow = content.removeFromTop(layout::controlButtonHeight);
+    startStopButton.setBounds(playbackRow.removeFromLeft((playbackRow.getWidth() - layout::sectionSpacing) / 2));
+    playbackRow.removeFromLeft(layout::sectionSpacing);
+    settingsButton.setBounds(playbackRow);
 
-    constexpr auto buttonGap = layout::sectionSpacing;
+    content.removeFromTop(layout::sectionSpacing);
+    auto zoomRow = content.removeFromTop(layout::sliderRowHeight);
+    zoomLabel.setBounds(zoomRow.removeFromLeft(layout::sliderLabelWidth));
+    zoomSlider.setBounds(zoomRow);
 
-    // Bottom row: Process and Play/Stop.
-    auto buttonsBottom = control.removeFromBottom(layout::controlButtonHeight);
-    const auto bottomButtonWidth = (buttonsBottom.getWidth() - buttonGap) / 2;
-    processButton.setBounds(buttonsBottom.removeFromLeft(bottomButtonWidth));
-    buttonsBottom.removeFromLeft(buttonGap);
-    startStopButton.setBounds(buttonsBottom);
+    content.removeFromTop(layout::sectionSpacing * 2);
+    auto gainCaption = content.removeFromTop(layout::sliderRowHeight);
+    gainClearButton.setBounds(gainCaption.removeFromRight(layout::gainClearButtonWidth));
+    gainLabel.setBounds(gainCaption);
+    gainSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
 
-    control.removeFromBottom(4);
-
-    // Row above: Audio Settings and Plugins.
-    auto buttonsTop = control.removeFromBottom(layout::controlButtonHeight);
-    const auto topButtonWidth = (buttonsTop.getWidth() - buttonGap) / 2;
-    settingsButton.setBounds(buttonsTop.removeFromLeft(topButtonWidth));
-    buttonsTop.removeFromLeft(buttonGap);
-    pluginButton.setBounds(buttonsTop);
-
-    control.removeFromBottom(8);
-
-    // The normalize and force overwrite toggles share a row above the buttons.
-    auto toggleRow = control.removeFromBottom(layout::normalizeToggleHeight);
-    normalizeBeforePluginToggle.setBounds(toggleRow.removeFromLeft((toggleRow.getWidth() - buttonGap) / 2));
-    toggleRow.removeFromLeft(buttonGap);
-    forceOverwriteToggle.setBounds(toggleRow);
-
-    control.removeFromBottom(layout::sectionSpacing);
-
-    // The normalization mode and target share the row above the toggles.
-    normalizationTargetControl.setBounds(control.removeFromBottom(layout::normalizeToggleHeight));
-
-    control.removeFromBottom(layout::sectionSpacing);
-
-    zoomSlider.setBounds(control.removeFromBottom(zoomSlider.getTextBoxHeight()));
-
-    control.removeFromBottom(layout::sectionSpacing);
-
-    // Gain row: inline label, slider, then the clear button on the right.
-    auto gainRow = control.removeFromBottom(gainSlider.getTextBoxHeight());
-    gainClearButton.setBounds(gainRow.removeFromRight(layout::gainClearButtonWidth));
-    gainRow.removeFromRight(4);
-    constexpr auto gainLabelWidth = 36;
-    gainLabel.setBounds(gainRow.removeFromLeft(gainLabelWidth));
-    gainSlider.setBounds(gainRow);
-
-    control.removeFromBottom(8);
-
-    audioInfoViewport.setBounds(control);
-    const auto viewportWidth = audioInfoViewport.getMaximumVisibleWidth();
-    const auto preferredHeight = audioInfo->getPreferredHeight();
-    const auto viewportHeight = audioInfoViewport.getMaximumVisibleHeight();
-    audioInfo->setSize(viewportWidth, juce::jmax(viewportHeight, preferredHeight));
-
-    previewArea.removeFromLeft(layout::sectionSpacing);
-
-    thumbnail->setBounds(previewArea);
+    content.removeFromTop(layout::sectionSpacing * 2);
+    pluginButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
+    content.removeFromTop(layout::sectionSpacing);
+    normalizeBeforePluginToggle.setBounds(content.removeFromTop(layout::normalizeToggleHeight));
+    normalizationTargetControl.setBounds(content.removeFromTop(layout::controlButtonHeight));
+    content.removeFromTop(layout::sectionSpacing);
+    forceOverwriteToggle.setBounds(content.removeFromTop(layout::normalizeToggleHeight));
 }
 
 /// Distributes leftover table width between the name and path columns while preserving their current ratio.

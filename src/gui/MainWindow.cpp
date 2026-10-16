@@ -11,6 +11,10 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#if JUCE_WINDOWS
+#include <windows.h>
+#endif
+
 namespace audiobatch
 {
 /// Menu ids and window limits of the main window.
@@ -33,12 +37,6 @@ enum MenuItemId : std::uint8_t {
     moveSelectedToTrashMenuItemId,
     revealSelectedMenuItemId,
 };
-
-/// Smallest width in pixels the main window can be resized to,
-/// chosen so the results table and the preview controls below it stay usable.
-constexpr int minimumWindowWidth = 800;
-/// Smallest height in pixels the main window can be resized to.
-constexpr int minimumWindowHeight = 600;
 }  // namespace
 
 /// Builds the window, installs the custom look-and-feel as the global default,
@@ -83,12 +81,12 @@ MainWindow::MainWindow(const juce::String& name) :
     logStartupCheckpoint("menu bar configured");
 
     setResizable(true, true);
-    setResizeLimits(minimumWindowWidth, minimumWindowHeight, 8192, 8192);
-#if JUCE_WINDOWS
-    centreWithSize(layout::defaultWindowWidth, layout::defaultWindowHeight);
-#else
-    centreWithSize(getWidth(), getHeight());
-#endif
+    setResizeLimits(layout::minimumWindowWidth, layout::minimumWindowHeight, 8192, 8192);
+    if (const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()) {
+        setBounds(layout::initialWindowBounds(display->userBounds.toNearestInt()));
+    } else {
+        centreWithSize(layout::defaultWindowWidth, layout::defaultWindowHeight);
+    }
     logStartupCheckpoint("constructor complete");
 }
 
@@ -103,6 +101,13 @@ void MainWindow::showAndActivate()
     toFront(true);
 
     if (auto* peer = getPeer()) {
+#if JUCE_WINDOWS
+        // JUCE's Windows peer only calls BringWindowToTop and SetFocus, neither of which requests foreground ownership.
+        auto* const windowHandle = static_cast<HWND>(peer->getNativeHandle());
+        if (SetForegroundWindow(windowHandle) == 0 && GetForegroundWindow() != windowHandle) {
+            utils::logWarn("Windows did not grant foreground activation to the main window");
+        }
+#endif
         peer->grabFocus();
     }
 
