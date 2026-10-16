@@ -60,7 +60,7 @@ constexpr double resultsTablePreferredProportion = -0.5;
 constexpr double resizeBarHeight = 6.0;
 constexpr double previewMinimumHeight = 220.0;
 constexpr double previewMaximumProportion = -0.7;
-constexpr double previewPreferredProportion = -0.3;
+constexpr double previewPreferredProportion = -0.25;
 
 constexpr int controlButtonHeight = 28;
 constexpr int processButtonHeight = 38;
