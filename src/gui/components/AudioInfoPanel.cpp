@@ -179,7 +179,7 @@ void AudioInfoPanel::showRecord(
 
     std::vector<AudioInfoRow> newRows;
     if (record.isReady()) {
-        metrics[0].setValue(formatPeakCompact(record.overallPeak));
+        metrics[0].setValue(formatPeakCompact(static_cast<double>(record.overallPeak)));
         metrics[1].setValue(formatTruePeakCompact(record.overallTruePeak));
         metrics[2].setValue(formatLoudnessCompact(record.integratedLufs));
         metrics[3].setValue(formatLoudnessCompact(record.maxShortTermLufs));
@@ -202,8 +202,11 @@ void AudioInfoPanel::showRecord(
         newRows.push_back({.field = "Samples", .value = juce::String(record.lengthInSamples)});
         newRows.push_back({
             .field = "Peak L / R",
-            .value
-            = utils::format("{} / {} dBFS", formatPeakCompact(record.peakLeft), formatPeakCompact(record.peakRight)),
+            .value = utils::format(
+                "{} / {} dBFS",
+                formatPeakCompact(static_cast<double>(record.peakLeft)),
+                formatPeakCompact(static_cast<double>(record.peakRight))
+            ),
         });
     }
     appendTrackInfo(newRows, data);
