@@ -34,72 +34,44 @@ public:
     ThumbnailComponent& operator=(ThumbnailComponent&&) = delete;
 
     bool isInterestedInFileDrag(const juce::StringArray& /*files*/) override;
-
-    void filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/) override;
-
-    void changeListenerCallback(ChangeBroadcaster* source) override;
-
-    void mouseDown(const juce::MouseEvent& event) override;
-
-    void mouseDrag(const juce::MouseEvent& event) override;
-
-    void mouseUp(const juce::MouseEvent& event) override;
-
-    void mouseDoubleClick(const juce::MouseEvent& event) override;
-
-    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
-
     bool keyPressed(const juce::KeyPress& key) override;
-
+    void changeListenerCallback(ChangeBroadcaster* source) override;
+    void filesDropped(const juce::StringArray& files, int /*x*/, int /*y*/) override;
     void focusGained(FocusChangeType cause) override;
-
     void focusLost(FocusChangeType cause) override;
-
+    void mouseDoubleClick(const juce::MouseEvent& event) override;
+    void mouseDown(const juce::MouseEvent& event) override;
+    void mouseDrag(const juce::MouseEvent& event) override;
+    void mouseUp(const juce::MouseEvent& event) override;
+    void mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel) override;
     void paint(juce::Graphics& graphics) override;
-
     void resized() override;
 
-    juce::URL getLastDroppedFile() const noexcept;
-
-    juce::StringArray getLastDroppedFiles() const;
-
     juce::MemoryBlock saveToCacheData() const;
+    juce::StringArray getLastDroppedFiles() const;
+    juce::URL getLastDroppedFile() const noexcept;
 
     bool loadFromCacheData(const juce::MemoryBlock& waveformData);
 
-    void setRange(juce::Range<double> newRange);
-
-    void setMouseWheelZoomCallback(std::function<void(double)> callback);
-
-    void setMouseWheelGainCallback(std::function<void(float)> callback);
-
-    void setThumbnailFullyLoadedCallback(std::function<void()> callback);
-
-    void setURL(const juce::URL& url);
-
-    void setZoom(double zoomLevel);
-
     void setDisplayGain(float linearGain);
-
-    void setSeratoOverview(std::shared_ptr<const serato::Overview> overview);
-
+    void setMouseWheelGainCallback(std::function<void(float)> callback);
+    void setMouseWheelZoomCallback(std::function<void(double)> callback);
+    void setRange(juce::Range<double> newRange);
     void setSeratoMarkers(std::shared_ptr<const serato::Markers> markers);
+    void setSeratoOverview(std::shared_ptr<const serato::Overview> overview);
+    void setThumbnailFullyLoadedCallback(std::function<void()> callback);
+    void setURL(const juce::URL& url);
+    void setZoom(double zoomLevel);
 
 private:
     [[nodiscard]] bool canMoveTransport() const noexcept;
-
     [[nodiscard]] double xToTime(float xPosition) const;
-
     [[nodiscard]] float timeToX(double time) const;
-
     [[nodiscard]] juce::Rectangle<int> waveformBounds() const;
 
-    void jumpToHotCue(int slot);
-
     void drawCueMarkers(juce::Graphics& graphics) const;
-
+    void jumpToHotCue(int slot);
     void timerCallback() override;
-
     void updateCursorPosition();
 
     juce::AudioThumbnail thumbnail;
@@ -116,8 +88,8 @@ private:
     std::shared_ptr<const serato::Overview> seratoOverview;
     std::shared_ptr<const serato::Markers> seratoMarkers;
 
-    bool hasNotifiedFullyLoaded = false;
-    bool isFollowingTransport = false;
-    float displayGain = 1.0f;
+    bool hasNotifiedFullyLoaded {false};
+    bool isFollowingTransport {false};
+    float displayGain {1.0f};
 };
 }  // namespace audiobatch
