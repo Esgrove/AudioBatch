@@ -1,5 +1,5 @@
-/// Implementation of the main GUI component: construction, layout, the results table, selection,
-/// sorting, the status label, and dialog windows.
+/// Implementation of the main GUI component:
+/// construction, layout, the results table, selection, sorting, the status label, and dialog windows.
 /// The other AudioBatchComponent*.cpp files implement the remaining member functions by topic.
 
 #include "gui/AudioBatchComponent.h"
@@ -85,7 +85,7 @@ void AudioBatchComponent::configurePreviewControls()
     startStopButton.setColour(juce::TextButton::buttonOnColourId, juce::CustomLookAndFeel::green());
     startStopButton.setTooltip("Start or stop preview playback for the selected file.");
     startStopButton.onClick = [this] { previewPlayer.togglePlayback(); };
-    controlsContent.addAndMakeVisible(startStopButton);
+    addAndMakeVisible(startStopButton);
 
     zoomSlider.setRange(zoom_range::minimumPercent, zoom_range::maximumPercent, 1);
     zoomSlider.setNumDecimalPlacesToDisplay(0);
@@ -133,7 +133,9 @@ void AudioBatchComponent::configureProcessingControls()
     gainSlider.setTextValueSuffix(" dB");
     gainSlider.setTooltip("Per-file gain in dB. Non-zero values override normalization for the file.");
     gainSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    gainSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 64, gainSlider.getTextBoxHeight());
+    gainSlider.setTextBoxStyle(
+        juce::Slider::TextBoxRight, false, layout::gainTextBoxWidth, gainSlider.getTextBoxHeight()
+    );
     gainSlider.setDoubleClickReturnValue(true, 0.0);
     gainSlider.setEnabled(false);
     gainSlider.onValueChange = [this] {
@@ -154,6 +156,8 @@ void AudioBatchComponent::configureProcessingControls()
         "When enabled, files without a custom gain are normalized to the selected peak or loudness target "
         "before the plugin chain."
     );
+    normalizeBeforePluginToggle.onClick
+        = [this] { normalizationTargetControl.setEnabled(normalizeBeforePluginToggle.getToggleState()); };
     controlsContent.addAndMakeVisible(normalizeBeforePluginToggle);
 
     forceOverwriteToggle.setTooltip(
@@ -163,6 +167,7 @@ void AudioBatchComponent::configureProcessingControls()
     controlsContent.addAndMakeVisible(forceOverwriteToggle);
 
     normalizationTargetControl.loadSettings();
+    normalizationTargetControl.setEnabled(normalizeBeforePluginToggle.getToggleState());
     controlsContent.addAndMakeVisible(normalizationTargetControl);
 
     processButton.setTooltip("Process selected files through the plugin chain.");
@@ -441,38 +446,41 @@ void AudioBatchComponent::resized()
     audioInfo->setBounds(columns.information);
     thumbnail->setBounds(columns.waveform);
 
-    auto controls = columns.controls;
-    processButton.setBounds(controls.removeFromBottom(layout::processButtonHeight));
-    controls.removeFromBottom(layout::sectionSpacing);
-    controlsViewport.setBounds(controls);
-    controlsContent.setSize(
-        juce::jmax(0, controls.getWidth() - layout::scrollBarThickness),
-        juce::jmax(controls.getHeight(), layout::controlsContentHeight)
-    );
-    auto content = controlsContent.getLocalBounds();
-    auto playbackRow = content.removeFromTop(layout::controlButtonHeight);
+    auto controls
+        = columns.controls.reduced(layout::information::horizontalPadding, layout::information::verticalPadding);
+    auto playbackRow = controls.removeFromBottom(layout::processButtonHeight);
     startStopButton.setBounds(playbackRow.removeFromLeft((playbackRow.getWidth() - layout::sectionSpacing) / 2));
     playbackRow.removeFromLeft(layout::sectionSpacing);
-    settingsButton.setBounds(playbackRow);
+    processButton.setBounds(playbackRow);
+    controls.removeFromBottom(layout::sectionSpacing);
 
-    content.removeFromTop(layout::sectionSpacing);
-    auto zoomRow = content.removeFromTop(layout::sliderRowHeight);
-    zoomLabel.setBounds(zoomRow.removeFromLeft(layout::sliderLabelWidth));
-    zoomSlider.setBounds(zoomRow);
+    // Reserve the scrollbar in the outer padding so scrolling and pinned controls share the same edges.
+    controlsViewport.setBounds(controls.withWidth(controls.getWidth() + layout::scrollBarThickness));
+    controlsContent.setSize(
+        juce::jmax(0, controls.getWidth()), juce::jmax(controls.getHeight(), layout::controlsContentHeight)
+    );
+    auto content = controlsContent.getLocalBounds();
+    zoomLabel.setBounds(content.removeFromTop(layout::sliderRowHeight));
+    zoomSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
 
     content.removeFromTop(layout::sectionSpacing * 2);
     auto gainCaption = content.removeFromTop(layout::sliderRowHeight);
-    gainClearButton.setBounds(gainCaption.removeFromRight(layout::gainClearButtonWidth));
+    gainClearButton.setBounds(gainCaption.removeFromRight(layout::gainTextBoxWidth));
     gainLabel.setBounds(gainCaption);
     gainSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
 
     content.removeFromTop(layout::sectionSpacing * 2);
-    pluginButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
-    content.removeFromTop(layout::sectionSpacing);
-    normalizeBeforePluginToggle.setBounds(content.removeFromTop(layout::normalizeToggleHeight));
+    auto normalizeRow = content.removeFromTop(layout::normalizeToggleHeight);
+    normalizeBeforePluginToggle.setBounds(
+        normalizeRow.removeFromLeft((normalizeRow.getWidth() - layout::sectionSpacing) / 2)
+    );
+    normalizeRow.removeFromLeft(layout::sectionSpacing);
+    forceOverwriteToggle.setBounds(normalizeRow);
     normalizationTargetControl.setBounds(content.removeFromTop(layout::controlButtonHeight));
     content.removeFromTop(layout::sectionSpacing);
-    forceOverwriteToggle.setBounds(content.removeFromTop(layout::normalizeToggleHeight));
+    pluginButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
+    content.removeFromTop(layout::sectionSpacing);
+    settingsButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
 }
 
 /// Distributes leftover table width between the name and path columns while preserving their current ratio.
@@ -536,7 +544,8 @@ void AudioBatchComponent::showAudioSettingsWindow()
     openDialogWindow(settingsWindow, &audioSetupComponent, "Audio Settings");
 }
 
-/// Returns the current row index of the record with the given full path, or -1 when it is not in the table.
+/// Returns the current row index of the record with the given full path, or -1
+/// when it is not in the table.
 int AudioBatchComponent::findRecordIndex(const juce::String& fullPath) const
 {
     for (std::size_t index = 0; index < analysisResults.size(); ++index) {
@@ -570,7 +579,8 @@ juce::Array<juce::File> AudioBatchComponent::getSelectedRecordFiles() const
 }
 
 /// Returns the selected records when every one of them exists on disk and is fully analyzed.
-/// Returns an empty list as soon as any selected record is missing or unfinished, so normalization is all-or-nothing.
+/// Returns an empty list as soon as any selected record is missing or unfinished,
+/// so normalization is all-or-nothing.
 std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedNormalizableRecords() const
 {
     std::vector<AudioAnalysisRecord> selectedRecords;
@@ -598,7 +608,8 @@ std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedNormalizableRec
     return selectedRecords;
 }
 
-/// Returns the full paths of the selected rows, used to restore the selection after re-sorting.
+/// Returns the full paths of the selected rows, used to restore the selection
+/// after re-sorting.
 juce::StringArray AudioBatchComponent::getSelectedRecordPaths() const
 {
     juce::StringArray selectedPaths;
@@ -690,7 +701,8 @@ void AudioBatchComponent::updateStatusLabel()
 /// and as the thin bar above the results table, and restores the plain title when idle.
 /// The progress counts finished files plus the completed fractions of the files being worked on,
 /// so it advances smoothly within long files instead of jumping once per file.
-/// Runs on every activity animation tick, so it only touches the title and the bar when their values change.
+/// Runs on every activity animation tick,
+/// so it only touches the title and the bar when their values change.
 void AudioBatchComponent::updateProgressIndicators()
 {
     juce::String activityName;
@@ -765,7 +777,8 @@ void AudioBatchComponent::handleSortRequested(const int columnId, const bool isF
     refreshTablePreservingSelection(selectedPaths);
 }
 
-/// Updates the secondary sort requested with a ctrl or cmd click on a header and refreshes the table.
+/// Updates the secondary sort requested with a ctrl or cmd click on a header
+/// and refreshes the table.
 void AudioBatchComponent::handleSecondarySortRequested(const int columnId)
 {
     if (columnId <= 0) {
@@ -816,7 +829,8 @@ int AudioBatchComponent::getSelectionDisplayRow(
     return selectedRows[0];
 }
 
-/// Loads the newly selected file into the preview and refreshes the info panel and gain controls.
+/// Loads the newly selected file into the preview and refreshes the info panel
+/// and gain controls.
 void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
 {
     const auto selectedRows = resultsTable.getSelectedRows();
