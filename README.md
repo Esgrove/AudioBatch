@@ -171,6 +171,18 @@ For release builds, use the build script:
 ./build.sh
 ```
 
+On macOS, pass `--xcode` to generate and build with Xcode instead of Ninja.
+To generate a project and open it in the IDE without building, use `--open`:
+
+```shell
+./build.sh --open -b Debug
+```
+
+This selects Xcode on macOS and Visual Studio on Windows.
+Add `--reuse` to open an existing project without regenerating it.
+`--open` cannot be combined with `--ninja`.
+With `--open --test`, tests are included in the project but are not built or run.
+
 ## Development
 
 - `./format.sh` formats C++, CMake and shell scripts. `--check` verifies formatting without changes.
