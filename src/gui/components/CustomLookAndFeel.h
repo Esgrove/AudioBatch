@@ -71,6 +71,13 @@ public:
 
     void drawTooltip(Graphics& graphics, const String& text, int width, int height) override;
 
+    void drawToggleButton(
+        Graphics& graphics,
+        ToggleButton& button,
+        bool shouldDrawButtonAsHighlighted,
+        bool shouldDrawButtonAsDown
+    ) override;
+
     void drawTableHeaderColumn(
         Graphics& graphics,
         TableHeaderComponent& header,
