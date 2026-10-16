@@ -25,6 +25,10 @@ Removing a row does not delete the file. Moving a file to the trash is a separat
 ### Waveform Preview
 
 View and play tracks with a zoomable waveform.
+The resizable preview workspace has separate columns for controls, selected-file information, and the waveform.
+Sample peak, true peak, integrated loudness, and maximum short-term loudness appear in dedicated metric cards.
+Technical details scroll independently in smaller windows, keeping the key readings visible.
+The primary Process button stays at the bottom of the controls column.
 Serato DJ metadata adds waveform colours and coloured cue markers,
 and the info panel shows BPM and musical key when available.
 Files without Serato tag data show a default blue waveform.

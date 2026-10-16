@@ -1,6 +1,7 @@
 /// File system helpers shared by the services and both front ends.
 /// Declares moving files to the system trash, the file manager label for revealing a file,
-/// deleting files with error logging, and extension checks for the audio file types the services treat specially.
+/// deleting files with error logging, choosing the default browse folder,
+/// and extension checks for supported audio types.
 
 #pragma once
 
@@ -13,6 +14,8 @@ namespace audiobatch::utils
 
 /// Disposes of a file that a committed output replaces, and returns true when the file is gone.
 using FileDisposer = std::function<bool(const juce::File&)>;
+
+juce::File getDefaultBrowseDirectory();
 
 bool deleteFile(const juce::File& file);
 bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile);

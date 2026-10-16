@@ -31,6 +31,7 @@ Within a struct or class:
   Document each function on its definition and group related functions into one header per topic.
 - Do not use `using namespace`, in headers or sources, at file or function scope.
   Wrap the definitions in the matching `namespace x { ... }` block or qualify the names.
+- Do not use namespace aliases. Qualify references with the original namespace path.
 
 ## File size and structure
 

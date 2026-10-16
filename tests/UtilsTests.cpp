@@ -1,9 +1,10 @@
-/// Tests for the shared helpers in FileUtils, AudioFormatUtils, ThreadUtils, ConsolePrint,
+/// Tests for the shared helpers in AppInfo, FileUtils, AudioFormatUtils, ThreadUtils, ConsolePrint,
 /// and DecodeFailureTracker.
 
 #include "analysis/DecodeFailureTracker.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/AppInfo.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/ConsolePrint.h"
 #include "utils/FileUtils.h"
@@ -65,6 +66,22 @@ public:
     void runTest() override
     {
         const auto root = juce::File::getSpecialLocation(juce::File::tempDirectory);
+
+        beginTest("Startup flags recognize complete options and their short aliases");
+        {
+            expect(utils::isVersionRequest("--version"));
+            expect(utils::isVersionRequest("-V"));
+            expect(!utils::isVersionRequest({}));
+            expect(!utils::isVersionRequest("--versions"));
+            expect(!utils::isVersionRequest("track--version.wav"));
+            expect(!utils::isVersionRequest("--headless"));
+            expect(utils::isHeadlessRequest("--headless"));
+            expect(utils::isHeadlessRequest("-H"));
+            expect(!utils::isHeadlessRequest({}));
+            expect(!utils::isHeadlessRequest("--headless-mode"));
+            expect(!utils::isHeadlessRequest("track--headless.wav"));
+            expect(!utils::isHeadlessRequest("--version"));
+        }
 
         beginTest("System information retains indented details without padding one-line messages");
         {

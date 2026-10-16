@@ -1,6 +1,6 @@
-/// Application identity and environment information.
-/// Declares the helpers that describe the build and the machine for the logs, the About dialog,
-/// and the --version flag, and the storage options of the shared settings file.
+/// Application identity, startup options, and environment information.
+/// Declares shared launch-flag queries, settings-file options,
+/// and build and machine descriptions for logs, the About dialog, and version-only output.
 
 #pragma once
 
@@ -8,6 +8,9 @@
 
 namespace audiobatch::utils
 {
+bool isVersionRequest(const juce::String& commandLine);
+bool isHeadlessRequest(const juce::String& commandLine);
+
 juce::PropertiesFile::Options createApplicationSettingsOptions();
 
 juce::String aboutMessage(const juce::String& appName);

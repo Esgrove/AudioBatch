@@ -9,7 +9,7 @@
 
 namespace audiobatch
 {
-/// Rebuilds the info panel rows for a record, with dedicated layouts for pending and failed files.
+/// Updates the fixed analysis cards and scrolling details, including pending and failed record states.
 void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 {
     if (record.file == currentAudioFile && seratoPreviewIdentity && !seratoPreviewIdentity->matches(record.file)) {

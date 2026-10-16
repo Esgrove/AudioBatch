@@ -5,7 +5,7 @@
 
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisFormatting.h"
-#include "gui/AudioFileTableModel.h"
+#include "gui/GuiLayout.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>

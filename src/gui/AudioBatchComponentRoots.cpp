@@ -3,6 +3,7 @@
 
 #include "gui/AudioBatchComponent.h"
 #include "gui/AudioBatchComponentConstants.h"
+#include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -10,33 +11,6 @@
 
 namespace audiobatch
 {
-/// Returns the starting directory for the folder chooser,
-/// favouring a Dropbox folder, then the system Music folder, then the home folder.
-static juce::File getDefaultBrowseDirectory()
-{
-    auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
-    // Prefer the Dropbox folder where the music library is usually kept,
-    // then the system Music folder, and finally the home folder.
-    // A user config file for this is listed in the README TODO.
-#if JUCE_WINDOWS
-    auto dropboxDirectory = juce::File("D:\\Dropbox");
-#else
-    auto dropboxDirectory = homeDirectory.getChildFile("Dropbox");
-#endif
-
-    if (dropboxDirectory.isDirectory()) {
-        return dropboxDirectory;
-    }
-
-    if (const auto musicDirectory = juce::File::getSpecialLocation(juce::File::userMusicDirectory);
-        musicDirectory.isDirectory())
-    {
-        return musicDirectory;
-    }
-
-    return homeDirectory;
-}
-
 /// Accepts any external drag that contains at least one file.
 bool AudioBatchComponent::isInterestedInFileDrag(const juce::StringArray& files)
 {
@@ -68,7 +42,7 @@ void AudioBatchComponent::addRootFolder()
 void AudioBatchComponent::launchFolderChooser(const bool appendToRoots)
 {
     const auto lastRoot = currentRoots.isEmpty() ? juce::File() : currentRoots.getLast();
-    const auto startDirectory = lastRoot.isDirectory() ? lastRoot : getDefaultBrowseDirectory();
+    const auto startDirectory = lastRoot.isDirectory() ? lastRoot : utils::getDefaultBrowseDirectory();
     directoryChooser = std::make_unique<juce::FileChooser>(
         appendToRoots ? "Add Audio Folder" : "Choose Audio Folder", startDirectory, supportedAudioFilePatterns, true
     );

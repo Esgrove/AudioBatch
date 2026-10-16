@@ -1,5 +1,5 @@
 /// Implementation of the application information helpers:
-/// the settings file options, the system information lines for the log, the About dialog message, and the version line.
+/// startup flag queries, settings file options, system information, the About dialog message, and the version line.
 
 #include "utils/AppInfo.h"
 
@@ -8,6 +8,20 @@
 
 namespace audiobatch::utils
 {
+/// Recognizes a version-only launch before logging, single-instance forwarding, or GUI initialization.
+bool isVersionRequest(const juce::String& commandLine)
+{
+    const juce::ArgumentList arguments {"AudioBatch", commandLine};
+    return arguments.containsOption("--version|-V");
+}
+
+/// Recognizes deliberate hidden launches consistently during startup and single-instance forwarding.
+bool isHeadlessRequest(const juce::String& commandLine)
+{
+    const juce::ArgumentList arguments {"AudioBatch", commandLine};
+    return arguments.containsOption("--headless|-H");
+}
+
 /// Returns the storage options for the AudioBatch.settings file that holds the GUI settings and plugin chain.
 /// The CLI only reads this file, for example the plugin search folders of the last GUI scan.
 juce::PropertiesFile::Options createApplicationSettingsOptions()

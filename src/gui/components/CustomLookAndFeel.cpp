@@ -37,59 +37,17 @@ constexpr float rotarySliderFillAlpha {0.72f};
 /// Alpha of the text editor selection highlight.
 constexpr float textEditorHighlightAlpha {0.24f};
 
-/// Inset of the inner rectangle of the fullscreen glyph, in the glyph's 100 by 100 path units.
-constexpr float fullscreenGlyphInset {45.0f};
-
-/// Stroke thickness of the fullscreen glyph, in the glyph's 100 by 100 path units.
-constexpr float fullscreenGlyphStrokeThickness {30.0f};
-
-/// Horizontal inset of popup menu separator lines, in pixels.
-constexpr int popupMenuSeparatorInset {5};
-
 /// Alpha of popup menu separator lines relative to the menu text colour.
 constexpr float popupMenuSeparatorAlpha {0.3f};
 
-/// Upper limit of the horizontal padding of popup menu items, in pixels.
-constexpr int popupMenuItemMaximumPadding {5};
-
-/// Popup menu item width divided by this gives the horizontal padding, up to the maximum padding.
-constexpr int popupMenuItemPaddingDivisor {20};
-
-/// Icon area width divided by this gives the horizontal inset of the tick mark.
-constexpr int popupMenuTickInsetDivisor {5};
-
-/// Width of the submenu arrow relative to its height.
-constexpr float subMenuArrowWidthRatio {0.6f};
-
-/// Height of the shortcut key text relative to the menu item font height.
-constexpr float shortcutFontHeightRatio {0.75f};
-
-/// Horizontal scale of the shortcut key text, which slightly condenses it.
-constexpr float shortcutFontHorizontalScale {0.95f};
-
-/// Upper limit of the text button label font height, in points.
-constexpr float maximumButtonFontHeight {16.0f};
-
-/// Text button label font height relative to the button height.
-constexpr float buttonFontHeightRatio {0.6f};
-
-/// Table title height relative to the header, matching JUCE's existing layout.
-constexpr float tableHeaderFontHeightRatio {0.5f};
-/// Increase in table title height, in logical pixels.
-constexpr float tableHeaderFontHeightIncrease {1.0f};
-/// Horizontal inset of the table title and sort arrow.
-constexpr int tableHeaderTextInset {4};
 /// Opacity of a column hover highlight relative to its pressed highlight.
 constexpr float tableHeaderHoverAlpha {0.625f};
-/// Vertical tip position of the normalized sort arrow.
-constexpr float tableHeaderSortArrowTip {0.8f};
 /// Sort-arrow colour matching JUCE's existing table header rendering.
 constexpr juce::uint32 tableHeaderSortArrowColour {0x99000000};
 }  // namespace
 
 namespace juce
 {
-
 /// Returns the proportional font created from the embedded Roboto typeface.
 /// The font is created on first use, so no font construction runs during static initialization.
 const juce::Font& CustomLookAndFeel::getTextFont()
@@ -236,7 +194,7 @@ CustomLookAndFeel::CustomLookAndFeel(const bool darkModeEnabled) : darkTheme(dar
 Button* CustomLookAndFeel::createDocumentWindowButton(const int buttonType)
 {
     Path shape;
-    const auto crossThickness = 0.15f;
+    constexpr auto crossThickness = 0.15f;
 
     if (buttonType == DocumentWindow::closeButton) {
         shape.addLineSegment({0.0f, 0.0f, 1.0f, 1.0f}, crossThickness);
@@ -258,13 +216,19 @@ Button* CustomLookAndFeel::createDocumentWindowButton(const int buttonType)
         shape.addLineSegment({0.0f, 0.5f, 1.0f, 0.5f}, crossThickness);
 
         Path fullscreenShape;
-        fullscreenShape.startNewSubPath(fullscreenGlyphInset, 100.0f);
+        fullscreenShape.startNewSubPath(audiobatch::layout::theme::fullscreenGlyphInset, 100.0f);
         fullscreenShape.lineTo(0.0f, 100.0f);
         fullscreenShape.lineTo(0.0f, 0.0f);
         fullscreenShape.lineTo(100.0f, 0.0f);
-        fullscreenShape.lineTo(100.0f, fullscreenGlyphInset);
-        fullscreenShape.addRectangle(fullscreenGlyphInset, fullscreenGlyphInset, 100.0f, 100.0f);
-        PathStrokeType(fullscreenGlyphStrokeThickness).createStrokedPath(fullscreenShape, fullscreenShape);
+        fullscreenShape.lineTo(100.0f, audiobatch::layout::theme::fullscreenGlyphInset);
+        fullscreenShape.addRectangle(
+            audiobatch::layout::theme::fullscreenGlyphInset,
+            audiobatch::layout::theme::fullscreenGlyphInset,
+            100.0f,
+            100.0f
+        );
+        PathStrokeType(audiobatch::layout::theme::fullscreenGlyphStrokeThickness)
+            .createStrokedPath(fullscreenShape, fullscreenShape);
 
         return new CustomDocumentWindowButton(
             "maximise", CustomLookAndFeel::greyMiddleLight(), shape, fullscreenShape, darkTheme
@@ -350,7 +314,7 @@ void CustomLookAndFeel::drawPopupMenuItem(
 )
 {
     if (isSeparator) {
-        auto separatorArea = area.reduced(popupMenuSeparatorInset, 0);
+        auto separatorArea = area.reduced(audiobatch::layout::theme::popupMenuSeparatorInset, 0);
         separatorArea.removeFromTop(roundToInt(static_cast<float>(separatorArea.getHeight()) * 0.5f - 0.5f));
         graphics.setColour(findColour(PopupMenu::textColourId).withAlpha(popupMenuSeparatorAlpha));
         graphics.fillRect(separatorArea.removeFromTop(1));
@@ -367,10 +331,17 @@ void CustomLookAndFeel::drawPopupMenuItem(
             graphics.setColour(textColour.withMultipliedAlpha(isActive ? 1.0f : 0.5f));
         }
 
-        itemArea.reduce(jmin(popupMenuItemMaximumPadding, area.getWidth() / popupMenuItemPaddingDivisor), 0);
+        itemArea.reduce(
+            jmin(
+                audiobatch::layout::theme::popupMenuItemMaximumPadding,
+                area.getWidth() / audiobatch::layout::theme::popupMenuItemPaddingDivisor
+            ),
+            0
+        );
 
         auto font = getPopupMenuFont();
-        const auto maxFontHeight = jmin(monoFontHeight, static_cast<float>(area.getHeight()) / 1.3f);
+        const auto maxFontHeight
+            = jmin(audiobatch::layout::theme::monoFontHeight, static_cast<float>(area.getHeight()) / 1.3f);
         if (font.getHeight() > maxFontHeight) {
             font.setHeight(maxFontHeight);
         }
@@ -395,7 +366,9 @@ void CustomLookAndFeel::drawPopupMenuItem(
             graphics.fillPath(
                 tick,
                 tick.getTransformToScaleToFit(
-                    iconArea.reduced(iconArea.getWidth() / popupMenuTickInsetDivisor, 0).toFloat(), true
+                    iconArea.reduced(iconArea.getWidth() / audiobatch::layout::theme::popupMenuTickInsetDivisor, 0)
+                        .toFloat(),
+                    true
                 )
             );
         }
@@ -408,7 +381,7 @@ void CustomLookAndFeel::drawPopupMenuItem(
 
             Path path;
             path.startNewSubPath(arrowX, centreY - arrowHeight * 0.5f);
-            path.lineTo(arrowX + arrowHeight * subMenuArrowWidthRatio, centreY);
+            path.lineTo(arrowX + arrowHeight * audiobatch::layout::theme::subMenuArrowWidthRatio, centreY);
             path.lineTo(arrowX, centreY + arrowHeight * 0.5f);
 
             graphics.strokePath(path, PathStrokeType(2.0f));
@@ -419,8 +392,8 @@ void CustomLookAndFeel::drawPopupMenuItem(
 
         if (shortcutKeyText.isNotEmpty()) {
             auto shortcutFont = font;
-            shortcutFont.setHeight(shortcutFont.getHeight() * shortcutFontHeightRatio);
-            shortcutFont.setHorizontalScale(shortcutFontHorizontalScale);
+            shortcutFont.setHeight(shortcutFont.getHeight() * audiobatch::layout::theme::shortcutFontHeightRatio);
+            shortcutFont.setHorizontalScale(audiobatch::layout::theme::shortcutFontHorizontalScale);
             graphics.setFont(shortcutFont);
             graphics.drawText(shortcutKeyText, itemArea, Justification::centredRight, true);
         }
@@ -449,13 +422,14 @@ void CustomLookAndFeel::drawTableHeaderColumn(
     }
 
     Rectangle<int> area(width, height);
-    area.reduce(tableHeaderTextInset, 0);
+    area.reduce(audiobatch::layout::theme::tableHeaderTextInset, 0);
     const auto flags = static_cast<unsigned int>(columnFlags);
     constexpr auto sortedForwards = static_cast<unsigned int>(TableHeaderComponent::sortedForwards);
     constexpr auto sortedBackwards = static_cast<unsigned int>(TableHeaderComponent::sortedBackwards);
     if ((flags & (sortedForwards | sortedBackwards)) != 0) {
         Path sortArrow;
-        const auto tip = (flags & sortedForwards) != 0 ? -tableHeaderSortArrowTip : tableHeaderSortArrowTip;
+        const auto tip = (flags & sortedForwards) != 0 ? -audiobatch::layout::theme::tableHeaderSortArrowTip
+                                                       : audiobatch::layout::theme::tableHeaderSortArrowTip;
         sortArrow.addTriangle(0.0f, 0.0f, 0.5f, tip, 1.0f, 0.0f);
         graphics.setColour(Colour(tableHeaderSortArrowColour));
         graphics.fillPath(
@@ -466,7 +440,8 @@ void CustomLookAndFeel::drawTableHeaderColumn(
     graphics.setColour(header.findColour(TableHeaderComponent::textColourId));
     graphics.setFont(
         getTextFont().withHeight(
-            static_cast<float>(height) * tableHeaderFontHeightRatio + tableHeaderFontHeightIncrease
+            static_cast<float>(height) * audiobatch::layout::theme::tableHeaderFontHeightRatio
+            + audiobatch::layout::theme::tableHeaderFontHeightIncrease
         )
     );
     graphics.drawFittedText(columnName, area, Justification::centredLeft, 1);
@@ -481,18 +456,18 @@ Font CustomLookAndFeel::getPopupMenuFont()
 /// Returns the button label font, scaled down with the button height and capped at 16 points.
 Font CustomLookAndFeel::getTextButtonFont(TextButton& /*button*/, const int buttonHeight)
 {
-    return getTextFont().withHeight(
-        jmin(maximumButtonFontHeight, static_cast<float>(buttonHeight) * buttonFontHeightRatio)
-    );
+    return getTextFont().withHeight(jmin(
+        audiobatch::layout::theme::maximumButtonFontHeight,
+        static_cast<float>(buttonHeight) * audiobatch::layout::theme::buttonFontHeightRatio
+    ));
 }
 
 /// Draws tooltips with the project font and rounded background.
 void CustomLookAndFeel::drawTooltip(Graphics& graphics, const String& text, const int width, const int height)
 {
     const Rectangle bounds {width, height};
-    constexpr auto cornerSize = 5.0f;
     graphics.setColour(findColour(TooltipWindow::backgroundColourId));
-    graphics.fillRoundedRectangle(bounds.toFloat(), cornerSize);
+    graphics.fillRoundedRectangle(bounds.toFloat(), audiobatch::layout::theme::tooltipCornerRadius);
     layoutTooltipText(text, findColour(TooltipWindow::textColourId))
         .draw(graphics, {static_cast<float>(width), static_cast<float>(height)});
 }
@@ -501,15 +476,14 @@ void CustomLookAndFeel::drawTooltip(Graphics& graphics, const String& text, cons
 /// Shared by drawTooltip so the drawn text and its measured size always agree.
 TextLayout CustomLookAndFeel::layoutTooltipText(const String& text, const Colour colour) noexcept
 {
-    const float tooltipFontSize = 13.0f;
-    const int maxToolTipWidth = 400;
-
     AttributedString attributedText;
     attributedText.setJustification(Justification::centred);
-    attributedText.append(text, getTextFont().withHeight(tooltipFontSize), colour);
+    attributedText.append(text, getTextFont().withHeight(audiobatch::layout::theme::tooltipFontHeight), colour);
 
     TextLayout layout;
-    layout.createLayoutWithBalancedLineLengths(attributedText, static_cast<float>(maxToolTipWidth));
+    layout.createLayoutWithBalancedLineLengths(
+        attributedText, static_cast<float>(audiobatch::layout::theme::tooltipMaximumWidth)
+    );
     return layout;
 }
 }  // namespace juce

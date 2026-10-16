@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "gui/GuiLayout.h"
 #include "plugins/PluginChain.h"
 
 #include <JuceHeader.h>
@@ -125,12 +126,9 @@ private:
     juce::Component rowContainer;
     std::vector<std::unique_ptr<PluginChainSlotRow>> rows;
 
-    /// Hover time before a tooltip appears in this window, in milliseconds.
-    static constexpr int tooltipDelayMilliseconds {700};
-
     /// Shows tooltips for the controls in this window.
     /// The main window's tooltip client cannot serve a separate dialog window.
-    juce::TooltipWindow tooltipWindow {this, tooltipDelayMilliseconds};
+    juce::TooltipWindow tooltipWindow {this, layout::tooltipDelayMilliseconds};
 
     JUCE_LEAK_DETECTOR(PluginChainEditor)
 };

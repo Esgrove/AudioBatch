@@ -213,7 +213,9 @@ private:
     juce::File currentAudioFile;
     juce::TableListBox resultsTable;
     juce::URL currentAudioUrl;
-    juce::Viewport audioInfoViewport;
+    /// The secondary controls scroll independently while Process stays pinned below them.
+    juce::Component controlsContent;
+    juce::Viewport controlsViewport;
     std::unique_ptr<AudioInfoPanel> audioInfo;
     std::unique_ptr<ThumbnailComponent> thumbnail;
     std::unique_ptr<juce::FileChooser> directoryChooser;
@@ -245,10 +247,10 @@ private:
     juce::Label statusLabel {"StatusLabel"};
     juce::Label zoomLabel {"Zoom"};
     juce::Slider zoomSlider {"ZoomSlider"};
-    juce::TextButton gainClearButton {"x"};
+    juce::TextButton gainClearButton {"Reset"};
     juce::TextButton pluginButton {"Plugins"};
     juce::TextButton processButton {"Process"};
-    juce::TextButton settingsButton {"Audio Settings"};
+    juce::TextButton settingsButton {"Settings"};
     juce::TextButton startStopButton {"Play/Stop"};
     juce::ToggleButton forceOverwriteToggle {"Force overwrite"};
     juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};

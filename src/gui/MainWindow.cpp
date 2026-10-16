@@ -4,16 +4,17 @@
 
 #include "gui/MainWindow.h"
 
-#include "gui/AudioBatchComponentConstants.h"
+#include "gui/GuiLayout.h"
 #include "plugins/PluginChain.h"
 #include "utils/AppInfo.h"
 #include "utils/FileUtils.h"
+#include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
 namespace audiobatch
 {
-/// Menu ids and window limits of the main window.
+/// Menu ids used only by the main window's command dispatch.
 namespace
 {
 enum MenuItemId : std::uint8_t {
@@ -33,12 +34,6 @@ enum MenuItemId : std::uint8_t {
     moveSelectedToTrashMenuItemId,
     revealSelectedMenuItemId,
 };
-
-/// Smallest width in pixels the main window can be resized to,
-/// chosen so the results table and the preview controls below it stay usable.
-constexpr int minimumWindowWidth = 800;
-/// Smallest height in pixels the main window can be resized to.
-constexpr int minimumWindowHeight = 600;
 }  // namespace
 
 /// Builds the window, installs the custom look-and-feel as the global default,
@@ -76,19 +71,19 @@ MainWindow::MainWindow(const juce::String& name) :
 #if JUCE_MAC
     juce::MenuBarModel::setMacMainMenu(this);
 #else
-    /// Height in pixels of the in-window menu bar used on platforms without a global menu bar.
-    constexpr int inWindowMenuBarHeight = 26;
-    setMenuBar(this, inWindowMenuBarHeight);
+    setMenuBar(this, layout::inWindowMenuBarHeight);
 #endif
     logStartupCheckpoint("menu bar configured");
 
     setResizable(true, true);
-    setResizeLimits(minimumWindowWidth, minimumWindowHeight, 8192, 8192);
-#if JUCE_WINDOWS
-    centreWithSize(layout::defaultWindowWidth, layout::defaultWindowHeight);
-#else
-    centreWithSize(getWidth(), getHeight());
-#endif
+    setResizeLimits(
+        layout::minimumWindowWidth, layout::minimumWindowHeight, layout::maximumWindowSize, layout::maximumWindowSize
+    );
+    if (const auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay()) {
+        setBounds(layout::initialWindowBounds(display->userBounds.toNearestInt()));
+    } else {
+        centreWithSize(layout::defaultWindowWidth, layout::defaultWindowHeight);
+    }
     logStartupCheckpoint("constructor complete");
 }
 
@@ -100,11 +95,7 @@ void MainWindow::showAndActivate()
     utils::logDebug("MainWindow startup: showAndActivate begin");
     setVisible(true);
     setMinimised(false);
-    toFront(true);
-
-    if (auto* peer = getPeer()) {
-        peer->grabFocus();
-    }
+    utils::bringWindowToFront(*this);
 
     if (auto* content = getContentComponent()) {
         content->grabKeyboardFocus();

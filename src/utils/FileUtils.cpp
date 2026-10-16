@@ -1,4 +1,4 @@
-/// Implementation of the file system helpers.
+/// Implementation of file system helpers and default browse-folder selection.
 /// Moving to the trash uses the shell's IFileOperation on Windows,
 /// with a progress sink that refuses deletes the shell would perform permanently,
 /// and juce::File::moveToTrash elsewhere.
@@ -73,7 +73,7 @@ public:
     }
 
     /// Aborts the delete when the shell will not recycle the item.
-    HRESULT STDMETHODCALLTYPE PreDeleteItem(DWORD flags, IShellItem* /*item*/) override
+    HRESULT STDMETHODCALLTYPE PreDeleteItem(const DWORD flags, IShellItem* /*item*/) override
     {
         if ((flags & static_cast<DWORD>(TSF_DELETE_RECYCLE_IF_POSSIBLE)) == 0) {
             refusedPermanentDelete = true;
@@ -543,5 +543,25 @@ juce::String commitTemporaryOutput(
     }
 
     return {};
+}
+
+/// Chooses a browse location, preferring the existing Dropbox directory, then Music, then the home directory.
+juce::File getDefaultBrowseDirectory()
+{
+    auto homeDirectory = juce::File::getSpecialLocation(juce::File::userHomeDirectory);
+#if JUCE_WINDOWS
+    juce::File dropboxDirectory("D:\\Dropbox");
+#else
+    auto dropboxDirectory = homeDirectory.getChildFile("Dropbox");
+#endif
+    if (dropboxDirectory.isDirectory()) {
+        return dropboxDirectory;
+    }
+    if (auto musicDirectory = juce::File::getSpecialLocation(juce::File::userMusicDirectory);
+        musicDirectory.isDirectory())
+    {
+        return musicDirectory;
+    }
+    return homeDirectory;
 }
 }  // namespace audiobatch::utils
