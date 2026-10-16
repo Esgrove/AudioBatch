@@ -134,8 +134,7 @@ void AudioInfoPanel::clear()
     filenameLabel.setText("No file selected", juce::dontSendNotification);
     filenameLabel.setTooltip({});
     filenameLabel.setDescription({});
-    statusLabel.setVisible(true);
-    statusLabel.setText("Select a file in the list.", juce::dontSendNotification);
+    statusLabel.setVisible(false);
     statusLabel.setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddleLight());
     errorLabel.setText({}, juce::dontSendNotification);
     for (auto& metric : metrics) {
