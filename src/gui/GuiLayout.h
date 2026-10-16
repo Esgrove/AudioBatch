@@ -182,7 +182,7 @@ constexpr int sampleRateColumnDefaultWidth = 76;
 constexpr int overallPeakColumnDefaultWidth = 74;
 constexpr int peakLeftColumnDefaultWidth = 74;
 constexpr int peakRightColumnDefaultWidth = 74;
-constexpr int truePeakColumnDefaultWidth = 74;
+constexpr int truePeakColumnDefaultWidth = 78;
 constexpr int maxShortTermLufsColumnDefaultWidth = 76;
 constexpr int integratedLufsColumnDefaultWidth = 76;
 constexpr int customGainColumnDefaultWidth = 72;
@@ -198,6 +198,7 @@ constexpr int initiallyVisibleColumnWidth = nameColumnDefaultWidth + pathColumnD
     + bitrateColumnDefaultWidth + sampleRateColumnDefaultWidth + overallPeakColumnDefaultWidth
     + truePeakColumnDefaultWidth + maxShortTermLufsColumnDefaultWidth + integratedLufsColumnDefaultWidth
     + statusColumnDefaultWidth;
+
 static_assert(
     initiallyVisibleColumnWidth <= initiallyVisibleColumnWidthBudget,
     "Initially visible columns must fit the default column-width budget"
