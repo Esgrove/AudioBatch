@@ -3,6 +3,7 @@
 
 #include "gui/components/NormalizationTargetControl.h"
 
+#include "gui/GuiLayout.h"
 #include "utils/StringFormat.h"
 
 namespace audiobatch
@@ -19,8 +20,6 @@ constexpr double loudnessStepDecibels = 0.5;
 constexpr int peakModeItemId = 1;
 /// Combo box item id of the loudness mode.
 constexpr int loudnessModeItemId = 2;
-/// Gap in pixels between the mode selector and the slider.
-constexpr int controlGap = 6;
 constexpr auto modeSettingKey = "normalizeMode";
 constexpr auto targetPeakSettingKey = "normalizeTargetPeakDbfs";
 constexpr auto targetLufsSettingKey = "normalizeTargetLufs";
@@ -107,8 +106,8 @@ juce::String NormalizationTargetControl::describeTarget() const
 void NormalizationTargetControl::resized()
 {
     auto bounds = getLocalBounds();
-    modeBox.setBounds(bounds.removeFromLeft((bounds.getWidth() - normalize_target::controlGap) / 2));
-    bounds.removeFromLeft(normalize_target::controlGap);
+    modeBox.setBounds(bounds.removeFromLeft((bounds.getWidth() - layout::sectionSpacing) / 2));
+    bounds.removeFromLeft(layout::sectionSpacing);
     targetSlider.setBounds(bounds);
 }
 

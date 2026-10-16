@@ -73,7 +73,8 @@ fi
 if [ -n "$(command -v cmake-format)" ]; then
     CMAKE_FORMAT=(cmake-format)
 elif [ -n "$(command -v uvx)" ]; then
-    CMAKE_FORMAT=(uvx --from cmakelang --with pyyaml cmake-format)
+    # cmakelang's token scanner is incompatible with Python 3.15.
+    CMAKE_FORMAT=(uvx --python 3.14 --from cmakelang --with pyyaml cmake-format)
 else
     CMAKE_FORMAT=()
     print_yellow "cmake-format and uvx not found, skipping CMake formatting"

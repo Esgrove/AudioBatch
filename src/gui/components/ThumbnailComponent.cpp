@@ -7,6 +7,7 @@
 #include "gui/components/ThumbnailComponent.h"
 
 #include "gui/components/CustomLookAndFeel.h"
+#include "gui/GuiLayout.h"
 #include "serato/SeratoWaveformColouring.h"
 #include "utils/ThreadUtils.h"
 
@@ -21,12 +22,6 @@ namespace
 /// Alpha of the white playback position marker drawn over the waveform.
 constexpr float positionMarkerAlpha {0.85f};
 
-/// Width of the playback position marker, in pixels.
-constexpr float positionMarkerWidth {1.5f};
-
-/// Font height of the placeholder text shown when no audio file is loaded.
-constexpr float placeholderFontHeight {14.0f};
-
 /// Rate of the timer that updates the position marker and follows the transport, in hertz.
 constexpr int positionUpdateRateHz {60};
 
@@ -36,18 +31,14 @@ constexpr double horizontalScrollStepRatio {0.10};
 /// Fraction of the total length near the start of the file within which zooming always anchors at the playhead.
 constexpr double zoomStartAnchorRatio {0.05};
 
-/// Fixed cue arrow dimensions keep overlays readable without changing waveform channel bounds.
-constexpr float cueArrowHeight {8.0f};
-constexpr float cueArrowWidth {10.0f};
-constexpr float cueArrowOutlineWidth {1.5f};
+/// Opacity of the cue arrow outline.
 constexpr float cueArrowOutlineAlpha {0.8f};
 
 /// Number of Serato hot cue slots reachable with the number keys 1 to 8.
 constexpr int hotCueSlotCount {8};
 
-/// Alpha and width of the outline drawn while the waveform has keyboard focus.
+/// Opacity of the outline drawn while the waveform has keyboard focus.
 constexpr float focusOutlineAlpha {0.6f};
-constexpr float focusOutlineWidth {1.0f};
 }  // namespace
 
 /// Creates a thumbnail view backed by the shared transport source.
@@ -88,13 +79,13 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
         }
         drawCueMarkers(graphics);
     } else {
-        graphics.setFont(juce::CustomLookAndFeel::getTextFont().withHeight(placeholderFontHeight));
+        graphics.setFont(juce::CustomLookAndFeel::getTextFont().withHeight(layout::waveform::placeholderFontHeight));
         graphics.drawFittedText("No audio file selected", getLocalBounds(), juce::Justification::centred, 2);
     }
 
     if (hasKeyboardFocus(false)) {
         graphics.setColour(juce::CustomLookAndFeel::blue().withAlpha(focusOutlineAlpha));
-        graphics.drawRect(getLocalBounds().toFloat(), focusOutlineWidth);
+        graphics.drawRect(getLocalBounds().toFloat(), layout::waveform::focusOutlineWidth);
     }
 }
 
@@ -426,9 +417,9 @@ void ThumbnailComponent::updateCursorPosition()
 
     currentPositionMarker.setRectangle(
         juce::Rectangle<float>(
-            timeToX(transportSource.getCurrentPosition()) - positionMarkerWidth / 2.0f,
+            timeToX(transportSource.getCurrentPosition()) - layout::waveform::positionMarkerWidth / 2.0f,
             0,
-            positionMarkerWidth,
+            layout::waveform::positionMarkerWidth,
             static_cast<float>(getHeight())
         )
     );
@@ -476,8 +467,12 @@ void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
     }
     const juce::Graphics::ScopedSaveState savedState(graphics);
     graphics.reduceClipRegion(bounds);
-    const auto arrowHeight = std::min(cueArrowHeight, static_cast<float>(bounds.getHeight()) / 4.0f);
-    const auto halfWidth = std::min(cueArrowWidth, arrowHeight * cueArrowWidth / cueArrowHeight) / 2.0f;
+    const auto arrowHeight = std::min(layout::waveform::cueArrowHeight, static_cast<float>(bounds.getHeight()) / 4.0f);
+    const auto halfWidth = std::min(
+                               layout::waveform::cueArrowWidth,
+                               arrowHeight * layout::waveform::cueArrowWidth / layout::waveform::cueArrowHeight
+                           )
+        / 2.0f;
     for (const auto& cue : seratoMarkers->cues) {
         const auto seconds = static_cast<double>(cue.positionMilliseconds) / utils::millisecondsPerSecond;
         if (seconds > thumbnail.getTotalLength() || seconds < visibleRange.getStart()
@@ -506,7 +501,7 @@ void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
             bottom - arrowHeight
         );
         graphics.setColour(juce::Colours::black.withAlpha(cueArrowOutlineAlpha));
-        graphics.strokePath(arrows, juce::PathStrokeType(cueArrowOutlineWidth));
+        graphics.strokePath(arrows, juce::PathStrokeType(layout::waveform::cueArrowOutlineWidth));
         graphics.setColour(cue.colour.withAlpha(1.0f));
         graphics.fillPath(arrows);
     }

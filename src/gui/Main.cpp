@@ -6,6 +6,7 @@
 #include "plugins/PluginScanner.h"
 #include "utils/AppInfo.h"
 #include "utils/ConsolePrint.h"
+#include "utils/GuiUtils.h"
 #include "utils/Log.h"
 
 #include <JuceHeader.h>
@@ -14,13 +15,6 @@ namespace audiobatch
 {
 namespace
 {
-/// Returns true when the command line contains the version flag.
-bool isVersionRequest(const juce::String& commandLine)
-{
-    const juce::ArgumentList arguments {"AudioBatch", commandLine};
-    return arguments.containsOption("--version|-V");
-}
-
 /// JUCE application entry point for the desktop GUI build.
 class AudioBatchApplication : public juce::JUCEApplication
 {
@@ -48,7 +42,11 @@ public:
     bool moreThanOneInstanceAllowed() override
     {
         const auto commandLine = getCommandLineParameters();
-        return isVersionRequest(commandLine) || isPluginScanWorkerCommandLine(commandLine);
+        const auto independent = utils::isVersionRequest(commandLine) || isPluginScanWorkerCommandLine(commandLine);
+        if (!independent && !utils::isHeadlessRequest(commandLine)) {
+            utils::allowExistingInstanceToActivate(getApplicationName());
+        }
+        return independent;
     }
 
     /// Starts the application: sets up file logging, creates the main window,
@@ -59,7 +57,7 @@ public:
     /// When launched as a plugin scan worker, only the worker is started instead.
     void initialise(const juce::String& commandLineParameters) override
     {
-        if (isVersionRequest(commandLineParameters)) {
+        if (utils::isVersionRequest(commandLineParameters)) {
             console::printLineToConsole(utils::versionLine(getApplicationName()));
             setApplicationReturnValue(0);
             quit();
@@ -72,7 +70,7 @@ public:
         }
 
         const juce::ArgumentList arguments {getApplicationName(), commandLineParameters};
-        const bool startHeadless = arguments.containsOption("--headless|-H");
+        const bool startHeadless = utils::isHeadlessRequest(commandLineParameters);
 
         // Initialise the log file in the OS default location, under an "AudioBatch" directory.
         // Mac:     /Users/<username>/Library/Logs/AudioBatch
@@ -134,11 +132,16 @@ public:
         }
     }
 
-    /// Logs launches of a second instance.
-    /// The arguments are only recorded, this instance keeps running unchanged.
+    /// Activates the existing Windows window on a normal relaunch, preserving deliberate headless launches.
+    /// macOS keeps its existing platform activation behavior.
     void anotherInstanceStarted(const juce::String& commandLine) override
     {
         utils::logInfo("Another instance started with args: {}", commandLine);
+#if JUCE_WINDOWS
+        if (mainWindow != nullptr && !quitRequested && !utils::isHeadlessRequest(commandLine)) {
+            mainWindow->showAndActivate();
+        }
+#endif
     }
 
 private:

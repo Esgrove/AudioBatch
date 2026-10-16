@@ -132,8 +132,8 @@ juce::String formatRecordsAsCsv(const std::vector<AudioAnalysisRecord>& records)
     juce::StringArray lines;
     juce::StringArray headerFields;
 
-    for (const auto& property : buildRecordObject(AudioAnalysisRecord {})->getProperties()) {
-        headerFields.add(property.name.toString());
+    for (const auto& [name, value] : buildRecordObject(AudioAnalysisRecord {})->getProperties()) {
+        headerFields.add(name.toString());
     }
     lines.add(headerFields.joinIntoString(","));
 
@@ -141,8 +141,8 @@ juce::String formatRecordsAsCsv(const std::vector<AudioAnalysisRecord>& records)
         const auto object = buildRecordObject(record);
         juce::StringArray fields;
 
-        for (const auto& property : object->getProperties()) {
-            fields.add(utils::escapeCsvField(property.value.toString()));
+        for (const auto& [name, value] : object->getProperties()) {
+            fields.add(utils::escapeCsvField(value.toString()));
         }
         lines.add(fields.joinIntoString(","));
     }

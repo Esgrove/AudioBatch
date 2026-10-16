@@ -87,6 +87,8 @@ jobs:
           fi
           # Reuse the compilation cache that build.sh keeps inside the build directory.
           export CCACHE_DIR="$PWD/$BUILD_DIR/ccache"
+          # build.sh configures without tests, so enable the test target explicitly.
+          cmake -S . -B "$BUILD_DIR" -DBUILD_TESTING=ON
           cmake --build "$BUILD_DIR" --target AudioBatchTests --config Debug
           ctest --test-dir "$BUILD_DIR" --build-config Debug --output-on-failure
 

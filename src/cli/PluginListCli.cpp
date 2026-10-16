@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <map>
+#include <ranges>
 #include <string>
 #include <vector>
 
@@ -247,7 +248,7 @@ void printGroups(const std::vector<juce::PluginDescription>& plugins, const Plug
 
     std::vector<Group> groups;
     groups.reserve(groupsByKey.size());
-    for (auto& [key, group] : groupsByKey) {
+    for (auto& group : groupsByKey | std::views::values) {
         groups.push_back(std::move(group));
     }
 

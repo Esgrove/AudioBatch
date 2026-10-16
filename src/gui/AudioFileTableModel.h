@@ -1,10 +1,11 @@
 /// Table model for the sortable analysis results table in the GUI.
-/// Declares AudioFileTableModel, a juce::TableListBoxModel with column identifiers, compile-time column widths,
-/// sorting, cell painting, and row actions for the analyzed files.
+/// Declares AudioFileTableModel, a juce::TableListBoxModel with sorting, cell painting, and row actions.
+/// Column identifiers and sizing rules are shared through GuiLayout.h.
 
 #pragma once
 
 #include "analysis/AudioAnalysis.h"
+#include "gui/GuiLayout.h"
 
 #include <JuceHeader.h>
 
@@ -15,23 +16,6 @@
 
 namespace audiobatch
 {
-/// Stable identifiers shared by the header configuration, painting, and sort logic.
-enum AudioFileTableColumn : std::uint8_t {
-    columnName = 1,
-    columnPath,
-    columnType,
-    columnBitrate,
-    columnSampleRate,
-    columnPeakLeft,
-    columnPeakRight,
-    columnOverallPeak,
-    columnOverallTruePeak,
-    columnMaxShortTermLufs,
-    columnIntegratedLufs,
-    columnCustomGain,
-    columnStatus,
-};
-
 /// What a busy file is doing, shown with an activity indicator in the status column.
 enum class FileActivity : std::uint8_t {
     /// Queued for analysis, normalization, or processing, but not started yet.
@@ -70,72 +54,6 @@ public:
         std::function<float()> phaseProvider
     );
 
-    /// Returns the compile-time default width for a column.
-    /// The defaults are chosen so that the initially visible columns fit the default window width,
-    /// which is enforced by a static_assert below.
-    static consteval int initialColumnWidth(const AudioFileTableColumn columnId)
-    {
-        switch (columnId) {
-            case columnName:
-                return nameColumnDefaultWidth;
-            case columnPath:
-                return pathColumnDefaultWidth;
-            case columnType:
-                return typeColumnDefaultWidth;
-            case columnBitrate:
-                return bitrateColumnDefaultWidth;
-            case columnSampleRate:
-                return sampleRateColumnDefaultWidth;
-            case columnOverallPeak:
-                return overallPeakColumnDefaultWidth;
-            case columnPeakLeft:
-                return peakLeftColumnDefaultWidth;
-            case columnPeakRight:
-                return peakRightColumnDefaultWidth;
-            case columnOverallTruePeak:
-                return truePeakColumnDefaultWidth;
-            case columnMaxShortTermLufs:
-                return maxShortTermLufsColumnDefaultWidth;
-            case columnIntegratedLufs:
-                return integratedLufsColumnDefaultWidth;
-            case columnCustomGain:
-                return customGainColumnDefaultWidth;
-            case columnStatus:
-                return statusColumnDefaultWidth;
-        }
-
-        return 0;
-    }
-
-    /// Returns the compile-time minimum width a user can shrink a column to.
-    /// All metric columns share one minimum so their numeric values stay readable.
-    static consteval int minimumColumnWidth(const AudioFileTableColumn columnId)
-    {
-        switch (columnId) {
-            case columnName:
-                return nameColumnMinimumWidth;
-            case columnPath:
-                return pathColumnMinimumWidth;
-            case columnType:
-                return typeColumnMinimumWidth;
-            case columnBitrate:
-                return bitrateColumnMinimumWidth;
-            case columnSampleRate:
-                return sampleRateColumnMinimumWidth;
-            case columnOverallPeak:
-            case columnPeakLeft:
-            case columnPeakRight:
-            case columnOverallTruePeak:
-            case columnMaxShortTermLufs:
-            case columnIntegratedLufs:
-            case columnCustomGain:
-            case columnStatus:
-                return metricColumnMinimumWidth;
-        }
-
-        return 0;
-    }
-
     static void configureHeader(juce::TableHeaderComponent& header);
 
     int getNumRows() override;
@@ -169,39 +87,6 @@ public:
 
 private:
     [[nodiscard]] OperationMessage getOperationMessage(const AudioAnalysisRecord& record) const;
-
-    static constexpr int defaultWindowWidth = 1096;
-    static constexpr int nameColumnMinimumWidth = 110;
-    static constexpr int pathColumnMinimumWidth = 140;
-    static constexpr int typeColumnMinimumWidth = 60;
-    static constexpr int bitrateColumnMinimumWidth = 68;
-    static constexpr int sampleRateColumnMinimumWidth = 72;
-    static constexpr int metricColumnMinimumWidth = 72;
-    static constexpr int nameColumnDefaultWidth = 140;
-    static constexpr int pathColumnDefaultWidth = 160;
-    static constexpr int typeColumnDefaultWidth = 66;
-    static constexpr int bitrateColumnDefaultWidth = 70;
-    static constexpr int sampleRateColumnDefaultWidth = 76;
-    static constexpr int overallPeakColumnDefaultWidth = 74;
-    static constexpr int peakLeftColumnDefaultWidth = 74;
-    static constexpr int peakRightColumnDefaultWidth = 74;
-    static constexpr int truePeakColumnDefaultWidth = 74;
-    static constexpr int maxShortTermLufsColumnDefaultWidth = 76;
-    static constexpr int integratedLufsColumnDefaultWidth = 76;
-    static constexpr int customGainColumnDefaultWidth = 72;
-    static constexpr int statusColumnDefaultWidth = 240;
-    static constexpr int totalInitialColumnWidth = nameColumnDefaultWidth + pathColumnDefaultWidth
-        + typeColumnDefaultWidth + bitrateColumnDefaultWidth + sampleRateColumnDefaultWidth
-        + overallPeakColumnDefaultWidth + peakLeftColumnDefaultWidth + peakRightColumnDefaultWidth
-        + truePeakColumnDefaultWidth + maxShortTermLufsColumnDefaultWidth + integratedLufsColumnDefaultWidth
-        + customGainColumnDefaultWidth + statusColumnDefaultWidth;
-
-    static_assert(
-        totalInitialColumnWidth - peakLeftColumnDefaultWidth - peakRightColumnDefaultWidth
-                - customGainColumnDefaultWidth
-            <= defaultWindowWidth,
-        "Initially visible columns must fit the default window width"
-    );
 
     const std::vector<AudioAnalysisRecord>* records;
     std::function<void(int row)> selectionChanged;

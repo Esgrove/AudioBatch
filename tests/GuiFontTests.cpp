@@ -3,6 +3,7 @@
 /// and the increased column title size without relying on platform-specific glyph snapshots.
 
 #include "gui/components/CustomLookAndFeel.h"
+#include "gui/GuiLayout.h"
 #include "TestSuites.h"
 
 namespace audiobatch::tests
@@ -46,7 +47,7 @@ public:
         beginTest("Popup measurement and painting share Roboto Mono at the same height");
         const auto popupFont = lookAndFeel.getPopupMenuFont();
         expect(popupFont.getTypefacePtr() == monoTypeface);
-        expectWithinAbsoluteError(popupFont.getHeight(), juce::CustomLookAndFeel::monoFontHeight, 0.001f);
+        expectWithinAbsoluteError(popupFont.getHeight(), layout::theme::monoFontHeight, 0.001f);
         lookAndFeel.drawPopupMenuItem(
             graphics, {0, 0, 240, 30}, false, true, false, false, false, "Process Selected", {}, nullptr, nullptr
         );
