@@ -286,7 +286,8 @@ juce_generate_juce_header(AudioBatch)
 juce_generate_juce_header(AudioBatchCli)
 
 # Sources shared by the GUI, the CLI and the tests.
-# Paths stay relative to the source directory, which audiobatch_set_source_warnings relies on.
+# Paths stay relative to the source directory,
+# which audiobatch_set_source_warnings relies on.
 set(AUDIOBATCH_CORE_SOURCES
     "src/analysis/AnalysisCache.cpp"
     "src/analysis/AnalysisCache.h"
