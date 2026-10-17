@@ -5,10 +5,12 @@ USAGE="Usage: $0 [OPTIONS]
 
 Install AudioBatch.
 On macOS, installs the CLI binary and GUI app.
-On Windows, installs the CLI binary only.
+On Windows, installs the CLI binary and GUI app.
 
 The CLI binary is installed to ~/.local/bin.
 On macOS, the GUI app is copied to /Applications.
+On Windows, the GUI app is installed to %LOCALAPPDATA%/Programs/AudioBatch,
+with a Start Menu shortcut.
 
 OPTIONS: All options are optional
     -h | --help
@@ -18,7 +20,7 @@ OPTIONS: All options are optional
         Install only the CLI binary.
 
     -a | --app-only
-        Install only the GUI app (macOS only).
+        Install only the GUI app.
 
     -v | --verbose
         Display commands being executed.
@@ -57,14 +59,6 @@ init_options() {
         esac
         shift
     done
-
-    # GUI app install is only supported on macOS
-    if [ "$BASH_PLATFORM" = "windows" ]; then
-        if [ "$INSTALL_APP" = true ] && [ "$INSTALL_CLI" = false ]; then
-            print_error_and_exit "--app-only is not supported on Windows"
-        fi
-        INSTALL_APP=false
-    fi
 
     CLI_BINARY_NAME="audiobatch"
     GUI_APP_BUNDLE="AudioBatch.app"
@@ -105,6 +99,18 @@ find_gui_app() {
     fi
 }
 
+find_windows_gui_executable() {
+    # Check repo root first, then build directory.
+    if [ -f "$REPO/AudioBatchApp.exe" ]; then
+        echo "$REPO/AudioBatchApp.exe"
+    else
+        local build_path="$BUILD_DIR/AudioBatch_artefacts/Release/AudioBatch.exe"
+        if [ -f "$build_path" ]; then
+            echo "$build_path"
+        fi
+    fi
+}
+
 install_cli() {
     local cli_source
     cli_source=$(find_cli_binary)
@@ -123,6 +129,60 @@ install_cli() {
     mv -f "$cli_source" "$INSTALL_DIR/$CLI_BINARY_NAME"
     chmod 755 "$INSTALL_DIR/$CLI_BINARY_NAME"
     print_green "Installed CLI binary to $INSTALL_DIR/$CLI_BINARY_NAME"
+}
+
+install_windows_gui_app() {
+    local app_source
+    app_source=$(find_windows_gui_executable)
+    if [ -z "$app_source" ]; then
+        print_error_and_exit "GUI app 'AudioBatchApp.exe' not found. Build the project first."
+    fi
+
+    if [ -z "${LOCALAPPDATA:-}" ] || [ -z "${APPDATA:-}" ]; then
+        print_error_and_exit "LOCALAPPDATA and APPDATA must be set to install the Windows GUI app."
+    fi
+    if ! command -v cygpath > /dev/null 2>&1; then
+        print_error_and_exit "cygpath is required to install the Windows GUI app. Run this script from Git Bash."
+    fi
+    if ! command -v powershell.exe > /dev/null 2>&1; then
+        print_error_and_exit "PowerShell is required to create the Windows Start Menu shortcut."
+    fi
+
+    local local_app_data
+    local roaming_app_data
+    local app_install_dir
+    local start_menu_dir
+    local_app_data=$(cygpath -u "$LOCALAPPDATA")
+    roaming_app_data=$(cygpath -u "$APPDATA")
+    app_install_dir="$local_app_data/Programs/AudioBatch"
+    start_menu_dir="$roaming_app_data/Microsoft/Windows/Start Menu/Programs/AudioBatch"
+    local app_destination="$app_install_dir/AudioBatchApp.exe"
+    local shortcut_destination="$start_menu_dir/AudioBatch.lnk"
+    local windows_app_destination
+    local windows_shortcut_destination
+
+    windows_app_destination=$(cygpath -w "$app_destination")
+    windows_shortcut_destination=$(cygpath -w "$shortcut_destination")
+
+    print_magenta "Installing Windows GUI app..."
+    echo "Source: $app_source"
+    mkdir -p "$app_install_dir" "$start_menu_dir"
+    cp -f "$app_source" "$app_destination"
+
+    AUDIOBATCH_TARGET_PATH="$windows_app_destination" \
+        AUDIOBATCH_SHORTCUT_PATH="$windows_shortcut_destination" \
+        powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command '
+            $ErrorActionPreference = "Stop"
+            $shell = New-Object -ComObject WScript.Shell
+            $shortcut = $shell.CreateShortcut($env:AUDIOBATCH_SHORTCUT_PATH)
+            $shortcut.TargetPath = $env:AUDIOBATCH_TARGET_PATH
+            $shortcut.WorkingDirectory = Split-Path -Parent $env:AUDIOBATCH_TARGET_PATH
+            $shortcut.IconLocation = $env:AUDIOBATCH_TARGET_PATH
+            $shortcut.Save()
+        '
+
+    print_green "Installed GUI app to $windows_app_destination"
+    print_green "Created Start Menu shortcut at $windows_shortcut_destination"
 }
 
 install_gui_app() {
@@ -161,7 +221,11 @@ if [ "$INSTALL_CLI" = true ]; then
 fi
 
 if [ "$INSTALL_APP" = true ]; then
-    install_gui_app
+    if [ "$BASH_PLATFORM" = "windows" ]; then
+        install_windows_gui_app
+    else
+        install_gui_app
+    fi
 fi
 
 echo ""
