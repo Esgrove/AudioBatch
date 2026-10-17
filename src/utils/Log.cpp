@@ -13,7 +13,6 @@
 #include <atomic>
 #include <bit>
 #include <csignal>
-#include <cstdint>
 #include <cstdlib>
 #include <exception>
 

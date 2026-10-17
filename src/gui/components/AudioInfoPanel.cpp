@@ -150,6 +150,41 @@ void AudioInfoPanel::clear()
     setRows({});
 }
 
+/// Format detailed audio info rows.
+///
+/// Channels, bit depth, sample rate, bit rate, duration, number of samples, channel peaks.
+std::vector<AudioInfoRow> AudioInfoPanel::formatRows(const AudioAnalysisRecord& record)
+{
+    std::vector<AudioInfoRow> newRows;
+
+    auto channels = juce::String(record.channels);
+    if (record.channels == 1) {
+        channels = "Mono";
+    } else if (record.channels == 2) {
+        channels = "Stereo";
+    }
+    const auto bitDepth = formatBitsPerSampleDisplay(record);
+    newRows.push_back({
+        .field = "Format",
+        .value = utils::format("{} / {} / {} bit", formatTypeLabel(record), channels, bitDepth),
+    });
+    newRows.push_back({
+        .field = "Audio",
+        .value = utils::format("{} / {}", formatSampleRateDisplay(record), formatBitrateDisplay(record)),
+    });
+    newRows.push_back({.field = "Duration", .value = juce::RelativeTime(record.durationSeconds).getDescription()});
+    newRows.push_back({.field = "Samples", .value = juce::String(record.lengthInSamples)});
+    newRows.push_back({
+        .field = "Peak L / R",
+        .value = utils::format(
+            "{} / {} dBFS",
+            formatPeakCompact(static_cast<double>(record.peakLeft)),
+            formatPeakCompact(static_cast<double>(record.peakRight))
+        ),
+    });
+
+    return newRows;
+}
 /// Shows full-width file details and fixed metrics, clearing analysis values for pending or failed records.
 /// Splits the filename at the first literal " - ", keeping subsequent separators in the title.
 /// Ready records omit the status row to leave more room for file details.
@@ -201,31 +236,7 @@ void AudioInfoPanel::showRecord(
         metrics[1].setValue(formatTruePeakCompact(record.overallTruePeak));
         metrics[2].setValue(formatLoudnessCompact(record.maxShortTermLufs));
         metrics[3].setValue(formatLoudnessCompact(record.integratedLufs));
-        auto channels = juce::String(record.channels);
-        if (record.channels == 1) {
-            channels = "Mono";
-        } else if (record.channels == 2) {
-            channels = "Stereo";
-        }
-        const auto bitDepth = formatBitsPerSampleDisplay(record);
-        newRows.push_back({
-            .field = "Format",
-            .value = utils::format("{} / {} / {} bit", formatTypeLabel(record), channels, bitDepth),
-        });
-        newRows.push_back({
-            .field = "Audio",
-            .value = utils::format("{} / {}", formatSampleRateDisplay(record), formatBitrateDisplay(record)),
-        });
-        newRows.push_back({.field = "Duration", .value = juce::RelativeTime(record.durationSeconds).getDescription()});
-        newRows.push_back({.field = "Samples", .value = juce::String(record.lengthInSamples)});
-        newRows.push_back({
-            .field = "Peak L / R",
-            .value = utils::format(
-                "{} / {} dBFS",
-                formatPeakCompact(static_cast<double>(record.peakLeft)),
-                formatPeakCompact(static_cast<double>(record.peakRight))
-            ),
-        });
+        newRows = formatRows(record);
     }
     appendTrackInfo(newRows, data);
     setRows(std::move(newRows));
@@ -264,11 +275,11 @@ void AudioInfoPanel::setRows(std::vector<AudioInfoRow> newRows)
         fieldLabels[index]->setVisible(visible);
         valueLabels[index]->setVisible(visible);
         if (visible) {
-            const auto& row = rows[index];
-            fieldLabels[index]->setText(row.field, juce::dontSendNotification);
-            valueLabels[index]->setName(row.field);
-            valueLabels[index]->setText(row.value, juce::dontSendNotification);
-            valueLabels[index]->setTooltip(utils::format("{}: {}", row.field, row.value));
+            const auto& [field, value] = rows[index];
+            fieldLabels[index]->setText(field, juce::dontSendNotification);
+            valueLabels[index]->setName(field);
+            valueLabels[index]->setText(value, juce::dontSendNotification);
+            valueLabels[index]->setTooltip(utils::format("{}: {}", field, value));
         }
     }
     resized();

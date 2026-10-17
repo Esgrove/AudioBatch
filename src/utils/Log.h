@@ -9,8 +9,6 @@
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
 
-#include <JuceHeader.h>
-
 #include <memory>
 #include <utility>
 

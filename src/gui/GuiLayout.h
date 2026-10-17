@@ -5,29 +5,12 @@
 
 #pragma once
 
-#include <JuceHeader.h>
+#include "gui/AudioBatchComponentConstants.h"
 
-#include <cstdint>
+#include <JuceHeader.h>
 
 namespace audiobatch
 {
-/// Stable identifiers shared by results-table layout, painting, and sorting.
-enum AudioFileTableColumn : std::uint8_t {
-    columnName = 1,
-    columnPath,
-    columnType,
-    columnBitrate,
-    columnSampleRate,
-    columnPeakLeft,
-    columnPeakRight,
-    columnOverallPeak,
-    columnOverallTruePeak,
-    columnMaxShortTermLufs,
-    columnIntegratedLufs,
-    columnCustomGain,
-    columnStatus,
-};
-
 /// Adjacent full-height sections of the lower workspace, in parent coordinates.
 struct PreviewColumns {
     juce::Rectangle<int> controls;
@@ -61,7 +44,7 @@ constexpr double resultsTablePreferredProportion = -0.5;
 constexpr double resizeBarHeight = 6.0;
 constexpr double previewMinimumHeight = 220.0;
 constexpr double previewMaximumProportion = -0.7;
-constexpr double previewPreferredProportion = -0.25;
+constexpr double previewPreferredProportion = -0.26;
 
 constexpr int controlButtonHeight = 28;
 constexpr int processButtonHeight = 34;

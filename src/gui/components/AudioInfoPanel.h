@@ -43,8 +43,9 @@ class AudioInfoPanel : public juce::Component
 public:
     AudioInfoPanel();
 
-    void clear();
+    static std::vector<AudioInfoRow> formatRows(const AudioAnalysisRecord& record);
 
+    void clear();
     void showRecord(
         const AudioAnalysisRecord& record,
         const juce::String& activeStatusLabel,
@@ -54,7 +55,6 @@ public:
     [[nodiscard]] int getPreferredHeight() const;
 
     void paint(juce::Graphics& graphics) override;
-
     void resized() override;
 
 private:
@@ -73,11 +73,11 @@ private:
         AudioInfoMetric {"Integrated loudness", "Integrated", "LUFS"},
     };
     juce::Component detailsContent;
-    juce::Viewport detailsViewport;
     juce::Label errorLabel {"Error"};
+    juce::String displayedPath;
+    juce::Viewport detailsViewport;
     std::vector<AudioInfoRow> rows;
     std::vector<std::unique_ptr<juce::Label>> fieldLabels;
     std::vector<std::unique_ptr<juce::Label>> valueLabels;
-    juce::String displayedPath;
 };
 }  // namespace audiobatch
