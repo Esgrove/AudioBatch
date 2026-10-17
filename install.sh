@@ -22,6 +22,9 @@ OPTIONS: All options are optional
     -a | --app-only
         Install only the GUI app.
 
+    -r | --reuse
+        Skip CMake generation and reuse the existing release build directory.
+
     -v | --verbose
         Display commands being executed.
 "
@@ -34,6 +37,7 @@ source "$DIR/common.sh"
 init_options() {
     INSTALL_CLI=true
     INSTALL_APP=true
+    REUSE_BUILD_DIR=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -48,6 +52,9 @@ init_options() {
             -a | --app-only)
                 INSTALL_CLI=false
                 INSTALL_APP=true
+                ;;
+            -r | --reuse)
+                REUSE_BUILD_DIR=true
                 ;;
             -v | --verbose)
                 set -x
@@ -181,8 +188,8 @@ install_windows_gui_app() {
             $shortcut.Save()
         '
 
-    print_green "Installed GUI app to $windows_app_destination"
-    print_green "Created Start Menu shortcut at $windows_shortcut_destination"
+    echo "Installed GUI app to           $windows_app_destination"
+    echo "Created Start Menu shortcut at $windows_shortcut_destination"
 }
 
 install_gui_app() {
@@ -214,7 +221,11 @@ cd "$REPO"
 
 # Build release artifacts first
 print_magenta "Running release build..."
-"$DIR/build.sh" -b Release
+if [ "$REUSE_BUILD_DIR" = true ]; then
+    "$DIR/build.sh" -b Release --reuse
+else
+    "$DIR/build.sh" -b Release
+fi
 
 if [ "$INSTALL_CLI" = true ]; then
     install_cli
@@ -228,13 +239,4 @@ if [ "$INSTALL_APP" = true ]; then
     fi
 fi
 
-echo ""
-print_green "Installation complete!"
-
-if [ "$INSTALL_CLI" = true ]; then
-    local_cli="$INSTALL_DIR/$CLI_BINARY_NAME"
-    if [ -x "$local_cli" ]; then
-        print_magenta "Installed CLI version:"
-        "$local_cli" --version
-    fi
-fi
+print_green "Installation complete"
