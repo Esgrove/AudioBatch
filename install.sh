@@ -172,7 +172,7 @@ install_windows_gui_app() {
     windows_shortcut_destination=$(cygpath -w "$shortcut_destination")
 
     print_magenta "Installing Windows GUI app..."
-    echo "Source: $app_source"
+    echo "Source:                         $(cygpath -w "$app_source")"
     mkdir -p "$app_install_dir" "$start_menu_dir"
     cp -f "$app_source" "$app_destination"
 
@@ -188,8 +188,8 @@ install_windows_gui_app() {
             $shortcut.Save()
         '
 
-    echo "Installed GUI app to           $windows_app_destination"
-    echo "Created Start Menu shortcut at $windows_shortcut_destination"
+    echo "Installed GUI app to:           $windows_app_destination"
+    echo "Created Start Menu shortcut at: $windows_shortcut_destination"
 }
 
 install_gui_app() {
@@ -208,7 +208,7 @@ install_gui_app() {
     fi
 
     mv -f "$app_source" "/Applications/$GUI_APP_BUNDLE"
-    print_green "Installed GUI app to /Applications/$GUI_APP_BUNDLE"
+    echo "Installed GUI app to /Applications/$GUI_APP_BUNDLE"
 }
 
 init_options "$@"
