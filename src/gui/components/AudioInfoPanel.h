@@ -69,8 +69,8 @@ private:
     std::array<AudioInfoMetric, 4> metrics {
         AudioInfoMetric {"Sample peak", "Sample peak", "dBFS"},
         AudioInfoMetric {"True peak", "True peak", "dBTP"},
-        AudioInfoMetric {"Integrated loudness", "Integrated", "LUFS"},
         AudioInfoMetric {"Max short-term", "Short-term", "LUFS"},
+        AudioInfoMetric {"Integrated loudness", "Integrated", "LUFS"},
     };
     juce::Component detailsContent;
     juce::Viewport detailsViewport;
