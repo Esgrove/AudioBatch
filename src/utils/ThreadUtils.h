@@ -13,22 +13,22 @@
 
 namespace audiobatch::utils
 {
-/// Number of milliseconds in one second, shared by duration conversions and timing output.
-inline constexpr double millisecondsPerSecond = 1000.0;
+/// Receives the completed fraction of a long-running operation on one file, in the range 0 to 1.
+/// Called from worker threads, so it must be thread-safe and cheap.
+using ProgressCallback = std::function<void(float progress)>;
 
 /// Returns true when the caller wants the work to stop as soon as possible.
 /// Polled from worker threads, so it must be thread-safe and cheap.
 using CancellationCheck = std::function<bool()>;
+
+/// Number of milliseconds in one second, shared by duration conversions and timing output.
+inline constexpr double millisecondsPerSecond = 1000.0;
 
 /// Returns true when a cancellation check is set and reports that cancellation was requested.
 [[nodiscard]] inline bool isCancellationRequested(const CancellationCheck& isCancelled)
 {
     return isCancelled != nullptr && isCancelled();
 }
-
-/// Receives the completed fraction of a long-running operation on one file, in the range 0 to 1.
-/// Called from worker threads, so it must be thread-safe and cheap.
-using ProgressCallback = std::function<void(float progress)>;
 
 /// Returns the done amount as a fraction of the total for progress reporting, or 1 when the total is not positive.
 [[nodiscard]] constexpr float progressFraction(const std::int64_t done, const std::int64_t total)
@@ -47,6 +47,5 @@ inline void reportProgress(const ProgressCallback& onProgress, const float progr
 bool callOnMessageThread(std::function<void()> function, const CancellationCheck& isCancelled);
 
 ProgressCallback makeProgressRange(const ProgressCallback& onProgress, float start, float end);
-
 ProgressCallback makeThrottledProgress(ProgressCallback onProgress);
 }  // namespace audiobatch::utils
