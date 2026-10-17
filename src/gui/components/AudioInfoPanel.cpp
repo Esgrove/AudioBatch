@@ -199,8 +199,8 @@ void AudioInfoPanel::showRecord(
     if (record.isReady()) {
         metrics[0].setValue(formatPeakCompact(static_cast<double>(record.overallPeak)));
         metrics[1].setValue(formatTruePeakCompact(record.overallTruePeak));
-        metrics[2].setValue(formatLoudnessCompact(record.integratedLufs));
-        metrics[3].setValue(formatLoudnessCompact(record.maxShortTermLufs));
+        metrics[2].setValue(formatLoudnessCompact(record.maxShortTermLufs));
+        metrics[3].setValue(formatLoudnessCompact(record.integratedLufs));
         auto channels = juce::String(record.channels);
         if (record.channels == 1) {
             channels = "Mono";
