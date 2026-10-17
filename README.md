@@ -183,6 +183,18 @@ Add `--reuse` to open an existing project without regenerating it.
 `--open` cannot be combined with `--ninja`.
 With `--open --test`, tests are included in the project but are not built or run.
 
+To install the release build, run:
+
+```shell
+./install.sh
+```
+
+On Windows, run this from Git Bash.
+The GUI app is installed under `%LOCALAPPDATA%\Programs\AudioBatch`,
+and a Start Menu shortcut is created for Start search.
+The CLI is installed to `~/.local/bin`.
+Use `--app-only` or `--cli-only` to install just one of the two.
+
 ## Development
 
 - `./format.sh` formats C++, CMake and shell scripts. `--check` verifies formatting without changes.
