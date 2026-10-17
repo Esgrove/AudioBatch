@@ -292,12 +292,12 @@ public:
     }
 
     /// Emulates AU initialization resetting parameters, so a second preparation destroys restored state.
-    void prepareToPlay(const double sampleRate, const int blockSize) override
+    void prepareToPlay(const double sampleRate, const int samplesPerBlock) override
     {
         lifecycle.add("prepare");
-        preparedBlockSize = blockSize;
+        preparedBlockSize = samplesPerBlock;
         lastSampleRate = sampleRate;
-        TestPlugin::prepareToPlay(sampleRate, blockSize);
+        TestPlugin::prepareToPlay(sampleRate, samplesPerBlock);
         initialized = true;
         if (audioUnit) {
             constexpr float defaultGain = 1.0f;
