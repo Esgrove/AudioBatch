@@ -194,6 +194,7 @@ The GUI app is installed under `%LOCALAPPDATA%\Programs\AudioBatch`,
 and a Start Menu shortcut is created for Start search.
 The CLI is installed to `~/.local/bin`.
 Use `--app-only` or `--cli-only` to install just one of the two.
+Pass `--reuse` to skip CMake generation and reuse the existing release build directory.
 
 ## Development
 
