@@ -92,6 +92,18 @@ public:
 
     static TextLayout layoutTooltipText(const String& text, Colour colour) noexcept;
 
+    void drawMenuBarItem(
+        Graphics& graphics,
+        int width,
+        int height,
+        int itemIndex,
+        const String& itemText,
+        bool isMouseOverItem,
+        bool isMenuOpen,
+        bool isMouseOverBar,
+        MenuBarComponent& menuBar
+    ) override;
+
     void drawPopupMenuItem(
         Graphics& graphics,
         const Rectangle<int>& area,
@@ -105,6 +117,16 @@ public:
         const Drawable* icon,
         const Colour* textColourToUse
     ) override;
+
+    void getIdealPopupMenuItemSize(
+        const String& text,
+        bool isSeparator,
+        int standardMenuItemHeight,
+        int& idealWidth,
+        int& idealHeight
+    ) override;
+
+    Font getMenuBarFont(MenuBarComponent& menuBar, int itemIndex, const String& itemText) override;
 
     Font getTextButtonFont(TextButton& button, int buttonHeight) override;
 

@@ -17,6 +17,7 @@ Multichannel audio and Linux are not currently supported.
 Choose a folder or drop folders onto the window to start background analysis.
 Use `File > Add Folder...` or hold `Shift` while dropping to add folders without clearing the results.
 `Rescan` or `F5` refreshes all selected folders.
+Quit with `Ctrl+Q` on Windows or `Cmd+Q` on macOS.
 
 Sort results by level, loudness or file details, and show or hide columns from the table header menu.
 The results context menu lets you normalize, process, re-analyze, reveal or remove selected files.
