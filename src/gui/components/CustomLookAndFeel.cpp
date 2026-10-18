@@ -344,13 +344,19 @@ void CustomLookAndFeel::drawMenuBarItem(
     const String& itemText,
     const bool isMouseOverItem,
     const bool isMenuOpen,
-    const bool isMouseOverBar,
+    const bool /*isMouseOverBar*/,
     MenuBarComponent& menuBar
 )
 {
-    LookAndFeel_V2::drawMenuBarItem(
-        graphics, width, height, itemIndex, itemText, isMouseOverItem, isMenuOpen, isMouseOverBar, menuBar
-    );
+    const auto enabled = menuBar.isEnabled();
+    const auto highlighted = enabled && (isMouseOverItem || isMenuOpen);
+    if (highlighted) {
+        graphics.fillAll(menuBar.findColour(PopupMenu::highlightedBackgroundColourId));
+    }
+    graphics.setColour(menuBar.findColour(highlighted ? PopupMenu::highlightedTextColourId : PopupMenu::textColourId)
+                           .withMultipliedAlpha(enabled ? 1.0f : 0.5f));
+    graphics.setFont(getMenuBarFont(menuBar, itemIndex, itemText));
+    graphics.drawFittedText(itemText, 0, 0, width, height, Justification::centred, 1);
 }
 
 /// Draws popup menu items with the project Roboto font.
