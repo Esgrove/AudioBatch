@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 4.2)
 
 project(
     "AudioBatch"
-    VERSION 0.13.0
+    VERSION 0.14.0
     DESCRIPTION "Batch analyze and process audio files"
     HOMEPAGE_URL "https://github.com/Esgrove/AudioBatch"
     LANGUAGES CXX C

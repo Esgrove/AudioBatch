@@ -54,6 +54,31 @@ void AudioBatchComponent::configurePreviewControls()
         2, layout::previewMinimumHeight, layout::previewMaximumProportion, layout::previewPreferredProportion
     );
     addAndMakeVisible(waveformResizeBar);
+    juce::Path chevronPath;
+    chevronPath.startNewSubPath(0.0f, 0.0f);
+    chevronPath.lineTo(layout::previewToggle::glyphWidth * 0.5f, layout::previewToggle::glyphHeight);
+    chevronPath.lineTo(layout::previewToggle::glyphWidth, 0.0f);
+    juce::DrawablePath collapseChevron;
+    collapseChevron.setPath(chevronPath);
+    collapseChevron.setFill(juce::Colours::transparentBlack);
+    collapseChevron.setStrokeFill(juce::CustomLookAndFeel::greyMiddleLight());
+    collapseChevron.setStrokeThickness(layout::previewToggle::strokeWidth);
+    chevronPath.applyTransform(
+        juce::AffineTransform::rotation(
+            juce::MathConstants<float>::pi,
+            layout::previewToggle::glyphWidth * 0.5f,
+            layout::previewToggle::glyphHeight * 0.5f
+        )
+    );
+    juce::DrawablePath expandChevron;
+    expandChevron.setPath(chevronPath);
+    expandChevron.setFill(juce::Colours::transparentBlack);
+    expandChevron.setStrokeFill(juce::CustomLookAndFeel::greyMiddleLight());
+    expandChevron.setStrokeThickness(layout::previewToggle::strokeWidth);
+    previewSectionButton.setImages(&collapseChevron, nullptr, nullptr, nullptr, &expandChevron);
+    previewSectionButton.setEdgeIndent(layout::previewToggle::imageInset);
+    previewSectionButton.setColour(juce::DrawableButton::backgroundColourId, juce::Colours::transparentBlack);
+    previewSectionButton.setColour(juce::DrawableButton::backgroundOnColourId, juce::Colours::transparentBlack);
     previewSectionButton.setTooltip("Collapse bottom section (Ctrl+Shift+Space / Cmd+Shift+Space).");
     previewSectionButton.onClick = [this] { togglePreviewSection(); };
     addAndMakeVisible(previewSectionButton);

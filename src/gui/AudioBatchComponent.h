@@ -259,7 +259,7 @@ private:
     juce::TextButton processButton {"Process"};
     juce::TextButton settingsButton {"Audio Settings"};
     juce::TextButton startStopButton {"Play/Stop"};
-    juce::ArrowButton previewSectionButton {"Collapse bottom section", 0.25f, juce::Colours::lightgrey};
+    juce::DrawableButton previewSectionButton {"Collapse bottom section", juce::DrawableButton::ImageFitted};
     juce::ToggleButton forceOverwriteToggle {"Overwrite"};
     juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
 
@@ -268,8 +268,8 @@ private:
     /// Expanded divider allocation is independent of the animated or compact workspace.
     bool previewSectionExpanded {true};
     bool restoreExpandedLayout {false};
-    double expandedPreviewProportion {0.26};
-    double animationStartProportion {0.26};
+    double expandedPreviewProportion {0.28};
+    double animationStartProportion {0.28};
     double animationStartedAtMilliseconds {0.0};
     int workspaceAvailableHeight {0};
     int currentPreviewHeight {0};
