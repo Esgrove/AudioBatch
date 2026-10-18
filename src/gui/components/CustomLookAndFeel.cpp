@@ -335,7 +335,25 @@ void CustomLookAndFeel::drawDocumentWindowTitleBar(
     graphics.drawText(window.getName(), textX, 0, availableTextWidth, height, Justification::centredLeft, true);
 }
 
-/// Draws popup menu items with the project monospaced font.
+/// Uses popup-menu colours for menu-bar hover and open states instead of toggle-button colours.
+void CustomLookAndFeel::drawMenuBarItem(
+    Graphics& graphics,
+    const int width,
+    const int height,
+    const int itemIndex,
+    const String& itemText,
+    const bool isMouseOverItem,
+    const bool isMenuOpen,
+    const bool isMouseOverBar,
+    MenuBarComponent& menuBar
+)
+{
+    LookAndFeel_V2::drawMenuBarItem(
+        graphics, width, height, itemIndex, itemText, isMouseOverItem, isMenuOpen, isMouseOverBar, menuBar
+    );
+}
+
+/// Draws popup menu items with the project Roboto font.
 /// JUCE offers no smaller hook for the menu item font, so the whole item painting is replicated here.
 void CustomLookAndFeel::drawPopupMenuItem(
     Graphics& graphics,
@@ -378,8 +396,7 @@ void CustomLookAndFeel::drawPopupMenuItem(
         );
 
         auto font = getPopupMenuFont();
-        const auto maxFontHeight
-            = jmin(audiobatch::layout::theme::monoFontHeight, static_cast<float>(area.getHeight()) / 1.3f);
+        const auto maxFontHeight = jmin(font.getHeight(), static_cast<float>(area.getHeight()) / 1.3f);
         if (font.getHeight() > maxFontHeight) {
             font.setHeight(maxFontHeight);
         }
@@ -485,10 +502,34 @@ void CustomLookAndFeel::drawTableHeaderColumn(
     graphics.drawFittedText(columnName, area, Justification::centredLeft, 1);
 }
 
-/// Uses the same embedded monospaced font for popup sizing and item painting.
+/// Adds vertical breathing room to default popup rows while preserving separators and explicitly sized menus.
+void CustomLookAndFeel::getIdealPopupMenuItemSize(
+    const String& text,
+    const bool isSeparator,
+    const int standardMenuItemHeight,
+    int& idealWidth,
+    int& idealHeight
+)
+{
+    const auto itemHeight = !isSeparator && standardMenuItemHeight <= 0 ? audiobatch::layout::theme::popupMenuItemHeight
+                                                                        : standardMenuItemHeight;
+    LookAndFeel_V4::getIdealPopupMenuItemSize(text, isSeparator, itemHeight, idealWidth, idealHeight);
+}
+
+/// Keeps top-level menu labels slightly smaller than JUCE's height-proportional default.
+Font CustomLookAndFeel::getMenuBarFont(
+    MenuBarComponent& /*menuBar*/,
+    int /*itemIndex*/,
+    const String& /*itemText*/
+)
+{
+    return getTextFont().withHeight(audiobatch::layout::theme::menuBarFontHeight);
+}
+
+/// Uses the same embedded Roboto font for popup sizing and item painting.
 Font CustomLookAndFeel::getPopupMenuFont()
 {
-    return get_mono_font();
+    return getTextFont().withHeight(audiobatch::layout::theme::popupMenuFontHeight);
 }
 
 /// Returns the button label font, scaled down with the button height and capped at 16 points.

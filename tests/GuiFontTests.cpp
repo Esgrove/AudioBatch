@@ -44,15 +44,32 @@ public:
         }
         header.setLookAndFeel(nullptr);
 
-        beginTest("Popup measurement and painting share Roboto Mono at the same height");
+        beginTest("Top-level menu labels use smaller Roboto text");
+        juce::MenuBarComponent menuBar;
+        const auto menuBarFont = lookAndFeel.getMenuBarFont(menuBar, 0, "File");
+        expect(menuBarFont.getTypefacePtr() == textTypeface);
+        expectWithinAbsoluteError(menuBarFont.getHeight(), 16.0f, 0.001f);
+
+        beginTest("Popup measurement and painting share regular Roboto at the same height");
         const auto popupFont = lookAndFeel.getPopupMenuFont();
-        expect(popupFont.getTypefacePtr() == monoTypeface);
-        expectWithinAbsoluteError(popupFont.getHeight(), layout::theme::monoFontHeight, 0.001f);
+        expect(popupFont.getTypefacePtr() == textTypeface);
+        expectWithinAbsoluteError(popupFont.getHeight(), layout::theme::popupMenuFontHeight, 0.001f);
         lookAndFeel.drawPopupMenuItem(
             graphics, {0, 0, 240, 30}, false, true, false, false, false, "Process Selected", {}, nullptr, nullptr
         );
-        expect(graphics.getCurrentFont().getTypefacePtr() == monoTypeface);
+        expect(graphics.getCurrentFont().getTypefacePtr() == textTypeface);
         expectWithinAbsoluteError(graphics.getCurrentFont().getHeight(), popupFont.getHeight(), 0.001f);
+
+        beginTest("Popup rows have extra vertical space without changing separators or explicit heights");
+        int idealWidth = 0;
+        int idealHeight = 0;
+        lookAndFeel.getIdealPopupMenuItemSize("Process Selected", false, 0, idealWidth, idealHeight);
+        expectEquals(idealHeight, 28);
+        expect(idealWidth > 0);
+        lookAndFeel.getIdealPopupMenuItemSize({}, true, 0, idealWidth, idealHeight);
+        expectEquals(idealHeight, 10);
+        lookAndFeel.getIdealPopupMenuItemSize("Process Selected", false, 30, idealWidth, idealHeight);
+        expectEquals(idealHeight, 30);
 
         beginTest("Buttons and combo boxes retain the existing Roboto font sizes");
         juce::TextButton button;

@@ -86,7 +86,7 @@ constexpr int padding = 4;
 constexpr int spacing = 6;
 constexpr int metricMinimumWidth = 100;
 constexpr int metricCaptionHeight = 14;
-constexpr int metricSpacing = 4;
+constexpr int metricSpacing = 5;
 constexpr int metricsMinimumWidth = metricMinimumWidth * 4 + metricSpacing * 3;
 constexpr int minimumWaveformWidth = 140;
 constexpr double metricsWidthProportion = 0.35;
@@ -158,6 +158,9 @@ constexpr float focusOutlineWidth = 1.0f;
 namespace theme
 {
 constexpr float monoFontHeight = 15.0f;
+constexpr float menuBarFontHeight = 16.0f;
+constexpr float popupMenuFontHeight = 15.0f;
+constexpr int popupMenuItemHeight = 28;
 /// Fullscreen glyph geometry uses its normalized 100 by 100 path rather than logical pixels.
 constexpr float fullscreenGlyphInset = 45.0f;
 constexpr float fullscreenGlyphStrokeThickness = 30.0f;

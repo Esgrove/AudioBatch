@@ -156,7 +156,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
         case 0:
             menu.addCommandItem(&commandManager, aboutMenuItemId);
             menu.addSeparator();
-            menu.addItem(quitMenuItemId, "Quit");
+            menu.addCommandItem(&commandManager, quitMenuItemId);
             break;
         case 1:
             menu.addItem(chooseFolderMenuItemId, "Choose Folder...");
@@ -198,7 +198,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             menu.addCommandItem(&commandManager, moveSelectedToTrashMenuItemId, "Move Selected to Trash");
             menu.addItem(clearFilesMenuItemId, "Clear All Files");
             menu.addSeparator();
-            menu.addItem(quitMenuItemId, "Quit");
+            menu.addCommandItem(&commandManager, quitMenuItemId);
             break;
         case 1:
             menu.addCommandItem(&commandManager, togglePreviewSectionMenuItemId);
@@ -242,6 +242,7 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
         case moveSelectedToTrashMenuItemId:
         case revealSelectedMenuItemId:
         case aboutMenuItemId:
+        case quitMenuItemId:
             // Handled by perform, the menu invokes the command before it reports the choice here.
             break;
         case reanalyzeSelectedMenuItemId:
@@ -254,9 +255,6 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
             getAudioBatch().showSupportedNormalizationFormats();
             break;
 
-        case quitMenuItemId:
-            juce::JUCEApplication::getInstance()->systemRequestedQuit();
-            break;
         case editChainMenuItemId:
             if (auto* chain = getAudioBatch().getPluginChain()) {
                 chain->showChainEditor();
@@ -293,6 +291,7 @@ void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
         removeSelectedMenuItemId,
         moveSelectedToTrashMenuItemId,
         aboutMenuItemId,
+        quitMenuItemId,
         togglePreviewSectionMenuItemId,
         toggleSeratoWaveformColouringMenuItemId,
     });
@@ -313,6 +312,11 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
     const auto canActOnSelection = !blockedByDialog && audioBatch.hasSelectedRecords();
 
     switch (commandID) {
+        case quitMenuItemId:
+            result.setInfo("Quit", "Quits the application", fileCategory, 0);
+            result.addDefaultKeypress('q', juce::ModifierKeys::commandModifier);
+            result.setActive(!blockedByDialog);
+            break;
         case toggleSeratoWaveformColouringMenuItemId:
             result.setInfo(
                 "Serato Waveform Colours", "Uses Serato spectral colours for waveform previews", "Options", 0
@@ -383,6 +387,9 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
 bool MainWindow::perform(const InvocationInfo& info)
 {
     switch (info.commandID) {
+        case quitMenuItemId:
+            juce::JUCEApplication::getInstance()->systemRequestedQuit();
+            return true;
         case toggleSeratoWaveformColouringMenuItemId:
             getAudioBatch().toggleSeratoWaveformColouring();
             return true;
