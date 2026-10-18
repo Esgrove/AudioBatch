@@ -23,6 +23,7 @@
 
 #include <JuceHeader.h>
 
+#include <functional>
 #include <memory>
 #include <thread>
 #include <vector>
@@ -37,7 +38,8 @@ class AudioBatchComponent :
     public juce::FileDragAndDropTarget,
     public juce::DragAndDropContainer,
     juce::ChangeListener,
-    juce::KeyListener
+    juce::KeyListener,
+    private juce::Timer
 {
 public:
     AudioBatchComponent();
@@ -60,9 +62,14 @@ public:
     void revealSelectedRecord() const;
     void showAudioSettingsWindow();
     void showSupportedNormalizationFormats();
+    void togglePreviewSection();
 
     [[nodiscard]] bool hasSelectedRecords() const;
     [[nodiscard]] bool isFileOperationInProgress() const noexcept;
+    [[nodiscard]] bool isPreviewSectionExpanded() const noexcept;
+
+    /// Notifies the window when the menu command's action label needs refreshing.
+    std::function<void()> onPreviewSectionChanged;
 
     /// Returns the plugin selection controller, or nullptr before the component finishes constructing.
     [[nodiscard]] PluginChain* getPluginChain() const noexcept
@@ -88,6 +95,7 @@ protected:
 private:
     bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
+    void timerCallback() override;
 
     juce::Array<juce::File> getSelectedRecordFiles() const;
     juce::StringArray getSelectedRecordPaths() const;
@@ -251,10 +259,20 @@ private:
     juce::TextButton processButton {"Process"};
     juce::TextButton settingsButton {"Audio Settings"};
     juce::TextButton startStopButton {"Play/Stop"};
+    juce::ArrowButton previewSectionButton {"Collapse bottom section", 0.25f, juce::Colours::lightgrey};
     juce::ToggleButton forceOverwriteToggle {"Overwrite"};
     juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
 
     bool currentWaveformLoadedFromCache {false};
+
+    /// Expanded divider allocation is independent of the animated or compact workspace.
+    bool previewSectionExpanded {true};
+    bool restoreExpandedLayout {false};
+    double expandedPreviewProportion {0.26};
+    double animationStartProportion {0.26};
+    double animationStartedAtMilliseconds {0.0};
+    int workspaceAvailableHeight {0};
+    int currentPreviewHeight {0};
 
     JUCE_LEAK_DETECTOR(AudioBatchComponent)
 };

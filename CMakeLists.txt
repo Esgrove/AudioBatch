@@ -358,6 +358,7 @@ target_sources(
         "src/gui/AudioBatchComponent.h"
         "src/gui/AudioBatchComponentActions.cpp"
         "src/gui/AudioBatchComponentConstants.h"
+        "src/gui/AudioBatchComponentLayout.cpp"
         "src/gui/AudioBatchComponentOperations.cpp"
         "src/gui/AudioBatchComponentPreview.cpp"
         "src/gui/AudioBatchComponentRoots.cpp"
