@@ -71,7 +71,7 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
 
     if (thumbnail.getTotalLength() > 0.0) {
         const auto reduced = waveformBounds();
-        const auto gradient = seratoOverview
+        const auto gradient = seratoWaveformColouringEnabled && seratoOverview
             ? serato::makeOverviewGradient(
                   *seratoOverview, visibleRange, thumbnail.getTotalLength(), reduced, juce::CustomLookAndFeel::blue()
               )
@@ -97,8 +97,11 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
     }
 }
 
-/// No layout work is needed, the position marker is placed by updateCursorPosition instead.
-void ThumbnailComponent::resized() {}
+/// Keeps the playback marker full-height immediately while the preview workspace resizes.
+void ThumbnailComponent::resized()
+{
+    updateCursorPosition();
+}
 
 /// Restores a previously cached waveform without re-reading the audio file.
 bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData)
@@ -427,9 +430,9 @@ void ThumbnailComponent::updateCursorPosition()
     currentPositionMarker.setRectangle(
         juce::Rectangle<float>(
             timeToX(transportSource.getCurrentPosition()) - layout::waveform::positionMarkerWidth / 2.0f,
-            layout::waveform::cornerRadius,
+            0.0f,
             layout::waveform::positionMarkerWidth,
-            juce::jmax(0.0f, static_cast<float>(getHeight()) - layout::waveform::cornerRadius * 2.0f)
+            static_cast<float>(getHeight())
         )
     );
 }
@@ -456,6 +459,21 @@ void ThumbnailComponent::setSeratoOverview(std::shared_ptr<const serato::Overvie
     }
     seratoOverview = std::move(overview);
     repaint();
+}
+
+/// Reports the view preference independently of whether the current file contains spectral metadata.
+bool ThumbnailComponent::isSeratoWaveformColouringEnabled() const noexcept
+{
+    return seratoWaveformColouringEnabled;
+}
+
+/// Changes only the spectral brush, retaining the overview so it can be restored without reloading audio.
+void ThumbnailComponent::setSeratoWaveformColouringEnabled(const bool enabled)
+{
+    if (seratoWaveformColouringEnabled != enabled) {
+        seratoWaveformColouringEnabled = enabled;
+        repaint();
+    }
 }
 
 /// Attaches owned cue positions and colours without altering peaks, playback or the viewport.

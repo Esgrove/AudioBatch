@@ -63,13 +63,15 @@ public:
     void showAudioSettingsWindow();
     void showSupportedNormalizationFormats();
     void togglePreviewSection();
+    void toggleSeratoWaveformColouring();
 
     [[nodiscard]] bool hasSelectedRecords() const;
     [[nodiscard]] bool isFileOperationInProgress() const noexcept;
     [[nodiscard]] bool isPreviewSectionExpanded() const noexcept;
+    [[nodiscard]] bool isSeratoWaveformColouringEnabled() const noexcept;
 
-    /// Notifies the window when the menu command's action label needs refreshing.
-    std::function<void()> onPreviewSectionChanged;
+    /// Notifies the window when preview command labels or check marks need refreshing.
+    std::function<void()> onViewOptionsChanged;
 
     /// Returns the plugin selection controller, or nullptr before the component finishes constructing.
     [[nodiscard]] PluginChain* getPluginChain() const noexcept
@@ -136,6 +138,7 @@ private:
     void handleSortRequested(int columnId, bool isForwards);
     void handleThumbnailFullyLoaded();
     void launchFolderChooser(bool appendToRoots);
+    void layoutPlaybackButtons(juce::Rectangle<int> bounds);
     void normalizeSelectedRecords();
     void reconcilePendingAnalysisResults();
     void refreshAnalysis(bool forceRefresh);

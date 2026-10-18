@@ -81,29 +81,19 @@ constexpr float strokeWidth = 1.5f;
 /// Compact workspace geometry leaves room for the waveform even at the minimum window width.
 namespace compactPreview
 {
-constexpr int height = 60;
+constexpr int height = 52;
 constexpr int padding = 4;
 constexpr int spacing = 6;
-constexpr int playbackWidth = 90;
-constexpr int processWidth = 80;
 constexpr int metricMinimumWidth = 100;
-constexpr int metricPadding = 4;
 constexpr int metricCaptionHeight = 14;
 constexpr int metricSpacing = 4;
 constexpr int metricsMinimumWidth = metricMinimumWidth * 4 + metricSpacing * 3;
 constexpr int minimumWaveformWidth = 140;
-constexpr double waveformWidthProportion = 0.3;
-constexpr float valueFontHeight = 24.0f;
+constexpr double metricsWidthProportion = 0.35;
 constexpr float minimumValueHorizontalScale = 0.5f;
 constexpr int animationDurationMilliseconds = 180;
 constexpr int animationFramesPerSecond = 60;
 
-static_assert(
-    minimumWindowWidth - mainContentPadding * 2 - padding * 2 - previewToggle::size - playbackWidth - processWidth
-            - metricsMinimumWidth - spacing * 4
-        >= minimumWaveformWidth,
-    "The compact controls and all four metrics must leave room for the waveform at the minimum window width"
-);
 }  // namespace compactPreview
 
 /// Reserve scrollbar width even when hidden, avoiding width/height relayout feedback.
@@ -132,6 +122,13 @@ constexpr int horizontalPadding = 10;
 /// The optional pending/error status row is added separately.
 constexpr int summaryHeight = filenameHeight + sectionSpacing + metricHeight * 2 + sectionSpacing * 2;
 }  // namespace information
+
+static_assert(
+    minimumWindowWidth - mainContentPadding * 2 - compactPreview::padding * 2 - controlsMinimumWidth
+            - compactPreview::metricsMinimumWidth - sectionSpacing * 2
+        >= compactPreview::minimumWaveformWidth,
+    "The compact controls and all four metrics must leave room for the waveform at the minimum window width"
+);
 
 /// Plugin-chain rows, action buttons, and the scrolling editor's outer margin.
 namespace pluginEditor

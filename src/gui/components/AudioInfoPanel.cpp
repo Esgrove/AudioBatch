@@ -73,15 +73,11 @@ void AudioInfoMetric::setValue(const juce::String& value)
     unitLabel.setTooltip(description);
 }
 
-/// Gives compact metrics larger full-height values beside stacked captions and units.
+/// Keeps the same numeric font in both modes, with compact values beside stacked captions and units.
 void AudioInfoMetric::setCompact(const bool compact)
 {
     compactMode = compact;
-    valueLabel.setFont(
-        juce::CustomLookAndFeel::getMonoBaseFont().withHeight(
-            compact ? layout::compactPreview::valueFontHeight : layout::information::metricFontHeight
-        )
-    );
+    valueLabel.setFont(juce::CustomLookAndFeel::getMonoBaseFont().withHeight(layout::information::metricFontHeight));
     valueLabel.setMinimumHorizontalScale(
         compact ? layout::compactPreview::minimumValueHorizontalScale : layout::information::minimumValueHorizontalScale
     );
@@ -103,9 +99,7 @@ void AudioInfoMetric::paint(juce::Graphics& graphics)
 /// Stacks compact captions and units to the left of a full-height value, retaining cards in expanded mode.
 void AudioInfoMetric::resized()
 {
-    auto bounds = getLocalBounds().reduced(
-        compactMode ? layout::compactPreview::metricPadding : layout::information::metricPadding
-    );
+    auto bounds = getLocalBounds().reduced(layout::information::metricPadding);
     if (compactMode) {
         auto labels = bounds.removeFromLeft((bounds.getWidth() - layout::compactPreview::metricSpacing) / 2);
         labels = labels.withSizeKeepingCentre(labels.getWidth(), layout::compactPreview::metricCaptionHeight * 2);
@@ -192,6 +186,7 @@ void AudioInfoPanel::setCompact(const bool compact)
         metric.setCompact(compact);
     }
     resized();
+    repaint();
 }
 
 /// Format detailed audio info rows.
@@ -329,9 +324,12 @@ void AudioInfoPanel::setRows(std::vector<AudioInfoRow> newRows)
     repaint();
 }
 
-/// Paints a subtle inspector surface behind the fixed and scrolling sections.
+/// Paints the expanded inspector surface, leaving only the individual metric cards visible in compact mode.
 void AudioInfoPanel::paint(juce::Graphics& graphics)
 {
+    if (compactMode) {
+        return;
+    }
     const auto bounds = getLocalBounds().toFloat();
     graphics.setColour(juce::CustomLookAndFeel::greySemiDark());
     graphics.fillRoundedRectangle(bounds, layout::information::cornerRadius);

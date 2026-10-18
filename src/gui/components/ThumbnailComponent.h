@@ -52,6 +52,7 @@ public:
     juce::URL getLastDroppedFile() const noexcept;
 
     bool loadFromCacheData(const juce::MemoryBlock& waveformData);
+    [[nodiscard]] bool isSeratoWaveformColouringEnabled() const noexcept;
 
     void setDisplayGain(float linearGain);
     void setMouseWheelGainCallback(std::function<void(float)> callback);
@@ -59,6 +60,7 @@ public:
     void setRange(juce::Range<double> newRange);
     void setSeratoMarkers(std::shared_ptr<const serato::Markers> markers);
     void setSeratoOverview(std::shared_ptr<const serato::Overview> overview);
+    void setSeratoWaveformColouringEnabled(bool enabled);
     void setThumbnailFullyLoadedCallback(std::function<void()> callback);
     void setURL(const juce::URL& url);
     void setZoom(double zoomLevel);
@@ -90,6 +92,7 @@ private:
 
     bool hasNotifiedFullyLoaded {false};
     bool isFollowingTransport {false};
+    bool seratoWaveformColouringEnabled {true};
     float displayGain {1.0f};
 };
 }  // namespace audiobatch
