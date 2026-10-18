@@ -9,6 +9,21 @@
 
 namespace audiobatch
 {
+/// Reports the active spectral-colour preference without requiring a selected file.
+bool AudioBatchComponent::isSeratoWaveformColouringEnabled() const noexcept
+{
+    return thumbnail->isSeratoWaveformColouringEnabled();
+}
+
+/// Switches the spectral-colour brush without altering cues, metadata, playback, zoom, or cached peaks.
+void AudioBatchComponent::toggleSeratoWaveformColouring()
+{
+    thumbnail->setSeratoWaveformColouringEnabled(!isSeratoWaveformColouringEnabled());
+    if (onViewOptionsChanged) {
+        onViewOptionsChanged();
+    }
+}
+
 /// Updates the fixed analysis cards and scrolling details, including pending and failed record states.
 void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 {

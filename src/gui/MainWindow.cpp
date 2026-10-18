@@ -34,6 +34,7 @@ enum MenuItemId : std::uint8_t {
     moveSelectedToTrashMenuItemId,
     revealSelectedMenuItemId,
     togglePreviewSectionMenuItemId,
+    toggleSeratoWaveformColouringMenuItemId,
 };
 }  // namespace
 
@@ -68,7 +69,7 @@ MainWindow::MainWindow(const juce::String& name) :
 
     commandManager.registerAllCommandsForTarget(this);
     commandManager.setFirstCommandTarget(this);
-    getAudioBatch().onPreviewSectionChanged = [this] {
+    getAudioBatch().onViewOptionsChanged = [this] {
         commandManager.commandStatusChanged();
         menuItemsChanged();
     };
@@ -170,6 +171,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             break;
         case 2:
             menu.addCommandItem(&commandManager, togglePreviewSectionMenuItemId);
+            menu.addCommandItem(&commandManager, toggleSeratoWaveformColouringMenuItemId);
             menu.addSeparator();
             appendPluginOptionsMenuItems(menu);
             menu.addSeparator();
@@ -200,6 +202,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             break;
         case 1:
             menu.addCommandItem(&commandManager, togglePreviewSectionMenuItemId);
+            menu.addCommandItem(&commandManager, toggleSeratoWaveformColouringMenuItemId);
             menu.addSeparator();
             appendPluginOptionsMenuItems(menu);
             menu.addSeparator();
@@ -291,6 +294,7 @@ void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
         moveSelectedToTrashMenuItemId,
         aboutMenuItemId,
         togglePreviewSectionMenuItemId,
+        toggleSeratoWaveformColouringMenuItemId,
     });
 }
 
@@ -309,6 +313,17 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
     const auto canActOnSelection = !blockedByDialog && audioBatch.hasSelectedRecords();
 
     switch (commandID) {
+        case toggleSeratoWaveformColouringMenuItemId:
+            result.setInfo(
+                "Serato Waveform Colours", "Uses Serato spectral colours for waveform previews", "Options", 0
+            );
+            result.addDefaultKeypress(
+                's',
+                juce::ModifierKeys(juce::ModifierKeys::commandModifier).withFlags(juce::ModifierKeys::shiftModifier)
+            );
+            result.setTicked(audioBatch.isSeratoWaveformColouringEnabled());
+            result.setActive(!blockedByDialog);
+            break;
         case togglePreviewSectionMenuItemId:
             result.setInfo(
                 audioBatch.isPreviewSectionExpanded() ? "Collapse Bottom Section" : "Expand Bottom Section",
@@ -368,6 +383,9 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
 bool MainWindow::perform(const InvocationInfo& info)
 {
     switch (info.commandID) {
+        case toggleSeratoWaveformColouringMenuItemId:
+            getAudioBatch().toggleSeratoWaveformColouring();
+            return true;
         case togglePreviewSectionMenuItemId:
             getAudioBatch().togglePreviewSection();
             return true;
