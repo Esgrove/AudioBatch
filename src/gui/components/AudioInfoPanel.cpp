@@ -73,6 +73,18 @@ void AudioInfoMetric::setValue(const juce::String& value)
     unitLabel.setTooltip(description);
 }
 
+/// Switches to a smaller value with its unit alongside it, leaving the full caption width available.
+void AudioInfoMetric::setCompact(const bool compact)
+{
+    compactMode = compact;
+    valueLabel.setFont(
+        juce::CustomLookAndFeel::getMonoBaseFont().withHeight(
+            compact ? layout::compactPreview::valueFontHeight : layout::information::metricFontHeight
+        )
+    );
+    resized();
+}
+
 /// Draws a neutral card surface without implying a loudness target or clipping threshold.
 void AudioInfoMetric::paint(juce::Graphics& graphics)
 {
@@ -88,7 +100,10 @@ void AudioInfoMetric::resized()
 {
     auto bounds = getLocalBounds().reduced(layout::information::metricPadding);
     auto caption = bounds.removeFromTop(layout::information::metricCaptionHeight);
-    unitLabel.setBounds(caption.removeFromRight(layout::information::metricUnitWidth));
+    unitLabel.setBounds(
+        compactMode ? bounds.removeFromRight(layout::information::metricUnitWidth)
+                    : caption.removeFromRight(layout::information::metricUnitWidth)
+    );
     captionLabel.setBounds(caption);
     valueLabel.setBounds(bounds);
 }
@@ -132,6 +147,9 @@ AudioInfoPanel::AudioInfoPanel()
 /// Clears stale values while keeping a consistent empty-state summary.
 void AudioInfoPanel::clear()
 {
+    hasTitle = false;
+    hasStatus = false;
+    setDescription("No file selected");
     displayedPath.clear();
     filenameLabel.setText("No file selected", juce::dontSendNotification);
     filenameLabel.setTooltip({});
@@ -148,6 +166,19 @@ void AudioInfoPanel::clear()
     }
     detailsViewport.setViewPosition(0, 0);
     setRows({});
+}
+
+/// Reflows the existing metrics without changing their data or the details viewport's scroll position.
+void AudioInfoPanel::setCompact(const bool compact)
+{
+    if (compactMode == compact) {
+        return;
+    }
+    compactMode = compact;
+    for (auto& metric : metrics) {
+        metric.setCompact(compact);
+    }
+    resized();
 }
 
 /// Format detailed audio info rows.
@@ -203,7 +234,7 @@ void AudioInfoPanel::showRecord(
     }
     const juce::String separator = " - ";
     const auto separatorIndex = record.fileName.indexOf(separator);
-    const bool hasTitle = separatorIndex >= 0;
+    hasTitle = separatorIndex >= 0;
     filenameLabel.setText(
         hasTitle ? record.fileName.substring(0, separatorIndex) : record.fileName, juce::dontSendNotification
     );
@@ -211,16 +242,16 @@ void AudioInfoPanel::showRecord(
         hasTitle ? record.fileName.substring(separatorIndex + separator.length()) : juce::String(),
         juce::dontSendNotification
     );
-    titleLabel.setVisible(hasTitle);
     for (auto* label : {&filenameLabel, &titleLabel}) {
         label->setTooltip(path);
         label->setDescription(path);
     }
-    statusLabel.setVisible(!record.isReady());
+    hasStatus = !record.isReady();
     const auto status = !record.isReady() && !record.hasError() && activeStatusLabel.isNotEmpty()
         ? activeStatusLabel
         : formatStatus(record);
     statusLabel.setText(status, juce::dontSendNotification);
+    setDescription(utils::format("{}: {}", path, status));
     statusLabel.setColour(
         juce::Label::textColourId,
         record.hasError() ? juce::CustomLookAndFeel::red() : juce::CustomLookAndFeel::greyMiddleLight()
@@ -259,8 +290,7 @@ int AudioInfoPanel::getErrorHeight(const int width) const
 int AudioInfoPanel::getPreferredHeight() const
 {
     return layout::information::verticalPadding * 2 + layout::information::summaryHeight
-        + (titleLabel.isVisible() ? layout::information::filenameHeight : 0)
-        + (statusLabel.isVisible() ? layout::information::statusHeight : 0)
+        + (hasTitle ? layout::information::filenameHeight : 0) + (hasStatus ? layout::information::statusHeight : 0)
         + static_cast<int>(rows.size()) * layout::information::rowHeight
         + getErrorHeight(getWidth() - layout::information::horizontalPadding * 2 - layout::scrollBarThickness);
 }
@@ -299,6 +329,18 @@ void AudioInfoPanel::paint(juce::Graphics& graphics)
 /// Keeps the heading and cards outside the viewport, reserving scrollbar width to avoid relayout oscillation.
 void AudioInfoPanel::resized()
 {
+    filenameLabel.setVisible(!compactMode);
+    titleLabel.setVisible(!compactMode && hasTitle);
+    statusLabel.setVisible(!compactMode && hasStatus);
+    detailsViewport.setVisible(!compactMode);
+    if (compactMode) {
+        auto bounds = getLocalBounds();
+        for (auto& metric : metrics) {
+            metric.setBounds(bounds.removeFromLeft(layout::compactPreview::metricWidth));
+            bounds.removeFromLeft(layout::compactPreview::metricSpacing);
+        }
+        return;
+    }
     auto bounds
         = getLocalBounds().reduced(layout::information::horizontalPadding, layout::information::verticalPadding);
     filenameLabel.setBounds(bounds.removeFromTop(layout::information::filenameHeight));

@@ -67,6 +67,32 @@ constexpr int dialogContentHeight = 250;
 constexpr int dialogMaximumWindowSize = 4096;
 constexpr int tooltipDelayMilliseconds = 700;
 
+/// Compact workspace geometry leaves room for the waveform even at the minimum window width.
+namespace compactPreview
+{
+constexpr int height = 64;
+constexpr int padding = 6;
+constexpr int spacing = 6;
+constexpr int toggleWidth = 24;
+constexpr int playbackWidth = 56;
+constexpr int processWidth = 68;
+constexpr int buttonHeight = 28;
+constexpr int metricWidth = 100;
+constexpr int metricSpacing = 4;
+constexpr int metricsWidth = metricWidth * 4 + metricSpacing * 3;
+constexpr int minimumWaveformWidth = 120;
+constexpr float valueFontHeight = 16.0f;
+constexpr int animationDurationMilliseconds = 180;
+constexpr int animationFramesPerSecond = 60;
+
+static_assert(
+    minimumWindowWidth - mainContentPadding * 2 - padding * 2 - toggleWidth - playbackWidth - processWidth
+            - metricsWidth - spacing * 4
+        >= minimumWaveformWidth,
+    "The compact controls and all four metrics must leave room for the waveform at the minimum window width"
+);
+}  // namespace compactPreview
+
 /// Reserve scrollbar width even when hidden, avoiding width/height relayout feedback.
 constexpr int scrollBarThickness = 8;
 

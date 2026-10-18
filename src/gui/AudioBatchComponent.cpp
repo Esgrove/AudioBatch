@@ -54,6 +54,9 @@ void AudioBatchComponent::configurePreviewControls()
         2, layout::previewMinimumHeight, layout::previewMaximumProportion, layout::previewPreferredProportion
     );
     addAndMakeVisible(waveformResizeBar);
+    previewSectionButton.setTooltip("Collapse bottom section (Ctrl+Shift+Space / Cmd+Shift+Space).");
+    previewSectionButton.onClick = [this] { togglePreviewSection(); };
+    addAndMakeVisible(previewSectionButton);
 
     controlsViewport.setViewedComponent(&controlsContent, false);
     controlsViewport.setScrollBarsShown(true, false);
@@ -352,6 +355,7 @@ AudioBatchComponent::AudioBatchComponent() :
 /// Stops background work and releases audio and dialog resources.
 AudioBatchComponent::~AudioBatchComponent()
 {
+    stopTimer();
     utils::logDebug("Application shutdown: stopping preview metadata worker");
     if (seratoPreviewLoader) {
         seratoPreviewLoader->cancelAndWait();
@@ -413,66 +417,6 @@ juce::Rectangle<int> AudioBatchComponent::getOverallProgressBounds() const
         tableBounds.getWidth(),
         layout::overallProgressBarHeight,
     };
-}
-
-/// Lays out the table and three preview columns.
-/// Only secondary controls scroll, leaving Process and the info panel's summary in view.
-void AudioBatchComponent::resized()
-{
-    auto bounds = getLocalBounds().reduced(layout::mainContentPadding);
-    auto topBar = bounds.removeFromTop(layout::topBarHeight);
-
-    statusLabel.setBounds(topBar.removeFromRight(layout::statusLabelWidth));
-    topBar.removeFromRight(layout::sectionSpacing);
-    currentRootLabel.setBounds(topBar);
-
-    bounds.removeFromTop(layout::sectionSpacing);
-
-    std::array<juce::Component*, 3> verticalSections {&resultsTable, &waveformResizeBar, thumbnail.get()};
-    mainVerticalLayout.layOutComponents(
-        verticalSections.data(), 3, bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(), true, true
-    );
-    updateResultsTableColumnWidths();
-
-    const auto columns = layout::previewColumns(thumbnail->getBounds());
-    audioInfo->setBounds(columns.information);
-    thumbnail->setBounds(columns.waveform);
-
-    auto controls
-        = columns.controls.reduced(layout::information::horizontalPadding, layout::information::verticalPadding);
-    auto playbackRow = controls.removeFromBottom(layout::processButtonHeight);
-    startStopButton.setBounds(playbackRow.removeFromLeft((playbackRow.getWidth() - layout::sectionSpacing) / 2));
-    playbackRow.removeFromLeft(layout::sectionSpacing);
-    processButton.setBounds(playbackRow);
-    controls.removeFromBottom(layout::controlsSectionSpacing);
-
-    // Keep the viewport inside the shared panel padding, reserving scrollbar width as in the audio info details.
-    controlsViewport.setBounds(controls);
-    controlsContent.setSize(
-        juce::jmax(0, controls.getWidth() - layout::scrollBarThickness),
-        juce::jmax(controls.getHeight(), layout::controlsContentHeight)
-    );
-    auto content = controlsContent.getLocalBounds();
-    zoomLabel.setBounds(content.removeFromTop(layout::sliderRowHeight));
-    zoomSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
-
-    content.removeFromTop(layout::controlsSectionSpacing);
-    gainLabel.setBounds(content.removeFromTop(layout::sliderRowHeight));
-    gainSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
-
-    content.removeFromTop(layout::controlsSectionSpacing);
-    auto normalizeRow = content.removeFromTop(layout::normalizeToggleHeight);
-    normalizeBeforePluginToggle.setBounds(
-        normalizeRow.removeFromLeft((normalizeRow.getWidth() - layout::sectionSpacing) / 2)
-    );
-    normalizeRow.removeFromLeft(layout::sectionSpacing);
-    forceOverwriteToggle.setBounds(normalizeRow);
-    content.removeFromTop(layout::normalizeTargetSpacing);
-    normalizationTargetControl.setBounds(content.removeFromTop(layout::controlButtonHeight));
-    content.removeFromTop(layout::controlsSectionSpacing);
-    pluginButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
-    content.removeFromTop(layout::controlsSectionSpacing);
-    settingsButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
 }
 
 /// Distributes leftover table width between the name and path columns while preserving their current ratio.

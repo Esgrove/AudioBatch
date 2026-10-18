@@ -29,6 +29,12 @@ The resizable preview workspace has separate columns for controls, selected-file
 Sample peak, true peak, integrated loudness, and maximum short-term loudness appear in dedicated metric cards.
 Technical details scroll independently in smaller windows, keeping the key readings visible.
 The primary Process button stays at the bottom of the controls column.
+Use the arrow at the left edge of the bottom section, or the collapse/expand command in the Options menu,
+to animate it into a compact row and give more space to the results table.
+The shortcut is `Ctrl+Shift+Space` on Windows and `Cmd+Shift+Space` on macOS.
+The compact row keeps Play/Stop, Process, all four metrics, and a smaller waveform visible.
+Other controls are hidden but retain their settings.
+Expanding restores the previous divider position. The section starts expanded on every launch.
 Serato DJ metadata adds waveform colours and coloured cue markers,
 and the info panel shows BPM and musical key when available.
 Files without Serato tag data show a default blue waveform.

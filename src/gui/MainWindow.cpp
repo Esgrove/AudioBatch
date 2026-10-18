@@ -33,6 +33,7 @@ enum MenuItemId : std::uint8_t {
     addFolderMenuItemId,
     moveSelectedToTrashMenuItemId,
     revealSelectedMenuItemId,
+    togglePreviewSectionMenuItemId,
 };
 }  // namespace
 
@@ -67,6 +68,10 @@ MainWindow::MainWindow(const juce::String& name) :
 
     commandManager.registerAllCommandsForTarget(this);
     commandManager.setFirstCommandTarget(this);
+    getAudioBatch().onPreviewSectionChanged = [this] {
+        commandManager.commandStatusChanged();
+        menuItemsChanged();
+    };
     addKeyListener(commandManager.getKeyMappings());
 
 #if JUCE_MAC
@@ -164,6 +169,8 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             menu.addItem(clearFilesMenuItemId, "Clear All Files");
             break;
         case 2:
+            menu.addCommandItem(&commandManager, togglePreviewSectionMenuItemId);
+            menu.addSeparator();
             appendPluginOptionsMenuItems(menu);
             menu.addSeparator();
             menu.addItem(audioSettingsMenuItemId, "Audio Settings...");
@@ -192,6 +199,8 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             menu.addItem(quitMenuItemId, "Quit");
             break;
         case 1:
+            menu.addCommandItem(&commandManager, togglePreviewSectionMenuItemId);
+            menu.addSeparator();
             appendPluginOptionsMenuItems(menu);
             menu.addSeparator();
             menu.addItem(audioSettingsMenuItemId, "Audio Settings...");
@@ -281,6 +290,7 @@ void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
         removeSelectedMenuItemId,
         moveSelectedToTrashMenuItemId,
         aboutMenuItemId,
+        togglePreviewSectionMenuItemId,
     });
 }
 
@@ -299,6 +309,19 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
     const auto canActOnSelection = !blockedByDialog && audioBatch.hasSelectedRecords();
 
     switch (commandID) {
+        case togglePreviewSectionMenuItemId:
+            result.setInfo(
+                audioBatch.isPreviewSectionExpanded() ? "Collapse Bottom Section" : "Expand Bottom Section",
+                "Toggles the compact preview and processing row",
+                "Options",
+                0
+            );
+            result.addDefaultKeypress(
+                juce::KeyPress::spaceKey,
+                juce::ModifierKeys(juce::ModifierKeys::commandModifier).withFlags(juce::ModifierKeys::shiftModifier)
+            );
+            result.setActive(!blockedByDialog);
+            break;
         case aboutMenuItemId:
             result.setInfo(
                 utils::format("About {}", juce::JUCEApplication::getInstance()->getApplicationName()),
@@ -345,6 +368,9 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
 bool MainWindow::perform(const InvocationInfo& info)
 {
     switch (info.commandID) {
+        case togglePreviewSectionMenuItemId:
+            getAudioBatch().togglePreviewSection();
+            return true;
         case aboutMenuItemId: {
             const auto appName = juce::JUCEApplication::getInstance()->getApplicationName();
             juce::AlertWindow::showAsync(

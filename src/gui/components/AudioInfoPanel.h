@@ -28,6 +28,7 @@ public:
     AudioInfoMetric(const juce::String& name, const juce::String& caption, const juce::String& unit);
 
     void setValue(const juce::String& value);
+    void setCompact(bool compact);
     void paint(juce::Graphics& graphics) override;
     void resized() override;
 
@@ -35,6 +36,7 @@ private:
     juce::Label captionLabel;
     juce::Label unitLabel;
     juce::Label valueLabel;
+    bool compactMode {false};
 };
 
 /// Read-only inspector with a fixed summary and a vertically scrolling details region.
@@ -46,6 +48,7 @@ public:
     static std::vector<AudioInfoRow> formatRows(const AudioAnalysisRecord& record);
 
     void clear();
+    void setCompact(bool compact);
     void showRecord(
         const AudioAnalysisRecord& record,
         const juce::String& activeStatusLabel,
@@ -79,5 +82,8 @@ private:
     std::vector<AudioInfoRow> rows;
     std::vector<std::unique_ptr<juce::Label>> fieldLabels;
     std::vector<std::unique_ptr<juce::Label>> valueLabels;
+    bool compactMode {false};
+    bool hasTitle {false};
+    bool hasStatus {false};
 };
 }  // namespace audiobatch
