@@ -29,6 +29,7 @@ void AudioBatchComponent::togglePreviewSection()
     }
     const auto* action = previewSectionExpanded ? "Collapse bottom section" : "Expand bottom section";
     previewSectionButton.setButtonText(action);
+    previewSectionButton.setToggleState(!previewSectionExpanded, juce::dontSendNotification);
     previewSectionButton.setTooltip(utils::format("{} (Ctrl+Shift+Space / Cmd+Shift+Space).", action));
     startTimerHz(layout::compactPreview::animationFramesPerSecond);
     resized();
@@ -124,38 +125,27 @@ void AudioBatchComponent::resized()
     updateResultsTableColumnWidths();
 
     auto workspace = previewBounds.reduced(layout::compactPreview::padding);
-    const auto toggleBounds = workspace.removeFromLeft(layout::compactPreview::toggleWidth);
-    previewSectionButton.setBounds(
-        toggleBounds.withSizeKeepingCentre(layout::compactPreview::toggleWidth, layout::compactPreview::buttonHeight)
-    );
-    previewSectionButton.setTransform(
-        juce::AffineTransform::rotation(
-            previewSectionExpanded ? 0.0f : juce::MathConstants<float>::pi,
-            static_cast<float>(previewSectionButton.getBounds().getCentreX()),
-            static_cast<float>(previewSectionButton.getBounds().getCentreY())
-        )
-    );
-    workspace.removeFromLeft(layout::compactPreview::spacing);
-
     if (compact) {
-        const auto playback = workspace.removeFromLeft(layout::compactPreview::playbackWidth);
-        startStopButton.setBounds(
-            playback.withSizeKeepingCentre(playback.getWidth(), layout::compactPreview::buttonHeight)
+        const auto toggleBounds = workspace.removeFromLeft(layout::previewToggle::size);
+        previewSectionButton.setBounds(
+            toggleBounds.withSizeKeepingCentre(layout::previewToggle::size, layout::previewToggle::size)
         );
         workspace.removeFromLeft(layout::compactPreview::spacing);
-        const auto processing = workspace.removeFromLeft(layout::compactPreview::processWidth);
-        processButton.setBounds(
-            processing.withSizeKeepingCentre(processing.getWidth(), layout::compactPreview::buttonHeight)
+        startStopButton.setBounds(workspace.removeFromLeft(layout::compactPreview::playbackWidth));
+        workspace.removeFromLeft(layout::compactPreview::spacing);
+        processButton.setBounds(workspace.removeFromLeft(layout::compactPreview::processWidth));
+        workspace.removeFromLeft(layout::compactPreview::spacing);
+        const auto waveformWidth = juce::jlimit(
+            layout::compactPreview::minimumWaveformWidth,
+            juce::jmax(
+                layout::compactPreview::minimumWaveformWidth,
+                workspace.getWidth() - layout::compactPreview::metricsMinimumWidth - layout::compactPreview::spacing
+            ),
+            juce::roundToInt(workspace.getWidth() * layout::compactPreview::waveformWidthProportion)
         );
-        workspace.removeFromLeft(layout::compactPreview::spacing);
-        audioInfo->setBounds(workspace.removeFromLeft(layout::compactPreview::metricsWidth)
-                                 .withHeight(layout::compactPreview::height - layout::compactPreview::padding * 2)
-                                 .withY(
-                                     workspace.getCentreY()
-                                     - (layout::compactPreview::height - layout::compactPreview::padding * 2) / 2
-                                 ));
-        workspace.removeFromLeft(layout::compactPreview::spacing);
-        thumbnail->setBounds(workspace);
+        thumbnail->setBounds(workspace.removeFromRight(waveformWidth));
+        workspace.removeFromRight(layout::compactPreview::spacing);
+        audioInfo->setBounds(workspace);
         return;
     }
 
@@ -165,6 +155,10 @@ void AudioBatchComponent::resized()
     thumbnail->setBounds(columns.waveform);
     auto controls
         = columns.controls.reduced(layout::information::horizontalPadding, layout::information::verticalPadding);
+    previewSectionButton.setBounds(
+        controls.removeFromTop(layout::previewToggle::size).withWidth(layout::previewToggle::size)
+    );
+    controls.removeFromTop(layout::previewToggle::expandedSpacing);
     auto playbackRow = controls.removeFromBottom(layout::processButtonHeight);
     startStopButton.setBounds(playbackRow.removeFromLeft((playbackRow.getWidth() - layout::sectionSpacing) / 2));
     playbackRow.removeFromLeft(layout::sectionSpacing);

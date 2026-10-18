@@ -73,7 +73,7 @@ void AudioInfoMetric::setValue(const juce::String& value)
     unitLabel.setTooltip(description);
 }
 
-/// Switches to a smaller value with its unit alongside it, leaving the full caption width available.
+/// Gives compact metrics larger full-height values beside stacked captions and units.
 void AudioInfoMetric::setCompact(const bool compact)
 {
     compactMode = compact;
@@ -82,6 +82,11 @@ void AudioInfoMetric::setCompact(const bool compact)
             compact ? layout::compactPreview::valueFontHeight : layout::information::metricFontHeight
         )
     );
+    valueLabel.setMinimumHorizontalScale(
+        compact ? layout::compactPreview::minimumValueHorizontalScale : layout::information::minimumValueHorizontalScale
+    );
+    valueLabel.setJustificationType(compact ? juce::Justification::centredRight : juce::Justification::centredLeft);
+    unitLabel.setJustificationType(compact ? juce::Justification::centredLeft : juce::Justification::centredRight);
     resized();
 }
 
@@ -95,15 +100,23 @@ void AudioInfoMetric::paint(juce::Graphics& graphics)
     graphics.drawRoundedRectangle(bounds.reduced(0.5f), layout::information::cornerRadius, 1.0f);
 }
 
-/// Places a small caption and unit above the prominent numeric value.
+/// Stacks compact captions and units to the left of a full-height value, retaining cards in expanded mode.
 void AudioInfoMetric::resized()
 {
-    auto bounds = getLocalBounds().reduced(layout::information::metricPadding);
-    auto caption = bounds.removeFromTop(layout::information::metricCaptionHeight);
-    unitLabel.setBounds(
-        compactMode ? bounds.removeFromRight(layout::information::metricUnitWidth)
-                    : caption.removeFromRight(layout::information::metricUnitWidth)
+    auto bounds = getLocalBounds().reduced(
+        compactMode ? layout::compactPreview::metricPadding : layout::information::metricPadding
     );
+    if (compactMode) {
+        auto labels = bounds.removeFromLeft((bounds.getWidth() - layout::compactPreview::metricSpacing) / 2);
+        labels = labels.withSizeKeepingCentre(labels.getWidth(), layout::compactPreview::metricCaptionHeight * 2);
+        captionLabel.setBounds(labels.removeFromTop(layout::compactPreview::metricCaptionHeight));
+        unitLabel.setBounds(labels);
+        bounds.removeFromLeft(layout::compactPreview::metricSpacing);
+        valueLabel.setBounds(bounds);
+        return;
+    }
+    auto caption = bounds.removeFromTop(layout::information::metricCaptionHeight);
+    unitLabel.setBounds(caption.removeFromRight(layout::information::metricUnitWidth));
     captionLabel.setBounds(caption);
     valueLabel.setBounds(bounds);
 }
@@ -335,8 +348,12 @@ void AudioInfoPanel::resized()
     detailsViewport.setVisible(!compactMode);
     if (compactMode) {
         auto bounds = getLocalBounds();
-        for (auto& metric : metrics) {
-            metric.setBounds(bounds.removeFromLeft(layout::compactPreview::metricWidth));
+        for (std::size_t index = 0; index < metrics.size(); ++index) {
+            const auto remainingMetrics = static_cast<int>(metrics.size() - index);
+            const auto metricWidth
+                = (bounds.getWidth() - layout::compactPreview::metricSpacing * (remainingMetrics - 1))
+                / remainingMetrics;
+            metrics[index].setBounds(bounds.removeFromLeft(juce::jmax(0, metricWidth)));
             bounds.removeFromLeft(layout::compactPreview::metricSpacing);
         }
         return;

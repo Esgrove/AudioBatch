@@ -42,12 +42,12 @@ constexpr double resultsTableMinimumHeight = 240.0;
 constexpr double resultsTableMaximumProportion = -0.75;
 constexpr double resultsTablePreferredProportion = -0.5;
 constexpr double resizeBarHeight = 6.0;
-constexpr double previewMinimumHeight = 220.0;
+constexpr double previewMinimumHeight = 232.0;
 constexpr double previewMaximumProportion = -0.7;
-constexpr double previewPreferredProportion = -0.26;
+constexpr double previewPreferredProportion = -0.28;
 
 constexpr int controlButtonHeight = 28;
-constexpr int processButtonHeight = 34;
+constexpr int processButtonHeight = 38;
 constexpr int controlsSectionSpacing = 8;
 constexpr int gainTextBoxWidth = 60;
 constexpr int normalizeToggleHeight = 22;
@@ -67,27 +67,40 @@ constexpr int dialogContentHeight = 250;
 constexpr int dialogMaximumWindowSize = 4096;
 constexpr int tooltipDelayMilliseconds = 700;
 
+/// Small outlined disclosure icon inside the controls, without a separate sidebar.
+namespace previewToggle
+{
+constexpr int size = 14;
+constexpr int expandedSpacing = 4;
+constexpr int imageInset = 2;
+constexpr float glyphWidth = 10.0f;
+constexpr float glyphHeight = 5.0f;
+constexpr float strokeWidth = 1.5f;
+}  // namespace previewToggle
+
 /// Compact workspace geometry leaves room for the waveform even at the minimum window width.
 namespace compactPreview
 {
-constexpr int height = 64;
-constexpr int padding = 6;
+constexpr int height = 60;
+constexpr int padding = 4;
 constexpr int spacing = 6;
-constexpr int toggleWidth = 24;
-constexpr int playbackWidth = 56;
-constexpr int processWidth = 68;
-constexpr int buttonHeight = 28;
-constexpr int metricWidth = 100;
+constexpr int playbackWidth = 90;
+constexpr int processWidth = 80;
+constexpr int metricMinimumWidth = 100;
+constexpr int metricPadding = 4;
+constexpr int metricCaptionHeight = 14;
 constexpr int metricSpacing = 4;
-constexpr int metricsWidth = metricWidth * 4 + metricSpacing * 3;
-constexpr int minimumWaveformWidth = 120;
-constexpr float valueFontHeight = 16.0f;
+constexpr int metricsMinimumWidth = metricMinimumWidth * 4 + metricSpacing * 3;
+constexpr int minimumWaveformWidth = 140;
+constexpr double waveformWidthProportion = 0.3;
+constexpr float valueFontHeight = 24.0f;
+constexpr float minimumValueHorizontalScale = 0.5f;
 constexpr int animationDurationMilliseconds = 180;
 constexpr int animationFramesPerSecond = 60;
 
 static_assert(
-    minimumWindowWidth - mainContentPadding * 2 - padding * 2 - toggleWidth - playbackWidth - processWidth
-            - metricsWidth - spacing * 4
+    minimumWindowWidth - mainContentPadding * 2 - padding * 2 - previewToggle::size - playbackWidth - processWidth
+            - metricsMinimumWidth - spacing * 4
         >= minimumWaveformWidth,
     "The compact controls and all four metrics must leave room for the waveform at the minimum window width"
 );
@@ -104,6 +117,7 @@ constexpr float outlineAlpha = 0.08f;
 constexpr float captionFontHeight = 12.0f;
 constexpr float valueFontHeight = 13.0f;
 constexpr float metricFontHeight = 20.0f;
+constexpr float minimumValueHorizontalScale = 0.7f;
 constexpr float headingFontHeight = 13.0f;
 constexpr int filenameHeight = 22;
 constexpr int statusHeight = 18;

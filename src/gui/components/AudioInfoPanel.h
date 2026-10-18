@@ -70,7 +70,7 @@ private:
     juce::Label titleLabel {"Title"};
     juce::Label statusLabel {"Status"};
     std::array<AudioInfoMetric, 4> metrics {
-        AudioInfoMetric {"Sample peak", "Sample peak", "dBFS"},
+        AudioInfoMetric {"Peak", "Peak", "dBFS"},
         AudioInfoMetric {"True peak", "True peak", "dBTP"},
         AudioInfoMetric {"Max short-term", "Short-term", "LUFS"},
         AudioInfoMetric {"Integrated loudness", "Integrated", "LUFS"},
