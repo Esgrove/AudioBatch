@@ -28,7 +28,8 @@ namespace
 constinit std::atomic_flag crashLogged;
 }  // namespace
 
-/// Returns the conventional name of a fatal signal for the crash log.
+#if !JUCE_WINDOWS
+/// Returns the conventional name of a fatal signal for the POSIX crash log.
 static constexpr std::string_view signalName(const int signalNumber)
 {
     switch (signalNumber) {
@@ -40,16 +41,15 @@ static constexpr std::string_view signalName(const int signalNumber)
             return "SIGILL";
         case SIGFPE:
             return "SIGFPE";
-#if !JUCE_WINDOWS
         case SIGBUS:
             return "SIGBUS";
         case SIGSYS:
             return "SIGSYS";
-#endif
         default:
             return "unknown signal";
     }
 }
+#endif
 
 /// Logs the reason the process is about to die together with the current stack trace.
 /// Runs inside a signal handler or the terminate handler,
@@ -72,9 +72,10 @@ static void logCrash(const juce::String& reason)
 /// On POSIX systems JUCE passes the signal number and would kill the process with SIGKILL after this returns.
 /// The signal is re-raised with its default action instead,
 /// so the exit status and the system crash report still show the original signal.
-static void handleCrash([[maybe_unused]] void* crashInfo)
+static void handleCrash(void* crashInfo)
 {
 #if JUCE_WINDOWS
+    juce::ignoreUnused(crashInfo);
     logCrash("unhandled exception");
 #else
     const auto signalNumber = static_cast<int>(std::bit_cast<std::intptr_t>(crashInfo));
