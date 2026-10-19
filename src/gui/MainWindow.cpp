@@ -415,7 +415,22 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
             break;
         case moveSelectedToTrashMenuItemId:
             result.setInfo("Move Selected to Trash", "Moves the selected files to the system trash", fileCategory, 0);
+#if JUCE_WINDOWS
+            result.addDefaultKeypress(juce::KeyPress::deleteKey, juce::ModifierKeys::ctrlModifier);
+            result.addDefaultKeypress(
+                juce::KeyPress::deleteKey, juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier
+            );
+#endif
             result.addDefaultKeypress(juce::KeyPress::backspaceKey, juce::ModifierKeys::commandModifier);
+            result.addDefaultKeypress(
+                juce::KeyPress::backspaceKey, juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier
+            );
+#if JUCE_MAC
+            result.addDefaultKeypress(juce::KeyPress::backspaceKey, juce::ModifierKeys::ctrlModifier);
+            result.addDefaultKeypress(
+                juce::KeyPress::backspaceKey, juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier
+            );
+#endif
             result.setActive(canActOnSelection);
             break;
         default:
@@ -470,7 +485,9 @@ bool MainWindow::perform(const InvocationInfo& info)
             getAudioBatch().removeSelectedRecords();
             return true;
         case moveSelectedToTrashMenuItemId:
-            getAudioBatch().moveSelectedRecordsToTrash(true);
+            getAudioBatch().moveSelectedRecordsToTrash(
+                info.invocationMethod != InvocationInfo::fromKeyPress || !info.keyPress.getModifiers().isShiftDown()
+            );
             return true;
         default:
             return false;
