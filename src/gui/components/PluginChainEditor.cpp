@@ -274,7 +274,7 @@ void PluginChainEditor::updateLatencyLabels()
         juce::dontSendNotification
     );
     processingRateLabel.setText(
-        utils::format("Preview rate: {:.0f} Hz. No device: 48 kHz inspection.", pluginChain.getPreviewSampleRate()),
+        formatPluginPreviewRate(pluginChain.getPreviewSampleRate(), pluginChain.hasOpenPreviewDevice()),
         juce::dontSendNotification
     );
 }
@@ -298,11 +298,9 @@ void PluginChainEditor::layoutRows(const PluginChainSlotRow* draggedRow, const i
         ++visualIndex;
     }
 
-    // Keep the add button centered below the last row.
     const auto rowsHeight = static_cast<int>(rows.size()) * layout::pluginEditor::rowHeight;
-    const auto addButtonX = (rowContainer.getWidth() - layout::pluginEditor::addButtonSize) / 2;
     addButton.setBounds(
-        addButtonX,
+        layout::pluginEditor::rowPadding,
         rowsHeight + layout::pluginEditor::rowPadding,
         layout::pluginEditor::addButtonSize,
         layout::pluginEditor::addButtonSize
@@ -336,6 +334,7 @@ int PluginChainEditor::rowIndexForPosition(const int containerY) const
 }
 
 /// Pops up the known-plugins menu and appends the chosen plugin to the chain.
+/// Uses desktop space so long plugin lists are not constrained by the chain editor window.
 void PluginChainEditor::showAddPluginMenu()
 {
     const auto& types = pluginChain.getKnownPluginList().getTypes();
@@ -344,21 +343,18 @@ void PluginChainEditor::showAddPluginMenu()
     juce::KnownPluginList::addToMenu(menu, types, juce::KnownPluginList::sortByManufacturer);
 
     const SafePointer safeThis(this);
-    menu.showMenuAsync(
-        juce::PopupMenu::Options().withTargetComponent(&addButton).withParentComponent(getTopLevelComponent()),
-        [safeThis, types](const int result) {
-            if (safeThis == nullptr || result == 0) {
-                return;
-            }
-
-            const auto index = juce::KnownPluginList::getIndexChosenByMenu(types, result);
-            if (index < 0 || index >= types.size()) {
-                return;
-            }
-
-            safeThis->pluginChain.addPlugin(types.getReference(index));
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&addButton), [safeThis, types](const int result) {
+        if (safeThis == nullptr || result == 0) {
+            return;
         }
-    );
+
+        const auto index = juce::KnownPluginList::getIndexChosenByMenu(types, result);
+        if (index < 0 || index >= types.size()) {
+            return;
+        }
+
+        safeThis->pluginChain.addPlugin(types.getReference(index));
+    });
 }
 
 /// Shows a hint label when the chain is empty, suggesting a plugin scan if no plugins are known yet.

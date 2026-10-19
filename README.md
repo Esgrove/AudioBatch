@@ -50,7 +50,8 @@ Preview never applies automatic normalization or writes audio files.
 Each plugin row shows `Latency: X samples (Y ms)`.
 The chain window's footer shows the enabled plugins' total latency and the real-time processing sample rate.
 Disabled plugins do not contribute to the total.
-Without an open device, latency inspection uses 48 kHz.
+The footer marks the preparation rate as inspection-only when no audio device is open.
+This rate starts at 48 kHz and retains the last playback rate if the device has been closed.
 Plugins may report different latency or sound different when batch processing in offline mode.
 
 Latency compensation aligns processed audio with the waveform's file position.

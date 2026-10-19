@@ -21,6 +21,7 @@
 namespace audiobatch
 {
 [[nodiscard]] juce::String formatPluginDescription(const juce::PluginDescription& description);
+[[nodiscard]] juce::String formatPluginPreviewRate(double sampleRate, bool hasOpenDevice);
 
 /// Description plus descriptor reference for one enabled slot, in chain order.
 struct EnabledChainPlugin {
@@ -69,7 +70,11 @@ class PluginChain : public juce::ChangeListener, public juce::ChangeBroadcaster,
 public:
     using ChainChangedCallback = std::function<void()>;
 
-    PluginChain(juce::ApplicationProperties& applicationProperties, juce::CriticalSection& previewRenderingLock);
+    PluginChain(
+        juce::ApplicationProperties& applicationProperties,
+        juce::CriticalSection& previewRenderingLock,
+        juce::AudioDeviceManager& audioDeviceManager
+    );
 
     ~PluginChain() override;
 
@@ -85,6 +90,7 @@ public:
     [[nodiscard]] juce::PluginDescription getSlotDescription(int index) const;
 
     [[nodiscard]] bool isSlotEnabled(int index) const;
+    [[nodiscard]] bool hasOpenPreviewDevice() const;
 
     [[nodiscard]] std::vector<EnabledChainPlugin> getEnabledPlugins();
 
@@ -170,6 +176,7 @@ private:
 
     juce::ApplicationProperties& appProperties;
     juce::CriticalSection& renderingLock;
+    juce::AudioDeviceManager& previewDeviceManager;
     juce::AudioPluginFormatManager formatManager;
     juce::Component::SafePointer<juce::DialogWindow> chainEditorWindow;
     juce::Component::SafePointer<juce::DialogWindow> scanWindow;
