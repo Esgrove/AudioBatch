@@ -2,7 +2,7 @@
 /// Covers waveform painting and cache load and save,
 /// transport scrubbing through the mouse handlers,
 /// wheel-based zoom and gain gestures,
-/// and the timer-driven position marker updates during playback.
+/// and display-synchronized position marker updates during playback.
 
 #include "gui/components/ThumbnailComponent.h"
 
@@ -21,9 +21,6 @@ namespace
 {
 /// Alpha of the white playback position marker drawn over the waveform.
 constexpr float positionMarkerAlpha {0.85f};
-
-/// Rate of the timer that updates the position marker and follows the transport, in hertz.
-constexpr int positionUpdateRateHz {60};
 
 /// Fraction of the visible range scrolled per unit of horizontal mouse wheel movement.
 constexpr double horizontalScrollStepRatio {0.10};
@@ -53,9 +50,10 @@ ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, 
     setWantsKeyboardFocus(true);
 }
 
-/// Stops timer activity and detaches listeners.
+/// Stops display callbacks and detaches listeners.
 ThumbnailComponent::~ThumbnailComponent()
 {
+    positionAttachment = {};
     thumbnail.removeChangeListener(this);
 }
 
@@ -113,14 +111,14 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
 
     if (waveformData.getSize() == 0) {
         visibleRange = {};
-        stopTimer();
+        positionAttachment = {};
         repaint();
         return false;
     }
 
     if (juce::MemoryInputStream input(waveformData, false); !thumbnail.loadFrom(input)) {
         visibleRange = {};
-        stopTimer();
+        positionAttachment = {};
         repaint();
         return false;
     }
@@ -131,13 +129,13 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
     if (thumbnail.getTotalLength() <= 0.0) {
         thumbnail.clear();
         visibleRange = {};
-        stopTimer();
+        positionAttachment = {};
         repaint();
         return false;
     }
 
     setRange({0.0, thumbnail.getTotalLength()});
-    startTimerHz(positionUpdateRateHz);
+    positionAttachment = juce::VBlankAttachment(this, [this](double) { updatePlaybackPosition(); });
     return true;
 }
 
@@ -187,7 +185,7 @@ void ThumbnailComponent::setURL(const juce::URL& url)
     if (!url.isWellFormed()) {
         thumbnail.clear();
         visibleRange = {};
-        stopTimer();
+        positionAttachment = {};
         repaint();
         return;
     }
@@ -202,7 +200,7 @@ void ThumbnailComponent::setURL(const juce::URL& url)
             repaint();
         }
 
-        startTimerHz(positionUpdateRateHz);
+        positionAttachment = juce::VBlankAttachment(this, [this](double) { updatePlaybackPosition(); });
     }
 }
 
@@ -410,10 +408,17 @@ bool ThumbnailComponent::canMoveTransport() const noexcept
     return !(isFollowingTransport && transportSource.isPlaying());
 }
 
-/// Timer tick that keeps the playback cursor in sync,
+/// Keeps the playback cursor in sync with the display refresh,
 /// scrolling the visible range along with the transport when follow mode is active.
-void ThumbnailComponent::timerCallback()
+/// Skips hidden and idle views, but hides a previously visible marker once playback stops.
+void ThumbnailComponent::updatePlaybackPosition()
 {
+    if (!isShowing()
+        || (!transportSource.isPlaying() && !isMouseButtonDown() && !currentPositionMarkerComponent.isVisible()))
+    {
+        return;
+    }
+
     if (canMoveTransport()) {
         updateCursorPosition();
     } else {

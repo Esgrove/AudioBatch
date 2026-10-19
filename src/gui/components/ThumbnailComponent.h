@@ -20,8 +20,7 @@ class ThumbnailComponent :
     public juce::Component,
     public juce::ChangeListener,
     public juce::FileDragAndDropTarget,
-    public juce::ChangeBroadcaster,
-    juce::Timer
+    public juce::ChangeBroadcaster
 {
 public:
     ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source);
@@ -73,7 +72,7 @@ private:
 
     void drawCueMarkers(juce::Graphics& graphics) const;
     void jumpToHotCue(int slot);
-    void timerCallback() override;
+    void updatePlaybackPosition();
     void updateCursorPosition();
 
     juce::AudioThumbnail thumbnail;
@@ -94,5 +93,6 @@ private:
     bool isFollowingTransport {false};
     bool seratoWaveformColouringEnabled {true};
     float displayGain {1.0f};
+    juce::VBlankAttachment positionAttachment;
 };
 }  // namespace audiobatch

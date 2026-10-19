@@ -92,7 +92,6 @@ constexpr int minimumWaveformWidth = 140;
 constexpr double metricsWidthProportion = 0.35;
 constexpr float minimumValueHorizontalScale = 0.5f;
 constexpr int animationDurationMilliseconds = 180;
-constexpr int animationFramesPerSecond = 60;
 
 }  // namespace compactPreview
 

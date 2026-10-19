@@ -380,7 +380,8 @@ AudioBatchComponent::AudioBatchComponent() :
 /// Stops background work and releases audio and dialog resources.
 AudioBatchComponent::~AudioBatchComponent()
 {
-    stopTimer();
+    previewAnimationAttachment = {};
+    fileActivity.clearAllActive();
     utils::logDebug("Application shutdown: stopping preview metadata worker");
     if (seratoPreviewLoader) {
         seratoPreviewLoader->cancelAndWait();

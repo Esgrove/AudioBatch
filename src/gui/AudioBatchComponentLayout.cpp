@@ -31,7 +31,9 @@ void AudioBatchComponent::togglePreviewSection()
     previewSectionButton.setButtonText(action);
     previewSectionButton.setToggleState(!previewSectionExpanded, juce::dontSendNotification);
     previewSectionButton.setTooltip(utils::format("{} (Ctrl+Shift+Space / Cmd+Shift+Space).", action));
-    startTimerHz(layout::compactPreview::animationFramesPerSecond);
+    if (previewAnimationAttachment.isEmpty()) {
+        previewAnimationAttachment = juce::VBlankAttachment(this, [this](double) { updatePreviewAnimation(); });
+    }
     resized();
     if (onViewOptionsChanged) {
         onViewOptionsChanged();
@@ -39,12 +41,12 @@ void AudioBatchComponent::togglePreviewSection()
 }
 
 /// Ends on the exact target layout, restoring normal divider behavior only once expansion is complete.
-void AudioBatchComponent::timerCallback()
+void AudioBatchComponent::updatePreviewAnimation()
 {
     if (juce::Time::getMillisecondCounterHiRes() - animationStartedAtMilliseconds
         >= layout::compactPreview::animationDurationMilliseconds)
     {
-        stopTimer();
+        previewAnimationAttachment = {};
         restoreExpandedLayout = previewSectionExpanded;
     }
     resized();
@@ -71,7 +73,7 @@ void AudioBatchComponent::resized()
     bounds.removeFromTop(layout::sectionSpacing);
     workspaceAvailableHeight = juce::jmax(1, bounds.getHeight());
 
-    const bool compact = !previewSectionExpanded || isTimerRunning();
+    const bool compact = !previewSectionExpanded || !previewAnimationAttachment.isEmpty();
     waveformResizeBar.setVisible(!compact);
     controlsViewport.setVisible(!compact);
     if (compact) {
@@ -91,7 +93,7 @@ void AudioBatchComponent::resized()
         );
         const auto targetHeight = previewSectionExpanded ? expandedHeight : layout::compactPreview::height;
         double progress = 1.0;
-        if (isTimerRunning()) {
+        if (!previewAnimationAttachment.isEmpty()) {
             progress = juce::jlimit(
                 0.0,
                 1.0,
