@@ -15,7 +15,7 @@ namespace audiobatch::plugin_processing
 /// Block size in samples the chain is prepared for and processed in.
 constexpr int processingBlockSize = 1024;
 /// Per-plugin bound shared by offline rendering and live preview.
-constexpr double maximumTailSeconds = 30.0;
+constexpr double maximumTailSeconds = 20.0;
 
 /// Values gathered while preparing a plugin chain for one file that rendering needs.
 struct ChainPreparation {
@@ -36,17 +36,16 @@ ChainPreparation prepareChain(
     double sampleRate
 );
 
-bool configurePluginChannels(juce::AudioPluginInstance& plugin, int numChannels, double sampleRate, int blockSize);
-
 [[nodiscard]] juce::int64 getPluginTailSamples(const juce::AudioPluginInstance& plugin, double sampleRate);
 [[nodiscard]] juce::String formatPluginLatency(juce::int64 samples, double sampleRate);
 
+bool configurePluginChannels(juce::AudioPluginInstance& plugin, int numChannels, double sampleRate, int blockSize);
+
+void releasePluginResources(const std::vector<juce::AudioPluginInstance*>& chainInstances);
 void restoreStateAndPrepare(
     juce::AudioPluginInstance& plugin,
     const juce::MemoryBlock& state,
     double sampleRate,
     int blockSize
 );
-
-void releasePluginResources(const std::vector<juce::AudioPluginInstance*>& chainInstances);
 }  // namespace audiobatch::plugin_processing
