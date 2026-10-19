@@ -38,8 +38,7 @@ class AudioBatchComponent :
     public juce::FileDragAndDropTarget,
     public juce::DragAndDropContainer,
     juce::ChangeListener,
-    juce::KeyListener,
-    private juce::Timer
+    juce::KeyListener
 {
 public:
     AudioBatchComponent();
@@ -97,7 +96,7 @@ protected:
 private:
     bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
-    void timerCallback() override;
+    void updatePreviewAnimation();
 
     juce::Array<juce::File> getSelectedRecordFiles() const;
     juce::StringArray getSelectedRecordPaths() const;
@@ -243,10 +242,10 @@ private:
 
     /// Activity, progress, and last operation messages per file, shown in the status column.
     /// Its callback also runs on every animation tick while files are busy, which keeps the overall progress current.
-    FileActivityTracker fileActivity {[this] {
-        resultsTable.repaint();
-        updateProgressIndicators();
-    }};
+    FileActivityTracker fileActivity {resultsTable, [this] {
+                                          resultsTable.repaint();
+                                          updateProgressIndicators();
+                                      }};
 
     /// Overall progress of the running operation in tenths of a percent, or -1 when nothing with a known size runs.
     /// Drawn as a thin bar above the results table.
@@ -276,6 +275,7 @@ private:
     double animationStartedAtMilliseconds {0.0};
     int workspaceAvailableHeight {0};
     int currentPreviewHeight {0};
+    juce::VBlankAttachment previewAnimationAttachment;
 
     JUCE_LEAK_DETECTOR(AudioBatchComponent)
 };

@@ -1,4 +1,5 @@
-/// Implementation of FileActivityTracker: the activity and message maps, the progress sum, and the animation timer.
+/// Implementation of FileActivityTracker: activity and message maps, the progress sum,
+/// and display-synchronized repaint scheduling.
 
 #include "gui/FileActivityTracker.h"
 
@@ -7,12 +8,6 @@
 
 namespace audiobatch
 {
-namespace
-{
-/// Rate in hertz at which the activity indicators are repainted while files are busy.
-constexpr int animationTimerHz = 24;
-}  // namespace
-
 /// Returns the text shown in the status column for a file busy with the activity.
 juce::String getFileActivityLabel(const FileActivity activity)
 {
@@ -31,21 +26,21 @@ juce::String getFileActivityLabel(const FileActivity activity)
 }
 
 /// Creates the tracker with the callback that repaints the view showing the activity.
-/// The callback also runs on every animation tick while any file is busy.
-FileActivityTracker::FileActivityTracker(std::function<void()> repaintCallback) : repaint(std::move(repaintCallback)) {}
+/// The component must outlive the tracker and selects the display used for animation updates.
+FileActivityTracker::FileActivityTracker(juce::Component& component, std::function<void()> repaintCallback) :
+    animationComponent(component),
+    repaint(std::move(repaintCallback))
+{}
 
-/// Stops the animation timer.
-FileActivityTracker::~FileActivityTracker()
-{
-    stopTimer();
-}
+/// Detaches display callbacks before releasing the activity state.
+FileActivityTracker::~FileActivityTracker() = default;
 
 /// Marks the files busy with the activity and clears their previous operation messages,
-/// since a new operation replaces the outcome of the last one.
+/// since a new operation replaces the outcome of the last one. Progress starts empty before the first repaint.
 void FileActivityTracker::markActive(const juce::Array<juce::File>& files, const FileActivity activity)
 {
     for (const auto& file : files) {
-        activeStates[file.getFullPathName()] = {.activity = activity, .progress = std::nullopt};
+        activeStates[file.getFullPathName()] = {.activity = activity, .progress = 0.0f};
         messages.erase(file.getFullPathName());
     }
 
@@ -53,16 +48,16 @@ void FileActivityTracker::markActive(const juce::Array<juce::File>& files, const
 }
 
 /// Sets the activity of one file, for example when its analysis starts.
-/// The progress is unknown until the first progress report for the new activity arrives.
+/// Resets progress before repainting so no previous fill or indeterminate arc appears at startup.
 void FileActivityTracker::setActive(const juce::String& fullPath, const FileActivity activity)
 {
-    activeStates[fullPath] = {.activity = activity, .progress = std::nullopt};
+    activeStates[fullPath] = {.activity = activity, .progress = 0.0f};
     activityChanged();
 }
 
 /// Stores the completed fraction of a busy file.
 /// Ignored for an idle or waiting file, since a late report from a finished or cancelled file must not revive it.
-/// The animation timer repaints the change.
+/// The next display refresh repaints the change.
 void FileActivityTracker::setProgress(const juce::String& fullPath, const float progress)
 {
     const auto iterator = activeStates.find(fullPath);
@@ -185,13 +180,17 @@ float FileActivityTracker::getAnimationPhase()
     return static_cast<float>(phase);
 }
 
-/// Starts or stops the repaint timer depending on whether any file is busy, and repaints once.
+/// Attaches to the component's display only while files are busy, and repaints state changes immediately.
 void FileActivityTracker::activityChanged()
 {
     if (!isAnyActive()) {
-        stopTimer();
-    } else if (!isTimerRunning()) {
-        startTimerHz(animationTimerHz);
+        animationAttachment = {};
+    } else if (animationAttachment.isEmpty()) {
+        animationAttachment = juce::VBlankAttachment(&animationComponent, [this](double) {
+            if (animationComponent.isShowing() && repaint != nullptr) {
+                repaint();
+            }
+        });
     }
 
     if (repaint != nullptr) {
@@ -199,16 +198,4 @@ void FileActivityTracker::activityChanged()
     }
 }
 
-/// Repaints to animate the activity indicators and show progress, and stops itself once all files are idle.
-void FileActivityTracker::timerCallback()
-{
-    if (!isAnyActive()) {
-        stopTimer();
-        return;
-    }
-
-    if (repaint != nullptr) {
-        repaint();
-    }
-}
 }  // namespace audiobatch

@@ -2,7 +2,7 @@
 /// Declares FileActivityTracker, which holds the activity of each busy file,
 /// such as waiting, analyzing, or normalizing, together with its progress,
 /// the outcome message of each file's last operation,
-/// and the timer that animates the activity indicators while any file is busy.
+/// and the display-synchronized updates that animate the indicators while any file is busy.
 
 #pragma once
 
@@ -18,14 +18,14 @@
 namespace audiobatch
 {
 /// Tracks which files are busy, how far along they are, and what their last operation reported, keyed by full path.
-/// Runs a repaint timer while any file is busy and stops it once all files are idle.
+/// Requests display-synchronized repaints while any file is busy and stops once all files are idle.
 /// Must only be used on the message thread.
-class FileActivityTracker final : juce::Timer
+class FileActivityTracker final
 {
 public:
-    explicit FileActivityTracker(std::function<void()> repaintCallback);
+    FileActivityTracker(juce::Component& component, std::function<void()> repaintCallback);
 
-    ~FileActivityTracker() override;
+    ~FileActivityTracker();
 
     FileActivityTracker(const FileActivityTracker&) = delete;
     FileActivityTracker& operator=(const FileActivityTracker&) = delete;
@@ -52,11 +52,12 @@ public:
 
 private:
     void activityChanged();
-    void timerCallback() override;
 
+    juce::Component& animationComponent;
     std::function<void()> repaint;
     std::map<juce::String, OperationMessage> messages;
     std::map<juce::String, FileActivityState> activeStates;
+    juce::VBlankAttachment animationAttachment;
 };
 
 juce::String getFileActivityLabel(FileActivity activity);
