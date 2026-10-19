@@ -21,13 +21,19 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key, juce::Component*
 
 /// Handles the application shortcuts for trash, remove, reveal, play/stop, and rescan.
 /// Command or Ctrl with Backspace moves the selection to the trash,
-/// and Delete or Backspace without those modifiers removes it from the list.
+/// as does Ctrl with Delete on Windows. Shift skips the confirmation.
+/// Delete or Backspace without those modifiers removes it from the list.
 bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
 {
     const auto modifiers = key.getModifiers();
+#if JUCE_WINDOWS
+    const auto isTrashKey
+        = key.getKeyCode() == juce::KeyPress::backspaceKey || key.getKeyCode() == juce::KeyPress::deleteKey;
+#else
+    const auto isTrashKey = key.getKeyCode() == juce::KeyPress::backspaceKey;
+#endif
 
-    // Cmd-Backspace is the Finder shortcut on macOS, and Ctrl-Backspace works on every platform.
-    if (key.getKeyCode() == juce::KeyPress::backspaceKey && (modifiers.isCommandDown() || modifiers.isCtrlDown())) {
+    if (isTrashKey && (modifiers.isCommandDown() || modifiers.isCtrlDown()) && !modifiers.isAltDown()) {
         moveSelectedRecordsToTrash(!modifiers.isShiftDown());
         return true;
     }
@@ -304,16 +310,21 @@ void AudioBatchComponent::moveSelectedRecordsToTrash(const bool promptForConfirm
     }
 
     const auto safeThis = SafePointer(this);
-    juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions::makeOptionsOkCancel(
-            juce::MessageBoxIconType::WarningIcon, "Move to Trash", message, "Move to Trash", "Cancel", this
-        ),
-        [safeThis, filesToTrash, removedPaths, fallbackRow = selectedRows[0]](const int result) {
-            if (safeThis == nullptr || result == 0) {
-                return;
+    juce::AlertWindow::showOkCancelBox(
+        juce::MessageBoxIconType::WarningIcon,
+        "Move to Trash",
+        message,
+        "Move to Trash",
+        "Cancel",
+        this,
+        juce::ModalCallbackFunction::create(
+            [safeThis, filesToTrash, removedPaths, fallbackRow = selectedRows[0]](const int result) {
+                if (safeThis == nullptr || result != 1) {
+                    return;
+                }
+                safeThis->runMoveToTrash(filesToTrash, removedPaths, fallbackRow);
             }
-            safeThis->runMoveToTrash(filesToTrash, removedPaths, fallbackRow);
-        }
+        )
     );
 }
 
@@ -329,13 +340,21 @@ void AudioBatchComponent::runMoveToTrash(
 
     for (int index = 0; index < filesToTrash.size(); ++index) {
         const auto& file = filesToTrash.getReference(index);
+        const auto isPreviewFile = file == currentAudioFile;
+
+        if (isPreviewFile) {
+            releasePreviewPlayback();
+        }
 
         if (!utils::moveToTrash(file)) {
             failedPaths.add(file.getFullPathName());
+            if (isPreviewFile) {
+                showAudioResource(juce::URL(file));
+            }
             continue;
         }
 
-        if (file == currentAudioFile) {
+        if (isPreviewFile) {
             clearCurrentAudioPreview();
         }
 
