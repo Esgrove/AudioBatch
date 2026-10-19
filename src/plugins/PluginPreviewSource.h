@@ -21,7 +21,6 @@ public:
     void prepareToPlay(int samplesPerBlockExpected, double sampleRate) override;
     void releaseResources() override;
     void getNextAudioBlock(const juce::AudioSourceChannelInfo& info) override;
-
     void setInput(juce::AudioSource* source, double durationSeconds, int channels);
     void setChain(
         std::vector<juce::AudioPluginInstance*> processors,
@@ -41,37 +40,41 @@ public:
     [[nodiscard]] double getCurrentPosition() const noexcept;
 
 private:
-    void allocateBuffers();
-    void resetPlayback();
     int processInputBlock(int samples, juce::int64 sourceRemaining);
-    void copyOutput(const juce::AudioSourceChannelInfo& info, int offset, int samples, int signalChannels);
 
-    juce::AudioSource* input = nullptr;
-    std::vector<juce::AudioPluginInstance*> plugins;
-    std::vector<juce::AudioBuffer<float>> pluginViews;
-    juce::AudioBuffer<float> scratch;
+    void allocateBuffers();
+    void copyOutput(const juce::AudioSourceChannelInfo& info, int offset, int samples, int signalChannels);
+    void resetPlayback();
+
     juce::AudioBuffer<float> blockView;
+    juce::AudioBuffer<float> scratch;
+    juce::AudioSource* input = nullptr;
     juce::MidiBuffer midi;
     juce::SmoothedValue<float> inputGain {1.0f};
-    double processingRate = 48000.0;
-    double duration = 0.0;
-    double position = 0.0;
-    int blockSize = 512;
-    int sourceChannels = 2;
-    int processingChannels = 2;
-    int transitionSamples = 0;
-    int fadeOutRemaining = 0;
-    juce::int64 lengthSamples = 0;
-    juce::int64 startSample = 0;
-    juce::int64 processedSamples = 0;
     juce::int64 emittedSamples = 0;
     juce::int64 latencySamples = 0;
-    juce::int64 tailSamples = 0;
+    juce::int64 lengthSamples = 0;
     juce::int64 preRollRemaining = 0;
-    bool wet = false;
+    juce::int64 processedSamples = 0;
+    juce::int64 startSample = 0;
+    juce::int64 tailSamples = 0;
+    std::vector<juce::AudioBuffer<float>> pluginViews;
+    std::vector<juce::AudioPluginInstance*> plugins;
+
     bool compensation = true;
-    bool playing = false;
     bool failed = false;
+    bool playing = false;
     bool stopRequested = false;
+    bool wet = false;
+
+    double duration = 0.0;
+    double position = 0.0;
+    double processingRate = 48'000.0;
+
+    int blockSize = 512;
+    int fadeOutRemaining = 0;
+    int processingChannels = 2;
+    int sourceChannels = 2;
+    int transitionSamples = 0;
 };
 }  // namespace audiobatch

@@ -20,8 +20,8 @@
 
 namespace audiobatch
 {
-[[nodiscard]] juce::String formatPluginDescription(const juce::PluginDescription& description);
-[[nodiscard]] juce::String formatPluginPreviewRate(double sampleRate, bool hasOpenDevice);
+/// Sample rate to use when no audio device is present.
+constexpr double defaultSampleRate = 48'000.0;
 
 /// Description plus descriptor reference for one enabled slot, in chain order.
 struct EnabledChainPlugin {
@@ -83,27 +83,25 @@ public:
     PluginChain(PluginChain&&) = delete;
     PluginChain& operator=(PluginChain&&) = delete;
 
-    [[nodiscard]] int getNumSlots() const noexcept;
-
-    [[nodiscard]] int getNumEnabledValidSlots() const noexcept;
-
     [[nodiscard]] juce::PluginDescription getSlotDescription(int index) const;
+    [[nodiscard]] juce::String getChainSummary() const;
+    [[nodiscard]] juce::int64 getPreviewTailSamples() const;
 
-    [[nodiscard]] bool isSlotEnabled(int index) const;
-    [[nodiscard]] bool hasOpenPreviewDevice() const;
-
+    [[nodiscard]] std::optional<juce::int64> getSlotLatency(int index) const;
+    [[nodiscard]] std::optional<juce::int64> getTotalLatency() const;
     [[nodiscard]] std::vector<EnabledChainPlugin> getEnabledPlugins();
+
+    [[nodiscard]] bool hasOpenPreviewDevice() const;
+    [[nodiscard]] bool isSlotEnabled(int index) const;
+    [[nodiscard]] double getPreviewSampleRate() const noexcept;
+    [[nodiscard]] int getNumEnabledValidSlots() const noexcept;
+    [[nodiscard]] int getNumSlots() const noexcept;
 
     [[nodiscard]] ChainInstantiation instantiateChains(
         const std::vector<EnabledChainPlugin>& enabledPlugins,
         int workerCount
     ) const;
 
-    [[nodiscard]] juce::String getChainSummary() const;
-    [[nodiscard]] std::optional<juce::int64> getSlotLatency(int index) const;
-    [[nodiscard]] std::optional<juce::int64> getTotalLatency() const;
-    [[nodiscard]] double getPreviewSampleRate() const noexcept;
-    [[nodiscard]] juce::int64 getPreviewTailSamples() const;
     /// Distinguishes structural changes from latency-only label refreshes.
     [[nodiscard]] std::uint64_t getRevision() const noexcept
     {
@@ -155,18 +153,19 @@ private:
         const juce::String& stateBase64
     );
 
-    bool beginPluginScan();
+    void audioProcessorChanged(juce::AudioProcessor* processor, const ChangeDetails& details) override;
+    void audioProcessorParameterChanged(juce::AudioProcessor* processor, int parameterIndex, float value) override;
 
     void captureOpenEditorStates();
-    bool prepareLiveEntry(PluginChainEntry& entry);
     void destroyLiveEntry(PluginChainEntry& entry);
-    void audioProcessorParameterChanged(juce::AudioProcessor* processor, int parameterIndex, float value) override;
-    void audioProcessorChanged(juce::AudioProcessor* processor, const ChangeDetails& details) override;
     void loadKnownPluginList();
     void loadPersistedChain();
     void notifyChainChanged();
     void persistChain();
     void persistKnownPluginList() const;
+
+    bool beginPluginScan();
+    bool prepareLiveEntry(PluginChainEntry& entry);
 
     // Declared before the list, so it outlives the scanner that the list owns.
     PluginScanLock pluginScanLock;
@@ -175,20 +174,24 @@ private:
     ChainChangedCallback latencyChangedCallback;
 
     juce::ApplicationProperties& appProperties;
-    juce::CriticalSection& renderingLock;
     juce::AudioDeviceManager& previewDeviceManager;
     juce::AudioPluginFormatManager formatManager;
     juce::Component::SafePointer<juce::DialogWindow> chainEditorWindow;
     juce::Component::SafePointer<juce::DialogWindow> scanWindow;
+    juce::CriticalSection& renderingLock;
     juce::KnownPluginList knownPluginList;
-    std::vector<PluginChainEntry> chain;
     std::atomic<bool> latencyDirty {false};
-    double previewSampleRate = 48000.0;
-    int previewBlockSize = 512;
-    int previewChannels = 2;
-    std::uint64_t revision = 0;
+    std::uint64_t revision {0};
+    std::vector<PluginChainEntry> chain;
+
+    double previewSampleRate {defaultSampleRate};
+    int previewBlockSize {512};
+    int previewChannels {2};
 
     JUCE_DECLARE_WEAK_REFERENCEABLE(PluginChain)
     JUCE_LEAK_DETECTOR(PluginChain)
 };
+
+[[nodiscard]] juce::String formatPluginDescription(const juce::PluginDescription& description);
+[[nodiscard]] juce::String formatPluginPreviewRate(double sampleRate, bool hasOpenDevice);
 }  // namespace audiobatch
