@@ -103,13 +103,9 @@ public:
 
 private:
     void publishCompletion(int totalFiles, int runId) const;
-
     void publishProgress(const juce::File& file, float progress, int runId) const;
-
     void publishResult(const PluginProcessingResult& result, int runId) const;
-
     void publishStarting(const juce::File& file, int runId) const;
-
     void reportStartError(const juce::String& message) const;
 
     void runFileJob(
@@ -121,13 +117,14 @@ private:
         std::atomic<int>& pendingFiles
     ) const;
 
-    juce::ThreadPool threadPool;
-    juce::CriticalSection callbackLock;
-    ResultCallback resultCallback;
     CompletionCallback completionCallback;
     ProgressCallback progressCallback;
+    ResultCallback resultCallback;
     StartErrorCallback startErrorCallback;
     StartingCallback startingCallback;
+
+    juce::CriticalSection callbackLock;
+    juce::ThreadPool threadPool;
 
     /// Chains of the current run. Only accessed on the message thread.
     std::shared_ptr<PluginRunChains> currentChains;

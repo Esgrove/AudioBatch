@@ -20,7 +20,7 @@ namespace audiobatch
 /// The files of a run, published once the input paths are expanded and checked against the cache.
 struct AnalysisPlan {
     /// The run the plan belongs to.
-    int runId = 0;
+    int runId {0};
     /// Every supported file found in the input paths.
     juce::Array<juce::File> files;
     /// The files without a current cache entry, which are analyzed in this run.

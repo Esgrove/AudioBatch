@@ -31,8 +31,8 @@ private:
     void cacheBaseColumnNames();
 
     SecondarySortCallback secondarySortRequested;
-    bool secondarySortForwards = true;
-    int secondarySortColumnId = 0;
+    bool secondarySortForwards {true};
+    int secondarySortColumnId {0};
     std::map<int, juce::String> baseColumnNames;
 };
 
@@ -42,10 +42,10 @@ namespace results_sorting
 /// The primary and secondary sort columns of the results table.
 /// A column id of zero means no sort on that level.
 struct SortState {
-    int primaryColumnId = 0;
-    bool primaryForwards = true;
-    int secondaryColumnId = 0;
-    bool secondaryForwards = true;
+    int primaryColumnId {0};
+    bool primaryForwards {true};
+    int secondaryColumnId {0};
+    bool secondaryForwards {true};
     /// Returns the text the status column shows for a record, such as the message of its last operation.
     /// The status column sorts by this text when set, and by the analysis status otherwise.
     std::function<juce::String(const AudioAnalysisRecord&)> statusText;

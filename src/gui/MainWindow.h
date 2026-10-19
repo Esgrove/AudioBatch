@@ -45,7 +45,7 @@ private:
     void handlePluginChoiceMenuItem(int menuItemID) const;
 
     juce::ApplicationCommandManager commandManager;
-    std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel = std::make_unique<juce::CustomLookAndFeel>(true);
+    std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel {std::make_unique<juce::CustomLookAndFeel>(true)};
 
     JUCE_LEAK_DETECTOR(MainWindow)
 };

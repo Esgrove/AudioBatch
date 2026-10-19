@@ -22,7 +22,7 @@ using ProgressCallback = std::function<void(float progress)>;
 using CancellationCheck = std::function<bool()>;
 
 /// Number of milliseconds in one second, shared by duration conversions and timing output.
-inline constexpr double millisecondsPerSecond = 1000.0;
+inline constexpr double millisecondsPerSecond {1000.0};
 
 /// Returns true when a cancellation check is set and reports that cancellation was requested.
 [[nodiscard]] inline bool isCancellationRequested(const CancellationCheck& isCancelled)

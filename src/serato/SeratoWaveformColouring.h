@@ -19,7 +19,7 @@ class AudioThumbnail;
 namespace audiobatch::serato
 {
 /// Bounds gradient storage independently of tag size and offscreen slice count.
-inline constexpr int maxWaveformGradientStops = 4096;
+inline constexpr int maxWaveformGradientStops {4096};
 
 [[nodiscard]] juce::Colour colourForOverviewSlice(
     const std::array<std::uint8_t, Overview::bandCount>& cells,

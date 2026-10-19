@@ -14,36 +14,36 @@ namespace audiobatch::serato
 {
 namespace
 {
-constexpr std::size_t wrapperAllowance = 1024;
-constexpr std::size_t maxDecodedBytes = maxTagPayloadBytes + wrapperAllowance;
-constexpr std::size_t maxEncodedBytes = ((maxDecodedBytes + 2) / 3) * 4 + 4096;
-constexpr std::size_t cacheHeaderBytes = 16;
-constexpr std::size_t bpmOffset = 2;
-constexpr std::size_t autoGainOffset = 9;
-constexpr std::size_t gainOffset = 16;
-constexpr std::size_t fullAutotagsBytes = 22;
-constexpr std::size_t gridHeaderBytes = 6;
-constexpr std::size_t gridRecordBytes = 8;
-constexpr std::size_t cueNameOffset = 12;
-constexpr std::size_t cueColourOffset = 7;
-constexpr std::size_t loopNameOffset = 20;
-constexpr std::size_t loopColourOffset = 15;
-constexpr std::size_t loopLockOffset = 19;
-constexpr std::size_t maxRecordTypeBytes = 64;
-constexpr std::size_t legacyCount = 14;
-constexpr std::size_t legacyRecordBytes = 22;
-constexpr std::size_t legacyColourOffset = 16;
-constexpr std::size_t legacyTypeOffset = 20;
-constexpr std::size_t legacyLockOffset = 21;
-constexpr std::size_t legacyEndOffset = 6;
-constexpr std::uint8_t legacyUnset = 0x7f;
-constexpr std::uint8_t legacyMinorVersion = 5;
-constexpr std::uint8_t maxAsciiByte = 127;
-constexpr std::uint32_t cacheMagic = 0x53544147;
-constexpr unsigned int seratoGroupBits = 7;
-constexpr std::uint32_t seratoGroupMask = 0x7f;
-constexpr std::uint32_t seratoHighMask = 0x07;
-constexpr std::uint32_t opaqueAlpha = 0xff000000;
+constexpr std::size_t wrapperAllowance {1024};
+constexpr std::size_t maxDecodedBytes {maxTagPayloadBytes + wrapperAllowance};
+constexpr std::size_t maxEncodedBytes {((maxDecodedBytes + 2) / 3) * 4 + 4096};
+constexpr std::size_t cacheHeaderBytes {16};
+constexpr std::size_t bpmOffset {2};
+constexpr std::size_t autoGainOffset {9};
+constexpr std::size_t gainOffset {16};
+constexpr std::size_t fullAutotagsBytes {22};
+constexpr std::size_t gridHeaderBytes {6};
+constexpr std::size_t gridRecordBytes {8};
+constexpr std::size_t cueNameOffset {12};
+constexpr std::size_t cueColourOffset {7};
+constexpr std::size_t loopNameOffset {20};
+constexpr std::size_t loopColourOffset {15};
+constexpr std::size_t loopLockOffset {19};
+constexpr std::size_t maxRecordTypeBytes {64};
+constexpr std::size_t legacyCount {14};
+constexpr std::size_t legacyRecordBytes {22};
+constexpr std::size_t legacyColourOffset {16};
+constexpr std::size_t legacyTypeOffset {20};
+constexpr std::size_t legacyLockOffset {21};
+constexpr std::size_t legacyEndOffset {6};
+constexpr std::uint8_t legacyUnset {0x7f};
+constexpr std::uint8_t legacyMinorVersion {5};
+constexpr std::uint8_t maxAsciiByte {127};
+constexpr std::uint32_t cacheMagic {0x53544147};
+constexpr unsigned int seratoGroupBits {7};
+constexpr std::uint32_t seratoGroupMask {0x7f};
+constexpr std::uint32_t seratoHighMask {0x07};
+constexpr std::uint32_t opaqueAlpha {0xff000000};
 
 /// Checks padding without accepting unparsed trailing records or text.
 bool allZero(std::span<const std::uint8_t> bytes)
@@ -211,7 +211,7 @@ struct Cursor {
         return valid && remaining.empty();
     }
 
-    bool valid = true;
+    bool valid {true};
     std::span<const std::uint8_t> remaining;
 };
 

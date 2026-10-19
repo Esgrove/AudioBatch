@@ -98,7 +98,7 @@ private:
     juce::AudioDeviceManager deviceManager;
     juce::AudioFormatManager formatManager;
     PluginPreviewSource previewSource;
-    PluginChain* pluginChain = nullptr;
+    PluginChain* pluginChain {nullptr};
 
     /// Reader source of the loaded file, or nullptr when nothing is loaded.
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;
@@ -112,11 +112,11 @@ private:
     std::atomic<bool> bufferUnderrun {false};
     std::atomic<double> pendingRate {0.0};
     std::atomic<int> pendingBlockSize {512};
-    double sampleRate = 48000.0;
-    int blockSize = 512;
-    bool pluginPreviewEnabled = false;
-    bool latencyCompensated = true;
-    bool lastReportedPlaying = false;
+    double sampleRate {48000.0};
+    int blockSize {512};
+    bool pluginPreviewEnabled {false};
+    bool latencyCompensated {true};
+    bool lastReportedPlaying {false};
 
     JUCE_DECLARE_WEAK_REFERENCEABLE(AudioPreviewPlayer)
     JUCE_LEAK_DETECTOR(AudioPreviewPlayer)

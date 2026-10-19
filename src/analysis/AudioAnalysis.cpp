@@ -35,8 +35,8 @@ namespace
 /// How often the short-term loudness is sampled while decoding, in hertz.
 /// EBU R128 updates short-term loudness at least ten times per second,
 /// so a slower rate can miss the loudest three second window.
-constexpr double shortTermUpdateRateHz = 10.0;
-constexpr auto cancelledMessage = "Analysis was cancelled";
+constexpr double shortTermUpdateRateHz {10.0};
+constexpr auto cancelledMessage {"Analysis was cancelled"};
 
 /// Left, right, and overall peak reduced from per-channel peaks.
 template<typename Value>
@@ -53,7 +53,7 @@ struct DecodeMeasurements {
     /// Largest sample seen on each channel.
     std::vector<float> maxSamples;
     /// Highest short-term loudness seen across the file.
-    double maxShortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
+    double maxShortTermLoudness {AudioAnalysisRecord::negativeInfinityLoudness};
     /// Empty when decoding and measuring succeeded.
     juce::String errorMessage;
 };

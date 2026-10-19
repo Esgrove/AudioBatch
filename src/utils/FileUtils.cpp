@@ -214,7 +214,7 @@ public:
     }
 
     /// True when a delete was aborted because the shell would not have recycled the item.
-    bool refusedPermanentDelete = false;
+    bool refusedPermanentDelete {false};
 };
 
 }  // namespace

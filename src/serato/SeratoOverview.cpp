@@ -14,11 +14,11 @@ namespace
 {
 constexpr std::array<std::uint8_t, 4> cacheMagic {'S', 'O', 'V', 'R'};
 constexpr std::array<std::uint8_t, 2> payloadHeader {0x01, 0x05};
-constexpr std::size_t cacheHeaderBytes = 16;
-constexpr std::size_t kindOffset = 4;
-constexpr std::size_t versionOffset = 8;
-constexpr std::size_t countOffset = 12;
-constexpr std::size_t fieldBytes = sizeof(std::uint32_t);
+constexpr std::size_t cacheHeaderBytes {16};
+constexpr std::size_t kindOffset {4};
+constexpr std::size_t versionOffset {8};
+constexpr std::size_t countOffset {12};
+constexpr std::size_t fieldBytes {sizeof(std::uint32_t)};
 
 /// Reads a validated four-byte big-endian field without alignment assumptions.
 std::uint32_t readBigEndian(const std::span<const std::uint8_t> bytes)

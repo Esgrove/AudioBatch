@@ -11,7 +11,7 @@
 namespace audiobatch
 {
 /// How long cancelAndWait waits for running analysis jobs to finish before giving up, in milliseconds.
-constexpr int jobShutdownTimeoutMilliseconds = 30000;
+constexpr int jobShutdownTimeoutMilliseconds {30000};
 
 /// Creates a coordinator with a thread pool sized for the current machine.
 AnalysisCoordinator::AnalysisCoordinator(AnalysisCache& analysisCache, const int workerCount) :

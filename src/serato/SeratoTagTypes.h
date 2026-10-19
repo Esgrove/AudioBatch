@@ -44,21 +44,21 @@ inline constexpr std::array allTagKinds {
 
 /// Serato's analysis engine version, not the musical key of the track.
 struct Analysis {
-    std::uint8_t majorVersion = 0;
-    std::uint8_t minorVersion = 0;
+    std::uint8_t majorVersion {0};
+    std::uint8_t minorVersion {0};
 };
 
 /// Serato tempo and gain adjustments in beats per minute and decibels.
 struct Autotags {
-    double bpm = 0;
-    double autoGain = 0;
-    double gain = 0;
+    double bpm {0};
+    double autoGain {0};
+    double gain {0};
 };
 
 /// A grid anchor in seconds. The final anchor has BPM instead of beats until the next anchor.
 struct BeatGridMarker {
-    double positionSeconds = 0;
-    std::uint32_t beatsUntilNext = 0;
+    double positionSeconds {0};
+    std::uint32_t beatsUntilNext {0};
     std::optional<double> bpm;
 };
 
@@ -69,19 +69,19 @@ struct BeatGrid {
 
 /// An owned hot cue with its original zero-based index and millisecond position.
 struct CuePoint {
-    std::uint32_t positionMilliseconds = 0;
-    std::uint8_t index = 0;
+    std::uint32_t positionMilliseconds {0};
+    std::uint8_t index {0};
     juce::Colour colour;
     juce::String name;
 };
 
 /// An owned saved loop and its lock state.
 struct Loop {
-    std::uint32_t startMilliseconds = 0;
-    std::uint32_t endMilliseconds = 0;
-    std::uint8_t index = 0;
+    std::uint32_t startMilliseconds {0};
+    std::uint32_t endMilliseconds {0};
+    std::uint8_t index {0};
     juce::Colour colour;
-    bool locked = false;
+    bool locked {false};
     juce::String name;
 };
 
@@ -111,14 +111,14 @@ struct SeratoData {
 
 /// Reports one requested kind. Only present results contain the matching owned value.
 struct TagReadResult {
-    TagKind kind = TagKind::overview;
-    ReadStatus status = ReadStatus::absent;
-    std::optional<Overview> overview = std::nullopt;
-    std::optional<Analysis> analysis = std::nullopt;
-    std::optional<Autotags> autotags = std::nullopt;
-    std::optional<BeatGrid> beatGrid = std::nullopt;
-    std::optional<Markers> markers = std::nullopt;
-    std::optional<TrackInfo> trackInfo = std::nullopt;
+    TagKind kind {TagKind::overview};
+    ReadStatus status {ReadStatus::absent};
+    std::optional<Overview> overview {std::nullopt};
+    std::optional<Analysis> analysis {std::nullopt};
+    std::optional<Autotags> autotags {std::nullopt};
+    std::optional<BeatGrid> beatGrid {std::nullopt};
+    std::optional<Markers> markers {std::nullopt};
+    std::optional<TrackInfo> trackInfo {std::nullopt};
 };
 
 /// Reports the independent numeric cache schema version for a supported kind.

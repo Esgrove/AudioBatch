@@ -36,8 +36,8 @@ private:
     juce::ComboBox modeBox;
     juce::Slider targetSlider {"NormalizeTarget"};
     /// Remembered peak mode target, in dBFS, kept while loudness mode is selected.
-    double targetPeakDbfs = AudioNormalizationOptions::defaultTargetPeakDbfs;
+    double targetPeakDbfs {AudioNormalizationOptions::defaultTargetPeakDbfs};
     /// Remembered loudness mode target, in LUFS, kept while peak mode is selected.
-    double targetLufs = AudioNormalizationOptions::defaultTargetLufs;
+    double targetLufs {AudioNormalizationOptions::defaultTargetLufs};
 };
 }  // namespace audiobatch

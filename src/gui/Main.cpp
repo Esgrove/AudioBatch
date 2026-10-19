@@ -175,7 +175,7 @@ private:
     std::unique_ptr<juce::FileLogger> logger;
 
     /// Prevents repeated close requests from scheduling teardown more than once.
-    bool quitRequested = false;
+    bool quitRequested {false};
 };
 }  // namespace
 }  // namespace audiobatch

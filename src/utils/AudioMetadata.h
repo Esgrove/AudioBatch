@@ -50,7 +50,7 @@ struct AudioMetadata {
     /// Owned ID3v2.4 frame bytes, including custom binary frames outside TagLib's PropertyMap.
     std::vector<juce::MemoryBlock> id3v2Frames;
     /// True when TagLib cannot safely reserialize a known frame, so processing must keep the original file.
-    bool hasUnsupportedId3Frames = false;
+    bool hasUnsupportedId3Frames {false};
 };
 
 bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile);

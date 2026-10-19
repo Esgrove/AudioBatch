@@ -85,13 +85,13 @@ public:
     }
 
     /// Number of consecutive failed blocks, outside the final block, after which decoding stops.
-    static constexpr int maximumConsecutiveFailures = 3;
+    static constexpr int maximumConsecutiveFailures {3};
 
 private:
     juce::int64 totalSamples;
-    juce::int64 failedBlockPosition = -1;
-    juce::int64 stoppedAt = -1;
-    int failedBlocks = 0;
-    int consecutiveFailures = 0;
+    juce::int64 failedBlockPosition {-1};
+    juce::int64 stoppedAt {-1};
+    int failedBlocks {0};
+    int consecutiveFailures {0};
 };
 }  // namespace audiobatch

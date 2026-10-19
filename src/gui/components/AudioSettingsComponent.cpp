@@ -10,10 +10,10 @@ namespace audiobatch
 {
 namespace
 {
-constexpr auto pluginPreviewKey = "previewPluginChain";
-constexpr auto compensationKey = "previewLatencyCompensation";
-constexpr auto continuationKey = "previewContinuePlayback";
-constexpr auto waveformColoursKey = "seratoWaveformColours";
+constexpr auto pluginPreviewKey {"previewPluginChain"};
+constexpr auto compensationKey {"previewLatencyCompensation"};
+constexpr auto continuationKey {"previewContinuePlayback"};
+constexpr auto waveformColoursKey {"seratoWaveformColours"};
 }  // namespace
 
 /// Reads only preview-owned keys, leaving existing plugin and normalization properties intact.

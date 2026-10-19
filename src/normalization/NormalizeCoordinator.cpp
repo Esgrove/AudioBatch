@@ -12,7 +12,7 @@ namespace audiobatch
 namespace
 {
 /// How long cancelAndWait waits for running normalization jobs to finish before giving up, in milliseconds.
-constexpr int jobShutdownTimeoutMilliseconds = 30000;
+constexpr int jobShutdownTimeoutMilliseconds {30000};
 }  // namespace
 
 /// Creates a coordinator with a thread pool sized for the current machine.

@@ -25,32 +25,32 @@ enum class AudioNormalizationMode : std::uint8_t {
 /// Options controlling how a file is normalized.
 struct AudioNormalizationOptions {
     /// Default target sample peak, in dBFS.
-    static constexpr double defaultTargetPeakDbfs = 0.0;
+    static constexpr double defaultTargetPeakDbfs {0.0};
     /// Default target integrated loudness, in LUFS.
-    static constexpr double defaultTargetLufs = -14.0;
+    static constexpr double defaultTargetLufs {-14.0};
     /// Default highest true peak allowed in loudness mode, in dBTP.
-    static constexpr double defaultTruePeakCeilingDbtp = -0.3;
+    static constexpr double defaultTruePeakCeilingDbtp {-0.3};
     /// Lowest accepted target sample peak, in dBFS.
-    static constexpr double minimumTargetPeakDbfs = -12.0;
+    static constexpr double minimumTargetPeakDbfs {-12.0};
     /// Highest accepted target sample peak, in dBFS.
-    static constexpr double maximumTargetPeakDbfs = 0.0;
+    static constexpr double maximumTargetPeakDbfs {0.0};
     /// Lowest accepted target integrated loudness, in LUFS.
-    static constexpr double minimumTargetLufs = -24.0;
+    static constexpr double minimumTargetLufs {-24.0};
     /// Highest accepted target integrated loudness, in LUFS.
-    static constexpr double maximumTargetLufs = -6.0;
+    static constexpr double maximumTargetLufs {-6.0};
 
     /// Replace an existing output file that is not the source itself.
     /// When false, a file whose output path is already taken fails instead of overwriting it.
-    bool overwriteExisting = false;
+    bool overwriteExisting {false};
     /// Whether the target is a sample peak or an integrated loudness.
-    AudioNormalizationMode mode = AudioNormalizationMode::peak;
+    AudioNormalizationMode mode {AudioNormalizationMode::peak};
     /// Target sample peak in peak mode, in dBFS.
-    double targetPeakDbfs = defaultTargetPeakDbfs;
+    double targetPeakDbfs {defaultTargetPeakDbfs};
     /// Target integrated loudness in loudness mode, in LUFS.
-    double targetLufs = defaultTargetLufs;
+    double targetLufs {defaultTargetLufs};
     /// Highest true peak allowed in loudness mode, in dBTP.
     /// When reaching the target loudness would exceed it, the gain is reduced to stay at the ceiling.
-    double truePeakCeilingDbtp = defaultTruePeakCeilingDbtp;
+    double truePeakCeilingDbtp {defaultTruePeakCeilingDbtp};
 };
 
 /// Result payload for a single normalize-and-reanalyze operation.
@@ -85,10 +85,10 @@ struct AudioNormalizationResult {
     /// Analysis of the normalized file, valid when the re-analysis succeeded.
     AudioAnalysisRecord analysisRecord;
     /// True when the normalization pass completed.
-    bool succeeded = false;
+    bool succeeded {false};
     /// True once the output was moved into place, which can happen even when re-analysis then failed.
     /// A converted source is in the trash by then, so callers move the record to the output either way.
-    bool committed = false;
+    bool committed {false};
 };
 
 AudioNormalizationResult normalizeFile(

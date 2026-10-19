@@ -13,20 +13,20 @@
 namespace audiobatch::plugin_processing
 {
 /// Block size in samples the chain is prepared for and processed in.
-constexpr int processingBlockSize = 1024;
+constexpr int processingBlockSize {1024};
 /// Per-plugin bound shared by offline rendering and live preview.
-constexpr double maximumTailSeconds = 20.0;
+constexpr double maximumTailSeconds {20.0};
 
 /// Values gathered while preparing a plugin chain for one file that rendering needs.
 struct ChainPreparation {
     /// Empty when every plugin in the chain was prepared.
     juce::String errorMessage;
     /// Widest channel count of any plugin in the chain, at least the file's channel count.
-    int processChannelCount = 0;
+    int processChannelCount {0};
     /// Sum of the individually clamped per-plugin tails.
-    juce::int64 tailSamples = 0;
+    juce::int64 tailSamples {0};
     /// Sum of the latencies the plugins report after preparation.
-    juce::int64 latencySamples = 0;
+    juce::int64 latencySamples {0};
 };
 
 ChainPreparation prepareChain(
