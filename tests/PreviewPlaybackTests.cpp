@@ -482,19 +482,19 @@ private:
     void testLatencyFormattingAndTailLimit()
     {
         beginTest("Latency uses processing-rate milliseconds and effect tails retain the batch bound");
-        expectEquals(plugin_processing::formatPluginLatency(512, 48000.0), juce::String("512 samples (10.67 ms)"));
-        expectEquals(plugin_processing::formatPluginLatency(0, 44100.0), juce::String("0 samples (0.00 ms)"));
-        expectEquals(formatPluginPreviewRate(48000.0, true), juce::String("Preview rate: 48000 Hz."));
-        expectEquals(formatPluginPreviewRate(44100.0, true), juce::String("Preview rate: 44100 Hz."));
+        expectEquals(plugin_processing::formatPluginLatency(512, 48'000.0), juce::String("512 samples (10.67 ms)"));
+        expectEquals(plugin_processing::formatPluginLatency(0, 44'100.0), juce::String("0 samples (0.00 ms)"));
+        expectEquals(formatPluginPreviewRate(48'000.0, true), juce::String("Preview rate: 48000 Hz."));
+        expectEquals(formatPluginPreviewRate(44'100.0, true), juce::String("Preview rate: 44100 Hz."));
         expectEquals(
-            formatPluginPreviewRate(48000.0, false), juce::String("No audio device. Inspection rate: 48000 Hz.")
+            formatPluginPreviewRate(48'000.0, false), juce::String("No audio device. Inspection rate: 48000 Hz.")
         );
         expectEquals(
-            formatPluginPreviewRate(44100.0, false), juce::String("No audio device. Inspection rate: 44100 Hz.")
+            formatPluginPreviewRate(44'100.0, false), juce::String("No audio device. Inspection rate: 44100 Hz.")
         );
         PreviewTestPlugin plugin;
         plugin.getSettings().reportedTail = std::numeric_limits<double>::infinity();
-        expectEquals(plugin_processing::getPluginTailSamples(plugin, previewTestRate), juce::int64 {240000});
+        expectEquals(plugin_processing::getPluginTailSamples(plugin, previewTestRate), juce::int64 {160'000});
         plugin.getSettings().reportedTail = 0.001;
         expectEquals(plugin_processing::getPluginTailSamples(plugin, previewTestRate), juce::int64 {8});
     }

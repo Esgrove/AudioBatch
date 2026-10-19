@@ -21,7 +21,7 @@ namespace audiobatch
 {
 namespace
 {
-constexpr auto unknownLabel = "Unknown";
+constexpr auto unknownLabel {"Unknown"};
 
 /// One column of the plugin listing.
 enum class Column : std::uint8_t { name, manufacturer, type, format, version };

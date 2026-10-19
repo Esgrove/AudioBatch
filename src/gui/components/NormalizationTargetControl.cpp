@@ -13,16 +13,16 @@ namespace audiobatch
 namespace normalize_target
 {
 /// Step of the target sample peak, in dB.
-constexpr double peakStepDecibels = 0.1;
+constexpr double peakStepDecibels {0.1};
 /// Step of the target loudness, in LU.
-constexpr double loudnessStepDecibels = 0.5;
+constexpr double loudnessStepDecibels {0.5};
 /// Combo box item id of the peak mode, which must be non-zero.
-constexpr int peakModeItemId = 1;
+constexpr int peakModeItemId {1};
 /// Combo box item id of the loudness mode.
-constexpr int loudnessModeItemId = 2;
-constexpr auto modeSettingKey = "normalizeMode";
-constexpr auto targetPeakSettingKey = "normalizeTargetPeakDbfs";
-constexpr auto targetLufsSettingKey = "normalizeTargetLufs";
+constexpr int loudnessModeItemId {2};
+constexpr auto modeSettingKey {"normalizeMode"};
+constexpr auto targetPeakSettingKey {"normalizeTargetPeakDbfs"};
+constexpr auto targetLufsSettingKey {"normalizeTargetLufs"};
 }  // namespace normalize_target
 
 /// Creates the controls. The settings are read later by loadSettings,

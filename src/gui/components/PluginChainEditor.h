@@ -74,8 +74,8 @@ private:
     juce::TextButton downButton;
     juce::TextButton removeButton {"X"};
 
-    bool dragging = false;
-    int dragGrabOffsetY = 0;
+    bool dragging {false};
+    int dragGrabOffsetY {0};
 
     JUCE_LEAK_DETECTOR(PluginChainSlotRow)
 };
@@ -126,7 +126,7 @@ private:
     juce::Label hintLabel;
     juce::Label totalLatencyLabel;
     juce::Label processingRateLabel;
-    std::uint64_t displayedRevision = 0;
+    std::uint64_t displayedRevision {0};
 
     juce::Viewport viewport;
     juce::Component rowContainer;

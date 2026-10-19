@@ -21,7 +21,7 @@
 namespace audiobatch
 {
 /// Sample rate to use when no audio device is present.
-constexpr double defaultSampleRate = 48'000.0;
+constexpr double defaultSampleRate {48'000.0};
 
 /// Description plus descriptor reference for one enabled slot, in chain order.
 struct EnabledChainPlugin {
@@ -53,13 +53,13 @@ struct PreviewChain {
 struct PluginChainEntry {
     juce::PluginDescription description;
     juce::MemoryBlock state;
-    bool enabled = true;
+    bool enabled {true};
     std::unique_ptr<juce::AudioPluginInstance> instance;
     juce::Component::SafePointer<juce::DialogWindow> editorWindow;
     juce::String preparationError;
     std::optional<juce::int64> latencySamples;
-    bool prepared = false;
-    bool wasEditorOpen = false;
+    bool prepared {false};
+    bool wasEditorOpen {false};
 };
 
 /// Owns the user's plugin chain, the known-plugins database, scanning, and the editor windows.

@@ -23,12 +23,12 @@ namespace audiobatch::serato
 {
 namespace
 {
-constexpr std::size_t maxWrapperBytes = Overview::maxPayloadBytes + 1024;
-constexpr std::size_t maxBase64Bytes = ((maxWrapperBytes + 2) / 3) * 4;
-constexpr std::size_t maxEncodedBytes = maxBase64Bytes + 4096;
-constexpr std::size_t containerCodeBytes = 4;
-constexpr std::size_t containerTypeOffset = 2 * containerCodeBytes;
-constexpr std::size_t containerHeaderBytes = containerTypeOffset + containerCodeBytes;
+constexpr std::size_t maxWrapperBytes {Overview::maxPayloadBytes + 1024};
+constexpr std::size_t maxBase64Bytes {((maxWrapperBytes + 2) / 3) * 4};
+constexpr std::size_t maxEncodedBytes {maxBase64Bytes + 4096};
+constexpr std::size_t containerCodeBytes {4};
+constexpr std::size_t containerTypeOffset {2 * containerCodeBytes};
+constexpr std::size_t containerHeaderBytes {containerTypeOffset + containerCodeBytes};
 
 /// Rejects truncated or mislabeled RIFF containers that TagLib can otherwise report as valid empty tags.
 bool hasValidContainerHeader(const juce::File& file)

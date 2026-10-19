@@ -8,9 +8,9 @@
 
 namespace audiobatch::serato
 {
-inline constexpr std::size_t maxTagPayloadBytes = Overview::maxPayloadBytes;
-inline constexpr std::size_t maxTagRecords = 4096;
-inline constexpr std::size_t maxTagTextBytes = 32'768;
+inline constexpr std::size_t maxTagPayloadBytes {Overview::maxPayloadBytes};
+inline constexpr std::size_t maxTagRecords {4096};
+inline constexpr std::size_t maxTagTextBytes {32'768};
 
 [[nodiscard]] juce::MemoryBlock serializeTag(const TagReadResult& result);
 [[nodiscard]] std::optional<Analysis> parseAnalysis(std::span<const std::uint8_t> bytes);

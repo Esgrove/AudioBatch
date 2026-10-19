@@ -145,6 +145,15 @@ Tests:
 
 ## Code Style
 
+- Prefer direct brace initialization for data members and namespace-scope constants,
+  such as `int blockSize {512};` and `constexpr int fileSize {0};`,
+  instead of copy initialization with `=`.
+  Apply this to classes and structs, including those defined in source files.
+  Do not extend this preference to local variables, loop initializers, or constructor initializer lists.
+  Only add an empty `{}` initializer when value initialization is needed.
+  Do not add redundant empty initializers to default-constructed class objects or members initialized by a constructor.
+  Keep another initialization form when braces would change type deduction or constructor overload selection.
+  Examples include container size constructors and copies of `juce::Array`.
 - Every source and header file must begin with a file-level comment section
   that explains on a high level what the file contains and implements.
   Use a `///` comment block at the very top of the file,

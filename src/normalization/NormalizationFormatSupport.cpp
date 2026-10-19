@@ -21,7 +21,7 @@ namespace
 struct AudioNormalizationFormatSupport {
     juce::String formatName;
     juce::StringArray fileExtensions;
-    bool canNormalize = false;
+    bool canNormalize {false};
     juce::String detail;
 };
 

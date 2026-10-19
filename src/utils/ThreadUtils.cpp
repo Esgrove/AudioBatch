@@ -16,7 +16,7 @@ namespace audiobatch::utils
 namespace
 {
 /// How long a worker waits for the message thread between cancellation checks, in milliseconds.
-constexpr int messageThreadPollIntervalMs = 20;
+constexpr int messageThreadPollIntervalMs {20};
 
 /// Lifecycle of a MessageThreadCall.
 enum class MessageThreadCallState : std::uint8_t { pending, running, abandoned };

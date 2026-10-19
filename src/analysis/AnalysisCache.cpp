@@ -453,8 +453,8 @@ namespace
 /// One cached row, identified by path and the file version it describes.
 struct CachedRow {
     juce::String path;
-    std::int64_t fileSize = 0;
-    std::int64_t modifiedTimeMs = 0;
+    std::int64_t fileSize {0};
+    std::int64_t modifiedTimeMs {0};
     std::optional<std::int64_t> tagKind;
 };
 }  // namespace

@@ -19,18 +19,18 @@ namespace audiobatch
 {
 namespace
 {
-constexpr auto resultsXmlTag = "PLUGINS";
-constexpr auto knownPluginListFileName = "KnownPlugins.xml";
-constexpr auto legacyKnownPluginListPropertyKey = "knownPluginList";
-constexpr auto crashLogFileName = "audiobatch_plugin_scan_crash_log.txt";
-constexpr auto responsePollInterval = std::chrono::milliseconds(50);
+constexpr auto resultsXmlTag {"PLUGINS"};
+constexpr auto knownPluginListFileName {"KnownPlugins.xml"};
+constexpr auto legacyKnownPluginListPropertyKey {"knownPluginList"};
+constexpr auto crashLogFileName {"audiobatch_plugin_scan_crash_log.txt"};
+constexpr auto responsePollInterval {std::chrono::milliseconds(50)};
 
 /// Outcome of waiting for the reply to one scan request.
 enum class PluginScanResponseState : std::uint8_t { timeout, gotResult, connectionLost };
 
 /// Reply to one scan request.
 struct PluginScanResponse {
-    PluginScanResponseState state = PluginScanResponseState::timeout;
+    PluginScanResponseState state {PluginScanResponseState::timeout};
     std::unique_ptr<juce::XmlElement> xml;
 };
 
@@ -318,9 +318,9 @@ private:
     std::mutex mutex;
     std::condition_variable condition;
     std::unique_ptr<juce::XmlElement> resultXml;
-    bool gotResult = false;
-    bool connectionLost = false;
-    bool running = false;
+    bool gotResult {false};
+    bool connectionLost {false};
+    bool running {false};
 
     JUCE_LEAK_DETECTOR(PluginScanWorkerProcess)
 };

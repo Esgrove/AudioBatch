@@ -16,9 +16,9 @@ namespace audiobatch
 {
 namespace
 {
-constexpr int readAheadBufferSamples = 32768;
-constexpr int readAheadThreadStopTimeoutMilliseconds = 2000;
-constexpr juce::uint32 seekBufferTimeoutMilliseconds = 2000;
+constexpr int readAheadBufferSamples {32768};
+constexpr int readAheadThreadStopTimeoutMilliseconds {2000};
+constexpr juce::uint32 seekBufferTimeoutMilliseconds {2000};
 
 /// Records read failures on the decoding thread rather than silently turning them into successful playback.
 class PreviewReaderSource final : public juce::AudioFormatReaderSource

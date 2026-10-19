@@ -45,6 +45,6 @@ private:
     juce::ToggleButton compensationToggle {"Compensate plugin latency"};
     juce::ToggleButton continuationToggle {"Continue playback when changing files"};
     juce::ToggleButton coloursToggle {"Serato waveform colours"};
-    bool layingOut = false;
+    bool layingOut {false};
 };
 }  // namespace audiobatch

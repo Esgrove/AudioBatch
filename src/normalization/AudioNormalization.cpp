@@ -22,15 +22,15 @@ namespace audiobatch
 /// Helpers for bit depth selection and chunked normalization.
 namespace
 {
-constexpr int normalizationBlockSize = 32768;
-constexpr auto normalizedAiffOutputExtension = ".aif";
-constexpr int defaultMp3BitsPerSample = 16;
-constexpr auto cancelledMessage = "Normalization was cancelled";
+constexpr int normalizationBlockSize {32768};
+constexpr auto normalizedAiffOutputExtension {".aif"};
+constexpr int defaultMp3BitsPerSample {16};
+constexpr auto cancelledMessage {"Normalization was cancelled"};
 
 /// Share of a file's progress taken by analyzing a source that changed since its last analysis.
-constexpr float sourceAnalysisProgressShare = 0.3f;
+constexpr float sourceAnalysisProgressShare {0.3f};
 /// Progress at which rendering the normalized audio ends and analyzing the output begins.
-constexpr float renderProgressEnd = 0.8f;
+constexpr float renderProgressEnd {0.8f};
 
 /// Logs the failure and builds a failure result for the given file.
 AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)

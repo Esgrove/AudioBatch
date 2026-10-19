@@ -19,36 +19,36 @@ namespace audiobatch
 {
 namespace
 {
-constexpr auto pluginChainPropertyKey = "pluginChain";
-constexpr auto legacySelectedPluginIdPropertyKey = "selectedPluginIdentifier";
-constexpr auto legacySelectedPluginStatePropertyKey = "selectedPluginState";
+constexpr auto pluginChainPropertyKey {"pluginChain"};
+constexpr auto legacySelectedPluginIdPropertyKey {"selectedPluginIdentifier"};
+constexpr auto legacySelectedPluginStatePropertyKey {"selectedPluginState"};
 
-constexpr auto chainXmlTag = "PLUGIN_CHAIN";
-constexpr auto slotXmlTag = "SLOT";
-constexpr auto slotEnabledAttribute = "enabled";
-constexpr auto slotStateAttribute = "state";
+constexpr auto chainXmlTag {"PLUGIN_CHAIN"};
+constexpr auto slotXmlTag {"SLOT"};
+constexpr auto slotEnabledAttribute {"enabled"};
+constexpr auto slotStateAttribute {"state"};
 
-constexpr int editChainMenuItemId = 1;
-constexpr int clearChainMenuItemId = 2;
-constexpr int scanMenuItemId = 3;
+constexpr int editChainMenuItemId {1};
+constexpr int clearChainMenuItemId {2};
+constexpr int scanMenuItemId {3};
 
 /// Initial width of the generic parameter editor shown for plugins without a custom editor.
-constexpr int genericEditorWidth = 450;
+constexpr int genericEditorWidth {450};
 
 /// Initial height of the generic parameter editor shown for plugins without a custom editor.
-constexpr int genericEditorHeight = 600;
+constexpr int genericEditorHeight {600};
 
 /// Initial width of the plugin chain editor window.
-constexpr int chainEditorWidth = 560;
+constexpr int chainEditorWidth {560};
 
 /// Initial height of the plugin chain editor window.
-constexpr int chainEditorHeight = 420;
+constexpr int chainEditorHeight {420};
 
 /// Initial width of the plugin manager window that lists and scans plugins.
-constexpr int pluginManagerWidth = 720;
+constexpr int pluginManagerWidth {720};
 
 /// Initial height of the plugin manager window that lists and scans plugins.
-constexpr int pluginManagerHeight = 520;
+constexpr int pluginManagerHeight {520};
 
 /// Builds the descriptor ref for one chain entry.
 PluginDescriptorRef makeDescriptorRef(const juce::PluginDescription& description, const juce::MemoryBlock& state)
@@ -78,8 +78,8 @@ PluginChain::PluginChain(
     juce::AudioDeviceManager& audioDeviceManager
 ) :
     appProperties(applicationProperties),
-    renderingLock(previewRenderingLock),
-    previewDeviceManager(audioDeviceManager)
+    previewDeviceManager(audioDeviceManager),
+    renderingLock(previewRenderingLock)
 {
     juce::addDefaultFormatsToManager(formatManager);
     knownPluginList.addChangeListener(this);
@@ -192,7 +192,6 @@ ChainInstantiation PluginChain::instantiateChains(
 ) const
 {
     // Use a reasonable default sample rate. The chain is prepared again per file with the file's rate.
-    constexpr double defaultSampleRate = 48000.0;
     constexpr int defaultBlockSize = 1024;
 
     ChainInstantiation instantiation;

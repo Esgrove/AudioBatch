@@ -30,38 +30,38 @@ enum class AudioAnalysisSortMode : std::uint8_t {
 /// Input parameters shared by the GUI and CLI analysis flows.
 struct AudioAnalysisOptions {
     juce::Array<juce::File> inputPaths;
-    bool recursive = false;
-    bool refresh = false;
+    bool recursive {false};
+    bool refresh {false};
 };
 
 /// Analysis metadata and derived peak information for a single audio file.
 struct AudioAnalysisRecord {
-    static constexpr double negativeInfinityLoudness = -1000.0;
+    static constexpr double negativeInfinityLoudness {-1000.0};
 
     juce::File file;
     juce::String fileName;
     juce::String fullPath;
     juce::String formatName;
     juce::String errorMessage;
-    std::int64_t fileSize = 0;
-    std::int64_t modifiedTimeMs = 0;
-    std::int64_t lengthInSamples = 0;
-    double durationSeconds = 0.0;
-    float peakLeft = 0.0f;
-    float peakRight = 0.0f;
-    float overallPeak = 0.0f;
-    double truePeakLeft = 0.0;
-    double truePeakRight = 0.0;
-    double overallTruePeak = 0.0;
-    double maxShortTermLufs = negativeInfinityLoudness;
-    double integratedLufs = negativeInfinityLoudness;
-    int sampleRate = 0;
-    int channels = 0;
-    int bitsPerSample = 0;
-    float customGainDb = 0.0f;
-    bool hasCustomGain = false;
-    AudioAnalysisStatus status = AudioAnalysisStatus::pending;
-    bool fromCache = false;
+    std::int64_t fileSize {0};
+    std::int64_t modifiedTimeMs {0};
+    std::int64_t lengthInSamples {0};
+    double durationSeconds {0.0};
+    float peakLeft {0.0f};
+    float peakRight {0.0f};
+    float overallPeak {0.0f};
+    double truePeakLeft {0.0};
+    double truePeakRight {0.0};
+    double overallTruePeak {0.0};
+    double maxShortTermLufs {negativeInfinityLoudness};
+    double integratedLufs {negativeInfinityLoudness};
+    int sampleRate {0};
+    int channels {0};
+    int bitsPerSample {0};
+    float customGainDb {0.0f};
+    bool hasCustomGain {false};
+    AudioAnalysisStatus status {AudioAnalysisStatus::pending};
+    bool fromCache {false};
 
     /// Returns true when the record represents a failed analysis attempt.
     [[nodiscard]] bool hasError() const noexcept

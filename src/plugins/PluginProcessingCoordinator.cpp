@@ -22,10 +22,10 @@ namespace audiobatch
 namespace
 {
 /// How long cancelAndWait waits for running plugin processing jobs to finish before giving up, in milliseconds.
-constexpr int jobShutdownTimeoutMilliseconds = 60000;
+constexpr int jobShutdownTimeoutMilliseconds {60000};
 
 /// How long a worker waits for a plugin chain to be released before checking for cancellation again, in milliseconds.
-constexpr int chainWaitIntervalMilliseconds = 100;
+constexpr int chainWaitIntervalMilliseconds {100};
 }  // namespace
 
 /// Reserves one physical core for the UI and other work, with a half-logical-core fallback.

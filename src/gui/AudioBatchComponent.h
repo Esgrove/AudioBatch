@@ -262,7 +262,7 @@ private:
 
     /// Overall progress of the running operation in tenths of a percent, or -1 when nothing with a known size runs.
     /// Drawn as a thin bar above the results table.
-    int overallProgressPermille = -1;
+    int overallProgressPermille {-1};
 
     IntervalStepSlider gainSlider {"GainSlider"};
     juce::Label currentRootLabel {"CurrentRootLabel"};
@@ -279,7 +279,7 @@ private:
     juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
 
     bool currentWaveformLoadedFromCache {false};
-    bool automaticSelectionChange = false;
+    bool automaticSelectionChange {false};
 
     /// Expanded divider allocation is independent of the animated or compact workspace.
     bool previewSectionExpanded {true};

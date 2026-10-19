@@ -17,7 +17,7 @@
 namespace audiobatch
 {
 /// Unique id that marks the command line of a plugin scan worker process.
-constexpr auto pluginScanWorkerProcessUid = "audiobatch-plugin-scan-worker";
+constexpr auto pluginScanWorkerProcessUid {"audiobatch-plugin-scan-worker"};
 
 [[nodiscard]] bool isPluginScanWorkerCommandLine(const juce::String& commandLine);
 [[nodiscard]] bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList);
@@ -103,8 +103,8 @@ private:
     std::unique_ptr<PluginScanWorkerProcess> worker;
     ScanStartingCallback onScanStarting;
     ScanFinishedCallback onScanFinished;
-    bool scanStarted = false;
-    bool scanSkipped = false;
+    bool scanStarted {false};
+    bool scanSkipped {false};
 
     JUCE_LEAK_DETECTOR(OutOfProcessPluginScanner)
 };
@@ -131,7 +131,7 @@ public:
 
 private:
     juce::InterProcessLock lock {"AudioBatchPluginScan"};
-    bool held = false;
+    bool held {false};
 
     JUCE_LEAK_DETECTOR(PluginScanLock)
 };

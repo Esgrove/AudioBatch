@@ -55,7 +55,7 @@ struct PluginDescriptorRef {
 /// One entry in the plugin processing chain.
 struct PluginChainSlot {
     PluginDescriptorRef plugin;
-    bool enabled = true;
+    bool enabled {true};
 };
 
 /// Options controlling a batch plugin processing run.
@@ -70,11 +70,11 @@ struct PluginProcessingOptions {
     std::optional<AudioNormalizationOptions> normalizeBeforePlugin;
     /// Replace an existing output file that is not the source itself.
     /// When false, a file whose output path is already taken fails instead of overwriting it.
-    bool overwriteExisting = false;
+    bool overwriteExisting {false};
     /// Disposes of the files a processed output replaces:
     /// a converted source, an overwritten output, and a copy of an `.aif` source rewritten in place.
     /// Moves them to the system trash, unless a caller such as a test passes another function.
-    utils::FileDisposer disposeFile = utils::moveToTrash;
+    utils::FileDisposer disposeFile {utils::moveToTrash};
 };
 
 /// Result payload for a single plugin-processing operation.
@@ -95,10 +95,10 @@ struct PluginProcessingResult {
     /// Analysis of the output file, valid when the re-analysis succeeded.
     AudioAnalysisRecord analysisRecord;
     /// True when the plugin chain rendered the output file.
-    bool succeeded = false;
+    bool succeeded {false};
     /// True once the output was moved into place, which can happen even when re-analysis then failed.
     /// A converted source is in the trash by then, so callers move the record to the output either way.
-    bool committed = false;
+    bool committed {false};
 
     /// True when processing failed.
     [[nodiscard]] bool hasError() const noexcept

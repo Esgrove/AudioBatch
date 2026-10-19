@@ -12,8 +12,8 @@ namespace audiobatch
 {
 namespace
 {
-constexpr int transitionLengthSamples = 64;
-constexpr double gainRampSeconds = 0.005;
+constexpr int transitionLengthSamples {64};
+constexpr double gainRampSeconds {0.005};
 }  // namespace
 
 /// Prepares the input and all scratch views. Plugin preparation belongs to the message-thread host.

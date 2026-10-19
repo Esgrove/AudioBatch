@@ -83,11 +83,11 @@ private:
 
     static juce::String normalizedPath(const juce::File& file);
 
-    static constexpr int analysisVersion = 8;
-    static constexpr int waveformVersion = 1;
+    static constexpr int analysisVersion {8};
+    static constexpr int waveformVersion {1};
 
     juce::CriticalSection mutex;
     juce::File databaseFile;
-    sqlite3* database = nullptr;
+    sqlite3* database {nullptr};
 };
 }  // namespace audiobatch

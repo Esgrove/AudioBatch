@@ -38,31 +38,31 @@ namespace audiobatch
 namespace
 {
 /// Block size for copying the rendered intermediate file into the final output.
-constexpr int finalizeBlockSize = 32768;
+constexpr int finalizeBlockSize {32768};
 /// Level below which rendered tail samples count as silence and are trimmed from the end of the output.
 /// The value is -96 dB, the noise floor of 16-bit audio.
-constexpr float silenceThreshold = 1.5849e-5f;
+constexpr float silenceThreshold {1.5849e-5f};
 /// Output bit depth at and below which TPDF dither is added when quantizing the rendered audio.
-constexpr int maximumDitheredBitDepth = 16;
+constexpr int maximumDitheredBitDepth {16};
 /// Seed for the dither noise, so processing the same file twice writes identical output.
-constexpr juce::int64 ditherSeed = 0x41554449;
-constexpr auto cancelledMessage = "Processing was cancelled";
+constexpr juce::int64 ditherSeed {0x41554449};
+constexpr auto cancelledMessage {"Processing was cancelled"};
 
 /// Share of a file's progress taken by analyzing a source that changed since its last analysis.
-constexpr float sourceAnalysisProgressShare = 0.1f;
+constexpr float sourceAnalysisProgressShare {0.1f};
 /// Progress at which rendering through the chain ends and writing the final output begins.
-constexpr float renderProgressEnd = 0.7f;
+constexpr float renderProgressEnd {0.7f};
 /// Progress at which writing the final output ends and analyzing the output begins.
-constexpr float writeProgressEnd = 0.85f;
+constexpr float writeProgressEnd {0.85f};
 
 /// Level and length measurements of the rendered chain output, used to finalize the output file.
 struct RenderSummary {
     /// Largest absolute sample value of the rendered output.
-    float peak = 0.0f;
+    float peak {0.0f};
     /// Number of samples written to the intermediate file.
-    juce::int64 samplesWritten = 0;
+    juce::int64 samplesWritten {0};
     /// Position of the last sample above the silence threshold, or -1 when the output is silent.
-    juce::int64 lastAudibleSample = -1;
+    juce::int64 lastAudibleSample {-1};
     /// Notice about source blocks that failed to decode but were tolerated, or empty when there were none.
     juce::String decodeNotice;
 };
