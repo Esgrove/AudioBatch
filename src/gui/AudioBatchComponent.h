@@ -10,6 +10,7 @@
 #include "gui/AudioBatchComponentState.h"
 #include "gui/AudioFileTableModel.h"
 #include "gui/AudioPreviewPlayer.h"
+#include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/IntervalStepSlider.h"
 #include "gui/components/NormalizationTargetControl.h"
 #include "gui/components/ThumbnailComponent.h"
@@ -63,11 +64,17 @@ public:
     void showSupportedNormalizationFormats();
     void togglePreviewSection();
     void toggleSeratoWaveformColouring();
+    void togglePluginPreview();
+    void togglePreviewLatencyCompensation();
+    void toggleContinuePreviewPlayback();
 
     [[nodiscard]] bool hasSelectedRecords() const;
     [[nodiscard]] bool isFileOperationInProgress() const noexcept;
     [[nodiscard]] bool isPreviewSectionExpanded() const noexcept;
     [[nodiscard]] bool isSeratoWaveformColouringEnabled() const noexcept;
+    [[nodiscard]] bool isPluginPreviewEnabled() const noexcept;
+    [[nodiscard]] bool isPreviewLatencyCompensated() const noexcept;
+    [[nodiscard]] bool isContinuePreviewPlaybackEnabled() const noexcept;
 
     /// Notifies the window when preview command labels or check marks need refreshing.
     std::function<void()> onViewOptionsChanged;
@@ -163,6 +170,9 @@ private:
     void updateResultsTableColumnWidths() const;
     void updateStatusLabel();
     void updateThumbnailDisplayGain() const;
+    void updatePreviewInputGain(bool immediately = false);
+    void setPreviewPreferences(const AudioPreviewPreferences& preferences);
+    void synchronizePreviewPreferences();
     void zoomLevelChanged(double zoomLevel) const;
 
     void runMoveToTrash(
@@ -174,7 +184,9 @@ private:
     void openDialogWindow(
         SafePointer<juce::DialogWindow>& window,
         const SafePointer<juce::Component>& component,
-        const juce::String& title
+        const juce::String& title,
+        int initialWidth = layout::dialogContentWidth,
+        int initialHeight = layout::dialogContentHeight
     );
 
     void adoptSeratoPreview(
@@ -205,12 +217,12 @@ private:
     juce::ApplicationProperties pluginAppProperties;
     juce::StretchableLayoutManager mainVerticalLayout;
     juce::StretchableLayoutResizerBar waveformResizeBar {&mainVerticalLayout, 1, false};
-    std::unique_ptr<PluginChain> pluginChain;
     std::vector<AudioAnalysisRecord> analysisResults;
 
     /// Plays the previewed file.
     /// Declared before the thumbnail and the audio settings component, which hold references into it.
     AudioPreviewPlayer previewPlayer;
+    std::unique_ptr<PluginChain> pluginChain;
 
     /// Normalization mode and target, persisted in pluginAppProperties, which is declared before it.
     NormalizationTargetControl normalizationTargetControl {pluginAppProperties};
@@ -219,7 +231,8 @@ private:
     SafePointer<juce::DialogWindow> settingsWindow;
     juce::Array<SafePointer<juce::DialogWindow>> childWindows;
     juce::Array<juce::File> currentRoots;
-    juce::AudioDeviceSelectorComponent audioSetupComponent;
+    AudioSettingsComponent audioSettingsComponent {previewPlayer.getDeviceManager()};
+    AudioPreviewPreferences previewPreferences;
     juce::File currentAudioFile;
     juce::TableListBox resultsTable;
     juce::URL currentAudioUrl;
@@ -266,6 +279,7 @@ private:
     juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
 
     bool currentWaveformLoadedFromCache {false};
+    bool automaticSelectionChange = false;
 
     /// Expanded divider allocation is independent of the animated or compact workspace.
     bool previewSectionExpanded {true};

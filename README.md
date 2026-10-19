@@ -26,6 +26,7 @@ Removing a row does not delete the file. Moving a file to the trash is a separat
 ### Waveform Preview
 
 View and play tracks with a zoomable waveform.
+Playback status and the waveform cursor follow the current display's refresh rate, including high-refresh displays.
 The resizable preview workspace has separate columns for controls, selected-file information, and the waveform.
 Sample peak, true peak, integrated loudness, and maximum short-term loudness appear in dedicated metric cards.
 
@@ -37,6 +38,47 @@ Use the small outlined arrow in the controls' top-left corner, or the collapse/e
 The shortcut is `Ctrl+Shift+Space` on Windows and `Cmd+Shift+Space` on macOS.
 The compact row keeps Play/Stop, Process, all four metrics, and a smaller waveform visible.
 Other controls are hidden but retain their settings.
+
+### Live Plugin Preview
+
+Enable **Preview plugin chain** to listen through the enabled effects in chain order.
+Plugin editor adjustments affect the preview in real time, and closing an editor does not stop its effect.
+The current file's custom input gain is applied before the live chain, including when no plugins are enabled.
+Disabling plugin preview returns to unchanged dry playback.
+Preview never applies automatic normalization or writes audio files.
+
+Each plugin row shows `Latency: X samples (Y ms)`.
+The chain window's footer shows the enabled plugins' total latency and the real-time processing sample rate.
+Disabled plugins do not contribute to the total.
+Without an open device, latency inspection uses 48 kHz.
+Plugins may report different latency or sound different when batch processing in offline mode.
+
+Latency compensation aligns processed audio with the waveform's file position.
+High-latency chains need a preparation pause after starting, seeking, or switching the chain.
+The pause primes the effects without permanently delaying dry playback.
+Turn **Compensate Preview Plugin Latency** off to hear the plugins' natural uncompensated delay instead.
+Changing a latency-affecting plugin setting updates the readouts and may re-prime playback.
+
+At the end of a file, preview drains the delayed final audio and the reported effect tails,
+with each plugin's tail limited to 30 seconds.
+The position marker stays at the file end while the tail plays.
+Stopping, seeking, switching files, or disabling the chain discards the old tail.
+Unlike offline processing, live preview does not perform a whole-file anti-clipping gain adjustment.
+
+### Audio Settings
+
+**Audio Settings** separates audio interface/playback configuration from preview preferences.
+The preview preferences are also available as ticked commands in the Options menu.
+Plugin preview is controlled only from this window and the menu, keeping the main playback controls uncluttered.
+
+- **Preview plugin chain:** off by default.
+- **Compensate plugin latency:** on by default.
+- **Continue playback when changing files:** off by default.
+  When enabled, selecting a different file starts it from the beginning only if preview was already playing.
+- **Serato waveform colours:** on by default.
+
+All four choices are remembered between sessions.
+Latency compensation and playback continuation do not add controls to the main preview workspace.
 
 ### Normalization
 

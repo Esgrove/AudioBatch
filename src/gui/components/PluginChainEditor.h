@@ -46,6 +46,7 @@ public:
     void mouseUp(const juce::MouseEvent& event) override;
 
     void updateMoveButtonStates(int numRows);
+    void updateLatency();
 
     /// Returns the chain slot index this row is bound to.
     [[nodiscard]] int getSlotIndex() const noexcept
@@ -66,6 +67,7 @@ private:
 
     juce::ToggleButton enabledToggle;
     juce::Label nameLabel;
+    juce::Label latencyLabel;
     juce::TextButton editButton {"Edit"};
     /// Reorder buttons, labelled with Unicode arrows in the constructor.
     juce::TextButton upButton;
@@ -114,6 +116,7 @@ private:
     void showAddPluginMenu();
 
     void updateHintLabel();
+    void updateLatencyLabels();
 
     PluginChain& pluginChain;
 
@@ -121,6 +124,9 @@ private:
     /// Lives inside the row container below the last row, so it scrolls with the rows.
     juce::TextButton addButton {"+"};
     juce::Label hintLabel;
+    juce::Label totalLatencyLabel;
+    juce::Label processingRateLabel;
+    std::uint64_t displayedRevision = 0;
 
     juce::Viewport viewport;
     juce::Component rowContainer;

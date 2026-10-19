@@ -132,7 +132,10 @@ static_assert(
 /// Plugin-chain rows, action buttons, and the scrolling editor's outer margin.
 namespace pluginEditor
 {
-constexpr int rowHeight = 36;
+constexpr int rowHeight = 54;
+constexpr int nameHeight = 24;
+constexpr int footerHeight = 48;
+constexpr int footerLineHeight = 22;
 constexpr int rowPadding = 4;
 constexpr int addButtonSize = 28;
 constexpr int margin = 8;
@@ -140,6 +143,18 @@ constexpr int rowIconButtonWidth = 24;
 constexpr int rowEditButtonWidth = 48;
 constexpr float rowCornerRadius = 4.0f;
 }  // namespace pluginEditor
+
+/// Device and preview preferences share one scrollable dialog without changing unrelated dialogs.
+namespace audioSettings
+{
+constexpr int preferredWidth = 560;
+constexpr int preferredHeight = 620;
+constexpr int padding = 12;
+constexpr int sectionSpacing = 16;
+constexpr int headingHeight = 24;
+constexpr int rowHeight = 30;
+constexpr int preferencesHeight = padding * 2 + headingHeight + rowHeight * 4;
+}  // namespace audioSettings
 
 /// Waveform overlays retain fixed logical sizes independently of channel and zoom geometry.
 namespace waveform

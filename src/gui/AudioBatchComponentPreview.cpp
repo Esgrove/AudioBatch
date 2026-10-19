@@ -12,13 +12,83 @@ namespace audiobatch
 /// Reports the active spectral-colour preference without requiring a selected file.
 bool AudioBatchComponent::isSeratoWaveformColouringEnabled() const noexcept
 {
-    return thumbnail->isSeratoWaveformColouringEnabled();
+    return previewPreferences.seratoWaveformColours;
 }
 
 /// Switches the spectral-colour brush without altering cues, metadata, playback, zoom, or cached peaks.
 void AudioBatchComponent::toggleSeratoWaveformColouring()
 {
-    thumbnail->setSeratoWaveformColouringEnabled(!isSeratoWaveformColouringEnabled());
+    auto preferences = previewPreferences;
+    preferences.seratoWaveformColours = !preferences.seratoWaveformColours;
+    setPreviewPreferences(preferences);
+}
+
+/// Reports the canonical live-chain setting to menu command descriptions.
+bool AudioBatchComponent::isPluginPreviewEnabled() const noexcept
+{
+    return previewPreferences.pluginChainEnabled;
+}
+
+/// Reports compensation independently of whether live preview is currently enabled.
+bool AudioBatchComponent::isPreviewLatencyCompensated() const noexcept
+{
+    return previewPreferences.latencyCompensated;
+}
+
+/// Reports whether active playback should continue after a user selects a different file.
+bool AudioBatchComponent::isContinuePreviewPlaybackEnabled() const noexcept
+{
+    return previewPreferences.continuePlayback;
+}
+
+/// Toggles live processing through the same setter used by Audio Settings.
+void AudioBatchComponent::togglePluginPreview()
+{
+    auto preferences = previewPreferences;
+    preferences.pluginChainEnabled = !preferences.pluginChainEnabled;
+    setPreviewPreferences(preferences);
+}
+
+/// Re-primes playback after changing the compensation policy.
+void AudioBatchComponent::togglePreviewLatencyCompensation()
+{
+    auto preferences = previewPreferences;
+    preferences.latencyCompensated = !preferences.latencyCompensated;
+    setPreviewPreferences(preferences);
+}
+
+/// Toggles selection continuation without starting a currently stopped preview.
+void AudioBatchComponent::toggleContinuePreviewPlayback()
+{
+    auto preferences = previewPreferences;
+    preferences.continuePlayback = !preferences.continuePlayback;
+    setPreviewPreferences(preferences);
+}
+
+/// Applies requested changes before publishing actual successful state to every preference surface.
+void AudioBatchComponent::setPreviewPreferences(const AudioPreviewPreferences& preferences)
+{
+    const auto previous = previewPreferences;
+    previewPreferences = preferences;
+    if (previous.latencyCompensated != preferences.latencyCompensated) {
+        previewPlayer.setLatencyCompensated(preferences.latencyCompensated);
+    }
+    if (previous.pluginChainEnabled != preferences.pluginChainEnabled) {
+        const auto enabled = previewPlayer.setPluginPreviewEnabled(preferences.pluginChainEnabled);
+        juce::ignoreUnused(enabled);
+    }
+    previewPreferences.pluginChainEnabled = previewPlayer.isPluginPreviewEnabled();
+    thumbnail->setSeratoWaveformColouringEnabled(previewPreferences.seratoWaveformColours);
+    updatePreviewInputGain(true);
+    synchronizePreviewPreferences();
+}
+
+/// Persists the canonical preferences and updates check marks without generating recursive control callbacks.
+void AudioBatchComponent::synchronizePreviewPreferences()
+{
+    audioSettingsComponent.setPreferences(previewPreferences);
+    const auto saved = saveAudioPreviewPreferences(*pluginAppProperties.getUserSettings(), previewPreferences);
+    juce::ignoreUnused(saved);
     if (onViewOptionsChanged) {
         onViewOptionsChanged();
     }
@@ -47,6 +117,7 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
     audioInfo->clear();
 
     if (previewPlayer.load(resource)) {
+        updatePreviewInputGain(true);
         currentAudioUrl = std::move(resource);
         currentWaveformLoadedFromCache = false;
         startStopButton.setEnabled(true);
@@ -149,7 +220,7 @@ void AudioBatchComponent::updatePlaybackButtonForTransportState()
 /// Reacts to transport state changes and to files dropped onto the waveform preview.
 void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
-    if (source == &previewPlayer.getTransport()) {
+    if (source == &previewPlayer) {
         updatePlaybackButtonForTransportState();
         return;
     }
@@ -236,7 +307,23 @@ void AudioBatchComponent::applyCustomGainToSelection(const float gainDb, const b
     if (anyChanged) {
         resultsTable.repaint();
         updateThumbnailDisplayGain();
+        updatePreviewInputGain();
     }
+}
+
+/// Applies only the loaded file's gain, not another selected row's slider value or any normalization target.
+void AudioBatchComponent::updatePreviewInputGain(const bool immediately)
+{
+    float gain = 1.0f;
+    if (const auto row = findRecordIndex(currentAudioFile.getFullPathName());
+        juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size())))
+    {
+        const auto& record = analysisResults[static_cast<std::size_t>(row)];
+        if (record.hasCustomGain) {
+            gain = juce::Decibels::decibelsToGain(record.customGainDb);
+        }
+    }
+    previewPlayer.setInputGain(gain, immediately);
 }
 
 /// Syncs the gain slider with the record shown for the current selection.

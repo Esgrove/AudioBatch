@@ -35,6 +35,9 @@ enum MenuItemId : std::uint8_t {
     revealSelectedMenuItemId,
     togglePreviewSectionMenuItemId,
     toggleSeratoWaveformColouringMenuItemId,
+    togglePluginPreviewMenuItemId,
+    togglePreviewCompensationMenuItemId,
+    toggleContinuePlaybackMenuItemId,
 };
 }  // namespace
 
@@ -172,6 +175,9 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
         case 2:
             menu.addCommandItem(&commandManager, togglePreviewSectionMenuItemId);
             menu.addCommandItem(&commandManager, toggleSeratoWaveformColouringMenuItemId);
+            menu.addCommandItem(&commandManager, togglePluginPreviewMenuItemId);
+            menu.addCommandItem(&commandManager, togglePreviewCompensationMenuItemId);
+            menu.addCommandItem(&commandManager, toggleContinuePlaybackMenuItemId);
             menu.addSeparator();
             appendPluginOptionsMenuItems(menu);
             menu.addSeparator();
@@ -203,6 +209,9 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
         case 1:
             menu.addCommandItem(&commandManager, togglePreviewSectionMenuItemId);
             menu.addCommandItem(&commandManager, toggleSeratoWaveformColouringMenuItemId);
+            menu.addCommandItem(&commandManager, togglePluginPreviewMenuItemId);
+            menu.addCommandItem(&commandManager, togglePreviewCompensationMenuItemId);
+            menu.addCommandItem(&commandManager, toggleContinuePlaybackMenuItemId);
             menu.addSeparator();
             appendPluginOptionsMenuItems(menu);
             menu.addSeparator();
@@ -243,6 +252,11 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
         case revealSelectedMenuItemId:
         case aboutMenuItemId:
         case quitMenuItemId:
+        case togglePreviewSectionMenuItemId:
+        case toggleSeratoWaveformColouringMenuItemId:
+        case togglePluginPreviewMenuItemId:
+        case togglePreviewCompensationMenuItemId:
+        case toggleContinuePlaybackMenuItemId:
             // Handled by perform, the menu invokes the command before it reports the choice here.
             break;
         case reanalyzeSelectedMenuItemId:
@@ -294,6 +308,9 @@ void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
         quitMenuItemId,
         togglePreviewSectionMenuItemId,
         toggleSeratoWaveformColouringMenuItemId,
+        togglePluginPreviewMenuItemId,
+        togglePreviewCompensationMenuItemId,
+        toggleContinuePlaybackMenuItemId,
     });
 }
 
@@ -312,6 +329,30 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
     const auto canActOnSelection = !blockedByDialog && audioBatch.hasSelectedRecords();
 
     switch (commandID) {
+        case togglePluginPreviewMenuItemId:
+            result.setInfo(
+                "Preview Plugin Chain", "Listen through enabled plugins and custom input gain", "Options", 0
+            );
+            result.setTicked(audioBatch.isPluginPreviewEnabled());
+            result.setActive(!blockedByDialog);
+            break;
+        case togglePreviewCompensationMenuItemId:
+            result.setInfo(
+                "Compensate Preview Plugin Latency", "Align processed audio with the file position", "Options", 0
+            );
+            result.setTicked(audioBatch.isPreviewLatencyCompensated());
+            result.setActive(!blockedByDialog);
+            break;
+        case toggleContinuePlaybackMenuItemId:
+            result.setInfo(
+                "Continue Playback When Changing Files",
+                "Continue active playback on a newly selected file",
+                "Options",
+                0
+            );
+            result.setTicked(audioBatch.isContinuePreviewPlaybackEnabled());
+            result.setActive(!blockedByDialog);
+            break;
         case quitMenuItemId:
             result.setInfo("Quit", "Quits the application", fileCategory, 0);
             result.addDefaultKeypress('q', juce::ModifierKeys::commandModifier);
@@ -387,6 +428,15 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
 bool MainWindow::perform(const InvocationInfo& info)
 {
     switch (info.commandID) {
+        case togglePluginPreviewMenuItemId:
+            getAudioBatch().togglePluginPreview();
+            return true;
+        case togglePreviewCompensationMenuItemId:
+            getAudioBatch().togglePreviewLatencyCompensation();
+            return true;
+        case toggleContinuePlaybackMenuItemId:
+            getAudioBatch().toggleContinuePreviewPlayback();
+            return true;
         case quitMenuItemId:
             juce::JUCEApplication::getInstance()->systemRequestedQuit();
             return true;

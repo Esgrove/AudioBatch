@@ -1,8 +1,10 @@
 /// Offscreen cue-arrow and musical-info tests using generated PCM peaks and synthetic metadata.
 /// Exercises the actual preview components without devices, local music or redistributed Serato payloads.
 
+#include "gui/AudioPreviewPlayer.h"
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/components/ThumbnailComponent.h"
+#include "TestHelpers.h"
 #include "TestSuites.h"
 
 #include <cmath>
@@ -101,7 +103,7 @@ private:
     {
         beginTest("Cue arrows retain their colour and point inward above unchanged mono/stereo peaks");
         juce::AudioFormatManager formats;
-        juce::AudioTransportSource transport;
+        AudioPreviewPlayer transport;
         ThumbnailComponent thumbnail(formats, transport);
         thumbnail.setSize(260, 104);
         const auto colour = juce::Colour(239, 37, 37);
@@ -177,7 +179,7 @@ private:
     {
         beginTest("Cached source replacement, explicit reset and empty URL remove old cues");
         juce::AudioFormatManager formats;
-        juce::AudioTransportSource transport;
+        AudioPreviewPlayer transport;
         ThumbnailComponent thumbnail(formats, transport);
         thumbnail.setSize(260, 104);
         const auto peaks = previewPeaks(formats, 1);
@@ -202,14 +204,9 @@ private:
     void testHotCueKeys()
     {
         beginTest("Number keys jump to their Serato hot cue slot and other keys pass through");
-        constexpr double sampleRate = 44100.0;
         juce::AudioFormatManager formats;
-        juce::AudioBuffer<float> silence(1, static_cast<int>(sampleRate * 2.0));
-        silence.clear();
-        juce::MemoryAudioSource memorySource(silence, false);
-        juce::AudioTransportSource transport;
-        transport.setSource(&memorySource, 0, nullptr, sampleRate);
-        transport.prepareToPlay(512, sampleRate);
+        AudioPreviewPlayer transport;
+        expect(transport.load(juce::URL(fixtureFile("silence_stereo_44100_16.wav"))));
         ThumbnailComponent thumbnail(formats, transport);
         thumbnail.setSize(260, 104);
         expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
@@ -232,7 +229,7 @@ private:
         expectWithinAbsoluteError(transport.getCurrentPosition(), 0.5, 0.001);
 
         transport.stop();
-        transport.setSource(nullptr);
+        transport.release();
     }
 
     /// Shows metadata only when available, preserving it during pending/failed analysis and clearing it on replacement.

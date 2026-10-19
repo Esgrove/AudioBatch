@@ -4,6 +4,7 @@
 
 #include "plugins/PluginChainPreparation.h"
 
+#include "utils/AudioFormatUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -13,15 +14,16 @@
 
 namespace audiobatch::plugin_processing
 {
-/// Upper limit for the tail length a plugin may report, in seconds.
-/// Caps the silence appended after each file so a plugin reporting an infinite tail cannot stall processing.
-constexpr double maximumTailSeconds = 30.0;
-
 /// Reconfigures the plugin's main input and output buses to match the file when possible.
 /// We preserve the plugin's existing bus count and only override the main bus channel set,
 /// because some plugins have sidechain or aux buses that should be left alone.
 /// If that fails we fall back through several common configurations.
-static bool configurePluginChannels(juce::AudioPluginInstance& plugin, const int numChannels, const double sampleRate)
+bool configurePluginChannels(
+    juce::AudioPluginInstance& plugin,
+    const int numChannels,
+    const double sampleRate,
+    const int blockSize
+)
 {
     auto const trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {
         auto layout = plugin.getBusesLayout();
@@ -58,12 +60,28 @@ static bool configurePluginChannels(juce::AudioPluginInstance& plugin, const int
     if (!layoutConfigured && numChannels <= 2) {
         // Last resort: ask the processor to accept the channel counts directly.
         // Some plugins do not honor setBusesLayout but still process correctly if play config details are set.
-        plugin.setPlayConfigDetails(numChannels, numChannels, sampleRate, processingBlockSize);
+        plugin.setPlayConfigDetails(numChannels, numChannels, sampleRate, blockSize);
         layoutConfigured
             = plugin.getTotalNumInputChannels() >= numChannels && plugin.getTotalNumOutputChannels() >= numChannels;
     }
 
     return layoutConfigured;
+}
+
+/// Bounds an effect's tail so infinite tails cannot keep either preview or offline rendering alive indefinitely.
+juce::int64 getPluginTailSamples(const juce::AudioPluginInstance& plugin, const double sampleRate)
+{
+    const auto seconds = plugin.getTailLengthSeconds();
+    const auto boundedSeconds = std::isnan(seconds) ? 0.0 : juce::jlimit(0.0, maximumTailSeconds, seconds);
+    return static_cast<juce::int64>(std::ceil(boundedSeconds * sampleRate));
+}
+
+/// Formats device-rate latency consistently for slot rows and the enabled-chain total.
+juce::String formatPluginLatency(const juce::int64 samples, const double sampleRate)
+{
+    return utils::format(
+        "{} samples ({:.2f} ms)", samples, static_cast<double>(samples) * utils::millisecondsPerSecond / sampleRate
+    );
 }
 
 /// Tells the plugin it is rendering offline rather than running live on an audio device,
@@ -185,7 +203,7 @@ ChainPreparation prepareChain(
     for (std::size_t pluginIndex = 0; pluginIndex < chainInstances.size(); ++pluginIndex) {
         auto* plugin = chainInstances[pluginIndex];
 
-        if (!configurePluginChannels(*plugin, numChannels, sampleRate)) {
+        if (!configurePluginChannels(*plugin, numChannels, sampleRate, processingBlockSize)) {
             releasePluginResources(chainInstances);
             preparation.errorMessage = utils::format(
                 "Plugin {} does not support the file's channel layout ({} channels)",
@@ -206,9 +224,7 @@ ChainPreparation prepareChain(
             preparation.processChannelCount, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels()
         );
 
-        const auto tailSeconds = plugin->getTailLengthSeconds();
-        preparation.tailSamples
-            += static_cast<juce::int64>(std::ceil(juce::jlimit(0.0, maximumTailSeconds, tailSeconds) * sampleRate));
+        preparation.tailSamples += getPluginTailSamples(*plugin, sampleRate);
     }
 
     return preparation;

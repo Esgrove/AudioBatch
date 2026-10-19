@@ -17,10 +17,21 @@
 #include <JuceHeader.h>
 
 #include <optional>
+#include <span>
 #include <vector>
 
 namespace audiobatch
 {
+int processBlockThroughChain(
+    juce::AudioBuffer<float>& buffer,
+    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    int numChannels,
+    juce::MidiBuffer& midi,
+    std::span<juce::AudioBuffer<float>> preparedViews = {}
+);
+
+[[nodiscard]] bool isBlockFinite(const juce::AudioBuffer<float>& block, int numSamples);
+
 /// Lightweight reference describing which plugin to instantiate and its saved state.
 struct PluginDescriptorRef {
     /// "VST3", "AudioUnit", etc.

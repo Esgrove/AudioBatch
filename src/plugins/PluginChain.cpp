@@ -1,7 +1,7 @@
 /// Implementation of PluginChain.
 /// Covers the popup menu, slot editing operations, and window handling for the per-slot plugin editors,
 /// the chain editor, and the plugin scan dialog,
-/// including capturing live plugin state from open editors before a run or save.
+/// including capturing live plugin state from loaded slots before a run or save.
 /// Also implements XML persistence of the chain and the known-plugins list in application settings,
 /// with migration of the legacy single-plugin selection into a one-slot chain.
 
@@ -31,9 +31,6 @@ constexpr auto slotStateAttribute = "state";
 constexpr int editChainMenuItemId = 1;
 constexpr int clearChainMenuItemId = 2;
 constexpr int scanMenuItemId = 3;
-
-constexpr double editorSampleRate = 48000.0;
-constexpr int editorBlockSize = 512;
 
 /// Initial width of the generic parameter editor shown for plugins without a custom editor.
 constexpr int genericEditorWidth = 450;
@@ -74,7 +71,12 @@ juce::String formatPluginDescription(const juce::PluginDescription& description)
 
 /// Registers the default plugin formats and restores the known-plugins list
 /// and the persisted chain from application settings.
-PluginChain::PluginChain(juce::ApplicationProperties& applicationProperties) : appProperties(applicationProperties)
+PluginChain::PluginChain(
+    juce::ApplicationProperties& applicationProperties,
+    juce::CriticalSection& previewRenderingLock
+) :
+    appProperties(applicationProperties),
+    renderingLock(previewRenderingLock)
 {
     juce::addDefaultFormatsToManager(formatManager);
     knownPluginList.addChangeListener(this);
@@ -95,12 +97,13 @@ PluginChain::PluginChain(juce::ApplicationProperties& applicationProperties) : a
 /// Closes all editor, chain-editor, and scan windows and destroys their plugin instances.
 PluginChain::~PluginChain()
 {
+    const juce::ScopedLock lock(renderingLock);
     utils::logDebug("Application shutdown: closing plugin windows");
-    stopTimer();
     knownPluginList.removeChangeListener(this);
 
+    persistChain();
     for (auto& entry : chain) {
-        closeEditorForEntry(entry);
+        destroyLiveEntry(entry);
     }
 
     if (chainEditorWindow != nullptr) {
@@ -153,10 +156,11 @@ bool PluginChain::isSlotEnabled(const int index) const
 }
 
 /// Returns the enabled plugins in chain order.
-/// Captures live state from any open editor windows first, so a processing run always uses the latest tweaks.
+/// Captures every instantiated slot first, so a processing run always uses the latest live tweaks.
 std::vector<EnabledChainPlugin> PluginChain::getEnabledPlugins()
 {
-    // Capture live state from open editors so a processing run uses the latest tweaks.
+    const juce::ScopedLock lock(renderingLock);
+    // Include closed-editor instances because they continue processing live preview.
     captureOpenEditorStates();
 
     std::vector<EnabledChainPlugin> plugins;
@@ -252,11 +256,13 @@ void PluginChain::changeListenerCallback(juce::ChangeBroadcaster* source)
     }
 }
 
-/// Polls for editor windows the user has closed, capturing their plugin state and releasing their instances.
+/// Captures closed editor state without destroying the live processors, and defers plugin latency notifications.
 /// A window hidden by its close button counts as closed, because the dialog hides itself instead of deleting itself.
-/// Stops itself once no editor windows remain open.
-void PluginChain::timerCallback()
+/// The preview's display-synchronized VBlank callback drives this metadata and window housekeeping.
+/// Audio parameter changes use the shared processor directly and never wait for this update.
+void PluginChain::updatePreviewStatus()
 {
+    const juce::ScopedLock lock(renderingLock);
     // Watch for the user closing editor windows so we can capture plugin state.
     bool stateCaptured = false;
 
@@ -268,11 +274,24 @@ void PluginChain::timerCallback()
 
     if (stateCaptured) {
         persistChain();
-        notifyChainChanged();
+        sendChangeMessage();
     }
 
-    if (!anyEditorOpen()) {
-        stopTimer();
+    if (latencyDirty.exchange(false)) {
+        bool changed = false;
+        for (auto& entry : chain) {
+            if (entry.instance != nullptr && entry.prepared) {
+                const auto latency = static_cast<juce::int64>(juce::jmax(0, entry.instance->getLatencySamples()));
+                changed = changed || entry.latencySamples != latency;
+                entry.latencySamples = latency;
+            }
+        }
+        if (changed) {
+            if (latencyChangedCallback) {
+                latencyChangedCallback();
+            }
+            sendChangeMessage();
+        }
     }
 }
 
@@ -284,16 +303,16 @@ bool PluginChain::isEditorWindowClosed(const PluginChainEntry& entry)
     return entry.editorWindow == nullptr || !entry.editorWindow->isVisible();
 }
 
-/// Captures plugin state from a closed editor into its entry, then destroys the window and the instance.
+/// Captures plugin state from a closed editor and deletes only its window, preserving live audio.
 /// Returns true when plugin state was captured.
 bool PluginChain::reapClosedEditor(PluginChainEntry& entry)
 {
     entry.wasEditorOpen = false;
 
     bool stateCaptured = false;
-    if (entry.editorInstance != nullptr) {
+    if (entry.instance != nullptr && entry.prepared) {
         juce::MemoryBlock state;
-        entry.editorInstance->getStateInformation(state);
+        entry.instance->getStateInformation(state);
 
         if (state.getSize() > 0) {
             entry.state = std::move(state);
@@ -362,6 +381,7 @@ void PluginChain::showMenu(juce::Component& anchor)
 /// Appends the given plugin to the chain as an enabled slot and opens its editor.
 void PluginChain::addPlugin(const juce::PluginDescription& description)
 {
+    const juce::ScopedLock lock(renderingLock);
     PluginChainEntry entry;
     entry.description = description;
     chain.push_back(std::move(entry));
@@ -376,17 +396,14 @@ void PluginChain::addPlugin(const juce::PluginDescription& description)
 /// Removes the given slot from the chain, closing its editor window if open.
 void PluginChain::removeSlot(const int index)
 {
+    const juce::ScopedLock lock(renderingLock);
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
         return;
     }
 
     auto& entry = chain[static_cast<std::size_t>(index)];
-    closeEditorForEntry(entry);
+    destroyLiveEntry(entry);
     chain.erase(chain.begin() + index);
-
-    if (!anyEditorOpen()) {
-        stopTimer();
-    }
 
     persistChain();
     notifyChainChanged();
@@ -395,6 +412,7 @@ void PluginChain::removeSlot(const int index)
 /// Moves a slot to a new position in the chain.
 void PluginChain::moveSlot(const int fromIndex, const int toIndex)
 {
+    const juce::ScopedLock lock(renderingLock);
     const auto numSlots = getNumSlots();
     if (!juce::isPositiveAndBelow(fromIndex, numSlots) || !juce::isPositiveAndBelow(toIndex, numSlots)
         || fromIndex == toIndex)
@@ -416,6 +434,7 @@ void PluginChain::moveSlot(const int fromIndex, const int toIndex)
 /// Enables or disables the given slot without removing it from the chain.
 void PluginChain::setSlotEnabled(const int index, const bool enabled)
 {
+    const juce::ScopedLock lock(renderingLock);
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
         return;
     }
@@ -433,16 +452,16 @@ void PluginChain::setSlotEnabled(const int index, const bool enabled)
 /// Removes all slots from the chain, closing any open editor windows.
 void PluginChain::clearChain()
 {
+    const juce::ScopedLock lock(renderingLock);
     if (chain.empty()) {
         return;
     }
 
     for (auto& entry : chain) {
-        closeEditorForEntry(entry);
+        destroyLiveEntry(entry);
     }
 
     chain.clear();
-    stopTimer();
 
     persistChain();
     notifyChainChanged();
@@ -451,9 +470,10 @@ void PluginChain::clearChain()
 /// Opens the editor window for the given slot.
 /// Multiple slot editors can be open at the same time.
 /// Uses the same format-specific state restoration as processing, then creates the editor.
-/// The prepared instance is released in closeEditorForEntry.
+/// Closing the window retains the instance so parameter changes affect the same live processor.
 void PluginChain::openEditorForSlot(const int index)
 {
+    const juce::ScopedLock lock(renderingLock);
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
         return;
     }
@@ -469,23 +489,19 @@ void PluginChain::openEditorForSlot(const int index)
         return;
     }
 
-    // A window the user closed is only hidden, not deleted, and the polling timer may not have reaped it yet.
+    // A window the user closed is only hidden, not deleted, and the next display update may not have reaped it yet.
     // Capture its state and destroy it now so a fresh editor can open below.
     if (entry.wasEditorOpen && reapClosedEditor(entry)) {
         persistChain();
-        notifyChainChanged();
+        sendChangeMessage();
     }
 
-    juce::String errorMessage;
-    entry.editorInstance
-        = formatManager.createPluginInstance(entry.description, editorSampleRate, editorBlockSize, errorMessage);
-
-    if (entry.editorInstance == nullptr) {
+    if (!prepareLiveEntry(entry)) {
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions::makeOptionsOk(
                 juce::MessageBoxIconType::WarningIcon,
                 "Plugin Error",
-                utils::format("Could not instantiate plugin:\n\n{}", errorMessage),
+                utils::format("Could not prepare plugin:\n\n{}", entry.preparationError),
                 "OK"
             ),
             nullptr
@@ -493,13 +509,11 @@ void PluginChain::openEditorForSlot(const int index)
         return;
     }
 
-    plugin_processing::restoreStateAndPrepare(*entry.editorInstance, entry.state, editorSampleRate, editorBlockSize);
-
-    auto* editor = entry.editorInstance->createEditorAndMakeActive();
+    auto* editor = entry.instance->createEditorAndMakeActive();
 
     if (editor == nullptr) {
         // No custom editor. Fall back to the generic parameter editor.
-        editor = new juce::GenericAudioProcessorEditor(*entry.editorInstance);
+        editor = new juce::GenericAudioProcessorEditor(*entry.instance);
         editor->setSize(genericEditorWidth, genericEditorHeight);
     }
 
@@ -518,15 +532,17 @@ void PluginChain::openEditorForSlot(const int index)
         entry.editorWindow->setVisible(true);
         entry.editorWindow->toFront(true);
         entry.wasEditorOpen = true;
-        startTimerHz(4);
-    } else {
-        entry.editorInstance = nullptr;
     }
+    sendChangeMessage();
 }
 
 /// Opens the chain editor window for adding, reordering, enabling, and removing plugins.
 void PluginChain::showChainEditor()
 {
+    const auto inspectedChain = preparePreview(previewSampleRate, previewBlockSize, previewChannels, true);
+    if (inspectedChain.preparation.errorMessage.isNotEmpty()) {
+        utils::logWarn("Plugin latency inspection: {}", inspectedChain.preparation.errorMessage);
+    }
     if (chainEditorWindow != nullptr) {
         // The window hides itself when closed, so reopening only needs to make it visible again.
         chainEditorWindow->setVisible(true);
@@ -604,13 +620,13 @@ void PluginChain::showScanWindow()
     }
 }
 
-/// Captures live plugin state from every open editor into its entry without closing anything.
+/// Captures all instantiated slots, including processors whose editor windows have closed.
 void PluginChain::captureOpenEditorStates()
 {
     for (auto& entry : chain) {
-        if (entry.editorInstance != nullptr && entry.editorWindow != nullptr) {
+        if (entry.instance != nullptr && entry.prepared) {
             juce::MemoryBlock state;
-            entry.editorInstance->getStateInformation(state);
+            entry.instance->getStateInformation(state);
 
             if (state.getSize() > 0) {
                 entry.state = std::move(state);
@@ -619,27 +635,14 @@ void PluginChain::captureOpenEditorStates()
     }
 }
 
-/// Closes the given entry's editor window, releases its instance's resources,
-/// and destroys the instance without capturing state.
+/// Deletes only the editor window. The slot continues owning its live processor.
 void PluginChain::closeEditorForEntry(PluginChainEntry& entry)
 {
     if (entry.editorWindow != nullptr) {
         entry.editorWindow.deleteAndZero();
     }
 
-    // The editor is deleted with its window above, so the instance has no editor when it is released.
-    if (entry.editorInstance != nullptr) {
-        entry.editorInstance->releaseResources();
-    }
-
-    entry.editorInstance = nullptr;
     entry.wasEditorOpen = false;
-}
-
-/// Returns true when any entry still has an editor window open.
-bool PluginChain::anyEditorOpen() const noexcept
-{
-    return std::ranges::any_of(chain, [](const auto& entry) { return entry.wasEditorOpen; });
 }
 
 /// Decodes a base64 plugin state onto the entry, leaving the state empty when the text is not valid base64.
@@ -826,6 +829,7 @@ bool PluginChain::beginPluginScan()
 /// Broadcasts a change message and invokes the chain-changed callback, if one is set.
 void PluginChain::notifyChainChanged()
 {
+    ++revision;
     sendChangeMessage();
 
     if (chainChangedCallback != nullptr) {

@@ -32,6 +32,7 @@ std::unique_ptr<juce::UnitTest> createMetadataTests();
 
 /// Creates the suite that runs files through in-process test plugins.
 std::unique_ptr<juce::UnitTest> createProcessingTests();
+std::unique_ptr<juce::UnitTest> createPreviewPlaybackTests();
 
 /// Creates the suite that checks normalization output paths, collisions, and the written audio.
 std::unique_ptr<juce::UnitTest> createNormalizationTests();
