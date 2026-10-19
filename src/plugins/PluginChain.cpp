@@ -71,15 +71,19 @@ juce::String formatPluginDescription(const juce::PluginDescription& description)
 
 /// Registers the default plugin formats and restores the known-plugins list
 /// and the persisted chain from application settings.
+/// Observes the longer-lived preview device manager to keep the chain editor's rate context accurate.
 PluginChain::PluginChain(
     juce::ApplicationProperties& applicationProperties,
-    juce::CriticalSection& previewRenderingLock
+    juce::CriticalSection& previewRenderingLock,
+    juce::AudioDeviceManager& audioDeviceManager
 ) :
     appProperties(applicationProperties),
-    renderingLock(previewRenderingLock)
+    renderingLock(previewRenderingLock),
+    previewDeviceManager(audioDeviceManager)
 {
     juce::addDefaultFormatsToManager(formatManager);
     knownPluginList.addChangeListener(this);
+    previewDeviceManager.addChangeListener(this);
 
     // Load plugins in a separate worker process while scanning,
     // so a plugin that crashes during the scan is blacklisted instead of taking down the app.
@@ -100,6 +104,7 @@ PluginChain::~PluginChain()
     const juce::ScopedLock lock(renderingLock);
     utils::logDebug("Application shutdown: closing plugin windows");
     knownPluginList.removeChangeListener(this);
+    previewDeviceManager.removeChangeListener(this);
 
     persistChain();
     for (auto& entry : chain) {
@@ -248,11 +253,13 @@ void PluginChain::setChainChangedCallback(ChainChangedCallback callback)
     chainChangedCallback = std::move(callback);
 }
 
-/// Persists the known-plugins list whenever the plugin scanner updates it.
+/// Persists scanner changes or refreshes device context without rebuilding rows or restarting preview.
 void PluginChain::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
     if (source == &knownPluginList) {
         persistKnownPluginList();
+    } else if (source == &previewDeviceManager) {
+        sendChangeMessage();
     }
 }
 
@@ -326,6 +333,7 @@ bool PluginChain::reapClosedEditor(PluginChainEntry& entry)
 
 /// Pops up the plugin menu anchored to the given component.
 /// The menu includes the chain summary, Edit Chain, the Add Plugin submenu, Clear Chain, and a Scan entry.
+/// Uses desktop space so plugin selection submenus can extend beyond the anchor window.
 void PluginChain::showMenu(juce::Component& anchor)
 {
     juce::PopupMenu menu;
@@ -347,35 +355,32 @@ void PluginChain::showMenu(juce::Component& anchor)
     menu.addItem(scanMenuItemId, "Scan for Plugins...");
 
     const juce::WeakReference safeThis(this);
-    menu.showMenuAsync(
-        juce::PopupMenu::Options().withTargetComponent(&anchor).withParentComponent(anchor.getTopLevelComponent()),
-        [safeThis, types](const int result) {
-            if (safeThis == nullptr || result == 0) {
-                return;
-            }
-
-            switch (result) {
-                case editChainMenuItemId:
-                    safeThis->showChainEditor();
-                    return;
-                case clearChainMenuItemId:
-                    safeThis->clearChain();
-                    return;
-                case scanMenuItemId:
-                    safeThis->showScanWindow();
-                    return;
-                default:
-                    break;
-            }
-
-            const auto index = juce::KnownPluginList::getIndexChosenByMenu(types, result);
-            if (index < 0 || index >= types.size()) {
-                return;
-            }
-
-            safeThis->addPlugin(types.getReference(index));
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&anchor), [safeThis, types](const int result) {
+        if (safeThis == nullptr || result == 0) {
+            return;
         }
-    );
+
+        switch (result) {
+            case editChainMenuItemId:
+                safeThis->showChainEditor();
+                return;
+            case clearChainMenuItemId:
+                safeThis->clearChain();
+                return;
+            case scanMenuItemId:
+                safeThis->showScanWindow();
+                return;
+            default:
+                break;
+        }
+
+        const auto index = juce::KnownPluginList::getIndexChosenByMenu(types, result);
+        if (index < 0 || index >= types.size()) {
+            return;
+        }
+
+        safeThis->addPlugin(types.getReference(index));
+    });
 }
 
 /// Appends the given plugin to the chain as an enabled slot and opens its editor.

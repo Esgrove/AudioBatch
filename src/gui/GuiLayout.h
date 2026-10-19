@@ -42,7 +42,7 @@ constexpr double resultsTableMinimumHeight = 240.0;
 constexpr double resultsTableMaximumProportion = -0.75;
 constexpr double resultsTablePreferredProportion = -0.5;
 constexpr double resizeBarHeight = 6.0;
-constexpr double previewMinimumHeight = 232.0;
+constexpr double previewMinimumHeight = 230.0;
 constexpr double previewMaximumProportion = -0.7;
 constexpr double previewPreferredProportion = -0.28;
 
@@ -148,7 +148,7 @@ constexpr float rowCornerRadius = 4.0f;
 namespace audioSettings
 {
 constexpr int preferredWidth = 560;
-constexpr int preferredHeight = 620;
+constexpr int preferredHeight = 600;
 constexpr int padding = 12;
 constexpr int sectionSpacing = 16;
 constexpr int headingHeight = 24;

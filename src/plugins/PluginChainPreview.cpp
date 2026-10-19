@@ -10,6 +10,21 @@
 
 namespace audiobatch
 {
+/// Labels latency inspection as device-free only when there is no open playback device.
+/// Uses the actual preparation rate rather than assuming that inspection always runs at 48 kHz.
+juce::String formatPluginPreviewRate(const double sampleRate, const bool hasOpenDevice)
+{
+    return hasOpenDevice ? utils::format("Preview rate: {:.0f} Hz.", sampleRate)
+                         : utils::format("No audio device. Inspection rate: {:.0f} Hz.", sampleRate);
+}
+
+/// Queries the device manager directly so a closed or disconnected device cannot leave a stale availability flag.
+bool PluginChain::hasOpenPreviewDevice() const
+{
+    auto* const device = previewDeviceManager.getCurrentAudioDevice();
+    return device != nullptr && device->isOpen();
+}
+
 /// Instantiates and prepares a slot once for the current real-time context.
 /// The caller holds the preview rendering lock, so editor and device access cannot race reconfiguration.
 bool PluginChain::prepareLiveEntry(PluginChainEntry& entry)

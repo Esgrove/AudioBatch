@@ -140,7 +140,9 @@ void AudioBatchComponent::configureProcessingControls()
 {
     pluginAppProperties.setStorageParameters(utils::createApplicationSettingsOptions());
 
-    pluginChain = std::make_unique<PluginChain>(pluginAppProperties, previewPlayer.getRenderingLock());
+    pluginChain = std::make_unique<PluginChain>(
+        pluginAppProperties, previewPlayer.getRenderingLock(), previewPlayer.getDeviceManager()
+    );
     previewPlayer.setPluginChain(pluginChain.get());
     const auto refreshLiveChain = [this] {
         const auto refreshed = previewPlayer.refreshPluginChain();
