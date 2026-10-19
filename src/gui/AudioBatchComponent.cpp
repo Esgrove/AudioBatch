@@ -89,10 +89,10 @@ void AudioBatchComponent::configurePreviewControls()
     controlsViewport.setName("Preview and processing controls");
     addAndMakeVisible(controlsViewport);
 
-    thumbnail = std::make_unique<ThumbnailComponent>(previewPlayer.getFormatManager(), previewPlayer.getTransport());
+    thumbnail = std::make_unique<ThumbnailComponent>(previewPlayer.getFormatManager(), previewPlayer);
     addAndMakeVisible(thumbnail.get());
     thumbnail->addChangeListener(this);
-    previewPlayer.getTransport().addChangeListener(this);
+    previewPlayer.addChangeListener(this);
     thumbnail->setMouseWheelZoomCallback([this](const double zoomFactor) {
         zoomSlider.setValue(zoomSlider.getValue() * zoomFactor);
     });
@@ -140,8 +140,30 @@ void AudioBatchComponent::configureProcessingControls()
 {
     pluginAppProperties.setStorageParameters(utils::createApplicationSettingsOptions());
 
-    pluginChain = std::make_unique<PluginChain>(pluginAppProperties);
-    pluginChain->setChainChangedCallback([this] { updateProcessButtonState(); });
+    pluginChain = std::make_unique<PluginChain>(pluginAppProperties, previewPlayer.getRenderingLock());
+    previewPlayer.setPluginChain(pluginChain.get());
+    const auto refreshLiveChain = [this] {
+        const auto refreshed = previewPlayer.refreshPluginChain();
+        juce::ignoreUnused(refreshed);
+        previewPreferences.pluginChainEnabled = previewPlayer.isPluginPreviewEnabled();
+        synchronizePreviewPreferences();
+        updateProcessButtonState();
+    };
+    pluginChain->setChainChangedCallback(refreshLiveChain);
+    pluginChain->setLatencyChangedCallback(refreshLiveChain);
+    previewPlayer.onError = [this](const juce::String& message) {
+        previewPreferences.pluginChainEnabled = previewPlayer.isPluginPreviewEnabled();
+        synchronizePreviewPreferences();
+        juce::AlertWindow::showAsync(
+            juce::MessageBoxOptions::makeOptionsOk(
+                juce::MessageBoxIconType::WarningIcon, "Audio Preview", message, "OK", this
+            ),
+            nullptr
+        );
+    };
+    audioSettingsComponent.onPreferencesChanged
+        = [this](const AudioPreviewPreferences& preferences) { setPreviewPreferences(preferences); };
+    setPreviewPreferences(loadAudioPreviewPreferences(*pluginAppProperties.getUserSettings()));
 
     pluginButton.setTooltip("Edit the plugin chain, add plugins, or scan for plugins.");
     pluginButton.onClick = [this] {
@@ -197,7 +219,7 @@ void AudioBatchComponent::configureProcessingControls()
     processButton.onClick = [this] { processSelectedRecords(); };
     addAndMakeVisible(processButton);
 
-    settingsButton.setTooltip("Open audio device settings.");
+    settingsButton.setTooltip("Open audio device and preview settings.");
     settingsButton.onClick = [this] { showAudioSettingsWindow(); };
     controlsContent.addAndMakeVisible(settingsButton);
 }
@@ -315,8 +337,7 @@ AudioBatchComponent::AudioBatchComponent() :
         [this](const AudioAnalysisRecord& record) { return fileActivity.getActivityState(record.fullPath); },
         [this](const AudioAnalysisRecord& record) { return fileActivity.getMessage(record.fullPath); },
         [] { return FileActivityTracker::getAnimationPhase(); }
-    ),
-    audioSetupComponent(previewPlayer.getDeviceManager(), 0, 0, 0, 2, false, false, true, false)
+    )
 {
     const auto constructorStartedAtMs = juce::Time::getMillisecondCounterHiRes();
     const auto logStartupCheckpoint = [constructorStartedAtMs](const juce::String& step) {
@@ -395,7 +416,11 @@ AudioBatchComponent::~AudioBatchComponent()
 
     utils::logDebug("Application shutdown: releasing preview and dialogs");
     previewPlayer.release();
-    previewPlayer.getTransport().removeChangeListener(this);
+    previewPlayer.removeChangeListener(this);
+    previewPlayer.onError = {};
+    pluginChain->setChainChangedCallback({});
+    pluginChain->setLatencyChangedCallback({});
+    previewPlayer.setPluginChain(nullptr);
     thumbnail->removeChangeListener(this);
     thumbnail->setMouseWheelZoomCallback({});
     thumbnail->setMouseWheelGainCallback({});
@@ -503,7 +528,13 @@ bool AudioBatchComponent::hasAnyRecords() const
 /// Opens the audio-device settings dialog.
 void AudioBatchComponent::showAudioSettingsWindow()
 {
-    openDialogWindow(settingsWindow, &audioSetupComponent, "Audio Settings");
+    openDialogWindow(
+        settingsWindow,
+        &audioSettingsComponent,
+        "Audio Settings",
+        layout::audioSettings::preferredWidth,
+        layout::audioSettings::preferredHeight
+    );
 }
 
 /// Returns the current row index of the record with the given full path, or -1
@@ -805,8 +836,13 @@ void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
     const auto& record = analysisResults[static_cast<std::size_t>(row)];
 
     if (record.file.existsAsFile() && currentAudioFile != record.file) {
+        const bool continuePlaying
+            = shouldContinuePreviewPlayback(previewPreferences, previewPlayer.isPlaying(), !automaticSelectionChange);
         currentAudioFile = record.file;
         showAudioResource(juce::URL(record.file));
+        if (continuePlaying && previewPlayer.hasLoadedSource()) {
+            previewPlayer.start();
+        }
         utils::logDebug("Loaded file: {}", record.fileName);
     }
 
@@ -820,7 +856,9 @@ void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
 void AudioBatchComponent::openDialogWindow(
     SafePointer<juce::DialogWindow>& window,
     const SafePointer<juce::Component>& component,
-    const juce::String& title
+    const juce::String& title,
+    const int initialWidth,
+    const int initialHeight
 )
 {
     // Create the window the first time it is opened.
@@ -828,7 +866,7 @@ void AudioBatchComponent::openDialogWindow(
         juce::DialogWindow::LaunchOptions launchOptions;
         launchOptions.dialogTitle = title;
         launchOptions.content.setNonOwned(component);
-        launchOptions.content->setSize(layout::dialogContentWidth, layout::dialogContentHeight);
+        launchOptions.content->setSize(initialWidth, initialHeight);
         window = launchOptions.create();
         childWindows.add(window);
     }

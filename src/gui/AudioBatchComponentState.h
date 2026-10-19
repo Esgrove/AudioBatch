@@ -12,6 +12,14 @@
 
 namespace audiobatch
 {
+/// Persisted preview choices, independent of the current file and audio device.
+struct AudioPreviewPreferences {
+    bool pluginChainEnabled = false;
+    bool latencyCompensated = true;
+    bool continuePlayback = false;
+    bool seratoWaveformColours = true;
+};
+
 /// Progress and inputs of one analysis run, from its start until its completion arrives.
 struct AnalysisRunState {
     /// Options of the run.

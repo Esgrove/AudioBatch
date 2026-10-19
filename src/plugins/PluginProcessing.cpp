@@ -189,16 +189,18 @@ static void foldStereoToMono(juce::AudioBuffer<float>& buffer, const int firstSa
 /// the same way the output of a mono file is written, so the order of the plugins does not drop a channel.
 /// Channels beyond a plugin's main input, such as a sidechain, are cleared so no dry signal leaks into them.
 /// The buffer is as wide as the widest plugin, and each plugin only sees the channels of its own buses.
-static int processBlockThroughChain(
+int processBlockThroughChain(
     juce::AudioBuffer<float>& buffer,
     const std::vector<juce::AudioPluginInstance*>& chainInstances,
     const int numChannels,
-    juce::MidiBuffer& midi
+    juce::MidiBuffer& midi,
+    const std::span<juce::AudioBuffer<float>> preparedViews
 )
 {
     auto signalChannels = numChannels;
 
-    for (auto* plugin : chainInstances) {
+    for (std::size_t pluginIndex = 0; pluginIndex < chainInstances.size(); ++pluginIndex) {
+        auto* plugin = chainInstances[pluginIndex];
         const auto mainInputChannels = juce::jmin(plugin->getMainBusNumInputChannels(), buffer.getNumChannels());
 
         if (signalChannels == 1 && mainInputChannels >= 2) {
@@ -216,7 +218,9 @@ static int processBlockThroughChain(
         const auto pluginChannels = juce::jmin(
             buffer.getNumChannels(), juce::jmax(plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels())
         );
-        juce::AudioBuffer pluginBuffer(buffer.getArrayOfWritePointers(), pluginChannels, buffer.getNumSamples());
+        juce::AudioBuffer<float> temporaryView;
+        auto& pluginBuffer = preparedViews.empty() ? temporaryView : preparedViews[pluginIndex];
+        pluginBuffer.setDataToReferTo(buffer.getArrayOfWritePointers(), pluginChannels, buffer.getNumSamples());
 
         midi.clear();
         plugin->processBlock(pluginBuffer, midi);
@@ -248,7 +252,7 @@ static juce::AudioBuffer<float> prepareOutputView(
 /// Returns true when every sample of the block is a finite number.
 /// An unstable plugin can produce infinity or NaN,
 /// which would turn the clip guard gain into zero or reach the integer writer unchanged.
-static bool isBlockFinite(const juce::AudioBuffer<float>& block, const int numSamples)
+bool isBlockFinite(const juce::AudioBuffer<float>& block, const int numSamples)
 {
     for (int channel = 0; channel < block.getNumChannels(); ++channel) {
         const std::span samples(block.getReadPointer(channel), static_cast<std::size_t>(numSamples));

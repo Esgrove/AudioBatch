@@ -428,6 +428,7 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
     restoreSelectionByPaths(remainingSelectedPaths);
 
     if (resultsTable.getNumSelectedRows() == 0 && !analysisResults.empty()) {
+        const juce::ScopedValueSetter<bool> automaticSelection(automaticSelectionChange, true);
         resultsTable.selectRow(juce::jlimit(0, static_cast<int>(analysisResults.size()) - 1, fallbackRow));
     }
 

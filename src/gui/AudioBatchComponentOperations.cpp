@@ -276,8 +276,10 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int
     );
 
     if (resultsTable.getSelectedRow() < 0 && !analysisResults.empty()) {
+        const juce::ScopedValueSetter<bool> automaticSelection(automaticSelectionChange, true);
         resultsTable.selectRow(0);
     } else if (!currentAudioFile.existsAsFile() && resultsTable.getSelectedRow() >= 0) {
+        const juce::ScopedValueSetter<bool> automaticSelection(automaticSelectionChange, true);
         handleSelectionChanged(resultsTable.getSelectedRow());
     }
 

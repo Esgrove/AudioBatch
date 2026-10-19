@@ -15,6 +15,7 @@
 
 namespace audiobatch
 {
+class AudioPreviewPlayer;
 /// Waveform preview component with transport following, scrubbing, zooming, and drag-and-drop.
 class ThumbnailComponent :
     public juce::Component,
@@ -23,7 +24,7 @@ class ThumbnailComponent :
     public juce::ChangeBroadcaster
 {
 public:
-    ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source);
+    ThumbnailComponent(juce::AudioFormatManager& formatManager, AudioPreviewPlayer& source);
 
     ~ThumbnailComponent() override;
 
@@ -77,7 +78,7 @@ private:
 
     juce::AudioThumbnail thumbnail;
     juce::AudioThumbnailCache thumbnailCache {128};
-    juce::AudioTransportSource& transportSource;
+    AudioPreviewPlayer& transportSource;
     juce::DrawableRectangle currentPositionMarker;
     juce::DrawableComponent currentPositionMarkerComponent {currentPositionMarker};
     juce::Range<double> visibleRange;

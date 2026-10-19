@@ -45,6 +45,10 @@ PluginChainSlotRow::PluginChainSlotRow(
     );
     nameLabel.setInterceptsMouseClicks(false, false);
     addAndMakeVisible(nameLabel);
+    latencyLabel.setInterceptsMouseClicks(false, false);
+    latencyLabel.setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddle());
+    addAndMakeVisible(latencyLabel);
+    updateLatency();
 
     editButton.setTooltip("Open this plugin's editor window.");
     editButton.onClick = [this] { pluginChain.openEditorForSlot(index); };
@@ -79,7 +83,22 @@ void PluginChainSlotRow::resized()
     area.removeFromRight(layout::pluginEditor::rowPadding);
     editButton.setBounds(area.removeFromRight(layout::pluginEditor::rowEditButtonWidth));
     area.removeFromRight(layout::pluginEditor::rowPadding);
-    nameLabel.setBounds(area);
+    nameLabel.setBounds(area.removeFromTop(layout::pluginEditor::nameHeight));
+    latencyLabel.setBounds(area);
+}
+
+/// Refreshes only measured latency text, leaving row controls and drag state intact.
+void PluginChainSlotRow::updateLatency()
+{
+    const auto latency = pluginChain.getSlotLatency(index);
+    latencyLabel.setText(
+        latency
+            ? utils::format(
+                  "Latency: {}", plugin_processing::formatPluginLatency(*latency, pluginChain.getPreviewSampleRate())
+              )
+            : juce::String("Latency: unavailable"),
+        juce::dontSendNotification
+    );
 }
 
 /// Fills the row background, using a lighter shade while the row is being dragged.
@@ -147,6 +166,9 @@ PluginChainEditor::PluginChainEditor(PluginChain& chain) : pluginChain(chain)
     hintLabel.setJustificationType(juce::Justification::centred);
     hintLabel.setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddle());
     addChildComponent(hintLabel);
+    addAndMakeVisible(totalLatencyLabel);
+    processingRateLabel.setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddle());
+    addAndMakeVisible(processingRateLabel);
 
     viewport.setViewedComponent(&rowContainer, false);
     viewport.setScrollBarsShown(true, false);
@@ -166,7 +188,10 @@ PluginChainEditor::~PluginChainEditor()
 /// Lays out the hint label and the scrolling row list with its add button.
 void PluginChainEditor::resized()
 {
-    const auto area = getLocalBounds().reduced(layout::pluginEditor::margin);
+    auto area = getLocalBounds().reduced(layout::pluginEditor::margin);
+    auto footer = area.removeFromBottom(layout::pluginEditor::footerHeight);
+    totalLatencyLabel.setBounds(footer.removeFromTop(layout::pluginEditor::footerLineHeight));
+    processingRateLabel.setBounds(footer);
 
     viewport.setBounds(area);
     hintLabel.setBounds(area);
@@ -197,12 +222,17 @@ void PluginChainEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
 /// Performs the row rebuild deferred by changeListenerCallback().
 void PluginChainEditor::handleAsyncUpdate()
 {
-    rebuildRows();
+    if (displayedRevision != pluginChain.getRevision()) {
+        rebuildRows();
+    } else {
+        updateLatencyLabels();
+    }
 }
 
 /// Recreates the slot rows from the current chain state.
 void PluginChainEditor::rebuildRows()
 {
+    displayedRevision = pluginChain.getRevision();
     rows.clear();
 
     const auto numSlots = pluginChain.getNumSlots();
@@ -224,7 +254,29 @@ void PluginChainEditor::rebuildRows()
     }
 
     updateHintLabel();
+    updateLatencyLabels();
     resized();
+}
+
+/// Updates the pinned total and processing-rate context without rebuilding slot components.
+void PluginChainEditor::updateLatencyLabels()
+{
+    for (const auto& row : rows) {
+        row->updateLatency();
+    }
+    const auto total = pluginChain.getTotalLatency();
+    totalLatencyLabel.setText(
+        total ? utils::format(
+                    "Total latency: {}",
+                    plugin_processing::formatPluginLatency(*total, pluginChain.getPreviewSampleRate())
+                )
+              : juce::String("Total latency: unavailable"),
+        juce::dontSendNotification
+    );
+    processingRateLabel.setText(
+        utils::format("Preview rate: {:.0f} Hz. No device: 48 kHz inspection.", pluginChain.getPreviewSampleRate()),
+        juce::dontSendNotification
+    );
 }
 
 /// Positions all rows in the container.

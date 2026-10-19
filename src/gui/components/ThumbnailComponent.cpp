@@ -6,6 +6,7 @@
 
 #include "gui/components/ThumbnailComponent.h"
 
+#include "gui/AudioPreviewPlayer.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
 #include "serato/SeratoWaveformColouring.h"
@@ -39,7 +40,7 @@ constexpr float focusOutlineAlpha {0.6f};
 }  // namespace
 
 /// Creates a thumbnail view backed by the shared transport source.
-ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, juce::AudioTransportSource& source) :
+ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, AudioPreviewPlayer& source) :
     thumbnail(1024, formatManager, thumbnailCache),
     transportSource(source)
 {
@@ -48,6 +49,7 @@ ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, 
     currentPositionMarker.setFill(juce::Colours::white.withAlpha(positionMarkerAlpha));
     addAndMakeVisible(currentPositionMarkerComponent);
     setWantsKeyboardFocus(true);
+    positionAttachment = juce::VBlankAttachment(this, [this](double) { updatePlaybackPosition(); });
 }
 
 /// Stops display callbacks and detaches listeners.
@@ -111,14 +113,12 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
 
     if (waveformData.getSize() == 0) {
         visibleRange = {};
-        positionAttachment = {};
         repaint();
         return false;
     }
 
     if (juce::MemoryInputStream input(waveformData, false); !thumbnail.loadFrom(input)) {
         visibleRange = {};
-        positionAttachment = {};
         repaint();
         return false;
     }
@@ -129,13 +129,11 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
     if (thumbnail.getTotalLength() <= 0.0) {
         thumbnail.clear();
         visibleRange = {};
-        positionAttachment = {};
         repaint();
         return false;
     }
 
     setRange({0.0, thumbnail.getTotalLength()});
-    positionAttachment = juce::VBlankAttachment(this, [this](double) { updatePlaybackPosition(); });
     return true;
 }
 
@@ -185,7 +183,6 @@ void ThumbnailComponent::setURL(const juce::URL& url)
     if (!url.isWellFormed()) {
         thumbnail.clear();
         visibleRange = {};
-        positionAttachment = {};
         repaint();
         return;
     }
@@ -199,8 +196,6 @@ void ThumbnailComponent::setURL(const juce::URL& url)
             visibleRange = {};
             repaint();
         }
-
-        positionAttachment = juce::VBlankAttachment(this, [this](double) { updatePlaybackPosition(); });
     }
 }
 
@@ -410,9 +405,10 @@ bool ThumbnailComponent::canMoveTransport() const noexcept
 
 /// Keeps the playback cursor in sync with the display refresh,
 /// scrolling the visible range along with the transport when follow mode is active.
-/// Skips hidden and idle views, but hides a previously visible marker once playback stops.
+/// Updates playback status before skipping hidden or idle drawing, and hides the marker once playback stops.
 void ThumbnailComponent::updatePlaybackPosition()
 {
+    transportSource.updatePlaybackStatus();
     if (!isShowing()
         || (!transportSource.isPlaying() && !isMouseButtonDown() && !currentPositionMarkerComponent.isVisible()))
     {
