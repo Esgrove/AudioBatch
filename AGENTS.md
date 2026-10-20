@@ -154,6 +154,9 @@ Tests:
   Do not add redundant empty initializers to default-constructed class objects or members initialized by a constructor.
   Keep another initialization form when braces would change type deduction or constructor overload selection.
   Examples include container size constructors and copies of `juce::Array`.
+- Use apostrophe digit separators in C++ decimal numeric literals with more than four digits in the integer part.
+  Group digits in threes from the right, for example `48'000`, `100'000`, and `48'000.0`.
+  Leave literals with four or fewer integer digits unchanged, for example `1024`.
 - Every source and header file must begin with a file-level comment section
   that explains on a high level what the file contains and implements.
   Use a `///` comment block at the very top of the file,
