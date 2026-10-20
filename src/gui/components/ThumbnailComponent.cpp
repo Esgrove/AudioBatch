@@ -252,7 +252,7 @@ void ThumbnailComponent::filesDropped(const juce::StringArray& files, int /*x*/,
     sendChangeMessage();
 }
 
-/// Takes keyboard focus so the hot cue keys apply, then starts scrubbing through the drag handler.
+/// Focuses the waveform for its visual outline, then starts scrubbing through the drag handler.
 void ThumbnailComponent::mouseDown(const juce::MouseEvent& event)
 {
     grabKeyboardFocus();

@@ -270,7 +270,7 @@ private:
         }
     }
 
-    /// Exercises delivery-time generation and identity checks after the worker has already queued a result.
+    /// Distinguishes generation cancellation from path and identity rejection after a result is queued.
     void queuedDelivery()
     {
         beginTest("Queued completions reject path mismatch, A to B to A, mutation and clear");
@@ -287,28 +287,36 @@ private:
             return;
         }
         const auto original = results.front();
+        expect(loader.isCurrentGeneration(original.generation));
         expect(loader.canAdopt(original.identity, original.generation, first));
         expect(!loader.canAdopt(original.identity, original.generation, second));
+        expect(loader.isCurrentGeneration(original.generation));
         loader.request(second, 1.0);
         const auto latest = loader.request(first, 1.0);
         expect(!loader.canAdopt(original.identity, original.generation, first));
+        expect(!loader.isCurrentGeneration(original.generation));
         expect(probe.waitForGeneration(latest));
+        expect(loader.isCurrentGeneration(latest));
         loader.cancel();
         expect(!loader.canAdopt(FileIdentity(first), latest, first));
+        expect(!loader.isCurrentGeneration(latest));
         const auto afterClear = loader.request(first, 1.0);
         expect(probe.waitForGeneration(afterClear));
         results = probe.queued();
         const auto mutated = results.back();
         expect(first.appendText("changed"));
         expect(!loader.canAdopt(mutated.identity, mutated.generation, first));
+        expect(loader.isCurrentGeneration(mutated.generation));
         loader.cancelAndWait();
         expect(!loader.canAdopt(original.identity, original.generation, first));
+        expect(!loader.isCurrentGeneration(mutated.generation));
     }
 
-    /// Uses a subsequent completion as a barrier proving a mutated active read finished without delivery or storage.
+    /// Waits for null completion of an unchanged generation before requesting another file.
+    /// Mutated bytes cannot be adopted or cached, and a subsequent valid request still completes.
     void mutationDuringRead()
     {
-        beginTest("Mutation during a noninterruptible read discards the old bytes before cache storage");
+        beginTest("Mutation during a noninterruptible read completes without metadata or cache storage");
         const TemporaryDirectory directory;
         AnalysisCache cache(directory.getChildFile("cache.db"));
         const auto first = directory.copyFixture("sine_stereo_44100_16.wav", "first.wav");
@@ -316,22 +324,42 @@ private:
         const FileIdentity original(first);
         PreviewProbe probe(ReadStatus::present, true);
         SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
-        loader.request(first, 1.0);
+        const auto originalGeneration = loader.request(first, 1.0);
         expect(probe.waitForReads(1));
         expect(first.appendText("changed"));
         probe.release();
-        loader.request(second, 1.0);
-        expect(probe.waitForDeliveries(1));
-        loader.cancelAndWait();
-        const auto results = probe.queued();
+        expect(probe.waitForGeneration(originalGeneration));
+        auto results = probe.queued();
         expectEquals(static_cast<int>(results.size()), 1);
         if (!results.empty()) {
-            expectEquals(results.front().identity.path, second.getFullPathName());
+            const auto& rejected = results.front();
+            expectEquals(rejected.identity.path, original.path);
+            expect(rejected.generation == originalGeneration);
+            expect(rejected.data == nullptr);
+            expect(!loader.canAdopt(rejected.identity, rejected.generation, first));
+            expect(loader.isCurrentGeneration(rejected.generation));
         }
+        expect(loader.isCurrentGeneration(originalGeneration));
+        expect(!probe.wasCancelled());
         for (const auto kind : serato::allTagKinds) {
             expect(!cache.getSeratoTag(original, kind));
             expect(!cache.getSeratoTag(FileIdentity(first), kind));
+            expect(!cache.getSeratoTag(FileIdentity(second), kind));
         }
+
+        const auto latest = loader.request(second, 1.0);
+        expect(probe.waitForGeneration(latest));
+        results = probe.queued();
+        expectEquals(static_cast<int>(results.size()), 2);
+        if (results.size() == 2) {
+            expectEquals(results.back().identity.path, second.getFullPathName());
+            expect(results.back().generation == latest);
+            expectEveryKind(results.back().data);
+            expect(loader.canAdopt(results.back().identity, results.back().generation, second));
+            expect(loader.isCurrentGeneration(results.back().generation));
+        }
+        expect(!loader.isCurrentGeneration(originalGeneration));
+        loader.cancelAndWait();
     }
 
     /// Clears pending work and joins an in-flight reader without running queued GUI callbacks.
@@ -653,13 +681,13 @@ private:
         const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
         PreviewProbe probe;
         SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
-        loader.request(file, 0.0);
-        loader.request(file, -1.0);
-        loader.request(file, std::numeric_limits<double>::quiet_NaN());
-        loader.request(file, std::numeric_limits<double>::infinity());
-        loader.request(directory.getChildFile("missing.wav"), 1.0);
+        expect(loader.request(file, 0.0) == 0);
+        expect(loader.request(file, -1.0) == 0);
+        expect(loader.request(file, std::numeric_limits<double>::quiet_NaN()) == 0);
+        expect(loader.request(file, std::numeric_limits<double>::infinity()) == 0);
+        expect(loader.request(directory.getChildFile("missing.wav"), 1.0) == 0);
         loader.cancelAndWait();
-        loader.request(file, 1.0);
+        expect(loader.request(file, 1.0) == 0);
         loader.cancelAndWait();
         expect(probe.readPaths().empty());
         expect(probe.queued().empty());

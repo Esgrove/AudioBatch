@@ -1,7 +1,8 @@
-/// Device-free regression tests for the live preview renderer and persisted preferences.
-/// Synthetic processors expose latency, gain edits, ordering, EOF tails, and invalid output
-/// without opening hardware or loading third-party plugins.
+/// Device-free regression tests for the live preview renderer, cue positioning, and persisted preferences.
+/// Synthetic processors expose latency, gain edits, ordering, EOF tails, and invalid output.
+/// The committed silence fixture exercises deferred playback without opening hardware or third-party plugins.
 
+#include "gui/AudioPreviewPlayer.h"
 #include "gui/components/AudioSettingsComponent.h"
 #include "plugins/PluginChain.h"
 #include "plugins/PluginPreviewSource.h"
@@ -214,6 +215,8 @@ public:
         testStopRampAndTailUpdates();
         testInvalidOutput();
         testResampling();
+        testCueStartPosition();
+        testInitialPosition();
         testPreferences();
         testLatencyFormattingAndTailLimit();
         testUnavailableSlotLatency();
@@ -441,6 +444,146 @@ private:
         expectWithinAbsoluteError(source.getCurrentPosition(), 0.01, 0.000001);
     }
 
+    /// Selects chronological cues rather than hot-cue indices and rejects missing or unsafe start positions.
+    void testCueStartPosition()
+    {
+        const AudioPreviewPreferences enabled {.playFromFirstCuePoint = true};
+        serato::Markers markers;
+
+        beginTest("Cue starts require an enabled preference and nonempty markers");
+        expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, nullptr, 10.0), 0.0, 0.000001);
+        expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 0.0, 0.000001);
+        markers.cues.push_back({.positionMilliseconds = 1250, .index = 7, .colour = {}, .name = {}});
+        expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 1.25, 0.000001);
+        expectWithinAbsoluteError(
+            getPreviewStartPositionSeconds(AudioPreviewPreferences(), &markers, 10.0), 0.0, 0.000001
+        );
+
+        beginTest("Unsorted cues use the earliest time even when another cue has index zero or is after halfway");
+        markers.cues.insert(markers.cues.begin(), {.positionMilliseconds = 7000, .index = 0, .colour = {}, .name = {}});
+        markers.cues.push_back({.positionMilliseconds = 2500, .index = 1, .colour = {}, .name = {}});
+        expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 1.25, 0.000001);
+
+        beginTest("A cue exactly halfway is accepted but one millisecond later falls back to zero");
+        markers.cues = {{.positionMilliseconds = 5000, .index = 0, .colour = {}, .name = {}}};
+        expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 5.0, 0.000001);
+        markers.cues.front().positionMilliseconds = 5001;
+        expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 0.0, 0.000001);
+
+        beginTest("Nonpositive and nonfinite durations cannot select a cue start");
+        markers.cues.front().positionMilliseconds = 1250;
+        for (const auto duration :
+             {
+                 0.0,
+                 -1.0,
+                 std::numeric_limits<double>::quiet_NaN(),
+                 std::numeric_limits<double>::infinity(),
+                 -std::numeric_limits<double>::infinity(),
+             })
+        {
+            expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, duration), 0.0, 0.000001);
+        }
+
+        beginTest("A zero-position cue remains at the beginning even with later cues");
+        markers.cues.push_back({.positionMilliseconds = 0, .index = 7, .colour = {}, .name = {}});
+        expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 0.0, 0.000001);
+    }
+
+    /// Exercises deferred cue resolution on one player without requesting device access or rendering callbacks.
+    /// Each load establishes a fresh wait so completion, cancellation, release, and replacement remain independent.
+    void testInitialPosition()
+    {
+        const juce::URL silenceUrl(fixtureFile("silence_stereo_44100_16.wav"));
+        AudioPreviewPlayer player;
+
+        beginTest("Resolving a stopped preview positions it once without starting playback");
+        expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+        expect(player.load(silenceUrl, true));
+        expect(player.hasLoadedSource());
+        expect(!player.isPlaying());
+        player.completeInitialPosition(0.25);
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.25, 0.000001);
+        expect(!player.isPlaying());
+        player.completeInitialPosition(0.5);
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.25, 0.000001);
+        expect(!player.isPlaying());
+
+        beginTest("A pending start is logically playing at zero until its initial position is resolved");
+        expect(player.load(silenceUrl, true));
+        player.start();
+        expect(player.isPlaying());
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.0, 0.000001);
+        player.completeInitialPosition(0.25);
+        expect(player.isPlaying());
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.25, 0.000001);
+        player.completeInitialPosition(0.5);
+        expect(player.isPlaying());
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.25, 0.000001);
+
+        beginTest("Stopping during the initial wait cancels the pending start but still allows cue positioning");
+        expect(player.load(silenceUrl, true));
+        player.start();
+        expect(player.isPlaying());
+        player.stop();
+        expect(!player.isPlaying());
+        player.completeInitialPosition(0.25);
+        expect(!player.isPlaying());
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.25, 0.000001);
+        player.start();
+        expect(player.isPlaying());
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.25, 0.000001);
+
+        beginTest("An explicit seek cancels the initial wait while preserving a pending start");
+        expect(player.load(silenceUrl, true));
+        player.start();
+        player.setPosition(0.375);
+        expect(player.isPlaying());
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.375, 0.000001);
+        player.completeInitialPosition(0.25);
+        expect(player.isPlaying());
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.375, 0.000001);
+
+        beginTest("An explicit seek cancels a stopped preview's initial wait without starting it");
+        expect(player.load(silenceUrl, true));
+        player.setPosition(0.375);
+        expect(!player.isPlaying());
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.375, 0.000001);
+        player.completeInitialPosition(0.25);
+        expect(!player.isPlaying());
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.375, 0.000001);
+
+        beginTest("Release clears a pending start and ignores late initial-position completion");
+        expect(player.load(silenceUrl, true));
+        player.start();
+        expect(player.isPlaying());
+        player.release();
+        expect(!player.hasLoadedSource());
+        expect(!player.getLoadedDurationSeconds().has_value());
+        expect(!player.isPlaying());
+        player.completeInitialPosition(0.25);
+        player.start();
+        expect(!player.isPlaying());
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.0, 0.000001);
+
+        beginTest("A replacement load defaults to no wait and discards the previous pending start");
+        expect(player.load(silenceUrl, true));
+        expect(!player.isPlaying());
+        player.start();
+        expect(player.isPlaying());
+        expect(player.load(silenceUrl));
+        expect(player.hasLoadedSource());
+        expect(!player.isPlaying());
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.0, 0.000001);
+        player.completeInitialPosition(0.25);
+        expect(!player.isPlaying());
+        expectWithinAbsoluteError(player.getCurrentPosition(), 0.0, 0.000001);
+        player.start();
+        expect(player.isPlaying());
+        player.stop();
+        expect(!player.isPlaying());
+        expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+    }
+
     /// Uses an isolated settings file to verify unset defaults, persistence, and actual continuation policy.
     void testPreferences()
     {
@@ -455,26 +598,37 @@ private:
             expect(!defaults.pluginChainEnabled);
             expect(defaults.latencyCompensated);
             expect(!defaults.continuePlayback);
+            expect(!defaults.playFromFirstCuePoint);
+            expect(!AudioPreviewPreferences().playFromFirstCuePoint);
             expect(defaults.seratoWaveformColours);
             const AudioPreviewPreferences changed {
                 .pluginChainEnabled = true,
                 .latencyCompensated = false,
                 .continuePlayback = true,
+                .playFromFirstCuePoint = true,
                 .seratoWaveformColours = false,
             };
             expect(saveAudioPreviewPreferences(settings, changed));
         }
         {
-            const juce::PropertiesFile settings(file, options);
+            juce::PropertiesFile settings(file, options);
             const auto saved = loadAudioPreviewPreferences(settings);
             expect(saved.pluginChainEnabled);
             expect(!saved.latencyCompensated);
             expect(saved.continuePlayback);
+            expect(saved.playFromFirstCuePoint);
             expect(!saved.seratoWaveformColours);
             expect(shouldContinuePreviewPlayback(saved, true, true));
             expect(!shouldContinuePreviewPlayback(saved, false, true));
             expect(!shouldContinuePreviewPlayback(saved, true, false));
             expect(!shouldContinuePreviewPlayback(AudioPreviewPreferences(), true, true));
+            auto disabled = saved;
+            disabled.playFromFirstCuePoint = false;
+            expect(saveAudioPreviewPreferences(settings, disabled));
+        }
+        {
+            const juce::PropertiesFile settings(file, options);
+            expect(!loadAudioPreviewPreferences(settings).playFromFirstCuePoint);
         }
     }
 

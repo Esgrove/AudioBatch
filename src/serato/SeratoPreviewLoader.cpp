@@ -1,5 +1,6 @@
 /// Implements the single-worker, latest-pending preview loader.
-/// File/cache work stays off the message thread, and stale results are rejected before storage and delivery.
+/// File/cache work stays off the message thread, and stale metadata is rejected before storage and delivery.
+/// Identity rejection completes the current request with null data instead of leaving the preview waiting.
 
 #include "serato/SeratoPreviewLoader.h"
 
@@ -28,7 +29,7 @@ SeratoPreviewLoader::~SeratoPreviewLoader()
 }
 
 /// Replaces pending work and invalidates earlier reads and deliveries, including selection A to B to A.
-/// Invalid duration or file identity cancels prior work without scheduling a read.
+/// Invalid duration or file identity cancels prior work without scheduling a read and returns zero.
 /// Called by the owner thread, never from completion.
 std::uint64_t SeratoPreviewLoader::request(const juce::File& file, const double durationSeconds)
 {
@@ -40,6 +41,8 @@ std::uint64_t SeratoPreviewLoader::request(const juce::File& file, const double 
         pending.reset();
         if (!stopped && std::isfinite(durationSeconds) && durationSeconds > 0.0 && identity.matches(file)) {
             pending = SeratoPreviewRequest {.file = file, .identity = identity, .generation = nextGeneration};
+        } else {
+            nextGeneration = 0;
         }
     }
     condition.notify_one();
@@ -71,7 +74,15 @@ void SeratoPreviewLoader::cancelAndWait()
     }
 }
 
+/// Checks whether a completion still belongs to the active generation without requiring a valid file identity.
+/// The owner must also check the selected path before resolving a pending preview after identity rejection.
+bool SeratoPreviewLoader::isCurrentGeneration(const std::uint64_t resultGeneration) const
+{
+    return !stopped && generation == resultGeneration;
+}
+
 /// Checks the generation, selected path and current file stats again at queued delivery time.
+/// A false result forbids adopting metadata, but does not imply the generation has been cancelled.
 /// The GUI additionally checks its URL, reader and thumbnail before applying the returned data.
 bool SeratoPreviewLoader::canAdopt(
     const FileIdentity& identity,
@@ -79,7 +90,7 @@ bool SeratoPreviewLoader::canAdopt(
     const juce::File& selectedFile
 ) const
 {
-    return !stopped && generation == resultGeneration && identity.matches(selectedFile);
+    return isCurrentGeneration(resultGeneration) && identity.matches(selectedFile);
 }
 
 /// Waits interruptibly for the latest request and processes it outside the queue lock.
@@ -102,40 +113,46 @@ void SeratoPreviewLoader::run(const std::stop_token& stopToken)
 }
 
 /// Performs cache lookup, reading and stable persistence, checking cancellation at each boundary.
+/// Identity rejection before reading, after reading or at delivery completes with null data if still current.
+/// Generation cancellation remains silent.
 void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std::stop_token& stopToken) const
 {
-    const utils::CancellationCheck isCancelled = [this, &active, stopToken] {
-        return stopToken.stop_requested() || stopped || generation != active.generation;
-    };
-    if (isCancelled() || !active.identity.matches(active.file)) {
+    const utils::CancellationCheck isCancelled
+        = [this, &active, stopToken] { return stopToken.stop_requested() || !isCurrentGeneration(active.generation); };
+    if (isCancelled()) {
         return;
     }
 
     std::shared_ptr<const SeratoData> data;
     try {
-        Results results;
-        std::vector<TagKind> misses;
-        for (std::size_t index = 0; index < allTagKinds.size(); ++index) {
-            if (isCancelled()) {
-                return;
+        if (active.identity.matches(active.file)) {
+            Results results;
+            std::vector<TagKind> misses;
+            for (std::size_t index = 0; index < allTagKinds.size(); ++index) {
+                if (isCancelled()) {
+                    return;
+                }
+                results[index] = cache.getSeratoTag(active.identity, allTagKinds[index]);
+                if (!results[index]) {
+                    misses.push_back(allTagKinds[index]);
+                }
             }
-            results[index] = cache.getSeratoTag(active.identity, allTagKinds[index]);
-            if (!results[index]) {
-                misses.push_back(allTagKinds[index]);
+            const auto readCompleted = readMisses(active, misses, results, isCancelled);
+            if (active.identity.matches(active.file)) {
+                if (!readCompleted || isCancelled()) {
+                    return;
+                }
+                data = collectData(results);
             }
         }
-        if (!readMisses(active, misses, results, isCancelled)) {
-            return;
-        }
-        if (isCancelled() || !active.identity.matches(active.file)) {
-            return;
-        }
-        data = collectData(results);
     } catch (const std::exception& exception) {
         utils::logDebug("Serato preview read failed: {}", exception.what());
     }
 
-    if (!isCancelled() && active.identity.matches(active.file) && completion) {
+    if (!active.identity.matches(active.file)) {
+        data.reset();
+    }
+    if (!isCancelled() && completion) {
         completion(active.identity, active.generation, std::move(data));
     }
 }

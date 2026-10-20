@@ -113,7 +113,8 @@ void AudioPreviewPlayer::requestDeviceAccess()
 }
 
 /// Loads a mono/stereo source without starting it or altering the file on disk.
-bool AudioPreviewPlayer::load(const juce::URL& audioUrl)
+/// Optionally defers playback until the owner supplies the cue-derived initial position.
+bool AudioPreviewPlayer::load(const juce::URL& audioUrl, const bool waitForInitialPosition)
 {
     const juce::ScopedLock lock(renderingLock);
     release();
@@ -135,6 +136,7 @@ bool AudioPreviewPlayer::load(const juce::URL& audioUrl)
     previewSource.setInputGain(1.0f, true);
     const auto refreshed = refreshPluginChain();
     juce::ignoreUnused(refreshed);
+    waitingForInitialPosition = waitForInitialPosition;
     sendChangeMessage();
     return true;
 }
@@ -174,6 +176,8 @@ void AudioPreviewPlayer::release()
     resamplingSource.reset();
     bufferingSource.reset();
     readerSource.reset();
+    waitingForInitialPosition = false;
+    startWhenInitialPositionReady = false;
     readFailed.store(false);
     bufferUnderrun.store(false);
     sendChangeMessage();
@@ -204,6 +208,7 @@ bool AudioPreviewPlayer::refreshPluginChain()
     const auto error = pluginPreviewEnabled ? chain.preparation.errorMessage : juce::String();
     if (error.isNotEmpty()) {
         pluginPreviewEnabled = false;
+        startWhenInitialPositionReady = false;
         resume = false;
     }
     previewSource.setChain(
@@ -275,6 +280,11 @@ void AudioPreviewPlayer::start()
     if (readerSource == nullptr) {
         return;
     }
+    if (waitingForInitialPosition) {
+        startWhenInitialPositionReady = true;
+        sendChangeMessage();
+        return;
+    }
     const auto* reader = readerSource->getAudioFormatReader();
     const auto duration = static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
     const auto position = previewSource.getCurrentPosition();
@@ -287,17 +297,33 @@ void AudioPreviewPlayer::start()
 void AudioPreviewPlayer::stop()
 {
     const juce::ScopedLock lock(renderingLock);
+    startWhenInitialPositionReady = false;
     previewSource.requestStop();
     sendChangeMessage();
 }
 
-/// Seeks while preserving whether playback was active, including during compensation pre-roll.
+/// Seeks while preserving playback intent, including during cue loading or compensation pre-roll.
+/// An explicit seek takes precedence over any initial cue position that arrives later.
 void AudioPreviewPlayer::setPosition(const double seconds)
 {
     const juce::ScopedLock lock(renderingLock);
-    const auto positioned = reposition(seconds, previewSource.isPlaying());
+    const auto resume = isPlaying();
+    waitingForInitialPosition = false;
+    startWhenInitialPositionReady = false;
+    const auto positioned = reposition(seconds, resume);
     juce::ignoreUnused(positioned);
     sendChangeMessage();
+}
+
+/// Applies the asynchronous initial position once, unless an explicit seek superseded it.
+/// The owner must validate that the completion belongs to the loaded file.
+/// Stopped previews stay stopped, and a pending start begins directly at the resolved position.
+void AudioPreviewPlayer::completeInitialPosition(const double seconds)
+{
+    const juce::ScopedLock lock(renderingLock);
+    if (waitingForInitialPosition) {
+        setPosition(seconds);
+    }
 }
 
 /// Toggles playback using the same path as waveform and cue interactions.
@@ -316,11 +342,11 @@ bool AudioPreviewPlayer::hasLoadedSource() const noexcept
     return readerSource != nullptr;
 }
 
-/// Reports logical playback rather than the input reader's advanced position.
+/// Reports logical playback, including a start waiting for cue metadata, rather than the reader's advanced position.
 bool AudioPreviewPlayer::isPlaying() const
 {
     const juce::ScopedLock lock(renderingLock);
-    return previewSource.isPlaying();
+    return startWhenInitialPositionReady || previewSource.isPlaying();
 }
 
 /// Reports the actual wet-path setting, including a failed attempt to enable a plugin.
@@ -430,6 +456,7 @@ void AudioPreviewPlayer::updatePlaybackStatus()
     const bool decodeFailed = readFailed.exchange(false);
     const bool underrun = bufferUnderrun.exchange(false);
     if (decodeFailed || underrun || previewSource.hasFailed()) {
+        startWhenInitialPositionReady = false;
         previewSource.stop();
         const bool invalidOutput = previewSource.hasFailed();
         previewSource.setPosition(previewSource.getCurrentPosition());
@@ -439,8 +466,8 @@ void AudioPreviewPlayer::updatePlaybackStatus()
                 : "Audio preview could not read the source fast enough or decoding failed. Preview was stopped."
         );
     }
-    if (lastReportedPlaying != previewSource.isPlaying()) {
-        lastReportedPlaying = previewSource.isPlaying();
+    if (lastReportedPlaying != isPlaying()) {
+        lastReportedPlaying = isPlaying();
         sendChangeMessage();
     }
 }

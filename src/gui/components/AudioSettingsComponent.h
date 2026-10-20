@@ -5,6 +5,7 @@
 #pragma once
 
 #include "gui/AudioBatchComponentState.h"
+#include "serato/SeratoTagTypes.h"
 
 #include <JuceHeader.h>
 
@@ -14,6 +15,11 @@ namespace audiobatch
 {
 [[nodiscard]] AudioPreviewPreferences loadAudioPreviewPreferences(const juce::PropertiesFile& settings);
 bool saveAudioPreviewPreferences(juce::PropertiesFile& settings, const AudioPreviewPreferences& preferences);
+[[nodiscard]] double getPreviewStartPositionSeconds(
+    const AudioPreviewPreferences& preferences,
+    const serato::Markers* markers,
+    double durationSeconds
+);
 [[nodiscard]] bool shouldContinuePreviewPlayback(
     const AudioPreviewPreferences& preferences,
     bool wasPlaying,
@@ -51,6 +57,7 @@ private:
     juce::ToggleButton pluginToggle {"Preview plugin chain"};
     juce::ToggleButton compensationToggle {"Compensate plugin latency"};
     juce::ToggleButton continuationToggle {"Continue playback when changing files"};
+    juce::ToggleButton playFromFirstCuePointToggle {"Play from first cue point"};
     juce::ToggleButton coloursToggle {"Serato waveform colours"};
     bool layingOut {false};
 };

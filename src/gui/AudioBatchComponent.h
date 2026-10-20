@@ -69,6 +69,7 @@ public:
     void togglePluginPreview();
     void togglePreviewLatencyCompensation();
     void toggleContinuePreviewPlayback();
+    void togglePlayFromFirstCuePoint();
 
     [[nodiscard]] bool hasSelectedRecords() const;
     [[nodiscard]] bool isFileOperationInProgress() const noexcept;
@@ -77,6 +78,7 @@ public:
     [[nodiscard]] bool isPluginPreviewEnabled() const noexcept;
     [[nodiscard]] bool isPreviewLatencyCompensated() const noexcept;
     [[nodiscard]] bool isContinuePreviewPlaybackEnabled() const noexcept;
+    [[nodiscard]] bool isPlayFromFirstCuePointEnabled() const noexcept;
 
     /// Returns the plugin selection controller, or nullptr before the component finishes constructing.
     [[nodiscard]] PluginChain* getPluginChain() const noexcept

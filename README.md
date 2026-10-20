@@ -33,6 +33,9 @@ Sample peak, true peak, integrated loudness, and maximum short-term loudness app
 Serato DJ metadata adds optional waveform colours and coloured cue markers,
 and the info panel shows BPM and musical key when available.
 Files without Serato tag data show a default blue waveform.
+The Up and Down arrow keys navigate the song list even while the waveform has keyboard focus.
+Number keys `1` to `8` jump to the corresponding Serato hot cue and start playback from either the song list
+or waveform, without clicking or moving keyboard focus first.
 
 Use the small outlined arrow in the controls' top-left corner, or the collapse/expand command in the Options menu.
 The shortcut is `Ctrl+Shift+Space` on Windows and `Cmd+Shift+Space` on macOS.
@@ -75,11 +78,16 @@ Plugin preview is controlled only from this window and the menu, keeping the mai
 - **Preview plugin chain:** off by default.
 - **Compensate plugin latency:** on by default.
 - **Continue playback when changing files:** off by default.
-  When enabled, selecting a different file starts it from the beginning only if preview was already playing.
+  When enabled, selecting a different file starts it only if preview was already playing.
+- **Play from first cue point:** off by default.
+  Newly loaded tracks begin at their earliest cue marker if it is at or before halfway through the track.
+  Tracks without an eligible cue begin at zero.
+  This also applies when continuing playback across files, but does not start a stopped preview automatically.
+  Manual seeks and hot cue jumps take precedence over this initial position.
 - **Serato waveform colours:** on by default.
 
-All four choices are remembered between sessions.
-Latency compensation and playback continuation do not add controls to the main preview workspace.
+All five choices are remembered between sessions.
+These preferences do not add controls to the main preview workspace.
 
 ### Normalization
 
