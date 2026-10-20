@@ -99,3 +99,13 @@ if [ -n "$(command -v shfmt)" ]; then
         shfmt --list --write ./*.sh tests/fixtures/*.sh
     fi
 fi
+
+if [ -n "$(command -v slb)" ]; then
+    if [ "$CHECK" = true ]; then
+        print_magenta "Checking prose..."
+        slb --exclude JUCE --quiet
+    else
+        print_magenta "Formatting prose..."
+        slb --exclude JUCE --fix
+    fi
+fi
