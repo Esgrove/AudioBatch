@@ -7,6 +7,8 @@
 #include "gui/components/CustomLookAndFeel.h"
 #include "utils/Log.h"
 
+#include <cmath>
+
 namespace audiobatch
 {
 /// Reports the active spectral-colour preference without requiring a selected file.
@@ -41,6 +43,12 @@ bool AudioBatchComponent::isContinuePreviewPlaybackEnabled() const noexcept
     return previewPreferences.continuePlayback;
 }
 
+/// Reports whether newly loaded files use an eligible first cue as their initial position.
+bool AudioBatchComponent::isPlayFromFirstCuePointEnabled() const noexcept
+{
+    return previewPreferences.playFromFirstCuePoint;
+}
+
 /// Toggles live processing through the same setter used by Audio Settings.
 void AudioBatchComponent::togglePluginPreview()
 {
@@ -65,11 +73,22 @@ void AudioBatchComponent::toggleContinuePreviewPlayback()
     setPreviewPreferences(preferences);
 }
 
+/// Toggles cue-based initial positioning without seeking or starting an already loaded preview.
+void AudioBatchComponent::togglePlayFromFirstCuePoint()
+{
+    auto preferences = previewPreferences;
+    preferences.playFromFirstCuePoint = !preferences.playFromFirstCuePoint;
+    setPreviewPreferences(preferences);
+}
+
 /// Applies requested changes before publishing actual successful state to every preference surface.
 void AudioBatchComponent::setPreviewPreferences(const AudioPreviewPreferences& preferences)
 {
     const auto previous = previewPreferences;
     previewPreferences = preferences;
+    if (!preferences.playFromFirstCuePoint) {
+        previewPlayer.completeInitialPosition(0.0);
+    }
     if (previous.latencyCompensated != preferences.latencyCompensated) {
         previewPlayer.setLatencyCompensated(preferences.latencyCompensated);
     }
@@ -116,7 +135,7 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
     }
     audioInfo->clear();
 
-    if (previewPlayer.load(resource)) {
+    if (previewPlayer.load(resource, previewPreferences.playFromFirstCuePoint)) {
         updatePreviewInputGain(true);
         currentAudioUrl = std::move(resource);
         currentWaveformLoadedFromCache = false;
@@ -150,16 +169,22 @@ void AudioBatchComponent::requestSeratoPreview()
     thumbnail->setSeratoMarkers({});
     const auto duration = previewPlayer.getLoadedDurationSeconds();
     if (seratoPreviewLoader && currentAudioUrl.isLocalFile() && currentAudioUrl.getLocalFile() == currentAudioFile
-        && duration.has_value())
+        && duration.has_value() && std::isfinite(*duration) && *duration > 0.0)
     {
         seratoPreviewIdentity.emplace(currentAudioFile);
-        seratoPreviewLoader->request(currentAudioFile, *duration);
-    } else if (seratoPreviewLoader) {
-        seratoPreviewLoader->cancel();
+        if (seratoPreviewLoader->request(currentAudioFile, *duration) == 0) {
+            previewPlayer.completeInitialPosition(0.0);
+        }
+    } else {
+        if (seratoPreviewLoader) {
+            seratoPreviewLoader->cancel();
+        }
+        previewPlayer.completeInitialPosition(0.0);
     }
 }
 
 /// Adopts immutable colours, cues and track info only while the generation, file and URL still match.
+/// Resolves a new file's pending cue start without overriding a manual seek or later metadata refresh.
 /// Never reloads playback or changes waveform geometry, gain, zoom or peak-cache data.
 void AudioBatchComponent::adoptSeratoPreview(
     const FileIdentity& identity,
@@ -169,10 +194,19 @@ void AudioBatchComponent::adoptSeratoPreview(
 {
     if (seratoPreviewLoader && thumbnail != nullptr && previewPlayer.hasLoadedSource() && currentAudioUrl.isWellFormed()
         && currentAudioUrl.isLocalFile() && currentAudioUrl.getLocalFile() == currentAudioFile
-        && seratoPreviewLoader->canAdopt(identity, generation, currentAudioFile))
+        && identity.path == currentAudioFile.getFullPathName() && seratoPreviewLoader->isCurrentGeneration(generation))
     {
+        if (!seratoPreviewLoader->canAdopt(identity, generation, currentAudioFile)) {
+            previewPlayer.completeInitialPosition(0.0);
+            return;
+        }
         seratoPreviewIdentity = identity;
         seratoPreviewData = std::move(data);
+        previewPlayer.completeInitialPosition(getPreviewStartPositionSeconds(
+            previewPreferences,
+            seratoPreviewData && seratoPreviewData->markers ? &*seratoPreviewData->markers : nullptr,
+            previewPlayer.getLoadedDurationSeconds().value_or(0.0)
+        ));
         thumbnail->setSeratoOverview(
             seratoPreviewData && seratoPreviewData->overview
                 ? std::shared_ptr<const serato::Overview>(seratoPreviewData, &*seratoPreviewData->overview)

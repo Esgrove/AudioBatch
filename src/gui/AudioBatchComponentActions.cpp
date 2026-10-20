@@ -13,19 +13,28 @@
 
 namespace audiobatch
 {
-/// Forwards key presses from the results table to the main shortcut handler.
+/// Forwards key presses from the results table to the shared list and preview shortcuts.
 bool AudioBatchComponent::keyPressed(const juce::KeyPress& key, juce::Component* /*originator*/)
 {
     return keyPressed(key);
 }
 
-/// Handles the application shortcuts for trash, remove, reveal, play/stop, and rescan.
+/// Shares list navigation and cue jumps between the table and waveform without moving keyboard focus.
+/// Also handles the application shortcuts for trash, remove, reveal, play/stop, and rescan.
 /// Command or Ctrl with Backspace moves the selection to the trash,
 /// as does Ctrl with Delete on Windows. Shift skips the confirmation.
 /// Delete or Backspace without those modifiers removes it from the list.
 bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
 {
     const auto modifiers = key.getModifiers();
+    if (key.isKeyCode(juce::KeyPress::upKey) || key.isKeyCode(juce::KeyPress::downKey)) {
+        return resultsTable.keyPressed(key);
+    }
+
+    if (thumbnail != nullptr && thumbnail->keyPressed(key)) {
+        return true;
+    }
+
 #if JUCE_WINDOWS
     const auto isTrashKey
         = key.getKeyCode() == juce::KeyPress::backspaceKey || key.getKeyCode() == juce::KeyPress::deleteKey;

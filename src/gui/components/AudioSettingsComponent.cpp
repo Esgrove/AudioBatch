@@ -5,7 +5,10 @@
 
 #include "gui/GuiLayout.h"
 #include "utils/Log.h"
+#include "utils/ThreadUtils.h"
 
+#include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace audiobatch
@@ -15,6 +18,7 @@ namespace
 constexpr auto pluginPreviewKey {"previewPluginChain"};
 constexpr auto compensationKey {"previewLatencyCompensation"};
 constexpr auto continuationKey {"previewContinuePlayback"};
+constexpr auto playFromFirstCuePointKey {"playFromFirstCuePoint"};
 constexpr auto waveformColoursKey {"seratoWaveformColours"};
 }  // namespace
 
@@ -25,16 +29,18 @@ AudioPreviewPreferences loadAudioPreviewPreferences(const juce::PropertiesFile& 
         .pluginChainEnabled = settings.getBoolValue(pluginPreviewKey, false),
         .latencyCompensated = settings.getBoolValue(compensationKey, true),
         .continuePlayback = settings.getBoolValue(continuationKey, false),
+        .playFromFirstCuePoint = settings.getBoolValue(playFromFirstCuePointKey, false),
         .seratoWaveformColours = settings.getBoolValue(waveformColoursKey, true),
     };
 }
 
-/// Saves all four switches together and explicitly reports persistence failures.
+/// Saves all preview switches together and explicitly reports persistence failures.
 bool saveAudioPreviewPreferences(juce::PropertiesFile& settings, const AudioPreviewPreferences& preferences)
 {
     settings.setValue(pluginPreviewKey, preferences.pluginChainEnabled);
     settings.setValue(compensationKey, preferences.latencyCompensated);
     settings.setValue(continuationKey, preferences.continuePlayback);
+    settings.setValue(playFromFirstCuePointKey, preferences.playFromFirstCuePoint);
     settings.setValue(waveformColoursKey, preferences.seratoWaveformColours);
     if (!settings.saveIfNeeded()) {
         utils::logError(
@@ -43,6 +49,24 @@ bool saveAudioPreviewPreferences(juce::PropertiesFile& settings, const AudioPrev
         return false;
     }
     return true;
+}
+
+/// Uses the earliest cue in time only when enabled and at or before the track's halfway point.
+/// Missing cues and invalid durations fall back to the beginning, independent of playback continuation.
+double getPreviewStartPositionSeconds(
+    const AudioPreviewPreferences& preferences,
+    const serato::Markers* markers,
+    const double durationSeconds
+)
+{
+    if (!preferences.playFromFirstCuePoint || markers == nullptr || markers->cues.empty()
+        || !std::isfinite(durationSeconds) || durationSeconds <= 0.0)
+    {
+        return 0.0;
+    }
+    const auto firstCue = std::ranges::min_element(markers->cues, {}, &serato::CuePoint::positionMilliseconds);
+    const auto position = static_cast<double>(firstCue->positionMilliseconds) / utils::millisecondsPerSecond;
+    return position <= durationSeconds * 0.5 ? position : 0.0;
 }
 
 /// Restricts continuation to an intentional selection while playback, pre-roll, or a tail was active.
@@ -74,10 +98,16 @@ AudioSettingsComponent::AudioSettingsComponent(juce::AudioDeviceManager& manager
         "seeks."
     );
     continuationToggle.setTooltip("Start a newly selected file only if the previous preview was playing.");
+    playFromFirstCuePointToggle.setTooltip(
+        "When loading a file, start at its first cue point only if it is at or before halfway through the file. "
+        "Otherwise, or if there is no cue point, start at zero."
+    );
     coloursToggle.setTooltip(
         "Use Serato spectral waveform colours where available, without changing cues or playback."
     );
-    for (auto* toggle : {&pluginToggle, &compensationToggle, &continuationToggle, &coloursToggle}) {
+    for (auto* toggle :
+         {&pluginToggle, &compensationToggle, &continuationToggle, &playFromFirstCuePointToggle, &coloursToggle})
+    {
         content.addAndMakeVisible(toggle);
         toggle->onClick = [this] { preferencesChanged(); };
     }
@@ -96,6 +126,7 @@ void AudioSettingsComponent::setPreferences(const AudioPreviewPreferences& prefe
     pluginToggle.setToggleState(preferences.pluginChainEnabled, juce::dontSendNotification);
     compensationToggle.setToggleState(preferences.latencyCompensated, juce::dontSendNotification);
     continuationToggle.setToggleState(preferences.continuePlayback, juce::dontSendNotification);
+    playFromFirstCuePointToggle.setToggleState(preferences.playFromFirstCuePoint, juce::dontSendNotification);
     coloursToggle.setToggleState(preferences.seratoWaveformColours, juce::dontSendNotification);
 }
 
@@ -113,6 +144,7 @@ void AudioSettingsComponent::preferencesChanged()
             .pluginChainEnabled = pluginToggle.getToggleState(),
             .latencyCompensated = compensationToggle.getToggleState(),
             .continuePlayback = continuationToggle.getToggleState(),
+            .playFromFirstCuePoint = playFromFirstCuePointToggle.getToggleState(),
             .seratoWaveformColours = coloursToggle.getToggleState(),
         });
     }
@@ -142,7 +174,9 @@ void AudioSettingsComponent::resized()
     previewGroup.setBounds(area.getX(), groupTop, area.getWidth(), layout::audioSettings::preferencesHeight);
     auto preferences = previewGroup.getBounds().reduced(layout::audioSettings::padding);
     preferences.removeFromTop(layout::audioSettings::headingHeight);
-    for (auto* toggle : {&pluginToggle, &compensationToggle, &continuationToggle, &coloursToggle}) {
+    for (auto* toggle :
+         {&pluginToggle, &compensationToggle, &continuationToggle, &playFromFirstCuePointToggle, &coloursToggle})
+    {
         toggle->setBounds(preferences.removeFromTop(layout::audioSettings::rowHeight));
     }
     content.setSize(width, previewGroup.getBottom() + layout::audioSettings::padding);

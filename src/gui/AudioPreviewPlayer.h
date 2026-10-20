@@ -37,13 +37,14 @@ public:
     AudioPreviewPlayer(AudioPreviewPlayer&&) = delete;
     AudioPreviewPlayer& operator=(AudioPreviewPlayer&&) = delete;
 
-    bool load(const juce::URL& audioUrl);
+    bool load(const juce::URL& audioUrl, bool waitForInitialPosition = false);
 
     void release();
     void requestDeviceAccess();
     void stop();
     void start();
     void setPosition(double seconds);
+    void completeInitialPosition(double seconds);
     void setErrorCallback(std::function<void(const juce::String&)> callback);
     void setPluginChain(PluginChain* chain);
     bool setPluginPreviewEnabled(bool enabled);
@@ -119,6 +120,11 @@ private:
     bool pluginPreviewEnabled {false};
     bool latencyCompensated {true};
     bool lastReportedPlaying {false};
+
+    /// Holds a new file silent until its asynchronous cue metadata determines the initial position.
+    /// Explicit seeks cancel the wait, and start/stop retain the user's latest playback intent.
+    bool waitingForInitialPosition {false};
+    bool startWhenInitialPositionReady {false};
 
     JUCE_DECLARE_WEAK_REFERENCEABLE(AudioPreviewPlayer)
     JUCE_LEAK_DETECTOR(AudioPreviewPlayer)

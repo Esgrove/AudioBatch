@@ -1,6 +1,7 @@
 /// Bounded asynchronous loading of independent Serato tags for the GUI preview.
 /// SeratoPreviewLoader owns its worker and immutable inputs, but never accesses a GUI component.
 /// The owner must outlive the loader's cache reference and validate queued completions before adoption.
+/// Identity-rejected current requests complete with null data. Cancelled generations do not complete.
 
 #pragma once
 
@@ -29,6 +30,8 @@ struct SeratoPreviewRequest {
 class SeratoPreviewLoader final
 {
 public:
+    /// Receives the requested identity and generation, with null data for missing metadata or identity rejection.
+    /// Before resolving an identity-rejected preview, the owner must check the generation and selected path.
     using Completion = std::function<void(FileIdentity, std::uint64_t, std::shared_ptr<const SeratoData>)>;
     using Reader = std::function<
         std::vector<TagReadResult>(const juce::File&, std::span<const TagKind>, const utils::CancellationCheck&)>;
@@ -47,6 +50,7 @@ public:
     void cancel();
     void cancelAndWait();
 
+    [[nodiscard]] bool isCurrentGeneration(std::uint64_t resultGeneration) const;
     [[nodiscard]] bool canAdopt(
         const FileIdentity& identity,
         std::uint64_t resultGeneration,
@@ -75,8 +79,10 @@ private:
     std::atomic<std::uint64_t> generation {0};
     std::atomic<bool> stopped {false};
     std::condition_variable_any condition;
-    std::jthread worker;
     std::mutex mutex;
     std::optional<SeratoPreviewRequest> pending;
+
+    /// Starts only after every queue member it accesses has been initialized.
+    std::jthread worker;
 };
 }  // namespace audiobatch::serato

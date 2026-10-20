@@ -155,7 +155,8 @@ constexpr int padding {12};
 constexpr int sectionSpacing {16};
 constexpr int headingHeight {24};
 constexpr int rowHeight {30};
-constexpr int preferencesHeight {padding * 2 + headingHeight + rowHeight * 4};
+constexpr int preferenceRowCount {5};
+constexpr int preferencesHeight {padding * 2 + headingHeight + rowHeight * preferenceRowCount};
 }  // namespace audioSettings
 
 /// Waveform overlays retain fixed logical sizes independently of channel and zoom geometry.

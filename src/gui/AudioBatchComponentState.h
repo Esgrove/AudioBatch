@@ -17,6 +17,7 @@ struct AudioPreviewPreferences {
     bool pluginChainEnabled {false};
     bool latencyCompensated {true};
     bool continuePlayback {false};
+    bool playFromFirstCuePoint {false};
     bool seratoWaveformColours {true};
 };
 

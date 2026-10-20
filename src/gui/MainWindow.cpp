@@ -38,6 +38,7 @@ enum MenuItemId : std::uint8_t {
     togglePluginPreviewMenuItemId,
     togglePreviewCompensationMenuItemId,
     toggleContinuePlaybackMenuItemId,
+    togglePlayFromFirstCuePointMenuItemId,
 };
 }  // namespace
 
@@ -178,6 +179,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             menu.addCommandItem(&commandManager, togglePluginPreviewMenuItemId);
             menu.addCommandItem(&commandManager, togglePreviewCompensationMenuItemId);
             menu.addCommandItem(&commandManager, toggleContinuePlaybackMenuItemId);
+            menu.addCommandItem(&commandManager, togglePlayFromFirstCuePointMenuItemId);
             menu.addSeparator();
             appendPluginOptionsMenuItems(menu);
             menu.addSeparator();
@@ -212,6 +214,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             menu.addCommandItem(&commandManager, togglePluginPreviewMenuItemId);
             menu.addCommandItem(&commandManager, togglePreviewCompensationMenuItemId);
             menu.addCommandItem(&commandManager, toggleContinuePlaybackMenuItemId);
+            menu.addCommandItem(&commandManager, togglePlayFromFirstCuePointMenuItemId);
             menu.addSeparator();
             appendPluginOptionsMenuItems(menu);
             menu.addSeparator();
@@ -257,6 +260,7 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
         case togglePluginPreviewMenuItemId:
         case togglePreviewCompensationMenuItemId:
         case toggleContinuePlaybackMenuItemId:
+        case togglePlayFromFirstCuePointMenuItemId:
             // Handled by perform, the menu invokes the command before it reports the choice here.
             break;
         case reanalyzeSelectedMenuItemId:
@@ -311,6 +315,7 @@ void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
         togglePluginPreviewMenuItemId,
         togglePreviewCompensationMenuItemId,
         toggleContinuePlaybackMenuItemId,
+        togglePlayFromFirstCuePointMenuItemId,
     });
 }
 
@@ -351,6 +356,16 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
                 0
             );
             result.setTicked(audioBatch.isContinuePreviewPlaybackEnabled());
+            result.setActive(!blockedByDialog);
+            break;
+        case togglePlayFromFirstCuePointMenuItemId:
+            result.setInfo(
+                "Play from First Cue Point",
+                "Load files at the first cue point if it is at or before halfway, otherwise start at zero",
+                "Options",
+                0
+            );
+            result.setTicked(audioBatch.isPlayFromFirstCuePointEnabled());
             result.setActive(!blockedByDialog);
             break;
         case quitMenuItemId:
@@ -451,6 +466,9 @@ bool MainWindow::perform(const InvocationInfo& info)
             return true;
         case toggleContinuePlaybackMenuItemId:
             getAudioBatch().toggleContinuePreviewPlayback();
+            return true;
+        case togglePlayFromFirstCuePointMenuItemId:
+            getAudioBatch().togglePlayFromFirstCuePoint();
             return true;
         case quitMenuItemId:
             juce::JUCEApplication::getInstance()->systemRequestedQuit();
