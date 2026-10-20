@@ -27,14 +27,21 @@ public:
     explicit AudioSettingsComponent(juce::AudioDeviceManager& manager);
     ~AudioSettingsComponent() override;
 
+    AudioSettingsComponent(const AudioSettingsComponent&) = delete;
+    AudioSettingsComponent& operator=(const AudioSettingsComponent&) = delete;
+    AudioSettingsComponent(AudioSettingsComponent&&) = delete;
+    AudioSettingsComponent& operator=(AudioSettingsComponent&&) = delete;
+
     void resized() override;
     void setPreferences(const AudioPreviewPreferences& preferences);
 
-    std::function<void(const AudioPreviewPreferences&)> onPreferencesChanged;
+    void setPreferencesChangedCallback(std::function<void(const AudioPreviewPreferences&)> callback);
 
 private:
     void preferencesChanged();
     void componentMovedOrResized(juce::Component& component, bool moved, bool resized) override;
+
+    std::function<void(const AudioPreviewPreferences&)> onPreferencesChanged;
 
     juce::Viewport viewport;
     juce::Component content;

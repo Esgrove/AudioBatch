@@ -7,8 +7,16 @@
 #include "gui/GuiLayout.h"
 #include "utils/StringFormat.h"
 
+#include <utility>
+
 namespace audiobatch
 {
+/// Replaces the callback used to refresh window commands when preview view options change.
+void AudioBatchComponent::setViewOptionsChangedCallback(std::function<void()> callback)
+{
+    onViewOptionsChanged = std::move(callback);
+}
+
 /// Reports the intended state immediately, including while an animation is running.
 bool AudioBatchComponent::isPreviewSectionExpanded() const noexcept
 {

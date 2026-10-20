@@ -15,6 +15,7 @@
 #include "gui/components/NormalizationTargetControl.h"
 #include "gui/components/ThumbnailComponent.h"
 #include "gui/FileActivityTracker.h"
+#include "gui/GuiLayout.h"
 #include "gui/ResultsSorting.h"
 #include "normalization/NormalizeCoordinator.h"
 #include "plugins/PluginChain.h"
@@ -62,6 +63,7 @@ public:
     void revealSelectedRecord() const;
     void showAudioSettingsWindow();
     void showSupportedNormalizationFormats();
+    void setViewOptionsChangedCallback(std::function<void()> callback);
     void togglePreviewSection();
     void toggleSeratoWaveformColouring();
     void togglePluginPreview();
@@ -75,9 +77,6 @@ public:
     [[nodiscard]] bool isPluginPreviewEnabled() const noexcept;
     [[nodiscard]] bool isPreviewLatencyCompensated() const noexcept;
     [[nodiscard]] bool isContinuePreviewPlaybackEnabled() const noexcept;
-
-    /// Notifies the window when preview command labels or check marks need refreshing.
-    std::function<void()> onViewOptionsChanged;
 
     /// Returns the plugin selection controller, or nullptr before the component finishes constructing.
     [[nodiscard]] PluginChain* getPluginChain() const noexcept
@@ -195,6 +194,9 @@ private:
         std::shared_ptr<const serato::SeratoData> data
     );
 
+    /// Notifies the window when preview command labels or check marks need refreshing.
+    std::function<void()> onViewOptionsChanged;
+
     AnalysisCache analysisCache;
 
     /// Owns the tag worker, stopped explicitly before GUI cleanup and before the cache is destroyed.
@@ -284,8 +286,8 @@ private:
     /// Expanded divider allocation is independent of the animated or compact workspace.
     bool previewSectionExpanded {true};
     bool restoreExpandedLayout {false};
-    double expandedPreviewProportion {0.28};
-    double animationStartProportion {0.28};
+    double expandedPreviewProportion {-layout::previewPreferredProportion};
+    double animationStartProportion {-layout::previewPreferredProportion};
     double animationStartedAtMilliseconds {0.0};
     int workspaceAvailableHeight {0};
     int currentPreviewHeight {0};

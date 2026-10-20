@@ -445,8 +445,14 @@ void AudioPreviewPlayer::updatePlaybackStatus()
     }
 }
 
+/// Installs the error notification callback on the message thread, or clears it when the owner disconnects.
+void AudioPreviewPlayer::setErrorCallback(std::function<void(const juce::String&)> callback)
+{
+    onError = std::move(callback);
+}
+
 /// Logs every failure and gives the GUI an explicit message-thread notification.
-void AudioPreviewPlayer::reportError(const juce::String& message)
+void AudioPreviewPlayer::reportError(const juce::String& message) const
 {
     utils::logError("Audio preview: {}", message);
     if (onError) {

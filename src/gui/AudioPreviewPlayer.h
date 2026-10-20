@@ -5,6 +5,7 @@
 #pragma once
 
 #include "plugins/PluginPreviewSource.h"
+#include "utils/AudioFormatUtils.h"
 
 #include <JuceHeader.h>
 
@@ -43,6 +44,7 @@ public:
     void stop();
     void start();
     void setPosition(double seconds);
+    void setErrorCallback(std::function<void(const juce::String&)> callback);
     void setPluginChain(PluginChain* chain);
     bool setPluginPreviewEnabled(bool enabled);
     void setLatencyCompensated(bool enabled);
@@ -75,9 +77,6 @@ public:
         return renderingLock;
     }
 
-    /// Delivers errors on the message thread, never from audio or read-ahead callbacks.
-    std::function<void(const juce::String&)> onError;
-
 private:
     void audioDeviceAboutToStart(juce::AudioIODevice* device) override;
     void audioDeviceStopped() override;
@@ -92,7 +91,10 @@ private:
     void handleAsyncUpdate() override;
     void prepareInput();
     bool reposition(double seconds, bool resume);
-    void reportError(const juce::String& message);
+    void reportError(const juce::String& message) const;
+
+    /// Delivers errors on the message thread, never from audio or read-ahead callbacks.
+    std::function<void(const juce::String&)> onError;
 
     mutable juce::CriticalSection renderingLock;
     juce::AudioDeviceManager deviceManager;
@@ -112,7 +114,7 @@ private:
     std::atomic<bool> bufferUnderrun {false};
     std::atomic<double> pendingRate {0.0};
     std::atomic<int> pendingBlockSize {512};
-    double sampleRate {48000.0};
+    double sampleRate {utils::defaultSampleRate};
     int blockSize {512};
     bool pluginPreviewEnabled {false};
     bool latencyCompensated {true};

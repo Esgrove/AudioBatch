@@ -5,6 +5,7 @@
 #pragma once
 
 #include "plugins/PluginChainPreparation.h"
+#include "utils/AudioFormatUtils.h"
 
 #include <JuceHeader.h>
 
@@ -69,7 +70,7 @@ private:
 
     double duration {0.0};
     double position {0.0};
-    double processingRate {48'000.0};
+    double processingRate {utils::defaultSampleRate};
 
     int blockSize {512};
     int fadeOutRemaining {0};

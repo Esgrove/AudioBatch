@@ -62,7 +62,7 @@ constexpr double informationWidthProportion {0.22};
 constexpr int sliderRowHeight {24};
 constexpr int controlsContentHeight {
     sliderRowHeight * 4 + normalizeToggleHeight + normalizeTargetSpacing + controlButtonHeight * 3
-    + controlsSectionSpacing * 4
+        + controlsSectionSpacing * 4,
 };
 constexpr int dialogContentWidth {500};
 constexpr int dialogContentHeight {250};
@@ -235,8 +235,8 @@ constexpr int statusMaximumWidth {800};
 constexpr int initiallyVisibleColumnWidthBudget {1096};
 constexpr int initiallyVisibleColumnWidth {
     nameColumnDefaultWidth + pathColumnDefaultWidth + typeColumnDefaultWidth + bitrateColumnDefaultWidth
-    + sampleRateColumnDefaultWidth + overallPeakColumnDefaultWidth + truePeakColumnDefaultWidth
-    + maxShortTermLufsColumnDefaultWidth + integratedLufsColumnDefaultWidth + statusColumnDefaultWidth
+        + sampleRateColumnDefaultWidth + overallPeakColumnDefaultWidth + truePeakColumnDefaultWidth
+        + maxShortTermLufsColumnDefaultWidth + integratedLufsColumnDefaultWidth + statusColumnDefaultWidth,
 };
 
 static_assert(

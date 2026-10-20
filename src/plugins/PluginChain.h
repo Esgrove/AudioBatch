@@ -9,6 +9,7 @@
 #include "plugins/PluginChainPreparation.h"
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginScanner.h"
+#include "utils/AudioFormatUtils.h"
 
 #include <JuceHeader.h>
 
@@ -20,8 +21,6 @@
 
 namespace audiobatch
 {
-/// Sample rate to use when no audio device is present.
-constexpr double defaultSampleRate {48'000.0};
 
 /// Description plus descriptor reference for one enabled slot, in chain order.
 struct EnabledChainPlugin {
@@ -184,7 +183,7 @@ private:
     std::uint64_t revision {0};
     std::vector<PluginChainEntry> chain;
 
-    double previewSampleRate {defaultSampleRate};
+    double previewSampleRate {utils::defaultSampleRate};
     int previewBlockSize {512};
     int previewChannels {2};
 

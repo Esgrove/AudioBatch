@@ -6,6 +6,8 @@
 #include "gui/GuiLayout.h"
 #include "utils/Log.h"
 
+#include <utility>
+
 namespace audiobatch
 {
 namespace
@@ -95,6 +97,12 @@ void AudioSettingsComponent::setPreferences(const AudioPreviewPreferences& prefe
     compensationToggle.setToggleState(preferences.latencyCompensated, juce::dontSendNotification);
     continuationToggle.setToggleState(preferences.continuePlayback, juce::dontSendNotification);
     coloursToggle.setToggleState(preferences.seratoWaveformColours, juce::dontSendNotification);
+}
+
+/// Installs the message-thread callback that receives user changes to preview preferences.
+void AudioSettingsComponent::setPreferencesChangedCallback(std::function<void(const AudioPreviewPreferences&)> callback)
+{
+    onPreferencesChanged = std::move(callback);
 }
 
 /// Forwards a complete preference snapshot so all other surfaces can update together.

@@ -153,7 +153,7 @@ void AudioBatchComponent::configureProcessingControls()
     };
     pluginChain->setChainChangedCallback(refreshLiveChain);
     pluginChain->setLatencyChangedCallback(refreshLiveChain);
-    previewPlayer.onError = [this](const juce::String& message) {
+    previewPlayer.setErrorCallback([this](const juce::String& message) {
         previewPreferences.pluginChainEnabled = previewPlayer.isPluginPreviewEnabled();
         synchronizePreviewPreferences();
         juce::AlertWindow::showAsync(
@@ -162,9 +162,10 @@ void AudioBatchComponent::configureProcessingControls()
             ),
             nullptr
         );
-    };
-    audioSettingsComponent.onPreferencesChanged
-        = [this](const AudioPreviewPreferences& preferences) { setPreviewPreferences(preferences); };
+    });
+    audioSettingsComponent.setPreferencesChangedCallback([this](const AudioPreviewPreferences& preferences) {
+        setPreviewPreferences(preferences);
+    });
     setPreviewPreferences(loadAudioPreviewPreferences(*pluginAppProperties.getUserSettings()));
 
     pluginButton.setTooltip("Edit the plugin chain, add plugins, or scan for plugins.");
@@ -419,7 +420,7 @@ AudioBatchComponent::~AudioBatchComponent()
     utils::logDebug("Application shutdown: releasing preview and dialogs");
     previewPlayer.release();
     previewPlayer.removeChangeListener(this);
-    previewPlayer.onError = {};
+    previewPlayer.setErrorCallback({});
     pluginChain->setChainChangedCallback({});
     pluginChain->setLatencyChangedCallback({});
     previewPlayer.setPluginChain(nullptr);
