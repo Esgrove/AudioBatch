@@ -29,7 +29,7 @@ class AudioPreviewPlayer :
 public:
     AudioPreviewPlayer();
 
-    ~AudioPreviewPlayer();
+    ~AudioPreviewPlayer() override;
 
     AudioPreviewPlayer(const AudioPreviewPlayer&) = delete;
     AudioPreviewPlayer& operator=(const AudioPreviewPlayer&) = delete;
