@@ -304,9 +304,110 @@ public:
 
         runSeratoTests();
         runMultiKindSeratoTests();
+        runLoudnessHistoryTests();
     }
 
 private:
+    /// Exercises persistent history, automatic legacy regeneration, and corrupt payload recovery without GUI work.
+    void runLoudnessHistoryTests()
+    {
+        const TemporaryDirectory directory;
+        const auto databaseFile = directory.getChildFile("loudness.db");
+        const auto file = directory.copyFixture("sine_stereo_44100_16.wav");
+        const auto record = analyzeFile(file);
+        {
+            AnalysisCache writer(databaseFile);
+            expect(writer.storeAnalysis(record));
+            expect(writer.storeCustomGain(file, -2.5f, true));
+        }
+        AnalysisCache cache(databaseFile);
+        AudioAnalysisRecord cached;
+        beginTest("Short-term loudness survives reopening the database with identical timing and readings");
+        expect(cache.getAnalysis(file, cached));
+        expect(cached.shortTermLoudness != nullptr);
+        if (cached.shortTermLoudness && record.shortTermLoudness) {
+            expect(cached.shortTermLoudness->values == record.shortTermLoudness->values);
+            expectEquals(cached.shortTermLoudness->samplesPerPoint, record.shortTermLoudness->samplesPerPoint);
+            expectWithinAbsoluteError(cached.shortTermLoudness->timeAt(9), 1.0, 0.000001);
+        }
+
+        beginTest("A cached loudness graph is delivered without starting an analysis job");
+        std::atomic<int> started {0};
+        AnalysisCoordinator coordinator(cache, 1);
+        coordinator.setStartingCallback([&started](const juce::File&, int) { ++started; });
+        AudioAnalysisOptions options;
+        options.inputPaths.add(file);
+        const auto cachedResults = coordinator.analyzeBlocking(options);
+        expectEquals(started.load(), 0);
+        expectEquals(static_cast<int>(cachedResults.size()), 1);
+        expect(
+            !cachedResults.empty() && cachedResults.front().fromCache
+            && cachedResults.front().shortTermLoudness != nullptr
+        );
+
+        beginTest("Version-eight scalar analysis regenerates history once and preserves custom gain");
+        expect(executeSql(databaseFile, "UPDATE file_analysis SET analysis_version = 8, short_term_loudness = NULL;"));
+        expect(!cache.getAnalysis(file, cached));
+        const auto regenerated = coordinator.analyzeBlocking(options);
+        expectEquals(started.load(), 1);
+        expectEquals(static_cast<int>(regenerated.size()), 1);
+        expect(!regenerated.empty() && regenerated.front().shortTermLoudness && !regenerated.front().fromCache);
+        expect(cache.getAnalysis(file, cached));
+        expect(cached.hasCustomGain);
+        expectEquals(cached.customGainDb, -2.5f);
+
+        beginTest("Invalid headers, counts, timestamps and readings become cache misses");
+        for (const auto* mutation :
+             {
+                 "short_term_loudness = NULL",
+                 "short_term_loudness = X'4C554653'",
+                 "short_term_loudness = zeroblob(72)",
+                 "short_term_loudness = CAST(short_term_loudness AS TEXT)",
+                 "short_term_loudness = substr(short_term_loudness, 1, length(short_term_loudness) - 1)",
+                 "short_term_loudness = CAST(short_term_loudness || X'00' AS BLOB)",
+                 "short_term_loudness = CAST(substr(short_term_loudness,1,4) || X'02000000' || "
+                 "substr(short_term_loudness,9) AS BLOB)",
+                 "short_term_loudness = CAST(substr(short_term_loudness,1,8) || zeroblob(8) || "
+                 "substr(short_term_loudness,17) AS BLOB)",
+                 "short_term_loudness = CAST(substr(short_term_loudness,1,28) || X'FFFFFFFF' || "
+                 "substr(short_term_loudness,33) AS BLOB)",
+                 "short_term_loudness = CAST(substr(short_term_loudness,1,28) || X'FFFFFF7F' || "
+                 "substr(short_term_loudness,33) AS BLOB)",
+                 "short_term_loudness = CAST(substr(short_term_loudness,1,32) || X'0000C07F' || "
+                 "substr(short_term_loudness,37) AS BLOB)",
+                 "short_term_loudness = CAST(substr(short_term_loudness,1,32) || X'0000807F' || "
+                 "substr(short_term_loudness,37) AS BLOB)",
+                 "short_term_loudness = CAST(substr(short_term_loudness,1,32) || X'0000FAC4' || "
+                 "substr(short_term_loudness,37) AS BLOB)",
+                 "short_term_loudness = CAST(substr(short_term_loudness,1,32) || X'FFFF7F7F' || "
+                 "substr(short_term_loudness,37) AS BLOB)",
+                 "length_in_samples = length_in_samples + 1",
+                 "duration_seconds = duration_seconds + 1",
+             })
+        {
+            expect(cache.storeAnalysis(record));
+            const auto sql = utils::format("UPDATE file_analysis SET {};", mutation);
+            expect(executeSql(databaseFile, sql.toRawUTF8()));
+            expect(!cache.getAnalysis(file, cached), mutation);
+        }
+
+        beginTest("Silent history round trips and failed analysis needs no history");
+        const auto silent = directory.copyFixture("silence_stereo_44100_16.wav");
+        expect(cache.storeAnalysis(analyzeFile(silent)));
+        expect(cache.getAnalysis(silent, cached));
+        expect(cached.shortTermLoudness != nullptr);
+        if (cached.shortTermLoudness && !cached.shortTermLoudness->values.empty()) {
+            expectEquals(
+                cached.shortTermLoudness->values.front(),
+                static_cast<float>(AudioAnalysisRecord::negativeInfinityLoudness)
+            );
+        }
+        const auto broken = directory.copyFixture("broken.wav");
+        expect(cache.storeAnalysis(analyzeFile(broken)));
+        expect(cache.getAnalysis(broken, cached));
+        expect(cached.hasError() && !cached.shortTermLoudness);
+    }
+
     /// Exercises tag-only lifecycle, stable outcomes, corruption and independence using fixture copies.
     void runSeratoTests()
     {
@@ -422,7 +523,7 @@ private:
         expect(cache.storeAnalysis(analyzed));
         const juce::MemoryBlock waveform("cached peaks", 12);
         expect(cache.storeWaveformData(file, waveform));
-        expectSqlScalar(databaseFile, "SELECT analysis_version FROM file_analysis;", 8);
+        expectSqlScalar(databaseFile, "SELECT analysis_version FROM file_analysis;", 9);
         expectSqlScalar(databaseFile, "SELECT waveform_version FROM file_analysis;", 1);
         expect(cache.getSeratoTag(identity).has_value());
         juce::MemoryBlock loadedWaveform;

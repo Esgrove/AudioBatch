@@ -11,6 +11,20 @@
 
 namespace audiobatch
 {
+/// Reports the graph preference independently of whether the selected track has finished analysis.
+bool AudioBatchComponent::isLoudnessGraphEnabled() const noexcept
+{
+    return previewPreferences.loudnessGraphEnabled;
+}
+
+/// Shares the Audio Settings preference path without decoding audio or moving the playhead.
+void AudioBatchComponent::toggleLoudnessGraph()
+{
+    auto preferences = previewPreferences;
+    preferences.loudnessGraphEnabled = !preferences.loudnessGraphEnabled;
+    setPreviewPreferences(preferences);
+}
+
 /// Reports the active spectral-colour preference without requiring a selected file.
 bool AudioBatchComponent::isSeratoWaveformColouringEnabled() const noexcept
 {
@@ -84,6 +98,10 @@ void AudioBatchComponent::togglePlayFromFirstCuePoint()
 /// Applies requested changes before publishing actual successful state to every preference surface.
 void AudioBatchComponent::setPreviewPreferences(const AudioPreviewPreferences& preferences)
 {
+    if (!isValidLoudnessGraphRange(preferences.loudnessGraphMinimum, preferences.loudnessGraphMaximum)) {
+        utils::logError("Rejected invalid loudness graph preferences");
+        return;
+    }
     const auto previous = previewPreferences;
     previewPreferences = preferences;
     if (!preferences.playFromFirstCuePoint) {
@@ -98,6 +116,11 @@ void AudioBatchComponent::setPreviewPreferences(const AudioPreviewPreferences& p
     }
     previewPreferences.pluginChainEnabled = previewPlayer.isPluginPreviewEnabled();
     thumbnail->setSeratoWaveformColouringEnabled(previewPreferences.seratoWaveformColours);
+    thumbnail->setLoudnessGraphSettings(
+        previewPreferences.loudnessGraphEnabled,
+        previewPreferences.loudnessGraphMinimum,
+        previewPreferences.loudnessGraphMaximum
+    );
     updatePreviewInputGain(true);
     synchronizePreviewPreferences();
 }
@@ -116,6 +139,7 @@ void AudioBatchComponent::synchronizePreviewPreferences()
 /// Updates the fixed analysis cards and scrolling details, including pending and failed record states.
 void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 {
+    updatePreviewLoudnessHistory();
     if (record.file == currentAudioFile && seratoPreviewIdentity && !seratoPreviewIdentity->matches(record.file)) {
         requestSeratoPreview();
     }
@@ -126,6 +150,29 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
     );
 }
 
+/// Adopts only complete analysis of the unchanged file backing the loaded preview.
+/// Selection, result, reconciliation, and output-replacement paths all pass through this check.
+void AudioBatchComponent::updatePreviewLoudnessHistory()
+{
+    std::shared_ptr<const ShortTermLoudnessHistory> history;
+    if (previewFileIdentity && previewPlayer.hasLoadedSource() && currentAudioUrl.isLocalFile()
+        && currentAudioUrl.getLocalFile() == currentAudioFile && previewFileIdentity->matches(currentAudioFile))
+    {
+        const auto row = findRecordIndex(currentAudioFile.getFullPathName());
+        if (juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
+            const auto& record = analysisResults[static_cast<std::size_t>(row)];
+            const auto activity = fileActivity.getActivity(record.fullPath);
+            if (record.isReady() && record.fileSize == previewFileIdentity->fileSize
+                && record.modifiedTimeMs == previewFileIdentity->modifiedTimeMs && activity != FileActivity::waiting
+                && activity != FileActivity::analyzing)
+            {
+                history = record.shortTermLoudness;
+            }
+        }
+    }
+    thumbnail->setLoudnessHistory(std::move(history));
+}
+
 /// Loads a file URL into the preview player and waveform, preferring cached waveform data over decoding the file again.
 void AudioBatchComponent::showAudioResource(juce::URL resource)
 {
@@ -134,6 +181,11 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
         seratoPreviewLoader->cancel();
     }
     audioInfo->clear();
+    thumbnail->setLoudnessHistory({});
+    previewFileIdentity.reset();
+    if (resource.isLocalFile()) {
+        previewFileIdentity.emplace(resource.getLocalFile());
+    }
 
     if (previewPlayer.load(resource, previewPreferences.playFromFirstCuePoint)) {
         updatePreviewInputGain(true);
@@ -153,6 +205,7 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
         }
 
         requestSeratoPreview();
+        updatePreviewLoudnessHistory();
     } else {
         currentAudioUrl = {};
         releasePreviewPlayback();
@@ -280,6 +333,7 @@ void AudioBatchComponent::clearCurrentAudioPreview()
 /// so the file on disk can be replaced or the preview reset.
 void AudioBatchComponent::releasePreviewPlayback()
 {
+    previewFileIdentity.reset();
     if (seratoPreviewLoader) {
         seratoPreviewLoader->cancel();
     }

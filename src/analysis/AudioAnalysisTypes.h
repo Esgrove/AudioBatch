@@ -1,5 +1,5 @@
 /// Shared data types for the audio analysis pipeline.
-/// Defines AudioAnalysisRecord, which carries per-file peak, true peak, and loudness results,
+/// Defines AudioAnalysisRecord, which carries per-file peak, true peak, loudness, and shared short-term history,
 /// along with the AudioAnalysisStatus and AudioAnalysisSortMode enums
 /// and the AudioAnalysisOptions input parameters used by both the GUI and CLI flows.
 
@@ -7,7 +7,10 @@
 
 #include <JuceHeader.h>
 
+#include <algorithm>
 #include <cstdint>
+#include <memory>
+#include <vector>
 
 namespace audiobatch
 {
@@ -34,6 +37,33 @@ struct AudioAnalysisOptions {
     bool refresh {false};
 };
 
+/// Combined-channel short-term LUFS readings from the existing analysis blocks.
+/// Each reading describes the trailing three seconds, with libebur128's zero-filled startup history.
+/// Times are block ends, with the final partial block clamped to the source length.
+struct ShortTermLoudnessHistory {
+    [[nodiscard]] double timeAt(std::size_t index) const noexcept;
+
+    /// EBU-mode meter update rate, independent of the three-second measurement window.
+    static constexpr double updateRateHz {10.0};
+
+    std::vector<float> values;
+    double sampleRate {0.0};
+    std::int64_t lengthInSamples {0};
+    int samplesPerPoint {0};
+};
+
+/// Returns the exact measurement time, including a final block shorter than the normal interval.
+inline double ShortTermLoudnessHistory::timeAt(const std::size_t index) const noexcept
+{
+    if (sampleRate <= 0.0 || samplesPerPoint <= 0 || lengthInSamples <= 0 || index >= values.size()) {
+        return 0.0;
+    }
+    const auto position = std::min(
+        static_cast<double>(index + 1) * static_cast<double>(samplesPerPoint), static_cast<double>(lengthInSamples)
+    );
+    return position / sampleRate;
+}
+
 /// Analysis metadata and derived peak information for a single audio file.
 struct AudioAnalysisRecord {
     static constexpr double negativeInfinityLoudness {-1000.0};
@@ -43,6 +73,7 @@ struct AudioAnalysisRecord {
     juce::String fullPath;
     juce::String formatName;
     juce::String errorMessage;
+    std::shared_ptr<const ShortTermLoudnessHistory> shortTermLoudness;
     std::int64_t fileSize {0};
     std::int64_t modifiedTimeMs {0};
     std::int64_t lengthInSamples {0};

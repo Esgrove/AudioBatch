@@ -66,6 +66,7 @@ public:
     void setViewOptionsChangedCallback(std::function<void()> callback);
     void togglePreviewSection();
     void toggleSeratoWaveformColouring();
+    void toggleLoudnessGraph();
     void togglePluginPreview();
     void togglePreviewLatencyCompensation();
     void toggleContinuePreviewPlayback();
@@ -75,6 +76,7 @@ public:
     [[nodiscard]] bool isFileOperationInProgress() const noexcept;
     [[nodiscard]] bool isPreviewSectionExpanded() const noexcept;
     [[nodiscard]] bool isSeratoWaveformColouringEnabled() const noexcept;
+    [[nodiscard]] bool isLoudnessGraphEnabled() const noexcept;
     [[nodiscard]] bool isPluginPreviewEnabled() const noexcept;
     [[nodiscard]] bool isPreviewLatencyCompensated() const noexcept;
     [[nodiscard]] bool isContinuePreviewPlaybackEnabled() const noexcept;
@@ -171,6 +173,7 @@ private:
     void updateResultsTableColumnWidths() const;
     void updateStatusLabel();
     void updateThumbnailDisplayGain() const;
+    void updatePreviewLoudnessHistory();
     void updatePreviewInputGain(bool immediately = false);
     void setPreviewPreferences(const AudioPreviewPreferences& preferences);
     void synchronizePreviewPreferences();
@@ -237,6 +240,7 @@ private:
     juce::Array<juce::File> currentRoots;
     AudioSettingsComponent audioSettingsComponent {previewPlayer.getDeviceManager()};
     AudioPreviewPreferences previewPreferences;
+    std::optional<FileIdentity> previewFileIdentity;
     juce::File currentAudioFile;
     juce::TableListBox resultsTable;
     juce::URL currentAudioUrl;

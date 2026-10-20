@@ -1,5 +1,6 @@
 /// SQLite-backed cache for audio analysis results.
-/// AnalysisCache stores per-file analysis records and waveform preview data keyed by path, size, and modification time,
+/// AnalysisCache stores per-file analysis records, short-term loudness history,
+/// and waveform preview data keyed by path, size, and modification time,
 /// so unchanged files are not re-read on later runs.
 
 #pragma once
@@ -83,7 +84,7 @@ private:
 
     static juce::String normalizedPath(const juce::File& file);
 
-    static constexpr int analysisVersion {8};
+    static constexpr int analysisVersion {9};
     static constexpr int waveformVersion {1};
 
     juce::CriticalSection mutex;

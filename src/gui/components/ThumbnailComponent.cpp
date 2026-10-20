@@ -10,11 +10,14 @@
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
 #include "serato/SeratoWaveformColouring.h"
+#include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
 
 #include <JuceHeader.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 
 namespace audiobatch
 {
@@ -37,12 +40,15 @@ constexpr int hotCueSlotCount {8};
 
 /// Opacity of the outline drawn while the waveform has keyboard focus.
 constexpr float focusOutlineAlpha {0.6f};
+constexpr float loudnessLabelAlpha {0.8f};
+constexpr float loudnessGridAlpha {0.12f};
+constexpr float loudnessOutlineAlpha {0.65f};
 }  // namespace
 
 /// Creates a thumbnail view backed by the shared transport source.
 ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, AudioPreviewPlayer& source) :
-    thumbnail(1024, formatManager, thumbnailCache),
-    transportSource(source)
+    transportSource(source),
+    thumbnail(1024, formatManager, thumbnailCache)
 {
     thumbnail.addChangeListener(this);
 
@@ -81,6 +87,7 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
         } else {
             thumbnail.drawChannels(graphics, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
         }
+        drawLoudnessGraph(graphics);
         drawCueMarkers(graphics);
     } else {
         graphics.setFont(juce::CustomLookAndFeel::getTextFont().withHeight(layout::waveform::placeholderFontHeight));
@@ -106,6 +113,7 @@ void ThumbnailComponent::resized()
 /// Restores a previously cached waveform without re-reading the audio file.
 bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData)
 {
+    loudnessHistory.reset();
     seratoOverview.reset();
     seratoMarkers.reset();
     thumbnail.clear();
@@ -176,6 +184,7 @@ void ThumbnailComponent::setMouseWheelGainCallback(std::function<void(float)> ca
 /// Loads a new audio resource into the thumbnail display.
 void ThumbnailComponent::setURL(const juce::URL& url)
 {
+    loudnessHistory.reset();
     seratoOverview.reset();
     seratoMarkers.reset();
     hasNotifiedFullyLoaded = false;
@@ -393,7 +402,178 @@ double ThumbnailComponent::xToTime(const float xPosition) const
 /// Returns the inset rectangle shared by waveform painting, cursor projection and scrubbing.
 juce::Rectangle<int> ThumbnailComponent::waveformBounds() const
 {
-    return getLocalBounds().reduced(2);
+    auto bounds = getLocalBounds().reduced(2);
+    if (loudnessGraphEnabled && thumbnail.getTotalLength() > 0.0) {
+        bounds.removeFromLeft(
+            std::min(
+                layout::waveform::loudnessAxisWidth + layout::waveform::loudnessAxisGap,
+                std::max(0, bounds.getWidth() - 1)
+            )
+        );
+    }
+    return bounds;
+}
+
+/// Attaches source analysis on the message thread without changing playback, gain, or the viewport.
+void ThumbnailComponent::setLoudnessHistory(std::shared_ptr<const ShortTermLoudnessHistory> history)
+{
+    if (loudnessHistory != history) {
+        loudnessHistory = std::move(history);
+        repaint();
+    }
+}
+
+/// Changes display-only preferences and reprojects the cursor when the axis gutter changes.
+void ThumbnailComponent::setLoudnessGraphSettings(const bool enabled, const double minimum, const double maximum)
+{
+    loudnessGraphEnabled = enabled;
+    loudnessMinimum = minimum;
+    loudnessMaximum = maximum;
+    updateCursorPosition();
+    repaint();
+}
+
+/// Converts source LUFS to a waveform ordinate without clamping out-of-range measurements.
+float ThumbnailComponent::loudnessToY(const double value, const juce::Rectangle<int> bounds) const
+{
+    return static_cast<float>(bounds.getBottom())
+        - static_cast<float>((value - loudnessMinimum) / (loudnessMaximum - loudnessMinimum))
+        * static_cast<float>(bounds.getHeight());
+}
+
+/// Draws the axis even while analysis is pending, adding the source curve once complete history is available.
+void ThumbnailComponent::drawLoudnessGraph(juce::Graphics& graphics) const
+{
+    const auto bounds = waveformBounds();
+    if (!loudnessGraphEnabled || bounds.isEmpty() || visibleRange.getLength() <= 0.0) {
+        return;
+    }
+    drawLoudnessAxis(graphics, bounds);
+    if (loudnessHistory && !loudnessHistory->values.empty()) {
+        drawLoudnessCurve(graphics, bounds);
+    }
+}
+
+/// Fits uniformly spaced, zero-aligned ticks to the expanded or compact waveform height.
+/// Custom limits clip the axis rather than introducing irregular endpoint intervals.
+void ThumbnailComponent::drawLoudnessAxis(juce::Graphics& graphics, const juce::Rectangle<int> bounds) const
+{
+    const auto plot = bounds.toFloat();
+    graphics.setFont(juce::CustomLookAndFeel::getTextFont().withHeight(layout::waveform::loudnessFontHeight));
+    auto gutter = getLocalBounds().reduced(2);
+    gutter.setRight(std::max(gutter.getX(), bounds.getX() - layout::waveform::loudnessAxisGap));
+    const auto interval = layout::waveform::loudnessTickInterval(
+        juce::roundToInt(loudnessMinimum), juce::roundToInt(loudnessMaximum), bounds.getHeight()
+    );
+    const auto firstTick = static_cast<int>(std::ceil(loudnessMinimum / interval)) * interval;
+    for (int value = firstTick; value <= loudnessMaximum; value += interval) {
+        const auto vertical = loudnessToY(value, bounds);
+        const auto labelHeight = juce::roundToInt(layout::waveform::loudnessFontHeight);
+        const auto labelTop = std::clamp(
+            juce::roundToInt(vertical) - labelHeight / 2,
+            gutter.getY(),
+            std::max(gutter.getY(), gutter.getBottom() - labelHeight)
+        );
+        graphics.setColour(juce::Colours::white.withAlpha(loudnessLabelAlpha));
+        graphics.drawText(
+            utils::format("{}", value),
+            gutter.withY(labelTop).withHeight(labelHeight),
+            juce::Justification::centredRight
+        );
+        graphics.setColour(juce::Colours::white.withAlpha(loudnessGridAlpha));
+        graphics.drawHorizontalLine(juce::roundToInt(vertical), plot.getX(), plot.getRight());
+    }
+}
+
+/// Draws nonempty history using time-ordered pixel-bucket extrema.
+/// Undefined readings break the line, and the plot clip preserves out-of-range crossings.
+void ThumbnailComponent::drawLoudnessCurve(juce::Graphics& graphics, const juce::Rectangle<int> bounds) const
+{
+    const auto plot = bounds.toFloat();
+    const auto& history = *loudnessHistory;
+    const auto interval = static_cast<double>(history.samplesPerPoint) / history.sampleRate;
+    const auto lastIndex = history.values.size() - 1;
+    const auto first = static_cast<std::size_t>(
+        std::clamp(std::floor(visibleRange.getStart() / interval) - 1.0, 0.0, static_cast<double>(lastIndex))
+    );
+    const auto last = static_cast<std::size_t>(
+        std::clamp(std::ceil(visibleRange.getEnd() / interval), 0.0, static_cast<double>(lastIndex))
+    );
+    juce::Path line;
+    juce::Path segmentStarts;
+    bool newSegment = true;
+    std::array<std::size_t, 4> bucket {};
+    bool bucketActive = false;
+    int bucketColumn = 0;
+    const auto flushBucket = [&] {
+        if (!bucketActive) {
+            return;
+        }
+        auto ordered = bucket;
+        std::ranges::sort(ordered);
+        const auto end = std::ranges::unique(ordered).begin();
+        for (auto iterator = ordered.begin(); iterator != end; ++iterator) {
+            const auto index = *iterator;
+            const auto horizontal = timeToX(history.timeAt(index));
+            const auto vertical = loudnessToY(history.values[index], bounds);
+            if (newSegment) {
+                line.startNewSubPath(horizontal, vertical);
+                const auto diameter = layout::waveform::loudnessLineWidth;
+                segmentStarts.addEllipse(horizontal - diameter / 2.0f, vertical - diameter / 2.0f, diameter, diameter);
+                newSegment = false;
+            } else {
+                line.lineTo(horizontal, vertical);
+            }
+        }
+        bucketActive = false;
+    };
+    for (auto index = first; index <= last; ++index) {
+        const auto value = history.values[index];
+        if (!std::isfinite(value) || value <= AudioAnalysisRecord::negativeInfinityLoudness) {
+            flushBucket();
+            newSegment = true;
+            continue;
+        }
+        const auto column = static_cast<int>(
+            std::clamp(std::floor(timeToX(history.timeAt(index)) - plot.getX()), -1.0f, plot.getWidth())
+        );
+        if (bucketActive && column != bucketColumn) {
+            flushBucket();
+        }
+        if (!bucketActive) {
+            bucket.fill(index);
+            bucketColumn = column;
+            bucketActive = true;
+        } else {
+            if (value < history.values[bucket[1]]) {
+                bucket[1] = index;
+            }
+            if (value > history.values[bucket[2]]) {
+                bucket[2] = index;
+            }
+            bucket[3] = index;
+        }
+    }
+    flushBucket();
+    const juce::Graphics::ScopedSaveState savedState(graphics);
+    graphics.reduceClipRegion(bounds);
+    graphics.setColour(juce::Colours::black.withAlpha(loudnessOutlineAlpha));
+    graphics.strokePath(
+        line,
+        juce::PathStrokeType(
+            layout::waveform::loudnessLineWidth + layout::waveform::loudnessOutlineWidth,
+            juce::PathStrokeType::curved,
+            juce::PathStrokeType::rounded
+        )
+    );
+    graphics.setColour(juce::Colours::orangered);
+    graphics.fillPath(segmentStarts);
+    graphics.strokePath(
+        line,
+        juce::PathStrokeType(
+            layout::waveform::loudnessLineWidth, juce::PathStrokeType::curved, juce::PathStrokeType::rounded
+        )
+    );
 }
 
 /// Reports whether user interaction may reposition the transport.
