@@ -203,7 +203,8 @@ ChainInstantiation PluginChain::instantiateChains(
 
         for (const auto& [description, descriptorRef] : enabledPlugins) {
             juce::String error;
-            auto instance = formatManager.createPluginInstance(description, defaultSampleRate, defaultBlockSize, error);
+            auto instance
+                = formatManager.createPluginInstance(description, utils::defaultSampleRate, defaultBlockSize, error);
 
             if (instance == nullptr) {
                 instantiation.errorMessage = error.isNotEmpty() ? error : juce::String("Plugin instantiation failed");

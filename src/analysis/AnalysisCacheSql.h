@@ -19,7 +19,7 @@ constexpr int busyTimeoutMilliseconds {2000};
 
 /// Maximum numeric tag cache size, including the explicit serializer header fields.
 constexpr std::size_t maximumOverviewBytes {
-    4 * sizeof(std::uint32_t) + serato::Overview::maxSlices * serato::Overview::bandCount
+    4 * sizeof(std::uint32_t) + serato::Overview::maxSlices * serato::Overview::bandCount,
 };
 
 /// Zero-based columns for independent tag lookup, including the key's stored SQLite types.

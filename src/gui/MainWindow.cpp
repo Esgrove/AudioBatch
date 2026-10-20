@@ -72,10 +72,10 @@ MainWindow::MainWindow(const juce::String& name) :
 
     commandManager.registerAllCommandsForTarget(this);
     commandManager.setFirstCommandTarget(this);
-    getAudioBatch().onViewOptionsChanged = [this] {
+    getAudioBatch().setViewOptionsChangedCallback([this] {
         commandManager.commandStatusChanged();
         menuItemsChanged();
-    };
+    });
     addKeyListener(commandManager.getKeyMappings());
 
 #if JUCE_MAC

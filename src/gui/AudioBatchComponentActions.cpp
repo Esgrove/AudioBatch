@@ -310,21 +310,16 @@ void AudioBatchComponent::moveSelectedRecordsToTrash(const bool promptForConfirm
     }
 
     const auto safeThis = SafePointer(this);
-    juce::AlertWindow::showOkCancelBox(
-        juce::MessageBoxIconType::WarningIcon,
-        "Move to Trash",
-        message,
-        "Move to Trash",
-        "Cancel",
-        this,
-        juce::ModalCallbackFunction::create(
-            [safeThis, filesToTrash, removedPaths, fallbackRow = selectedRows[0]](const int result) {
-                if (safeThis == nullptr || result != 1) {
-                    return;
-                }
-                safeThis->runMoveToTrash(filesToTrash, removedPaths, fallbackRow);
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions::makeOptionsOkCancel(
+            juce::MessageBoxIconType::WarningIcon, "Move to Trash", message, "Move to Trash", "Cancel", this
+        ),
+        [safeThis, filesToTrash, removedPaths, fallbackRow = selectedRows[0]](const int result) {
+            if (safeThis == nullptr || result != 1) {
+                return;
             }
-        )
+            safeThis->runMoveToTrash(filesToTrash, removedPaths, fallbackRow);
+        }
     );
 }
 
