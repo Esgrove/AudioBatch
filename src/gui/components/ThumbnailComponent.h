@@ -1,11 +1,14 @@
 /// Waveform preview for the currently loaded audio file.
 /// Declares ThumbnailComponent, a JUCE component that draws the audio thumbnail,
 /// follows and scrubs the shared transport source,
+/// overlays optional cached short-term loudness with an adjustable LUFS-S axis,
 /// supports zoom and gain mouse-wheel gestures, Serato hot cue jumps with the number keys, file drag-and-drop,
 /// and caching of the rendered waveform data.
 
 #pragma once
 
+#include "analysis/AudioAnalysisTypes.h"
+#include "gui/AudioBatchComponentState.h"
 #include "serato/SeratoTagTypes.h"
 
 #include <JuceHeader.h>
@@ -55,6 +58,8 @@ public:
     [[nodiscard]] bool isSeratoWaveformColouringEnabled() const noexcept;
 
     void setDisplayGain(float linearGain);
+    void setLoudnessHistory(std::shared_ptr<const ShortTermLoudnessHistory> history);
+    void setLoudnessGraphSettings(bool enabled, double minimum, double maximum);
     void setMouseWheelGainCallback(std::function<void(float)> callback);
     void setMouseWheelZoomCallback(std::function<void(double)> callback);
     void setRange(juce::Range<double> newRange);
@@ -69,31 +74,40 @@ private:
     [[nodiscard]] bool canMoveTransport() const noexcept;
     [[nodiscard]] double xToTime(float xPosition) const;
     [[nodiscard]] float timeToX(double time) const;
+    [[nodiscard]] float loudnessToY(double value, juce::Rectangle<int> bounds) const;
     [[nodiscard]] juce::Rectangle<int> waveformBounds() const;
 
     void drawCueMarkers(juce::Graphics& graphics) const;
+    void drawLoudnessGraph(juce::Graphics& graphics) const;
+    void drawLoudnessAxis(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
+    void drawLoudnessCurve(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
     void jumpToHotCue(int slot);
     void updatePlaybackPosition();
     void updateCursorPosition();
 
-    juce::AudioThumbnail thumbnail;
-    juce::AudioThumbnailCache thumbnailCache {128};
     AudioPreviewPlayer& transportSource;
+    juce::AudioThumbnailCache thumbnailCache {128};
+    juce::AudioThumbnail thumbnail;
     juce::DrawableRectangle currentPositionMarker;
     juce::DrawableComponent currentPositionMarkerComponent {currentPositionMarker};
     juce::Range<double> visibleRange;
     juce::StringArray lastDroppedFiles;
     juce::URL lastFileDropped;
+    juce::VBlankAttachment positionAttachment;
+
     std::function<void()> thumbnailFullyLoadedCallback;
     std::function<void(double)> mouseWheelZoomCallback;
     std::function<void(float)> mouseWheelGainCallback;
-    std::shared_ptr<const serato::Overview> seratoOverview;
     std::shared_ptr<const serato::Markers> seratoMarkers;
+    std::shared_ptr<const serato::Overview> seratoOverview;
+    std::shared_ptr<const ShortTermLoudnessHistory> loudnessHistory;
 
     bool hasNotifiedFullyLoaded {false};
     bool isFollowingTransport {false};
+    bool loudnessGraphEnabled {false};
     bool seratoWaveformColouringEnabled {true};
+    double loudnessMaximum {AudioPreviewPreferences::defaultLoudnessGraphMaximum};
+    double loudnessMinimum {AudioPreviewPreferences::defaultLoudnessGraphMinimum};
     float displayGain {1.0f};
-    juce::VBlankAttachment positionAttachment;
 };
 }  // namespace audiobatch

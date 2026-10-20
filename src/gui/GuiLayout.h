@@ -9,6 +9,9 @@
 
 #include <JuceHeader.h>
 
+#include <algorithm>
+#include <array>
+
 namespace audiobatch
 {
 /// Adjacent full-height sections of the lower workspace, in parent coordinates.
@@ -150,12 +153,15 @@ constexpr float rowCornerRadius {4.0f};
 namespace audioSettings
 {
 constexpr int preferredWidth {560};
-constexpr int preferredHeight {600};
+constexpr int preferredHeight {660};
 constexpr int padding {12};
 constexpr int sectionSpacing {16};
 constexpr int headingHeight {24};
 constexpr int rowHeight {30};
-constexpr int preferenceRowCount {5};
+constexpr int preferenceRowCount {7};
+constexpr int rangeLabelWidth {80};
+constexpr int rangeEditorWidth {48};
+constexpr int rangeEditorPadding {3};
 constexpr int preferencesHeight {padding * 2 + headingHeight + rowHeight * preferenceRowCount};
 }  // namespace audioSettings
 
@@ -163,12 +169,33 @@ constexpr int preferencesHeight {padding * 2 + headingHeight + rowHeight * prefe
 namespace waveform
 {
 constexpr float cornerRadius {information::cornerRadius};
-constexpr float positionMarkerWidth {1.5f};
-constexpr float placeholderFontHeight {14.0f};
 constexpr float cueArrowHeight {8.0f};
-constexpr float cueArrowWidth {10.0f};
 constexpr float cueArrowOutlineWidth {1.5f};
+constexpr float cueArrowWidth {10.0f};
 constexpr float focusOutlineWidth {1.0f};
+constexpr float placeholderFontHeight {14.0f};
+constexpr float positionMarkerWidth {1.5f};
+
+constexpr float loudnessFontHeight {10.0f};
+constexpr float loudnessLineWidth {1.5f};
+constexpr float loudnessOutlineWidth {1.4f};
+constexpr int loudnessAxisGap {6};
+constexpr int loudnessAxisWidth {16};
+constexpr int loudnessTickSpacing {32};
+
+/// Chooses a uniform whole-LU interval for valid integer loudness limits.
+/// Even steps keep labels anchored to even values, except when a narrow range needs one-LU detail.
+constexpr int loudnessTickInterval(const int minimum, const int maximum, const int height)
+{
+    constexpr std::array intervals {1, 2, 4, 6, 8, 10, 12, 16, 20};
+    const auto targetCount = std::max(2, height / loudnessTickSpacing);
+    for (const auto interval : intervals) {
+        if (interval * targetCount >= maximum - minimum) {
+            return interval;
+        }
+    }
+    return intervals.back();
+}
 }  // namespace waveform
 
 /// Font and paint geometry shared by the application look-and-feel.

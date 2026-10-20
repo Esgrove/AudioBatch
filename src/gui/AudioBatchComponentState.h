@@ -1,4 +1,4 @@
-/// Progress state that AudioBatchComponent keeps for its background operations.
+/// Preview preferences and progress state that AudioBatchComponent keeps for its background operations.
 /// Declares AnalysisRunState for the current analysis run
 /// and OperationProgress for the normalization and plugin processing passes.
 
@@ -14,11 +14,22 @@ namespace audiobatch
 {
 /// Persisted preview choices, independent of the current file and audio device.
 struct AudioPreviewPreferences {
+    /// Practical editable LUFS limits for the source loudness axis.
+    static constexpr double minimumLoudnessGraphLimit {-60.0};
+    static constexpr double maximumLoudnessGraphLimit {6.0};
+
+    /// Initial LUFS axis range shared by settings and waveform presentation.
+    static constexpr double defaultLoudnessGraphMinimum {-24.0};
+    static constexpr double defaultLoudnessGraphMaximum {-4.0};
+
     bool pluginChainEnabled {false};
     bool latencyCompensated {true};
     bool continuePlayback {false};
     bool playFromFirstCuePoint {false};
     bool seratoWaveformColours {true};
+    bool loudnessGraphEnabled {false};
+    double loudnessGraphMinimum {defaultLoudnessGraphMinimum};
+    double loudnessGraphMaximum {defaultLoudnessGraphMaximum};
 };
 
 /// Progress and inputs of one analysis run, from its start until its completion arrives.

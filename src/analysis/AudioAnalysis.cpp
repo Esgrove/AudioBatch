@@ -33,9 +33,9 @@ namespace audiobatch
 namespace
 {
 /// How often the short-term loudness is sampled while decoding, in hertz.
-/// EBU R128 updates short-term loudness at least ten times per second,
-/// so a slower rate can miss the loudest three second window.
-constexpr double shortTermUpdateRateHz {10.0};
+/// EBU Tech 3341 specifies at least ten meter updates per second.
+/// libebur128 supplies the trailing three-second value whenever the application queries it.
+constexpr double shortTermUpdateRateHz {ShortTermLoudnessHistory::updateRateHz};
 constexpr auto cancelledMessage {"Analysis was cancelled"};
 
 /// Left, right, and overall peak reduced from per-channel peaks.
@@ -54,6 +54,7 @@ struct DecodeMeasurements {
     std::vector<float> maxSamples;
     /// Highest short-term loudness seen across the file.
     double maxShortTermLoudness {AudioAnalysisRecord::negativeInfinityLoudness};
+    std::shared_ptr<ShortTermLoudnessHistory> shortTermLoudness;
     /// Empty when decoding and measuring succeeded.
     juce::String errorMessage;
 };
@@ -331,6 +332,11 @@ static DecodeMeasurements measureDecodedAudio(
 
     // One block per short-term loudness update.
     const auto analysisBlockSize = juce::jmax(1, juce::roundToInt(reader.sampleRate / shortTermUpdateRateHz));
+    measurements.shortTermLoudness = std::make_shared<ShortTermLoudnessHistory>();
+    auto& history = *measurements.shortTermLoudness;
+    history.sampleRate = reader.sampleRate;
+    history.lengthInSamples = reader.lengthInSamples;
+    history.samplesPerPoint = analysisBlockSize;
     juce::AudioBuffer<float> readBuffer(channelCount, analysisBlockSize);
     std::vector interleaved(static_cast<size_t>(channelCount * analysisBlockSize), 0.0f);
     DecodeFailureTracker failureTracker(reader.lengthInSamples);
@@ -378,10 +384,13 @@ static DecodeMeasurements measureDecodedAudio(
 
         double shortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
 
-        if (ebur128_loudness_shortterm(loudnessState, &shortTermLoudness) == EBUR128_SUCCESS) {
-            measurements.maxShortTermLoudness
-                = std::max(measurements.maxShortTermLoudness, normalizeLoudness(shortTermLoudness));
+        if (ebur128_loudness_shortterm(loudnessState, &shortTermLoudness) != EBUR128_SUCCESS) {
+            measurements.errorMessage = "Short-term loudness analysis failed";
+            return measurements;
         }
+        const auto normalized = normalizeLoudness(shortTermLoudness);
+        measurements.maxShortTermLoudness = std::max(measurements.maxShortTermLoudness, normalized);
+        history.values.push_back(static_cast<float>(normalized));
 
         utils::reportProgress(
             onProgress, utils::progressFraction(samplePosition + framesThisBlock, reader.lengthInSamples)
@@ -426,7 +435,7 @@ AudioAnalysisRecord analyzeFile(
         return failAnalysis(std::move(record), "Could not initialize loudness analyzer");
     }
 
-    const auto [minSamples, maxSamples, maxShortTermLoudness, errorMessage]
+    const auto [minSamples, maxSamples, maxShortTermLoudness, shortTermLoudness, errorMessage]
         = measureDecodedAudio(*reader, loudnessState.get(), record.fullPath, isCancelled, onProgress);
 
     if (errorMessage.isNotEmpty()) {
@@ -476,6 +485,7 @@ AudioAnalysisRecord analyzeFile(
     record.truePeakRight = truePeakRight;
     record.overallTruePeak = truePeakOverall;
     record.maxShortTermLufs = maxShortTermLoudness;
+    record.shortTermLoudness = shortTermLoudness;
     record.integratedLufs = normalizeLoudness(integratedLoudness);
     record.status = AudioAnalysisStatus::analyzed;
     record.fromCache = false;

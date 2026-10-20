@@ -5,7 +5,9 @@
 #include "analysis/AudioAnalysis.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/AudioFormatUtils.h"
 #include "utils/AudioMetadata.h"
+#include "utils/StringFormat.h"
 
 #include <array>
 
@@ -156,7 +158,16 @@ public:
             expect(!record.hasError(), record.errorMessage);
             expectEquals(record.overallPeak, 0.0f);
             expectEquals(record.integratedLufs, AudioAnalysisRecord::negativeInfinityLoudness);
+            expect(record.shortTermLoudness != nullptr);
+            if (record.shortTermLoudness) {
+                expectEquals(static_cast<int>(record.shortTermLoudness->values.size()), 10);
+                for (const auto value : record.shortTermLoudness->values) {
+                    expectEquals(value, static_cast<float>(AudioAnalysisRecord::negativeInfinityLoudness));
+                }
+            }
         }
+
+        testLoudnessHistory();
 
         beginTest("Hidden and AppleDouble files are skipped when collecting inputs");
         {
@@ -200,6 +211,16 @@ public:
             const auto record = analyzeFile(fixtureFile("sine_stereo_44100_16.wav"), [] { return true; });
             expect(record.hasError());
             expect(record.errorMessage.contains("cancelled"), record.errorMessage);
+            expect(record.shortTermLoudness == nullptr);
+        }
+
+        beginTest("Cancellation after partial decoding never publishes incomplete loudness history");
+        {
+            int checks = 0;
+            const auto record
+                = analyzeFile(fixtureFile("sine_stereo_44100_16.wav"), [&checks] { return ++checks > 3; });
+            expect(record.hasError());
+            expect(record.shortTermLoudness == nullptr);
         }
 
         beginTest("An MP3 bit depth is never read from its tags");
@@ -221,10 +242,70 @@ public:
             const auto record = analyzeFile(fixtureFile("broken.wav"));
             expect(record.hasError());
             expect(record.errorMessage.isNotEmpty());
+            expect(record.shortTermLoudness == nullptr);
         }
     }
 
 private:
+    /// Uses short slices of the committed tone to cover exact EOF and the zero-filled startup window.
+    void testLoudnessHistory()
+    {
+        beginTest("Short-term history reuses the three-second meter at ten block ends per second");
+        const auto record = analyzeFile(fixtureFile("sine_stereo_44100_16.wav"));
+        expect(record.shortTermLoudness != nullptr);
+        if (record.shortTermLoudness) {
+            const auto& history = *record.shortTermLoudness;
+            expectEquals(static_cast<int>(history.values.size()), 10);
+            expectWithinAbsoluteError(history.timeAt(0), 0.1, 0.000001);
+            expectWithinAbsoluteError(history.timeAt(9), 1.0, 0.000001);
+            expectWithinAbsoluteError(
+                static_cast<double>(history.values.back()), fixtureLoudness - 10.0 * std::log10(3.0), 0.1
+            );
+            expect(history.values.front() < history.values.back());
+            auto copied = record;
+            expect(copied.shortTermLoudness == record.shortTermLoudness);
+            copied.shortTermLoudness.reset();
+            expect(record.shortTermLoudness != nullptr);
+        }
+
+        beginTest("A final partial block and a sub-block file end at their actual last sample");
+        const TemporaryDirectory temporary;
+        const auto reader = utils::createAudioReader(fixtureFile("sine_stereo_44100_16.wav"));
+        expect(reader != nullptr);
+        if (!reader) {
+            return;
+        }
+        for (const int frames : {1000, 4500}) {
+            const auto file = temporary.getChildFile(utils::format("slice-{}.wav", frames));
+            juce::WavAudioFormat format;
+            std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
+            auto writer = format.createWriterFor(
+                stream,
+                juce::AudioFormatWriterOptions()
+                    .withSampleRate(reader->sampleRate)
+                    .withNumChannels(2)
+                    .withBitsPerSample(16)
+            );
+            expect(writer != nullptr);
+            if (!writer) {
+                continue;
+            }
+            expect(writer->writeFromAudioReader(*reader, 0, frames));
+            writer.reset();
+            const auto slice = analyzeFile(file);
+            expect(!slice.hasError(), slice.errorMessage);
+            expect(slice.shortTermLoudness != nullptr);
+            if (slice.shortTermLoudness) {
+                const auto& history = *slice.shortTermLoudness;
+                expectEquals(static_cast<int>(history.values.size()), frames < 4410 ? 1 : 2);
+                expectWithinAbsoluteError(
+                    history.timeAt(history.values.size() - 1), static_cast<double>(frames) / 44'100.0, 0.0000001
+                );
+                expectEquals(slice.lengthInSamples, static_cast<std::int64_t>(frames));
+            }
+        }
+    }
+
     /// Analyzes one fixture and compares the results with its expected properties.
     void checkToneFixture(const ToneFixture& fixture)
     {
@@ -246,6 +327,17 @@ private:
         );
         expectWithinAbsoluteError(record.integratedLufs, fixtureLoudness, tolerance);
         expectWithinAbsoluteError(record.durationSeconds, 1.0, 0.1);
+        expect(record.shortTermLoudness != nullptr);
+        if (record.shortTermLoudness && !record.shortTermLoudness->values.empty()) {
+            const auto& history = *record.shortTermLoudness;
+            const auto expectedCount = record.lengthInSamples / history.samplesPerPoint
+                + (record.lengthInSamples % history.samplesPerPoint != 0 ? 1 : 0);
+            expectEquals(static_cast<std::int64_t>(history.values.size()), expectedCount);
+            expectWithinAbsoluteError(history.timeAt(history.values.size() - 1), record.durationSeconds, 0.0000001);
+            expectWithinAbsoluteError(
+                static_cast<double>(*std::ranges::max_element(history.values)), record.maxShortTermLufs, 0.00001
+            );
+        }
     }
 };
 

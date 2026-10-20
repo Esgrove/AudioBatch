@@ -1,5 +1,5 @@
 /// Audio settings content combining JUCE device selection with the application's preview preferences.
-/// The main view remains the preference authority, while this panel forwards checkbox changes
+/// The main view remains the preference authority, while this panel forwards checkbox and loudness-axis changes
 /// and reflects updates made through the Options menu.
 
 #pragma once
@@ -10,10 +10,13 @@
 #include <JuceHeader.h>
 
 #include <functional>
+#include <memory>
 
 namespace audiobatch
 {
 [[nodiscard]] AudioPreviewPreferences loadAudioPreviewPreferences(const juce::PropertiesFile& settings);
+[[nodiscard]] bool isValidLoudnessGraphRange(double minimum, double maximum);
+[[nodiscard]] bool isValidLoudnessGraphLimitInput(const juce::String& text);
 bool saveAudioPreviewPreferences(juce::PropertiesFile& settings, const AudioPreviewPreferences& preferences);
 [[nodiscard]] double getPreviewStartPositionSeconds(
     const AudioPreviewPreferences& preferences,
@@ -59,6 +62,16 @@ private:
     juce::ToggleButton continuationToggle {"Continue playback when changing files"};
     juce::ToggleButton playFromFirstCuePointToggle {"Play from first cue point"};
     juce::ToggleButton coloursToggle {"Serato waveform colours"};
+    juce::ToggleButton loudnessGraphToggle {"Show loudness graph"};
+    juce::Label loudnessMinimumLabel {"loudnessMinimum", "Min (LUFS)"};
+    juce::Label loudnessMaximumLabel {"loudnessMaximum", "Max (LUFS)"};
+    juce::Label loudnessRangeError;
+    juce::TextEditor loudnessMinimum;
+    juce::TextEditor loudnessMaximum;
+    AudioPreviewPreferences displayedPreferences;
     bool layingOut {false};
+
+    /// Serves tooltips in the settings dialog's native window independently of the main view.
+    std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 };
 }  // namespace audiobatch

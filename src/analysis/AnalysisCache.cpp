@@ -12,12 +12,116 @@
 #include "utils/StringFormat.h"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <sqlite3.h>
 #include <utility>
 #include <vector>
 
 namespace audiobatch
 {
+namespace
+{
+constexpr int loudnessHistoryMagic {0x5346554c};
+constexpr int loudnessHistoryVersion {1};
+constexpr std::size_t loudnessHistoryHeaderBytes {32};
+
+/// Checks timing and count before allocating or serializing cached history.
+bool validHistoryTiming(
+    const ShortTermLoudnessHistory& history,
+    const AudioAnalysisRecord& record,
+    const std::int64_t count
+)
+{
+    if (!std::isfinite(history.sampleRate) || history.sampleRate < 1.0
+        || history.sampleRate > static_cast<double>(std::numeric_limits<int>::max())
+        || juce::roundToInt(history.sampleRate) != record.sampleRate || history.lengthInSamples < 0
+        || history.lengthInSamples != record.lengthInSamples
+        || !juce::approximatelyEqual(
+            static_cast<double>(history.lengthInSamples) / history.sampleRate, record.durationSeconds
+        )
+        || history.samplesPerPoint
+            != juce::jmax(1, juce::roundToInt(history.sampleRate / ShortTermLoudnessHistory::updateRateHz)))
+    {
+        return false;
+    }
+    const auto expectedCount = history.lengthInSamples / history.samplesPerPoint
+        + (history.lengthInSamples % history.samplesPerPoint != 0 ? 1 : 0);
+    return count == expectedCount && count >= 0
+        && count <= (std::numeric_limits<int>::max() - static_cast<std::int64_t>(loudnessHistoryHeaderBytes))
+            / static_cast<std::int64_t>(sizeof(float));
+}
+
+/// Rejects non-finite readings and values outside the float audio signal's possible LUFS range.
+/// The upper bound is deliberately above the roughly +800 LUFS representable by finite float PCM.
+bool validHistoryValue(const float value)
+{
+    constexpr float maximumLoudness {1000.0f};
+    return std::isfinite(value) && value >= AudioAnalysisRecord::negativeInfinityLoudness && value <= maximumLoudness;
+}
+
+/// Writes an explicit little-endian header and IEEE float readings, never native struct padding.
+juce::MemoryBlock serializeLoudnessHistory(const AudioAnalysisRecord& record)
+{
+    juce::MemoryBlock data;
+    if (!record.shortTermLoudness) {
+        return data;
+    }
+    const auto& history = *record.shortTermLoudness;
+    if (!validHistoryTiming(history, record, static_cast<std::int64_t>(history.values.size()))
+        || !std::ranges::all_of(history.values, validHistoryValue))
+    {
+        return data;
+    }
+    juce::MemoryOutputStream output(data, false);
+    output.writeInt(loudnessHistoryMagic);
+    output.writeInt(loudnessHistoryVersion);
+    output.writeDouble(history.sampleRate);
+    output.writeInt64(history.lengthInSamples);
+    output.writeInt(history.samplesPerPoint);
+    output.writeInt(static_cast<int>(history.values.size()));
+    for (const auto value : history.values) {
+        output.writeFloat(value);
+    }
+    return data;
+}
+
+/// Validates the complete payload against its analysis record before allocating its sample vector.
+std::shared_ptr<const ShortTermLoudnessHistory> deserializeLoudnessHistory(
+    const void* data,
+    const std::size_t bytes,
+    const AudioAnalysisRecord& record
+)
+{
+    if (data == nullptr || bytes < loudnessHistoryHeaderBytes) {
+        return {};
+    }
+    juce::MemoryInputStream input(data, bytes, false);
+    if (input.readInt() != loudnessHistoryMagic || input.readInt() != loudnessHistoryVersion) {
+        return {};
+    }
+    ShortTermLoudnessHistory history;
+    history.sampleRate = input.readDouble();
+    history.lengthInSamples = input.readInt64();
+    history.samplesPerPoint = input.readInt();
+    const auto count = input.readInt();
+    if (!validHistoryTiming(history, record, count)
+        || bytes != loudnessHistoryHeaderBytes + static_cast<std::size_t>(count) * sizeof(float))
+    {
+        return {};
+    }
+    history.values.reserve(static_cast<std::size_t>(count));
+    for (int index = 0; index < count; ++index) {
+        const auto value = input.readFloat();
+        if (!validHistoryValue(value)) {
+            return {};
+        }
+        history.values.push_back(value);
+    }
+    return std::make_shared<const ShortTermLoudnessHistory>(std::move(history));
+}
+}  // namespace
+
 /// Returns an independently versioned stable tag result, or a miss for stale or corrupt data.
 /// Validates file identity after the read. Unknown kinds and transient outcomes are never returned.
 std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
@@ -186,7 +290,7 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
                duration_seconds, peak_left, peak_right, overall_peak, true_peak_left,
                true_peak_right, overall_true_peak, max_short_term_lufs, integrated_lufs,
                sample_rate, channels, bits_per_sample, status, error_message, analysis_version,
-               custom_gain_db, has_custom_gain
+               custom_gain_db, has_custom_gain, short_term_loudness
         FROM file_analysis
         WHERE file_path = ?;
     )SQL";
@@ -234,6 +338,22 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
     record.errorMessage = columnText(statement, analysis_column::errorMessage);
     record.customGainDb = static_cast<float>(sqlite3_column_double(statement, analysis_column::customGainDb));
     record.hasCustomGain = sqlite3_column_int(statement, analysis_column::hasCustomGain) != 0;
+    if (!record.hasError()) {
+        if (sqlite3_column_type(statement, analysis_column::shortTermLoudness) == SQLITE_BLOB) {
+            record.shortTermLoudness = deserializeLoudnessHistory(
+                sqlite3_column_blob(statement, analysis_column::shortTermLoudness),
+                static_cast<std::size_t>(sqlite3_column_bytes(statement, analysis_column::shortTermLoudness)),
+                record
+            );
+        }
+        if (!record.shortTermLoudness) {
+            utils::logWarn(
+                "Invalid cached short-term loudness history for {}, reanalysis required", record.fullPath.quoted()
+            );
+            sqlite3_finalize(statement);
+            return false;
+        }
+    }
     record.fromCache = true;
 
     if (record.status != AudioAnalysisStatus::failed) {
@@ -250,6 +370,11 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
 /// since a custom gain only applies to the version of the file it was set for.
 bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
 {
+    const auto loudnessData = serializeLoudnessHistory(record);
+    if (!record.hasError() && loudnessData.isEmpty()) {
+        utils::logError("Cannot cache analysis without valid loudness history for {}", record.fullPath.quoted());
+        return false;
+    }
     const juce::ScopedLock lock(mutex);
 
     if (database == nullptr && !openUnlocked()) {
@@ -263,8 +388,8 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             true_peak_right, overall_true_peak, max_short_term_lufs, integrated_lufs,
             sample_rate, channels, bits_per_sample, status, error_message,
             waveform_data, waveform_version, analysis_version, updated_at_ms,
-            custom_gain_db, has_custom_gain
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            custom_gain_db, has_custom_gain, short_term_loudness
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             file_name = excluded.file_name,
             format_name = excluded.format_name,
@@ -280,6 +405,7 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             overall_true_peak = excluded.overall_true_peak,
             max_short_term_lufs = excluded.max_short_term_lufs,
             integrated_lufs = excluded.integrated_lufs,
+            short_term_loudness = excluded.short_term_loudness,
             sample_rate = excluded.sample_rate,
             channels = excluded.channels,
             bits_per_sample = excluded.bits_per_sample,
@@ -334,6 +460,11 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
     sqlite3_bind_int64(statement, analysis_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
     sqlite3_bind_double(statement, analysis_parameter::customGainDb, static_cast<double>(record.customGainDb));
     sqlite3_bind_int(statement, analysis_parameter::hasCustomGain, record.hasCustomGain ? 1 : 0);
+    if (record.hasError()) {
+        sqlite3_bind_null(statement, analysis_parameter::shortTermLoudness);
+    } else {
+        bindBlob(statement, analysis_parameter::shortTermLoudness, loudnessData);
+    }
 
     const auto completed = stepToCompletion(statement);
     sqlite3_finalize(statement);

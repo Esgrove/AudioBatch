@@ -4,12 +4,14 @@
 
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/AudioSettingsComponent.h"
+#include "gui/GuiLayout.h"
 #include "plugins/PluginChain.h"
 #include "plugins/PluginPreviewSource.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <limits>
 #include <span>
@@ -218,11 +220,50 @@ public:
         testCueStartPosition();
         testInitialPosition();
         testPreferences();
+        testLoudnessAxisIntervals();
         testLatencyFormattingAndTailLimit();
         testUnavailableSlotLatency();
     }
 
 private:
+    /// Checks numeric tick layout without constructing or rendering a GUI component.
+    void testLoudnessAxisIntervals()
+    {
+        beginTest("Loudness ticks use even intervals instead of independently rounded labels");
+        expectEquals(layout::waveform::loudnessTickInterval(-24, -4, 230), 4);
+        expectEquals(layout::waveform::loudnessTickInterval(-23, -5, 230), 4);
+        expectEquals(layout::waveform::loudnessTickInterval(-24, -4, 48), 10);
+        expectEquals(layout::waveform::loudnessTickInterval(-60, 6, 48), 20);
+        expectEquals(layout::waveform::loudnessTickInterval(-6, -4, 230), 1);
+        expectEquals(layout::waveform::loudnessTickInterval(5, 6, 48), 1);
+
+        beginTest("Every supported loudness range has uniform in-range ticks at compact and expanded heights");
+        for (int minimum = -60; minimum < 6; ++minimum) {
+            for (int maximum = minimum + 1; maximum <= 6; ++maximum) {
+                for (const auto height : {48, 64, 128, 230, 480}) {
+                    const auto interval = layout::waveform::loudnessTickInterval(minimum, maximum, height);
+                    const auto first = static_cast<int>(std::ceil(static_cast<double>(minimum) / interval)) * interval;
+                    expect(first >= minimum && first <= maximum);
+                    expect(interval <= 20);
+                    expect(interval == 1 || interval % 2 == 0);
+                    if (maximum - minimum > interval) {
+                        expect(
+                            static_cast<double>(interval * height) / (maximum - minimum)
+                            >= layout::waveform::loudnessFontHeight
+                        );
+                    }
+                    int previous = first - interval;
+                    for (int value = first; value <= maximum; value += interval) {
+                        expectEquals(value - previous, interval);
+                        expect(value >= minimum);
+                        expect(interval == 1 || value % 2 == 0);
+                        previous = value;
+                    }
+                }
+            }
+        }
+    }
+
     /// Preserves the first and last source samples across zero, short, and multi-block latency.
     void testLatency()
     {
@@ -601,12 +642,18 @@ private:
             expect(!defaults.playFromFirstCuePoint);
             expect(!AudioPreviewPreferences().playFromFirstCuePoint);
             expect(defaults.seratoWaveformColours);
+            expect(!defaults.loudnessGraphEnabled);
+            expectEquals(defaults.loudnessGraphMinimum, -24.0);
+            expectEquals(defaults.loudnessGraphMaximum, -4.0);
             const AudioPreviewPreferences changed {
                 .pluginChainEnabled = true,
                 .latencyCompensated = false,
                 .continuePlayback = true,
                 .playFromFirstCuePoint = true,
                 .seratoWaveformColours = false,
+                .loudnessGraphEnabled = true,
+                .loudnessGraphMinimum = -32.0,
+                .loudnessGraphMaximum = -2.0,
             };
             expect(saveAudioPreviewPreferences(settings, changed));
         }
@@ -618,17 +665,91 @@ private:
             expect(saved.continuePlayback);
             expect(saved.playFromFirstCuePoint);
             expect(!saved.seratoWaveformColours);
+            expect(saved.loudnessGraphEnabled);
+            expectEquals(saved.loudnessGraphMinimum, -32.0);
+            expectEquals(saved.loudnessGraphMaximum, -2.0);
             expect(shouldContinuePreviewPlayback(saved, true, true));
             expect(!shouldContinuePreviewPlayback(saved, false, true));
             expect(!shouldContinuePreviewPlayback(saved, true, false));
             expect(!shouldContinuePreviewPlayback(AudioPreviewPreferences(), true, true));
             auto disabled = saved;
             disabled.playFromFirstCuePoint = false;
+            disabled.loudnessGraphEnabled = false;
             expect(saveAudioPreviewPreferences(settings, disabled));
         }
         {
             const juce::PropertiesFile settings(file, options);
             expect(!loadAudioPreviewPreferences(settings).playFromFirstCuePoint);
+            const auto disabled = loadAudioPreviewPreferences(settings);
+            expect(!disabled.loudnessGraphEnabled);
+            expectEquals(disabled.loudnessGraphMinimum, -32.0);
+            expectEquals(disabled.loudnessGraphMaximum, -2.0);
+        }
+
+        beginTest("Invalid loudness axis settings are repaired without changing other preferences");
+        expect(isValidLoudnessGraphRange(-60.0, 6.0));
+        expect(isValidLoudnessGraphRange(5.0, 6.0));
+        expect(!isValidLoudnessGraphRange(-4.0, -24.0));
+        expect(!isValidLoudnessGraphRange(-4.0, -4.0));
+        expect(!isValidLoudnessGraphRange(-4.0, -3.5));
+        expect(!isValidLoudnessGraphRange(-24.5, -4.0));
+        expect(!isValidLoudnessGraphRange(std::nextafter(-24.0, -23.0), -4.0));
+        expect(!isValidLoudnessGraphRange(-24.0, -3.5));
+        expect(!isValidLoudnessGraphRange(-61.0, -4.0));
+        expect(!isValidLoudnessGraphRange(-24.0, 7.0));
+        expect(!isValidLoudnessGraphRange(std::numeric_limits<double>::quiet_NaN(), -4.0));
+        expect(!isValidLoudnessGraphRange(-24.0, std::numeric_limits<double>::infinity()));
+        for (const auto* invalid : {"nan", "-4junk", "", "-2", "-999", "-61", "-24.5"}) {
+            juce::PropertiesFile settings(file, options);
+            settings.setValue("loudnessGraphMinimum", invalid);
+            settings.setValue("loudnessGraphMaximum", "-4");
+            const auto repaired = loadAudioPreviewPreferences(settings);
+            expectEquals(repaired.loudnessGraphMinimum, -24.0);
+            expectEquals(repaired.loudnessGraphMaximum, -4.0);
+            expect(repaired.pluginChainEnabled);
+            expect(saveAudioPreviewPreferences(settings, repaired));
+            auto rejected = repaired;
+            rejected.loudnessGraphMaximum = -40.0;
+            expect(!saveAudioPreviewPreferences(settings, rejected));
+            expectEquals(loadAudioPreviewPreferences(settings).loudnessGraphMaximum, -4.0);
+        }
+
+        beginTest("Integer loudness limits round trip at the supported endpoints");
+        {
+            juce::PropertiesFile settings(file, options);
+            auto endpoints = loadAudioPreviewPreferences(settings);
+            endpoints.loudnessGraphMinimum = -60.0;
+            endpoints.loudnessGraphMaximum = 6.0;
+            expect(saveAudioPreviewPreferences(settings, endpoints));
+        }
+        {
+            juce::PropertiesFile settings(file, options);
+            const auto saved = loadAudioPreviewPreferences(settings);
+            expectEquals(saved.loudnessGraphMinimum, -60.0);
+            expectEquals(saved.loudnessGraphMaximum, 6.0);
+            auto fractional = saved;
+            fractional.loudnessGraphMaximum = 5.5;
+            expect(!saveAudioPreviewPreferences(settings, fractional));
+            expectEquals(loadAudioPreviewPreferences(settings).loudnessGraphMaximum, 6.0);
+
+            beginTest("Saved whole-number decimals remain compatible with integer-only limits");
+            settings.setValue("loudnessGraphMinimum", "-60.0");
+            settings.setValue("loudnessGraphMaximum", "6.0");
+            const auto legacy = loadAudioPreviewPreferences(settings);
+            expectEquals(legacy.loudnessGraphMinimum, -60.0);
+            expectEquals(legacy.loudnessGraphMaximum, 6.0);
+            settings.setValue("loudnessGraphMaximum", "7");
+            const auto repaired = loadAudioPreviewPreferences(settings);
+            expectEquals(repaired.loudnessGraphMinimum, -24.0);
+            expectEquals(repaired.loudnessGraphMaximum, -4.0);
+        }
+
+        beginTest("Loudness range editing accepts at most two digits and never strips pasted decimals");
+        for (const auto* input : {"", "-", "0", "6", "-6", "-60", "60", "-99"}) {
+            expect(isValidLoudnessGraphLimitInput(input), input);
+        }
+        for (const auto* input : {"123", "-123", "006", "6.0", "-2.5", "1-2", "--6", "nan", "6 "}) {
+            expect(!isValidLoudnessGraphLimitInput(input), input);
         }
     }
 

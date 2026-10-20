@@ -39,6 +39,7 @@ enum MenuItemId : std::uint8_t {
     togglePreviewCompensationMenuItemId,
     toggleContinuePlaybackMenuItemId,
     togglePlayFromFirstCuePointMenuItemId,
+    toggleLoudnessGraphMenuItemId,
 };
 }  // namespace
 
@@ -176,6 +177,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
         case 2:
             menu.addCommandItem(&commandManager, togglePreviewSectionMenuItemId);
             menu.addCommandItem(&commandManager, toggleSeratoWaveformColouringMenuItemId);
+            menu.addCommandItem(&commandManager, toggleLoudnessGraphMenuItemId);
             menu.addCommandItem(&commandManager, togglePluginPreviewMenuItemId);
             menu.addCommandItem(&commandManager, togglePreviewCompensationMenuItemId);
             menu.addCommandItem(&commandManager, toggleContinuePlaybackMenuItemId);
@@ -211,6 +213,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
         case 1:
             menu.addCommandItem(&commandManager, togglePreviewSectionMenuItemId);
             menu.addCommandItem(&commandManager, toggleSeratoWaveformColouringMenuItemId);
+            menu.addCommandItem(&commandManager, toggleLoudnessGraphMenuItemId);
             menu.addCommandItem(&commandManager, togglePluginPreviewMenuItemId);
             menu.addCommandItem(&commandManager, togglePreviewCompensationMenuItemId);
             menu.addCommandItem(&commandManager, toggleContinuePlaybackMenuItemId);
@@ -257,6 +260,7 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
         case quitMenuItemId:
         case togglePreviewSectionMenuItemId:
         case toggleSeratoWaveformColouringMenuItemId:
+        case toggleLoudnessGraphMenuItemId:
         case togglePluginPreviewMenuItemId:
         case togglePreviewCompensationMenuItemId:
         case toggleContinuePlaybackMenuItemId:
@@ -312,6 +316,7 @@ void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
         quitMenuItemId,
         togglePreviewSectionMenuItemId,
         toggleSeratoWaveformColouringMenuItemId,
+        toggleLoudnessGraphMenuItemId,
         togglePluginPreviewMenuItemId,
         togglePreviewCompensationMenuItemId,
         toggleContinuePlaybackMenuItemId,
@@ -334,6 +339,13 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
     const auto canActOnSelection = !blockedByDialog && audioBatch.hasSelectedRecords();
 
     switch (commandID) {
+        case toggleLoudnessGraphMenuItemId:
+            result.setInfo(
+                "Show Loudness Graph", "Overlay source-file short-term loudness on the waveform", "Options", 0
+            );
+            result.setTicked(audioBatch.isLoudnessGraphEnabled());
+            result.setActive(!blockedByDialog);
+            break;
         case togglePluginPreviewMenuItemId:
             result.setInfo(
                 "Preview Plugin Chain", "Listen through enabled plugins and custom input gain", "Options", 0
@@ -458,6 +470,9 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
 bool MainWindow::perform(const InvocationInfo& info)
 {
     switch (info.commandID) {
+        case toggleLoudnessGraphMenuItemId:
+            getAudioBatch().toggleLoudnessGraph();
+            return true;
         case togglePluginPreviewMenuItemId:
             getAudioBatch().togglePluginPreview();
             return true;

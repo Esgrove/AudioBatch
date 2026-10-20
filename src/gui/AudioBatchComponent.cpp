@@ -428,6 +428,7 @@ AudioBatchComponent::~AudioBatchComponent()
     thumbnail->setMouseWheelZoomCallback({});
     thumbnail->setMouseWheelGainCallback({});
     thumbnail->setThumbnailFullyLoadedCallback({});
+    audioSettingsComponent.setPreferencesChangedCallback({});
     resultsTable.setModel(nullptr);
 
     if (childWindows.size() != 0) {

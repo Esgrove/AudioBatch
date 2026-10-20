@@ -30,6 +30,15 @@ Playback status and the waveform cursor follow the current display's refresh rat
 The resizable preview workspace has separate columns for controls, selected-file information, and the waveform.
 Sample peak, true peak, integrated loudness, and maximum short-term loudness appear in dedicated metric cards.
 
+An optional orange-red short-term loudness line overlays the waveform, with a compact numeric axis on the left.
+It measures the trailing three seconds and follows waveform zoom and scrolling.
+The initial three seconds use the analyzer's zero-filled startup history.
+The curve describes the source file, not custom preview gain, live plugins, or a normalization target.
+Silent readings leave gaps, and values outside the selected axis range are clipped.
+Analysis retains the existing 10 Hz readings without another decoding pass and caches them in SQLite.
+Older cached tracks need one normal reanalysis to populate this history.
+After that, unchanged tracks show the curve from the cache.
+
 Serato DJ metadata adds optional waveform colours and coloured cue markers,
 and the info panel shows BPM and musical key when available.
 Files without Serato tag data show a default blue waveform.
@@ -85,8 +94,12 @@ Plugin preview is controlled only from this window and the menu, keeping the mai
   This also applies when continuing playback across files, but does not start a stopped preview automatically.
   Manual seeks and hot cue jumps take precedence over this initial position.
 - **Serato waveform colours:** on by default.
+- **Show loudness graph:** off by default.
+  Toggle it here or with **Options > Show Loudness Graph**.
+  The minimum and maximum axis limits default to **-24 and -4 LUFS**.
+  Limits accept integers from -60 to +6 LUFS.
 
-All five choices are remembered between sessions.
+All preview choices and the loudness axis limits are remembered between sessions.
 These preferences do not add controls to the main preview workspace.
 
 ### Normalization

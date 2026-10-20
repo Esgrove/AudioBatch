@@ -464,6 +464,7 @@ void AudioBatchComponent::handleAnalysisPlan(const AnalysisPlan& plan)
     resultsTable.updateContent();
     updateResultsTableColumnWidths();
     fileActivity.markActive(plan.staleFiles, FileActivity::waiting);
+    updatePreviewLoudnessHistory();
 
     statusLabel.setText(
         utils::format("Analyzing {}/{}", analysisRun.completed, analysisRun.expected), juce::dontSendNotification
