@@ -75,8 +75,8 @@ PreviewChain PluginChain::preparePreview(
 )
 {
     const juce::ScopedLock lock(renderingLock);
-    const bool contextChanged
-        = sampleRate != previewSampleRate || blockSize != previewBlockSize || channels != previewChannels;
+    const bool contextChanged = !juce::approximatelyEqual(sampleRate, previewSampleRate)
+        || blockSize != previewBlockSize || channels != previewChannels;
     if (contextChanged) {
         captureOpenEditorStates();
         for (auto& entry : chain) {

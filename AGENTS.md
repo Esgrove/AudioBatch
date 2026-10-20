@@ -188,6 +188,10 @@ Tests:
   unless the iostream version is clearly more readable and performant with much less code.
   Use `console::printError` and `console::printWarn` for user-facing error and warning messages.
   Avoid `fmt::println`, because it triggers MSVC warning C4702 inside fmt with warnings as errors.
+- Use `juce::approximatelyEqual` for equality comparisons of `float` and `double` values instead of direct `==` or `!=`.
+  For inequality, use `!juce::approximatelyEqual(firstValue, secondValue)`.
+  Direct floating-point equality comparisons trigger `-Wfloat-equal`, which is treated as an error.
+  Keep ordinary `<`, `<=`, `>`, and `>=` comparisons for ordering and range checks.
 - The logging helpers accept fmt format strings and arguments directly:
   `utils::logError("Analysis failed for {}: {}", path.quoted(), message)`.
   Do not wrap the message in a `utils::format` call first.
