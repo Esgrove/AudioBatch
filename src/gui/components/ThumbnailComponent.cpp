@@ -511,11 +511,10 @@ void ThumbnailComponent::drawLoudnessCurve(juce::Graphics& graphics, const juce:
         }
         auto ordered = bucket;
         std::ranges::sort(ordered);
-        const auto end = std::ranges::unique(ordered).begin();
-        for (auto iterator = ordered.begin(); iterator != end; ++iterator) {
-            const auto index = *iterator;
+        const auto uniqueIndices = std::ranges::subrange(ordered.begin(), std::ranges::unique(ordered).begin());
+        for (const auto index : uniqueIndices) {
             const auto horizontal = timeToX(history.timeAt(index));
-            const auto vertical = loudnessToY(history.values[index], bounds);
+            const auto vertical = loudnessToY(static_cast<double>(history.values[index]), bounds);
             if (newSegment) {
                 line.startNewSubPath(horizontal, vertical);
                 const auto diameter = layout::waveform::loudnessLineWidth;
@@ -529,7 +528,7 @@ void ThumbnailComponent::drawLoudnessCurve(juce::Graphics& graphics, const juce:
     };
     for (auto index = first; index <= last; ++index) {
         const auto value = history.values[index];
-        if (!std::isfinite(value) || value <= AudioAnalysisRecord::negativeInfinityLoudness) {
+        if (!std::isfinite(value) || static_cast<double>(value) <= AudioAnalysisRecord::negativeInfinityLoudness) {
             flushBucket();
             newSegment = true;
             continue;
