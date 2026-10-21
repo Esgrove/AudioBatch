@@ -445,17 +445,20 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
 #if JUCE_WINDOWS
             result.addDefaultKeypress(juce::KeyPress::deleteKey, juce::ModifierKeys::ctrlModifier);
             result.addDefaultKeypress(
-                juce::KeyPress::deleteKey, juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier
+                juce::KeyPress::deleteKey,
+                juce::ModifierKeys(juce::ModifierKeys::ctrlModifier).withFlags(juce::ModifierKeys::shiftModifier)
             );
 #endif
             result.addDefaultKeypress(juce::KeyPress::backspaceKey, juce::ModifierKeys::commandModifier);
             result.addDefaultKeypress(
-                juce::KeyPress::backspaceKey, juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier
+                juce::KeyPress::backspaceKey,
+                juce::ModifierKeys(juce::ModifierKeys::commandModifier).withFlags(juce::ModifierKeys::shiftModifier)
             );
 #if JUCE_MAC
             result.addDefaultKeypress(juce::KeyPress::backspaceKey, juce::ModifierKeys::ctrlModifier);
             result.addDefaultKeypress(
-                juce::KeyPress::backspaceKey, juce::ModifierKeys::ctrlModifier | juce::ModifierKeys::shiftModifier
+                juce::KeyPress::backspaceKey,
+                juce::ModifierKeys(juce::ModifierKeys::ctrlModifier).withFlags(juce::ModifierKeys::shiftModifier)
             );
 #endif
             result.setActive(canActOnSelection);
