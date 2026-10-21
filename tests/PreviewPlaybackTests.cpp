@@ -249,7 +249,7 @@ private:
                     if (maximum - minimum > interval) {
                         expect(
                             static_cast<double>(interval * height) / (maximum - minimum)
-                            >= layout::waveform::loudnessFontHeight
+                            >= static_cast<double>(layout::waveform::loudnessFontHeight)
                         );
                     }
                     int previous = first - interval;

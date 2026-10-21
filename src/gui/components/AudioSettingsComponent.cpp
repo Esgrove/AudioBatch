@@ -10,9 +10,10 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
 #include <cmath>
+#include <locale>
 #include <memory>
+#include <sstream>
 #include <utility>
 
 namespace audiobatch
@@ -111,10 +112,10 @@ public:
 /// Parses the complete saved or edited text, rejecting partially numeric and non-finite values.
 bool readLoudnessLimit(const juce::String& input, double& value)
 {
-    const auto text = input.trim().toStdString();
-    const auto* end = std::to_address(text.end());
-    const auto result = std::from_chars(text.data(), end, value);
-    return result.ec == std::errc() && result.ptr == end && std::isfinite(value);
+    std::istringstream stream(input.trim().toStdString());
+    stream.imbue(std::locale::classic());
+    stream >> std::noskipws >> value;
+    return !stream.fail() && stream.eof() && std::isfinite(value);
 }
 }  // namespace
 

@@ -57,7 +57,8 @@ bool validHistoryTiming(
 bool validHistoryValue(const float value)
 {
     constexpr float maximumLoudness {1000.0f};
-    return std::isfinite(value) && value >= AudioAnalysisRecord::negativeInfinityLoudness && value <= maximumLoudness;
+    return std::isfinite(value) && static_cast<double>(value) >= AudioAnalysisRecord::negativeInfinityLoudness
+        && value <= maximumLoudness;
 }
 
 /// Writes an explicit little-endian header and IEEE float readings, never native struct padding.
