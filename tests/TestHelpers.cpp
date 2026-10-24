@@ -27,6 +27,11 @@ public:
         close();
     }
 
+    TestAudioDevice(const TestAudioDevice&) = delete;
+    TestAudioDevice& operator=(const TestAudioDevice&) = delete;
+    TestAudioDevice(TestAudioDevice&&) = delete;
+    TestAudioDevice& operator=(TestAudioDevice&&) = delete;
+
     /// Exposes a stereo playback interface.
     juce::StringArray getOutputChannelNames() override
     {
@@ -78,12 +83,12 @@ public:
         return 0;
     }
     /// Returns the channels actually requested by the application.
-    juce::BigInteger getActiveOutputChannels() const override
+    [[nodiscard]] juce::BigInteger getActiveOutputChannels() const override
     {
         return outputs;
     }
     /// Returns the recording channels actually requested by the application.
-    juce::BigInteger getActiveInputChannels() const override
+    [[nodiscard]] juce::BigInteger getActiveInputChannels() const override
     {
         return inputs;
     }
@@ -107,8 +112,8 @@ public:
     juce::String open(
         const juce::BigInteger& inputChannels,
         const juce::BigInteger& outputChannels,
-        double,
-        int
+        double /*sampleRate*/,
+        int /*bufferSizeSamples*/
     ) override
     {
         if (state.openError.isNotEmpty()) {
@@ -169,17 +174,17 @@ public:
     /// Needs no native device enumeration.
     void scanForDevices() override {}
     /// Offers the same interface for input and output.
-    juce::StringArray getDeviceNames(bool) const override
+    juce::StringArray getDeviceNames(bool /*wantInputNames*/) const override
     {
         return {"Test output"};
     }
     /// Always selects the only interface.
-    int getDefaultDeviceIndex(bool) const override
+    int getDefaultDeviceIndex(bool /*forInput*/) const override
     {
         return 0;
     }
     /// All created devices belong to the single advertised interface.
-    int getIndexOfDevice(juce::AudioIODevice*, bool) const override
+    int getIndexOfDevice(juce::AudioIODevice* /*device*/, bool /*asInput*/) const override
     {
         return 0;
     }
@@ -189,7 +194,10 @@ public:
         return true;
     }
     /// Creates a fresh driver whose lifetime is controlled by the real device manager.
-    juce::AudioIODevice* createDevice(const juce::String&, const juce::String&) override
+    juce::AudioIODevice* createDevice(
+        const juce::String& /*outputDeviceName*/,
+        const juce::String& /*inputDeviceName*/
+    ) override
     {
         return new TestAudioDevice(state);
     }
@@ -210,7 +218,7 @@ void installTestAudioDevice(juce::AudioDeviceManager& manager, TestAudioDeviceSt
 }
 
 /// Advances the real audio callback synchronously, without a device thread or timing-dependent waits.
-void renderTestAudioDevice(TestAudioDeviceState& state, const int sampleCount)
+void renderTestAudioDevice(const TestAudioDeviceState& state, const int sampleCount)
 {
     if (state.callback != nullptr) {
         juce::AudioBuffer<float> output(2, sampleCount);

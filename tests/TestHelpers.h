@@ -85,5 +85,5 @@ juce::File fixtureFile(const juce::String& name);
 double peakDecibels(const AudioAnalysisRecord& record);
 
 void installTestAudioDevice(juce::AudioDeviceManager& manager, TestAudioDeviceState& state);
-void renderTestAudioDevice(TestAudioDeviceState& state, int sampleCount = 512);
+void renderTestAudioDevice(const TestAudioDeviceState& state, int sampleCount = 512);
 }  // namespace audiobatch::tests

@@ -328,10 +328,6 @@ void AudioPreviewPlayer::setInputGain(const float linearGain, const bool immedia
 /// Flushes decoder/resampler history before resuming from an audible position.
 bool AudioPreviewPlayer::reposition(const double seconds, const bool resume)
 {
-    if (resume && !openAudioDevice()) {
-        previewSource.stop();
-        return false;
-    }
     previewSource.stop();
     previewSource.setPosition(seconds);
     if (bufferingSource != nullptr && resamplingSource != nullptr) {
@@ -365,6 +361,11 @@ void AudioPreviewPlayer::start()
         sendChangeMessage();
         return;
     }
+    if (!openAudioDevice()) {
+        previewSource.stop();
+        sendChangeMessage();
+        return;
+    }
     const auto* reader = readerSource->getAudioFormatReader();
     const auto duration = static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
     const auto position = previewSource.getCurrentPosition();
@@ -390,6 +391,11 @@ void AudioPreviewPlayer::setPosition(const double seconds)
     const auto resume = isPlaying();
     waitingForInitialPosition = false;
     startWhenInitialPositionReady = false;
+    if (resume && !openAudioDevice()) {
+        previewSource.stop();
+        sendChangeMessage();
+        return;
+    }
     const auto positioned = reposition(seconds, resume);
     juce::ignoreUnused(positioned);
     sendChangeMessage();
