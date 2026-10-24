@@ -791,7 +791,7 @@ public:
                 const auto reader = utils::createAudioReader(result.outputFile);
                 expect(reader != nullptr);
                 if (reader != nullptr) {
-                    expectEquals(reader->bitsPerSample, 16U);
+                    expectEquals<juce::uint64>(reader->bitsPerSample, 16);
                     expect(!reader->usesFloatingPointData);
                 }
             }
