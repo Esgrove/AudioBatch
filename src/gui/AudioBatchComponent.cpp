@@ -481,6 +481,7 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
 
     const auto fixedColumnWidth = header.getColumnWidth(columnOverallPeak)
         + (header.isColumnVisible(columnType) ? header.getColumnWidth(columnType) : 0)
+        + (header.isColumnVisible(columnBitDepth) ? header.getColumnWidth(columnBitDepth) : 0)
         + (header.isColumnVisible(columnBitrate) ? header.getColumnWidth(columnBitrate) : 0)
         + (header.isColumnVisible(columnSampleRate) ? header.getColumnWidth(columnSampleRate) : 0)
         + (header.isColumnVisible(columnPeakLeft) ? header.getColumnWidth(columnPeakLeft) : 0)

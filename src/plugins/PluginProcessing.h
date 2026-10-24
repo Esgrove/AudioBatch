@@ -1,6 +1,7 @@
 /// Offline rendering of audio files through a plugin chain.
 /// Declares the free functions that process one file at a time through a caller-owned sequence of plugin instances
-/// and write the result as `<name>.aif` next to the original file.
+/// and write the result as 16-bit PCM `<name>.aif` next to the original file.
+/// Plugins handle dithering and output level. No dither or post-chain gain adjustment is added.
 /// Also defines the shared data types of the feature:
 /// PluginDescriptorRef for identifying a plugin and carrying its saved state,
 /// PluginChainSlot for one entry in the chain,
@@ -90,7 +91,7 @@ struct PluginProcessingResult {
     /// Empty on success, otherwise the reason processing failed.
     juce::String errorMessage;
     /// Information about a successful run worth showing to the user,
-    /// such as gain reduced to avoid clipping or source blocks that failed to decode.
+    /// such as output clipping or source blocks that failed to decode.
     juce::String notice;
     /// Analysis of the output file, valid when the re-analysis succeeded.
     AudioAnalysisRecord analysisRecord;

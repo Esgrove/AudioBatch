@@ -238,22 +238,24 @@ namespace table
 constexpr int nameColumnMinimumWidth {110};
 constexpr int pathColumnMinimumWidth {140};
 constexpr int typeColumnMinimumWidth {60};
+constexpr int bitDepthColumnMinimumWidth {68};
 constexpr int bitrateColumnMinimumWidth {68};
 constexpr int sampleRateColumnMinimumWidth {72};
 constexpr int metricColumnMinimumWidth {72};
 constexpr int nameColumnDefaultWidth {140};
 constexpr int pathColumnDefaultWidth {160};
 constexpr int typeColumnDefaultWidth {66};
+constexpr int bitDepthColumnDefaultWidth {70};
 constexpr int bitrateColumnDefaultWidth {70};
 constexpr int sampleRateColumnDefaultWidth {76};
-constexpr int overallPeakColumnDefaultWidth {74};
-constexpr int peakLeftColumnDefaultWidth {74};
-constexpr int peakRightColumnDefaultWidth {74};
-constexpr int truePeakColumnDefaultWidth {78};
+constexpr int overallPeakColumnDefaultWidth {76};
+constexpr int peakLeftColumnDefaultWidth {76};
+constexpr int peakRightColumnDefaultWidth {76};
+constexpr int truePeakColumnDefaultWidth {76};
 constexpr int maxShortTermLufsColumnDefaultWidth {76};
 constexpr int integratedLufsColumnDefaultWidth {76};
-constexpr int customGainColumnDefaultWidth {72};
-constexpr int statusColumnDefaultWidth {240};
+constexpr int customGainColumnDefaultWidth {70};
+constexpr int statusColumnDefaultWidth {180};
 constexpr int nameMaximumWidth {600};
 constexpr int pathMaximumWidth {1200};
 constexpr int metricMaximumWidth {160};
@@ -262,9 +264,10 @@ constexpr int statusMaximumWidth {800};
 /// Preserve the original compact-column budget independently of the larger main-window default.
 constexpr int initiallyVisibleColumnWidthBudget {1096};
 constexpr int initiallyVisibleColumnWidth {
-    nameColumnDefaultWidth + pathColumnDefaultWidth + typeColumnDefaultWidth + bitrateColumnDefaultWidth
-        + sampleRateColumnDefaultWidth + overallPeakColumnDefaultWidth + truePeakColumnDefaultWidth
-        + maxShortTermLufsColumnDefaultWidth + integratedLufsColumnDefaultWidth + statusColumnDefaultWidth,
+    nameColumnDefaultWidth + pathColumnDefaultWidth + typeColumnDefaultWidth + bitDepthColumnDefaultWidth
+        + bitrateColumnDefaultWidth + sampleRateColumnDefaultWidth + overallPeakColumnDefaultWidth
+        + truePeakColumnDefaultWidth + maxShortTermLufsColumnDefaultWidth + integratedLufsColumnDefaultWidth
+        + statusColumnDefaultWidth,
 };
 
 static_assert(
@@ -282,6 +285,8 @@ consteval int initialColumnWidth(const AudioFileTableColumn columnId)
             return pathColumnDefaultWidth;
         case columnType:
             return typeColumnDefaultWidth;
+        case columnBitDepth:
+            return bitDepthColumnDefaultWidth;
         case columnBitrate:
             return bitrateColumnDefaultWidth;
         case columnSampleRate:
@@ -316,6 +321,8 @@ consteval int minimumColumnWidth(const AudioFileTableColumn columnId)
             return pathColumnMinimumWidth;
         case columnType:
             return typeColumnMinimumWidth;
+        case columnBitDepth:
+            return bitDepthColumnMinimumWidth;
         case columnBitrate:
             return bitrateColumnMinimumWidth;
         case columnSampleRate:
