@@ -1,5 +1,5 @@
 /// Tests for processFileWithPlugins with small in-process test plugins.
-/// Covers mono files through stereo-only and mixed-width chains, the clip guard, the output bit depth,
+/// Covers mono files through stereo-only and mixed-width chains, undithered 16-bit output without a clip guard,
 /// latency compensation, rendering and trimming the tail, per-file state, cancellation, and the output length.
 /// Replaced files are deleted instead of moved to the system trash, so the tests never touch the user's trash.
 
@@ -16,6 +16,7 @@
 #include <condition_variable>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstring>
 #include <generalencapsulatedobjectframe.h>
@@ -47,6 +48,8 @@ struct TestPluginSettings {
     int echoSamples = 0;
     /// Tail length reported without producing any tail, in seconds, for a plugin without an echo.
     double reportedTailSeconds = 0.0;
+    /// Emits a repeated pattern spanning 16-bit quantization boundaries and the PCM clipping limits.
+    bool producesQuantizationPattern {false};
 };
 
 /// A test plugin that applies a fixed gain and can swap the left and right channels.
@@ -94,6 +97,29 @@ public:
 
         if (settings.producesInfinity && channels > 0) {
             buffer.setSample(0, 0, std::numeric_limits<float>::infinity());
+        }
+
+        if (settings.producesQuantizationPattern) {
+            constexpr float leastSignificantBit {1.0f / 32'768.0f};
+            constexpr std::array pattern {
+                0.0f,
+                0.25f * leastSignificantBit,
+                -0.25f * leastSignificantBit,
+                1.25f * leastSignificantBit,
+                -1.25f * leastSignificantBit,
+                1.75f * leastSignificantBit,
+                -1.75f * leastSignificantBit,
+                0.25f,
+                -0.25f,
+                1.25f,
+                -1.25f,
+                1.0f - leastSignificantBit,
+            };
+            for (int channel = 0; channel < channels; ++channel) {
+                for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
+                    buffer.setSample(channel, sample, pattern[static_cast<std::size_t>(sample) % pattern.size()]);
+                }
+            }
         }
     }
 
@@ -419,7 +445,7 @@ public:
 
             expect(!result.hasError(), result.errorMessage);
             expectEquals(result.analysisRecord.channels, 1);
-            expectEquals(result.analysisRecord.bitsPerSample, 24);
+            expectEquals(result.analysisRecord.bitsPerSample, 16);
             expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels, 0.05);
             expect(result.notice.isEmpty(), result.notice);
             const auto messages = capture.getMessages();
@@ -595,7 +621,7 @@ public:
             expect(result.committed);
             expect(!source.exists());
             expectEquals(result.outputFile.getFileName(), juce::String("converted.aif"));
-            expectEquals(result.analysisRecord.bitsPerSample, 24);
+            expectEquals(result.analysisRecord.bitsPerSample, 16);
             expectEquals(result.analysisRecord.sampleRate, 48000);
         }
 
@@ -748,11 +774,89 @@ public:
             expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels - 6.0, 0.05);
         }
 
-        beginTest("Output that would clip is turned down to full scale and reported");
+        beginTest("Every source depth produces 16-bit PCM while preserving rate and channel count");
+        {
+            for (const auto* fixture :
+                 {"sine_stereo_44100_16.aif", "sine_stereo_48000_24.wav", "sine_stereo_44100_32f.wav"})
+            {
+                const auto source = directory.copyFixture(fixture);
+                const auto original = analyzeFile(source);
+                TestPlugin plugin({});
+                const auto result = process(source, {&plugin});
+                expect(!result.hasError(), result.errorMessage);
+                expectEquals(result.analysisRecord.bitsPerSample, 16);
+                expectEquals(result.analysisRecord.sampleRate, original.sampleRate);
+                expectEquals(result.analysisRecord.channels, original.channels);
+                expectEquals(result.analysisRecord.lengthInSamples, original.lengthInSamples);
+                const auto reader = utils::createAudioReader(result.outputFile);
+                expect(reader != nullptr);
+                if (reader != nullptr) {
+                    expectEquals(reader->bitsPerSample, 16U);
+                    expect(!reader->usesFloatingPointData);
+                }
+            }
+        }
+
+        beginTest("Digital silence stays exactly silent without AudioBatch dithering");
+        {
+            const auto source = directory.copyFixture("silence_stereo_44100_16.wav");
+            TestPlugin plugin({});
+            const auto result = process(source, {&plugin});
+            expect(!result.hasError(), result.errorMessage);
+            const auto reader = utils::createAudioReader(result.outputFile);
+            expect(reader != nullptr);
+            if (reader != nullptr) {
+                juce::AudioBuffer<float> samples(2, static_cast<int>(reader->lengthInSamples));
+                expect(reader->read(&samples, 0, samples.getNumSamples(), 0, true, true));
+                expectWithinAbsoluteError(samples.getMagnitude(0, samples.getNumSamples()), 0.0f, 0.0f);
+            }
+        }
+
+        beginTest("PCM output truncates low bits without dither, attenuation, or overflow wraparound");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "quantization.aif");
+            TestPlugin plugin({.producesQuantizationPattern = true});
+            const auto result = process(source, {&plugin});
+            expect(!result.hasError(), result.errorMessage);
+            expect(result.notice.contains("Output clipping"), result.notice);
+            const auto reader = utils::createAudioReader(result.outputFile);
+            expect(reader != nullptr);
+            if (reader != nullptr) {
+                constexpr std::array expected {0, 0, -1, 1, -2, 1, -2, 8192, -8192, 32'767, -32'768, 32'767};
+                std::array<int, 512> left {};
+                std::array<int, 512> right {};
+                const std::array channels {left.data(), right.data()};
+                expect(reader->read(channels.data(), 2, 0, static_cast<int>(left.size()), false));
+                for (std::size_t sample = 0; sample < left.size(); ++sample) {
+                    const auto expectedSample = expected[sample % expected.size()] * 65'536;
+                    expectEquals(left[sample], expectedSample);
+                    expectEquals(right[sample], expectedSample);
+                }
+            }
+        }
+
+        beginTest("Float overs between plugins do not report clipping when the final output is in range");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "float_overs.aif");
+            TestPlugin boost({.gain = 4.0f});
+            TestPlugin attenuate({.gain = 0.25f});
+            const ScopedLogCapture capture;
+            const auto result = process(source, {&boost, &attenuate});
+
+            expect(!result.hasError(), result.errorMessage);
+            expect(result.notice.isEmpty(), result.notice);
+            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels, 0.05);
+            expect(std::ranges::none_of(capture.getMessages(), [](const auto& message) {
+                return message.contains("Output clipping");
+            }));
+        }
+
+        beginTest("Output that would clip saturates without automatic gain reduction and reports clipping");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif");
             const auto sourceLength = analyzeFile(source).lengthInSamples;
             TestPlugin plugin({.gain = juce::Decibels::decibelsToGain(12.0f)});
+            const ScopedLogCapture capture;
             const auto result = process(source, {&plugin});
 
             expect(!result.hasError(), result.errorMessage);
@@ -761,7 +865,16 @@ public:
             expectEquals(result.analysisRecord.lengthInSamples, sourceLength);
             expect(peakDecibels(result.analysisRecord) <= 0.0, juce::String(peakDecibels(result.analysisRecord)));
             expect(peakDecibels(result.analysisRecord) > -0.1, juce::String(peakDecibels(result.analysisRecord)));
-            expect(result.notice.contains("clipping"), result.notice);
+            expect(result.notice.contains("Output clipping"), result.notice);
+            expect(std::ranges::any_of(capture.getMessages(), [&](const auto& message) {
+                return message.endsWith(
+                    utils::format(
+                        "[WARN]: Plugin processing warning: {}, {}",
+                        result.outputFile.getFullPathName().quoted(),
+                        result.notice
+                    )
+                );
+            }));
         }
     }
 

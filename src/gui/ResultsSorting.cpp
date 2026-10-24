@@ -149,6 +149,12 @@ int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
         case columnType:
             return compareNatural(formatTypeLabel(lhs), formatTypeLabel(rhs));
 
+        case columnBitDepth:
+            if (lhs.bitsPerSample == rhs.bitsPerSample) {
+                return 0;
+            }
+            return lhs.bitsPerSample < rhs.bitsPerSample ? -1 : 1;
+
         case columnBitrate:
             return compareBitrates(lhs, rhs);
 

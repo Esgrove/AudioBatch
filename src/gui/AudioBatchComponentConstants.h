@@ -36,6 +36,7 @@ enum AudioFileTableColumn : std::uint8_t {
     columnIntegratedLufs,
     columnCustomGain,
     columnStatus,
+    columnBitDepth,
 };
 
 constexpr auto supportedAudioFilePatterns {"*.wav;*.aif;*.aiff;*.flac;*.mp3"};

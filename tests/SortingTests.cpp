@@ -44,6 +44,28 @@ public:
     /// Runs the sorting checks.
     void runTest() override
     {
+        beginTest("Bit depth sorts numerically in both directions, with unavailable depths first");
+        {
+            auto unknown = makeRecord("unknown", 0.5f, -20.0);
+            auto eightBit = makeRecord("eight", 0.5f, -20.0);
+            auto sixteenBit = makeRecord("sixteen", 0.5f, -20.0);
+            auto twentyFourBit = makeRecord("twenty-four", 0.5f, -20.0);
+            unknown.bitsPerSample = 0;
+            eightBit.bitsPerSample = 8;
+            sixteenBit.bitsPerSample = 16;
+            twentyFourBit.bitsPerSample = 24;
+            expectEquals(results_sorting::compareRecordsByColumn(sixteenBit, sixteenBit, columnBitDepth), 0);
+            expect(results_sorting::compareRecordsByColumn(eightBit, sixteenBit, columnBitDepth) < 0);
+
+            std::vector records {twentyFourBit, sixteenBit, unknown, eightBit};
+            results_sorting::SortState state {.primaryColumnId = columnBitDepth, .statusText = {}};
+            results_sorting::sortRecords(records, state);
+            expect(namesOf(records) == juce::StringArray {"unknown", "eight", "sixteen", "twenty-four"});
+            state.primaryForwards = false;
+            results_sorting::sortRecords(records, state);
+            expect(namesOf(records) == juce::StringArray {"twenty-four", "sixteen", "eight", "unknown"});
+        }
+
         beginTest("Peaks compare by magnitude regardless of polarity");
         {
             const auto quiet = makeRecord("quiet", -0.25f, -20.0);
@@ -259,6 +281,7 @@ private:
         constexpr std::array columns {
             columnName,
             columnPath,
+            columnBitDepth,
             columnSampleRate,
             columnPeakLeft,
             columnPeakRight,
@@ -322,6 +345,7 @@ private:
             record.overallTruePeak = static_cast<double>(pickPeak());
             record.maxShortTermLufs = pickLoudness();
             record.sampleRate = random.nextBool() ? 44100 : 48000;
+            record.bitsPerSample = random.nextInt(5) * 8;
             record.hasCustomGain = random.nextBool();
             record.customGainDb = static_cast<float>(random.nextInt(3));
             record.status = random.nextBool() ? AudioAnalysisStatus::analyzed : AudioAnalysisStatus::cached;

@@ -51,6 +51,19 @@ public:
             expectEquals(formatSampleRateDisplay(record), juce::String("44.1 kHz"));
         }
 
+        beginTest("Bit depth uses the analyzed value or the existing unavailable label");
+        {
+            AudioAnalysisRecord record;
+            expectEquals(formatBitsPerSampleDisplay(record), juce::String("-"));
+            record.bitsPerSample = 16;
+            expectEquals(formatBitsPerSampleDisplay(record), juce::String("16"));
+            record.bitsPerSample = 24;
+            expectEquals(formatBitsPerSampleDisplay(record), juce::String("24"));
+            record.bitsPerSample = 0;
+            record.file = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("song.mp3");
+            expectEquals(formatBitsPerSampleDisplay(record), juce::String("Unknown"));
+        }
+
         beginTest("Bitrate is derived from file size and duration");
         {
             AudioAnalysisRecord record;

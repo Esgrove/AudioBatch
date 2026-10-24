@@ -134,6 +134,14 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
         juce::TableHeaderComponent::defaultFlags
     );
     header.addColumn(
+        "Bit Depth",
+        columnBitDepth,
+        layout::table::initialColumnWidth(columnBitDepth),
+        layout::table::minimumColumnWidth(columnBitDepth),
+        layout::table::metricMaximumWidth,
+        juce::TableHeaderComponent::defaultFlags
+    );
+    header.addColumn(
         "Bitrate",
         columnBitrate,
         layout::table::initialColumnWidth(columnBitrate),
@@ -300,6 +308,10 @@ void AudioFileTableModel::paintCell(
         case columnType:
             text = formatTypeLabel(record);
             font = juce::CustomLookAndFeel::get_mono_font();
+            break;
+        case columnBitDepth:
+            text = formatBitsPerSampleDisplay(record);
+            justification = juce::Justification::centredRight;
             break;
         case columnBitrate:
             text = formatBitrateDisplay(record);

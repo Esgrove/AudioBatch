@@ -10,8 +10,8 @@
 /// so a worker never deadlocks against a message thread that waits for it,
 /// while processBlock runs on the calling worker thread.
 /// The chain output is rendered to an unquantized 32-bit float file first,
-/// so the peak and the end of the audible tail are known before the final AIFF file is written at the source bit depth,
-/// turned down when it would clip, trimmed, and dithered when 16-bit.
+/// so the end of the audible tail is known before the final 16-bit AIFF file is written.
+/// Output is truncated without additional dither or gain adjustment. Plugins handle dithering and output level.
 /// The AIFF file is validated, given the original file's metadata,
 /// and then moved into place, with the processed file re-analyzed for the result record.
 
@@ -42,10 +42,12 @@ constexpr int finalizeBlockSize {32768};
 /// Level below which rendered tail samples count as silence and are trimmed from the end of the output.
 /// The value is -96 dB, the noise floor of 16-bit audio.
 constexpr float silenceThreshold {1.5849e-5f};
-/// Output bit depth at and below which TPDF dither is added when quantizing the rendered audio.
-constexpr int maximumDitheredBitDepth {16};
-/// Seed for the dither noise, so processing the same file twice writes identical output.
-constexpr juce::int64 ditherSeed {0x41554449};
+/// Fixed PCM depth of plugin-processed output, independent of the source.
+constexpr int outputBitsPerSample {16};
+/// Scale from floating-point full scale to a signed 16-bit PCM value.
+constexpr int outputPcmScale {32'768};
+/// JUCE's integer writer takes PCM values aligned to the most significant bits of a 32-bit integer.
+constexpr int outputPcmAlignment {65'536};
 constexpr auto cancelledMessage {"Processing was cancelled"};
 
 /// Share of a file's progress taken by analyzing a source that changed since its last analysis.
@@ -55,10 +57,8 @@ constexpr float renderProgressEnd {0.7f};
 /// Progress at which writing the final output ends and analyzing the output begins.
 constexpr float writeProgressEnd {0.85f};
 
-/// Level and length measurements of the rendered chain output, used to finalize the output file.
+/// Length measurements of the rendered chain output, used to finalize the output file.
 struct RenderSummary {
-    /// Largest absolute sample value of the rendered output.
-    float peak {0.0f};
     /// Number of samples written to the intermediate file.
     juce::int64 samplesWritten {0};
     /// Position of the last sample above the silence threshold, or -1 when the output is silent.
@@ -251,7 +251,7 @@ static juce::AudioBuffer<float> prepareOutputView(
 
 /// Returns true when every sample of the block is a finite number.
 /// An unstable plugin can produce infinity or NaN,
-/// which would turn the clip guard gain into zero or reach the integer writer unchanged.
+/// which must be rejected before converting the rendered audio to integer PCM.
 bool isBlockFinite(const juce::AudioBuffer<float>& block, const int numSamples)
 {
     for (int channel = 0; channel < block.getNumChannels(); ++channel) {
@@ -265,14 +265,10 @@ bool isBlockFinite(const juce::AudioBuffer<float>& block, const int numSamples)
     return true;
 }
 
-/// Updates the peak and the last audible sample position with a block about to be written.
+/// Updates the last audible sample position with a block about to be written.
 /// The block must only hold finite samples.
 static void measureOutputBlock(const juce::AudioBuffer<float>& block, const int numSamples, RenderSummary& summary)
 {
-    for (int channel = 0; channel < block.getNumChannels(); ++channel) {
-        summary.peak = juce::jmax(summary.peak, block.getMagnitude(channel, 0, numSamples));
-    }
-
     for (int sample = numSamples - 1; sample >= 0; --sample) {
         for (int channel = 0; channel < block.getNumChannels(); ++channel) {
             if (std::abs(block.getSample(channel, sample)) > silenceThreshold) {
@@ -373,16 +369,6 @@ static juce::String renderThroughChain(
     return {};
 }
 
-/// Returns the gain that keeps the rendered output from clipping, which is 1 when the peak is within full scale.
-/// The ceiling leaves room for the dither noise when the output is dithered.
-static float getClipGuardGain(const RenderSummary& summary, const int bitsPerSample)
-{
-    const auto ditherHeadroom
-        = bitsPerSample <= maximumDitheredBitDepth ? 2.0f / std::ldexp(1.0f, bitsPerSample - 1) : 0.0f;
-    const auto ceiling = 1.0f - ditherHeadroom;
-    return summary.peak > ceiling ? ceiling / summary.peak : 1.0f;
-}
-
 /// Returns the number of samples to keep from the rendered output.
 /// Trailing silence from the tail allowance is dropped, but the output is never shorter than the source.
 static juce::int64 getFinalLength(const RenderSummary& summary, const juce::int64 sourceLength)
@@ -392,42 +378,27 @@ static juce::int64 getFinalLength(const RenderSummary& summary, const juce::int6
     );
 }
 
-/// Adds triangular (TPDF) dither of one least significant bit to the block
-/// before it is quantized, which turns the quantization error into benign noise
-/// instead of distortion on quiet material.
-static void addDither(
-    juce::AudioBuffer<float>& block,
-    const int numSamples,
-    const int bitsPerSample,
-    juce::Random& random
-)
-{
-    // The JUCE writers scale full scale to 2^(bits - 1) - 1 integer steps.
-    const auto leastSignificantBit = 1.0f / (std::ldexp(1.0f, bitsPerSample - 1) - 1.0f);
-
-    for (int channel = 0; channel < block.getNumChannels(); ++channel) {
-        for (int sample = 0; sample < numSamples; ++sample) {
-            block.addSample(channel, sample, (random.nextFloat() - random.nextFloat()) * leastSignificantBit);
-        }
-    }
-}
-
-/// Copies the rendered intermediate audio into the final writer, applying the clip guard gain,
-/// trimming the trailing silence, and dithering 16-bit output.
+/// Copies the rendered intermediate audio into the final writer, trimming the trailing silence.
+/// Low bits are discarded without dither and out-of-range samples saturate without changing gain.
+/// Explicit quantization avoids the float writer's full-scale scaling changing exact 16-bit sample values.
+/// Sets outputClipped when a sample is saturated during this final PCM conversion.
 /// The written fraction is reported to onProgress after each block.
 /// Returns an error message, or an empty string when the whole output was written.
 static juce::String writeFinalOutput(
     juce::AudioFormatReader& renderedReader,
     juce::AudioFormatWriter& writer,
     const juce::int64 finalLength,
-    const float gain,
-    const int bitsPerSample,
+    bool& outputClipped,
     const utils::CancellationCheck& isCancelled,
     const utils::ProgressCallback& onProgress
 )
 {
     juce::AudioBuffer<float> block(static_cast<int>(renderedReader.numChannels), finalizeBlockSize);
-    juce::Random random(ditherSeed);
+    juce::AudioBuffer<int> quantizedBlock(block.getNumChannels(), finalizeBlockSize);
+    std::vector<const int*> outputChannels(static_cast<std::size_t>(block.getNumChannels()) + 1, nullptr);
+    for (int channel = 0; channel < block.getNumChannels(); ++channel) {
+        outputChannels[static_cast<std::size_t>(channel)] = quantizedBlock.getReadPointer(channel);
+    }
 
     for (juce::int64 samplePosition = 0; samplePosition < finalLength; samplePosition += finalizeBlockSize) {
         if (utils::isCancellationRequested(isCancelled)) {
@@ -441,13 +412,24 @@ static juce::String writeFinalOutput(
             return "Failed while reading the rendered audio";
         }
 
-        block.applyGain(0, samplesThisBlock, gain);
-
-        if (bitsPerSample <= maximumDitheredBitDepth) {
-            addDither(block, samplesThisBlock, bitsPerSample, random);
+        for (int channel = 0; channel < block.getNumChannels(); ++channel) {
+            const std::span<const float> input(
+                block.getReadPointer(channel), static_cast<std::size_t>(samplesThisBlock)
+            );
+            const std::span<int> output(
+                quantizedBlock.getWritePointer(channel), static_cast<std::size_t>(samplesThisBlock)
+            );
+            for (std::size_t sample = 0; sample < input.size(); ++sample) {
+                constexpr float minimumPcmValue {-static_cast<float>(outputPcmScale)};
+                constexpr float maximumPcmValue {static_cast<float>(outputPcmScale - 1)};
+                const auto scaled = input[sample] * static_cast<float>(outputPcmScale);
+                outputClipped = outputClipped || scaled < minimumPcmValue || scaled > maximumPcmValue;
+                const auto limited = juce::jlimit(minimumPcmValue, maximumPcmValue, scaled);
+                output[sample] = static_cast<int>(std::floor(limited)) * outputPcmAlignment;
+            }
         }
 
-        if (!writer.writeFromAudioSampleBuffer(block, 0, samplesThisBlock)) {
+        if (!writer.write(outputChannels.data(), samplesThisBlock)) {
             return "Failed while writing processed audio data";
         }
 
@@ -534,8 +516,8 @@ static juce::String renderChainToFile(
     return renderError;
 }
 
-/// Writes the rendered intermediate audio to the AIFF output file at the given bit depth,
-/// with the clip guard gain, the trimmed length, and dither for 16-bit output.
+/// Writes the trimmed intermediate audio as 16-bit AIFF without additional gain adjustment or dither.
+/// Sets outputClipped only when the final PCM conversion saturates samples.
 /// The write progress is reported to onProgress.
 /// Returns an error message, or an empty string when the output was written.
 static juce::String writeProcessedAiff(
@@ -544,8 +526,7 @@ static juce::String writeProcessedAiff(
     const juce::File& outputFile,
     const juce::AudioFormatReader& sourceReader,
     const juce::int64 finalLength,
-    const float gain,
-    const int bitsPerSample,
+    bool& outputClipped,
     const utils::CancellationCheck& isCancelled,
     const utils::ProgressCallback& onProgress
 )
@@ -574,7 +555,7 @@ static juce::String writeProcessedAiff(
     const auto writerOptions = juce::AudioFormatWriterOptions()
                                    .withSampleRate(sourceReader.sampleRate)
                                    .withNumChannels(static_cast<int>(renderedReader->numChannels))
-                                   .withBitsPerSample(bitsPerSample)
+                                   .withBitsPerSample(outputBitsPerSample)
                                    .withMetadataValues(utils::aiffWriterMetadata(sourceReader.metadataValues));
     const auto writer = aiffFormat.createWriterFor(outputStream, writerOptions);
 
@@ -582,7 +563,7 @@ static juce::String writeProcessedAiff(
         return "Could not create AIFF writer for output";
     }
 
-    return writeFinalOutput(*renderedReader, *writer, finalLength, gain, bitsPerSample, isCancelled, onProgress);
+    return writeFinalOutput(*renderedReader, *writer, finalLength, outputClipped, isCancelled, onProgress);
 }
 
 /// Processes a single file through the given plugin instances in order.
@@ -602,10 +583,11 @@ static juce::String writeProcessedAiff(
 /// a chain of instances must only be in use by one thread at a time.
 /// A mono file running through a stereo chain feeds both plugin inputs and is written back as mono,
 /// using the average of both output channels. The chain renders into an unquantized intermediate file first.
-/// When the rendered peak exceeds full scale,
-/// the whole output is turned down just enough to avoid clipping, which is reported in the result notice.
+/// Rendered samples outside the 16-bit PCM range saturate without gain reduction,
+/// and clipping is reported in the result notice.
 /// Isolated source blocks that fail to decode are processed as decoded and reported in the notice too.
-/// Trailing silence from the tail allowance is trimmed, and 16-bit output is dithered.
+/// Trailing silence from the tail allowance is trimmed.
+/// Output is always 16-bit PCM without additional dithering or post-chain gain adjustment.
 /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again first.
 /// An `.aif` source is rewritten in place after a copy of it is disposed of through options.disposeFile.
 /// Progress of the whole file, through any source analysis, the render, the final write, and the output analysis,
@@ -678,10 +660,8 @@ PluginProcessingResult processFileWithPlugins(
     // The hidden name keeps a half-written output out of folder scans,
     // and out of later scans after a crash.
     const juce::TemporaryFile temporaryFile(outputFile, juce::TemporaryFile::useHiddenFile);
-    const auto bitsPerSample = getNormalizationOutputBitDepth(record, *reader);
-    const auto clipGuardGain = getClipGuardGain(summary, bitsPerSample);
-
     const auto finalLength = getFinalLength(summary, reader->lengthInSamples);
+    bool outputClipped = false;
 
     if (const auto writeError = writeProcessedAiff(
             *aiffFormat,
@@ -689,8 +669,7 @@ PluginProcessingResult processFileWithPlugins(
             temporaryFile.getFile(),
             *reader,
             finalLength,
-            clipGuardGain,
-            bitsPerSample,
+            outputClipped,
             isCancelled,
             utils::makeProgressRange(onProgress, renderProgressEnd, writeProgressEnd)
         );
@@ -741,11 +720,10 @@ PluginProcessingResult processFileWithPlugins(
 
     juce::StringArray notices;
 
-    if (clipGuardGain < 1.0f) {
-        const auto clipNotice
-            = utils::format("Reduced {:.1f} dB to avoid clipping", -juce::Decibels::gainToDecibels(clipGuardGain));
-        notices.add(clipNotice);
-        utils::logInfo("Plugin processing notice: {}, {}", outputFile.getFullPathName().quoted(), clipNotice);
+    if (outputClipped) {
+        const juce::String clippingNotice {"Output clipping: final render exceeded the 16-bit PCM range"};
+        notices.add(clippingNotice);
+        utils::logWarn("Plugin processing warning: {}, {}", outputFile.getFullPathName().quoted(), clippingNotice);
     }
 
     if (summary.decodeNotice.isNotEmpty()) {

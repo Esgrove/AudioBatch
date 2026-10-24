@@ -76,7 +76,16 @@ At the end of a file, preview drains the delayed final audio and the reported ef
 with each plugin's tail limited to 30 seconds.
 The position marker stays at the file end while the tail plays.
 Stopping, seeking, switching files, or disabling the chain discards the old tail.
-Unlike offline processing, live preview does not perform a whole-file anti-clipping gain adjustment.
+Neither live preview nor offline plugin processing applies post-chain anti-clipping gain adjustment.
+
+Offline plugin processing always writes 16-bit PCM AIFF, regardless of the source bit depth.
+AudioBatch truncates to 16 bits without adding dither or changing the plugin chain's output gain.
+Configure dithering and prevent clipping in the plugins. Samples outside the PCM range saturate on output.
+Clipping during the final 16-bit PCM conversion is reported in the processing result and logged as a warning,
+without automatic gain reduction.
+Floating-point levels above full scale between plugins do not trigger this warning.
+Latency compensation and trailing-silence trimming still apply.
+Standalone normalization is unchanged.
 
 ### Audio Settings
 
