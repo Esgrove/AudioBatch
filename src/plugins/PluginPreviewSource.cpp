@@ -153,6 +153,12 @@ bool PluginPreviewSource::isPlaying() const noexcept
     return playing && !stopRequested;
 }
 
+/// Keeps the output device alive only until the short user-stop fade has finished rendering.
+bool PluginPreviewSource::isStopping() const noexcept
+{
+    return playing && stopRequested;
+}
+
 /// Reports non-finite plugin output for the host to surface outside the audio callback.
 bool PluginPreviewSource::hasFailed() const noexcept
 {

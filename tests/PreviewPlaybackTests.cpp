@@ -219,6 +219,7 @@ public:
         testResampling();
         testCueStartPosition();
         testInitialPosition();
+        testDeviceOwnership();
         testPreferences();
         testLoudnessAxisIntervals();
         testLatencyFormattingAndTailLimit();
@@ -530,12 +531,14 @@ private:
         expectWithinAbsoluteError(getPreviewStartPositionSeconds(enabled, &markers, 10.0), 0.0, 0.000001);
     }
 
-    /// Exercises deferred cue resolution on one player without requesting device access or rendering callbacks.
+    /// Exercises deferred cue resolution on one player with a simulated output driver.
     /// Each load establishes a fresh wait so completion, cancellation, release, and replacement remain independent.
     void testInitialPosition()
     {
         const juce::URL silenceUrl(fixtureFile("silence_stereo_44100_16.wav"));
+        TestAudioDeviceState device;
         AudioPreviewPlayer player;
+        installTestAudioDevice(player.getDeviceManager(), device);
 
         beginTest("Resolving a stopped preview positions it once without starting playback");
         expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
@@ -622,7 +625,96 @@ private:
         expect(player.isPlaying());
         player.stop();
         expect(!player.isPlaying());
+        renderTestAudioDevice(device);
+        player.updatePlaybackStatus();
         expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+    }
+
+    /// Exercises the real device manager and player lifetime without native audio hardware.
+    void testDeviceOwnership()
+    {
+        const juce::URL audioUrl(fixtureFile("silence_stereo_44100_16.wav"));
+        TestAudioDeviceState device;
+        {
+            AudioPreviewPlayer player;
+            installTestAudioDevice(player.getDeviceManager(), device);
+            beginTest("Startup and file selection leave the audio device closed");
+            expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+            expect(player.load(audioUrl));
+            player.updatePlaybackStatus();
+            expectEquals(device.opens, 0);
+
+            beginTest("Playback opens only output channels and stopping releases the driver after its fade");
+            player.start();
+            expect(player.isPlaying());
+            expectEquals(device.opens, 1);
+            expectEquals(device.inputChannels, 0);
+            expectEquals(device.outputChannels, 2);
+            renderTestAudioDevice(device);
+            player.stop();
+            renderTestAudioDevice(device);
+            player.updatePlaybackStatus();
+            expect(!player.isPlaying());
+            expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+            expectEquals(device.closes, 1);
+
+            beginTest("Suspension releases immediately and does not restart until an explicit play");
+            const auto position = player.getCurrentPosition();
+            player.start();
+            expectEquals(device.opens, 2);
+            player.setApplicationActive(false);
+            expect(!player.isPlaying());
+            expect(player.hasLoadedSource());
+            expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+            expectEquals(device.closes, 2);
+            expectWithinAbsoluteError(player.getCurrentPosition(), position, 0.000001);
+            player.updatePlaybackStatus();
+            expectEquals(device.opens, 2);
+            player.setApplicationActive(true);
+            expect(!player.isPlaying());
+            expectEquals(device.opens, 2);
+
+            beginTest("Audio Settings leases the device only while the application is focused");
+            player.setDeviceSettingsActive(true);
+            expect(player.getDeviceManager().getCurrentAudioDevice() != nullptr);
+            expect(!player.isPlaying());
+            player.updatePlaybackStatus();
+            expect(player.getDeviceManager().getCurrentAudioDevice() != nullptr);
+            player.setApplicationActive(false);
+            expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+            player.setApplicationActive(true);
+            expect(player.getDeviceManager().getCurrentAudioDevice() != nullptr);
+            expect(!player.isPlaying());
+            player.setDeviceSettingsActive(false);
+            expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+
+            beginTest("EOF releases the output device even without waveform repainting");
+            player.setPosition(0.999);
+            player.start();
+            renderTestAudioDevice(device);
+            player.updatePlaybackStatus();
+            expect(!player.isPlaying());
+            expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+            expectEquals(device.opens, device.closes);
+
+            beginTest("An unavailable device reports its error and does not leave logical playback active");
+            juce::String error;
+            player.setErrorCallback([&](const juce::String& message) { error = message; });
+            device.openError = "Test output is in use by another application";
+            player.start();
+            expect(!player.isPlaying());
+            expectEquals(error, device.openError);
+            expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+            device.openError.clear();
+            player.setErrorCallback({});
+
+            beginTest("Shutdown balances all device opens even if playback is still active");
+            player.start();
+            expect(player.isPlaying());
+            expectEquals(device.opens, device.closes + 1);
+        }
+        expectEquals(device.opens, device.closes);
+        expect(device.callback == nullptr);
     }
 
     /// Uses an isolated settings file to verify unset defaults, persistence, and actual continuation policy.

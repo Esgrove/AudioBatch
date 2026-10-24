@@ -17,6 +17,16 @@ constexpr double fixturePeakDecibels = -6.0206;
 /// Mono fixtures are measured as dual mono, so they read the same as the stereo ones.
 constexpr double fixtureLoudness = fixturePeakDecibels;
 
+/// Observes simulated driver ownership without touching hardware. Must outlive the installed device manager.
+struct TestAudioDeviceState {
+    int opens {0};
+    int closes {0};
+    int inputChannels {0};
+    int outputChannels {0};
+    juce::String openError;
+    juce::AudioIODeviceCallback* callback {nullptr};
+};
+
 /// Captures log messages from any worker and restores the previous logger when the scope ends.
 /// All workers using the logger must finish before this object is destroyed.
 class ScopedLogCapture final : public juce::Logger
@@ -73,4 +83,7 @@ juce::File fixtureFile(const juce::String& name);
 
 /// Returns the sample peak of an analysis record in dBFS.
 double peakDecibels(const AudioAnalysisRecord& record);
+
+void installTestAudioDevice(juce::AudioDeviceManager& manager, TestAudioDeviceState& state);
+void renderTestAudioDevice(TestAudioDeviceState& state, int sampleCount = 512);
 }  // namespace audiobatch::tests

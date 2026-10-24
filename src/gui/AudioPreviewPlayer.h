@@ -25,7 +25,8 @@ class PluginChain;
 class AudioPreviewPlayer :
     public juce::ChangeBroadcaster,
     private juce::AudioIODeviceCallback,
-    private juce::AsyncUpdater
+    private juce::AsyncUpdater,
+    private juce::Timer
 {
 public:
     AudioPreviewPlayer();
@@ -40,7 +41,9 @@ public:
     bool load(const juce::URL& audioUrl, bool waitForInitialPosition = false);
 
     void release();
-    void requestDeviceAccess();
+    void suspend();
+    void setApplicationActive(bool active);
+    void setDeviceSettingsActive(bool active);
     void stop();
     void start();
     void setPosition(double seconds);
@@ -90,7 +93,10 @@ private:
         const juce::AudioIODeviceCallbackContext& context
     ) override;
     void handleAsyncUpdate() override;
+    void timerCallback() override;
+    void closeAudioDevice();
     void prepareInput();
+    bool openAudioDevice();
     bool reposition(double seconds, bool resume);
     void reportError(const juce::String& message) const;
 
@@ -120,6 +126,8 @@ private:
     bool pluginPreviewEnabled {false};
     bool latencyCompensated {true};
     bool lastReportedPlaying {false};
+    bool applicationActive {true};
+    bool deviceSettingsActive {false};
 
     /// Holds a new file silent until its asynchronous cue metadata determines the initial position.
     /// Explicit seeks cancel the wait, and start/stop retain the user's latest playback intent.

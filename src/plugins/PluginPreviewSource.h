@@ -37,6 +37,7 @@ public:
     void requestStop();
 
     [[nodiscard]] bool isPlaying() const noexcept;
+    [[nodiscard]] bool isStopping() const noexcept;
     [[nodiscard]] bool hasFailed() const noexcept;
     [[nodiscard]] double getCurrentPosition() const noexcept;
 

@@ -382,19 +382,6 @@ AudioBatchComponent::AudioBatchComponent() :
     connectCoordinatorCallbacks();
     logStartupCheckpoint("analysis and normalization callbacks configured");
 
-#if JUCE_WINDOWS
-    // Opening Windows audio devices can take seconds and consume the launch's foreground opportunity.
-    // Let the main window activate before running that work on the message thread.
-    juce::MessageManager::callAsync([safeThis = SafePointer(this)] {
-        if (safeThis != nullptr) {
-            safeThis->previewPlayer.requestDeviceAccess();
-        }
-    });
-#else
-    previewPlayer.requestDeviceAccess();
-#endif
-    logStartupCheckpoint("audio device access requested or scheduled");
-
     setOpaque(true);
     setSize(layout::initialComponentWidth, layout::initialComponentHeight);
     setWantsKeyboardFocus(true);
@@ -405,6 +392,11 @@ AudioBatchComponent::AudioBatchComponent() :
 AudioBatchComponent::~AudioBatchComponent()
 {
     previewAnimationAttachment = {};
+    if (settingsWindow != nullptr) {
+        settingsWindow->removeComponentListener(this);
+    }
+    previewPlayer.setDeviceSettingsActive(false);
+    previewPlayer.release();
     fileActivity.clearAllActive();
     utils::logDebug("Application shutdown: stopping preview metadata worker");
     if (seratoPreviewLoader) {
@@ -418,7 +410,6 @@ AudioBatchComponent::~AudioBatchComponent()
     pluginCoordinator.cancelAndWait();
 
     utils::logDebug("Application shutdown: releasing preview and dialogs");
-    previewPlayer.release();
     previewPlayer.removeChangeListener(this);
     previewPlayer.setErrorCallback({});
     pluginChain->setChainChangedCallback({});
@@ -533,6 +524,7 @@ bool AudioBatchComponent::hasAnyRecords() const
 /// Opens the audio-device settings dialog.
 void AudioBatchComponent::showAudioSettingsWindow()
 {
+    previewPlayer.setDeviceSettingsActive(true);
     openDialogWindow(
         settingsWindow,
         &audioSettingsComponent,
@@ -540,6 +532,15 @@ void AudioBatchComponent::showAudioSettingsWindow()
         layout::audioSettings::preferredWidth,
         layout::audioSettings::preferredHeight
     );
+    settingsWindow->addComponentListener(this);
+}
+
+/// Releases the temporary settings lease when the dialog is hidden, including its native close button.
+void AudioBatchComponent::componentVisibilityChanged(juce::Component& component)
+{
+    if (&component == settingsWindow.getComponent()) {
+        previewPlayer.setDeviceSettingsActive(component.isVisible());
+    }
 }
 
 /// Returns the current row index of the record with the given full path, or -1

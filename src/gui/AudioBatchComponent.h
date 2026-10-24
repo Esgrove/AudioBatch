@@ -40,7 +40,8 @@ class AudioBatchComponent :
     public juce::FileDragAndDropTarget,
     public juce::DragAndDropContainer,
     juce::ChangeListener,
-    juce::KeyListener
+    juce::KeyListener,
+    private juce::ComponentListener
 {
 public:
     AudioBatchComponent();
@@ -104,6 +105,7 @@ protected:
     ) override;
 
 private:
+    void componentVisibilityChanged(juce::Component& component) override;
     bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
     void updatePreviewAnimation();
