@@ -89,6 +89,15 @@ Standalone normalization is unchanged.
 
 ### Audio Settings
 
+Preview opens the audio output device only when playback starts and never requests recording inputs.
+Stopping playback, reaching the end including effect tails, or a playback failure releases the device.
+On Windows, switching to another application stops preview and releases the sound card.
+Returning to AudioBatch does not automatically resume playback or reopen the device.
+The selected interface, sample rate, and buffer size are reused on the next explicit play.
+An open Audio Settings window temporarily holds the device for sample-rate, buffer-size, and driver configuration.
+Closing that window releases an idle device. Switching applications releases it even while Audio Settings is open.
+Playback is output-only on macOS as well and does not require microphone access.
+
 **Audio Settings** separates audio interface/playback configuration from preview preferences.
 The preview preferences are also available as ticked commands in the Options menu.
 Plugin preview is controlled only from this window and the menu, keeping the main playback controls uncluttered.

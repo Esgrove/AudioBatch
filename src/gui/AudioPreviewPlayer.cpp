@@ -19,6 +19,8 @@ namespace
 constexpr int readAheadBufferSamples {32768};
 constexpr int readAheadThreadStopTimeoutMilliseconds {2000};
 constexpr juce::uint32 seekBufferTimeoutMilliseconds {2000};
+/// Device ownership must not depend on visible waveform refreshes or focused component callbacks.
+constexpr int deviceStatusIntervalMilliseconds {50};
 
 /// Records read failures on the decoding thread rather than silently turning them into successful playback.
 class PreviewReaderSource final : public juce::AudioFormatReaderSource
@@ -79,17 +81,20 @@ private:
 };
 }  // namespace
 
-/// Creates a device-free player first. Opening the device is deferred until permission handling completes.
+/// Creates a device-free player. The output device opens only when playback starts.
 AudioPreviewPlayer::AudioPreviewPlayer()
 {
     formatManager.registerBasicFormats();
     readAheadThread.startThread(juce::Thread::Priority::high);
     deviceManager.addAudioCallback(this);
+    startTimer(deviceStatusIntervalMilliseconds);
 }
 
 /// Disconnects callbacks before destroying file buffers or the read-ahead thread.
 AudioPreviewPlayer::~AudioPreviewPlayer()
 {
+    stopTimer();
+    suspend();
     cancelPendingUpdate();
     deviceManager.removeAudioCallback(this);
     release();
@@ -97,19 +102,89 @@ AudioPreviewPlayer::~AudioPreviewPlayer()
     readAheadThread.stopThread(readAheadThreadStopTimeoutMilliseconds);
 }
 
-/// Requests permission without retaining a dangling player if the application closes during the request.
-void AudioPreviewPlayer::requestDeviceAccess()
+/// Opens only output channels, restoring the last selection without silently falling back to another device.
+/// Initial startup alone never opens hardware or requests recording permission.
+bool AudioPreviewPlayer::openAudioDevice()
 {
-    const juce::WeakReference safeThis(this);
-    juce::RuntimePermissions::request(juce::RuntimePermissions::recordAudio, [safeThis](const bool granted) {
-        if (safeThis == nullptr) {
-            return;
-        }
-        const auto error = safeThis->deviceManager.initialise(granted ? 2 : 0, 2, nullptr, true, {}, nullptr);
-        if (error.isNotEmpty()) {
-            safeThis->reportError(error);
-        }
-    });
+    if (deviceManager.getCurrentAudioDevice() != nullptr) {
+        return true;
+    }
+    auto setup = deviceManager.getAudioDeviceSetup();
+    setup.inputDeviceName.clear();
+    setup.inputChannels.clear();
+    setup.useDefaultInputChannels = false;
+    const auto error = setup.outputDeviceName.isEmpty() ? deviceManager.initialise(0, 2, nullptr, true, {}, &setup)
+                                                        : deviceManager.setAudioDeviceSetup(setup, false);
+    if (error.isNotEmpty() || deviceManager.getCurrentAudioDevice() == nullptr) {
+        closeAudioDevice();
+        reportError(error.isNotEmpty() ? error : juce::String("No audio output device is available"));
+        return false;
+    }
+    cancelPendingUpdate();
+    handleAsyncUpdate();
+    return deviceReady.load();
+}
+
+/// Releases the driver on the message thread, retaining its selected configuration for the next explicit play.
+/// Audio callbacks use a try-lock, so closing while the rendering lock is held cannot block on that lock.
+void AudioPreviewPlayer::closeAudioDevice()
+{
+    cancelPendingUpdate();
+    deviceReady.store(false);
+    pendingRate.store(0.0);
+    if (deviceManager.getCurrentAudioDevice() != nullptr) {
+        deviceManager.closeAudioDevice();
+        deviceManager.sendChangeMessage();
+        sendChangeMessage();
+    }
+}
+
+/// Stops immediately and relinquishes the driver without unloading the file or auto-resuming later.
+/// Used for application focus loss and shutdown, when retaining a driver for the stop ramp is inappropriate.
+void AudioPreviewPlayer::suspend()
+{
+    const juce::ScopedLock lock(renderingLock);
+    startWhenInitialPositionReady = false;
+    previewSource.stop();
+    closeAudioDevice();
+    sendChangeMessage();
+}
+
+/// Releases the interface on app deactivation without auto-resuming preview when focus returns.
+/// An explicitly open settings window may reacquire the interface to configure it after reactivation.
+void AudioPreviewPlayer::setApplicationActive(const bool active)
+{
+    if (applicationActive == active) {
+        return;
+    }
+    applicationActive = active;
+    if (!active) {
+        suspend();
+    } else if (deviceSettingsActive) {
+        const auto opened = openAudioDevice();
+        juce::ignoreUnused(opened);
+    }
+}
+
+/// Temporarily leases the interface for its native settings UI, but only while this application is active.
+void AudioPreviewPlayer::setDeviceSettingsActive(const bool active)
+{
+    deviceSettingsActive = active;
+    if (active && applicationActive) {
+        const auto opened = openAudioDevice();
+        juce::ignoreUnused(opened);
+    } else {
+        updatePlaybackStatus();
+    }
+}
+
+/// Keeps device release independent of GUI painting, including EOF, hidden windows and Windows app switching.
+void AudioPreviewPlayer::timerCallback()
+{
+#if JUCE_WINDOWS
+    setApplicationActive(juce::Process::isForegroundProcess());
+#endif
+    updatePlaybackStatus();
 }
 
 /// Loads a mono/stereo source without starting it or altering the file on disk.
@@ -171,6 +246,7 @@ void AudioPreviewPlayer::prepareInput()
 void AudioPreviewPlayer::release()
 {
     const juce::ScopedLock lock(renderingLock);
+    suspend();
     previewSource.releaseResources();
     previewSource.setInput(nullptr, 0.0, 2);
     resamplingSource.reset();
@@ -252,6 +328,10 @@ void AudioPreviewPlayer::setInputGain(const float linearGain, const bool immedia
 /// Flushes decoder/resampler history before resuming from an audible position.
 bool AudioPreviewPlayer::reposition(const double seconds, const bool resume)
 {
+    if (resume && !openAudioDevice()) {
+        previewSource.stop();
+        return false;
+    }
     previewSource.stop();
     previewSource.setPosition(seconds);
     if (bufferingSource != nullptr && resamplingSource != nullptr) {
@@ -277,7 +357,7 @@ bool AudioPreviewPlayer::reposition(const double seconds, const bool resume)
 void AudioPreviewPlayer::start()
 {
     const juce::ScopedLock lock(renderingLock);
-    if (readerSource == nullptr) {
+    if (readerSource == nullptr || !applicationActive) {
         return;
     }
     if (waitingForInitialPosition) {
@@ -391,6 +471,9 @@ void AudioPreviewPlayer::audioDeviceStopped()
 void AudioPreviewPlayer::handleAsyncUpdate()
 {
     const juce::ScopedLock lock(renderingLock);
+    if (deviceManager.getCurrentAudioDevice() == nullptr) {
+        return;
+    }
     const auto position = previewSource.getCurrentPosition();
     const auto resume = previewSource.isPlaying();
     const auto newRate = pendingRate.load();
@@ -469,6 +552,9 @@ void AudioPreviewPlayer::updatePlaybackStatus()
     if (lastReportedPlaying != isPlaying()) {
         lastReportedPlaying = isPlaying();
         sendChangeMessage();
+    }
+    if ((!applicationActive || !deviceSettingsActive) && !isPlaying() && !previewSource.isStopping()) {
+        closeAudioDevice();
     }
 }
 
