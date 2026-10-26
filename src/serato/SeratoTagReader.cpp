@@ -220,6 +220,11 @@ TagReadResult readId3Tag(const TagLib::ID3v2::Tag* tag, const TagKind kind, cons
 TagReadResult decodeFlacTag(const TagKind kind, const TagLib::String& value, const bool legacy)
 {
     auto result = outcome(kind, ReadStatus::invalid);
+    // Base64 is ASCII, and to8Bit keeps only the low byte of every other character,
+    // so for example U+0141 would pass as the Base64 letter 'A'.
+    if (!value.isAscii()) {
+        return result;
+    }
     if (kind == TagKind::overview) {
         if (auto overview = decodeFlacOverview(value)) {
             result.overview = std::move(overview);

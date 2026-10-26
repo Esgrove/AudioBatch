@@ -24,6 +24,11 @@ constexpr auto knownPluginListFileName {"KnownPlugins.xml"};
 constexpr auto legacyKnownPluginListPropertyKey {"knownPluginList"};
 constexpr auto crashLogFileName {"audiobatch_plugin_scan_crash_log.txt"};
 constexpr auto responsePollInterval {std::chrono::milliseconds(50)};
+/// Longest wait for the worker to scan one plugin.
+/// The GUI scan waits on the message thread, where the scan cannot be cancelled,
+/// so a plugin that hangs in the worker would otherwise freeze the app for good.
+/// Generous, because a copy-protected plugin can show a licensing prompt in the worker while it is scanned.
+constexpr auto pluginScanTimeout {std::chrono::minutes(3)};
 
 /// Outcome of waiting for the reply to one scan request.
 enum class PluginScanResponseState : std::uint8_t { timeout, gotResult, connectionLost };
@@ -33,6 +38,20 @@ struct PluginScanResponse {
     PluginScanResponseState state {PluginScanResponseState::timeout};
     std::unique_ptr<juce::XmlElement> xml;
 };
+
+/// Adds the plugin descriptions in a worker reply to the scan results, skipping entries that do not parse.
+void addDescriptions(const juce::XmlElement* reply, juce::OwnedArray<juce::PluginDescription>& result)
+{
+    if (reply == nullptr) {
+        return;
+    }
+
+    for (const auto* element : reply->getChildIterator()) {
+        if (auto description = std::make_unique<juce::PluginDescription>(); description->loadFromXml(*element)) {
+            result.add(std::move(description));
+        }
+    }
+}
 
 /// Builds a scan request for one plugin file or identifier.
 juce::MemoryBlock createScanRequest(const juce::String& formatName, const juce::String& fileOrIdentifier)
@@ -341,7 +360,8 @@ OutOfProcessPluginScanner::OutOfProcessPluginScanner(
 OutOfProcessPluginScanner::~OutOfProcessPluginScanner() = default;
 
 /// Scans one plugin file in the worker process and adds the descriptions it found.
-/// Blocks until the worker replies, the worker process dies, or the scan is cancelled.
+/// Blocks until the worker replies, the worker process dies, the scan is cancelled, or the per-plugin timeout passes.
+/// A worker that times out is dropped, since it may be stuck inside the plugin.
 /// Returns false only when the worker crashed, which makes KnownPluginList blacklist the plugin.
 bool OutOfProcessPluginScanner::findPluginTypesFor(
     juce::AudioPluginFormat& format,
@@ -377,6 +397,8 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
         return true;
     }
 
+    const auto deadline = std::chrono::steady_clock::now() + pluginScanTimeout;
+
     for (;;) {
         if (shouldExit()) {
             // The scan was cancelled. Drop the worker, which may be stuck inside the plugin.
@@ -388,6 +410,16 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
 
         switch (state) {
             case PluginScanResponseState::timeout:
+                if (std::chrono::steady_clock::now() >= deadline) {
+                    // Skipped instead of blacklisted, so a plugin that was only slow is scanned again next time.
+                    utils::logWarn(
+                        "Plugin scan timed out after {} minutes, skipping {}",
+                        std::chrono::duration_cast<std::chrono::minutes>(pluginScanTimeout).count(),
+                        fileOrIdentifier.quoted()
+                    );
+                    worker.reset();
+                    return true;
+                }
                 continue;
 
             case PluginScanResponseState::connectionLost:
@@ -396,16 +428,7 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
                 return false;
 
             case PluginScanResponseState::gotResult:
-                if (xml != nullptr) {
-                    for (const auto* element : xml->getChildIterator()) {
-                        auto description = std::make_unique<juce::PluginDescription>();
-
-                        if (description->loadFromXml(*element)) {
-                            result.add(std::move(description));
-                        }
-                    }
-                }
-
+                addDescriptions(xml.get(), result);
                 return true;
         }
     }

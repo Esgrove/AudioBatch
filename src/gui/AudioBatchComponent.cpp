@@ -642,9 +642,13 @@ void AudioBatchComponent::restoreSelectionByPaths(const juce::StringArray& selec
 }
 
 /// Re-sorts the results, refreshes the table, and selects the given paths again.
+/// The old selection is cleared without a notification first,
+/// because updateContent synchronously reports a selection it trimmed to a shorter table,
+/// and those row numbers point at different files after the change.
 void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArray& selectedPaths)
 {
     sortResults();
+    resultsTable.setSelectedRows({}, juce::dontSendNotification);
     resultsTable.updateContent();
     updateResultsTableColumnWidths();
     restoreSelectionByPaths(selectedPaths);

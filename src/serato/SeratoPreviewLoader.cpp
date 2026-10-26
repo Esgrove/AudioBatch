@@ -137,11 +137,13 @@ void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std:
                     misses.push_back(allTagKinds[index]);
                 }
             }
-            const auto readCompleted = readMisses(active, misses, results, isCancelled);
-            if (active.identity.matches(active.file)) {
-                if (!readCompleted || isCancelled()) {
-                    return;
-                }
+            const auto outcome = readMisses(active, misses, results, isCancelled);
+            if (outcome == ReadOutcome::cancelled || isCancelled()) {
+                return;
+            }
+            // A rejected identity falls through to the null completion below,
+            // even when the file matches again by now, so the waiting preview is always resolved.
+            if (outcome == ReadOutcome::completed && active.identity.matches(active.file)) {
                 data = collectData(results);
             }
         }
@@ -159,7 +161,8 @@ void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std:
 }
 
 /// Reads missing kinds in one batch and persists only stable results while the request remains current.
-bool SeratoPreviewLoader::readMisses(
+/// Reports cancellation and a changed file separately, since only cancellation may skip the completion.
+ReadOutcome SeratoPreviewLoader::readMisses(
     const SeratoPreviewRequest& active,
     const std::span<const TagKind> misses,
     Results& results,
@@ -167,23 +170,29 @@ bool SeratoPreviewLoader::readMisses(
 ) const
 {
     if (misses.empty()) {
-        return true;
+        return ReadOutcome::completed;
     }
-    if (isCancelled() || !active.identity.matches(active.file)) {
-        return false;
+    if (isCancelled()) {
+        return ReadOutcome::cancelled;
+    }
+    if (!active.identity.matches(active.file)) {
+        return ReadOutcome::identityRejected;
     }
     auto fresh = reader(active.file, misses, isCancelled);
-    if (isCancelled() || !active.identity.matches(active.file)
+    if (isCancelled()
         || std::ranges::any_of(fresh, [](const auto& result) { return result.status == ReadStatus::cancelled; }))
     {
-        return false;
+        return ReadOutcome::cancelled;
+    }
+    if (!active.identity.matches(active.file)) {
+        return ReadOutcome::identityRejected;
     }
     for (auto& result : fresh) {
         if (std::ranges::find(misses, result.kind) == misses.end()) {
             continue;
         }
         if (isCancelled()) {
-            return false;
+            return ReadOutcome::cancelled;
         }
         // Avoid naming the iterator type, it is a pointer with libc++ but a class with MSVC.
         const auto index = static_cast<std::size_t>(
@@ -197,7 +206,7 @@ bool SeratoPreviewLoader::readMisses(
         }
         results[index] = std::move(result);
     }
-    return true;
+    return ReadOutcome::completed;
 }
 
 /// Moves independently present values into an immutable aggregate, leaving negative kinds unset.

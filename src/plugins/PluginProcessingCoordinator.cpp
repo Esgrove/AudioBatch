@@ -385,6 +385,8 @@ int PluginProcessingCoordinator::start(
     const auto conflicts = findBatchOutputConflicts(queuedRecords);
     // The counter belongs to this run, so a job that outlives a cancellation timeout cannot change a later run's count.
     const auto pendingFiles = std::make_shared<std::atomic<int>>(totalFiles);
+    // The options hold the saved state of every plugin, so the jobs share one copy instead of each holding their own.
+    const auto runOptions = std::make_shared<const PluginProcessingOptions>(options);
 
     const auto concurrentFiles
         = juce::jmin(totalFiles, threadPool.getNumThreads(), static_cast<int>(currentChains->chains.size()));
@@ -408,8 +410,8 @@ int PluginProcessingCoordinator::start(
             continue;
         }
 
-        threadPool.addJob([this, record, options, runId, totalFiles, runChains = currentChains, pendingFiles] {
-            runFileJob(record, options, runId, totalFiles, *runChains, *pendingFiles);
+        threadPool.addJob([this, record, runOptions, runId, totalFiles, runChains = currentChains, pendingFiles] {
+            runFileJob(record, *runOptions, runId, totalFiles, *runChains, *pendingFiles);
         });
     }
 
