@@ -3,14 +3,15 @@
 Rust port of AudioBatch, built next to the C++ application in `../cpp`.
 It analyzes audio files for sample peak, true peak, and integrated loudness (EBU R128),
 caches the results in SQLite, and lists them in a CLI and a GUI with a waveform overview and playback.
+The CLI also normalizes files to a sample peak or loudness target, written as AIFF with their tags carried over.
 
 The C++ application remains the reference implementation and the full-featured version.
-Normalization and plugin processing are only available there.
+Plugin processing is only available there, and the GUI cannot normalize files yet.
 
 ## Crates
 
 - `crates/core`: decoding with symphonia, analysis with ebur128,
-  the waveform overview, tags with lofty, and the SQLite cache
+  the waveform overview, tags with lofty, the SQLite cache, and normalization to AIFF
 - `crates/playback`: preview playback with cpal, rtrb, and rubato
 - `crates/serato`: parsers for the Serato GEOB tags, extracted from track-rename
 - `crates/cli`: the `audiobatch-rs` command line tool
@@ -65,10 +66,20 @@ Bash completions go to `~/.bash_completion.d`.
 
 ## CLI
 
-`audiobatch-rs` takes the analysis options of the C++ `audiobatch` CLI
+`audiobatch-rs` takes the analysis and normalization options of the C++ `audiobatch` CLI
 and prints the same table, CSV, and JSON output.
 It exits with code 2 when a file fails and with code 1 for invalid arguments.
 The `completion` subcommand is the only addition that the C++ CLI does not have.
+
+`--normalize` writes every analyzed file as a sibling `<name>.aif` at the source sample rate,
+brought to a sample peak of 0 dBFS, or to the `--peak` or `--lufs` target.
+A loudness target is limited by a -0.3 dBTP true peak ceiling, and a gain above 40 dB is refused.
+The output keeps the source bit depth when AIFF supports it, so 32-bit float files become 24-bit,
+and the tags, album art, and Serato data are copied over without the Serato overview.
+The converted original goes to the system trash, and an `.aif` file rewritten in place leaves a copy there.
+An existing output file is only replaced with `--force`,
+and when two selected files would write the same output, only one of them is normalized.
+The output of lossless sources has the same samples as the C++ application writes, without dither.
 
 ```console
 Analyze audio files for sample peak, true peak, and integrated loudness (EBU R128)
@@ -85,6 +96,10 @@ Arguments:
 Options:
   -r, --recurse          Recurse into directories
   -f, --refresh          Ignore cached analysis and re-analyze files
+  -n, --normalize        Normalize analyzed files, then report the re-analyzed output peaks
+  -F, --force            Let --normalize replace an existing output file
+      --peak <DBFS>      Normalize to this sample peak, -12 to 0 (default 0)
+      --lufs <LUFS>      Normalize to this integrated loudness, -24 to -6, with a -0.3 dBTP ceiling
   -j, --jobs <COUNT>     Override worker count
   -s, --sort <MODE>      Sort by peak, lufs, name, or path [default: peak]
       --reverse          Sort in descending order
@@ -162,9 +177,13 @@ cargo nextest run
 
 `scripts/parity.sh` runs the Rust and the C++ CLI on the same files and compares their JSON output.
 Build the C++ CLI first with the CMake debug preset or `build.sh` in `../cpp`.
+With `--normalize`, each CLI normalizes its own copy of the files in a temporary folder,
+and the re-analyzed outputs are compared.
+The originals are left alone, but the replaced copies go to the system trash.
 
 ```shell
 ./scripts/parity.sh ../fixtures
+./scripts/parity.sh --normalize ../fixtures
 ```
 
 `cargo run -p audiobatch-playback --example play -- <file> [seconds] [sample rate] [buffer size]`

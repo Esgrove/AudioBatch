@@ -34,8 +34,11 @@ The port covers the key features of the C++ application:
 - Play the selected file in the GUI.
 - Keep a per-file custom gain in the GUI and the cache, applied to the preview and the waveform.
 - Accept files and folders dropped onto the GUI.
+- Normalize files from the CLI to a sample peak or loudness target, written as AIFF with tags and Serato data.
+  Lossless sources produce the same samples as the C++ application.
 
-Normalization, AIFF conversion, and VST3 / Audio Unit plugin processing stay in the C++ application for now.
+The GUI cannot normalize files yet.
+VST3 / Audio Unit plugin processing stays in the C++ application for now.
 
 ## Workspace Layout
 
@@ -53,6 +56,9 @@ and every crate inherits them with `.workspace = true`.
     `coordinator.rs` runs analysis in parallel with cancellation and progress events.
   - `format.rs` formats levels and file properties for display, `sorting.rs` sorts records.
   - `tags.rs` reads display tags and Serato data with lofty.
+  - `normalize.rs` computes the normalization gain and writes the normalized file, ported from `AudioNormalization.cpp`.
+    `aiff.rs` is its AIFF writer, `metadata.rs` copies the tags onto the output,
+    and `output_file.rs` commits the output and disposes of the replaced files, ported from `FileUtils.cpp`.
 - `crates/playback` (`audiobatch-playback`): the preview engine.
   A decode thread feeds an `rtrb` ring buffer that the `cpal` output callback reads,
   with `rubato` resampling when the device rate differs from the file rate.
@@ -109,8 +115,9 @@ cargo run --bin audiobatch-rs -- [args]
 # Run the GUI
 cargo run --bin AudioBatchRs
 
-# Compare the Rust and C++ CLI output on a folder
+# Compare the Rust and C++ CLI output on a folder, or their normalized output of copies of it
 ./scripts/parity.sh <path>
+./scripts/parity.sh --normalize <path>
 
 # Save an image of the GUI window and quit, for checking the layout without screen recording permission
 cargo build --release -p audiobatch-gui --features snapshot

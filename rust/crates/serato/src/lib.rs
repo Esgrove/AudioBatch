@@ -10,6 +10,7 @@ mod analysis;
 mod autotags;
 mod beatgrid;
 mod markers;
+pub mod native;
 mod overview;
 
 use std::fmt;

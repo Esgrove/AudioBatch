@@ -10,6 +10,7 @@ use audiobatch_cli::args::{CliArgs, CliCommand};
 use audiobatch_cli::completion::generate_shell_completion;
 use audiobatch_cli::run::{EXIT_USAGE_ERROR, run_analysis};
 use audiobatch_core::AnalysisCache;
+use audiobatch_core::output_file::trash_disposer;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use colored::Colorize;
@@ -55,7 +56,14 @@ fn main() -> ExitCode {
         }
     };
 
-    match run_analysis(&args, cache, &mut output, &mut log, ProgressDrawTarget::stderr()) {
+    match run_analysis(
+        &args,
+        cache,
+        trash_disposer(),
+        &mut output,
+        &mut log,
+        ProgressDrawTarget::stderr,
+    ) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             // Writing fails when stdout is closed early, for example when piping into head.
