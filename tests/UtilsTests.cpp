@@ -9,6 +9,7 @@
 #include "utils/ConsolePrint.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
+#include "utils/MessageThreadBatcher.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
 #include <string_view>
