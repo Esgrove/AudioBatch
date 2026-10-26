@@ -1,6 +1,6 @@
 /// Main GUI component of the application.
-/// Declares AudioBatchComponent, which owns the analysis results table, waveform preview and transport,
-/// folder scanning, gain controls, and the plugin chain button and processing flow.
+/// Declares AudioBatchComponent, which owns the analysis results table, the preview and its workspace controls,
+/// folder scanning, per-file gains, and the plugin chain and processing flow.
 /// It starts background analysis, normalization, and plugin processing through BackgroundWorkController,
 /// and applies their results to the table and the preview as the controller's listener.
 
@@ -12,10 +12,8 @@
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/BackgroundWorkController.h"
 #include "gui/components/AudioSettingsComponent.h"
-#include "gui/components/IntervalStepSlider.h"
-#include "gui/components/NormalizationTargetControl.h"
+#include "gui/components/PreviewWorkspace.h"
 #include "gui/components/StatusBar.h"
-#include "gui/components/ThumbnailComponent.h"
 #include "gui/FileActivityTracker.h"
 #include "gui/GuiLayout.h"
 #include "gui/PreviewController.h"
@@ -34,8 +32,6 @@
 
 namespace audiobatch
 {
-class AudioInfoPanel;
-
 /// Main application view that coordinates analysis, playback preview, and file-list interactions.
 class AudioBatchComponent :
     public juce::Component,
@@ -148,7 +144,6 @@ private:
     void handleSortRequested(std::optional<AudioFileTableColumn> column, bool isForwards);
     void handleThumbnailFullyLoaded();
     void launchFolderChooser(bool appendToRoots);
-    void layoutPlaybackButtons(juce::Rectangle<int> bounds);
     void normalizeSelectedRecords();
     void reconcilePendingAnalysisResults();
     void refreshAnalysis(bool forceRefresh);
@@ -173,12 +168,12 @@ private:
     void updateProgressIndicators();
     void updateResultsTableColumnWidths() const;
     void updateStatusLabel();
-    void updateThumbnailDisplayGain() const;
+    void updateThumbnailDisplayGain();
     void updatePreviewLoudnessHistory();
     void updatePreviewInputGain(bool immediately = false);
     void setPreviewPreferences(const AudioPreviewPreferences& preferences);
     void synchronizePreviewPreferences();
-    void zoomLevelChanged(double zoomLevel) const;
+    void zoomLevelChanged(double zoomLevel);
 
     void runMoveToTrash(
         const juce::Array<juce::File>& filesToTrash,
@@ -229,8 +224,9 @@ private:
 
     std::unique_ptr<PluginChain> pluginChain;
 
-    /// Normalization mode and target, persisted in pluginAppProperties, which is declared before it.
-    NormalizationTargetControl normalizationTargetControl {pluginAppProperties};
+    /// The waveform, metrics, and controls below the results table.
+    /// Declared after the player and the settings it refers to.
+    PreviewWorkspace previewWorkspace {previewPlayer, pluginAppProperties};
 
     SafePointer<juce::DialogWindow> settingsWindow;
     juce::Array<SafePointer<juce::DialogWindow>> childWindows;
@@ -238,11 +234,6 @@ private:
     AudioSettingsComponent audioSettingsComponent {previewPlayer.getDeviceManager()};
     AudioPreviewPreferences previewPreferences;
     juce::TableListBox resultsTable;
-    /// The secondary controls scroll independently while playback and processing stay pinned below them.
-    juce::Component controlsContent;
-    juce::Viewport controlsViewport;
-    std::unique_ptr<AudioInfoPanel> audioInfo;
-    std::unique_ptr<ThumbnailComponent> thumbnail;
     std::unique_ptr<juce::FileChooser> directoryChooser;
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 
@@ -267,18 +258,6 @@ private:
 
     /// Root folders, background activity, audio output device, and overall progress along the bottom of the window.
     StatusBar statusBar;
-
-    IntervalStepSlider gainSlider {"GainSlider"};
-    juce::Label gainLabel {"GainLabel"};
-    juce::Label zoomLabel {"Zoom"};
-    juce::Slider zoomSlider {"ZoomSlider"};
-    juce::TextButton pluginButton {"Plugin chain"};
-    juce::TextButton processButton {"Process"};
-    juce::TextButton settingsButton {"Audio Settings"};
-    juce::TextButton startStopButton {"Play/Stop"};
-    juce::DrawableButton previewSectionButton {"Collapse bottom section", juce::DrawableButton::ImageFitted};
-    juce::ToggleButton forceOverwriteToggle {"Overwrite"};
-    juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
 
     bool automaticSelectionChange {false};
 

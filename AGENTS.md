@@ -124,6 +124,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
   `ThumbnailComponent.*`, `IntervalStepSlider.h`, and the plugin chain editor in `PluginChainEditor.*`.
   `StatusBar.*` is the bottom bar with the root folders, the status text, the preview audio output device,
   and the overall progress line along its top edge.
+  `PreviewWorkspace.*` holds the waveform, the metrics, and the controls below the results table,
+  and lays them out as an expanded section or a compact row.
 
 Put a new file in the directory of its domain, and add a directory only for a new domain with several files.
 Include project headers by their path relative to `src/`, for example `#include "analysis/AudioAnalysis.h"`,

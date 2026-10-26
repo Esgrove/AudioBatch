@@ -399,6 +399,8 @@ target_sources(
         "src/gui/components/NormalizationTargetControl.h"
         "src/gui/components/PluginChainEditor.cpp"
         "src/gui/components/PluginChainEditor.h"
+        "src/gui/components/PreviewWorkspace.cpp"
+        "src/gui/components/PreviewWorkspace.h"
         "src/gui/components/StatusBar.cpp"
         "src/gui/components/StatusBar.h"
         "src/gui/components/ThumbnailComponent.cpp"
