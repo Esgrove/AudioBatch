@@ -7,6 +7,7 @@
 #include "analysis/AnalysisCache.h"
 
 #include "analysis/AnalysisCacheSql.h"
+#include "analysis/SqliteTransaction.h"
 #include "serato/SeratoTags.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
@@ -163,15 +164,15 @@ std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
                      file_path, tag_kind
             FROM serato_tag_cache WHERE file_path = ? AND tag_kind = ?;
         )SQL";
-        sqlite3_stmt* statement = nullptr;
-        if (!prepare(sql, statement)) {
+        const auto statement = sqlite::prepare(*database, sql);
+        if (statement == nullptr || !sqlite::bindText(*statement, 1, identity.path)
+            || !sqlite::bindInt64(*statement, 2, static_cast<std::uint32_t>(kind)))
+        {
             return std::nullopt;
         }
-        bindText(statement, 1, identity.path);
-        sqlite3_bind_int64(statement, 2, static_cast<std::uint32_t>(kind));
+        auto* const row = statement.get();
         // Reading a column without a current row is undefined, so a miss returns before any column is read.
-        if (sqlite3_step(statement) != SQLITE_ROW) {
-            sqlite3_finalize(statement);
+        if (sqlite3_step(row) != SQLITE_ROW) {
             return std::nullopt;
         }
         bool valid = true;
@@ -185,31 +186,30 @@ std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
                  serato_column::tagKind,
              })
         {
-            valid = valid && sqlite3_column_type(statement, column) == SQLITE_INTEGER;
+            valid = valid && sqlite3_column_type(row, column) == SQLITE_INTEGER;
         }
-        valid = valid && sqlite3_column_int64(statement, serato_column::fileSize) == identity.fileSize
-            && sqlite3_column_int64(statement, serato_column::modifiedTimeMs) == identity.modifiedTimeMs
-            && sqlite3_column_int64(statement, serato_column::parserVersion) == serato::parserVersion(kind)
-            && sqlite3_column_int64(statement, serato_column::updatedAtMs) > 0
-            && sqlite3_column_type(statement, serato_column::filePath) == SQLITE_TEXT
-            && columnText(statement, serato_column::filePath) == identity.path
-            && sqlite3_column_int64(statement, serato_column::tagKind) == static_cast<std::uint32_t>(kind);
-        const auto state = sqlite3_column_int64(statement, serato_column::resultState);
+        valid = valid && sqlite3_column_int64(row, serato_column::fileSize) == identity.fileSize
+            && sqlite3_column_int64(row, serato_column::modifiedTimeMs) == identity.modifiedTimeMs
+            && sqlite3_column_int64(row, serato_column::parserVersion) == serato::parserVersion(kind)
+            && sqlite3_column_int64(row, serato_column::updatedAtMs) > 0
+            && sqlite3_column_type(row, serato_column::filePath) == SQLITE_TEXT
+            && sqlite::columnText(*row, serato_column::filePath) == identity.path
+            && sqlite3_column_int64(row, serato_column::tagKind) == static_cast<std::uint32_t>(kind);
+        const auto state = sqlite3_column_int64(row, serato_column::resultState);
         if (valid && state == static_cast<int>(serato::ReadStatus::present)) {
-            const auto bytes = sqlite3_column_bytes(statement, serato_column::decodedData);
-            valid = sqlite3_column_type(statement, serato_column::decodedData) == SQLITE_BLOB && bytes > 0
+            const auto bytes = sqlite3_column_bytes(row, serato_column::decodedData);
+            valid = sqlite3_column_type(row, serato_column::decodedData) == SQLITE_BLOB && bytes > 0
                 && std::cmp_less_equal(bytes, maximumOverviewBytes);
             if (valid) {
-                data = columnBlob(statement, serato_column::decodedData);
+                data = sqlite::columnBlob(*row, serato_column::decodedData);
             }
         } else {
             valid = valid
                 && (state == static_cast<int>(serato::ReadStatus::absent)
                     || state == static_cast<int>(serato::ReadStatus::unsupported)
                     || state == static_cast<int>(serato::ReadStatus::invalid))
-                && sqlite3_column_type(statement, serato_column::decodedData) == SQLITE_NULL;
+                && sqlite3_column_type(row, serato_column::decodedData) == SQLITE_NULL;
         }
-        sqlite3_finalize(statement);
         if (!valid) {
             return std::nullopt;
         }
@@ -273,25 +273,21 @@ bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const serato::T
             parser_version = excluded.parser_version, result_state = excluded.result_state,
             decoded_data = excluded.decoded_data, updated_at_ms = excluded.updated_at_ms;
     )SQL";
-    sqlite3_stmt* statement = nullptr;
-    if (!prepare(sql, statement)) {
+    const auto statement = sqlite::prepare(*database, sql);
+    if (statement == nullptr) {
         return false;
     }
-    bindText(statement, serato_parameter::filePath, identity.path);
-    sqlite3_bind_int64(statement, serato_parameter::tagKind, static_cast<std::uint32_t>(result.kind));
-    sqlite3_bind_int64(statement, serato_parameter::fileSize, identity.fileSize);
-    sqlite3_bind_int64(statement, serato_parameter::modifiedTimeMs, identity.modifiedTimeMs);
-    sqlite3_bind_int64(statement, serato_parameter::parserVersion, serato::parserVersion(result.kind));
-    sqlite3_bind_int(statement, serato_parameter::resultState, static_cast<int>(result.status));
-    if (result.status == serato::ReadStatus::present) {
-        bindBlob(statement, serato_parameter::decodedData, data);
-    } else {
-        sqlite3_bind_null(statement, serato_parameter::decodedData);
-    }
-    sqlite3_bind_int64(statement, serato_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
-    const auto completed = stepToCompletion(statement);
-    sqlite3_finalize(statement);
-    return completed;
+    const bool dataBound = result.status == serato::ReadStatus::present
+        ? sqlite::bindBlob(*statement, serato_parameter::decodedData, data)
+        : sqlite::bindNull(*statement, serato_parameter::decodedData);
+    const bool bound = dataBound && sqlite::bindText(*statement, serato_parameter::filePath, identity.path)
+        && sqlite::bindInt64(*statement, serato_parameter::tagKind, static_cast<std::uint32_t>(result.kind))
+        && sqlite::bindInt64(*statement, serato_parameter::fileSize, identity.fileSize)
+        && sqlite::bindInt64(*statement, serato_parameter::modifiedTimeMs, identity.modifiedTimeMs)
+        && sqlite::bindInt64(*statement, serato_parameter::parserVersion, serato::parserVersion(result.kind))
+        && sqlite::bindInt64(*statement, serato_parameter::resultState, static_cast<int>(result.status))
+        && sqlite::bindInt64(*statement, serato_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
+    return bound && sqlite::stepToCompletion(*statement);
 }
 
 /// Loads a cached analysis record for the given file when present and current.
@@ -315,15 +311,14 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
         WHERE file_path = ?;
     )SQL";
 
-    sqlite3_stmt* statement = nullptr;
-    if (!prepare(sql, statement)) {
+    const auto prepared = sqlite::prepare(*database, sql);
+    if (prepared == nullptr || !sqlite::bindText(*prepared, 1, normalizedPath(file))) {
         return false;
     }
 
-    bindText(statement, 1, normalizedPath(file));
+    auto* const statement = prepared.get();
 
     if (const auto stepResult = sqlite3_step(statement); stepResult != SQLITE_ROW) {
-        sqlite3_finalize(statement);
         return false;
     }
 
@@ -334,13 +329,12 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
     if (cachedFileSize != fileRecord.fileSize || cachedModifiedTime != fileRecord.modifiedTimeMs
         || cachedVersion != analysisVersion)
     {
-        sqlite3_finalize(statement);
         return false;
     }
 
     record = std::move(fileRecord);
-    record.fileName = columnText(statement, analysis_column::fileName);
-    record.formatName = columnText(statement, analysis_column::formatName);
+    record.fileName = sqlite::columnText(*statement, analysis_column::fileName);
+    record.formatName = sqlite::columnText(*statement, analysis_column::formatName);
     record.lengthInSamples = sqlite3_column_int64(statement, analysis_column::lengthInSamples);
     record.durationSeconds = sqlite3_column_double(statement, analysis_column::durationSeconds);
     record.peakLeft = static_cast<float>(sqlite3_column_double(statement, analysis_column::peakLeft));
@@ -357,11 +351,10 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
     const auto status = statusFromColumn(sqlite3_column_int(statement, analysis_column::status));
     if (!status.has_value()) {
         utils::logWarn("Invalid cached analysis status for {}, reanalysis required", record.fullPath.quoted());
-        sqlite3_finalize(statement);
         return false;
     }
     record.status = *status;
-    record.errorMessage = columnText(statement, analysis_column::errorMessage);
+    record.errorMessage = sqlite::columnText(*statement, analysis_column::errorMessage);
     record.customGainDb = static_cast<float>(sqlite3_column_double(statement, analysis_column::customGainDb));
     record.hasCustomGain = sqlite3_column_int(statement, analysis_column::hasCustomGain) != 0;
     if (!record.hasError()) {
@@ -376,7 +369,6 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
             utils::logWarn(
                 "Invalid cached short-term loudness history for {}, reanalysis required", record.fullPath.quoted()
             );
-            sqlite3_finalize(statement);
             return false;
         }
     }
@@ -386,7 +378,6 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
         record.status = AudioAnalysisStatus::cached;
     }
 
-    sqlite3_finalize(statement);
     return true;
 }
 
@@ -455,46 +446,42 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             END;
     )SQL";
 
-    sqlite3_stmt* statement = nullptr;
-    if (!prepare(sql, statement)) {
+    const auto prepared = sqlite::prepare(*database, sql);
+    if (prepared == nullptr) {
         return false;
     }
 
-    bindText(statement, analysis_parameter::filePath, record.fullPath);
-    bindText(statement, analysis_parameter::fileName, record.fileName);
-    bindText(statement, analysis_parameter::formatName, record.formatName);
-    sqlite3_bind_int64(statement, analysis_parameter::fileSize, record.fileSize);
-    sqlite3_bind_int64(statement, analysis_parameter::modifiedTimeMs, record.modifiedTimeMs);
-    sqlite3_bind_int64(statement, analysis_parameter::lengthInSamples, record.lengthInSamples);
-    sqlite3_bind_double(statement, analysis_parameter::durationSeconds, record.durationSeconds);
-    sqlite3_bind_double(statement, analysis_parameter::peakLeft, static_cast<double>(record.peakLeft));
-    sqlite3_bind_double(statement, analysis_parameter::peakRight, static_cast<double>(record.peakRight));
-    sqlite3_bind_double(statement, analysis_parameter::overallPeak, static_cast<double>(record.overallPeak));
-    sqlite3_bind_double(statement, analysis_parameter::truePeakLeft, record.truePeakLeft);
-    sqlite3_bind_double(statement, analysis_parameter::truePeakRight, record.truePeakRight);
-    sqlite3_bind_double(statement, analysis_parameter::overallTruePeak, record.overallTruePeak);
-    sqlite3_bind_double(statement, analysis_parameter::maxShortTermLufs, record.maxShortTermLufs);
-    sqlite3_bind_double(statement, analysis_parameter::integratedLufs, record.integratedLufs);
-    sqlite3_bind_int(statement, analysis_parameter::sampleRate, record.sampleRate);
-    sqlite3_bind_int(statement, analysis_parameter::channels, record.channels);
-    sqlite3_bind_int(statement, analysis_parameter::bitsPerSample, record.bitsPerSample);
-    sqlite3_bind_int(statement, analysis_parameter::status, static_cast<int>(record.status));
-    bindText(statement, analysis_parameter::errorMessage, record.errorMessage);
-    sqlite3_bind_null(statement, analysis_parameter::waveformData);
-    sqlite3_bind_int(statement, analysis_parameter::waveformVersion, 0);
-    sqlite3_bind_int(statement, analysis_parameter::analysisVersion, analysisVersion);
-    sqlite3_bind_int64(statement, analysis_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
-    sqlite3_bind_double(statement, analysis_parameter::customGainDb, static_cast<double>(record.customGainDb));
-    sqlite3_bind_int(statement, analysis_parameter::hasCustomGain, record.hasCustomGain ? 1 : 0);
-    if (record.hasError()) {
-        sqlite3_bind_null(statement, analysis_parameter::shortTermLoudness);
-    } else {
-        bindBlob(statement, analysis_parameter::shortTermLoudness, loudnessData);
-    }
+    auto& statement = *prepared;
+    const bool textBound = sqlite::bindText(statement, analysis_parameter::filePath, record.fullPath)
+        && sqlite::bindText(statement, analysis_parameter::fileName, record.fileName)
+        && sqlite::bindText(statement, analysis_parameter::formatName, record.formatName)
+        && sqlite::bindText(statement, analysis_parameter::errorMessage, record.errorMessage);
+    const bool integersBound = sqlite::bindInt64(statement, analysis_parameter::fileSize, record.fileSize)
+        && sqlite::bindInt64(statement, analysis_parameter::modifiedTimeMs, record.modifiedTimeMs)
+        && sqlite::bindInt64(statement, analysis_parameter::lengthInSamples, record.lengthInSamples)
+        && sqlite::bindInt64(statement, analysis_parameter::sampleRate, record.sampleRate)
+        && sqlite::bindInt64(statement, analysis_parameter::channels, record.channels)
+        && sqlite::bindInt64(statement, analysis_parameter::bitsPerSample, record.bitsPerSample)
+        && sqlite::bindInt64(statement, analysis_parameter::status, static_cast<int>(record.status))
+        && sqlite::bindInt64(statement, analysis_parameter::waveformVersion, 0)
+        && sqlite::bindInt64(statement, analysis_parameter::analysisVersion, analysisVersion)
+        && sqlite::bindInt64(statement, analysis_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds())
+        && sqlite::bindInt64(statement, analysis_parameter::hasCustomGain, record.hasCustomGain ? 1 : 0);
+    const bool numbersBound = sqlite::bindDouble(statement, analysis_parameter::durationSeconds, record.durationSeconds)
+        && sqlite::bindDouble(statement, analysis_parameter::peakLeft, static_cast<double>(record.peakLeft))
+        && sqlite::bindDouble(statement, analysis_parameter::peakRight, static_cast<double>(record.peakRight))
+        && sqlite::bindDouble(statement, analysis_parameter::overallPeak, static_cast<double>(record.overallPeak))
+        && sqlite::bindDouble(statement, analysis_parameter::truePeakLeft, record.truePeakLeft)
+        && sqlite::bindDouble(statement, analysis_parameter::truePeakRight, record.truePeakRight)
+        && sqlite::bindDouble(statement, analysis_parameter::overallTruePeak, record.overallTruePeak)
+        && sqlite::bindDouble(statement, analysis_parameter::maxShortTermLufs, record.maxShortTermLufs)
+        && sqlite::bindDouble(statement, analysis_parameter::integratedLufs, record.integratedLufs)
+        && sqlite::bindDouble(statement, analysis_parameter::customGainDb, static_cast<double>(record.customGainDb));
+    const bool blobsBound = sqlite::bindNull(statement, analysis_parameter::waveformData)
+        && (record.hasError() ? sqlite::bindNull(statement, analysis_parameter::shortTermLoudness)
+                              : sqlite::bindBlob(statement, analysis_parameter::shortTermLoudness, loudnessData));
 
-    const auto completed = stepToCompletion(statement);
-    sqlite3_finalize(statement);
-    return completed;
+    return textBound && integersBound && numbersBound && blobsBound && sqlite::stepToCompletion(statement);
 }
 
 /// Loads the custom gain stored for a file when the stored row has the given size and modification time,
@@ -518,21 +505,18 @@ bool AnalysisCache::getCustomGain(
         WHERE file_path = ? AND file_size = ? AND modified_time_ms = ? AND has_custom_gain = 1;
     )SQL";
 
-    sqlite3_stmt* statement = nullptr;
-    if (!prepare(sql, statement)) {
+    const auto statement = sqlite::prepare(*database, sql);
+    if (statement == nullptr || !sqlite::bindText(*statement, 1, normalizedPath(file))
+        || !sqlite::bindInt64(*statement, 2, fileSize) || !sqlite::bindInt64(*statement, 3, modifiedTimeMs))
+    {
         return false;
     }
 
-    bindText(statement, 1, normalizedPath(file));
-    sqlite3_bind_int64(statement, 2, fileSize);
-    sqlite3_bind_int64(statement, 3, modifiedTimeMs);
-
-    const bool found = sqlite3_step(statement) == SQLITE_ROW;
+    const bool found = sqlite3_step(statement.get()) == SQLITE_ROW;
     if (found) {
-        customGainDb = static_cast<float>(sqlite3_column_double(statement, 0));
+        customGainDb = static_cast<float>(sqlite3_column_double(statement.get(), 0));
     }
 
-    sqlite3_finalize(statement);
     return found;
 }
 
@@ -561,7 +545,8 @@ int AnalysisCache::storeCustomGains(const std::vector<CustomGainUpdate>& updates
         return 0;
     }
 
-    if (!execute("BEGIN IMMEDIATE;")) {
+    sqlite::Transaction transaction(*database);
+    if (!transaction.isActive()) {
         return 0;
     }
 
@@ -571,39 +556,28 @@ int AnalysisCache::storeCustomGains(const std::vector<CustomGainUpdate>& updates
         WHERE file_path = ?;
     )SQL";
 
-    sqlite3_stmt* statement = nullptr;
-    if (!prepare(sql, statement)) {
-        static_cast<void>(execute("ROLLBACK;"));
+    const auto statement = sqlite::prepare(*database, sql);
+    if (statement == nullptr) {
         return 0;
     }
 
     const auto updatedAtMs = juce::Time::getCurrentTime().toMilliseconds();
     int updatedRows = 0;
-    bool completed = true;
 
     for (const auto& [file, customGainDb, hasCustomGain] : updates) {
-        sqlite3_reset(statement);
-        sqlite3_bind_double(statement, 1, static_cast<double>(customGainDb));
-        sqlite3_bind_int(statement, 2, hasCustomGain ? 1 : 0);
-        sqlite3_bind_int64(statement, 3, updatedAtMs);
-        bindText(statement, 4, normalizedPath(file));
+        sqlite3_reset(statement.get());
+        const bool stored = sqlite::bindDouble(*statement, 1, static_cast<double>(customGainDb))
+            && sqlite::bindInt64(*statement, 2, hasCustomGain ? 1 : 0) && sqlite::bindInt64(*statement, 3, updatedAtMs)
+            && sqlite::bindText(*statement, 4, normalizedPath(file)) && sqlite::stepToCompletion(*statement);
 
-        if (!stepToCompletion(statement)) {
-            completed = false;
-            break;
+        if (!stored) {
+            return 0;
         }
 
-        updatedRows += sqlite3_changes(database);
+        updatedRows += sqlite3_changes(database.get());
     }
 
-    sqlite3_finalize(statement);
-
-    if (completed && execute("COMMIT;")) {
-        return updatedRows;
-    }
-
-    static_cast<void>(execute("ROLLBACK;"));
-    return 0;
+    return transaction.commit() ? updatedRows : 0;
 }
 
 /// Removes the analysis, waveform and all independently cached tag kinds for a file, atomically.
@@ -616,30 +590,23 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
         return false;
     }
 
-    if (!execute("BEGIN IMMEDIATE;")) {
+    sqlite::Transaction transaction(*database);
+    if (!transaction.isActive()) {
         return false;
     }
+
     for (const auto* sql :
          {"DELETE FROM file_analysis WHERE file_path = ?;", "DELETE FROM serato_tag_cache WHERE file_path = ?;"})
     {
-        sqlite3_stmt* statement = nullptr;
-        if (!prepare(sql, statement)) {
-            static_cast<void>(execute("ROLLBACK;"));
-            return false;
-        }
-        bindText(statement, 1, normalizedPath(file));
-        const auto completed = stepToCompletion(statement);
-        sqlite3_finalize(statement);
-        if (!completed) {
-            static_cast<void>(execute("ROLLBACK;"));
+        const auto statement = sqlite::prepare(*database, sql);
+        if (statement == nullptr || !sqlite::bindText(*statement, 1, normalizedPath(file))
+            || !sqlite::stepToCompletion(*statement))
+        {
             return false;
         }
     }
-    if (execute("COMMIT;")) {
-        return true;
-    }
-    static_cast<void>(execute("ROLLBACK;"));
-    return false;
+
+    return transaction.commit();
 }
 
 namespace
@@ -678,14 +645,16 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
             UNION ALL
             SELECT file_path, file_size, modified_time_ms, tag_kind FROM serato_tag_cache;
         )SQL";
-        sqlite3_stmt* statement = nullptr;
-        if (!prepare(sql, statement)) {
+        const auto prepared = sqlite::prepare(*database, sql);
+        if (prepared == nullptr) {
             return 0;
         }
 
+        auto* const statement = prepared.get();
+
         while (sqlite3_step(statement) == SQLITE_ROW) {
             cachedRows.push_back({
-                .path = columnText(statement, 0),
+                .path = sqlite::columnText(*statement, 0),
                 .fileSize = sqlite3_column_int64(statement, 1),
                 .modifiedTimeMs = sqlite3_column_int64(statement, 2),
                 .tagKind = sqlite3_column_type(statement, 3) == SQLITE_NULL
@@ -693,8 +662,6 @@ int AnalysisCache::pruneMissingFiles(const std::function<bool()>& shouldStop)
                     : std::optional {sqlite3_column_int64(statement, 3)},
             });
         }
-
-        sqlite3_finalize(statement);
     }
 
     int removedRows = 0;
@@ -747,21 +714,16 @@ bool AnalysisCache::removeRowVersion(
           "?;"
         : "DELETE FROM file_analysis WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;";
 
-    sqlite3_stmt* statement = nullptr;
-    if (!prepare(sql, statement)) {
+    const auto statement = sqlite::prepare(*database, sql);
+    if (statement == nullptr) {
         return false;
     }
 
-    bindText(statement, 1, path);
-    sqlite3_bind_int64(statement, 2, fileSize);
-    sqlite3_bind_int64(statement, 3, modifiedTimeMs);
-    if (tagKind) {
-        sqlite3_bind_int64(statement, 4, *tagKind);
-    }
+    const bool bound = sqlite::bindText(*statement, 1, path) && sqlite::bindInt64(*statement, 2, fileSize)
+        && sqlite::bindInt64(*statement, 3, modifiedTimeMs)
+        && (!tagKind.has_value() || sqlite::bindInt64(*statement, 4, *tagKind));
 
-    const auto completed = stepToCompletion(statement);
-    sqlite3_finalize(statement);
-    return completed && sqlite3_changes(database) > 0;
+    return bound && sqlite::stepToCompletion(*statement) && sqlite3_changes(database.get()) > 0;
 }
 
 /// Loads cached thumbnail waveform data for the given file when available.
@@ -784,15 +746,14 @@ bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& w
         WHERE file_path = ?;
     )SQL";
 
-    sqlite3_stmt* statement = nullptr;
-    if (!prepare(sql, statement)) {
+    const auto prepared = sqlite::prepare(*database, sql);
+    if (prepared == nullptr || !sqlite::bindText(*prepared, 1, normalizedPath(file))) {
         return false;
     }
 
-    bindText(statement, 1, normalizedPath(file));
+    auto* const statement = prepared.get();
 
     if (sqlite3_step(statement) != SQLITE_ROW) {
-        sqlite3_finalize(statement);
         return false;
     }
 
@@ -804,12 +765,10 @@ bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& w
     if (cachedFileSize != fileSize || cachedModifiedTime != modifiedTimeMs || cachedWaveformVersion != waveformVersion
         || cachedAnalysisVersion != analysisVersion)
     {
-        sqlite3_finalize(statement);
         return false;
     }
 
-    waveformData = columnBlob(statement, 2);
-    sqlite3_finalize(statement);
+    waveformData = sqlite::columnBlob(*statement, 2);
     return waveformData.getSize() > 0;
 }
 
@@ -836,22 +795,19 @@ bool AnalysisCache::storeWaveformData(const juce::File& file, const juce::Memory
           AND analysis_version = ?;
     )SQL";
 
-    sqlite3_stmt* statement = nullptr;
-    if (!prepare(sql, statement)) {
+    const auto statement = sqlite::prepare(*database, sql);
+    if (statement == nullptr) {
         return false;
     }
 
-    bindBlob(statement, waveform_parameter::waveformData, waveformData);
-    sqlite3_bind_int(statement, waveform_parameter::waveformVersion, waveformVersion);
-    sqlite3_bind_int64(statement, waveform_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
-    bindText(statement, waveform_parameter::filePath, normalizedPath(file));
-    sqlite3_bind_int64(statement, waveform_parameter::fileSize, fileSize);
-    sqlite3_bind_int64(statement, waveform_parameter::modifiedTimeMs, modifiedTimeMs);
-    sqlite3_bind_int(statement, waveform_parameter::analysisVersion, analysisVersion);
+    const bool bound = sqlite::bindBlob(*statement, waveform_parameter::waveformData, waveformData)
+        && sqlite::bindInt64(*statement, waveform_parameter::waveformVersion, waveformVersion)
+        && sqlite::bindInt64(*statement, waveform_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds())
+        && sqlite::bindText(*statement, waveform_parameter::filePath, normalizedPath(file))
+        && sqlite::bindInt64(*statement, waveform_parameter::fileSize, fileSize)
+        && sqlite::bindInt64(*statement, waveform_parameter::modifiedTimeMs, modifiedTimeMs)
+        && sqlite::bindInt64(*statement, waveform_parameter::analysisVersion, analysisVersion);
 
-    const auto completed = stepToCompletion(statement);
-    const auto changedRows = sqlite3_changes(database);
-    sqlite3_finalize(statement);
-    return completed && changedRows > 0;
+    return bound && sqlite::stepToCompletion(*statement) && sqlite3_changes(database.get()) > 0;
 }
 }  // namespace audiobatch

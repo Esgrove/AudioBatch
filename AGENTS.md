@@ -39,7 +39,10 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
     - `AnalysisCache.*` manage the SQLite result cache.
       Its implementation is split into `AnalysisCache.cpp` (analysis, tag and waveform persistence)
       and `AnalysisCacheSchema.cpp` (database lifecycle and schema),
-      which share the constants and helpers in `AnalysisCacheSql.h`.
+      which share the column and parameter constants in `AnalysisCacheSql.h`.
+    - `Sqlite.*` holds the self-closing database and statement handles in the `sqlite` namespace,
+      with the execute, prepare, step, bind and column helpers that check results and log errors.
+      `SqliteTransaction.*` holds `sqlite::Transaction`, which rolls back unless committed.
     - `AnalysisCoordinator.*` orchestrates background analysis.
 - `src/normalization/` holds `AudioNormalization.*` for normalization and AIFF conversion,
   `NormalizationFormatSupport.cpp`, which reports which formats this build can normalize,

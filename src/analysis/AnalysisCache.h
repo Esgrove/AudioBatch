@@ -6,6 +6,7 @@
 #pragma once
 
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/Sqlite.h"
 #include "serato/SeratoTagTypes.h"
 
 #include <JuceHeader.h>
@@ -14,9 +15,6 @@
 #include <functional>
 #include <optional>
 #include <vector>
-
-struct sqlite3;
-struct sqlite3_stmt;
 
 namespace audiobatch
 {
@@ -77,10 +75,7 @@ public:
 private:
     [[nodiscard]] bool addMissingColumns() const;
     [[nodiscard]] bool columnExists(const juce::String& tableName, const juce::String& columnName) const;
-    [[nodiscard]] bool execute(const juce::String& sql) const;
     bool openUnlocked();
-    bool prepare(const char* sql, sqlite3_stmt*& statement) const;
-    bool stepToCompletion(sqlite3_stmt* statement) const;
 
     [[nodiscard]] bool removeRowVersion(
         const juce::String& path,
@@ -96,8 +91,9 @@ private:
     static constexpr int analysisVersion {9};
     static constexpr int waveformVersion {1};
 
+    /// Serializes every use of the connection, which is opened without SQLite's own mutex.
     juce::CriticalSection mutex;
     juce::File databaseFile;
-    sqlite3* database {nullptr};
+    sqlite::Database database;
 };
 }  // namespace audiobatch
