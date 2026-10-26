@@ -13,6 +13,7 @@ use audiobatch_core::AnalysisCache;
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use colored::Colorize;
+use indicatif::ProgressDrawTarget;
 
 fn main() -> ExitCode {
     let args = match CliArgs::try_parse() {
@@ -54,7 +55,7 @@ fn main() -> ExitCode {
         }
     };
 
-    match run_analysis(&args, cache, &mut output, &mut log) {
+    match run_analysis(&args, cache, &mut output, &mut log, ProgressDrawTarget::stderr()) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             // Writing fails when stdout is closed early, for example when piping into head.

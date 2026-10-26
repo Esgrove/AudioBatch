@@ -28,6 +28,9 @@ pub const EXIT_FAILURES: u8 = 2;
 
 /// Runs the analysis workflow and returns the process exit code.
 ///
+/// The progress bar is drawn to `progress_target`,
+/// which is stderr for the CLI and hidden in tests so the bar does not mix into the test output.
+///
 /// # Errors
 ///
 /// Returns an error when the worker pool cannot be created or the results cannot be written.
@@ -36,6 +39,7 @@ pub fn run_analysis(
     cache: Arc<AnalysisCache>,
     output: &mut dyn Write,
     log: &mut dyn Write,
+    progress_target: ProgressDrawTarget,
 ) -> Result<u8> {
     let mut input_paths = args.paths.clone();
     if input_paths.is_empty() {
@@ -56,7 +60,7 @@ pub fn run_analysis(
     };
 
     let started = Instant::now();
-    let mut records = analyze_with_progress(&coordinator, options);
+    let mut records = analyze_with_progress(&coordinator, options, progress_target);
     let failures: Vec<&AnalysisRecord> = records.iter().filter(|record| record.has_error()).collect();
     writeln!(
         log,
@@ -94,13 +98,18 @@ pub fn run_analysis(
     Ok(exit_code)
 }
 
-/// Runs the analysis and collects every record, showing a progress bar on stderr when it is a terminal.
+/// Runs the analysis and collects every record, showing a progress bar on the given target.
+/// The stderr target only draws when stderr is a terminal.
 #[expect(
     clippy::literal_string_with_formatting_args,
     reason = "the progress template uses indicatif placeholders, not format arguments"
 )]
-fn analyze_with_progress(coordinator: &AnalysisCoordinator, options: AnalysisOptions) -> Vec<AnalysisRecord> {
-    let progress = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr());
+fn analyze_with_progress(
+    coordinator: &AnalysisCoordinator,
+    options: AnalysisOptions,
+    progress_target: ProgressDrawTarget,
+) -> Vec<AnalysisRecord> {
+    let progress = ProgressBar::with_draw_target(None, progress_target);
     progress.set_style(
         ProgressStyle::with_template("{spinner} [{elapsed_precise}] {bar:40} {pos}/{len} {wide_msg}")
             .unwrap_or_else(|_| ProgressStyle::default_bar()),
@@ -145,7 +154,8 @@ mod test_run_analysis {
         let cache = Arc::new(AnalysisCache::with_path(directory.path().join("analysis.db")));
         let mut output = Vec::new();
         let mut log = Vec::new();
-        let code = run_analysis(&args, cache, &mut output, &mut log).expect("run succeeds");
+        let code =
+            run_analysis(&args, cache, &mut output, &mut log, ProgressDrawTarget::hidden()).expect("run succeeds");
         (
             code,
             String::from_utf8(output).expect("utf-8"),
