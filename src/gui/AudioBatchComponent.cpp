@@ -481,6 +481,7 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
         AudioFileTableColumn::bitDepth,
         AudioFileTableColumn::bitrate,
         AudioFileTableColumn::sampleRate,
+        AudioFileTableColumn::length,
         AudioFileTableColumn::overallPeak,
         AudioFileTableColumn::peakLeft,
         AudioFileTableColumn::peakRight,

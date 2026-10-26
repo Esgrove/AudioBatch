@@ -50,15 +50,16 @@ constexpr std::array columnDefinitions {
     defineColumn(AudioFileTableColumn::path, "Path", layout::table::pathMaximumWidth),
     defineColumn(AudioFileTableColumn::type, "Type", layout::table::metricMaximumWidth),
     defineColumn(AudioFileTableColumn::bitDepth, "Bit Depth", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::bitrate, "Bitrate", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::sampleRate, "Rate", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::overallPeak, "Peak", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::peakLeft, "Peak L", layout::table::metricMaximumWidth, false),
-    defineColumn(AudioFileTableColumn::peakRight, "Peak R", layout::table::metricMaximumWidth, false),
-    defineColumn(AudioFileTableColumn::overallTruePeak, "True Peak", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::bitrate, "Bitrate (kbps)", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::sampleRate, "Rate (kHz)", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::length, "Length", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::overallPeak, "Peak (dBFS)", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::peakLeft, "Peak L (dBFS)", layout::table::metricMaximumWidth, false),
+    defineColumn(AudioFileTableColumn::peakRight, "Peak R (dBFS)", layout::table::metricMaximumWidth, false),
+    defineColumn(AudioFileTableColumn::overallTruePeak, "True Peak (dBTP)", layout::table::metricMaximumWidth),
     defineColumn(AudioFileTableColumn::maxShortTermLufs, "LUFS-S", layout::table::metricMaximumWidth),
     defineColumn(AudioFileTableColumn::integratedLufs, "LUFS-I", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::customGain, "Gain", layout::table::metricMaximumWidth, false),
+    defineColumn(AudioFileTableColumn::customGain, "Gain (dB)", layout::table::metricMaximumWidth, false),
     defineColumn(AudioFileTableColumn::status, "Status", layout::table::statusMaximumWidth),
 };
 
@@ -262,39 +263,43 @@ void AudioFileTableModel::paintCell(
             justification = juce::Justification::centredRight;
             break;
         case AudioFileTableColumn::bitrate:
-            text = formatBitrateDisplay(record);
+            text = formatBitrateCompact(record);
             justification = juce::Justification::centredRight;
             break;
         case AudioFileTableColumn::sampleRate:
-            text = formatSampleRateDisplay(record);
+            text = formatSampleRateCompact(record);
+            justification = juce::Justification::centredRight;
+            break;
+        case AudioFileTableColumn::length:
+            text = formatDurationClock(record.durationSeconds);
             justification = juce::Justification::centredRight;
             break;
         case AudioFileTableColumn::peakLeft:
-            text = formatPeakDisplay(record.peakLeft);
+            text = formatPeakCompact(static_cast<double>(record.peakLeft));
             justification = juce::Justification::centredRight;
             break;
         case AudioFileTableColumn::peakRight:
-            text = formatPeakDisplay(record.peakRight);
+            text = formatPeakCompact(static_cast<double>(record.peakRight));
             justification = juce::Justification::centredRight;
             break;
         case AudioFileTableColumn::overallPeak:
-            text = formatPeakDisplay(record.overallPeak);
+            text = formatPeakCompact(static_cast<double>(record.overallPeak));
             justification = juce::Justification::centredRight;
             break;
         case AudioFileTableColumn::overallTruePeak:
-            text = formatTruePeakDisplay(record.overallTruePeak);
+            text = formatTruePeakCompact(record.overallTruePeak);
             justification = juce::Justification::centredRight;
             break;
         case AudioFileTableColumn::maxShortTermLufs:
-            text = formatLoudnessDisplay(record.maxShortTermLufs);
+            text = formatLoudnessCompact(record.maxShortTermLufs);
             justification = juce::Justification::centredRight;
             break;
         case AudioFileTableColumn::integratedLufs:
-            text = formatLoudnessDisplay(record.integratedLufs);
+            text = formatLoudnessCompact(record.integratedLufs);
             justification = juce::Justification::centredRight;
             break;
         case AudioFileTableColumn::customGain:
-            text = formatCustomGainDisplay(record);
+            text = formatCustomGainCompact(record);
             justification = juce::Justification::centredRight;
             break;
         case AudioFileTableColumn::status:

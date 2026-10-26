@@ -211,7 +211,7 @@ std::vector<AudioInfoRow> AudioInfoPanel::formatRows(const AudioAnalysisRecord& 
         .field = "Audio",
         .value = utils::format("{} / {}", formatSampleRateDisplay(record), formatBitrateDisplay(record)),
     });
-    newRows.push_back({.field = "Duration", .value = juce::RelativeTime(record.durationSeconds).getDescription()});
+    newRows.push_back({.field = "Duration", .value = formatDurationClockTenths(record.durationSeconds)});
     newRows.push_back({.field = "Samples", .value = juce::String(record.lengthInSamples)});
     newRows.push_back({
         .field = "Peak L / R",

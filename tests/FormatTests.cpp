@@ -5,6 +5,7 @@
 #include "analysis/AudioAnalysisFormatting.h"
 #include "TestSuites.h"
 
+#include <limits>
 #include <vector>
 
 namespace audiobatch::tests
@@ -24,8 +25,8 @@ public:
             expectEquals(formatPeakCompact(0.5), juce::String("-6.02"));
             expectEquals(formatPeakCompact(-0.5), juce::String("-6.02"));
             expectEquals(formatPeakCompact(0.0), juce::String("-INF"));
-            expectEquals(formatPeakDisplay(0.5f), juce::String("-6.02 dBFS"));
-            expectEquals(formatTruePeakDisplay(0.0), juce::String("-INF dBTP"));
+            expectEquals(formatTruePeakCompact(0.5), juce::String("-6.02"));
+            expectEquals(formatTruePeakCompact(0.0), juce::String("-INF"));
         }
 
         beginTest("Very quiet peaks are floored at -100 dB");
@@ -36,19 +37,35 @@ public:
         beginTest("Loudness formats as LUFS, with the sentinel as -INF");
         {
             expectEquals(formatLoudnessCompact(-14.25), juce::String("-14.25"));
-            expectEquals(
-                formatLoudnessDisplay(AudioAnalysisRecord::negativeInfinityLoudness), juce::String("-INF LUFS")
-            );
+            expectEquals(formatLoudnessCompact(AudioAnalysisRecord::negativeInfinityLoudness), juce::String("-INF"));
         }
 
-        beginTest("Sample rates format in kHz");
+        beginTest("Sample rates format in kHz, with the unit only outside the results table");
         {
             AudioAnalysisRecord record;
+            expectEquals(formatSampleRateCompact(record), juce::String("-"));
             expectEquals(formatSampleRateDisplay(record), juce::String("-"));
             record.sampleRate = 48'000;
+            expectEquals(formatSampleRateCompact(record), juce::String("48"));
             expectEquals(formatSampleRateDisplay(record), juce::String("48 kHz"));
             record.sampleRate = 44'100;
+            expectEquals(formatSampleRateCompact(record), juce::String("44.1"));
             expectEquals(formatSampleRateDisplay(record), juce::String("44.1 kHz"));
+        }
+
+        beginTest("Durations format as minutes and seconds, with hours from one hour on");
+        {
+            expectEquals(formatDurationClock(0.0), juce::String("-"));
+            expectEquals(formatDurationClock(std::numeric_limits<double>::quiet_NaN()), juce::String("-"));
+            expectEquals(formatDurationClock(5.4), juce::String("0:05"));
+            expectEquals(formatDurationClock(195.0), juce::String("3:15"));
+            expectEquals(formatDurationClock(195.6), juce::String("3:16"));
+            expectEquals(formatDurationClock(3'599.6), juce::String("1:00:00"));
+            expectEquals(formatDurationClock(3'725.0), juce::String("1:02:05"));
+            expectEquals(formatDurationClockTenths(0.0), juce::String("-"));
+            expectEquals(formatDurationClockTenths(195.44), juce::String("3:15.4"));
+            expectEquals(formatDurationClockTenths(59.96), juce::String("1:00.0"));
+            expectEquals(formatDurationClockTenths(3'725.25), juce::String("1:02:05.3"));
         }
 
         beginTest("Bit depth uses the analyzed value or the existing unavailable label");
@@ -67,9 +84,11 @@ public:
         beginTest("Bitrate is derived from file size and duration");
         {
             AudioAnalysisRecord record;
+            expectEquals(formatBitrateCompact(record), juce::String("-"));
             expectEquals(formatBitrateDisplay(record), juce::String("-"));
             record.fileSize = 40'000;
             record.durationSeconds = 1.0;
+            expectEquals(formatBitrateCompact(record), juce::String("320"));
             expectEquals(formatBitrateDisplay(record), juce::String("320 kbps"));
         }
 
@@ -77,13 +96,13 @@ public:
         {
             AudioAnalysisRecord record;
             record.customGainDb = 3.0f;
-            expectEquals(formatCustomGainDisplay(record), juce::String());
+            expectEquals(formatCustomGainCompact(record), juce::String());
             record.hasCustomGain = true;
-            expectEquals(formatCustomGainDisplay(record), juce::String("+3.0 dB"));
+            expectEquals(formatCustomGainCompact(record), juce::String("+3.0"));
             record.customGainDb = 0.0f;
-            expectEquals(formatCustomGainDisplay(record), juce::String("+0.0 dB"));
+            expectEquals(formatCustomGainCompact(record), juce::String("+0.0"));
             record.customGainDb = -1.5f;
-            expectEquals(formatCustomGainDisplay(record), juce::String("-1.5 dB"));
+            expectEquals(formatCustomGainCompact(record), juce::String("-1.5"));
         }
 
         beginTest("The type label prefers the extension, then the format name");

@@ -173,6 +173,9 @@ int compareRecordsByColumn(
         case AudioFileTableColumn::sampleRate:
             return compareSampleRates(lhs, rhs);
 
+        case AudioFileTableColumn::length:
+            return compareValues(lhs.durationSeconds, rhs.durationSeconds);
+
         case AudioFileTableColumn::peakLeft:
             return comparePeaks(lhs.peakLeft, rhs.peakLeft);
 

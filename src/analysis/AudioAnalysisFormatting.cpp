@@ -1,11 +1,15 @@
 /// Implementation of the functions that format analysis values for display in the GUI and CLI:
-/// peak, true peak, and loudness levels, bitrate, sample rate, bit depth, file type, and status.
+/// peak, true peak, and loudness levels, bitrate, sample rate, bit depth, per-file gain, duration, file type,
+/// and status.
 
 #include "analysis/AudioAnalysisFormatting.h"
 
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
+
+#include <cmath>
+#include <cstdint>
 
 namespace audiobatch
 {
@@ -19,64 +23,68 @@ constexpr double kilobitsPerSecondDivisor {1000.0};
 constexpr double bitsPerByte {8.0};
 /// Number of hertz in a kilohertz, used when displaying sample rates.
 constexpr int hertzPerKilohertz {1000};
+/// Number of seconds in a minute, used when displaying durations.
+constexpr std::int64_t secondsPerMinute {60};
+/// Number of minutes in an hour, used when displaying durations.
+constexpr std::int64_t minutesPerHour {60};
+/// Number of seconds in an hour, used when displaying durations.
+constexpr std::int64_t secondsPerHour {secondsPerMinute * minutesPerHour};
+/// Number of tenths of a second in a second, the precision of the detailed duration.
+constexpr std::int64_t tenthsPerSecond {10};
 
-/// Converts a linear amplitude into a decibel string with the given unit suffix.
+/// Converts a linear amplitude into decibels as text.
 /// Silence renders as "-INF" so it never shows a misleading finite value.
-juce::String formatAmplitudeDisplay(const double amplitude, const juce::String& unitSuffix)
+juce::String formatAmplitudeDecibels(const double amplitude)
 {
     if (amplitude <= 0.0) {
-        return utils::format("-INF{}", unitSuffix);
+        return "-INF";
     }
 
     const auto decibels = juce::Decibels::gainToDecibels(static_cast<float>(amplitude), minimumDisplayDecibels);
-    return utils::format("{:.2f}{}", decibels, unitSuffix);
+    return utils::format("{:.2f}", decibels);
 }
 
-/// Formats a LUFS loudness value with the given unit suffix, rendering the sentinel value as "-INF".
-juce::String formatLoudnessValue(const double loudness, const juce::String& unitSuffix)
+/// Formats whole seconds as "m:ss", or as "h:mm:ss" from one hour on.
+juce::String formatClock(const std::int64_t totalSeconds)
 {
-    if (loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
-        return utils::format("-INF{}", unitSuffix);
+    const auto hours = totalSeconds / secondsPerHour;
+    const auto minutes = totalSeconds / secondsPerMinute % minutesPerHour;
+    const auto seconds = totalSeconds % secondsPerMinute;
+
+    if (hours > 0) {
+        return utils::format("{}:{:02}:{:02}", hours, minutes, seconds);
     }
 
-    return utils::format("{:.2f}{}", loudness, unitSuffix);
+    return utils::format("{}:{:02}", minutes, seconds);
+}
+
+/// Formats a LUFS loudness value, rendering the sentinel value as "-INF".
+juce::String formatLoudnessValue(const double loudness)
+{
+    if (loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
+        return "-INF";
+    }
+
+    return utils::format("{:.2f}", loudness);
 }
 }  // namespace
 
-/// Formats a peak value for display in the GUI and CLI.
-juce::String formatPeakDisplay(const float peak)
-{
-    return formatAmplitudeDisplay(utils::peakMagnitude(static_cast<double>(peak)), " dBFS");
-}
-
-/// Formats a true-peak value for display in the GUI.
-juce::String formatTruePeakDisplay(const double truePeak)
-{
-    return formatAmplitudeDisplay(utils::peakMagnitude(truePeak), " dBTP");
-}
-
-/// Formats a loudness value for display in the GUI.
-juce::String formatLoudnessDisplay(const double loudness)
-{
-    return formatLoudnessValue(loudness, " LUFS");
-}
-
-/// Formats a peak value for compact CLI display without a unit suffix.
+/// Formats a peak value in dBFS without a unit suffix, for the CLI and the results table.
 juce::String formatPeakCompact(const double peak)
 {
-    return formatAmplitudeDisplay(utils::peakMagnitude(peak), {});
+    return formatAmplitudeDecibels(utils::peakMagnitude(peak));
 }
 
-/// Formats a true-peak value for compact CLI display without a unit suffix.
+/// Formats a true-peak value in dBTP without a unit suffix, for the CLI and the results table.
 juce::String formatTruePeakCompact(const double truePeak)
 {
-    return formatAmplitudeDisplay(utils::peakMagnitude(truePeak), {});
+    return formatAmplitudeDecibels(utils::peakMagnitude(truePeak));
 }
 
-/// Formats a loudness value for compact CLI display without a unit suffix.
+/// Formats a loudness value in LUFS without a unit suffix, for the CLI and the results table.
 juce::String formatLoudnessCompact(const double loudness)
 {
-    return formatLoudnessValue(loudness, {});
+    return formatLoudnessValue(loudness);
 }
 
 /// Returns the average file bitrate in kbps when it can be derived from the analyzed file.
@@ -99,8 +107,8 @@ juce::String formatBitsPerSampleDisplay(const AudioAnalysisRecord& record)
     return juce::String(record.bitsPerSample);
 }
 
-/// Formats the average bitrate for display in the GUI.
-juce::String formatBitrateDisplay(const AudioAnalysisRecord& record)
+/// Formats the average bitrate in kbps without a unit suffix, or "-" when it cannot be derived.
+juce::String formatBitrateCompact(const AudioAnalysisRecord& record)
 {
     const auto bitrateKbps = getAverageBitrateKbps(record);
 
@@ -108,31 +116,69 @@ juce::String formatBitrateDisplay(const AudioAnalysisRecord& record)
         return "-";
     }
 
-    return utils::format("{} kbps", juce::roundToInt(bitrateKbps));
+    return juce::String(juce::roundToInt(bitrateKbps));
 }
 
-/// Formats the per-file gain with an explicit sign for display in the GUI, or an empty string for a file without one.
-juce::String formatCustomGainDisplay(const AudioAnalysisRecord& record)
+/// Formats the average bitrate with its unit for display in the GUI, or "-" when it cannot be derived.
+juce::String formatBitrateDisplay(const AudioAnalysisRecord& record)
+{
+    const auto bitrate = formatBitrateCompact(record);
+    return bitrate == "-" ? bitrate : utils::format("{} kbps", bitrate);
+}
+
+/// Formats the per-file gain in dB with an explicit sign and without a unit suffix,
+/// or an empty string for a file without one.
+juce::String formatCustomGainCompact(const AudioAnalysisRecord& record)
 {
     if (!record.hasCustomGain) {
         return {};
     }
 
-    return utils::format("{}{:.1f} dB", record.customGainDb >= 0.0f ? "+" : "", record.customGainDb);
+    return utils::format("{}{:.1f}", record.customGainDb >= 0.0f ? "+" : "", record.customGainDb);
 }
 
-/// Formats the sample rate for display in the GUI.
-juce::String formatSampleRateDisplay(const AudioAnalysisRecord& record)
+/// Formats a duration rounded to whole seconds as "m:ss", or "h:mm:ss" from one hour on, such as "3:15".
+/// Returns "-" for a duration that is not known.
+juce::String formatDurationClock(const double durationSeconds)
+{
+    if (!std::isfinite(durationSeconds) || durationSeconds <= 0.0) {
+        return "-";
+    }
+
+    return formatClock(std::llround(durationSeconds));
+}
+
+/// Formats a duration rounded to tenths of a second as "m:ss.t", or "h:mm:ss.t" from one hour on, such as "3:15.4".
+/// Returns "-" for a duration that is not known.
+juce::String formatDurationClockTenths(const double durationSeconds)
+{
+    if (!std::isfinite(durationSeconds) || durationSeconds <= 0.0) {
+        return "-";
+    }
+
+    const auto tenths = std::llround(durationSeconds * tenthsPerSecond);
+    return utils::format("{}.{}", formatClock(tenths / tenthsPerSecond), tenths % tenthsPerSecond);
+}
+
+/// Formats the sample rate in kHz without a unit suffix, such as "48" or "44.1", or "-" when it is not known.
+juce::String formatSampleRateCompact(const AudioAnalysisRecord& record)
 {
     if (record.sampleRate <= 0) {
         return "-";
     }
 
     if (record.sampleRate % hertzPerKilohertz == 0) {
-        return utils::format("{} kHz", record.sampleRate / hertzPerKilohertz);
+        return juce::String(record.sampleRate / hertzPerKilohertz);
     }
 
-    return utils::format("{:.1f} kHz", static_cast<double>(record.sampleRate) / hertzPerKilohertz);
+    return utils::format("{:.1f}", static_cast<double>(record.sampleRate) / hertzPerKilohertz);
+}
+
+/// Formats the sample rate with its unit for display in the GUI, or "-" when it is not known.
+juce::String formatSampleRateDisplay(const AudioAnalysisRecord& record)
+{
+    const auto sampleRate = formatSampleRateCompact(record);
+    return sampleRate == "-" ? sampleRate : utils::format("{} kHz", sampleRate);
 }
 
 /// Returns the short file type label for display: the uppercase extension, for example "FLAC",
