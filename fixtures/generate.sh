@@ -56,6 +56,15 @@ ffmpeg -hide_banner -loglevel error -y \
     -f lavfi -i "aevalsrc=${TONE}|${TONE}|${TONE}:s=44100:d=0.25" \
     -map_metadata -1 -fflags +bitexact -flags:a +bitexact -c:a pcm_s16be sine_3ch_44100_16.aif
 
+# A quarter sample rate sine whose samples fall 45 degrees away from its peaks,
+# so the sample peak, the true peak, and the loudness all measure differently.
+# The samples reach 0.354, which is -9.03 dBFS, the waveform between them peaks near -6 dBTP,
+# and the K-weighting boost at 11 kHz raises the integrated loudness above both, to about -2.7 LUFS.
+INTERSAMPLE="0.5*sin(2*PI*11025*t+PI/4)"
+ffmpeg -hide_banner -loglevel error -y \
+    -f lavfi -i "aevalsrc=${INTERSAMPLE}|${INTERSAMPLE}:s=44100:d=1" \
+    -map_metadata -1 -fflags +bitexact -flags:a +bitexact -c:a pcm_s24le intersample_stereo_44100_24.wav
+
 # A single click at sample 11025 of half a second of silence,
 # which shows whether decoding or processing moves the start of the audio.
 # The MP3 encoder records its delay and padding in a Lavf tag, which Core Audio does not read.

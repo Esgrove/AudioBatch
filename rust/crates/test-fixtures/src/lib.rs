@@ -17,6 +17,20 @@ pub const FIXTURE_PEAK_DECIBELS: f64 = -6.0206;
 /// A 1 kHz sine on both channels measures the same as its peak level, as in EBU Tech 3341.
 pub const FIXTURE_LOUDNESS: f64 = FIXTURE_PEAK_DECIBELS;
 
+/// File name of the intersample fixture, a quarter sample rate sine whose samples fall between its peaks.
+///
+/// Its sample peak, true peak, and loudness all differ, so a measurement reported in the wrong field fails.
+pub const INTERSAMPLE_FIXTURE: &str = "intersample_stereo_44100_24.wav";
+
+/// Sample peak of the intersample fixture, in dBFS.
+pub const INTERSAMPLE_PEAK_DECIBELS: f64 = -9.03;
+
+/// True peak of the intersample fixture, in dBTP.
+pub const INTERSAMPLE_TRUE_PEAK_DECIBELS: f64 = -5.92;
+
+/// Integrated loudness of the intersample fixture, in LUFS, raised by the K-weighting at 11 kHz.
+pub const INTERSAMPLE_LOUDNESS: f64 = -2.67;
+
 /// Allowed level difference for lossless fixtures, in dB or LU.
 pub const LOSSLESS_TOLERANCE: f64 = 0.05;
 

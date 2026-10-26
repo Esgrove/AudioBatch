@@ -332,6 +332,28 @@ mod test_fixture_levels {
     }
 
     #[test]
+    fn each_measurement_is_reported_in_its_own_field() {
+        let record = analyze(&test_fixtures::fixture(test_fixtures::INTERSAMPLE_FIXTURE));
+        assert!(!record.has_error(), "{}", record.error_message);
+        let tolerance = test_fixtures::LOSSLESS_TOLERANCE;
+        let peak = decibels(f64::from(record.overall_peak));
+        assert!(
+            (peak - test_fixtures::INTERSAMPLE_PEAK_DECIBELS).abs() < tolerance,
+            "peak {peak}"
+        );
+        let true_peak = decibels(record.overall_true_peak);
+        assert!(
+            (true_peak - test_fixtures::INTERSAMPLE_TRUE_PEAK_DECIBELS).abs() < tolerance,
+            "true peak {true_peak}"
+        );
+        assert!(
+            (record.integrated_lufs - test_fixtures::INTERSAMPLE_LOUDNESS).abs() < tolerance,
+            "loudness {}",
+            record.integrated_lufs
+        );
+    }
+
+    #[test]
     fn history_has_one_reading_per_block() {
         for tone in TONE_FIXTURES {
             let record = analyze(&tone.path());
