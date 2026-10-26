@@ -233,7 +233,7 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
 /// Returns what a column shows with its unit, for the header tooltip, or an empty string for an unknown column.
 juce::String AudioFileTableModel::getColumnDescription(const AudioFileTableColumn column)
 {
-    const auto* const definition = std::ranges::find(columnDefinitions, column, &ColumnDefinition::column);
+    const auto definition = std::ranges::find(columnDefinitions, column, &ColumnDefinition::column);
     return definition != columnDefinitions.end() ? juce::String(definition->description) : juce::String();
 }
 
