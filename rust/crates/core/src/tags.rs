@@ -7,6 +7,7 @@
 use std::borrow::Cow;
 use std::fs::File;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use lofty::config::ParseOptions;
@@ -16,7 +17,20 @@ use lofty::iff::aiff::AiffFile;
 use lofty::iff::wav::WavFile;
 use lofty::mpeg::MpegFile;
 use lofty::prelude::{Accessor, ItemKey, TaggedFileExt};
-use serato_tags::SeratoData;
+use serato_tags::{Overview, SeratoData, SeratoTag};
+
+/// What reading the Serato Overview tag of a file found, the read results the C++ tag cache keeps.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SeratoOverviewState {
+    /// The file has a valid overview.
+    Present(Arc<Overview>),
+    /// The file can hold Serato tags but has no overview.
+    Absent,
+    /// Serato tags are not read from this file format.
+    Unsupported,
+    /// The file has an overview that could not be parsed.
+    Invalid,
+}
 
 /// Tag fields shown in the GUI information panel.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -41,6 +55,33 @@ pub struct FileTags {
     pub has_picture: bool,
     /// Serato DJ data, when the file has any.
     pub serato: Option<SeratoData>,
+}
+
+impl SeratoOverviewState {
+    /// Returns the overview state of a file from the tags read from it.
+    #[must_use]
+    pub fn from_tags(path: &Path, tags: &FileTags) -> Self {
+        if !supports_serato_frames(path) {
+            return Self::Unsupported;
+        }
+        match &tags.serato {
+            Some(serato) if serato.failed_to_parse(SeratoTag::Overview) => Self::Invalid,
+            Some(SeratoData {
+                overview: Some(overview),
+                ..
+            }) => Self::Present(Arc::new(overview.clone())),
+            _ => Self::Absent,
+        }
+    }
+
+    /// Returns the overview when the file has a valid one.
+    #[must_use]
+    pub const fn overview(&self) -> Option<&Arc<Overview>> {
+        match self {
+            Self::Present(overview) => Some(overview),
+            Self::Absent | Self::Unsupported | Self::Invalid => None,
+        }
+    }
 }
 
 impl FileTags {
@@ -85,7 +126,7 @@ pub fn read_tags(path: &Path) -> Result<FileTags> {
 
 /// Reads the concrete `ID3v2` tag of an MP3, AIFF, or WAV file.
 pub(crate) fn read_id3v2(path: &Path) -> Option<Id3v2Tag> {
-    let extension = path.extension()?.to_str()?.to_ascii_lowercase();
+    let extension = lowercase_extension(path)?;
     let mut file = File::open(path).ok()?;
     let options = ParseOptions::new();
     match extension.as_str() {
@@ -94,6 +135,17 @@ pub(crate) fn read_id3v2(path: &Path) -> Option<Id3v2Tag> {
         "wav" | "wave" => WavFile::read_from(&mut file, options).ok()?.id3v2().cloned(),
         _ => None,
     }
+}
+
+/// Returns true for the formats whose `ID3v2` tag `read_id3v2` reads, the only place Serato data is read from.
+fn supports_serato_frames(path: &Path) -> bool {
+    lowercase_extension(path)
+        .is_some_and(|extension| matches!(extension.as_str(), "mp3" | "aif" | "aiff" | "aifc" | "wav" | "wave"))
+}
+
+/// Returns the lowercase extension of a path.
+fn lowercase_extension(path: &Path) -> Option<String> {
+    Some(path.extension()?.to_str()?.to_ascii_lowercase())
 }
 
 /// Parses the Serato data among the `GEOB` frames of an `ID3v2` tag.
@@ -143,5 +195,64 @@ mod test_read_tags {
     #[test]
     fn broken_file_is_an_error() {
         assert!(read_tags(&test_fixtures::fixture("broken.wav")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod test_serato_overview_state {
+    use super::*;
+
+    /// Returns tags whose Serato data comes from the given GEOB frames.
+    fn tags_with_frames(frames: &[(&str, &[u8])]) -> FileTags {
+        FileTags {
+            serato: SeratoData::parse(frames.iter().copied()),
+            ..FileTags::default()
+        }
+    }
+
+    #[test]
+    fn formats_without_id3v2_serato_frames_are_unsupported() {
+        let tags = tags_with_frames(&[(
+            "Serato Overview",
+            &[1, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+        )]);
+        assert_eq!(
+            SeratoOverviewState::from_tags(Path::new("song.flac"), &tags),
+            SeratoOverviewState::Unsupported
+        );
+        assert_eq!(
+            SeratoOverviewState::from_tags(Path::new("song"), &FileTags::default()),
+            SeratoOverviewState::Unsupported
+        );
+    }
+
+    #[test]
+    fn valid_overview_is_present() {
+        let tags = tags_with_frames(&[(
+            "Serato Overview",
+            &[1, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+        )]);
+        let state = SeratoOverviewState::from_tags(Path::new("song.MP3"), &tags);
+        assert_eq!(state.overview().map(|overview| overview.slices().len()), Some(1));
+    }
+
+    #[test]
+    fn missing_and_broken_overviews_are_absent_and_invalid() {
+        let path = Path::new("song.aiff");
+        assert_eq!(
+            SeratoOverviewState::from_tags(path, &FileTags::default()),
+            SeratoOverviewState::Absent
+        );
+        let other_tag = tags_with_frames(&[("Serato Analysis", &[2, 1])]);
+        assert_eq!(
+            SeratoOverviewState::from_tags(path, &other_tag),
+            SeratoOverviewState::Absent
+        );
+        let broken = tags_with_frames(&[("Serato Overview", &[1, 5, 0])]);
+        assert_eq!(
+            SeratoOverviewState::from_tags(path, &broken),
+            SeratoOverviewState::Invalid
+        );
+        assert_eq!(SeratoOverviewState::Invalid.overview(), None);
     }
 }

@@ -27,5 +27,5 @@ pub use normalize_coordinator::{NormalizeCoordinator, NormalizeEvent};
 pub use record::{AnalysisOptions, AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory};
 pub use serato_tags;
 pub use sorting::SortMode;
-pub use tags::{FileTags, read_tags};
+pub use tags::{FileTags, SeratoOverviewState, read_tags};
 pub use waveform::WaveformOverview;
