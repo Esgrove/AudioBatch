@@ -179,53 +179,57 @@ void AudioBatchComponent::rescanCurrentRoot()
     refreshAnalysis(true);
 }
 
-/// Routes dropped paths to a root folder scan when only directories were dropped,
-/// otherwise analyzes the dropped files individually.
-/// Dropped directories replace the root folders, or are appended to them when Shift is held.
+/// Opens dropped paths, appending dropped directories to the root folders when Shift is held.
 void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
 {
-    juce::Array<juce::File> droppedFiles;
-    juce::Array<juce::File> droppedDirectories;
+    // The drop callback carries no modifier state, so read the live keyboard state instead.
+    openPaths(paths, juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown());
+}
+
+/// Routes paths to a root folder scan when they are all directories,
+/// otherwise analyzes the files among them individually.
+/// The directories replace the root folders, or are appended to them.
+/// Paths that do not exist are logged and skipped.
+void AudioBatchComponent::openPaths(const juce::StringArray& paths, const bool appendToRoots)
+{
+    juce::Array<juce::File> files;
+    juce::Array<juce::File> directories;
 
     for (const auto& path : paths) {
-        const juce::File droppedPath(path);
+        const juce::File file(path);
 
-        if (droppedPath.isDirectory()) {
-            droppedDirectories.addIfNotAlreadyThere(droppedPath);
-            continue;
-        }
-
-        if (droppedPath.existsAsFile()) {
-            droppedFiles.addIfNotAlreadyThere(droppedPath);
+        if (file.isDirectory()) {
+            directories.addIfNotAlreadyThere(file);
+        } else if (file.existsAsFile()) {
+            files.addIfNotAlreadyThere(file);
+        } else {
+            utils::logWarn("Path not found: {}", path.quoted());
         }
     }
 
-    if (droppedFiles.isEmpty() && !droppedDirectories.isEmpty()) {
-        // The drop callback carries no modifier state, so read the live keyboard state instead.
-        const auto appendToRoots = juce::ModifierKeys::getCurrentModifiersRealtime().isShiftDown();
-
-        for (const auto& directory : droppedDirectories) {
+    if (files.isEmpty() && !directories.isEmpty()) {
+        for (const auto& directory : directories) {
             utils::logInfo(
-                "Dropped directory{}: {}", appendToRoots ? " to add" : "", directory.getFullPathName().quoted()
+                "Opening directory{}: {}", appendToRoots ? " to add" : "", directory.getFullPathName().quoted()
             );
         }
 
         if (appendToRoots) {
-            addRoots(droppedDirectories);
+            addRoots(directories);
         } else {
-            setRoots(droppedDirectories);
+            setRoots(directories);
         }
 
         return;
     }
 
-    if (droppedFiles.isEmpty()) {
-        statusBar.setStatusText("No supported dropped files");
+    if (files.isEmpty()) {
+        statusBar.setStatusText("No supported files to open");
         return;
     }
 
-    utils::logInfo("Dropped {} files", droppedFiles.size());
-    startAnalysis(droppedFiles, false, false, false);
+    utils::logInfo("Opening {} files", files.size());
+    startAnalysis(files, false, false, false);
 }
 
 /// Re-analyzes all root folders that still exist, or the files already in the table when no root folder has been set.

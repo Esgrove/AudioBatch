@@ -22,6 +22,22 @@ bool isHeadlessRequest(const juce::String& commandLine)
     return arguments.containsOption("--headless|-H");
 }
 
+/// Returns the full paths of the arguments that are not options, such as the folders and files to open on launch.
+/// Relative paths resolve against the current working directory, and quoted paths may contain spaces.
+juce::StringArray getPathArguments(const juce::String& commandLine)
+{
+    const juce::ArgumentList arguments {"AudioBatch", commandLine};
+    juce::StringArray paths;
+
+    for (const auto& argument : arguments.arguments) {
+        if (!argument.isOption()) {
+            paths.addIfNotAlreadyThere(argument.resolveAsFile().getFullPathName());
+        }
+    }
+
+    return paths;
+}
+
 /// Returns the storage options for the AudioBatch.settings file that holds the GUI settings and plugin chain.
 /// The CLI only reads this file, for example the plugin search folders of the last GUI scan.
 juce::PropertiesFile::Options createApplicationSettingsOptions()

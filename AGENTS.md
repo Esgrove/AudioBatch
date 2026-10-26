@@ -63,7 +63,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       implement the plugin chain and batch processing through it.
 - `src/utils/` holds the shared helpers, split by area, all in the `utils` namespace unless noted:
     - `Log.*` holds the leveled logging functions.
-    - `AppInfo.*` holds startup flag queries, the version line, the About text, system information,
+    - `AppInfo.*` holds startup flag and path argument queries, the version line, the About text, system information,
       and the settings file options.
     - `FileUtils.*` holds the file system helpers, such as moving files to the trash and extension checks.
       It also chooses the default folder for file browsing.
@@ -96,6 +96,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
     - `PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
 - `src/gui/` holds the GUI application shell and its main screen.
     - `Main.cpp` is the GUI application entry point, and `MainWindow.*` is its top-level window and menu bar.
+      Folders and files given as arguments, or forwarded from a second launch, open as if dropped onto the window.
       `GuiLayout.h` holds shared UI dimensions and compile-time layout calculations,
       grouped by the window, workspace, status bar, table, inspector, plugin editor, waveform, and theme.
     - `AudioBatchComponent.*` is the main GUI component.

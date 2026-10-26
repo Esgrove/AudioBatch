@@ -29,6 +29,7 @@ public:
     MainWindow& operator=(MainWindow&&) = delete;
 
     void closeButtonPressed() override;
+    void openPaths(const juce::StringArray& paths) const;
     void showAndActivate();
 
 private:
