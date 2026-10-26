@@ -84,23 +84,7 @@ PluginProcessingResult fail(const juce::File& file, const juce::String& message)
 /// A file with more channels is refused, because the output would drop the extra channels
 /// before the original is replaced.
 constexpr unsigned int maximumProcessingChannels {2};
-}  // namespace
 
-/// Returns true when the file's format can be read for processing.
-bool canProcessFileWithPlugins(const juce::File& file)
-{
-    const auto reader = utils::createAudioReader(file);
-    return reader != nullptr;
-}
-
-/// Returns the on-disk output path that processing would produce for the given input.
-juce::File getProcessingOutputFile(const juce::File& input)
-{
-    return getNormalizationOutputFile(input);
-}
-
-namespace
-{
 /// Returns an error message when the record or the plugin chain cannot be processed.
 std::expected<void, juce::String> validateProcessingInputs(
     const AudioAnalysisRecord& record,
@@ -183,61 +167,7 @@ void foldStereoToMono(juce::AudioBuffer<float>& buffer, const int firstSample, c
     buffer.addFrom(0, firstSample, buffer, 1, firstSample, numSamples);
     buffer.applyGain(0, firstSample, numSamples, 0.5f);
 }
-}  // namespace
 
-/// Runs one block through every plugin in chain order on the same buffer,
-/// and returns the number of main channels carrying signal after the last plugin.
-/// The signal starts with the file's channel count.
-/// A mono signal reaching a plugin with a stereo main input is copied to the second channel first,
-/// so stereo-linked and mid/side processing see a centred source instead of a hard-left one,
-/// and a mono plugin earlier in the chain still affects both channels.
-/// A stereo signal reaching a plugin with a mono main input is folded to the average of both channels,
-/// the same way the output of a mono file is written, so the order of the plugins does not drop a channel.
-/// Channels beyond a plugin's main input, such as a sidechain, are cleared so no dry signal leaks into them.
-/// The buffer is as wide as the widest plugin, and each plugin only sees the channels of its own buses.
-int processBlockThroughChain(
-    juce::AudioBuffer<float>& buffer,
-    std::span<juce::AudioPluginInstance* const> chainInstances,
-    const int numChannels,
-    juce::MidiBuffer& midi,
-    const std::span<juce::AudioBuffer<float>> preparedViews
-)
-{
-    auto signalChannels = numChannels;
-
-    for (std::size_t pluginIndex = 0; pluginIndex < chainInstances.size(); ++pluginIndex) {
-        auto* plugin = chainInstances[pluginIndex];
-        const auto mainInputChannels = juce::jmin(plugin->getMainBusNumInputChannels(), buffer.getNumChannels());
-
-        if (signalChannels == 1 && mainInputChannels >= 2) {
-            buffer.copyFrom(1, 0, buffer, 0, 0, buffer.getNumSamples());
-        } else if (signalChannels >= 2 && mainInputChannels == 1) {
-            foldStereoToMono(buffer, 0, buffer.getNumSamples());
-        }
-
-        for (int channel = juce::jmax(mainInputChannels, 1); channel < buffer.getNumChannels(); ++channel) {
-            buffer.clear(channel, 0, buffer.getNumSamples());
-        }
-
-        // Each plugin gets a view with only as many channels as it was prepared for,
-        // because JUCE's Audio Unit host asserts that the buffer is not wider than the prepared layout.
-        const auto pluginChannels = juce::jmin(
-            buffer.getNumChannels(), juce::jmax(plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels())
-        );
-        juce::AudioBuffer<float> temporaryView;
-        auto& pluginBuffer = preparedViews.empty() ? temporaryView : preparedViews[pluginIndex];
-        pluginBuffer.setDataToReferTo(buffer.getArrayOfWritePointers(), pluginChannels, buffer.getNumSamples());
-
-        midi.clear();
-        plugin->processBlock(pluginBuffer, midi);
-        signalChannels = juce::jmax(1, juce::jmin(plugin->getMainBusNumOutputChannels(), buffer.getNumChannels()));
-    }
-
-    return signalChannels;
-}
-
-namespace
-{
 /// Folds the processed channels down to the file's channel count before they are written.
 /// A mono file whose signal ended up in stereo is written as the average of both main channels.
 /// Returns the buffer view to write, which aliases `buffer`.
@@ -256,26 +186,7 @@ juce::AudioBuffer<float> prepareOutputView(
     const auto channelsToWrite = juce::jmin(numChannels, buffer.getNumChannels());
     return {buffer.getArrayOfWritePointers(), channelsToWrite, firstSample, numSamples};
 }
-}  // namespace
 
-/// Returns true when every sample of the block is a finite number.
-/// An unstable plugin can produce infinity or NaN,
-/// which must be rejected before converting the rendered audio to integer PCM.
-bool isBlockFinite(const juce::AudioBuffer<float>& block, const int numSamples)
-{
-    for (int channel = 0; channel < block.getNumChannels(); ++channel) {
-        const std::span samples(block.getReadPointer(channel), static_cast<std::size_t>(numSamples));
-
-        if (!std::ranges::all_of(samples, [](const float sample) { return std::isfinite(sample); })) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-namespace
-{
 /// Updates the last audible sample position with a block about to be written.
 /// The block must only hold finite samples.
 void measureOutputBlock(const juce::AudioBuffer<float>& block, const int numSamples, RenderSummary& summary)
@@ -571,6 +482,86 @@ std::expected<WriteSummary, juce::String> writeProcessedAiff(
     return writeFinalOutput(*renderedReader, *writer, finalLength, isCancelled, onProgress);
 }
 }  // namespace
+
+/// Returns true when the file's format can be read for processing.
+bool canProcessFileWithPlugins(const juce::File& file)
+{
+    const auto reader = utils::createAudioReader(file);
+    return reader != nullptr;
+}
+
+/// Returns the on-disk output path that processing would produce for the given input.
+juce::File getProcessingOutputFile(const juce::File& input)
+{
+    return getNormalizationOutputFile(input);
+}
+
+/// Runs one block through every plugin in chain order on the same buffer,
+/// and returns the number of main channels carrying signal after the last plugin.
+/// The signal starts with the file's channel count.
+/// A mono signal reaching a plugin with a stereo main input is copied to the second channel first,
+/// so stereo-linked and mid/side processing see a centred source instead of a hard-left one,
+/// and a mono plugin earlier in the chain still affects both channels.
+/// A stereo signal reaching a plugin with a mono main input is folded to the average of both channels,
+/// the same way the output of a mono file is written, so the order of the plugins does not drop a channel.
+/// Channels beyond a plugin's main input, such as a sidechain, are cleared so no dry signal leaks into them.
+/// The buffer is as wide as the widest plugin, and each plugin only sees the channels of its own buses.
+int processBlockThroughChain(
+    juce::AudioBuffer<float>& buffer,
+    std::span<juce::AudioPluginInstance* const> chainInstances,
+    const int numChannels,
+    juce::MidiBuffer& midi,
+    const std::span<juce::AudioBuffer<float>> preparedViews
+)
+{
+    auto signalChannels = numChannels;
+
+    for (std::size_t pluginIndex = 0; pluginIndex < chainInstances.size(); ++pluginIndex) {
+        auto* plugin = chainInstances[pluginIndex];
+        const auto mainInputChannels = juce::jmin(plugin->getMainBusNumInputChannels(), buffer.getNumChannels());
+
+        if (signalChannels == 1 && mainInputChannels >= 2) {
+            buffer.copyFrom(1, 0, buffer, 0, 0, buffer.getNumSamples());
+        } else if (signalChannels >= 2 && mainInputChannels == 1) {
+            foldStereoToMono(buffer, 0, buffer.getNumSamples());
+        }
+
+        for (int channel = juce::jmax(mainInputChannels, 1); channel < buffer.getNumChannels(); ++channel) {
+            buffer.clear(channel, 0, buffer.getNumSamples());
+        }
+
+        // Each plugin gets a view with only as many channels as it was prepared for,
+        // because JUCE's Audio Unit host asserts that the buffer is not wider than the prepared layout.
+        const auto pluginChannels = juce::jmin(
+            buffer.getNumChannels(), juce::jmax(plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels())
+        );
+        juce::AudioBuffer<float> temporaryView;
+        auto& pluginBuffer = preparedViews.empty() ? temporaryView : preparedViews[pluginIndex];
+        pluginBuffer.setDataToReferTo(buffer.getArrayOfWritePointers(), pluginChannels, buffer.getNumSamples());
+
+        midi.clear();
+        plugin->processBlock(pluginBuffer, midi);
+        signalChannels = juce::jmax(1, juce::jmin(plugin->getMainBusNumOutputChannels(), buffer.getNumChannels()));
+    }
+
+    return signalChannels;
+}
+
+/// Returns true when every sample of the block is a finite number.
+/// An unstable plugin can produce infinity or NaN,
+/// which must be rejected before converting the rendered audio to integer PCM.
+bool isBlockFinite(const juce::AudioBuffer<float>& block, const int numSamples)
+{
+    for (int channel = 0; channel < block.getNumChannels(); ++channel) {
+        const std::span samples(block.getReadPointer(channel), static_cast<std::size_t>(numSamples));
+
+        if (!std::ranges::all_of(samples, [](const float sample) { return std::isfinite(sample); })) {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 /// Processes a single file through the given plugin instances in order.
 /// The instances must align index-for-index with options.plugins.

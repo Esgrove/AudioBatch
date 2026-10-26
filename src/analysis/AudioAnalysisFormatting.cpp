@@ -9,17 +9,17 @@
 
 namespace audiobatch
 {
-/// Helpers for formatting levels and file properties.
-
+namespace
+{
+/// Lowest level shown in dB, which very quiet peaks are floored at.
 constexpr float minimumDisplayDecibels {-100.0f};
+/// Number of bits per second in a kilobit per second, used for the average bitrate.
 constexpr double kilobitsPerSecondDivisor {1000.0};
 /// Number of bits in a byte, used to turn a file size into a bit count for the average bitrate.
 constexpr double bitsPerByte {8.0};
 /// Number of hertz in a kilohertz, used when displaying sample rates.
 constexpr int hertzPerKilohertz {1000};
 
-namespace
-{
 /// Converts a linear amplitude into a decibel string with the given unit suffix.
 /// Silence renders as "-INF" so it never shows a misleading finite value.
 juce::String formatAmplitudeDisplay(const double amplitude, const juce::String& unitSuffix)

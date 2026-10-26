@@ -16,6 +16,65 @@
 
 namespace audiobatch::plugin_processing
 {
+namespace
+{
+/// Tells the plugin it is rendering offline rather than running live on an audio device,
+/// so it can use higher-quality processing that does not need to keep up with realtime,
+/// for example higher oversampling or longer lookahead.
+/// Must be called before prepareToPlay:
+/// JUCE passes the mode to VST3 plugins as kOffline in setupProcessing during prepareToPlay.
+/// JUCE's Audio Unit host does not forward the mode,
+/// so it is set directly through kAudioUnitProperty_OfflineRender while the unit is uninitialized.
+void enableOfflineRendering(juce::AudioPluginInstance& plugin)
+{
+    plugin.setNonRealtime(true);
+
+#if JUCE_MAC
+    if (const auto* audioUnitClient = plugin.getAudioUnitClient(); audioUnitClient != nullptr) {
+        if (auto* audioUnit = audioUnitClient->getAudioUnitHandle(); audioUnit != nullptr) {
+            constexpr UInt32 offlineRender = 1;
+            if (const auto status = AudioUnitSetProperty(
+                    audioUnit,
+                    kAudioUnitProperty_OfflineRender,
+                    kAudioUnitScope_Global,
+                    0,
+                    &offlineRender,
+                    sizeof(offlineRender)
+                );
+                status != noErr)
+            {
+                // Not fatal: the plugin still renders correctly, only without its offline quality mode.
+                utils::logWarn(
+                    "Audio Unit {} did not accept offline render mode (OSStatus {})", plugin.getName().quoted(), status
+                );
+            }
+        }
+    }
+#endif
+}
+
+#if JUCE_MAC
+/// Refreshes an Audio Unit's latency immediately after state restoration, without reinitializing it.
+/// JUCE also listens for latency notifications, but those may arrive after per-file preparation returns.
+void refreshAudioUnitLatency(juce::AudioPluginInstance& plugin, const double sampleRate)
+{
+    if (const auto* client = plugin.getAudioUnitClient(); client != nullptr) {
+        if (auto* audioUnit = client->getAudioUnitHandle(); audioUnit != nullptr) {
+            Float64 latencySeconds = 0.0;
+            UInt32 propertySize = sizeof(latencySeconds);
+            if (AudioUnitGetProperty(
+                    audioUnit, kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0, &latencySeconds, &propertySize
+                )
+                == noErr)
+            {
+                plugin.setLatencySamples(juce::jmax(0, juce::roundToInt(latencySeconds * sampleRate)));
+            }
+        }
+    }
+}
+#endif
+}  // namespace
+
 /// Reconfigures the plugin's main input and output buses to match the file when possible.
 /// We preserve the plugin's existing bus count and only override the main bus channel set,
 /// because some plugins have sidechain or aux buses that should be left alone.
@@ -85,68 +144,6 @@ juce::String formatPluginLatency(const juce::int64 samples, const double sampleR
         "{} samples ({:.2f} ms)", samples, static_cast<double>(samples) * utils::millisecondsPerSecond / sampleRate
     );
 }
-
-namespace
-{
-/// Tells the plugin it is rendering offline rather than running live on an audio device,
-/// so it can use higher-quality processing that does not need to keep up with realtime,
-/// for example higher oversampling or longer lookahead.
-/// Must be called before prepareToPlay:
-/// JUCE passes the mode to VST3 plugins as kOffline in setupProcessing during prepareToPlay.
-/// JUCE's Audio Unit host does not forward the mode,
-/// so it is set directly through kAudioUnitProperty_OfflineRender while the unit is uninitialized.
-void enableOfflineRendering(juce::AudioPluginInstance& plugin)
-{
-    plugin.setNonRealtime(true);
-
-#if JUCE_MAC
-    if (const auto* audioUnitClient = plugin.getAudioUnitClient(); audioUnitClient != nullptr) {
-        if (auto* audioUnit = audioUnitClient->getAudioUnitHandle(); audioUnit != nullptr) {
-            constexpr UInt32 offlineRender = 1;
-            if (const auto status = AudioUnitSetProperty(
-                    audioUnit,
-                    kAudioUnitProperty_OfflineRender,
-                    kAudioUnitScope_Global,
-                    0,
-                    &offlineRender,
-                    sizeof(offlineRender)
-                );
-                status != noErr)
-            {
-                // Not fatal: the plugin still renders correctly, only without its offline quality mode.
-                utils::logWarn(
-                    "Audio Unit {} did not accept offline render mode (OSStatus {})", plugin.getName().quoted(), status
-                );
-            }
-        }
-    }
-#endif
-}
-}  // namespace
-
-#if JUCE_MAC
-namespace
-{
-/// Refreshes an Audio Unit's latency immediately after state restoration, without reinitializing it.
-/// JUCE also listens for latency notifications, but those may arrive after per-file preparation returns.
-void refreshAudioUnitLatency(juce::AudioPluginInstance& plugin, const double sampleRate)
-{
-    if (const auto* client = plugin.getAudioUnitClient(); client != nullptr) {
-        if (auto* audioUnit = client->getAudioUnitHandle(); audioUnit != nullptr) {
-            Float64 latencySeconds = 0.0;
-            UInt32 propertySize = sizeof(latencySeconds);
-            if (AudioUnitGetProperty(
-                    audioUnit, kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0, &latencySeconds, &propertySize
-                )
-                == noErr)
-            {
-                plugin.setLatencySamples(juce::jmax(0, juce::roundToInt(latencySeconds * sampleRate)));
-            }
-        }
-    }
-}
-}  // namespace
-#endif
 
 /// Restores saved settings and prepares an inactive plugin on the message thread.
 /// Audio Units must be initialized before restoring state to avoid crashes in units such as Ozone 12.

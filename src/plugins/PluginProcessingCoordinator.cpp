@@ -29,6 +29,33 @@ constexpr int jobShutdownTimeoutMilliseconds {60'000};
 
 /// How long a worker waits for a plugin chain to be released before checking for cancellation again, in milliseconds.
 constexpr int chainWaitIntervalMilliseconds {100};
+
+/// Returns whether every chain aligns index-for-index with options.plugins and contains no null instances.
+/// At least one chain is required.
+bool areChainsUsable(const std::vector<PluginChainInstances>& chains, const PluginProcessingOptions& options)
+{
+    const auto isUsableChain = [&options](const PluginChainInstances& chain) {
+        return !chain.empty() && chain.size() == options.plugins.size()
+            && std::ranges::none_of(chain, [](const auto& instance) { return instance == nullptr; });
+    };
+
+    return !chains.empty() && std::ranges::all_of(chains, isUsableChain);
+}
+
+/// Returns existing records in caller order, retaining the first occurrence of each full path.
+std::vector<AudioAnalysisRecord> collectQueuedRecords(const std::vector<AudioAnalysisRecord>& records)
+{
+    std::set<juce::String> seenPaths;
+    std::vector<AudioAnalysisRecord> queuedRecords;
+    queuedRecords.reserve(records.size());
+    for (const auto& record : records) {
+        if (record.file.existsAsFile() && seenPaths.insert(record.fullPath).second) {
+            queuedRecords.push_back(record);
+        }
+    }
+
+    return queuedRecords;
+}
 }  // namespace
 
 /// Reserves one physical core for the UI and other work, with a half-logical-core fallback.
@@ -236,36 +263,6 @@ void PluginProcessingCoordinator::cancelAndWait()
 
     threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
 }
-
-namespace
-{
-/// Returns whether every chain aligns index-for-index with options.plugins and contains no null instances.
-/// At least one chain is required.
-bool areChainsUsable(const std::vector<PluginChainInstances>& chains, const PluginProcessingOptions& options)
-{
-    const auto isUsableChain = [&options](const PluginChainInstances& chain) {
-        return !chain.empty() && chain.size() == options.plugins.size()
-            && std::ranges::none_of(chain, [](const auto& instance) { return instance == nullptr; });
-    };
-
-    return !chains.empty() && std::ranges::all_of(chains, isUsableChain);
-}
-
-/// Returns existing records in caller order, retaining the first occurrence of each full path.
-std::vector<AudioAnalysisRecord> collectQueuedRecords(const std::vector<AudioAnalysisRecord>& records)
-{
-    std::set<juce::String> seenPaths;
-    std::vector<AudioAnalysisRecord> queuedRecords;
-    queuedRecords.reserve(records.size());
-    for (const auto& record : records) {
-        if (record.file.existsAsFile() && seenPaths.insert(record.fullPath).second) {
-            queuedRecords.push_back(record);
-        }
-    }
-
-    return queuedRecords;
-}
-}  // namespace
 
 /// Reports that a run could not start to the start error callback, if one is set.
 void PluginProcessingCoordinator::reportStartError(const juce::String& message) const

@@ -26,6 +26,12 @@ constexpr auto unknownLabel {"Unknown"};
 /// One column of the plugin listing.
 enum class Column : std::uint8_t { name, manufacturer, type, format, version };
 
+/// The plugins of one group, with the label as first seen.
+struct Group {
+    juce::String label;
+    std::vector<juce::PluginDescription> plugins;
+};
+
 /// Returns the short display name of a plugin format, for example AU instead of AudioUnit.
 juce::String formatLabel(const juce::String& formatName)
 {
@@ -213,15 +219,6 @@ void printTable(const std::vector<juce::PluginDescription>& plugins)
     console::printBold("{}\n", formatLine("", headers, widths));
     printRows(plugins, columns, widths, "");
 }
-
-namespace
-{
-/// The plugins of one group, with the label as first seen.
-struct Group {
-    juce::String label;
-    std::vector<juce::PluginDescription> plugins;
-};
-}  // namespace
 
 /// Prints the plugins in sections, one per group, sorted by group name with Unknown last.
 /// Groups are matched case-insensitively, so differently capitalized manufacturer names end up together.

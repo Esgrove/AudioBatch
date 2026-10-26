@@ -25,6 +25,10 @@ Within a struct or class:
   This includes types that would otherwise be local to a function.
 - File-local helper functions and variables also go in the anonymous namespace instead of being declared `static`.
   `misc-use-anonymous-namespace` in `.clang-tidy` enforces this.
+- Give a `.cpp` file a single anonymous namespace, right after the project namespace opens and its using-declarations.
+  Inside it, declare the types and constants first, then the helper functions.
+  Wrap platform-specific helpers in `#if` blocks inside it instead of opening another anonymous namespace,
+  and do not nest it in a named namespace of the file.
 - Make enums `enum class`.
   Convert the integer ids JUCE passes for menu items, commands, and table columns back with `utils::enumFromId`,
   and switch over every enumerator without a `default` label.

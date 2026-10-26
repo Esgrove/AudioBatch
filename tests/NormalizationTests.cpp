@@ -16,11 +16,11 @@
 
 namespace audiobatch::tests
 {
+namespace
+{
 /// Allowed difference between the normalized peak and 0 dBFS, in dB.
 constexpr double peakTolerance = 0.01;
 
-namespace
-{
 /// Builds an analysis record for a file path without analyzing it.
 AudioAnalysisRecord recordForPath(const juce::String& path)
 {

@@ -13,15 +13,13 @@
 
 namespace audiobatch
 {
-/// Helpers for parsing and validating the CLI options.
-
+namespace
+{
 /// Lowest upper limit for the worker count, used on machines with few cores.
 constexpr int minimumWorkerLimit {64};
 /// Longest worker count text that is parsed, which keeps the number far from the 64-bit limit.
 constexpr int maximumWorkerCountDigits {9};
 
-namespace
-{
 /// Returns true when the argument is a plain number such as "-14" or "0.5",
 /// which may start with a minus sign but is a value and not an option.
 bool isNumericArgument(const juce::String& text)

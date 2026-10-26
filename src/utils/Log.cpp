@@ -26,11 +26,8 @@ namespace
 {
 /// Set by the first crash log, so a terminate handler followed by the abort signal it raises logs only once.
 constinit std::atomic_flag crashLogged;
-}  // namespace
 
 #if !JUCE_WINDOWS
-namespace
-{
 /// Returns the conventional name of a fatal signal for the POSIX crash log.
 constexpr std::string_view signalName(const int signalNumber)
 {
@@ -51,11 +48,8 @@ constexpr std::string_view signalName(const int signalNumber)
             return "unknown signal";
     }
 }
-}  // namespace
 #endif
 
-namespace
-{
 /// Logs the reason the process is about to die together with the current stack trace.
 /// Runs inside a signal handler or the terminate handler,
 /// so the logging is best effort: it allocates and takes the logger lock, which is not async-signal-safe.

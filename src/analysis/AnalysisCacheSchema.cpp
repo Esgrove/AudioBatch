@@ -15,6 +15,15 @@
 
 namespace audiobatch
 {
+namespace
+{
+/// A column that older databases lack, with the definition used to add it.
+struct ColumnMigration {
+    const char* name;
+    const char* definition;
+};
+}  // namespace
+
 /// Captures the absolute path and current file stats without accessing the database.
 FileIdentity::FileIdentity(const juce::File& file) :
     path(file.getFullPathName()),
@@ -107,15 +116,6 @@ bool AnalysisCache::columnExists(const juce::String& tableName, const juce::Stri
 
     return false;
 }
-
-namespace
-{
-/// A column that older databases lack, with the definition used to add it.
-struct ColumnMigration {
-    const char* name;
-    const char* definition;
-};
-}  // namespace
 
 /// Adds every column that a database created by an older version lacks, with its default value.
 /// Returns false when a migration statement fails.

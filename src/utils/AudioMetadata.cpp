@@ -35,21 +35,6 @@
 
 namespace audiobatch
 {
-namespace utils
-{
-/// Converts a JUCE path to TagLib's platform filename representation.
-/// Windows copies the wide buffer.
-/// Elsewhere the returned pointer aliases fullPath, which must remain alive for the entire TagLib operation.
-TagLib::FileName tagLibFileName(const juce::String& fullPath)
-{
-#if JUCE_WINDOWS
-    return {fullPath.toWideCharPointer()};
-#else
-    return fullPath.toRawUTF8();
-#endif
-}
-}  // namespace utils
-
 namespace
 {
 constexpr std::array names {
@@ -403,6 +388,21 @@ bool applyMetadata(
     return tag != nullptr && writeId3Frames(*tag, frames);
 }
 }  // namespace
+
+namespace utils
+{
+/// Converts a JUCE path to TagLib's platform filename representation.
+/// Windows copies the wide buffer.
+/// Elsewhere the returned pointer aliases fullPath, which must remain alive for the entire TagLib operation.
+TagLib::FileName tagLibFileName(const juce::String& fullPath)
+{
+#if JUCE_WINDOWS
+    return {fullPath.toWideCharPointer()};
+#else
+    return fullPath.toRawUTF8();
+#endif
+}
+}  // namespace utils
 
 /// Reads text properties, pictures and opaque ID3v2 frames from the given file.
 /// Returns true on success. Output is cleared on entry.
