@@ -13,6 +13,9 @@ namespace audiobatch::tests
 /// Creates the suite that analyzes the committed audio fixtures and checks the measured levels.
 std::unique_ptr<juce::UnitTest> createAnalysisTests();
 
+/// Creates the suite that checks the blocked reasons and progress of the background work of the main view.
+std::unique_ptr<juce::UnitTest> createBackgroundWorkTests();
+
 /// Creates the suite that checks cache storage and invalidation against a temporary database.
 std::unique_ptr<juce::UnitTest> createCacheTests();
 

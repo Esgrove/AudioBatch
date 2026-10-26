@@ -65,6 +65,7 @@ int main(int argumentCount, char* arguments[])
 
     std::vector<std::unique_ptr<juce::UnitTest>> suites;
     suites.push_back(audiobatch::tests::createAnalysisTests());
+    suites.push_back(audiobatch::tests::createBackgroundWorkTests());
     suites.push_back(audiobatch::tests::createCacheTests());
     suites.push_back(audiobatch::tests::createCliTests());
     suites.push_back(audiobatch::tests::createFileActivityTests());

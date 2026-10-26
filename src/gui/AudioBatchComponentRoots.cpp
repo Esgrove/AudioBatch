@@ -79,7 +79,8 @@ void AudioBatchComponent::launchFolderChooser(const bool appendToRoots)
 /// since startAnalysis would refuse the scan and leave roots that were never scanned.
 void AudioBatchComponent::setRoots(const juce::Array<juce::File>& folders)
 {
-    if (const auto blockedReason = getFileOperationBlockedReason(); blockedReason.isNotEmpty()) {
+    if (const auto blockedReason = getFileOperationBlockedReason(backgroundWork.getWork()); blockedReason.isNotEmpty())
+    {
         statusBar.setStatusText(blockedReason);
         return;
     }
@@ -106,7 +107,8 @@ void AudioBatchComponent::setRoots(const juce::Array<juce::File>& folders)
 /// Refuses before changing the roots while files are being rewritten, like setRoots.
 void AudioBatchComponent::addRoots(const juce::Array<juce::File>& folders)
 {
-    if (const auto blockedReason = getFileOperationBlockedReason(); blockedReason.isNotEmpty()) {
+    if (const auto blockedReason = getFileOperationBlockedReason(backgroundWork.getWork()); blockedReason.isNotEmpty())
+    {
         statusBar.setStatusText(blockedReason);
         return;
     }

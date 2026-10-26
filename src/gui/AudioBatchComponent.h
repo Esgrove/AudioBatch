@@ -1,15 +1,16 @@
 /// Main GUI component of the application.
 /// Declares AudioBatchComponent, which owns the analysis results table, waveform preview and transport,
 /// folder scanning, gain controls, and the plugin chain button and processing flow.
-/// It also hosts the coordinators for background analysis, normalization, and plugin processing.
+/// It starts background analysis, normalization, and plugin processing through BackgroundWorkController,
+/// and applies their results to the table and the preview as the controller's listener.
 
 #pragma once
 
 #include "analysis/AnalysisCache.h"
-#include "analysis/AnalysisCoordinator.h"
 #include "gui/AudioBatchComponentState.h"
 #include "gui/AudioFileTableModel.h"
 #include "gui/AudioPreviewPlayer.h"
+#include "gui/BackgroundWorkController.h"
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/IntervalStepSlider.h"
 #include "gui/components/NormalizationTargetControl.h"
@@ -19,12 +20,9 @@
 #include "gui/GuiLayout.h"
 #include "gui/ResultsModel.h"
 #include "gui/ResultsSorting.h"
-#include "normalization/NormalizeCoordinator.h"
 #include "plugins/PluginChain.h"
 #include "plugins/PluginProcessing.h"
-#include "plugins/PluginProcessingCoordinator.h"
 #include "serato/SeratoPreviewLoader.h"
-#include "utils/MessageThreadBatcher.h"
 
 #include <JuceHeader.h>
 
@@ -45,7 +43,8 @@ class AudioBatchComponent :
     public juce::DragAndDropContainer,
     juce::ChangeListener,
     juce::KeyListener,
-    private juce::ComponentListener
+    private juce::ComponentListener,
+    private BackgroundWorkListener
 {
 public:
     AudioBatchComponent();
@@ -112,21 +111,23 @@ private:
     void componentVisibilityChanged(juce::Component& component) override;
     bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
+    void analysisPlanReceived(const AnalysisPlan& plan, const AnalyzingWork& run) override;
+    void analysisResultsReceived(std::vector<AudioAnalysisRecord> records) override;
+    void analysisCompleted(const AnalyzingWork& run, int totalFiles) override;
+    void normalizeResultReceived(const AudioNormalizationResult& result) override;
+    void normalizeCompleted(const NormalizingWork& pass, int totalFiles) override;
+    void processingResultReceived(const PluginProcessingResult& result) override;
+    void processingCompleted(const ProcessingWork& pass, int totalFiles) override;
+    void processingStartFailed(const juce::String& errorMessage) override;
     void updatePreviewAnimation();
 
     juce::Array<juce::File> getSelectedRecordFiles() const;
     juce::StringArray getSelectedRecordPaths() const;
-    [[nodiscard]] juce::String getFileOperationBlockedReason() const;
-    [[nodiscard]] juce::String getNormalizationBlockedReason() const;
-    [[nodiscard]] juce::String getProcessingBlockedReason() const;
     [[nodiscard]] juce::Array<juce::File> releasePreviewBeforeProcessing(
         const std::vector<AudioAnalysisRecord>& records
     );
 
     [[nodiscard]] bool hasAnyRecords() const;
-    [[nodiscard]] bool isAnalysisInProgress() const noexcept;
-    [[nodiscard]] bool isCurrentAnalysisRun(int runId) const noexcept;
-    [[nodiscard]] bool isIdle() const noexcept;
     [[nodiscard]] bool isFileBeingRewritten(const juce::String& fullPath) const;
     [[nodiscard]] std::vector<AudioAnalysisRecord> getSelectedProcessableRecords() const;
     int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
@@ -138,17 +139,9 @@ private:
     void configurePreviewControls();
     void configureProcessingControls();
     void configureResultsTable();
-    void connectCoordinatorCallbacks();
-    void connectProgressCallbacks();
-    void handleAnalysisComplete(int totalFiles, int runId);
-    void handleAnalysisPlan(const AnalysisPlan& plan);
-    void handleAnalysisResults(std::vector<AnalysisResultMessage> messages);
+    void createSeratoPreviewLoader();
     void handleDroppedPaths(const juce::StringArray& paths);
     void handleFileContextMenuRequested(int row, const juce::MouseEvent& event);
-    void handleNormalizeComplete(int totalFiles);
-    void handleNormalizeResult(const AudioNormalizationResult& result);
-    void handleProcessingComplete(int totalFiles);
-    void handleProcessingResult(const PluginProcessingResult& result);
     void handleSecondarySortRequested(AudioFileTableColumn column);
     void handleSelectionChanged(int lastRowSelected);
     void handleSortRequested(std::optional<AudioFileTableColumn> column, bool isForwards);
@@ -224,19 +217,9 @@ private:
     /// Declared after the cache, so it is stopped and joined before the cache is destroyed.
     std::jthread cachePruneThread;
 
-    /// Hands analysis results from the workers to the message thread, merging each burst with one table refresh.
-    /// Declared before the analysis coordinator, whose workers post to it until the coordinator is destroyed.
-    utils::MessageThreadBatcher<AnalysisResultMessage> analysisResultBatcher {
-        [this](std::vector<AnalysisResultMessage> messages) { handleAnalysisResults(std::move(messages)); }
-    };
-
-    AnalysisCoordinator analysisCoordinator;
-
     /// The rows of the results table. Declared before the table model, which refers to it.
     ResultsModel analysisResults;
     AudioFileTableModel fileTableModel;
-    NormalizeCoordinator normalizeCoordinator;
-    PluginProcessingCoordinator pluginCoordinator;
     juce::ApplicationProperties pluginAppProperties;
     juce::StretchableLayoutManager mainVerticalLayout;
     juce::StretchableLayoutResizerBar waveformResizeBar {&mainVerticalLayout, 1, false};
@@ -266,9 +249,6 @@ private:
     std::unique_ptr<juce::FileChooser> directoryChooser;
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 
-    /// The analysis run, normalization pass, or plugin processing pass that is running, if any.
-    BackgroundWork backgroundWork;
-
     /// Primary and secondary sort columns of the results table.
     results_sorting::SortState sortState {
         .primaryColumn = AudioFileTableColumn::overallPeak,
@@ -282,6 +262,11 @@ private:
                                           resultsTable.repaint();
                                           updateProgressIndicators();
                                       }};
+
+    /// Runs the analysis, normalization, and plugin processing passes, one at a time.
+    /// Declared after the cache and the activity tracker it refers to,
+    /// so it is destroyed, and its workers stopped, before them.
+    BackgroundWorkController backgroundWork {analysisCache, fileActivity, *this};
 
     /// Root folders, background activity, audio output device, and overall progress along the bottom of the window.
     StatusBar statusBar;
