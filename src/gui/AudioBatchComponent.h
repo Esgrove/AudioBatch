@@ -18,11 +18,11 @@
 #include "gui/components/ThumbnailComponent.h"
 #include "gui/FileActivityTracker.h"
 #include "gui/GuiLayout.h"
+#include "gui/PreviewController.h"
 #include "gui/ResultsModel.h"
 #include "gui/ResultsSorting.h"
 #include "plugins/PluginChain.h"
 #include "plugins/PluginProcessing.h"
-#include "serato/SeratoPreviewLoader.h"
 
 #include <JuceHeader.h>
 
@@ -137,10 +137,10 @@ private:
     void addRoots(const juce::Array<juce::File>& folders);
     void applyCustomGainToSelection(std::optional<Decibels> gain);
     void clearCurrentAudioPreview();
+    void clearPreviewDisplay();
     void configurePreviewControls();
     void configureProcessingControls();
     void configureResultsTable();
-    void createSeratoPreviewLoader();
     void handleDroppedPaths(const juce::StringArray& paths);
     void handleFileContextMenuRequested(int row, const juce::MouseEvent& event);
     void handleSecondarySortRequested(AudioFileTableColumn column);
@@ -160,7 +160,7 @@ private:
     void requestSeratoPreview();
     void restoreSelectionByPaths(const juce::StringArray& selectedPaths);
     void setRoots(const juce::Array<juce::File>& folders);
-    void showAudioResource(juce::URL resource);
+    void showAudioFile(const juce::File& file);
     void showFileContextMenu(int row, juce::Point<int> screenPosition);
     void showPluginProcessingWarning(const juce::String& message);
     void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
@@ -200,19 +200,12 @@ private:
         std::shared_ptr<const serato::SeratoData> data
     );
 
+    serato::SeratoPreviewLoader::Completion createSeratoPreviewCompletion();
+
     /// Notifies the window when preview command labels or check marks need refreshing.
     std::function<void()> onViewOptionsChanged;
 
     AnalysisCache analysisCache;
-
-    /// Owns the tag worker, stopped explicitly before GUI cleanup and before the cache is destroyed.
-    std::unique_ptr<serato::SeratoPreviewLoader> seratoPreviewLoader;
-
-    /// Holds the selected preview's metadata so analysis refreshes retain BPM and key until the selection changes.
-    std::shared_ptr<const serato::SeratoData> seratoPreviewData;
-
-    /// Records the requested or adopted file version, including stable negative outcomes.
-    std::optional<FileIdentity> seratoPreviewIdentity;
 
     /// Removes cached rows of deleted files in the background after startup.
     /// Declared after the cache, so it is stopped and joined before the cache is destroyed.
@@ -228,6 +221,12 @@ private:
     /// Plays the previewed file.
     /// Declared before the thumbnail and the audio settings component, which hold references into it.
     AudioPreviewPlayer previewPlayer;
+
+    /// The previewed file and its Serato tags.
+    /// Its tag worker is stopped explicitly before GUI cleanup,
+    /// and it is declared after the cache and the player it uses, so it is destroyed before them.
+    PreviewController preview {analysisCache, previewPlayer, createSeratoPreviewCompletion()};
+
     std::unique_ptr<PluginChain> pluginChain;
 
     /// Normalization mode and target, persisted in pluginAppProperties, which is declared before it.
@@ -238,10 +237,7 @@ private:
     juce::Array<juce::File> currentRoots;
     AudioSettingsComponent audioSettingsComponent {previewPlayer.getDeviceManager()};
     AudioPreviewPreferences previewPreferences;
-    std::optional<FileIdentity> previewFileIdentity;
-    juce::File currentAudioFile;
     juce::TableListBox resultsTable;
-    juce::URL currentAudioUrl;
     /// The secondary controls scroll independently while playback and processing stay pinned below them.
     juce::Component controlsContent;
     juce::Viewport controlsViewport;
@@ -284,7 +280,6 @@ private:
     juce::ToggleButton forceOverwriteToggle {"Overwrite"};
     juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
 
-    bool currentWaveformLoadedFromCache {false};
     bool automaticSelectionChange {false};
 
     /// Expanded divider allocation is independent of the animated or compact workspace.

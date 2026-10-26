@@ -1,0 +1,91 @@
+/// Tests for PreviewController:
+/// the transitions between an empty, released, and loaded preview, and which file each state keeps.
+
+#include "gui/PreviewController.h"
+#include "TestHelpers.h"
+#include "TestSuites.h"
+
+#include <variant>
+
+namespace audiobatch::tests
+{
+/// Checks how loading, releasing, and clearing move the preview between its states.
+class PreviewControllerTests final : public juce::UnitTest
+{
+public:
+    PreviewControllerTests() : juce::UnitTest("Preview controller", "AudioBatch") {}
+
+    /// Runs the preview state checks.
+    void runTest() override
+    {
+        // The cache is never opened, because these checks request no Serato tags.
+        AnalysisCache cache(
+            juce::File::getSpecialLocation(juce::File::tempDirectory)
+                .getChildFile("AudioBatch preview controller tests.db")
+        );
+        TestAudioDeviceState device;
+        AudioPreviewPlayer player;
+        installTestAudioDevice(player.getDeviceManager(), device);
+        PreviewController preview(
+            cache, player, [](const FileIdentity&, std::uint64_t, const std::shared_ptr<const serato::SeratoData>&) {}
+        );
+        const auto file = fixtureFile("silence_stereo_44100_16.wav");
+
+        beginTest("A new preview is empty");
+        {
+            expect(std::holds_alternative<NoPreview>(preview.getState()));
+            expect(preview.getFile() == juce::File());
+            expect(!preview.isWaveformLoadedFromCache());
+        }
+
+        beginTest("Loading a file keeps its identity and a fresh waveform flag");
+        {
+            expect(preview.load(file, false));
+            const auto* loaded = std::get_if<LoadedPreview>(&preview.getState());
+            expect(loaded != nullptr);
+            expect(loaded != nullptr && loaded->identity.matches(file));
+            expect(preview.getFile() == file);
+            expect(player.hasLoadedSource());
+            expect(!preview.isWaveformLoadedFromCache());
+            preview.setWaveformLoadedFromCache(true);
+            expect(preview.isWaveformLoadedFromCache());
+        }
+
+        beginTest("Releasing keeps the file selected but closes the player");
+        {
+            preview.release();
+            expect(std::holds_alternative<ReleasedPreview>(preview.getState()));
+            expect(preview.getFile() == file);
+            expect(!player.hasLoadedSource());
+            expect(!preview.isWaveformLoadedFromCache());
+            expect(preview.getSeratoData() == nullptr);
+            expect(!preview.adoptSeratoData(FileIdentity(file), 1, nullptr));
+        }
+
+        beginTest("A file that fails to load stays selected as a released preview");
+        {
+            const auto missing = file.getSiblingFile("missing preview file.wav");
+            expect(!preview.load(missing, false));
+            expect(std::holds_alternative<ReleasedPreview>(preview.getState()));
+            expect(preview.getFile() == missing);
+            expect(!player.hasLoadedSource());
+        }
+
+        beginTest("Clearing forgets the file");
+        {
+            expect(preview.load(file, false));
+            preview.clear();
+            expect(std::holds_alternative<NoPreview>(preview.getState()));
+            expect(preview.getFile() == juce::File());
+            expect(!player.hasLoadedSource());
+        }
+
+        preview.stop();
+    }
+};
+
+std::unique_ptr<juce::UnitTest> createPreviewControllerTests()
+{
+    return std::make_unique<PreviewControllerTests>();
+}
+}  // namespace audiobatch::tests
