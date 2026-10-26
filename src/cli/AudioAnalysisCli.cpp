@@ -7,6 +7,7 @@
 #include "analysis/AudioAnalysis.h"
 #include "cli/AudioAnalysisCliOutput.h"
 #include "normalization/AudioNormalization.h"
+#include "utils/ConsolePrint.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -17,6 +18,41 @@
 
 namespace audiobatch
 {
+/// Returns an error for every path named on the command line that produced no result:
+/// a path that does not exist, or a file that the analysis skips because it is hidden or not a supported format.
+/// Inside a folder those files are skipped on purpose, but a file named on the command line was asked for,
+/// so skipping it silently would report success for work that was never done.
+juce::StringArray cli::findSkippedInputs(
+    const juce::Array<juce::File>& inputPaths,
+    const std::vector<AudioAnalysisRecord>& results
+)
+{
+    juce::StringArray errors;
+
+    for (const auto& input : inputPaths) {
+        if (!input.exists()) {
+            errors.add(utils::format("Input not found: {}", input.getFullPathName().quoted()));
+            continue;
+        }
+
+        if (input.isDirectory()
+            || std::ranges::any_of(
+                results, [&input](const AudioAnalysisRecord& record) { return record.file == input; }
+            ))
+        {
+            continue;
+        }
+
+        if (input.isHidden() || input.getFileName().startsWithChar('.')) {
+            errors.add(utils::format("Hidden files are not analyzed: {}", input.getFullPathName().quoted()));
+        } else {
+            errors.add(utils::format("Not a supported audio file: {}", input.getFullPathName().quoted()));
+        }
+    }
+
+    return errors;
+}
+
 /// Executes the CLI analysis workflow and returns the process exit code.
 int cli::runAnalysis(const AudioAnalysisCliOptions& options)
 {
@@ -30,7 +66,13 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
     }
 
     AnalysisCache cache;
-    cache.open();
+
+    // The analysis still works without the cache, it only has to read every file again on the next run.
+    if (!cache.open()) {
+        const juce::String cacheWarning {"Could not open the analysis cache, results are not cached"};
+        utils::logWarn(cacheWarning);
+        console::printWarn(cacheWarning);
+    }
 
     AnalysisCoordinator coordinator(cache, options.workerCount);
     AudioAnalysisOptions analysisOptions;
@@ -52,7 +94,14 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
 
     sortRecords(results, options.sortMode, !options.reverse);
 
-    int failureCount = 0;
+    const auto skippedInputs = findSkippedInputs(options.inputPaths, results);
+
+    for (const auto& error : skippedInputs) {
+        utils::logError(error);
+        console::printError(error);
+    }
+
+    int failureCount = skippedInputs.size();
     std::vector<AudioAnalysisRecord> normalizedResults;
 
     juce::StringArray normalizationConflicts;

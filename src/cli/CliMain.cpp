@@ -50,19 +50,18 @@ static int runPluginScanWorker(const juce::String& executableName, const juce::S
 static int runCliMain(const std::span<char*> argv)
 {
     juce::ArgumentList arguments(static_cast<int>(argv.size()), argv.data());
-    cli::attachNegativeOptionValues(arguments);
     // argv[0] is often a relative path, which juce::File asserts on, so resolve it against the working directory.
     // An absolute path is kept as it is.
     const auto executableName
         = juce::File::getCurrentWorkingDirectory().getChildFile(arguments.executableName).getFileNameWithoutExtension();
 
     // The plugin rescan relaunches this executable as its scan worker.
-    const auto argumentSpan = argv.subspan(1);
-    const auto commandLine
-        = juce::StringArray(argumentSpan.data(), static_cast<int>(argumentSpan.size())).joinIntoString(" ");
-    if (isPluginScanWorkerCommandLine(commandLine)) {
+    // The command line is rebuilt from the decoded arguments, before any of them are rewritten for parsing.
+    if (const auto commandLine = cli::joinArguments(arguments); isPluginScanWorkerCommandLine(commandLine)) {
         return cli::runPluginScanWorker(executableName, commandLine);
     }
+
+    cli::attachNegativeOptionValues(arguments);
 
     // Help and version only print to the console.
     // They are checked before parsing, so they win over any other argument, even an invalid one,
