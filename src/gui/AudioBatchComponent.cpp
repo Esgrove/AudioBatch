@@ -103,8 +103,8 @@ void AudioBatchComponent::configureProcessingControls()
         synchronizePreviewPreferences();
         updateProcessButtonState();
     };
-    pluginChain->setChainChangedCallback(refreshLiveChain);
-    pluginChain->setLatencyChangedCallback(refreshLiveChain);
+    liveChain->setChainChangedCallback(refreshLiveChain);
+    liveChain->setLatencyChangedCallback(refreshLiveChain);
     previewPlayer.setErrorCallback([this](const juce::String& message) {
         previewPreferences.pluginChainEnabled = previewPlayer.isPluginPreviewEnabled();
         synchronizePreviewPreferences();
@@ -120,7 +120,7 @@ void AudioBatchComponent::configureProcessingControls()
     });
     setPreviewPreferences(loadAudioPreviewPreferences(*pluginAppProperties.getUserSettings()));
 
-    previewWorkspace.pluginButton.onClick = [this] { pluginChain->showMenu(previewWorkspace.pluginButton); };
+    previewWorkspace.pluginButton.onClick = [this] { liveChain->showMenu(previewWorkspace.pluginButton); };
 
     previewWorkspace.gainSlider.onValueChange = [this] {
         const auto value = static_cast<float>(previewWorkspace.gainSlider.getValue());
@@ -189,10 +189,11 @@ AudioBatchComponent::AudioBatchComponent() :
 
     // The plugin chain is created first, so every control and callback configured below can rely on it.
     pluginAppProperties.setStorageParameters(utils::createApplicationSettingsOptions());
-    pluginChain = std::make_unique<PluginChain>(
-        pluginAppProperties, previewPlayer.getRenderingLock(), previewPlayer.getDeviceManager()
+    pluginLibrary = std::make_unique<PluginLibrary>(pluginAppProperties);
+    liveChain = std::make_unique<LiveChain>(
+        *pluginLibrary, pluginAppProperties, previewPlayer.getRenderingLock(), previewPlayer.getDeviceManager()
     );
-    previewPlayer.setPluginChain(pluginChain.get());
+    previewPlayer.setLiveChain(liveChain.get());
 
     addAndMakeVisible(statusBar);
     previewPlayer.getDeviceManager().addChangeListener(this);
@@ -243,9 +244,9 @@ AudioBatchComponent::~AudioBatchComponent()
     previewPlayer.getDeviceManager().removeChangeListener(this);
     previewPlayer.removeChangeListener(this);
     previewPlayer.setErrorCallback({});
-    pluginChain->setChainChangedCallback({});
-    pluginChain->setLatencyChangedCallback({});
-    previewPlayer.setPluginChain(nullptr);
+    liveChain->setChainChangedCallback({});
+    liveChain->setLatencyChangedCallback({});
+    previewPlayer.setLiveChain(nullptr);
     previewWorkspace.thumbnail.removeChangeListener(this);
     previewWorkspace.thumbnail.setMouseWheelZoomCallback({});
     previewWorkspace.thumbnail.setMouseWheelGainCallback({});
@@ -458,7 +459,7 @@ void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArra
 /// records are loaded, and no processing or analysis is running.
 void AudioBatchComponent::updateProcessButtonState()
 {
-    const bool hasChain = pluginChain->getNumEnabledValidSlots() > 0;
+    const bool hasChain = liveChain->getNumEnabledValidSlots() > 0;
     previewWorkspace.processButton.setEnabled(
         hasChain && hasAnyRecords() && !backgroundWork.isProcessingInProgress()
         && !backgroundWork.isAnalysisInProgress()

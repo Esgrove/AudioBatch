@@ -16,7 +16,7 @@
 
 namespace audiobatch
 {
-class PluginChain;
+class LiveChain;
 
 /// Name and configuration of the preview output device, shown in the status bar.
 /// A value that is not known yet is empty or zero.
@@ -59,7 +59,7 @@ public:
     void setPosition(double seconds);
     void completeInitialPosition(double seconds);
     void setErrorCallback(std::function<void(const juce::String&)> callback);
-    void setPluginChain(PluginChain* chain);
+    void setLiveChain(LiveChain* chain);
     bool setPluginPreviewEnabled(bool enabled);
     void setLatencyCompensated(bool enabled);
     void setInputGain(LinearGain gain, bool immediately = false);
@@ -121,7 +121,7 @@ private:
     juce::AudioFormatManager formatManager;
     PluginPreviewSource previewSource;
     /// The slot owner, which can be destroyed or detached independently of the player.
-    juce::WeakReference<PluginChain> pluginChain;
+    juce::WeakReference<LiveChain> liveChain;
 
     /// Reader source of the loaded file, or nullptr when nothing is loaded.
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;

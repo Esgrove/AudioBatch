@@ -424,7 +424,7 @@ void AudioBatchComponent::processSelectedRecords()
     }
 
     // Captures live state from any open editors so the run uses the latest tweaks.
-    const auto enabledPlugins = pluginChain->getEnabledPlugins();
+    const auto enabledPlugins = liveChain->getEnabledPlugins();
     if (enabledPlugins.empty()) {
         showPluginProcessingWarning("The plugin chain is empty. Use the Plugins button to add plugins.");
         return;
@@ -451,7 +451,7 @@ void AudioBatchComponent::processSelectedRecords()
     statusBar.setStatusText("Loading plugins...");
 
     auto [chains, initialStates, errorMessage, failedPluginName]
-        = pluginChain->instantiateChains(enabledPlugins, workerCount);
+        = pluginLibrary->instantiateChains(enabledPlugins, workerCount);
 
     if (chains.empty() || errorMessage.isNotEmpty()) {
         // All-or-nothing: a chain missing any plugin must not run at all.

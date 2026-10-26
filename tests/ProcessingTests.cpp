@@ -4,7 +4,7 @@
 /// Replaced files are deleted instead of moved to the system trash, so the tests never touch the user's trash.
 
 #include "analysis/AudioAnalysis.h"
-#include "plugins/PluginChain.h"
+#include "gui/LiveChain.h"
 #include "plugins/PluginChainPreparation.h"
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"

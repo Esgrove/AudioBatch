@@ -6,7 +6,7 @@
 #pragma once
 
 #include "gui/GuiLayout.h"
-#include "plugins/PluginChain.h"
+#include "gui/LiveChain.h"
 
 #include <JuceHeader.h>
 
@@ -16,13 +16,16 @@
 
 namespace audiobatch
 {
-/// One row in the chain list, bound to a slot index.
+/// One row in the chain list, bound to the id of its slot.
+/// The rows are rebuilt after every structural change of the chain,
+/// so the position a row was built at is only used for its number, its move buttons, and drag-to-reorder.
 class PluginChainSlotRow : public juce::Component
 {
 public:
     PluginChainSlotRow(
-        PluginChain& ownerChain,
-        int slotIndex,
+        LiveChain& ownerChain,
+        PluginSlotId rowSlotId,
+        int rowChainPosition,
         std::function<int(int containerY)> dropIndexCallback,
         std::function<void(PluginChainSlotRow& row, int targetIndex)> draggedCallback,
         std::function<void(PluginChainSlotRow& row, int targetIndex)> droppedCallback
@@ -48,15 +51,24 @@ public:
     void updateMoveButtonStates(int numRows);
     void updateLatency();
 
-    /// Returns the chain slot index this row is bound to.
-    [[nodiscard]] int getSlotIndex() const noexcept
+    /// Returns the id of the slot this row is bound to.
+    [[nodiscard]] PluginSlotId getSlotId() const noexcept
     {
-        return index;
+        return slotId;
+    }
+
+    /// Returns the position of the slot in the chain when the row was built.
+    [[nodiscard]] int getChainPosition() const noexcept
+    {
+        return chainPosition;
     }
 
 private:
-    PluginChain& pluginChain;
-    int index;
+    void moveBy(int offset);
+
+    LiveChain& liveChain;
+    PluginSlotId slotId;
+    int chainPosition;
 
     /// Maps the vertical centre of the row in its container to the slot index it would drop onto.
     std::function<int(int containerY)> getDropIndex;
@@ -87,7 +99,7 @@ private:
 class PluginChainEditor : public juce::Component, public juce::ChangeListener, private juce::AsyncUpdater
 {
 public:
-    explicit PluginChainEditor(PluginChain& chain);
+    explicit PluginChainEditor(LiveChain& chain);
 
     ~PluginChainEditor() override;
 
@@ -118,7 +130,7 @@ private:
     void updateHintLabel();
     void updateLatencyLabels();
 
-    PluginChain& pluginChain;
+    LiveChain& liveChain;
 
     /// Appends a new plugin to the chain.
     /// Lives inside the row container below the last row, so it scrolls with the rows.

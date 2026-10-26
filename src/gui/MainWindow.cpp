@@ -5,7 +5,7 @@
 #include "gui/MainWindow.h"
 
 #include "gui/GuiLayout.h"
-#include "plugins/PluginChain.h"
+#include "gui/LiveChain.h"
 #include "utils/AppInfo.h"
 #include "utils/FileUtils.h"
 #include "utils/GuiUtils.h"
@@ -319,13 +319,13 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
             getAudioBatch().showSupportedNormalizationFormats();
             break;
         case MenuItemId::editChain:
-            getAudioBatch().getPluginChain().showChainEditor();
+            getAudioBatch().getLiveChain().showChainEditor();
             break;
         case MenuItemId::clearChain:
-            getAudioBatch().getPluginChain().clearChain();
+            getAudioBatch().getLiveChain().clearChain();
             break;
         case MenuItemId::scanPlugins:
-            getAudioBatch().getPluginChain().showScanWindow();
+            getAudioBatch().getLiveChain().showScanWindow();
             break;
     }
 }
@@ -560,7 +560,7 @@ bool MainWindow::perform(const InvocationInfo& info)
 /// Appends the plugin chain section into a menu, mirroring the popup attached to the Plugin toolbar button.
 void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu) const
 {
-    auto& chain = getAudioBatch().getPluginChain();
+    const auto& chain = getAudioBatch().getLiveChain();
     const auto summary = chain.getChainSummary();
     menu.addSectionHeader(
         summary.isEmpty() ? juce::String("No plugins in chain") : utils::format("Chain: {}", summary)
@@ -568,7 +568,7 @@ void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu) const
     addMenuItem(menu, MenuItemId::editChain, "Edit Chain...");
     menu.addSeparator();
 
-    const auto& types = chain.getKnownPluginList().getTypes();
+    const auto types = chain.getLibrary().getKnownTypes();
     juce::PopupMenu addSubmenu;
     juce::KnownPluginList::addToMenu(addSubmenu, types, juce::KnownPluginList::sortByManufacturer);
     menu.addSubMenu("Add Plugin", addSubmenu, !types.isEmpty());
@@ -579,8 +579,8 @@ void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu) const
 /// Decodes a menu result against the known plugin list and appends the chosen plugin to the chain.
 void MainWindow::handlePluginChoiceMenuItem(const int menuItemID) const
 {
-    auto& chain = getAudioBatch().getPluginChain();
-    const auto& types = chain.getKnownPluginList().getTypes();
+    auto& chain = getAudioBatch().getLiveChain();
+    const auto types = chain.getLibrary().getKnownTypes();
     const auto index = juce::KnownPluginList::getIndexChosenByMenu(types, menuItemID);
     if (index < 0 || index >= types.size()) {
         return;

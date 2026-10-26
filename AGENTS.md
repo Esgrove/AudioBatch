@@ -59,8 +59,10 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       Each executable relaunches itself as its scan worker:
       `gui/Main.cpp` and `cli/CliMain.cpp` detect the worker command line before doing anything else.
       The CLI links `juce_audio_processors` for this, which also pulls in the JUCE GUI modules.
-    - `PluginChain.*`, `PluginChainPreparation.*`, `PluginProcessing.*`, and `PluginProcessingCoordinator.*`
-      implement the plugin chain and batch processing through it.
+    - `PluginLibrary.*` owns the plugin format manager and the known-plugins list for the GUI.
+      It scans from the plugin manager on one background thread and creates the plugin instances of a processing run.
+    - `PluginChainPreparation.*`, `PluginProcessing.*`, and `PluginProcessingCoordinator.*`
+      implement batch processing through a plugin chain.
 - `src/utils/` holds the shared helpers, split by area, all in the `utils` namespace unless noted:
     - `Log.*` holds the leveled logging functions.
     - `AppInfo.*` holds startup flag and path argument queries, the version line, the About text, system information,
@@ -115,6 +117,9 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       It moves their callbacks to the message thread and reports the results to the main component,
       which implements its `BackgroundWorkListener`.
     - `AudioPreviewPlayer.*` owns the audio device, transport, and read-ahead thread of the file preview.
+    - `LiveChain.*` holds the user's plugin chain, its settings persistence, and its editor and plugin manager windows.
+      Each slot owns the processor the preview and its editor share, and `LiveChainPreview.cpp` prepares them.
+      The chain editor rows refer to their slot by `PluginSlotId` instead of by position.
     - `PreviewController.*` loads and releases the previewed file in that player and reads its Serato tags.
       Its state is a variant of no preview, a released preview that keeps its file, and a loaded preview.
     - `ResultsModel.*` holds the rows of the results table with an index from path to row,

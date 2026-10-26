@@ -198,7 +198,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     );
     addItem(FileMenuItemId::normalizeSupport, "Normalization Format Support...", true);
     menu.addSeparator();
-    const bool canProcess = backgroundWork.isIdle() && pluginChain->getNumEnabledValidSlots() > 0;
+    const bool canProcess = backgroundWork.isIdle() && liveChain->getNumEnabledValidSlots() > 0;
     addItem(FileMenuItemId::process, "Process With Plugin Chain (output AIFF)", canProcess);
     const bool anyHasGain = std::ranges::any_of(selectedRecords, [](const AudioAnalysisRecord& selectedRecord) {
         return selectedRecord.customGain.has_value();

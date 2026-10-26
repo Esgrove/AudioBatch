@@ -2,7 +2,7 @@
 /// Prepares slot instances lazily, reports their device-rate latency and bounded tails,
 /// and observes plugin changes without doing host work in processor callbacks.
 
-#include "plugins/PluginChain.h"
+#include "gui/LiveChain.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -19,7 +19,7 @@ juce::String formatPluginPreviewRate(const double sampleRate, const bool hasOpen
 }
 
 /// Queries the device manager directly so a closed or disconnected device cannot leave a stale availability flag.
-bool PluginChain::hasOpenPreviewDevice() const
+bool LiveChain::hasOpenPreviewDevice() const
 {
     auto* const device = previewDeviceManager.getCurrentAudioDevice();
     return device != nullptr && device->isOpen();
@@ -27,14 +27,14 @@ bool PluginChain::hasOpenPreviewDevice() const
 
 /// Instantiates and prepares a slot once for the current real-time context.
 /// The caller holds the preview rendering lock, so editor and device access cannot race reconfiguration.
-bool PluginChain::prepareLiveEntry(LiveSlot& entry)
+bool LiveChain::prepareLiveEntry(LiveSlot& entry)
 {
     if (entry.prepared) {
         return true;
     }
     entry.preparationError.clear();
     if (entry.instance == nullptr) {
-        auto instance = formatManager.createPluginInstance(
+        auto instance = library.getFormatManager().createPluginInstance(
             entry.description, previewSampleRate, previewBlockSize, entry.preparationError
         );
         if (instance == nullptr) {
@@ -66,7 +66,7 @@ bool PluginChain::prepareLiveEntry(LiveSlot& entry)
 
 /// Configures the enabled live processors while keeping disabled instantiated slots in the same device context.
 /// Inspection additionally prepares disabled slots so every row can display an actual measured latency.
-PreviewChain PluginChain::preparePreview(
+PreviewChain LiveChain::preparePreview(
     const double sampleRate,
     const int blockSize,
     const int channels,
@@ -120,7 +120,7 @@ PreviewChain PluginChain::preparePreview(
 }
 
 /// Ordinary parameter edits affect the shared processor directly, without copying state or restarting playback.
-void PluginChain::audioProcessorParameterChanged(
+void LiveChain::audioProcessorParameterChanged(
     juce::AudioProcessor* /*processor*/,
     int /*parameterIndex*/,
     float /*value*/
@@ -128,7 +128,7 @@ void PluginChain::audioProcessorParameterChanged(
 {}
 
 /// Defers latency queries and playback re-priming to the message-thread display update.
-void PluginChain::audioProcessorChanged(juce::AudioProcessor* /*processor*/, const ChangeDetails& details)
+void LiveChain::audioProcessorChanged(juce::AudioProcessor* /*processor*/, const ChangeDetails& details)
 {
     if (details.latencyChanged) {
         latencyDirty.store(true);
@@ -136,20 +136,20 @@ void PluginChain::audioProcessorChanged(juce::AudioProcessor* /*processor*/, con
 }
 
 /// Installs the message-thread callback used to re-prime playback after an actual latency change.
-void PluginChain::setLatencyChangedCallback(ChainChangedCallback callback)
+void LiveChain::setLatencyChangedCallback(ChainChangedCallback callback)
 {
     latencyChangedCallback = std::move(callback);
 }
 
 /// Returns a measured slot latency, distinguishing unavailable values from a valid zero.
-std::optional<juce::int64> PluginChain::getSlotLatency(const int index) const
+std::optional<juce::int64> LiveChain::getSlotLatency(const PluginSlotId slotId) const
 {
-    return juce::isPositiveAndBelow(index, getNumSlots()) ? chain[static_cast<std::size_t>(index)].latencySamples
-                                                          : std::nullopt;
+    const auto index = getSlotIndex(slotId);
+    return index.has_value() ? chain[static_cast<std::size_t>(*index)].latencySamples : std::nullopt;
 }
 
 /// Sums enabled slots only, refusing to present a partial sum as a complete measurement.
-std::optional<juce::int64> PluginChain::getTotalLatency() const
+std::optional<juce::int64> LiveChain::getTotalLatency() const
 {
     juce::int64 total = 0;
     for (const auto& entry : chain) {
@@ -164,13 +164,13 @@ std::optional<juce::int64> PluginChain::getTotalLatency() const
 }
 
 /// Returns the processing rate used to convert the measured sample counts into milliseconds.
-double PluginChain::getPreviewSampleRate() const noexcept
+double LiveChain::getPreviewSampleRate() const noexcept
 {
     return previewSampleRate;
 }
 
 /// Queries current tail estimates on the message thread without changing the live processing state.
-juce::int64 PluginChain::getPreviewTailSamples() const
+juce::int64 LiveChain::getPreviewTailSamples() const
 {
     juce::int64 total = 0;
     for (const auto& entry : chain) {
