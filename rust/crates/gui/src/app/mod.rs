@@ -3,7 +3,8 @@
 //! `AppView` owns the results table, the preview section, the analysis and normalization coordinators,
 //! and the preview player.
 //! This module holds the view state, the analysis runs, and the selection.
-//! The menu and transport actions are in `actions`, normalization is in `normalize`, and the layout is in `render`.
+//! The menu and transport actions are in `actions`, and normalization is in `normalize`.
+//! The tags of the selected file are read in `tags`, and the layout is in `render`.
 //! Coordinator events are drained from their channel by a foreground task in batches,
 //! so a large run updates the table at a steady rate instead of once per event.
 
@@ -11,6 +12,7 @@ mod actions;
 mod normalize;
 mod preferences;
 mod render;
+mod tags;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -21,7 +23,6 @@ use audiobatch_core::discovery::{has_supported_extension, normalize_path};
 use audiobatch_core::record::{custom_gain_from_decibels, decibels_to_gain};
 use audiobatch_core::{
     AnalysisCache, AnalysisCoordinator, AnalysisEvent, AnalysisOptions, AnalysisRecord, FileTags, NormalizeCoordinator,
-    read_tags,
 };
 use audiobatch_playback::Player;
 use crossbeam_channel::{Receiver, TryRecvError};
@@ -35,9 +36,7 @@ use crate::menus::{MenuState, set_menus};
 use crate::normalization::{NormalizeRun, describe_target, target_range};
 use crate::results::{ResultRow, ResultsDelegate, RowState};
 use crate::settings::{GuiSettings, NormalizeMode};
-use crate::waveform::{
-    CueMarker, MAXIMUM_ZOOM, MINIMUM_ZOOM, NO_FILE_TEXT, PlayheadSource, WaveformEvent, WaveformView,
-};
+use crate::waveform::{MAXIMUM_ZOOM, MINIMUM_ZOOM, NO_FILE_TEXT, PlayheadSource, WaveformEvent, WaveformView};
 use preferences::{SettingsWindow, open_player};
 
 /// Window title, followed by the analysis progress while a run is in progress.
@@ -689,9 +688,8 @@ impl AppView {
         self.apply_preview_gain(cx);
         if changed {
             self.selected_tags = None;
-            self.waveform
-                .update(cx, |waveform, cx| waveform.set_cues(Vec::new(), cx));
-            self.tags_task = Some(Self::spawn_tag_read(path.to_path_buf(), cx));
+            self.clear_tag_marks(cx);
+            self.tags_task = Some(self.spawn_tag_read(path.to_path_buf(), cx));
         }
         if let Some(player) = &mut self.player {
             if changed || player.loaded_path() != Some(path) {
@@ -712,33 +710,9 @@ impl AppView {
             player.unload();
         }
         self.table.update(cx, TableState::clear_selection);
-        self.waveform.update(cx, |waveform, cx| {
-            waveform.set_cues(Vec::new(), cx);
-            waveform.show_placeholder(NO_FILE_TEXT, cx);
-        });
-    }
-
-    /// Reads the tags of a file on a background thread and shows them if it is still selected.
-    /// The Serato cue points of the file are drawn on the waveform,
-    /// and the file moves to its first cue point when that option is on.
-    fn spawn_tag_read(path: PathBuf, cx: &Context<Self>) -> Task<()> {
-        cx.spawn(async move |this, cx| {
-            let read_path = path.clone();
-            let tags = cx
-                .background_executor()
-                .spawn(async move { read_tags(&read_path).ok() })
-                .await;
-            let _ = this.update(cx, |view, cx| {
-                if view.selected.as_deref() != Some(path.as_path()) {
-                    return;
-                }
-                let cues = tags.as_ref().map(cue_markers).unwrap_or_default();
-                view.start_at_first_cue(&path, &cues, cx);
-                view.waveform.update(cx, |waveform, cx| waveform.set_cues(cues, cx));
-                view.selected_tags = tags.map(|tags| (path, Arc::new(tags)));
-                cx.notify();
-            });
-        })
+        self.clear_tag_marks(cx);
+        self.waveform
+            .update(cx, |waveform, cx| waveform.show_placeholder(NO_FILE_TEXT, cx));
     }
 
     /// Shows the waveform of the selected file, or a placeholder while it has no result.
@@ -858,22 +832,6 @@ fn open_coordinators() -> anyhow::Result<(AnalysisCoordinator, NormalizeCoordina
     let workers = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
     let normalize = NormalizeCoordinator::new(Arc::clone(&cache), workers)?;
     Ok((AnalysisCoordinator::new(cache, workers)?, normalize))
-}
-
-/// Returns the Serato cue points of a file as waveform markers.
-fn cue_markers(tags: &FileTags) -> Vec<CueMarker> {
-    tags.serato
-        .as_ref()
-        .map(|serato| {
-            serato
-                .cues()
-                .map(|cue| CueMarker {
-                    seconds: f64::from(cue.position) / 1000.0,
-                    color: cue.color.to_rgb_u32(),
-                })
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
 /// Takes every event waiting in a coordinator channel.

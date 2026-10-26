@@ -134,6 +134,8 @@ and the output device with its sample rate and buffer size in samples.
 - Drop folders to replace the list, or hold Shift to add them. Dropped files are added.
   File > Choose Folder, Add Folder, and Add Files do the same through a dialog.
 - Select a row to see its levels, details, tags, waveform, and Serato cue points.
+  A file with a Serato Overview tag gets a waveform coloured from it,
+  while the shape still comes from the decoded audio, and other files are drawn in blue.
   Double-click a row, press space, or use Play to play, and press escape to stop and return to the start.
 - Drag a column header to reorder the columns, and hover it to see what the column shows and in which unit.
 - Click or drag on the waveform to seek.
@@ -164,6 +166,7 @@ and the output device with its sample rate and buffer size in samples.
 
 The analysis cache lives in the `AudioBatch-rs` folder of the user data directory,
 apart from the cache of the C++ application.
+It also keeps the Serato Overview of each file, so the waveform is coloured before the tags are read again.
 
 ### Stress test
 

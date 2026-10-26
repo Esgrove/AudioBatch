@@ -31,7 +31,9 @@ The port covers the key features of the C++ application:
 - Analyze audio files for decoded sample peak, true peak, and integrated loudness (EBU R128).
 - Cache analysis results in SQLite so unchanged files are not decoded again.
 - List the files with their stats in the CLI and the GUI.
-- Draw a waveform overview of the selected file in the GUI.
+- Draw a waveform overview of the selected file in the GUI,
+  coloured from the Serato Overview tag like the C++ application when the file has one.
+- Cache the Serato Overview of each file in a `serato_tag_cache` table with the C++ schema.
 - Play the selected file in the GUI.
 - Keep a per-file custom gain in the GUI and the cache, applied to the preview and the waveform.
 - Accept files and folders dropped onto the GUI.
@@ -53,11 +55,11 @@ and every crate inherits them with `.workspace = true`.
   - `record.rs` holds `AnalysisRecord`, its status, and the short-term loudness history.
   - `waveform.rs` holds the min/max peak overview and its resolution levels.
   - `discovery.rs` expands input paths into the sorted list of supported audio files.
-  - `cache.rs` is the SQLite result cache,
+  - `cache.rs` is the SQLite result cache, with its Serato tag table in `cache/serato.rs`,
     `coordinator.rs` runs analysis in parallel with cancellation and progress events,
     and `normalize_coordinator.rs` does the same for normalization, keeping the cache in step with the outputs.
   - `format.rs` formats levels and file properties for display, `sorting.rs` sorts records.
-  - `tags.rs` reads display tags and Serato data with lofty.
+  - `tags.rs` reads display tags and Serato data with lofty, and tells what the Serato Overview read found.
   - `normalize.rs` computes the normalization gain and writes the normalized file, ported from `AudioNormalization.cpp`.
     `aiff.rs` is its AIFF writer, `metadata.rs` copies the tags onto the output,
     and `output_file.rs` commits the output and disposes of the replaced files, ported from `FileUtils.cpp`.
@@ -67,6 +69,8 @@ and every crate inherits them with `.workspace = true`.
   It has no GUI dependency.
 - `crates/serato` (`serato-tags`): parsers for the Serato GEOB tags, extracted from the track-rename project.
   They take raw frame bytes and do no terminal printing, so any tag library and front end can use them.
+  `overview.rs` parses the Overview tag as strictly as `SeratoOverview.cpp` and keeps its cache representation,
+  and `colouring.rs` ports the palette decoding and the column colours of `SeratoWaveformColouring.cpp`.
 - `crates/cli` (`audiobatch-cli`): the `audiobatch-rs` binary.
   Its options, JSON field names, and exit codes match the C++ `audiobatch` CLI,
   so `scripts/parity.sh` can compare the two directly.

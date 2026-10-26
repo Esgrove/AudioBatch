@@ -1,8 +1,10 @@
 //! Waveform overview of the selected file, with cue arrows, the playhead, and the optional loudness graph.
 //!
 //! Follows `ThumbnailComponent.cpp` of the C++ application:
-//! blue channel envelopes stacked on a rounded panel, Serato cue points as inward arrows at the top and bottom,
+//! channel envelopes stacked on a rounded panel, Serato cue points as inward arrows at the top and bottom,
 //! a thin white playhead, and a short-term loudness curve with its axis when the graph is enabled.
+//! The envelopes are blue, or coloured column by column from the Serato Overview tag when the file has one,
+//! like `SeratoWaveformColouring.cpp` colours them, while their shape still comes from the decoded audio.
 //! The view zooms around the playhead and follows it while playing,
 //! and it scales the envelope by the input gain.
 //! A click or drag seeks, the mouse wheel zooms, and Command or Control with the wheel changes the gain.
@@ -14,6 +16,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use audiobatch_core::record::NEGATIVE_INFINITY_LOUDNESS;
+use audiobatch_core::serato_tags::Overview;
+use audiobatch_core::serato_tags::colouring::{OverviewColour, column_colours};
 use audiobatch_core::{ShortTermLoudnessHistory, WaveformOverview};
 use audiobatch_playback::PlayheadHandle;
 use gpui_kit::{
@@ -117,6 +121,8 @@ pub struct CueMarker {
 /// Paints the overview of one file.
 pub struct WaveformView {
     overview: Option<Arc<WaveformOverview>>,
+    /// Serato Overview of the file, which colours the envelope when present.
+    serato_overview: Option<Arc<Overview>>,
     cues: Vec<CueMarker>,
     loudness: Option<Arc<ShortTermLoudnessHistory>>,
     placeholder: SharedString,
@@ -168,6 +174,7 @@ struct ColumnBucket {
 /// Everything the paint closure needs, copied out of the view for one frame.
 struct PaintData {
     overview: Arc<WaveformOverview>,
+    serato_overview: Option<Arc<Overview>>,
     loudness: Option<Arc<ShortTermLoudnessHistory>>,
     show_loudness: bool,
     loudness_range: LoudnessRange,
@@ -265,6 +272,7 @@ impl WaveformView {
     pub fn new() -> Self {
         Self {
             overview: None,
+            serato_overview: None,
             cues: Vec::new(),
             loudness: None,
             placeholder: SharedString::from(NO_FILE_TEXT),
@@ -324,6 +332,13 @@ impl WaveformView {
     /// Sets the cue points drawn on top of the overview.
     pub fn set_cues(&mut self, cues: Vec<CueMarker>, cx: &mut Context<Self>) {
         self.cues = cues;
+        cx.notify();
+    }
+
+    /// Sets the Serato Overview that colours the envelope, or none for the plain blue envelope.
+    /// Like the cue points, it stays while a placeholder is shown.
+    pub fn set_serato_overview(&mut self, overview: Option<Arc<Overview>>, cx: &mut Context<Self>) {
+        self.serato_overview = overview;
         cx.notify();
     }
 
@@ -500,6 +515,7 @@ impl Render for WaveformView {
                 });
                 let data = PaintData {
                     overview,
+                    serato_overview: self.serato_overview.clone(),
                     loudness: self.loudness.clone(),
                     show_loudness: self.show_loudness,
                     loudness_range: self.loudness_range,
@@ -587,8 +603,9 @@ fn paint_waveform(data: &PaintData, bounds: Bounds<Pixels>, window: &mut Window,
     }
 }
 
-/// Paints one filled envelope per channel, stacked, scaled by the display gain.
+/// Paints one envelope per channel, stacked, scaled by the display gain.
 /// Every column keeps at least one pixel of height, so silence shows as a line.
+/// With Serato colours each column is painted in its own colour, otherwise each envelope is one blue shape.
 fn paint_channels(data: &PaintData, viewport: &Viewport, window: &mut Window) {
     let plot = viewport.plot;
     let columns = f32::from(plot.size.width) as usize;
@@ -597,32 +614,90 @@ fn paint_channels(data: &PaintData, viewport: &Viewport, window: &mut Window) {
     let sample_rate = f64::from(data.overview.sample_rate());
     let start_frame = viewport.start * sample_rate;
     let end_frame = (viewport.start + viewport.length) * sample_rate;
-    let left = f32::from(plot.origin.x);
-    let wave_color = color(palette::BLUE);
+    let colours = serato_column_colours(data, viewport, columns);
 
     for channel in 0..channels {
         let lane_top = lane_height.mul_add(channel as f32, f32::from(plot.origin.y));
         let center = lane_top + lane_height / 2.0;
         let half = (lane_height / 2.0 - 1.0).max(0.5);
-        let peaks = data.overview.column_peaks(channel, start_frame, end_frame, columns);
         let scale = |value: f32| (value * data.display_gain).clamp(-1.0, 1.0);
-        let mut outline: Vec<Point<Pixels>> = Vec::with_capacity(peaks.len() * 2);
-        outline.extend(peaks.iter().enumerate().map(|(column, &(_, maximum))| {
-            let top = scale(maximum).mul_add(-half, center).min(center - 0.5);
-            point(px(left + column as f32), px(top))
-        }));
-        outline.extend(peaks.iter().enumerate().rev().map(|(column, &(minimum, _))| {
-            let bottom = scale(minimum).mul_add(-half, center).max(center + 0.5);
-            point(px(left + column as f32), px(bottom))
-        }));
-        if outline.len() < 3 {
-            continue;
+        let extents: Vec<(f32, f32)> = data
+            .overview
+            .column_peaks(channel, start_frame, end_frame, columns)
+            .into_iter()
+            .map(|(minimum, maximum)| {
+                (
+                    scale(maximum).mul_add(-half, center).min(center - 0.5),
+                    scale(minimum).mul_add(-half, center).max(center + 0.5),
+                )
+            })
+            .collect();
+        if colours.is_empty() {
+            paint_envelope(&extents, f32::from(plot.origin.x), window);
+        } else {
+            paint_coloured_columns(&extents, &colours, f32::from(plot.origin.x), window);
         }
-        let mut builder = PathBuilder::fill();
-        builder.add_polygon(&outline, true);
-        if let Ok(path) = builder.build() {
-            window.paint_path(path, wave_color);
-        }
+    }
+}
+
+/// Returns the Serato colour of each plot column, or nothing when the file has no Serato Overview.
+/// When the plot is wider than the colour limit, each colour covers several neighbouring columns.
+fn serato_column_colours(data: &PaintData, viewport: &Viewport, columns: usize) -> Vec<Option<OverviewColour>> {
+    let duration = data.overview.duration_seconds();
+    let Some(serato_overview) = data.serato_overview.as_deref() else {
+        return Vec::new();
+    };
+    if duration <= 0.0 || columns == 0 {
+        return Vec::new();
+    }
+    let start = viewport.start / duration;
+    let end = (viewport.start + viewport.length) / duration;
+    let colours = column_colours(serato_overview, start, end, columns);
+    if colours.is_empty() || colours.len() == columns {
+        return colours;
+    }
+    (0..columns)
+        .map(|column| colours.get(column * colours.len() / columns).copied().flatten())
+        .collect()
+}
+
+/// Paints one envelope as a single blue shape through the top and bottom of every column.
+fn paint_envelope(extents: &[(f32, f32)], left: f32, window: &mut Window) {
+    let mut outline: Vec<Point<Pixels>> = Vec::with_capacity(extents.len() * 2);
+    outline.extend(
+        extents
+            .iter()
+            .enumerate()
+            .map(|(column, &(top, _))| point(px(left + column as f32), px(top))),
+    );
+    outline.extend(
+        extents
+            .iter()
+            .enumerate()
+            .rev()
+            .map(|(column, &(_, bottom))| point(px(left + column as f32), px(bottom))),
+    );
+    if outline.len() < 3 {
+        return;
+    }
+    let mut builder = PathBuilder::fill();
+    builder.add_polygon(&outline, true);
+    if let Ok(path) = builder.build() {
+        window.paint_path(path, color(palette::BLUE));
+    }
+}
+
+/// Paints one envelope as a one pixel wide bar per column in its Serato colour, blue where a column has none.
+fn paint_coloured_columns(extents: &[(f32, f32)], colours: &[Option<OverviewColour>], left: f32, window: &mut Window) {
+    for (column, (&(top, bottom), colour)) in extents.iter().zip(colours).enumerate() {
+        let fill_color = colour.map_or_else(|| color(palette::BLUE), |colour| color(colour.to_rgb_u32()));
+        window.paint_quad(fill(
+            Bounds {
+                origin: point(px(left + column as f32), px(top)),
+                size: size(px(1.0), px(bottom - top)),
+            },
+            fill_color,
+        ));
     }
 }
 
