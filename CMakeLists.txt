@@ -751,7 +751,10 @@ if(BUILD_TESTING)
     # cmake-format: on
 
     include(GoogleTest)
-    gtest_discover_tests(AudioBatchTests PROPERTIES RUN_SERIAL TRUE)
+    # Discovery runs the freshly linked executable as a post-build step.
+    # The first launch of a new binary can take longer than the default five seconds,
+    # for example while macOS scans it or a sanitizer runtime starts up.
+    gtest_discover_tests(AudioBatchTests DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)
     audiobatch_set_source_warnings(AudioBatchTests)
 endif()
 
