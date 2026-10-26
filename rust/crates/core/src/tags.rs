@@ -3,6 +3,8 @@
 //! The common fields come from lofty's format-independent tag.
 //! Serato stores its data as `GEOB` frames, which only the concrete `ID3v2` tag keeps,
 //! so MP3, AIFF, and WAV files are read a second time through their own file types for those frames.
+//! FLAC files keep the same data as native `SERATO_*` Vorbis comments,
+//! which are unwrapped into the frame payloads, as the C++ `SeratoTagReader` does.
 
 use std::borrow::Cow;
 use std::fs::File;
@@ -12,11 +14,13 @@ use std::sync::Arc;
 use anyhow::{Context, Result};
 use lofty::config::ParseOptions;
 use lofty::file::AudioFile;
+use lofty::flac::FlacFile;
 use lofty::id3::v2::{Frame, GeneralEncapsulatedObject, Id3v2Tag};
 use lofty::iff::aiff::AiffFile;
 use lofty::iff::wav::WavFile;
 use lofty::mpeg::MpegFile;
 use lofty::prelude::{Accessor, ItemKey, TaggedFileExt};
+use serato_tags::native::{decode_native_value, native_field_description};
 use serato_tags::{Overview, SeratoData, SeratoTag};
 
 /// What reading the Serato Overview tag of a file found, the read results the C++ tag cache keeps.
@@ -59,17 +63,18 @@ pub struct FileTags {
 
 impl SeratoOverviewState {
     /// Returns the overview state of a file from the tags read from it.
+    /// A valid duplicate wins over an invalid one, like in the C++ reader.
     #[must_use]
     pub fn from_tags(path: &Path, tags: &FileTags) -> Self {
-        if !supports_serato_frames(path) {
+        if !supports_serato_data(path) {
             return Self::Unsupported;
         }
         match &tags.serato {
-            Some(serato) if serato.failed_to_parse(SeratoTag::Overview) => Self::Invalid,
             Some(SeratoData {
                 overview: Some(overview),
                 ..
             }) => Self::Present(Arc::new(overview.clone())),
+            Some(serato) if serato.failed_to_parse(SeratoTag::Overview) => Self::Invalid,
             _ => Self::Absent,
         }
     }
@@ -120,7 +125,11 @@ pub fn read_tags(path: &Path) -> Result<FileTags> {
         tags.key = tag.get_string(ItemKey::InitialKey).map(str::to_string);
         tags.has_picture = !tag.pictures().is_empty();
     }
-    tags.serato = read_id3v2(path).as_ref().and_then(serato_data);
+    tags.serato = if lowercase_extension(path).as_deref() == Some("flac") {
+        read_flac_serato_data(path)
+    } else {
+        read_id3v2(path).as_ref().and_then(serato_data)
+    };
     Ok(tags)
 }
 
@@ -137,10 +146,35 @@ pub(crate) fn read_id3v2(path: &Path) -> Option<Id3v2Tag> {
     }
 }
 
-/// Returns true for the formats whose `ID3v2` tag `read_id3v2` reads, the only place Serato data is read from.
-fn supports_serato_frames(path: &Path) -> bool {
-    lowercase_extension(path)
-        .is_some_and(|extension| matches!(extension.as_str(), "mp3" | "aif" | "aiff" | "aifc" | "wav" | "wave"))
+/// Returns true for the formats Serato data is read from:
+/// the `ID3v2` tag of MP3, AIFF, and WAV files, and the Vorbis comments of FLAC files.
+fn supports_serato_data(path: &Path) -> bool {
+    lowercase_extension(path).is_some_and(|extension| {
+        matches!(
+            extension.as_str(),
+            "mp3" | "aif" | "aiff" | "aifc" | "wav" | "wave" | "flac"
+        )
+    })
+}
+
+/// Parses the Serato data among the native `SERATO_*` Vorbis comments of a FLAC file.
+/// A value that is not a valid wrapper is passed on empty, so its tag reads as invalid rather than absent.
+fn read_flac_serato_data(path: &Path) -> Option<SeratoData> {
+    let mut file = File::open(path).ok()?;
+    let flac = FlacFile::read_from(&mut file, ParseOptions::new()).ok()?;
+    let objects: Vec<(&'static str, Vec<u8>)> = flac
+        .vorbis_comments()?
+        .items()
+        .filter_map(|(key, value)| {
+            let description = native_field_description(key)?;
+            Some((description, decode_native_value(value, description).unwrap_or_default()))
+        })
+        .collect();
+    SeratoData::parse(
+        objects
+            .iter()
+            .map(|(description, data)| (*description, data.as_slice())),
+    )
 }
 
 /// Returns the lowercase extension of a path.
@@ -202,7 +236,11 @@ mod test_read_tags {
 mod test_serato_overview_state {
     use super::*;
 
+    use lofty::config::WriteOptions;
+    use lofty::ogg::tag::VorbisComments;
+    use lofty::prelude::TagExt;
     use serato_tags::colouring::{OverviewColour, column_colours};
+    use tempfile::TempDir;
 
     /// Returns tags whose Serato data comes from the given GEOB frames.
     fn tags_with_frames(frames: &[(&str, &[u8])]) -> FileTags {
@@ -213,13 +251,13 @@ mod test_serato_overview_state {
     }
 
     #[test]
-    fn formats_without_id3v2_serato_frames_are_unsupported() {
+    fn formats_without_serato_data_are_unsupported() {
         let tags = tags_with_frames(&[(
             "Serato Overview",
             &[1, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
         )]);
         assert_eq!(
-            SeratoOverviewState::from_tags(Path::new("song.flac"), &tags),
+            SeratoOverviewState::from_tags(Path::new("song.ogg"), &tags),
             SeratoOverviewState::Unsupported
         );
         assert_eq!(
@@ -239,19 +277,52 @@ mod test_serato_overview_state {
     }
 
     #[test]
-    fn rainbow_fixture_has_six_colour_bands() {
-        let path = test_fixtures::fixture(test_fixtures::SERATO_OVERVIEW_FIXTURE);
-        let tags = read_tags(&path).expect("reads");
-        let state = SeratoOverviewState::from_tags(&path, &tags);
-        let overview = state.overview().expect("has an overview");
-        assert_eq!(overview.slices().len(), test_fixtures::SERATO_OVERVIEW_SLICES);
+    fn rainbow_fixtures_have_six_colour_bands_in_every_container() {
         let band_count = test_fixtures::SERATO_OVERVIEW_BANDS.len();
-        let colours: Vec<Option<u32>> = column_colours(overview, 0.0, 1.0, band_count)
-            .into_iter()
-            .map(|colour| colour.map(OverviewColour::to_rgb_u32))
-            .collect();
         let expected: Vec<Option<u32>> = test_fixtures::SERATO_OVERVIEW_BANDS.into_iter().map(Some).collect();
-        assert_eq!(colours, expected);
+        for name in test_fixtures::SERATO_OVERVIEW_FIXTURES {
+            let path = test_fixtures::fixture(name);
+            let tags = read_tags(&path).expect("reads");
+            let state = SeratoOverviewState::from_tags(&path, &tags);
+            let overview = state
+                .overview()
+                .unwrap_or_else(|| panic!("{name} has no overview: {state:?}"));
+            assert_eq!(overview.slices().len(), test_fixtures::SERATO_OVERVIEW_SLICES, "{name}");
+            let colours: Vec<Option<u32>> = column_colours(overview, 0.0, 1.0, band_count)
+                .into_iter()
+                .map(|colour| colour.map(OverviewColour::to_rgb_u32))
+                .collect();
+            assert_eq!(colours, expected, "{name}");
+        }
+    }
+
+    #[test]
+    fn malformed_flac_comment_is_invalid() {
+        let directory = TempDir::new().expect("temp dir");
+        let path = test_fixtures::copy_fixture(&directory, "sine_stereo_44100_16.flac", None);
+        let mut comments = VorbisComments::default();
+        comments.insert("SERATO_OVERVIEW".to_string(), "!invalid!".to_string());
+        comments
+            .save_to_path(&path, WriteOptions::default())
+            .expect("writes the comment");
+        let tags = read_tags(&path).expect("reads");
+        assert_eq!(
+            SeratoOverviewState::from_tags(&path, &tags),
+            SeratoOverviewState::Invalid
+        );
+    }
+
+    #[test]
+    fn valid_duplicate_wins_over_an_invalid_one() {
+        let tags = tags_with_frames(&[
+            ("Serato Overview", &[1, 5, 0]),
+            (
+                "Serato Overview",
+                &[1, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+            ),
+        ]);
+        let state = SeratoOverviewState::from_tags(Path::new("song.flac"), &tags);
+        assert_eq!(state.overview().map(|overview| overview.slices().len()), Some(1));
     }
 
     #[test]

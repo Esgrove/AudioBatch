@@ -79,13 +79,21 @@ click -c:a libmp3lame -b:a 320k click_mono_44100_320k.mp3
 
 # Two seconds of the tone swelling twice from a fifth of its level to full level,
 # tagged with a synthetic rainbow Serato Overview by serato_overview.py, for the coloured waveform.
-# ffmpeg writes no ID3v2 tag of its own, so the script can add one with the GEOB frame that ffmpeg cannot write.
+# The script writes the tag the way Serato stores it in each format, which ffmpeg cannot do:
+# a GEOB frame in an ID3v2 tag for MP3 and AIFF, and a SERATO_OVERVIEW comment for FLAC.
+# ffmpeg writes no ID3v2 tag of its own, so the script can add one.
 SWELL="${TONE}*(0.6-0.4*cos(2*PI*t))"
-ffmpeg -hide_banner -loglevel error -y \
-    -f lavfi -i "aevalsrc=${SWELL}|${SWELL}:s=44100:d=2" \
-    -map_metadata -1 -fflags +bitexact -flags:a +bitexact -id3v2_version 0 \
-    -c:a libmp3lame -b:a 128k serato_rainbow_stereo_44100_128k.mp3
-python3 serato_overview.py serato_rainbow_stereo_44100_128k.mp3
+serato_swell() {
+    local output="${*: -1}"
+    ffmpeg -hide_banner -loglevel error -y \
+        -f lavfi -i "aevalsrc=${SWELL}|${SWELL}:s=44100:d=2" \
+        -map_metadata -1 -fflags +bitexact -flags:a +bitexact "$@"
+    python3 serato_overview.py "$output"
+}
+
+serato_swell -id3v2_version 0 -c:a libmp3lame -b:a 128k serato_rainbow_stereo_44100_128k.mp3
+serato_swell -c:a pcm_s16be serato_rainbow_stereo_44100_16.aif
+serato_swell -c:a flac -sample_fmt s16 serato_rainbow_stereo_44100_16.flac
 
 # Digital silence, which has no peak and no measurable loudness.
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "anullsrc=r=44100:cl=stereo:d=1" \

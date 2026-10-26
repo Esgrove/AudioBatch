@@ -136,6 +136,7 @@ and the output device with its sample rate and buffer size in samples.
 - Select a row to see its levels, details, tags, waveform, and Serato cue points.
   A file with a Serato Overview tag gets a waveform coloured from it,
   while the shape still comes from the decoded audio, and other files are drawn in blue.
+  Serato data is read from MP3, AIFF, WAV, and FLAC files.
   Double-click a row, press space, or use Play to play, and press escape to stop and return to the start.
 - Drag a column header to reorder the columns, and hover it to see what the column shows and in which unit.
 - Click or drag on the waveform to seek.
