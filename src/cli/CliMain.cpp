@@ -13,6 +13,7 @@
 #include "utils/Log.h"
 
 #include <span>
+#include <variant>
 
 namespace audiobatch
 {
@@ -55,43 +56,46 @@ int runCliMain(const std::span<char*> argv)
         = juce::File::getCurrentWorkingDirectory().getChildFile(arguments.executableName).getFileNameWithoutExtension();
 
     // The plugin rescan relaunches this executable as its scan worker.
-    // The command line is rebuilt from the decoded arguments, before any of them are rewritten for parsing.
+    // The command line is rebuilt from the decoded arguments.
     if (const auto commandLine = cli::joinArguments(arguments); isPluginScanWorkerCommandLine(commandLine)) {
         return runPluginScanWorker(executableName, commandLine);
     }
 
-    cli::attachNegativeOptionValues(arguments);
-
     // Help and version only print to the console.
     // They are checked before parsing, so they win over any other argument, even an invalid one,
     // and return before the logger is created, so they never touch the log file.
-    if (cli::containsExactOption(arguments, {"--version", "-V"})) {
+    if (arguments.containsOption("--version|-V")) {
         fmt::print("{}\n", utils::versionLine(executableName));
         return 0;
     }
 
-    if (cli::containsExactOption(arguments, {"--help", "-h"})) {
+    if (arguments.containsOption("--help|-h")) {
         fmt::print("{}\n", cli::buildUsage(executableName));
         return 0;
     }
 
-    const auto cliOptions = cli::parseArguments(arguments);
+    const auto command = cli::parseArguments(arguments);
 
     const auto logger = utils::createDefaultLogger(executableName);
     juce::Logger::setCurrentLogger(logger.get());
     utils::installCrashLogging();
 
-    if (!cliOptions) {
-        utils::logError(cliOptions.error());
-        console::printError(cliOptions.error());
+    if (!command) {
+        utils::logError(command.error());
+        console::printError(command.error());
         fmt::print("\n{}\n", cli::buildUsage(executableName));
         return exitCli(1);
     }
 
     int exitCode = 0;
     try {
-        exitCode = cliOptions->listPlugins ? cli::runPluginList(cliOptions->rescanPlugins, cliOptions->pluginGrouping)
-                                           : cli::runAnalysis(*cliOptions);
+        exitCode = std::visit(
+            Overloaded {
+                [](const ListPluginsCommand& listing) { return cli::runPluginList(listing.rescan, listing.grouping); },
+                [](const AnalyzeCommand& analysis) { return cli::runAnalysis(analysis); },
+            },
+            *command
+        );
     } catch (const std::system_error& error) {
         // fmt::print throws when stdout is closed early, for example when piping into head.
         utils::logError("Writing output failed: {}", error.what());

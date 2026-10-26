@@ -366,30 +366,6 @@ void rescanPlugins(
 }
 }  // namespace
 
-/// Parses a --group-by value. Returns an empty optional for an unknown value.
-std::optional<PluginListGrouping> cli::parsePluginGrouping(const juce::String& value)
-{
-    const auto normalized = utils::normalizedToken(value);
-
-    if (normalized == "name") {
-        return PluginListGrouping::name;
-    }
-
-    if (normalized == "manufacturer") {
-        return PluginListGrouping::manufacturer;
-    }
-
-    if (normalized == "type") {
-        return PluginListGrouping::type;
-    }
-
-    if (normalized == "format") {
-        return PluginListGrouping::format;
-    }
-
-    return std::nullopt;
-}
-
 /// Prints the known plugins, grouped as requested, and returns the process exit code.
 /// With rescan set, scans the plugin folders for new or changed plugins first
 /// and saves the updated list for the GUI too.

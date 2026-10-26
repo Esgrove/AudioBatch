@@ -1,6 +1,7 @@
 /// Tests for the CLI argument parsing in cli::parseArguments and the CSV and JSON output.
 /// Covers option values, aliases, the combinations the CLI rejects, and the machine-readable record fields,
-/// the UTF-8 decoding of process arguments, and the errors for inputs that produced no result.
+/// the option matching and UTF-8 decoding of process arguments fixed in the JUCE fork,
+/// and the errors for inputs that produced no result.
 
 #include "cli/AudioAnalysisCli.h"
 #include "cli/AudioAnalysisCliOutput.h"
@@ -9,6 +10,7 @@
 
 #include <array>
 #include <expected>
+#include <variant>
 #include <vector>
 
 namespace audiobatch::tests
@@ -17,14 +19,11 @@ namespace
 {
 /// Parses the given arguments as if they followed the executable name on the command line.
 /// Also copies a parse error into errorMessage, so a check can match its text after a failed parse.
-std::expected<AudioAnalysisCliOptions, juce::String> parseArguments(
-    const juce::StringArray& arguments,
-    juce::String& errorMessage
-)
+std::expected<CliCommand, juce::String> parseArguments(const juce::StringArray& arguments, juce::String& errorMessage)
 {
-    auto options = cli::parseArguments(juce::ArgumentList("audiobatch", arguments));
-    errorMessage = options ? juce::String() : options.error();
-    return options;
+    auto command = cli::parseArguments(juce::ArgumentList("audiobatch", arguments));
+    errorMessage = command ? juce::String() : command.error();
+    return command;
 }
 }  // namespace
 
@@ -34,14 +33,19 @@ class CliTests final : public juce::UnitTest
 public:
     CliTests() : juce::UnitTest("CLI argument parsing", "AudioBatch") {}
 
-    /// Parses arguments that are expected to be valid, recording a failure with the parse error when they are not.
-    /// Returns default options on failure so the caller can keep checking fields.
-    AudioAnalysisCliOptions expectParsed(const juce::StringArray& arguments)
+    /// Parses arguments that are expected to be a valid command of the given type,
+    /// recording a failure with the parse error, or for another command type, when they are not.
+    /// Returns a default command on failure so the caller can keep checking fields.
+    template<typename Command>
+    Command expectCommand(const juce::StringArray& arguments)
     {
         juce::String errorMessage;
-        const auto options = parseArguments(arguments, errorMessage);
-        expect(options.has_value(), errorMessage);
-        return options.value_or(AudioAnalysisCliOptions {});
+        const auto command = parseArguments(arguments, errorMessage);
+        expect(command.has_value(), errorMessage);
+
+        const auto* parsed = command.has_value() ? std::get_if<Command>(&*command) : nullptr;
+        expect(!command.has_value() || parsed != nullptr, "The arguments parsed into another command");
+        return parsed != nullptr ? *parsed : Command {};
     }
 
     /// Runs the CLI parsing checks.
@@ -51,10 +55,11 @@ public:
 
         beginTest("Separate short options are parsed");
         {
-            const auto options = expectParsed({"-r", "-f", "music"});
-            expect(options.recursive);
-            expect(options.refresh);
-            expectEquals(options.inputPaths.size(), 1);
+            const auto command = expectCommand<AnalyzeCommand>({"-r", "-f", "music"});
+            expect(command.recursive);
+            expect(command.refresh);
+            expect(!command.normalization.has_value());
+            expectEquals(command.inputPaths.size(), 1);
         }
 
         beginTest("Combined short options are rejected");
@@ -72,9 +77,30 @@ public:
             expect(errorMessage.contains("Unexpected number -12"), errorMessage);
 
             const juce::ArgumentList negativeValue("audiobatch", juce::StringArray {"-j", "-1"});
-            expect(!cli::containsExactOption(negativeValue, {"--help", "-h"}));
+            expect(!negativeValue.containsOption("--help|-h"));
             const juce::ArgumentList help("audiobatch", juce::StringArray {"-h"});
-            expect(cli::containsExactOption(help, {"--help", "-h"}));
+            expect(help.containsOption("--help|-h"));
+        }
+
+        beginTest("Argument matching compares option letters and takes negative numbers as values");
+        {
+            // The JUCE fork compares the option letter itself.
+            // Before that fix the letter became its number string, so "-a1" matched "-h" through the "1" of "104".
+            const juce::ArgumentList digits("audiobatch", juce::StringArray {"-a1"});
+            expect(!digits.containsOption("-h"));
+            const juce::ArgumentList letters("audiobatch", juce::StringArray {"-ah"});
+            expect(letters.containsOption("-h"));
+
+            const juce::ArgumentList negative("audiobatch", juce::StringArray {"--lufs", "-14", "-j", "-.5"});
+            expect(!negative[1].isOption());
+            expect(!negative[3].isShortOption());
+            expectEquals(negative.getValueForOption("--lufs"), juce::String("-14"));
+            expectEquals(negative.getValueForOption("-j"), juce::String("-.5"));
+
+            juce::ArgumentList longForm("audiobatch", juce::StringArray {"--sort", "name", "song.wav"});
+            expectEquals(longForm.removeValueForOption("--sort|-s"), juce::String("name"));
+            expectEquals(longForm.size(), 1);
+            expectEquals(longForm[0].text, juce::String("song.wav"));
         }
 
         beginTest("Boolean options never absorb following negative numbers");
@@ -87,11 +113,9 @@ public:
 
         beginTest("Option values are accepted after an equals sign or as the next argument");
         {
-            auto options = expectParsed({"--jobs=4"});
-            expectEquals(options.workerCount, 4);
-
-            options = expectParsed({"-j", "3"});
-            expectEquals(options.workerCount, 3);
+            expectEquals(expectCommand<AnalyzeCommand>({"--jobs=4"}).workerCount, 4);
+            expectEquals(expectCommand<AnalyzeCommand>({"--jobs", "5"}).workerCount, 5);
+            expectEquals(expectCommand<AnalyzeCommand>({"-j", "3"}).workerCount, 3);
 
             expect(!parseArguments({"-j", "0"}, errorMessage).has_value());
             expect(!parseArguments({"-j", "4x"}, errorMessage).has_value());
@@ -102,13 +126,12 @@ public:
 
         beginTest("Sort modes and the loudness alias are recognised");
         {
-            auto options = expectParsed({"--sort", "loudness"});
-            expect(options.sortMode == AudioAnalysisSortMode::loudness);
-
-            options = expectParsed({"-s", "name"});
-            expect(options.sortMode == AudioAnalysisSortMode::name);
+            expect(expectCommand<AnalyzeCommand>({"--sort", "loudness"}).sortMode == AudioAnalysisSortMode::loudness);
+            expect(expectCommand<AnalyzeCommand>({"--sort=LUFS"}).sortMode == AudioAnalysisSortMode::loudness);
+            expect(expectCommand<AnalyzeCommand>({"-s", "name"}).sortMode == AudioAnalysisSortMode::name);
 
             expect(!parseArguments({"--sort", "bogus"}, errorMessage).has_value());
+            expect(errorMessage.contains("peak, lufs, loudness, name, path"), errorMessage);
         }
 
         beginTest("Plugin listing options require --list-plugins and exclude analysis options");
@@ -118,27 +141,39 @@ public:
             expect(!parseArguments({"-l", "-r"}, errorMessage).has_value());
             expect(!parseArguments({"-l", "music"}, errorMessage).has_value());
 
-            const auto options = expectParsed({"-l", "-g", "manufacturer"});
-            expect(options.pluginGrouping == PluginListGrouping::manufacturer);
+            expect(!parseArguments({"-l", "--bogus"}, errorMessage).has_value());
+            expect(errorMessage.contains("--bogus"), errorMessage);
+            expect(!parseArguments({"-l", "-g", "size"}, errorMessage).has_value());
+            expect(errorMessage.contains("name, manufacturer, type, format"), errorMessage);
+
+            auto command = expectCommand<ListPluginsCommand>({"-l", "-g", "manufacturer"});
+            expect(command.grouping == PluginListGrouping::manufacturer);
+            expect(!command.rescan);
+
+            command = expectCommand<ListPluginsCommand>({"--list-plugins", "--group-by", "type", "-R"});
+            expect(command.grouping == PluginListGrouping::type);
+            expect(command.rescan);
         }
 
         beginTest("Force requires normalize");
         {
             expect(!parseArguments({"--force"}, errorMessage).has_value());
 
-            const auto options = expectParsed({"-n", "-F"});
-            expect(options.normalize);
-            expect(options.force);
+            const auto command = expectCommand<AnalyzeCommand>({"-n", "-F"});
+            expect(command.normalization.has_value());
+            expect(command.normalization.value_or(AudioNormalizationOptions {}).overwriteExisting);
+            expect(!expectCommand<AnalyzeCommand>({"-n"})
+                        .normalization.value_or(AudioNormalizationOptions {})
+                        .overwriteExisting);
         }
 
         beginTest("Output formats and reverse sorting are parsed");
         {
-            auto options = expectParsed({"--output", "json", "--reverse"});
-            expect(options.outputFormat == AudioAnalysisOutputFormat::json);
-            expect(options.reverse);
+            const auto command = expectCommand<AnalyzeCommand>({"--output", "json", "--reverse"});
+            expect(command.outputFormat == AudioAnalysisOutputFormat::json);
+            expect(command.reverse);
 
-            options = expectParsed({"--output=csv"});
-            expect(options.outputFormat == AudioAnalysisOutputFormat::csv);
+            expect(expectCommand<AnalyzeCommand>({"--output=csv"}).outputFormat == AudioAnalysisOutputFormat::csv);
 
             expect(!parseArguments({"-o", "xml"}, errorMessage).has_value());
             expect(!parseArguments({"-l", "-o", "json"}, errorMessage).has_value());
@@ -146,21 +181,26 @@ public:
 
         beginTest("Normalization targets are parsed and validated");
         {
-            auto options = expectParsed({"-n", "--lufs", "-14"});
-            expect(options.hasNormalizationTarget);
-            expect(options.normalization.mode == AudioNormalizationMode::loudness);
-            expectEquals(options.normalization.targetLufs, -14.0);
+            const auto normalizationOf = [this](const juce::StringArray& arguments) {
+                const auto normalization = expectCommand<AnalyzeCommand>(arguments).normalization;
+                expect(normalization.has_value());
+                return normalization.value_or(AudioNormalizationOptions {});
+            };
 
-            options = expectParsed({"-n", "--lufs=-16.5"});
-            expectEquals(options.normalization.targetLufs, -16.5);
+            auto normalization = normalizationOf({"-n", "--lufs", "-14"});
+            expect(normalization.mode == AudioNormalizationMode::loudness);
+            expectEquals(normalization.targetLufs, -14.0);
 
-            options = expectParsed({"-n", "--peak", "-1"});
-            expect(options.normalization.mode == AudioNormalizationMode::peak);
-            expectEquals(options.normalization.targetPeakDbfs, -1.0);
+            normalization = normalizationOf({"-n", "--lufs=-16.5"});
+            expectEquals(normalization.targetLufs, -16.5);
 
-            options = expectParsed({"-n"});
-            expect(options.normalization.mode == AudioNormalizationMode::peak);
-            expectEquals(options.normalization.targetPeakDbfs, 0.0);
+            normalization = normalizationOf({"-n", "--peak", "-1"});
+            expect(normalization.mode == AudioNormalizationMode::peak);
+            expectEquals(normalization.targetPeakDbfs, -1.0);
+
+            normalization = normalizationOf({"-n"});
+            expect(normalization.mode == AudioNormalizationMode::peak);
+            expectEquals(normalization.targetPeakDbfs, 0.0);
 
             expect(!parseArguments({"-n", "--lufs", "-30"}, errorMessage).has_value());
             expect(!parseArguments({"-n", "--peak", "1"}, errorMessage).has_value());

@@ -1,5 +1,6 @@
 /// Command-line interface for the headless batch analysis executable.
-/// Declares AudioAnalysisCliOptions, the parsed and validated CLI options,
+/// Declares CliCommand, the parsed and validated command of one invocation,
+/// which is either an AnalyzeCommand or a ListPluginsCommand,
 /// and the cli functions that build the usage text, parse arguments, and run the analysis workflow.
 
 #pragma once
@@ -10,6 +11,8 @@
 
 #include <cstdint>
 #include <expected>
+#include <optional>
+#include <variant>
 #include <vector>
 
 namespace audiobatch
@@ -24,27 +27,18 @@ enum class AudioAnalysisOutputFormat : std::uint8_t {
     json,
 };
 
-/// Parsed command-line options for the headless audio analysis executable.
-struct AudioAnalysisCliOptions {
+/// An analysis run parsed from the command line, with every value validated.
+struct AnalyzeCommand {
+    /// Files and directories to analyze.
+    juce::Array<juce::File> inputPaths;
     /// Search directories in the input paths recursively for audio files.
     bool recursive {false};
     /// Ignore cached results and analyze every file again.
     bool refresh {false};
-    /// Normalize the files after analysis, using the normalization options below.
-    bool normalize {false};
-    /// Replace an existing normalized output file that is not the source itself.
-    bool force {false};
-    /// Normalization mode and target, set by --peak or --lufs.
-    /// Defaults to a 0 dBFS sample peak.
-    AudioNormalizationOptions normalization;
-    /// True when --peak or --lufs was given, which requires --normalize.
-    bool hasNormalizationTarget {false};
-    /// List the known plugins instead of analyzing files.
-    bool listPlugins {false};
-    /// Scan for plugins again before listing them. Only valid with listPlugins.
-    bool rescanPlugins {false};
-    /// How the plugin list is grouped and ordered.
-    PluginListGrouping pluginGrouping {PluginListGrouping::name};
+    /// The normalization to run after the analysis, set by --normalize.
+    /// The target comes from --peak or --lufs, defaulting to a 0 dBFS sample peak,
+    /// and --force allows replacing an existing output file.
+    std::optional<AudioNormalizationOptions> normalization;
     /// Number of files analyzed in parallel.
     int workerCount {juce::SystemStats::getNumCpus()};
     /// Order of the printed results.
@@ -53,9 +47,18 @@ struct AudioAnalysisCliOptions {
     bool reverse {false};
     /// Format of the printed results.
     AudioAnalysisOutputFormat outputFormat {AudioAnalysisOutputFormat::table};
-    /// Files and directories to analyze.
-    juce::Array<juce::File> inputPaths;
 };
+
+/// A plugin listing parsed from the command line, selected by --list-plugins.
+struct ListPluginsCommand {
+    /// Scan for new or changed plugins before listing them.
+    bool rescan {false};
+    /// How the plugin list is grouped and ordered.
+    PluginListGrouping grouping {PluginListGrouping::name};
+};
+
+/// The command a CLI invocation runs.
+using CliCommand = std::variant<AnalyzeCommand, ListPluginsCommand>;
 
 namespace cli
 {
@@ -67,12 +70,8 @@ juce::StringArray findSkippedInputs(
     const std::vector<AudioAnalysisRecord>& results
 );
 
-void attachNegativeOptionValues(juce::ArgumentList& arguments);
+[[nodiscard]] std::expected<CliCommand, juce::String> parseArguments(juce::ArgumentList arguments);
 
-bool containsExactOption(const juce::ArgumentList& arguments, const juce::StringArray& optionNames);
-
-[[nodiscard]] std::expected<AudioAnalysisCliOptions, juce::String> parseArguments(juce::ArgumentList arguments);
-
-[[nodiscard]] int runAnalysis(const AudioAnalysisCliOptions& options);
+[[nodiscard]] int runAnalysis(const AnalyzeCommand& command);
 }  // namespace cli
 }  // namespace audiobatch
