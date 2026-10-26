@@ -88,7 +88,8 @@ cargo nextest run
 ```
 
 `cargo test` works too.
-CI runs `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, and the tests on macOS and Windows.
+CI runs `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, and the tests on macOS and Windows,
+and a coverage run on macOS.
 
 Other commands:
 
@@ -96,6 +97,10 @@ Other commands:
 # Build the release binaries into rust/, or install them and the CLI shell completions
 ./build.sh
 ./install.sh
+
+# Run the tests with coverage and print the summary, add --open for the HTML report
+./coverage.sh
+cargo llvm-cov nextest --workspace
 
 # Run the CLI
 cargo run --bin audiobatch-rs -- [args]
