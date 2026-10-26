@@ -330,25 +330,42 @@ public:
     void runTest() override
     {
         testOverview();
-        testRainbowFixture();
+        testRainbowFixtures();
         testMetadata();
         testTrackInfoFields();
     }
 
 private:
-    /// Reads the committed rainbow fixture, which the Rust tests read too.
-    void testRainbowFixture()
+    /// Reads the committed rainbow fixtures, which the Rust tests read too.
+    /// The MP3 and AIFF files hold the overview in a GEOB frame, and the FLAC file in a native comment.
+    void testRainbowFixtures()
     {
-        beginTest("The committed rainbow fixture has 240 overview slices in six colour bands");
-        const auto result = serato::readTag(fixtureFile("serato_rainbow_stereo_44100_128k.mp3"));
-        expectStatus(result, serato::ReadStatus::present);
-        const auto overview = tagValue<serato::Overview>(result);
-        expect(overview.has_value());
-        if (!overview) {
+        beginTest("The committed rainbow fixtures have 240 overview slices in six colour bands in every container");
+        for (const auto* name :
+             {
+                 "serato_rainbow_stereo_44100_128k.mp3",
+                 "serato_rainbow_stereo_44100_16.aif",
+                 "serato_rainbow_stereo_44100_16.flac",
+             })
+        {
+            const auto result = serato::readTag(fixtureFile(name));
+            expectStatus(result, serato::ReadStatus::present);
+            const auto overview = tagValue<serato::Overview>(result);
+            expect(overview.has_value(), name);
+            if (overview) {
+                expectRainbowBands(*overview, name);
+            }
+        }
+    }
+
+    /// Checks the slice count and the colour of the first and last slice of every band of a rainbow overview.
+    void expectRainbowBands(const serato::Overview& overview, const juce::String& name)
+    {
+        constexpr std::size_t sliceCount {240};
+        expectEquals(overview.slices.size(), sliceCount, name);
+        if (overview.slices.size() != sliceCount) {
             return;
         }
-        constexpr std::size_t sliceCount {240};
-        expectEquals(overview->slices.size(), sliceCount);
         const std::array<juce::uint32, 6> bands {
             0xffff0000,
             0xffffff00,
@@ -358,12 +375,12 @@ private:
             0xffff00ff,
         };
         const auto slicesPerBand = sliceCount / bands.size();
-        for (std::size_t band = 0; band < bands.size() && overview->slices.size() == sliceCount; ++band) {
+        for (std::size_t band = 0; band < bands.size(); ++band) {
             for (const auto slice : {band * slicesPerBand, ((band + 1) * slicesPerBand) - 1}) {
-                const auto colour = serato::colourForOverviewSlice(overview->slices[slice], juce::Colours::black);
+                const auto colour = serato::colourForOverviewSlice(overview.slices[slice], juce::Colours::black);
                 expect(
                     colour.getARGB() == bands[band],
-                    utils::format("slice {} is {} instead of {:08x}", slice, colour.toString(), bands[band])
+                    utils::format("{} slice {} is {} instead of {:08x}", name, slice, colour.toString(), bands[band])
                 );
             }
         }

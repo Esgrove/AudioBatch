@@ -60,6 +60,7 @@ and every crate inherits them with `.workspace = true`.
     and `normalize_coordinator.rs` does the same for normalization, keeping the cache in step with the outputs.
   - `format.rs` formats levels and file properties for display, `sorting.rs` sorts records.
   - `tags.rs` reads display tags and Serato data with lofty, and tells what the Serato Overview read found.
+    Serato data comes from the `GEOB` frames of MP3, AIFF, and WAV files, and the `SERATO_*` comments of FLAC files.
   - `normalize.rs` computes the normalization gain and writes the normalized file, ported from `AudioNormalization.cpp`.
     `aiff.rs` is its AIFF writer, `metadata.rs` copies the tags onto the output,
     and `output_file.rs` commits the output and disposes of the replaced files, ported from `FileUtils.cpp`.

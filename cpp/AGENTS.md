@@ -168,7 +168,8 @@ Tests:
   at several sample rates and bit depths, plus a tagged FLAC file, digital silence, a short three channel AIFF,
   a single click at a known sample in WAV and MP3 for checking that the start of the audio stays in place,
   a quarter sample rate tone whose sample peak, true peak, and loudness all differ,
-  an MP3 with a synthetic rainbow Serato Overview of six colour bands, and a broken file.
+  MP3, AIFF, and FLAC files with a synthetic rainbow Serato Overview of six colour bands in each Serato container,
+  and a broken file.
   `../fixtures/generate.sh` regenerates them with ffmpeg,
   and `../fixtures/serato_overview.py` writes the Serato tag, which ffmpeg cannot.
   The icons and fonts live in `../assets/` at the repository root for the same reason.
