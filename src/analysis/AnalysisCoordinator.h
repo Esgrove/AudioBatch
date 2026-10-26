@@ -7,6 +7,7 @@
 
 #include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysis.h"
+#include "utils/Synchronized.h"
 
 #include <JuceHeader.h>
 
@@ -27,6 +28,20 @@ struct AnalysisPlan {
     juce::Array<juce::File> staleFiles;
 };
 
+/// The callbacks an AnalysisCoordinator publishes to, each of which may be empty.
+struct AnalysisCallbacks {
+    /// Called once after a run has published all queued results.
+    std::function<void(int totalFiles, int runId)> completion;
+    /// Called for each analysed file as results become available.
+    std::function<void(const AudioAnalysisRecord& result, int runId)> result;
+    /// Called right before a file's analysis begins, from the worker thread.
+    std::function<void(const juce::File& file, int runId)> starting;
+    /// Called from the worker thread with the analyzed fraction of a file, throttled to a few updates per second.
+    std::function<void(const juce::File& file, float progress, int runId)> progress;
+    /// Called once per run from a worker thread, before any of its results.
+    std::function<void(const AnalysisPlan& plan)> plan;
+};
+
 /// Coordinates background audio analysis jobs and marshals result callbacks to the UI layer.
 class AnalysisCoordinator
 {
@@ -34,20 +49,20 @@ public:
     // Every callback carries the id of the run it belongs to,
     // so a receiver that handles them asynchronously can drop messages from a run that was replaced meanwhile.
 
-    /// Called once after a run has published all queued results.
-    using CompletionCallback = std::function<void(int totalFiles, int runId)>;
+    /// Type of the completion callback in AnalysisCallbacks.
+    using CompletionCallback = decltype(AnalysisCallbacks::completion);
 
-    /// Called for each analysed file as results become available.
-    using ResultCallback = std::function<void(const AudioAnalysisRecord& result, int runId)>;
+    /// Type of the result callback in AnalysisCallbacks.
+    using ResultCallback = decltype(AnalysisCallbacks::result);
 
-    /// Called right before a file's analysis begins, from the worker thread.
-    using StartingCallback = std::function<void(const juce::File& file, int runId)>;
+    /// Type of the starting callback in AnalysisCallbacks.
+    using StartingCallback = decltype(AnalysisCallbacks::starting);
 
-    /// Called from the worker thread with the analyzed fraction of a file, throttled to a few updates per second.
-    using ProgressCallback = std::function<void(const juce::File& file, float progress, int runId)>;
+    /// Type of the progress callback in AnalysisCallbacks.
+    using ProgressCallback = decltype(AnalysisCallbacks::progress);
 
-    /// Called once per run from a worker thread, before any of its results.
-    using PlanCallback = std::function<void(const AnalysisPlan& plan)>;
+    /// Type of the plan callback in AnalysisCallbacks.
+    using PlanCallback = decltype(AnalysisCallbacks::plan);
 
     explicit AnalysisCoordinator(AnalysisCache& analysisCache, int workerCount = juce::SystemStats::getNumCpus());
 
@@ -92,8 +107,7 @@ private:
     PlanCallback planCallback;
     ProgressCallback progressCallback;
     ResultCallback resultCallback;
-    StartingCallback startingCallback;
-    juce::CriticalSection callbackLock;
+    utils::Synchronized<AnalysisCallbacks> callbacks;
     juce::ThreadPool threadPool;
     std::atomic<int> currentRunId {0};
 };

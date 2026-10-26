@@ -39,22 +39,19 @@ AnalysisCoordinator::~AnalysisCoordinator()
 /// Sets the callback invoked when a run completes.
 void AnalysisCoordinator::setCompletionCallback(CompletionCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    completionCallback = std::move(callback);
+    callbacks.with([&callback](AnalysisCallbacks& all) { all.completion = std::move(callback); });
 }
 
 /// Sets the callback invoked for each published result.
 void AnalysisCoordinator::setResultCallback(ResultCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    resultCallback = std::move(callback);
+    callbacks.with([&callback](AnalysisCallbacks& all) { all.result = std::move(callback); });
 }
 
 /// Sets the callback invoked when a file's analysis is about to start.
 void AnalysisCoordinator::setStartingCallback(StartingCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    startingCallback = std::move(callback);
+    callbacks.with([&callback](AnalysisCallbacks& all) { all.starting = std::move(callback); });
 }
 
 /// Invokes the starting callback when the given run id is still current.
@@ -65,12 +62,7 @@ void AnalysisCoordinator::publishStarting(const juce::File& file, const int runI
         return;
     }
 
-    StartingCallback callbackCopy;
-
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = startingCallback;
-    }
+    const auto callbackCopy = callbacks.with([](const AnalysisCallbacks& all) { return all.starting; });
 
     if (callbackCopy != nullptr) {
         callbackCopy(file, runId);
@@ -80,8 +72,7 @@ void AnalysisCoordinator::publishStarting(const juce::File& file, const int runI
 /// Sets the callback invoked with the analyzed fraction of each file.
 void AnalysisCoordinator::setProgressCallback(ProgressCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    progressCallback = std::move(callback);
+    callbacks.with([&callback](AnalysisCallbacks& all) { all.progress = std::move(callback); });
 }
 
 /// Invokes the progress callback when the given run id is still current.
@@ -92,12 +83,7 @@ void AnalysisCoordinator::publishProgress(const juce::File& file, const float pr
         return;
     }
 
-    ProgressCallback callbackCopy;
-
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = progressCallback;
-    }
+    const auto callbackCopy = callbacks.with([](const AnalysisCallbacks& all) { return all.progress; });
 
     if (callbackCopy != nullptr) {
         callbackCopy(file, progress, runId);
@@ -112,12 +98,7 @@ void AnalysisCoordinator::publishResult(const AudioAnalysisRecord& result, const
         return;
     }
 
-    ResultCallback callbackCopy;
-
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = resultCallback;
-    }
+    const auto callbackCopy = callbacks.with([](const AnalysisCallbacks& all) { return all.result; });
 
     if (callbackCopy != nullptr) {
         callbackCopy(result, runId);
@@ -133,12 +114,7 @@ void AnalysisCoordinator::publishCompletion(const int totalFiles, const int runI
         return;
     }
 
-    CompletionCallback callbackCopy;
-
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = completionCallback;
-    }
+    const auto callbackCopy = callbacks.with([](const AnalysisCallbacks& all) { return all.completion; });
 
     if (callbackCopy != nullptr) {
         callbackCopy(totalFiles, runId);
@@ -281,8 +257,7 @@ void AnalysisCoordinator::analyzeStaleFile(
 /// Sets the callback invoked with the file list of each run.
 void AnalysisCoordinator::setPlanCallback(PlanCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    planCallback = std::move(callback);
+    callbacks.with([&callback](AnalysisCallbacks& all) { all.plan = std::move(callback); });
 }
 
 /// Invokes the plan callback when the given run id is still current.
@@ -292,12 +267,7 @@ void AnalysisCoordinator::publishPlan(const AnalysisPlan& plan, const int runId)
         return;
     }
 
-    PlanCallback callbackCopy;
-
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = planCallback;
-    }
+    const auto callbackCopy = callbacks.with([](const AnalysisCallbacks& all) { return all.plan; });
 
     if (callbackCopy != nullptr) {
         callbackCopy(plan);

@@ -11,6 +11,7 @@
 #include "utils/Log.h"
 #include "utils/MessageThreadBatcher.h"
 #include "utils/StringFormat.h"
+#include "utils/Synchronized.h"
 #include "utils/ThreadUtils.h"
 #include <string_view>
 
@@ -429,6 +430,30 @@ public:
                 }
             }
             expect(utils::createAudioReader(fixtureFile("broken.wav")) == nullptr);
+        }
+
+        beginTest("Synchronized runs each callable on the value under its lock");
+        {
+            utils::Synchronized<int> counter;
+            constexpr int threadCount = 4;
+            constexpr int incrementsPerThread = 1000;
+            std::vector<std::thread> threads;
+            for (int index = 0; index < threadCount; ++index) {
+                threads.emplace_back([&counter] {
+                    for (int increment = 0; increment < incrementsPerThread; ++increment) {
+                        counter.with([](int& value) { ++value; });
+                    }
+                });
+            }
+            for (auto& thread : threads) {
+                thread.join();
+            }
+            const auto& constCounter = counter;
+            expectEquals(constCounter.with([](const int value) { return value; }), threadCount * incrementsPerThread);
+            const utils::Synchronized<std::vector<int>> initialized(std::in_place, std::size_t {3}, 7);
+            expectEquals(
+                initialized.with([](const std::vector<int>& values) { return values.size(); }), std::size_t {3}
+            );
         }
 
         beginTest("A failed read from a fixed-point reader leaves silence instead of raw integers");

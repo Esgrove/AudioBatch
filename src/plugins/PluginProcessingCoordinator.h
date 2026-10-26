@@ -7,12 +7,14 @@
 #pragma once
 
 #include "plugins/PluginProcessing.h"
+#include "utils/Synchronized.h"
 
 #include <JuceHeader.h>
 
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace audiobatch
@@ -25,10 +27,29 @@ int getPluginProcessingWorkerCount(
 /// One pre-instantiated chain of plugin instances, in processing order.
 using PluginChainInstances = std::vector<std::unique_ptr<juce::AudioPluginInstance>>;
 
-/// The plugin chains of one run and the indices of the chains no worker is using.
+/// The callbacks a PluginProcessingCoordinator publishes to, each of which may be empty.
+struct PluginProcessingCallbacks {
+    /// Called once after a run has published all queued results.
+    std::function<void(int totalFiles)> completion;
+    /// Called from the worker thread with the processed fraction of a file, throttled to a few updates per second.
+    std::function<void(const juce::File& file, float progress)> progress;
+    /// Called for each processed file as plugin-processing results become available.
+    std::function<void(const PluginProcessingResult& result)> result;
+    /// Called from the worker thread once a file has a plugin chain and its processing begins.
+    std::function<void(const juce::File& file)> starting;
+    /// Called on the message thread when the coordinator could not start a run.
+    /// Receives the error message.
+    std::function<void(juce::String errorMessage)> startError;
+};
+
+class ChainLease;
+
+/// The plugin chains of one run and the pool of the chains no worker is using.
 /// Every job of the run shares ownership, so a job that outlives a cancellation timeout keeps its chain alive
-/// and can never return a chain index to the free pool of a later run.
-struct PluginRunChains {
+/// and can never return a chain to the free pool of a later run.
+class PluginRunChains
+{
+public:
     PluginRunChains(std::vector<PluginChainInstances> chainInstances, bool usable);
 
     ~PluginRunChains();
@@ -38,41 +59,64 @@ struct PluginRunChains {
     PluginRunChains(PluginRunChains&&) = delete;
     PluginRunChains& operator=(PluginRunChains&&) = delete;
 
-    int acquire();
+    [[nodiscard]] std::optional<ChainLease> acquire(const std::function<bool()>& keepWaiting);
+
+    [[nodiscard]] int getNumChains() const noexcept;
+
+    void wakeWaitingWorkers();
+
+private:
+    friend class ChainLease;
 
     void release(int chainIndex);
 
-    [[nodiscard]] std::vector<juce::AudioPluginInstance*> getChainView(int chainIndex) const;
-
     /// The plugin instances of every chain, owned for the whole run.
     std::vector<PluginChainInstances> chains;
-    /// Guards freeIndices.
-    juce::CriticalSection lock;
     /// Indices of the chains no worker is using.
-    std::vector<int> freeIndices;
-    /// Auto-reset event, signaled on release and on cancellation.
+    utils::Synchronized<std::vector<int>> freeIndices;
+    /// Auto-reset event, signaled when a chain goes back to the pool and on cancellation.
     juce::WaitableEvent available {false};
+};
+
+/// A chain a worker took from the free pool of a run, which goes back to the pool when the lease is destroyed.
+/// The run must outlive the lease.
+class ChainLease
+{
+public:
+    ChainLease(PluginRunChains& chains, int index) noexcept;
+
+    ~ChainLease();
+
+    ChainLease(const ChainLease&) = delete;
+    ChainLease& operator=(const ChainLease&) = delete;
+    ChainLease(ChainLease&&) = delete;
+    ChainLease& operator=(ChainLease&&) = delete;
+
+    [[nodiscard]] std::vector<juce::AudioPluginInstance*> getChainView() const;
+
+private:
+    PluginRunChains& runChains;
+    int chainIndex;
 };
 
 /// Coordinates background plugin-processing jobs and marshals results back to the UI layer.
 class PluginProcessingCoordinator
 {
 public:
-    /// Called once after a run has published all queued results.
-    using CompletionCallback = std::function<void(int totalFiles)>;
+    /// Type of the completion callback in PluginProcessingCallbacks.
+    using CompletionCallback = decltype(PluginProcessingCallbacks::completion);
 
-    /// Called from the worker thread with the processed fraction of a file, throttled to a few updates per second.
-    using ProgressCallback = std::function<void(const juce::File& file, float progress)>;
+    /// Type of the progress callback in PluginProcessingCallbacks.
+    using ProgressCallback = decltype(PluginProcessingCallbacks::progress);
 
-    /// Called for each processed file as plugin-processing results become available.
-    using ResultCallback = std::function<void(const PluginProcessingResult& result)>;
+    /// Type of the result callback in PluginProcessingCallbacks.
+    using ResultCallback = decltype(PluginProcessingCallbacks::result);
 
-    /// Called from the worker thread once a file has a plugin chain and its processing begins.
-    using StartingCallback = std::function<void(const juce::File& file)>;
+    /// Type of the starting callback in PluginProcessingCallbacks.
+    using StartingCallback = decltype(PluginProcessingCallbacks::starting);
 
-    /// Called on the message thread when the coordinator could not start a run.
-    /// Receives the error message.
-    using StartErrorCallback = std::function<void(juce::String errorMessage)>;
+    /// Type of the startError callback in PluginProcessingCallbacks.
+    using StartErrorCallback = decltype(PluginProcessingCallbacks::startError);
 
     explicit PluginProcessingCoordinator(int workerCount = getPluginProcessingWorkerCount());
 
@@ -121,9 +165,7 @@ private:
     ProgressCallback progressCallback;
     ResultCallback resultCallback;
     StartErrorCallback startErrorCallback;
-    StartingCallback startingCallback;
-
-    juce::CriticalSection callbackLock;
+    utils::Synchronized<PluginProcessingCallbacks> callbacks;
     juce::ThreadPool threadPool;
 
     /// Chains of the current run. Only accessed on the message thread.

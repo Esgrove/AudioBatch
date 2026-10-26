@@ -6,6 +6,7 @@
 #pragma once
 
 #include "normalization/AudioNormalization.h"
+#include "utils/Synchronized.h"
 
 #include <JuceHeader.h>
 
@@ -16,21 +17,33 @@
 
 namespace audiobatch
 {
+/// The callbacks a NormalizeCoordinator publishes to, each of which may be empty.
+struct NormalizeCallbacks {
+    /// Called once after a run has published all queued results.
+    std::function<void(int totalFiles)> completion;
+    /// Called from the worker thread with the normalized fraction of a file, throttled to a few updates per second.
+    std::function<void(const juce::File& file, float progress)> progress;
+    /// Called for each processed file as normalize results become available.
+    std::function<void(const AudioNormalizationResult& result)> result;
+    /// Called from the worker thread right before a file's normalization begins.
+    std::function<void(const juce::File& file)> starting;
+};
+
 /// Coordinates background normalize jobs and marshals results back to the UI layer.
 class NormalizeCoordinator
 {
 public:
-    /// Called once after a run has published all queued results.
-    using CompletionCallback = std::function<void(int totalFiles)>;
+    /// Type of the completion callback in NormalizeCallbacks.
+    using CompletionCallback = decltype(NormalizeCallbacks::completion);
 
-    /// Called from the worker thread with the normalized fraction of a file, throttled to a few updates per second.
-    using ProgressCallback = std::function<void(const juce::File& file, float progress)>;
+    /// Type of the progress callback in NormalizeCallbacks.
+    using ProgressCallback = decltype(NormalizeCallbacks::progress);
 
-    /// Called for each processed file as normalize results become available.
-    using ResultCallback = std::function<void(const AudioNormalizationResult& result)>;
+    /// Type of the result callback in NormalizeCallbacks.
+    using ResultCallback = decltype(NormalizeCallbacks::result);
 
-    /// Called from the worker thread right before a file's normalization begins.
-    using StartingCallback = std::function<void(const juce::File& file)>;
+    /// Type of the starting callback in NormalizeCallbacks.
+    using StartingCallback = decltype(NormalizeCallbacks::starting);
 
     explicit NormalizeCoordinator(int workerCount = juce::SystemStats::getNumCpus());
 
@@ -58,8 +71,7 @@ private:
     CompletionCallback completionCallback;
     ProgressCallback progressCallback;
     ResultCallback resultCallback;
-    StartingCallback startingCallback;
-    juce::CriticalSection callbackLock;
+    utils::Synchronized<NormalizeCallbacks> callbacks;
     juce::ThreadPool threadPool;
     std::atomic<int> currentRunId {0};
 };
