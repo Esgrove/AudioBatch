@@ -1,6 +1,10 @@
 # AGENTS.md
 
 AudioBatch is a JUCE-based C++23 application for analyzing and batch processing audio files.
+This file governs the C++ project in `cpp/`, and paths below are relative to it unless they start with `../`.
+The Rust port lives next to it in `../rust`, and the root `AGENTS.md` describes the repository layout.
+Run the build, format, lint, and test commands below from `cpp/`.
+
 It builds two deliverables from a shared core:
 
 - GUI target: `AudioBatch` producing `AudioBatch.app` / `AudioBatchApp.exe`. This is the primary deliverable.
@@ -158,12 +162,13 @@ Tests:
 
 - `tests/` holds the `AudioBatchTests` executable, which links the shared core and the CLI front end.
   Suites are `juce::UnitTest` classes, one per file, created through the factories in `tests/TestSuites.h`.
-- `tests/fixtures/` holds small committed audio files:
+- `../fixtures/` at the repository root holds small committed audio files, shared with the Rust port:
   one second 1 kHz tones at -6.02 dBFS in WAV, AIFF, FLAC, MP3, and Ogg, mono and stereo,
   at several sample rates and bit depths, plus a tagged FLAC file, digital silence, a short three channel AIFF,
   a single click at a known sample in WAV and MP3 for checking that the start of the audio stays in place,
   and a broken file.
-  `tests/fixtures/generate.sh` regenerates them with ffmpeg.
+  `../fixtures/generate.sh` regenerates them with ffmpeg.
+  The icons and fonts live in `../assets/` at the repository root for the same reason.
   Tests that modify files work on copies in a temporary directory.
 
 ## Dependencies
@@ -282,8 +287,8 @@ Prefer, in this order, a value or a reference, then a smart pointer, and a raw p
 
 ## Code Organization
 
-The detailed rules are in `.agents/rules/code-organization.md`.
-`.claude/rules` is a symlink to `.agents/rules`, so Claude Code reads the same files.
+The detailed rules are in `../.agents/rules/code-organization.md` at the repository root.
+`../.claude/rules` is a symlink to `../.agents/rules`, so Claude Code reads the same files.
 
 - Declare enums first, then structs, then classes.
 - Within a class or struct, put `public` before `protected` before `private`.
@@ -356,8 +361,11 @@ The detailed rules are in `.agents/rules/code-organization.md`.
   cmake-format runs through `uvx` when it is not installed.
   The fallback uses Python 3.14 because cmakelang's token scanner is incompatible with Python 3.15.
   After changing `CMakeLists.txt`, run `./format.sh` or cmake-format on it.
-- `.pre-commit-config.yaml` runs clang-format, cmake-format, and basic file checks through [prek](https://prek.j178.dev).
-- CI runs `./format.sh --check`.
+- `./format.sh` covers this `cpp/` directory and `../fixtures/generate.sh`,
+  and also checks the prose with `slb` when it is installed.
+- `../.pre-commit-config.yaml` at the repository root runs clang-format, cmake-format, cargo fmt,
+  and basic file checks through [prek](https://prek.j178.dev).
+- CI runs `./format.sh --check` in the `C++` workflow, `../.github/workflows/cpp.yml`.
 
 ## Linting
 
@@ -409,5 +417,5 @@ Example (C++ doc comment):
 ## Notes
 
 - The main application code lives in `src/`.
-- Shell helpers live in the repository root.
+- Shell helpers live in the C++ project root, `cpp/`.
 - `CLAUDE.md` is a symlink to this file, so both point at the same guidance. Only edit `AGENTS.md` directly.

@@ -33,20 +33,20 @@
 *.exe
 *.out
 *.app
-/audiobatch
+/cpp/audiobatch
 
 # Build
 
 /assets/icon.afdesign
 /assets/sound.png
-/build
-/Builds
-/cmake-build*
+/cpp/build
+/cpp/Builds
+/cpp/cmake-build*
 
 # Test audio files
-/files/
-/test/
-/screenshots/
+/cpp/files/
+/cpp/test/
+/cpp/screenshots/
 
 # Allow checked-in workspace settings for shared CMake/IntelliSense config.
 !/.vscode/

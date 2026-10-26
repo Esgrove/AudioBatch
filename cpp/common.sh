@@ -1,7 +1,8 @@
 #!/bin/bash
 set -eo pipefail
 
-REPO=$(git rev-parse --show-toplevel || { cd "$(dirname "${BASH_SOURCE[0]}")" && pwd; })
+# The C++ project root, which is the directory of this script.
+REPO=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 export REPO
 
 # Set Bash platform script is running on (mac/windows/linux).

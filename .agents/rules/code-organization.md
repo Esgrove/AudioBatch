@@ -1,6 +1,7 @@
 # Code organization
 
-These rules apply to every C++ source and header under `src/` and `tests/`.
+These rules apply to every C++ source and header under `cpp/src/` and `cpp/tests/`.
+Paths below are relative to `cpp/`, and `AGENTS.md` means `cpp/AGENTS.md`.
 
 ## Declaration order
 

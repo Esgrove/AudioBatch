@@ -296,7 +296,7 @@ Built with C++23 and JUCE. Requires CMake 4.2 or newer and a supported platform 
 JUCE is included as a submodule.
 CMake fetches the other dependencies as needed: SQLite 3, libebur128, TagLib, {fmt} and GoogleTest (tests only).
 
-Run these commands in a terminal on macOS or Git Bash on Windows.
+Run these commands from the `cpp` directory in a terminal on macOS or Git Bash on Windows.
 
 macOS:
 

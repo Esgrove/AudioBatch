@@ -93,19 +93,19 @@ fi
 if [ -n "$(command -v shfmt)" ]; then
     if [ "$CHECK" = true ]; then
         print_magenta "Checking shell script formatting..."
-        shfmt --diff ./*.sh tests/fixtures/*.sh
+        shfmt --diff ./*.sh ../fixtures/*.sh
     else
         print_magenta "Formatting shell scripts..."
-        shfmt --list --write ./*.sh tests/fixtures/*.sh
+        shfmt --list --write ./*.sh ../fixtures/*.sh
     fi
 fi
 
 if [ -n "$(command -v slb)" ]; then
     if [ "$CHECK" = true ]; then
         print_magenta "Checking prose..."
-        slb --exclude JUCE --quiet
+        slb --exclude JUCE --quiet "$REPO"
     else
         print_magenta "Formatting prose..."
-        slb --exclude JUCE --fix
+        slb --exclude JUCE --fix "$REPO"
     fi
 fi

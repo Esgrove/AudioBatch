@@ -30,7 +30,7 @@ repos:
         entry: clang-format -i --style=file
         types_or: [c, c++]
         language: system
-        files: ^(src|tests)/
+        files: ^cpp/(src|tests)/
         priority: 1
 
       - id: cmake-format
@@ -38,5 +38,15 @@ repos:
         description: Run cmake-format on CMake files included in the commit.
         entry: cmake-format -i
         language: system
-        files: (^|/)(CMakeLists\.txt|[^/]+\.cmake)$
+        files: ^cpp/(.+/)?(CMakeLists\.txt|[^/]+\.cmake)$
+        priority: 1
+
+      - id: cargo-fmt
+        name: Rust Format
+        description: Run rustfmt on Rust files included in the commit, with the Rust workspace settings.
+        entry: bash -c 'cd rust && cargo fmt --'
+        types: [rust]
+        language: system
+        files: ^rust/
+        pass_filenames: false
         priority: 1
