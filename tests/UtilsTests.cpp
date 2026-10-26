@@ -369,7 +369,26 @@ public:
             expect(reported.size() < 1000, juce::String(static_cast<int>(reported.size())));
             expectEquals(reported.back(), 1.0f);
             expect(std::ranges::is_sorted(reported));
+            for (std::size_t index = 1; index + 1 < reported.size(); ++index) {
+                expectGreaterOrEqual(reported[index] - reported[index - 1], 0.001f);
+            }
             expect(utils::makeThrottledProgress({}) == nullptr);
+        }
+
+        beginTest("Throttled progress forwards steps of a tenth of a percent");
+        {
+            std::vector<float> reported;
+            const auto onProgress
+                = utils::makeThrottledProgress([&reported](const float progress) { reported.push_back(progress); });
+
+            onProgress(0.0f);
+            // Waits past the minimum interval, so only the size of the step decides what is forwarded.
+            juce::Thread::sleep(60);
+            onProgress(0.0005f);
+            onProgress(0.0015f);
+
+            expectEquals(static_cast<int>(reported.size()), 2);
+            expectEquals(reported.back(), 0.0015f);
         }
 
         beginTest("Padded MP3 frames without a frame-count header have an exact readable length");
