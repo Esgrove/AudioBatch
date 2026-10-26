@@ -11,6 +11,7 @@
 #include <memory>
 #include <span>
 #include <utility>
+#include <variant>
 
 namespace audiobatch::tests
 {
@@ -295,6 +296,39 @@ juce::File fixtureFile(const juce::String& name)
 double peakDecibels(const AudioAnalysisRecord& record)
 {
     return static_cast<double>(juce::Decibels::gainToDecibels(std::abs(record.overallPeak)));
+}
+
+/// Returns the error of a failed or unanalyzed outcome, or an empty string for a success.
+juce::String outcomeError(const OperationOutcome& outcome)
+{
+    return std::visit(
+        Overloaded {
+            [](const OperationFailed& failed) { return failed.error; },
+            [](const CommittedButUnanalyzed& unanalyzed) { return unanalyzed.error; },
+            [](const OperationSucceeded& /*succeeded*/) { return juce::String(); },
+        },
+        outcome
+    );
+}
+
+/// Returns the analysis of the output of an operation that wrote it, or an empty record for one that failed before.
+AudioAnalysisRecord outcomeRecord(const OperationOutcome& outcome)
+{
+    return std::visit(
+        Overloaded {
+            [](const OperationFailed& /*failed*/) { return AudioAnalysisRecord(); },
+            [](const CommittedButUnanalyzed& unanalyzed) { return unanalyzed.output; },
+            [](const OperationSucceeded& succeeded) { return succeeded.output; },
+        },
+        outcome
+    );
+}
+
+/// Returns the notice of a successful outcome, or an empty string.
+juce::String outcomeNotice(const OperationOutcome& outcome)
+{
+    const auto* succeeded = std::get_if<OperationSucceeded>(&outcome);
+    return succeeded != nullptr ? succeeded->notice : juce::String();
 }
 
 /// Decodes the first channel of an audio file and returns the position of its sample with the largest magnitude,

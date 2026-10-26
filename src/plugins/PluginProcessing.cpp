@@ -708,12 +708,6 @@ PluginProcessingResult processFileWithPlugins(
         return fail(file, commit.error());
     }
 
-    PluginProcessingResult result;
-    result.originalFile = file;
-    result.originalFullPath = file.getFullPathName();
-    result.outputFile = outputFile;
-    result.committed = true;
-
     juce::StringArray notices;
 
     if (written->clipped) {
@@ -729,27 +723,24 @@ PluginProcessingResult processFileWithPlugins(
         );
     }
 
-    result.notice = notices.joinIntoString(". ");
-
-    result.fileName = outputFile.getFileName();
-    result.analysisRecord = analyzeFile(outputFile, {}, utils::makeProgressRange(onProgress, writeProgressEnd, 1.0f));
+    auto analysis = analyzeFile(outputFile, {}, utils::makeProgressRange(onProgress, writeProgressEnd, 1.0f));
     // Custom gain has been baked in. Clear it on the new record.
-    result.analysisRecord.customGainDb = 0.0f;
-    result.analysisRecord.hasCustomGain = false;
-    result.succeeded = !result.analysisRecord.hasError();
+    analysis.customGainDb = 0.0f;
+    analysis.hasCustomGain = false;
 
-    if (!result.succeeded) {
-        result.errorMessage
-            = utils::format("The file was processed, but re-analysis failed: {}", result.analysisRecord.errorMessage);
-        utils::logError("Plugin processing re-analysis failed for {}", result.outputFile.getFullPathName().quoted());
-    } else {
-        utils::logInfo(
-            "Processed: {:.2f} s, {}",
-            utils::elapsedSecondsSince(startedAtMilliseconds),
-            result.outputFile.getFileName().quoted()
+    if (analysis.hasError()) {
+        auto error = utils::format("The file was processed, but re-analysis failed: {}", analysis.errorMessage);
+        utils::logError("Plugin processing re-analysis failed for {}", outputFile.getFullPathName().quoted());
+        return PluginProcessingResult::forFile(
+            file, CommittedButUnanalyzed {.output = std::move(analysis), .error = std::move(error)}
         );
     }
 
-    return result;
+    utils::logInfo(
+        "Processed: {:.2f} s, {}", utils::elapsedSecondsSince(startedAtMilliseconds), outputFile.getFileName().quoted()
+    );
+    return PluginProcessingResult::forFile(
+        file, OperationSucceeded {.output = std::move(analysis), .notice = notices.joinIntoString(". ")}
+    );
 }
 }  // namespace audiobatch

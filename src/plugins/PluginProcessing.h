@@ -19,6 +19,8 @@
 
 #include <optional>
 #include <span>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace audiobatch
@@ -80,44 +82,37 @@ struct PluginProcessingOptions {
 
 /// Result payload for a single plugin-processing operation.
 struct PluginProcessingResult {
-    /// Source file path before processing.
-    juce::File originalFile;
-    /// Absolute path of the source file, which identifies its table row.
-    juce::String originalFullPath;
-    /// Final on-disk file after processing (.aif).
-    juce::File outputFile;
-    /// Name of the source file.
-    juce::String fileName;
-    /// Empty on success, otherwise the reason processing failed.
-    juce::String errorMessage;
-    /// Information about a successful run worth showing to the user,
-    /// such as output clipping or source blocks that failed to decode.
-    juce::String notice;
-    /// Analysis of the output file, valid when the re-analysis succeeded.
-    AudioAnalysisRecord analysisRecord;
-    /// True when the plugin chain rendered the output file.
-    bool succeeded {false};
-    /// True once the output was moved into place, which can happen even when re-analysis then failed.
-    /// A converted source is in the trash by then, so callers move the record to the output either way.
-    bool committed {false};
-
-    /// True when processing failed.
+    /// Returns true unless the output was written and analyzed.
     [[nodiscard]] bool hasError() const noexcept
     {
-        return !succeeded;
+        return !std::holds_alternative<OperationSucceeded>(outcome);
+    }
+
+    /// Creates the result of an operation on the given source file.
+    static PluginProcessingResult forFile(const juce::File& file, OperationOutcome outcome)
+    {
+        PluginProcessingResult result;
+        result.originalFile = file;
+        result.originalFullPath = file.getFullPathName();
+        result.fileName = file.getFileName();
+        result.outcome = std::move(outcome);
+        return result;
     }
 
     /// Creates a failure result for the given file and message.
     static PluginProcessingResult failure(const juce::File& file, const juce::String& message)
     {
-        PluginProcessingResult result;
-        result.originalFile = file;
-        result.originalFullPath = file.getFullPathName();
-        result.outputFile = file;
-        result.fileName = file.getFileName();
-        result.errorMessage = message;
-        return result;
+        return forFile(file, OperationFailed {.error = message});
     }
+
+    /// Source file path before processing.
+    juce::File originalFile;
+    /// Absolute path of the source file, which identifies its table row.
+    juce::String originalFullPath;
+    /// Name of the source file.
+    juce::String fileName;
+    /// What the operation did with the file.
+    OperationOutcome outcome;
 };
 
 bool canProcessFileWithPlugins(const juce::File& file);

@@ -89,6 +89,9 @@ juce::File fixtureFile(const juce::String& name);
 /// Returns the sample peak of an analysis record in dBFS.
 double peakDecibels(const AudioAnalysisRecord& record);
 juce::int64 peakSamplePosition(const juce::File& file);
+juce::String outcomeError(const OperationOutcome& outcome);
+AudioAnalysisRecord outcomeRecord(const OperationOutcome& outcome);
+juce::String outcomeNotice(const OperationOutcome& outcome);
 
 bool deleteInsteadOfTrash(const juce::File& file);
 AudioNormalizationOptions testNormalizationOptions();

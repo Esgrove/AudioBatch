@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <iterator>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace audiobatch
@@ -154,25 +155,33 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
         // A converted original was moved to the trash, so its cached row is no longer needed,
         // even when the re-analysis of the committed output failed.
         // The cache logs its own failures, and a stale row only costs another read later.
-        if (normalization.committed && normalization.analysisRecord.fullPath != result.fullPath) {
-            static_cast<void>(cache.removeAnalysis(result.file));
-        }
-
-        if (normalization.hasError()) {
+        const auto forgetConvertedSource = [&](const AudioAnalysisRecord& output) {
+            if (output.fullPath != result.fullPath) {
+                static_cast<void>(cache.removeAnalysis(result.file));
+            }
+        };
+        const auto reportFailure = [&](const AudioAnalysisRecord& record, const juce::String& error) {
             ++failureCount;
-            utils::logError(
-                "Normalization failed: {}, {}", result.file.getFullPathName().quoted(), normalization.errorMessage
-            );
-            // A committed output replaced the source, so the failed re-analysis of the output is reported instead.
-            addNormalizationFailure(
-                normalization.committed ? normalization.analysisRecord : result, normalization.errorMessage
-            );
-            continue;
-        }
+            utils::logError("Normalization failed: {}, {}", result.file.getFullPathName().quoted(), error);
+            addNormalizationFailure(record, error);
+        };
 
-        static_cast<void>(cache.storeAnalysis(normalization.analysisRecord));
-
-        normalizedResults.push_back(normalization.analysisRecord);
+        std::visit(
+            Overloaded {
+                [&](const OperationFailed& failed) { reportFailure(result, failed.error); },
+                [&](const CommittedButUnanalyzed& unanalyzed) {
+                    forgetConvertedSource(unanalyzed.output);
+                    // The output replaced the source, so the failed re-analysis of the output is reported instead.
+                    reportFailure(unanalyzed.output, unanalyzed.error);
+                },
+                [&](const OperationSucceeded& succeeded) {
+                    forgetConvertedSource(succeeded.output);
+                    static_cast<void>(cache.storeAnalysis(succeeded.output));
+                    normalizedResults.push_back(succeeded.output);
+                },
+            },
+            normalization.outcome
+        );
     }
 
     if (options.normalize) {

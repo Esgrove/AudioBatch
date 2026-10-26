@@ -12,6 +12,7 @@
 #include "utils/StringFormat.h"
 
 #include <algorithm>
+#include <variant>
 #include <vector>
 
 namespace audiobatch::tests
@@ -129,7 +130,7 @@ private:
             options.targetPeakDbfs = peakDecibels(record);
             const ScopedLogCapture capture;
             const auto result = normalizeFile(record, options);
-            expect(!result.hasError(), result.errorMessage);
+            expect(!result.hasError(), outcomeError(result.outcome));
             const auto messages = capture.getMessages();
             expect(std::ranges::any_of(messages, [&](const auto& message) {
                 return message.contains("[INFO]: Normalized: ")
@@ -145,8 +146,8 @@ private:
 
             const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
             expect(result.hasError());
-            expect(!result.committed);
-            expect(result.errorMessage.contains("already exists"), result.errorMessage);
+            expect(std::holds_alternative<OperationFailed>(result.outcome));
+            expect(outcomeError(result.outcome).contains("already exists"), outcomeError(result.outcome));
             expect(source.existsAsFile());
             expectEquals(existingOutput.loadFileAsString(), juce::String("unrelated"));
         }
@@ -169,7 +170,7 @@ private:
             });
 
             expect(result.hasError());
-            expect(result.errorMessage.contains("not a file"), result.errorMessage);
+            expect(outcomeError(result.outcome).contains("not a file"), outcomeError(result.outcome));
             expectEquals(cancellationChecks, 0);
             expect(folder.isDirectory());
             expect(source.existsAsFile());
@@ -208,7 +209,7 @@ private:
             expect(writeMetadata(source, metadata));
 
             const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
-            expect(!result.hasError(), result.errorMessage);
+            expect(!result.hasError(), outcomeError(result.outcome));
 
             AudioMetadata written;
             expect(readMetadata(source, written));
@@ -228,10 +229,10 @@ private:
                 const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "Upper.AIF");
                 const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
 
-                expect(!result.hasError(), result.errorMessage);
-                expect(result.analysisRecord.file == source);
+                expect(!result.hasError(), outcomeError(result.outcome));
+                expect(outcomeRecord(result.outcome).file == source);
                 expect(source.existsAsFile());
-                expectWithinAbsoluteError(peakDecibels(result.analysisRecord), 0.0, peakTolerance);
+                expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), 0.0, peakTolerance);
             }
         }
 
@@ -248,8 +249,10 @@ private:
             staleRecord.modifiedTimeMs -= 1000;
 
             const auto result = normalizeFile(staleRecord, testNormalizationOptions());
-            expect(!result.hasError(), result.errorMessage);
-            expectWithinAbsoluteError(result.analysisRecord.integratedLufs, fixtureLoudness - fixturePeakDecibels, 0.1);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectWithinAbsoluteError(
+                outcomeRecord(result.outcome).integratedLufs, fixtureLoudness - fixturePeakDecibels, 0.1
+            );
         }
 
         beginTest("Cancellation stops changed-source analysis before an in-place no-op");
@@ -264,8 +267,8 @@ private:
 
             const auto result = normalizeFile(staleRecord, options, [] { return true; });
             expect(result.hasError());
-            expect(!result.committed);
-            expect(result.errorMessage.containsIgnoreCase("cancel"), result.errorMessage);
+            expect(std::holds_alternative<OperationFailed>(result.outcome));
+            expect(outcomeError(result.outcome).containsIgnoreCase("cancel"), outcomeError(result.outcome));
             juce::MemoryBlock remainingBytes;
             expect(source.loadFileAsData(remainingBytes));
             expect(remainingBytes == originalBytes);
@@ -282,12 +285,17 @@ private:
             options.targetPeakDbfs = peakDecibels(staleRecord);
             staleRecord.modifiedTimeMs -= 1000;
             staleRecord.overallPeak = 0.125f;
+            const auto modifiedBefore = source.getLastModificationTime();
+            const auto sizeBefore = source.getSize();
 
             const auto result = normalizeFile(staleRecord, options);
-            expect(result.succeeded, result.errorMessage);
-            expect(!result.committed);
-            expect(result.analysisRecord.matchesFileOnDisk());
-            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), options.targetPeakDbfs, peakTolerance);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expect(source.getLastModificationTime() == modifiedBefore);
+            expectEquals(source.getSize(), sizeBefore);
+            expect(outcomeRecord(result.outcome).matchesFileOnDisk());
+            expectWithinAbsoluteError(
+                peakDecibels(outcomeRecord(result.outcome)), options.targetPeakDbfs, peakTolerance
+            );
         }
 
         beginTest("Cancellation stops re-analysis of an unchanged in-place no-op");
@@ -299,8 +307,8 @@ private:
 
             const auto result = normalizeFile(record, options, [] { return true; });
             expect(result.hasError());
-            expect(!result.committed);
-            expect(result.errorMessage.containsIgnoreCase("cancel"), result.errorMessage);
+            expect(std::holds_alternative<OperationFailed>(result.outcome));
+            expect(outcomeError(result.outcome).containsIgnoreCase("cancel"), outcomeError(result.outcome));
         }
 
         beginTest(
@@ -342,8 +350,8 @@ private:
             options.targetLufs = -14.0;
 
             const auto result = normalizeFile(analyzeFile(source), options);
-            expect(!result.hasError(), result.errorMessage);
-            expectWithinAbsoluteError(result.analysisRecord.integratedLufs, -14.0, 0.1);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectWithinAbsoluteError(outcomeRecord(result.outcome).integratedLufs, -14.0, 0.1);
         }
 
         beginTest("Peak mode reaches a target below full scale");
@@ -353,8 +361,8 @@ private:
             options.targetPeakDbfs = -1.0;
 
             const auto result = normalizeFile(analyzeFile(source), options);
-            expect(!result.hasError(), result.errorMessage);
-            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), -1.0, peakTolerance);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), -1.0, peakTolerance);
         }
 
         beginTest("A silent file cannot be normalized");
@@ -398,10 +406,10 @@ private:
             const auto source = directory.copyFixture("click_mono_44100_320k.mp3", "click.mp3");
             const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
 
-            expect(!result.hasError(), result.errorMessage);
-            expectEquals(result.analysisRecord.file.getFileName(), juce::String("click.aif"));
-            expectEquals(result.analysisRecord.lengthInSamples, clickFixtureLength);
-            expectEquals(peakSamplePosition(result.analysisRecord.file), clickFixturePosition);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectEquals(outcomeRecord(result.outcome).file.getFileName(), juce::String("click.aif"));
+            expectEquals(outcomeRecord(result.outcome).lengthInSamples, clickFixtureLength);
+            expectEquals(peakSamplePosition(outcomeRecord(result.outcome).file), clickFixturePosition);
         }
 
         beginTest("An .aif source normalized in place disposes of a copy of the original first");
@@ -419,10 +427,10 @@ private:
             };
 
             const auto result = normalizeFile(analyzeFile(source), options);
-            expect(!result.hasError(), result.errorMessage);
+            expect(!result.hasError(), outcomeError(result.outcome));
             expectEquals(disposedNames.joinIntoString(","), juce::String("backup.aif"));
             expectEquals(disposedSizes[0], sourceSize);
-            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), -1.0, peakTolerance);
+            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), -1.0, peakTolerance);
         }
 
         beginTest("An in-place no-op disposes of nothing");
@@ -438,7 +446,7 @@ private:
             };
 
             const auto result = normalizeFile(record, options);
-            expect(!result.hasError(), result.errorMessage);
+            expect(!result.hasError(), outcomeError(result.outcome));
             expectEquals(disposedCount, 0);
         }
     }
@@ -457,12 +465,12 @@ private:
 
         const auto source = directory.copyFixture(fixtureName);
         const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
-        expect(!result.hasError(), result.errorMessage);
-        expectEquals(result.analysisRecord.fullPath, source.getFullPathName());
-        expectEquals(result.analysisRecord.channels, channels);
-        expectEquals(result.analysisRecord.sampleRate, sampleRate);
-        expectEquals(result.analysisRecord.bitsPerSample, bitsPerSample);
-        expectWithinAbsoluteError(peakDecibels(result.analysisRecord), 0.0, peakTolerance);
+        expect(!result.hasError(), outcomeError(result.outcome));
+        expectEquals(outcomeRecord(result.outcome).fullPath, source.getFullPathName());
+        expectEquals(outcomeRecord(result.outcome).channels, channels);
+        expectEquals(outcomeRecord(result.outcome).sampleRate, sampleRate);
+        expectEquals(outcomeRecord(result.outcome).bitsPerSample, bitsPerSample);
+        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), 0.0, peakTolerance);
     }
 };
 

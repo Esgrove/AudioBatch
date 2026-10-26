@@ -342,25 +342,20 @@ AudioNormalizationResult normalizeFile(
     const auto gain = *normalizationGain;
 
     if (juce::approximatelyEqual(gain, 1.0f) && outputFile == file) {
-        AudioNormalizationResult result;
-        result.file = file;
-        result.fileName = file.getFileName();
-        result.fullPath = file.getFullPathName();
-        result.analysisRecord
-            = analyzeFile(file, isCancelled, utils::makeProgressRange(onProgress, renderProgressStart, 1.0f));
-        result.succeeded = !result.analysisRecord.hasError();
+        auto analysis = analyzeFile(file, isCancelled, utils::makeProgressRange(onProgress, renderProgressStart, 1.0f));
 
-        if (!result.succeeded) {
-            result.errorMessage = result.analysisRecord.errorMessage;
-        } else {
-            utils::logInfo(
-                "Normalized: {:.2f} s, {} (already at target)",
-                utils::elapsedSecondsSince(startedAtMilliseconds),
-                file.getFileName().quoted()
-            );
+        if (analysis.hasError()) {
+            return AudioNormalizationResult::failure(file, analysis.errorMessage);
         }
 
-        return result;
+        utils::logInfo(
+            "Normalized: {:.2f} s, {} (already at target)",
+            utils::elapsedSecondsSince(startedAtMilliseconds),
+            file.getFileName().quoted()
+        );
+        return AudioNormalizationResult::forFile(
+            file, OperationSucceeded {.output = std::move(analysis), .notice = {}}
+        );
     }
 
     // The hidden name keeps a half-written output out of folder scans,
@@ -437,31 +432,26 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, commit.error());
     }
 
-    AudioNormalizationResult result;
-    result.file = file;
-    result.fileName = file.getFileName();
-    result.fullPath = file.getFullPathName();
-    result.committed = true;
-    result.notice = std::move(*decodeNotice);
-    result.analysisRecord = analyzeFile(outputFile, {}, utils::makeProgressRange(onProgress, renderProgressEnd, 1.0f));
-    result.succeeded = !result.analysisRecord.hasError();
+    auto analysis = analyzeFile(outputFile, {}, utils::makeProgressRange(onProgress, renderProgressEnd, 1.0f));
+    auto notice = std::move(*decodeNotice);
 
-    if (result.notice.isNotEmpty()) {
-        utils::logWarn("Normalization warning: {}, {}", outputFile.getFullPathName().quoted(), result.notice);
+    if (notice.isNotEmpty()) {
+        utils::logWarn("Normalization warning: {}, {}", outputFile.getFullPathName().quoted(), notice);
     }
 
-    if (!result.succeeded) {
-        result.errorMessage
-            = utils::format("The file was normalized, but re-analysis failed: {}", result.analysisRecord.errorMessage);
-        utils::logError("Normalization failed for {}: {}", result.fullPath.quoted(), result.errorMessage);
-    } else {
-        utils::logInfo(
-            "Normalized: {:.2f} s, {}",
-            utils::elapsedSecondsSince(startedAtMilliseconds),
-            outputFile.getFileName().quoted()
+    if (analysis.hasError()) {
+        auto error = utils::format("The file was normalized, but re-analysis failed: {}", analysis.errorMessage);
+        utils::logError("Normalization failed for {}: {}", file.getFullPathName().quoted(), error);
+        return AudioNormalizationResult::forFile(
+            file, CommittedButUnanalyzed {.output = std::move(analysis), .error = std::move(error)}
         );
     }
 
-    return result;
+    utils::logInfo(
+        "Normalized: {:.2f} s, {}", utils::elapsedSecondsSince(startedAtMilliseconds), outputFile.getFileName().quoted()
+    );
+    return AudioNormalizationResult::forFile(
+        file, OperationSucceeded {.output = std::move(analysis), .notice = std::move(notice)}
+    );
 }
 }  // namespace audiobatch
