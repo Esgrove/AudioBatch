@@ -1,6 +1,6 @@
 /// Plugin listing for the CLI executable.
 /// Declares PluginListGrouping, the supported listing layouts,
-/// and the cli functions that parse the grouping option and print the known-plugins list shared with the GUI,
+/// and the cli function that prints the known-plugins list shared with the GUI,
 /// optionally after rescanning the plugin folders with the out-of-process scanner.
 
 #pragma once
@@ -8,7 +8,6 @@
 #include <JuceHeader.h>
 
 #include <cstdint>
-#include <optional>
 
 namespace audiobatch
 {
@@ -26,8 +25,6 @@ enum class PluginListGrouping : std::uint8_t {
 
 namespace cli
 {
-[[nodiscard]] std::optional<PluginListGrouping> parsePluginGrouping(const juce::String& value);
-
 [[nodiscard]] int runPluginList(bool rescan, PluginListGrouping grouping);
 }  // namespace cli
 }  // namespace audiobatch

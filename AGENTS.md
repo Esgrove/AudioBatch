@@ -89,8 +89,9 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       so they are not duplicated across services.
 - `src/cli/` holds the CLI front end.
     - `CliMain.cpp` is the CLI entry point.
-    - `AudioAnalysisCli.{h,cpp}` declare the CLI options and the `cli` functions that run the analysis workflow,
-      `AudioAnalysisCliParse.cpp` parses and validates the arguments,
+    - `AudioAnalysisCli.{h,cpp}` declare the CLI commands and the `cli` functions that run the analysis workflow.
+      `AudioAnalysisCliParse.cpp` parses and validates the arguments into an `AnalyzeCommand` or a `ListPluginsCommand`,
+      with one name table per enum option shared by the parser and its error messages,
       and `AudioAnalysisCliOutput.*` prints the results as a table, CSV, or JSON.
     - `PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
 - `src/gui/` holds the GUI application shell and its main screen.

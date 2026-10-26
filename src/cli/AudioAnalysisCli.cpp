@@ -55,9 +55,9 @@ juce::StringArray cli::findSkippedInputs(
 }
 
 /// Executes the CLI analysis workflow and returns the process exit code.
-int cli::runAnalysis(const AudioAnalysisCliOptions& options)
+int cli::runAnalysis(const AnalyzeCommand& command)
 {
-    auto inputPaths = options.inputPaths;
+    auto inputPaths = command.inputPaths;
 
     if (inputPaths.isEmpty()) {
         inputPaths.add(juce::File::getCurrentWorkingDirectory());
@@ -75,11 +75,11 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
         console::printWarn(cacheWarning);
     }
 
-    AnalysisCoordinator coordinator(cache, options.workerCount);
+    AnalysisCoordinator coordinator(cache, command.workerCount);
     AudioAnalysisOptions analysisOptions;
     analysisOptions.inputPaths = inputPaths;
-    analysisOptions.recursive = options.recursive;
-    analysisOptions.refresh = options.refresh;
+    analysisOptions.recursive = command.recursive;
+    analysisOptions.refresh = command.refresh;
 
     const auto analysisStartedAtMs = juce::Time::getMillisecondCounterHiRes();
     auto results = coordinator.analyzeBlocking(analysisOptions);
@@ -93,9 +93,9 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
         analysisFailureCount
     );
 
-    sortRecords(results, options.sortMode, !options.reverse);
+    sortRecords(results, command.sortMode, !command.reverse);
 
-    const auto skippedInputs = findSkippedInputs(options.inputPaths, results);
+    const auto skippedInputs = findSkippedInputs(command.inputPaths, results);
 
     for (const auto& error : skippedInputs) {
         utils::logError(error);
@@ -107,7 +107,7 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
 
     juce::StringArray normalizationConflicts;
 
-    if (options.normalize) {
+    if (command.normalization.has_value()) {
         normalizedResults.reserve(results.size());
         std::vector<AudioAnalysisRecord> normalizableResults;
         std::ranges::copy_if(results, std::back_inserter(normalizableResults), [](const auto& record) {
@@ -128,13 +128,13 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
             ++failureCount;
             utils::logError("Analysis failed: {}, {}", result.file.getFullPathName().quoted(), result.errorMessage);
 
-            if (options.normalize) {
+            if (command.normalization.has_value()) {
                 normalizedResults.push_back(result);
             }
             continue;
         }
 
-        if (!options.normalize) {
+        if (!command.normalization.has_value()) {
             continue;
         }
 
@@ -148,9 +148,7 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
             continue;
         }
 
-        auto normalizationOptions = options.normalization;
-        normalizationOptions.overwriteExisting = options.force;
-        const auto normalization = normalizeFile(result, normalizationOptions);
+        const auto normalization = normalizeFile(result, *command.normalization);
 
         // A converted original was moved to the trash, so its cached row is no longer needed,
         // even when the re-analysis of the committed output failed.
@@ -184,11 +182,11 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
         );
     }
 
-    if (options.normalize) {
-        sortRecords(normalizedResults, options.sortMode, !options.reverse);
-        cli::printRecords(normalizedResults, options.outputFormat, true);
+    if (command.normalization.has_value()) {
+        sortRecords(normalizedResults, command.sortMode, !command.reverse);
+        cli::printRecords(normalizedResults, command.outputFormat, true);
     } else {
-        cli::printRecords(results, options.outputFormat, false);
+        cli::printRecords(results, command.outputFormat, false);
     }
 
     return failureCount == 0 ? 0 : 2;
