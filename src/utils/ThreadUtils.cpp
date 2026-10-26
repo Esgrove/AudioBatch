@@ -125,6 +125,36 @@ juce::String describeCurrentException()
     }
 }
 
+/// Creates a callback that runs the function on the message thread when triggered.
+AsyncCallback::AsyncCallback(std::function<void()> callback) : function(std::move(callback)) {}
+
+/// Drops a call that has not run yet.
+AsyncCallback::~AsyncCallback()
+{
+    cancelPendingUpdate();
+}
+
+/// Schedules the function to run on the message thread, unless a call is already pending.
+/// Safe to call from any thread.
+void AsyncCallback::trigger()
+{
+    triggerAsyncUpdate();
+}
+
+/// Runs a pending call right away instead of on the next message loop turn. Message thread only.
+void AsyncCallback::runNowIfPending()
+{
+    handleUpdateNowIfNeeded();
+}
+
+/// Runs the function on the message thread.
+void AsyncCallback::handleAsyncUpdate()
+{
+    if (function != nullptr) {
+        function();
+    }
+}
+
 /// Returns a callback
 /// that maps the 0 to 1 progress of one phase into the range from start to end of the whole operation
 /// and reports it to onProgress, or an empty callback when onProgress is empty.
