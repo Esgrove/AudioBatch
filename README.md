@@ -226,6 +226,70 @@ Plugin processing itself is GUI-only. CLAP plugins are not supported.
 Exit codes: `0` for success, `1` for invalid arguments or output errors,
 and `2` when any file fails analysis or normalization.
 
+## Architecture
+
+The GUI and the CLI are two thin front ends over one shared core.
+The core reads, analyzes, normalizes and processes audio,
+and keeps the results in an SQLite cache so unchanged files are not read again.
+Each source directory under `src/` holds one domain, and the domains only depend downwards:
+
+```mermaid
+flowchart TD
+    gui["gui: application shell and main screen"]
+    cli["cli: argument parsing and console output"]
+    normalization["normalization: gain and AIFF conversion"]
+    plugins["plugins: scanning and batch processing"]
+    metadata["metadata: tags and embedded art"]
+    serato["serato: Serato tags and overview waveform"]
+    analysis["analysis: peak and loudness analysis, result cache"]
+    utils["utils: shared helpers"]
+
+    gui --> normalization
+    gui --> plugins
+    cli --> normalization
+    cli --> plugins
+    plugins --> normalization
+    normalization --> metadata
+    plugins --> metadata
+    metadata --> serato
+    serato --> analysis
+    analysis --> utils
+```
+
+The GUI splits its main screen into a few owners with one job each.
+`AudioBatchComponent` wires them together and handles the user actions:
+
+```mermaid
+flowchart TD
+    MainWindow --> AudioBatchComponent
+    AudioBatchComponent --> ResultsModel
+    AudioBatchComponent --> PreviewController
+    AudioBatchComponent --> BackgroundWorkController
+    AudioBatchComponent --> PreviewWorkspace
+    AudioBatchComponent --> LiveChain
+    BackgroundWorkController --> AnalysisCoordinator
+    BackgroundWorkController --> NormalizeCoordinator
+    BackgroundWorkController --> PluginProcessingCoordinator
+    AnalysisCoordinator --> BackgroundRunner
+    NormalizeCoordinator --> BackgroundRunner
+    PluginProcessingCoordinator --> BackgroundRunner
+    PreviewController --> AudioPreviewPlayer
+    PreviewController --> SeratoPreviewLoader
+    AudioPreviewPlayer -.-> LiveChain
+    LiveChain --> PluginLibrary
+```
+
+- `ResultsModel` holds the rows of the results table and sorts, merges and removes them.
+- `BackgroundWorkController` runs one analysis, normalization or plugin processing pass at a time.
+  Each coordinator does its work on a `BackgroundRunner` thread pool,
+  and the controller hands the results of the current run back to the message thread.
+- `PreviewController` loads the selected file into `AudioPreviewPlayer`,
+  and reads its Serato tags, such as the overview waveform and cue points, in the background.
+- `PreviewWorkspace` is the bottom section with the file info, the waveform and the preview controls.
+- `LiveChain` holds the plugins the preview plays through, and their editors.
+  The player only observes it, which the dashed line shows.
+  `PluginLibrary` holds the known plugins, and scans for new ones out of process.
+
 ## Build
 
 Built with C++23 and JUCE. Requires CMake 4.2 or newer and a supported platform toolchain.
