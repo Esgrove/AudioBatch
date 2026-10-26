@@ -1,9 +1,11 @@
-/// Device-free regression tests for the live preview renderer, cue positioning, and persisted preferences.
+/// Device-free regression tests for the live preview renderer, cue positioning, persisted preferences,
+/// and the output device status shown in the status bar.
 /// Synthetic processors expose latency, gain edits, ordering, EOF tails, and invalid output.
 /// The committed silence fixture exercises deferred playback without opening hardware or third-party plugins.
 
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/AudioSettingsComponent.h"
+#include "gui/components/StatusBar.h"
 #include "gui/GuiLayout.h"
 #include "plugins/PluginChain.h"
 #include "plugins/PluginPreviewSource.h"
@@ -220,6 +222,7 @@ public:
         testCueStartPosition();
         testInitialPosition();
         testDeviceOwnership();
+        testOutputStatusFormatting();
         testPreferences();
         testLoudnessAxisIntervals();
         testLatencyFormattingAndTailLimit();
@@ -643,6 +646,8 @@ private:
             expect(player.load(audioUrl));
             player.updatePlaybackStatus();
             expectEquals(device.opens, 0);
+            expect(!player.getOutputStatus().open);
+            expectEquals(formatAudioOutputStatus(player.getOutputStatus()), juce::String("Default output"));
 
             beginTest("Playback opens only output channels and stopping releases the driver after its fade");
             player.start();
@@ -650,6 +655,10 @@ private:
             expectEquals(device.opens, 1);
             expectEquals(device.inputChannels, 0);
             expectEquals(device.outputChannels, 2);
+            expect(player.getOutputStatus().open);
+            expectEquals(
+                formatAudioOutputStatus(player.getOutputStatus()), juce::String("Test output, 48 kHz, 512 samples")
+            );
             renderTestAudioDevice(device);
             player.stop();
             renderTestAudioDevice(device);
@@ -657,6 +666,12 @@ private:
             expect(!player.isPlaying());
             expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
             expectEquals(device.closes, 1);
+
+            beginTest("A closed output device keeps reporting its last configuration");
+            expect(!player.getOutputStatus().open);
+            expectEquals(
+                formatAudioOutputStatus(player.getOutputStatus()), juce::String("Test output, 48 kHz, 512 samples")
+            );
 
             beginTest("Suspension releases immediately and does not restart until an explicit play");
             const auto position = player.getCurrentPosition();
@@ -715,6 +730,26 @@ private:
         }
         expectEquals(device.opens, device.closes);
         expect(device.callback == nullptr);
+    }
+
+    /// Checks the status bar text of the output device for fractional rates and values that are not known yet.
+    void testOutputStatusFormatting()
+    {
+        beginTest("Output status text leaves out unknown values and keeps fractional sample rates");
+        expectEquals(
+            formatAudioOutputStatus(
+                {.deviceName = "Speakers", .sampleRate = 44'100.0, .bufferSize = 256, .open = true}
+            ),
+            juce::String("Speakers, 44.1 kHz, 256 samples")
+        );
+        expectEquals(
+            formatAudioOutputStatus({.deviceName = "Speakers", .sampleRate = 0.0, .bufferSize = 0, .open = false}),
+            juce::String("Speakers")
+        );
+        expectEquals(
+            formatAudioOutputStatus({.deviceName = {}, .sampleRate = 96'000.0, .bufferSize = 0, .open = false}),
+            juce::String("Default output, 96 kHz")
+        );
     }
 
     /// Uses an isolated settings file to verify unset defaults, persistence, and actual continuation policy.

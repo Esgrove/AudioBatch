@@ -80,7 +80,7 @@ void AudioBatchComponent::launchFolderChooser(const bool appendToRoots)
 void AudioBatchComponent::setRoots(const juce::Array<juce::File>& folders)
 {
     if (const auto blockedReason = getFileOperationBlockedReason(); blockedReason.isNotEmpty()) {
-        statusLabel.setText(blockedReason, juce::dontSendNotification);
+        statusBar.setStatusText(blockedReason);
         return;
     }
 
@@ -107,7 +107,7 @@ void AudioBatchComponent::setRoots(const juce::Array<juce::File>& folders)
 void AudioBatchComponent::addRoots(const juce::Array<juce::File>& folders)
 {
     if (const auto blockedReason = getFileOperationBlockedReason(); blockedReason.isNotEmpty()) {
-        statusLabel.setText(blockedReason, juce::dontSendNotification);
+        statusBar.setStatusText(blockedReason);
         return;
     }
 
@@ -130,7 +130,7 @@ void AudioBatchComponent::addRoots(const juce::Array<juce::File>& folders)
     }
 
     if (!rootsChanged) {
-        statusLabel.setText("Folder is already included", juce::dontSendNotification);
+        statusBar.setStatusText("Folder is already included");
         return;
     }
 
@@ -149,14 +149,13 @@ void AudioBatchComponent::addRoots(const juce::Array<juce::File>& folders)
     startAnalysis(existingRoots, true, false, false);
 }
 
-/// Shows the root folders in the top bar label:
+/// Shows the root folders on the left of the status bar:
 /// the full path for a single root, or the first path and the number of others for several,
 /// with every root listed in the tooltip.
 void AudioBatchComponent::updateCurrentRootLabel()
 {
     if (currentRoots.isEmpty()) {
-        currentRootLabel.setText("", juce::dontSendNotification);
-        currentRootLabel.setTooltip("");
+        statusBar.setPath({}, {});
         return;
     }
 
@@ -169,8 +168,7 @@ void AudioBatchComponent::updateCurrentRootLabel()
         rootPaths.add(root.getFullPathName());
     }
 
-    currentRootLabel.setText(labelText, juce::dontSendNotification);
-    currentRootLabel.setTooltip(rootPaths.joinIntoString("\n"));
+    statusBar.setPath(labelText, rootPaths.joinIntoString("\n"));
 }
 
 /// Re-runs analysis for all current root folders.
@@ -220,7 +218,7 @@ void AudioBatchComponent::handleDroppedPaths(const juce::StringArray& paths)
     }
 
     if (droppedFiles.isEmpty()) {
-        statusLabel.setText("No supported dropped files", juce::dontSendNotification);
+        statusBar.setStatusText("No supported dropped files");
         return;
     }
 

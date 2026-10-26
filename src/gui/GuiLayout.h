@@ -34,10 +34,7 @@ constexpr int maximumWindowSize {8192};
 constexpr int initialComponentWidth {defaultWindowWidth};
 constexpr int initialComponentHeight {defaultWindowHeight};
 constexpr int mainContentPadding {4};
-constexpr int topBarHeight {32};
-constexpr int statusLabelWidth {220};
 constexpr int sectionSpacing {10};
-constexpr int overallProgressBarHeight {3};
 constexpr int resultsTableRowHeight {24};
 
 /// JUCE's negative sizes express proportions of the available vertical space.
@@ -102,6 +99,21 @@ constexpr int animationDurationMilliseconds {180};
 
 /// Reserve scrollbar width even when hidden, avoiding width/height relayout feedback.
 constexpr int scrollBarThickness {8};
+
+/// Bottom status bar with the root path, the status text, and the audio output device,
+/// and the overall progress line along its top edge.
+namespace statusBar
+{
+constexpr int height {24};
+constexpr int horizontalPadding {8};
+constexpr int sectionSpacing {16};
+constexpr int statusTextWidth {220};
+constexpr int outputStatusMaximumWidth {360};
+/// Vertical gap above and below the separators between the sections.
+constexpr int separatorInset {5};
+constexpr int progressHeight {3};
+constexpr float fontHeight {14.0f};
+}  // namespace statusBar
 
 /// Fixed summary cards and compact secondary details in the selected-file inspector.
 namespace information

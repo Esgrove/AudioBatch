@@ -1,4 +1,5 @@
-/// Layout and animated expansion of the bottom preview workspace.
+/// Layout of the main view, with the status bar along the bottom edge,
+/// and the animated expansion of the preview workspace above it.
 /// Reuses live controls, selected-file metrics, and waveform in expanded and compact presentations,
 /// preserving the expanded table divider independently of the compact row.
 
@@ -69,16 +70,14 @@ void AudioBatchComponent::layoutPlaybackButtons(juce::Rectangle<int> bounds)
     processButton.setBounds(bounds);
 }
 
-/// Allocates one shared workspace height so the results table and live preview move together.
+/// Puts the status bar along the full width of the bottom edge,
+/// and allocates one shared workspace height above it so the results table and live preview move together.
 /// Secondary controls appear only in the settled expanded layout.
 void AudioBatchComponent::resized()
 {
-    auto bounds = getLocalBounds().reduced(layout::mainContentPadding);
-    auto topBar = bounds.removeFromTop(layout::topBarHeight);
-    statusLabel.setBounds(topBar.removeFromRight(layout::statusLabelWidth));
-    topBar.removeFromRight(layout::sectionSpacing);
-    currentRootLabel.setBounds(topBar);
-    bounds.removeFromTop(layout::sectionSpacing);
+    auto bounds = getLocalBounds();
+    statusBar.setBounds(bounds.removeFromBottom(layout::statusBar::height));
+    bounds.reduce(layout::mainContentPadding, layout::mainContentPadding);
     workspaceAvailableHeight = juce::jmax(1, bounds.getHeight());
 
     const bool compact = !previewSectionExpanded || !previewAnimationAttachment.isEmpty();
