@@ -49,7 +49,7 @@ int runPluginScanWorker(const juce::String& executableName, const juce::String& 
 /// Runs the headless batch analysis executable and returns its process exit code.
 int runCliMain(const std::span<char*> argv)
 {
-    juce::ArgumentList arguments(static_cast<int>(argv.size()), argv.data());
+    const juce::ArgumentList arguments(static_cast<int>(argv.size()), argv.data());
     // argv[0] is often a relative path, which juce::File asserts on, so resolve it against the working directory.
     // An absolute path is kept as it is.
     const auto executableName
