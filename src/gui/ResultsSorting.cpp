@@ -16,65 +16,6 @@
 
 namespace audiobatch
 {
-/// Stores the callback invoked when a column is clicked with ctrl or cmd held down.
-SecondarySortTableHeader::SecondarySortTableHeader(SecondarySortCallback secondarySortRequestedCallback) :
-    secondarySortRequested(std::move(secondarySortRequestedCallback))
-{}
-
-/// Routes ctrl or cmd clicks to the secondary sort callback,
-/// while plain clicks fall through to the normal primary sort behaviour.
-void SecondarySortTableHeader::columnClicked(const int columnId, const juce::ModifierKeys& modifiers)
-{
-    if ((modifiers.isCtrlDown() || modifiers.isCommandDown()) && secondarySortRequested != nullptr) {
-        if (const auto column = tableColumnFromId(columnId)) {
-            secondarySortRequested(*column);
-        }
-        return;
-    }
-
-    juce::TableHeaderComponent::columnClicked(columnId, modifiers);
-}
-
-/// Appends a textual secondary sort marker to the given column's name and restores the base name of every other column.
-/// Passing no column clears the indicator entirely.
-void SecondarySortTableHeader::setSecondarySortIndicator(
-    const std::optional<AudioFileTableColumn> column,
-    const bool isForwards
-)
-{
-    if (baseColumnNames.empty()) {
-        cacheBaseColumnNames();
-    }
-
-    secondarySortColumn = column;
-    secondarySortForwards = isForwards;
-
-    for (const auto& [trackedColumnId, baseName] : baseColumnNames) {
-        auto displayName = baseName;
-
-        if (trackedColumnId == toColumnId(secondarySortColumn)) {
-            displayName = utils::format("{} {}", displayName, secondarySortForwards ? "[2^]" : "[2v]");
-        }
-
-        setColumnName(trackedColumnId, displayName);
-    }
-
-    repaint();
-}
-
-/// Captures the original column names once, so indicator suffixes can be re-applied without accumulating in the names.
-void SecondarySortTableHeader::cacheBaseColumnNames()
-{
-    const auto columnCount = getNumColumns(false);
-
-    for (int index = 0; index < columnCount; ++index) {
-        const auto columnId = getColumnIdOfIndex(index, false);
-        baseColumnNames.emplace(columnId, getColumnName(columnId));
-    }
-}
-
-namespace results_sorting
-{
 namespace
 {
 /// Three-way natural-order string comparison, so numbered file names sort as expected.
@@ -141,6 +82,66 @@ int compareLoudness(const double left, const double right)
     return compareValues(left, right);
 }
 }  // namespace
+
+/// Stores the callback invoked when a column is clicked with ctrl or cmd held down.
+SecondarySortTableHeader::SecondarySortTableHeader(SecondarySortCallback secondarySortRequestedCallback) :
+    secondarySortRequested(std::move(secondarySortRequestedCallback))
+{}
+
+/// Routes ctrl or cmd clicks to the secondary sort callback,
+/// while plain clicks fall through to the normal primary sort behaviour.
+void SecondarySortTableHeader::columnClicked(const int columnId, const juce::ModifierKeys& modifiers)
+{
+    if ((modifiers.isCtrlDown() || modifiers.isCommandDown()) && secondarySortRequested != nullptr) {
+        if (const auto column = tableColumnFromId(columnId)) {
+            secondarySortRequested(*column);
+        }
+        return;
+    }
+
+    juce::TableHeaderComponent::columnClicked(columnId, modifiers);
+}
+
+/// Appends a textual secondary sort marker to the given column's name and restores the base name of every other column.
+/// Passing no column clears the indicator entirely.
+void SecondarySortTableHeader::setSecondarySortIndicator(
+    const std::optional<AudioFileTableColumn> column,
+    const bool isForwards
+)
+{
+    if (baseColumnNames.empty()) {
+        cacheBaseColumnNames();
+    }
+
+    secondarySortColumn = column;
+    secondarySortForwards = isForwards;
+
+    for (const auto& [trackedColumnId, baseName] : baseColumnNames) {
+        auto displayName = baseName;
+
+        if (trackedColumnId == toColumnId(secondarySortColumn)) {
+            displayName = utils::format("{} {}", displayName, secondarySortForwards ? "[2^]" : "[2v]");
+        }
+
+        setColumnName(trackedColumnId, displayName);
+    }
+
+    repaint();
+}
+
+/// Captures the original column names once, so indicator suffixes can be re-applied without accumulating in the names.
+void SecondarySortTableHeader::cacheBaseColumnNames()
+{
+    const auto columnCount = getNumColumns(false);
+
+    for (int index = 0; index < columnCount; ++index) {
+        const auto columnId = getColumnIdOfIndex(index, false);
+        baseColumnNames.emplace(columnId, getColumnName(columnId));
+    }
+}
+
+namespace results_sorting
+{
 
 /// Returns a negative, zero, or positive value as lhs sorts before, with, or after rhs in the given table column.
 /// Peaks compare by magnitude, and silent loudness sorts below every measurable value.

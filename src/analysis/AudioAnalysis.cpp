@@ -29,7 +29,6 @@ extern "C" {
 
 namespace audiobatch
 {
-/// Internal helpers for peak comparisons and stable record sorting.
 namespace
 {
 /// How often the short-term loudness is sampled while decoding, in hertz.
@@ -196,85 +195,7 @@ std::weak_ordering compareBySortMode(
 
     std::unreachable();
 }
-}  // namespace
 
-/// Returns true when the path is a supported audio file for analysis.
-bool isSupportedAudioFile(const juce::File& file)
-{
-    if (!file.existsAsFile()) {
-        return false;
-    }
-
-    const auto& formatManager = utils::threadLocalFormatManager();
-    const auto extension = utils::fileExtension(file);
-    return extension.isNotEmpty() && formatManager.findFormatForFileExtension(extension) != nullptr;
-}
-
-/// Expands the input paths into a de-duplicated list of supported files.
-/// The directory walk checks isCancelled between entries and returns the files found so far when it is set,
-/// so a scan of a large or slow folder can be abandoned quickly.
-juce::Array<juce::File> collectInputFiles(
-    const juce::Array<juce::File>& inputPaths,
-    const bool recursive,
-    const utils::CancellationCheck& isCancelled
-)
-{
-    juce::Array<juce::File> files;
-    std::set<juce::String> seenPaths;
-
-    auto const addFile = [&](const juce::File& file) {
-        // Dot-prefixed files are skipped on every platform, because juce::File::isHidden only checks the hidden
-        // attribute on Windows. This includes AppleDouble "._" files, which hold macOS metadata on non-Apple file
-        // systems and are never audio.
-        if (file.isHidden() || file.getFileName().startsWithChar('.') || !isSupportedAudioFile(file)) {
-            return;
-        }
-
-        if (const auto& normalizedPath = file.getFullPathName(); seenPaths.insert(normalizedPath).second) {
-            files.add(file);
-        }
-    };
-
-    const auto cancelled = [&isCancelled] { return utils::isCancellationRequested(isCancelled); };
-
-    for (const auto& inputPath : inputPaths) {
-        if (cancelled()) {
-            break;
-        }
-
-        if (inputPath.isDirectory()) {
-            // The iterator follows every symlink by default, which never ends on a link that points to its parent.
-            for (const auto& entry : juce::RangedDirectoryIterator(
-                     inputPath,
-                     recursive,
-                     "*",
-                     static_cast<int>(
-                         static_cast<unsigned int>(juce::File::findFiles)
-                         | static_cast<unsigned int>(juce::File::ignoreHiddenFiles)
-                     ),
-                     juce::File::FollowSymlinks::noCycles
-                 ))
-            {
-                if (cancelled()) {
-                    break;
-                }
-
-                addFile(entry.getFile());
-            }
-        } else {
-            addFile(inputPath);
-        }
-    }
-
-    std::ranges::sort(files, [](const juce::File& lhs, const juce::File& rhs) {
-        return lhs.getFullPathName().compareNatural(rhs.getFullPathName()) < 0;
-    });
-
-    return files;
-}
-
-namespace
-{
 /// Reduces per-channel peaks to the left, right, and overall peak.
 /// A mono source reports its only channel as both left and right.
 template<typename Value>
@@ -400,6 +321,83 @@ DecodeMeasurements measureDecodedAudio(
     return measurements;
 }
 }  // namespace
+
+/// Internal helpers for peak comparisons and stable record sorting.
+
+/// Returns true when the path is a supported audio file for analysis.
+bool isSupportedAudioFile(const juce::File& file)
+{
+    if (!file.existsAsFile()) {
+        return false;
+    }
+
+    const auto& formatManager = utils::threadLocalFormatManager();
+    const auto extension = utils::fileExtension(file);
+    return extension.isNotEmpty() && formatManager.findFormatForFileExtension(extension) != nullptr;
+}
+
+/// Expands the input paths into a de-duplicated list of supported files.
+/// The directory walk checks isCancelled between entries and returns the files found so far when it is set,
+/// so a scan of a large or slow folder can be abandoned quickly.
+juce::Array<juce::File> collectInputFiles(
+    const juce::Array<juce::File>& inputPaths,
+    const bool recursive,
+    const utils::CancellationCheck& isCancelled
+)
+{
+    juce::Array<juce::File> files;
+    std::set<juce::String> seenPaths;
+
+    auto const addFile = [&](const juce::File& file) {
+        // Dot-prefixed files are skipped on every platform, because juce::File::isHidden only checks the hidden
+        // attribute on Windows. This includes AppleDouble "._" files, which hold macOS metadata on non-Apple file
+        // systems and are never audio.
+        if (file.isHidden() || file.getFileName().startsWithChar('.') || !isSupportedAudioFile(file)) {
+            return;
+        }
+
+        if (const auto& normalizedPath = file.getFullPathName(); seenPaths.insert(normalizedPath).second) {
+            files.add(file);
+        }
+    };
+
+    const auto cancelled = [&isCancelled] { return utils::isCancellationRequested(isCancelled); };
+
+    for (const auto& inputPath : inputPaths) {
+        if (cancelled()) {
+            break;
+        }
+
+        if (inputPath.isDirectory()) {
+            // The iterator follows every symlink by default, which never ends on a link that points to its parent.
+            for (const auto& entry : juce::RangedDirectoryIterator(
+                     inputPath,
+                     recursive,
+                     "*",
+                     static_cast<int>(
+                         static_cast<unsigned int>(juce::File::findFiles)
+                         | static_cast<unsigned int>(juce::File::ignoreHiddenFiles)
+                     ),
+                     juce::File::FollowSymlinks::noCycles
+                 ))
+            {
+                if (cancelled()) {
+                    break;
+                }
+
+                addFile(entry.getFile());
+            }
+        } else {
+            addFile(inputPath);
+        }
+    }
+
+    std::ranges::sort(files, [](const juce::File& lhs, const juce::File& rhs) {
+        return lhs.getFullPathName().compareNatural(rhs.getFullPathName()) < 0;
+    });
+
+    return files;
+}
 
 /// Analyzes a single supported audio file and returns the populated result record.
 /// When isCancelled starts returning true, decoding stops and a failed record is returned,

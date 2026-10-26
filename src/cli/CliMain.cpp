@@ -16,8 +16,6 @@
 
 namespace audiobatch
 {
-namespace cli
-{
 namespace
 {
 /// Detaches the logger before returning the process exit code,
@@ -46,11 +44,7 @@ int runPluginScanWorker(const juce::String& executableName, const juce::String& 
     juce::MessageManager::getInstance()->runDispatchLoop();
     return exitCli(0);
 }
-}  // namespace
-}  // namespace cli
 
-namespace
-{
 /// Runs the headless batch analysis executable and returns its process exit code.
 int runCliMain(const std::span<char*> argv)
 {
@@ -63,7 +57,7 @@ int runCliMain(const std::span<char*> argv)
     // The plugin rescan relaunches this executable as its scan worker.
     // The command line is rebuilt from the decoded arguments, before any of them are rewritten for parsing.
     if (const auto commandLine = cli::joinArguments(arguments); isPluginScanWorkerCommandLine(commandLine)) {
-        return cli::runPluginScanWorker(executableName, commandLine);
+        return runPluginScanWorker(executableName, commandLine);
     }
 
     cli::attachNegativeOptionValues(arguments);
@@ -91,7 +85,7 @@ int runCliMain(const std::span<char*> argv)
         utils::logError(cliOptions.error());
         console::printError(cliOptions.error());
         fmt::print("\n{}\n", cli::buildUsage(executableName));
-        return cli::exitCli(1);
+        return exitCli(1);
     }
 
     int exitCode = 0;
@@ -101,10 +95,10 @@ int runCliMain(const std::span<char*> argv)
     } catch (const std::system_error& error) {
         // fmt::print throws when stdout is closed early, for example when piping into head.
         utils::logError("Writing output failed: {}", error.what());
-        return cli::exitCli(1);
+        return exitCli(1);
     }
 
-    return cli::exitCli(exitCode);
+    return exitCli(exitCode);
 }
 }  // namespace
 }  // namespace audiobatch

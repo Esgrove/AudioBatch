@@ -13,12 +13,15 @@
 
 namespace audiobatch::cli
 {
-constexpr int cliPeakColumnWidth {7};
-constexpr int cliTruePeakColumnWidth {7};
-constexpr int cliLoudnessColumnWidth {8};
-
 namespace
 {
+/// Width in characters of the dBFS sample peak column of the results table.
+constexpr int cliPeakColumnWidth {7};
+/// Width in characters of the dBTP true peak column of the results table.
+constexpr int cliTruePeakColumnWidth {7};
+/// Width in characters of the LUFS integrated loudness column of the results table.
+constexpr int cliLoudnessColumnWidth {8};
+
 /// Formats the sample peak value right-aligned to the fixed dBFS column width.
 juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
 {

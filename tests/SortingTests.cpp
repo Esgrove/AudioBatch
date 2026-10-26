@@ -15,6 +15,8 @@
 
 namespace audiobatch::tests
 {
+namespace
+{
 static_assert(!tableColumnFromId(0).has_value());
 static_assert(tableColumnFromId(1) == AudioFileTableColumn::name);
 static_assert(tableColumnFromId(std::to_underlying(AudioFileTableColumn::bitDepth)) == AudioFileTableColumn::bitDepth);
@@ -25,8 +27,6 @@ static_assert(!fileMenuItemFromId(0).has_value());
 static_assert(fileMenuItemFromId(std::to_underlying(FileMenuItemId::reanalyze)) == FileMenuItemId::reanalyze);
 static_assert(!fileMenuItemFromId(std::to_underlying(FileMenuItemId::reanalyze) + 1).has_value());
 
-namespace
-{
 /// Builds an analyzed record with the given name, peak, and integrated loudness.
 AudioAnalysisRecord makeRecord(const juce::String& name, const float peak, const double integratedLufs)
 {

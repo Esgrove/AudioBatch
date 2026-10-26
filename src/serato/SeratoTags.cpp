@@ -417,6 +417,61 @@ std::uint32_t legacyNumber(const std::span<const std::uint8_t> bytes)
         | ((bytes[1] & seratoGroupMask) << (2 * seratoGroupBits)) | ((bytes[2] & seratoGroupMask) << seratoGroupBits)
         | (bytes[3] & seratoGroupMask);
 }
+
+/// Writes a matching non-Overview cache payload after checking its public collection and text bounds.
+bool writeCachePayload(juce::MemoryOutputStream& payload, const TagReadResult& result)
+{
+    switch (result.kind) {
+        case TagKind::analysis:
+            if (!result.analysis) {
+                return false;
+            }
+            payload.writeByte(static_cast<char>(result.analysis->majorVersion));
+            payload.writeByte(static_cast<char>(result.analysis->minorVersion));
+            return true;
+        case TagKind::autotags:
+            if (!result.autotags) {
+                return false;
+            }
+            writeReal(payload, result.autotags->bpm);
+            writeReal(payload, result.autotags->autoGain);
+            writeReal(payload, result.autotags->gain);
+            return true;
+        case TagKind::beatGrid:
+            if (!result.beatGrid || result.beatGrid->markers.size() > maxTagRecords) {
+                return false;
+            }
+            payload.writeIntBigEndian(static_cast<int>(result.beatGrid->markers.size()));
+            for (const auto& [positionSeconds, beatsUntilNext, bpm] : result.beatGrid->markers) {
+                writeReal(payload, positionSeconds);
+                payload.writeIntBigEndian(std::bit_cast<int>(beatsUntilNext));
+                payload.writeBool(bpm.has_value());
+                if (bpm) {
+                    writeReal(payload, *bpm);
+                }
+            }
+            return true;
+        case TagKind::markers:
+            if (!result.markers || !boundedMarkers(*result.markers)) {
+                return false;
+            }
+            writeMarkers(payload, *result.markers);
+            return true;
+        case TagKind::trackInfo:
+            if (!result.trackInfo || result.trackInfo->key.getNumBytesAsUTF8() > maxTagTextBytes) {
+                return false;
+            }
+            payload.writeBool(result.trackInfo->bpm.has_value());
+            if (result.trackInfo->bpm) {
+                writeReal(payload, *result.trackInfo->bpm);
+            }
+            writeText(payload, result.trackInfo->key);
+            return true;
+        case TagKind::overview:
+            return false;
+    }
+    return false;
+}
 }  // namespace
 
 /// Strictly parses a finite ASCII number without locale dependence or ignored trailing text.
@@ -666,64 +721,6 @@ TagReadResult parseTagPayload(const TagKind kind, const std::span<const std::uin
     }
     return result;
 }
-
-namespace
-{
-/// Writes a matching non-Overview cache payload after checking its public collection and text bounds.
-bool writeCachePayload(juce::MemoryOutputStream& payload, const TagReadResult& result)
-{
-    switch (result.kind) {
-        case TagKind::analysis:
-            if (!result.analysis) {
-                return false;
-            }
-            payload.writeByte(static_cast<char>(result.analysis->majorVersion));
-            payload.writeByte(static_cast<char>(result.analysis->minorVersion));
-            return true;
-        case TagKind::autotags:
-            if (!result.autotags) {
-                return false;
-            }
-            writeReal(payload, result.autotags->bpm);
-            writeReal(payload, result.autotags->autoGain);
-            writeReal(payload, result.autotags->gain);
-            return true;
-        case TagKind::beatGrid:
-            if (!result.beatGrid || result.beatGrid->markers.size() > maxTagRecords) {
-                return false;
-            }
-            payload.writeIntBigEndian(static_cast<int>(result.beatGrid->markers.size()));
-            for (const auto& [positionSeconds, beatsUntilNext, bpm] : result.beatGrid->markers) {
-                writeReal(payload, positionSeconds);
-                payload.writeIntBigEndian(std::bit_cast<int>(beatsUntilNext));
-                payload.writeBool(bpm.has_value());
-                if (bpm) {
-                    writeReal(payload, *bpm);
-                }
-            }
-            return true;
-        case TagKind::markers:
-            if (!result.markers || !boundedMarkers(*result.markers)) {
-                return false;
-            }
-            writeMarkers(payload, *result.markers);
-            return true;
-        case TagKind::trackInfo:
-            if (!result.trackInfo || result.trackInfo->key.getNumBytesAsUTF8() > maxTagTextBytes) {
-                return false;
-            }
-            payload.writeBool(result.trackInfo->bpm.has_value());
-            if (result.trackInfo->bpm) {
-                writeReal(payload, *result.trackInfo->bpm);
-            }
-            writeText(payload, result.trackInfo->key);
-            return true;
-        case TagKind::overview:
-            return false;
-    }
-    return false;
-}
-}  // namespace
 
 /// Encodes a present result using a bounded, versioned numeric representation.
 /// Overview delegates to its existing serializer. Invalid or mismatched public values return an empty block.

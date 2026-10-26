@@ -262,6 +262,7 @@ The detailed rules are in `.agents/rules/code-organization.md`.
 - Do not define structs, classes or enums inside classes.
   Declare them at namespace level before the class, or in the anonymous namespace of the `.cpp` that alone uses them.
 - Put file-local helper functions and variables in the anonymous namespace too, instead of declaring them `static`.
+  Give a `.cpp` file a single anonymous namespace, right after the project namespace opens.
 - Make enums `enum class`, and convert integer ids from JUCE back with `utils::enumFromId`.
 - All project code lives in `namespace audiobatch`, with the helper namespaces
   such as `utils` and `console` nested inside it.

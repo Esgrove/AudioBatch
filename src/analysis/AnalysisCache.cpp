@@ -27,6 +27,14 @@ constexpr int loudnessHistoryMagic {0x5346554c};
 constexpr int loudnessHistoryVersion {1};
 constexpr std::size_t loudnessHistoryHeaderBytes {32};
 
+/// One cached row, identified by path and the file version it describes.
+struct CachedRow {
+    juce::String path;
+    std::int64_t fileSize {0};
+    std::int64_t modifiedTimeMs {0};
+    std::optional<std::int64_t> tagKind;
+};
+
 /// Checks timing and count before allocating or serializing cached history.
 bool validHistoryTiming(
     const ShortTermLoudnessHistory& history,
@@ -605,17 +613,6 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
 
     return transaction.commit();
 }
-
-namespace
-{
-/// One cached row, identified by path and the file version it describes.
-struct CachedRow {
-    juce::String path;
-    std::int64_t fileSize {0};
-    std::int64_t modifiedTimeMs {0};
-    std::optional<std::int64_t> tagKind;
-};
-}  // namespace
 
 /// Deletes the rows of files that no longer exist, for example after they were trashed or renamed.
 /// Rows whose folder is missing are kept, since that usually means an unmounted drive, not deleted files.

@@ -24,6 +24,8 @@ namespace audiobatch::tests
 using serato::ReadStatus;
 using serato::SeratoPreviewLoader;
 
+namespace
+{
 /// Captures a worker completion without adopting it, like a queued message-thread callback.
 struct PreviewDelivery {
     FileIdentity identity;
@@ -31,8 +33,6 @@ struct PreviewDelivery {
     std::shared_ptr<const serato::SeratoData> data;
 };
 
-namespace
-{
 /// Builds representative owned values for every independently cached kind.
 serato::TagReadResult previewResult(const serato::TagKind kind, const ReadStatus status = ReadStatus::present)
 {

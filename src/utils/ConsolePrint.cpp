@@ -17,8 +17,6 @@
 
 namespace audiobatch
 {
-namespace console::detail
-{
 namespace
 {
 /// Returns true when the NO_COLOR convention (https://no-color.org) asks for plain output.
@@ -83,10 +81,9 @@ void printPrefixedMessage(
 )
 {
     const auto [indent, text] = splitLeadingWhitespace(message);
-    printStyled(stderr, fmt::fg(color), "{}{}{}\n", indent, prefix, text);
+    console::printStyled(stderr, fmt::fg(color), "{}{}{}\n", indent, prefix, text);
 }
 }  // namespace
-}  // namespace console::detail
 
 namespace console
 {
@@ -98,16 +95,16 @@ namespace console
 bool isColorEnabled(std::FILE* stream)
 {
     if (stream == stdout) {
-        static const bool stdoutColorEnabled = detail::computeColorEnabled(stdout);
+        static const bool stdoutColorEnabled = computeColorEnabled(stdout);
         return stdoutColorEnabled;
     }
 
     if (stream == stderr) {
-        static const bool stderrColorEnabled = detail::computeColorEnabled(stderr);
+        static const bool stderrColorEnabled = computeColorEnabled(stderr);
         return stderrColorEnabled;
     }
 
-    return detail::computeColorEnabled(stream);
+    return computeColorEnabled(stream);
 }
 
 /// Prints already formatted text to the given stream with a text style.
@@ -131,7 +128,7 @@ void printStyledText(std::FILE* stream, const fmt::text_style style, const std::
 /// Leading whitespace in the message is kept in front of the prefix, so indented messages stay indented.
 void printError(const std::string_view message)
 {
-    detail::printPrefixedMessage("Error: ", fmt::terminal_color::red, message);
+    printPrefixedMessage("Error: ", fmt::terminal_color::red, message);
 }
 
 /// Prints "Error: <message>" in red to stderr, followed by a newline.
@@ -144,7 +141,7 @@ void printError(const juce::String& message)
 /// Leading whitespace in the message is kept in front of the prefix.
 void printWarn(const std::string_view message)
 {
-    detail::printPrefixedMessage("Warning: ", fmt::terminal_color::yellow, message);
+    printPrefixedMessage("Warning: ", fmt::terminal_color::yellow, message);
 }
 
 /// Prints "Warning: <message>" in yellow to stderr, followed by a newline.
