@@ -1,6 +1,6 @@
 /// Implementation of NormalizeCoordinator.
 /// Queues one thread pool job per file, runs normalizeFile on worker threads,
-/// and guards callback publication with run id checks and a callback lock
+/// and publishes through the shared BackgroundRunner,
 /// so cancelled runs stop publishing results.
 
 #include "normalization/NormalizeCoordinator.h"
@@ -22,130 +22,51 @@ constexpr int jobShutdownTimeoutMilliseconds {30'000};
 }  // namespace
 
 /// Creates a coordinator with a thread pool sized for the current machine.
-NormalizeCoordinator::NormalizeCoordinator(const int workerCount) : threadPool(juce::jmax(1, workerCount)) {}
+NormalizeCoordinator::NormalizeCoordinator(const int workerCount) : runner(workerCount, jobShutdownTimeoutMilliseconds)
+{}
 
-/// Cancels any in-flight work and destroys the worker pool.
-/// Waits without a timeout so workers cannot access destroyed coordinator state.
+/// Cancels any in-flight work and waits for every job without a timeout,
+/// so workers cannot access destroyed coordinator state.
 NormalizeCoordinator::~NormalizeCoordinator()
 {
-    cancelAndWait();
-    threadPool.removeAllJobs(true, -1);
+    runner.cancelAndWait();
+    runner.waitForAllJobs();
+}
+
+/// Returns the id of the latest run, which its callbacks carry.
+int NormalizeCoordinator::getCurrentRunId() const noexcept
+{
+    return runner.getCurrentRunId();
 }
 
 /// Sets the callback that is invoked for each published result.
 void NormalizeCoordinator::setResultCallback(ResultCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    resultCallback = std::move(callback);
+    resultCallback.set(std::move(callback));
 }
 
 /// Sets the callback that is invoked when a run completes.
 void NormalizeCoordinator::setCompletionCallback(CompletionCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    completionCallback = std::move(callback);
+    completionCallback.set(std::move(callback));
 }
 
 /// Sets the callback that is invoked with the normalized fraction of each file.
 void NormalizeCoordinator::setProgressCallback(ProgressCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    progressCallback = std::move(callback);
+    progressCallback.set(std::move(callback));
 }
 
 /// Sets the callback that is invoked right before each file's normalization begins.
 void NormalizeCoordinator::setStartingCallback(StartingCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    startingCallback = std::move(callback);
-}
-
-/// Invokes the progress callback when the given run id is still current.
-/// Runs on the worker thread while a file is being normalized.
-void NormalizeCoordinator::publishProgress(const juce::File& file, const float progress, const int runId) const
-{
-    if (runId != currentRunId.load()) {
-        return;
-    }
-
-    ProgressCallback callbackCopy;
-
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = progressCallback;
-    }
-
-    if (callbackCopy != nullptr) {
-        callbackCopy(file, progress);
-    }
-}
-
-/// Invokes the starting callback when the given run id is still current.
-/// Runs on the worker thread right before a file's normalization begins.
-void NormalizeCoordinator::publishStarting(const juce::File& file, const int runId) const
-{
-    if (runId != currentRunId.load()) {
-        return;
-    }
-
-    StartingCallback callbackCopy;
-
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = startingCallback;
-    }
-
-    if (callbackCopy != nullptr) {
-        callbackCopy(file);
-    }
-}
-
-/// Invokes the result callback when the given run id is still current.
-/// Runs on the worker thread, so the callback must marshal to the message thread itself if needed.
-void NormalizeCoordinator::publishResult(const AudioNormalizationResult& result, const int runId) const
-{
-    if (runId != currentRunId.load()) {
-        return;
-    }
-
-    ResultCallback callbackCopy;
-
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = resultCallback;
-    }
-
-    if (callbackCopy != nullptr) {
-        callbackCopy(result);
-    }
-}
-
-/// Invokes the completion callback when the given run id is still current.
-/// The callback is copied under the lock and invoked without it,
-/// so the callback may safely call back into the coordinator.
-void NormalizeCoordinator::publishCompletion(const int totalFiles, const int runId) const
-{
-    if (runId != currentRunId.load()) {
-        return;
-    }
-
-    CompletionCallback callbackCopy;
-
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = completionCallback;
-    }
-
-    if (callbackCopy != nullptr) {
-        callbackCopy(totalFiles);
-    }
+    startingCallback.set(std::move(callback));
 }
 
 /// Cancels queued work and waits for active jobs to finish.
 void NormalizeCoordinator::cancelAndWait()
 {
-    ++currentRunId;
-    threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
+    runner.cancelAndWait();
 }
 
 /// Starts a background normalize run and returns the number of queued files.
@@ -158,7 +79,7 @@ int NormalizeCoordinator::start(
 {
     cancelAndWait();
 
-    const auto runId = currentRunId.load();
+    const auto runId = runner.getCurrentRunId();
     std::map<juce::String, AudioAnalysisRecord> recordsByPath;
 
     for (const auto& record : records) {
@@ -172,7 +93,7 @@ int NormalizeCoordinator::start(
     const auto normalizedRecords = recordsByPath | std::views::values | std::ranges::to<std::vector>();
 
     if (normalizedRecords.empty()) {
-        publishCompletion(0, runId);
+        runner.publish(completionCallback, runId, 0);
         return 0;
     }
 
@@ -183,44 +104,44 @@ int NormalizeCoordinator::start(
     for (const auto& record : normalizedRecords) {
         const bool hasConflict = conflicts.contains(record.file.getFullPathName());
 
-        threadPool.addJob([this,
-                           record,
-                           options,
-                           hasConflict,
-                           runId,
-                           pendingFiles,
-                           totalFiles = static_cast<int>(normalizedRecords.size())] {
-            if (runId != currentRunId.load()) {
+        runner.addJob([this,
+                       record,
+                       options,
+                       hasConflict,
+                       runId,
+                       pendingFiles,
+                       totalFiles = static_cast<int>(normalizedRecords.size())] {
+            if (!runner.isCurrent(runId)) {
                 return;
             }
 
             if (hasConflict) {
-                publishResult(
-                    AudioNormalizationResult::failure(record.file, batchOutputConflictMessage(record.file)), runId
+                runner.publish(
+                    resultCallback,
+                    runId,
+                    AudioNormalizationResult::failure(record.file, batchOutputConflictMessage(record.file))
                 );
             } else {
-                publishStarting(record.file, runId);
+                runner.publish(startingCallback, runId, record.file);
                 const auto onProgress = utils::makeThrottledProgress([this, &record, runId](const float progress) {
-                    publishProgress(record.file, progress, runId);
+                    runner.publish(progressCallback, runId, record.file, progress);
                 });
 
                 AudioNormalizationResult result;
 
                 try {
-                    result = normalizeFile(
-                        record, options, [this, runId] { return runId != currentRunId.load(); }, onProgress
-                    );
+                    result = normalizeFile(record, options, runner.makeCancellationCheck(runId), onProgress);
                 } catch (...) {
                     const auto message = utils::format("Normalization failed: {}", utils::describeCurrentException());
                     utils::logError("Normalization failed for {}: {}", record.fullPath.quoted(), message);
                     result = AudioNormalizationResult::failure(record.file, message);
                 }
 
-                publishResult(result, runId);
+                runner.publish(resultCallback, runId, result);
             }
 
             if (pendingFiles->fetch_sub(1) == 1) {
-                publishCompletion(totalFiles, runId);
+                runner.publish(completionCallback, runId, totalFiles);
             }
         });
     }

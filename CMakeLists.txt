@@ -340,6 +340,8 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/utils/AudioFormatUtils.h"
     "src/utils/AudioMetadata.cpp"
     "src/utils/AudioMetadata.h"
+    "src/utils/BackgroundRunner.cpp"
+    "src/utils/BackgroundRunner.h"
     "src/utils/ConsolePrint.cpp"
     "src/utils/ConsolePrint.h"
     "src/utils/FileUtils.cpp"

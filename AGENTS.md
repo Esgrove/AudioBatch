@@ -82,6 +82,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       and the cancellable blocking call from a worker to the message thread.
     - `MessageThreadBatcher.*` holds `AsyncCallback` and `MessageThreadBatcher`,
       which hand work from worker threads to the message thread in coalesced batches.
+    - `BackgroundRunner.*` holds `RunCallback` and `BackgroundRunner`, which the three coordinators share.
+      The runner owns the thread pool and the current run id, and publishes a callback only while its run is current.
     - `StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
     - `ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
     - `version.h` holds the build version constants.

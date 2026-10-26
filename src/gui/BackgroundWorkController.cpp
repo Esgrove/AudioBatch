@@ -10,6 +10,7 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <functional>
 #include <utility>
 #include <variant>
 
@@ -76,6 +77,7 @@ int BackgroundWorkController::startNormalization(
     auto& normalizing = work.emplace<NormalizingWork>();
     normalizing.startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     normalizing.expected = normalizeCoordinator.start(records, options);
+    normalizing.runId = normalizeCoordinator.getCurrentRunId();
 
     const auto expected = normalizing.expected;
     if (expected <= 0) {
@@ -97,6 +99,7 @@ int BackgroundWorkController::startProcessing(
     auto& processing = work.emplace<ProcessingWork>();
     processing.startedAtMilliseconds = startedAtMilliseconds;
     processing.expected = pluginCoordinator.start(records, options, std::move(chainInstances));
+    processing.runId = pluginCoordinator.getCurrentRunId();
 
     const auto expected = processing.expected;
     if (expected <= 0) {
@@ -234,7 +237,7 @@ void BackgroundWorkController::connectAnalysisCallbacks()
 /// Connects the normalization and plugin processing coordinators to the message thread handlers
 /// and the activity tracker.
 /// Files switch from waiting to busy when a worker starts on them.
-/// A start arriving after its pass ended belongs to no pass, so it does not mark the file busy again.
+/// A start arriving after its pass ended belongs to no current pass, so it does not mark the file busy again.
 void BackgroundWorkController::connectOperationCallbacks()
 {
     const juce::WeakReference<BackgroundWorkController> weakThis(this);
@@ -243,16 +246,17 @@ void BackgroundWorkController::connectOperationCallbacks()
         return [weakThis, handler](const auto&... arguments) {
             juce::MessageManager::callAsync([weakThis, handler, arguments...] {
                 if (auto* controller = weakThis.get()) {
-                    (controller->*handler)(arguments...);
+                    std::invoke(handler, controller, arguments...);
                 }
             });
         };
     };
 
-    const auto postStarting = [weakThis](const FileActivity activity) {
-        return [weakThis, activity](const juce::File& file) {
-            juce::MessageManager::callAsync([weakThis, file, activity] {
-                if (auto* controller = weakThis.get(); controller != nullptr && controller->isFileOperationInProgress())
+    const auto postStarting = [weakThis](const FileActivity activity, auto isCurrentRun) {
+        return [weakThis, activity, isCurrentRun](const juce::File& file, const int runId) {
+            juce::MessageManager::callAsync([weakThis, file, activity, isCurrentRun, runId] {
+                if (const auto* controller = weakThis.get();
+                    controller != nullptr && (controller->*isCurrentRun)(runId))
                 {
                     controller->fileActivity.setActive(file.getFullPathName(), activity);
                 }
@@ -260,7 +264,7 @@ void BackgroundWorkController::connectOperationCallbacks()
         };
     };
 
-    const auto postProgress = [weakThis](const juce::File& file, const float progress) {
+    const auto postProgress = [weakThis](const juce::File& file, const float progress, const int /*runId*/) {
         juce::MessageManager::callAsync([weakThis, file, progress] {
             if (auto* controller = weakThis.get()) {
                 controller->fileActivity.setProgress(file.getFullPathName(), progress);
@@ -268,12 +272,16 @@ void BackgroundWorkController::connectOperationCallbacks()
         });
     };
 
-    normalizeCoordinator.setStartingCallback(postStarting(FileActivity::normalizing));
+    normalizeCoordinator.setStartingCallback(
+        postStarting(FileActivity::normalizing, &BackgroundWorkController::isCurrentNormalizationRun)
+    );
     normalizeCoordinator.setProgressCallback(postProgress);
     normalizeCoordinator.setResultCallback(postToMessageThread(&BackgroundWorkController::handleNormalizeResult));
     normalizeCoordinator.setCompletionCallback(postToMessageThread(&BackgroundWorkController::handleNormalizeComplete));
 
-    pluginCoordinator.setStartingCallback(postStarting(FileActivity::processing));
+    pluginCoordinator.setStartingCallback(
+        postStarting(FileActivity::processing, &BackgroundWorkController::isCurrentProcessingRun)
+    );
     pluginCoordinator.setProgressCallback(postProgress);
     pluginCoordinator.setResultCallback(postToMessageThread(&BackgroundWorkController::handleProcessingResult));
     pluginCoordinator.setCompletionCallback(postToMessageThread(&BackgroundWorkController::handleProcessingComplete));
@@ -345,48 +353,50 @@ void BackgroundWorkController::handleAnalysisResults(std::vector<AnalysisResultM
 }
 
 /// Ends the normalization pass and reports its completion.
-/// A pass that started no files has already ended, and analysis may run by the time its completion arrives.
-void BackgroundWorkController::handleNormalizeComplete(const int totalFiles)
+/// A pass that started no files has already ended,
+/// and other work, even another normalization pass, may run by the time its completion arrives.
+void BackgroundWorkController::handleNormalizeComplete(const int totalFiles, const int runId)
 {
-    const auto* normalizing = std::get_if<NormalizingWork>(&work);
-    if (normalizing == nullptr) {
+    if (!isCurrentNormalizationRun(runId)) {
         return;
     }
 
-    const auto pass = *normalizing;
+    const auto pass = std::get<NormalizingWork>(work);
     work = IdleWork {};
     listener.normalizeCompleted(pass, totalFiles);
 }
 
-/// Counts one normalization result and passes it on.
-void BackgroundWorkController::handleNormalizeResult(const AudioNormalizationResult& result)
+/// Counts one normalization result towards its pass and passes it on.
+/// A result is passed on even after its pass ended, because its output file was already written.
+void BackgroundWorkController::handleNormalizeResult(const AudioNormalizationResult& result, const int runId)
 {
-    if (auto* normalizing = std::get_if<NormalizingWork>(&work)) {
-        ++normalizing->completed;
+    if (isCurrentNormalizationRun(runId)) {
+        ++std::get<NormalizingWork>(work).completed;
     }
     fileActivity.clearActive(result.fullPath);
     listener.normalizeResultReceived(result);
 }
 
 /// Ends the plugin processing pass and reports its completion.
-/// A pass that started no files or failed to start has already ended.
-void BackgroundWorkController::handleProcessingComplete(const int totalFiles)
+/// A pass that started no files or failed to start has already ended,
+/// and another pass may run by the time its completion arrives.
+void BackgroundWorkController::handleProcessingComplete(const int totalFiles, const int runId)
 {
-    const auto* processing = std::get_if<ProcessingWork>(&work);
-    if (processing == nullptr) {
+    if (!isCurrentProcessingRun(runId)) {
         return;
     }
 
-    const auto pass = *processing;
+    const auto pass = std::get<ProcessingWork>(work);
     work = IdleWork {};
     listener.processingCompleted(pass, totalFiles);
 }
 
-/// Counts one plugin processing result and passes it on.
-void BackgroundWorkController::handleProcessingResult(const PluginProcessingResult& result)
+/// Counts one plugin processing result towards its pass and passes it on.
+/// A result is passed on even after its pass ended, because its output file was already written.
+void BackgroundWorkController::handleProcessingResult(const PluginProcessingResult& result, const int runId)
 {
-    if (auto* processing = std::get_if<ProcessingWork>(&work)) {
-        ++processing->completed;
+    if (isCurrentProcessingRun(runId)) {
+        ++std::get<ProcessingWork>(work).completed;
     }
     fileActivity.clearActive(result.originalFullPath);
     listener.processingResultReceived(result);
@@ -407,6 +417,21 @@ bool BackgroundWorkController::isCurrentAnalysisRun(const int runId) const noexc
 {
     const auto* analyzing = std::get_if<AnalyzingWork>(&work);
     return analyzing != nullptr && analyzing->runId == runId;
+}
+
+/// True while the normalization pass with the given normalize coordinator run id is running.
+bool BackgroundWorkController::isCurrentNormalizationRun(const int runId) const noexcept
+{
+    const auto* normalizing = std::get_if<NormalizingWork>(&work);
+    return normalizing != nullptr && normalizing->runId == runId;
+}
+
+/// True while the processing pass with the given plugin coordinator run id is running.
+/// The coordinators count their run ids separately, so each kind of pass is checked on its own.
+bool BackgroundWorkController::isCurrentProcessingRun(const int runId) const noexcept
+{
+    const auto* processing = std::get_if<ProcessingWork>(&work);
+    return processing != nullptr && processing->runId == runId;
 }
 
 /// Returns the name of the running pass and its completed fraction.
