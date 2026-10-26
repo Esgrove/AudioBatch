@@ -28,10 +28,21 @@ Run the commands from this directory.
 ```
 
 `build.sh` builds the release binaries and moves `audiobatch-rs` and `AudioBatchRs` into this directory.
-`install.sh` installs both with `cargo install` into the Cargo bin directory,
-and then installs the shell completions for the CLI.
-The GUI is installed as a plain binary that runs from the terminal, not as an app bundle.
+On macOS, the GUI is packaged as `AudioBatchRs.app` with the bundle id `com.esgrove.audiobatch-rs`.
+`install.sh` installs the CLI with `cargo install` into the Cargo bin directory,
+and then installs the shell completions for it.
+On macOS, it installs the app bundle to `/Applications`, and elsewhere the GUI binary next to the CLI.
 Both scripts take `--cli-only` to skip the slower GUI build.
+
+The app uses the same icons as the C++ application, from the root `assets` directory.
+The app bundle carries the layered Icon Composer icon, compiled for macOS 15 and later with `actool` from Xcode 26,
+and `icon_mac.icns` as the fallback icon file.
+On Windows, `crates/gui/build.rs` embeds `icon_win.ico` and the version information into the executable.
+The `.ico` file is generated from `icon_win.png` with ImageMagick:
+
+```shell
+magick ../assets/icon_win.png -define icon:auto-resize=256,128,96,64,48,40,32,24,20,16 ../assets/icon_win.ico
+```
 
 `.cargo/config.toml` compiles for the native CPU, so binaries built here may not run on older machines.
 CI overrides it with an empty `RUSTFLAGS`.

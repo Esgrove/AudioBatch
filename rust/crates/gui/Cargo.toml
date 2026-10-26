@@ -30,6 +30,10 @@ trash.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 
+# Embeds the app icon and version information into the Windows executable, see `build.rs`.
+[target.'cfg(windows)'.build-dependencies]
+winresource = { version = "0.1.34", default-features = false }
+
 [features]
 # Saves an image of the window for checking the layout, see `src/snapshot.rs`.
 snapshot = ["dep:gpui-pre", "dep:gpui-pre-platform"]

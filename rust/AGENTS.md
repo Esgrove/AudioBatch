@@ -13,7 +13,8 @@ When the two files disagree about code under `rust/`, this file wins.
   are the closest counterparts of `crates/core` and `crates/cli`.
 - The tests read the shared fixtures in place from the root `fixtures` directory through the `test-fixtures` crate.
   Do not copy fixtures into `rust/`.
-- The GUI embeds the Roboto fonts from the root `assets` directory, the same files the C++ application bundles.
+- The GUI embeds the Roboto fonts from the root `assets` directory, the same files the C++ application bundles,
+  and uses the same app icons from there.
   Do not copy them into `rust/` either.
 - Stage with explicit paths, for example `git add rust`.
   Avoid `git add -A`, `git add .`, and `git commit -a`, so unrelated work in progress stays out of Rust commits.
@@ -71,6 +72,8 @@ and every crate inherits them with `.workspace = true`.
   The `completion` subcommand in `completion.rs` is the only addition the C++ CLI does not have.
 - `crates/gui` (`audiobatch-gui`): the `AudioBatchRs` GUI binary, built on gpui-kit.
   It is the only crate that depends on gpui-kit, which is pinned to an exact version and upgraded by hand.
+  Its `build.rs` embeds the app icon from the root `assets` directory into the Windows executable.
+  On macOS, `build.sh` and `install.sh` package it as `AudioBatchRs.app` through `create_mac_app_bundle` in `common.sh`.
 - `crates/test-fixtures`: a dev-only helper that locates the shared fixtures and lists their expected properties.
 
 Keep the core and playback crates free of GUI dependencies,
@@ -101,7 +104,8 @@ and a coverage run on macOS.
 Other commands:
 
 ```shell
-# Build the release binaries into rust/, or install them and the CLI shell completions
+# Build the release binaries into rust/, or install them and the CLI shell completions.
+# On macOS, the GUI becomes AudioBatchRs.app, and install.sh puts it in /Applications.
 ./build.sh
 ./install.sh
 
