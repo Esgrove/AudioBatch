@@ -140,9 +140,10 @@ ProgressCallback makeProgressRange(const ProgressCallback& onProgress, const flo
     };
 }
 
-/// Returns a callback that forwards progress to onProgress at most once per percent and once per interval,
+/// Returns a callback that forwards progress to onProgress at most once per tenth of a percent and once per interval,
 /// always forwarding completion,
 /// so a worker reporting every block does not flood the message thread.
+/// The fine step keeps the progress shown in the GUI moving smoothly within a single long file.
 /// The throttling state lives in the returned callback, so create one per file and do not copy it.
 /// Returns an empty callback when onProgress is empty.
 ProgressCallback makeThrottledProgress(ProgressCallback onProgress)
@@ -152,7 +153,7 @@ ProgressCallback makeThrottledProgress(ProgressCallback onProgress)
     }
 
     /// Smallest progress change that is forwarded.
-    constexpr float minimumStep = 0.01f;
+    constexpr float minimumStep = 0.001f;
     /// Shortest time between forwarded updates, in milliseconds.
     constexpr std::uint32_t minimumIntervalMs = 50;
 
