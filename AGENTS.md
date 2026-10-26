@@ -94,11 +94,12 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
 - `src/gui/` holds the GUI application shell and its main screen.
     - `Main.cpp` is the GUI application entry point, and `MainWindow.*` is its top-level window and menu bar.
       `GuiLayout.h` holds shared UI dimensions and compile-time layout calculations,
-      grouped by the window, workspace, table, inspector, plugin editor, waveform, and theme.
+      grouped by the window, workspace, status bar, table, inspector, plugin editor, waveform, and theme.
     - `AudioBatchComponent.*` is the main GUI component.
-      Its implementation is split by topic into `AudioBatchComponent.cpp` (construction, layout, table, selection),
-      `AudioBatchComponentActions.cpp`, `AudioBatchComponentOperations.cpp`, `AudioBatchComponentPreview.cpp`,
-      and `AudioBatchComponentRoots.cpp`, which share main-view filters, ranges, and menu ids
+      Its implementation is split by topic into `AudioBatchComponent.cpp` (construction, table, selection, status),
+      `AudioBatchComponentActions.cpp`, `AudioBatchComponentLayout.cpp`, `AudioBatchComponentOperations.cpp`,
+      `AudioBatchComponentPreview.cpp`, and `AudioBatchComponentRoots.cpp`,
+      which share main-view filters, ranges, and menu ids
       in `AudioBatchComponentConstants.h` and UI geometry in `GuiLayout.h`.
       Put new member functions in the file of their topic.
       `AudioBatchComponentState.h` holds the progress state of the analysis run and of the normalization
@@ -107,8 +108,10 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
     - `AudioFileTableModel.*` backs the sortable results table, and `ResultsSorting.*` sorts it.
     - `FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
 - `src/gui/components/` holds the reusable UI pieces the main component is built from:
-  `AudioInfoPanel.*`, `NormalizationTargetControl.*`, `CustomLookAndFeel.*`, `ThumbnailComponent.*`,
-  `IntervalStepSlider.h`, and the plugin chain editor in `PluginChainEditor.*`.
+  `AudioInfoPanel.*`, `AudioSettingsComponent.*`, `NormalizationTargetControl.*`, `CustomLookAndFeel.*`,
+  `ThumbnailComponent.*`, `IntervalStepSlider.h`, and the plugin chain editor in `PluginChainEditor.*`.
+  `StatusBar.*` is the bottom bar with the root folders, the status text, the preview audio output device,
+  and the overall progress line along its top edge.
 
 Put a new file in the directory of its domain, and add a directory only for a new domain with several files.
 Include project headers by their path relative to `src/`, for example `#include "analysis/AudioAnalysis.h"`,

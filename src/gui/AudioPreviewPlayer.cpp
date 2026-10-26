@@ -480,6 +480,29 @@ std::optional<double> AudioPreviewPlayer::getLoadedDurationSeconds() const
     return static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
 }
 
+/// Describes the output device without opening it.
+/// While the device is closed, this reports the last configuration the device manager kept,
+/// which stays empty until the device has been opened once.
+AudioOutputStatus AudioPreviewPlayer::getOutputStatus() const
+{
+    if (auto* device = deviceManager.getCurrentAudioDevice(); device != nullptr) {
+        return {
+            .deviceName = device->getName(),
+            .sampleRate = device->getCurrentSampleRate(),
+            .bufferSize = device->getCurrentBufferSizeSamples(),
+            .open = true,
+        };
+    }
+
+    const auto setup = deviceManager.getAudioDeviceSetup();
+    return {
+        .deviceName = setup.outputDeviceName,
+        .sampleRate = setup.sampleRate,
+        .bufferSize = setup.bufferSize,
+        .open = false,
+    };
+}
+
 /// Records device configuration without preparing a VST3/AU from the device's callback thread.
 void AudioPreviewPlayer::audioDeviceAboutToStart(juce::AudioIODevice* device)
 {

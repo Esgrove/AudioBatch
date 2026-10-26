@@ -84,7 +84,7 @@ void AudioBatchComponent::clearAllRecords()
     }
 
     if (const auto blockedReason = getFileOperationBlockedReason(); blockedReason.isNotEmpty()) {
-        statusLabel.setText(blockedReason, juce::dontSendNotification);
+        statusBar.setStatusText(blockedReason);
         return;
     }
 
@@ -105,7 +105,7 @@ void AudioBatchComponent::clearAllRecords()
     resultsTable.updateContent();
     updateResultsTableColumnWidths();
     resultsTable.repaint();
-    statusLabel.setText("No files", juce::dontSendNotification);
+    statusBar.setStatusText("No files");
     updateProcessButtonState();
 }
 

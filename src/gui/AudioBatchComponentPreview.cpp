@@ -303,11 +303,17 @@ void AudioBatchComponent::updatePlaybackButtonForTransportState()
     startStopButton.setColour(juce::TextButton::buttonColourId, colour);
 }
 
-/// Reacts to transport state changes and to files dropped onto the waveform preview.
+/// Reacts to transport and output device changes, and to files dropped onto the waveform preview.
 void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
     if (source == &previewPlayer) {
         updatePlaybackButtonForTransportState();
+        updateOutputStatus();
+        return;
+    }
+
+    if (source == &previewPlayer.getDeviceManager()) {
+        updateOutputStatus();
         return;
     }
 

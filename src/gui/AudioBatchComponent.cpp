@@ -1,5 +1,5 @@
 /// Implementation of the main GUI component:
-/// construction, layout, the results table, selection, sorting, the status label, and dialog windows.
+/// construction, the results table, selection, sorting, the status bar text and progress, and dialog windows.
 /// The other AudioBatchComponent*.cpp files implement the remaining member functions by topic.
 
 #include "gui/AudioBatchComponent.h"
@@ -320,7 +320,7 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
                 if (std::holds_alternative<ProcessingWork>(safeThis->backgroundWork)) {
                     safeThis->backgroundWork = IdleWork {};
                 }
-                safeThis->statusLabel.setText(errorMessage, juce::dontSendNotification);
+                safeThis->statusBar.setStatusText(errorMessage);
                 safeThis->showPluginProcessingWarning(errorMessage);
             }
         });
@@ -360,12 +360,9 @@ AudioBatchComponent::AudioBatchComponent() :
     );
     previewPlayer.setPluginChain(pluginChain.get());
 
-    currentRootLabel.setJustificationType(juce::Justification::centredLeft);
-    addAndMakeVisible(currentRootLabel);
-
-    statusLabel.setTooltip("Background analysis and normalization status.");
-    statusLabel.setJustificationType(juce::Justification::centredRight);
-    addAndMakeVisible(statusLabel);
+    addAndMakeVisible(statusBar);
+    previewPlayer.getDeviceManager().addChangeListener(this);
+    updateOutputStatus();
 
     configureResultsTable();
     configurePreviewControls();
@@ -418,6 +415,7 @@ AudioBatchComponent::~AudioBatchComponent()
     pluginCoordinator.cancelAndWait();
 
     utils::logDebug("Application shutdown: releasing preview and dialogs");
+    previewPlayer.getDeviceManager().removeChangeListener(this);
     previewPlayer.removeChangeListener(this);
     previewPlayer.setErrorCallback({});
     pluginChain->setChainChangedCallback({});
@@ -439,38 +437,10 @@ AudioBatchComponent::~AudioBatchComponent()
     utils::logDebug("Application shutdown: releasing component members");
 }
 
-/// Fills the background with the look-and-feel window colour,
-/// and draws the overall progress bar above the results table while a pass of known size runs.
+/// Fills the background with the look-and-feel window colour.
 void AudioBatchComponent::paint(juce::Graphics& graphics)
 {
     graphics.fillAll(juce::LookAndFeel::getDefaultLookAndFeel().findColour(juce::ResizableWindow::backgroundColourId));
-
-    if (overallProgressPermille < 0) {
-        return;
-    }
-
-    /// Converts the stored tenths of a percent to a fraction.
-    constexpr float permillePerUnit = 1000.0f;
-    /// Opacity of the unfilled track behind the overall progress bar.
-    constexpr float progressTrackAlpha = 0.25f;
-
-    const auto bar = getOverallProgressBounds().toFloat();
-    graphics.setColour(juce::CustomLookAndFeel::greyMiddle().withAlpha(progressTrackAlpha));
-    graphics.fillRect(bar);
-    graphics.setColour(juce::CustomLookAndFeel::blue());
-    graphics.fillRect(bar.withWidth(bar.getWidth() * static_cast<float>(overallProgressPermille) / permillePerUnit));
-}
-
-/// Returns the area of the thin overall progress bar, in the gap between the top bar and the results table.
-juce::Rectangle<int> AudioBatchComponent::getOverallProgressBounds() const
-{
-    const auto tableBounds = resultsTable.getBounds();
-    return {
-        tableBounds.getX(),
-        tableBounds.getY() - (layout::sectionSpacing + layout::overallProgressBarHeight) / 2,
-        tableBounds.getWidth(),
-        layout::overallProgressBarHeight,
-    };
 }
 
 /// Distributes leftover table width between the name and path columns while preserving their current ratio.
@@ -712,24 +682,25 @@ void AudioBatchComponent::updateStatusLabel()
     );
 
     if (progressText.isNotEmpty()) {
-        statusLabel.setText(progressText, juce::dontSendNotification);
+        statusBar.setStatusText(progressText);
         return;
     }
 
     if (analysisResults.empty()) {
-        statusLabel.setText("No supported audio files found", juce::dontSendNotification);
+        statusBar.setStatusText("No supported audio files found");
         return;
     }
 
-    statusLabel.setText(utils::format("Loaded {} files", analysisResults.size()), juce::dontSendNotification);
+    statusBar.setStatusText(utils::format("Loaded {} files", analysisResults.size()));
 }
 
 /// Shows the overall progress of the running analysis, normalization, or processing pass in the window title
-/// and as the thin bar above the results table, and restores the plain title when idle.
+/// and as the thin line along the top edge of the status bar, and restores the plain title when idle.
 /// The progress counts finished files plus the completed fractions of the files being worked on,
 /// so it advances smoothly within long files instead of jumping once per file.
+/// The line moves in tenths of a percent, while the title only changes once per whole percent.
 /// Runs on every activity animation tick,
-/// so it only touches the title and the bar when their values change.
+/// so it only touches the title and the line when their values change.
 void AudioBatchComponent::updateProgressIndicators()
 {
     juce::String activityName;
@@ -765,7 +736,7 @@ void AudioBatchComponent::updateProgressIndicators()
         backgroundWork
     );
 
-    /// Converts a fraction to the stored tenths of a percent.
+    /// Converts a fraction to the tenths of a percent the status bar draws.
     constexpr float permillePerUnit = 1000.0f;
     /// Converts a fraction to the whole percent shown in the title.
     constexpr float percentPerUnit = 100.0f;
@@ -784,12 +755,14 @@ void AudioBatchComponent::updateProgressIndicators()
         window->setName(title);
     }
 
-    const auto permille = fraction.has_value() ? juce::roundToInt(*fraction * permillePerUnit) : -1;
+    statusBar.setProgress(fraction.has_value() ? juce::roundToInt(*fraction * permillePerUnit) : -1);
+}
 
-    if (permille != overallProgressPermille) {
-        overallProgressPermille = permille;
-        repaint(getOverallProgressBounds());
-    }
+/// Shows the preview output device and its configuration at the right end of the status bar.
+/// Called on device manager changes and preview player changes, which include the device opening and closing.
+void AudioBatchComponent::updateOutputStatus()
+{
+    statusBar.setOutputStatus(previewPlayer.getOutputStatus());
 }
 
 /// Sorts the records by the primary and secondary sort columns.

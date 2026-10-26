@@ -13,6 +13,7 @@
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/IntervalStepSlider.h"
 #include "gui/components/NormalizationTargetControl.h"
+#include "gui/components/StatusBar.h"
 #include "gui/components/ThumbnailComponent.h"
 #include "gui/FileActivityTracker.h"
 #include "gui/GuiLayout.h"
@@ -126,7 +127,6 @@ private:
     [[nodiscard]] bool isCurrentAnalysisRun(int runId) const noexcept;
     [[nodiscard]] bool isIdle() const noexcept;
     [[nodiscard]] bool isFileBeingRewritten(const juce::String& fullPath) const;
-    [[nodiscard]] juce::Rectangle<int> getOverallProgressBounds() const;
     [[nodiscard]] std::vector<AudioAnalysisRecord> getSelectedProcessableRecords() const;
     int findRecordIndex(const juce::String& fullPath) const;
     int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
@@ -174,6 +174,7 @@ private:
     void updateAudioInfo(const AudioAnalysisRecord& record);
     void updateCurrentRootLabel();
     void updateGainControlsForSelection();
+    void updateOutputStatus();
     void updatePlaybackButtonForTransportState();
     void updateProcessButtonState();
     void updateProgressIndicators();
@@ -283,14 +284,11 @@ private:
                                           updateProgressIndicators();
                                       }};
 
-    /// Overall progress of the running operation in tenths of a percent, or -1 when nothing with a known size runs.
-    /// Drawn as a thin bar above the results table.
-    int overallProgressPermille {-1};
+    /// Root folders, background activity, audio output device, and overall progress along the bottom of the window.
+    StatusBar statusBar;
 
     IntervalStepSlider gainSlider {"GainSlider"};
-    juce::Label currentRootLabel {"CurrentRootLabel"};
     juce::Label gainLabel {"GainLabel"};
-    juce::Label statusLabel {"StatusLabel"};
     juce::Label zoomLabel {"Zoom"};
     juce::Slider zoomSlider {"ZoomSlider"};
     juce::TextButton pluginButton {"Plugin chain"};

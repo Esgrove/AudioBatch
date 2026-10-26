@@ -345,7 +345,7 @@ void AudioBatchComponent::normalizeSelectedRecords()
 {
     if (const auto blockedReason = getNormalizationBlockedReason(); blockedReason.isNotEmpty()) {
         utils::logError("Normalization not started: {}", blockedReason);
-        statusLabel.setText(blockedReason, juce::dontSendNotification);
+        statusBar.setStatusText(blockedReason);
         return;
     }
 
@@ -367,7 +367,7 @@ void AudioBatchComponent::normalizeSelectedRecords()
             ),
             nullptr
         );
-        statusLabel.setText("Selected file type cannot be normalized in this build", juce::dontSendNotification);
+        statusBar.setStatusText("Selected file type cannot be normalized in this build");
         return;
     }
 
@@ -412,7 +412,7 @@ void AudioBatchComponent::startAnalysis(
 )
 {
     if (const auto blockedReason = getFileOperationBlockedReason(); blockedReason.isNotEmpty()) {
-        statusLabel.setText(blockedReason, juce::dontSendNotification);
+        statusBar.setStatusText(blockedReason);
         return;
     }
 
@@ -453,7 +453,7 @@ void AudioBatchComponent::startAnalysis(
     run.options = options;
     run.startedAtMs = juce::Time::getMillisecondCounterHiRes();
     run.replacesResults = clearResults;
-    statusLabel.setText("Scanning for audio files...", juce::dontSendNotification);
+    statusBar.setStatusText("Scanning for audio files...");
 
     if (clearResults) {
         updateCurrentRootLabel();
@@ -479,9 +479,8 @@ void AudioBatchComponent::handleAnalysisPlan(const AnalysisPlan& plan)
     utils::logInfo("Found {} audio files", analyzing->expected);
 
     if (analyzing->expected == 0) {
-        statusLabel.setText(
-            analyzing->replacesResults ? "No supported audio files found" : "No supported dropped files",
-            juce::dontSendNotification
+        statusBar.setStatusText(
+            analyzing->replacesResults ? "No supported audio files found" : "No supported dropped files"
         );
         updateProcessButtonState();
         return;
@@ -503,9 +502,7 @@ void AudioBatchComponent::handleAnalysisPlan(const AnalysisPlan& plan)
     fileActivity.markActive(plan.staleFiles, FileActivity::waiting);
     updatePreviewLoudnessHistory();
 
-    statusLabel.setText(
-        utils::format("Analyzing {}/{}", analyzing->completed, analyzing->expected), juce::dontSendNotification
-    );
+    statusBar.setStatusText(utils::format("Analyzing {}/{}", analyzing->completed, analyzing->expected));
 }
 
 /// True from the start of an analysis run until the coordinator reports its completion.
@@ -638,7 +635,7 @@ juce::Array<juce::File> AudioBatchComponent::releasePreviewBeforeProcessing(
 void AudioBatchComponent::processSelectedRecords()
 {
     if (const auto blockedReason = getProcessingBlockedReason(); blockedReason.isNotEmpty()) {
-        statusLabel.setText(blockedReason, juce::dontSendNotification);
+        statusBar.setStatusText(blockedReason);
         return;
     }
 
@@ -651,7 +648,7 @@ void AudioBatchComponent::processSelectedRecords()
 
     const auto records = getSelectedProcessableRecords();
     if (records.empty()) {
-        statusLabel.setText("Select files that can be processed", juce::dontSendNotification);
+        statusBar.setStatusText("Select files that can be processed");
         return;
     }
 
@@ -667,7 +664,7 @@ void AudioBatchComponent::processSelectedRecords()
     const auto workerCount = juce::jmin(static_cast<int>(records.size()), getPluginProcessingWorkerCount());
 
     const auto startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
-    statusLabel.setText("Loading plugins...", juce::dontSendNotification);
+    statusBar.setStatusText("Loading plugins...");
 
     auto [chains, initialStates, errorMessage, failedPluginName]
         = pluginChain->instantiateChains(enabledPlugins, workerCount);
@@ -681,7 +678,7 @@ void AudioBatchComponent::processSelectedRecords()
                 errorMessage.isNotEmpty() ? errorMessage : juce::String("Unknown error")
             )
         );
-        statusLabel.setText("Plugin load failed", juce::dontSendNotification);
+        statusBar.setStatusText("Plugin load failed");
         return;
     }
 

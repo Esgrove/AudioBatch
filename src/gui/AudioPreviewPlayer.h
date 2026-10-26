@@ -18,6 +18,16 @@ namespace audiobatch
 {
 class PluginChain;
 
+/// Name and configuration of the preview output device, shown in the status bar.
+/// A value that is not known yet is empty or zero.
+struct AudioOutputStatus {
+    juce::String deviceName;
+    double sampleRate {};
+    int bufferSize {};
+    /// True while the device is open, which is only during preview playback or while the audio settings are shown.
+    bool open {};
+};
+
 /// Plays one audio file at a time through the default output device.
 /// Must be created and used on the message thread.
 /// Components that hold references to its format manager,
@@ -62,6 +72,7 @@ public:
     [[nodiscard]] bool isPluginPreviewEnabled() const noexcept;
     [[nodiscard]] double getCurrentPosition() const;
     [[nodiscard]] std::optional<double> getLoadedDurationSeconds() const;
+    [[nodiscard]] AudioOutputStatus getOutputStatus() const;
 
     /// Returns the device manager, used by the audio settings dialog.
     [[nodiscard]] juce::AudioDeviceManager& getDeviceManager() noexcept
