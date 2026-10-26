@@ -152,7 +152,8 @@ jobs:
       # so CMake above still configures with the Xcode toolchain like the build job.
       - name: Run clang-tidy
         run: |
-          export PATH="$(brew --prefix llvm)/bin:$PATH"
+          LLVM_PREFIX="$(brew --prefix llvm)"
+          export PATH="$LLVM_PREFIX/bin:$PATH"
           ./lint.sh --check
 
   format:
