@@ -167,3 +167,45 @@ Build the C++ CLI first with the CMake debug preset or `build.sh` in `../cpp`.
 `cargo run -p audiobatch-playback --example play -- <file> [seconds] [sample rate] [buffer size]`
 plays a file through the default output device, optionally at a chosen sample rate and buffer size,
 and `cargo run -p audiobatch-core --example read_tags -- <files...>` prints tags and Serato data.
+
+## Code Coverage
+
+Code coverage is generated using [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov)
+with [cargo-nextest](https://nexte.st/).
+`coverage.sh` runs the tests of the whole workspace with coverage and prints a per-file summary.
+
+```shell
+# Print the coverage summary
+./coverage.sh
+
+# Also write the HTML report and open it in the browser
+./coverage.sh --open
+
+# Also write an LCOV report for editors and coverage services
+./coverage.sh --lcov
+
+# Remove the previous coverage data first
+./coverage.sh --clean
+```
+
+The HTML report is generated in `target/llvm-cov/html/` and the LCOV report in `target/llvm-cov/lcov.info`.
+The same can be run with cargo directly:
+
+```shell
+# Run tests with coverage (text output)
+cargo llvm-cov nextest --workspace
+
+# Generate and open the HTML report in the browser
+cargo llvm-cov nextest --workspace --html --open
+```
+
+The coverage job in CI runs on macOS, adds the summary to the workflow run,
+and uploads the HTML and LCOV reports as the `rust-coverage` artifact.
+
+## Required Tools
+
+```shell
+cargo install --locked cargo-nextest
+cargo install --locked cargo-llvm-cov
+rustup component add llvm-tools-preview
+```
