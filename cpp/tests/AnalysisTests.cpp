@@ -213,6 +213,59 @@ public:
             }
         }
 
+        beginTest("Only a recursive scan collects files from subfolders, and only supported audio files");
+        {
+            const TemporaryDirectory directory;
+            const auto top = directory.copyFixture("sine_stereo_44100_16.wav", "top.wav");
+            const auto nested = directory.getChildFile("albums/nested.wav");
+            const auto deep = directory.getChildFile("albums/disc 2/deep.flac");
+            expect(deep.getParentDirectory().createDirectory());
+            expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(nested));
+            expect(fixtureFile("sine_stereo_44100_16.flac").copyFileTo(deep));
+            expect(directory.getChildFile("albums/notes.txt").replaceWithText("not audio"));
+
+            const auto root = top.getParentDirectory();
+            const auto flatFiles = collectInputFiles({root}, false);
+            expectEquals(flatFiles.size(), 1);
+            expect(flatFiles.contains(top));
+
+            const auto recursiveFiles = collectInputFiles({root}, true);
+            expectEquals(recursiveFiles.size(), 3);
+            expect(recursiveFiles.contains(top));
+            expect(recursiveFiles.contains(nested));
+            expect(recursiveFiles.contains(deep));
+        }
+
+        beginTest("Overlapping inputs collect each file once, sorted by natural path order");
+        {
+            const TemporaryDirectory directory;
+            const auto track10 = directory.copyFixture("sine_stereo_44100_16.wav", "track 10.wav");
+            const auto track2 = directory.copyFixture("sine_stereo_44100_16.wav", "track 2.wav");
+
+            const auto files = collectInputFiles({track10, track2.getParentDirectory(), track10, track2}, true);
+            expectEquals(files.size(), 2);
+            expect(files[0] == track2, files[0].getFullPathName());
+            expect(files[1] == track10, files[1].getFullPathName());
+        }
+
+        beginTest("A recursive scan follows a symlink into another folder");
+        {
+            const TemporaryDirectory directory;
+            const auto library = directory.getChildFile("library");
+            const auto elsewhere = directory.getChildFile("elsewhere");
+            expect(library.createDirectory());
+            expect(elsewhere.createDirectory());
+            expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(elsewhere.getChildFile("linked.wav")));
+
+            // Creating a symlink needs extra privileges on Windows, so the check only runs where the link exists.
+            if (elsewhere.createSymbolicLink(library.getChildFile("link"), true)) {
+                const auto files = collectInputFiles({library}, true);
+                expectEquals(files.size(), 1);
+                expect(!files.isEmpty() && files[0].getFileName() == "linked.wav");
+                expect(collectInputFiles({library}, false).isEmpty());
+            }
+        }
+
         beginTest("A cancelled folder scan stops without collecting files");
         {
             const auto files
