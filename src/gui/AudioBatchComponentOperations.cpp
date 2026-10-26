@@ -73,33 +73,13 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
 /// and keeping selection and preview in sync.
 /// The whole batch is merged before one sort and table refresh,
 /// so a large rescan does not re-sort the table once per file.
-/// Results from a replaced run are ignored, since their queued messages can arrive after a new run started.
-void AudioBatchComponent::handleAnalysisResults(std::vector<AnalysisResultMessage> messages)
+void AudioBatchComponent::analysisResultsReceived(std::vector<AudioAnalysisRecord> records)
 {
     const auto selectedPaths = getSelectedRecordPaths();
-
-    auto* analyzing = std::get_if<AnalyzingWork>(&backgroundWork);
-    if (analyzing == nullptr) {
-        return;
-    }
-
     bool tableChanged = false;
     bool currentFileChanged = false;
 
-    for (auto& [record, runId] : messages) {
-        if (runId != analyzing->runId) {
-            continue;
-        }
-
-        fileActivity.clearActive(record.fullPath);
-
-        // The expected count already went down when the row was removed.
-        if (analyzing->removedPaths.contains(record.fullPath)) {
-            continue;
-        }
-
-        ++analyzing->completed;
-
+    for (auto& record : records) {
         if (!record.file.exists()) {
             continue;
         }
@@ -179,19 +159,11 @@ void AudioBatchComponent::replaceRecordAfterOperation(
 /// Applies one normalization result on the message thread.
 /// Replaces the record, since the output path may differ from the source,
 /// updates the cache, and reloads the preview when the current file was normalized.
-void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& result)
+void AudioBatchComponent::normalizeResultReceived(const AudioNormalizationResult& result)
 {
-    auto* normalizing = std::get_if<NormalizingWork>(&backgroundWork);
-    if (normalizing != nullptr) {
-        ++normalizing->completed;
-    }
-    fileActivity.clearActive(result.fullPath);
-
     const auto reportFailure
-        = [this, normalizing](const juce::String& fileName, const juce::String& path, const juce::String& error) {
-              if (normalizing != nullptr) {
-                  normalizing->failures.add(utils::format("{}: {}", fileName, error));
-              }
+        = [this](const juce::String& fileName, const juce::String& path, const juce::String& error) {
+              backgroundWork.recordFailure(utils::format("{}: {}", fileName, error));
               fileActivity.setMessage(path, {.text = error, .isError = true});
               resultsTable.repaint();
           };
@@ -219,24 +191,17 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
     updateStatusLabel();
 }
 
-/// Ends the normalization pass and reports any accumulated failures to the user.
-void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
+/// Reports the end of the normalization pass and any accumulated failures to the user.
+void AudioBatchComponent::normalizeCompleted(const NormalizingWork& pass, const int totalFiles)
 {
-    // A pass that started no files has already ended, and analysis may run by the time its completion arrives.
-    const auto* normalizing = std::get_if<NormalizingWork>(&backgroundWork);
-    if (normalizing == nullptr) {
-        return;
-    }
-
-    const auto failures = normalizing->failures;
+    const auto& failures = pass.failures;
     utils::logInfo(
         "Normalization complete: {:.2f} s, {} files ({} succeeded, {} failed)",
-        utils::elapsedSecondsSince(normalizing->startedAtMilliseconds),
+        utils::elapsedSecondsSince(pass.startedAtMilliseconds),
         totalFiles,
         totalFiles - failures.size(),
         failures.size()
     );
-    backgroundWork = IdleWork {};
 
     utils::showFailureSummary(failures, "Normalize", "normalized", this);
 
@@ -249,19 +214,8 @@ void AudioBatchComponent::handleNormalizeComplete(const int totalFiles)
 
 /// Finalizes an analysis run on the message thread:
 /// reconciles rows still pending, logs run statistics, and restores a sensible selection.
-/// Completion of a replaced run is ignored.
-void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int runId)
+void AudioBatchComponent::analysisCompleted(const AnalyzingWork& run, const int totalFiles)
 {
-    if (!isCurrentAnalysisRun(runId)) {
-        return;
-    }
-
-    // Results are batched separately from this message, so the ones still queued are merged first,
-    // otherwise reconciling would mark their rows as unfinished.
-    analysisResultBatcher.deliverPending();
-
-    const auto run = std::get<AnalyzingWork>(backgroundWork);
-    backgroundWork = IdleWork {};
     reconcilePendingAnalysisResults();
 
     // The plan handler already reported that no files were found.
@@ -300,7 +254,8 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int
 /// after checking that no other pass is running and that every selected format is supported.
 void AudioBatchComponent::normalizeSelectedRecords()
 {
-    if (const auto blockedReason = getNormalizationBlockedReason(); blockedReason.isNotEmpty()) {
+    if (const auto blockedReason = getNormalizationBlockedReason(backgroundWork.getWork()); blockedReason.isNotEmpty())
+    {
         utils::logError("Normalization not started: {}", blockedReason);
         statusBar.setStatusText(blockedReason);
         return;
@@ -339,12 +294,7 @@ void AudioBatchComponent::normalizeSelectedRecords()
 
     auto normalizationOptions = normalizationTargetControl.getOptions();
     normalizationOptions.overwriteExisting = forceOverwriteToggle.getToggleState();
-    auto& normalizing = backgroundWork.emplace<NormalizingWork>();
-    normalizing.startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
-    normalizing.expected = normalizeCoordinator.start(recordsToNormalize, normalizationOptions);
-
-    if (normalizing.expected <= 0) {
-        backgroundWork = IdleWork {};
+    if (backgroundWork.startNormalization(recordsToNormalize, normalizationOptions) <= 0) {
         updateStatusLabel();
         return;
     }
@@ -357,8 +307,7 @@ void AudioBatchComponent::normalizeSelectedRecords()
 
 /// Kicks off a background analysis run.
 /// Pending placeholder rows for the files that are not already cached are added once the plan arrives.
-/// A run that keeps the results replaces a running one, so it also takes over the inputs of that run,
-/// which would otherwise leave its placeholder rows waiting forever.
+/// A run that keeps the results replaces a running one and takes over its inputs.
 /// Refuses to start while normalization or plugin processing is running,
 /// since the analysis would read files that are being replaced or moved to the trash.
 void AudioBatchComponent::startAnalysis(
@@ -368,7 +317,8 @@ void AudioBatchComponent::startAnalysis(
     const bool clearResults
 )
 {
-    if (const auto blockedReason = getFileOperationBlockedReason(); blockedReason.isNotEmpty()) {
+    if (const auto blockedReason = getFileOperationBlockedReason(backgroundWork.getWork()); blockedReason.isNotEmpty())
+    {
         statusBar.setStatusText(blockedReason);
         return;
     }
@@ -382,63 +332,20 @@ void AudioBatchComponent::startAnalysis(
         resultsTable.updateContent();
         updateResultsTableColumnWidths();
         resultsTable.repaint();
-    }
-
-    AudioAnalysisOptions options;
-    options.inputPaths = inputPaths;
-    options.recursive = recursive;
-    options.refresh = forceRefresh;
-
-    AnalyzingWork run;
-
-    // Starting a run cancels the running one, whose placeholder rows would then never get a result.
-    if (const auto* replaced = std::get_if<AnalyzingWork>(&backgroundWork); replaced != nullptr && !clearResults) {
-        for (const auto& path : replaced->options.inputPaths) {
-            options.inputPaths.addIfNotAlreadyThere(path);
-        }
-
-        options.recursive = options.recursive || replaced->options.recursive;
-        options.refresh = options.refresh || replaced->options.refresh;
-        run.removedPaths = replaced->removedPaths;
-
-        // A file the user adds again is wanted back in the table.
-        for (const auto& path : inputPaths) {
-            run.removedPaths.erase(path.getFullPathName());
-        }
-    }
-
-    run.options = options;
-    run.startedAtMs = juce::Time::getMillisecondCounterHiRes();
-    run.replacesResults = clearResults;
-    statusBar.setStatusText("Scanning for audio files...");
-
-    if (clearResults) {
         updateCurrentRootLabel();
     }
 
-    run.runId = analysisCoordinator.start(options);
-    backgroundWork = std::move(run);
+    statusBar.setStatusText("Scanning for audio files...");
+    backgroundWork.startAnalysis(inputPaths, recursive, forceRefresh, clearResults);
     updateProcessButtonState();
 }
 
 /// Adds pending rows for the files the run analyzes and shows the progress text.
 /// Called once per run on the message thread, after the coordinator has scanned the input folders.
-void AudioBatchComponent::handleAnalysisPlan(const AnalysisPlan& plan)
+void AudioBatchComponent::analysisPlanReceived(const AnalysisPlan& plan, const AnalyzingWork& run)
 {
-    auto* analyzing = std::get_if<AnalyzingWork>(&backgroundWork);
-    if (analyzing == nullptr || plan.runId != analyzing->runId) {
-        return;
-    }
-
-    analyzing->planReceived = true;
-    analyzing->expected = plan.files.size();
-    analyzing->analyzedFiles = plan.staleFiles.size();
-    utils::logInfo("Found {} audio files", analyzing->expected);
-
-    if (analyzing->expected == 0) {
-        statusBar.setStatusText(
-            analyzing->replacesResults ? "No supported audio files found" : "No supported dropped files"
-        );
+    if (run.expected == 0) {
+        statusBar.setStatusText(run.replacesResults ? "No supported audio files found" : "No supported dropped files");
         updateProcessButtonState();
         return;
     }
@@ -453,68 +360,13 @@ void AudioBatchComponent::handleAnalysisPlan(const AnalysisPlan& plan)
     fileActivity.markActive(plan.staleFiles, FileActivity::waiting);
     updatePreviewLoudnessHistory();
 
-    statusBar.setStatusText(utils::format("Analyzing {}/{}", analyzing->completed, analyzing->expected));
-}
-
-/// True from the start of an analysis run until the coordinator reports its completion.
-bool AudioBatchComponent::isAnalysisInProgress() const noexcept
-{
-    return std::holds_alternative<AnalyzingWork>(backgroundWork);
-}
-
-/// True while the analysis run with the given id is running,
-/// which drops the queued messages of runs that were replaced or have ended.
-bool AudioBatchComponent::isCurrentAnalysisRun(const int runId) const noexcept
-{
-    const auto* analyzing = std::get_if<AnalyzingWork>(&backgroundWork);
-    return analyzing != nullptr && analyzing->runId == runId;
-}
-
-/// True while no analysis, normalization, or plugin processing is running.
-bool AudioBatchComponent::isIdle() const noexcept
-{
-    return std::holds_alternative<IdleWork>(backgroundWork);
+    statusBar.setStatusText(utils::format("Analyzing {}/{}", run.completed, run.expected));
 }
 
 /// True while normalization or plugin processing is rewriting files.
 bool AudioBatchComponent::isFileOperationInProgress() const noexcept
 {
-    return std::holds_alternative<NormalizingWork>(backgroundWork)
-        || std::holds_alternative<ProcessingWork>(backgroundWork);
-}
-
-/// Returns the reason analysis or a change to the list cannot happen right now
-/// because files are being normalized or processed, or an empty string when it can.
-juce::String AudioBatchComponent::getFileOperationBlockedReason() const
-{
-    return std::visit(
-        Overloaded {
-            [](const IdleWork& /*idle*/) { return juce::String(); },
-            [](const AnalyzingWork& /*analyzing*/) { return juce::String(); },
-            [](const NormalizingWork& /*normalizing*/) { return juce::String("Normalization in progress"); },
-            [](const ProcessingWork& /*processing*/) { return juce::String("Plugin processing in progress"); },
-        },
-        backgroundWork
-    );
-}
-
-/// Returns the reason a normalization pass cannot start right now because other work is running,
-/// or an empty string when a pass may start.
-juce::String AudioBatchComponent::getNormalizationBlockedReason() const
-{
-    return std::visit(
-        Overloaded {
-            [](const IdleWork& /*idle*/) { return juce::String(); },
-            [](const AnalyzingWork& /*analyzing*/) {
-                return juce::String("Wait for analysis to finish before normalizing");
-            },
-            [](const NormalizingWork& /*normalizing*/) { return juce::String("Normalization already in progress"); },
-            [](const ProcessingWork& /*processing*/) {
-                return juce::String("Wait for plugin processing to finish before normalizing");
-            },
-        },
-        backgroundWork
-    );
+    return backgroundWork.isFileOperationInProgress();
 }
 
 /// True when the file is being normalized or processed right now, or is queued to be.
@@ -534,25 +386,6 @@ void AudioBatchComponent::showPluginProcessingWarning(const juce::String& messag
             juce::MessageBoxIconType::WarningIcon, "Plugin Processing", message, "OK", this
         ),
         nullptr
-    );
-}
-
-/// Returns the reason a processing run cannot start right now because other work is running,
-/// or an empty string when a run may start.
-juce::String AudioBatchComponent::getProcessingBlockedReason() const
-{
-    return std::visit(
-        Overloaded {
-            [](const IdleWork& /*idle*/) { return juce::String(); },
-            [](const AnalyzingWork& /*analyzing*/) {
-                return juce::String("Wait for analysis to finish before processing");
-            },
-            [](const NormalizingWork& /*normalizing*/) {
-                return juce::String("Wait for normalization to finish before processing");
-            },
-            [](const ProcessingWork& /*processing*/) { return juce::String("Processing already in progress"); },
-        },
-        backgroundWork
     );
 }
 
@@ -585,7 +418,7 @@ juce::Array<juce::File> AudioBatchComponent::releasePreviewBeforeProcessing(
 /// Runs the configured plugin (if any) over the currently-selected files.
 void AudioBatchComponent::processSelectedRecords()
 {
-    if (const auto blockedReason = getProcessingBlockedReason(); blockedReason.isNotEmpty()) {
+    if (const auto blockedReason = getProcessingBlockedReason(backgroundWork.getWork()); blockedReason.isNotEmpty()) {
         statusBar.setStatusText(blockedReason);
         return;
     }
@@ -642,15 +475,10 @@ void AudioBatchComponent::processSelectedRecords()
 
     const auto filesToProcess = releasePreviewBeforeProcessing(records);
 
-    auto& processing = backgroundWork.emplace<ProcessingWork>();
-    processing.startedAtMilliseconds = startedAtMilliseconds;
+    const auto expected = backgroundWork.startProcessing(records, options, std::move(chains), startedAtMilliseconds);
     updateProcessButtonState();
 
-    processing.expected = pluginCoordinator.start(records, options, std::move(chains));
-
-    if (processing.expected <= 0) {
-        backgroundWork = IdleWork {};
-        updateProcessButtonState();
+    if (expected <= 0) {
         updateStatusLabel();
         return;
     }
@@ -662,18 +490,10 @@ void AudioBatchComponent::processSelectedRecords()
 
 /// Applies one plugin processing result on the message thread.
 /// Replaces the record, drops stale cache rows and persisted gain, and reloads the preview when needed.
-void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& result)
+void AudioBatchComponent::processingResultReceived(const PluginProcessingResult& result)
 {
-    auto* processing = std::get_if<ProcessingWork>(&backgroundWork);
-    if (processing != nullptr) {
-        ++processing->completed;
-    }
-    fileActivity.clearActive(result.originalFullPath);
-
     const auto reportFailure = [&](const juce::String& fileName, const juce::String& path, const juce::String& error) {
-        if (processing != nullptr) {
-            processing->failures.add(utils::format("{}: {}", fileName, error));
-        }
+        backgroundWork.recordFailure(utils::format("{}: {}", fileName, error));
         fileActivity.setMessage(path, {.text = error, .isError = true});
         resultsTable.repaint();
         utils::logError("Plugin processing failed for {}: {}", result.originalFullPath.quoted(), error);
@@ -709,24 +529,17 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
     updateStatusLabel();
 }
 
-/// Ends the plugin processing pass and reports any accumulated failures to the user.
-void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
+/// Reports the end of the plugin processing pass and any accumulated failures to the user.
+void AudioBatchComponent::processingCompleted(const ProcessingWork& pass, const int totalFiles)
 {
-    // A pass that started no files or failed to start has already ended.
-    const auto* processing = std::get_if<ProcessingWork>(&backgroundWork);
-    if (processing == nullptr) {
-        return;
-    }
-
-    const auto failures = processing->failures;
+    const auto& failures = pass.failures;
     utils::logInfo(
         "Plugin processing complete: {:.2f} s, {} files ({} succeeded, {} failed)",
-        utils::elapsedSecondsSince(processing->startedAtMilliseconds),
+        utils::elapsedSecondsSince(pass.startedAtMilliseconds),
         totalFiles,
         totalFiles - failures.size(),
         failures.size()
     );
-    backgroundWork = IdleWork {};
 
     updateProcessButtonState();
 
@@ -737,5 +550,12 @@ void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
     }
 
     updateStatusLabel();
+}
+
+/// Shows why a plugin processing pass could not start its workers.
+void AudioBatchComponent::processingStartFailed(const juce::String& errorMessage)
+{
+    statusBar.setStatusText(errorMessage);
+    showPluginProcessingWarning(errorMessage);
 }
 }  // namespace audiobatch

@@ -83,17 +83,15 @@ void AudioBatchComponent::clearAllRecords()
         return;
     }
 
-    if (const auto blockedReason = getFileOperationBlockedReason(); blockedReason.isNotEmpty()) {
+    if (const auto blockedReason = getFileOperationBlockedReason(backgroundWork.getWork()); blockedReason.isNotEmpty())
+    {
         statusBar.setStatusText(blockedReason);
         return;
     }
 
     // Results of a run still in progress would add the rows back.
     // Ending the run here drops the results that were already queued too.
-    if (isAnalysisInProgress()) {
-        analysisCoordinator.cancel();
-        backgroundWork = IdleWork {};
-    }
+    backgroundWork.cancelAnalysis();
 
     analysisResults.clear();
     fileActivity.clearAllActive();
@@ -135,7 +133,7 @@ void AudioBatchComponent::removeSelectedRecords()
 /// Refused while analysis, normalization, or plugin processing is running.
 void AudioBatchComponent::reanalyzeSelectedRecords()
 {
-    if (isAnalysisInProgress() || isFileOperationInProgress()) {
+    if (!backgroundWork.isIdle()) {
         return;
     }
 
@@ -183,7 +181,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     const auto& record = analysisResults[row];
     const auto parentDirectory = record.file.getParentDirectory();
     const auto selectedRecords = getSelectedNormalizableRecords();
-    const auto canNormalize = isIdle() && canNormalizeRecords(selectedRecords);
+    const auto canNormalize = backgroundWork.isIdle() && canNormalizeRecords(selectedRecords);
 
     juce::PopupMenu menu;
     const auto addItem = [&menu](const FileMenuItemId item, const juce::String& text, const bool isEnabled) {
@@ -192,7 +190,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     addItem(FileMenuItemId::revealFile, utils::revealInFileManagerLabel(), record.file.exists());
     addItem(FileMenuItemId::openParentDirectory, "Open Parent Folder", parentDirectory.isDirectory());
     menu.addSeparator();
-    addItem(FileMenuItemId::reanalyze, "Re-analyze Selected", isIdle());
+    addItem(FileMenuItemId::reanalyze, "Re-analyze Selected", backgroundWork.isIdle());
     addItem(
         FileMenuItemId::normalize,
         utils::format("Normalize to {}", normalizationTargetControl.describeTarget()),
@@ -200,7 +198,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     );
     addItem(FileMenuItemId::normalizeSupport, "Normalization Format Support...", true);
     menu.addSeparator();
-    const bool canProcess = isIdle() && pluginChain->getNumEnabledValidSlots() > 0;
+    const bool canProcess = backgroundWork.isIdle() && pluginChain->getNumEnabledValidSlots() > 0;
     addItem(FileMenuItemId::process, "Process With Plugin Chain (output AIFF)", canProcess);
     const bool anyHasGain = std::ranges::any_of(selectedRecords, [](const AudioAnalysisRecord& selectedRecord) {
         return selectedRecord.customGain.has_value();
@@ -405,21 +403,15 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
         = currentAudioFile.exists() && removedPaths.contains(currentAudioFile.getFullPathName());
 
     int removedPendingCount = 0;
-    auto* analyzing = std::get_if<AnalyzingWork>(&backgroundWork);
 
     for (const auto& removedPath : removedPaths) {
-        if (analyzing != nullptr) {
-            const auto activity = fileActivity.getActivity(removedPath);
-            const auto row = analysisResults.findRow(removedPath);
-            const auto pending = activity == FileActivity::waiting || activity == FileActivity::analyzing
-                || (row.has_value() && analysisResults[*row].status == AudioAnalysisStatus::pending);
+        const auto activity = fileActivity.getActivity(removedPath);
+        const auto row = analysisResults.findRow(removedPath);
+        const auto pending = activity == FileActivity::waiting || activity == FileActivity::analyzing
+            || (row.has_value() && analysisResults[*row].status == AudioAnalysisStatus::pending);
 
-            if (pending) {
-                ++removedPendingCount;
-            }
-
-            // A carried over run could deliver a result for a finished row again, so every removed path is kept.
-            analyzing->removedPaths.insert(removedPath);
+        if (pending) {
+            ++removedPendingCount;
         }
 
         fileActivity.clearActive(removedPath);
@@ -427,12 +419,7 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
     }
 
     analysisResults.removePaths(removedPaths);
-
-    // Only rows still waiting for a result lower the expected count, since finished rows were already counted.
-    if (analyzing != nullptr) {
-        analyzing->expected = juce::jmax(0, analyzing->expected - removedPendingCount);
-        analyzing->completed = juce::jmin(analyzing->completed, analyzing->expected);
-    }
+    backgroundWork.forgetRemovedPaths(removedPaths, removedPendingCount);
 
     if (currentFileRemoved) {
         clearCurrentAudioPreview();

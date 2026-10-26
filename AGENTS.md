@@ -107,10 +107,14 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       Put new member functions in the file of their topic.
       `AudioBatchComponentState.h` holds the progress state of the analysis run and of the normalization
       and plugin processing passes.
+    - `BackgroundWorkController.*` owns the analysis, normalization, and plugin processing coordinators
+      and runs one pass at a time.
+      It moves their callbacks to the message thread and reports the results to the main component,
+      which implements its `BackgroundWorkListener`.
     - `AudioPreviewPlayer.*` owns the audio device, transport, and read-ahead thread of the file preview.
     - `ResultsModel.*` holds the rows of the results table with an index from path to row,
- and merges, removes, and sorts them.
- `AudioFileTableModel.*` shows those rows in the sortable table, and `ResultsSorting.*` compares and sorts records.
+      and merges, removes, and sorts them.
+      `AudioFileTableModel.*` shows those rows in the sortable table, and `ResultsSorting.*` compares and sorts records.
     - `FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
 - `src/gui/components/` holds the reusable UI pieces the main component is built from:
   `AudioInfoPanel.*`, `AudioSettingsComponent.*`, `NormalizationTargetControl.*`, `CustomLookAndFeel.*`,

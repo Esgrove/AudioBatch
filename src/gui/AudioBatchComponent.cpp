@@ -228,47 +228,9 @@ void AudioBatchComponent::configureProcessingControls()
     controlsContent.addAndMakeVisible(settingsButton);
 }
 
-/// Connects the per-file progress reports of the coordinators to the activity tracker on the message thread.
-/// Normalization and processing files switch from waiting to busy when a worker starts on them.
-/// A start arriving after its pass ended belongs to no pass, so it does not mark the file busy again.
-void AudioBatchComponent::connectProgressCallbacks()
-{
-    const SafePointer safeThis(this);
-
-    analysisCoordinator.setProgressCallback([safeThis](const juce::File& file, const float progress, const int runId) {
-        juce::MessageManager::callAsync([safeThis, file, progress, runId] {
-            if (safeThis != nullptr && safeThis->isCurrentAnalysisRun(runId)) {
-                safeThis->fileActivity.setProgress(file.getFullPathName(), progress);
-            }
-        });
-    });
-
-    const auto postStarting = [safeThis](const FileActivity activity) {
-        return [safeThis, activity](const juce::File& file) {
-            juce::MessageManager::callAsync([safeThis, file, activity] {
-                if (safeThis != nullptr && safeThis->isFileOperationInProgress()) {
-                    safeThis->fileActivity.setActive(file.getFullPathName(), activity);
-                }
-            });
-        };
-    };
-
-    const auto postProgress = [safeThis](const juce::File& file, const float progress) {
-        juce::MessageManager::callAsync([safeThis, file, progress] {
-            if (safeThis != nullptr) {
-                safeThis->fileActivity.setProgress(file.getFullPathName(), progress);
-            }
-        });
-    };
-
-    normalizeCoordinator.setStartingCallback(postStarting(FileActivity::normalizing));
-    normalizeCoordinator.setProgressCallback(postProgress);
-    pluginCoordinator.setStartingCallback(postStarting(FileActivity::processing));
-    pluginCoordinator.setProgressCallback(postProgress);
-}
-
-/// Connects the analysis, normalization, and plugin coordinators to the message thread handlers.
-void AudioBatchComponent::connectCoordinatorCallbacks()
+/// Creates the worker that reads the Serato tags of the previewed file,
+/// whose results are adopted on the message thread while this component still exists.
+void AudioBatchComponent::createSeratoPreviewLoader()
 {
     const SafePointer safeThis(this);
 
@@ -286,55 +248,10 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
             );
         }
     );
-
-    // Coordinator callbacks arrive on worker threads.
-    // The handler runs on the message thread, and only while this component still exists.
-    const auto postToMessageThread = [safeThis](auto handler) {
-        return [safeThis, handler](const auto&... arguments) {
-            juce::MessageManager::callAsync([safeThis, handler, arguments...] {
-                if (safeThis != nullptr) {
-                    (safeThis.getComponent()->*handler)(arguments...);
-                }
-            });
-        };
-    };
-
-    analysisCoordinator.setPlanCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisPlan));
-    analysisCoordinator.setResultCallback([this](const AudioAnalysisRecord& record, const int runId) {
-        analysisResultBatcher.post({.record = record, .runId = runId});
-    });
-    analysisCoordinator.setCompletionCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisComplete));
-    analysisCoordinator.setStartingCallback([safeThis](const juce::File& file, const int runId) {
-        juce::MessageManager::callAsync([safeThis, file, runId] {
-            if (safeThis != nullptr && safeThis->isCurrentAnalysisRun(runId)) {
-                safeThis->fileActivity.setActive(file.getFullPathName(), FileActivity::analyzing);
-            }
-        });
-    });
-    connectProgressCallbacks();
-
-    normalizeCoordinator.setResultCallback(postToMessageThread(&AudioBatchComponent::handleNormalizeResult));
-    normalizeCoordinator.setCompletionCallback(postToMessageThread(&AudioBatchComponent::handleNormalizeComplete));
-
-    pluginCoordinator.setResultCallback(postToMessageThread(&AudioBatchComponent::handleProcessingResult));
-    pluginCoordinator.setCompletionCallback(postToMessageThread(&AudioBatchComponent::handleProcessingComplete));
-
-    pluginCoordinator.setStartErrorCallback([safeThis](const juce::String& errorMessage) {
-        juce::MessageManager::callAsync([safeThis, errorMessage] {
-            if (safeThis != nullptr) {
-                if (std::holds_alternative<ProcessingWork>(safeThis->backgroundWork)) {
-                    safeThis->backgroundWork = IdleWork {};
-                }
-                safeThis->statusBar.setStatusText(errorMessage);
-                safeThis->showPluginProcessingWarning(errorMessage);
-            }
-        });
-    });
 }
 
 /// Creates the UI, opens the analysis cache, and starts the initial scan.
 AudioBatchComponent::AudioBatchComponent() :
-    analysisCoordinator(analysisCache),
     fileTableModel(
         analysisResults,
         [this](const int row) { handleSelectionChanged(row); },
@@ -389,8 +306,8 @@ AudioBatchComponent::AudioBatchComponent() :
         utils::logError("AudioBatchComponent startup: analysis cache open failed");
     }
 
-    connectCoordinatorCallbacks();
-    logStartupCheckpoint("analysis and normalization callbacks configured");
+    createSeratoPreviewLoader();
+    logStartupCheckpoint("preview metadata worker created");
 
     setOpaque(true);
     setSize(layout::initialComponentWidth, layout::initialComponentHeight);
@@ -412,12 +329,8 @@ AudioBatchComponent::~AudioBatchComponent()
     if (seratoPreviewLoader) {
         seratoPreviewLoader->cancelAndWait();
     }
-    utils::logDebug("Application shutdown: stopping analysis workers");
-    analysisCoordinator.cancelAndWait();
-    utils::logDebug("Application shutdown: stopping normalization workers");
-    normalizeCoordinator.cancelAndWait();
-    utils::logDebug("Application shutdown: stopping plugin processing workers");
-    pluginCoordinator.cancelAndWait();
+    utils::logDebug("Application shutdown: stopping analysis, normalization, and plugin processing workers");
+    backgroundWork.cancelAndWait();
 
     utils::logDebug("Application shutdown: releasing preview and dialogs");
     previewPlayer.getDeviceManager().removeChangeListener(this);
@@ -640,8 +553,8 @@ void AudioBatchComponent::updateProcessButtonState()
 {
     const bool hasChain = pluginChain->getNumEnabledValidSlots() > 0;
     processButton.setEnabled(
-        hasChain && hasAnyRecords() && !std::holds_alternative<ProcessingWork>(backgroundWork)
-        && !isAnalysisInProgress()
+        hasChain && hasAnyRecords() && !backgroundWork.isProcessingInProgress()
+        && !backgroundWork.isAnalysisInProgress()
     );
 }
 
@@ -651,27 +564,7 @@ void AudioBatchComponent::updateStatusLabel()
     updateProgressIndicators();
 
     // A pass whose file count is not known yet shows the summary of the list instead.
-    const auto progressText = std::visit(
-        Overloaded {
-            [](const IdleWork& /*idle*/) { return juce::String(); },
-            [](const AnalyzingWork& analyzing) {
-                return analyzing.planReceived
-                    ? utils::format("Analyzing {}/{}", analyzing.completed, analyzing.expected)
-                    : juce::String("Scanning for audio files...");
-            },
-            [](const NormalizingWork& normalizing) {
-                return normalizing.expected > 0
-                    ? utils::format("Normalizing {}/{}", normalizing.completed, normalizing.expected)
-                    : juce::String();
-            },
-            [](const ProcessingWork& processing) {
-                return processing.expected > 0
-                    ? utils::format("Processing {}/{}", processing.completed, processing.expected)
-                    : juce::String();
-            },
-        },
-        backgroundWork
-    );
+    const auto progressText = getProgressText(backgroundWork.getWork());
 
     if (progressText.isNotEmpty()) {
         statusBar.setStatusText(progressText);
@@ -688,45 +581,13 @@ void AudioBatchComponent::updateStatusLabel()
 
 /// Shows the overall progress of the running analysis, normalization, or processing pass in the window title
 /// and as the thin line along the top edge of the status bar, and restores the plain title when idle.
-/// The progress counts finished files plus the completed fractions of the files being worked on,
-/// so it advances smoothly within long files instead of jumping once per file.
 /// The line moves in tenths of a percent, while the title only changes once per whole percent.
 /// Runs on every activity animation tick,
 /// so it only touches the title and the line when their values change.
 void AudioBatchComponent::updateProgressIndicators()
 {
-    juce::String activityName;
-    std::optional<float> fraction;
-
-    const auto getRunFraction = [this](const int completed, const int expected) -> std::optional<float> {
-        if (expected <= 0) {
-            return std::nullopt;
-        }
-
-        const auto done = static_cast<float>(completed) + fileActivity.getProgressTotal();
-        return juce::jlimit(0.0f, 1.0f, done / static_cast<float>(expected));
-    };
-
-    std::visit(
-        Overloaded {
-            [](const IdleWork& /*idle*/) {},
-            [&](const AnalyzingWork& analyzing) {
-                activityName = analyzing.planReceived ? "Analyzing" : "Scanning";
-                if (analyzing.planReceived) {
-                    fraction = getRunFraction(analyzing.completed, analyzing.expected);
-                }
-            },
-            [&](const NormalizingWork& normalizing) {
-                activityName = "Normalizing";
-                fraction = getRunFraction(normalizing.completed, normalizing.expected);
-            },
-            [&](const ProcessingWork& processing) {
-                activityName = "Processing";
-                fraction = getRunFraction(processing.completed, processing.expected);
-            },
-        },
-        backgroundWork
-    );
+    const auto [activityName, fraction]
+        = getBackgroundProgress(backgroundWork.getWork(), fileActivity.getProgressTotal());
 
     /// Converts a fraction to the tenths of a percent the status bar draws.
     constexpr float permillePerUnit = 1000.0f;

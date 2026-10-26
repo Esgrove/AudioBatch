@@ -1,0 +1,154 @@
+/// Background work of the main view.
+/// Declares BackgroundWorkController, which owns the analysis, normalization, and plugin processing coordinators
+/// and the state of the one pass that runs at a time,
+/// and BackgroundWorkListener, which receives the plans, results, and completions of that work on the message thread.
+/// Also declares the free functions that describe the state for the status bar and the window title.
+
+#pragma once
+
+#include "analysis/AnalysisCache.h"
+#include "analysis/AnalysisCoordinator.h"
+#include "gui/AudioBatchComponentState.h"
+#include "normalization/NormalizeCoordinator.h"
+#include "plugins/PluginProcessingCoordinator.h"
+#include "utils/MessageThreadBatcher.h"
+
+#include <JuceHeader.h>
+
+#include <optional>
+#include <vector>
+
+namespace audiobatch
+{
+class FileActivityTracker;
+
+/// The name of the running pass and how far along it is, shown in the window title and the status bar.
+struct BackgroundProgress {
+    /// Name of the running pass, such as "Analyzing", or empty while idle.
+    juce::String activityName;
+    /// Completed fraction from 0 to 1, or empty while the pass does not know its file count yet.
+    std::optional<float> fraction;
+};
+
+/// Receives the events of the background work on the message thread.
+/// Messages of replaced analysis runs and of passes that already ended never reach the listener.
+class BackgroundWorkListener
+{
+public:
+    BackgroundWorkListener() = default;
+    virtual ~BackgroundWorkListener() = default;
+
+    BackgroundWorkListener(const BackgroundWorkListener&) = delete;
+    BackgroundWorkListener& operator=(const BackgroundWorkListener&) = delete;
+    BackgroundWorkListener(BackgroundWorkListener&&) = delete;
+    BackgroundWorkListener& operator=(BackgroundWorkListener&&) = delete;
+
+    /// Called once the running analysis has scanned its inputs, with the run already updated from the plan.
+    virtual void analysisPlanReceived(const AnalysisPlan& plan, const AnalyzingWork& run) = 0;
+
+    /// Called with a batch of results of the running analysis, without the results of rows removed during the run.
+    virtual void analysisResultsReceived(std::vector<AudioAnalysisRecord> records) = 0;
+
+    /// Called when the running analysis has finished, after its last results and once the controller is idle again.
+    virtual void analysisCompleted(const AnalyzingWork& run, int totalFiles) = 0;
+
+    /// Called with the result of one file of the running normalization pass, after its completed count went up.
+    virtual void normalizeResultReceived(const AudioNormalizationResult& result) = 0;
+
+    /// Called when the running normalization pass has finished, once the controller is idle again.
+    virtual void normalizeCompleted(const NormalizingWork& pass, int totalFiles) = 0;
+
+    /// Called with the result of one file of the running processing pass, after its completed count went up.
+    virtual void processingResultReceived(const PluginProcessingResult& result) = 0;
+
+    /// Called when the running processing pass has finished, once the controller is idle again.
+    virtual void processingCompleted(const ProcessingWork& pass, int totalFiles) = 0;
+
+    /// Called when a processing pass could not start its workers, once the controller is idle again.
+    virtual void processingStartFailed(const juce::String& errorMessage) = 0;
+};
+
+/// Runs one analysis, normalization, or plugin processing pass at a time, and tracks its progress.
+/// Coordinator callbacks arrive on worker threads.
+/// The controller moves them to the message thread, marks the files busy in the activity tracker,
+/// and forwards the results to the listener.
+/// Must only be used on the message thread.
+class BackgroundWorkController
+{
+public:
+    BackgroundWorkController(
+        AnalysisCache& analysisCache,
+        FileActivityTracker& activityTracker,
+        BackgroundWorkListener& workListener
+    );
+
+    ~BackgroundWorkController();
+
+    BackgroundWorkController(const BackgroundWorkController&) = delete;
+    BackgroundWorkController& operator=(const BackgroundWorkController&) = delete;
+    BackgroundWorkController(BackgroundWorkController&&) = delete;
+    BackgroundWorkController& operator=(BackgroundWorkController&&) = delete;
+
+    [[nodiscard]] const BackgroundWork& getWork() const noexcept;
+    [[nodiscard]] bool isIdle() const noexcept;
+    [[nodiscard]] bool isAnalysisInProgress() const noexcept;
+    [[nodiscard]] bool isProcessingInProgress() const noexcept;
+    [[nodiscard]] bool isFileOperationInProgress() const noexcept;
+
+    [[nodiscard]] int startNormalization(
+        const std::vector<AudioAnalysisRecord>& records,
+        const AudioNormalizationOptions& options
+    );
+
+    [[nodiscard]] int startProcessing(
+        const std::vector<AudioAnalysisRecord>& records,
+        const PluginProcessingOptions& options,
+        std::vector<PluginChainInstances> chainInstances,
+        double startedAtMilliseconds
+    );
+
+    void cancelAnalysis();
+    void cancelAndWait();
+    void forgetRemovedPaths(const juce::StringArray& removedPaths, int removedPendingCount);
+    void recordFailure(const juce::String& failure);
+    void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
+
+private:
+    void connectAnalysisCallbacks();
+    void connectOperationCallbacks();
+    void handleAnalysisComplete(int totalFiles, int runId);
+    void handleAnalysisPlan(const AnalysisPlan& plan);
+    void handleAnalysisResults(std::vector<AnalysisResultMessage> messages);
+    void handleNormalizeComplete(int totalFiles);
+    void handleNormalizeResult(const AudioNormalizationResult& result);
+    void handleProcessingComplete(int totalFiles);
+    void handleProcessingResult(const PluginProcessingResult& result);
+    void handleProcessingStartError(const juce::String& errorMessage);
+
+    [[nodiscard]] bool isCurrentAnalysisRun(int runId) const noexcept;
+
+    FileActivityTracker& fileActivity;
+    BackgroundWorkListener& listener;
+
+    /// The analysis run, normalization pass, or plugin processing pass that is running, if any.
+    BackgroundWork work;
+
+    /// Hands analysis results from the workers to the message thread, merging each burst into one batch.
+    /// Declared before the analysis coordinator, whose workers post to it until the coordinator is destroyed.
+    utils::MessageThreadBatcher<AnalysisResultMessage> analysisResultBatcher {
+        [this](std::vector<AnalysisResultMessage> messages) { handleAnalysisResults(std::move(messages)); }
+    };
+
+    AnalysisCoordinator analysisCoordinator;
+    NormalizeCoordinator normalizeCoordinator;
+    PluginProcessingCoordinator pluginCoordinator;
+
+    JUCE_DECLARE_WEAK_REFERENCEABLE(BackgroundWorkController)
+};
+
+[[nodiscard]] BackgroundProgress getBackgroundProgress(const BackgroundWork& work, float activeFileProgress);
+[[nodiscard]] juce::String getFileOperationBlockedReason(const BackgroundWork& work);
+[[nodiscard]] juce::String getNormalizationBlockedReason(const BackgroundWork& work);
+[[nodiscard]] juce::String getProcessingBlockedReason(const BackgroundWork& work);
+[[nodiscard]] juce::String getProgressText(const BackgroundWork& work);
+}  // namespace audiobatch
