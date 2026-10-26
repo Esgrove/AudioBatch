@@ -96,6 +96,7 @@ private:
     void timerCallback() override;
     void closeAudioDevice();
     void prepareInput();
+    void publishState();
     bool openAudioDevice();
     bool reposition(double seconds, bool resume);
     void reportError(const juce::String& message) const;
@@ -121,6 +122,17 @@ private:
     std::atomic<bool> bufferUnderrun {false};
     std::atomic<double> pendingRate {0.0};
     std::atomic<int> pendingBlockSize {512};
+
+    /// Playback state of the preview source, published under the rendering lock after every change
+    /// and after every rendered block, so the message thread reads it without taking the lock.
+    /// The audio callback only try-locks, and outputs silence for every block in which the lock is busy.
+    std::atomic<double> publishedPosition {0.0};
+    std::atomic<bool> publishedPlaying {false};
+    std::atomic<bool> publishedStopping {false};
+    std::atomic<bool> publishedFailed {false};
+
+    /// Tail length last applied to the preview source, so an unchanged tail does not take the rendering lock.
+    juce::int64 appliedTailSamples {-1};
     double sampleRate {utils::defaultSampleRate};
     int blockSize {512};
     bool pluginPreviewEnabled {false};
