@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <vector>
 
 struct sqlite3;
 struct sqlite3_stmt;
@@ -29,6 +30,13 @@ struct FileIdentity {
     juce::String path;
     std::int64_t fileSize;
     std::int64_t modifiedTimeMs;
+};
+
+/// A user-controlled gain to store for one file.
+struct CustomGainUpdate {
+    juce::File file;
+    float customGainDb {0.0f};
+    bool hasCustomGain {false};
 };
 
 /// Persistent SQLite-backed cache for file analysis results and waveform previews.
@@ -54,6 +62,7 @@ public:
     [[nodiscard]] juce::File getDatabaseFile() const;
 
     int pruneMissingFiles(const std::function<bool()>& shouldStop = {});
+    int storeCustomGains(const std::vector<CustomGainUpdate>& updates);
 
     bool getAnalysis(const juce::File& file, AudioAnalysisRecord& record);
     bool getCustomGain(const juce::File& file, std::int64_t fileSize, std::int64_t modifiedTimeMs, float& customGainDb);

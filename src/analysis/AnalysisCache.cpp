@@ -541,10 +541,28 @@ bool AnalysisCache::getCustomGain(
 /// A file without a cached row, such as one still waiting for its analysis, keeps no gain in the cache.
 bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGainDb, const bool hasCustomGain)
 {
+    return storeCustomGains({{.file = file, .customGainDb = customGainDb, .hasCustomGain = hasCustomGain}}) > 0;
+}
+
+/// Updates the user-controlled gain fields of several files in one transaction with one prepared statement,
+/// so moving the gain slider with many rows selected costs one commit per slider step instead of one per file.
+/// Either every update is stored or none is.
+/// Returns the number of cached rows that were updated.
+/// A file without a cached row, such as one still waiting for its analysis, keeps no gain in the cache.
+int AnalysisCache::storeCustomGains(const std::vector<CustomGainUpdate>& updates)
+{
+    if (updates.empty()) {
+        return 0;
+    }
+
     const juce::ScopedLock lock(mutex);
 
     if (database == nullptr && !openUnlocked()) {
-        return false;
+        return 0;
+    }
+
+    if (!execute("BEGIN IMMEDIATE;")) {
+        return 0;
     }
 
     constexpr auto sql = R"SQL(
@@ -555,18 +573,37 @@ bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGa
 
     sqlite3_stmt* statement = nullptr;
     if (!prepare(sql, statement)) {
-        return false;
+        static_cast<void>(execute("ROLLBACK;"));
+        return 0;
     }
 
-    sqlite3_bind_double(statement, 1, static_cast<double>(customGainDb));
-    sqlite3_bind_int(statement, 2, hasCustomGain ? 1 : 0);
-    sqlite3_bind_int64(statement, 3, juce::Time::getCurrentTime().toMilliseconds());
-    bindText(statement, 4, normalizedPath(file));
+    const auto updatedAtMs = juce::Time::getCurrentTime().toMilliseconds();
+    int updatedRows = 0;
+    bool completed = true;
 
-    const auto completed = stepToCompletion(statement);
-    const auto updatedRows = sqlite3_changes(database);
+    for (const auto& [file, customGainDb, hasCustomGain] : updates) {
+        sqlite3_reset(statement);
+        sqlite3_bind_double(statement, 1, static_cast<double>(customGainDb));
+        sqlite3_bind_int(statement, 2, hasCustomGain ? 1 : 0);
+        sqlite3_bind_int64(statement, 3, updatedAtMs);
+        bindText(statement, 4, normalizedPath(file));
+
+        if (!stepToCompletion(statement)) {
+            completed = false;
+            break;
+        }
+
+        updatedRows += sqlite3_changes(database);
+    }
+
     sqlite3_finalize(statement);
-    return completed && updatedRows > 0;
+
+    if (completed && execute("COMMIT;")) {
+        return updatedRows;
+    }
+
+    static_cast<void>(execute("ROLLBACK;"));
+    return 0;
 }
 
 /// Removes the analysis, waveform and all independently cached tag kinds for a file, atomically.

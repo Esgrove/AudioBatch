@@ -162,6 +162,32 @@ public:
             expect(!cache.storeCustomGain(waitingFile, 1.0f, true));
         }
 
+        beginTest("Custom gains of several files are stored together, skipping files without a cached row");
+        {
+            const auto first = directory.copyFixture("sine_stereo_44100_16.wav", "batch_first.wav");
+            const auto second = directory.copyFixture("sine_stereo_44100_16.wav", "batch_second.wav");
+            const auto uncached = directory.copyFixture("sine_stereo_44100_16.wav", "batch_uncached.wav");
+            expect(cache.storeAnalysis(analyzeFile(first)));
+            expect(cache.storeAnalysis(analyzeFile(second)));
+
+            expectEquals(cache.storeCustomGains({}), 0);
+            expectEquals(
+                cache.storeCustomGains({
+                    {.file = first, .customGainDb = 1.5f, .hasCustomGain = true},
+                    {.file = uncached, .customGainDb = 2.0f, .hasCustomGain = true},
+                    {.file = second, .customGainDb = 0.0f, .hasCustomGain = false},
+                }),
+                2
+            );
+
+            AudioAnalysisRecord cached;
+            expect(cache.getAnalysis(first, cached));
+            expect(cached.hasCustomGain);
+            expectEquals(cached.customGainDb, 1.5f);
+            expect(cache.getAnalysis(second, cached));
+            expect(!cached.hasCustomGain);
+        }
+
         beginTest("A custom gain is cleared when the file changes");
         {
             const auto gainFile = directory.getChildFile("gain.wav");
