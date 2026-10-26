@@ -156,6 +156,21 @@ require_path() {
     fi
 }
 
+# Ninja is a single configuration generator, so the build type is fixed when the build directory is configured.
+# Another tool configuring the same directory, such as an IDE, can leave it with a different or empty build type,
+# which changes both the compiler flags and the folder the artefacts are written to.
+ensure_cached_build_type() {
+    if [ "$USE_NINJA" != true ]; then
+        return
+    fi
+    local cached_build_type
+    cached_build_type=$(sed -n 's/^CMAKE_BUILD_TYPE:[A-Z]*=//p' "$CMAKE_BUILD_DIR/CMakeCache.txt")
+    if [ "$cached_build_type" != "$BUILD_TYPE" ]; then
+        print_yellow "Build directory has build type '$cached_build_type', reconfiguring it for $BUILD_TYPE..."
+        cmake -B "$CMAKE_BUILD_DIR" -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+    fi
+}
+
 build_app() {
     print_magenta "Building $APP_NAME..."
     if [ "$BASH_PLATFORM" = "mac" ]; then
@@ -307,6 +322,7 @@ if [ "$REUSE_BUILD_DIR" = true ]; then
         print_error_and_exit "Tests are disabled in this build directory. Run with --test without --reuse to enable them."
     fi
     print_magenta "Reusing existing build directory: $CMAKE_BUILD_DIR"
+    ensure_cached_build_type
 else
     check_juce_submodule
     export_cmake_project
