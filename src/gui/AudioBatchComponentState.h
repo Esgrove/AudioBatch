@@ -1,6 +1,7 @@
-/// Preview preferences and progress state that AudioBatchComponent keeps for its background operations.
-/// Declares AnalysisRunState for the current analysis run, AnalysisResultMessage for results waiting to be merged,
-/// and OperationProgress for the normalization and plugin processing passes.
+/// Preview preferences and the state of the background work that AudioBatchComponent runs.
+/// Declares BackgroundWork, the variant of the idle state, an analysis run, and a normalization or processing pass,
+/// which never run at the same time.
+/// Also declares AnalysisResultMessage for results waiting to be merged.
 
 #pragma once
 
@@ -9,6 +10,7 @@
 #include <JuceHeader.h>
 
 #include <set>
+#include <variant>
 
 namespace audiobatch
 {
@@ -32,8 +34,12 @@ struct AudioPreviewPreferences {
     double loudnessGraphMaximum {defaultLoudnessGraphMaximum};
 };
 
+/// No analysis, normalization, or plugin processing is running.
+struct IdleWork {};
+
 /// Progress and inputs of one analysis run, from its start until its completion arrives.
-struct AnalysisRunState {
+/// The run scans the input folders until its plan arrives.
+struct AnalyzingWork {
     /// Options of the run.
     /// A run that keeps the results and replaces a running one carries these inputs over.
     AudioAnalysisOptions options;
@@ -54,10 +60,6 @@ struct AnalysisRunState {
     /// Results received so far, out of the expected count, which only drive the status text.
     int completed {0};
     int expected {0};
-
-    /// True from the start of the run until its completion arrives.
-    /// Kept separate from the progress counters.
-    bool running {false};
 
     /// True once the run's plan arrived, so the status shows progress instead of the folder scan.
     bool planReceived {false};
@@ -82,6 +84,14 @@ struct OperationProgress {
 
     int completed {0};
     int expected {0};
-    bool inProgress {false};
 };
+
+/// A normalization pass, from its start until its completion arrives.
+struct NormalizingWork : OperationProgress {};
+
+/// A plugin processing pass, from its start until its completion arrives.
+struct ProcessingWork : OperationProgress {};
+
+/// The background work of the main view, which runs one analysis, normalization, or processing pass at a time.
+using BackgroundWork = std::variant<IdleWork, AnalyzingWork, NormalizingWork, ProcessingWork>;
 }  // namespace audiobatch

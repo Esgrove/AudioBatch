@@ -18,6 +18,7 @@
 #include <array>
 #include <optional>
 #include <utility>
+#include <variant>
 
 namespace audiobatch
 {
@@ -231,7 +232,7 @@ void AudioBatchComponent::connectProgressCallbacks()
 
     analysisCoordinator.setProgressCallback([safeThis](const juce::File& file, const float progress, const int runId) {
         juce::MessageManager::callAsync([safeThis, file, progress, runId] {
-            if (safeThis != nullptr && runId == safeThis->analysisRun.runId) {
+            if (safeThis != nullptr && safeThis->isCurrentAnalysisRun(runId)) {
                 safeThis->fileActivity.setProgress(file.getFullPathName(), progress);
             }
         });
@@ -300,7 +301,7 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
     analysisCoordinator.setCompletionCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisComplete));
     analysisCoordinator.setStartingCallback([safeThis](const juce::File& file, const int runId) {
         juce::MessageManager::callAsync([safeThis, file, runId] {
-            if (safeThis != nullptr && runId == safeThis->analysisRun.runId) {
+            if (safeThis != nullptr && safeThis->isCurrentAnalysisRun(runId)) {
                 safeThis->fileActivity.setActive(file.getFullPathName(), FileActivity::analyzing);
             }
         });
@@ -316,7 +317,9 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
     pluginCoordinator.setStartErrorCallback([safeThis](const juce::String& errorMessage) {
         juce::MessageManager::callAsync([safeThis, errorMessage] {
             if (safeThis != nullptr) {
-                safeThis->processingProgress.inProgress = false;
+                if (std::holds_alternative<ProcessingWork>(safeThis->backgroundWork)) {
+                    safeThis->backgroundWork = IdleWork {};
+                }
                 safeThis->statusLabel.setText(errorMessage, juce::dontSendNotification);
                 safeThis->showPluginProcessingWarning(errorMessage);
             }
@@ -674,7 +677,10 @@ void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArra
 void AudioBatchComponent::updateProcessButtonState()
 {
     const bool hasChain = pluginChain->getNumEnabledValidSlots() > 0;
-    processButton.setEnabled(hasChain && hasAnyRecords() && !processingProgress.inProgress && !isAnalysisInProgress());
+    processButton.setEnabled(
+        hasChain && hasAnyRecords() && !std::holds_alternative<ProcessingWork>(backgroundWork)
+        && !isAnalysisInProgress()
+    );
 }
 
 /// Shows the most relevant progress or summary text for the current background activity.
@@ -682,28 +688,31 @@ void AudioBatchComponent::updateStatusLabel()
 {
     updateProgressIndicators();
 
-    if (processingProgress.inProgress && processingProgress.expected > 0) {
-        statusLabel.setText(
-            utils::format("Processing {}/{}", processingProgress.completed, processingProgress.expected),
-            juce::dontSendNotification
-        );
-        return;
-    }
+    // A pass whose file count is not known yet shows the summary of the list instead.
+    const auto progressText = std::visit(
+        Overloaded {
+            [](const IdleWork& /*idle*/) { return juce::String(); },
+            [](const AnalyzingWork& analyzing) {
+                return analyzing.planReceived
+                    ? utils::format("Analyzing {}/{}", analyzing.completed, analyzing.expected)
+                    : juce::String("Scanning for audio files...");
+            },
+            [](const NormalizingWork& normalizing) {
+                return normalizing.expected > 0
+                    ? utils::format("Normalizing {}/{}", normalizing.completed, normalizing.expected)
+                    : juce::String();
+            },
+            [](const ProcessingWork& processing) {
+                return processing.expected > 0
+                    ? utils::format("Processing {}/{}", processing.completed, processing.expected)
+                    : juce::String();
+            },
+        },
+        backgroundWork
+    );
 
-    if (normalizeProgress.inProgress && normalizeProgress.expected > 0) {
-        statusLabel.setText(
-            utils::format("Normalizing {}/{}", normalizeProgress.completed, normalizeProgress.expected),
-            juce::dontSendNotification
-        );
-        return;
-    }
-
-    if (analysisRun.running) {
-        statusLabel.setText(
-            analysisRun.planReceived ? utils::format("Analyzing {}/{}", analysisRun.completed, analysisRun.expected)
-                                     : juce::String("Scanning for audio files..."),
-            juce::dontSendNotification
-        );
+    if (progressText.isNotEmpty()) {
+        statusLabel.setText(progressText, juce::dontSendNotification);
         return;
     }
 
@@ -735,18 +744,26 @@ void AudioBatchComponent::updateProgressIndicators()
         return juce::jlimit(0.0f, 1.0f, done / static_cast<float>(expected));
     };
 
-    if (processingProgress.inProgress) {
-        activityName = "Processing";
-        fraction = getRunFraction(processingProgress.completed, processingProgress.expected);
-    } else if (normalizeProgress.inProgress) {
-        activityName = "Normalizing";
-        fraction = getRunFraction(normalizeProgress.completed, normalizeProgress.expected);
-    } else if (analysisRun.running && analysisRun.planReceived) {
-        activityName = "Analyzing";
-        fraction = getRunFraction(analysisRun.completed, analysisRun.expected);
-    } else if (analysisRun.running) {
-        activityName = "Scanning";
-    }
+    std::visit(
+        Overloaded {
+            [](const IdleWork& /*idle*/) {},
+            [&](const AnalyzingWork& analyzing) {
+                activityName = analyzing.planReceived ? "Analyzing" : "Scanning";
+                if (analyzing.planReceived) {
+                    fraction = getRunFraction(analyzing.completed, analyzing.expected);
+                }
+            },
+            [&](const NormalizingWork& normalizing) {
+                activityName = "Normalizing";
+                fraction = getRunFraction(normalizing.completed, normalizing.expected);
+            },
+            [&](const ProcessingWork& processing) {
+                activityName = "Processing";
+                fraction = getRunFraction(processing.completed, processing.expected);
+            },
+        },
+        backgroundWork
+    );
 
     /// Converts a fraction to the stored tenths of a percent.
     constexpr float permillePerUnit = 1000.0f;
