@@ -334,8 +334,6 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   JUCE module sources do not get it,
   and the JUCE headers are included as system headers so their warnings are not reported.
   Several of those flags are Clang-specific, so GCC is not a supported compiler.
-  `src/gui/Main.cpp` additionally gets `-Wno-cast-qual`,
-  because the `START_JUCE_APPLICATION` macro casts away `const` in code the project cannot change.
 
 ## Testing
 

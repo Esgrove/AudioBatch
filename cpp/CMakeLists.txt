@@ -798,16 +798,6 @@ foreach(target IN ITEMS AudioBatch AudioBatchCli AudioBatchTests)
     endif()
 endforeach()
 
-# START_JUCE_APPLICATION expands to a main function that casts `char**` to `const char**`,
-# which -Wcast-qual rejects and project code cannot change.
-if(NOT MSVC)
-    set_property(
-        SOURCE "${CMAKE_SOURCE_DIR}/src/gui/Main.cpp"
-        APPEND
-        PROPERTY COMPILE_OPTIONS -Wno-cast-qual
-    )
-endif()
-
 juce_add_binary_data(
     Assets
     NAMESPACE BinaryData
