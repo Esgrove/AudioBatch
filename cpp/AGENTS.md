@@ -335,6 +335,7 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   `ctest --test-dir cmake-build-mac-fuzz` runs each harness once over its corpus.
   Running a harness with a scratch corpus directory and `-max_total_time=60` fuzzes it,
   and an input that found a new crash belongs in its corpus once the bug is fixed.
+  CI replays the corpus and fuzzes each harness for a minute, and uploads any crashing input as an artifact.
 - If you need Ninja and `compile_commands.json` on Windows,
   use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
 - Both `AudioBatch` and `AudioBatchCli` build with warnings as errors, so all warnings must be resolved.

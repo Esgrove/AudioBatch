@@ -107,6 +107,25 @@ jobs:
             exit 1
           fi
 
+      # Reads, lists, caches, and writes a file whose name and folder are outside ASCII,
+      # which on Windows depends on the UTF-16 command line and wide file APIs.
+      - name: CLI smoke test with non-ASCII paths
+        run: |
+          CLI="$PWD/audiobatch"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            CLI="$PWD/audiobatch.exe"
+          fi
+          UNICODE_DIR="$RUNNER_TEMP/Ääni ja kuva"
+          UNICODE_FILE="$UNICODE_DIR/Łódź テスト.wav"
+          mkdir -p "$UNICODE_DIR"
+          cp ../fixtures/sine_stereo_44100_16.wav "$UNICODE_FILE"
+          "$CLI" --output csv "$UNICODE_FILE" | tee unicode-output.txt
+          grep -- "Łódź テスト.wav" unicode-output.txt
+          grep -- "-6.02" unicode-output.txt
+          "$CLI" --output csv "$UNICODE_DIR" | grep -- "Łódź テスト.wav"
+          "$CLI" --normalize "$UNICODE_FILE"
+          ls "$UNICODE_DIR"/Łódź\ テスト.aif*
+
   lint:
     # Use macOS with the latest LLVM from Homebrew, since Ubuntu apt has an older clang-tidy
     runs-on: macos-latest
@@ -202,3 +221,45 @@ jobs:
           else
             ./sanitize.sh
           fi
+
+  fuzz:
+    # Replays the committed corpus through each libFuzzer harness, then fuzzes each one briefly.
+    # The macos-fuzz preset uses Homebrew LLVM, since Apple Clang does not ship libFuzzer.
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install LLVM and Ninja
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: brew install llvm ninja
+
+      - name: Build harnesses
+        run: |
+          cmake --preset macos-fuzz
+          cmake --build --preset macos-fuzz
+
+      - name: Replay corpus
+        run: ctest --test-dir cmake-build-mac-fuzz --output-on-failure
+
+      # New inputs go to a scratch corpus, so the committed corpus stays as it is.
+      - name: Fuzz
+        run: |
+          mkdir -p fuzz-artifacts
+          for fuzzer in SeratoTagFuzzer CliArgumentsFuzzer; do
+            mkdir -p "fuzz-scratch/$fuzzer"
+            "cmake-build-mac-fuzz/${fuzzer}_artefacts/RelWithDebInfo/$fuzzer" \
+              -max_total_time=60 -artifact_prefix="fuzz-artifacts/$fuzzer-" \
+              "fuzz-scratch/$fuzzer" "tests/fuzz/corpus/$fuzzer"
+          done
+
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v5
+        with:
+          name: fuzz-artifacts
+          path: cpp/fuzz-artifacts
+          if-no-files-found: ignore
