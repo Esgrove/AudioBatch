@@ -171,6 +171,9 @@ Tests:
   `../fixtures/generate.sh` regenerates them with ffmpeg.
   The icons and fonts live in `../assets/` at the repository root for the same reason.
   Tests that modify files work on copies in a temporary directory.
+- `tests/fuzz/` holds the libFuzzer harnesses for the Serato tag parsers and the CLI argument parser,
+  one executable per file, with a committed seed corpus per harness in `tests/fuzz/corpus/`.
+  Only the `macos-fuzz` preset builds them, because they need the libFuzzer runtime of Homebrew LLVM.
 
 ## Dependencies
 
@@ -325,6 +328,10 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
 - To run the tests under AddressSanitizer and UndefinedBehaviorSanitizer, run `./sanitize.sh`.
   It configures and builds the `macos-asan` preset in `cmake-build-mac-asan`, then runs ctest.
   The `AUDIOBATCH_SANITIZE` CMake option takes a comma separated list such as `address,undefined`.
+- To fuzz, run `cmake --preset macos-fuzz` and `cmake --build --preset macos-fuzz`.
+  `ctest --test-dir cmake-build-mac-fuzz` runs each harness once over its corpus.
+  Running a harness with a scratch corpus directory and `-max_total_time=60` fuzzes it,
+  and an input that found a new crash belongs in its corpus once the bug is fixed.
 - If you need Ninja and `compile_commands.json` on Windows,
   use `cmake --preset windows-ninja-debug` then `cmake --build --preset windows-ninja-debug`.
 - Both `AudioBatch` and `AudioBatchCli` build with warnings as errors, so all warnings must be resolved.

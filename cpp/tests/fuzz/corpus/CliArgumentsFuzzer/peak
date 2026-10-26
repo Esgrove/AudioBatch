@@ -1,0 +1,9 @@
+-n
+--peak
+-1.0
+-s
+name
+-o
+csv
+a.wav
+b.aif

@@ -1,4 +1,5 @@
-exclude: ^(.idea|.vscode)
+# The fuzz corpus holds exact input bytes, which the whitespace and line ending fixers must not change.
+exclude: ^(.idea|.vscode|cpp/tests/fuzz/corpus)
 
 # Run with prek (https://prek.j178.dev), a fast drop-in replacement for pre-commit.
 # Hooks with the same priority run concurrently, lower priority values run first.

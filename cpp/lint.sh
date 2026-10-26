@@ -126,11 +126,18 @@ while IFS= read -r source; do
 done < <(find "$REPO/src" "$REPO/tests" -type f -name "*.cpp" | sort)
 
 # Do not let clang-tidy infer flags from an unrelated source when the database is stale.
+# The fuzz harnesses are only in the database of the macos-fuzz build, so they are skipped elsewhere.
+LINTED_SOURCES=()
 for source in "${SOURCES[@]}"; do
-    if ! grep -Fq "\"file\": \"$source\"" "$BUILD_DIR/compile_commands.json"; then
+    if grep -Fq "\"file\": \"$source\"" "$BUILD_DIR/compile_commands.json"; then
+        LINTED_SOURCES+=("$source")
+    elif [[ "$source" == "$REPO/tests/fuzz/"* ]]; then
+        print_yellow "Skipping $source, which only the macos-fuzz preset builds"
+    else
         print_error_and_exit "Compile database has no entry for $source. Reconfigure and build CMake first, for example: cmake --preset macos-debug && cmake --build --preset macos-debug"
     fi
 done
+SOURCES=("${LINTED_SOURCES[@]}")
 
 print_magenta "Running clang-tidy on ${#SOURCES[@]} source files..."
 
