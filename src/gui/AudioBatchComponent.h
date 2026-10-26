@@ -16,10 +16,11 @@
 #include "gui/components/StatusBar.h"
 #include "gui/FileActivityTracker.h"
 #include "gui/GuiLayout.h"
+#include "gui/LiveChain.h"
 #include "gui/PreviewController.h"
 #include "gui/ResultsModel.h"
 #include "gui/ResultsSorting.h"
-#include "plugins/PluginChain.h"
+#include "plugins/PluginLibrary.h"
 #include "plugins/PluginProcessing.h"
 
 #include <JuceHeader.h>
@@ -84,9 +85,9 @@ public:
     [[nodiscard]] bool isPlayFromFirstCuePointEnabled() const noexcept;
 
     /// Returns the plugin chain, which the constructor creates and the destructor destroys.
-    [[nodiscard]] PluginChain& getPluginChain() const noexcept
+    [[nodiscard]] LiveChain& getLiveChain() const noexcept
     {
-        return *pluginChain;
+        return *liveChain;
     }
 
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
@@ -222,7 +223,10 @@ private:
     /// and it is declared after the cache and the player it uses, so it is destroyed before them.
     PreviewController preview {analysisCache, previewPlayer, createSeratoPreviewCompletion()};
 
-    std::unique_ptr<PluginChain> pluginChain;
+    /// The known plugins, created in the constructor once the settings storage is set up.
+    /// Declared before the chain, which creates its processors through it.
+    std::unique_ptr<PluginLibrary> pluginLibrary;
+    std::unique_ptr<LiveChain> liveChain;
 
     /// The waveform, metrics, and controls below the results table.
     /// Declared after the player and the settings it refers to.

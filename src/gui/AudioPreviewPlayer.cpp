@@ -4,7 +4,7 @@
 
 #include "gui/AudioPreviewPlayer.h"
 
-#include "plugins/PluginChain.h"
+#include "gui/LiveChain.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/Log.h"
 
@@ -98,7 +98,7 @@ AudioPreviewPlayer::~AudioPreviewPlayer()
     cancelPendingUpdate();
     deviceManager.removeAudioCallback(this);
     release();
-    pluginChain = nullptr;
+    liveChain = nullptr;
     readAheadThread.stopThread(readAheadThreadStopTimeoutMilliseconds);
 }
 
@@ -263,10 +263,10 @@ void AudioPreviewPlayer::release()
 }
 
 /// Attaches or detaches the slot owner while retaining safe processor lifetimes.
-void AudioPreviewPlayer::setPluginChain(PluginChain* chain)
+void AudioPreviewPlayer::setLiveChain(LiveChain* chain)
 {
     const juce::ScopedLock lock(renderingLock);
-    pluginChain = chain;
+    liveChain = chain;
     const auto refreshed = refreshPluginChain();
     juce::ignoreUnused(refreshed);
 }
@@ -279,10 +279,10 @@ bool AudioPreviewPlayer::refreshPluginChain()
     auto resume = previewSource.isPlaying();
     previewSource.stop();
     PreviewChain chain;
-    if (pluginChain != nullptr) {
+    if (liveChain != nullptr) {
         const auto channels
             = readerSource != nullptr ? static_cast<int>(readerSource->getAudioFormatReader()->numChannels) : 2;
-        chain = pluginChain->preparePreview(sampleRate, blockSize, channels, false, pluginPreviewEnabled);
+        chain = liveChain->preparePreview(sampleRate, blockSize, channels, false, pluginPreviewEnabled);
     }
     const auto error = pluginPreviewEnabled ? chain.preparation.errorMessage : juce::String();
     if (error.isNotEmpty()) {
@@ -593,11 +593,11 @@ void AudioPreviewPlayer::audioDeviceIOCallbackWithContext(
 /// because the audio callback outputs silence for every block in which the lock is busy.
 void AudioPreviewPlayer::updatePlaybackStatus()
 {
-    if (pluginChain != nullptr) {
-        pluginChain->updatePreviewStatus();
+    if (liveChain != nullptr) {
+        liveChain->updatePreviewStatus();
         if (pluginPreviewEnabled) {
             // The plugins are only destroyed on the message thread, so querying them here needs no lock.
-            if (const auto tailSamples = pluginChain->getPreviewTailSamples(); tailSamples != appliedTailSamples) {
+            if (const auto tailSamples = liveChain->getPreviewTailSamples(); tailSamples != appliedTailSamples) {
                 const juce::ScopedLock lock(renderingLock);
                 previewSource.setTailSamples(tailSamples);
                 appliedTailSamples = tailSamples;

@@ -7,7 +7,8 @@
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/StatusBar.h"
 #include "gui/GuiLayout.h"
-#include "plugins/PluginChain.h"
+#include "gui/LiveChain.h"
+#include "plugins/PluginLibrary.h"
 #include "plugins/PluginPreviewSource.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
@@ -26,6 +27,38 @@ namespace
 {
 constexpr double previewTestRate = 8000.0;
 constexpr int previewTestBlockSize = 64;
+
+/// Stores the application settings of a test in the given temporary directory, so the user's settings stay untouched.
+void useTemporarySettings(juce::ApplicationProperties& properties, const TemporaryDirectory& temporary)
+{
+    juce::PropertiesFile::Options options;
+    options.applicationName = "PreviewChainTests";
+    options.filenameSuffix = ".xml";
+    options.folderName = temporary.getChildFile("properties").getFullPathName();
+    options.storageFormat = juce::PropertiesFile::storeAsXML;
+    properties.setStorageParameters(options);
+}
+
+/// Stores a chain of disabled slots for plugins that are not installed, one slot per name, each with the given state.
+void storeUnavailableChain(
+    juce::PropertiesFile& settings,
+    const juce::StringArray& pluginNames,
+    const juce::MemoryBlock& savedState
+)
+{
+    juce::XmlElement chainXml("PLUGIN_CHAIN");
+    for (const auto& name : pluginNames) {
+        juce::PluginDescription description;
+        description.name = name;
+        description.pluginFormatName = "Unavailable test format";
+        description.fileOrIdentifier = "not-installed";
+        auto* slotXml = chainXml.createNewChildElement("SLOT");
+        slotXml->setAttribute("enabled", 0);
+        slotXml->setAttribute("state", juce::Base64::toBase64(savedState.getData(), savedState.getSize()));
+        slotXml->addChildElement(description.createXml().release());
+    }
+    settings.setValue("pluginChain", chainXml.toString());
+}
 
 /// Editable behavior shared by the test processor and its simulated editor.
 struct PreviewTestSettings {
@@ -227,6 +260,7 @@ public:
         testLoudnessAxisIntervals();
         testLatencyFormattingAndTailLimit();
         testUnavailableSlotLatency();
+        testSlotIds();
     }
 
 private:
@@ -906,38 +940,27 @@ private:
     {
         beginTest("Unavailable enabled slots cannot masquerade as zero latency or lose their saved state");
         const TemporaryDirectory temporary;
-        juce::PropertiesFile::Options options;
-        options.applicationName = "PreviewChainTests";
-        options.filenameSuffix = ".xml";
-        options.folderName = temporary.getChildFile("properties").getFullPathName();
-        options.storageFormat = juce::PropertiesFile::storeAsXML;
         juce::ApplicationProperties properties;
-        properties.setStorageParameters(options);
+        useTemporarySettings(properties, temporary);
         auto* settings = properties.getUserSettings();
         expect(settings->getFile().isAChildOf(temporary.getChildFile("properties")));
-        juce::PluginDescription description;
-        description.name = "Unavailable test effect";
-        description.pluginFormatName = "Unavailable test format";
-        description.fileOrIdentifier = "not-installed";
-        juce::XmlElement chainXml("PLUGIN_CHAIN");
-        auto* slotXml = chainXml.createNewChildElement("SLOT");
-        slotXml->setAttribute("enabled", 0);
         const juce::MemoryBlock savedState("saved plugin state", 18);
-        slotXml->setAttribute("state", juce::Base64::toBase64(savedState.getData(), savedState.getSize()));
-        slotXml->addChildElement(description.createXml().release());
-        settings->setValue("pluginChain", chainXml.toString());
+        storeUnavailableChain(*settings, {"Unavailable test effect"}, savedState);
         juce::CriticalSection renderingLock;
         juce::AudioDeviceManager previewDeviceManager;
-        PluginChain chain(properties, renderingLock, previewDeviceManager);
+        PluginLibrary library(properties);
+        LiveChain chain(library, properties, renderingLock, previewDeviceManager);
         expect(!chain.hasOpenPreviewDevice());
         expectEquals(chain.getNumSlots(), 1);
-        expect(!chain.getSlotLatency(0).has_value());
+        const auto slotIds = chain.getSlotIds();
+        const auto slotId = slotIds.empty() ? PluginSlotId {} : slotIds.front();
+        expect(!chain.getSlotLatency(slotId).has_value());
         expect(chain.getTotalLatency().has_value());
         expectEquals(chain.getTotalLatency().value_or(-1), juce::int64 {0});
         const auto disabled = chain.preparePreview(44'100.0, 128, 1, false, false);
         expect(disabled.instances.empty());
         expectWithinAbsoluteError(chain.getPreviewSampleRate(), 44'100.0, 0.001);
-        chain.setSlotEnabled(0, true);
+        chain.setSlotEnabled(slotId, true);
         expect(!chain.getTotalLatency().has_value());
         const auto unavailable = chain.preparePreview(44'100.0, 128, 1);
         expect(unavailable.preparation.errorMessage.isNotEmpty());
@@ -951,6 +974,46 @@ private:
         chain.clearChain();
         expectEquals(chain.getNumSlots(), 0);
         expectEquals(chain.getTotalLatency().value_or(-1), juce::int64 {0});
+    }
+
+    /// Checks that slot ids follow their slots when the chain is reordered, and stop matching once a slot is removed.
+    void testSlotIds()
+    {
+        beginTest("Slot ids follow their slots through moves and removals");
+        const TemporaryDirectory temporary;
+        juce::ApplicationProperties properties;
+        useTemporarySettings(properties, temporary);
+        storeUnavailableChain(*properties.getUserSettings(), {"First", "Second", "Third"}, {});
+        juce::CriticalSection renderingLock;
+        juce::AudioDeviceManager previewDeviceManager;
+        PluginLibrary library(properties);
+        LiveChain chain(library, properties, renderingLock, previewDeviceManager);
+
+        const auto slotIds = chain.getSlotIds();
+        expectEquals(static_cast<int>(slotIds.size()), 3);
+        if (slotIds.size() != 3) {
+            return;
+        }
+        expect(slotIds[0] != slotIds[1] && slotIds[1] != slotIds[2] && slotIds[0] != slotIds[2]);
+
+        chain.moveSlot(slotIds[0], 2);
+        expect(chain.getSlotIds() == std::vector {slotIds[1], slotIds[2], slotIds[0]});
+        expectEquals(chain.getSlotIndex(slotIds[0]).value_or(-1), 2);
+        expectEquals(chain.getSlotDescription(slotIds[0]).name, juce::String("First"));
+
+        chain.removeSlot(slotIds[2]);
+        expect(!chain.getSlotIndex(slotIds[2]).has_value());
+        expect(chain.getSlotDescription(slotIds[2]).name.isEmpty());
+        expect(chain.getSlotIds() == std::vector {slotIds[1], slotIds[0]});
+
+        chain.setSlotEnabled(slotIds[0], true);
+        expect(chain.isSlotEnabled(slotIds[0]));
+        expect(!chain.isSlotEnabled(slotIds[1]));
+
+        // Acting on a removed slot changes nothing.
+        chain.moveSlot(slotIds[2], 0);
+        chain.removeSlot(slotIds[2]);
+        expect(chain.getSlotIds() == std::vector {slotIds[1], slotIds[0]});
     }
 };
 

@@ -1,5 +1,5 @@
 /// Implementation of PluginChainEditor and its PluginChainSlotRow component.
-/// Covers building the rows and wiring their controls to the owning PluginChain,
+/// Covers building the rows and wiring their controls to the slots of the owning LiveChain,
 /// laying out the hint label and the scrolling row list with its add button,
 /// drag-to-reorder gestures with a live drop-position preview,
 /// and deferred row rebuilds when the chain changes.
@@ -15,28 +15,30 @@ namespace audiobatch
 {
 /// Builds the row for the given slot and wires its controls to the owning chain.
 PluginChainSlotRow::PluginChainSlotRow(
-    PluginChain& ownerChain,
-    const int slotIndex,
+    LiveChain& ownerChain,
+    const PluginSlotId rowSlotId,
+    const int rowChainPosition,
     std::function<int(int containerY)> dropIndexCallback,
     std::function<void(PluginChainSlotRow& row, int targetIndex)> draggedCallback,
     std::function<void(PluginChainSlotRow& row, int targetIndex)> droppedCallback
 ) :
-    pluginChain(ownerChain),
-    index(slotIndex),
+    liveChain(ownerChain),
+    slotId(rowSlotId),
+    chainPosition(rowChainPosition),
     getDropIndex(std::move(dropIndexCallback)),
     onDragged(std::move(draggedCallback)),
     onDropped(std::move(droppedCallback))
 {
-    const auto description = pluginChain.getSlotDescription(index);
-    const bool enabled = pluginChain.isSlotEnabled(index);
+    const auto description = liveChain.getSlotDescription(slotId);
+    const bool enabled = liveChain.isSlotEnabled(slotId);
 
     enabledToggle.setToggleState(enabled, juce::dontSendNotification);
     enabledToggle.setTooltip("Enable or disable this plugin in the chain.");
-    enabledToggle.onClick = [this] { pluginChain.setSlotEnabled(index, enabledToggle.getToggleState()); };
+    enabledToggle.onClick = [this] { liveChain.setSlotEnabled(slotId, enabledToggle.getToggleState()); };
     addAndMakeVisible(enabledToggle);
 
     nameLabel.setText(
-        utils::format("{}. {}", index + 1, formatPluginDescription(description)), juce::dontSendNotification
+        utils::format("{}. {}", chainPosition + 1, formatPluginDescription(description)), juce::dontSendNotification
     );
     nameLabel.setJustificationType(juce::Justification::centredLeft);
     nameLabel.setColour(
@@ -51,22 +53,22 @@ PluginChainSlotRow::PluginChainSlotRow(
     updateLatency();
 
     editButton.setTooltip("Open this plugin's editor window.");
-    editButton.onClick = [this] { pluginChain.openEditorForSlot(index); };
+    editButton.onClick = [this] { liveChain.openEditorForSlot(slotId); };
     addAndMakeVisible(editButton);
 
     upButton.setButtonText(juce::String::fromUTF8("\xE2\x86\x91"));
     upButton.setTooltip("Move this plugin earlier in the chain.");
-    upButton.onClick = [this] { pluginChain.moveSlot(index, index - 1); };
+    upButton.onClick = [this] { moveBy(-1); };
     addAndMakeVisible(upButton);
 
     downButton.setButtonText(juce::String::fromUTF8("\xE2\x86\x93"));
     downButton.setTooltip("Move this plugin later in the chain.");
-    downButton.onClick = [this] { pluginChain.moveSlot(index, index + 1); };
+    downButton.onClick = [this] { moveBy(1); };
     addAndMakeVisible(downButton);
 
     removeButton.setTooltip("Remove this plugin from the chain.");
     removeButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMediumDark());
-    removeButton.onClick = [this] { pluginChain.removeSlot(index); };
+    removeButton.onClick = [this] { liveChain.removeSlot(slotId); };
     addAndMakeVisible(removeButton);
 }
 
@@ -90,13 +92,12 @@ void PluginChainSlotRow::resized()
 /// Refreshes only measured latency text, leaving row controls and drag state intact.
 void PluginChainSlotRow::updateLatency()
 {
-    const auto latency = pluginChain.getSlotLatency(index);
+    const auto latency = liveChain.getSlotLatency(slotId);
     latencyLabel.setText(
-        latency
-            ? utils::format(
-                  "Latency: {}", plugin_processing::formatPluginLatency(*latency, pluginChain.getPreviewSampleRate())
-              )
-            : juce::String("Latency: unavailable"),
+        latency ? utils::format(
+                      "Latency: {}", plugin_processing::formatPluginLatency(*latency, liveChain.getPreviewSampleRate())
+                  )
+                : juce::String("Latency: unavailable"),
         juce::dontSendNotification
     );
 }
@@ -151,13 +152,22 @@ void PluginChainSlotRow::mouseUp(const juce::MouseEvent& event)
 /// Updates the enabled state of the reorder buttons for the row's position in the chain.
 void PluginChainSlotRow::updateMoveButtonStates(const int numRows)
 {
-    upButton.setEnabled(index > 0);
-    downButton.setEnabled(index < numRows - 1);
+    upButton.setEnabled(chainPosition > 0);
+    downButton.setEnabled(chainPosition < numRows - 1);
+}
+
+/// Moves the slot of this row earlier or later in the chain by the given number of positions.
+/// Starts from the current position of the slot, which differs from the row's position until the rows are rebuilt.
+void PluginChainSlotRow::moveBy(const int offset)
+{
+    if (const auto current = liveChain.getSlotIndex(slotId)) {
+        liveChain.moveSlot(slotId, *current + offset);
+    }
 }
 
 /// Builds the initial rows for the given chain
 /// and registers as a change listener so the rows follow external chain changes.
-PluginChainEditor::PluginChainEditor(PluginChain& chain) : pluginChain(chain)
+PluginChainEditor::PluginChainEditor(LiveChain& chain) : liveChain(chain)
 {
     addButton.setTooltip("Add a plugin to the end of the chain.");
     addButton.onClick = [this] { showAddPluginMenu(); };
@@ -175,14 +185,14 @@ PluginChainEditor::PluginChainEditor(PluginChain& chain) : pluginChain(chain)
     viewport.setScrollBarThickness(layout::scrollBarThickness);
     addAndMakeVisible(viewport);
 
-    pluginChain.addChangeListener(this);
+    liveChain.addChangeListener(this);
     rebuildRows();
 }
 
 /// Unregisters from the chain's change notifications.
 PluginChainEditor::~PluginChainEditor()
 {
-    pluginChain.removeChangeListener(this);
+    liveChain.removeChangeListener(this);
 }
 
 /// Lays out the hint label and the scrolling row list with its add button.
@@ -212,7 +222,7 @@ void PluginChainEditor::resized()
 /// that a synchronous rebuild would delete while its onClick is still executing.
 void PluginChainEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
-    if (source == &pluginChain) {
+    if (source == &liveChain) {
         // Defer the rebuild: the change may originate from a button on a row
         // that a synchronous rebuild would delete while its onClick is still executing.
         triggerAsyncUpdate();
@@ -222,7 +232,7 @@ void PluginChainEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
 /// Performs the row rebuild deferred by changeListenerCallback().
 void PluginChainEditor::handleAsyncUpdate()
 {
-    if (displayedRevision != pluginChain.getRevision()) {
+    if (displayedRevision != liveChain.getRevision()) {
         rebuildRows();
     } else {
         updateLatencyLabels();
@@ -232,16 +242,18 @@ void PluginChainEditor::handleAsyncUpdate()
 /// Recreates the slot rows from the current chain state.
 void PluginChainEditor::rebuildRows()
 {
-    displayedRevision = pluginChain.getRevision();
+    displayedRevision = liveChain.getRevision();
     rows.clear();
 
-    const auto numSlots = pluginChain.getNumSlots();
-    rows.reserve(static_cast<std::size_t>(numSlots));
+    const auto slotIds = liveChain.getSlotIds();
+    const auto numSlots = static_cast<int>(slotIds.size());
+    rows.reserve(slotIds.size());
 
-    for (int index = 0; index < numSlots; ++index) {
+    for (int position = 0; position < numSlots; ++position) {
         auto row = std::make_unique<PluginChainSlotRow>(
-            pluginChain,
-            index,
+            liveChain,
+            slotIds[static_cast<std::size_t>(position)],
+            position,
             [this](const int containerY) { return rowIndexForPosition(containerY); },
             [this](const PluginChainSlotRow& draggedRow, const int targetIndex) {
                 rowDragged(draggedRow, targetIndex);
@@ -264,17 +276,17 @@ void PluginChainEditor::updateLatencyLabels()
     for (const auto& row : rows) {
         row->updateLatency();
     }
-    const auto total = pluginChain.getTotalLatency();
+    const auto total = liveChain.getTotalLatency();
     totalLatencyLabel.setText(
-        total ? utils::format(
-                    "Total latency: {}",
-                    plugin_processing::formatPluginLatency(*total, pluginChain.getPreviewSampleRate())
-                )
-              : juce::String("Total latency: unavailable"),
+        total
+            ? utils::format(
+                  "Total latency: {}", plugin_processing::formatPluginLatency(*total, liveChain.getPreviewSampleRate())
+              )
+            : juce::String("Total latency: unavailable"),
         juce::dontSendNotification
     );
     processingRateLabel.setText(
-        formatPluginPreviewRate(pluginChain.getPreviewSampleRate(), pluginChain.hasOpenPreviewDevice()),
+        formatPluginPreviewRate(liveChain.getPreviewSampleRate(), liveChain.hasOpenPreviewDevice()),
         juce::dontSendNotification
     );
 }
@@ -316,14 +328,14 @@ void PluginChainEditor::rowDragged(const PluginChainSlotRow& row, const int targ
 /// Called by a row when a drag ends to commit the reorder.
 void PluginChainEditor::rowDropped(const PluginChainSlotRow& row, const int targetIndex)
 {
-    if (targetIndex == row.getSlotIndex()) {
+    if (targetIndex == row.getChainPosition()) {
         // Nothing moved. Restore the resting layout.
         layoutRows();
         return;
     }
 
     // The chain change triggers an async rebuild that recreates the rows in final order.
-    pluginChain.moveSlot(row.getSlotIndex(), targetIndex);
+    liveChain.moveSlot(row.getSlotId(), targetIndex);
 }
 
 /// Returns the visual row index for the given Y position in the row container.
@@ -337,7 +349,7 @@ int PluginChainEditor::rowIndexForPosition(const int containerY) const
 /// Uses desktop space so long plugin lists are not constrained by the chain editor window.
 void PluginChainEditor::showAddPluginMenu()
 {
-    const auto& types = pluginChain.getKnownPluginList().getTypes();
+    const auto types = liveChain.getLibrary().getKnownTypes();
 
     juce::PopupMenu menu;
     juce::KnownPluginList::addToMenu(menu, types, juce::KnownPluginList::sortByManufacturer);
@@ -353,7 +365,7 @@ void PluginChainEditor::showAddPluginMenu()
             return;
         }
 
-        safeThis->pluginChain.addPlugin(types.getReference(index));
+        safeThis->liveChain.addPlugin(types.getReference(index));
     });
 }
 
@@ -365,7 +377,7 @@ void PluginChainEditor::updateHintLabel()
         return;
     }
 
-    const bool hasKnownPlugins = !pluginChain.getKnownPluginList().getTypes().isEmpty();
+    const bool hasKnownPlugins = !liveChain.getLibrary().getKnownTypes().isEmpty();
     hintLabel.setText(
         hasKnownPlugins ? "No plugins in chain. Use the + button to get started."
                         : "No plugins found. Use the Plugins menu to scan for installed plugins.",

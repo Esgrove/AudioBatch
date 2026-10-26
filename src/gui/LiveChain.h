@@ -1,19 +1,20 @@
-/// Ownership and management of the user's plugin chain in the GUI.
-/// Declares PluginChain, which holds the ordered list of plugin slots that files are processed through,
-/// along with the known-plugins database, plugin scanning, persistence in application settings,
-/// and the plugin editor, chain editor, and scan windows.
+/// The user's plugin chain in the GUI.
+/// Declares LiveChain, which holds the ordered list of plugin slots that files are processed through,
+/// keeps it in the application settings, and owns the plugin editor, chain editor, and plugin manager windows.
+/// Each slot owns the processor that the live preview and its editor share.
+/// The plugins it can add and create come from the PluginLibrary.
 /// Callers interact with it through a single menu invoked from a button or menu item.
 
 #pragma once
 
 #include "plugins/PluginChainPreparation.h"
-#include "plugins/PluginProcessing.h"
-#include "plugins/PluginScanner.h"
+#include "plugins/PluginLibrary.h"
 #include "utils/AudioFormatUtils.h"
 
 #include <JuceHeader.h>
 
 #include <atomic>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -21,26 +22,10 @@
 
 namespace audiobatch
 {
-
-/// Description plus descriptor reference for one enabled slot, in chain order.
-struct EnabledChainPlugin {
-    juce::PluginDescription description;
-    PluginDescriptorRef descriptorRef;
-};
-
-/// Plugin chains created for one processing run, or the reason they could not be created.
-struct ChainInstantiation {
-    /// One chain of plugin instances per worker.
-    std::vector<std::vector<std::unique_ptr<juce::AudioPluginInstance>>> chains;
-    /// State of each enabled plugin right after it was created, in chain order.
-    /// Restored before every file for a plugin without saved state,
-    /// so adaptive state from one file does not carry over to the next.
-    std::vector<juce::MemoryBlock> initialStates;
-    /// Empty when every plugin of every chain was created.
-    juce::String errorMessage;
-    /// Name of the plugin that failed to load, when errorMessage is not empty.
-    juce::String failedPluginName;
-};
+/// Identifies one slot of the live chain for as long as the slot exists.
+/// Rows of the chain editor refer to their slot by id, so a row that is about to be rebuilt still acts on its own slot
+/// after another slot was moved or removed.
+enum class PluginSlotId : std::uint64_t {};
 
 /// A prepared live chain. Its slot-owned instances remain protected by the preview rendering lock.
 struct PreviewChain {
@@ -69,11 +54,12 @@ struct LiveSlot {
     void closeEditor();
     void destroyProcessor();
 
+    PluginSlotId id {};
     juce::PluginDescription description;
     juce::MemoryBlock state;
     bool enabled {true};
     std::unique_ptr<juce::AudioPluginInstance> instance;
-    /// The listener registered on the instance, owned by the plugin chain that owns the slot.
+    /// The listener registered on the instance, owned by the live chain that owns the slot.
     /// Null exactly when the slot has no instance.
     juce::AudioProcessorListener* listener {nullptr};
     juce::Component::SafePointer<juce::DialogWindow> editorWindow;
@@ -83,45 +69,43 @@ struct LiveSlot {
     bool wasEditorOpen {false};
 };
 
-/// Owns the user's plugin chain, the known-plugins database, scanning, and the editor windows.
+/// Owns the user's plugin chain and its editor and plugin manager windows.
 /// The chain is an ordered list of plugins that files are processed through in sequence.
 /// Not a visible component: callers display a single button (or menu item) that invokes showMenu().
-class PluginChain : public juce::ChangeListener, public juce::ChangeBroadcaster, private juce::AudioProcessorListener
+class LiveChain : public juce::ChangeListener, public juce::ChangeBroadcaster, private juce::AudioProcessorListener
 {
 public:
     using ChainChangedCallback = std::function<void()>;
 
-    PluginChain(
+    LiveChain(
+        PluginLibrary& pluginLibrary,
         juce::ApplicationProperties& applicationProperties,
         juce::CriticalSection& previewRenderingLock,
         juce::AudioDeviceManager& audioDeviceManager
     );
 
-    ~PluginChain() override;
+    ~LiveChain() override;
 
-    PluginChain(const PluginChain&) = delete;
-    PluginChain& operator=(const PluginChain&) = delete;
-    PluginChain(PluginChain&&) = delete;
-    PluginChain& operator=(PluginChain&&) = delete;
+    LiveChain(const LiveChain&) = delete;
+    LiveChain& operator=(const LiveChain&) = delete;
+    LiveChain(LiveChain&&) = delete;
+    LiveChain& operator=(LiveChain&&) = delete;
 
-    [[nodiscard]] juce::PluginDescription getSlotDescription(int index) const;
+    [[nodiscard]] juce::PluginDescription getSlotDescription(PluginSlotId slotId) const;
     [[nodiscard]] juce::String getChainSummary() const;
     [[nodiscard]] juce::int64 getPreviewTailSamples() const;
 
-    [[nodiscard]] std::optional<juce::int64> getSlotLatency(int index) const;
+    [[nodiscard]] std::optional<int> getSlotIndex(PluginSlotId slotId) const;
+    [[nodiscard]] std::optional<juce::int64> getSlotLatency(PluginSlotId slotId) const;
     [[nodiscard]] std::optional<juce::int64> getTotalLatency() const;
     [[nodiscard]] std::vector<EnabledChainPlugin> getEnabledPlugins();
+    [[nodiscard]] std::vector<PluginSlotId> getSlotIds() const;
 
     [[nodiscard]] bool hasOpenPreviewDevice() const;
-    [[nodiscard]] bool isSlotEnabled(int index) const;
+    [[nodiscard]] bool isSlotEnabled(PluginSlotId slotId) const;
     [[nodiscard]] double getPreviewSampleRate() const noexcept;
     [[nodiscard]] int getNumEnabledValidSlots() const noexcept;
     [[nodiscard]] int getNumSlots() const noexcept;
-
-    [[nodiscard]] ChainInstantiation instantiateChains(
-        const std::vector<EnabledChainPlugin>& enabledPlugins,
-        int workerCount
-    ) const;
 
     /// Distinguishes structural changes from latency-only label refreshes.
     [[nodiscard]] std::uint64_t getRevision() const noexcept
@@ -136,27 +120,21 @@ public:
         bool loadEnabled = true
     );
 
-    /// Returns the format manager used for instantiation (so callers can create more instances).
-    [[nodiscard]] juce::AudioPluginFormatManager& getFormatManager() noexcept
+    /// Returns the library of known plugins that slots are added from.
+    [[nodiscard]] PluginLibrary& getLibrary() const noexcept
     {
-        return formatManager;
-    }
-
-    /// Returns the known plugin list (for the scan dialog).
-    [[nodiscard]] juce::KnownPluginList& getKnownPluginList() noexcept
-    {
-        return knownPluginList;
+        return library;
     }
 
     void addPlugin(const juce::PluginDescription& description);
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
     void clearChain();
-    void moveSlot(int fromIndex, int toIndex);
-    void openEditorForSlot(int index);
-    void removeSlot(int index);
+    void moveSlot(PluginSlotId slotId, int toIndex);
+    void openEditorForSlot(PluginSlotId slotId);
+    void removeSlot(PluginSlotId slotId);
     void setChainChangedCallback(ChainChangedCallback callback);
     void setLatencyChangedCallback(ChainChangedCallback callback);
-    void setSlotEnabled(int index, bool enabled);
+    void setSlotEnabled(PluginSlotId slotId, bool enabled);
     void showChainEditor();
     void showMenu(juce::Component& anchor);
     void showScanWindow();
@@ -173,42 +151,38 @@ private:
         const juce::String& stateBase64
     );
 
+    PluginSlotId appendSlot(LiveSlot entry);
+
     void audioProcessorChanged(juce::AudioProcessor* processor, const ChangeDetails& details) override;
     void audioProcessorParameterChanged(juce::AudioProcessor* processor, int parameterIndex, float value) override;
 
     void captureOpenEditorStates();
-    void loadKnownPluginList();
     void loadPersistedChain();
     void notifyChainChanged();
     void persistChain();
-    void persistKnownPluginList() const;
 
-    bool beginPluginScan();
     bool prepareLiveEntry(LiveSlot& entry);
-
-    // Declared before the list, so it outlives the scanner that the list owns.
-    PluginScanLock pluginScanLock;
 
     ChainChangedCallback chainChangedCallback;
     ChainChangedCallback latencyChangedCallback;
 
+    PluginLibrary& library;
     juce::ApplicationProperties& appProperties;
     juce::AudioDeviceManager& previewDeviceManager;
-    juce::AudioPluginFormatManager formatManager;
     juce::Component::SafePointer<juce::DialogWindow> chainEditorWindow;
     juce::Component::SafePointer<juce::DialogWindow> scanWindow;
     juce::CriticalSection& renderingLock;
-    juce::KnownPluginList knownPluginList;
     std::atomic<bool> latencyDirty {false};
     std::uint64_t revision {0};
+    std::uint64_t lastSlotId {0};
     std::vector<LiveSlot> chain;
 
     double previewSampleRate {utils::defaultSampleRate};
     int previewBlockSize {512};
     int previewChannels {2};
 
-    JUCE_DECLARE_WEAK_REFERENCEABLE(PluginChain)
-    JUCE_LEAK_DETECTOR(PluginChain)
+    JUCE_DECLARE_WEAK_REFERENCEABLE(LiveChain)
+    JUCE_LEAK_DETECTOR(LiveChain)
 };
 
 [[nodiscard]] juce::String formatPluginDescription(const juce::PluginDescription& description);
