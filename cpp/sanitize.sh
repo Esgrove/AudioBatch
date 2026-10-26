@@ -3,11 +3,12 @@ set -eo pipefail
 
 USAGE="Usage: $0 [OPTIONS]
 
-Build the tests with AddressSanitizer and UndefinedBehaviorSanitizer using the macos-asan preset,
-or with ThreadSanitizer using the macos-tsan preset, then run them with ctest.
-Each preset uses its own build directory, cmake-build-mac-asan or cmake-build-mac-tsan,
+Build the tests with sanitizers, then run them with ctest.
+On macOS, the macos-asan preset uses AddressSanitizer and UndefinedBehaviorSanitizer,
+and the macos-tsan preset uses ThreadSanitizer.
+On Windows, the windows-asan preset uses the MSVC AddressSanitizer.
+Each preset uses its own build directory, such as cmake-build-mac-asan,
 so the debug build directory is not affected.
-Only macOS is supported.
 
 OPTIONS: All options are optional
     -h | --help
@@ -15,6 +16,7 @@ OPTIONS: All options are optional
 
     -t | --thread
         Use ThreadSanitizer instead of AddressSanitizer and UndefinedBehaviorSanitizer.
+        Only supported on macOS.
 
     -v | --verbose
         Display commands being executed.
@@ -25,8 +27,7 @@ DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=./common.sh
 source "$DIR/common.sh"
 
-PRESET="macos-asan"
-BUILD_DIR="cmake-build-mac-asan"
+THREAD_SANITIZER=false
 
 init_options() {
     while [ $# -gt 0 ]; do
@@ -35,8 +36,7 @@ init_options() {
                 print_usage_and_exit 0
                 ;;
             -t | --thread)
-                PRESET="macos-tsan"
-                BUILD_DIR="cmake-build-mac-tsan"
+                THREAD_SANITIZER=true
                 ;;
             -v | --verbose)
                 set -x
@@ -52,9 +52,27 @@ init_options() {
 
 init_options "$@"
 
-if [ "$BASH_PLATFORM" != "mac" ]; then
-    print_error_and_exit "The sanitizer build is only supported on macOS."
-fi
+case "$BASH_PLATFORM" in
+    mac)
+        if [ "$THREAD_SANITIZER" = true ]; then
+            PRESET="macos-tsan"
+            BUILD_DIR="cmake-build-mac-tsan"
+        else
+            PRESET="macos-asan"
+            BUILD_DIR="cmake-build-mac-asan"
+        fi
+        ;;
+    windows)
+        if [ "$THREAD_SANITIZER" = true ]; then
+            print_error_and_exit "ThreadSanitizer is not supported on Windows."
+        fi
+        PRESET="windows-asan"
+        BUILD_DIR="cmake-build-windows-asan"
+        ;;
+    *)
+        print_error_and_exit "The sanitizer build is only supported on macOS and Windows."
+        ;;
+esac
 
 cd "$REPO"
 
@@ -63,6 +81,6 @@ cmake --preset "$PRESET" -DBUILD_TESTING=ON
 cmake --build --preset "$PRESET" --target AudioBatchTests
 
 print_magenta "Running tests..."
-ctest --test-dir "$BUILD_DIR" --output-on-failure --no-tests=error
+ctest --test-dir "$BUILD_DIR" --build-config Debug --output-on-failure --no-tests=error
 
 print_green "Sanitizer run passed."

@@ -123,6 +123,16 @@ if(AUDIOBATCH_SANITIZE)
             message(FATAL_ERROR "MSVC only supports AUDIOBATCH_SANITIZE=address")
         endif()
         add_compile_options(/fsanitize=address)
+        # AddressSanitizer cannot be combined with incremental linking
+        # or with the runtime checks that Debug builds enable by default.
+        set(CMAKE_MSVC_RUNTIME_CHECKS "")
+        add_link_options(/INCREMENTAL:NO)
+        # Instrumented executables load the AddressSanitizer runtime that ships next to the compiler.
+        cmake_path(GET CMAKE_CXX_COMPILER PARENT_PATH msvcBinaryDirectory)
+        file(GLOB AUDIOBATCH_ASAN_RUNTIME "${msvcBinaryDirectory}/clang_rt.asan*_dynamic-x86_64.dll")
+        if(NOT AUDIOBATCH_ASAN_RUNTIME)
+            message(FATAL_ERROR "Could not find the AddressSanitizer runtime in ${msvcBinaryDirectory}")
+        endif()
     else()
         # Without -fno-sanitize-recover, UndefinedBehaviorSanitizer prints a finding and continues,
         # so the test run would still pass.
@@ -134,11 +144,15 @@ endif()
 # libc++ hardening turns out of range access through std::span, std::optional, std::vector and similar into a trap.
 # Debug builds, which include the sanitizer builds, use the extensive checks,
 # and the other configurations keep the cheap checks that are suitable for release builds.
+# MSVC STL hardening adds the same cheap checks to every configuration,
+# on top of the iterator debugging that Debug builds already have.
 # The mode is global so JUCE and the fetched dependencies use the same checks as project code.
 if(APPLE)
     add_compile_definitions(
         _LIBCPP_HARDENING_MODE=$<IF:$<CONFIG:Debug>,_LIBCPP_HARDENING_MODE_EXTENSIVE,_LIBCPP_HARDENING_MODE_FAST>
     )
+elseif(MSVC)
+    add_compile_definitions(_MSVC_STL_HARDENING=1)
 endif()
 
 # Adds all the module sources so they appear correctly in the IDE
@@ -777,6 +791,16 @@ if(BUILD_TESTING)
             juce::juce_recommended_warning_flags
     )
     # cmake-format: on
+
+    # Added before the discovery step below, so the runtime is in place when discovery runs the executable.
+    if(AUDIOBATCH_ASAN_RUNTIME)
+        add_custom_command(
+            TARGET AudioBatchTests
+            POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different ${AUDIOBATCH_ASAN_RUNTIME} $<TARGET_FILE_DIR:AudioBatchTests>
+            VERBATIM
+        )
+    endif()
 
     include(GoogleTest)
     # Discovery runs the freshly linked executable as a post-build step.
