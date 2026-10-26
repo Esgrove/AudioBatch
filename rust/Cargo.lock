@@ -851,9 +851,9 @@ dependencies = [
 
 [[package]]
 name = "borsh"
-version = "1.7.0"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f3f6da4992df95bbcd9af42a6c7dcb994498fc9048230405f3b36ff7cd3f145"
+checksum = "553c5d846a6ba5150c65e3b1b8ec073bcf1abc20f9b7220de384a4443ea4e20a"
 dependencies = [
  "borsh-derive",
  "bytes",
@@ -862,15 +862,15 @@ dependencies = [
 
 [[package]]
 name = "borsh-derive"
-version = "1.7.0"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ae8fb4fb5740e4b2c4884ff95f5f32f5e8479db1e8fd8eb49ddbe09eb09bb7c"
+checksum = "12cdfe656708a01f89b451a7d36466e6fe6c414de0aa18fc54f864f6f9ca9f56"
 dependencies = [
  "once_cell",
  "proc-macro-crate",
  "proc-macro2",
  "quote",
- "syn 2.0.119",
+ "syn 3.0.9",
 ]
 
 [[package]]
@@ -5077,9 +5077,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-probe"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c87def4c32ab89d880effc9e097653c8da5d6ef28e6b539d313baaacfbafcbe"
+checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
 name = "option-ext"
@@ -5881,9 +5881,9 @@ dependencies = [
 
 [[package]]
 name = "realfft"
-version = "3.5.0"
+version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f821338fddb99d089116342c46e9f1fbf3828dba077674613e734e01d6ea8677"
+checksum = "538895ccf2006b473aafbe8d72770e21038961ab67aae34f3c577485fc703a7d"
 dependencies = [
  "rustfft",
 ]
@@ -6315,9 +6315,9 @@ checksum = "cf54715a573b99ac80df0bc206da022bcd442c974952c7b9720069370852e21f"
 
 [[package]]
 name = "rusty-fork"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb3dcc6e454c328bb824492db107ab7c0ae8fcffe4ad210136ef014458c1bc4f"
+checksum = "cc6bf79ff24e648f6da1f8d1f011e9cac26491b619e6b9280f2b47f1774e6ee2"
 dependencies = [
  "fnv",
  "quick-error 1.2.3",
