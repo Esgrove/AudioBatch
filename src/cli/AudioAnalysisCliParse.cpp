@@ -313,6 +313,20 @@ bool cli::containsExactOption(const juce::ArgumentList& arguments, const juce::S
     });
 }
 
+/// Joins the decoded arguments, without the executable name, into one space separated command line.
+/// Used for the plugin scan worker command line,
+/// so it carries the same decoded text as the arguments instead of decoding argv a second time.
+juce::String cli::joinArguments(const juce::ArgumentList& arguments)
+{
+    juce::StringArray texts;
+
+    for (const auto& argument : arguments.arguments) {
+        texts.add(argument.text);
+    }
+
+    return texts.joinIntoString(" ");
+}
+
 /// Parses command-line arguments into a validated options object.
 /// The help and version flags are handled by the caller before parsing.
 std::optional<AudioAnalysisCliOptions> cli::parseArguments(juce::ArgumentList arguments, juce::String& errorMessage)

@@ -1,10 +1,13 @@
 /// Tests for the CLI argument parsing in cli::parseArguments and the CSV and JSON output.
-/// Covers option values, aliases, the combinations the CLI rejects, and the machine-readable record fields.
+/// Covers option values, aliases, the combinations the CLI rejects, and the machine-readable record fields,
+/// the UTF-8 decoding of process arguments, and the errors for inputs that produced no result.
 
 #include "cli/AudioAnalysisCli.h"
 #include "cli/AudioAnalysisCliOutput.h"
+#include "TestHelpers.h"
 #include "TestSuites.h"
 
+#include <array>
 #include <optional>
 #include <vector>
 
@@ -166,10 +169,57 @@ public:
             expect(errorMessage.contains("--bogus"), errorMessage);
         }
 
+        beginTest("Arguments from the process are decoded as UTF-8");
+        {
+            // "Björk.flac" and "-j", as the bytes a terminal passes in argv.
+            std::array<char, 16> executable {"audiobatch"};
+            std::array<char, 16> path {"Bj\xc3\xb6rk.flac"};
+            std::array<char, 4> option {"-j"};
+            std::array argv {executable.data(), path.data(), option.data()};
+
+            const juce::ArgumentList arguments(static_cast<int>(argv.size()), argv.data());
+            expectEquals(arguments.size(), 2);
+            expectEquals(arguments[0].text, juce::String::fromUTF8("Bj\xc3\xb6rk.flac"));
+            expectEquals(arguments[0].text.length(), 10);
+            expectEquals(cli::joinArguments(arguments), juce::String::fromUTF8("Bj\xc3\xb6rk.flac -j"));
+        }
+
+        runInputTests();
         runOutputTests();
     }
 
 private:
+    /// Checks that inputs named on the command line which produce no result are reported as errors.
+    void runInputTests()
+    {
+        const TemporaryDirectory directory;
+        const auto audio = directory.copyFixture("sine_stereo_44100_16.wav", "tone.wav");
+        const auto text = directory.getChildFile("notes.txt");
+        expect(text.replaceWithText("not audio"));
+        const auto hidden = directory.copyFixture("sine_stereo_44100_16.wav", ".hidden.wav");
+        const auto missing = directory.getChildFile("missing.wav");
+
+        AudioAnalysisRecord analyzed;
+        analyzed.file = audio;
+        analyzed.fullPath = audio.getFullPathName();
+        const std::vector results {analyzed};
+
+        beginTest("Inputs that produced a result, and folders, are not reported");
+        {
+            const juce::Array<juce::File> inputs {audio, directory.getChildFile({})};
+            expect(cli::findSkippedInputs(inputs, results).isEmpty());
+        }
+
+        beginTest("Missing, unsupported and hidden inputs are reported");
+        {
+            const auto errors = cli::findSkippedInputs({missing, text, hidden}, results);
+            expectEquals(errors.size(), 3);
+            expect(errors[0].startsWith("Input not found"), errors[0]);
+            expect(errors[1].startsWith("Not a supported audio file"), errors[1]);
+            expect(errors[2].startsWith("Hidden files are not analyzed"), errors[2]);
+        }
+    }
+
     /// Checks the CSV and JSON output of a quoted path, a silent file, and a failed file.
     void runOutputTests()
     {

@@ -10,6 +10,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace audiobatch
 {
@@ -59,6 +60,12 @@ struct AudioAnalysisCliOptions {
 namespace cli
 {
 juce::String buildUsage(const juce::String& executableName);
+juce::String joinArguments(const juce::ArgumentList& arguments);
+
+juce::StringArray findSkippedInputs(
+    const juce::Array<juce::File>& inputPaths,
+    const std::vector<AudioAnalysisRecord>& results
+);
 
 void attachNegativeOptionValues(juce::ArgumentList& arguments);
 

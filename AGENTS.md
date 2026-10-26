@@ -127,7 +127,7 @@ Tests:
 
 ## Dependencies
 
-- JUCE, vendored under `JUCE/` as a submodule.
+- JUCE, from the [Esgrove/JUCE](https://github.com/Esgrove/JUCE) fork, as a submodule under `JUCE/`.
 - SQLite 3, resolved via CMake (system package if present, otherwise the fetched amalgamation).
 - libebur128, fetched via CMake, for loudness and true peak analysis.
 - TagLib, fetched via CMake, for cross-format metadata handling.
@@ -136,7 +136,13 @@ Tests:
 ## Working Rules
 
 - Prefer modern C++23 coding standards and idioms.
-- Do not edit vendored code under `JUCE/` unless the task explicitly requires it.
+- Fix JUCE bugs in the fork instead of working around them in project code.
+  Commit the fix on the fork's `master` in `JUCE/`, in JUCE's own code style.
+  Keep each patch small and upstreamable, so rebasing the fork onto a new JUCE release stays easy.
+  The AudioBatch commit that relies on the fix updates the submodule in the same commit,
+  and adds a test that pins the fixed behaviour.
+  Push the fork's `master` before the AudioBatch commit that refers to it, since CI checks out the submodule by hash.
+- Do not edit the other third-party code, such as the fetched dependencies.
 - Prefer fixing warnings and build issues in project code or project configuration before considering third-party changes.
 - Follow the domain directories under `src/` described in Source Layout and the current naming used in `CMakeLists.txt`.
 - Keep reusable helpers in the matching shared utility files rather than application or component class files.
