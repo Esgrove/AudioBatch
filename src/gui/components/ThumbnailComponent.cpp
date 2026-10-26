@@ -98,15 +98,15 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
     juce::Path outline;
     outline.addRoundedRectangle(getLocalBounds().toFloat(), layout::waveform::cornerRadius);
     graphics.reduceClipRegion(outline);
-    graphics.setColour(juce::CustomLookAndFeel::greyMediumDark());
+    graphics.setColour(CustomLookAndFeel::greyMediumDark());
     graphics.fillPath(outline);
-    graphics.setColour(juce::CustomLookAndFeel::blue());
+    graphics.setColour(CustomLookAndFeel::blue());
 
     if (thumbnail->getTotalLength() > 0.0) {
         const auto reduced = waveformBounds();
         const auto gradient = seratoWaveformColouringEnabled && seratoOverview
             ? serato::makeOverviewGradient(
-                  *seratoOverview, visibleRange, thumbnail->getTotalLength(), reduced, juce::CustomLookAndFeel::blue()
+                  *seratoOverview, visibleRange, thumbnail->getTotalLength(), reduced, CustomLookAndFeel::blue()
               )
             : std::nullopt;
         if (gradient) {
@@ -117,12 +117,12 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
         drawLoudnessGraph(graphics);
         drawCueMarkers(graphics);
     } else {
-        graphics.setFont(juce::CustomLookAndFeel::getTextFont().withHeight(layout::waveform::placeholderFontHeight));
+        graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::placeholderFontHeight));
         graphics.drawFittedText("No audio file selected", getLocalBounds(), juce::Justification::centred, 2);
     }
 
     if (hasKeyboardFocus(false)) {
-        graphics.setColour(juce::CustomLookAndFeel::blue().withAlpha(focusOutlineAlpha));
+        graphics.setColour(CustomLookAndFeel::blue().withAlpha(focusOutlineAlpha));
         graphics.drawRoundedRectangle(
             getLocalBounds().toFloat().reduced(layout::waveform::focusOutlineWidth / 2.0f),
             layout::waveform::cornerRadius,
@@ -496,7 +496,7 @@ void ThumbnailComponent::drawLoudnessGraph(juce::Graphics& graphics) const
 void ThumbnailComponent::drawLoudnessAxis(juce::Graphics& graphics, const juce::Rectangle<int> bounds) const
 {
     const auto plot = bounds.toFloat();
-    graphics.setFont(juce::CustomLookAndFeel::getTextFont().withHeight(layout::waveform::loudnessFontHeight));
+    graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::loudnessFontHeight));
     auto gutter = getLocalBounds().reduced(2);
     gutter.setRight(std::max(gutter.getX(), bounds.getX() - layout::waveform::loudnessAxisGap));
     const auto interval = layout::waveform::loudnessTickInterval(

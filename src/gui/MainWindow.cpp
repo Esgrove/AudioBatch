@@ -90,7 +90,7 @@ void addCommandItem(
 /// creates the owned AudioBatchComponent content, and configures the platform menu bar.
 /// The window is not made visible here, callers use showAndActivate for that.
 MainWindow::MainWindow(const juce::String& name) :
-    DocumentWindow(name, juce::CustomLookAndFeel::greyDark(), DocumentWindow::allButtons)
+    DocumentWindow(name, CustomLookAndFeel::greyDark(), DocumentWindow::allButtons)
 {
     const auto constructorStartedAtMs = juce::Time::getMillisecondCounterHiRes();
     const auto logStartupCheckpoint = [constructorStartedAtMs](const juce::String& step) {

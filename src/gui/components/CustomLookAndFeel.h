@@ -8,7 +8,7 @@
 
 #include <JuceHeader.h>
 
-namespace juce
+namespace audiobatch
 {
 /// Opaque ARGB values of the project colour palette.
 /// The CustomLookAndFeel colour accessors and its default colour scheme are built from these values.
@@ -59,29 +59,29 @@ public:
     juce::Button* createDocumentWindowButton(int buttonType) override;
 
     void drawDocumentWindowTitleBar(
-        DocumentWindow& window,
-        Graphics& graphics,
+        juce::DocumentWindow& window,
+        juce::Graphics& graphics,
         int width,
         int height,
         int titleSpaceX,
         int titleSpaceWidth,
-        const Image* icon,
+        const juce::Image* icon,
         bool drawTitleTextOnLeft
     ) override;
 
-    void drawTooltip(Graphics& graphics, const String& text, int width, int height) override;
+    void drawTooltip(juce::Graphics& graphics, const juce::String& text, int width, int height) override;
 
     void drawToggleButton(
-        Graphics& graphics,
-        ToggleButton& button,
+        juce::Graphics& graphics,
+        juce::ToggleButton& button,
         bool shouldDrawButtonAsHighlighted,
         bool shouldDrawButtonAsDown
     ) override;
 
     void drawTableHeaderColumn(
-        Graphics& graphics,
-        TableHeaderComponent& header,
-        const String& columnName,
+        juce::Graphics& graphics,
+        juce::TableHeaderComponent& header,
+        const juce::String& columnName,
         int columnId,
         int width,
         int height,
@@ -90,58 +90,58 @@ public:
         int columnFlags
     ) override;
 
-    static TextLayout layoutTooltipText(const String& text, Colour colour) noexcept;
+    static juce::TextLayout layoutTooltipText(const juce::String& text, juce::Colour colour) noexcept;
 
     void drawMenuBarItem(
-        Graphics& graphics,
+        juce::Graphics& graphics,
         int width,
         int height,
         int itemIndex,
-        const String& itemText,
+        const juce::String& itemText,
         bool isMouseOverItem,
         bool isMenuOpen,
         bool isMouseOverBar,
-        MenuBarComponent& menuBar
+        juce::MenuBarComponent& menuBar
     ) override;
 
     void drawPopupMenuItem(
-        Graphics& graphics,
-        const Rectangle<int>& area,
+        juce::Graphics& graphics,
+        const juce::Rectangle<int>& area,
         bool isSeparator,
         bool isActive,
         bool isHighlighted,
         bool isTicked,
         bool hasSubMenu,
-        const String& text,
-        const String& shortcutKeyText,
-        const Drawable* icon,
-        const Colour* textColourToUse
+        const juce::String& text,
+        const juce::String& shortcutKeyText,
+        const juce::Drawable* icon,
+        const juce::Colour* textColourToUse
     ) override;
 
     void getIdealPopupMenuItemSize(
-        const String& text,
+        const juce::String& text,
         bool isSeparator,
         int standardMenuItemHeight,
         int& idealWidth,
         int& idealHeight
     ) override;
 
-    Font getMenuBarFont(MenuBarComponent& menuBar, int itemIndex, const String& itemText) override;
+    juce::Font getMenuBarFont(juce::MenuBarComponent& menuBar, int itemIndex, const juce::String& itemText) override;
 
-    Font getTextButtonFont(TextButton& button, int buttonHeight) override;
+    juce::Font getTextButtonFont(juce::TextButton& button, int buttonHeight) override;
 
-    Font getPopupMenuFont() override;
+    juce::Font getPopupMenuFont() override;
 
     /// Uses the monospaced font for combo box text so numeric choices align.
-    Font getComboBoxFont(ComboBox& /*comboBox*/) override
+    juce::Font getComboBoxFont(juce::ComboBox& /*comboBox*/) override
     {
         return get_mono_font();
     }
 
     /// Returns the monospaced font used for tabular values and status text.
-    [[nodiscard]] static Font get_mono_font()
+    [[nodiscard]] static juce::Font get_mono_font()
     {
-        return getMonoBaseFont().withHeight(audiobatch::layout::theme::monoFontHeight);
+        return getMonoBaseFont().withHeight(layout::theme::monoFontHeight);
     }
 
     [[nodiscard]] static const juce::Font& getTextFont();
@@ -256,4 +256,4 @@ private:
 
     bool darkTheme;
 };
-}  // namespace juce
+}  // namespace audiobatch

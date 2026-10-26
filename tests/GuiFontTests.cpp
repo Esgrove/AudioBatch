@@ -18,9 +18,9 @@ public:
     /// Checks face identities and logical sizes on an offscreen graphics context.
     void runTest() override
     {
-        juce::CustomLookAndFeel lookAndFeel(true);
-        const auto textTypeface = juce::CustomLookAndFeel::getTextFont().getTypefacePtr();
-        const auto monoTypeface = juce::CustomLookAndFeel::getMonoBaseFont().getTypefacePtr();
+        CustomLookAndFeel lookAndFeel(true);
+        const auto textTypeface = CustomLookAndFeel::getTextFont().getTypefacePtr();
+        const auto monoTypeface = CustomLookAndFeel::getMonoBaseFont().getTypefacePtr();
 
         beginTest("Embedded Roboto faces resolve without system font installation");
         expectEquals(textTypeface->getName(), juce::String("Roboto"));

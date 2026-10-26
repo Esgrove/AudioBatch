@@ -621,7 +621,7 @@ void LiveChain::openEditorForSlot(const PluginSlotId slotId)
     launchOptions.useNativeTitleBar = true;
     launchOptions.resizable = editor->isResizable();
     launchOptions.useBottomRightCornerResizer = false;
-    launchOptions.dialogBackgroundColour = juce::CustomLookAndFeel::greySemiDark();
+    launchOptions.dialogBackgroundColour = CustomLookAndFeel::greySemiDark();
 
     entry.editorWindow = launchOptions.create();
 
@@ -656,7 +656,7 @@ void LiveChain::showChainEditor()
     launchOptions.escapeKeyTriggersCloseButton = true;
     launchOptions.useNativeTitleBar = true;
     launchOptions.resizable = true;
-    launchOptions.dialogBackgroundColour = juce::CustomLookAndFeel::greySemiDark();
+    launchOptions.dialogBackgroundColour = CustomLookAndFeel::greySemiDark();
 
     chainEditorWindow = launchOptions.create();
 
@@ -685,7 +685,7 @@ void LiveChain::showScanWindow()
     launchOptions.escapeKeyTriggersCloseButton = true;
     launchOptions.useNativeTitleBar = true;
     launchOptions.resizable = true;
-    launchOptions.dialogBackgroundColour = juce::CustomLookAndFeel::greySemiDark();
+    launchOptions.dialogBackgroundColour = CustomLookAndFeel::greySemiDark();
 
     scanWindow = launchOptions.create();
 

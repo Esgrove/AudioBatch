@@ -47,10 +47,10 @@ juce::String formatAudioOutputStatus(const AudioOutputStatus& status)
 /// The output device starts as the closed default output until the owner reports the real device.
 StatusBar::StatusBar()
 {
-    const auto font = juce::CustomLookAndFeel::getTextFont().withHeight(layout::statusBar::fontHeight);
+    const auto font = CustomLookAndFeel::getTextFont().withHeight(layout::statusBar::fontHeight);
 
     for (auto* label : {&pathLabel, &statusLabel, &outputLabel}) {
-        utils::styleLabel(*label, font, juce::CustomLookAndFeel::greyMiddleLight());
+        utils::styleLabel(*label, font, CustomLookAndFeel::greyMiddleLight());
         label->setJustificationType(juce::Justification::centredLeft);
         addAndMakeVisible(*label);
     }
@@ -79,8 +79,7 @@ void StatusBar::setOutputStatus(const AudioOutputStatus& status)
     const auto text = formatAudioOutputStatus(status);
     outputLabel.setText(text, juce::dontSendNotification);
     outputLabel.setColour(
-        juce::Label::textColourId,
-        status.open ? juce::CustomLookAndFeel::greyMiddleLight() : juce::CustomLookAndFeel::greyMiddle()
+        juce::Label::textColourId, status.open ? CustomLookAndFeel::greyMiddleLight() : CustomLookAndFeel::greyMiddle()
     );
     outputLabel.setTooltip(
         status.open ? utils::format("Preview audio output: {}", text)
@@ -105,9 +104,9 @@ void StatusBar::setProgress(const int permille)
 /// and draws the progress line over the top border while a pass of known size runs.
 void StatusBar::paint(juce::Graphics& graphics)
 {
-    graphics.fillAll(juce::CustomLookAndFeel::greySemiDark());
+    graphics.fillAll(CustomLookAndFeel::greySemiDark());
 
-    graphics.setColour(juce::CustomLookAndFeel::greyMedium());
+    graphics.setColour(CustomLookAndFeel::greyMedium());
     graphics.fillRect(getLocalBounds().withHeight(1));
 
     const auto separatorHeight = getHeight() - layout::statusBar::separatorInset * 2;
@@ -122,9 +121,9 @@ void StatusBar::paint(juce::Graphics& graphics)
     }
 
     const auto bar = getProgressBounds().toFloat();
-    graphics.setColour(juce::CustomLookAndFeel::greyMiddle().withAlpha(progressTrackAlpha));
+    graphics.setColour(CustomLookAndFeel::greyMiddle().withAlpha(progressTrackAlpha));
     graphics.fillRect(bar);
-    graphics.setColour(juce::CustomLookAndFeel::blue());
+    graphics.setColour(CustomLookAndFeel::blue());
     graphics.fillRect(bar.withWidth(bar.getWidth() * static_cast<float>(progressPermille) / permillePerUnit));
 }
 
