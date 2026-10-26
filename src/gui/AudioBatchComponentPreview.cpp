@@ -370,7 +370,7 @@ void AudioBatchComponent::applyCustomGainToSelection(const float gainDb, const b
         return;
     }
 
-    bool anyChanged = false;
+    std::vector<CustomGainUpdate> changedGains;
 
     for (int index = 0; index < selectedRows.size(); ++index) {
         const auto rowNumber = selectedRows[index];
@@ -387,12 +387,15 @@ void AudioBatchComponent::applyCustomGainToSelection(const float gainDb, const b
         record.hasCustomGain = hasGain;
 
         if (previousHadGain != record.hasCustomGain || !juce::approximatelyEqual(previousValue, record.customGainDb)) {
-            analysisCache.storeCustomGain(record.file, record.customGainDb, record.hasCustomGain);
-            anyChanged = true;
+            changedGains.push_back(
+                {.file = record.file, .customGainDb = record.customGainDb, .hasCustomGain = record.hasCustomGain}
+            );
         }
     }
 
-    if (anyChanged) {
+    // The slider calls this on every step of a drag, so all selected files are stored in one transaction.
+    if (!changedGains.empty()) {
+        analysisCache.storeCustomGains(changedGains);
         resultsTable.repaint();
         updateThumbnailDisplayGain();
         updatePreviewInputGain();
