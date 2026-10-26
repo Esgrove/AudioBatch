@@ -25,9 +25,12 @@ namespace audiobatch
 /// Creates the results table header, model, and selection behavior.
 void AudioBatchComponent::configureResultsTable()
 {
-    resultsTable.setHeader(std::make_unique<SecondarySortTableHeader>([this](const AudioFileTableColumn column) {
-        handleSecondarySortRequested(column);
-    }));
+    resultsTable.setHeader(
+        std::make_unique<SecondarySortTableHeader>(
+            [this](const AudioFileTableColumn column) { handleSecondarySortRequested(column); },
+            &AudioFileTableModel::getColumnDescription
+        )
+    );
     AudioFileTableModel::configureHeader(resultsTable.getHeader());
     resultsTable.setModel(&fileTableModel);
     resultsTable.setColour(juce::ListBox::backgroundColourId, juce::CustomLookAndFeel::greyMediumDark());

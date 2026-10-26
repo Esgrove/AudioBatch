@@ -9,6 +9,7 @@
 #include "gui/FileActivityTracker.h"
 #include "utils/StringFormat.h"
 
+#include <algorithm>
 #include <array>
 #include <utility>
 
@@ -19,7 +20,10 @@ namespace
 /// A results table column as the header registers it.
 struct ColumnDefinition {
     AudioFileTableColumn column;
+    /// Short title shown in the header.
     const char* title;
+    /// What the column shows with its unit, for the header tooltip.
+    const char* description;
     int initialWidth;
     int minimumWidth;
     int maximumWidth;
@@ -30,6 +34,7 @@ struct ColumnDefinition {
 consteval ColumnDefinition defineColumn(
     const AudioFileTableColumn column,
     const char* title,
+    const char* description,
     const int maximumWidth,
     const bool initiallyVisible = true
 )
@@ -37,6 +42,7 @@ consteval ColumnDefinition defineColumn(
     return {
         .column = column,
         .title = title,
+        .description = description,
         .initialWidth = layout::table::initialColumnWidth(column),
         .minimumWidth = layout::table::minimumColumnWidth(column),
         .maximumWidth = maximumWidth,
@@ -45,22 +51,71 @@ consteval ColumnDefinition defineColumn(
 }
 
 /// The results table columns in their initial display order.
+/// The short titles leave the units to the header tooltips, so the numeric columns stay narrow.
 constexpr std::array columnDefinitions {
-    defineColumn(AudioFileTableColumn::name, "Name", layout::table::nameMaximumWidth),
-    defineColumn(AudioFileTableColumn::path, "Path", layout::table::pathMaximumWidth),
-    defineColumn(AudioFileTableColumn::type, "Type", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::bitDepth, "Bit Depth", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::bitrate, "Bitrate (kbps)", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::sampleRate, "Rate (kHz)", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::length, "Length", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::overallPeak, "Peak (dBFS)", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::peakLeft, "Peak L (dBFS)", layout::table::metricMaximumWidth, false),
-    defineColumn(AudioFileTableColumn::peakRight, "Peak R (dBFS)", layout::table::metricMaximumWidth, false),
-    defineColumn(AudioFileTableColumn::overallTruePeak, "True Peak (dBTP)", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::maxShortTermLufs, "LUFS-S", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::integratedLufs, "LUFS-I", layout::table::metricMaximumWidth),
-    defineColumn(AudioFileTableColumn::customGain, "Gain (dB)", layout::table::metricMaximumWidth, false),
-    defineColumn(AudioFileTableColumn::status, "Status", layout::table::statusMaximumWidth),
+    defineColumn(AudioFileTableColumn::name, "Name", "File name", layout::table::nameMaximumWidth),
+    defineColumn(AudioFileTableColumn::path, "Path", "Full path of the file", layout::table::pathMaximumWidth),
+    defineColumn(AudioFileTableColumn::type, "Type", "File type", layout::table::metricMaximumWidth),
+    defineColumn(
+        AudioFileTableColumn::bitDepth,
+        "Bit Depth",
+        "Bit depth of the source audio",
+        layout::table::metricMaximumWidth
+    ),
+    defineColumn(
+        AudioFileTableColumn::bitrate,
+        "Bitrate",
+        "Average bitrate in kbps",
+        layout::table::metricMaximumWidth
+    ),
+    defineColumn(AudioFileTableColumn::sampleRate, "Rate", "Sample rate in kHz", layout::table::metricMaximumWidth),
+    defineColumn(
+        AudioFileTableColumn::length,
+        "Length",
+        "Duration in minutes and seconds",
+        layout::table::metricMaximumWidth
+    ),
+    defineColumn(AudioFileTableColumn::overallPeak, "Peak", "Sample peak in dBFS", layout::table::metricMaximumWidth),
+    defineColumn(
+        AudioFileTableColumn::peakLeft,
+        "Peak L",
+        "Sample peak of the left channel in dBFS",
+        layout::table::metricMaximumWidth,
+        false
+    ),
+    defineColumn(
+        AudioFileTableColumn::peakRight,
+        "Peak R",
+        "Sample peak of the right channel in dBFS",
+        layout::table::metricMaximumWidth,
+        false
+    ),
+    defineColumn(
+        AudioFileTableColumn::overallTruePeak,
+        "True Peak",
+        "True peak in dBTP",
+        layout::table::metricMaximumWidth
+    ),
+    defineColumn(
+        AudioFileTableColumn::maxShortTermLufs,
+        "LUFS-S",
+        "Maximum short-term loudness in LUFS",
+        layout::table::metricMaximumWidth
+    ),
+    defineColumn(
+        AudioFileTableColumn::integratedLufs,
+        "LUFS-I",
+        "Integrated loudness in LUFS",
+        layout::table::metricMaximumWidth
+    ),
+    defineColumn(
+        AudioFileTableColumn::customGain,
+        "Gain",
+        "Per-file gain in dB",
+        layout::table::metricMaximumWidth,
+        false
+    ),
+    defineColumn(AudioFileTableColumn::status, "Status", "Analysis status", layout::table::statusMaximumWidth),
 };
 
 /// Inner radius of the activity indicator arc as a proportion of the outer radius,
@@ -173,6 +228,13 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
             header.setColumnVisible(columnId, false);
         }
     }
+}
+
+/// Returns what a column shows with its unit, for the header tooltip, or an empty string for an unknown column.
+juce::String AudioFileTableModel::getColumnDescription(const AudioFileTableColumn column)
+{
+    const auto* const definition = std::ranges::find(columnDefinitions, column, &ColumnDefinition::column);
+    return definition != columnDefinitions.end() ? juce::String(definition->description) : juce::String();
 }
 
 /// Returns the number of analyzed rows currently available.

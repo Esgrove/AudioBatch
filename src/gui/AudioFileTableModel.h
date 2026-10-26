@@ -63,6 +63,7 @@ public:
     AudioFileTableModel& operator=(AudioFileTableModel&&) = delete;
 
     static void configureHeader(juce::TableHeaderComponent& header);
+    [[nodiscard]] static juce::String getColumnDescription(AudioFileTableColumn column);
 
     int getNumRows() override;
 
