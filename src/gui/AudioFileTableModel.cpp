@@ -245,7 +245,7 @@ void AudioFileTableModel::paintCell(
     std::optional<FileActivityState> activityState;
     auto justification = juce::Justification::centredLeft;
     auto textBounds = juce::Rectangle(4, 0, width - 8, height);
-    auto font = juce::CustomLookAndFeel::getTextFont();
+    auto font = juce::CustomLookAndFeel::getTextFont().withHeight(layout::theme::tableCellFontHeight);
 
     switch (*column) {
         case AudioFileTableColumn::name:
@@ -256,7 +256,7 @@ void AudioFileTableModel::paintCell(
             break;
         case AudioFileTableColumn::type:
             text = formatTypeLabel(record);
-            font = juce::CustomLookAndFeel::get_mono_font();
+            font = juce::CustomLookAndFeel::getMonoBaseFont().withHeight(layout::theme::tableMonoCellFontHeight);
             break;
         case AudioFileTableColumn::bitDepth:
             text = formatBitsPerSampleDisplay(record);

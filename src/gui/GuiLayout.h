@@ -222,6 +222,10 @@ constexpr float toggleTickWidthRatio {1.1f};
 constexpr int toggleTextSpacing {6};
 constexpr float maximumButtonFontHeight {16.0f};
 constexpr float buttonFontHeightRatio {0.6f};
+/// Heights of the results table cell text in Roboto and Roboto Mono.
+/// A JUCE font height is the ascent plus the descent, so both give the text an em size of 14 pixels.
+constexpr float tableCellFontHeight {16.4f};
+constexpr float tableMonoCellFontHeight {18.5f};
 constexpr float tableHeaderFontHeightRatio {0.5f};
 /// Column titles retain JUCE's proportional size with one additional logical pixel.
 constexpr float tableHeaderFontHeightIncrease {1.0f};
