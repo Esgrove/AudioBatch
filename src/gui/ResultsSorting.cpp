@@ -83,10 +83,23 @@ int compareLoudness(const double left, const double right)
 }
 }  // namespace
 
-/// Stores the callback invoked when a column is clicked with ctrl or cmd held down.
-SecondarySortTableHeader::SecondarySortTableHeader(SecondarySortCallback secondarySortRequestedCallback) :
-    secondarySortRequested(std::move(secondarySortRequestedCallback))
+/// Stores the callback invoked when a column is clicked with ctrl or cmd held down,
+/// and the one that describes a column for the header tooltip.
+SecondarySortTableHeader::SecondarySortTableHeader(
+    SecondarySortCallback secondarySortRequestedCallback,
+    ColumnDescriber columnDescriber
+) :
+    secondarySortRequested(std::move(secondarySortRequestedCallback)),
+    describeColumn(std::move(columnDescriber))
 {}
+
+/// Returns the description of the column under the mouse.
+/// The tooltip window asks again as the mouse moves, so each column shows its own description.
+juce::String SecondarySortTableHeader::getTooltip()
+{
+    const auto column = tableColumnFromId(getColumnIdAtX(getMouseXYRelative().getX()));
+    return column.has_value() && describeColumn != nullptr ? describeColumn(*column) : juce::String();
+}
 
 /// Routes ctrl or cmd clicks to the secondary sort callback,
 /// while plain clicks fall through to the normal primary sort behaviour.

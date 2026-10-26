@@ -263,14 +263,14 @@ constexpr int nameColumnDefaultWidth {140};
 constexpr int pathColumnDefaultWidth {160};
 constexpr int typeColumnDefaultWidth {66};
 constexpr int bitDepthColumnDefaultWidth {70};
-// Wide enough for each header with its unit next to the sort arrow, such as "True Peak (dBTP)".
-constexpr int bitrateColumnDefaultWidth {100};
-constexpr int sampleRateColumnDefaultWidth {82};
+// Wide enough for each short header next to the sort arrow, such as "True Peak".
+constexpr int bitrateColumnDefaultWidth {76};
+constexpr int sampleRateColumnDefaultWidth {72};
 constexpr int lengthColumnDefaultWidth {66};
-constexpr int overallPeakColumnDefaultWidth {92};
-constexpr int peakLeftColumnDefaultWidth {102};
-constexpr int peakRightColumnDefaultWidth {104};
-constexpr int truePeakColumnDefaultWidth {122};
+constexpr int overallPeakColumnDefaultWidth {76};
+constexpr int peakLeftColumnDefaultWidth {76};
+constexpr int peakRightColumnDefaultWidth {76};
+constexpr int truePeakColumnDefaultWidth {86};
 constexpr int maxShortTermLufsColumnDefaultWidth {70};
 constexpr int integratedLufsColumnDefaultWidth {70};
 constexpr int customGainColumnDefaultWidth {76};
