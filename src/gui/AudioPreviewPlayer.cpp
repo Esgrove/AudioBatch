@@ -209,7 +209,7 @@ bool AudioPreviewPlayer::load(const juce::URL& audioUrl, const bool waitForIniti
     }
     readerSource = std::make_unique<PreviewReaderSource>(reader.release(), readFailed);
     prepareInput();
-    previewSource.setInputGain(1.0f, true);
+    previewSource.setInputGain(LinearGain {}, true);
     const auto refreshed = refreshPluginChain();
     juce::ignoreUnused(refreshed);
     waitingForInitialPosition = waitForInitialPosition;
@@ -324,10 +324,10 @@ void AudioPreviewPlayer::setLatencyCompensated(const bool enabled)
 }
 
 /// Applies custom input gain to the wet path without changing dry preview or normalization.
-void AudioPreviewPlayer::setInputGain(const float linearGain, const bool immediately)
+void AudioPreviewPlayer::setInputGain(const LinearGain gain, const bool immediately)
 {
     const juce::ScopedLock lock(renderingLock);
-    previewSource.setInputGain(linearGain, immediately);
+    previewSource.setInputGain(gain, immediately);
 }
 
 /// Flushes decoder/resampler history before resuming from an audible position.

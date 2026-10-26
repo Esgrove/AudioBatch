@@ -908,7 +908,7 @@ public:
             auto options = makeOptions({&plugin});
             options.normalizeBeforePlugin = AudioNormalizationOptions {};
             auto record = analyzeFile(source);
-            record.customGain = -6.0f;
+            record.customGain = Decibels {-6.0f};
 
             const auto result = processFileWithPlugins(record, options, chainOf(plugin));
 

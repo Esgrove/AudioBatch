@@ -112,7 +112,7 @@ juce::String getFormatSupportSummary();
 juce::String getNormalizationSupportMessage(const juce::File& file);
 juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records);
 
-[[nodiscard]] std::expected<float, juce::String> getNormalizationGain(
+[[nodiscard]] std::expected<LinearGain, juce::String> getNormalizationGain(
     const AudioAnalysisRecord& record,
     const AudioNormalizationOptions& options
 );

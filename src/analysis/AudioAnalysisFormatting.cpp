@@ -134,7 +134,7 @@ juce::String formatCustomGainCompact(const AudioAnalysisRecord& record)
         return {};
     }
 
-    return utils::format("{}{:.1f}", *record.customGain >= 0.0f ? "+" : "", *record.customGain);
+    return utils::format("{}{:.1f}", record.customGain->value >= 0.0f ? "+" : "", record.customGain->value);
 }
 
 /// Formats a duration rounded to whole seconds as "m:ss", or "h:mm:ss" from one hour on, such as "3:15".

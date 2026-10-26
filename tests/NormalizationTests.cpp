@@ -10,6 +10,7 @@
 #include "TestSuites.h"
 #include "utils/AudioMetadata.h"
 #include "utils/StringFormat.h"
+#include <type_traits>
 
 #include <algorithm>
 #include <variant>
@@ -324,7 +325,7 @@ private:
             auto gain = getNormalizationGain(record, options);
             expect(gain.has_value(), gain.error_or({}));
             expectWithinAbsoluteError(
-                static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(0.0f))),
+                static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(LinearGain {0.0f}).value)),
                 -14.0 - record.integratedLufs,
                 0.01
             );
@@ -335,7 +336,7 @@ private:
             gain = getNormalizationGain(record, options);
             expect(gain.has_value(), gain.error_or({}));
             expectWithinAbsoluteError(
-                static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(0.0f))),
+                static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(LinearGain {0.0f}).value)),
                 AudioNormalizationOptions::defaultTruePeakCeilingDbtp
                     - juce::Decibels::gainToDecibels(record.overallTruePeak),
                 0.01
@@ -373,6 +374,16 @@ private:
             expect(source.existsAsFile());
         }
 
+        beginTest("A gain in decibels converts to its linear factor and keeps the JUCE floor");
+        {
+            static_assert(!std::is_convertible_v<float, Decibels>);
+            static_assert(!std::is_convertible_v<float, LinearGain>);
+            expectWithinAbsoluteError(Decibels {}.toLinearGain().value, 1.0f, 1.0e-6f);
+            expectWithinAbsoluteError(Decibels {-6.0206f}.toLinearGain().value, 0.5f, 1.0e-4f);
+            expectWithinAbsoluteError(Decibels {6.0206f}.toLinearGain().value, 2.0f, 1.0e-4f);
+            expectEquals(Decibels {-120.0f}.toLinearGain().value, 0.0f);
+        }
+
         beginTest("A nearly silent file needs more gain than normalization applies");
         {
             auto record = analyzeFile(fixtureFile("sine_stereo_44100_16.aif"));
@@ -397,7 +408,7 @@ private:
             const auto gain = getNormalizationGain(record, options);
             expect(gain.has_value(), gain.error_or({}));
             expectWithinAbsoluteError(
-                static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(0.0f))), 30.0, 0.01
+                static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(LinearGain {0.0f}).value)), 30.0, 0.01
             );
         }
 

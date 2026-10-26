@@ -62,7 +62,7 @@ public:
     void setPluginChain(PluginChain* chain);
     bool setPluginPreviewEnabled(bool enabled);
     void setLatencyCompensated(bool enabled);
-    void setInputGain(float linearGain, bool immediately = false);
+    void setInputGain(LinearGain gain, bool immediately = false);
     bool refreshPluginChain();
     void togglePlayback();
     void updatePlaybackStatus();

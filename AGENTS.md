@@ -32,7 +32,9 @@ Directories describe what the code does, not which target links it.
 The source lists in `CMakeLists.txt` decide which target builds each file.
 
 - `src/analysis/` holds audio analysis and its result cache.
-    - `AudioAnalysis.*` and `AudioAnalysisTypes.h` perform audio analysis as free functions.
+    - `AudioAnalysis.*` perform audio analysis as free functions.
+      `AudioAnalysisTypes.h` holds the record and outcome types shared by the services,
+      and the `LinearGain` and `Decibels` gain units that service boundaries take instead of a bare `float`.
       `AudioAnalysisFormatting.*` implement the display formatting,
       and `BitDepthDetection.*` detects the source bit depth from the audio file, with a fixed default for MP3 files.
       `DecodeFailureTracker.h` holds the shared rules for read failures while decoding a file block by block.

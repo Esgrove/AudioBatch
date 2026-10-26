@@ -214,7 +214,7 @@ juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord
 /// or the user-facing reason when the file has no measurable level for that mode.
 /// A gain above AudioNormalizationOptions::maximumGainDb, or one that is not finite, is refused instead of capped,
 /// since a capped gain would leave the file short of the target without telling the caller.
-std::expected<float, juce::String> getNormalizationGain(
+std::expected<LinearGain, juce::String> getNormalizationGain(
     const AudioAnalysisRecord& record,
     const AudioNormalizationOptions& options
 )
@@ -254,7 +254,7 @@ std::expected<float, juce::String> getNormalizationGain(
         );
     }
 
-    return static_cast<float>(juce::Decibels::decibelsToGain(gainDecibels, decibelFloor));
+    return LinearGain {static_cast<float>(juce::Decibels::decibelsToGain(gainDecibels, decibelFloor))};
 }
 
 /// Returns the AIFF bit depth for output written from the given source.
@@ -339,7 +339,7 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, normalizationGain.error());
     }
 
-    const auto gain = *normalizationGain;
+    const auto gain = normalizationGain->value;
 
     if (juce::approximatelyEqual(gain, 1.0f) && outputFile == file) {
         auto analysis = analyzeFile(file, isCancelled, utils::makeProgressRange(onProgress, renderProgressStart, 1.0f));

@@ -2,6 +2,7 @@
 /// Defines AudioAnalysisRecord, which carries per-file peak, true peak, loudness, and shared short-term history,
 /// along with the AudioAnalysisStatus and AudioAnalysisSortMode enums
 /// and the AudioAnalysisOptions input parameters used by both the GUI and CLI flows.
+/// LinearGain and Decibels keep the two gain units apart at the service boundaries that take a gain.
 /// Also defines OperationOutcome, the variant that normalization and plugin processing return for each file,
 /// and Overloaded, which visits such variants with one lambda per alternative.
 
@@ -50,6 +51,24 @@ enum class AnalysisError : std::uint8_t {
     /// An unexpected exception stopped the analysis.
     exception,
 };
+
+/// A linear amplitude factor, where 1 leaves the signal unchanged.
+/// A separate type from Decibels, so a gain in one unit cannot be passed where the other is expected.
+struct LinearGain {
+    float value {1.0f};
+};
+
+/// A gain in decibels, where 0 dB leaves the signal unchanged.
+struct Decibels {
+    /// Returns the linear factor that applies this gain, with JUCE's default -100 dB floor.
+    [[nodiscard]] LinearGain toLinearGain() const
+    {
+        return LinearGain {juce::Decibels::decibelsToGain(value)};
+    }
+
+    float value {0.0f};
+};
+
 /// Input parameters shared by the GUI and CLI analysis flows.
 struct AudioAnalysisOptions {
     juce::Array<juce::File> inputPaths;
@@ -109,8 +128,8 @@ struct AudioAnalysisRecord {
     int sampleRate {0};
     int channels {0};
     int bitsPerSample {0};
-    /// Per-file gain in dB that the user set for this version of the file, which processing applies first.
-    std::optional<float> customGain;
+    /// Per-file gain that the user set for this version of the file, which processing applies first.
+    std::optional<Decibels> customGain;
     AudioAnalysisStatus status {AudioAnalysisStatus::pending};
     /// Why the analysis failed, set on the records of failed analyses.
     std::optional<AnalysisError> error;
@@ -156,9 +175,9 @@ struct AudioAnalysisRecord {
 }
 
 /// Returns true when neither gain is set, or both are set to approximately the same value.
-[[nodiscard]] inline bool sameCustomGain(const std::optional<float> first, const std::optional<float> second)
+[[nodiscard]] inline bool sameCustomGain(const std::optional<Decibels> first, const std::optional<Decibels> second)
 {
-    return first.has_value() == second.has_value() && (!first || juce::approximatelyEqual(*first, *second));
+    return first.has_value() == second.has_value() && (!first || juce::approximatelyEqual(first->value, second->value));
 }
 
 /// A normalization or plugin processing run that failed before writing its output, which leaves the source as it was.

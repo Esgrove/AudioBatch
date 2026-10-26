@@ -189,7 +189,9 @@ void AudioBatchComponent::configureProcessingControls()
     gainSlider.setEnabled(false);
     gainSlider.onValueChange = [this] {
         const auto value = static_cast<float>(gainSlider.getValue());
-        applyCustomGainToSelection(juce::approximatelyEqual(value, 0.0f) ? std::nullopt : std::optional(value));
+        applyCustomGainToSelection(
+            juce::approximatelyEqual(value, 0.0f) ? std::nullopt : std::optional(Decibels {value})
+        );
     };
     controlsContent.addAndMakeVisible(gainSlider);
 
