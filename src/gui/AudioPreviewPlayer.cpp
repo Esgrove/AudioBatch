@@ -209,7 +209,7 @@ bool AudioPreviewPlayer::load(const juce::URL& audioUrl, const bool waitForIniti
     }
     readerSource = std::make_unique<PreviewReaderSource>(reader.release(), readFailed);
     prepareInput();
-    previewSource.setInputGain(LinearGain {}, true);
+    previewSource.setInputGain(LinearGain {.value = 1.0f}, true);
     const auto refreshed = refreshPluginChain();
     juce::ignoreUnused(refreshed);
     waitingForInitialPosition = waitForInitialPosition;
