@@ -198,7 +198,7 @@ int compareRecordsByColumn(
             if (!lhs.customGain) {
                 return 0;
             }
-            return compareValues(*lhs.customGain, *rhs.customGain);
+            return compareValues(lhs.customGain->value, rhs.customGain->value);
         }
 
         case AudioFileTableColumn::status:

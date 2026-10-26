@@ -133,7 +133,7 @@ private:
     std::vector<AudioAnalysisRecord> getSelectedNormalizableRecords() const;
 
     void addRoots(const juce::Array<juce::File>& folders);
-    void applyCustomGainToSelection(std::optional<float> gain);
+    void applyCustomGainToSelection(std::optional<Decibels> gain);
     void clearCurrentAudioPreview();
     void configurePreviewControls();
     void configureProcessingControls();

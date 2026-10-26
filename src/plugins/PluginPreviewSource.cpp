@@ -82,12 +82,12 @@ void PluginPreviewSource::allocateBuffers()
 }
 
 /// Smooths gain edits during wet playback, or sets a new file's gain before its first audible sample.
-void PluginPreviewSource::setInputGain(const float linearGain, const bool immediately)
+void PluginPreviewSource::setInputGain(const LinearGain gain, const bool immediately)
 {
     if (immediately) {
-        inputGain.setCurrentAndTargetValue(linearGain);
+        inputGain.setCurrentAndTargetValue(gain.value);
     } else {
-        inputGain.setTargetValue(linearGain);
+        inputGain.setTargetValue(gain.value);
     }
 }
 

@@ -114,17 +114,17 @@ std::expected<void, juce::String> validateProcessingInputs(
 /// A custom gain wins, otherwise the file is normalized to the requested peak or loudness target,
 /// and otherwise it is left unchanged.
 /// A file without a measurable level for the target, such as silence, is left unchanged too.
-float getInputGain(const AudioAnalysisRecord& record, const PluginProcessingOptions& options)
+LinearGain getInputGain(const AudioAnalysisRecord& record, const PluginProcessingOptions& options)
 {
     if (record.customGain) {
-        return juce::Decibels::decibelsToGain(*record.customGain);
+        return record.customGain->toLinearGain();
     }
 
     if (options.normalizeBeforePlugin.has_value()) {
-        return getNormalizationGain(record, *options.normalizeBeforePlugin).value_or(1.0f);
+        return getNormalizationGain(record, *options.normalizeBeforePlugin).value_or(LinearGain {});
     }
 
-    return 1.0f;
+    return LinearGain {};
 }
 
 /// Reads `samplesToRead` frames starting at `samplePosition` into the start of
@@ -638,7 +638,7 @@ PluginProcessingResult processFileWithPlugins(
         chainInstances,
         options,
         numChannels,
-        getInputGain(record, options),
+        getInputGain(record, options).value,
         isCancelled,
         utils::makeProgressRange(onProgress, renderProgressStart, renderProgressEnd)
     );

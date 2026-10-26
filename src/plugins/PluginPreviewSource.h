@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "analysis/AudioAnalysisTypes.h"
 #include "plugins/PluginChainPreparation.h"
 #include "utils/AudioFormatUtils.h"
 
@@ -29,7 +30,7 @@ public:
         bool enabled,
         bool compensate
     );
-    void setInputGain(float linearGain, bool immediately = false);
+    void setInputGain(LinearGain gain, bool immediately = false);
     void setTailSamples(juce::int64 samples);
     void setPosition(double seconds);
     void start();

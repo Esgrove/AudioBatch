@@ -368,7 +368,7 @@ void AudioBatchComponent::zoomLevelChanged(const double zoomLevel) const
 }
 
 /// Updates the current selection's custom gain in-memory, in the cache, and the waveform preview.
-void AudioBatchComponent::applyCustomGainToSelection(const std::optional<float> gain)
+void AudioBatchComponent::applyCustomGainToSelection(const std::optional<Decibels> gain)
 {
     const auto selectedRows = resultsTable.getSelectedRows();
     if (selectedRows.size() == 0) {
@@ -404,13 +404,13 @@ void AudioBatchComponent::applyCustomGainToSelection(const std::optional<float> 
 /// Applies only the loaded file's gain, not another selected row's slider value or any normalization target.
 void AudioBatchComponent::updatePreviewInputGain(const bool immediately)
 {
-    float gain = 1.0f;
+    LinearGain gain;
     if (const auto row = findRecordIndex(currentAudioFile.getFullPathName());
         juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size())))
     {
         const auto& record = analysisResults[static_cast<std::size_t>(row)];
         if (record.customGain) {
-            gain = juce::Decibels::decibelsToGain(*record.customGain);
+            gain = record.customGain->toLinearGain();
         }
     }
     previewPlayer.setInputGain(gain, immediately);
@@ -444,7 +444,7 @@ void AudioBatchComponent::updateGainControlsForSelection()
     }
 
     const auto& record = analysisResults[static_cast<std::size_t>(referenceRow)];
-    gainSlider.setValue(static_cast<double>(record.customGain.value_or(0.0f)), juce::dontSendNotification);
+    gainSlider.setValue(static_cast<double>(record.customGain.value_or(Decibels {}).value), juce::dontSendNotification);
 }
 
 /// Applies the current file's custom gain to the waveform preview as a display-only scale factor.
@@ -466,7 +466,6 @@ void AudioBatchComponent::updateThumbnailDisplayGain() const
     }
 
     const auto& record = analysisResults[static_cast<std::size_t>(currentRow)];
-    const auto gain = record.customGain ? juce::Decibels::decibelsToGain(*record.customGain) : 1.0f;
-    thumbnail->setDisplayGain(gain);
+    thumbnail->setDisplayGain(record.customGain.value_or(Decibels {}).toLinearGain().value);
 }
 }  // namespace audiobatch

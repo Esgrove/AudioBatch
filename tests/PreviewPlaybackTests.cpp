@@ -350,7 +350,7 @@ private:
         PluginPreviewSource source;
         source.setInput(&input, 1024.0 / previewTestRate, 1);
         source.setChain({}, plugin_processing::ChainPreparation(), false, true);
-        source.setInputGain(2.0f, true);
+        source.setInputGain(LinearGain {2.0f}, true);
         source.prepareToPlay(previewTestBlockSize, previewTestRate);
         source.start();
         juce::AudioBuffer<float> output(2, 128);

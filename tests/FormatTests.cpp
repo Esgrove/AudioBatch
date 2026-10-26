@@ -96,11 +96,11 @@ public:
         {
             AudioAnalysisRecord record;
             expectEquals(formatCustomGainCompact(record), juce::String());
-            record.customGain = 3.0f;
+            record.customGain = Decibels {3.0f};
             expectEquals(formatCustomGainCompact(record), juce::String("+3.0"));
-            record.customGain = 0.0f;
+            record.customGain = Decibels {0.0f};
             expectEquals(formatCustomGainCompact(record), juce::String("+0.0"));
-            record.customGain = -1.5f;
+            record.customGain = Decibels {-1.5f};
             expectEquals(formatCustomGainCompact(record), juce::String("-1.5"));
         }
 

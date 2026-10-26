@@ -177,9 +177,9 @@ public:
         beginTest("Records without a custom gain sort before gains, which sort by value");
         {
             auto boosted = makeRecord("boosted", 0.5f, -12.0);
-            boosted.customGain = 3.0f;
+            boosted.customGain = Decibels {3.0f};
             auto cut = makeRecord("cut", 0.5f, -12.0);
-            cut.customGain = -3.0f;
+            cut.customGain = Decibels {-3.0f};
             std::vector records {boosted, makeRecord("none", 0.5f, -12.0), cut};
 
             results_sorting::sortRecords(
@@ -373,7 +373,7 @@ private:
             record.durationSeconds = random.nextBool() ? 180.0 : random.nextDouble() * 600.0;
             record.bitsPerSample = random.nextInt(5) * 8;
             if (random.nextBool()) {
-                record.customGain = static_cast<float>(random.nextInt(3));
+                record.customGain = Decibels {static_cast<float>(random.nextInt(3))};
             }
             record.status = random.nextBool() ? AudioAnalysisStatus::analyzed : AudioAnalysisStatus::cached;
             records.push_back(record);

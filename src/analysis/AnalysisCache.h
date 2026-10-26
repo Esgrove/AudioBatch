@@ -33,8 +33,8 @@ struct FileIdentity {
 /// A user-controlled gain to store for one file.
 struct CustomGainUpdate {
     juce::File file;
-    /// The new gain in dB, or nothing to clear it.
-    std::optional<float> customGain;
+    /// The new gain, or nothing to clear it.
+    std::optional<Decibels> customGain;
 };
 
 /// Persistent SQLite-backed cache for file analysis results and waveform previews.
@@ -60,7 +60,7 @@ public:
     [[nodiscard]] juce::File getDatabaseFile() const;
 
     [[nodiscard]] std::optional<AudioAnalysisRecord> getAnalysis(const juce::File& file);
-    [[nodiscard]] std::optional<float> getCustomGain(
+    [[nodiscard]] std::optional<Decibels> getCustomGain(
         const juce::File& file,
         std::int64_t fileSize,
         std::int64_t modifiedTimeMs
@@ -73,7 +73,7 @@ public:
     [[nodiscard]] bool open();
     [[nodiscard]] bool removeAnalysis(const juce::File& file);
     [[nodiscard]] bool storeAnalysis(const AudioAnalysisRecord& record);
-    [[nodiscard]] bool storeCustomGain(const juce::File& file, std::optional<float> customGain);
+    [[nodiscard]] bool storeCustomGain(const juce::File& file, std::optional<Decibels> customGain);
     [[nodiscard]] bool storeSeratoTag(const FileIdentity& identity, const serato::TagReadResult& result);
     [[nodiscard]] bool storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData);
 
