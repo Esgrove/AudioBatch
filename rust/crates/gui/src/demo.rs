@@ -78,7 +78,7 @@ pub fn advance_row(row: &mut ResultRow, random: &mut DemoRandom) {
     row.state = match row.state {
         RowState::Pending => RowState::Analyzing(0.0),
         RowState::Analyzing(fraction) if fraction < 0.9 => RowState::Analyzing(fraction + 0.1),
-        RowState::Analyzing(_) => {
+        RowState::Analyzing(_) | RowState::Normalizing(_) => {
             row.record = Some(demo_record(row, random));
             RowState::Done
         }

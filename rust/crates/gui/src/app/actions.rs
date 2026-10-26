@@ -3,6 +3,7 @@
 //! Covers the file dialogs, analyzing the selected file again, clearing its custom gain, removing it from the list,
 //! moving it to the trash, revealing it in the file manager, clearing the list,
 //! playback, the events of the controls column, the About dialog, and the synthetic stress test.
+//! Removing or trashing files waits while files are being normalized.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -73,6 +74,9 @@ impl AppView {
         let Some(selected) = self.selected.clone() else {
             return;
         };
+        if self.blocked_by_normalization(cx) {
+            return;
+        }
         self.excluded.insert(selected.clone());
         self.roots.retain(|root| root != &selected);
         let removed_index = self.table.update(cx, |state, cx| {
@@ -99,6 +103,9 @@ impl AppView {
         let Some(selected) = self.selected.clone() else {
             return;
         };
+        if self.blocked_by_normalization(cx) {
+            return;
+        }
         if let Some(player) = &mut self.player
             && player.loaded_path() == Some(selected.as_path())
         {
@@ -136,10 +143,12 @@ impl AppView {
     }
 
     /// Removes every file and folder and stops any run and playback.
+    /// Files being normalized finish their current block and keep their originals.
     pub(super) fn clear_list(&mut self, cx: &mut Context<Self>) {
         if let Some(coordinator) = &self.coordinator {
             coordinator.cancel();
         }
+        self.cancel_normalization();
         self.analysis_task = None;
         self.demo_task = None;
         self.roots.clear();
@@ -174,8 +183,8 @@ impl AppView {
     }
 
     /// Resets a slider of the controls column to its default:
-    /// the whole file for the zoom, and no custom gain for the selected file.
-    fn reset_slider(&self, control: SliderControl, window: &mut Window, cx: &mut Context<Self>) {
+    /// the whole file for the zoom, no custom gain for the selected file, and the default normalization target.
+    fn reset_slider(&mut self, control: SliderControl, window: &mut Window, cx: &mut Context<Self>) {
         match control {
             SliderControl::Zoom => {
                 self.zoom_slider
@@ -188,6 +197,7 @@ impl AppView {
                     .update(cx, |slider, cx| slider.set_value(DEFAULT_GAIN_DB, window, cx));
                 self.clear_selected_gain(cx);
             }
+            SliderControl::NormalizeTarget => self.reset_normalize_target(window, cx),
         }
         cx.notify();
     }
@@ -206,6 +216,12 @@ impl AppView {
             ControlsEvent::TogglePlayback => self.toggle_playback(cx),
             ControlsEvent::ResetSlider(control) => self.reset_slider(control, window, cx),
             ControlsEvent::OpenSettings => self.open_settings_window(cx),
+            ControlsEvent::SetNormalizeMode(mode) => self.set_normalize_mode(mode, cx),
+            ControlsEvent::SetOverwrite(overwrite) => {
+                self.overwrite_existing = overwrite;
+                cx.notify();
+            }
+            ControlsEvent::NormalizeSelected => self.normalize_selected(window, cx),
         }
     }
 

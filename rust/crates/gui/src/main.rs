@@ -14,6 +14,7 @@ mod demo;
 mod files;
 mod info_panel;
 mod menus;
+mod normalization;
 mod results;
 mod settings;
 mod settings_window;

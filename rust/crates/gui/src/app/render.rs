@@ -4,7 +4,7 @@
 //! and the waveform.
 //! A status bar along the bottom edge shows the listed folders, the run status with its progress,
 //! and the output device with its sample rate and buffer size.
-//! The window title shows the analysis progress, and files dropped anywhere on the window are added.
+//! The window title shows the analysis or normalization progress, and files dropped anywhere on the window are added.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -25,13 +25,14 @@ use super::{
     APP_TITLE, AppView, CONTENT_PADDING, PREVIEW_MINIMUM_HEIGHT, SECTION_SPACING, STATUS_BAR_HEIGHT,
     TABLE_FRAME_BORDER, content_size,
 };
-use crate::controls::{ControlsEvent, ControlsState, render_controls};
+use crate::controls::{ControlsEvent, ControlsState, NormalizeControls, render_controls};
 use crate::info_panel::render_info_panel;
 use crate::menus::{
-    About, AddFiles, AddFolder, ChooseFolder, ClearCustomGain, ClearList, KEY_CONTEXT, OpenAudioSettings,
-    ReanalyzeSelected, RemoveSelected, Rescan, RevealSelected, SelectOutputDevice, StopPlayback, ToggleLoudnessGraph,
-    TogglePlayback, TrashSelected,
+    About, AddFiles, AddFolder, ChooseFolder, ClearCustomGain, ClearList, KEY_CONTEXT, NormalizeAll, NormalizeSelected,
+    OpenAudioSettings, ReanalyzeSelected, RemoveSelected, Rescan, RevealSelected, SelectOutputDevice, StopPlayback,
+    ToggleLoudnessGraph, TogglePlayback, TrashSelected,
 };
+use crate::normalization::target_value_text;
 use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, fill_status_column};
 use crate::theme::{TEXT_FONT, color, palette, tooltip};
 
@@ -56,8 +57,8 @@ const STATUS_SEPARATOR_INSET: f32 = 5.0;
 /// Share of the status bar width given to the listed folders, leaving the status text the larger part.
 const PATH_PROPORTION: f32 = 0.4;
 
-/// Tooltip of the status text, as in the C++ application without its normalization.
-const STATUS_TOOLTIP: &str = "Background analysis status.";
+/// Tooltip of the status text, as in the C++ application.
+const STATUS_TOOLTIP: &str = "Background analysis and normalization status.";
 
 /// Smallest height of the results table.
 const TABLE_MINIMUM_HEIGHT: f32 = 240.0;
@@ -87,11 +88,11 @@ const INFORMATION_MAXIMUM_WIDTH: f32 = 270.0;
 const INFORMATION_WIDTH_PROPORTION: f32 = 0.22;
 
 impl AppView {
-    /// Sets the window title, with the analysis progress while a run is in progress.
-    fn update_window_title(&mut self, progress: Option<f32>, window: &mut Window) {
+    /// Sets the window title, with the activity and its progress while a run is in progress.
+    fn update_window_title(&mut self, progress: Option<(&str, f32)>, window: &mut Window) {
         let title = progress.map_or_else(
             || String::from(APP_TITLE),
-            |fraction| format!("{APP_TITLE} - Analyzing {:.0}%", fraction * 100.0),
+            |(activity, fraction)| format!("{APP_TITLE} - {activity} {:.0}%", fraction * 100.0),
         );
         if title != self.window_title {
             window.set_window_title(&title);
@@ -233,6 +234,13 @@ impl AppView {
             playing: self.player.as_ref().is_some_and(Player::is_playing),
             can_play: self.player.is_some() && (self.selected.is_some() || self.is_demo()),
             can_adjust_gain: self.can_adjust_gain(cx),
+            normalize: NormalizeControls {
+                mode: self.settings.normalize_mode,
+                target: self.normalize_target_slider(self.settings.normalize_mode),
+                target_text: target_value_text(&self.settings),
+                overwrite: self.overwrite_existing,
+                can_normalize: self.can_normalize_selected(cx),
+            },
         };
         let on_event = cx.listener(|view, event: &ControlsEvent, window, cx| {
             view.handle_controls_event(*event, window, cx);
@@ -272,6 +280,7 @@ impl Render for AppView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let progress = self.overall_progress(cx);
         self.update_window_title(progress, window);
+        let progress = progress.map(|(_, fraction)| fraction);
         let (content_width, workspace_height) = content_size(window.viewport_size());
         let preview_maximum = (workspace_height * PREVIEW_MAXIMUM_PROPORTION).max(PREVIEW_MINIMUM_HEIGHT + 1.0);
         let table_width = TABLE_FRAME_BORDER.mul_add(-2.0, content_width);
@@ -290,6 +299,8 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &Rescan, _, cx| view.rescan(cx)))
             .on_action(cx.listener(|view, _: &RevealSelected, _, cx| view.reveal_selected(cx)))
             .on_action(cx.listener(|view, _: &ReanalyzeSelected, _, cx| view.reanalyze_selected(cx)))
+            .on_action(cx.listener(|view, _: &NormalizeSelected, window, cx| view.normalize_selected(window, cx)))
+            .on_action(cx.listener(|view, _: &NormalizeAll, window, cx| view.normalize_all(window, cx)))
             .on_action(cx.listener(|view, _: &ClearCustomGain, _, cx| view.clear_selected_gain(cx)))
             .on_action(cx.listener(|view, _: &RemoveSelected, _, cx| view.remove_selected(cx)))
             .on_action(cx.listener(|view, _: &TrashSelected, _, cx| view.trash_selected(cx)))

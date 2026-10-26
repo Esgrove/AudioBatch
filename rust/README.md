@@ -3,10 +3,10 @@
 Rust port of AudioBatch, built next to the C++ application in `../cpp`.
 It analyzes audio files for sample peak, true peak, and integrated loudness (EBU R128),
 caches the results in SQLite, and lists them in a CLI and a GUI with a waveform overview and playback.
-The CLI also normalizes files to a sample peak or loudness target, written as AIFF with their tags carried over.
+Both also normalize files to a sample peak or loudness target, written as AIFF with their tags carried over.
 
 The C++ application remains the reference implementation and the full-featured version.
-Plugin processing is only available there, and the GUI cannot normalize files yet.
+Plugin processing is only available there.
 
 ## Crates
 
@@ -128,7 +128,7 @@ cargo run --release --bin AudioBatchRs -- [--autoplay] [paths...]
 The window follows the layout and colors of the C++ application:
 the results table with the same columns in the same order,
 and below it the controls, the information panel, and the waveform.
-A status bar along the bottom shows the listed folders, the analysis status and progress,
+A status bar along the bottom shows the listed folders, the analysis or normalization status and progress,
 and the output device with its sample rate and buffer size in samples.
 
 - Drop folders to replace the list, or hold Shift to add them. Dropped files are added.
@@ -142,6 +142,14 @@ and the output device with its sample rate and buffer size in samples.
 - The Input gain slider sets a per-file gain for the selected file, shown in the Gain column.
   It applies to the preview and the waveform, and is saved in the analysis cache until the file changes.
   File > Clear Per-file Gain removes it.
+- The Normalize group chooses a sample peak target from -12 to 0 dBFS,
+  or a loudness target from -24 to -6 LUFS limited to a -0.3 dBTP true peak.
+  The Normalize button and File > Normalize Selected normalize the selected file,
+  and File > Normalize All Files normalizes every analyzed file after a confirmation.
+  Each file is written as a sibling `.aif` that replaces its row, and a converted source is moved to the system trash.
+  Overwrite lets the output replace an existing file of the same name, which is moved to the trash too.
+  The Status column shows the progress of each file, and a failure keeps the row with the reason.
+  The list cannot change while files are being normalized, and normalization waits for analysis to finish.
 - File > Rescan (F5) picks up new and changed files,
   and the File menu also re-analyzes, removes, trashes, or reveals the selected file.
 - Options > Show Loudness Graph, or the same option in the settings window,

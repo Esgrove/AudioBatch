@@ -1,12 +1,14 @@
 //! The main window of `AudioBatch` RS.
 //!
-//! `AppView` owns the results table, the preview section, the analysis coordinator, and the preview player.
+//! `AppView` owns the results table, the preview section, the analysis and normalization coordinators,
+//! and the preview player.
 //! This module holds the view state, the analysis runs, and the selection.
-//! The menu and transport actions are in `actions`, and the layout is in `render`.
-//! Analysis events are drained from the coordinator channel by a foreground task in batches,
+//! The menu and transport actions are in `actions`, normalization is in `normalize`, and the layout is in `render`.
+//! Coordinator events are drained from their channel by a foreground task in batches,
 //! so a large run updates the table at a steady rate instead of once per event.
 
 mod actions;
+mod normalize;
 mod preferences;
 mod render;
 
@@ -18,7 +20,8 @@ use std::time::Duration;
 use audiobatch_core::discovery::{has_supported_extension, normalize_path};
 use audiobatch_core::record::{custom_gain_from_decibels, decibels_to_gain};
 use audiobatch_core::{
-    AnalysisCache, AnalysisCoordinator, AnalysisEvent, AnalysisOptions, AnalysisRecord, FileTags, read_tags,
+    AnalysisCache, AnalysisCoordinator, AnalysisEvent, AnalysisOptions, AnalysisRecord, FileTags, NormalizeCoordinator,
+    read_tags,
 };
 use audiobatch_playback::Player;
 use crossbeam_channel::{Receiver, TryRecvError};
@@ -29,8 +32,9 @@ use gpui_kit::{
 };
 
 use crate::menus::{MenuState, set_menus};
+use crate::normalization::{NormalizeRun, describe_target, target_range};
 use crate::results::{ResultRow, ResultsDelegate, RowState};
-use crate::settings::GuiSettings;
+use crate::settings::{GuiSettings, NormalizeMode};
 use crate::waveform::{
     CueMarker, MAXIMUM_ZOOM, MINIMUM_ZOOM, NO_FILE_TEXT, PlayheadSource, WaveformEvent, WaveformView,
 };
@@ -39,7 +43,7 @@ use preferences::{SettingsWindow, open_player};
 /// Window title, followed by the analysis progress while a run is in progress.
 pub const APP_TITLE: &str = "AudioBatchRs";
 
-/// How often the analysis events are applied to the table.
+/// How often the analysis and normalization events are applied to the table.
 const ANALYSIS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// Padding around the window content.
@@ -103,6 +107,14 @@ struct RunProgress {
     completed: bool,
 }
 
+/// The sliders of the controls column.
+struct Sliders {
+    zoom: Entity<SliderState>,
+    gain: Entity<SliderState>,
+    peak_target: Entity<SliderState>,
+    loudness_target: Entity<SliderState>,
+}
+
 /// The root view of the main window.
 pub struct AppView {
     focus_handle: FocusHandle,
@@ -110,7 +122,19 @@ pub struct AppView {
     waveform: Entity<WaveformView>,
     zoom_slider: Entity<SliderState>,
     gain_slider: Entity<SliderState>,
+    /// Target slider of peak normalization in dBFS.
+    peak_target_slider: Entity<SliderState>,
+    /// Target slider of loudness normalization in LUFS.
+    loudness_target_slider: Entity<SliderState>,
     coordinator: Option<Arc<AnalysisCoordinator>>,
+    /// Normalizes files in the background, sharing the cache of the analysis coordinator.
+    normalize_coordinator: Option<Arc<NormalizeCoordinator>>,
+    /// Progress of the current or last normalization run.
+    normalize_run: Option<NormalizeRun>,
+    /// Applies the events of the normalization run. Dropping it stops listening to the run.
+    normalize_task: Option<Task<()>>,
+    /// Replaces an existing output file when normalizing, for this session only.
+    overwrite_existing: bool,
     player: Option<Player>,
     /// Folders and files the list is built from.
     roots: Vec<PathBuf>,
@@ -158,38 +182,26 @@ impl AppView {
             .row_selectable(true)
         });
         let waveform = cx.new(|_| WaveformView::new());
-        let (zoom_slider, gain_slider) = new_sliders(cx);
-        let subscriptions = vec![
+        let settings = GuiSettings::load();
+        let (sliders, slider_subscriptions) = new_sliders(&settings, window, cx);
+        let mut subscriptions = vec![
             cx.subscribe_in(&table, window, Self::on_table_event),
             cx.subscribe_in(&waveform, window, Self::on_waveform_event),
-            cx.subscribe_in(&zoom_slider, window, |view, _, event: &SliderEvent, _, cx| {
-                if let SliderEvent::Change(value) = event {
-                    let zoom = f64::from(value.start());
-                    view.waveform.update(cx, |waveform, cx| waveform.set_zoom(zoom, cx));
-                    cx.notify();
-                }
-            }),
-            cx.subscribe_in(&gain_slider, window, |view, _, event: &SliderEvent, _, cx| {
-                match event {
-                    SliderEvent::Change(value) => view.change_selected_gain(value.start(), cx),
-                    SliderEvent::Release(_) => view.store_selected_gain(cx),
-                }
-                cx.notify();
-            }),
         ];
+        subscriptions.extend(slider_subscriptions);
 
         let mut status = SharedString::default();
-        let coordinator = match open_coordinator() {
-            Ok(coordinator) => Some(Arc::new(coordinator)),
-            Err(error) => {
+        let (coordinator, normalize_coordinator) = open_coordinators().map_or_else(
+            |error| {
                 status = format!("Analysis unavailable: {error:#}").into();
-                None
-            }
-        };
-        let settings = GuiSettings::load();
+                (None, None)
+            },
+            |(analysis, normalize)| (Some(Arc::new(analysis)), Some(Arc::new(normalize))),
+        );
         let mut menu_state = MenuState {
             output_device: None,
             show_loudness_graph: settings.show_loudness_graph,
+            normalize_target: describe_target(&settings),
         };
         let player = match open_player(&settings.output_config()) {
             Ok(player) => {
@@ -215,9 +227,15 @@ impl AppView {
             focus_handle,
             table,
             waveform,
-            zoom_slider,
-            gain_slider,
+            zoom_slider: sliders.zoom,
+            gain_slider: sliders.gain,
+            peak_target_slider: sliders.peak_target,
+            loudness_target_slider: sliders.loudness_target,
             coordinator,
+            normalize_coordinator,
+            normalize_run: None,
+            normalize_task: None,
+            overwrite_existing: false,
             player,
             roots: Vec::new(),
             excluded: HashSet::new(),
@@ -259,6 +277,9 @@ impl AppView {
     /// Adds folders and files to the list and scans every listed root again.
     /// Cached files come back immediately, so only new or changed files are decoded.
     fn add_roots(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        if self.blocked_by_normalization(cx) {
+            return;
+        }
         let mut added = false;
         for path in paths.iter().map(|path| normalize_path(path)) {
             self.excluded.remove(&path);
@@ -277,6 +298,9 @@ impl AppView {
 
     /// Replaces the listed folders and files and scans them.
     fn replace_roots(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        if self.blocked_by_normalization(cx) {
+            return;
+        }
         self.roots = paths.iter().map(|path| normalize_path(path)).collect();
         self.excluded.clear();
         self.start_run(RunKind::Scan, self.roots.clone(), false, cx);
@@ -306,7 +330,7 @@ impl AppView {
         let Some(coordinator) = self.coordinator.clone() else {
             return;
         };
-        if inputs.is_empty() || self.is_demo() {
+        if inputs.is_empty() || self.is_demo() || self.blocked_by_normalization(cx) {
             return;
         }
         let (run_id, receiver) = coordinator.start(AnalysisOptions {
@@ -352,15 +376,38 @@ impl AppView {
         self.table.read(cx).delegate().row_for(selected)?.ready_record()
     }
 
-    /// Returns the overall progress of the current run from 0 to 1, or none when no run is in progress.
-    /// Files being decoded count with their decoded fraction, so the line moves smoothly on long files.
-    fn overall_progress(&self, cx: &Context<Self>) -> Option<f32> {
-        let run = self.run.as_ref().filter(|_| self.is_analyzing())?;
-        if run.total == 0 {
-            return Some(0.0);
+    /// Returns the activity and the overall progress of the current run from 0 to 1,
+    /// or none when no analysis or normalization run is in progress.
+    /// Files being worked on count with their fraction, so the line moves smoothly on long files.
+    fn overall_progress(&self, cx: &Context<Self>) -> Option<(&'static str, f32)> {
+        let (activity, finished, total) =
+            if let Some(run) = self.normalize_run.as_ref().filter(|_| self.is_normalizing()) {
+                ("Normalizing", run.finished, run.total)
+            } else {
+                let run = self.run.as_ref().filter(|_| self.is_analyzing())?;
+                ("Analyzing", run.finished, run.total)
+            };
+        if total == 0 {
+            return Some((activity, 0.0));
         }
         let active = self.table.read(cx).delegate().active_progress();
-        Some(((run.finished as f32 + active) / run.total as f32).clamp(0.0, 1.0))
+        Some((activity, ((finished as f32 + active) / total as f32).clamp(0.0, 1.0)))
+    }
+
+    /// Returns the target slider of a normalization mode.
+    const fn normalize_target_slider(&self, mode: NormalizeMode) -> &Entity<SliderState> {
+        match mode {
+            NormalizeMode::Peak => &self.peak_target_slider,
+            NormalizeMode::Loudness => &self.loudness_target_slider,
+        }
+    }
+
+    /// Stores the target while a target slider moves, and saves it when the slider is released.
+    fn on_target_slider_event(&mut self, mode: NormalizeMode, event: &SliderEvent, cx: &mut Context<Self>) {
+        match event {
+            SliderEvent::Change(value) => self.change_normalize_target(mode, value.start(), cx),
+            SliderEvent::Release(_) => self.store_normalize_target(cx),
+        }
     }
 
     /// Applies a batch of analysis events to the table and the selection.
@@ -720,8 +767,44 @@ fn content_size(viewport: Size<Pixels>) -> (f32, f32) {
     (width, height)
 }
 
+/// Creates the sliders of the controls column, and subscribes the view to them.
+fn new_sliders(settings: &GuiSettings, window: &Window, cx: &mut Context<AppView>) -> (Sliders, [Subscription; 4]) {
+    let (zoom, gain) = new_view_sliders(cx);
+    let peak_target = new_target_slider(NormalizeMode::Peak, settings.normalize_target_peak_dbfs, cx);
+    let loudness_target = new_target_slider(NormalizeMode::Loudness, settings.normalize_target_lufs, cx);
+    let subscriptions = [
+        cx.subscribe_in(&zoom, window, |view, _, event: &SliderEvent, _, cx| {
+            if let SliderEvent::Change(value) = event {
+                let zoom = f64::from(value.start());
+                view.waveform.update(cx, |waveform, cx| waveform.set_zoom(zoom, cx));
+                cx.notify();
+            }
+        }),
+        cx.subscribe_in(&gain, window, |view, _, event: &SliderEvent, _, cx| {
+            match event {
+                SliderEvent::Change(value) => view.change_selected_gain(value.start(), cx),
+                SliderEvent::Release(_) => view.store_selected_gain(cx),
+            }
+            cx.notify();
+        }),
+        cx.subscribe_in(&peak_target, window, |view, _, event: &SliderEvent, _, cx| {
+            view.on_target_slider_event(NormalizeMode::Peak, event, cx);
+        }),
+        cx.subscribe_in(&loudness_target, window, |view, _, event: &SliderEvent, _, cx| {
+            view.on_target_slider_event(NormalizeMode::Loudness, event, cx);
+        }),
+    ];
+    let sliders = Sliders {
+        zoom,
+        gain,
+        peak_target,
+        loudness_target,
+    };
+    (sliders, subscriptions)
+}
+
 /// Creates the zoom slider, logarithmic from 1 to 20 times, and the input gain slider in decibels.
-fn new_sliders(cx: &mut Context<AppView>) -> (Entity<SliderState>, Entity<SliderState>) {
+fn new_view_sliders(cx: &mut Context<AppView>) -> (Entity<SliderState>, Entity<SliderState>) {
     let zoom = cx.new(|_| {
         SliderState::new()
             .min(MINIMUM_ZOOM as f32)
@@ -740,26 +823,41 @@ fn new_sliders(cx: &mut Context<AppView>) -> (Entity<SliderState>, Entity<Slider
     (zoom, gain)
 }
 
+/// Creates the target slider of a normalization mode, starting at the saved target.
+fn new_target_slider(mode: NormalizeMode, target: f64, cx: &mut Context<AppView>) -> Entity<SliderState> {
+    let range = target_range(mode);
+    cx.new(|_| {
+        SliderState::new()
+            .min(range.minimum)
+            .max(range.maximum)
+            .step(range.step)
+            .default_value(target as f32)
+    })
+}
+
 /// Returns the waveform placeholder for a file without a usable result.
 fn placeholder_text(row: &ResultRow) -> String {
     match row.state {
         RowState::Pending => String::from("Waiting for analysis"),
         RowState::Analyzing(fraction) => format!("Analyzing {:.0}%", fraction * 100.0),
+        RowState::Normalizing(fraction) => format!("Normalizing {:.0}%", fraction * 100.0),
         RowState::Done if row.has_error() => String::from("Could not read this file"),
         RowState::Done => String::from("No waveform for this file"),
     }
 }
 
-/// Opens the default analysis cache and a coordinator with one worker per CPU.
+/// Opens the default analysis cache, and the analysis and normalization coordinators sharing it,
+/// each with one worker per CPU.
 /// Falls back to a cache in the temporary directory when the default location cannot be opened.
-fn open_coordinator() -> anyhow::Result<AnalysisCoordinator> {
+fn open_coordinators() -> anyhow::Result<(AnalysisCoordinator, NormalizeCoordinator)> {
     let cache = AnalysisCache::open_default().or_else(|_| {
         let cache = AnalysisCache::with_path(std::env::temp_dir().join("AudioBatch-rs").join("analysis.db"));
         cache.open()?;
         anyhow::Ok(Arc::new(cache))
     })?;
     let workers = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-    AnalysisCoordinator::new(cache, workers)
+    let normalize = NormalizeCoordinator::new(Arc::clone(&cache), workers)?;
+    Ok((AnalysisCoordinator::new(cache, workers)?, normalize))
 }
 
 /// Returns the Serato cue points of a file as waveform markers.
@@ -778,18 +876,24 @@ fn cue_markers(tags: &FileTags) -> Vec<CueMarker> {
         .unwrap_or_default()
 }
 
-/// Drains the coordinator events on a timer and applies them to the view in batches.
+/// Takes every event waiting in a coordinator channel.
+/// Returns the events and whether the channel is disconnected, which means the run has no more events.
+fn drain_events<T>(receiver: &Receiver<T>) -> (Vec<T>, bool) {
+    let mut batch = Vec::new();
+    loop {
+        match receiver.try_recv() {
+            Ok(event) => batch.push(event),
+            Err(TryRecvError::Empty) => return (batch, false),
+            Err(TryRecvError::Disconnected) => return (batch, true),
+        }
+    }
+}
+
+/// Drains the analysis events on a timer and applies them to the view in batches.
 fn spawn_event_drain(receiver: Receiver<AnalysisEvent>, cx: &Context<AppView>) -> Task<()> {
     cx.spawn(async move |this, cx| {
         loop {
-            let mut batch = Vec::new();
-            let disconnected = loop {
-                match receiver.try_recv() {
-                    Ok(event) => batch.push(event),
-                    Err(TryRecvError::Empty) => break false,
-                    Err(TryRecvError::Disconnected) => break true,
-                }
-            };
+            let (batch, disconnected) = drain_events(&receiver);
             if !batch.is_empty()
                 && this
                     .update(cx, |view, cx| view.apply_analysis_events(batch, cx))

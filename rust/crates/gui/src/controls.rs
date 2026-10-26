@@ -1,8 +1,10 @@
 //! The controls column at the left of the preview:
-//! zoom, input gain, the Audio Settings button, and Play/Stop.
+//! zoom, input gain, the normalization target, the Audio Settings button, and Play/Stop.
 //!
 //! Follows the controls of the C++ application, with the zoom and gain sliders and their value labels on top
 //! and the large Play/Stop button at the bottom, green while stopped and red while playing.
+//! The normalization group has the Peak and Loudness modes, the target slider of the chosen mode,
+//! the overwrite option, and the button that normalizes the selected file.
 //! The playback position is shown by the playhead on the waveform,
 //! and the output device in the status bar of the main window.
 //! Everything above the button scrolls when the preview is short, so the button always stays visible.
@@ -11,15 +13,18 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::Disableable as _;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::base::Selectable as _;
+use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::slider::{Slider, SliderState};
+use gpui_kit::component::{Disableable as _, Sizable as _};
 use gpui_kit::{
     App, Div, ElementId, Entity, InteractiveElement as _, MouseButton, MouseUpEvent, ParentElement as _, Stateful,
     StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
+use crate::settings::NormalizeMode;
 use crate::theme::{MONO_FONT, color, palette, tooltip, white};
 
 /// Height of the Play/Stop button, the C++ process button height.
@@ -56,6 +61,22 @@ const GAIN_TOOLTIP: &str = if cfg!(target_os = "macos") {
     "Per-file gain in dB, saved for the selected file and applied to the preview and the waveform. \
      You can also use Ctrl with the mouse wheel over the waveform. Double-click to reset."
 };
+
+/// Tooltip of the normalization mode buttons, the C++ mode box tooltip.
+const MODE_TOOLTIP: &str =
+    "Normalize to a sample peak level, or to an integrated loudness limited to a -0.3 dBTP true peak.";
+
+/// Tooltip of the normalization target slider.
+const TARGET_TOOLTIP: &str = "Target level for normalization. Double-click to reset.";
+
+/// Tooltip of the overwrite option, the C++ toggle tooltip without plugin processing.
+const OVERWRITE_TOOLTIP: &str = "When enabled, normalizing replaces an existing output file with the same name. \
+     The replaced file is moved to the system trash.";
+
+/// Tooltip of the Normalize button.
+const NORMALIZE_TOOLTIP: &str = "Normalize the selected file to the target. \
+     The output is written as AIFF next to the source, and a converted source is moved to the system trash.";
+
 /// A slider of the controls column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SliderControl {
@@ -63,6 +84,8 @@ pub enum SliderControl {
     Zoom,
     /// The input gain.
     Gain,
+    /// The normalization target of the current mode.
+    NormalizeTarget,
 }
 
 /// Something the user did in the controls column.
@@ -74,6 +97,26 @@ pub enum ControlsEvent {
     ResetSlider(SliderControl),
     /// The Audio Settings button was clicked.
     OpenSettings,
+    /// A normalization mode was chosen.
+    SetNormalizeMode(NormalizeMode),
+    /// The overwrite option was switched on or off.
+    SetOverwrite(bool),
+    /// The Normalize button was clicked.
+    NormalizeSelected,
+}
+
+/// Values the normalization group shows.
+pub struct NormalizeControls<'a> {
+    /// The chosen mode.
+    pub mode: NormalizeMode,
+    /// Target slider of the chosen mode.
+    pub target: &'a Entity<SliderState>,
+    /// Target text next to the caption, for example "-14.0 LUFS".
+    pub target_text: String,
+    /// True when an existing output is replaced.
+    pub overwrite: bool,
+    /// True when the selected file can be normalized now.
+    pub can_normalize: bool,
 }
 
 /// Values the controls column shows, collected by the app view for one render.
@@ -88,6 +131,8 @@ pub struct ControlsState<'a> {
     pub can_play: bool,
     /// True when the selected file has a usable result, so the gain has something to apply to.
     pub can_adjust_gain: bool,
+    /// The normalization group.
+    pub normalize: NormalizeControls<'a>,
 }
 
 /// Callback that receives the events of the controls column.
@@ -127,6 +172,7 @@ pub fn render_controls(
             state.can_adjust_gain,
             send_on_double_click(&on_event, ControlsEvent::ResetSlider(SliderControl::Gain)),
         ))
+        .child(normalize_group(&state.normalize, &on_event))
         .child({
             let on_event = Rc::clone(&on_event);
             Button::new("audio-settings")
@@ -170,6 +216,81 @@ fn play_button(state: &ControlsState<'_>, on_event: EventCallback) -> Button {
         (true, false) => button.success(),
         (true, true) => button.danger(),
     }
+}
+
+/// Renders the normalization group: the mode buttons, the target slider,
+/// and a row with the overwrite option and the Normalize button.
+fn normalize_group(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
+    let modes = {
+        let on_event = Rc::clone(on_event);
+        ButtonGroup::new("normalize-mode")
+            .small()
+            .w_full()
+            .child(
+                Button::new("normalize-peak")
+                    .label("Peak")
+                    .tooltip(MODE_TOOLTIP)
+                    .flex_1()
+                    .selected(state.mode == NormalizeMode::Peak),
+            )
+            .child(
+                Button::new("normalize-loudness")
+                    .label("Loudness")
+                    .tooltip(MODE_TOOLTIP)
+                    .flex_1()
+                    .selected(state.mode == NormalizeMode::Loudness),
+            )
+            .on_click(move |clicked: &Vec<usize>, window, cx| {
+                let mode = if clicked.contains(&1) {
+                    NormalizeMode::Loudness
+                } else {
+                    NormalizeMode::Peak
+                };
+                on_event(&ControlsEvent::SetNormalizeMode(mode), window, cx);
+            })
+    };
+    let overwrite = {
+        let on_event = Rc::clone(on_event);
+        Checkbox::new("normalize-overwrite")
+            .label("Overwrite")
+            .tooltip(OVERWRITE_TOOLTIP)
+            .checked(state.overwrite)
+            .on_change(move |checked: &bool, window, cx| {
+                on_event(&ControlsEvent::SetOverwrite(*checked), window, cx);
+            })
+    };
+    let normalize = {
+        let on_event = Rc::clone(on_event);
+        Button::new("normalize-selected")
+            .label("Normalize")
+            .tooltip(NORMALIZE_TOOLTIP)
+            .disabled(!state.can_normalize)
+            .flex_1()
+            .h(px(SETTINGS_BUTTON_HEIGHT))
+            .on_click(move |_, window, cx| on_event(&ControlsEvent::NormalizeSelected, window, cx))
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .child(modes)
+        .child(slider_group(
+            "Normalize target",
+            state.target_text.clone(),
+            Slider::new(state.target),
+            TARGET_TOOLTIP,
+            true,
+            send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::NormalizeTarget)),
+        ))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .child(overwrite)
+                .child(normalize),
+        )
 }
 
 /// Returns a mouse up listener that sends an event on the second click of a double click.

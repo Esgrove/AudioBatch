@@ -77,6 +77,16 @@ pub struct TrashSelected;
 #[action(namespace = audiobatch)]
 pub struct ClearList;
 
+/// Normalizes the selected file to the normalization target.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct NormalizeSelected;
+
+/// Normalizes every analyzed file in the list to the normalization target, after a confirmation.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct NormalizeAll;
+
 /// Shows or hides the short-term loudness graph over the waveform.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
@@ -110,13 +120,15 @@ pub struct SelectOutputDevice {
     pub name: SharedString,
 }
 
-/// Menu items whose check marks reflect the app state.
+/// Menu items whose check marks and labels reflect the app state.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct MenuState {
     /// Name of the output device in use.
     pub output_device: Option<String>,
     /// True when the loudness graph is shown.
     pub show_loudness_graph: bool,
+    /// Normalization target shown in the normalize items, for example "-14.0 LUFS".
+    pub normalize_target: String,
 }
 
 /// Prefixes a keystroke with the platform's primary shortcut modifier.
@@ -156,7 +168,8 @@ pub fn install(cx: &mut App) {
     set_menus(cx, &MenuState::default());
 }
 
-/// Builds the menu bar, with check marks on the loudness graph option and the current output device.
+/// Builds the menu bar, with check marks on the loudness graph option and the current output device,
+/// and the normalization target in the normalize items.
 pub fn set_menus(cx: &App, state: &MenuState) {
     let devices = Player::output_device_names()
         .into_iter()
@@ -174,6 +187,14 @@ pub fn set_menus(cx: &App, state: &MenuState) {
         MenuItem::separator(),
         MenuItem::action(REVEAL_LABEL, RevealSelected),
         MenuItem::action("Re-analyze Selected", ReanalyzeSelected),
+        MenuItem::action(
+            format!("Normalize Selected to {}", state.normalize_target),
+            NormalizeSelected,
+        ),
+        MenuItem::action(
+            format!("Normalize All Files to {}…", state.normalize_target),
+            NormalizeAll,
+        ),
         MenuItem::action("Clear Per-file Gain", ClearCustomGain),
         MenuItem::action("Remove Selected from List", RemoveSelected),
         MenuItem::action("Move Selected to Trash", TrashSelected),

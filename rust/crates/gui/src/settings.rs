@@ -3,6 +3,7 @@
 //! They are the audio device and preview preferences of the C++ application's Audio Settings:
 //! the output device with its sample rate and buffer size, continuing playback when changing files,
 //! starting from the first cue point, and the loudness graph with its axis range.
+//! The normalization mode and its peak and loudness targets are kept here too, like the C++ target control does.
 //! They are stored as JSON next to the analysis cache in the `AudioBatch-rs` data directory.
 //! A missing or unreadable file gives the defaults, so a broken file never stops the app from starting.
 
@@ -11,6 +12,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use audiobatch_core::cache::data_directory;
+use audiobatch_core::normalize::{
+    DEFAULT_TARGET_LUFS, DEFAULT_TARGET_PEAK_DBFS, MAXIMUM_TARGET_LUFS, MAXIMUM_TARGET_PEAK_DBFS, MINIMUM_TARGET_LUFS,
+    MINIMUM_TARGET_PEAK_DBFS, NormalizationMode,
+};
 use audiobatch_playback::OutputConfig;
 use serde::{Deserialize, Serialize};
 
@@ -29,8 +34,19 @@ pub const DEFAULT_LOUDNESS_MAXIMUM: i32 = -4;
 /// File name of the settings in the data directory.
 const SETTINGS_FILE_NAME: &str = "gui-settings.json";
 
+/// The level normalization brings files to, as stored in the settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NormalizeMode {
+    /// Bring the sample peak to the peak target.
+    #[default]
+    Peak,
+    /// Bring the integrated loudness to the loudness target, limited by the true peak ceiling.
+    Loudness,
+}
+
 /// Preferences that persist between launches.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GuiSettings {
     /// Name of the output device to open, or the system default when unset.
@@ -49,6 +65,23 @@ pub struct GuiSettings {
     pub loudness_minimum: i32,
     /// Top of the loudness graph axis in LUFS.
     pub loudness_maximum: i32,
+    /// Which level normalization brings files to.
+    pub normalize_mode: NormalizeMode,
+    /// Sample peak target of peak normalization in dBFS.
+    pub normalize_target_peak_dbfs: f64,
+    /// Integrated loudness target of loudness normalization in LUFS.
+    pub normalize_target_lufs: f64,
+}
+
+impl NormalizeMode {
+    /// Returns the normalization mode of the core library.
+    #[must_use]
+    pub const fn to_core(self) -> NormalizationMode {
+        match self {
+            Self::Peak => NormalizationMode::Peak,
+            Self::Loudness => NormalizationMode::Loudness,
+        }
+    }
 }
 
 impl Default for GuiSettings {
@@ -62,6 +95,9 @@ impl Default for GuiSettings {
             show_loudness_graph: false,
             loudness_minimum: DEFAULT_LOUDNESS_MINIMUM,
             loudness_maximum: DEFAULT_LOUDNESS_MAXIMUM,
+            normalize_mode: NormalizeMode::Peak,
+            normalize_target_peak_dbfs: DEFAULT_TARGET_PEAK_DBFS,
+            normalize_target_lufs: DEFAULT_TARGET_LUFS,
         }
     }
 }
@@ -74,7 +110,8 @@ impl GuiSettings {
     }
 
     /// Reads the settings from a file, with the defaults when it is missing or invalid.
-    /// An invalid loudness range falls back to the default range on its own.
+    /// An invalid loudness range falls back to the default range on its own,
+    /// and a normalization target outside its range is clamped into it.
     #[must_use]
     pub fn load_from(path: &Path) -> Self {
         let mut settings: Self = fs::read_to_string(path)
@@ -85,6 +122,18 @@ impl GuiSettings {
             settings.loudness_minimum = DEFAULT_LOUDNESS_MINIMUM;
             settings.loudness_maximum = DEFAULT_LOUDNESS_MAXIMUM;
         }
+        settings.normalize_target_peak_dbfs = clamp_target(
+            settings.normalize_target_peak_dbfs,
+            MINIMUM_TARGET_PEAK_DBFS,
+            MAXIMUM_TARGET_PEAK_DBFS,
+            DEFAULT_TARGET_PEAK_DBFS,
+        );
+        settings.normalize_target_lufs = clamp_target(
+            settings.normalize_target_lufs,
+            MINIMUM_TARGET_LUFS,
+            MAXIMUM_TARGET_LUFS,
+            DEFAULT_TARGET_LUFS,
+        );
         settings
     }
 
@@ -140,6 +189,15 @@ fn settings_path() -> PathBuf {
     data_directory().join(SETTINGS_FILE_NAME)
 }
 
+/// Clamps a stored normalization target into its range, with the default for a value that is not a number.
+const fn clamp_target(value: f64, minimum: f64, maximum: f64, default: f64) -> f64 {
+    if value.is_finite() {
+        value.clamp(minimum, maximum)
+    } else {
+        default
+    }
+}
+
 #[cfg(test)]
 mod test_settings_file {
     use super::*;
@@ -157,6 +215,9 @@ mod test_settings_file {
             show_loudness_graph: true,
             loudness_minimum: -30,
             loudness_maximum: 0,
+            normalize_mode: NormalizeMode::Loudness,
+            normalize_target_peak_dbfs: -1.0,
+            normalize_target_lufs: -9.5,
         };
         settings.save_to(&path).expect("saves the settings");
         assert_eq!(GuiSettings::load_from(&path), settings);
@@ -190,6 +251,21 @@ mod test_settings_file {
         let settings = GuiSettings::load_from(&path);
         assert_eq!(settings.loudness_minimum, DEFAULT_LOUDNESS_MINIMUM);
         assert_eq!(settings.loudness_maximum, DEFAULT_LOUDNESS_MAXIMUM);
+    }
+
+    #[test]
+    fn normalization_targets_are_clamped_into_their_ranges() {
+        let directory = tempfile::tempdir().expect("creates a temporary directory");
+        let path = directory.path().join(SETTINGS_FILE_NAME);
+        fs::write(
+            &path,
+            r#"{"normalize_mode": "loudness", "normalize_target_peak_dbfs": 3.0, "normalize_target_lufs": -40.0}"#,
+        )
+        .expect("writes the file");
+        let settings = GuiSettings::load_from(&path);
+        assert_eq!(settings.normalize_mode, NormalizeMode::Loudness);
+        assert!((settings.normalize_target_peak_dbfs - MAXIMUM_TARGET_PEAK_DBFS).abs() < f64::EPSILON);
+        assert!((settings.normalize_target_lufs - MINIMUM_TARGET_LUFS).abs() < f64::EPSILON);
     }
 }
 
