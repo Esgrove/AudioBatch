@@ -13,7 +13,8 @@ namespace audiobatch
 [[nodiscard]] juce::String formatAudioOutputStatus(const AudioOutputStatus& status);
 
 /// Bottom bar of the main window.
-/// The root path takes the remaining width on the left, the status text has a fixed-width section,
+/// The root path on the left and the status text share the width left of the output device,
+/// with the larger part for the status text,
 /// and the audio output device sits at the right end, dimmed while the device is closed.
 /// The overall progress of a running pass is drawn as a thin line along the top edge.
 class StatusBar final : public juce::Component
