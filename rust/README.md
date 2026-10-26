@@ -22,8 +22,46 @@ Normalization and plugin processing are only available there.
 Run the commands from this directory.
 
 ```shell
+./build.sh
+./install.sh
+```
+
+`build.sh` builds the release binaries and moves `audiobatch-rs` and `AudioBatchRs` into this directory.
+`install.sh` installs both with `cargo install` into the Cargo bin directory,
+and then installs the shell completions for the CLI.
+The GUI is installed as a plain binary that runs from the terminal, not as an app bundle.
+Both scripts take `--cli-only` to skip the slower GUI build.
+
+`.cargo/config.toml` compiles for the native CPU, so binaries built here may not run on older machines.
+CI overrides it with an empty `RUSTFLAGS`.
+
+```shell
 cargo build --release
 ```
+
+## Shell Completions
+
+`audiobatch-rs` generates shell completions with the `completion` subcommand.
+`install.sh` runs `completions.sh`, which detects the platform and installs completions for its shells:
+
+- **Windows**: Bash and PowerShell
+- **macOS**: Zsh
+- **Linux**: Zsh and Bash
+
+```shell
+# Install the completions for the shells of this platform
+./completions.sh
+
+# Print the completion script to stdout
+audiobatch-rs completion zsh
+
+# Install the completion script to the shell's completion directory
+audiobatch-rs completion zsh --install --verbose
+```
+
+Zsh completions go to `~/.zsh/completions`, or into a custom plugin when oh-my-zsh is installed.
+Bash completions go to `~/.bash_completion.d`.
+`completions.sh` prints what to add to the shell config to load them.
 
 ## CLI
 
