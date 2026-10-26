@@ -69,6 +69,91 @@ juce::String formatPluginDescription(const juce::PluginDescription& description)
     return utils::format("{} {} ({})", description.manufacturerName, description.name, description.pluginFormatName);
 }
 
+/// Tears the live processor down, so erasing or clearing slots can never skip the teardown order.
+LiveSlot::~LiveSlot()
+{
+    destroyProcessor();
+}
+
+/// Takes over the processor and the editor window of the other slot, which is left without either.
+/// The editor window has to be taken explicitly, because a copied safe pointer would let both slots delete it.
+LiveSlot::LiveSlot(LiveSlot&& other) noexcept :
+    description(std::move(other.description)),
+    state(std::move(other.state)),
+    enabled(other.enabled),
+    instance(std::move(other.instance)),
+    listener(std::exchange(other.listener, nullptr)),
+    editorWindow(std::exchange(other.editorWindow, nullptr)),
+    preparationError(std::move(other.preparationError)),
+    latencySamples(std::exchange(other.latencySamples, std::nullopt)),
+    prepared(std::exchange(other.prepared, false)),
+    wasEditorOpen(std::exchange(other.wasEditorOpen, false))
+{}
+
+/// Tears down the processor this slot holds before taking over the processor and editor window of the other slot.
+LiveSlot& LiveSlot::operator=(LiveSlot&& other) noexcept
+{
+    if (this != &other) {
+        destroyProcessor();
+        description = std::move(other.description);
+        state = std::move(other.state);
+        enabled = other.enabled;
+        instance = std::move(other.instance);
+        listener = std::exchange(other.listener, nullptr);
+        editorWindow = std::exchange(other.editorWindow, nullptr);
+        preparationError = std::move(other.preparationError);
+        latencySamples = std::exchange(other.latencySamples, std::nullopt);
+        prepared = std::exchange(other.prepared, false);
+        wasEditorOpen = std::exchange(other.wasEditorOpen, false);
+    }
+
+    return *this;
+}
+
+/// Gives the slot its live processor and registers the listener that observes its parameter and state changes.
+/// The listener must outlive the slot, since the slot unregisters it again when the processor is destroyed.
+void LiveSlot::attachInstance(
+    std::unique_ptr<juce::AudioPluginInstance> newInstance,
+    juce::AudioProcessorListener& newListener
+)
+{
+    destroyProcessor();
+    instance = std::move(newInstance);
+    if (instance != nullptr) {
+        instance->addListener(&newListener);
+        listener = &newListener;
+    }
+}
+
+/// Deletes only the editor window. The slot continues owning its live processor.
+void LiveSlot::closeEditor()
+{
+    if (editorWindow != nullptr) {
+        editorWindow.deleteAndZero();
+    }
+
+    wasEditorOpen = false;
+}
+
+/// Closes the editor before unregistering the listener, releasing the prepared resources, and destroying the processor.
+/// The editor refers to the processor, and the plugin must not call the listener while it is being destroyed.
+void LiveSlot::destroyProcessor()
+{
+    closeEditor();
+    if (instance != nullptr) {
+        if (listener != nullptr) {
+            instance->removeListener(listener);
+        }
+        if (prepared) {
+            instance->releaseResources();
+        }
+        instance = nullptr;
+    }
+    listener = nullptr;
+    prepared = false;
+    latencySamples.reset();
+}
+
 /// Registers the default plugin formats and restores the known-plugins list
 /// and the persisted chain from application settings.
 /// Observes the longer-lived preview device manager to keep the chain editor's rate context accurate.
@@ -107,9 +192,7 @@ PluginChain::~PluginChain()
     previewDeviceManager.removeChangeListener(this);
 
     persistChain();
-    for (auto& entry : chain) {
-        destroyLiveEntry(entry);
-    }
+    chain.clear();
 
     if (chainEditorWindow != nullptr) {
         chainEditorWindow.deleteAndZero();
@@ -271,7 +354,7 @@ void PluginChain::updatePreviewStatus()
 {
     // Runs on every display frame, so it only takes the rendering lock when an editor closed or a latency changed.
     // The slots are only changed on the message thread, so checking them needs no lock.
-    const bool editorClosed = std::ranges::any_of(chain, [](const PluginChainEntry& entry) {
+    const bool editorClosed = std::ranges::any_of(chain, [](const LiveSlot& entry) {
         return entry.wasEditorOpen && isEditorWindowClosed(entry);
     });
 
@@ -320,14 +403,14 @@ void PluginChain::updatePreviewStatus()
 /// Returns true when the entry's editor window has been closed by the user.
 /// The dialog window hides itself when its close button is pressed instead of deleting itself,
 /// so a hidden window also counts as closed.
-bool PluginChain::isEditorWindowClosed(const PluginChainEntry& entry)
+bool PluginChain::isEditorWindowClosed(const LiveSlot& entry)
 {
     return entry.editorWindow == nullptr || !entry.editorWindow->isVisible();
 }
 
 /// Captures plugin state from a closed editor and deletes only its window, preserving live audio.
 /// Returns true when plugin state was captured.
-bool PluginChain::reapClosedEditor(PluginChainEntry& entry)
+bool PluginChain::reapClosedEditor(LiveSlot& entry)
 {
     entry.wasEditorOpen = false;
 
@@ -342,7 +425,7 @@ bool PluginChain::reapClosedEditor(PluginChainEntry& entry)
         }
     }
 
-    closeEditorForEntry(entry);
+    entry.closeEditor();
     return stateCaptured;
 }
 
@@ -403,7 +486,7 @@ void PluginChain::addPlugin(const juce::PluginDescription& description)
 {
     {
         const juce::ScopedLock lock(renderingLock);
-        PluginChainEntry entry;
+        LiveSlot entry;
         entry.description = description;
         chain.push_back(std::move(entry));
     }
@@ -424,8 +507,6 @@ void PluginChain::removeSlot(const int index)
 
     {
         const juce::ScopedLock lock(renderingLock);
-        auto& entry = chain[static_cast<std::size_t>(index)];
-        destroyLiveEntry(entry);
         chain.erase(chain.begin() + index);
 
         // The live preview drops the destroyed processor before the audio callback can take the lock again.
@@ -490,11 +571,6 @@ void PluginChain::clearChain()
 
     {
         const juce::ScopedLock lock(renderingLock);
-
-        for (auto& entry : chain) {
-            destroyLiveEntry(entry);
-        }
-
         chain.clear();
 
         // The live preview drops the destroyed processors before the audio callback can take the lock again.
@@ -682,18 +758,8 @@ void PluginChain::captureOpenEditorStates()
     }
 }
 
-/// Deletes only the editor window. The slot continues owning its live processor.
-void PluginChain::closeEditorForEntry(PluginChainEntry& entry)
-{
-    if (entry.editorWindow != nullptr) {
-        entry.editorWindow.deleteAndZero();
-    }
-
-    entry.wasEditorOpen = false;
-}
-
 /// Decodes a base64 plugin state onto the entry, leaving the state empty when the text is not valid base64.
-void PluginChain::restoreState(PluginChainEntry& entry, const juce::String& stateBase64)
+void PluginChain::restoreState(LiveSlot& entry, const juce::String& stateBase64)
 {
     if (stateBase64.isEmpty()) {
         return;
@@ -706,14 +772,14 @@ void PluginChain::restoreState(PluginChainEntry& entry, const juce::String& stat
 }
 
 /// Parses one stored chain slot, or returns an empty optional when its plugin description cannot be loaded.
-std::optional<PluginChainEntry> PluginChain::parseSlot(const juce::XmlElement& slotElement)
+std::optional<LiveSlot> PluginChain::parseSlot(const juce::XmlElement& slotElement)
 {
     const auto* descriptionElement = slotElement.getFirstChildElement();
     if (descriptionElement == nullptr) {
         return std::nullopt;
     }
 
-    PluginChainEntry entry;
+    LiveSlot entry;
     if (!entry.description.loadFromXml(*descriptionElement)) {
         return std::nullopt;
     }
@@ -724,17 +790,14 @@ std::optional<PluginChainEntry> PluginChain::parseSlot(const juce::XmlElement& s
 }
 
 /// Parses a legacy single-plugin selection, or returns an empty optional when its description cannot be loaded.
-std::optional<PluginChainEntry> PluginChain::parseLegacyEntry(
-    const juce::String& pluginXml,
-    const juce::String& stateBase64
-)
+std::optional<LiveSlot> PluginChain::parseLegacyEntry(const juce::String& pluginXml, const juce::String& stateBase64)
 {
     const auto element = juce::parseXML(pluginXml);
     if (element == nullptr) {
         return std::nullopt;
     }
 
-    PluginChainEntry entry;
+    LiveSlot entry;
     if (!entry.description.loadFromXml(*element)) {
         return std::nullopt;
     }

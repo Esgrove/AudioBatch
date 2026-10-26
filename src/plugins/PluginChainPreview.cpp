@@ -27,24 +27,24 @@ bool PluginChain::hasOpenPreviewDevice() const
 
 /// Instantiates and prepares a slot once for the current real-time context.
 /// The caller holds the preview rendering lock, so editor and device access cannot race reconfiguration.
-bool PluginChain::prepareLiveEntry(PluginChainEntry& entry)
+bool PluginChain::prepareLiveEntry(LiveSlot& entry)
 {
     if (entry.prepared) {
         return true;
     }
     entry.preparationError.clear();
     if (entry.instance == nullptr) {
-        entry.instance = formatManager.createPluginInstance(
+        auto instance = formatManager.createPluginInstance(
             entry.description, previewSampleRate, previewBlockSize, entry.preparationError
         );
-        if (entry.instance == nullptr) {
+        if (instance == nullptr) {
             if (entry.preparationError.isEmpty()) {
                 entry.preparationError = "Plugin instantiation failed";
             }
             utils::logError("Live plugin {}: {}", entry.description.name.quoted(), entry.preparationError);
             return false;
         }
-        entry.instance->addListener(this);
+        entry.attachInstance(std::move(instance), *this);
     }
     auto& plugin = *entry.instance;
     plugin.setNonRealtime(false);
@@ -117,21 +117,6 @@ PreviewChain PluginChain::preparePreview(
     }
     sendChangeMessage();
     return result;
-}
-
-/// Closes the editor before unregistering and destroying a slot's live processor.
-void PluginChain::destroyLiveEntry(PluginChainEntry& entry)
-{
-    closeEditorForEntry(entry);
-    if (entry.instance != nullptr) {
-        entry.instance->removeListener(this);
-        if (entry.prepared) {
-            entry.instance->releaseResources();
-        }
-        entry.instance = nullptr;
-    }
-    entry.prepared = false;
-    entry.latencySamples.reset();
 }
 
 /// Ordinary parameter edits affect the shared processor directly, without copying state or restarting playback.

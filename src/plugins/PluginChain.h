@@ -51,11 +51,31 @@ struct PreviewChain {
 };
 
 /// One slot owns the same processor for editing and live playback, independently of its editor window.
-struct PluginChainEntry {
+/// Destroying a slot tears its processor down in the order a plugin needs:
+/// the editor window first, then the parameter listener, then the prepared resources, and the instance last.
+/// Moving a slot carries the processor and its editor window along and leaves the source slot empty.
+struct LiveSlot {
+    LiveSlot() = default;
+    ~LiveSlot();
+    LiveSlot(LiveSlot&& other) noexcept;
+    LiveSlot& operator=(LiveSlot&& other) noexcept;
+    LiveSlot(const LiveSlot&) = delete;
+    LiveSlot& operator=(const LiveSlot&) = delete;
+
+    void attachInstance(
+        std::unique_ptr<juce::AudioPluginInstance> newInstance,
+        juce::AudioProcessorListener& newListener
+    );
+    void closeEditor();
+    void destroyProcessor();
+
     juce::PluginDescription description;
     juce::MemoryBlock state;
     bool enabled {true};
     std::unique_ptr<juce::AudioPluginInstance> instance;
+    /// The listener registered on the instance, owned by the plugin chain that owns the slot.
+    /// Null exactly when the slot has no instance.
+    juce::AudioProcessorListener* listener {nullptr};
     juce::Component::SafePointer<juce::DialogWindow> editorWindow;
     juce::String preparationError;
     std::optional<juce::int64> latencySamples;
@@ -143,13 +163,12 @@ public:
     void updatePreviewStatus();
 
 private:
-    [[nodiscard]] static bool isEditorWindowClosed(const PluginChainEntry& entry);
-    [[nodiscard]] static std::optional<PluginChainEntry> parseSlot(const juce::XmlElement& slotElement);
-    static bool reapClosedEditor(PluginChainEntry& entry);
-    static void closeEditorForEntry(PluginChainEntry& entry);
-    static void restoreState(PluginChainEntry& entry, const juce::String& stateBase64);
+    [[nodiscard]] static bool isEditorWindowClosed(const LiveSlot& entry);
+    [[nodiscard]] static std::optional<LiveSlot> parseSlot(const juce::XmlElement& slotElement);
+    static bool reapClosedEditor(LiveSlot& entry);
+    static void restoreState(LiveSlot& entry, const juce::String& stateBase64);
 
-    [[nodiscard]] static std::optional<PluginChainEntry> parseLegacyEntry(
+    [[nodiscard]] static std::optional<LiveSlot> parseLegacyEntry(
         const juce::String& pluginXml,
         const juce::String& stateBase64
     );
@@ -158,7 +177,6 @@ private:
     void audioProcessorParameterChanged(juce::AudioProcessor* processor, int parameterIndex, float value) override;
 
     void captureOpenEditorStates();
-    void destroyLiveEntry(PluginChainEntry& entry);
     void loadKnownPluginList();
     void loadPersistedChain();
     void notifyChainChanged();
@@ -166,7 +184,7 @@ private:
     void persistKnownPluginList() const;
 
     bool beginPluginScan();
-    bool prepareLiveEntry(PluginChainEntry& entry);
+    bool prepareLiveEntry(LiveSlot& entry);
 
     // Declared before the list, so it outlives the scanner that the list owns.
     PluginScanLock pluginScanLock;
@@ -183,7 +201,7 @@ private:
     juce::KnownPluginList knownPluginList;
     std::atomic<bool> latencyDirty {false};
     std::uint64_t revision {0};
-    std::vector<PluginChainEntry> chain;
+    std::vector<LiveSlot> chain;
 
     double previewSampleRate {utils::defaultSampleRate};
     int previewBlockSize {512};

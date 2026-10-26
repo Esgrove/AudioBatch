@@ -8,6 +8,7 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <exception>
 #include <span>
 
 #if JUCE_MAC
@@ -232,6 +233,54 @@ ChainPreparation prepareChain(
         preparation.tailSamples += getPluginTailSamples(*plugin, sampleRate);
     }
 
+    return preparation;
+}
+
+/// Keeps references to the chain and the cancellation check without touching the plugins yet.
+PreparedChain::PreparedChain(
+    const std::span<juce::AudioPluginInstance* const> instances,
+    const utils::CancellationCheck& cancellationCheck
+) :
+    chainInstances(instances),
+    isCancelled(cancellationCheck)
+{}
+
+/// Releases a successfully prepared chain on the message thread unless the run was cancelled.
+/// A failure while releasing is logged rather than thrown, because this runs while unwinding as well.
+PreparedChain::~PreparedChain()
+{
+    if (!prepared) {
+        return;
+    }
+
+    try {
+        static_cast<void>(utils::callOnMessageThread([this] { releasePluginResources(chainInstances); }, isCancelled));
+    } catch (const std::exception& exception) {
+        utils::logError("Releasing the plugin chain failed: {}", exception.what());
+    } catch (...) {
+        utils::logError("Releasing the plugin chain failed with an unknown exception");
+    }
+}
+
+/// Prepares every plugin in the chain for a file with the given channel count and sample rate on the message thread.
+/// Returns nothing when the run was cancelled before the preparation started.
+/// A failed preparation has already released the chain and reports its error in the returned errorMessage.
+std::optional<ChainPreparation> PreparedChain::prepare(
+    const PluginProcessingOptions& options,
+    const int numChannels,
+    const double sampleRate
+)
+{
+    ChainPreparation preparation;
+    const bool called = utils::callOnMessageThread(
+        [&] { preparation = prepareChain(chainInstances, options, numChannels, sampleRate); }, isCancelled
+    );
+
+    if (!called) {
+        return std::nullopt;
+    }
+
+    prepared = preparation.errorMessage.isEmpty();
     return preparation;
 }
 }  // namespace audiobatch::plugin_processing

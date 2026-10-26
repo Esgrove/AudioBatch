@@ -1,13 +1,16 @@
 /// Per-file preparation of a hosted plugin chain for offline processing.
 /// Declares prepareChain, which configures the buses, offline mode, saved state,
 /// and processing setup of every plugin for one file, and releasePluginResources, which undoes it.
+/// PreparedChain pairs the two on the message thread, so a prepared chain is always released again.
 
 #pragma once
 
 #include "plugins/PluginProcessing.h"
+#include "utils/ThreadUtils.h"
 
 #include <JuceHeader.h>
 
+#include <optional>
 #include <span>
 
 namespace audiobatch::plugin_processing
@@ -27,6 +30,36 @@ struct ChainPreparation {
     juce::int64 tailSamples {0};
     /// Sum of the latencies the plugins report after preparation.
     juce::int64 latencySamples {0};
+};
+
+/// Prepares a plugin chain for one file on the message thread and releases it again when destroyed,
+/// so no path leaves the chain active for the next file, including an exception thrown by a plugin.
+/// After cancellation the release is skipped, because the message thread may be blocked waiting for the worker,
+/// and the plugin instances release their resources when they are destroyed instead.
+/// Refers to the chain instances and the cancellation check, which must outlive it.
+class PreparedChain
+{
+public:
+    PreparedChain(
+        std::span<juce::AudioPluginInstance* const> instances,
+        const utils::CancellationCheck& cancellationCheck
+    );
+    ~PreparedChain();
+    PreparedChain(const PreparedChain&) = delete;
+    PreparedChain(PreparedChain&&) = delete;
+    PreparedChain& operator=(const PreparedChain&) = delete;
+    PreparedChain& operator=(PreparedChain&&) = delete;
+
+    [[nodiscard]] std::optional<ChainPreparation> prepare(
+        const PluginProcessingOptions& options,
+        int numChannels,
+        double sampleRate
+    );
+
+private:
+    std::span<juce::AudioPluginInstance* const> chainInstances;
+    const utils::CancellationCheck& isCancelled;
+    bool prepared {false};
 };
 
 ChainPreparation prepareChain(
