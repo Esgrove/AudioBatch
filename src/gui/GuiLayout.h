@@ -107,7 +107,8 @@ namespace statusBar
 constexpr int height {24};
 constexpr int horizontalPadding {8};
 constexpr int sectionSpacing {16};
-constexpr int statusTextWidth {220};
+/// Share of the width left of the output device given to the root path, leaving the status text the larger part.
+constexpr double pathProportion {0.4};
 constexpr int outputStatusMaximumWidth {360};
 /// Vertical gap above and below the separators between the sections.
 constexpr int separatorInset {5};

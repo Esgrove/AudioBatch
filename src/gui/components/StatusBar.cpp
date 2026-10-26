@@ -128,8 +128,9 @@ void StatusBar::paint(juce::Graphics& graphics)
     graphics.fillRect(bar.withWidth(bar.getWidth() * static_cast<float>(progressPermille) / permillePerUnit));
 }
 
-/// Gives the output device the width of its text up to a maximum, the status text a fixed width,
-/// and the root path the rest, which it truncates with an ellipsis when it does not fit.
+/// Gives the output device the width of its text up to a maximum,
+/// and splits the rest between the root path and the larger status text section.
+/// Both truncate their text with an ellipsis when it does not fit.
 void StatusBar::resized()
 {
     auto bounds = getLocalBounds().reduced(layout::statusBar::horizontalPadding, 0);
@@ -140,9 +141,10 @@ void StatusBar::resized()
         juce::jmin(layout::statusBar::outputStatusMaximumWidth, outputTextWidth + outputTextSlack)
     ));
     bounds.removeFromRight(layout::statusBar::sectionSpacing);
-    statusLabel.setBounds(bounds.removeFromRight(layout::statusBar::statusTextWidth));
-    bounds.removeFromRight(layout::statusBar::sectionSpacing);
-    pathLabel.setBounds(bounds);
+    const auto pathWidth = juce::roundToInt(bounds.getWidth() * layout::statusBar::pathProportion);
+    pathLabel.setBounds(bounds.removeFromLeft(pathWidth));
+    bounds.removeFromLeft(layout::statusBar::sectionSpacing);
+    statusLabel.setBounds(bounds);
 }
 
 /// Returns the strip along the top edge where the progress line is drawn.
