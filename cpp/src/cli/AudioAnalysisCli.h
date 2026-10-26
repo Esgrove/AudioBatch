@@ -1,7 +1,8 @@
 /// Command-line interface for the headless batch analysis executable.
 /// Declares CliCommand, the parsed and validated command of one invocation,
-/// which is either an AnalyzeCommand or a ListPluginsCommand,
-/// and the cli functions that build the usage text, parse arguments, and run the analysis workflow.
+/// which is either an AnalyzeCommand or a ListPluginsCommand.
+/// CliParseError says why the arguments were rejected.
+/// The cli functions build the usage text, parse the arguments, and run the analysis workflow.
 
 #pragma once
 
@@ -25,6 +26,26 @@ enum class AudioAnalysisOutputFormat : std::uint8_t {
     csv,
     /// An array with one object per file, for scripts.
     json,
+};
+
+/// Why a command line was rejected, which callers and tests can check without matching the message text.
+enum class CliParseErrorKind : std::uint8_t {
+    /// Several short options in one argument, such as "-rf".
+    combinedShortOptions,
+    /// An option that the command does not take.
+    unknownOption,
+    /// An option value that is not one of the accepted names, or not a number.
+    invalidValue,
+    /// A numeric option value outside its allowed range.
+    valueOutOfRange,
+    /// Options that cannot be used together.
+    conflictingOptions,
+    /// An option given without the option it depends on, such as --force without --normalize.
+    missingRequiredOption,
+    /// A negative number that no option took as its value.
+    unexpectedNumber,
+    /// Input paths given to a command that takes none.
+    unexpectedInput,
 };
 
 /// An analysis run parsed from the command line, with every value validated.
@@ -57,6 +78,14 @@ struct ListPluginsCommand {
     PluginListGrouping grouping {PluginListGrouping::name};
 };
 
+/// A rejected command line.
+struct CliParseError {
+    /// The rule the arguments broke.
+    CliParseErrorKind kind;
+    /// The explanation shown to the user.
+    juce::String message;
+};
+
 /// The command a CLI invocation runs.
 using CliCommand = std::variant<AnalyzeCommand, ListPluginsCommand>;
 
@@ -70,7 +99,7 @@ juce::StringArray findSkippedInputs(
     const std::vector<AudioAnalysisRecord>& results
 );
 
-[[nodiscard]] std::expected<CliCommand, juce::String> parseArguments(juce::ArgumentList arguments);
+[[nodiscard]] std::expected<CliCommand, CliParseError> parseArguments(juce::ArgumentList arguments);
 
 [[nodiscard]] int runAnalysis(const AnalyzeCommand& command);
 }  // namespace cli
