@@ -16,12 +16,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use audiobatch_core::discovery::{has_supported_extension, normalize_path};
-use audiobatch_core::{AnalysisCache, AnalysisCoordinator, AnalysisEvent, AnalysisOptions, FileTags, read_tags};
+use audiobatch_core::record::{custom_gain_from_decibels, decibels_to_gain};
+use audiobatch_core::{
+    AnalysisCache, AnalysisCoordinator, AnalysisEvent, AnalysisOptions, AnalysisRecord, FileTags, read_tags,
+};
 use audiobatch_playback::Player;
 use crossbeam_channel::{Receiver, TryRecvError};
 use gpui_kit::component::slider::{SliderEvent, SliderScale, SliderState};
 use gpui_kit::component::table::{TableEvent, TableState};
-use gpui_kit::{AppContext as _, Context, Entity, FocusHandle, Pixels, SharedString, Size, Subscription, Task, Window};
+use gpui_kit::{
+    App, AppContext as _, Context, Entity, FocusHandle, Pixels, SharedString, Size, Subscription, Task, Window,
+};
 
 use crate::menus::{MenuState, set_menus};
 use crate::results::{ResultRow, ResultsDelegate, RowState};
@@ -63,6 +68,9 @@ const MAXIMUM_GAIN_DB: f32 = 12.0;
 
 /// Input gain at startup and after a reset, in decibels.
 const DEFAULT_GAIN_DB: f32 = 0.0;
+
+/// Difference between the gain slider and the selected file's gain that moves the slider, in decibels.
+const GAIN_SLIDER_TOLERANCE_DB: f32 = 1e-3;
 
 /// Startup options from the command line.
 #[derive(Debug, Default, Clone)]
@@ -162,10 +170,11 @@ impl AppView {
                 }
             }),
             cx.subscribe_in(&gain_slider, window, |view, _, event: &SliderEvent, _, cx| {
-                if let SliderEvent::Change(value) = event {
-                    view.apply_gain(value.start(), cx);
-                    cx.notify();
+                match event {
+                    SliderEvent::Change(value) => view.change_selected_gain(value.start(), cx),
+                    SliderEvent::Release(_) => view.store_selected_gain(cx),
                 }
+                cx.notify();
             }),
         ];
 
@@ -331,9 +340,16 @@ impl AppView {
         self.demo_task.is_some()
     }
 
-    /// Returns true when a file is selected, so the input gain can be changed, as in the C++ application.
-    const fn can_adjust_gain(&self) -> bool {
-        self.selected.is_some() || self.is_demo()
+    /// Returns true when the selected file has a usable result, so its custom gain can be changed,
+    /// or while the stress test runs, where the gain only scales the drawn waveform.
+    fn can_adjust_gain(&self, cx: &App) -> bool {
+        self.is_demo() || self.selected_record(cx).is_some()
+    }
+
+    /// Returns the usable result of the selected file.
+    fn selected_record<'app>(&self, cx: &'app App) -> Option<&'app AnalysisRecord> {
+        let selected = self.selected.as_deref()?;
+        self.table.read(cx).delegate().row_for(selected)?.ready_record()
     }
 
     /// Returns the overall progress of the current run from 0 to 1, or none when no run is in progress.
@@ -356,6 +372,7 @@ impl AppView {
         let mut finished = 0;
         let mut selected_finished = false;
         let mut completed = false;
+        let mut carried_gains = Vec::new();
         let excluded = &self.excluded;
         let selected = self.selected.as_deref();
         self.table.update(cx, |state, cx| {
@@ -378,7 +395,10 @@ impl AppView {
                         }
                         finished += 1;
                         selected_finished |= selected == Some(record.path.as_path());
-                        delegate.set_record(*record);
+                        let path = record.path.clone();
+                        if let Some(gain) = delegate.set_record(*record) {
+                            carried_gains.push((path, gain));
+                        }
                     }
                     AnalysisEvent::Completed { .. } => {
                         delegate.sort_rows();
@@ -388,6 +408,10 @@ impl AppView {
             }
             cx.notify();
         });
+        // The coordinator stored each row before publishing it, so a carried over gain can be stored now.
+        for (path, gain) in carried_gains {
+            self.store_custom_gain(&path, Some(gain));
+        }
 
         if let Some(run) = &mut self.run {
             if let Some(total) = planned_total {
@@ -421,6 +445,7 @@ impl AppView {
         }
         if selected_finished {
             self.refresh_selected_waveform(cx);
+            self.apply_preview_gain(cx);
         }
         cx.notify();
     }
@@ -510,27 +535,99 @@ impl AppView {
                     .update(cx, |slider, cx| slider.set_value(zoom as f32, window, cx));
                 self.waveform.update(cx, |waveform, cx| waveform.set_zoom(zoom, cx));
             }
-            WaveformEvent::GainBy(decibels) if self.can_adjust_gain() => {
+            WaveformEvent::GainBy(decibels) if self.can_adjust_gain(cx) => {
                 let current = self.gain_slider.read(cx).value().start();
                 let gain = ((current + decibels) * 10.0).round() / 10.0;
                 let gain = gain.clamp(MINIMUM_GAIN_DB, MAXIMUM_GAIN_DB);
                 self.gain_slider
                     .update(cx, |slider, cx| slider.set_value(gain, window, cx));
-                self.apply_gain(gain, cx);
+                self.change_selected_gain(gain, cx);
+                self.store_selected_gain(cx);
             }
             WaveformEvent::GainBy(_) => {}
         }
         cx.notify();
     }
 
-    /// Applies the input gain to the preview and to the drawn waveform.
-    fn apply_gain(&self, decibels: f32, cx: &mut Context<Self>) {
-        let linear = 10_f32.powf(decibels / 20.0);
+    /// Sets the custom gain of the selected file while the slider or the mouse wheel moves,
+    /// and applies it to the preview and the drawn waveform.
+    /// The cache is written by `store_selected_gain` once the change is finished.
+    /// In the stress test the gain only scales the drawn waveform.
+    fn change_selected_gain(&self, decibels: f32, cx: &mut Context<Self>) {
+        if self.is_demo() {
+            let linear = decibels_to_gain(f64::from(decibels)) as f32;
+            self.waveform
+                .update(cx, |waveform, cx| waveform.set_display_gain(linear, cx));
+            return;
+        }
+        let Some(selected) = self.selected.clone() else {
+            return;
+        };
+        let gain = custom_gain_from_decibels(decibels);
+        let changed = self.table.update(cx, |state, cx| {
+            let changed = state.delegate_mut().set_custom_gain(&selected, gain);
+            if changed {
+                cx.notify();
+            }
+            changed
+        });
+        if changed {
+            self.apply_preview_gain(cx);
+        }
+    }
+
+    /// Stores the custom gain of the selected file in the cache.
+    fn store_selected_gain(&self, cx: &App) {
+        if let (Some(selected), Some(record)) = (&self.selected, self.selected_record(cx)) {
+            self.store_custom_gain(selected, record.custom_gain_db);
+        }
+    }
+
+    /// Clears the custom gain of the selected file, in the table and in the cache.
+    pub(super) fn clear_selected_gain(&self, cx: &mut Context<Self>) {
+        self.change_selected_gain(DEFAULT_GAIN_DB, cx);
+        self.store_selected_gain(cx);
+        cx.notify();
+    }
+
+    /// Writes the custom gain of a file to the cache.
+    /// A failure is only reported, because the table keeps the gain for this session either way.
+    fn store_custom_gain(&self, path: &Path, custom_gain_db: Option<f32>) {
+        if let Some(coordinator) = &self.coordinator
+            && let Err(error) = coordinator.cache().store_custom_gain(path, custom_gain_db)
+        {
+            eprintln!("Failed to store the custom gain of {}: {error:#}", path.display());
+        }
+    }
+
+    /// Applies the custom gain of the selected file to the preview and to the drawn waveform,
+    /// or unity gain when it has none.
+    fn apply_preview_gain(&self, cx: &mut Context<Self>) {
+        let linear = self.selected_record(cx).map_or(1.0, AnalysisRecord::custom_gain_linear);
         if let Some(player) = &self.player {
             player.set_gain(linear);
         }
         self.waveform
             .update(cx, |waveform, cx| waveform.set_display_gain(linear, cx));
+    }
+
+    /// Moves the gain slider to the custom gain of the selected file, 0 dB without one.
+    /// The record is the source of truth.
+    /// A new selection, a cleared gain, and a gain loaded from the cache all show on the slider this way,
+    /// without each of them having to update it.
+    fn sync_gain_slider(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_demo() {
+            return;
+        }
+        let target = self
+            .selected_record(cx)
+            .and_then(|record| record.custom_gain_db)
+            .unwrap_or(DEFAULT_GAIN_DB);
+        let current = self.gain_slider.read(cx).value().start();
+        if (current - target).abs() >= GAIN_SLIDER_TOLERANCE_DB {
+            self.gain_slider
+                .update(cx, |slider, cx| slider.set_value(target, window, cx));
+        }
     }
 
     /// Selects a file: shows its waveform and loads it into the player, playing it when asked.
@@ -542,6 +639,7 @@ impl AppView {
             return;
         }
         self.refresh_selected_waveform(cx);
+        self.apply_preview_gain(cx);
         if changed {
             self.selected_tags = None;
             self.waveform

@@ -56,6 +56,14 @@ pub fn format_loudness_compact(loudness: f64) -> String {
     format_loudness(loudness, "")
 }
 
+/// Formats the per-file gain in dB with an explicit sign and without a unit, or an empty string without one.
+#[must_use]
+pub fn format_custom_gain_compact(record: &AnalysisRecord) -> String {
+    record
+        .custom_gain_db
+        .map_or_else(String::new, |decibels| format!("{decibels:+.1}"))
+}
+
 /// Returns the average file bitrate in kbps, or 0 when it cannot be derived.
 #[must_use]
 pub fn average_bitrate_kbps(record: &AnalysisRecord) -> f64 {
@@ -207,6 +215,16 @@ mod test_level_formatting {
     #[test]
     fn tiny_amplitudes_clamp_to_the_floor() {
         assert_eq!(format_peak_compact(1e-9), "-100.00");
+    }
+
+    #[test]
+    fn custom_gain_has_a_sign_and_one_decimal() {
+        let mut record = AnalysisRecord::default();
+        assert_eq!(format_custom_gain_compact(&record), "");
+        record.custom_gain_db = Some(1.5);
+        assert_eq!(format_custom_gain_compact(&record), "+1.5");
+        record.custom_gain_db = Some(-3.04);
+        assert_eq!(format_custom_gain_compact(&record), "-3.0");
     }
 }
 

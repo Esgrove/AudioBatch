@@ -230,6 +230,7 @@ fn plan_run(pool: &Arc<ThreadPool>, context: &Arc<RunContext>, options: &Analysi
 }
 
 /// Analyzes one file, caches the result, and publishes it.
+/// The stored custom gain is kept while the file is unchanged on disk.
 /// A file whose analysis is cancelled is neither cached nor published.
 /// The job that finishes the last file of the run publishes completion.
 fn analyze_stale_file(path: &Path, context: &RunContext, pending: &AtomicUsize, total_files: usize) {
@@ -251,9 +252,15 @@ fn analyze_stale_file(path: &Path, context: &RunContext, pending: &AtomicUsize, 
             });
         }
     };
-    let record = analyze_file(path, &|| context.is_cancelled(), &mut on_progress);
+    let mut record = analyze_file(path, &|| context.is_cancelled(), &mut on_progress);
     if context.is_cancelled() {
         return;
+    }
+    // A refresh analyzes unchanged files too, and those keep the custom gain the user set for them.
+    if !record.has_error() {
+        record.custom_gain_db = context
+            .cache
+            .get_custom_gain(path, record.file_size, record.modified_time_ms);
     }
     // A failed store only costs a re-analysis on the next run, so the result is still published.
     let _ = context.cache.store_analysis(&record);
@@ -326,6 +333,28 @@ mod test_coordinator {
         );
         let refreshed = coordinator.analyze_blocking(options(&folder, true));
         assert!(refreshed.iter().all(|record| !record.from_cache));
+    }
+
+    #[test]
+    fn refresh_keeps_the_custom_gain_of_an_unchanged_file() {
+        let directory = TempDir::new().expect("temp dir");
+        let folder = fixture_folder(&directory);
+        let coordinator = coordinator(&directory);
+        let _ = coordinator.analyze_blocking(options(&folder, false));
+        let path = folder.join("sine_stereo_44100_16.wav");
+        assert!(
+            coordinator
+                .cache()
+                .store_custom_gain(&path, Some(-4.0))
+                .expect("stores gain")
+        );
+        let refreshed = coordinator.analyze_blocking(options(&folder, true));
+        let record = refreshed
+            .iter()
+            .find(|record| record.path == path)
+            .expect("record of the file");
+        assert!(!record.from_cache);
+        assert_eq!(record.custom_gain_db, Some(-4.0));
     }
 
     #[test]

@@ -17,9 +17,11 @@ use std::path::{Path, PathBuf};
 
 use audiobatch_core::AnalysisRecord;
 use audiobatch_core::format::{
-    average_bitrate_kbps, format_bitrate_compact, format_bits_per_sample, format_duration, format_loudness_compact,
-    format_peak_compact, format_sample_rate_compact, format_status, format_true_peak_compact, format_type_label,
+    average_bitrate_kbps, format_bitrate_compact, format_bits_per_sample, format_custom_gain_compact, format_duration,
+    format_loudness_compact, format_peak_compact, format_sample_rate_compact, format_status, format_true_peak_compact,
+    format_type_label,
 };
+use audiobatch_core::record::same_custom_gain;
 use audiobatch_core::sorting::{SortMode, compare_by_mode, compare_natural};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::{
@@ -93,6 +95,7 @@ enum ColumnKey {
     TruePeak,
     ShortTerm,
     Integrated,
+    Gain,
     Status,
 }
 
@@ -140,7 +143,7 @@ struct ColumnSpec {
 /// The widths are the C++ defaults, wider where a title needs the room next to the sort indicator.
 /// The Name and Path widths are a starting point that `ResultsDelegate::new` stretches,
 /// and the Status width is the least it gets, because it fills whatever the table has left.
-const COLUMNS: [ColumnSpec; 12] = [
+const COLUMNS: [ColumnSpec; 13] = [
     column_spec(ColumnKey::Name, "Name", "File name", 140.0, false),
     column_spec(ColumnKey::Path, "Path", "Full path of the file", 160.0, false),
     column_spec(ColumnKey::Type, "Type", "File type", 66.0, false),
@@ -176,6 +179,7 @@ const COLUMNS: [ColumnSpec; 12] = [
         78.0,
         true,
     ),
+    column_spec(ColumnKey::Gain, "Gain", "Per-file gain in dB", 76.0, true),
     column_spec(ColumnKey::Status, "Status", "Analysis status", 180.0, false),
 ];
 
@@ -377,14 +381,46 @@ impl ResultsDelegate {
     }
 
     /// Stores the result of a file, adding a row when the file is not listed yet.
-    pub fn set_record(&mut self, record: AnalysisRecord) {
-        if let Some(row) = self.row_mut(&record.path) {
-            row.state = RowState::Done;
-            row.record = Some(record);
-        } else {
+    /// A replaced record passes its custom gain on while the file is unchanged on disk,
+    /// because the user may have set it before the cache had a row to keep it in.
+    /// Returns the gain when it was carried over, so the caller can store it in the cache.
+    pub fn set_record(&mut self, mut record: AnalysisRecord) -> Option<f32> {
+        let Some(row) = self.row_mut(&record.path) else {
             self.index.insert(record.path.clone(), self.rows.len());
             self.rows.push(ResultRow::from_record(record));
+            return None;
+        };
+        let carried_over = row
+            .record
+            .as_ref()
+            .filter(|existing| {
+                existing.file_size == record.file_size && existing.modified_time_ms == record.modified_time_ms
+            })
+            .and_then(|existing| existing.custom_gain_db)
+            .filter(|&gain| !same_custom_gain(Some(gain), record.custom_gain_db));
+        if let Some(gain) = carried_over {
+            record.custom_gain_db = Some(gain);
         }
+        row.state = RowState::Done;
+        row.record = Some(record);
+        carried_over
+    }
+
+    /// Sets or clears the custom gain of a file with a usable result.
+    /// Returns true when the gain changed.
+    pub fn set_custom_gain(&mut self, path: &Path, custom_gain_db: Option<f32>) -> bool {
+        let Some(record) = self
+            .row_mut(path)
+            .and_then(|row| row.record.as_mut())
+            .filter(|record| record.is_ready())
+        else {
+            return false;
+        };
+        if same_custom_gain(record.custom_gain_db, custom_gain_db) {
+            return false;
+        }
+        record.custom_gain_db = custom_gain_db;
+        true
     }
 
     /// Removes the row of a file and returns its former index.
@@ -719,6 +755,7 @@ const fn column_id(key: ColumnKey) -> &'static str {
         ColumnKey::TruePeak => "true_peak",
         ColumnKey::ShortTerm => "short_term",
         ColumnKey::Integrated => "integrated",
+        ColumnKey::Gain => "custom_gain",
         ColumnKey::Status => "status",
     }
 }
@@ -734,6 +771,7 @@ fn level_text(record: &AnalysisRecord, key: ColumnKey) -> String {
         ColumnKey::TruePeak => format_true_peak_compact(record.overall_true_peak),
         ColumnKey::ShortTerm => format_loudness_compact(record.max_short_term_lufs),
         ColumnKey::Integrated => format_loudness_compact(record.integrated_lufs),
+        ColumnKey::Gain => format_custom_gain_compact(record),
         ColumnKey::Name | ColumnKey::Path | ColumnKey::Type | ColumnKey::Status => String::new(),
     }
 }
@@ -769,8 +807,81 @@ fn compare_rows(first: &ResultRow, second: &ResultRow, key: ColumnKey) -> Orderi
         ColumnKey::BitDepth => first_record.bits_per_sample.cmp(&second_record.bits_per_sample),
         ColumnKey::Bitrate => average_bitrate_kbps(first_record).total_cmp(&average_bitrate_kbps(second_record)),
         ColumnKey::Type => format_type_label(first_record).cmp(&format_type_label(second_record)),
+        // Files without a gain come first in ascending order, like the C++ table.
+        ColumnKey::Gain => match (first_record.custom_gain_db, second_record.custom_gain_db) {
+            (Some(first_gain), Some(second_gain)) => first_gain.total_cmp(&second_gain),
+            (first_gain, second_gain) => first_gain.is_some().cmp(&second_gain.is_some()),
+        },
     };
     ordering.then_with(by_name)
+}
+
+#[cfg(test)]
+mod test_custom_gain {
+    use super::*;
+
+    use audiobatch_core::AnalysisStatus;
+
+    fn record(path: &str, custom_gain_db: Option<f32>) -> AnalysisRecord {
+        AnalysisRecord {
+            path: PathBuf::from(path),
+            file_size: 100,
+            modified_time_ms: 1000,
+            status: AnalysisStatus::Analyzed,
+            custom_gain_db,
+            ..Default::default()
+        }
+    }
+
+    fn delegate_with(records: Vec<AnalysisRecord>) -> ResultsDelegate {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_rows(records.into_iter().map(ResultRow::from_record).collect());
+        delegate
+    }
+
+    fn gain_of(delegate: &ResultsDelegate, path: &str) -> Option<f32> {
+        delegate
+            .row_for(Path::new(path))
+            .and_then(|row| row.record.as_ref())
+            .and_then(|record| record.custom_gain_db)
+    }
+
+    #[test]
+    fn gain_changes_only_for_ready_rows() {
+        let mut delegate = delegate_with(vec![record("/a.wav", None)]);
+        assert!(delegate.set_custom_gain(Path::new("/a.wav"), Some(2.0)));
+        assert!(!delegate.set_custom_gain(Path::new("/a.wav"), Some(2.0)));
+        assert_eq!(gain_of(&delegate, "/a.wav"), Some(2.0));
+        delegate.set_files(&[PathBuf::from("/a.wav"), PathBuf::from("/b.wav")]);
+        assert!(!delegate.set_custom_gain(Path::new("/b.wav"), Some(1.0)));
+    }
+
+    #[test]
+    fn new_record_of_an_unchanged_file_takes_over_the_gain() {
+        let mut delegate = delegate_with(vec![record("/a.wav", Some(-3.0))]);
+        assert_eq!(delegate.set_record(record("/a.wav", None)), Some(-3.0));
+        assert_eq!(gain_of(&delegate, "/a.wav"), Some(-3.0));
+        assert_eq!(delegate.set_record(record("/a.wav", Some(-3.0))), None);
+    }
+
+    #[test]
+    fn new_record_of_a_changed_file_starts_without_a_gain() {
+        let mut delegate = delegate_with(vec![record("/a.wav", Some(-3.0))]);
+        let mut changed = record("/a.wav", None);
+        changed.modified_time_ms += 1;
+        assert_eq!(delegate.set_record(changed), None);
+        assert_eq!(gain_of(&delegate, "/a.wav"), None);
+    }
+
+    #[test]
+    fn files_without_a_gain_sort_first() {
+        let without = ResultRow::from_record(record("/a.wav", None));
+        let lower = ResultRow::from_record(record("/b.wav", Some(-1.0)));
+        let higher = ResultRow::from_record(record("/c.wav", Some(2.0)));
+        assert_eq!(compare_rows(&without, &lower, ColumnKey::Gain), Ordering::Less);
+        assert_eq!(compare_rows(&lower, &higher, ColumnKey::Gain), Ordering::Less);
+        assert_eq!(compare_rows(&higher, &without, ColumnKey::Gain), Ordering::Greater);
+    }
 }
 
 #[cfg(test)]
