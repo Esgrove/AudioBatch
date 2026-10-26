@@ -47,7 +47,7 @@ const ROW_SPACING: f32 = 8.0;
 const CAPTION_WIDTH: f32 = 110.0;
 
 /// Width of a loudness limit field.
-const LIMIT_INPUT_WIDTH: f32 = 64.0;
+const LIMIT_INPUT_WIDTH: f32 = 44.0;
 
 /// Font size of the window text.
 const FONT_SIZE: f32 = 13.0;
