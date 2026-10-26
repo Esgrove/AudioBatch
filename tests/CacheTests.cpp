@@ -48,14 +48,12 @@ public:
             overview.slices.resize(2);
             overview.slices.front().fill(7);
             overview.slices.back().fill(19);
-            const serato::TagReadResult result {
-                .status = serato::ReadStatus::present,
-                .overview = overview,
-            };
+            const auto result = serato::TagReadResult::present(overview);
             expect(cache.storeSeratoTag(identity, result));
             const auto loaded = cache.getSeratoTag(identity);
             expect(loaded.has_value());
-            expect(loaded && loaded->overview && loaded->overview->slices == overview.slices);
+            const auto loadedOverview = loaded ? tagValue<serato::Overview>(*loaded) : std::nullopt;
+            expect(loadedOverview && loadedOverview->slices == overview.slices);
             expect(!cache.getAnalysis(tagFile).has_value());
         }
 
@@ -477,7 +475,7 @@ private:
         overview.slices.resize(3);
         overview.slices.front().fill(3);
         overview.slices.back().fill(255);
-        const serato::TagReadResult positive {.status = serato::ReadStatus::present, .overview = overview};
+        const auto positive = serato::TagReadResult::present(overview);
 
         beginTest("Tag results survive a database reopen without an analysis row");
         {
@@ -486,17 +484,17 @@ private:
         }
         const auto reopened = cache.getSeratoTag(identity);
         expect(
-            reopened && reopened->status == serato::ReadStatus::present && reopened->overview
-            && reopened->overview->slices == overview.slices
+            reopened && reopened->status() == serato::ReadStatus::present
+            && tagValue<serato::Overview>(*reopened).value_or(serato::Overview {}).slices == overview.slices
         );
 
         beginTest("All stable negatives round trip with SQL NULL data");
         for (const auto status :
              {serato::ReadStatus::absent, serato::ReadStatus::invalid, serato::ReadStatus::unsupported})
         {
-            expect(cache.storeSeratoTag(identity, {.status = status, .overview = std::nullopt}));
+            expect(cache.storeSeratoTag(identity, serato::TagReadResult::missing(serato::TagKind::overview, status)));
             const auto loaded = cache.getSeratoTag(identity);
-            expect(loaded && loaded->status == status && !loaded->overview);
+            expect(loaded && loaded->status() == status && !loaded->value);
             expectSqlScalar(databaseFile, "SELECT decoded_data IS NULL FROM serato_tag_cache;", 1);
         }
 
@@ -509,32 +507,35 @@ private:
                  std::bit_cast<serato::ReadStatus>(std::uint8_t {99}),
              })
         {
-            expect(!cache.storeSeratoTag(identity, {.status = status, .overview = std::nullopt}));
+            expect(!cache.storeSeratoTag(identity, serato::TagReadResult::missing(serato::TagKind::overview, status)));
         }
-        expect(!cache.storeSeratoTag(identity, {.status = serato::ReadStatus::present, .overview = std::nullopt}));
-        expect(
-            !cache.storeSeratoTag(identity, {.status = serato::ReadStatus::present, .overview = serato::Overview {}})
-        );
+        expect(!cache.storeSeratoTag(identity, serato::TagReadResult::present(serato::Overview {})));
+        expect(!cache.storeSeratoTag(
+            identity, serato::TagReadResult {.kind = serato::TagKind::analysis, .value = overview}
+        ));
         serato::Overview oversized;
         oversized.slices.resize(serato::Overview::maxSlices + 1);
-        expect(
-            !cache.storeSeratoTag(identity, {.status = serato::ReadStatus::present, .overview = std::move(oversized)})
-        );
-        expect(!cache.storeSeratoTag(identity, {.status = serato::ReadStatus::absent, .overview = overview}));
+        expect(!cache.storeSeratoTag(identity, serato::TagReadResult::present(std::move(oversized))));
         const auto retained = cache.getSeratoTag(identity);
-        expect(retained && retained->overview && retained->overview->slices == overview.slices);
+        expect(
+            retained && tagValue<serato::Overview>(*retained).value_or(serato::Overview {}).slices == overview.slices
+        );
         expect(cache.removeAnalysis(file));
-        expect(!cache.storeSeratoTag(identity, {.status = serato::ReadStatus::ioError, .overview = std::nullopt}));
-        expect(!cache.storeSeratoTag(identity, {.status = serato::ReadStatus::cancelled, .overview = std::nullopt}));
+        expect(!cache.storeSeratoTag(
+            identity, serato::TagReadResult::missing(serato::TagKind::overview, serato::ReadStatus::ioError)
+        ));
+        expect(!cache.storeSeratoTag(
+            identity, serato::TagReadResult::missing(serato::TagKind::overview, serato::ReadStatus::cancelled)
+        ));
         expect(!cache.getSeratoTag(identity));
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
 
         beginTest("Unknown tag kinds miss and cannot be stored");
         const auto unknownKind = std::bit_cast<serato::TagKind>(std::uint8_t {99});
         expect(!cache.getSeratoTag(identity, unknownKind));
-        expect(!cache.storeSeratoTag(
-            identity, {.kind = unknownKind, .status = serato::ReadStatus::absent, .overview = std::nullopt}
-        ));
+        expect(
+            !cache.storeSeratoTag(identity, serato::TagReadResult::missing(unknownKind, serato::ReadStatus::absent))
+        );
 
         beginTest("Corrupt state, blob, parser, path and stat fields are cache misses");
         for (const auto* sql :
@@ -613,7 +614,9 @@ private:
         expect(!cache.getSeratoTag(identity));
         expect(!cache.getSeratoTag(changedTime));
         expect(!cache.storeSeratoTag(identity, positive));
-        expect(cache.storeSeratoTag(changedTime, {.status = serato::ReadStatus::absent, .overview = std::nullopt}));
+        expect(cache.storeSeratoTag(
+            changedTime, serato::TagReadResult::missing(serato::TagKind::overview, serato::ReadStatus::absent)
+        ));
         expect(!cache.storeSeratoTag(identity, positive));
         expect(cache.getSeratoTag(changedTime).has_value());
 
@@ -711,53 +714,33 @@ private:
         overview.slices.front().fill(7);
         overview.slices.back().fill(19);
         const std::array positives {
-            serato::TagReadResult {.kind = serato::TagKind::overview, .status = serato::ReadStatus::present, .overview = overview},
-            serato::TagReadResult {
-                .kind = serato::TagKind::analysis,
-                .status = serato::ReadStatus::present,
-                .analysis = serato::Analysis {.majorVersion = 2, .minorVersion = 5},
-            },
-            serato::TagReadResult {
-                .kind = serato::TagKind::autotags,
-                .status = serato::ReadStatus::present,
-                .autotags = serato::Autotags {.bpm = 128.25, .autoGain = -3.5, .gain = 1.25},
-            },
-            serato::TagReadResult {
-                .kind = serato::TagKind::beatGrid,
-                .status = serato::ReadStatus::present,
-                .beatGrid = serato::BeatGrid {
-                    .markers = {
-                        {.positionSeconds = 0.5, .beatsUntilNext = 16, .bpm = std::nullopt},
-                        {.positionSeconds = 8.0, .beatsUntilNext = 0, .bpm = 128.25},
+            serato::TagReadResult::present(overview),
+            serato::TagReadResult::present(serato::Analysis {.majorVersion = 2, .minorVersion = 5}),
+            serato::TagReadResult::present(serato::Autotags {.bpm = 128.25, .autoGain = -3.5, .gain = 1.25}),
+            serato::TagReadResult::present(serato::BeatGrid {
+                .markers = {
+                    {.positionSeconds = 0.5, .beatsUntilNext = 16, .bpm = std::nullopt},
+                    {.positionSeconds = 8.0, .beatsUntilNext = 0, .bpm = 128.25},
+                },
+            }),
+            serato::TagReadResult::present(serato::Markers {
+                .cues = {
+                    {.positionMilliseconds = 1500, .index = 3, .colour = juce::Colours::red, .name = "Intro"},
+                },
+                .loops = {
+                    {
+                        .startMilliseconds = 2000,
+                        .endMilliseconds = 4000,
+                        .index = 1,
+                        .colour = juce::Colours::green,
+                        .locked = true,
+                        .name = "Loop",
                     },
                 },
-            },
-            serato::TagReadResult {
-                .kind = serato::TagKind::markers,
-                .status = serato::ReadStatus::present,
-                .markers = serato::Markers {
-                    .cues = {
-                        {.positionMilliseconds = 1500, .index = 3, .colour = juce::Colours::red, .name = "Intro"},
-                    },
-                    .loops = {
-                        {
-                            .startMilliseconds = 2000,
-                            .endMilliseconds = 4000,
-                            .index = 1,
-                            .colour = juce::Colours::green,
-                            .locked = true,
-                            .name = "Loop",
-                        },
-                    },
-                    .colour = juce::Colours::blue,
-                    .bpmLocked = false,
-                },
-            },
-            serato::TagReadResult {
-                .kind = serato::TagKind::trackInfo,
-                .status = serato::ReadStatus::present,
-                .trackInfo = serato::TrackInfo {.bpm = 128.25, .key = "Am"},
-            },
+                .colour = juce::Colours::blue,
+                .bpmLocked = false,
+            }),
+            serato::TagReadResult::present(serato::TrackInfo {.bpm = 128.25, .key = "Am"}),
         };
 
         runMultiKindRoundTripTests(cache, databaseFile, file, identity, positives);
@@ -785,7 +768,7 @@ private:
         }
         for (const auto& positive : positives) {
             const auto loaded = cache.getSeratoTag(identity, positive.kind);
-            expect(loaded && loaded->kind == positive.kind && loaded->status == serato::ReadStatus::present);
+            expect(loaded && loaded->kind == positive.kind && loaded->status() == serato::ReadStatus::present);
             if (loaded) {
                 expect(serato::serializeTag(*loaded) == serato::serializeTag(positive));
                 expect(!serato::serializeTag(*loaded).isEmpty());
@@ -811,15 +794,10 @@ private:
             for (const auto status :
                  {serato::ReadStatus::absent, serato::ReadStatus::invalid, serato::ReadStatus::unsupported})
             {
-                expect(cache.storeSeratoTag(identity, {.kind = kind, .status = status}));
+                expect(cache.storeSeratoTag(identity, serato::TagReadResult::missing(kind, status)));
                 const auto negative = cache.getSeratoTag(identity, kind);
-                expect(negative && negative->kind == kind && negative->status == status);
-                if (negative) {
-                    expect(
-                        !negative->overview && !negative->analysis && !negative->autotags && !negative->beatGrid
-                        && !negative->markers && !negative->trackInfo
-                    );
-                }
+                expect(negative && negative->kind == kind && negative->status() == status);
+                expect(negative && !negative->value);
                 const auto sql = utils::format(
                     "SELECT decoded_data IS NULL FROM serato_tag_cache WHERE tag_kind = {};",
                     static_cast<std::uint32_t>(kind)
@@ -849,7 +827,7 @@ private:
         for (const auto kind : serato::allTagKinds) {
             for (const auto status : {serato::ReadStatus::present, serato::ReadStatus::absent}) {
                 if (status == serato::ReadStatus::absent) {
-                    expect(cache.storeSeratoTag(identity, {.kind = kind, .status = status}));
+                    expect(cache.storeSeratoTag(identity, serato::TagReadResult::missing(kind, status)));
                 }
                 const auto mismatch = utils::format(
                     "UPDATE serato_tag_cache SET parser_version = {} WHERE tag_kind = {};",
@@ -893,7 +871,7 @@ private:
         beginTest("Transient results cannot overwrite any independently cached positive kind");
         for (const auto& positive : positives) {
             for (const auto status : {serato::ReadStatus::ioError, serato::ReadStatus::cancelled}) {
-                expect(!cache.storeSeratoTag(identity, {.kind = positive.kind, .status = status}));
+                expect(!cache.storeSeratoTag(identity, serato::TagReadResult::missing(positive.kind, status)));
                 const auto retained = cache.getSeratoTag(identity, positive.kind);
                 expect(retained && serato::serializeTag(*retained) == serato::serializeTag(positive));
             }

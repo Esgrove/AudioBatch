@@ -1,4 +1,5 @@
 /// Stable Serato tag identifiers and read outcomes for independent per-kind caching.
+/// TagReadResult holds either the owned value of a present tag as a TagValue variant or the status of a missing one.
 /// Transient failures are separate from stable negative results.
 
 #pragma once
@@ -8,6 +9,9 @@
 #include <juce_graphics/juce_graphics.h>
 
 #include <algorithm>
+#include <expected>
+#include <utility>
+#include <variant>
 
 namespace audiobatch::serato
 {
@@ -109,16 +113,42 @@ struct SeratoData {
     std::optional<TrackInfo> trackInfo;
 };
 
-/// Reports one requested kind. Only present results contain the matching owned value.
+/// The owned value of one present tag, with the alternatives in the order of allTagKinds.
+using TagValue = std::variant<Overview, Analysis, Autotags, BeatGrid, Markers, TrackInfo>;
+
+static_assert(std::variant_size_v<TagValue> == allTagKinds.size());
+
+/// Returns the kind of tag a value belongs to.
+[[nodiscard]] constexpr TagKind kindOf(const TagValue& value) noexcept
+{
+    return allTagKinds[value.index()];
+}
+
+/// Reports one requested kind, with the owned value of a present tag or the status that explains why there is none.
 struct TagReadResult {
+    /// Returns the result of a present tag, whose kind follows from the value.
+    [[nodiscard]] static TagReadResult present(TagValue tagValue)
+    {
+        const auto tagKind = kindOf(tagValue);
+        return {.kind = tagKind, .value = std::move(tagValue)};
+    }
+
+    /// Returns the result of a kind without a value, which must not have the status ReadStatus::present.
+    [[nodiscard]] static TagReadResult missing(const TagKind tagKind, const ReadStatus status)
+    {
+        jassert(status != ReadStatus::present);
+        return {.kind = tagKind, .value = std::unexpected(status)};
+    }
+
+    /// Returns ReadStatus::present for a tag with a value, otherwise the reason it has none.
+    [[nodiscard]] ReadStatus status() const noexcept
+    {
+        return value.has_value() ? ReadStatus::present : value.error();
+    }
+
     TagKind kind {TagKind::overview};
-    ReadStatus status {ReadStatus::absent};
-    std::optional<Overview> overview {std::nullopt};
-    std::optional<Analysis> analysis {std::nullopt};
-    std::optional<Autotags> autotags {std::nullopt};
-    std::optional<BeatGrid> beatGrid {std::nullopt};
-    std::optional<Markers> markers {std::nullopt};
-    std::optional<TrackInfo> trackInfo {std::nullopt};
+    /// The value of a present tag, which matches the kind, or the status of a missing one.
+    std::expected<TagValue, ReadStatus> value {std::unexpected(ReadStatus::absent)};
 };
 
 /// Reports the independent numeric cache schema version for a supported kind.

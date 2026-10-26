@@ -36,27 +36,26 @@ struct PreviewDelivery {
 /// Builds representative owned values for every independently cached kind.
 serato::TagReadResult previewResult(const serato::TagKind kind, const ReadStatus status = ReadStatus::present)
 {
-    serato::TagReadResult result {.kind = kind, .status = status};
     if (status != ReadStatus::present) {
-        return result;
+        return serato::TagReadResult::missing(kind, status);
     }
     switch (kind) {
-        case serato::TagKind::overview:
-            result.overview.emplace();
-            result.overview->slices.resize(1);
-            result.overview->slices.front().fill(32);
-            break;
+        case serato::TagKind::overview: {
+            serato::Overview overview;
+            overview.slices.resize(1);
+            overview.slices.front().fill(32);
+            return serato::TagReadResult::present(std::move(overview));
+        }
         case serato::TagKind::analysis:
-            result.analysis = serato::Analysis {.majorVersion = 2, .minorVersion = 5};
-            break;
+            return serato::TagReadResult::present(serato::Analysis {.majorVersion = 2, .minorVersion = 5});
         case serato::TagKind::autotags:
-            result.autotags = serato::Autotags {.bpm = 128.0, .autoGain = -3.0, .gain = 1.5};
-            break;
+            return serato::TagReadResult::present(serato::Autotags {.bpm = 128.0, .autoGain = -3.0, .gain = 1.5});
         case serato::TagKind::beatGrid:
-            result.beatGrid = serato::BeatGrid {{{.positionSeconds = 0.5, .beatsUntilNext = 0, .bpm = 128.0}}};
-            break;
+            return serato::TagReadResult::present(
+                serato::BeatGrid {{{.positionSeconds = 0.5, .beatsUntilNext = 0, .bpm = 128.0}}}
+            );
         case serato::TagKind::markers:
-            result.markers = serato::Markers {
+            return serato::TagReadResult::present(serato::Markers {
                 .cues = {
                     {.positionMilliseconds = 1000,
                         .index = 2,
@@ -76,13 +75,11 @@ serato::TagReadResult previewResult(const serato::TagKind kind, const ReadStatus
                 },
                 .colour = juce::Colours::blue,
                 .bpmLocked = false,
-            };
-            break;
+            });
         case serato::TagKind::trackInfo:
-            result.trackInfo = serato::TrackInfo {.bpm = 128.0, .key = "Am"};
-            break;
+            return serato::TagReadResult::present(serato::TrackInfo {.bpm = 128.0, .key = "Am"});
     }
-    return result;
+    return serato::TagReadResult::missing(kind, ReadStatus::unsupported);
 }
 }  // namespace
 
@@ -436,7 +433,7 @@ private:
             }
             for (const auto kind : serato::allTagKinds) {
                 const auto cached = cache.getSeratoTag(FileIdentity(file), kind);
-                expect(cached && cached->kind == kind && cached->status == status);
+                expect(cached && cached->kind == kind && cached->status() == status);
             }
             expect(!cache.getAnalysis(file).has_value());
         }
@@ -564,7 +561,7 @@ private:
             }
         }
         const auto negative = cache.getSeratoTag(identity, TagKind::analysis);
-        expect(negative && negative->status == ReadStatus::invalid);
+        expect(negative && negative->status() == ReadStatus::invalid);
         expect(!cache.getSeratoTag(identity, TagKind::autotags));
         expect(!cache.getSeratoTag(identity, TagKind::beatGrid));
     }

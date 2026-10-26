@@ -146,28 +146,16 @@ TagLib::String description(const TagKind kind)
     return {};
 }
 
-/// Creates an empty outcome while retaining the requested stable kind.
-TagReadResult outcome(const TagKind kind, const ReadStatus status)
-{
-    TagReadResult result;
-    result.kind = kind;
-    result.status = status;
-    return result;
-}
-
 /// Parses one bounded GEOB object, retaining the existing Overview payload decoder.
 TagReadResult parseId3Payload(const TagKind kind, const TagLib::ByteVector& payload, const bool legacy)
 {
-    auto result = outcome(kind, ReadStatus::invalid);
     if (payload.size() > maxTagPayloadBytes) {
-        return result;
+        return TagReadResult::missing(kind, ReadStatus::invalid);
     }
     if (kind == TagKind::overview) {
-        if (auto overview = parseGeobPayload(payload)) {
-            result.overview = std::move(overview);
-            result.status = ReadStatus::present;
-        }
-        return result;
+        auto overview = parseGeobPayload(payload);
+        return overview ? TagReadResult::present(std::move(*overview))
+                        : TagReadResult::missing(kind, ReadStatus::invalid);
     }
     const std::vector<std::uint8_t> bytes(payload.begin(), payload.end());
     return parseTagPayload(kind, bytes, legacy);
@@ -181,23 +169,23 @@ TagReadResult readId3Frames(
     const utils::CancellationCheck& isCancelled
 )
 {
-    auto result = outcome(kind, ReadStatus::absent);
+    auto result = TagReadResult::missing(kind, ReadStatus::absent);
     const auto expected = legacy ? TagLib::String("Serato Markers_") : description(kind);
     std::size_t matchingRecords = 0;
     for (const auto* frame : tag.frameList("GEOB")) {
         if (utils::isCancellationRequested(isCancelled)) {
-            return outcome(kind, ReadStatus::cancelled);
+            return TagReadResult::missing(kind, ReadStatus::cancelled);
         }
         const auto* object = dynamic_cast<const TagLib::ID3v2::GeneralEncapsulatedObjectFrame*>(frame);
         if (object == nullptr || object->description() != expected) {
             continue;
         }
-        result.status = ReadStatus::invalid;
+        result = TagReadResult::missing(kind, ReadStatus::invalid);
         if (kind != TagKind::overview && ++matchingRecords > maxTagRecords) {
             break;
         }
         auto parsed = parseId3Payload(kind, object->object(), legacy);
-        if (parsed.status == ReadStatus::present) {
+        if (parsed.value.has_value()) {
             return parsed;
         }
     }
@@ -209,31 +197,29 @@ TagReadResult readId3Frames(
 TagReadResult readId3Tag(const TagLib::ID3v2::Tag* tag, const TagKind kind, const utils::CancellationCheck& isCancelled)
 {
     if (tag == nullptr) {
-        return outcome(kind, ReadStatus::absent);
+        return TagReadResult::missing(kind, ReadStatus::absent);
     }
     auto result = readId3Frames(*tag, kind, false, isCancelled);
-    if (kind != TagKind::markers || result.status == ReadStatus::present || result.status == ReadStatus::cancelled) {
+    if (kind != TagKind::markers || result.status() == ReadStatus::present || result.status() == ReadStatus::cancelled)
+    {
         return result;
     }
     const auto legacy = readId3Frames(*tag, kind, true, isCancelled);
-    return legacy.status == ReadStatus::absent ? result : legacy;
+    return legacy.status() == ReadStatus::absent ? result : legacy;
 }
 
 /// Decodes a documented FLAC wrapper with an exact MIME, filename and matching per-kind description.
 TagReadResult decodeFlacTag(const TagKind kind, const TagLib::String& value, const bool legacy)
 {
-    auto result = outcome(kind, ReadStatus::invalid);
+    const auto result = TagReadResult::missing(kind, ReadStatus::invalid);
     // Base64 is ASCII, and to8Bit keeps only the low byte of every other character,
     // so for example U+0141 would pass as the Base64 letter 'A'.
     if (!value.isAscii()) {
         return result;
     }
     if (kind == TagKind::overview) {
-        if (auto overview = decodeFlacOverview(value)) {
-            result.overview = std::move(overview);
-            result.status = ReadStatus::present;
-        }
-        return result;
+        auto overview = decodeFlacOverview(value);
+        return overview ? TagReadResult::present(std::move(*overview)) : result;
     }
     if (value.size() > maxEncodedBytes) {
         return result;
@@ -292,7 +278,7 @@ TagReadResult readFlacTag(
     const utils::CancellationCheck& isCancelled
 )
 {
-    auto result = outcome(kind, ReadStatus::absent);
+    auto result = TagReadResult::missing(kind, ReadStatus::absent);
     for (const bool legacy : {false, true}) {
         if (legacy && kind != TagKind::markers) {
             break;
@@ -301,16 +287,16 @@ TagReadResult readFlacTag(
         if (entry == properties.end()) {
             continue;
         }
-        result.status = ReadStatus::invalid;
+        result = TagReadResult::missing(kind, ReadStatus::invalid);
         if (kind != TagKind::overview && entry->second.size() > maxTagRecords) {
             continue;
         }
         for (const auto& value : entry->second) {
             if (utils::isCancellationRequested(isCancelled)) {
-                return outcome(kind, ReadStatus::cancelled);
+                return TagReadResult::missing(kind, ReadStatus::cancelled);
             }
             auto parsed = decodeFlacTag(kind, value, legacy);
-            if (parsed.status == ReadStatus::present) {
+            if (parsed.value.has_value()) {
                 return parsed;
             }
         }
@@ -347,20 +333,20 @@ bool readTrackInfoValue(TrackInfo& info, const std::string_view name, const TagL
 /// Reads standard tempo and musical key, allowing malformed BPM to coexist with an independently valid key.
 TagReadResult readTrackInfo(const TagLib::PropertyMap& properties, const utils::CancellationCheck& isCancelled)
 {
-    auto result = outcome(TagKind::trackInfo, ReadStatus::absent);
+    auto result = TagReadResult::missing(TagKind::trackInfo, ReadStatus::absent);
     TrackInfo info;
     for (const auto* name : {"BPM", "INITIALKEY"}) {
         const auto entry = properties.find(name);
         if (entry == properties.end()) {
             continue;
         }
-        result.status = ReadStatus::invalid;
+        result = TagReadResult::missing(TagKind::trackInfo, ReadStatus::invalid);
         if (entry->second.size() > maxTagRecords) {
             continue;
         }
         for (const auto& value : entry->second) {
             if (utils::isCancellationRequested(isCancelled)) {
-                return outcome(TagKind::trackInfo, ReadStatus::cancelled);
+                return TagReadResult::missing(TagKind::trackInfo, ReadStatus::cancelled);
             }
             if (readTrackInfoValue(info, name, value)) {
                 break;
@@ -368,8 +354,7 @@ TagReadResult readTrackInfo(const TagLib::PropertyMap& properties, const utils::
         }
     }
     if (info.bpm || info.key.isNotEmpty()) {
-        result.status = ReadStatus::present;
-        result.trackInfo = std::move(info);
+        return TagReadResult::present(std::move(info));
     }
     return result;
 }
@@ -412,7 +397,7 @@ std::vector<TagReadResult> failedReads(std::vector<TagReadResult> results, const
 {
     for (auto& result : results) {
         if (supportsTagKind(result.kind)) {
-            result = outcome(result.kind, status);
+            result = TagReadResult::missing(result.kind, status);
         }
     }
     return results;
@@ -432,9 +417,10 @@ std::vector<TagReadResult> readTags(
     if (kinds.empty() || kinds.size() > maxTagRecords) {
         return {};
     }
-    auto results = kinds | std::views::transform([](const TagKind kind) {
-                       return outcome(kind, supportsTagKind(kind) ? ReadStatus::absent : ReadStatus::unsupported);
-                   })
+    auto results
+        = kinds | std::views::transform([](const TagKind kind) {
+              return TagReadResult::missing(kind, supportsTagKind(kind) ? ReadStatus::absent : ReadStatus::unsupported);
+          })
         | std::ranges::to<std::vector>();
     if (utils::isCancellationRequested(isCancelled)) {
         return failedReads(std::move(results), ReadStatus::cancelled);
@@ -468,14 +454,14 @@ std::vector<TagReadResult> readTags(
             continue;
         }
         if (utils::isCancellationRequested(isCancelled)) {
-            result = outcome(result.kind, ReadStatus::cancelled);
+            result = TagReadResult::missing(result.kind, ReadStatus::cancelled);
             continue;
         }
         result = readOpenedTag(result.kind, properties, id3, flac != nullptr, isCancelled);
         if (utils::isCancellationRequested(isCancelled)) {
-            result = outcome(result.kind, ReadStatus::cancelled);
+            result = TagReadResult::missing(result.kind, ReadStatus::cancelled);
         }
-        if (result.status == ReadStatus::invalid) {
+        if (result.status() == ReadStatus::invalid) {
             utils::logDebug("Unusable Serato tag kind {} in {}", std::to_underlying(result.kind), fullPath.quoted());
         }
     }

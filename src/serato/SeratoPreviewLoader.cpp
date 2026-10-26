@@ -4,11 +4,13 @@
 
 #include "serato/SeratoPreviewLoader.h"
 
+#include "analysis/AudioAnalysisTypes.h"
 #include "utils/Log.h"
 
 #include <algorithm>
 #include <exception>
 #include <utility>
+#include <variant>
 
 namespace audiobatch::serato
 {
@@ -180,7 +182,7 @@ ReadOutcome SeratoPreviewLoader::readMisses(
     }
     auto fresh = reader(active.file, misses, isCancelled);
     if (isCancelled()
-        || std::ranges::any_of(fresh, [](const auto& result) { return result.status == ReadStatus::cancelled; }))
+        || std::ranges::any_of(fresh, [](const auto& result) { return result.status() == ReadStatus::cancelled; }))
     {
         return ReadOutcome::cancelled;
     }
@@ -202,7 +204,7 @@ ReadOutcome SeratoPreviewLoader::readMisses(
             continue;
         }
         // A tag the cache could not store is only read from the file again next time.
-        if (result.status != ReadStatus::ioError) {
+        if (result.status() != ReadStatus::ioError) {
             static_cast<void>(cache.storeSeratoTag(active.identity, result));
         }
         results[index] = std::move(result);
@@ -215,29 +217,20 @@ std::shared_ptr<const SeratoData> SeratoPreviewLoader::collectData(Results& resu
 {
     SeratoData loaded;
     for (auto& result : results) {
-        if (!result || result->status != ReadStatus::present) {
+        if (!result || !result->value) {
             continue;
         }
-        switch (result->kind) {
-            case TagKind::overview:
-                loaded.overview = std::move(result->overview);
-                break;
-            case TagKind::analysis:
-                loaded.analysis = result->analysis;
-                break;
-            case TagKind::autotags:
-                loaded.autotags = result->autotags;
-                break;
-            case TagKind::beatGrid:
-                loaded.beatGrid = std::move(result->beatGrid);
-                break;
-            case TagKind::markers:
-                loaded.markers = std::move(result->markers);
-                break;
-            case TagKind::trackInfo:
-                loaded.trackInfo = std::move(result->trackInfo);
-                break;
-        }
+        std::visit(
+            Overloaded {
+                [&loaded](Overview& overview) { loaded.overview = std::move(overview); },
+                [&loaded](const Analysis& analysis) { loaded.analysis = analysis; },
+                [&loaded](const Autotags& autotags) { loaded.autotags = autotags; },
+                [&loaded](BeatGrid& grid) { loaded.beatGrid = std::move(grid); },
+                [&loaded](Markers& markers) { loaded.markers = std::move(markers); },
+                [&loaded](TrackInfo& info) { loaded.trackInfo = std::move(info); },
+            },
+            *result->value
+        );
     }
     if (loaded.overview || loaded.analysis || loaded.autotags || loaded.beatGrid || loaded.markers || loaded.trackInfo)
     {
