@@ -81,10 +81,10 @@ fi
 if [ ${#CMAKE_FORMAT[@]} -gt 0 ]; then
     if [ "$CHECK" = true ]; then
         print_magenta "Checking CMake formatting..."
-        "${CMAKE_FORMAT[@]}" --check CMakeLists.txt
+        "${CMAKE_FORMAT[@]}" --check CMakeLists.txt cmake/*.cmake
     else
         print_magenta "Formatting CMake files..."
-        "${CMAKE_FORMAT[@]}" --in-place CMakeLists.txt
+        "${CMAKE_FORMAT[@]}" --in-place CMakeLists.txt cmake/*.cmake
     fi
 fi
 

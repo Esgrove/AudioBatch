@@ -37,6 +37,7 @@ parse:
         GIT_TAG: 1
         GIT_SHALLOW: 1
         SOURCE_SUBDIR: 1
+        PATCH_COMMAND: +
     # Declaring COMPILE_OPTIONS as a nested keyword makes the call count as complex enough to keep the file list
     # and the PROPERTIES pair on separate lines.
     set_source_files_properties:
