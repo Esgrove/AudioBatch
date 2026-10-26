@@ -32,11 +32,17 @@ defaults:
 
 jobs:
   build:
+    # Release builds compile out the JUCE assertions and turn on the optimizer,
+    # so they catch warnings and behaviour that only show up there.
     strategy:
       matrix:
         os: [macos-latest, windows-2025-vs2026]
+        build-type: [Debug, Release]
       fail-fast: false
+    name: build (${{ matrix.os }}, ${{ matrix.build-type }})
     runs-on: ${{ matrix.os }}
+    env:
+      BUILD_TYPE: ${{ matrix.build-type }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -49,33 +55,37 @@ jobs:
 
       # The ccache cache lives inside the build directory (build.sh sets CCACHE_DIR),
       # so caching the build directories also caches the compilation cache.
+      # The lint job restores this cache, and a cache only restores with the same path list it was saved with.
       - name: Cache CMake build directory and ccache
         uses: actions/cache@v5
         with:
           path: |
             cpp/cmake-build-mac-debug
+            cpp/cmake-build-mac-release
             cpp/cmake-build-windows-debug
-          key: ${{ runner.os }}-cmake-${{ github.sha }}
-          restore-keys: ${{ runner.os }}-cmake-
+            cpp/cmake-build-windows-release
+          key: ${{ runner.os }}-${{ matrix.build-type }}-cmake-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-${{ matrix.build-type }}-cmake-
 
       - name: Build
         run: |
           chmod +x build.sh
-          ./build.sh --build-type Debug
+          ./build.sh --build-type "$BUILD_TYPE"
 
       - name: Build and run tests
         run: |
+          BUILD_TYPE_LOWER=$(echo "$BUILD_TYPE" | tr '[:upper:]' '[:lower:]')
           if [ "$RUNNER_OS" = "macOS" ]; then
-            BUILD_DIR=cmake-build-mac-debug
+            BUILD_DIR="cmake-build-mac-$BUILD_TYPE_LOWER"
           else
-            BUILD_DIR=cmake-build-windows-debug
+            BUILD_DIR="cmake-build-windows-$BUILD_TYPE_LOWER"
           fi
           # Reuse the compilation cache that build.sh keeps inside the build directory.
           export CCACHE_DIR="$PWD/$BUILD_DIR/ccache"
           # build.sh configures without tests, so enable the test target explicitly.
           cmake -S . -B "$BUILD_DIR" -DBUILD_TESTING=ON
-          cmake --build "$BUILD_DIR" --target AudioBatchTests --config Debug
-          ctest --test-dir "$BUILD_DIR" --build-config Debug --output-on-failure
+          cmake --build "$BUILD_DIR" --target AudioBatchTests --config "$BUILD_TYPE"
+          ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_TYPE" --output-on-failure
 
       # Runs the CLI that build.sh copied to the C++ project root on the committed test fixtures,
       # and checks the reported level and the exit codes.
@@ -112,15 +122,20 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: brew install llvm ninja
 
-      # Restores the build job's macOS cache, which holds the same cmake-build-mac-debug directory
-      # including the fetched dependencies.
+      # Restores the build job's macOS Debug cache.
+      # It holds the same cmake-build-mac-debug directory, including the fetched dependencies.
+      # The path list must match the build job's for the cache to restore.
       # Restore-only, since the build job owns saving it.
       - name: Restore CMake build directory
         uses: actions/cache/restore@v5
         with:
-          path: cpp/cmake-build-mac-debug
-          key: ${{ runner.os }}-cmake-${{ github.sha }}
-          restore-keys: ${{ runner.os }}-cmake-
+          path: |
+            cpp/cmake-build-mac-debug
+            cpp/cmake-build-mac-release
+            cpp/cmake-build-windows-debug
+            cpp/cmake-build-windows-release
+          key: ${{ runner.os }}-Debug-cmake-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-Debug-cmake-
 
       # clang-tidy only needs the compile database and the generated JUCE and binary data headers,
       # so the application itself is not built.
