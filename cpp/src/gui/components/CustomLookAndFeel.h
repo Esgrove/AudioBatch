@@ -148,6 +148,8 @@ public:
 
     [[nodiscard]] static const juce::Font& getMonoBaseFont();
 
+    [[nodiscard]] static juce::Font getTableHeaderFont(int headerHeight);
+
     /// Palette colour #76A8DA.
     [[nodiscard]] static juce::Colour blue() noexcept
     {
