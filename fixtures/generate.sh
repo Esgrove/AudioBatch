@@ -6,7 +6,7 @@ set -eo pipefail
 # Stereo tones carry the same signal on both channels and measure -6.02 LUFS integrated.
 # Mono tones are analyzed as dual mono and therefore measure the same loudness.
 # The files are committed so the tests do not depend on ffmpeg.
-# Requires ffmpeg with the libmp3lame encoder.
+# Requires ffmpeg with the libmp3lame encoder, and python3 for the Serato tag.
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$DIR"
@@ -76,6 +76,16 @@ click() {
 
 click -c:a pcm_s16le click_mono_44100_16.wav
 click -c:a libmp3lame -b:a 320k click_mono_44100_320k.mp3
+
+# Two seconds of the tone swelling twice from a fifth of its level to full level,
+# tagged with a synthetic rainbow Serato Overview by serato_overview.py, for the coloured waveform.
+# ffmpeg writes no ID3v2 tag of its own, so the script can add one with the GEOB frame that ffmpeg cannot write.
+SWELL="${TONE}*(0.6-0.4*cos(2*PI*t))"
+ffmpeg -hide_banner -loglevel error -y \
+    -f lavfi -i "aevalsrc=${SWELL}|${SWELL}:s=44100:d=2" \
+    -map_metadata -1 -fflags +bitexact -flags:a +bitexact -id3v2_version 0 \
+    -c:a libmp3lame -b:a 128k serato_rainbow_stereo_44100_128k.mp3
+python3 serato_overview.py serato_rainbow_stereo_44100_128k.mp3
 
 # Digital silence, which has no peak and no measurable loudness.
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "anullsrc=r=44100:cl=stereo:d=1" \

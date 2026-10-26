@@ -202,6 +202,8 @@ mod test_read_tags {
 mod test_serato_overview_state {
     use super::*;
 
+    use serato_tags::colouring::{OverviewColour, column_colours};
+
     /// Returns tags whose Serato data comes from the given GEOB frames.
     fn tags_with_frames(frames: &[(&str, &[u8])]) -> FileTags {
         FileTags {
@@ -234,6 +236,22 @@ mod test_serato_overview_state {
         )]);
         let state = SeratoOverviewState::from_tags(Path::new("song.MP3"), &tags);
         assert_eq!(state.overview().map(|overview| overview.slices().len()), Some(1));
+    }
+
+    #[test]
+    fn rainbow_fixture_has_six_colour_bands() {
+        let path = test_fixtures::fixture(test_fixtures::SERATO_OVERVIEW_FIXTURE);
+        let tags = read_tags(&path).expect("reads");
+        let state = SeratoOverviewState::from_tags(&path, &tags);
+        let overview = state.overview().expect("has an overview");
+        assert_eq!(overview.slices().len(), test_fixtures::SERATO_OVERVIEW_SLICES);
+        let band_count = test_fixtures::SERATO_OVERVIEW_BANDS.len();
+        let colours: Vec<Option<u32>> = column_colours(overview, 0.0, 1.0, band_count)
+            .into_iter()
+            .map(|colour| colour.map(OverviewColour::to_rgb_u32))
+            .collect();
+        let expected: Vec<Option<u32>> = test_fixtures::SERATO_OVERVIEW_BANDS.into_iter().map(Some).collect();
+        assert_eq!(colours, expected);
     }
 
     #[test]
