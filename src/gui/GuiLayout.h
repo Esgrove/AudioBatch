@@ -241,33 +241,37 @@ constexpr int typeColumnMinimumWidth {60};
 constexpr int bitDepthColumnMinimumWidth {68};
 constexpr int bitrateColumnMinimumWidth {68};
 constexpr int sampleRateColumnMinimumWidth {72};
+constexpr int lengthColumnMinimumWidth {60};
 constexpr int metricColumnMinimumWidth {72};
 constexpr int nameColumnDefaultWidth {140};
 constexpr int pathColumnDefaultWidth {160};
 constexpr int typeColumnDefaultWidth {66};
 constexpr int bitDepthColumnDefaultWidth {70};
-constexpr int bitrateColumnDefaultWidth {70};
-constexpr int sampleRateColumnDefaultWidth {76};
-constexpr int overallPeakColumnDefaultWidth {76};
-constexpr int peakLeftColumnDefaultWidth {76};
-constexpr int peakRightColumnDefaultWidth {76};
-constexpr int truePeakColumnDefaultWidth {76};
-constexpr int maxShortTermLufsColumnDefaultWidth {76};
-constexpr int integratedLufsColumnDefaultWidth {76};
-constexpr int customGainColumnDefaultWidth {70};
+// Wide enough for each header with its unit next to the sort arrow, such as "True Peak (dBTP)".
+constexpr int bitrateColumnDefaultWidth {100};
+constexpr int sampleRateColumnDefaultWidth {82};
+constexpr int lengthColumnDefaultWidth {66};
+constexpr int overallPeakColumnDefaultWidth {92};
+constexpr int peakLeftColumnDefaultWidth {102};
+constexpr int peakRightColumnDefaultWidth {104};
+constexpr int truePeakColumnDefaultWidth {122};
+constexpr int maxShortTermLufsColumnDefaultWidth {70};
+constexpr int integratedLufsColumnDefaultWidth {70};
+constexpr int customGainColumnDefaultWidth {76};
 constexpr int statusColumnDefaultWidth {180};
 constexpr int nameMaximumWidth {600};
 constexpr int pathMaximumWidth {1200};
 constexpr int metricMaximumWidth {160};
 constexpr int statusMaximumWidth {800};
 
-/// Preserve the original compact-column budget independently of the larger main-window default.
-constexpr int initiallyVisibleColumnWidthBudget {1096};
+/// Width the initially visible columns may take together.
+/// It leaves the name and path columns room to grow in the default window.
+constexpr int initiallyVisibleColumnWidthBudget {1240};
 constexpr int initiallyVisibleColumnWidth {
     nameColumnDefaultWidth + pathColumnDefaultWidth + typeColumnDefaultWidth + bitDepthColumnDefaultWidth
-        + bitrateColumnDefaultWidth + sampleRateColumnDefaultWidth + overallPeakColumnDefaultWidth
-        + truePeakColumnDefaultWidth + maxShortTermLufsColumnDefaultWidth + integratedLufsColumnDefaultWidth
-        + statusColumnDefaultWidth,
+        + bitrateColumnDefaultWidth + sampleRateColumnDefaultWidth + lengthColumnDefaultWidth
+        + overallPeakColumnDefaultWidth + truePeakColumnDefaultWidth + maxShortTermLufsColumnDefaultWidth
+        + integratedLufsColumnDefaultWidth + statusColumnDefaultWidth,
 };
 
 static_assert(
@@ -291,6 +295,8 @@ consteval int initialColumnWidth(const AudioFileTableColumn column)
             return bitrateColumnDefaultWidth;
         case AudioFileTableColumn::sampleRate:
             return sampleRateColumnDefaultWidth;
+        case AudioFileTableColumn::length:
+            return lengthColumnDefaultWidth;
         case AudioFileTableColumn::overallPeak:
             return overallPeakColumnDefaultWidth;
         case AudioFileTableColumn::peakLeft:
@@ -327,6 +333,8 @@ consteval int minimumColumnWidth(const AudioFileTableColumn column)
             return bitrateColumnMinimumWidth;
         case AudioFileTableColumn::sampleRate:
             return sampleRateColumnMinimumWidth;
+        case AudioFileTableColumn::length:
+            return lengthColumnMinimumWidth;
         case AudioFileTableColumn::overallPeak:
         case AudioFileTableColumn::peakLeft:
         case AudioFileTableColumn::peakRight:

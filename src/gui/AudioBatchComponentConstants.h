@@ -43,6 +43,7 @@ enum class AudioFileTableColumn : std::uint8_t {
     customGain,
     status,
     bitDepth,
+    length,
 };
 
 /// Returns the context menu item for a popup menu result, or nullopt when the menu was dismissed.
@@ -54,9 +55,7 @@ enum class AudioFileTableColumn : std::uint8_t {
 /// Returns the column for a JUCE table column id, or nullopt for zero, which JUCE uses for no column.
 [[nodiscard]] constexpr std::optional<AudioFileTableColumn> tableColumnFromId(const int columnId) noexcept
 {
-    return utils::enumFromId<AudioFileTableColumn, AudioFileTableColumn::name, AudioFileTableColumn::bitDepth>(
-        columnId
-    );
+    return utils::enumFromId<AudioFileTableColumn, AudioFileTableColumn::name, AudioFileTableColumn::length>(columnId);
 }
 
 /// Returns the JUCE table column id of a column, or zero for no column.

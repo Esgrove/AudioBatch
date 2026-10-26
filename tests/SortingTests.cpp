@@ -19,8 +19,8 @@ namespace
 {
 static_assert(!tableColumnFromId(0).has_value());
 static_assert(tableColumnFromId(1) == AudioFileTableColumn::name);
-static_assert(tableColumnFromId(std::to_underlying(AudioFileTableColumn::bitDepth)) == AudioFileTableColumn::bitDepth);
-static_assert(!tableColumnFromId(std::to_underlying(AudioFileTableColumn::bitDepth) + 1).has_value());
+static_assert(tableColumnFromId(std::to_underlying(AudioFileTableColumn::length)) == AudioFileTableColumn::length);
+static_assert(!tableColumnFromId(std::to_underlying(AudioFileTableColumn::length) + 1).has_value());
 static_assert(toColumnId(AudioFileTableColumn::status) == std::to_underlying(AudioFileTableColumn::status));
 static_assert(toColumnId(std::nullopt) == 0);
 static_assert(!fileMenuItemFromId(0).has_value());
@@ -309,6 +309,7 @@ private:
             AudioFileTableColumn::path,
             AudioFileTableColumn::bitDepth,
             AudioFileTableColumn::sampleRate,
+            AudioFileTableColumn::length,
             AudioFileTableColumn::peakLeft,
             AudioFileTableColumn::peakRight,
             AudioFileTableColumn::overallPeak,
@@ -371,6 +372,7 @@ private:
             record.overallTruePeak = static_cast<double>(pickPeak());
             record.maxShortTermLufs = pickLoudness();
             record.sampleRate = random.nextBool() ? 44'100 : 48'000;
+            record.durationSeconds = random.nextBool() ? 180.0 : random.nextDouble() * 600.0;
             record.bitsPerSample = random.nextInt(5) * 8;
             record.hasCustomGain = random.nextBool();
             record.customGainDb = static_cast<float>(random.nextInt(3));
