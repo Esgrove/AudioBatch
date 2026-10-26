@@ -61,6 +61,7 @@ and every crate inherits them with `.workspace = true`.
 - `crates/cli` (`audiobatch-cli`): the `audiobatch-rs` binary.
   Its options, JSON field names, and exit codes match the C++ `audiobatch` CLI,
   so `scripts/parity.sh` can compare the two directly.
+  The `completion` subcommand in `completion.rs` is the only addition the C++ CLI does not have.
 - `crates/gui` (`audiobatch-gui`): the `AudioBatchRs` GUI binary, built on gpui-kit.
   It is the only crate that depends on gpui-kit, which is pinned to an exact version and upgraded by hand.
 - `crates/test-fixtures`: a dev-only helper that locates the shared fixtures and lists their expected properties.

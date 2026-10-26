@@ -30,11 +30,16 @@ cargo build --release
 `audiobatch-rs` takes the analysis options of the C++ `audiobatch` CLI
 and prints the same table, CSV, and JSON output.
 It exits with code 2 when a file fails and with code 1 for invalid arguments.
+The `completion` subcommand is the only addition that the C++ CLI does not have.
 
 ```console
 Analyze audio files for sample peak, true peak, and integrated loudness (EBU R128)
 
-Usage: audiobatch-rs [OPTIONS] [PATHS]...
+Usage: audiobatch-rs [OPTIONS] [PATHS]... [COMMAND]
+
+Commands:
+  completion  Generate shell completion script
+  help        Print this message or the help of the given subcommand(s)
 
 Arguments:
   [PATHS]...  Files and directories to analyze, the current directory when none are given

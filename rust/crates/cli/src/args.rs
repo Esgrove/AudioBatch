@@ -2,12 +2,14 @@
 //!
 //! The options, their short forms, and their validation follow the analysis options of the C++ `audiobatch` CLI.
 //! Normalization and the plugin listing are not part of the Rust port.
+//! The `completion` subcommand is an addition that the C++ CLI does not have.
 
 use std::path::PathBuf;
 use std::thread;
 
 use audiobatch_core::SortMode;
-use clap::{Parser, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
+use clap_complete::Shell;
 
 /// Lowest upper limit for the worker count, used on machines with few cores.
 const MINIMUM_WORKER_LIMIT: usize = 64;
@@ -24,10 +26,34 @@ pub enum OutputFormat {
     Json,
 }
 
+/// Subcommands that run instead of the analysis.
+#[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
+pub enum CliCommand {
+    /// Generate shell completion script
+    #[command(name = "completion")]
+    Completion {
+        /// Shell to generate completion for
+        #[arg(value_enum)]
+        shell: Shell,
+
+        /// Install completion script to the shell's completion directory
+        #[arg(short = 'I', long)]
+        install: bool,
+
+        /// Print where the completion script was installed
+        #[arg(short = 'v', long)]
+        verbose: bool,
+    },
+}
+
 /// Analyze audio files for sample peak, true peak, and integrated loudness (EBU R128).
 #[derive(Parser, Debug, Clone)]
 #[command(name = "audiobatch-rs", author, version)]
 pub struct CliArgs {
+    /// Subcommand to run instead of the analysis
+    #[command(subcommand)]
+    pub command: Option<CliCommand>,
+
     /// Files and directories to analyze, the current directory when none are given
     #[arg(value_hint = clap::ValueHint::AnyPath)]
     pub paths: Vec<PathBuf>,
@@ -103,6 +129,7 @@ fn parse_sort_mode(value: &str) -> Result<SortMode, String> {
 #[cfg(test)]
 mod test_parse_arguments {
     use super::*;
+    use clap::CommandFactory;
 
     fn parse(arguments: &[&str]) -> Result<CliArgs, clap::Error> {
         CliArgs::try_parse_from(std::iter::once("audiobatch-rs").chain(arguments.iter().copied()))
@@ -156,5 +183,31 @@ mod test_parse_arguments {
         assert!(parse(&["--sort", "size"]).is_err());
         assert!(parse(&["--output", "xml"]).is_err());
         assert!(parse(&["--normalize"]).is_err());
+    }
+
+    #[test]
+    fn completion_command_parses() {
+        let args = parse(&["completion", "zsh", "-I", "--verbose"]).expect("parses");
+        assert_eq!(
+            args.command,
+            Some(CliCommand::Completion {
+                shell: Shell::Zsh,
+                install: true,
+                verbose: true,
+            })
+        );
+        assert!(parse(&["completion", "tcsh"]).is_err());
+    }
+
+    #[test]
+    fn paths_without_a_command_still_parse() {
+        let args = parse(&["a.wav", "b.flac"]).expect("parses");
+        assert_eq!(args.command, None);
+        assert_eq!(args.paths, vec![PathBuf::from("a.wav"), PathBuf::from("b.flac")]);
+    }
+
+    #[test]
+    fn clap_command_is_valid() {
+        CliArgs::command().debug_assert();
     }
 }
