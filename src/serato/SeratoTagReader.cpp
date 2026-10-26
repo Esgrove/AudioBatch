@@ -211,24 +211,24 @@ TagReadResult readId3Tag(const TagLib::ID3v2::Tag* tag, const TagKind kind, cons
 /// Decodes a documented FLAC wrapper with an exact MIME, filename and matching per-kind description.
 TagReadResult decodeFlacTag(const TagKind kind, const TagLib::String& value, const bool legacy)
 {
-    const auto result = TagReadResult::missing(kind, ReadStatus::invalid);
+    const auto invalid = [kind] { return TagReadResult::missing(kind, ReadStatus::invalid); };
     // Base64 is ASCII, and to8Bit keeps only the low byte of every other character,
     // so for example U+0141 would pass as the Base64 letter 'A'.
     if (!value.isAscii()) {
-        return result;
+        return invalid();
     }
     if (kind == TagKind::overview) {
         auto overview = decodeFlacOverview(value);
-        return overview ? TagReadResult::present(std::move(*overview)) : result;
+        return overview ? TagReadResult::present(std::move(*overview)) : invalid();
     }
     if (value.size() > maxEncodedBytes) {
-        return result;
+        return invalid();
     }
     const auto text = value.to8Bit(false);
     const std::vector<std::uint8_t> encoded(text.begin(), text.end());
     const auto decoded = decodeTagBase64(encoded);
     if (!decoded) {
-        return result;
+        return invalid();
     }
     const std::span bytes {static_cast<const std::uint8_t*>(decoded->getData()), decoded->getSize()};
     const auto name = (legacy ? TagLib::String("Serato Markers_") : description(kind)).to8Bit(false);
@@ -239,11 +239,11 @@ TagReadResult decodeFlacTag(const TagKind kind, const TagLib::String& value, con
         const auto remaining = bytes.subspan(offset);
         const auto terminator = std::ranges::find(remaining, std::uint8_t {0});
         if (terminator == remaining.end()) {
-            return result;
+            return invalid();
         }
         const auto length = static_cast<std::size_t>(terminator - remaining.begin());
         if (!std::ranges::equal(remaining.first(length), expected)) {
-            return result;
+            return invalid();
         }
         offset += length + 1;
     }

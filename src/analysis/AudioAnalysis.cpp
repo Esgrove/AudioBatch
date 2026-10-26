@@ -290,7 +290,8 @@ DecodeMeasurements measureDecodedAudio(
 
         if (!failureTracker.recordBlock(readSucceeded, samplePosition, framesThisBlock)) {
             measurements.failure = MeasurementFailure {
-                .error = AnalysisError::decodeFailed, .message = failureTracker.getErrorMessage()
+                .error = AnalysisError::decodeFailed,
+                .message = failureTracker.getErrorMessage(),
             };
             return measurements;
         }
@@ -311,7 +312,8 @@ DecodeMeasurements measureDecodedAudio(
             != EBUR128_SUCCESS)
         {
             measurements.failure = MeasurementFailure {
-                .error = AnalysisError::measurementFailed, .message = "Loudness analysis failed while processing audio"
+                .error = AnalysisError::measurementFailed,
+                .message = "Loudness analysis failed while processing audio",
             };
             return measurements;
         }
@@ -320,7 +322,8 @@ DecodeMeasurements measureDecodedAudio(
 
         if (ebur128_loudness_shortterm(loudnessState, &shortTermLoudness) != EBUR128_SUCCESS) {
             measurements.failure = MeasurementFailure {
-                .error = AnalysisError::measurementFailed, .message = "Short-term loudness analysis failed"
+                .error = AnalysisError::measurementFailed,
+                .message = "Short-term loudness analysis failed",
             };
             return measurements;
         }
