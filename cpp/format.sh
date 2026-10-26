@@ -50,9 +50,7 @@ init_options "$@"
 
 cd "$REPO"
 
-if [ -z "$(command -v clang-format)" ]; then
-    print_error_and_exit "clang-format not found in path"
-fi
+require_command clang-format
 
 # Collect the C++ sources and headers under src/ and tests/, including subdirectories.
 CPP_FILES=()
@@ -93,10 +91,10 @@ fi
 if [ -n "$(command -v shfmt)" ]; then
     if [ "$CHECK" = true ]; then
         print_magenta "Checking shell script formatting..."
-        shfmt --diff ./*.sh ../fixtures/*.sh
+        shfmt --diff ./*.sh ../common.sh ../fixtures/*.sh
     else
         print_magenta "Formatting shell scripts..."
-        shfmt --list --write ./*.sh ../fixtures/*.sh
+        shfmt --list --write ./*.sh ../common.sh ../fixtures/*.sh
     fi
 fi
 
