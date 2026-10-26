@@ -154,69 +154,79 @@ bool addMarker(Markers& markers, const juce::String& type, const std::span<const
     return true;
 }
 
-/// A fail-closed cursor for cache fields. Failed reads never advance outside the supplied span.
-struct Cursor {
+/// A fail-closed reader for cache fields.
+/// Every read returns nothing instead of a default value when its field is truncated or invalid,
+/// and a failed read never advances outside the supplied span.
+class Cursor
+{
+public:
     /// Borrows an already bounded block for this synchronous decode.
     explicit Cursor(const std::span<const std::uint8_t> input) : remaining(input) {}
-    /// Takes a bounded field, remembering truncation for the final validity check.
-    std::span<const std::uint8_t> take(const std::size_t count)
+
+    /// Takes a field of the given size, or nothing when fewer bytes remain.
+    std::optional<std::span<const std::uint8_t>> take(const std::size_t count)
     {
         if (count > remaining.size()) {
-            valid = false;
-            return {};
+            return std::nullopt;
         }
         const auto bytes = remaining.first(count);
         remaining = remaining.subspan(count);
         return bytes;
     }
-    /// Reads an unsigned byte with a safe default after truncation.
-    std::uint8_t byte()
+
+    /// Reads an unsigned byte.
+    std::optional<std::uint8_t> byte()
     {
-        const auto bytes = take(1);
-        return bytes.empty() ? 0 : bytes[0];
-    }
-    /// Reads a strict boolean, rejecting other byte values.
-    bool boolean()
-    {
-        const auto value = byte();
-        valid = valid && value <= 1;
-        return value != 0;
-    }
-    /// Reads a portable four-byte unsigned integer.
-    std::uint32_t number()
-    {
-        const auto bytes = take(sizeof(std::uint32_t));
-        return bytes.empty() ? 0 : integer(bytes.first<sizeof(std::uint32_t)>());
-    }
-    /// Reads an IEEE binary64 value and rejects infinities and NaNs.
-    double real()
-    {
-        const auto bytes = take(sizeof(std::uint64_t));
-        const auto value = bytes.empty()
-            ? 0.0
-            : std::bit_cast<double>(readBigEndian<std::uint64_t>(bytes.first<sizeof(std::uint64_t)>()));
-        valid = valid && std::isfinite(value);
-        return value;
-    }
-    /// Reads length-prefixed UTF-8 while bounding text before allocation.
-    juce::String text()
-    {
-        const auto size = number();
-        if (size > maxTagTextBytes) {
-            valid = false;
-            return {};
-        }
-        const auto value = utf8(take(size));
-        valid = valid && value.has_value();
-        return value.value_or(juce::String());
-    }
-    /// Reports whether every field and the exact enclosing length were consumed successfully.
-    [[nodiscard]] bool finished() const
-    {
-        return valid && remaining.empty();
+        return take(1).transform([](const std::span<const std::uint8_t> bytes) { return bytes.front(); });
     }
 
-    bool valid {true};
+    /// Reads a strict boolean, rejecting byte values other than zero and one.
+    std::optional<bool> boolean()
+    {
+        const auto value = byte();
+        if (!value || *value > 1) {
+            return std::nullopt;
+        }
+        return *value != 0;
+    }
+
+    /// Reads a portable four-byte unsigned integer.
+    std::optional<std::uint32_t> number()
+    {
+        return take(sizeof(std::uint32_t)).transform([](const std::span<const std::uint8_t> bytes) {
+            return integer(bytes.first<sizeof(std::uint32_t)>());
+        });
+    }
+
+    /// Reads an IEEE binary64 value, rejecting infinities and NaNs.
+    std::optional<double> real()
+    {
+        const auto bytes = take(sizeof(std::uint64_t));
+        if (!bytes) {
+            return std::nullopt;
+        }
+        const auto value = std::bit_cast<double>(readBigEndian<std::uint64_t>(bytes->first<sizeof(std::uint64_t)>()));
+        return std::isfinite(value) ? std::optional(value) : std::nullopt;
+    }
+
+    /// Reads length-prefixed UTF-8, bounding the length before allocating the text.
+    std::optional<juce::String> text()
+    {
+        const auto size = number();
+        if (!size || *size > maxTagTextBytes) {
+            return std::nullopt;
+        }
+        const auto bytes = take(*size);
+        return bytes ? utf8(*bytes) : std::nullopt;
+    }
+
+    /// Reports whether every byte of the enclosing block has been consumed.
+    [[nodiscard]] bool isExhausted() const
+    {
+        return remaining.empty();
+    }
+
+private:
     std::span<const std::uint8_t> remaining;
 };
 
@@ -224,38 +234,39 @@ struct Cursor {
 std::optional<juce::String> readMarkerType(Cursor& input)
 {
     std::vector<std::uint8_t> name;
-    auto character = input.byte();
-    while (character != 0 && input.valid && name.size() < maxRecordTypeBytes) {
-        if (character > maxAsciiByte) {
+    for (auto character = input.byte(); character.has_value(); character = input.byte()) {
+        if (*character == 0) {
+            return utf8(name);
+        }
+        if (*character > maxAsciiByte || name.size() >= maxRecordTypeBytes) {
             return std::nullopt;
         }
-        name.push_back(character);
-        character = input.byte();
+        name.push_back(*character);
     }
-    return input.valid && character == 0 ? utf8(name) : std::nullopt;
+    return std::nullopt;
 }
 
 /// Consumes only documented zero padding after the final marker record.
 bool finishMarkerPadding(Cursor& input)
 {
-    while (!input.finished() && input.valid) {
-        if (input.byte() != 0) {
+    while (!input.isExhausted()) {
+        if (input.byte() != std::uint8_t {0}) {
             return false;
         }
     }
-    return input.finished();
+    return true;
 }
 
 /// Validates the decoded Markers2 record body independently of its Base64 envelope.
 std::optional<Markers> readMarkerBody(const std::span<const std::uint8_t> payload)
 {
     Cursor input(payload);
-    if (input.byte() != 1 || input.byte() != 1 || !input.valid) {
+    if (input.byte() != std::uint8_t {1} || input.byte() != std::uint8_t {1}) {
         return std::nullopt;
     }
     Markers markers;
     std::size_t records = 0;
-    while (input.valid) {
+    while (true) {
         const auto type = readMarkerType(input);
         if (!type) {
             return std::nullopt;
@@ -267,32 +278,41 @@ std::optional<Markers> readMarkerBody(const std::span<const std::uint8_t> payloa
             return std::nullopt;
         }
         const auto size = input.number();
-        const auto record = input.take(size);
-        if (!input.valid || !addMarker(markers, *type, record)) {
+        const auto record = size ? input.take(*size) : std::nullopt;
+        if (!record || !addMarker(markers, *type, *record)) {
             return std::nullopt;
         }
     }
-    return std::nullopt;
 }
 
 /// Reads counted cache grid anchors while checking ordering and terminal versus intermediate semantics.
-BeatGrid readCacheGrid(Cursor& input)
+std::optional<BeatGrid> readCacheGrid(Cursor& input)
 {
-    BeatGrid grid;
     const auto count = input.number();
-    if (count > maxTagRecords) {
-        input.valid = false;
-        return grid;
+    if (!count || *count > maxTagRecords) {
+        return std::nullopt;
     }
-    for (std::uint32_t index = 0; index < count && input.valid; ++index) {
-        BeatGridMarker marker {.positionSeconds = input.real(), .beatsUntilNext = input.number(), .bpm = std::nullopt};
-        if (input.boolean()) {
-            marker.bpm = input.real();
+    BeatGrid grid;
+    for (std::uint32_t index = 0; index < *count; ++index) {
+        const auto position = input.real();
+        const auto beatsUntilNext = input.number();
+        const auto hasBpm = input.boolean();
+        if (!position || !beatsUntilNext || !hasBpm) {
+            return std::nullopt;
         }
-        input.valid = input.valid
-            && (grid.markers.empty() || marker.positionSeconds >= grid.markers.back().positionSeconds)
-            && (index + 1 == count ? marker.bpm && *marker.bpm > 0 && marker.beatsUntilNext == 0
-                                   : !marker.bpm && marker.beatsUntilNext > 0);
+        BeatGridMarker marker {.positionSeconds = *position, .beatsUntilNext = *beatsUntilNext, .bpm = std::nullopt};
+        if (*hasBpm) {
+            marker.bpm = input.real();
+            if (!marker.bpm) {
+                return std::nullopt;
+            }
+        }
+        const bool ordered = grid.markers.empty() || marker.positionSeconds >= grid.markers.back().positionSeconds;
+        const bool consistent = index + 1 == *count ? marker.bpm && *marker.bpm > 0 && marker.beatsUntilNext == 0
+                                                    : !marker.bpm && marker.beatsUntilNext > 0;
+        if (!ordered || !consistent) {
+            return std::nullopt;
+        }
         grid.markers.push_back(marker);
     }
     return grid;
@@ -365,50 +385,92 @@ void writeMarkers(juce::MemoryOutputStream& output, const Markers& markers)
 }
 
 /// Reads cache markers without trusting counts or allowing reversed loop boundaries.
-Markers readMarkers(Cursor& input)
+std::optional<Markers> readMarkers(Cursor& input)
 {
     Markers markers;
     const auto cueCount = input.number();
-    if (cueCount > maxTagRecords) {
-        input.valid = false;
-        return markers;
+    if (!cueCount || *cueCount > maxTagRecords) {
+        return std::nullopt;
     }
-    for (std::uint32_t index = 0; index < cueCount && input.valid; ++index) {
+    for (std::uint32_t index = 0; index < *cueCount; ++index) {
         const auto position = input.number();
         const auto slot = input.byte();
-        const juce::Colour colour(input.number());
+        const auto colour = input.number();
+        const auto name = input.text();
+        if (!position || !slot || !colour || !name) {
+            return std::nullopt;
+        }
         markers.cues.push_back(
-            {.positionMilliseconds = position, .index = slot, .colour = colour, .name = input.text()}
+            {.positionMilliseconds = *position, .index = *slot, .colour = juce::Colour(*colour), .name = *name}
         );
     }
     const auto loopCount = input.number();
-    if (loopCount > maxTagRecords) {
-        input.valid = false;
-        return markers;
+    if (!loopCount || *loopCount > maxTagRecords) {
+        return std::nullopt;
     }
-    for (std::uint32_t index = 0; index < loopCount && input.valid; ++index) {
+    for (std::uint32_t index = 0; index < *loopCount; ++index) {
         const auto start = input.number();
         const auto end = input.number();
         const auto slot = input.byte();
-        const juce::Colour colour(input.number());
+        const auto colour = input.number();
         const auto locked = input.boolean();
+        const auto name = input.text();
+        if (!start || !end || !slot || !colour || !locked || !name || *end < *start) {
+            return std::nullopt;
+        }
         markers.loops.push_back({
-            .startMilliseconds = start,
-            .endMilliseconds = end,
-            .index = slot,
-            .colour = colour,
-            .locked = locked,
-            .name = input.text(),
+            .startMilliseconds = *start,
+            .endMilliseconds = *end,
+            .index = *slot,
+            .colour = juce::Colour(*colour),
+            .locked = *locked,
+            .name = *name,
         });
-        input.valid = input.valid && end >= start;
     }
-    if (input.boolean()) {
-        markers.colour = juce::Colour(input.number());
+    const auto hasColour = input.boolean();
+    if (!hasColour) {
+        return std::nullopt;
     }
-    if (input.boolean()) {
+    if (*hasColour) {
+        const auto colour = input.number();
+        if (!colour) {
+            return std::nullopt;
+        }
+        markers.colour = juce::Colour(*colour);
+    }
+    const auto hasBpmLock = input.boolean();
+    if (!hasBpmLock) {
+        return std::nullopt;
+    }
+    if (*hasBpmLock) {
         markers.bpmLocked = input.boolean();
+        if (!markers.bpmLocked) {
+            return std::nullopt;
+        }
     }
     return markers;
+}
+
+/// Reads cache track information with an optional positive BPM and a key, requiring at least one of the two.
+std::optional<TrackInfo> readTrackInfo(Cursor& input)
+{
+    const auto hasBpm = input.boolean();
+    if (!hasBpm) {
+        return std::nullopt;
+    }
+    TrackInfo info;
+    if (*hasBpm) {
+        info.bpm = input.real();
+        if (!info.bpm || *info.bpm <= 0) {
+            return std::nullopt;
+        }
+    }
+    const auto key = input.text();
+    if (!key || (!info.bpm && key->isEmpty())) {
+        return std::nullopt;
+    }
+    info.key = *key;
+    return info;
 }
 
 /// Recovers the 24-bit legacy value from its four seven-bit groups.
@@ -765,13 +827,21 @@ std::optional<TagReadResult> deserializeTag(TagKind kind, const juce::MemoryBloc
     }
     std::optional<TagValue> value;
     switch (kind) {
-        case TagKind::analysis:
-            value = Analysis {.majorVersion = input.byte(), .minorVersion = input.byte()};
+        case TagKind::analysis: {
+            const auto majorVersion = input.byte();
+            const auto minorVersion = input.byte();
+            if (majorVersion && minorVersion) {
+                value = Analysis {.majorVersion = *majorVersion, .minorVersion = *minorVersion};
+            }
             break;
+        }
         case TagKind::autotags: {
-            const Autotags autotags {.bpm = input.real(), .autoGain = input.real(), .gain = input.real()};
-            input.valid = input.valid && autotags.bpm >= 0;
-            value = autotags;
+            const auto bpm = input.real();
+            const auto autoGain = input.real();
+            const auto gain = input.real();
+            if (bpm && autoGain && gain && *bpm >= 0) {
+                value = Autotags {.bpm = *bpm, .autoGain = *autoGain, .gain = *gain};
+            }
             break;
         }
         case TagKind::beatGrid:
@@ -780,19 +850,12 @@ std::optional<TagReadResult> deserializeTag(TagKind kind, const juce::MemoryBloc
         case TagKind::markers:
             value = readMarkers(input);
             break;
-        case TagKind::trackInfo: {
-            TrackInfo info;
-            if (input.boolean()) {
-                info.bpm = input.real();
-            }
-            info.key = input.text();
-            input.valid = input.valid && (!info.bpm || *info.bpm > 0) && (info.bpm || info.key.isNotEmpty());
-            value = std::move(info);
+        case TagKind::trackInfo:
+            value = readTrackInfo(input);
             break;
-        }
         case TagKind::overview:
             return std::nullopt;
     }
-    return input.finished() && value ? std::optional(TagReadResult::present(std::move(*value))) : std::nullopt;
+    return input.isExhausted() && value ? std::optional(TagReadResult::present(std::move(*value))) : std::nullopt;
 }
 }  // namespace audiobatch::serato
