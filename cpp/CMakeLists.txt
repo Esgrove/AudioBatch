@@ -530,12 +530,7 @@ if(WIN32)
     )
 endif()
 
-if(MSVC)
-    # /wd4100 disables MSVC warning C4100 (unreferenced formal parameter) for this JUCE source file only.
-    set_source_files_properties(
-        "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_gui_basics/juce_gui_basics.cpp" PROPERTIES COMPILE_OPTIONS "/wd4100"
-    )
-else()
+if(NOT MSVC)
     # Suppress -Wswitch-enum in vendored JUCE audio formats source (has a default case but not all enum values).
     set_source_files_properties(
         "${CMAKE_SOURCE_DIR}/JUCE/modules/juce_audio_formats/juce_audio_formats.mm"
