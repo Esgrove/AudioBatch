@@ -530,23 +530,23 @@ private:
     {
         beginTest("Background runner publishes with the run id only while the run is current");
         {
-            BackgroundRunner runner(1, 1000);
+            BackgroundRunner backgroundRunner(1, 1000);
             RunCallback<int, int> callback;
             std::vector<std::pair<int, int>> calls;
             callback.set([&calls](const int value, const int runId) { calls.emplace_back(value, runId); });
 
-            const auto runId = runner.getCurrentRunId();
-            const auto isCancelled = runner.makeCancellationCheck(runId);
-            runner.publish(callback, runId, 7);
+            const auto runId = backgroundRunner.getCurrentRunId();
+            const auto isCancelled = backgroundRunner.makeCancellationCheck(runId);
+            backgroundRunner.publish(callback, runId, 7);
             expect(!isCancelled());
 
-            runner.cancel();
-            runner.publish(callback, runId, 8);
+            backgroundRunner.cancel();
+            backgroundRunner.publish(callback, runId, 8);
             expect(isCancelled());
-            expect(!runner.isCurrent(runId));
+            expect(!backgroundRunner.isCurrent(runId));
 
             callback.set({});
-            runner.publish(callback, runner.getCurrentRunId(), 9);
+            backgroundRunner.publish(callback, backgroundRunner.getCurrentRunId(), 9);
 
             expectEquals(static_cast<int>(calls.size()), 1);
             expect(calls.front() == std::pair(7, runId));
@@ -554,10 +554,10 @@ private:
 
         beginTest("Cancelling a background run waits for its running job to finish");
         {
-            BackgroundRunner runner(1, 5000);
+            BackgroundRunner backgroundRunner(1, 5000);
             std::atomic<bool> started {false};
             std::atomic<bool> finished {false};
-            runner.addJob([&started, &finished] {
+            backgroundRunner.addJob([&started, &finished] {
                 started = true;
                 juce::Thread::sleep(50);
                 finished = true;
@@ -565,9 +565,9 @@ private:
             while (!started.load()) {
                 juce::Thread::yield();
             }
-            runner.cancelAndWait();
+            backgroundRunner.cancelAndWait();
             expect(finished.load());
-            runner.waitForAllJobs();
+            backgroundRunner.waitForAllJobs();
         }
 
         beginTest("Moving a missing file to the trash reports it as already missing");

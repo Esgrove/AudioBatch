@@ -104,8 +104,8 @@ public:
         beginTest("Rows are found by path after removing and sorting");
         {
             ResultsModel results;
-            for (const auto* name : {"d.wav", "b.wav", "a.wav", "c.wav"}) {
-                results.merge(makeRecord(name));
+            for (const auto* fileName : {"d.wav", "b.wav", "a.wav", "c.wav"}) {
+                results.merge(makeRecord(fileName));
             }
 
             results.removePaths(juce::StringArray {makeRecord("b.wav").fullPath});
