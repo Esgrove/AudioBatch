@@ -1,6 +1,6 @@
 /// Database lifecycle and schema of AnalysisCache.
 /// Implements FileIdentity, construction and destruction, opening the SQLite database with its pragmas,
-/// schema creation, lightweight column migrations, and the small statement helpers the other cache sources share.
+/// schema creation, and lightweight column migrations.
 
 #include "analysis/AnalysisCache.h"
 #include "analysis/AnalysisCacheSql.h"
@@ -60,51 +60,6 @@ juce::String AnalysisCache::normalizedPath(const juce::File& file)
     return file.getFullPathName();
 }
 
-/// Runs a statement that returns no rows, logging any SQLite error.
-bool AnalysisCache::execute(const juce::String& sql) const
-{
-    char* errorMessage = nullptr;
-
-    if (const auto result = sqlite3_exec(database, sql.toRawUTF8(), nullptr, nullptr, &errorMessage);
-        result != SQLITE_OK)
-    {
-        const auto error
-            = errorMessage != nullptr ? juce::String::fromUTF8(errorMessage) : juce::String("Unknown SQLite error");
-        utils::logError("SQLite error: {}", error);
-        sqlite3_free(errorMessage);
-        return false;
-    }
-
-    return true;
-}
-
-/// Prepares a statement, logging the SQLite error when it fails.
-bool AnalysisCache::prepare(const char* sql, sqlite3_stmt*& statement) const
-{
-    if (sqlite3_prepare_v2(database, sql, -1, &statement, nullptr) == SQLITE_OK) {
-        return true;
-    }
-
-    utils::logError(
-        "SQLite could not prepare an analysis cache query: {}", juce::String::fromUTF8(sqlite3_errmsg(database))
-    );
-    return false;
-}
-
-/// Steps a statement that returns no rows to completion, logging the SQLite error when it fails.
-/// Returns true when the statement completed.
-bool AnalysisCache::stepToCompletion(sqlite3_stmt* statement) const
-{
-    if (sqlite3_step(statement) == SQLITE_DONE) {
-        return true;
-    }
-
-    utils::logError(
-        "SQLite could not complete an analysis cache update: {}", juce::String::fromUTF8(sqlite3_errmsg(database))
-    );
-    return false;
-}
-
 /// Opens the cache database and creates or migrates tables as needed.
 bool AnalysisCache::open()
 {
@@ -124,8 +79,7 @@ void AnalysisCache::closeUnlocked()
     const auto startedAtMs = juce::Time::getMillisecondCounterHiRes();
     const auto databasePath = databaseFile.getFullPathName();
 
-    sqlite3_close(database);
-    database = nullptr;
+    database.reset();
 
     utils::logDebug(
         "Closed analysis cache at {} in {:.3f} s",
@@ -140,22 +94,18 @@ bool AnalysisCache::columnExists(const juce::String& tableName, const juce::Stri
 {
     const auto sql = utils::format("PRAGMA table_info({});", tableName);
 
-    sqlite3_stmt* statement = nullptr;
-    if (!prepare(sql.toRawUTF8(), statement)) {
+    const auto statement = sqlite::prepare(*database, sql.toRawUTF8());
+    if (statement == nullptr) {
         return false;
     }
 
-    bool found = false;
-
-    while (sqlite3_step(statement) == SQLITE_ROW) {
-        if (columnText(statement, 1) == columnName) {
-            found = true;
-            break;
+    while (sqlite3_step(statement.get()) == SQLITE_ROW) {
+        if (sqlite::columnText(*statement, 1) == columnName) {
+            return true;
         }
     }
 
-    sqlite3_finalize(statement);
-    return found;
+    return false;
 }
 
 namespace
@@ -186,8 +136,10 @@ bool AnalysisCache::addMissingColumns() const
 
     return std::ranges::all_of(migrations, [this](const ColumnMigration& migration) {
         return columnExists("file_analysis", migration.name)
-            || execute(
+            || sqlite::execute(
+                   *database,
                    utils::format("ALTER TABLE file_analysis ADD COLUMN {} {};", migration.name, migration.definition)
+                       .toRawUTF8()
             );
     });
 }
@@ -217,15 +169,19 @@ bool AnalysisCache::openUnlocked()
     }
 
     utils::logDebug("Analysis cache startup: calling sqlite3_open_v2");
+    // Every use of the connection holds the cache mutex, so SQLite's own per-connection mutex is not needed.
+    sqlite3* openedDatabase = nullptr;
     const auto result = sqlite3_open_v2(
         databaseFile.getFullPathName().toRawUTF8(),
-        &database,
+        &openedDatabase,
         static_cast<int>(
             static_cast<unsigned int>(SQLITE_OPEN_READWRITE) | static_cast<unsigned int>(SQLITE_OPEN_CREATE)
-            | static_cast<unsigned int>(SQLITE_OPEN_FULLMUTEX)
+            | static_cast<unsigned int>(SQLITE_OPEN_NOMUTEX)
         ),
         nullptr
     );
+    // SQLite can hand back a connection even when opening fails, and it still has to be closed.
+    database.reset(openedDatabase);
 
     if (result != SQLITE_OK || database == nullptr) {
         utils::logError(
@@ -233,26 +189,25 @@ bool AnalysisCache::openUnlocked()
             databasePath.quoted(),
             (juce::Time::getMillisecondCounterHiRes() - startedAtMs) / utils::millisecondsPerSecond
         );
-        if (database != nullptr) {
-            sqlite3_close(database);
-            database = nullptr;
-        }
+        database.reset();
         return false;
     }
 
     utils::logDebug("Analysis cache startup: sqlite3_open_v2 returned successfully");
-    sqlite3_busy_timeout(database, busyTimeoutMilliseconds);
+    sqlite3_busy_timeout(database.get(), busyTimeoutMilliseconds);
 
     // Any failure from here on closes the connection again,
     // so a later call retries the whole open instead of using a database with an incomplete schema.
     utils::logDebug("Analysis cache startup: applying SQLite pragmas");
-    if (!execute("PRAGMA journal_mode=WAL;") || !execute("PRAGMA synchronous=NORMAL;")) {
+    if (!sqlite::execute(*database, "PRAGMA journal_mode=WAL;")
+        || !sqlite::execute(*database, "PRAGMA synchronous=NORMAL;"))
+    {
         closeUnlocked();
         return false;
     }
 
     utils::logDebug("Analysis cache startup: ensuring schema");
-    if (!execute(R"SQL(
+    if (!sqlite::execute(*database, R"SQL(
         CREATE TABLE IF NOT EXISTS file_analysis (
             file_path TEXT PRIMARY KEY,
             file_name TEXT NOT NULL,
@@ -293,7 +248,7 @@ bool AnalysisCache::openUnlocked()
         return false;
     }
 
-    if (!execute(R"SQL(
+    if (!sqlite::execute(*database, R"SQL(
         CREATE TABLE IF NOT EXISTS serato_tag_cache (
             file_path TEXT NOT NULL,
             tag_kind INTEGER NOT NULL,

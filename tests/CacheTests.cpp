@@ -6,6 +6,8 @@
 #include "analysis/AnalysisCache.h"
 #include "analysis/AnalysisCoordinator.h"
 #include "analysis/AudioAnalysis.h"
+#include "analysis/Sqlite.h"
+#include "analysis/SqliteTransaction.h"
 #include "serato/SeratoTags.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
@@ -110,6 +112,38 @@ public:
             const FileIdentity identity(migratedFile);
             expect(migratedCache.storeSeratoTag(identity, {}));
             expect(migratedCache.getSeratoTag(identity).has_value());
+        }
+
+        beginTest("A transaction rolls back unless it is committed");
+        {
+            sqlite3* opened = nullptr;
+            expectEquals(
+                sqlite3_open(directory.getChildFile("transaction.db").getFullPathName().toRawUTF8(), &opened), SQLITE_OK
+            );
+            const sqlite::Database connection(opened);
+            expect(sqlite::execute(*connection, "CREATE TABLE numbers (value INTEGER);"));
+
+            const auto countRows = [&connection] {
+                const auto statement = sqlite::prepare(*connection, "SELECT COUNT(*) FROM numbers;");
+                return statement != nullptr && sqlite3_step(statement.get()) == SQLITE_ROW
+                    ? sqlite3_column_int(statement.get(), 0)
+                    : -1;
+            };
+
+            {
+                const sqlite::Transaction transaction(*connection);
+                expect(transaction.isActive());
+                expect(sqlite::execute(*connection, "INSERT INTO numbers VALUES (1);"));
+            }
+            expectEquals(countRows(), 0);
+
+            {
+                sqlite::Transaction transaction(*connection);
+                expect(sqlite::execute(*connection, "INSERT INTO numbers VALUES (2);"));
+                expect(transaction.commit());
+                expect(!transaction.isActive());
+            }
+            expectEquals(countRows(), 1);
         }
 
         beginTest("A database whose schema cannot be prepared is not left half open");

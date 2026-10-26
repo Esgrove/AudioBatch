@@ -1,16 +1,13 @@
-/// Internal SQL constants and value marshalling helpers shared by the AnalysisCache sources.
-/// Holds the column and bind parameter indices of the cache statements, which must match the SQL text exactly,
-/// and the helpers that convert between SQLite values and JUCE types.
+/// Internal SQL constants shared by the AnalysisCache sources.
+/// Holds the column and bind parameter indices of the cache statements, which must match the SQL text exactly.
+/// The SQLite handles and value marshalling helpers are in analysis/Sqlite.h.
 
 #pragma once
 
 #include "serato/SeratoTagTypes.h"
 
-#include <JuceHeader.h>
-
 #include <cstddef>
 #include <cstdint>
-#include <sqlite3.h>
 
 namespace audiobatch
 {
@@ -122,46 +119,4 @@ constexpr int fileSize {5};
 constexpr int modifiedTimeMs {6};
 constexpr int analysisVersion {7};
 }  // namespace waveform_parameter
-
-/// Reads a text column as a juce::String, mapping SQL NULL to an empty string.
-inline juce::String columnText(sqlite3_stmt* statement, const int columnIndex)
-{
-    const auto* text = sqlite3_column_blob(statement, columnIndex);
-    return text != nullptr ? juce::String::createStringFromData(text, sqlite3_column_bytes(statement, columnIndex))
-                           : juce::String();
-}
-
-/// Copies a blob column into a juce::MemoryBlock, returning an empty block for NULL or empty data.
-inline juce::MemoryBlock columnBlob(sqlite3_stmt* statement, const int columnIndex)
-{
-    juce::MemoryBlock data;
-
-    if (const auto* blob = sqlite3_column_blob(statement, columnIndex)) {
-        const auto size = sqlite3_column_bytes(statement, columnIndex);
-
-        if (size > 0) {
-            data.append(blob, static_cast<size_t>(size));
-        }
-    }
-
-    return data;
-}
-
-/// Binds a juce::String as UTF-8 text.
-///
-/// SQLITE_TRANSIENT makes SQLite copy the buffer, so the string does not need to outlive the statement.
-inline void bindText(sqlite3_stmt* statement, const int index, const juce::String& value)
-{
-    const auto* utf8 = value.toRawUTF8();
-    sqlite3_bind_text(statement, index, utf8, -1, SQLITE_TRANSIENT);
-}
-
-/// Binds a memory block as a blob.
-///
-/// SQLITE_TRANSIENT makes SQLite copy the data, so the block does not need to outlive the statement.
-inline void bindBlob(sqlite3_stmt* statement, const int index, const juce::MemoryBlock& data)
-{
-    sqlite3_bind_blob(statement, index, data.getData(), static_cast<int>(data.getSize()), SQLITE_TRANSIENT);
-}
-
 }  // namespace audiobatch
