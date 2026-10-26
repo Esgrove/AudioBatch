@@ -11,8 +11,11 @@
 #include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include <unordered_map>
 
 #include <algorithm>
+#include <utility>
+#include <vector>
 
 namespace audiobatch
 {
@@ -82,55 +85,78 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
     resultsTable.repaint();
 }
 
-/// Merges one analysis result into the table on the message thread,
-/// preserving the custom gain set for the file while the file is unchanged on disk,
+/// Merges a batch of analysis results into the table on the message thread,
+/// preserving the custom gain set for a file while the file is unchanged on disk,
 /// and keeping selection and preview in sync.
+/// The whole batch is merged through one index of the rows by path and shown with one sort and table refresh,
+/// so a large rescan no longer re-sorts the table once per file.
 /// Results from a replaced run are ignored, since their queued messages can arrive after a new run started.
-void AudioBatchComponent::handleAnalysisResult(const AudioAnalysisRecord& record, const int runId)
+void AudioBatchComponent::handleAnalysisResults(std::vector<AnalysisResultMessage> messages)
 {
-    if (runId != analysisRun.runId) {
-        return;
-    }
-
-    fileActivity.clearActive(record.fullPath);
-
-    // The expected count already went down when the row was removed.
-    if (analysisRun.removedPaths.contains(record.fullPath)) {
-        updateStatusLabel();
-        return;
-    }
-
-    ++analysisRun.completed;
-
-    if (!record.file.exists()) {
-        updateStatusLabel();
-        return;
-    }
-
     const auto selectedPaths = getSelectedRecordPaths();
+    std::unordered_map<juce::String, std::size_t> rowsByPath;
+    rowsByPath.reserve(analysisResults.size());
 
-    auto mergedRecord = record;
-    if (const auto existingIndex = findRecordIndex(record.fullPath); existingIndex >= 0) {
-        // A gain set while the file was still waiting may only live in the table,
-        // because the cache had no row for this version of the file to store it in yet.
-        // The coordinator stored the row before publishing the result, so the gain can be stored now.
-        if (keepCustomGainOfUnchangedFile(analysisResults[static_cast<std::size_t>(existingIndex)], mergedRecord)
-            && (!record.hasCustomGain || !juce::approximatelyEqual(record.customGainDb, mergedRecord.customGainDb)))
-        {
-            analysisCache.storeCustomGain(mergedRecord.file, mergedRecord.customGainDb, true);
+    for (std::size_t row = 0; row < analysisResults.size(); ++row) {
+        rowsByPath.try_emplace(analysisResults[row].fullPath, row);
+    }
+
+    bool tableChanged = false;
+    bool currentFileChanged = false;
+
+    for (auto& [record, runId] : messages) {
+        if (runId != analysisRun.runId) {
+            continue;
         }
 
-        analysisResults[static_cast<std::size_t>(existingIndex)] = mergedRecord;
-    } else {
-        analysisResults.push_back(mergedRecord);
+        fileActivity.clearActive(record.fullPath);
+
+        // The expected count already went down when the row was removed.
+        if (analysisRun.removedPaths.contains(record.fullPath)) {
+            continue;
+        }
+
+        ++analysisRun.completed;
+
+        if (!record.file.exists()) {
+            continue;
+        }
+
+        if (const auto existing = rowsByPath.find(record.fullPath); existing != rowsByPath.end()) {
+            auto& row = analysisResults[existing->second];
+            const auto incomingGainDb = record.customGainDb;
+            const auto incomingHasGain = record.hasCustomGain;
+
+            // A gain set while the file was still waiting may only live in the table,
+            // because the cache had no row for this version of the file to store it in yet.
+            // The coordinator stored the row before publishing the result, so the gain can be stored now.
+            if (keepCustomGainOfUnchangedFile(row, record)
+                && (!incomingHasGain || !juce::approximatelyEqual(incomingGainDb, record.customGainDb)))
+            {
+                analysisCache.storeCustomGain(record.file, record.customGainDb, true);
+            }
+
+            row = std::move(record);
+            currentFileChanged = currentFileChanged || currentAudioFile == row.file;
+        } else {
+            currentFileChanged = currentFileChanged || currentAudioFile == record.file;
+            rowsByPath.try_emplace(record.fullPath, analysisResults.size());
+            analysisResults.push_back(std::move(record));
+        }
+
+        tableChanged = true;
     }
 
-    refreshTablePreservingSelection(selectedPaths);
+    if (tableChanged) {
+        refreshTablePreservingSelection(selectedPaths);
+    }
 
-    if (currentAudioFile == mergedRecord.file) {
-        updateAudioInfo(mergedRecord);
-        updateGainControlsForSelection();
-        updateThumbnailDisplayGain();
+    if (currentFileChanged) {
+        if (const auto currentIndex = findRecordIndex(currentAudioFile.getFullPathName()); currentIndex >= 0) {
+            updateAudioInfo(analysisResults[static_cast<std::size_t>(currentIndex)]);
+            updateGainControlsForSelection();
+            updateThumbnailDisplayGain();
+        }
     }
 
     updateStatusLabel();
@@ -249,6 +275,10 @@ void AudioBatchComponent::handleAnalysisComplete(const int totalFiles, const int
     if (runId != analysisRun.runId) {
         return;
     }
+
+    // Results are batched separately from this message, so the ones still queued are merged first,
+    // otherwise reconciling would mark their rows as unfinished.
+    analysisResultBatcher.deliverPending();
 
     analysisRun.running = false;
     analysisRun.expected = juce::jmin(analysisRun.expected, totalFiles);

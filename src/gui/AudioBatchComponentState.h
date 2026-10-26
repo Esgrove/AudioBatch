@@ -1,5 +1,5 @@
 /// Preview preferences and progress state that AudioBatchComponent keeps for its background operations.
-/// Declares AnalysisRunState for the current analysis run
+/// Declares AnalysisRunState for the current analysis run, AnalysisResultMessage for results waiting to be merged,
 /// and OperationProgress for the normalization and plugin processing passes.
 
 #pragma once
@@ -64,6 +64,12 @@ struct AnalysisRunState {
 
     /// True when the run replaces the results list, which picks the message shown when no files are found.
     bool replacesResults {false};
+};
+
+/// One analysis result waiting to be merged into the table, with the run it belongs to.
+struct AnalysisResultMessage {
+    AudioAnalysisRecord record;
+    int runId {0};
 };
 
 /// Progress and collected failures of a normalization or plugin processing pass.

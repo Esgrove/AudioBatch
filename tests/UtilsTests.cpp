@@ -291,6 +291,30 @@ public:
             expect(!ran.load());
         }
 
+        beginTest("Values posted from a worker are delivered in one batch, in posting order");
+        {
+            std::vector<std::vector<int>> batches;
+            utils::MessageThreadBatcher<int> batcher([&batches](std::vector<int> batch) {
+                batches.push_back(std::move(batch));
+            });
+
+            // The test runs on the message thread without dispatching messages, so delivery is triggered by hand.
+            batcher.deliverPending();
+            expect(batches.empty());
+
+            std::thread worker([&batcher] {
+                for (int value = 1; value <= 3; ++value) {
+                    batcher.post(value);
+                }
+            });
+            worker.join();
+
+            batcher.deliverPending();
+            batcher.deliverPending();
+            expectEquals(static_cast<int>(batches.size()), 1);
+            expect(!batches.empty() && batches.front() == std::vector {1, 2, 3});
+        }
+
         beginTest("An exception being handled is described by its message");
         {
             try {

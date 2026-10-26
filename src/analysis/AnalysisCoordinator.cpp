@@ -152,6 +152,14 @@ void AnalysisCoordinator::cancelAndWait()
     threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
 }
 
+/// Cancels the current run without waiting for its jobs, so the message thread never blocks on a slow file.
+/// Queued jobs are dropped, and running jobs stop at their next run id check without caching or publishing anything.
+void AnalysisCoordinator::cancel()
+{
+    ++currentRunId;
+    threadPool.removeAllJobs(true, 0);
+}
+
 /// Returns true when the run has been cancelled or replaced by a newer one.
 bool AnalysisCoordinator::isRunCancelled(const int runId) const noexcept
 {
@@ -163,9 +171,10 @@ bool AnalysisCoordinator::isRunCancelled(const int runId) const noexcept
 /// so the caller never waits for the file system.
 /// The plan callback comes first, then cached results, then fresh results, and finally the completion callback,
 /// which is published even when no files are found.
+/// A run still in progress is cancelled without waiting, since its jobs exit on their own run id checks.
 int AnalysisCoordinator::start(const AudioAnalysisOptions& options)
 {
-    cancelAndWait();
+    cancel();
 
     const auto runId = currentRunId.load();
     threadPool.addJob([this, options, runId] { planRun(options, runId); });
