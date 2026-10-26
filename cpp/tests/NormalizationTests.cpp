@@ -122,8 +122,8 @@ private:
         beginTest("The coordinator normalizes each existing file once and then reports completion");
         {
             std::vector<AudioAnalysisRecord> records;
-            for (const auto* name : {"first.aif", "second.aif", "third.aif"}) {
-                records.push_back(analyzeFile(directory.copyFixture("sine_stereo_44100_16.aif", name)));
+            for (const auto* fileName : {"first.aif", "second.aif", "third.aif"}) {
+                records.push_back(analyzeFile(directory.copyFixture("sine_stereo_44100_16.aif", fileName)));
             }
             records.push_back(records.front());
             records.push_back(recordForPath(directory.getChildFile("missing.aif").getFullPathName()));
@@ -187,8 +187,8 @@ private:
     {
         std::vector<AudioAnalysisRecord> records;
         std::vector<juce::MemoryBlock> originalBytes;
-        for (const auto* name : {"held.aif", "queued.aif"}) {
-            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", name);
+        for (const auto* fileName : {"held.aif", "queued.aif"}) {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", fileName);
             records.push_back(analyzeFile(source));
             expect(source.loadFileAsData(originalBytes.emplace_back()));
         }
