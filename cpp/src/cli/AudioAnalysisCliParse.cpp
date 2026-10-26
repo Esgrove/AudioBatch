@@ -67,6 +67,12 @@ constexpr std::array analysisOptions {
     "--lufs",
 };
 
+/// Returns a rejected command line, ready to return from a function whose result is a std::expected.
+std::unexpected<CliParseError> parseError(const CliParseErrorKind kind, juce::String message)
+{
+    return std::unexpected(CliParseError {.kind = kind, .message = std::move(message)});
+}
+
 /// Returns true when the argument is a plain number such as "-14" or "0.5",
 /// which may start with a minus sign but is a value and not an option.
 bool isNumericArgument(const juce::String& text)
@@ -116,7 +122,7 @@ juce::String joinNames(const std::array<OptionName<Enum>, count>& names)
 /// Removes an option that takes one of the given names, and returns the value for it.
 /// Returns nothing when the option is absent, and an error naming the accepted values for an unknown name.
 template<typename Enum, std::size_t count>
-std::expected<std::optional<Enum>, juce::String> takeNamedOption(
+std::expected<std::optional<Enum>, CliParseError> takeNamedOption(
     juce::ArgumentList& arguments,
     const juce::StringRef option,
     const juce::String& description,
@@ -133,17 +139,20 @@ std::expected<std::optional<Enum>, juce::String> takeNamedOption(
         return value;
     }
 
-    return std::unexpected(utils::format("{} must be one of: {}", description, joinNames(names)));
+    return parseError(
+        CliParseErrorKind::invalidValue, utils::format("{} must be one of: {}", description, joinNames(names))
+    );
 }
 
-/// Returns an error message for the first argument that combines several short options, such as "-rf".
+/// Returns an error for the first argument that combines several short options, such as "-rf".
 /// juce::ArgumentList matches a short option by searching for its letter anywhere in the argument,
 /// and removes the whole argument on the first match, so "-rf" would silently set only one of the flags.
-std::expected<void, juce::String> checkCombinedShortOptions(const juce::ArgumentList& arguments)
+std::expected<void, CliParseError> checkCombinedShortOptions(const juce::ArgumentList& arguments)
 {
     for (const auto& argument : arguments.arguments) {
         if (argument.isShortOption() && argument.text.length() > 2) {
-            return std::unexpected(
+            return parseError(
+                CliParseErrorKind::combinedShortOptions,
                 utils::format(
                     "Combined short options are not supported: {}. Pass each option separately.", argument.text
                 )
@@ -155,34 +164,36 @@ std::expected<void, juce::String> checkCombinedShortOptions(const juce::Argument
 }
 
 /// Parses the worker count of --jobs.
-/// Returns the count, or an error message when the value is not a whole number in the supported range.
-std::expected<int, juce::String> parseWorkerCount(const juce::String& value)
+/// Returns the count, or an error when the value is not a whole number in the supported range.
+std::expected<int, CliParseError> parseWorkerCount(const juce::String& value)
 {
     // The thread pool creates every worker up front, so the count is capped well above any useful value.
     const auto maximumWorkerCount = juce::jmax(minimumWorkerLimit, juce::SystemStats::getNumCpus() * 4);
     const auto workerCountText = value.trim();
 
     if (workerCountText.isEmpty() || !workerCountText.containsOnly("0123456789")) {
-        return std::unexpected(juce::String("Worker count must be a whole number greater than zero"));
+        return parseError(CliParseErrorKind::invalidValue, "Worker count must be a whole number greater than zero");
     }
 
     // Parsed as a 64-bit value, so a very long number cannot overflow into a small one.
     const auto workerCount = workerCountText.getLargeIntValue();
 
     if (workerCount <= 0) {
-        return std::unexpected(juce::String("Worker count must be greater than zero"));
+        return parseError(CliParseErrorKind::valueOutOfRange, "Worker count must be greater than zero");
     }
 
     if (workerCount > maximumWorkerCount || workerCountText.length() > maximumWorkerCountDigits) {
-        return std::unexpected(utils::format("Worker count must be at most {}", maximumWorkerCount));
+        return parseError(
+            CliParseErrorKind::valueOutOfRange, utils::format("Worker count must be at most {}", maximumWorkerCount)
+        );
     }
 
     return static_cast<int>(workerCount);
 }
 
 /// Parses a target level in the given range for --peak or --lufs.
-/// Returns the level, or an error message when the value is not a number in the range.
-std::expected<double, juce::String> parseTargetLevel(
+/// Returns the level, or an error when the value is not a number in the range.
+std::expected<double, CliParseError> parseTargetLevel(
     const juce::String& option,
     const juce::String& value,
     const double minimum,
@@ -192,13 +203,18 @@ std::expected<double, juce::String> parseTargetLevel(
     const auto trimmedValue = value.trim();
 
     if (!isNumericArgument(trimmedValue)) {
-        return std::unexpected(utils::format("{} needs a number, for example {} {}", option, option, minimum));
+        return parseError(
+            CliParseErrorKind::invalidValue,
+            utils::format("{} needs a number, for example {} {}", option, option, minimum)
+        );
     }
 
     const auto target = trimmedValue.getDoubleValue();
 
     if (target < minimum || target > maximum) {
-        return std::unexpected(utils::format("{} must be between {} and {}", option, minimum, maximum));
+        return parseError(
+            CliParseErrorKind::valueOutOfRange, utils::format("{} must be between {} and {}", option, minimum, maximum)
+        );
     }
 
     return target;
@@ -206,8 +222,8 @@ std::expected<double, juce::String> parseTargetLevel(
 
 /// Builds the normalization options of --normalize from the values of --peak and --lufs,
 /// keeping the default 0 dBFS sample peak target when neither is given.
-/// Returns an error message when both are given or a value is invalid.
-std::expected<AudioNormalizationOptions, juce::String> parseNormalization(
+/// Returns an error when both are given or a value is invalid.
+std::expected<AudioNormalizationOptions, CliParseError> parseNormalization(
     const std::optional<juce::String>& peakValue,
     const std::optional<juce::String>& loudnessValue
 )
@@ -215,7 +231,7 @@ std::expected<AudioNormalizationOptions, juce::String> parseNormalization(
     AudioNormalizationOptions normalization;
 
     if (peakValue.has_value() && loudnessValue.has_value()) {
-        return std::unexpected(juce::String("--peak and --lufs cannot be used together"));
+        return parseError(CliParseErrorKind::conflictingOptions, "--peak and --lufs cannot be used together");
     }
 
     if (peakValue.has_value()) {
@@ -255,7 +271,7 @@ std::expected<AudioNormalizationOptions, juce::String> parseNormalization(
 
 /// Parses the arguments left after --list-plugins into a plugin listing,
 /// which takes only its grouping and rescan options, without input paths or analysis options.
-std::expected<CliCommand, juce::String> parseListPluginsCommand(juce::ArgumentList& arguments)
+std::expected<CliCommand, CliParseError> parseListPluginsCommand(juce::ArgumentList& arguments)
 {
     ListPluginsCommand command;
     command.rescan = arguments.removeOptionIfFound("--rescan|-R");
@@ -270,17 +286,19 @@ std::expected<CliCommand, juce::String> parseListPluginsCommand(juce::ArgumentLi
             analysisOptions, [&arguments](const char* option) { return arguments.containsOption(option); }
         ))
     {
-        return std::unexpected(juce::String("--list-plugins cannot be combined with analysis options"));
+        return parseError(
+            CliParseErrorKind::conflictingOptions, "--list-plugins cannot be combined with analysis options"
+        );
     }
 
     for (const auto& argument : arguments.arguments) {
         if (argument.isOption()) {
-            return std::unexpected(utils::format("Unknown option: {}", argument.text));
+            return parseError(CliParseErrorKind::unknownOption, utils::format("Unknown option: {}", argument.text));
         }
     }
 
     if (arguments.size() > 0) {
-        return std::unexpected(juce::String("--list-plugins does not take input paths"));
+        return parseError(CliParseErrorKind::unexpectedInput, "--list-plugins does not take input paths");
     }
 
     return command;
@@ -288,10 +306,12 @@ std::expected<CliCommand, juce::String> parseListPluginsCommand(juce::ArgumentLi
 
 /// Parses the arguments into an analysis run, with the remaining arguments as its input paths.
 /// The plugin listing options are rejected, and --force, --peak, and --lufs need --normalize.
-std::expected<CliCommand, juce::String> parseAnalyzeCommand(juce::ArgumentList& arguments)
+std::expected<CliCommand, CliParseError> parseAnalyzeCommand(juce::ArgumentList& arguments)
 {
     if (arguments.containsOption("--group-by|-g") || arguments.containsOption("--rescan|-R")) {
-        return std::unexpected(juce::String("--group-by and --rescan can only be used with --list-plugins"));
+        return parseError(
+            CliParseErrorKind::missingRequiredOption, "--group-by and --rescan can only be used with --list-plugins"
+        );
     }
 
     AnalyzeCommand command;
@@ -327,11 +347,13 @@ std::expected<CliCommand, juce::String> parseAnalyzeCommand(juce::ArgumentList& 
     const auto loudnessValue = takeOptionValue(arguments, "--lufs");
 
     if (force && !normalize) {
-        return std::unexpected(juce::String("--force can only be used with --normalize"));
+        return parseError(CliParseErrorKind::missingRequiredOption, "--force can only be used with --normalize");
     }
 
     if ((peakValue.has_value() || loudnessValue.has_value()) && !normalize) {
-        return std::unexpected(juce::String("--peak and --lufs can only be used with --normalize"));
+        return parseError(
+            CliParseErrorKind::missingRequiredOption, "--peak and --lufs can only be used with --normalize"
+        );
     }
 
     if (normalize) {
@@ -347,12 +369,13 @@ std::expected<CliCommand, juce::String> parseAnalyzeCommand(juce::ArgumentList& 
 
     for (const auto& argument : arguments.arguments) {
         if (argument.isOption()) {
-            return std::unexpected(utils::format("Unknown option: {}", argument.text));
+            return parseError(CliParseErrorKind::unknownOption, utils::format("Unknown option: {}", argument.text));
         }
 
         // A negative number is a value, so one that no option took was most likely meant for the option before it.
         if (isNumericArgument(argument.text) && argument.text.startsWithChar('-')) {
-            return std::unexpected(
+            return parseError(
+                CliParseErrorKind::unexpectedNumber,
                 utils::format(
                     "Unexpected number {}. Pass a negative value right after the option that takes it.", argument.text
                 )
@@ -413,9 +436,9 @@ juce::String cli::joinArguments(const juce::ArgumentList& arguments)
 }
 
 /// Parses command-line arguments into a validated analysis or plugin listing command,
-/// or returns the error to show the user.
+/// or returns why the arguments were rejected, with the message to show the user.
 /// The help and version flags are handled by the caller before parsing.
-std::expected<CliCommand, juce::String> cli::parseArguments(juce::ArgumentList arguments)
+std::expected<CliCommand, CliParseError> cli::parseArguments(juce::ArgumentList arguments)
 {
     if (auto combined = checkCombinedShortOptions(arguments); !combined) {
         return std::unexpected(std::move(combined).error());

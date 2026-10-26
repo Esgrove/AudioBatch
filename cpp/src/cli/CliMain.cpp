@@ -81,8 +81,8 @@ int runCliMain(const std::span<char*> argv)
     utils::installCrashLogging();
 
     if (!command) {
-        utils::logError(command.error());
-        console::printError(command.error());
+        utils::logError(command.error().message);
+        console::printError(command.error().message);
         fmt::print("\n{}\n", cli::buildUsage(executableName));
         return exitCli(1);
     }
