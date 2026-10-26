@@ -114,9 +114,21 @@ if(AUDIOBATCH_SANITIZE)
         endif()
         add_compile_options(/fsanitize=address)
     else()
-        add_compile_options(-fsanitize=${AUDIOBATCH_SANITIZE} -fno-omit-frame-pointer)
+        # Without -fno-sanitize-recover, UndefinedBehaviorSanitizer prints a finding and continues,
+        # so the test run would still pass.
+        add_compile_options(-fsanitize=${AUDIOBATCH_SANITIZE} -fno-omit-frame-pointer -fno-sanitize-recover=all)
         add_link_options(-fsanitize=${AUDIOBATCH_SANITIZE})
     endif()
+endif()
+
+# libc++ hardening turns out of range access through std::span, std::optional, std::vector and similar into a trap.
+# Debug builds, which include the sanitizer builds, use the extensive checks,
+# and the other configurations keep the cheap checks that are suitable for release builds.
+# The mode is global so JUCE and the fetched dependencies use the same checks as project code.
+if(APPLE)
+    add_compile_definitions(
+        _LIBCPP_HARDENING_MODE=$<IF:$<CONFIG:Debug>,_LIBCPP_HARDENING_MODE_EXTENSIVE,_LIBCPP_HARDENING_MODE_FAST>
+    )
 endif()
 
 # Adds all the module sources so they appear correctly in the IDE
