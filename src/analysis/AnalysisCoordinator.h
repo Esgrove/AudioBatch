@@ -7,6 +7,7 @@
 
 #include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysis.h"
+#include "utils/BackgroundRunner.h"
 
 #include <JuceHeader.h>
 
@@ -72,11 +73,6 @@ public:
 
 private:
     void planRun(const AudioAnalysisOptions& options, int runId);
-    void publishCompletion(int totalFiles, int runId) const;
-    void publishPlan(const AnalysisPlan& plan, int runId) const;
-    void publishProgress(const juce::File& file, float progress, int runId) const;
-    void publishResult(const AudioAnalysisRecord& result, int runId) const;
-    void publishStarting(const juce::File& file, int runId) const;
 
     void analyzeStaleFile(
         const juce::File& file,
@@ -85,16 +81,14 @@ private:
         const std::shared_ptr<std::atomic<int>>& pendingFiles
     ) const;
 
-    [[nodiscard]] bool isRunCancelled(int runId) const noexcept;
-
     AnalysisCache& cache;
-    CompletionCallback completionCallback;
-    PlanCallback planCallback;
-    ProgressCallback progressCallback;
-    ResultCallback resultCallback;
-    StartingCallback startingCallback;
-    juce::CriticalSection callbackLock;
-    juce::ThreadPool threadPool;
-    std::atomic<int> currentRunId {0};
+    RunCallback<int, int> completionCallback;
+    RunCallback<const AnalysisPlan&> planCallback;
+    RunCallback<const juce::File&, float, int> progressCallback;
+    RunCallback<const AudioAnalysisRecord&, int> resultCallback;
+    RunCallback<const juce::File&, int> startingCallback;
+
+    /// Declared last, so the callbacks the jobs publish to outlive it.
+    BackgroundRunner runner;
 };
 }  // namespace audiobatch

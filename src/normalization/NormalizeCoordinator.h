@@ -6,12 +6,11 @@
 #pragma once
 
 #include "normalization/AudioNormalization.h"
+#include "utils/BackgroundRunner.h"
 
 #include <JuceHeader.h>
 
-#include <atomic>
 #include <functional>
-#include <memory>
 #include <vector>
 
 namespace audiobatch
@@ -20,17 +19,20 @@ namespace audiobatch
 class NormalizeCoordinator
 {
 public:
+    // Every callback carries the id of the run it belongs to,
+    // so a receiver that handles them asynchronously can drop messages from a run that ended meanwhile.
+
     /// Called once after a run has published all queued results.
-    using CompletionCallback = std::function<void(int totalFiles)>;
+    using CompletionCallback = std::function<void(int totalFiles, int runId)>;
 
     /// Called from the worker thread with the normalized fraction of a file, throttled to a few updates per second.
-    using ProgressCallback = std::function<void(const juce::File& file, float progress)>;
+    using ProgressCallback = std::function<void(const juce::File& file, float progress, int runId)>;
 
     /// Called for each processed file as normalize results become available.
-    using ResultCallback = std::function<void(const AudioNormalizationResult& result)>;
+    using ResultCallback = std::function<void(const AudioNormalizationResult& result, int runId)>;
 
     /// Called from the worker thread right before a file's normalization begins.
-    using StartingCallback = std::function<void(const juce::File& file)>;
+    using StartingCallback = std::function<void(const juce::File& file, int runId)>;
 
     explicit NormalizeCoordinator(int workerCount = juce::SystemStats::getNumCpus());
 
@@ -41,6 +43,7 @@ public:
     NormalizeCoordinator(NormalizeCoordinator&&) = delete;
     NormalizeCoordinator& operator=(NormalizeCoordinator&&) = delete;
 
+    [[nodiscard]] int getCurrentRunId() const noexcept;
     [[nodiscard]] int start(const std::vector<AudioAnalysisRecord>& records, const AudioNormalizationOptions& options);
 
     void cancelAndWait();
@@ -50,17 +53,12 @@ public:
     void setStartingCallback(StartingCallback callback);
 
 private:
-    void publishCompletion(int totalFiles, int runId) const;
-    void publishProgress(const juce::File& file, float progress, int runId) const;
-    void publishResult(const AudioNormalizationResult& result, int runId) const;
-    void publishStarting(const juce::File& file, int runId) const;
+    RunCallback<int, int> completionCallback;
+    RunCallback<const juce::File&, float, int> progressCallback;
+    RunCallback<const AudioNormalizationResult&, int> resultCallback;
+    RunCallback<const juce::File&, int> startingCallback;
 
-    CompletionCallback completionCallback;
-    ProgressCallback progressCallback;
-    ResultCallback resultCallback;
-    StartingCallback startingCallback;
-    juce::CriticalSection callbackLock;
-    juce::ThreadPool threadPool;
-    std::atomic<int> currentRunId {0};
+    /// Declared last, so the callbacks the jobs publish to outlive it.
+    BackgroundRunner runner;
 };
 }  // namespace audiobatch

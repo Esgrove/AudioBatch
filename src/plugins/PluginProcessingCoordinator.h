@@ -7,6 +7,7 @@
 #pragma once
 
 #include "plugins/PluginProcessing.h"
+#include "utils/BackgroundRunner.h"
 
 #include <JuceHeader.h>
 
@@ -89,20 +90,23 @@ private:
 class PluginProcessingCoordinator
 {
 public:
+    // Every callback of a run carries the id of the run it belongs to,
+    // so a receiver that handles them asynchronously can drop messages from a run that ended meanwhile.
+
     /// Called once after a run has published all queued results.
-    using CompletionCallback = std::function<void(int totalFiles)>;
+    using CompletionCallback = std::function<void(int totalFiles, int runId)>;
 
     /// Called from the worker thread with the processed fraction of a file, throttled to a few updates per second.
-    using ProgressCallback = std::function<void(const juce::File& file, float progress)>;
+    using ProgressCallback = std::function<void(const juce::File& file, float progress, int runId)>;
 
     /// Called for each processed file as plugin-processing results become available.
-    using ResultCallback = std::function<void(const PluginProcessingResult& result)>;
+    using ResultCallback = std::function<void(const PluginProcessingResult& result, int runId)>;
 
     /// Called from the worker thread once a file has a plugin chain and its processing begins.
-    using StartingCallback = std::function<void(const juce::File& file)>;
+    using StartingCallback = std::function<void(const juce::File& file, int runId)>;
 
     /// Called on the message thread when the coordinator could not start a run.
-    /// Receives the error message.
+    /// Receives the error message, and no run id, because no run started.
     using StartErrorCallback = std::function<void(juce::String errorMessage)>;
 
     explicit PluginProcessingCoordinator(int workerCount = getPluginProcessingWorkerCount());
@@ -113,6 +117,8 @@ public:
     PluginProcessingCoordinator& operator=(const PluginProcessingCoordinator&) = delete;
     PluginProcessingCoordinator(PluginProcessingCoordinator&&) = delete;
     PluginProcessingCoordinator& operator=(PluginProcessingCoordinator&&) = delete;
+
+    [[nodiscard]] int getCurrentRunId() const noexcept;
 
     void cancelAndWait();
 
@@ -133,12 +139,6 @@ public:
     );
 
 private:
-    void publishCompletion(int totalFiles, int runId) const;
-    void publishProgress(const juce::File& file, float progress, int runId) const;
-    void publishResult(const PluginProcessingResult& result, int runId) const;
-    void publishStarting(const juce::File& file, int runId) const;
-    void reportStartError(const juce::String& message) const;
-
     void runFileJob(
         const AudioAnalysisRecord& record,
         const PluginProcessingOptions& options,
@@ -148,18 +148,16 @@ private:
         std::atomic<int>& pendingFiles
     ) const;
 
-    CompletionCallback completionCallback;
-    ProgressCallback progressCallback;
-    ResultCallback resultCallback;
-    StartErrorCallback startErrorCallback;
-    StartingCallback startingCallback;
-
-    juce::CriticalSection callbackLock;
-    juce::ThreadPool threadPool;
+    RunCallback<int, int> completionCallback;
+    RunCallback<const juce::File&, float, int> progressCallback;
+    RunCallback<const PluginProcessingResult&, int> resultCallback;
+    RunCallback<juce::String> startErrorCallback;
+    RunCallback<const juce::File&, int> startingCallback;
 
     /// Chains of the current run. Only accessed on the message thread.
     std::shared_ptr<PluginRunChains> currentChains;
 
-    std::atomic<int> currentRunId {0};
+    /// Declared last, so the callbacks and chains the jobs use outlive it.
+    BackgroundRunner runner;
 };
 }  // namespace audiobatch

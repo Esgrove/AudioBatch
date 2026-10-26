@@ -119,13 +119,15 @@ private:
     void handleAnalysisComplete(int totalFiles, int runId);
     void handleAnalysisPlan(const AnalysisPlan& plan);
     void handleAnalysisResults(std::vector<AnalysisResultMessage> messages);
-    void handleNormalizeComplete(int totalFiles);
-    void handleNormalizeResult(const AudioNormalizationResult& result);
-    void handleProcessingComplete(int totalFiles);
-    void handleProcessingResult(const PluginProcessingResult& result);
+    void handleNormalizeComplete(int totalFiles, int runId);
+    void handleNormalizeResult(const AudioNormalizationResult& result, int runId);
+    void handleProcessingComplete(int totalFiles, int runId);
+    void handleProcessingResult(const PluginProcessingResult& result, int runId);
     void handleProcessingStartError(const juce::String& errorMessage);
 
     [[nodiscard]] bool isCurrentAnalysisRun(int runId) const noexcept;
+    [[nodiscard]] bool isCurrentNormalizationRun(int runId) const noexcept;
+    [[nodiscard]] bool isCurrentProcessingRun(int runId) const noexcept;
 
     FileActivityTracker& fileActivity;
     BackgroundWorkListener& listener;

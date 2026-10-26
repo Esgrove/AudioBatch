@@ -6,6 +6,7 @@
 #include "TestSuites.h"
 #include "utils/AppInfo.h"
 #include "utils/AudioFormatUtils.h"
+#include "utils/BackgroundRunner.h"
 #include "utils/ConsolePrint.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
@@ -20,6 +21,7 @@
 #include <span>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace audiobatch::tests
@@ -526,6 +528,48 @@ private:
     /// Checks moving to the trash and the backups of originals, without touching the system trash.
     void runDisposalTests()
     {
+        beginTest("Background runner publishes with the run id only while the run is current");
+        {
+            BackgroundRunner runner(1, 1000);
+            RunCallback<int, int> callback;
+            std::vector<std::pair<int, int>> calls;
+            callback.set([&calls](const int value, const int runId) { calls.emplace_back(value, runId); });
+
+            const auto runId = runner.getCurrentRunId();
+            const auto isCancelled = runner.makeCancellationCheck(runId);
+            runner.publish(callback, runId, 7);
+            expect(!isCancelled());
+
+            runner.cancel();
+            runner.publish(callback, runId, 8);
+            expect(isCancelled());
+            expect(!runner.isCurrent(runId));
+
+            callback.set({});
+            runner.publish(callback, runner.getCurrentRunId(), 9);
+
+            expectEquals(static_cast<int>(calls.size()), 1);
+            expect(calls.front() == std::pair(7, runId));
+        }
+
+        beginTest("Cancelling a background run waits for its running job to finish");
+        {
+            BackgroundRunner runner(1, 5000);
+            std::atomic<bool> started {false};
+            std::atomic<bool> finished {false};
+            runner.addJob([&started, &finished] {
+                started = true;
+                juce::Thread::sleep(50);
+                finished = true;
+            });
+            while (!started.load()) {
+                juce::Thread::yield();
+            }
+            runner.cancelAndWait();
+            expect(finished.load());
+            runner.waitForAllJobs();
+        }
+
         beginTest("Moving a missing file to the trash reports it as already missing");
         {
             const TemporaryDirectory directory;

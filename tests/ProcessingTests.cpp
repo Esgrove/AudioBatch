@@ -1055,18 +1055,18 @@ private:
         int resultCount = 0;
         bool released = workerCount == 1;
         PluginProcessingCoordinator coordinator(workerCount);
-        coordinator.setStartingCallback([&](const juce::File& file) {
+        coordinator.setStartingCallback([&](const juce::File& file, int /*runId*/) {
             std::unique_lock lock(mutex);
             utils::logInfo("Test file starting: {}", file.getFileName().quoted());
             startedPaths.push_back(file.getFullPathName());
             condition.notify_all();
             condition.wait_for(lock, std::chrono::seconds(10), [&] { return released; });
         });
-        coordinator.setResultCallback([&](const PluginProcessingResult&) {
+        coordinator.setResultCallback([&](const PluginProcessingResult&, int /*runId*/) {
             const std::scoped_lock lock(mutex);
             ++resultCount;
         });
-        coordinator.setCompletionCallback([&](const int totalFiles) {
+        coordinator.setCompletionCallback([&](const int totalFiles, int /*runId*/) {
             const std::scoped_lock lock(mutex);
             completedFiles = totalFiles;
             condition.notify_all();
