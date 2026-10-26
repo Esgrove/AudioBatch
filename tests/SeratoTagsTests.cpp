@@ -317,11 +317,8 @@ private:
         results.push_back(serato::parseTagPayload(serato::TagKind::autotags, autotags));
         results.push_back(serato::parseTagPayload(serato::TagKind::beatGrid, grid));
         results.push_back(serato::parseTagPayload(serato::TagKind::markers, markers));
-        serato::TagReadResult info;
-        info.kind = serato::TagKind::trackInfo;
-        info.status = serato::ReadStatus::present;
-        info.trackInfo = serato::TrackInfo {.bpm = 127.25, .key = "F#m"};
-        results.push_back(info);
+        serato::TrackInfo trackInfo {.bpm = 127.25, .key = "F#m"};
+        results.push_back(serato::TagReadResult::present(trackInfo));
         for (const auto& result : results) {
             const auto cache = serato::serializeTag(result);
             expect(cache.getSize() > 0);
@@ -348,13 +345,15 @@ private:
                 = result.kind == serato::TagKind::analysis ? serato::TagKind::autotags : serato::TagKind::analysis;
             expect(!serato::deserializeTag(wrongKind, cache));
         }
-        info.trackInfo->bpm = std::numeric_limits<double>::infinity();
-        expect(serato::serializeTag(info).getSize() == 0);
-        info.trackInfo->bpm = 0;
-        expect(serato::serializeTag(info).getSize() == 0);
-        info.trackInfo->bpm = 120;
-        info.analysis = serato::Analysis {.majorVersion = 1, .minorVersion = 1};
-        expect(serato::serializeTag(info).getSize() == 0);
+        trackInfo.bpm = std::numeric_limits<double>::infinity();
+        expect(serato::serializeTag(serato::TagReadResult::present(trackInfo)).getSize() == 0);
+        trackInfo.bpm = 0;
+        expect(serato::serializeTag(serato::TagReadResult::present(trackInfo)).getSize() == 0);
+        const serato::TagReadResult mismatched {
+            .kind = serato::TagKind::trackInfo,
+            .value = serato::Analysis {.majorVersion = 1, .minorVersion = 1},
+        };
+        expect(serato::serializeTag(mismatched).getSize() == 0);
         expect(serato::serializeTag(serato::TagReadResult()).getSize() == 0);
     }
 };

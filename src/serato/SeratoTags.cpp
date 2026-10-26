@@ -11,6 +11,7 @@
 #include <locale>
 #include <sstream>
 #include <string>
+#include <variant>
 
 namespace audiobatch::serato
 {
@@ -418,31 +419,30 @@ std::uint32_t legacyNumber(const std::span<const std::uint8_t> bytes)
         | (bytes[3] & seratoGroupMask);
 }
 
-/// Writes a matching non-Overview cache payload after checking its public collection and text bounds.
-bool writeCachePayload(juce::MemoryOutputStream& payload, const TagReadResult& result)
+/// Writes a non-Overview cache payload after checking its public collection and text bounds.
+bool writeCachePayload(juce::MemoryOutputStream& payload, const TagValue& value)
 {
-    switch (result.kind) {
-        case TagKind::analysis:
-            if (!result.analysis) {
-                return false;
-            }
-            payload.writeByte(static_cast<char>(result.analysis->majorVersion));
-            payload.writeByte(static_cast<char>(result.analysis->minorVersion));
+    switch (kindOf(value)) {
+        case TagKind::analysis: {
+            const auto& analysis = std::get<Analysis>(value);
+            payload.writeByte(static_cast<char>(analysis.majorVersion));
+            payload.writeByte(static_cast<char>(analysis.minorVersion));
             return true;
-        case TagKind::autotags:
-            if (!result.autotags) {
-                return false;
-            }
-            writeReal(payload, result.autotags->bpm);
-            writeReal(payload, result.autotags->autoGain);
-            writeReal(payload, result.autotags->gain);
+        }
+        case TagKind::autotags: {
+            const auto& autotags = std::get<Autotags>(value);
+            writeReal(payload, autotags.bpm);
+            writeReal(payload, autotags.autoGain);
+            writeReal(payload, autotags.gain);
             return true;
-        case TagKind::beatGrid:
-            if (!result.beatGrid || result.beatGrid->markers.size() > maxTagRecords) {
+        }
+        case TagKind::beatGrid: {
+            const auto& grid = std::get<BeatGrid>(value);
+            if (grid.markers.size() > maxTagRecords) {
                 return false;
             }
-            payload.writeIntBigEndian(static_cast<int>(result.beatGrid->markers.size()));
-            for (const auto& [positionSeconds, beatsUntilNext, bpm] : result.beatGrid->markers) {
+            payload.writeIntBigEndian(static_cast<int>(grid.markers.size()));
+            for (const auto& [positionSeconds, beatsUntilNext, bpm] : grid.markers) {
                 writeReal(payload, positionSeconds);
                 payload.writeIntBigEndian(std::bit_cast<int>(beatsUntilNext));
                 payload.writeBool(bpm.has_value());
@@ -451,22 +451,27 @@ bool writeCachePayload(juce::MemoryOutputStream& payload, const TagReadResult& r
                 }
             }
             return true;
-        case TagKind::markers:
-            if (!result.markers || !boundedMarkers(*result.markers)) {
+        }
+        case TagKind::markers: {
+            const auto& markers = std::get<Markers>(value);
+            if (!boundedMarkers(markers)) {
                 return false;
             }
-            writeMarkers(payload, *result.markers);
+            writeMarkers(payload, markers);
             return true;
-        case TagKind::trackInfo:
-            if (!result.trackInfo || result.trackInfo->key.getNumBytesAsUTF8() > maxTagTextBytes) {
+        }
+        case TagKind::trackInfo: {
+            const auto& info = std::get<TrackInfo>(value);
+            if (info.key.getNumBytesAsUTF8() > maxTagTextBytes) {
                 return false;
             }
-            payload.writeBool(result.trackInfo->bpm.has_value());
-            if (result.trackInfo->bpm) {
-                writeReal(payload, *result.trackInfo->bpm);
+            payload.writeBool(info.bpm.has_value());
+            if (info.bpm) {
+                writeReal(payload, *info.bpm);
             }
-            writeText(payload, result.trackInfo->key);
+            writeText(payload, info.key);
             return true;
+        }
         case TagKind::overview:
             return false;
     }
@@ -688,57 +693,41 @@ std::optional<Markers> parseLegacyMarkers(const std::span<const std::uint8_t> by
 /// Dispatches a stripped GEOB payload. Invalid data affects only the requested kind.
 TagReadResult parseTagPayload(const TagKind kind, const std::span<const std::uint8_t> bytes, const bool legacyMarkers)
 {
-    TagReadResult result;
-    result.kind = kind;
-    result.status = ReadStatus::invalid;
     if (bytes.size() > maxTagPayloadBytes) {
-        return result;
+        return TagReadResult::missing(kind, ReadStatus::invalid);
     }
+    const auto present = [kind](auto parsed) {
+        return parsed ? TagReadResult::present(std::move(*parsed)) : TagReadResult::missing(kind, ReadStatus::invalid);
+    };
     switch (kind) {
         case TagKind::overview:
-            result.overview = Overview::parse(bytes);
-            break;
+            return present(Overview::parse(bytes));
         case TagKind::analysis:
-            result.analysis = parseAnalysis(bytes);
-            break;
+            return present(parseAnalysis(bytes));
         case TagKind::autotags:
-            result.autotags = parseAutotags(bytes);
-            break;
+            return present(parseAutotags(bytes));
         case TagKind::beatGrid:
-            result.beatGrid = parseBeatGrid(bytes);
-            break;
+            return present(parseBeatGrid(bytes));
         case TagKind::markers:
-            result.markers = legacyMarkers ? parseLegacyMarkers(bytes) : parseMarkers2(bytes);
-            break;
+            return present(legacyMarkers ? parseLegacyMarkers(bytes) : parseMarkers2(bytes));
         case TagKind::trackInfo:
-            result.status = ReadStatus::unsupported;
-            return result;
+            break;
     }
-    if (!supportsTagKind(kind)) {
-        result.status = ReadStatus::unsupported;
-    } else if (result.overview || result.analysis || result.autotags || result.beatGrid || result.markers) {
-        result.status = ReadStatus::present;
-    }
-    return result;
+    return TagReadResult::missing(kind, ReadStatus::unsupported);
 }
 
 /// Encodes a present result using a bounded, versioned numeric representation.
-/// Overview delegates to its existing serializer. Invalid or mismatched public values return an empty block.
+/// Overview delegates to its existing serializer. Missing, mismatched, or invalid values return an empty block.
 juce::MemoryBlock serializeTag(const TagReadResult& result)
 {
-    const auto values = static_cast<unsigned int>(result.overview.has_value())
-        + static_cast<unsigned int>(result.analysis.has_value())
-        + static_cast<unsigned int>(result.autotags.has_value())
-        + static_cast<unsigned int>(result.beatGrid.has_value()) + static_cast<unsigned int>(result.markers.has_value())
-        + static_cast<unsigned int>(result.trackInfo.has_value());
-    if (result.status != ReadStatus::present || values != 1 || !supportsTagKind(result.kind)) {
+    if (!result.value || !supportsTagKind(result.kind) || kindOf(*result.value) != result.kind) {
         return {};
     }
-    if (result.kind == TagKind::overview) {
-        return result.overview ? result.overview->serialize() : juce::MemoryBlock();
+    if (const auto* overview = std::get_if<Overview>(&*result.value)) {
+        return overview->serialize();
     }
     juce::MemoryOutputStream payload;
-    if (!writeCachePayload(payload, result)) {
+    if (!writeCachePayload(payload, *result.value)) {
         return {};
     }
     if (payload.getDataSize() > maxTagPayloadBytes) {
@@ -759,12 +748,9 @@ juce::MemoryBlock serializeTag(const TagReadResult& result)
 std::optional<TagReadResult> deserializeTag(TagKind kind, const juce::MemoryBlock& block)
 {
     const std::span bytes {static_cast<const std::uint8_t*>(block.getData()), block.getSize()};
-    TagReadResult result;
-    result.kind = kind;
-    result.status = ReadStatus::present;
     if (kind == TagKind::overview) {
-        result.overview = Overview::deserialize(bytes);
-        return result.overview ? std::optional(result) : std::nullopt;
+        auto overview = Overview::deserialize(bytes);
+        return overview ? std::optional(TagReadResult::present(std::move(*overview))) : std::nullopt;
     }
     if (!supportsTagKind(kind) || bytes.size() < cacheHeaderBytes
         || bytes.size() > cacheHeaderBytes + maxTagPayloadBytes)
@@ -777,32 +763,36 @@ std::optional<TagReadResult> deserializeTag(TagKind kind, const juce::MemoryBloc
     {
         return std::nullopt;
     }
+    std::optional<TagValue> value;
     switch (kind) {
         case TagKind::analysis:
-            result.analysis = Analysis {.majorVersion = input.byte(), .minorVersion = input.byte()};
+            value = Analysis {.majorVersion = input.byte(), .minorVersion = input.byte()};
             break;
-        case TagKind::autotags:
-            result.autotags = Autotags {.bpm = input.real(), .autoGain = input.real(), .gain = input.real()};
-            input.valid = input.valid && result.autotags->bpm >= 0;
+        case TagKind::autotags: {
+            const Autotags autotags {.bpm = input.real(), .autoGain = input.real(), .gain = input.real()};
+            input.valid = input.valid && autotags.bpm >= 0;
+            value = autotags;
             break;
+        }
         case TagKind::beatGrid:
-            result.beatGrid = readCacheGrid(input);
+            value = readCacheGrid(input);
             break;
         case TagKind::markers:
-            result.markers = readMarkers(input);
+            value = readMarkers(input);
             break;
-        case TagKind::trackInfo:
-            result.trackInfo.emplace();
+        case TagKind::trackInfo: {
+            TrackInfo info;
             if (input.boolean()) {
-                result.trackInfo->bpm = input.real();
+                info.bpm = input.real();
             }
-            result.trackInfo->key = input.text();
-            input.valid = input.valid && (!result.trackInfo->bpm || *result.trackInfo->bpm > 0)
-                && (result.trackInfo->bpm || result.trackInfo->key.isNotEmpty());
+            info.key = input.text();
+            input.valid = input.valid && (!info.bpm || *info.bpm > 0) && (info.bpm || info.key.isNotEmpty());
+            value = std::move(info);
             break;
+        }
         case TagKind::overview:
             return std::nullopt;
     }
-    return input.finished() ? std::optional(result) : std::nullopt;
+    return input.finished() && value ? std::optional(TagReadResult::present(std::move(*value))) : std::nullopt;
 }
 }  // namespace audiobatch::serato

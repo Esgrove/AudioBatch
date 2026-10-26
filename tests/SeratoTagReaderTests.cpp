@@ -361,8 +361,8 @@ private:
                     const auto before = fileChecksum(file);
                     const auto result = serato::readTag(file);
                     expectStatus(result, serato::ReadStatus::present);
-                    if (result.overview && expected) {
-                        expect(result.overview->slices == expected->slices);
+                    if (const auto overview = tagValue<serato::Overview>(result); overview && expected) {
+                        expect(overview->slices == expected->slices);
                     }
                     expect(before.has_value() && before == fileChecksum(file));
                 }
@@ -402,8 +402,8 @@ private:
             const auto before = fileChecksum(flacFile);
             const auto result = serato::readTag(flacFile);
             expectStatus(result, serato::ReadStatus::present);
-            if (result.overview && expected) {
-                expect(result.overview->slices == expected->slices);
+            if (const auto overview = tagValue<serato::Overview>(result); overview && expected) {
+                expect(overview->slices == expected->slices);
             }
             expect(before.has_value() && before == fileChecksum(flacFile));
         }
@@ -470,16 +470,16 @@ private:
             expectEquals(static_cast<int>(results.size()), 6);
             for (std::size_t index = 0; index < results.size(); ++index) {
                 expectEquals(static_cast<int>(results[index].kind), static_cast<int>(index + 1));
-                expectEquals(static_cast<int>(results[index].status), static_cast<int>(serato::ReadStatus::present));
+                expectEquals(static_cast<int>(results[index].status()), static_cast<int>(serato::ReadStatus::present));
                 expect(serato::serializeTag(results[index]).getSize() > 0);
             }
             if (results.size() == 6) {
-                const auto& info = results[5].trackInfo;
+                const auto info = tagValue<serato::TrackInfo>(results[5]);
                 if (info) {
                     expectEquals(info->bpm.value_or(0), 129.5);
                     expectEquals(info->key, juce::String("Gm"));
                 }
-                const auto& markers = results[4].markers;
+                const auto markers = tagValue<serato::Markers>(results[4]);
                 if (markers && !markers->cues.empty()) {
                     expectEquals(static_cast<int>(markers->cues.front().positionMilliseconds), 1234);
                 }
@@ -489,13 +489,13 @@ private:
             const auto mixed = serato::readTags(file, serato::allTagKinds);
             for (std::size_t index = 0; index < mixed.size(); ++index) {
                 expectEquals(
-                    static_cast<int>(mixed[index].status),
+                    static_cast<int>(mixed[index].status()),
                     static_cast<int>(index == 2 ? serato::ReadStatus::invalid : serato::ReadStatus::present)
                 );
             }
             const auto cancelled = serato::readTags(file, serato::allTagKinds, [] { return true; });
             for (const auto& result : cancelled) {
-                expectEquals(static_cast<int>(result.status), static_cast<int>(serato::ReadStatus::cancelled));
+                expectEquals(static_cast<int>(result.status()), static_cast<int>(serato::ReadStatus::cancelled));
                 expect(serato::serializeTag(result).getSize() == 0);
             }
         }
@@ -509,9 +509,9 @@ private:
             expect(createSyntheticContainer(file));
             expect(writeSyntheticTags(file, false, true, true));
             const auto markers = serato::readTag(file, serato::TagKind::markers);
-            expectEquals(static_cast<int>(markers.status), static_cast<int>(serato::ReadStatus::present));
-            if (markers.markers && !markers.markers->cues.empty()) {
-                expectEquals(static_cast<int>(markers.markers->cues.front().positionMilliseconds), 100);
+            expectEquals(static_cast<int>(markers.status()), static_cast<int>(serato::ReadStatus::present));
+            if (const auto value = tagValue<serato::Markers>(markers); value && !value->cues.empty()) {
+                expectEquals(static_cast<int>(value->cues.front().positionMilliseconds), 100);
             }
             expectStatus(serato::readTag(file), serato::ReadStatus::present);
             const std::array kinds {
@@ -522,9 +522,9 @@ private:
             const auto results = serato::readTags(file, kinds);
             expectEquals(static_cast<int>(results.size()), 3);
             if (results.size() == 3) {
-                expectEquals(static_cast<int>(results[0].status), static_cast<int>(serato::ReadStatus::present));
-                expectEquals(static_cast<int>(results[1].status), static_cast<int>(serato::ReadStatus::unsupported));
-                expectEquals(static_cast<int>(results[2].status), static_cast<int>(serato::ReadStatus::present));
+                expectEquals(static_cast<int>(results[0].status()), static_cast<int>(serato::ReadStatus::present));
+                expectEquals(static_cast<int>(results[1].status()), static_cast<int>(serato::ReadStatus::unsupported));
+                expectEquals(static_cast<int>(results[2].status()), static_cast<int>(serato::ReadStatus::present));
             }
             expect(serato::readTags(file, {}).empty());
         }
@@ -546,10 +546,10 @@ private:
                 expect(wav.save());
             }
             const auto keyOnly = serato::readTag(file, serato::TagKind::trackInfo);
-            expectEquals(static_cast<int>(keyOnly.status), static_cast<int>(serato::ReadStatus::present));
-            if (keyOnly.trackInfo) {
-                expect(!keyOnly.trackInfo->bpm);
-                expectEquals(keyOnly.trackInfo->key, juce::String("Gm"));
+            expectEquals(static_cast<int>(keyOnly.status()), static_cast<int>(serato::ReadStatus::present));
+            if (const auto info = tagValue<serato::TrackInfo>(keyOnly)) {
+                expect(!info->bpm);
+                expectEquals(info->key, juce::String("Gm"));
             }
             {
                 TagLib::RIFF::WAV::File wav(utils::tagLibFileName(fullPath), false);
@@ -560,21 +560,21 @@ private:
                 expect(wav.save());
             }
             expectEquals(
-                static_cast<int>(serato::readTag(file, serato::TagKind::analysis).status),
+                static_cast<int>(serato::readTag(file, serato::TagKind::analysis).status()),
                 static_cast<int>(serato::ReadStatus::present)
             );
             expectEquals(
-                static_cast<int>(serato::readTag(file, serato::TagKind::trackInfo).status),
+                static_cast<int>(serato::readTag(file, serato::TagKind::trackInfo).status()),
                 static_cast<int>(serato::ReadStatus::absent)
             );
         }
     }
 
-    /// Checks both the outcome and the invariant that only present results own an Overview.
+    /// Checks both the outcome and that a present result owns an Overview.
     void expectStatus(const serato::TagReadResult& result, serato::ReadStatus status)
     {
-        expectEquals(static_cast<int>(result.status), static_cast<int>(status));
-        expect(result.overview.has_value() == (status == serato::ReadStatus::present));
+        expectEquals(static_cast<int>(result.status()), static_cast<int>(status));
+        expect(tagValue<serato::Overview>(result).has_value() == (status == serato::ReadStatus::present));
     }
 };
 

@@ -6,8 +6,12 @@
 
 #include "analysis/AudioAnalysisTypes.h"
 #include "normalization/AudioNormalization.h"
+#include "serato/SeratoTagTypes.h"
 
 #include <JuceHeader.h>
+
+#include <optional>
+#include <variant>
 
 namespace audiobatch::tests
 {
@@ -95,6 +99,15 @@ juce::String outcomeNotice(const OperationOutcome& outcome);
 
 bool deleteInsteadOfTrash(const juce::File& file);
 AudioNormalizationOptions testNormalizationOptions();
+
+/// Returns a copy of the value of a present Serato tag result as the given tag type,
+/// or nothing when the result has no value of that type.
+template<typename Value>
+std::optional<Value> tagValue(const serato::TagReadResult& result)
+{
+    const auto* value = result.value.has_value() ? std::get_if<Value>(&*result.value) : nullptr;
+    return value != nullptr ? std::optional<Value>(*value) : std::nullopt;
+}
 
 void installTestAudioDevice(juce::AudioDeviceManager& manager, TestAudioDeviceState& state);
 void renderTestAudioDevice(const TestAudioDeviceState& state, int sampleCount = 512);

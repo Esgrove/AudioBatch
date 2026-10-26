@@ -160,7 +160,7 @@ std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
     if (!identity.matches(file)) {
         return std::nullopt;
     }
-    serato::TagReadResult result {.kind = kind, .status = serato::ReadStatus::absent, .overview = std::nullopt};
+    auto status = serato::ReadStatus::absent;
     juce::MemoryBlock data;
     {
         const juce::ScopedLock lock(mutex);
@@ -204,8 +204,9 @@ std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
             && sqlite::columnText(*row, serato_column::filePath) == identity.path
             && std::cmp_equal(sqlite3_column_int64(row, serato_column::tagKind), std::to_underlying(kind));
         const auto state = sqlite3_column_int64(row, serato_column::resultState);
-        const auto stateIs
-            = [state](const serato::ReadStatus status) { return std::cmp_equal(state, std::to_underlying(status)); };
+        const auto stateIs = [state](const serato::ReadStatus candidate) {
+            return std::cmp_equal(state, std::to_underlying(candidate));
+        };
         if (valid && stateIs(serato::ReadStatus::present)) {
             const auto bytes = sqlite3_column_bytes(row, serato_column::decodedData);
             valid = sqlite3_column_type(row, serato_column::decodedData) == SQLITE_BLOB && bytes > 0
@@ -222,16 +223,11 @@ std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
         if (!valid) {
             return std::nullopt;
         }
-        result.status = static_cast<serato::ReadStatus>(state);
+        status = static_cast<serato::ReadStatus>(state);
     }
-    if (result.status == serato::ReadStatus::present) {
-        const auto decoded = serato::deserializeTag(kind, data);
-        if (!decoded) {
-            return std::nullopt;
-        }
-        result = *decoded;
-    }
-    return identity.matches(file) ? std::optional {std::move(result)} : std::nullopt;
+    auto result = status == serato::ReadStatus::present ? serato::deserializeTag(kind, data)
+                                                        : serato::TagReadResult::missing(kind, status);
+    return result && identity.matches(file) ? result : std::nullopt;
 }
 
 /// Stores independently serialized tag data or a stable negative without requiring an analysis row.
@@ -239,13 +235,14 @@ std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
 /// Returns false for stale identities, inconsistent results, transient outcomes or database failures.
 bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const serato::TagReadResult& result)
 {
-    if (!serato::supportsTagKind(result.kind) || result.status < serato::ReadStatus::present
-        || result.status > serato::ReadStatus::cancelled || !juce::File::isAbsolutePath(identity.path))
+    const auto status = result.status();
+    if (!serato::supportsTagKind(result.kind) || status < serato::ReadStatus::present
+        || status > serato::ReadStatus::cancelled || !juce::File::isAbsolutePath(identity.path))
     {
         return false;
     }
     juce::MemoryBlock data;
-    switch (result.status) {
+    switch (status) {
         case serato::ReadStatus::present:
             data = serato::serializeTag(result);
             if (data.isEmpty() || data.getSize() > maximumOverviewBytes) {
@@ -255,11 +252,6 @@ bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const serato::T
         case serato::ReadStatus::absent:
         case serato::ReadStatus::unsupported:
         case serato::ReadStatus::invalid:
-            if (result.overview || result.analysis || result.autotags || result.beatGrid || result.markers
-                || result.trackInfo)
-            {
-                return false;
-            }
             break;
         case serato::ReadStatus::ioError:
         case serato::ReadStatus::cancelled:
@@ -286,7 +278,7 @@ bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const serato::T
     if (statement == nullptr) {
         return false;
     }
-    const bool dataBound = result.status == serato::ReadStatus::present
+    const bool dataBound = status == serato::ReadStatus::present
         ? sqlite::bindBlob(*statement, serato_parameter::decodedData, data)
         : sqlite::bindNull(*statement, serato_parameter::decodedData);
     const bool bound = dataBound && sqlite::bindText(*statement, serato_parameter::filePath, identity.path)
@@ -294,7 +286,7 @@ bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const serato::T
         && sqlite::bindInt64(*statement, serato_parameter::fileSize, identity.fileSize)
         && sqlite::bindInt64(*statement, serato_parameter::modifiedTimeMs, identity.modifiedTimeMs)
         && sqlite::bindInt64(*statement, serato_parameter::parserVersion, serato::parserVersion(result.kind))
-        && sqlite::bindInt64(*statement, serato_parameter::resultState, std::to_underlying(result.status))
+        && sqlite::bindInt64(*statement, serato_parameter::resultState, std::to_underlying(status))
         && sqlite::bindInt64(*statement, serato_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
     return bound && sqlite::stepToCompletion(*statement);
 }
