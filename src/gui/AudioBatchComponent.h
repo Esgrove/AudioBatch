@@ -115,13 +115,16 @@ private:
     juce::Array<juce::File> getSelectedRecordFiles() const;
     juce::StringArray getSelectedRecordPaths() const;
     [[nodiscard]] juce::String getFileOperationBlockedReason() const;
+    [[nodiscard]] juce::String getNormalizationBlockedReason() const;
     [[nodiscard]] juce::String getProcessingBlockedReason() const;
     [[nodiscard]] juce::Array<juce::File> releasePreviewBeforeProcessing(
         const std::vector<AudioAnalysisRecord>& records
     );
 
     [[nodiscard]] bool hasAnyRecords() const;
-    [[nodiscard]] bool isAnalysisInProgress() const;
+    [[nodiscard]] bool isAnalysisInProgress() const noexcept;
+    [[nodiscard]] bool isCurrentAnalysisRun(int runId) const noexcept;
+    [[nodiscard]] bool isIdle() const noexcept;
     [[nodiscard]] bool isFileBeingRewritten(const juce::String& fullPath) const;
     [[nodiscard]] juce::Rectangle<int> getOverallProgressBounds() const;
     [[nodiscard]] std::vector<AudioAnalysisRecord> getSelectedProcessableRecords() const;
@@ -246,7 +249,6 @@ private:
     /// Normalization mode and target, persisted in pluginAppProperties, which is declared before it.
     NormalizationTargetControl normalizationTargetControl {pluginAppProperties};
 
-    AnalysisRunState analysisRun;
     SafePointer<juce::DialogWindow> settingsWindow;
     juce::Array<SafePointer<juce::DialogWindow>> childWindows;
     juce::Array<juce::File> currentRoots;
@@ -264,11 +266,8 @@ private:
     std::unique_ptr<juce::FileChooser> directoryChooser;
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 
-    /// Progress and failures of the current or last normalization pass.
-    OperationProgress normalizeProgress;
-
-    /// Progress and failures of the current or last plugin processing pass.
-    OperationProgress processingProgress;
+    /// The analysis run, normalization pass, or plugin processing pass that is running, if any.
+    BackgroundWork backgroundWork;
 
     /// Primary and secondary sort columns of the results table.
     results_sorting::SortState sortState {
