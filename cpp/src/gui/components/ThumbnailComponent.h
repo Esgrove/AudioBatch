@@ -15,10 +15,29 @@
 
 #include <functional>
 #include <memory>
+#include <vector>
 
 namespace audiobatch
 {
 class AudioPreviewPlayer;
+
+/// Placement of the two arrows that mark one Serato cue on the waveform, in component coordinates.
+/// One arrow hangs from the top edge of the waveform and one rises from its bottom edge, both pointing inwards.
+struct CueArrows {
+    /// Opaque fill colour of the cue.
+    juce::Colour colour;
+    /// Horizontal position of the cue, where the tips of both arrows lie.
+    float horizontalPosition {0.0f};
+    /// Half the width of each arrow base along the waveform edge.
+    float halfWidth {0.0f};
+    /// Distance from the waveform edge to the arrow tip.
+    float height {0.0f};
+    /// Top edge of the waveform, where the base of the upper arrow lies.
+    float top {0.0f};
+    /// Bottom edge of the waveform, where the base of the lower arrow lies.
+    float bottom {0.0f};
+};
+
 /// Waveform preview component with transport following, scrubbing, zooming, and drag-and-drop.
 class ThumbnailComponent :
     public juce::Component,
@@ -53,6 +72,7 @@ public:
     juce::MemoryBlock saveToCacheData() const;
     juce::StringArray getLastDroppedFiles() const;
     juce::URL getLastDroppedFile() const noexcept;
+    [[nodiscard]] std::vector<CueArrows> getCueArrows() const;
 
     bool loadFromCacheData(const juce::MemoryBlock& waveformData);
     [[nodiscard]] bool isSeratoWaveformColouringEnabled() const noexcept;

@@ -702,22 +702,24 @@ void ThumbnailComponent::setSeratoMarkers(std::shared_ptr<const serato::Markers>
     repaint();
 }
 
-/// Draws inward-facing cue arrows over the waveform, below the child playback cursor.
+/// Returns the arrows of the Serato cues inside the visible range, in the order of the cues.
 /// Millisecond positions use the same seconds-based projection as scrubbing and the playhead.
-void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
+/// The arrows shrink on a short waveform, so each one reaches at most a quarter of the way to the other edge.
+/// Cues past the end of the track or outside the visible range have no arrows.
+std::vector<CueArrows> ThumbnailComponent::getCueArrows() const
 {
     const auto bounds = waveformBounds();
     if (!seratoMarkers || bounds.isEmpty() || visibleRange.getLength() <= 0.0) {
-        return;
+        return {};
     }
-    const juce::Graphics::ScopedSaveState savedState(graphics);
-    graphics.reduceClipRegion(bounds);
+
     const auto arrowHeight = std::min(layout::waveform::cueArrowHeight, static_cast<float>(bounds.getHeight()) / 4.0f);
     const auto halfWidth = std::min(
                                layout::waveform::cueArrowWidth,
                                arrowHeight * layout::waveform::cueArrowWidth / layout::waveform::cueArrowHeight
                            )
         / 2.0f;
+    std::vector<CueArrows> arrows;
     for (const auto& cue : seratoMarkers->cues) {
         const auto seconds = static_cast<double>(cue.positionMilliseconds) / utils::millisecondsPerSecond;
         if (seconds > thumbnail->getTotalLength() || seconds < visibleRange.getStart()
@@ -725,29 +727,49 @@ void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
         {
             continue;
         }
-        const auto horizontalPosition = timeToX(seconds);
-        const auto top = static_cast<float>(bounds.getY());
-        const auto bottom = static_cast<float>(bounds.getBottom());
+        arrows.push_back({
+            .colour = cue.colour.withAlpha(1.0f),
+            .horizontalPosition = timeToX(seconds),
+            .halfWidth = halfWidth,
+            .height = arrowHeight,
+            .top = static_cast<float>(bounds.getY()),
+            .bottom = static_cast<float>(bounds.getBottom()),
+        });
+    }
+    return arrows;
+}
+
+/// Draws the inward-facing cue arrows over the waveform, below the child playback cursor.
+void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
+{
+    const auto cueArrows = getCueArrows();
+    if (cueArrows.empty()) {
+        return;
+    }
+
+    const juce::Graphics::ScopedSaveState savedState(graphics);
+    graphics.reduceClipRegion(waveformBounds());
+    for (const auto& cue : cueArrows) {
         juce::Path arrows;
         arrows.addTriangle(
-            horizontalPosition - halfWidth,
-            top,
-            horizontalPosition + halfWidth,
-            top,
-            horizontalPosition,
-            top + arrowHeight
+            cue.horizontalPosition - cue.halfWidth,
+            cue.top,
+            cue.horizontalPosition + cue.halfWidth,
+            cue.top,
+            cue.horizontalPosition,
+            cue.top + cue.height
         );
         arrows.addTriangle(
-            horizontalPosition - halfWidth,
-            bottom,
-            horizontalPosition + halfWidth,
-            bottom,
-            horizontalPosition,
-            bottom - arrowHeight
+            cue.horizontalPosition - cue.halfWidth,
+            cue.bottom,
+            cue.horizontalPosition + cue.halfWidth,
+            cue.bottom,
+            cue.horizontalPosition,
+            cue.bottom - cue.height
         );
         graphics.setColour(juce::Colours::black.withAlpha(cueArrowOutlineAlpha));
         graphics.strokePath(arrows, juce::PathStrokeType(layout::waveform::cueArrowOutlineWidth));
-        graphics.setColour(cue.colour.withAlpha(1.0f));
+        graphics.setColour(cue.colour);
         graphics.fillPath(arrows);
     }
 }
