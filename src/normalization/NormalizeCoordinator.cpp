@@ -35,25 +35,29 @@ NormalizeCoordinator::~NormalizeCoordinator()
 /// Sets the callback that is invoked for each published result.
 void NormalizeCoordinator::setResultCallback(ResultCallback callback)
 {
-    callbacks.with([&callback](NormalizeCallbacks& all) { all.result = std::move(callback); });
+    const juce::ScopedLock lock(callbackLock);
+    resultCallback = std::move(callback);
 }
 
 /// Sets the callback that is invoked when a run completes.
 void NormalizeCoordinator::setCompletionCallback(CompletionCallback callback)
 {
-    callbacks.with([&callback](NormalizeCallbacks& all) { all.completion = std::move(callback); });
+    const juce::ScopedLock lock(callbackLock);
+    completionCallback = std::move(callback);
 }
 
 /// Sets the callback that is invoked with the normalized fraction of each file.
 void NormalizeCoordinator::setProgressCallback(ProgressCallback callback)
 {
-    callbacks.with([&callback](NormalizeCallbacks& all) { all.progress = std::move(callback); });
+    const juce::ScopedLock lock(callbackLock);
+    progressCallback = std::move(callback);
 }
 
 /// Sets the callback that is invoked right before each file's normalization begins.
 void NormalizeCoordinator::setStartingCallback(StartingCallback callback)
 {
-    callbacks.with([&callback](NormalizeCallbacks& all) { all.starting = std::move(callback); });
+    const juce::ScopedLock lock(callbackLock);
+    startingCallback = std::move(callback);
 }
 
 /// Invokes the progress callback when the given run id is still current.
@@ -64,7 +68,12 @@ void NormalizeCoordinator::publishProgress(const juce::File& file, const float p
         return;
     }
 
-    const auto callbackCopy = callbacks.with([](const NormalizeCallbacks& all) { return all.progress; });
+    ProgressCallback callbackCopy;
+
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = progressCallback;
+    }
 
     if (callbackCopy != nullptr) {
         callbackCopy(file, progress);
@@ -79,7 +88,12 @@ void NormalizeCoordinator::publishStarting(const juce::File& file, const int run
         return;
     }
 
-    const auto callbackCopy = callbacks.with([](const NormalizeCallbacks& all) { return all.starting; });
+    StartingCallback callbackCopy;
+
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = startingCallback;
+    }
 
     if (callbackCopy != nullptr) {
         callbackCopy(file);
@@ -94,7 +108,12 @@ void NormalizeCoordinator::publishResult(const AudioNormalizationResult& result,
         return;
     }
 
-    const auto callbackCopy = callbacks.with([](const NormalizeCallbacks& all) { return all.result; });
+    ResultCallback callbackCopy;
+
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = resultCallback;
+    }
 
     if (callbackCopy != nullptr) {
         callbackCopy(result);
@@ -110,7 +129,12 @@ void NormalizeCoordinator::publishCompletion(const int totalFiles, const int run
         return;
     }
 
-    const auto callbackCopy = callbacks.with([](const NormalizeCallbacks& all) { return all.completion; });
+    CompletionCallback callbackCopy;
+
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = completionCallback;
+    }
 
     if (callbackCopy != nullptr) {
         callbackCopy(totalFiles);
