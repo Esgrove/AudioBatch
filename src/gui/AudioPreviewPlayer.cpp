@@ -480,6 +480,15 @@ std::optional<double> AudioPreviewPlayer::getLoadedDurationSeconds() const
     return static_cast<double>(reader->lengthInSamples) / reader->sampleRate;
 }
 
+/// Returns the source length in samples, which sizes the waveform detail of the loaded file.
+std::optional<juce::int64> AudioPreviewPlayer::getLoadedLengthInSamples() const
+{
+    if (readerSource == nullptr) {
+        return std::nullopt;
+    }
+    return readerSource->getAudioFormatReader()->lengthInSamples;
+}
+
 /// Describes the output device without opening it.
 /// While the device is closed, this reports the last configuration the device manager kept,
 /// which stays empty until the device has been opened once.

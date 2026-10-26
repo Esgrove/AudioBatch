@@ -38,6 +38,32 @@ constexpr float cueArrowOutlineAlpha {0.8f};
 /// Number of Serato hot cue slots reachable with the number keys 1 to 8.
 constexpr int hotCueSlotCount {8};
 
+/// Number of points a waveform aims for, enough detail to zoom in on files of typical length.
+constexpr juce::int64 thumbnailTargetPoints {16'384};
+
+/// Finest waveform detail, in source samples per waveform point, used for short files.
+constexpr int minimumSamplesPerThumbnailPoint {16};
+
+/// Coarsest waveform detail, which keeps the cached waveform of a long file small.
+constexpr int maximumSamplesPerThumbnailPoint {1024};
+
+/// Returns the source samples per waveform point for a file:
+/// the power of two that gives it about thumbnailTargetPoints points, within the finest and coarsest detail.
+/// A 30 second file gets 128 samples per point, and an unknown length the coarsest detail.
+int samplesPerThumbnailPoint(const juce::int64 lengthInSamples)
+{
+    if (lengthInSamples <= 0) {
+        return maximumSamplesPerThumbnailPoint;
+    }
+    auto samplesPerPoint = minimumSamplesPerThumbnailPoint;
+    while (samplesPerPoint < maximumSamplesPerThumbnailPoint
+           && lengthInSamples / samplesPerPoint > thumbnailTargetPoints)
+    {
+        samplesPerPoint *= 2;
+    }
+    return samplesPerPoint;
+}
+
 /// Opacity of the outline drawn while the waveform has keyboard focus.
 constexpr float focusOutlineAlpha {0.6f};
 constexpr float loudnessLabelAlpha {0.8f};
@@ -48,9 +74,10 @@ constexpr float loudnessOutlineAlpha {0.65f};
 /// Creates a thumbnail view backed by the shared transport source.
 ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, AudioPreviewPlayer& source) :
     transportSource(source),
-    thumbnail(1024, formatManager, thumbnailCache)
+    thumbnailFormats(formatManager),
+    thumbnail(std::make_unique<juce::AudioThumbnail>(maximumSamplesPerThumbnailPoint, formatManager, thumbnailCache))
 {
-    thumbnail.addChangeListener(this);
+    thumbnail->addChangeListener(this);
 
     currentPositionMarker.setFill(juce::Colours::white.withAlpha(positionMarkerAlpha));
     addAndMakeVisible(currentPositionMarkerComponent);
@@ -62,7 +89,7 @@ ThumbnailComponent::ThumbnailComponent(juce::AudioFormatManager& formatManager, 
 ThumbnailComponent::~ThumbnailComponent()
 {
     positionAttachment = {};
-    thumbnail.removeChangeListener(this);
+    thumbnail->removeChangeListener(this);
 }
 
 /// Draws the waveform for the visible range, or a placeholder text when no file is loaded.
@@ -75,17 +102,17 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
     graphics.fillPath(outline);
     graphics.setColour(juce::CustomLookAndFeel::blue());
 
-    if (thumbnail.getTotalLength() > 0.0) {
+    if (thumbnail->getTotalLength() > 0.0) {
         const auto reduced = waveformBounds();
         const auto gradient = seratoWaveformColouringEnabled && seratoOverview
             ? serato::makeOverviewGradient(
-                  *seratoOverview, visibleRange, thumbnail.getTotalLength(), reduced, juce::CustomLookAndFeel::blue()
+                  *seratoOverview, visibleRange, thumbnail->getTotalLength(), reduced, juce::CustomLookAndFeel::blue()
               )
             : std::nullopt;
         if (gradient) {
-            serato::drawColouredThumbnail(graphics, thumbnail, reduced, visibleRange, displayGain, *gradient);
+            serato::drawColouredThumbnail(graphics, *thumbnail, reduced, visibleRange, displayGain, *gradient);
         } else {
-            thumbnail.drawChannels(graphics, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
+            thumbnail->drawChannels(graphics, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
         }
         drawLoudnessGraph(graphics);
         drawCueMarkers(graphics);
@@ -116,7 +143,7 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
     loudnessHistory.reset();
     seratoOverview.reset();
     seratoMarkers.reset();
-    thumbnail.clear();
+    thumbnail->clear();
     hasNotifiedFullyLoaded = false;
 
     if (waveformData.getSize() == 0) {
@@ -125,7 +152,7 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
         return false;
     }
 
-    if (juce::MemoryInputStream input(waveformData, false); !thumbnail.loadFrom(input)) {
+    if (juce::MemoryInputStream input(waveformData, false); !thumbnail->loadFrom(input)) {
         visibleRange = {};
         repaint();
         return false;
@@ -134,14 +161,14 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
     // A successful loadFrom can still leave the thumbnail empty
     // when the cached blob was written from an incomplete source.
     // Treat that as a cache miss so the caller can re-read the file.
-    if (thumbnail.getTotalLength() <= 0.0) {
-        thumbnail.clear();
+    if (thumbnail->getTotalLength() <= 0.0) {
+        thumbnail->clear();
         visibleRange = {};
         repaint();
         return false;
     }
 
-    setRange({0.0, thumbnail.getTotalLength()});
+    setRange({0.0, thumbnail->getTotalLength()});
     return true;
 }
 
@@ -154,12 +181,12 @@ juce::MemoryBlock ThumbnailComponent::saveToCacheData() const
     // AudioThumbnail::isFullyLoaded can briefly return true before any peak data has been generated.
     // Without this guard a zero-length blob can land in the cache,
     // causing the preview to render as "No audio file selected" on the next load.
-    if (!thumbnail.isFullyLoaded() || thumbnail.getTotalLength() <= 0.0) {
+    if (!thumbnail->isFullyLoaded() || thumbnail->getTotalLength() <= 0.0) {
         return waveformData;
     }
 
     juce::MemoryOutputStream output(waveformData, false);
-    thumbnail.saveTo(output);
+    thumbnail->saveTo(output);
     return waveformData;
 }
 
@@ -182,7 +209,8 @@ void ThumbnailComponent::setMouseWheelGainCallback(std::function<void(float)> ca
 }
 
 /// Loads a new audio resource into the thumbnail display.
-void ThumbnailComponent::setURL(const juce::URL& url)
+/// The length of the file in samples chooses the waveform detail, the finest for short files.
+void ThumbnailComponent::setURL(const juce::URL& url, const juce::int64 lengthInSamples)
 {
     loudnessHistory.reset();
     seratoOverview.reset();
@@ -190,21 +218,31 @@ void ThumbnailComponent::setURL(const juce::URL& url)
     hasNotifiedFullyLoaded = false;
 
     if (!url.isWellFormed()) {
-        thumbnail.clear();
+        thumbnail->clear();
         visibleRange = {};
         repaint();
         return;
     }
 
+    replaceThumbnail(samplesPerThumbnailPoint(lengthInSamples));
     // The thumbnail takes ownership of the input source.
-    thumbnail.setSource(new juce::URLInputSource(url));
+    thumbnail->setSource(new juce::URLInputSource(url));
 
-    if (thumbnail.getTotalLength() > 0.0) {
-        setRange({0.0, thumbnail.getTotalLength()});
+    if (thumbnail->getTotalLength() > 0.0) {
+        setRange({0.0, thumbnail->getTotalLength()});
     } else {
         visibleRange = {};
         repaint();
     }
+}
+
+/// Replaces the thumbnail with an empty one of the given detail, moving the change listener over.
+/// A thumbnail keeps its detail from creation or from the last cached data it loaded, so each file needs a new one.
+void ThumbnailComponent::replaceThumbnail(const int samplesPerPoint)
+{
+    thumbnail->removeChangeListener(this);
+    thumbnail = std::make_unique<juce::AudioThumbnail>(samplesPerPoint, thumbnailFormats, thumbnailCache);
+    thumbnail->addChangeListener(this);
 }
 
 /// Returns the most recently dropped file as a URL for convenience.
@@ -231,13 +269,13 @@ void ThumbnailComponent::setRange(const juce::Range<double> newRange)
 /// and fires the fully-loaded callback exactly once per loaded source.
 void ThumbnailComponent::changeListenerCallback(juce::ChangeBroadcaster* /*source*/)
 {
-    if (thumbnail.getTotalLength() > 0.0 && visibleRange.getLength() <= 0.0) {
-        setRange({0.0, thumbnail.getTotalLength()});
+    if (thumbnail->getTotalLength() > 0.0 && visibleRange.getLength() <= 0.0) {
+        setRange({0.0, thumbnail->getTotalLength()});
     } else {
         repaint();
     }
 
-    if (thumbnail.isFullyLoaded() && !hasNotifiedFullyLoaded) {
+    if (thumbnail->isFullyLoaded() && !hasNotifiedFullyLoaded) {
         hasNotifiedFullyLoaded = true;
 
         if (thumbnailFullyLoadedCallback) {
@@ -300,7 +338,7 @@ void ThumbnailComponent::focusLost(const FocusChangeType /*cause*/)
 /// Does nothing when that slot has no cue.
 void ThumbnailComponent::jumpToHotCue(const int slot)
 {
-    if (!seratoMarkers || thumbnail.getTotalLength() <= 0.0) {
+    if (!seratoMarkers || thumbnail->getTotalLength() <= 0.0) {
         return;
     }
 
@@ -312,7 +350,7 @@ void ThumbnailComponent::jumpToHotCue(const int slot)
     }
 
     const auto seconds = static_cast<double>(cue->positionMilliseconds) / utils::millisecondsPerSecond;
-    transportSource.setPosition(juce::jlimit(0.0, thumbnail.getTotalLength(), seconds));
+    transportSource.setPosition(juce::jlimit(0.0, thumbnail->getTotalLength(), seconds));
     transportSource.start();
     updateCursorPosition();
 }
@@ -344,7 +382,7 @@ void ThumbnailComponent::mouseUp(const juce::MouseEvent& /*event*/)
 /// and horizontal wheel scrolls the visible range.
 void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juce::MouseWheelDetails& wheel)
 {
-    if (thumbnail.getTotalLength() <= 0.0) {
+    if (thumbnail->getTotalLength() <= 0.0) {
         return;
     }
 
@@ -363,7 +401,7 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
 
     auto newStart = visibleRange.getStart()
         - static_cast<double>(wheel.deltaX) * visibleRange.getLength() * horizontalScrollStepRatio;
-    newStart = juce::jlimit(0.0, juce::jmax(0.0, thumbnail.getTotalLength() - visibleRange.getLength()), newStart);
+    newStart = juce::jlimit(0.0, juce::jmax(0.0, thumbnail->getTotalLength() - visibleRange.getLength()), newStart);
 
     if (canMoveTransport()) {
         setRange({newStart, newStart + visibleRange.getLength()});
@@ -402,7 +440,7 @@ double ThumbnailComponent::xToTime(const float xPosition) const
 juce::Rectangle<int> ThumbnailComponent::waveformBounds() const
 {
     auto bounds = getLocalBounds().reduced(2);
-    if (loudnessGraphEnabled && thumbnail.getTotalLength() > 0.0) {
+    if (loudnessGraphEnabled && thumbnail->getTotalLength() > 0.0) {
         bounds.removeFromLeft(
             std::min(
                 layout::waveform::loudnessAxisWidth + layout::waveform::loudnessAxisGap,
@@ -682,7 +720,7 @@ void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
         / 2.0f;
     for (const auto& cue : seratoMarkers->cues) {
         const auto seconds = static_cast<double>(cue.positionMilliseconds) / utils::millisecondsPerSecond;
-        if (seconds > thumbnail.getTotalLength() || seconds < visibleRange.getStart()
+        if (seconds > thumbnail->getTotalLength() || seconds < visibleRange.getStart()
             || seconds > visibleRange.getEnd())
         {
             continue;
@@ -718,13 +756,13 @@ void ThumbnailComponent::drawCueMarkers(juce::Graphics& graphics) const
 void ThumbnailComponent::setZoom(const double zoomLevel)
 {
     const auto start = transportSource.getCurrentPosition();
-    const auto zoom = thumbnail.getTotalLength() / zoomLevel;
-    const auto end = juce::jmin(thumbnail.getTotalLength(), start + zoom);
-    if (start < thumbnail.getTotalLength() * zoomStartAnchorRatio || thumbnail.getTotalLength() - start > zoom) {
+    const auto zoom = thumbnail->getTotalLength() / zoomLevel;
+    const auto end = juce::jmin(thumbnail->getTotalLength(), start + zoom);
+    if (start < thumbnail->getTotalLength() * zoomStartAnchorRatio || thumbnail->getTotalLength() - start > zoom) {
         setRange(juce::Range(start, end));
     } else {
         // The remaining distance is shorter than the zoom length, so zoom from the end instead.
-        setRange(juce::Range(thumbnail.getTotalLength() - zoom, end));
+        setRange(juce::Range(thumbnail->getTotalLength() - zoom, end));
     }
 }
 }  // namespace audiobatch

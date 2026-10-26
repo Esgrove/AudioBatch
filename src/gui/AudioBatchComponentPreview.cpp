@@ -200,7 +200,7 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
         if (waveformData.has_value() && thumbnail->loadFromCacheData(*waveformData)) {
             currentWaveformLoadedFromCache = true;
         } else {
-            thumbnail->setURL(currentAudioUrl);
+            thumbnail->setURL(currentAudioUrl, previewPlayer.getLoadedLengthInSamples().value_or(0));
         }
 
         requestSeratoPreview();
