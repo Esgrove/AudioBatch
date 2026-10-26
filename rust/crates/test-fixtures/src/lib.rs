@@ -31,6 +31,18 @@ pub const INTERSAMPLE_TRUE_PEAK_DECIBELS: f64 = -5.92;
 /// Integrated loudness of the intersample fixture, in LUFS, raised by the K-weighting at 11 kHz.
 pub const INTERSAMPLE_LOUDNESS: f64 = -2.67;
 
+/// File name of the Serato fixture, a swelling tone with a synthetic rainbow Serato Overview tag.
+///
+/// Its 240 overview slices form six bands of 40: red, yellow, green, cyan, blue, and magenta.
+/// Each slice also has background cells and one reserved palette index, which colouring skips.
+pub const SERATO_OVERVIEW_FIXTURE: &str = "serato_rainbow_stereo_44100_128k.mp3";
+
+/// Number of slices in the Serato Overview of the Serato fixture.
+pub const SERATO_OVERVIEW_SLICES: usize = 240;
+
+/// Colours of the bands in the Serato Overview of the Serato fixture, as `0xRRGGBB` values.
+pub const SERATO_OVERVIEW_BANDS: [u32; 6] = [0xFF_0000, 0xFF_FF00, 0x00_FF00, 0x00_FFFF, 0x00_00FF, 0xFF_00FF];
+
 /// Allowed level difference for lossless fixtures, in dB or LU.
 pub const LOSSLESS_TOLERANCE: f64 = 0.05;
 
@@ -143,10 +155,12 @@ mod test_fixture_paths {
     }
 
     #[test]
-    fn every_tone_fixture_exists() {
+    fn every_named_fixture_exists() {
         for tone in TONE_FIXTURES {
             assert!(tone.path().is_file(), "Missing fixture {}", tone.file_name);
         }
+        assert!(fixture(SERATO_OVERVIEW_FIXTURE).is_file());
+        assert!(fixture(INTERSAMPLE_FIXTURE).is_file());
     }
 
     #[test]

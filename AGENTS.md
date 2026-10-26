@@ -14,7 +14,8 @@ This repository holds two versions of it side by side, each with its own agent i
   such as platform detection and colored output.
   `cpp/common.sh` and `rust/common.sh` source it and add their project specific parts.
 - `fixtures/` holds the committed audio fixtures that both test suites read in place.
-  `fixtures/generate.sh` regenerates them with ffmpeg.
+  `fixtures/generate.sh` regenerates them with ffmpeg,
+  and calls `fixtures/serato_overview.py` to add the rainbow Serato Overview tag that ffmpeg cannot write.
   When a fixture changes, update the expected values in the C++ tests and in the Rust `test-fixtures` crate.
 - `.agents/rules/` holds rules for the C++ sources, and `.claude/rules` is a symlink to it.
 - `.pre-commit-config.yaml` runs clang-format and cmake-format on `cpp/`, cargo fmt on `rust/`,

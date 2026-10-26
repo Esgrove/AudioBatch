@@ -2,6 +2,7 @@
 /// Reader coverage depends only on committed fixtures and generated payloads.
 
 #include "serato/SeratoTagReader.h"
+#include "serato/SeratoWaveformColouring.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
@@ -329,11 +330,45 @@ public:
     void runTest() override
     {
         testOverview();
+        testRainbowFixture();
         testMetadata();
         testTrackInfoFields();
     }
 
 private:
+    /// Reads the committed rainbow fixture, which the Rust tests read too.
+    void testRainbowFixture()
+    {
+        beginTest("The committed rainbow fixture has 240 overview slices in six colour bands");
+        const auto result = serato::readTag(fixtureFile("serato_rainbow_stereo_44100_128k.mp3"));
+        expectStatus(result, serato::ReadStatus::present);
+        const auto overview = tagValue<serato::Overview>(result);
+        expect(overview.has_value());
+        if (!overview) {
+            return;
+        }
+        constexpr std::size_t sliceCount {240};
+        expectEquals(overview->slices.size(), sliceCount);
+        const std::array<juce::uint32, 6> bands {
+            0xffff0000,
+            0xffffff00,
+            0xff00ff00,
+            0xff00ffff,
+            0xff0000ff,
+            0xffff00ff,
+        };
+        const auto slicesPerBand = sliceCount / bands.size();
+        for (std::size_t band = 0; band < bands.size() && overview->slices.size() == sliceCount; ++band) {
+            for (const auto slice : {band * slicesPerBand, ((band + 1) * slicesPerBand) - 1}) {
+                const auto colour = serato::colourForOverviewSlice(overview->slices[slice], juce::Colours::black);
+                expect(
+                    colour.getARGB() == bands[band],
+                    utils::format("slice {} is {} instead of {:08x}", slice, colour.toString(), bands[band])
+                );
+            }
+        }
+    }
+
     /// Preserves existing Overview container and outcome regression coverage.
     void testOverview()
     {
