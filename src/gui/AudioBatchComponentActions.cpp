@@ -446,6 +446,8 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
         clearCurrentAudioPreview();
     }
 
+    // The old row numbers point at different files now, and updateContent would report them as the selection.
+    resultsTable.setSelectedRows({}, juce::dontSendNotification);
     resultsTable.updateContent();
     updateResultsTableColumnWidths();
     restoreSelectionByPaths(remainingSelectedPaths);

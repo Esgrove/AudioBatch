@@ -424,6 +424,11 @@ private:
                 invalidValues.push_back(juce::Base64::toBase64(corrupt.getData(), corrupt.getSize()));
             }
             invalidValues.push_back(juce::String::repeatedString("A", 1500000));
+            // The first character moved up by 0x100 has the same low byte, which a Latin-1 conversion would keep.
+            juce::String nonAscii;
+            nonAscii << juce::String::charToString(static_cast<juce::juce_wchar>(0x100 + encoded[0]))
+                     << encoded.substring(1);
+            invalidValues.push_back(nonAscii);
             for (const auto& value : invalidValues) {
                 expect(writeFlacValues(flacFile, {value}));
                 expectStatus(serato::readTag(flacFile), serato::ReadStatus::invalid);

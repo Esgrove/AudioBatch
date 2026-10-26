@@ -184,6 +184,20 @@ public:
             expect(explicitFiles.isEmpty());
         }
 
+        beginTest("A recursive scan ends on a symlink that points back to its parent folder");
+        {
+            const TemporaryDirectory directory;
+            const auto folder = directory.getChildFile("music");
+            expect(folder.createDirectory());
+            expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(folder.getChildFile("tone.wav")));
+
+            // Creating a symlink needs extra privileges on Windows, so the check only runs where the link exists.
+            if (folder.createSymbolicLink(folder.getChildFile("loop"), true)) {
+                const auto files = collectInputFiles({folder}, true);
+                expectEquals(files.size(), 1);
+            }
+        }
+
         beginTest("A cancelled folder scan stops without collecting files");
         {
             const auto files

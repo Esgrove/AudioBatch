@@ -19,6 +19,18 @@
 
 namespace audiobatch::serato
 {
+/// How reading the tag kinds missing from the cache ended.
+/// Cancellation stays silent, while a rejected identity still completes the request with null data,
+/// so the preview waiting for it is resolved.
+enum class ReadOutcome : std::uint8_t {
+    /// Every missing kind was read, or none were missing.
+    completed,
+    /// The request was cancelled or replaced by a newer one.
+    cancelled,
+    /// The file changed on disk, so the read results no longer describe the requested file.
+    identityRejected,
+};
+
 /// Owns the immutable pre-read file identity for a single preview generation.
 struct SeratoPreviewRequest {
     juce::File file;
@@ -65,7 +77,7 @@ private:
     void run(const std::stop_token& stopToken);
     void process(const SeratoPreviewRequest& active, const std::stop_token& stopToken) const;
 
-    bool readMisses(
+    ReadOutcome readMisses(
         const SeratoPreviewRequest& active,
         std::span<const TagKind> misses,
         Results& results,

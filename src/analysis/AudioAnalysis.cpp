@@ -246,6 +246,7 @@ juce::Array<juce::File> collectInputFiles(
         }
 
         if (inputPath.isDirectory()) {
+            // The iterator follows every symlink by default, which never ends on a link that points to its parent.
             for (const auto& entry : juce::RangedDirectoryIterator(
                      inputPath,
                      recursive,
@@ -253,7 +254,8 @@ juce::Array<juce::File> collectInputFiles(
                      static_cast<int>(
                          static_cast<unsigned int>(juce::File::findFiles)
                          | static_cast<unsigned int>(juce::File::ignoreHiddenFiles)
-                     )
+                     ),
+                     juce::File::FollowSymlinks::noCycles
                  ))
             {
                 if (cancelled()) {
