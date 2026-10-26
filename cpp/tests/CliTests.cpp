@@ -275,9 +275,16 @@ private:
         AudioAnalysisRecord quoted;
         quoted.fullPath = R"(/music/a, "b".wav)";
         quoted.fileName = R"(a, "b".wav)";
+        quoted.formatName = "WAV";
+        quoted.sampleRate = 44'100;
+        quoted.channels = 2;
+        quoted.bitsPerSample = 24;
+        quoted.durationSeconds = 1.5;
+        // Every level differs from the others, so a field that reports the wrong measurement fails the check.
         quoted.overallPeak = 0.5f;
-        quoted.overallTruePeak = 0.5;
-        quoted.integratedLufs = -14.0;
+        quoted.overallTruePeak = 0.8;
+        quoted.integratedLufs = -14.25;
+        quoted.maxShortTermLufs = -11.5;
         quoted.status = AudioAnalysisStatus::analyzed;
 
         AudioAnalysisRecord silent;
@@ -297,15 +304,23 @@ private:
 
         beginTest("CSV output escapes fields and always has a header");
         {
+            const juce::String header {"path,name,format,sampleRate,channels,bitsPerSample,durationSeconds,"
+                                       "peakDbfs,truePeakDbtp,integratedLufs,maxShortTermLufs,status,error"};
             const auto emptyLines = juce::StringArray::fromLines(cli::formatRecordsAsCsv({}).trimEnd());
             expectEquals(emptyLines.size(), 1);
-            expect(emptyLines[0].startsWith("path,name,"), emptyLines[0]);
+            expectEquals(emptyLines[0], header);
 
             const auto csv = cli::formatRecordsAsCsv(records);
             expect(!csv.containsChar('\r'));
             const auto lines = juce::StringArray::fromLines(csv.trimEnd());
             expectEquals(lines.size(), 4);
-            expect(lines[1].startsWith(R"("/music/a, ""b"".wav")"), lines[1]);
+            expectEquals(lines[0], header);
+            expectEquals(
+                lines[1],
+                juce::String(
+                    R"("/music/a, ""b"".wav","a, ""b"".wav",WAV,44100,2,24,1.5,-6.02,-1.94,-14.25,-11.5,analyzed,)"
+                )
+            );
             expect(lines[3].contains("failed"), lines[3]);
             expect(lines[3].contains("Unsupported or unreadable audio file"), lines[3]);
         }
@@ -318,8 +333,23 @@ private:
             expect(parsed.isArray());
             expectEquals(parsed.size(), 3);
 
-            expectEquals(static_cast<double>(parsed[0]["peakDbfs"]), -6.02);
             expectEquals(parsed[0]["path"].toString(), quoted.fullPath);
+            expectEquals(parsed[0]["name"].toString(), quoted.fileName);
+            expectEquals(parsed[0]["format"].toString(), juce::String("WAV"));
+            expectEquals(static_cast<int>(parsed[0]["sampleRate"]), 44'100);
+            expectEquals(static_cast<int>(parsed[0]["channels"]), 2);
+            expectEquals(static_cast<int>(parsed[0]["bitsPerSample"]), 24);
+            expectEquals(static_cast<double>(parsed[0]["durationSeconds"]), 1.5);
+            expectEquals(static_cast<double>(parsed[0]["peakDbfs"]), -6.02);
+            expectEquals(static_cast<double>(parsed[0]["truePeakDbtp"]), -1.94);
+            expectEquals(static_cast<double>(parsed[0]["integratedLufs"]), -14.25);
+            expectEquals(static_cast<double>(parsed[0]["maxShortTermLufs"]), -11.5);
+            expectEquals(parsed[0]["status"].toString(), juce::String("analyzed"));
+
+            // The levels are written as rounded, without the binary rounding error of the double that holds them.
+            expect(json.contains("\"peakDbfs\": -6.02,"), json);
+            expect(json.contains("\"truePeakDbtp\": -1.94,"), json);
+
             expect(parsed[1]["peakDbfs"].isVoid());
             expect(parsed[1]["integratedLufs"].isVoid());
             expectEquals(parsed[2]["status"].toString(), juce::String("failed"));
