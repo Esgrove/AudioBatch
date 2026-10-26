@@ -242,7 +242,7 @@ private:
         record.status = AudioAnalysisStatus::analyzed;
         serato::SeratoData data;
         data.autotags = serato::Autotags {.bpm = 128.25};
-        data.trackInfo = serato::TrackInfo {.bpm = 130.0, .key = "8A"};
+        data.trackInfo = makeTrackInfo(130.0, "8A");
         panel.showRecord(record, {}, &data);
         expectEquals(panelValue(panel, "BPM"), juce::String("128.25"));
         expectEquals(panelValue(panel, "Key"), juce::String("8A"));
@@ -263,7 +263,7 @@ private:
 
         beginTest("Musical metadata survives pending or failed analysis without treating Analysis version as key");
         data.beatGrid.reset();
-        data.trackInfo = serato::TrackInfo {.bpm = 92.0, .key = "F minor"};
+        data.trackInfo = makeTrackInfo(92.0, "F minor");
         record.status = AudioAnalysisStatus::pending;
         panel.showRecord(record, "Analyzing", &data);
         expectEquals(panelValue(panel, "BPM"), juce::String("92.00"));

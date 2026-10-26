@@ -6,6 +6,7 @@
 #include "serato/SeratoBytes.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <cmath>
 #include <locale>
@@ -451,7 +452,8 @@ std::optional<Markers> readMarkers(Cursor& input)
     return markers;
 }
 
-/// Reads cache track information with an optional positive BPM and a key, requiring at least one of the two.
+/// Reads cache track information: an optional positive BPM followed by the key, album, genre, year, and comment texts,
+/// requiring at least one field to be set.
 std::optional<TrackInfo> readTrackInfo(Cursor& input)
 {
     const auto hasBpm = input.boolean();
@@ -465,11 +467,16 @@ std::optional<TrackInfo> readTrackInfo(Cursor& input)
             return std::nullopt;
         }
     }
-    const auto key = input.text();
-    if (!key || (!info.bpm && key->isEmpty())) {
+    for (auto* field : {&info.key, &info.album, &info.genre, &info.year, &info.comment}) {
+        const auto text = input.text();
+        if (!text) {
+            return std::nullopt;
+        }
+        *field = *text;
+    }
+    if (info.isEmpty()) {
         return std::nullopt;
     }
-    info.key = *key;
     return info;
 }
 
@@ -524,14 +531,20 @@ bool writeCachePayload(juce::MemoryOutputStream& payload, const TagValue& value)
         }
         case TagKind::trackInfo: {
             const auto& info = std::get<TrackInfo>(value);
-            if (info.key.getNumBytesAsUTF8() > maxTagTextBytes) {
+            const std::array texts {&info.key, &info.album, &info.genre, &info.year, &info.comment};
+            if (std::ranges::any_of(
+                    texts, [](const auto* text) { return text->getNumBytesAsUTF8() > maxTagTextBytes; }
+                ))
+            {
                 return false;
             }
             payload.writeBool(info.bpm.has_value());
             if (info.bpm) {
                 writeReal(payload, *info.bpm);
             }
-            writeText(payload, info.key);
+            for (const auto* text : texts) {
+                writeText(payload, *text);
+            }
             return true;
         }
         case TagKind::overview:

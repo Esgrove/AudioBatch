@@ -330,6 +330,7 @@ public:
     {
         testOverview();
         testMetadata();
+        testTrackInfoFields();
     }
 
 private:
@@ -567,6 +568,41 @@ private:
                 static_cast<int>(serato::readTag(file, serato::TagKind::trackInfo).status()),
                 static_cast<int>(serato::ReadStatus::absent)
             );
+        }
+    }
+
+    /// Checks that track information also carries the album, genre, year, and comment of the standard tags.
+    void testTrackInfoFields()
+    {
+        const TemporaryDirectory directory;
+        beginTest("Track information carries the album, genre, year, and comment of the standard tags");
+        {
+            const auto tagged = tagValue<serato::TrackInfo>(
+                serato::readTag(fixtureFile("tagged_stereo_44100_16.flac"), serato::TagKind::trackInfo)
+            );
+            expect(tagged.has_value());
+            if (tagged) {
+                expectEquals(tagged->album, juce::String("Fixtures"));
+                expectEquals(tagged->comment, juce::String("Custom comment"));
+            }
+
+            const auto file = directory.getChildFile("dates.wav");
+            expect(createSyntheticContainer(file));
+            expect(writeSyntheticTags(file));
+            {
+                TagLib::RIFF::WAV::File wav(utils::tagLibFileName(file.getFullPathName()), false);
+                auto properties = wav.properties();
+                properties.replace("DATE", TagLib::StringList("2024-05-01"));
+                properties.replace("GENRE", TagLib::StringList("Techno"));
+                wav.setProperties(properties);
+                expect(wav.save());
+            }
+            const auto dated = tagValue<serato::TrackInfo>(serato::readTag(file, serato::TagKind::trackInfo));
+            expect(dated.has_value());
+            if (dated) {
+                expectEquals(dated->year, juce::String("2024"));
+                expectEquals(dated->genre, juce::String("Techno"));
+            }
         }
     }
 

@@ -304,7 +304,23 @@ TagReadResult readFlacTag(
     return result;
 }
 
-/// Validates one bounded standard property and stores the first usable tempo or musical key.
+/// Returns the trimmed text of a bounded tag value, or an empty string when it is not valid UTF-8.
+juce::String readTagText(const std::string& text)
+{
+    if (!juce::CharPointer_UTF8::isValidString(text.c_str(), static_cast<int>(text.size())) || text.contains('\0')) {
+        return {};
+    }
+    return juce::String::fromUTF8(text.c_str(), static_cast<int>(text.size())).trim();
+}
+
+/// Returns the year a DATE value starts with, or the whole value when it does not start with four digits.
+juce::String readYear(const juce::String& date)
+{
+    const auto year = date.substring(0, 4);
+    return year.length() == 4 && year.containsOnly("0123456789") ? year : date;
+}
+
+/// Validates one bounded standard property and stores it as the first usable value of its field.
 bool readTrackInfoValue(TrackInfo& info, const std::string_view name, const TagLib::String& value)
 {
     if (value.size() > maxTagTextBytes) {
@@ -320,22 +336,38 @@ bool readTrackInfoValue(TrackInfo& info, const std::string_view name, const TagL
             info.bpm = bpm;
             return true;
         }
-    } else if (
-        juce::CharPointer_UTF8::isValidString(text.c_str(), static_cast<int>(text.size())) && !text.contains('\0')
-    )
-    {
-        info.key = juce::String::fromUTF8(text.c_str(), static_cast<int>(text.size())).trim();
-        return info.key.isNotEmpty();
+        return false;
     }
-    return false;
+    const auto string = readTagText(text);
+    if (string.isEmpty()) {
+        return false;
+    }
+    if (name == "INITIALKEY") {
+        info.key = string;
+    } else if (name == "ALBUM") {
+        info.album = string;
+    } else if (name == "GENRE") {
+        info.genre = string;
+    } else if (name == "DATE") {
+        info.year = readYear(string);
+    } else if (name == "COMMENT" || name == "DESCRIPTION") {
+        // Vorbis comments may hold the comment as DESCRIPTION, as ffmpeg writes it, so that is the fallback.
+        if (info.comment.isEmpty()) {
+            info.comment = string;
+        }
+    } else {
+        return false;
+    }
+    return true;
 }
 
-/// Reads standard tempo and musical key, allowing malformed BPM to coexist with an independently valid key.
+/// Reads the standard tempo, musical key, album, genre, date, and comment,
+/// allowing a malformed value to coexist with independently valid ones.
 TagReadResult readTrackInfo(const TagLib::PropertyMap& properties, const utils::CancellationCheck& isCancelled)
 {
     auto result = TagReadResult::missing(TagKind::trackInfo, ReadStatus::absent);
     TrackInfo info;
-    for (const auto* name : {"BPM", "INITIALKEY"}) {
+    for (const auto* name : {"BPM", "INITIALKEY", "ALBUM", "GENRE", "DATE", "COMMENT", "DESCRIPTION"}) {
         const auto entry = properties.find(name);
         if (entry == properties.end()) {
             continue;
@@ -353,7 +385,7 @@ TagReadResult readTrackInfo(const TagLib::PropertyMap& properties, const utils::
             }
         }
     }
-    if (info.bpm || info.key.isNotEmpty()) {
+    if (!info.isEmpty()) {
         return TagReadResult::present(std::move(info));
     }
     return result;

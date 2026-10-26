@@ -10,12 +10,14 @@
 #include "utils/StringFormat.h"
 
 #include <cmath>
+#include <utility>
 
 namespace audiobatch
 {
 namespace
 {
-/// Appends musical metadata, preferring Serato's analyzed tempo over standard BPM and grid fallback.
+/// Appends musical metadata, preferring Serato's analyzed tempo over standard BPM and grid fallback,
+/// followed by the key, album, genre, year, and comment tags that are set.
 void appendTrackInfo(std::vector<AudioInfoRow>& rows, const serato::SeratoData* data)
 {
     if (data == nullptr) {
@@ -33,8 +35,22 @@ void appendTrackInfo(std::vector<AudioInfoRow>& rows, const serato::SeratoData* 
     if (bpm && std::isfinite(*bpm) && *bpm > 0.0) {
         rows.push_back({.field = "BPM", .value = utils::format("{:.2f}", *bpm)});
     }
-    if (data->trackInfo && data->trackInfo->key.isNotEmpty()) {
-        rows.push_back({.field = "Key", .value = data->trackInfo->key});
+    if (!data->trackInfo) {
+        return;
+    }
+    const auto& info = *data->trackInfo;
+    for (const auto& [field, value] :
+         {
+             std::pair {"Key", &info.key},
+             std::pair {"Album", &info.album},
+             std::pair {"Genre", &info.genre},
+             std::pair {"Year", &info.year},
+             std::pair {"Comment", &info.comment},
+         })
+    {
+        if (value->isNotEmpty()) {
+            rows.push_back({.field = field, .value = *value});
+        }
     }
 }
 

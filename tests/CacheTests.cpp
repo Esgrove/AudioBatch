@@ -752,7 +752,7 @@ private:
                 .colour = juce::Colours::blue,
                 .bpmLocked = false,
             }),
-            serato::TagReadResult::present(serato::TrackInfo {.bpm = 128.25, .key = "Am"}),
+            serato::TagReadResult::present(makeTrackInfo(128.25, "Am")),
         };
 
         runMultiKindRoundTripTests(cache, databaseFile, file, identity, positives);

@@ -77,7 +77,7 @@ serato::TagReadResult previewResult(const serato::TagKind kind, const ReadStatus
                 .bpmLocked = false,
             });
         case serato::TagKind::trackInfo:
-            return serato::TagReadResult::present(serato::TrackInfo {.bpm = 128.0, .key = "Am"});
+            return serato::TagReadResult::present(makeTrackInfo(128.0, "Am"));
     }
     return serato::TagReadResult::missing(kind, ReadStatus::unsupported);
 }
