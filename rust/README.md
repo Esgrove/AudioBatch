@@ -108,7 +108,7 @@ Options:
   -r, --recurse          Recurse into directories
   -f, --refresh          Ignore cached analysis and re-analyze files
   -n, --normalize        Normalize analyzed files, then report the re-analyzed output peaks
-  -F, --force            Let --normalize replace an existing output file
+  -F, --force            Let normalize replace an existing output file
       --peak <DBFS>      Normalize to this sample peak, -12 to 0 (default 0)
       --lufs <LUFS>      Normalize to this integrated loudness, -24 to -6, with a -0.3 dBTP ceiling
   -j, --jobs <COUNT>     Override worker count
