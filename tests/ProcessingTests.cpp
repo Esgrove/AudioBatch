@@ -283,7 +283,7 @@ private:
     TestPluginSettings settings;
     float currentGain;
     int widestBuffer = 0;
-    double preparedSampleRate = 44100.0;
+    double preparedSampleRate = 44'100.0;
     std::vector<std::vector<float>> history;
     std::size_t historyPosition = 0;
 };
@@ -518,7 +518,7 @@ public:
                 expect(result.committed);
                 expectWithinAbsoluteError(peakDecibels(result.analysisRecord), expectedPeak, 0.01);
                 expectEquals(plugin.getPreparedBlockSize(), plugin_processing::processingBlockSize);
-                expectWithinAbsoluteError(plugin.getLastSampleRate(), 44100.0, 0.001);
+                expectWithinAbsoluteError(plugin.getLastSampleRate(), 44'100.0, 0.001);
                 expectEquals(
                     plugin.getLifecycle().joinIntoString(","), juce::String("prepare,restore-initialized,reset,release")
                 );
@@ -531,25 +531,26 @@ public:
             juce::MemoryBlock savedState;
             plugin.getStateInformation(savedState);
 
-            plugin_processing::restoreStateAndPrepare(plugin, savedState, 48000.0, 512);
+            plugin_processing::restoreStateAndPrepare(plugin, savedState, 48'000.0, 512);
 
             expectEquals(plugin.getPreparedBlockSize(), 512);
-            expectWithinAbsoluteError(plugin.getLastSampleRate(), 48000.0, 0.001);
+            expectWithinAbsoluteError(plugin.getLastSampleRate(), 48'000.0, 0.001);
             expectEquals(plugin.getLifecycle().joinIntoString(","), juce::String("prepare,restore-initialized"));
             expectPreparedGain(plugin, 0.25f);
-            plugin_processing::releasePluginResources({&plugin});
+            plugin_processing::releasePluginResources(chainOf(plugin));
         }
 
         beginTest("An AU with empty saved state is prepared once and reset without restoring");
         {
             PreparationTestPlugin plugin(true);
-            const auto preparation = plugin_processing::prepareChain({&plugin}, makeOptions({&plugin}), 2, 44100.0);
+            const auto preparation
+                = plugin_processing::prepareChain(chainOf(plugin), makeOptions({&plugin}), 2, 44'100.0);
 
             expect(preparation.errorMessage.isEmpty(), preparation.errorMessage);
             expectEquals(plugin.getLifecycle().joinIntoString(","), juce::String("prepare,reset"));
             expectEquals(plugin.getPreparedBlockSize(), plugin_processing::processingBlockSize);
             expectPreparedGain(plugin, 1.0f);
-            plugin_processing::releasePluginResources({&plugin});
+            plugin_processing::releasePluginResources(chainOf(plugin));
         }
 
         beginTest("The editor preparation helper restores non-AU state before activation");
@@ -560,13 +561,13 @@ public:
 
             for (int preparationIndex = 0; preparationIndex < 2; ++preparationIndex) {
                 plugin.clearLifecycle();
-                plugin_processing::restoreStateAndPrepare(plugin, savedState, 48000.0, 512);
+                plugin_processing::restoreStateAndPrepare(plugin, savedState, 48'000.0, 512);
 
                 expectEquals(plugin.getLifecycle().joinIntoString(","), juce::String("restore-inactive,prepare"));
                 expectEquals(plugin.getPreparedBlockSize(), 512);
-                expectWithinAbsoluteError(plugin.getLastSampleRate(), 48000.0, 0.001);
+                expectWithinAbsoluteError(plugin.getLastSampleRate(), 48'000.0, 0.001);
                 expectPreparedGain(plugin, 0.25f);
-                plugin_processing::releasePluginResources({&plugin});
+                plugin_processing::releasePluginResources(chainOf(plugin));
             }
         }
 
@@ -603,7 +604,7 @@ public:
                 return file.deleteFile();
             };
 
-            const auto result = processFileWithPlugins(analyzeFile(source), options, {&plugin});
+            const auto result = processFileWithPlugins(analyzeFile(source), options, chainOf(plugin));
 
             expect(!result.hasError(), result.errorMessage);
             expectEquals(disposedNames.joinIntoString(","), juce::String("in_place.aif"));
@@ -623,7 +624,7 @@ public:
                 return file.deleteFile();
             };
 
-            const auto result = processFileWithPlugins(analyzeFile(source), options, {&plugin});
+            const auto result = processFileWithPlugins(analyzeFile(source), options, chainOf(plugin));
 
             expect(result.hasError());
             expect(!result.committed);
@@ -643,7 +644,7 @@ public:
             expect(!source.exists());
             expectEquals(result.outputFile.getFileName(), juce::String("converted.aif"));
             expectEquals(result.analysisRecord.bitsPerSample, 16);
-            expectEquals(result.analysisRecord.sampleRate, 48000);
+            expectEquals(result.analysisRecord.sampleRate, 48'000);
         }
 
         beginTest("Plugin latency is removed from the start of the output");
@@ -722,7 +723,9 @@ public:
             const auto sourceModified = source.getLastModificationTime();
             TestPlugin plugin({.gain = 0.5f});
             const auto result
-                = processFileWithPlugins(analyzeFile(source), makeOptions({&plugin}), {&plugin}, [] { return true; });
+                = processFileWithPlugins(analyzeFile(source), makeOptions({&plugin}), chainOf(plugin), [] {
+                      return true;
+                  });
 
             expect(result.hasError());
             expect(result.errorMessage.contains("cancelled"), result.errorMessage);
@@ -739,7 +742,7 @@ public:
             TestPlugin plugin({});
             const auto cancelledAnalysis = analyzeFile(source, [] { return true; });
             const auto result
-                = processFileWithPlugins(staleRecord, makeOptions({&plugin}), {&plugin}, [] { return true; });
+                = processFileWithPlugins(staleRecord, makeOptions({&plugin}), chainOf(plugin), [] { return true; });
 
             expect(result.hasError());
             expectEquals(result.errorMessage, cancelledAnalysis.errorMessage);
@@ -757,7 +760,7 @@ public:
             target.targetPeakDbfs = -3.0;
             options.normalizeBeforePlugin = target;
 
-            const auto result = processFileWithPlugins(analyzeFile(source), options, {&plugin});
+            const auto result = processFileWithPlugins(analyzeFile(source), options, chainOf(plugin));
 
             expect(!result.hasError(), result.errorMessage);
             expectWithinAbsoluteError(peakDecibels(result.analysisRecord), -3.0, 0.05);
@@ -773,7 +776,7 @@ public:
             target.targetLufs = -20.0;
             options.normalizeBeforePlugin = target;
 
-            const auto result = processFileWithPlugins(analyzeFile(source), options, {&plugin});
+            const auto result = processFileWithPlugins(analyzeFile(source), options, chainOf(plugin));
 
             expect(!result.hasError(), result.errorMessage);
             expectWithinAbsoluteError(result.analysisRecord.integratedLufs, -20.0, 0.1);
@@ -789,7 +792,7 @@ public:
             record.hasCustomGain = true;
             record.customGainDb = -6.0f;
 
-            const auto result = processFileWithPlugins(record, options, {&plugin});
+            const auto result = processFileWithPlugins(record, options, chainOf(plugin));
 
             expect(!result.hasError(), result.errorMessage);
             expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels - 6.0, 0.05);
@@ -1037,6 +1040,13 @@ private:
         }
 
         return difference;
+    }
+
+    /// Returns a chain holding only the given plugin.
+    /// The services take the chain as a std::span, which a braced list cannot convert to.
+    static std::vector<juce::AudioPluginInstance*> chainOf(juce::AudioPluginInstance& plugin)
+    {
+        return {&plugin};
     }
 
     /// Builds options for the given chain that delete replaced files instead of moving them to the system trash.

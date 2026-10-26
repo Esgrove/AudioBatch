@@ -5,11 +5,13 @@
 #pragma once
 
 #include "analysis/AudioAnalysisTypes.h"
+#include "gui/AudioBatchComponentConstants.h"
 
 #include <JuceHeader.h>
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <vector>
 
 namespace audiobatch
@@ -19,20 +21,21 @@ namespace audiobatch
 class SecondarySortTableHeader final : public juce::TableHeaderComponent
 {
 public:
-    /// Called with the column id when a column is clicked with ctrl or cmd held down.
-    using SecondarySortCallback = std::function<void(int columnId)>;
+    /// Called with the column when a column is clicked with ctrl or cmd held down.
+    using SecondarySortCallback = std::function<void(AudioFileTableColumn column)>;
 
     explicit SecondarySortTableHeader(SecondarySortCallback secondarySortRequestedCallback);
 
     void columnClicked(int columnId, const juce::ModifierKeys& modifiers) override;
-    void setSecondarySortIndicator(int columnId, bool isForwards);
+    void setSecondarySortIndicator(std::optional<AudioFileTableColumn> column, bool isForwards);
 
 private:
     void cacheBaseColumnNames();
 
     SecondarySortCallback secondarySortRequested;
     bool secondarySortForwards {true};
-    int secondarySortColumnId {0};
+    std::optional<AudioFileTableColumn> secondarySortColumn;
+    /// Column names without the secondary sort marker, keyed by JUCE column id.
     std::map<int, juce::String> baseColumnNames;
 };
 
@@ -40,22 +43,22 @@ private:
 namespace results_sorting
 {
 /// The primary and secondary sort columns of the results table.
-/// A column id of zero means no sort on that level.
+/// An empty column means no sort on that level.
 struct SortState {
-    int primaryColumnId {0};
+    std::optional<AudioFileTableColumn> primaryColumn;
     bool primaryForwards {true};
-    int secondaryColumnId {0};
+    std::optional<AudioFileTableColumn> secondaryColumn;
     bool secondaryForwards {true};
     /// Returns the text the status column shows for a record, such as the message of its last operation.
     /// The status column sorts by this text when set, and by the analysis status otherwise.
     std::function<juce::String(const AudioAnalysisRecord&)> statusText;
 };
 
-int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, int columnId);
+int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, AudioFileTableColumn column);
 
-void setPrimarySort(SortState& state, int columnId, bool isForwards);
+void setPrimarySort(SortState& state, std::optional<AudioFileTableColumn> column, bool isForwards);
 void sortRecords(std::vector<AudioAnalysisRecord>& records, const SortState& state);
-void toggleSecondarySort(SortState& state, int columnId);
+void toggleSecondarySort(SortState& state, AudioFileTableColumn column);
 
 SecondarySortTableHeader& getSecondarySortHeader(const juce::TableListBox& table);
 }  // namespace results_sorting

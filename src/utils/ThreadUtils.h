@@ -52,5 +52,7 @@ inline void reportProgress(const ProgressCallback& onProgress, const float progr
 juce::String describeCurrentException();
 
 ProgressCallback makeProgressRange(const ProgressCallback& onProgress, float start, float end);
+/// Deleted, because the returned callback refers to onProgress, which a temporary would leave dangling.
+ProgressCallback makeProgressRange(ProgressCallback&& onProgress, float start, float end) = delete;
 ProgressCallback makeThrottledProgress(ProgressCallback onProgress);
 }  // namespace audiobatch::utils

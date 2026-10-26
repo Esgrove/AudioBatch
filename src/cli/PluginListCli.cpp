@@ -194,12 +194,9 @@ void printRows(
 )
 {
     for (const auto& plugin : plugins) {
-        std::vector<juce::String> cells;
-        cells.reserve(columns.size());
-
-        for (const auto column : columns) {
-            cells.push_back(columnValue(plugin, column));
-        }
+        const auto cells = columns
+            | std::views::transform([&plugin](const Column column) { return columnValue(plugin, column); })
+            | std::ranges::to<std::vector>();
 
         fmt::print("{}\n", formatLine(indent, cells, widths));
     }
@@ -211,11 +208,7 @@ void printTable(const std::vector<juce::PluginDescription>& plugins)
     const std::vector columns {Column::name, Column::manufacturer, Column::type, Column::format, Column::version};
     const auto widths = columnWidths(plugins, columns, true);
 
-    std::vector<juce::String> headers;
-    headers.reserve(columns.size());
-    for (const auto column : columns) {
-        headers.push_back(columnHeader(column));
-    }
+    const auto headers = columns | std::views::transform(columnHeader) | std::ranges::to<std::vector>();
 
     console::printBold("{}\n", formatLine("", headers, widths));
     printRows(plugins, columns, widths, "");

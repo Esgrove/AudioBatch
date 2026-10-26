@@ -3,6 +3,7 @@
 
 #include "serato/SeratoOverview.h"
 
+#include "serato/SeratoBytes.h"
 #include "serato/SeratoTagTypes.h"
 
 #include <algorithm>
@@ -20,10 +21,11 @@ constexpr std::size_t versionOffset {8};
 constexpr std::size_t countOffset {12};
 constexpr std::size_t fieldBytes {sizeof(std::uint32_t)};
 
-/// Reads a validated four-byte big-endian field without alignment assumptions.
-std::uint32_t readBigEndian(const std::span<const std::uint8_t> bytes)
+/// Reads the four-byte big-endian header field at the given offset.
+template<std::size_t Offset>
+std::uint32_t readHeaderField(const std::span<const std::uint8_t> bytes)
 {
-    return juce::ByteOrder::bigEndianInt(bytes.data());
+    return readBigEndian<std::uint32_t>(bytes.subspan<Offset, fieldBytes>());
 }
 
 /// Writes a four-byte big-endian field to an already allocated cache header.
@@ -82,7 +84,7 @@ juce::MemoryBlock Overview::serialize() const
     juce::MemoryBlock output(cacheHeaderBytes + slices.size() * bandCount);
     const std::span bytes {static_cast<std::uint8_t*>(output.getData()), output.getSize()};
     std::ranges::copy(cacheMagic, bytes.begin());
-    writeBigEndian(bytes.subspan(kindOffset, fieldBytes), static_cast<std::uint32_t>(TagKind::overview));
+    writeBigEndian(bytes.subspan(kindOffset, fieldBytes), std::to_underlying(TagKind::overview));
     writeBigEndian(bytes.subspan(versionOffset, fieldBytes), overviewParserVersion);
     writeBigEndian(bytes.subspan(countOffset, fieldBytes), static_cast<std::uint32_t>(slices.size()));
     for (std::size_t index = 0; index < slices.size(); ++index) {
@@ -96,12 +98,12 @@ juce::MemoryBlock Overview::serialize() const
 std::optional<Overview> Overview::deserialize(const std::span<const std::uint8_t> bytes)
 {
     if (bytes.size() < cacheHeaderBytes || !std::ranges::equal(bytes.first(cacheMagic.size()), cacheMagic)
-        || readBigEndian(bytes.subspan(kindOffset, fieldBytes)) != static_cast<std::uint32_t>(TagKind::overview)
-        || readBigEndian(bytes.subspan(versionOffset, fieldBytes)) != overviewParserVersion)
+        || readHeaderField<kindOffset>(bytes) != std::to_underlying(TagKind::overview)
+        || readHeaderField<versionOffset>(bytes) != overviewParserVersion)
     {
         return std::nullopt;
     }
-    const auto count = readBigEndian(bytes.subspan(countOffset, fieldBytes));
+    const auto count = readHeaderField<countOffset>(bytes);
     if (count == 0 || count > maxSlices
         || bytes.size() != cacheHeaderBytes + static_cast<std::size_t>(count) * bandCount)
     {

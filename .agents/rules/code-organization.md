@@ -23,6 +23,11 @@ Within a struct or class:
   Do not define structs, classes or enums inside a class.
 - A type that only one `.cpp` file uses goes in that file's anonymous namespace.
   This includes types that would otherwise be local to a function.
+- File-local helper functions and variables also go in the anonymous namespace instead of being declared `static`.
+  `misc-use-anonymous-namespace` in `.clang-tidy` enforces this.
+- Make enums `enum class`.
+  Convert the integer ids JUCE passes for menu items, commands, and table columns back with `utils::enumFromId`,
+  and switch over every enumerator without a `default` label.
 - Put all project code in `namespace audiobatch`, so classes and their member definitions share it.
   Keep `main`, the JUCE application macro, and forward declarations of third-party types outside it.
 - Do not write a class or struct whose members are all static.

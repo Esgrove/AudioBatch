@@ -48,12 +48,19 @@ public:
     AudioFileTableModel(
         const std::vector<AudioAnalysisRecord>& sourceRecords,
         std::function<void(int row)> onSelectionChanged,
-        std::function<void(int columnId, bool isForwards)> onSortChanged,
-        std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,
+        std::function<void(std::optional<AudioFileTableColumn> column, bool isForwards)> onSortChanged,
+        std::function<void(int row, const juce::MouseEvent& event)> onContextMenuRequested,
         std::function<std::optional<FileActivityState>(const AudioAnalysisRecord& record)> activityProvider,
         std::function<OperationMessage(const AudioAnalysisRecord& record)> messageProvider,
         std::function<float()> phaseProvider
     );
+
+    ~AudioFileTableModel() override = default;
+
+    AudioFileTableModel(const AudioFileTableModel&) = delete;
+    AudioFileTableModel& operator=(const AudioFileTableModel&) = delete;
+    AudioFileTableModel(AudioFileTableModel&&) = delete;
+    AudioFileTableModel& operator=(AudioFileTableModel&&) = delete;
 
     static void configureHeader(juce::TableHeaderComponent& header);
 
@@ -89,10 +96,11 @@ public:
 private:
     [[nodiscard]] OperationMessage getOperationMessage(const AudioAnalysisRecord& record) const;
 
-    const std::vector<AudioAnalysisRecord>* records;
+    /// The rows of the table, owned by the component that owns this model and declared before it.
+    const std::vector<AudioAnalysisRecord>& records;
     std::function<void(int row)> selectionChanged;
-    std::function<void(int columnId, bool isForwards)> sortChanged;
-    std::function<void(int row, int columnId, const juce::MouseEvent& event)> contextMenuRequested;
+    std::function<void(std::optional<AudioFileTableColumn> column, bool isForwards)> sortChanged;
+    std::function<void(int row, const juce::MouseEvent& event)> contextMenuRequested;
     std::function<std::optional<FileActivityState>(const AudioAnalysisRecord& record)> activityStateProvider;
     std::function<OperationMessage(const AudioAnalysisRecord& record)> operationMessageProvider;
     std::function<float()> activityPhaseProvider;

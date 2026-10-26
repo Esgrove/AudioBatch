@@ -13,9 +13,11 @@ namespace audiobatch::analysis
 /// Bit depth assumed for MP3 files.
 constexpr int defaultMp3BitsPerSample {16};
 
+namespace
+{
 /// Returns true when the reader reports the decoder output bit depth instead of the source bit depth.
 /// JUCE's MP3 reader is the known case, since decoding hides the original encoding depth.
-static bool reportsDecodedBitDepth(const juce::AudioFormatReader& reader, const juce::File& file)
+bool reportsDecodedBitDepth(const juce::AudioFormatReader& reader, const juce::File& file)
 {
     if (utils::isMp3File(file)) {
         return true;
@@ -23,6 +25,7 @@ static bool reportsDecodedBitDepth(const juce::AudioFormatReader& reader, const 
 
     return reader.getFormatName().containsIgnoreCase("mp3");
 }
+}  // namespace
 
 /// Determines the best available source bit depth for the analyzed file.
 ///

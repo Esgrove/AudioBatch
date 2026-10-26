@@ -3,6 +3,8 @@
 
 #include "serato/SeratoTags.h"
 
+#include "serato/SeratoBytes.h"
+
 #include <algorithm>
 #include <bit>
 #include <cmath>
@@ -75,14 +77,14 @@ std::optional<juce::String> markerName(std::span<const std::uint8_t> bytes)
     return allZero(bytes.subspan(length)) ? utf8(bytes.first(length)) : std::nullopt;
 }
 
-/// Decodes a length-checked big-endian integer without alignment assumptions.
-std::uint32_t integer(const std::span<const std::uint8_t> bytes)
+/// Decodes a big-endian four-byte integer.
+constexpr std::uint32_t integer(const std::span<const std::uint8_t, sizeof(std::uint32_t)> bytes)
 {
-    return juce::ByteOrder::bigEndianInt(bytes.data());
+    return readBigEndian<std::uint32_t>(bytes);
 }
 
 /// Decodes opaque-alpha Serato RGB bytes into an opaque display colour.
-juce::Colour rgb(std::span<const std::uint8_t> bytes)
+juce::Colour rgb(const std::span<const std::uint8_t, rgbBytes> bytes)
 {
     return {bytes[0], bytes[1], bytes[2]};
 }
@@ -114,7 +116,7 @@ bool addMarker(Markers& markers, const juce::String& type, const std::span<const
         if (bytes.size() != 4) {
             return false;
         }
-        markers.colour = rgb(bytes.subspan(1));
+        markers.colour = rgb(bytes.subspan<1, rgbBytes>());
     } else if (type == "CUE") {
         if (bytes.size() <= cueNameOffset) {
             return false;
@@ -124,9 +126,9 @@ bool addMarker(Markers& markers, const juce::String& type, const std::span<const
             return false;
         }
         markers.cues.push_back({
-            .positionMilliseconds = integer(bytes.subspan(2)),
+            .positionMilliseconds = integer(bytes.subspan<2, sizeof(std::uint32_t)>()),
             .index = bytes[1],
-            .colour = rgb(bytes.subspan(cueColourOffset)),
+            .colour = rgb(bytes.subspan<cueColourOffset, rgbBytes>()),
             .name = *name,
         });
     } else if (type == "LOOP") {
@@ -134,8 +136,8 @@ bool addMarker(Markers& markers, const juce::String& type, const std::span<const
             return false;
         }
         const auto name = markerName(bytes.subspan(loopNameOffset));
-        const auto start = integer(bytes.subspan(2));
-        const auto end = integer(bytes.subspan(gridHeaderBytes));
+        const auto start = integer(bytes.subspan<2, sizeof(std::uint32_t)>());
+        const auto end = integer(bytes.subspan<gridHeaderBytes, sizeof(std::uint32_t)>());
         if (!name || end < start) {
             return false;
         }
@@ -143,7 +145,7 @@ bool addMarker(Markers& markers, const juce::String& type, const std::span<const
             .startMilliseconds = start,
             .endMilliseconds = end,
             .index = bytes[1],
-            .colour = rgb(bytes.subspan(loopColourOffset)),
+            .colour = rgb(bytes.subspan<loopColourOffset, rgbBytes>()),
             .locked = bytes[loopLockOffset] != 0,
             .name = *name,
         });
@@ -183,13 +185,15 @@ struct Cursor {
     std::uint32_t number()
     {
         const auto bytes = take(sizeof(std::uint32_t));
-        return bytes.empty() ? 0 : integer(bytes);
+        return bytes.empty() ? 0 : integer(bytes.first<sizeof(std::uint32_t)>());
     }
     /// Reads an IEEE binary64 value and rejects infinities and NaNs.
     double real()
     {
         const auto bytes = take(sizeof(std::uint64_t));
-        const auto value = bytes.empty() ? 0.0 : std::bit_cast<double>(juce::ByteOrder::bigEndianInt64(bytes.data()));
+        const auto value = bytes.empty()
+            ? 0.0
+            : std::bit_cast<double>(readBigEndian<std::uint64_t>(bytes.first<sizeof(std::uint64_t)>()));
         valid = valid && std::isfinite(value);
         return value;
     }
@@ -526,7 +530,7 @@ std::optional<BeatGrid> parseBeatGrid(const std::span<const std::uint8_t> bytes)
     if (bytes.size() < gridHeaderBytes || bytes.size() > maxTagPayloadBytes || bytes[0] != 1 || bytes[1] != 0) {
         return std::nullopt;
     }
-    const auto count = integer(bytes.subspan(2));
+    const auto count = integer(bytes.subspan<2, sizeof(std::uint32_t)>());
     const auto expected = gridHeaderBytes + static_cast<std::size_t>(count) * gridRecordBytes;
     if (count > maxTagRecords || (bytes.size() != expected + 1 && (count != 0 || bytes.size() != expected))) {
         return std::nullopt;
@@ -534,20 +538,21 @@ std::optional<BeatGrid> parseBeatGrid(const std::span<const std::uint8_t> bytes)
     BeatGrid grid;
     grid.markers.reserve(count);
     for (std::uint32_t index = 0; index < count; ++index) {
-        const auto record
-            = bytes.subspan(gridHeaderBytes + static_cast<std::size_t>(index) * gridRecordBytes, gridRecordBytes);
-        const double position = static_cast<double>(std::bit_cast<float>(integer(record)));
+        const auto record = bytes.subspan(gridHeaderBytes + static_cast<std::size_t>(index) * gridRecordBytes)
+                                .first<gridRecordBytes>();
+        const double position
+            = static_cast<double>(std::bit_cast<float>(integer(record.first<sizeof(std::uint32_t)>())));
         if (!std::isfinite(position) || (!grid.markers.empty() && position < grid.markers.back().positionSeconds)) {
             return std::nullopt;
         }
         if (index + 1 == count) {
-            const double bpm = static_cast<double>(std::bit_cast<float>(integer(record.subspan(4))));
+            const double bpm = static_cast<double>(std::bit_cast<float>(integer(record.last<sizeof(std::uint32_t)>())));
             if (!std::isfinite(bpm) || bpm <= 0) {
                 return std::nullopt;
             }
             grid.markers.push_back({.positionSeconds = position, .beatsUntilNext = 0, .bpm = bpm});
         } else {
-            const auto beats = integer(record.subspan(4));
+            const auto beats = integer(record.last<sizeof(std::uint32_t)>());
             if (beats == 0) {
                 return std::nullopt;
             }
@@ -582,7 +587,7 @@ std::optional<Markers> parseLegacyMarkers(const std::span<const std::uint8_t> by
 {
     constexpr auto expected = gridHeaderBytes + legacyCount * legacyRecordBytes + sizeof(std::uint32_t);
     if (bytes.size() != expected || bytes[0] != 2 || bytes[1] != legacyMinorVersion
-        || integer(bytes.subspan(2)) != legacyCount)
+        || integer(bytes.subspan<2, sizeof(std::uint32_t)>()) != legacyCount)
     {
         return std::nullopt;
     }
@@ -744,7 +749,7 @@ juce::MemoryBlock serializeTag(const TagReadResult& result)
     }
     juce::MemoryOutputStream output;
     output.writeIntBigEndian(static_cast<int>(cacheMagic));
-    output.writeIntBigEndian(static_cast<int>(result.kind));
+    output.writeIntBigEndian(std::to_underlying(result.kind));
     output.writeIntBigEndian(static_cast<int>(parserVersion(result.kind)));
     output.writeIntBigEndian(static_cast<int>(payload.getDataSize()));
     output.write(payload.getData(), payload.getDataSize());
@@ -770,7 +775,7 @@ std::optional<TagReadResult> deserializeTag(TagKind kind, const juce::MemoryBloc
         return std::nullopt;
     }
     Cursor input(bytes);
-    if (input.number() != cacheMagic || input.number() != static_cast<std::uint32_t>(kind)
+    if (input.number() != cacheMagic || input.number() != std::to_underlying(kind)
         || input.number() != parserVersion(kind) || input.number() != bytes.size() - cacheHeaderBytes)
     {
         return std::nullopt;

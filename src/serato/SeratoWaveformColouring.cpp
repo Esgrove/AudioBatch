@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <ranges>
 
 namespace audiobatch::serato
 {
@@ -25,12 +26,11 @@ struct ColourContributions {
     std::array<double, 3> components {};
     double weight {0.0};
 };
-}  // namespace
 
 /// Decodes every vertical cell with a time-sample weight, independently of its row position.
 /// Indices 0 and 1 are background. Indices 216 through 255 remain provisionally unknown or reserved.
 /// Reserved values are skipped rather than assigned an unverified grayscale palette.
-static void accumulateSlice(
+void accumulateSlice(
     const std::array<std::uint8_t, Overview::bandCount>& cells,
     const double sampleWeight,
     ColourContributions& contributions
@@ -51,7 +51,7 @@ static void accumulateSlice(
 }
 
 /// Produces the opaque arithmetic mean RGB without contrast adjustment, or opaque fallback for no valid cells.
-static juce::Colour colourForContributions(const ColourContributions& contributions, const juce::Colour fallback)
+juce::Colour colourForContributions(const ColourContributions& contributions, const juce::Colour fallback)
 {
     if (contributions.weight <= 0.0) {
         return fallback.withAlpha(1.0f);
@@ -68,7 +68,7 @@ static juce::Colour colourForContributions(const ColourContributions& contributi
 
 /// Decodes adjacent slices before interpolating RGB sums and valid-cell weights between their centres.
 /// Clamps before the first and after the last centre without interpolating numeric palette indices.
-static ColourContributions contributionsAtTime(const Overview& overview, const double time, const double totalLength)
+ColourContributions contributionsAtTime(const Overview& overview, const double time, const double totalLength)
 {
     const auto lastIndex = overview.slices.size() - 1;
     const auto position = std::clamp(
@@ -84,8 +84,10 @@ static ColourContributions contributionsAtTime(const Overview& overview, const d
     accumulateSlice(overview.slices[leftIndex], 1.0, left);
     accumulateSlice(overview.slices[rightIndex], 1.0, right);
     ColourContributions result;
-    for (std::size_t component = 0; component < result.components.size(); ++component) {
-        result.components[component] = std::lerp(left.components[component], right.components[component], fraction);
+    for (auto&& [component, leftComponent, rightComponent] :
+         std::views::zip(result.components, left.components, right.components))
+    {
+        component = std::lerp(leftComponent, rightComponent, fraction);
     }
     result.weight = std::lerp(left.weight, right.weight, fraction);
     return result;
@@ -93,7 +95,7 @@ static ColourContributions contributionsAtTime(const Overview& overview, const d
 
 /// Accumulates decoded RGB and foreground weights over exact overlaps before computing their mean.
 /// Avoids allocation or iteration over offscreen slices.
-static ColourContributions contributionsOverInterval(
+ColourContributions contributionsOverInterval(
     const Overview& overview,
     const double startTime,
     const double endTime,
@@ -117,6 +119,7 @@ static ColourContributions contributionsOverInterval(
     }
     return result;
 }
+}  // namespace
 
 /// Produces the opaque arithmetic mean RGB of valid nonbackground raster cells, independent of row position.
 /// The zero-based 6x6x6 cube is R=(index/36)*51, G=((index%36)/6)*51, B=(index%6)*51 using integer division.

@@ -14,16 +14,19 @@
 #include <unordered_map>
 
 #include <algorithm>
+#include <ranges>
 #include <utility>
 #include <vector>
 
 namespace audiobatch
 {
+namespace
+{
 /// Copies the custom gain of the record in the table onto a new record for the same path,
 /// when the file still has the size and modification time the gain was set for.
 /// A custom gain only applies to the version of the file it was set for, so a changed file starts without one.
 /// Returns true when the gain was carried over.
-static bool keepCustomGainOfUnchangedFile(const AudioAnalysisRecord& existing, AudioAnalysisRecord& incoming)
+bool keepCustomGainOfUnchangedFile(const AudioAnalysisRecord& existing, AudioAnalysisRecord& incoming)
 {
     if (!existing.hasCustomGain || existing.fileSize != incoming.fileSize
         || existing.modifiedTimeMs != incoming.modifiedTimeMs)
@@ -35,6 +38,7 @@ static bool keepCustomGainOfUnchangedFile(const AudioAnalysisRecord& existing, A
     incoming.hasCustomGain = true;
     return true;
 }
+}  // namespace
 
 /// Resolves rows still marked pending or active after a run completes,
 /// from the cache when possible and otherwise as failed, so no row is left waiting.
@@ -601,10 +605,6 @@ void AudioBatchComponent::processSelectedRecords()
         return;
     }
 
-    if (pluginChain == nullptr) {
-        return;
-    }
-
     // Captures live state from any open editors so the run uses the latest tweaks.
     const auto enabledPlugins = pluginChain->getEnabledPlugins();
     if (enabledPlugins.empty()) {
@@ -619,10 +619,8 @@ void AudioBatchComponent::processSelectedRecords()
     }
 
     PluginProcessingOptions options;
-    options.plugins.reserve(enabledPlugins.size());
-    for (const auto& [description, descriptorRef] : enabledPlugins) {
-        options.plugins.push_back(descriptorRef);
-    }
+    options.plugins
+        = enabledPlugins | std::views::transform(&EnabledChainPlugin::descriptorRef) | std::ranges::to<std::vector>();
     if (normalizeBeforePluginToggle.getToggleState()) {
         options.normalizeBeforePlugin = normalizationTargetControl.getOptions();
     }
@@ -723,9 +721,7 @@ void AudioBatchComponent::handleProcessingComplete(const int totalFiles)
         processingProgress.failures.size()
     );
 
-    if (pluginChain != nullptr) {
-        updateProcessButtonState();
-    }
+    updateProcessButtonState();
 
     utils::showFailureSummary(processingProgress.failures, "Plugin Processing", "processed", this);
 

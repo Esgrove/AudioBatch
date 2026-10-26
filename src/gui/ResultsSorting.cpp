@@ -26,7 +26,9 @@ SecondarySortTableHeader::SecondarySortTableHeader(SecondarySortCallback seconda
 void SecondarySortTableHeader::columnClicked(const int columnId, const juce::ModifierKeys& modifiers)
 {
     if ((modifiers.isCtrlDown() || modifiers.isCommandDown()) && secondarySortRequested != nullptr) {
-        secondarySortRequested(columnId);
+        if (const auto column = tableColumnFromId(columnId)) {
+            secondarySortRequested(*column);
+        }
         return;
     }
 
@@ -34,20 +36,23 @@ void SecondarySortTableHeader::columnClicked(const int columnId, const juce::Mod
 }
 
 /// Appends a textual secondary sort marker to the given column's name and restores the base name of every other column.
-/// Passing a column id of zero clears the indicator entirely.
-void SecondarySortTableHeader::setSecondarySortIndicator(const int columnId, const bool isForwards)
+/// Passing no column clears the indicator entirely.
+void SecondarySortTableHeader::setSecondarySortIndicator(
+    const std::optional<AudioFileTableColumn> column,
+    const bool isForwards
+)
 {
     if (baseColumnNames.empty()) {
         cacheBaseColumnNames();
     }
 
-    secondarySortColumnId = columnId;
+    secondarySortColumn = column;
     secondarySortForwards = isForwards;
 
     for (const auto& [trackedColumnId, baseName] : baseColumnNames) {
         auto displayName = baseName;
 
-        if (trackedColumnId == secondarySortColumnId) {
+        if (trackedColumnId == toColumnId(secondarySortColumn)) {
             displayName = utils::format("{} {}", displayName, secondarySortForwards ? "[2^]" : "[2v]");
         }
 
@@ -70,8 +75,10 @@ void SecondarySortTableHeader::cacheBaseColumnNames()
 
 namespace results_sorting
 {
+namespace
+{
 /// Three-way natural-order string comparison, so numbered file names sort as expected.
-static int compareNatural(const juce::String& left, const juce::String& right)
+int compareNatural(const juce::String& left, const juce::String& right)
 {
     return left.compareNatural(right);
 }
@@ -80,7 +87,7 @@ static int compareNatural(const juce::String& left, const juce::String& right)
 /// Only identical values compare equal, because a tolerance based equality is not transitive
 /// and would break the strict weak ordering that std::ranges::sort requires.
 template<std::floating_point Value>
-static int compareValues(const Value left, const Value right)
+int compareValues(const Value left, const Value right)
 {
     const auto ordering = std::strong_order(left, right);
 
@@ -93,13 +100,13 @@ static int compareValues(const Value left, const Value right)
 
 /// Three-way comparison of peak values by magnitude, ignoring polarity.
 template<std::floating_point Value>
-static int comparePeaks(const Value left, const Value right)
+int comparePeaks(const Value left, const Value right)
 {
     return compareValues(std::abs(left), std::abs(right));
 }
 
 /// Three-way comparison by average bitrate.
-static int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
+int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
 {
     const auto leftBitrate = getAverageBitrateKbps(lhs);
     const auto rightBitrate = getAverageBitrateKbps(rhs);
@@ -108,7 +115,7 @@ static int compareBitrates(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
 }
 
 /// Three-way comparison by sample rate.
-static int compareSampleRates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
+int compareSampleRates(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
 {
     if (lhs.sampleRate == rhs.sampleRate) {
         return 0;
@@ -118,7 +125,7 @@ static int compareSampleRates(const AudioAnalysisRecord& lhs, const AudioAnalysi
 }
 
 /// Three-way loudness comparison that sorts negative-infinity readings below every measurable value.
-static int compareLoudness(const double left, const double right)
+int compareLoudness(const double left, const double right)
 {
     const auto leftIsNegativeInfinity = left <= AudioAnalysisRecord::negativeInfinityLoudness;
     const auto rightIsNegativeInfinity = right <= AudioAnalysisRecord::negativeInfinityLoudness;
@@ -133,50 +140,54 @@ static int compareLoudness(const double left, const double right)
 
     return compareValues(left, right);
 }
+}  // namespace
 
 /// Returns a negative, zero, or positive value as lhs sorts before, with, or after rhs in the given table column.
-/// Peaks compare by magnitude, silent loudness sorts below every measurable value,
-/// and unknown column ids compare by overall peak.
-int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs, const int columnId)
+/// Peaks compare by magnitude, and silent loudness sorts below every measurable value.
+int compareRecordsByColumn(
+    const AudioAnalysisRecord& lhs,
+    const AudioAnalysisRecord& rhs,
+    const AudioFileTableColumn column
+)
 {
-    switch (columnId) {
-        case columnName:
+    switch (column) {
+        case AudioFileTableColumn::name:
             return compareNatural(lhs.fileName, rhs.fileName);
 
-        case columnPath:
+        case AudioFileTableColumn::path:
             return compareNatural(lhs.fullPath, rhs.fullPath);
 
-        case columnType:
+        case AudioFileTableColumn::type:
             return compareNatural(formatTypeLabel(lhs), formatTypeLabel(rhs));
 
-        case columnBitDepth:
+        case AudioFileTableColumn::bitDepth:
             if (lhs.bitsPerSample == rhs.bitsPerSample) {
                 return 0;
             }
             return lhs.bitsPerSample < rhs.bitsPerSample ? -1 : 1;
 
-        case columnBitrate:
+        case AudioFileTableColumn::bitrate:
             return compareBitrates(lhs, rhs);
 
-        case columnSampleRate:
+        case AudioFileTableColumn::sampleRate:
             return compareSampleRates(lhs, rhs);
 
-        case columnPeakLeft:
+        case AudioFileTableColumn::peakLeft:
             return comparePeaks(lhs.peakLeft, rhs.peakLeft);
 
-        case columnPeakRight:
+        case AudioFileTableColumn::peakRight:
             return comparePeaks(lhs.peakRight, rhs.peakRight);
 
-        case columnOverallTruePeak:
+        case AudioFileTableColumn::overallTruePeak:
             return comparePeaks(lhs.overallTruePeak, rhs.overallTruePeak);
 
-        case columnMaxShortTermLufs:
+        case AudioFileTableColumn::maxShortTermLufs:
             return compareLoudness(lhs.maxShortTermLufs, rhs.maxShortTermLufs);
 
-        case columnIntegratedLufs:
+        case AudioFileTableColumn::integratedLufs:
             return compareLoudness(lhs.integratedLufs, rhs.integratedLufs);
 
-        case columnCustomGain: {
+        case AudioFileTableColumn::customGain: {
             if (lhs.hasCustomGain != rhs.hasCustomGain) {
                 return lhs.hasCustomGain ? 1 : -1;
             }
@@ -186,13 +197,13 @@ int compareRecordsByColumn(const AudioAnalysisRecord& lhs, const AudioAnalysisRe
             return compareValues(lhs.customGainDb, rhs.customGainDb);
         }
 
-        case columnStatus:
+        case AudioFileTableColumn::status:
             return compareNatural(formatStatus(lhs), formatStatus(rhs));
 
-        case columnOverallPeak:
-        default:
+        case AudioFileTableColumn::overallPeak:
             return comparePeaks(lhs.overallPeak, rhs.overallPeak);
     }
+    return 0;
 }
 
 /// Sorts the records for the results table.
@@ -205,24 +216,24 @@ void sortRecords(std::vector<AudioAnalysisRecord>& records, const SortState& sta
             return !lhs.hasError();
         }
 
-        const auto compareUsingSort = [&](const int columnId, const bool isForwards) {
-            if (columnId <= 0) {
+        const auto compareUsingSort = [&](const std::optional<AudioFileTableColumn> column, const bool isForwards) {
+            if (!column.has_value()) {
                 return 0;
             }
 
-            const auto comparison = columnId == columnStatus && state.statusText != nullptr
+            const auto comparison = column == AudioFileTableColumn::status && state.statusText != nullptr
                 ? compareNatural(state.statusText(lhs), state.statusText(rhs))
-                : compareRecordsByColumn(lhs, rhs, columnId);
+                : compareRecordsByColumn(lhs, rhs, *column);
             return isForwards ? comparison : -comparison;
         };
 
-        if (const auto primaryComparison = compareUsingSort(state.primaryColumnId, state.primaryForwards);
+        if (const auto primaryComparison = compareUsingSort(state.primaryColumn, state.primaryForwards);
             primaryComparison != 0)
         {
             return primaryComparison < 0;
         }
 
-        if (const auto secondaryComparison = compareUsingSort(state.secondaryColumnId, state.secondaryForwards);
+        if (const auto secondaryComparison = compareUsingSort(state.secondaryColumn, state.secondaryForwards);
             secondaryComparison != 0)
         {
             return secondaryComparison < 0;
@@ -238,13 +249,13 @@ void sortRecords(std::vector<AudioAnalysisRecord>& records, const SortState& sta
 
 /// Applies a new primary sort column and direction.
 /// Clears the secondary sort when it targets the same column, since sorting twice by one column adds nothing.
-void setPrimarySort(SortState& state, const int columnId, const bool isForwards)
+void setPrimarySort(SortState& state, const std::optional<AudioFileTableColumn> column, const bool isForwards)
 {
-    state.primaryColumnId = columnId;
+    state.primaryColumn = column;
     state.primaryForwards = isForwards;
 
-    if (state.secondaryColumnId == state.primaryColumnId) {
-        state.secondaryColumnId = 0;
+    if (state.secondaryColumn == state.primaryColumn) {
+        state.secondaryColumn.reset();
         state.secondaryForwards = true;
     }
 }
@@ -253,20 +264,15 @@ void setPrimarySort(SortState& state, const int columnId, const bool isForwards)
 /// Clicking the primary column clears the secondary sort,
 /// clicking the current secondary column flips its direction,
 /// and clicking any other column makes it the ascending secondary sort.
-/// Column ids of zero or below are ignored.
-void toggleSecondarySort(SortState& state, const int columnId)
+void toggleSecondarySort(SortState& state, const AudioFileTableColumn column)
 {
-    if (columnId <= 0) {
-        return;
-    }
-
-    if (columnId == state.primaryColumnId) {
-        state.secondaryColumnId = 0;
+    if (column == state.primaryColumn) {
+        state.secondaryColumn.reset();
         state.secondaryForwards = true;
-    } else if (state.secondaryColumnId == columnId) {
+    } else if (state.secondaryColumn == column) {
         state.secondaryForwards = !state.secondaryForwards;
     } else {
-        state.secondaryColumnId = columnId;
+        state.secondaryColumn = column;
         state.secondaryForwards = true;
     }
 }

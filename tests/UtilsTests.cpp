@@ -32,9 +32,9 @@ public:
     /// Creates a mono 16-bit reader with one second of audio.
     FailingFixedPointReader() : juce::AudioFormatReader(nullptr, "Failing")
     {
-        sampleRate = 44100.0;
+        sampleRate = 44'100.0;
         bitsPerSample = 16;
-        lengthInSamples = 44100;
+        lengthInSamples = 44'100;
         numChannels = 1;
         usesFloatingPointData = false;
     }
@@ -148,11 +148,11 @@ public:
                     return utils::validateWrittenAudio(formatManager, file, channels, sampleRate, samples).error_or({});
                 };
 
-            expect(utils::validateWrittenAudio(formatManager, fixture, 2, 44100.0, length).has_value());
-            expect(validationError(fixture, 1, 44100.0, length).contains("channels"));
-            expect(validationError(fixture, 2, 48000.0, length).contains("sample rate"));
-            expect(validationError(fixture, 2, 44100.0, length + 1).contains("samples"));
-            expect(validationError(root.getChildFile("missing.aif"), 2, 44100.0, length).contains("cannot be read"));
+            expect(utils::validateWrittenAudio(formatManager, fixture, 2, 44'100.0, length).has_value());
+            expect(validationError(fixture, 1, 44'100.0, length).contains("channels"));
+            expect(validationError(fixture, 2, 48'000.0, length).contains("sample rate"));
+            expect(validationError(fixture, 2, 44'100.0, length + 1).contains("samples"));
+            expect(validationError(root.getChildFile("missing.aif"), 2, 44'100.0, length).contains("cannot be read"));
         }
 
         beginTest("A temporary output replaces its source in place");
@@ -349,7 +349,8 @@ public:
             expectWithinAbsoluteError(reported[0], 0.2f, 1.0e-6f);
             expectWithinAbsoluteError(reported[1], 0.4f, 1.0e-6f);
             expectWithinAbsoluteError(reported[2], 0.6f, 1.0e-6f);
-            expect(utils::makeProgressRange({}, 0.0f, 1.0f) == nullptr);
+            const utils::ProgressCallback noProgress;
+            expect(utils::makeProgressRange(noProgress, 0.0f, 1.0f) == nullptr);
             expectWithinAbsoluteError(utils::progressFraction(1, 4), 0.25f, 1.0e-6f);
             expectEquals(utils::progressFraction(0, 0), 1.0f);
         }
@@ -396,7 +397,7 @@ public:
                 for (juce::int64 position = 0; position < reader->lengthInSamples; position += 512) {
                     const auto samples
                         = static_cast<int>(juce::jmin<juce::int64>(512, reader->lengthInSamples - position));
-                    expect(utils::readFloatSamples(*reader, buffer.getArrayOfWritePointers(), 2, position, samples));
+                    expect(utils::readFloatSamples(*reader, utils::writePointers(buffer), position, samples));
                 }
             }
 
@@ -434,7 +435,7 @@ public:
             juce::AudioBuffer<float> buffer(1, 64);
             buffer.setSample(0, 0, 0.25f);
 
-            expect(!utils::readFloatSamples(reader, buffer.getArrayOfWritePointers(), 1, 0, 64));
+            expect(!utils::readFloatSamples(reader, utils::writePointers(buffer), 0, 64));
             expectEquals(buffer.getMagnitude(0, 0, 64), 0.0f);
         }
 

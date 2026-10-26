@@ -31,8 +31,10 @@ struct PreviewDelivery {
     std::shared_ptr<const serato::SeratoData> data;
 };
 
+namespace
+{
 /// Builds representative owned values for every independently cached kind.
-static serato::TagReadResult previewResult(const serato::TagKind kind, const ReadStatus status = ReadStatus::present)
+serato::TagReadResult previewResult(const serato::TagKind kind, const ReadStatus status = ReadStatus::present)
 {
     serato::TagReadResult result {.kind = kind, .status = status};
     if (status != ReadStatus::present) {
@@ -82,6 +84,7 @@ static serato::TagReadResult previewResult(const serato::TagKind kind, const Rea
     }
     return result;
 }
+}  // namespace
 
 /// Gates the first read and records worker activity without sleeps or message-thread dispatch.
 class PreviewProbe final

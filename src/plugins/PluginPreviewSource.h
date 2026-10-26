@@ -50,6 +50,8 @@ private:
 
     juce::AudioBuffer<float> blockView;
     juce::AudioBuffer<float> scratch;
+    /// Non-owning source of the device-rate input, or null while no file is attached.
+    /// The host keeps it alive until setInput replaces or detaches it.
     juce::AudioSource* input {nullptr};
     juce::MidiBuffer midi;
     juce::SmoothedValue<float> inputGain {1.0f};
@@ -61,6 +63,8 @@ private:
     juce::int64 startSample {0};
     juce::int64 tailSamples {0};
     std::vector<juce::AudioBuffer<float>> pluginViews;
+    /// Non-owning, never null processors of the attached chain in chain order.
+    /// The host keeps them alive and prepared until setChain replaces or detaches them.
     std::vector<juce::AudioPluginInstance*> plugins;
 
     bool compensation {true};

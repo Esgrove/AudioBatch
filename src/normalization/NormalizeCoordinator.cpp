@@ -10,13 +10,15 @@
 #include "utils/ThreadUtils.h"
 
 #include <map>
+#include <ranges>
+#include <vector>
 
 namespace audiobatch
 {
 namespace
 {
 /// How long cancelAndWait waits for running normalization jobs to finish before giving up, in milliseconds.
-constexpr int jobShutdownTimeoutMilliseconds {30000};
+constexpr int jobShutdownTimeoutMilliseconds {30'000};
 }  // namespace
 
 /// Creates a coordinator with a thread pool sized for the current machine.
@@ -157,7 +159,6 @@ int NormalizeCoordinator::start(
     cancelAndWait();
 
     const auto runId = currentRunId.load();
-    std::vector<AudioAnalysisRecord> normalizedRecords;
     std::map<juce::String, AudioAnalysisRecord> recordsByPath;
 
     for (const auto& record : records) {
@@ -168,12 +169,7 @@ int NormalizeCoordinator::start(
         recordsByPath.insert_or_assign(record.fullPath, record);
     }
 
-    normalizedRecords.reserve(recordsByPath.size());
-
-    for (const auto& [path, record] : recordsByPath) {
-        juce::ignoreUnused(path);
-        normalizedRecords.push_back(record);
-    }
+    const auto normalizedRecords = recordsByPath | std::views::values | std::ranges::to<std::vector>();
 
     if (normalizedRecords.empty()) {
         publishCompletion(0, runId);

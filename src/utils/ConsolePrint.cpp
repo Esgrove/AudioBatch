@@ -19,14 +19,16 @@ namespace audiobatch
 {
 namespace console::detail
 {
+namespace
+{
 /// Returns true when the NO_COLOR convention (https://no-color.org) asks for plain output.
-static bool isNoColorRequested()
+bool isNoColorRequested()
 {
     return juce::SystemStats::getEnvironmentVariable("NO_COLOR", {}).isNotEmpty();
 }
 
 /// Returns true when the stream is connected to something that renders ANSI escape codes.
-static bool streamSupportsColor(std::FILE* stream)
+bool streamSupportsColor(std::FILE* stream)
 {
 #if JUCE_WINDOWS
     if (stream != stdout && stream != stderr) {
@@ -61,20 +63,20 @@ static bool streamSupportsColor(std::FILE* stream)
 }
 
 /// Checks colour support for a stream, ignoring any cached result.
-static bool computeColorEnabled(std::FILE* stream)
+bool computeColorEnabled(std::FILE* stream)
 {
     return !isNoColorRequested() && streamSupportsColor(stream);
 }
 
 /// Splits a message into its leading whitespace and the remaining text.
-static std::pair<std::string_view, std::string_view> splitLeadingWhitespace(const std::string_view message)
+std::pair<std::string_view, std::string_view> splitLeadingWhitespace(const std::string_view message)
 {
     const auto indentSize = std::min(message.find_first_not_of(" \t\r\n"), message.size());
     return {message.substr(0, indentSize), message.substr(indentSize)};
 }
 
 /// Prints a prefixed, coloured message line to stderr, keeping the message indentation in front of the prefix.
-static void printPrefixedMessage(
+void printPrefixedMessage(
     const std::string_view prefix,
     const fmt::terminal_color color,
     const std::string_view message
@@ -83,6 +85,7 @@ static void printPrefixedMessage(
     const auto [indent, text] = splitLeadingWhitespace(message);
     printStyled(stderr, fmt::fg(color), "{}{}{}\n", indent, prefix, text);
 }
+}  // namespace
 }  // namespace console::detail
 
 namespace console

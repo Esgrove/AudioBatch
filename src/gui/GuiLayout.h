@@ -276,65 +276,65 @@ static_assert(
 );
 
 /// Returns a column's compile-time initial width, including columns hidden by default.
-consteval int initialColumnWidth(const AudioFileTableColumn columnId)
+consteval int initialColumnWidth(const AudioFileTableColumn column)
 {
-    switch (columnId) {
-        case columnName:
+    switch (column) {
+        case AudioFileTableColumn::name:
             return nameColumnDefaultWidth;
-        case columnPath:
+        case AudioFileTableColumn::path:
             return pathColumnDefaultWidth;
-        case columnType:
+        case AudioFileTableColumn::type:
             return typeColumnDefaultWidth;
-        case columnBitDepth:
+        case AudioFileTableColumn::bitDepth:
             return bitDepthColumnDefaultWidth;
-        case columnBitrate:
+        case AudioFileTableColumn::bitrate:
             return bitrateColumnDefaultWidth;
-        case columnSampleRate:
+        case AudioFileTableColumn::sampleRate:
             return sampleRateColumnDefaultWidth;
-        case columnOverallPeak:
+        case AudioFileTableColumn::overallPeak:
             return overallPeakColumnDefaultWidth;
-        case columnPeakLeft:
+        case AudioFileTableColumn::peakLeft:
             return peakLeftColumnDefaultWidth;
-        case columnPeakRight:
+        case AudioFileTableColumn::peakRight:
             return peakRightColumnDefaultWidth;
-        case columnOverallTruePeak:
+        case AudioFileTableColumn::overallTruePeak:
             return truePeakColumnDefaultWidth;
-        case columnMaxShortTermLufs:
+        case AudioFileTableColumn::maxShortTermLufs:
             return maxShortTermLufsColumnDefaultWidth;
-        case columnIntegratedLufs:
+        case AudioFileTableColumn::integratedLufs:
             return integratedLufsColumnDefaultWidth;
-        case columnCustomGain:
+        case AudioFileTableColumn::customGain:
             return customGainColumnDefaultWidth;
-        case columnStatus:
+        case AudioFileTableColumn::status:
             return statusColumnDefaultWidth;
     }
     return 0;
 }
 
 /// Returns the compile-time lower drag limit, retaining a common minimum for numeric and status columns.
-consteval int minimumColumnWidth(const AudioFileTableColumn columnId)
+consteval int minimumColumnWidth(const AudioFileTableColumn column)
 {
-    switch (columnId) {
-        case columnName:
+    switch (column) {
+        case AudioFileTableColumn::name:
             return nameColumnMinimumWidth;
-        case columnPath:
+        case AudioFileTableColumn::path:
             return pathColumnMinimumWidth;
-        case columnType:
+        case AudioFileTableColumn::type:
             return typeColumnMinimumWidth;
-        case columnBitDepth:
+        case AudioFileTableColumn::bitDepth:
             return bitDepthColumnMinimumWidth;
-        case columnBitrate:
+        case AudioFileTableColumn::bitrate:
             return bitrateColumnMinimumWidth;
-        case columnSampleRate:
+        case AudioFileTableColumn::sampleRate:
             return sampleRateColumnMinimumWidth;
-        case columnOverallPeak:
-        case columnPeakLeft:
-        case columnPeakRight:
-        case columnOverallTruePeak:
-        case columnMaxShortTermLufs:
-        case columnIntegratedLufs:
-        case columnCustomGain:
-        case columnStatus:
+        case AudioFileTableColumn::overallPeak:
+        case AudioFileTableColumn::peakLeft:
+        case AudioFileTableColumn::peakRight:
+        case AudioFileTableColumn::overallTruePeak:
+        case AudioFileTableColumn::maxShortTermLufs:
+        case AudioFileTableColumn::integratedLufs:
+        case AudioFileTableColumn::customGain:
+        case AudioFileTableColumn::status:
             return metricColumnMinimumWidth;
     }
     return 0;

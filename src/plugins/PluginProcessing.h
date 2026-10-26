@@ -25,7 +25,7 @@ namespace audiobatch
 {
 int processBlockThroughChain(
     juce::AudioBuffer<float>& buffer,
-    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    std::span<juce::AudioPluginInstance* const> chainInstances,
     int numChannels,
     juce::MidiBuffer& midi,
     std::span<juce::AudioBuffer<float>> preparedViews = {}
@@ -127,7 +127,7 @@ juce::File getProcessingOutputFile(const juce::File& input);
 PluginProcessingResult processFileWithPlugins(
     const AudioAnalysisRecord& sourceRecord,
     const PluginProcessingOptions& options,
-    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    std::span<juce::AudioPluginInstance* const> chainInstances,
     const utils::CancellationCheck& isCancelled = {},
     const utils::ProgressCallback& onProgress = {}
 );

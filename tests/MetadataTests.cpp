@@ -25,8 +25,10 @@
 
 namespace audiobatch::tests
 {
+namespace
+{
 /// Returns the first value of a property, or an empty string when the metadata does not have it.
-static juce::String firstPropertyValue(const AudioMetadata& metadata, const juce::String& key)
+juce::String firstPropertyValue(const AudioMetadata& metadata, const juce::String& key)
 {
     for (const auto& property : metadata.properties) {
         if (property.key == key && !property.values.isEmpty()) {
@@ -36,6 +38,7 @@ static juce::String firstPropertyValue(const AudioMetadata& metadata, const juce
 
     return {};
 }
+}  // namespace
 
 /// Checks that tags survive reading and writing across formats.
 class MetadataTests final : public juce::UnitTest

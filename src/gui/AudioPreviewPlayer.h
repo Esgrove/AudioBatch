@@ -108,7 +108,8 @@ private:
     juce::AudioDeviceManager deviceManager;
     juce::AudioFormatManager formatManager;
     PluginPreviewSource previewSource;
-    PluginChain* pluginChain {nullptr};
+    /// The slot owner, which can be destroyed or detached independently of the player.
+    juce::WeakReference<PluginChain> pluginChain;
 
     /// Reader source of the loaded file, or nullptr when nothing is loaded.
     std::unique_ptr<juce::AudioFormatReaderSource> readerSource;

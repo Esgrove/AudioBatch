@@ -9,12 +9,26 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <optional>
+#include <utility>
 #include <vector>
 
 namespace audiobatch::tests
 {
+static_assert(!tableColumnFromId(0).has_value());
+static_assert(tableColumnFromId(1) == AudioFileTableColumn::name);
+static_assert(tableColumnFromId(std::to_underlying(AudioFileTableColumn::bitDepth)) == AudioFileTableColumn::bitDepth);
+static_assert(!tableColumnFromId(std::to_underlying(AudioFileTableColumn::bitDepth) + 1).has_value());
+static_assert(toColumnId(AudioFileTableColumn::status) == std::to_underlying(AudioFileTableColumn::status));
+static_assert(toColumnId(std::nullopt) == 0);
+static_assert(!fileMenuItemFromId(0).has_value());
+static_assert(fileMenuItemFromId(std::to_underlying(FileMenuItemId::reanalyze)) == FileMenuItemId::reanalyze);
+static_assert(!fileMenuItemFromId(std::to_underlying(FileMenuItemId::reanalyze) + 1).has_value());
+
+namespace
+{
 /// Builds an analyzed record with the given name, peak, and integrated loudness.
-static AudioAnalysisRecord makeRecord(const juce::String& name, const float peak, const double integratedLufs)
+AudioAnalysisRecord makeRecord(const juce::String& name, const float peak, const double integratedLufs)
 {
     AudioAnalysisRecord record;
     record.fileName = name;
@@ -26,7 +40,7 @@ static AudioAnalysisRecord makeRecord(const juce::String& name, const float peak
 }
 
 /// Returns the file names of the records in their current order.
-static juce::StringArray namesOf(const std::vector<AudioAnalysisRecord>& records)
+juce::StringArray namesOf(const std::vector<AudioAnalysisRecord>& records)
 {
     juce::StringArray names;
     for (const auto& record : records) {
@@ -34,6 +48,7 @@ static juce::StringArray namesOf(const std::vector<AudioAnalysisRecord>& records
     }
     return names;
 }
+}  // namespace
 
 /// Checks the column comparators and the primary and secondary sort order.
 class SortingTests final : public juce::UnitTest
@@ -54,11 +69,17 @@ public:
             eightBit.bitsPerSample = 8;
             sixteenBit.bitsPerSample = 16;
             twentyFourBit.bitsPerSample = 24;
-            expectEquals(results_sorting::compareRecordsByColumn(sixteenBit, sixteenBit, columnBitDepth), 0);
-            expect(results_sorting::compareRecordsByColumn(eightBit, sixteenBit, columnBitDepth) < 0);
+            expectEquals(
+                results_sorting::compareRecordsByColumn(sixteenBit, sixteenBit, AudioFileTableColumn::bitDepth), 0
+            );
+            expect(results_sorting::compareRecordsByColumn(eightBit, sixteenBit, AudioFileTableColumn::bitDepth) < 0);
 
             std::vector records {twentyFourBit, sixteenBit, unknown, eightBit};
-            results_sorting::SortState state {.primaryColumnId = columnBitDepth, .statusText = {}};
+            results_sorting::SortState state {
+                .primaryColumn = AudioFileTableColumn::bitDepth,
+                .secondaryColumn = std::nullopt,
+                .statusText = {},
+            };
             results_sorting::sortRecords(records, state);
             expect(namesOf(records) == juce::StringArray {"unknown", "eight", "sixteen", "twenty-four"});
             state.primaryForwards = false;
@@ -70,23 +91,23 @@ public:
         {
             const auto quiet = makeRecord("quiet", -0.25f, -20.0);
             const auto loud = makeRecord("loud", 0.5f, -10.0);
-            expect(results_sorting::compareRecordsByColumn(quiet, loud, columnOverallPeak) < 0);
+            expect(results_sorting::compareRecordsByColumn(quiet, loud, AudioFileTableColumn::overallPeak) < 0);
         }
 
         beginTest("Peaks that differ by the smallest step still order strictly");
         {
             const auto lower = makeRecord("lower", 0.5f, -20.0);
             const auto higher = makeRecord("higher", std::nextafter(0.5f, 1.0f), -20.0);
-            expect(results_sorting::compareRecordsByColumn(lower, higher, columnOverallPeak) < 0);
-            expect(results_sorting::compareRecordsByColumn(higher, lower, columnOverallPeak) > 0);
-            expectEquals(results_sorting::compareRecordsByColumn(lower, lower, columnOverallPeak), 0);
+            expect(results_sorting::compareRecordsByColumn(lower, higher, AudioFileTableColumn::overallPeak) < 0);
+            expect(results_sorting::compareRecordsByColumn(higher, lower, AudioFileTableColumn::overallPeak) > 0);
+            expectEquals(results_sorting::compareRecordsByColumn(lower, lower, AudioFileTableColumn::overallPeak), 0);
         }
 
         beginTest("Silent loudness sorts below every measurable value");
         {
             const auto silent = makeRecord("silent", 0.0f, AudioAnalysisRecord::negativeInfinityLoudness);
             const auto quiet = makeRecord("quiet", 0.1f, -40.0);
-            expect(results_sorting::compareRecordsByColumn(silent, quiet, columnIntegratedLufs) < 0);
+            expect(results_sorting::compareRecordsByColumn(silent, quiet, AudioFileTableColumn::integratedLufs) < 0);
         }
 
         beginTest("Primary, secondary, and name ordering, with failed records last");
@@ -105,9 +126,9 @@ public:
             results_sorting::sortRecords(
                 records,
                 {
-                    .primaryColumnId = columnOverallPeak,
+                    .primaryColumn = AudioFileTableColumn::overallPeak,
                     .primaryForwards = false,
-                    .secondaryColumnId = columnIntegratedLufs,
+                    .secondaryColumn = AudioFileTableColumn::integratedLufs,
                     .secondaryForwards = true,
                     .statusText = {},
                 }
@@ -123,7 +144,7 @@ public:
             const auto negativeZero = makeRecord("negative zero", -0.0f, -20.0);
             const auto positiveZero = makeRecord("positive zero", 0.0f, -20.0);
             const auto half = makeRecord("half", 0.5f, -20.0);
-            constexpr auto column = columnOverallPeak;
+            constexpr auto column = AudioFileTableColumn::overallPeak;
 
             expectEquals(results_sorting::compareRecordsByColumn(nan, otherNan, column), 0);
             expect(results_sorting::compareRecordsByColumn(half, nan, column) < 0);
@@ -142,9 +163,9 @@ public:
             results_sorting::sortRecords(
                 records,
                 {
-                    .primaryColumnId = columnIntegratedLufs,
+                    .primaryColumn = AudioFileTableColumn::integratedLufs,
                     .primaryForwards = true,
-                    .secondaryColumnId = columnOverallPeak,
+                    .secondaryColumn = AudioFileTableColumn::overallPeak,
                     .secondaryForwards = true,
                     .statusText = {},
                 }
@@ -166,9 +187,9 @@ public:
             results_sorting::sortRecords(
                 records,
                 {
-                    .primaryColumnId = columnCustomGain,
+                    .primaryColumn = AudioFileTableColumn::customGain,
                     .primaryForwards = true,
-                    .secondaryColumnId = 0,
+                    .secondaryColumn = std::nullopt,
                     .secondaryForwards = true,
                     .statusText = {},
                 }
@@ -188,9 +209,9 @@ public:
             results_sorting::sortRecords(
                 records,
                 {
-                    .primaryColumnId = columnOverallPeak,
+                    .primaryColumn = AudioFileTableColumn::overallPeak,
                     .primaryForwards = false,
-                    .secondaryColumnId = 0,
+                    .secondaryColumn = std::nullopt,
                     .secondaryForwards = true,
                     .statusText = {},
                 }
@@ -220,9 +241,9 @@ public:
             results_sorting::sortRecords(
                 records,
                 {
-                    .primaryColumnId = columnStatus,
+                    .primaryColumn = AudioFileTableColumn::status,
                     .primaryForwards = true,
-                    .secondaryColumnId = 0,
+                    .secondaryColumn = std::nullopt,
                     .secondaryForwards = true,
                     .statusText
                     = [&shownText](const AudioAnalysisRecord& record) { return shownText.at(record.fileName); },
@@ -234,40 +255,45 @@ public:
 
         beginTest("A new primary sort clears a secondary sort on the same column");
         {
-            results_sorting::SortState state {.primaryColumnId = columnOverallPeak, .statusText = {}};
-            results_sorting::toggleSecondarySort(state, columnIntegratedLufs);
-            results_sorting::setPrimarySort(state, columnIntegratedLufs, false);
+            results_sorting::SortState state {
+                .primaryColumn = AudioFileTableColumn::overallPeak,
+                .secondaryColumn = std::nullopt,
+                .statusText = {},
+            };
+            results_sorting::toggleSecondarySort(state, AudioFileTableColumn::integratedLufs);
+            results_sorting::setPrimarySort(state, AudioFileTableColumn::integratedLufs, false);
 
-            expectEquals(state.primaryColumnId, static_cast<int>(columnIntegratedLufs));
+            expect(state.primaryColumn == AudioFileTableColumn::integratedLufs);
             expect(!state.primaryForwards);
-            expectEquals(state.secondaryColumnId, 0);
+            expect(!state.secondaryColumn.has_value());
             expect(state.secondaryForwards);
 
-            results_sorting::toggleSecondarySort(state, columnOverallPeak);
-            results_sorting::setPrimarySort(state, columnStatus, true);
-            expectEquals(state.secondaryColumnId, static_cast<int>(columnOverallPeak));
+            results_sorting::toggleSecondarySort(state, AudioFileTableColumn::overallPeak);
+            results_sorting::setPrimarySort(state, AudioFileTableColumn::status, true);
+            expect(state.secondaryColumn == AudioFileTableColumn::overallPeak);
         }
 
         beginTest("Secondary sort clicks set, flip, and clear the secondary column");
         {
-            results_sorting::SortState state {.primaryColumnId = columnOverallPeak, .statusText = {}};
+            results_sorting::SortState state {
+                .primaryColumn = AudioFileTableColumn::overallPeak,
+                .secondaryColumn = std::nullopt,
+                .statusText = {},
+            };
 
-            results_sorting::toggleSecondarySort(state, columnIntegratedLufs);
-            expectEquals(state.secondaryColumnId, static_cast<int>(columnIntegratedLufs));
+            results_sorting::toggleSecondarySort(state, AudioFileTableColumn::integratedLufs);
+            expect(state.secondaryColumn == AudioFileTableColumn::integratedLufs);
             expect(state.secondaryForwards);
 
-            results_sorting::toggleSecondarySort(state, columnIntegratedLufs);
+            results_sorting::toggleSecondarySort(state, AudioFileTableColumn::integratedLufs);
             expect(!state.secondaryForwards);
 
-            results_sorting::toggleSecondarySort(state, columnStatus);
-            expectEquals(state.secondaryColumnId, static_cast<int>(columnStatus));
+            results_sorting::toggleSecondarySort(state, AudioFileTableColumn::status);
+            expect(state.secondaryColumn == AudioFileTableColumn::status);
             expect(state.secondaryForwards);
 
-            results_sorting::toggleSecondarySort(state, 0);
-            expectEquals(state.secondaryColumnId, static_cast<int>(columnStatus));
-
-            results_sorting::toggleSecondarySort(state, columnOverallPeak);
-            expectEquals(state.secondaryColumnId, 0);
+            results_sorting::toggleSecondarySort(state, AudioFileTableColumn::overallPeak);
+            expect(!state.secondaryColumn.has_value());
             expect(state.secondaryForwards);
         }
     }
@@ -279,18 +305,18 @@ private:
     void checkComparatorsOnRandomRecords()
     {
         constexpr std::array columns {
-            columnName,
-            columnPath,
-            columnBitDepth,
-            columnSampleRate,
-            columnPeakLeft,
-            columnPeakRight,
-            columnOverallPeak,
-            columnOverallTruePeak,
-            columnMaxShortTermLufs,
-            columnIntegratedLufs,
-            columnCustomGain,
-            columnStatus,
+            AudioFileTableColumn::name,
+            AudioFileTableColumn::path,
+            AudioFileTableColumn::bitDepth,
+            AudioFileTableColumn::sampleRate,
+            AudioFileTableColumn::peakLeft,
+            AudioFileTableColumn::peakRight,
+            AudioFileTableColumn::overallPeak,
+            AudioFileTableColumn::overallTruePeak,
+            AudioFileTableColumn::maxShortTermLufs,
+            AudioFileTableColumn::integratedLufs,
+            AudioFileTableColumn::customGain,
+            AudioFileTableColumn::status,
         };
 
         const auto records = makeRandomRecords();
@@ -344,7 +370,7 @@ private:
             record.peakRight = pickPeak();
             record.overallTruePeak = static_cast<double>(pickPeak());
             record.maxShortTermLufs = pickLoudness();
-            record.sampleRate = random.nextBool() ? 44100 : 48000;
+            record.sampleRate = random.nextBool() ? 44'100 : 48'000;
             record.bitsPerSample = random.nextInt(5) * 8;
             record.hasCustomGain = random.nextBool();
             record.customGainDb = static_cast<float>(random.nextInt(3));
@@ -356,7 +382,10 @@ private:
     }
 
     /// Returns how many pairs break antisymmetry and how many triples break transitivity for one column.
-    static int countOrderingViolations(const std::vector<AudioAnalysisRecord>& records, const int column)
+    static int countOrderingViolations(
+        const std::vector<AudioAnalysisRecord>& records,
+        const AudioFileTableColumn column
+    )
     {
         const auto compare = [column](const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs) {
             return juce::jlimit(-1, 1, results_sorting::compareRecordsByColumn(lhs, rhs, column));

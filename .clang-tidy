@@ -10,11 +10,8 @@
 # - modernize-use-trailing-return-type: the project uses leading return types throughout.
 # - misc-include-cleaner: JUCE modules are included through umbrella headers,
 #   so nearly every use of a JUCE symbol is reported.
-# - misc-use-anonymous-namespace and misc-use-internal-linkage:
-#   file-local helpers are declared `static`, and file-local types and constants may sit in an anonymous namespace,
-#   so neither style is flagged.
-# - cppcoreguidelines-use-enum-class: the unscoped menu and table column enums hold ids
-#   that JUCE passes around as plain ints.
+# - misc-use-internal-linkage: flags every test suite class,
+#   which sits next to its factory from tests/TestSuites.h outside an anonymous namespace.
 # - cppcoreguidelines-owning-memory: JUCE APIs such as setContentOwned and createDocumentWindowButton
 #   take and return raw owning pointers.
 # - bugprone-exception-escape: the reported destructors and callbacks can only throw on allocation failure,
@@ -49,11 +46,11 @@ Checks: >
   cppcoreguidelines-special-member-functions,
   cppcoreguidelines-pro-bounds-pointer-arithmetic,
   cppcoreguidelines-pro-type-reinterpret-cast,
+  cppcoreguidelines-use-enum-class,
   -modernize-use-trailing-return-type,
   -readability-uppercase-literal-suffix,
   -readability-math-missing-parentheses,
   -misc-include-cleaner,
-  -misc-use-anonymous-namespace,
   -misc-use-internal-linkage,
   -bugprone-exception-escape,
   -misc-multiple-inheritance,

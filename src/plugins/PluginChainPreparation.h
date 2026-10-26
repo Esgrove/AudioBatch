@@ -8,7 +8,7 @@
 
 #include <JuceHeader.h>
 
-#include <vector>
+#include <span>
 
 namespace audiobatch::plugin_processing
 {
@@ -30,7 +30,7 @@ struct ChainPreparation {
 };
 
 ChainPreparation prepareChain(
-    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    std::span<juce::AudioPluginInstance* const> chainInstances,
     const PluginProcessingOptions& options,
     int numChannels,
     double sampleRate
@@ -41,7 +41,7 @@ ChainPreparation prepareChain(
 
 bool configurePluginChannels(juce::AudioPluginInstance& plugin, int numChannels, double sampleRate, int blockSize);
 
-void releasePluginResources(const std::vector<juce::AudioPluginInstance*>& chainInstances);
+void releasePluginResources(std::span<juce::AudioPluginInstance* const> chainInstances);
 void restoreStateAndPrepare(
     juce::AudioPluginInstance& plugin,
     const juce::MemoryBlock& state,

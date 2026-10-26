@@ -18,9 +18,11 @@ namespace audiobatch
 {
 namespace cli
 {
+namespace
+{
 /// Detaches the logger before returning the process exit code,
 /// so the juce::Logger never points at a logger that is about to be destroyed.
-static int exitCli(const int exitCode)
+int exitCli(const int exitCode)
 {
     juce::Logger::setCurrentLogger(nullptr);
     return exitCode;
@@ -28,7 +30,7 @@ static int exitCli(const int exitCode)
 
 /// Runs this process as the plugin scan worker for a plugin rescan in another audiobatch process.
 /// Runs a message loop until the scanning process disconnects, and logs to its own file.
-static int runPluginScanWorker(const juce::String& executableName, const juce::String& commandLine)
+int runPluginScanWorker(const juce::String& executableName, const juce::String& commandLine)
 {
     const juce::ScopedJuceInitialiser_GUI juceInitialiser;
     const auto logger = utils::createDefaultLogger(executableName, "audiobatchPluginScanner");
@@ -44,10 +46,13 @@ static int runPluginScanWorker(const juce::String& executableName, const juce::S
     juce::MessageManager::getInstance()->runDispatchLoop();
     return exitCli(0);
 }
+}  // namespace
 }  // namespace cli
 
+namespace
+{
 /// Runs the headless batch analysis executable and returns its process exit code.
-static int runCliMain(const std::span<char*> argv)
+int runCliMain(const std::span<char*> argv)
 {
     juce::ArgumentList arguments(static_cast<int>(argv.size()), argv.data());
     // argv[0] is often a relative path, which juce::File asserts on, so resolve it against the working directory.
@@ -101,6 +106,7 @@ static int runCliMain(const std::span<char*> argv)
 
     return cli::exitCli(exitCode);
 }
+}  // namespace
 }  // namespace audiobatch
 
 /// Entry point for the headless batch analysis executable.

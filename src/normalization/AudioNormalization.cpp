@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <ranges>
 #include <utility>
 #include <vector>
 
@@ -23,7 +24,7 @@ namespace audiobatch
 /// Helpers for bit depth selection and chunked normalization.
 namespace
 {
-constexpr int normalizationBlockSize {32768};
+constexpr int normalizationBlockSize {32'768};
 constexpr auto normalizedAiffOutputExtension {".aif"};
 constexpr int defaultMp3BitsPerSample {16};
 constexpr auto cancelledMessage {"Normalization was cancelled"};
@@ -144,9 +145,8 @@ std::expected<juce::String, juce::String> renderNormalizedAudio(
             juce::FloatVectorOperations::clear(channelPointer, samplesThisBlock);
         }
 
-        const auto readSucceeded = utils::readFloatSamples(
-            reader, channelPointers.data(), buffer.getNumChannels(), samplePosition, samplesThisBlock
-        );
+        const auto readSucceeded
+            = utils::readFloatSamples(reader, std::span(channelPointers), samplePosition, samplesThisBlock);
 
         if (!failureTracker.recordBlock(readSucceeded, samplePosition, samplesThisBlock)) {
             return std::unexpected(failureTracker.getErrorMessage());
@@ -179,12 +179,8 @@ juce::File getNormalizationOutputFile(const juce::File& sourceFile)
 /// Otherwise the record that sorts first by path wins, so the result does not depend on input order.
 juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records)
 {
-    std::vector<const AudioAnalysisRecord*> ordered;
-    ordered.reserve(records.size());
-
-    for (const auto& record : records) {
-        ordered.push_back(&record);
-    }
+    auto ordered = records | std::views::transform([](const AudioAnalysisRecord& record) { return &record; })
+        | std::ranges::to<std::vector>();
 
     // In-place sources claim their output first, then the rest in path order.
     std::ranges::sort(ordered, [](const AudioAnalysisRecord* lhs, const AudioAnalysisRecord* rhs) {
@@ -370,7 +366,7 @@ AudioNormalizationResult normalizeFile(
     // The hidden name keeps a half-written output out of folder scans,
     // and out of later scans after a crash.
     const juce::TemporaryFile temporaryFile(outputFile, juce::TemporaryFile::useHiddenFile);
-    std::unique_ptr<juce::OutputStream> outputStream(temporaryFile.getFile().createOutputStream().release());
+    std::unique_ptr<juce::OutputStream> outputStream = temporaryFile.getFile().createOutputStream();
 
     if (outputStream == nullptr) {
         return failNormalization(file, "Could not create temporary output file");

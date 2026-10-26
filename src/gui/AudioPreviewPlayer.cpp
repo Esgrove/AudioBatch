@@ -16,7 +16,7 @@ namespace audiobatch
 {
 namespace
 {
-constexpr int readAheadBufferSamples {32768};
+constexpr int readAheadBufferSamples {32'768};
 constexpr int readAheadThreadStopTimeoutMilliseconds {2000};
 constexpr juce::uint32 seekBufferTimeoutMilliseconds {2000};
 /// Device ownership must not depend on visible waveform refreshes or focused component callbacks.

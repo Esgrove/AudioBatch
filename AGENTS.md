@@ -48,7 +48,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
   `NormalizationFormatSupport.cpp`, which reports which formats this build can normalize,
   and `NormalizeCoordinator.*`, which orchestrates background normalization.
 
-- `src/serato/` holds the Serato tag parsing (`SeratoTags.*`, `SeratoTagReader.*`, `SeratoTagTypes.h`),
+- `src/serato/` holds the Serato tag parsing (`SeratoTags.*`, `SeratoTagReader.*`, `SeratoTagTypes.h`,
+  and the fixed-width field readers in `SeratoBytes.h`),
   the overview waveform (`SeratoOverview.*`, `SeratoWaveformColouring.*`),
   and the background preview loading in `SeratoPreviewLoader.*`.
 - `src/plugins/` holds VST3 / Audio Unit plugin hosting.
@@ -66,6 +67,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       It also chooses the default folder for file browsing.
     - `GuiUtils.*` holds reusable window activation, foreground permission transfer,
       read-only label styling, and failure-summary dialogs.
+      Its `enumFromId` turns the integer ids of JUCE menu items, commands, and table columns into scoped enums.
       Native Windows request types and APIs stay private to its implementation.
     - `AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, and peak math.
     - `AudioMetadata.*` reads and writes tags and embedded art through TagLib
@@ -78,7 +80,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
     - `StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
     - `ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
     - `version.h` holds the build version constants.
-      Put new generic helpers in the matching file instead of a file-local `static` function,
+      Put new generic helpers in the matching file instead of a file-local helper function,
       so they are not duplicated across services.
 - `src/cli/` holds the CLI front end.
     - `CliMain.cpp` is the CLI entry point.
@@ -222,6 +224,8 @@ The detailed rules are in `.agents/rules/code-organization.md`.
 - Group functions and variables by return type and topic.
 - Do not define structs, classes or enums inside classes.
   Declare them at namespace level before the class, or in the anonymous namespace of the `.cpp` that alone uses them.
+- Put file-local helper functions and variables in the anonymous namespace too, instead of declaring them `static`.
+- Make enums `enum class`, and convert integer ids from JUCE back with `utils::enumFromId`.
 - All project code lives in `namespace audiobatch`, with the helper namespaces
   such as `utils` and `console` nested inside it.
   Wrap whole headers and sources, so definitions of classes need no qualification.

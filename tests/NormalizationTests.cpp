@@ -19,11 +19,14 @@ namespace audiobatch::tests
 /// Allowed difference between the normalized peak and 0 dBFS, in dB.
 constexpr double peakTolerance = 0.01;
 
+namespace
+{
 /// Builds an analysis record for a file path without analyzing it.
-static AudioAnalysisRecord recordForPath(const juce::String& path)
+AudioAnalysisRecord recordForPath(const juce::String& path)
 {
     return AudioAnalysisRecord::fromFile(juce::File(path));
 }
+}  // namespace
 
 /// Checks normalization paths, conflicts, and output.
 class NormalizationTests final : public juce::UnitTest
@@ -185,9 +188,9 @@ private:
             expectEquals(analyzeFile(source).overallPeak, record.overallPeak);
         }
 
-        checkInPlaceNormalization(directory, "sine_mono_24000_16.aif", 1, 24000, 16);
-        checkInPlaceNormalization(directory, "sine_mono_48000_24.aif", 1, 48000, 24);
-        checkInPlaceNormalization(directory, "sine_stereo_44100_16.aif", 2, 44100, 16);
+        checkInPlaceNormalization(directory, "sine_mono_24000_16.aif", 1, 24'000, 16);
+        checkInPlaceNormalization(directory, "sine_mono_48000_24.aif", 1, 48'000, 24);
+        checkInPlaceNormalization(directory, "sine_stereo_44100_16.aif", 2, 44'100, 16);
 
         beginTest("Tags and embedded art survive in-place normalization");
         {

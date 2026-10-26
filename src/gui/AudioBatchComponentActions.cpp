@@ -10,6 +10,7 @@
 #include "utils/StringFormat.h"
 
 #include <algorithm>
+#include <utility>
 
 namespace audiobatch
 {
@@ -163,10 +164,8 @@ void AudioBatchComponent::showSupportedNormalizationFormats()
 }
 
 /// Selects the clicked row and opens the per-file action menu.
-void AudioBatchComponent::handleFileContextMenuRequested(const int row, int columnId, const juce::MouseEvent& event)
+void AudioBatchComponent::handleFileContextMenuRequested(const int row, const juce::MouseEvent& event)
 {
-    juce::ignoreUnused(columnId);
-
     if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
         return;
     }
@@ -192,25 +191,30 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
         && canNormalizeRecords(selectedRecords);
 
     juce::PopupMenu menu;
-    menu.addItem(revealFileMenuItemId, utils::revealInFileManagerLabel(), record.file.exists());
-    menu.addItem(openParentDirectoryMenuItemId, "Open Parent Folder", parentDirectory.isDirectory());
+    const auto addItem = [&menu](const FileMenuItemId item, const juce::String& text, const bool isEnabled) {
+        menu.addItem(std::to_underlying(item), text, isEnabled);
+    };
+    addItem(FileMenuItemId::revealFile, utils::revealInFileManagerLabel(), record.file.exists());
+    addItem(FileMenuItemId::openParentDirectory, "Open Parent Folder", parentDirectory.isDirectory());
     menu.addSeparator();
-    menu.addItem(reanalyzeMenuItemId, "Re-analyze Selected", !isAnalysisInProgress() && !isFileOperationInProgress());
-    menu.addItem(
-        normalizeMenuItemId, utils::format("Normalize to {}", normalizationTargetControl.describeTarget()), canNormalize
+    addItem(FileMenuItemId::reanalyze, "Re-analyze Selected", !isAnalysisInProgress() && !isFileOperationInProgress());
+    addItem(
+        FileMenuItemId::normalize,
+        utils::format("Normalize to {}", normalizationTargetControl.describeTarget()),
+        canNormalize
     );
-    menu.addItem(normalizeSupportMenuItemId, "Normalization Format Support...");
+    addItem(FileMenuItemId::normalizeSupport, "Normalization Format Support...", true);
     menu.addSeparator();
     const bool canProcess = !processingProgress.inProgress && !isAnalysisInProgress() && !normalizeProgress.inProgress
-        && pluginChain != nullptr && pluginChain->getNumEnabledValidSlots() > 0;
-    menu.addItem(processMenuItemId, "Process With Plugin Chain (output AIFF)", canProcess);
+        && pluginChain->getNumEnabledValidSlots() > 0;
+    addItem(FileMenuItemId::process, "Process With Plugin Chain (output AIFF)", canProcess);
     const bool anyHasGain = std::ranges::any_of(selectedRecords, [](const AudioAnalysisRecord& selectedRecord) {
         return selectedRecord.hasCustomGain;
     });
-    menu.addItem(clearCustomGainMenuItemId, "Clear Per-file Gain", anyHasGain);
+    addItem(FileMenuItemId::clearCustomGain, "Clear Per-file Gain", anyHasGain);
     menu.addSeparator();
-    menu.addItem(removeFromListMenuItemId, "Remove from List");
-    menu.addItem(moveToTrashMenuItemId, "Move to Trash", record.file.exists());
+    addItem(FileMenuItemId::removeFromList, "Remove from List", true);
+    addItem(FileMenuItemId::moveToTrash, "Move to Trash", record.file.exists());
 
     const auto safeThis = SafePointer(this);
     menu.showMenuAsync(
@@ -219,40 +223,39 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
             .withParentComponent(this),
         // The file is captured instead of the row, because results arriving while the menu is open re-sort the table.
         [safeThis, file = record.file](const int result) {
-            if (safeThis == nullptr) {
+            const auto item = fileMenuItemFromId(result);
+            if (safeThis == nullptr || !item.has_value()) {
                 return;
             }
 
-            switch (result) {
-                case revealFileMenuItemId:
+            switch (*item) {
+                case FileMenuItemId::revealFile:
                     utils::revealFileInFileManager(file);
                     break;
-                case openParentDirectoryMenuItemId:
+                case FileMenuItemId::openParentDirectory:
                     utils::revealParentDirectory(file);
                     break;
-                case normalizeMenuItemId:
+                case FileMenuItemId::normalize:
                     safeThis->normalizeSelectedRecords();
                     break;
-                case normalizeSupportMenuItemId:
+                case FileMenuItemId::normalizeSupport:
                     safeThis->showSupportedNormalizationFormats();
                     break;
-                case moveToTrashMenuItemId:
+                case FileMenuItemId::moveToTrash:
                     safeThis->moveSelectedRecordsToTrash(true);
                     break;
-                case removeFromListMenuItemId:
+                case FileMenuItemId::removeFromList:
                     safeThis->removeSelectedRecords();
                     break;
-                case reanalyzeMenuItemId:
+                case FileMenuItemId::reanalyze:
                     safeThis->reanalyzeSelectedRecords();
                     break;
-                case processMenuItemId:
+                case FileMenuItemId::process:
                     safeThis->processSelectedRecords();
                     break;
-                case clearCustomGainMenuItemId:
+                case FileMenuItemId::clearCustomGain:
                     safeThis->gainSlider.setValue(0.0, juce::dontSendNotification);
                     safeThis->applyCustomGainToSelection(0.0f, false);
-                    break;
-                default:
                     break;
             }
         }
