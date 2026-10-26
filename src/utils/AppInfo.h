@@ -10,6 +10,7 @@ namespace audiobatch::utils
 {
 bool isVersionRequest(const juce::String& commandLine);
 bool isHeadlessRequest(const juce::String& commandLine);
+juce::StringArray getPathArguments(const juce::String& commandLine);
 
 juce::PropertiesFile::Options createApplicationSettingsOptions();
 

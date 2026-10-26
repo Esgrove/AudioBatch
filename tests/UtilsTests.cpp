@@ -86,6 +86,21 @@ public:
             expect(!utils::isHeadlessRequest("--version"));
         }
 
+        beginTest("Path arguments skip options and resolve against the working directory");
+        {
+            const auto workingDirectory = juce::File::getCurrentWorkingDirectory();
+            const auto absoluteFolder = root.getChildFile("AudioBatch path arguments").getFullPathName();
+            const auto paths = utils::getPathArguments(
+                utils::format("--headless track.wav {} -psn_0_12345 track.wav", absoluteFolder.quoted())
+            );
+
+            expectEquals(paths.size(), 2);
+            expectEquals(paths[0], workingDirectory.getChildFile("track.wav").getFullPathName());
+            expectEquals(paths[1], absoluteFolder);
+            expect(utils::getPathArguments({}).isEmpty());
+            expect(utils::getPathArguments("--headless -V").isEmpty());
+        }
+
         beginTest("System information retains indented details without padding one-line messages");
         {
             const ScopedLogCapture capture;

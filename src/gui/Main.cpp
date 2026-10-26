@@ -51,6 +51,8 @@ public:
 
     /// Starts the application: sets up file logging, creates the main window,
     /// and either shows it or keeps it hidden when the --headless flag is present.
+    /// Folders and files given as arguments are opened as if they were dropped onto the window,
+    /// together with the files the system asked to open before the window existed.
     /// Window activation is repeated asynchronously to reliably gain focus on first launch.
     /// The --version flag only prints the version line and quits,
     /// before the logger or the window are created.
@@ -86,6 +88,12 @@ public:
         }
 
         mainWindow = std::make_unique<MainWindow>(getApplicationName());
+
+        pendingPaths.addArray(utils::getPathArguments(commandLineParameters));
+        if (!pendingPaths.isEmpty()) {
+            mainWindow->openPaths(pendingPaths);
+            pendingPaths.clear();
+        }
 
         if (startHeadless) {
             mainWindow->setVisible(false);
@@ -132,11 +140,21 @@ public:
         }
     }
 
+    /// Opens the folders and files of a relaunch or of a system request to open files in the running window.
+    /// On macOS, files opened at launch arrive here before initialise creates the window,
+    /// so they are kept until it exists.
     /// Activates the existing Windows window on a normal relaunch, preserving deliberate headless launches.
     /// macOS keeps its existing platform activation behavior.
     void anotherInstanceStarted(const juce::String& commandLine) override
     {
         utils::logInfo("Another instance started with args: {}", commandLine);
+        if (const auto paths = utils::getPathArguments(commandLine); !paths.isEmpty()) {
+            if (mainWindow == nullptr) {
+                pendingPaths.addArray(paths);
+            } else if (!quitRequested) {
+                mainWindow->openPaths(paths);
+            }
+        }
 #if JUCE_WINDOWS
         if (mainWindow != nullptr && !quitRequested && !utils::isHeadlessRequest(commandLine)) {
             mainWindow->showAndActivate();
@@ -173,6 +191,9 @@ private:
     std::unique_ptr<MainWindow> mainWindow;
     std::unique_ptr<PluginScanWorker> pluginScanWorker;
     std::unique_ptr<juce::FileLogger> logger;
+
+    /// Paths the system asked to open before the main window existed.
+    juce::StringArray pendingPaths;
 
     /// Prevents repeated close requests from scheduling teardown more than once.
     bool quitRequested {false};

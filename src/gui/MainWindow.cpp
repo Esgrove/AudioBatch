@@ -143,6 +143,13 @@ MainWindow::MainWindow(const juce::String& name) :
     logStartupCheckpoint("constructor complete");
 }
 
+/// Loads the folders and files given on the command line, or forwarded from another launch, into the results table.
+/// Folders replace the root folders, and files are added to the table, as when they are dropped onto the window.
+void MainWindow::openPaths(const juce::StringArray& paths) const
+{
+    getAudioBatch().openPaths(paths, false);
+}
+
 /// Makes the window visible and pushes it to the front with keyboard focus.
 /// Safe to call repeatedly,
 /// the GUI startup path also invokes it again asynchronously to work around platform focus quirks on first launch.

@@ -60,6 +60,7 @@ public:
     void chooseRootFolder();
     void clearAllRecords();
     void moveSelectedRecordsToTrash(bool promptForConfirmation);
+    void openPaths(const juce::StringArray& paths, bool appendToRoots);
     void processSelectedRecords();
     void reanalyzeSelectedRecords();
     void removeSelectedRecords();
