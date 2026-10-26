@@ -29,16 +29,16 @@ PreviewWorkspace::PreviewWorkspace(AudioPreviewPlayer& previewPlayer, juce::Appl
     addAndMakeVisible(thumbnail);
 
     startStopButton.setEnabled(false);
-    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
-    startStopButton.setColour(juce::TextButton::buttonOnColourId, juce::CustomLookAndFeel::green());
+    startStopButton.setColour(juce::TextButton::buttonColourId, CustomLookAndFeel::greyMedium());
+    startStopButton.setColour(juce::TextButton::buttonOnColourId, CustomLookAndFeel::green());
     startStopButton.setTooltip("Start or stop preview playback for the selected file.");
     addAndMakeVisible(startStopButton);
 
     addAndMakeVisible(audioInfo);
 
     processButton.setTooltip("Process selected files through the plugin chain.");
-    processButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::blue());
-    processButton.setColour(juce::TextButton::textColourOffId, juce::CustomLookAndFeel::greyDark());
+    processButton.setColour(juce::TextButton::buttonColourId, CustomLookAndFeel::blue());
+    processButton.setColour(juce::TextButton::textColourOffId, CustomLookAndFeel::greyDark());
     addAndMakeVisible(processButton);
 
     configureSecondaryControls();
@@ -119,7 +119,7 @@ void PreviewWorkspace::configurePreviewSectionButton()
     juce::DrawablePath collapseChevron;
     collapseChevron.setPath(chevronPath);
     collapseChevron.setFill(juce::Colours::transparentBlack);
-    collapseChevron.setStrokeFill(juce::CustomLookAndFeel::greyMiddleLight());
+    collapseChevron.setStrokeFill(CustomLookAndFeel::greyMiddleLight());
     collapseChevron.setStrokeThickness(layout::previewToggle::strokeWidth);
     chevronPath.applyTransform(
         juce::AffineTransform::rotation(
@@ -131,7 +131,7 @@ void PreviewWorkspace::configurePreviewSectionButton()
     juce::DrawablePath expandChevron;
     expandChevron.setPath(chevronPath);
     expandChevron.setFill(juce::Colours::transparentBlack);
-    expandChevron.setStrokeFill(juce::CustomLookAndFeel::greyMiddleLight());
+    expandChevron.setStrokeFill(CustomLookAndFeel::greyMiddleLight());
     expandChevron.setStrokeThickness(layout::previewToggle::strokeWidth);
     previewSectionButton.setImages(&collapseChevron, nullptr, nullptr, nullptr, &expandChevron);
     previewSectionButton.setEdgeIndent(layout::previewToggle::imageInset);

@@ -396,7 +396,7 @@ juce::Array<juce::File> AudioBatchComponent::releasePreviewBeforeProcessing(
 {
     // Always stop playback before processing, since files may be replaced on disk.
     previewPlayer.stop();
-    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green());
+    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, CustomLookAndFeel::green());
 
     juce::Array<juce::File> filesToProcess;
     for (const auto& record : records) {

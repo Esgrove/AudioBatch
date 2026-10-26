@@ -46,7 +46,7 @@ private:
     void handlePluginChoiceMenuItem(int menuItemID) const;
 
     juce::ApplicationCommandManager commandManager;
-    std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel {std::make_unique<juce::CustomLookAndFeel>(true)};
+    std::unique_ptr<CustomLookAndFeel> lookAndFeel {std::make_unique<CustomLookAndFeel>(true)};
 
     /// The window content, shown without transferring ownership to the window.
     /// Declared after the look-and-feel it paints with, and destroyed explicitly before it in the destructor.

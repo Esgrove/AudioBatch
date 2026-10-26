@@ -182,7 +182,7 @@ void AudioBatchComponent::showAudioFile(const juce::File& file)
 
     updatePreviewInputGain(true);
     previewWorkspace.startStopButton.setEnabled(true);
-    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green());
+    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, CustomLookAndFeel::green());
     previewWorkspace.zoomSlider.setValue(100.0, juce::dontSendNotification);
 
     const auto waveformData = file.existsAsFile() ? analysisCache.getWaveformData(file) : std::nullopt;
@@ -261,7 +261,7 @@ void AudioBatchComponent::updatePlaybackButtonForTransportState()
         return;
     }
 
-    const auto colour = previewPlayer.isPlaying() ? juce::CustomLookAndFeel::red() : juce::CustomLookAndFeel::green();
+    const auto colour = previewPlayer.isPlaying() ? CustomLookAndFeel::red() : CustomLookAndFeel::green();
     previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, colour);
 }
 
@@ -312,7 +312,7 @@ void AudioBatchComponent::clearPreviewDisplay()
     previewWorkspace.audioInfo.clear();
     previewWorkspace.thumbnail.setURL(juce::URL());
     previewWorkspace.startStopButton.setEnabled(false);
-    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
+    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, CustomLookAndFeel::greyMedium());
 }
 
 /// Maps pinch-zoom gestures onto the waveform zoom slider.

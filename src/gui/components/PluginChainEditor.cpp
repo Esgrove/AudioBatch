@@ -42,13 +42,12 @@ PluginChainSlotRow::PluginChainSlotRow(
     );
     nameLabel.setJustificationType(juce::Justification::centredLeft);
     nameLabel.setColour(
-        juce::Label::textColourId,
-        enabled ? juce::CustomLookAndFeel::greySuperLight() : juce::CustomLookAndFeel::greyMiddle()
+        juce::Label::textColourId, enabled ? CustomLookAndFeel::greySuperLight() : CustomLookAndFeel::greyMiddle()
     );
     nameLabel.setInterceptsMouseClicks(false, false);
     addAndMakeVisible(nameLabel);
     latencyLabel.setInterceptsMouseClicks(false, false);
-    latencyLabel.setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddle());
+    latencyLabel.setColour(juce::Label::textColourId, CustomLookAndFeel::greyMiddle());
     addAndMakeVisible(latencyLabel);
     updateLatency();
 
@@ -67,7 +66,7 @@ PluginChainSlotRow::PluginChainSlotRow(
     addAndMakeVisible(downButton);
 
     removeButton.setTooltip("Remove this plugin from the chain.");
-    removeButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMediumDark());
+    removeButton.setColour(juce::TextButton::buttonColourId, CustomLookAndFeel::greyMediumDark());
     removeButton.onClick = [this] { liveChain.removeSlot(slotId); };
     addAndMakeVisible(removeButton);
 }
@@ -105,7 +104,7 @@ void PluginChainSlotRow::updateLatency()
 /// Fills the row background, using a lighter shade while the row is being dragged.
 void PluginChainSlotRow::paint(juce::Graphics& graphics)
 {
-    graphics.setColour(dragging ? juce::CustomLookAndFeel::greyMedium() : juce::CustomLookAndFeel::greyMediumDark());
+    graphics.setColour(dragging ? CustomLookAndFeel::greyMedium() : CustomLookAndFeel::greyMediumDark());
     graphics.fillRoundedRectangle(getLocalBounds().reduced(1).toFloat(), layout::pluginEditor::rowCornerRadius);
 }
 
@@ -174,10 +173,10 @@ PluginChainEditor::PluginChainEditor(LiveChain& chain) : liveChain(chain)
     rowContainer.addAndMakeVisible(addButton);
 
     hintLabel.setJustificationType(juce::Justification::centred);
-    hintLabel.setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddle());
+    hintLabel.setColour(juce::Label::textColourId, CustomLookAndFeel::greyMiddle());
     addChildComponent(hintLabel);
     addAndMakeVisible(totalLatencyLabel);
-    processingRateLabel.setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddle());
+    processingRateLabel.setColour(juce::Label::textColourId, CustomLookAndFeel::greyMiddle());
     addAndMakeVisible(processingRateLabel);
 
     viewport.setViewedComponent(&rowContainer, false);

@@ -33,7 +33,7 @@ void AudioBatchComponent::configureResultsTable()
     );
     AudioFileTableModel::configureHeader(resultsTable.getHeader());
     resultsTable.setModel(&fileTableModel);
-    resultsTable.setColour(juce::ListBox::backgroundColourId, juce::CustomLookAndFeel::greyMediumDark());
+    resultsTable.setColour(juce::ListBox::backgroundColourId, CustomLookAndFeel::greyMediumDark());
     resultsTable.setMultipleSelectionEnabled(true);
     resultsTable.setOutlineThickness(0);
     resultsTable.setRowHeight(layout::resultsTableRowHeight);
@@ -644,7 +644,7 @@ void AudioBatchComponent::openDialogWindow(
     window->setResizeLimits(
         window->getWidth(), window->getHeight(), layout::dialogMaximumWindowSize, layout::dialogMaximumWindowSize
     );
-    window->setColour(juce::DialogWindow::backgroundColourId, juce::CustomLookAndFeel::greySemiDark());
+    window->setColour(juce::DialogWindow::backgroundColourId, CustomLookAndFeel::greySemiDark());
     window->setVisible(true);
     window->toFront(true);
 }

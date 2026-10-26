@@ -160,8 +160,8 @@ void drawActivityIndicator(
 )
 {
     const auto ringBounds = bounds.reduced(1.0f);
-    const auto accent = juce::CustomLookAndFeel::blue().withAlpha(0.9f);
-    const auto background = juce::CustomLookAndFeel::greyMiddle().withAlpha(0.3f);
+    const auto accent = CustomLookAndFeel::blue().withAlpha(0.9f);
+    const auto background = CustomLookAndFeel::greyMiddle().withAlpha(0.3f);
 
     graphics.setColour(background);
     graphics.fillEllipse(ringBounds);
@@ -275,13 +275,11 @@ void AudioFileTableModel::paintRowBackground(
     juce::ignoreUnused(rowNumber, width, height);
 
     if (rowIsSelected) {
-        graphics.fillAll(juce::CustomLookAndFeel::blue().withAlpha(selectedRowHighlightAlpha));
+        graphics.fillAll(CustomLookAndFeel::blue().withAlpha(selectedRowHighlightAlpha));
         return;
     }
 
-    graphics.fillAll(
-        rowNumber % 2 == 0 ? juce::CustomLookAndFeel::greySemiDark() : juce::CustomLookAndFeel::greyMediumDark()
-    );
+    graphics.fillAll(rowNumber % 2 == 0 ? CustomLookAndFeel::greySemiDark() : CustomLookAndFeel::greyMediumDark());
 }
 
 /// Paints the text content for a single table cell.
@@ -307,7 +305,7 @@ void AudioFileTableModel::paintCell(
     std::optional<FileActivityState> activityState;
     auto justification = juce::Justification::centredLeft;
     auto textBounds = juce::Rectangle(4, 0, width - 8, height);
-    auto font = juce::CustomLookAndFeel::getTextFont().withHeight(layout::theme::tableCellFontHeight);
+    auto font = CustomLookAndFeel::getTextFont().withHeight(layout::theme::tableCellFontHeight);
 
     switch (*column) {
         case AudioFileTableColumn::name:
@@ -318,7 +316,7 @@ void AudioFileTableModel::paintCell(
             break;
         case AudioFileTableColumn::type:
             text = formatTypeLabel(record);
-            font = juce::CustomLookAndFeel::getMonoBaseFont().withHeight(layout::theme::tableMonoCellFontHeight);
+            font = CustomLookAndFeel::getMonoBaseFont().withHeight(layout::theme::tableMonoCellFontHeight);
             break;
         case AudioFileTableColumn::bitDepth:
             text = formatBitsPerSampleDisplay(record);

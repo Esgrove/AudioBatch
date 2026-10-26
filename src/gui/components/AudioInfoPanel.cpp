@@ -63,13 +63,13 @@ AudioInfoMetric::AudioInfoMetric(const juce::String& name, const juce::String& c
     captionLabel.setText(caption, juce::dontSendNotification);
     unitLabel.setText(unit, juce::dontSendNotification);
     valueLabel.setName(name);
-    const auto captionFont = juce::CustomLookAndFeel::getTextFont().withHeight(layout::information::captionFontHeight);
-    utils::styleLabel(captionLabel, captionFont, juce::CustomLookAndFeel::greyMiddleLight());
-    utils::styleLabel(unitLabel, captionFont, juce::CustomLookAndFeel::greyMiddleLight());
+    const auto captionFont = CustomLookAndFeel::getTextFont().withHeight(layout::information::captionFontHeight);
+    utils::styleLabel(captionLabel, captionFont, CustomLookAndFeel::greyMiddleLight());
+    utils::styleLabel(unitLabel, captionFont, CustomLookAndFeel::greyMiddleLight());
     utils::styleLabel(
         valueLabel,
-        juce::CustomLookAndFeel::getMonoBaseFont().withHeight(layout::information::metricFontHeight),
-        juce::CustomLookAndFeel::greySuperLight()
+        CustomLookAndFeel::getMonoBaseFont().withHeight(layout::information::metricFontHeight),
+        CustomLookAndFeel::greySuperLight()
     );
     unitLabel.setJustificationType(juce::Justification::centredRight);
     addAndMakeVisible(captionLabel);
@@ -93,7 +93,7 @@ void AudioInfoMetric::setValue(const juce::String& value)
 void AudioInfoMetric::setCompact(const bool compact)
 {
     compactMode = compact;
-    valueLabel.setFont(juce::CustomLookAndFeel::getMonoBaseFont().withHeight(layout::information::metricFontHeight));
+    valueLabel.setFont(CustomLookAndFeel::getMonoBaseFont().withHeight(layout::information::metricFontHeight));
     valueLabel.setMinimumHorizontalScale(
         compact ? layout::compactPreview::minimumValueHorizontalScale : layout::information::minimumValueHorizontalScale
     );
@@ -106,7 +106,7 @@ void AudioInfoMetric::setCompact(const bool compact)
 void AudioInfoMetric::paint(juce::Graphics& graphics)
 {
     const auto bounds = getLocalBounds().toFloat();
-    graphics.setColour(juce::CustomLookAndFeel::greyMediumDark());
+    graphics.setColour(CustomLookAndFeel::greyMediumDark());
     graphics.fillRoundedRectangle(bounds, layout::information::cornerRadius);
     graphics.setColour(juce::Colours::white.withAlpha(layout::information::outlineAlpha));
     graphics.drawRoundedRectangle(bounds.reduced(0.5f), layout::information::cornerRadius, 1.0f);
@@ -135,22 +135,16 @@ void AudioInfoMetric::resized()
 AudioInfoPanel::AudioInfoPanel()
 {
     Component::setName("Selected file information");
-    const auto& textFont = juce::CustomLookAndFeel::getTextFont();
+    const auto& textFont = CustomLookAndFeel::getTextFont();
     for (auto* label : {&filenameLabel, &titleLabel}) {
         utils::styleLabel(
-            *label,
-            textFont.withHeight(layout::information::headingFontHeight),
-            juce::CustomLookAndFeel::greySuperLight()
+            *label, textFont.withHeight(layout::information::headingFontHeight), CustomLookAndFeel::greySuperLight()
         );
     }
     utils::styleLabel(
-        statusLabel,
-        textFont.withHeight(layout::information::captionFontHeight),
-        juce::CustomLookAndFeel::greyMiddleLight()
+        statusLabel, textFont.withHeight(layout::information::captionFontHeight), CustomLookAndFeel::greyMiddleLight()
     );
-    utils::styleLabel(
-        errorLabel, textFont.withHeight(layout::information::valueFontHeight), juce::CustomLookAndFeel::red()
-    );
+    utils::styleLabel(errorLabel, textFont.withHeight(layout::information::valueFontHeight), CustomLookAndFeel::red());
     errorLabel.setJustificationType(juce::Justification::topLeft);
     addAndMakeVisible(filenameLabel);
     addChildComponent(titleLabel);
@@ -182,7 +176,7 @@ void AudioInfoPanel::clear()
     titleLabel.setDescription({});
     titleLabel.setVisible(false);
     statusLabel.setVisible(false);
-    statusLabel.setColour(juce::Label::textColourId, juce::CustomLookAndFeel::greyMiddleLight());
+    statusLabel.setColour(juce::Label::textColourId, CustomLookAndFeel::greyMiddleLight());
     errorLabel.setText({}, juce::dontSendNotification);
     for (auto& metric : metrics) {
         metric.setValue("-");
@@ -277,8 +271,7 @@ void AudioInfoPanel::showRecord(
     statusLabel.setText(status, juce::dontSendNotification);
     setDescription(utils::format("{}: {}", path, status));
     statusLabel.setColour(
-        juce::Label::textColourId,
-        record.hasError() ? juce::CustomLookAndFeel::red() : juce::CustomLookAndFeel::greyMiddleLight()
+        juce::Label::textColourId, record.hasError() ? CustomLookAndFeel::red() : CustomLookAndFeel::greyMiddleLight()
     );
     errorLabel.setText(record.hasError() ? record.errorMessage : juce::String(), juce::dontSendNotification);
     for (auto& metric : metrics) {
@@ -304,7 +297,7 @@ int AudioInfoPanel::getErrorHeight(const int width) const
         return 0;
     }
     juce::AttributedString text;
-    text.append(errorLabel.getText(), errorLabel.getFont(), juce::CustomLookAndFeel::red());
+    text.append(errorLabel.getText(), errorLabel.getFont(), CustomLookAndFeel::red());
     juce::TextLayout textLayout;
     textLayout.createLayout(text, static_cast<float>(juce::jmax(1, width)));
     return juce::roundToInt(std::ceil(textLayout.getHeight())) + layout::information::verticalPadding;
@@ -347,7 +340,7 @@ void AudioInfoPanel::paint(juce::Graphics& graphics)
         return;
     }
     const auto bounds = getLocalBounds().toFloat();
-    graphics.setColour(juce::CustomLookAndFeel::greySemiDark());
+    graphics.setColour(CustomLookAndFeel::greySemiDark());
     graphics.fillRoundedRectangle(bounds, layout::information::cornerRadius);
     graphics.setColour(juce::Colours::white.withAlpha(layout::information::outlineAlpha));
     graphics.drawRoundedRectangle(bounds.reduced(0.5f), layout::information::cornerRadius, 1.0f);
@@ -407,8 +400,8 @@ void AudioInfoPanel::ensureLabelCount(const std::size_t requiredCount)
         auto fieldLabel = std::make_unique<juce::Label>();
         utils::styleLabel(
             *fieldLabel,
-            juce::CustomLookAndFeel::getTextFont().withHeight(layout::information::captionFontHeight),
-            juce::CustomLookAndFeel::greyMiddleLight()
+            CustomLookAndFeel::getTextFont().withHeight(layout::information::captionFontHeight),
+            CustomLookAndFeel::greyMiddleLight()
         );
         detailsContent.addAndMakeVisible(*fieldLabel);
         fieldLabels.push_back(std::move(fieldLabel));
@@ -416,8 +409,8 @@ void AudioInfoPanel::ensureLabelCount(const std::size_t requiredCount)
         auto valueLabel = std::make_unique<juce::Label>();
         utils::styleLabel(
             *valueLabel,
-            juce::CustomLookAndFeel::getTextFont().withHeight(layout::information::valueFontHeight),
-            juce::CustomLookAndFeel::greySuperLight()
+            CustomLookAndFeel::getTextFont().withHeight(layout::information::valueFontHeight),
+            CustomLookAndFeel::greySuperLight()
         );
         valueLabel->setJustificationType(juce::Justification::centredRight);
         detailsContent.addAndMakeVisible(*valueLabel);
