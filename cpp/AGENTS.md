@@ -330,7 +330,11 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
 - To run the tests under AddressSanitizer and UndefinedBehaviorSanitizer, run `./sanitize.sh`.
   It configures and builds the `macos-asan` preset in `cmake-build-mac-asan`, then runs ctest.
   `./sanitize.sh --thread` does the same under ThreadSanitizer with the `macos-tsan` preset in `cmake-build-mac-tsan`.
+  On Windows, `./sanitize.sh` uses the MSVC AddressSanitizer with the `windows-asan` preset in `cmake-build-windows-asan`.
   The `AUDIOBATCH_SANITIZE` CMake option takes a comma separated list such as `address,undefined`.
+- Every build enables standard library hardening,
+  `_LIBCPP_HARDENING_MODE` on macOS and `_MSVC_STL_HARDENING` on Windows,
+  so out of range access through the standard containers traps instead of reading past the end.
 - To fuzz, run `cmake --preset macos-fuzz` and `cmake --build --preset macos-fuzz`.
   `ctest --test-dir cmake-build-mac-fuzz` runs each harness once over its corpus.
   Running a harness with a scratch corpus directory and `-max_total_time=60` fuzzes it,

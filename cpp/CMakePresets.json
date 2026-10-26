@@ -65,6 +65,16 @@
       "binaryDir": "${sourceDir}/cmake-build-windows-release"
     },
     {
+      "name": "windows-asan",
+      "displayName": "Windows AddressSanitizer",
+      "description": "Debug build with AddressSanitizer using Visual Studio 18 2026 in cmake-build-windows-asan.",
+      "inherits": "windows-vs2026-base",
+      "binaryDir": "${sourceDir}/cmake-build-windows-asan",
+      "cacheVariables": {
+        "AUDIOBATCH_SANITIZE": "address"
+      }
+    },
+    {
       "name": "windows-ninja-debug",
       "displayName": "Windows Ninja Debug",
       "description": "Use Ninja with the MSVC toolchain in cmake-build-windows-ninja-debug for compile_commands.json support.",
@@ -152,6 +162,11 @@
       "name": "windows-release",
       "configurePreset": "windows-release",
       "configuration": "Release"
+    },
+    {
+      "name": "windows-asan",
+      "configurePreset": "windows-asan",
+      "configuration": "Debug"
     },
     {
       "name": "windows-ninja-debug",
