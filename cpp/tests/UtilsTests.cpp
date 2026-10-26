@@ -578,6 +578,20 @@ private:
             expect(utils::trashFile(missing));
         }
 
+#if JUCE_WINDOWS
+        // Only on CI, so local test runs leave the developer's recycle bin alone.
+        if (juce::SystemStats::getEnvironmentVariable("CI", {}).isNotEmpty()) {
+            beginTest("Moving a file to the recycle bin removes it from its folder");
+            {
+                const TemporaryDirectory directory;
+                const auto file = directory.getChildFile("recycled.aif");
+                expect(file.replaceWithText("recycled"));
+                expect(utils::moveToTrash(file) == utils::TrashResult::moved);
+                expect(!file.exists());
+            }
+        }
+#endif
+
         beginTest("Concurrent backups of files with the same name each dispose of their own copy");
         {
             const TemporaryDirectory directory;

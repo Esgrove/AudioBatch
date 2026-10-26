@@ -236,51 +236,51 @@ bool moveToRecycleBin(const juce::File& file)
         logError("Could not initialize COM to move {} to the recycle bin", file.getFullPathName().quoted());
         return false;
     }
+    // Declared before the interfaces, so they are released before the apartment is torn down.
+    const juce::ScopeGuard uninitializeApartment {[] { CoUninitialize(); }};
 
-    const auto recycled = [&file] {
-        IFileOperation* rawOperation = nullptr;
-        constexpr DWORD classContexts = static_cast<DWORD>(CLSCTX_INPROC_SERVER)
-            | static_cast<DWORD>(CLSCTX_INPROC_HANDLER) | static_cast<DWORD>(CLSCTX_LOCAL_SERVER)
-            | static_cast<DWORD>(CLSCTX_REMOTE_SERVER);
-        if (FAILED(CoCreateInstance(CLSID_FileOperation, nullptr, classContexts, IID_PPV_ARGS(&rawOperation)))) {
-            return false;
-        }
-        const ComPointer<IFileOperation> operation(rawOperation);
+    ComPointer<IFileOperation> operation;
+    constexpr DWORD classContexts = static_cast<DWORD>(CLSCTX_INPROC_SERVER) | static_cast<DWORD>(CLSCTX_INPROC_HANDLER)
+        | static_cast<DWORD>(CLSCTX_LOCAL_SERVER) | static_cast<DWORD>(CLSCTX_REMOTE_SERVER);
+    if (FAILED(CoCreateInstance(
+            CLSID_FileOperation, nullptr, classContexts, __uuidof(IFileOperation), std::out_ptr<void*>(operation)
+        )))
+    {
+        return false;
+    }
 
-        IShellItem* rawItem = nullptr;
-        const auto path = file.getFullPathName().replaceCharacter('/', '\\');
-        if (FAILED(SHCreateItemFromParsingName(path.toWideCharPointer(), nullptr, IID_PPV_ARGS(&rawItem)))) {
-            return false;
-        }
-        const ComPointer<IShellItem> item(rawItem);
+    ComPointer<IShellItem> item;
+    const auto path = file.getFullPathName().replaceCharacter('/', '\\');
+    if (FAILED(SHCreateItemFromParsingName(
+            path.toWideCharPointer(), nullptr, __uuidof(IShellItem), std::out_ptr<void*>(item)
+        )))
+    {
+        return false;
+    }
 
-        RecycleOnlyProgressSink progressSink;
-        DWORD adviseCookie = 0;
+    RecycleOnlyProgressSink progressSink;
+    DWORD adviseCookie = 0;
+    if (FAILED(operation->SetOperationFlags(FOF_ALLOWUNDO | FOF_NOERRORUI | FOF_SILENT | FOF_NOCONFIRMATION))
+        || FAILED(operation->Advise(&progressSink, &adviseCookie)))
+    {
+        return false;
+    }
+    // Declared after the sink, so the operation stops calling it before the sink goes out of scope.
+    const juce::ScopeGuard unadvise {[&operation, adviseCookie] { operation->Unadvise(adviseCookie); }};
 
-        if (FAILED(operation->SetOperationFlags(FOF_ALLOWUNDO | FOF_NOERRORUI | FOF_SILENT | FOF_NOCONFIRMATION))
-            || FAILED(operation->Advise(&progressSink, &adviseCookie)))
-        {
-            return false;
-        }
+    const auto deleted
+        = SUCCEEDED(operation->DeleteItem(item.get(), nullptr)) && SUCCEEDED(operation->PerformOperations());
+    BOOL anyAborted = FALSE;
+    const auto abortQueried = SUCCEEDED(operation->GetAnyOperationsAborted(&anyAborted));
 
-        const auto deleted
-            = SUCCEEDED(operation->DeleteItem(item.get(), nullptr)) && SUCCEEDED(operation->PerformOperations());
-        BOOL anyAborted = FALSE;
-        const auto abortQueried = SUCCEEDED(operation->GetAnyOperationsAborted(&anyAborted));
-        operation->Unadvise(adviseCookie);
+    if (progressSink.refusedPermanentDelete) {
+        logError(
+            "Did not move {} to the recycle bin, because its drive would delete it permanently",
+            file.getFullPathName().quoted()
+        );
+    }
 
-        if (progressSink.refusedPermanentDelete) {
-            logError(
-                "Did not move {} to the recycle bin, because its drive would delete it permanently",
-                file.getFullPathName().quoted()
-            );
-        }
-
-        return deleted && abortQueried && anyAborted == FALSE && !progressSink.refusedPermanentDelete;
-    }();
-
-    CoUninitialize();
-    return recycled && !file.exists();
+    return deleted && abortQueried && anyAborted == FALSE && !progressSink.refusedPermanentDelete && !file.exists();
 }
 #endif
 
