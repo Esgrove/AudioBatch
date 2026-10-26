@@ -7,7 +7,6 @@
 #pragma once
 
 #include "plugins/PluginProcessing.h"
-#include "utils/Synchronized.h"
 
 #include <JuceHeader.h>
 
@@ -26,21 +25,6 @@ int getPluginProcessingWorkerCount(
 
 /// One pre-instantiated chain of plugin instances, in processing order.
 using PluginChainInstances = std::vector<std::unique_ptr<juce::AudioPluginInstance>>;
-
-/// The callbacks a PluginProcessingCoordinator publishes to, each of which may be empty.
-struct PluginProcessingCallbacks {
-    /// Called once after a run has published all queued results.
-    std::function<void(int totalFiles)> completion;
-    /// Called from the worker thread with the processed fraction of a file, throttled to a few updates per second.
-    std::function<void(const juce::File& file, float progress)> progress;
-    /// Called for each processed file as plugin-processing results become available.
-    std::function<void(const PluginProcessingResult& result)> result;
-    /// Called from the worker thread once a file has a plugin chain and its processing begins.
-    std::function<void(const juce::File& file)> starting;
-    /// Called on the message thread when the coordinator could not start a run.
-    /// Receives the error message.
-    std::function<void(juce::String errorMessage)> startError;
-};
 
 class ChainLease;
 
@@ -72,8 +56,10 @@ private:
 
     /// The plugin instances of every chain, owned for the whole run.
     std::vector<PluginChainInstances> chains;
+    /// Guards freeIndices.
+    juce::CriticalSection lock;
     /// Indices of the chains no worker is using.
-    utils::Synchronized<std::vector<int>> freeIndices;
+    std::vector<int> freeIndices;
     /// Auto-reset event, signaled when a chain goes back to the pool and on cancellation.
     juce::WaitableEvent available {false};
 };
@@ -103,20 +89,21 @@ private:
 class PluginProcessingCoordinator
 {
 public:
-    /// Type of the completion callback in PluginProcessingCallbacks.
-    using CompletionCallback = decltype(PluginProcessingCallbacks::completion);
+    /// Called once after a run has published all queued results.
+    using CompletionCallback = std::function<void(int totalFiles)>;
 
-    /// Type of the progress callback in PluginProcessingCallbacks.
-    using ProgressCallback = decltype(PluginProcessingCallbacks::progress);
+    /// Called from the worker thread with the processed fraction of a file, throttled to a few updates per second.
+    using ProgressCallback = std::function<void(const juce::File& file, float progress)>;
 
-    /// Type of the result callback in PluginProcessingCallbacks.
-    using ResultCallback = decltype(PluginProcessingCallbacks::result);
+    /// Called for each processed file as plugin-processing results become available.
+    using ResultCallback = std::function<void(const PluginProcessingResult& result)>;
 
-    /// Type of the starting callback in PluginProcessingCallbacks.
-    using StartingCallback = decltype(PluginProcessingCallbacks::starting);
+    /// Called from the worker thread once a file has a plugin chain and its processing begins.
+    using StartingCallback = std::function<void(const juce::File& file)>;
 
-    /// Type of the startError callback in PluginProcessingCallbacks.
-    using StartErrorCallback = decltype(PluginProcessingCallbacks::startError);
+    /// Called on the message thread when the coordinator could not start a run.
+    /// Receives the error message.
+    using StartErrorCallback = std::function<void(juce::String errorMessage)>;
 
     explicit PluginProcessingCoordinator(int workerCount = getPluginProcessingWorkerCount());
 
@@ -165,7 +152,9 @@ private:
     ProgressCallback progressCallback;
     ResultCallback resultCallback;
     StartErrorCallback startErrorCallback;
-    utils::Synchronized<PluginProcessingCallbacks> callbacks;
+    StartingCallback startingCallback;
+
+    juce::CriticalSection callbackLock;
     juce::ThreadPool threadPool;
 
     /// Chains of the current run. Only accessed on the message thread.

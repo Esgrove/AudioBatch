@@ -86,13 +86,11 @@ PluginRunChains::PluginRunChains(std::vector<PluginChainInstances> chainInstance
     chains(std::move(chainInstances))
 {
     if (usable) {
-        freeIndices.with([this](std::vector<int>& indices) {
-            indices.reserve(chains.size());
+        freeIndices.reserve(chains.size());
 
-            for (int chainIndex = 0; std::cmp_less(chainIndex, chains.size()); ++chainIndex) {
-                indices.push_back(chainIndex);
-            }
-        });
+        for (int chainIndex = 0; std::cmp_less(chainIndex, chains.size()); ++chainIndex) {
+            freeIndices.push_back(chainIndex);
+        }
     }
 }
 
@@ -115,17 +113,14 @@ PluginRunChains::~PluginRunChains()
 std::optional<ChainLease> PluginRunChains::acquire(const std::function<bool()>& keepWaiting)
 {
     while (keepWaiting()) {
-        const auto chainIndex = freeIndices.with([](std::vector<int>& indices) {
-            if (indices.empty()) {
-                return -1;
-            }
-            const auto index = indices.back();
-            indices.pop_back();
-            return index;
-        });
+        {
+            const juce::ScopedLock scopedLock(lock);
 
-        if (chainIndex >= 0) {
-            return std::optional<ChainLease>(std::in_place, *this, chainIndex);
+            if (!freeIndices.empty()) {
+                const auto chainIndex = freeIndices.back();
+                freeIndices.pop_back();
+                return std::optional<ChainLease>(std::in_place, *this, chainIndex);
+            }
         }
 
         // More workers than chains is unusual, so polling while waiting costs little.
@@ -150,7 +145,11 @@ void PluginRunChains::wakeWaitingWorkers()
 /// Returns a chain to the free pool and wakes one worker waiting for a chain.
 void PluginRunChains::release(const int chainIndex)
 {
-    freeIndices.with([chainIndex](std::vector<int>& indices) { indices.push_back(chainIndex); });
+    {
+        const juce::ScopedLock scopedLock(lock);
+        freeIndices.push_back(chainIndex);
+    }
+
     available.signal();
 }
 
@@ -173,31 +172,36 @@ std::vector<juce::AudioPluginInstance*> ChainLease::getChainView() const
 /// Sets the callback that is invoked for each published result.
 void PluginProcessingCoordinator::setResultCallback(ResultCallback callback)
 {
-    callbacks.with([&callback](PluginProcessingCallbacks& all) { all.result = std::move(callback); });
+    const juce::ScopedLock lock(callbackLock);
+    resultCallback = std::move(callback);
 }
 
 /// Sets the callback that is invoked when a run completes.
 void PluginProcessingCoordinator::setCompletionCallback(CompletionCallback callback)
 {
-    callbacks.with([&callback](PluginProcessingCallbacks& all) { all.completion = std::move(callback); });
+    const juce::ScopedLock lock(callbackLock);
+    completionCallback = std::move(callback);
 }
 
 /// Sets the callback that is invoked if starting fails.
 void PluginProcessingCoordinator::setStartErrorCallback(StartErrorCallback callback)
 {
-    callbacks.with([&callback](PluginProcessingCallbacks& all) { all.startError = std::move(callback); });
+    const juce::ScopedLock lock(callbackLock);
+    startErrorCallback = std::move(callback);
 }
 
 /// Sets the callback that is invoked with the processed fraction of each file.
 void PluginProcessingCoordinator::setProgressCallback(ProgressCallback callback)
 {
-    callbacks.with([&callback](PluginProcessingCallbacks& all) { all.progress = std::move(callback); });
+    const juce::ScopedLock lock(callbackLock);
+    progressCallback = std::move(callback);
 }
 
 /// Sets the callback that is invoked when a file's processing begins.
 void PluginProcessingCoordinator::setStartingCallback(StartingCallback callback)
 {
-    callbacks.with([&callback](PluginProcessingCallbacks& all) { all.starting = std::move(callback); });
+    const juce::ScopedLock lock(callbackLock);
+    startingCallback = std::move(callback);
 }
 
 /// Invokes the progress callback for one file being processed, unless the run has been superseded or cancelled.
@@ -207,7 +211,11 @@ void PluginProcessingCoordinator::publishProgress(const juce::File& file, const 
         return;
     }
 
-    const auto callbackCopy = callbacks.with([](const PluginProcessingCallbacks& all) { return all.progress; });
+    ProgressCallback callbackCopy;
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = progressCallback;
+    }
 
     if (callbackCopy != nullptr) {
         callbackCopy(file, progress);
@@ -221,7 +229,11 @@ void PluginProcessingCoordinator::publishStarting(const juce::File& file, const 
         return;
     }
 
-    const auto callbackCopy = callbacks.with([](const PluginProcessingCallbacks& all) { return all.starting; });
+    StartingCallback callbackCopy;
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = startingCallback;
+    }
 
     if (callbackCopy != nullptr) {
         callbackCopy(file);
@@ -235,7 +247,11 @@ void PluginProcessingCoordinator::publishResult(const PluginProcessingResult& re
         return;
     }
 
-    const auto callbackCopy = callbacks.with([](const PluginProcessingCallbacks& all) { return all.result; });
+    ResultCallback callbackCopy;
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = resultCallback;
+    }
 
     if (callbackCopy != nullptr) {
         callbackCopy(result);
@@ -249,7 +265,11 @@ void PluginProcessingCoordinator::publishCompletion(const int totalFiles, const 
         return;
     }
 
-    const auto callbackCopy = callbacks.with([](const PluginProcessingCallbacks& all) { return all.completion; });
+    CompletionCallback callbackCopy;
+    {
+        const juce::ScopedLock lock(callbackLock);
+        callbackCopy = completionCallback;
+    }
 
     if (callbackCopy != nullptr) {
         callbackCopy(totalFiles);
@@ -275,7 +295,11 @@ void PluginProcessingCoordinator::cancelAndWait()
 /// Reports that a run could not start to the start error callback, if one is set.
 void PluginProcessingCoordinator::reportStartError(const juce::String& message) const
 {
-    const auto errorCallback = callbacks.with([](const PluginProcessingCallbacks& all) { return all.startError; });
+    StartErrorCallback errorCallback;
+    {
+        const juce::ScopedLock lock(callbackLock);
+        errorCallback = startErrorCallback;
+    }
 
     if (errorCallback != nullptr) {
         errorCallback(message);

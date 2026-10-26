@@ -81,8 +81,6 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
     - `MessageThreadBatcher.*` holds `AsyncCallback` and `MessageThreadBatcher`,
       which hand work from worker threads to the message thread in coalesced batches.
     - `StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
-    - `Synchronized.h` holds `utils::Synchronized`, which keeps a value together with its mutex,
-      so the value is only reachable through `with()` while the lock is held.
     - `ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
     - `version.h` holds the build version constants.
       Put new generic helpers in the matching file instead of a file-local helper function,
