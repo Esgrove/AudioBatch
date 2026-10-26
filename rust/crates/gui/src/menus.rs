@@ -180,12 +180,12 @@ pub fn set_menus(cx: &App, state: &MenuState) {
 
     let mut menus = Vec::new();
     if cfg!(target_os = "macos") {
-        menus.push(Menu::new("AudioBatch RS").items([
-            MenuItem::action("About AudioBatch RS", About),
+        menus.push(Menu::new("AudioBatchRs").items([
+            MenuItem::action("About AudioBatchRs", About),
             MenuItem::separator(),
             MenuItem::os_submenu("Services", SystemMenuType::Services),
             MenuItem::separator(),
-            MenuItem::action("Quit AudioBatch RS", Quit),
+            MenuItem::action("Quit AudioBatchRs", Quit),
         ]));
     }
     menus.push(Menu::new("File").items(file_items));
@@ -196,6 +196,6 @@ pub fn set_menus(cx: &App, state: &MenuState) {
         MenuItem::separator(),
         MenuItem::action("Audio Settings…", OpenAudioSettings),
     ]));
-    menus.push(Menu::new("Help").items([MenuItem::action("About AudioBatch RS", About)]));
+    menus.push(Menu::new("Help").items([MenuItem::action("About AudioBatchRs", About)]));
     cx.set_menus(menus);
 }

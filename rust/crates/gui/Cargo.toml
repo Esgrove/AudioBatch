@@ -1,6 +1,6 @@
 [package]
 name = "audiobatch-gui"
-description = "AudioBatch RS desktop app, built on gpui-kit"
+description = "AudioBatchRs desktop app, built on gpui-kit"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
@@ -9,7 +9,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "audiobatch-gui"
+name = "AudioBatchRs"
 path = "src/main.rs"
 
 [dependencies]

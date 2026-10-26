@@ -32,7 +32,7 @@ use crate::waveform::{
 use preferences::{SettingsWindow, open_player};
 
 /// Window title, followed by the analysis progress while a run is in progress.
-pub const APP_TITLE: &str = "AudioBatch RS";
+pub const APP_TITLE: &str = "AudioBatchRs";
 
 /// How often the analysis events are applied to the table.
 const ANALYSIS_POLL_INTERVAL: Duration = Duration::from_millis(50);

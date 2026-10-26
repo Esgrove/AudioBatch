@@ -1,8 +1,8 @@
 //! Entry point of the `AudioBatch` RS desktop app.
 //!
-//! Usage: `audiobatch-gui [paths...]` analyzes the given files and folders at startup,
+//! Usage: `AudioBatchRs [paths...]` analyzes the given files and folders at startup,
 //! and `--autoplay` then selects and plays the first file that analyzed successfully.
-//! `audiobatch-gui --demo-rows <count>` runs the table and waveform stress test with synthetic data instead.
+//! `AudioBatchRs --demo-rows <count>` runs the table and waveform stress test with synthetic data instead.
 //! Setting `AUDIOBATCH_GUI_DEBUG` prints diagnostics to stderr.
 
 // The Action derive generates `gpui::` paths, which resolve through the kit under this name.
@@ -48,7 +48,7 @@ fn main() {
         Ok(options) => options,
         Err(message) => {
             eprintln!("{message}");
-            eprintln!("Usage: audiobatch-gui [--autoplay] [--demo-rows <count>] [paths...]");
+            eprintln!("Usage: AudioBatchRs [--autoplay] [--demo-rows <count>] [paths...]");
             return;
         }
     };
@@ -136,7 +136,7 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<LaunchOpti
                 options.demo_rows = Some(rows);
             }
             "--autoplay" => options.autoplay = true,
-            "-h" | "--help" => return Err(String::from("AudioBatch RS")),
+            "-h" | "--help" => return Err(String::from("AudioBatchRs")),
             other if other.starts_with('-') => return Err(format!("Unknown option: {other}")),
             path => options.paths.push(PathBuf::from(path)),
         }
