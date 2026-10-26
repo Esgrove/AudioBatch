@@ -2,6 +2,8 @@
 /// Defines AudioAnalysisRecord, which carries per-file peak, true peak, loudness, and shared short-term history,
 /// along with the AudioAnalysisStatus and AudioAnalysisSortMode enums
 /// and the AudioAnalysisOptions input parameters used by both the GUI and CLI flows.
+/// Also defines OperationOutcome, the variant that normalization and plugin processing return for each file,
+/// and Overloaded, which visits such variants with one lambda per alternative.
 
 #pragma once
 
@@ -10,6 +12,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <variant>
 #include <vector>
 
 namespace audiobatch
@@ -125,5 +128,39 @@ struct AudioAnalysisRecord {
         record.modifiedTimeMs = file.exists() ? file.getLastModificationTime().toMilliseconds() : 0;
         return record;
     }
+};
+
+/// A normalization or plugin processing run that failed before writing its output, which leaves the source as it was.
+struct OperationFailed {
+    /// Why the run failed.
+    juce::String error;
+};
+
+/// A run that wrote its output, which then could not be analyzed.
+/// A converted source is in the trash by then, so the output takes the place of the source either way.
+struct CommittedButUnanalyzed {
+    /// The failed analysis of the output file.
+    AudioAnalysisRecord output;
+    /// Why the run counts as failed.
+    juce::String error;
+};
+
+/// A run that wrote and analyzed its output, or found the file already at its target and analyzed it again.
+struct OperationSucceeded {
+    /// The analysis of the output file.
+    AudioAnalysisRecord output;
+    /// Information about the run worth showing to the user, such as blocks that failed to decode, or empty.
+    juce::String notice;
+};
+
+/// What a normalization or plugin processing run did with one file.
+using OperationOutcome = std::variant<OperationFailed, CommittedButUnanalyzed, OperationSucceeded>;
+
+/// Combines callables into one with an overload of the call operator from each of them,
+/// for visiting a std::variant such as OperationOutcome with one lambda per alternative.
+/// Class template argument deduction picks the types, as in `std::visit(Overloaded {lambdas...}, variant)`.
+template<typename... Callables>
+struct Overloaded : Callables... {
+    using Callables::operator()...;
 };
 }  // namespace audiobatch

@@ -108,7 +108,7 @@ private:
         expect(readMetadata(source, before));
         expect(!before.hasUnsupportedId3Frames);
         const auto normalized = normalizeFile(analyzeFile(source), testNormalizationOptions());
-        expect(!normalized.hasError(), normalized.errorMessage);
+        expect(!normalized.hasError(), outcomeError(normalized.outcome));
         AudioMetadata after;
         expect(readMetadata(source, after));
         expect(after.id3v2Frames == before.id3v2Frames);
@@ -282,7 +282,7 @@ private:
             expect(readMetadata(output, expected));
             expect(firstPropertyValue(expected, "SERATO_OVERVIEW").isEmpty());
             const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
-            expect(!result.hasError(), result.errorMessage);
+            expect(!result.hasError(), outcomeError(result.outcome));
             AudioMetadata normalized;
             expect(readMetadata(source, normalized));
             expect(normalized.id3v2Frames == expected.id3v2Frames);

@@ -11,6 +11,8 @@
 
 #include <cstdint>
 #include <expected>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace audiobatch
@@ -61,23 +63,29 @@ struct AudioNormalizationOptions {
     double truePeakCeilingDbtp {defaultTruePeakCeilingDbtp};
 };
 
-/// Result payload for a single normalize-and-reanalyze operation.
+/// Result of normalizing one file, with the source it ran on and what happened to it.
 struct AudioNormalizationResult {
-    /// Returns true when the normalize pass could not complete successfully.
+    /// Returns true unless the output was written and analyzed, or the file was already at its target.
     [[nodiscard]] bool hasError() const noexcept
     {
-        return !succeeded;
+        return !std::holds_alternative<OperationSucceeded>(outcome);
     }
 
-    /// Creates a failure result for the given file and message.
-    static AudioNormalizationResult failure(const juce::File& file, const juce::String& message)
+    /// Creates the result of an operation on the given source file.
+    static AudioNormalizationResult forFile(const juce::File& file, OperationOutcome outcome)
     {
         AudioNormalizationResult result;
         result.file = file;
         result.fileName = file.getFileName();
         result.fullPath = file.getFullPathName();
-        result.errorMessage = message;
+        result.outcome = std::move(outcome);
         return result;
+    }
+
+    /// Creates a failure result for the given file and message.
+    static AudioNormalizationResult failure(const juce::File& file, const juce::String& message)
+    {
+        return forFile(file, OperationFailed {.error = message});
     }
 
     /// The source file the operation ran on.
@@ -86,17 +94,8 @@ struct AudioNormalizationResult {
     juce::String fileName;
     /// Absolute path of the source file, which identifies its table row.
     juce::String fullPath;
-    /// Empty on success, otherwise the reason the operation failed.
-    juce::String errorMessage;
-    /// Information about a successful run worth showing to the user, such as blocks that failed to decode.
-    juce::String notice;
-    /// Analysis of the normalized file, valid when the re-analysis succeeded.
-    AudioAnalysisRecord analysisRecord;
-    /// True when the normalization pass completed.
-    bool succeeded {false};
-    /// True once the output was moved into place, which can happen even when re-analysis then failed.
-    /// A converted source is in the trash by then, so callers move the record to the output either way.
-    bool committed {false};
+    /// What the operation did with the file.
+    OperationOutcome outcome;
 };
 
 AudioNormalizationResult normalizeFile(

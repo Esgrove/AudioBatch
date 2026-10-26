@@ -23,6 +23,7 @@
 #include <limits>
 #include <mutex>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace audiobatch::tests
@@ -443,11 +444,11 @@ public:
             const ScopedLogCapture capture;
             const auto result = process(source, {&plugin});
 
-            expect(!result.hasError(), result.errorMessage);
-            expectEquals(result.analysisRecord.channels, 1);
-            expectEquals(result.analysisRecord.bitsPerSample, 16);
-            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels, 0.05);
-            expect(result.notice.isEmpty(), result.notice);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectEquals(outcomeRecord(result.outcome).channels, 1);
+            expectEquals(outcomeRecord(result.outcome).bitsPerSample, 16);
+            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels, 0.05);
+            expect(outcomeNotice(result.outcome).isEmpty(), outcomeNotice(result.outcome));
             const auto messages = capture.getMessages();
             expect(std::ranges::any_of(messages, [&](const auto& message) {
                 return message.contains("[INFO]: Processed: ")
@@ -462,10 +463,10 @@ public:
             TestPlugin stereoSwap({.swapChannels = true});
             const auto result = process(source, {&monoGain, &stereoSwap});
 
-            expect(!result.hasError(), result.errorMessage);
-            expectEquals(result.analysisRecord.channels, 1);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectEquals(outcomeRecord(result.outcome).channels, 1);
             // Both stereo channels carry the boosted signal, so their average keeps the full 6 dB boost.
-            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels + 6.0, 0.05);
+            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels + 6.0, 0.05);
             // The mono plugin only sees its own channel, although the chain buffer is stereo.
             expectEquals(monoGain.getWidestBufferChannels(), 1);
             expectEquals(stereoSwap.getWidestBufferChannels(), 2);
@@ -480,9 +481,9 @@ public:
             TestPlugin monoPassThrough({.acceptsMono = true});
             const auto result = process(source, {&leftOnly, &monoPassThrough});
 
-            expect(!result.hasError(), result.errorMessage);
-            expectEquals(result.analysisRecord.channels, 1);
-            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels - 6.0206, 0.05);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectEquals(outcomeRecord(result.outcome).channels, 1);
+            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels - 6.0206, 0.05);
         }
 
         beginTest("A plugin that produces infinity fails the file and leaves the source unchanged");
@@ -494,8 +495,8 @@ public:
             const auto result = process(source, {&plugin});
 
             expect(result.hasError());
-            expect(!result.committed);
-            expect(result.errorMessage.contains("invalid samples"), result.errorMessage);
+            expect(std::holds_alternative<OperationFailed>(result.outcome));
+            expect(outcomeError(result.outcome).contains("invalid samples"), outcomeError(result.outcome));
             expectEquals(source.getSize(), sourceSize);
             expect(source.getLastModificationTime() == sourceModified);
         }
@@ -514,9 +515,9 @@ public:
                 plugin.clearLifecycle();
                 const auto result = process(source, {&plugin}, {savedState});
 
-                expect(!result.hasError(), result.errorMessage);
-                expect(result.committed);
-                expectWithinAbsoluteError(peakDecibels(result.analysisRecord), expectedPeak, 0.01);
+                expect(!result.hasError(), outcomeError(result.outcome));
+                expect(std::holds_alternative<OperationSucceeded>(result.outcome));
+                expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), expectedPeak, 0.01);
                 expectEquals(plugin.getPreparedBlockSize(), plugin_processing::processingBlockSize);
                 expectWithinAbsoluteError(plugin.getLastSampleRate(), 44'100.0, 0.001);
                 expectEquals(
@@ -582,11 +583,13 @@ public:
             const auto firstResult = process(first, {&plugin}, {initialState});
             const auto secondResult = process(second, {&plugin}, {initialState});
 
-            expect(!firstResult.hasError(), firstResult.errorMessage);
-            expect(!secondResult.hasError(), secondResult.errorMessage);
+            expect(!firstResult.hasError(), outcomeError(firstResult.outcome));
+            expect(!secondResult.hasError(), outcomeError(secondResult.outcome));
             // Without the restore, the second file would start from the gain the first file adapted to.
             expectWithinAbsoluteError(
-                peakDecibels(secondResult.analysisRecord), peakDecibels(firstResult.analysisRecord), 0.01
+                peakDecibels(outcomeRecord(secondResult.outcome)),
+                peakDecibels(outcomeRecord(firstResult.outcome)),
+                0.01
             );
         }
 
@@ -606,10 +609,10 @@ public:
 
             const auto result = processFileWithPlugins(analyzeFile(source), options, chainOf(plugin));
 
-            expect(!result.hasError(), result.errorMessage);
+            expect(!result.hasError(), outcomeError(result.outcome));
             expectEquals(disposedNames.joinIntoString(","), juce::String("in_place.aif"));
             expectEquals(disposedSizes[0], sourceSize);
-            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels - 6.0206, 0.05);
+            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels - 6.0206, 0.05);
         }
 
         beginTest("A source with more than two channels is refused and left unchanged");
@@ -627,8 +630,8 @@ public:
             const auto result = processFileWithPlugins(analyzeFile(source), options, chainOf(plugin));
 
             expect(result.hasError());
-            expect(!result.committed);
-            expect(result.errorMessage.contains("3 channels"), result.errorMessage);
+            expect(std::holds_alternative<OperationFailed>(result.outcome));
+            expect(outcomeError(result.outcome).contains("3 channels"), outcomeError(result.outcome));
             expectEquals(disposedCount, 0);
             expectEquals(source.getSize(), sourceSize);
         }
@@ -639,12 +642,12 @@ public:
             TestPlugin plugin({});
             const auto result = process(source, {&plugin});
 
-            expect(!result.hasError(), result.errorMessage);
-            expect(result.committed);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expect(std::holds_alternative<OperationSucceeded>(result.outcome));
             expect(!source.exists());
-            expectEquals(result.outputFile.getFileName(), juce::String("converted.aif"));
-            expectEquals(result.analysisRecord.bitsPerSample, 16);
-            expectEquals(result.analysisRecord.sampleRate, 48'000);
+            expectEquals(outcomeRecord(result.outcome).file.getFileName(), juce::String("converted.aif"));
+            expectEquals(outcomeRecord(result.outcome).bitsPerSample, 16);
+            expectEquals(outcomeRecord(result.outcome).sampleRate, 48'000);
         }
 
         beginTest("Plugin latency is removed from the start of the output");
@@ -654,10 +657,12 @@ public:
             TestPlugin plugin({.latencySamples = 1000});
             const auto result = process(source, {&plugin});
 
-            expect(!result.hasError(), result.errorMessage);
-            expectEquals(result.analysisRecord.lengthInSamples, sourceLength);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectEquals(outcomeRecord(result.outcome).lengthInSamples, sourceLength);
             expectWithinAbsoluteError(
-                maximumDifference(fixtureFile("sine_stereo_44100_16.aif"), result.outputFile, 512), 0.0f, 0.001f
+                maximumDifference(fixtureFile("sine_stereo_44100_16.aif"), outcomeRecord(result.outcome).file, 512),
+                0.0f,
+                0.001f
             );
         }
 
@@ -668,9 +673,9 @@ public:
                 TestPlugin plugin({.latencySamples = 1000});
                 const auto result = process(source, {&plugin});
 
-                expect(!result.hasError(), result.errorMessage);
-                expectEquals(result.analysisRecord.lengthInSamples, clickFixtureLength);
-                expectEquals(peakSamplePosition(result.outputFile), clickFixturePosition);
+                expect(!result.hasError(), outcomeError(result.outcome));
+                expectEquals(outcomeRecord(result.outcome).lengthInSamples, clickFixtureLength);
+                expectEquals(peakSamplePosition(outcomeRecord(result.outcome).file), clickFixturePosition);
             }
         }
 
@@ -682,9 +687,9 @@ public:
             TestPlugin plugin({.echoSamples = echoSamples});
             const auto result = process(source, {&plugin});
 
-            expect(!result.hasError(), result.errorMessage);
-            expect(result.analysisRecord.lengthInSamples > sourceLength + echoSamples - 20);
-            expect(result.analysisRecord.lengthInSamples <= sourceLength + echoSamples);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expect(outcomeRecord(result.outcome).lengthInSamples > sourceLength + echoSamples - 20);
+            expect(outcomeRecord(result.outcome).lengthInSamples <= sourceLength + echoSamples);
         }
 
         beginTest("A silent tail allowance is trimmed back to the source length");
@@ -694,8 +699,8 @@ public:
             TestPlugin plugin({.reportedTailSeconds = 0.5});
             const auto result = process(source, {&plugin});
 
-            expect(!result.hasError(), result.errorMessage);
-            expectEquals(result.analysisRecord.lengthInSamples, sourceLength);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectEquals(outcomeRecord(result.outcome).lengthInSamples, sourceLength);
         }
 
         beginTest("Plugin processing retains custom tags and Serato markers but drops the overview");
@@ -714,9 +719,9 @@ public:
             expect(writeMetadata(source, metadata));
             TestPlugin plugin({.gain = 0.5f});
             const auto result = process(source, {&plugin});
-            expect(!result.hasError(), result.errorMessage);
+            expect(!result.hasError(), outcomeError(result.outcome));
             AudioMetadata written;
-            expect(readMetadata(result.outputFile, written));
+            expect(readMetadata(outcomeRecord(result.outcome).file, written));
             metadata.id3v2Frames.pop_back();
             expect(written.id3v2Frames.size() == metadata.id3v2Frames.size() + 1);
             for (const auto& frame : metadata.id3v2Frames) {
@@ -741,7 +746,7 @@ public:
                   });
 
             expect(result.hasError());
-            expect(result.errorMessage.contains("cancelled"), result.errorMessage);
+            expect(outcomeError(result.outcome).contains("cancelled"), outcomeError(result.outcome));
             expectEquals(source.getSize(), sourceSize);
             expect(source.getLastModificationTime() == sourceModified);
             expectEquals(source.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 1);
@@ -758,8 +763,8 @@ public:
                 = processFileWithPlugins(staleRecord, makeOptions({&plugin}), chainOf(plugin), [] { return true; });
 
             expect(result.hasError());
-            expectEquals(result.errorMessage, cancelledAnalysis.errorMessage);
-            expect(!result.committed);
+            expectEquals(outcomeError(result.outcome), cancelledAnalysis.errorMessage);
+            expect(std::holds_alternative<OperationFailed>(result.outcome));
             expectEquals(plugin.getWidestBufferChannels(), 0);
         }
 
@@ -775,8 +780,8 @@ public:
 
             const auto result = processFileWithPlugins(analyzeFile(source), options, chainOf(plugin));
 
-            expect(!result.hasError(), result.errorMessage);
-            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), -3.0, 0.05);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), -3.0, 0.05);
         }
 
         beginTest("Normalization before the chain follows the selected loudness target");
@@ -791,8 +796,8 @@ public:
 
             const auto result = processFileWithPlugins(analyzeFile(source), options, chainOf(plugin));
 
-            expect(!result.hasError(), result.errorMessage);
-            expectWithinAbsoluteError(result.analysisRecord.integratedLufs, -20.0, 0.1);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectWithinAbsoluteError(outcomeRecord(result.outcome).integratedLufs, -20.0, 0.1);
         }
 
         beginTest("A custom gain wins over normalization before the chain");
@@ -807,8 +812,8 @@ public:
 
             const auto result = processFileWithPlugins(record, options, chainOf(plugin));
 
-            expect(!result.hasError(), result.errorMessage);
-            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels - 6.0, 0.05);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels - 6.0, 0.05);
         }
 
         beginTest("Every source depth produces 16-bit PCM while preserving rate and channel count");
@@ -820,12 +825,12 @@ public:
                 const auto original = analyzeFile(source);
                 TestPlugin plugin({});
                 const auto result = process(source, {&plugin});
-                expect(!result.hasError(), result.errorMessage);
-                expectEquals(result.analysisRecord.bitsPerSample, 16);
-                expectEquals(result.analysisRecord.sampleRate, original.sampleRate);
-                expectEquals(result.analysisRecord.channels, original.channels);
-                expectEquals(result.analysisRecord.lengthInSamples, original.lengthInSamples);
-                const auto reader = utils::createAudioReader(result.outputFile);
+                expect(!result.hasError(), outcomeError(result.outcome));
+                expectEquals(outcomeRecord(result.outcome).bitsPerSample, 16);
+                expectEquals(outcomeRecord(result.outcome).sampleRate, original.sampleRate);
+                expectEquals(outcomeRecord(result.outcome).channels, original.channels);
+                expectEquals(outcomeRecord(result.outcome).lengthInSamples, original.lengthInSamples);
+                const auto reader = utils::createAudioReader(outcomeRecord(result.outcome).file);
                 expect(reader != nullptr);
                 if (reader != nullptr) {
                     expectEquals<juce::uint64>(reader->bitsPerSample, 16);
@@ -839,8 +844,8 @@ public:
             const auto source = directory.copyFixture("silence_stereo_44100_16.wav");
             TestPlugin plugin({});
             const auto result = process(source, {&plugin});
-            expect(!result.hasError(), result.errorMessage);
-            const auto reader = utils::createAudioReader(result.outputFile);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            const auto reader = utils::createAudioReader(outcomeRecord(result.outcome).file);
             expect(reader != nullptr);
             if (reader != nullptr) {
                 juce::AudioBuffer<float> samples(2, static_cast<int>(reader->lengthInSamples));
@@ -854,9 +859,9 @@ public:
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "quantization.aif");
             TestPlugin plugin({.producesQuantizationPattern = true});
             const auto result = process(source, {&plugin});
-            expect(!result.hasError(), result.errorMessage);
-            expect(result.notice.contains("Output clipping"), result.notice);
-            const auto reader = utils::createAudioReader(result.outputFile);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expect(outcomeNotice(result.outcome).contains("Output clipping"), outcomeNotice(result.outcome));
+            const auto reader = utils::createAudioReader(outcomeRecord(result.outcome).file);
             expect(reader != nullptr);
             if (reader != nullptr) {
                 constexpr std::array expected {0, 0, -1, 1, -2, 1, -2, 8192, -8192, 32'767, -32'768, 32'767};
@@ -880,9 +885,9 @@ public:
             const ScopedLogCapture capture;
             const auto result = process(source, {&boost, &attenuate});
 
-            expect(!result.hasError(), result.errorMessage);
-            expect(result.notice.isEmpty(), result.notice);
-            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels, 0.05);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expect(outcomeNotice(result.outcome).isEmpty(), outcomeNotice(result.outcome));
+            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels, 0.05);
             expect(std::ranges::none_of(capture.getMessages(), [](const auto& message) {
                 return message.contains("Output clipping");
             }));
@@ -896,19 +901,25 @@ public:
             const ScopedLogCapture capture;
             const auto result = process(source, {&plugin});
 
-            expect(!result.hasError(), result.errorMessage);
-            expectEquals(result.analysisRecord.channels, 2);
-            expectEquals(result.analysisRecord.bitsPerSample, 16);
-            expectEquals(result.analysisRecord.lengthInSamples, sourceLength);
-            expect(peakDecibels(result.analysisRecord) <= 0.0, juce::String(peakDecibels(result.analysisRecord)));
-            expect(peakDecibels(result.analysisRecord) > -0.1, juce::String(peakDecibels(result.analysisRecord)));
-            expect(result.notice.contains("Output clipping"), result.notice);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectEquals(outcomeRecord(result.outcome).channels, 2);
+            expectEquals(outcomeRecord(result.outcome).bitsPerSample, 16);
+            expectEquals(outcomeRecord(result.outcome).lengthInSamples, sourceLength);
+            expect(
+                peakDecibels(outcomeRecord(result.outcome)) <= 0.0,
+                juce::String(peakDecibels(outcomeRecord(result.outcome)))
+            );
+            expect(
+                peakDecibels(outcomeRecord(result.outcome)) > -0.1,
+                juce::String(peakDecibels(outcomeRecord(result.outcome)))
+            );
+            expect(outcomeNotice(result.outcome).contains("Output clipping"), outcomeNotice(result.outcome));
             expect(std::ranges::any_of(capture.getMessages(), [&](const auto& message) {
                 return message.endsWith(
                     utils::format(
                         "[WARN]: Plugin processing warning: {}, {}",
-                        result.outputFile.getFullPathName().quoted(),
-                        result.notice
+                        outcomeRecord(result.outcome).file.getFullPathName().quoted(),
+                        outcomeNotice(result.outcome)
                     )
                 );
             }));

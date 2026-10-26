@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <ranges>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace audiobatch
@@ -227,23 +228,32 @@ void AudioBatchComponent::handleNormalizeResult(const AudioNormalizationResult& 
     ++normalizeProgress.completed;
     fileActivity.clearActive(result.fullPath);
 
-    if (result.succeeded && result.notice.isNotEmpty()) {
-        fileActivity.setMessage(result.analysisRecord.fullPath, {.text = result.notice, .isError = false});
-    }
+    const auto reportFailure
+        = [this](const juce::String& fileName, const juce::String& path, const juce::String& error) {
+              normalizeProgress.failures.add(utils::format("{}: {}", fileName, error));
+              fileActivity.setMessage(path, {.text = error, .isError = true});
+              resultsTable.repaint();
+          };
 
-    // A committed output replaces its source even when its re-analysis failed,
-    // since a converted source is already in the trash.
-    // A successful in-place no-op is applied too, since it carries a refreshed analysis of a changed file.
-    if (result.committed || result.succeeded) {
-        replaceRecordAfterOperation(result.file, result.analysisRecord);
-    }
-
-    if (!result.succeeded) {
-        normalizeProgress.failures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
-        const auto& failedPath = result.committed ? result.analysisRecord.fullPath : result.fullPath;
-        fileActivity.setMessage(failedPath, {.text = result.errorMessage, .isError = true});
-        resultsTable.repaint();
-    }
+    std::visit(
+        Overloaded {
+            [&](const OperationFailed& failed) { reportFailure(result.fileName, result.fullPath, failed.error); },
+            [&](const CommittedButUnanalyzed& unanalyzed) {
+                // A committed output replaces its source even when its re-analysis failed,
+                // since a converted source is already in the trash.
+                replaceRecordAfterOperation(result.file, unanalyzed.output);
+                reportFailure(unanalyzed.output.fileName, unanalyzed.output.fullPath, unanalyzed.error);
+            },
+            [&](const OperationSucceeded& succeeded) {
+                if (succeeded.notice.isNotEmpty()) {
+                    fileActivity.setMessage(succeeded.output.fullPath, {.text = succeeded.notice, .isError = false});
+                }
+                // A successful in-place no-op is applied too, since it carries a refreshed analysis of a changed file.
+                replaceRecordAfterOperation(result.file, succeeded.output);
+            },
+        },
+        result.outcome
+    );
 
     updateStatusLabel();
 }
@@ -683,26 +693,39 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
     ++processingProgress.completed;
     fileActivity.clearActive(result.originalFullPath);
 
-    if (result.succeeded && result.notice.isNotEmpty()) {
-        fileActivity.setMessage(result.analysisRecord.fullPath, {.text = result.notice, .isError = false});
-    }
-
+    const auto reportFailure = [&](const juce::String& fileName, const juce::String& path, const juce::String& error) {
+        processingProgress.failures.add(utils::format("{}: {}", fileName, error));
+        fileActivity.setMessage(path, {.text = error, .isError = true});
+        resultsTable.repaint();
+        utils::logError("Plugin processing failed for {}: {}", result.originalFullPath.quoted(), error);
+    };
     // A committed output replaces its source even when its re-analysis failed,
     // since a converted source is already in the trash.
-    if (result.committed) {
-        replaceRecordAfterOperation(result.originalFile, result.analysisRecord);
+    const auto replaceSource = [&](const AudioAnalysisRecord& output) {
+        replaceRecordAfterOperation(result.originalFile, output);
         // The custom gain is baked into the processed audio, so the new output starts without one.
         // The cache logs its own failures, and the row in the table is already correct.
-        static_cast<void>(analysisCache.storeCustomGain(result.analysisRecord.file, 0.0f, false));
-    }
+        static_cast<void>(analysisCache.storeCustomGain(output.file, 0.0f, false));
+    };
 
-    if (!result.succeeded) {
-        processingProgress.failures.add(utils::format("{}: {}", result.fileName, result.errorMessage));
-        const auto& failedPath = result.committed ? result.analysisRecord.fullPath : result.originalFullPath;
-        fileActivity.setMessage(failedPath, {.text = result.errorMessage, .isError = true});
-        resultsTable.repaint();
-        utils::logError("Plugin processing failed for {}: {}", result.originalFullPath.quoted(), result.errorMessage);
-    }
+    std::visit(
+        Overloaded {
+            [&](const OperationFailed& failed) {
+                reportFailure(result.fileName, result.originalFullPath, failed.error);
+            },
+            [&](const CommittedButUnanalyzed& unanalyzed) {
+                replaceSource(unanalyzed.output);
+                reportFailure(unanalyzed.output.fileName, unanalyzed.output.fullPath, unanalyzed.error);
+            },
+            [&](const OperationSucceeded& succeeded) {
+                if (succeeded.notice.isNotEmpty()) {
+                    fileActivity.setMessage(succeeded.output.fullPath, {.text = succeeded.notice, .isError = false});
+                }
+                replaceSource(succeeded.output);
+            },
+        },
+        result.outcome
+    );
 
     updateStatusLabel();
 }
