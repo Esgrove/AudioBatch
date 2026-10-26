@@ -148,12 +148,8 @@ install_windows_gui_app() {
     if [ -z "${LOCALAPPDATA:-}" ] || [ -z "${APPDATA:-}" ]; then
         print_error_and_exit "LOCALAPPDATA and APPDATA must be set to install the Windows GUI app."
     fi
-    if ! command -v cygpath > /dev/null 2>&1; then
-        print_error_and_exit "cygpath is required to install the Windows GUI app. Run this script from Git Bash."
-    fi
-    if ! command -v powershell.exe > /dev/null 2>&1; then
-        print_error_and_exit "PowerShell is required to create the Windows Start Menu shortcut."
-    fi
+    require_command cygpath "cygpath is required to install the Windows GUI app. Run this script from Git Bash."
+    require_command powershell.exe "PowerShell is required to create the Windows Start Menu shortcut."
 
     local local_app_data
     local roaming_app_data

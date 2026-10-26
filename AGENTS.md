@@ -10,6 +10,9 @@ This repository holds two versions of it side by side, each with its own agent i
 ## Shared Files
 
 - `assets/` holds the icons and fonts that both applications bundle.
+- `common.sh` holds the shell helpers shared by the scripts of both projects,
+  such as platform detection and colored output.
+  `cpp/common.sh` and `rust/common.sh` source it and add their project specific parts.
 - `fixtures/` holds the committed audio fixtures that both test suites read in place.
   `fixtures/generate.sh` regenerates them with ffmpeg.
   When a fixture changes, update the expected values in the C++ tests and in the Rust `test-fixtures` crate.

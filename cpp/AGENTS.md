@@ -416,5 +416,6 @@ Example (C++ doc comment):
 ## Notes
 
 - The main application code lives in `src/`.
-- Shell helpers live in the C++ project root, `cpp/`.
+- Shell scripts live in the C++ project root, `cpp/`.
+  Their `common.sh` sets `REPO` to `cpp/` and sources `../common.sh`, which holds the helpers shared with `../rust`.
 - `CLAUDE.md` is a symlink to this file, so both point at the same guidance. Only edit `AGENTS.md` directly.
