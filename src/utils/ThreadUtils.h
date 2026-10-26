@@ -47,7 +47,7 @@ inline void reportProgress(const ProgressCallback& onProgress, const float progr
     }
 }
 
-bool callOnMessageThread(std::function<void()> function, const CancellationCheck& isCancelled);
+[[nodiscard]] bool callOnMessageThread(std::function<void()> function, const CancellationCheck& isCancelled);
 
 juce::String describeCurrentException();
 

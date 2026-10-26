@@ -76,16 +76,15 @@ static int runCliMain(const std::span<char*> argv)
         return 0;
     }
 
-    juce::String parseError;
-    const auto cliOptions = cli::parseArguments(arguments, parseError);
+    const auto cliOptions = cli::parseArguments(arguments);
 
     const auto logger = utils::createDefaultLogger(executableName);
     juce::Logger::setCurrentLogger(logger.get());
     utils::installCrashLogging();
 
-    if (!cliOptions.has_value()) {
-        utils::logError(parseError);
-        console::printError(parseError);
+    if (!cliOptions) {
+        utils::logError(cliOptions.error());
+        console::printError(cliOptions.error());
         fmt::print("\n{}\n", cli::buildUsage(executableName));
         return cli::exitCli(1);
     }

@@ -308,11 +308,10 @@ private:
             const auto record = analyzeFile(fixtureFile("sine_stereo_44100_16.wav"));
             auto options = testNormalizationOptions();
             options.mode = AudioNormalizationMode::loudness;
-            juce::String errorMessage;
 
             options.targetLufs = -14.0;
-            auto gain = getNormalizationGain(record, options, errorMessage);
-            expect(gain.has_value(), errorMessage);
+            auto gain = getNormalizationGain(record, options);
+            expect(gain.has_value(), gain.error_or({}));
             expectWithinAbsoluteError(
                 static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(0.0f))),
                 -14.0 - record.integratedLufs,
@@ -322,8 +321,8 @@ private:
             // Reaching 0 LUFS would put the true peak at about 0 dBTP,
             // above the ceiling, so the gain stops at the ceiling.
             options.targetLufs = 0.0;
-            gain = getNormalizationGain(record, options, errorMessage);
-            expect(gain.has_value(), errorMessage);
+            gain = getNormalizationGain(record, options);
+            expect(gain.has_value(), gain.error_or({}));
             expectWithinAbsoluteError(
                 static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(0.0f))),
                 AudioNormalizationOptions::defaultTruePeakCeilingDbtp
@@ -371,21 +370,21 @@ private:
             record.overallTruePeak = 0.001;
             record.integratedLufs = -80.0;
             auto options = testNormalizationOptions();
-            juce::String errorMessage;
 
-            expect(!getNormalizationGain(record, options, errorMessage).has_value());
-            expect(errorMessage.contains("dB of gain"), errorMessage);
+            const auto peakGain = getNormalizationGain(record, options);
+            expect(!peakGain.has_value());
+            expect(peakGain.error_or({}).contains("dB of gain"), peakGain.error_or({}));
 
             options.mode = AudioNormalizationMode::loudness;
-            errorMessage.clear();
-            expect(!getNormalizationGain(record, options, errorMessage).has_value());
-            expect(errorMessage.contains("dB of gain"), errorMessage);
+            const auto loudnessGain = getNormalizationGain(record, options);
+            expect(!loudnessGain.has_value());
+            expect(loudnessGain.error_or({}).contains("dB of gain"), loudnessGain.error_or({}));
 
             // 30 dB of gain stays within the limit.
             options.mode = AudioNormalizationMode::peak;
             options.targetPeakDbfs = -30.0;
-            const auto gain = getNormalizationGain(record, options, errorMessage);
-            expect(gain.has_value(), errorMessage);
+            const auto gain = getNormalizationGain(record, options);
+            expect(gain.has_value(), gain.error_or({}));
             expectWithinAbsoluteError(
                 static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(0.0f))), 30.0, 0.01
             );

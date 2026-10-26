@@ -8,6 +8,7 @@
 #include <JuceHeader.h>
 
 #include <cstdint>
+#include <expected>
 #include <functional>
 
 namespace audiobatch::utils
@@ -27,7 +28,11 @@ using FileDisposer = std::function<bool(const juce::File&)>;
 
 juce::File getDefaultBrowseDirectory();
 
-juce::String checkOutputPath(const juce::File& sourceFile, const juce::File& outputFile, bool overwriteExisting);
+[[nodiscard]] std::expected<void, juce::String> checkOutputPath(
+    const juce::File& sourceFile,
+    const juce::File& outputFile,
+    bool overwriteExisting
+);
 juce::String existingOutputMessage(const juce::File& outputFile);
 juce::String fileExtension(const juce::File& file);
 juce::String normalizeExtension(const juce::String& extension);
@@ -35,7 +40,7 @@ juce::String revealInFileManagerLabel();
 
 [[nodiscard]] TrashResult moveToTrash(const juce::File& file);
 
-bool deleteFile(const juce::File& file);
+[[nodiscard]] bool deleteFile(const juce::File& file);
 [[nodiscard]] bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile);
 bool isAiffFile(const juce::File& file);
 bool isMp3File(const juce::File& file);
@@ -45,7 +50,7 @@ bool trashFile(const juce::File& file);
 void revealFileInFileManager(const juce::File& file);
 void revealParentDirectory(const juce::File& file);
 
-juce::String commitTemporaryOutput(
+[[nodiscard]] std::expected<void, juce::String> commitTemporaryOutput(
     const juce::TemporaryFile& temporaryFile,
     const juce::File& sourceFile,
     const juce::File& outputFile,

@@ -95,7 +95,7 @@ public:
 
     void setStartingCallback(StartingCallback callback);
 
-    int start(
+    [[nodiscard]] int start(
         const std::vector<AudioAnalysisRecord>& records,
         const PluginProcessingOptions& options,
         std::vector<PluginChainInstances> chainInstances

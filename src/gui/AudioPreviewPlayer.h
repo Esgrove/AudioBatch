@@ -38,7 +38,7 @@ public:
     AudioPreviewPlayer(AudioPreviewPlayer&&) = delete;
     AudioPreviewPlayer& operator=(AudioPreviewPlayer&&) = delete;
 
-    bool load(const juce::URL& audioUrl, bool waitForInitialPosition = false);
+    [[nodiscard]] bool load(const juce::URL& audioUrl, bool waitForInitialPosition = false);
 
     void release();
     void suspend();

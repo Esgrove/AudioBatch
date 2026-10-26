@@ -53,10 +53,8 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
             continue;
         }
 
-        AudioAnalysisRecord refreshedRecord;
-
-        if (analysisCache.getAnalysis(record.file, refreshedRecord)) {
-            record = std::move(refreshedRecord);
+        if (auto refreshedRecord = analysisCache.getAnalysis(record.file)) {
+            record = std::move(*refreshedRecord);
             resultsChanged = true;
             continue;
         }
@@ -130,10 +128,11 @@ void AudioBatchComponent::handleAnalysisResults(std::vector<AnalysisResultMessag
             // A gain set while the file was still waiting may only live in the table,
             // because the cache had no row for this version of the file to store it in yet.
             // The coordinator stored the row before publishing the result, so the gain can be stored now.
+            // The cache logs its own failures, and the table keeps the gain either way.
             if (keepCustomGainOfUnchangedFile(row, record)
                 && (!incomingHasGain || !juce::approximatelyEqual(incomingGainDb, record.customGainDb)))
             {
-                analysisCache.storeCustomGain(record.file, record.customGainDb, true);
+                static_cast<void>(analysisCache.storeCustomGain(record.file, record.customGainDb, true));
             }
 
             row = std::move(record);
@@ -195,11 +194,12 @@ void AudioBatchComponent::replaceRecordAfterOperation(
         analysisResults.push_back(mergedRecord);
     }
 
-    analysisCache.storeAnalysis(mergedRecord);
+    // The cache logs its own failures, and a row it could not store or remove is only read again later.
+    static_cast<void>(analysisCache.storeAnalysis(mergedRecord));
 
     // A converted original was moved to the trash, so its cached row is no longer needed.
     if (newRecord.fullPath != originalPath) {
-        analysisCache.removeAnalysis(originalFile);
+        static_cast<void>(analysisCache.removeAnalysis(originalFile));
     }
 
     refreshTablePreservingSelection(selectedPaths);
@@ -694,7 +694,8 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
     if (result.committed) {
         replaceRecordAfterOperation(result.originalFile, result.analysisRecord);
         // The custom gain is baked into the processed audio, so the new output starts without one.
-        analysisCache.storeCustomGain(result.analysisRecord.file, 0.0f, false);
+        // The cache logs its own failures, and the row in the table is already correct.
+        static_cast<void>(analysisCache.storeCustomGain(result.analysisRecord.file, 0.0f, false));
     }
 
     if (!result.succeeded) {

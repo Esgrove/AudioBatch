@@ -10,6 +10,7 @@
 #include <JuceHeader.h>
 
 #include <cmath>
+#include <expected>
 #include <memory>
 
 namespace audiobatch::utils
@@ -27,7 +28,7 @@ juce::AudioFormat* findAiffFormat(const juce::AudioFormatManager& formatManager)
 juce::AudioFormatManager& threadLocalFormatManager();
 std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& file);
 
-juce::String validateWrittenAudio(
+[[nodiscard]] std::expected<void, juce::String> validateWrittenAudio(
     juce::AudioFormatManager& formatManager,
     const juce::File& file,
     int expectedChannels,

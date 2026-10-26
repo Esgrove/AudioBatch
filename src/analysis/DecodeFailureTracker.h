@@ -26,7 +26,11 @@ public:
 
     /// Records the outcome of reading one block.
     /// Returns false when decoding must stop, after which errorMessage describes the failure.
-    bool recordBlock(const bool readSucceeded, const juce::int64 samplePosition, const int samplesInBlock) noexcept
+    [[nodiscard]] bool recordBlock(
+        const bool readSucceeded,
+        const juce::int64 samplePosition,
+        const int samplesInBlock
+    ) noexcept
     {
         if (readSucceeded) {
             consecutiveFailures = 0;

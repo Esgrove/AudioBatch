@@ -56,8 +56,7 @@ public:
             const auto loaded = cache.getSeratoTag(identity);
             expect(loaded.has_value());
             expect(loaded && loaded->overview && loaded->overview->slices == overview.slices);
-            AudioAnalysisRecord cached;
-            expect(!cache.getAnalysis(tagFile, cached));
+            expect(!cache.getAnalysis(tagFile).has_value());
         }
 
         beginTest("A database written by an older version gets the missing columns");
@@ -104,10 +103,9 @@ public:
             expect(migratedCache.storeAnalysis(analyzeFile(migratedFile)));
             expect(migratedCache.storeCustomGain(migratedFile, 1.5f, true));
 
-            AudioAnalysisRecord cached;
-            expect(migratedCache.getAnalysis(migratedFile, cached));
-            expect(cached.hasCustomGain);
-            expectEquals(cached.customGainDb, 1.5f);
+            const auto cached = migratedCache.getAnalysis(migratedFile);
+            expect(cached.has_value() && cached->hasCustomGain);
+            expectEquals(cached.value_or(AudioAnalysisRecord {}).customGainDb, 1.5f);
 
             const FileIdentity identity(migratedFile);
             expect(migratedCache.storeSeratoTag(identity, {}));
@@ -161,8 +159,7 @@ public:
         {
             expect(cache.storeAnalysis(analyzed));
 
-            AudioAnalysisRecord cached;
-            expect(cache.getAnalysis(file, cached));
+            const auto cached = cache.getAnalysis(file).value_or(AudioAnalysisRecord {});
             expectEquals(cached.overallPeak, analyzed.overallPeak);
             expectEquals(cached.sampleRate, analyzed.sampleRate);
         }
@@ -170,9 +167,7 @@ public:
         beginTest("A changed file is not served from the cache");
         {
             expect(fixtureFile("sine_stereo_48000_24.wav").copyFileTo(file));
-
-            AudioAnalysisRecord cached;
-            expect(!cache.getAnalysis(file, cached));
+            expect(!cache.getAnalysis(file).has_value());
         }
 
         beginTest("A custom gain is kept while the file is unchanged");
@@ -184,10 +179,9 @@ public:
             // Analyzing the unchanged file again must not drop the gain.
             expect(cache.storeAnalysis(analyzeFile(gainFile)));
 
-            AudioAnalysisRecord cached;
-            expect(cache.getAnalysis(gainFile, cached));
-            expect(cached.hasCustomGain);
-            expectEquals(cached.customGainDb, -3.5f);
+            const auto cached = cache.getAnalysis(gainFile);
+            expect(cached.has_value() && cached->hasCustomGain);
+            expectEquals(cached.value_or(AudioAnalysisRecord {}).customGainDb, -3.5f);
         }
 
         beginTest("A custom gain for a file without a cached row reports that nothing was stored");
@@ -214,12 +208,11 @@ public:
                 2
             );
 
-            AudioAnalysisRecord cached;
-            expect(cache.getAnalysis(first, cached));
-            expect(cached.hasCustomGain);
-            expectEquals(cached.customGainDb, 1.5f);
-            expect(cache.getAnalysis(second, cached));
-            expect(!cached.hasCustomGain);
+            const auto firstCached = cache.getAnalysis(first);
+            expect(firstCached.has_value() && firstCached->hasCustomGain);
+            expectEquals(firstCached.value_or(AudioAnalysisRecord {}).customGainDb, 1.5f);
+            const auto secondCached = cache.getAnalysis(second);
+            expect(secondCached.has_value() && !secondCached->hasCustomGain);
         }
 
         beginTest("A custom gain is cleared when the file changes");
@@ -228,9 +221,8 @@ public:
             expect(fixtureFile("sine_mono_44100_16.wav").copyFileTo(gainFile));
             expect(cache.storeAnalysis(analyzeFile(gainFile)));
 
-            AudioAnalysisRecord cached;
-            expect(cache.getAnalysis(gainFile, cached));
-            expect(!cached.hasCustomGain);
+            const auto cached = cache.getAnalysis(gainFile);
+            expect(cached.has_value() && !cached->hasCustomGain);
         }
 
         beginTest("Pruning removes rows of deleted files only");
@@ -242,9 +234,7 @@ public:
             expect(deletedFile.deleteFile());
 
             expectEquals(cache.pruneMissingFiles(), 1);
-
-            AudioAnalysisRecord cached;
-            expect(cache.getAnalysis(keptFile, cached));
+            expect(cache.getAnalysis(keptFile).has_value());
         }
 
         beginTest("Pruning keeps rows of files whose folder is missing, such as an unmounted drive");
@@ -310,12 +300,11 @@ public:
             const juce::MemoryBlock waveform(waveformText.toRawUTF8(), waveformText.getNumBytesAsUTF8());
             expect(cache.storeWaveformData(waveformFile, waveform));
 
-            juce::MemoryBlock loaded;
-            expect(cache.getWaveformData(waveformFile, loaded));
-            expect(loaded == waveform);
+            const auto loaded = cache.getWaveformData(waveformFile);
+            expect(loaded.has_value() && *loaded == waveform);
 
             expect(cache.storeAnalysis(analyzeFile(waveformFile)));
-            expect(!cache.getWaveformData(waveformFile, loaded));
+            expect(!cache.getWaveformData(waveformFile).has_value());
         }
 
         beginTest("Results of a replaced run are not delivered after the new run started");
@@ -336,7 +325,7 @@ public:
             AudioAnalysisOptions replacedRun;
             replacedRun.inputPaths.add(fixtureFile("sine_stereo_44100_16.wav").getParentDirectory());
             replacedRun.refresh = true;
-            coordinator.start(replacedRun);
+            const auto replacedRunId = coordinator.start(replacedRun);
 
             AudioAnalysisOptions currentRun;
             currentRun.inputPaths.add(file);
@@ -348,6 +337,7 @@ public:
                 juce::Thread::sleep(100);
             }
 
+            expect(replacedRunId != latestRunId.load());
             expectEquals(lastCompletedRunId.load(), latestRunId.load());
             expectEquals(staleDeliveries.load(), 0);
         }
@@ -357,9 +347,7 @@ public:
             const auto refreshed = analyzeFile(file);
             expect(cache.storeAnalysis(refreshed));
             expect(cache.removeAnalysis(file));
-
-            AudioAnalysisRecord cached;
-            expect(!cache.getAnalysis(file, cached));
+            expect(!cache.getAnalysis(file).has_value());
         }
 
         runSeratoTests();
@@ -382,8 +370,14 @@ private:
         }
         AnalysisCache cache(databaseFile);
         AudioAnalysisRecord cached;
+        // Loads the cached record of a file into `cached`, or a default record when there is none.
+        const auto loadCached = [&cache, &cached](const juce::File& source) {
+            const auto loaded = cache.getAnalysis(source);
+            cached = loaded.value_or(AudioAnalysisRecord {});
+            return loaded.has_value();
+        };
         beginTest("Short-term loudness survives reopening the database with identical timing and readings");
-        expect(cache.getAnalysis(file, cached));
+        expect(loadCached(file));
         expect(cached.shortTermLoudness != nullptr);
         if (cached.shortTermLoudness && record.shortTermLoudness) {
             expect(cached.shortTermLoudness->values == record.shortTermLoudness->values);
@@ -407,12 +401,12 @@ private:
 
         beginTest("Version-eight scalar analysis regenerates history once and preserves custom gain");
         expect(executeSql(databaseFile, "UPDATE file_analysis SET analysis_version = 8, short_term_loudness = NULL;"));
-        expect(!cache.getAnalysis(file, cached));
+        expect(!loadCached(file));
         const auto regenerated = coordinator.analyzeBlocking(options);
         expectEquals(started.load(), 1);
         expectEquals(static_cast<int>(regenerated.size()), 1);
         expect(!regenerated.empty() && regenerated.front().shortTermLoudness && !regenerated.front().fromCache);
-        expect(cache.getAnalysis(file, cached));
+        expect(loadCached(file));
         expect(cached.hasCustomGain);
         expectEquals(cached.customGainDb, -2.5f);
 
@@ -451,13 +445,13 @@ private:
             expect(cache.storeAnalysis(record));
             const auto sql = utils::format("UPDATE file_analysis SET {};", mutation);
             expect(executeSql(databaseFile, sql.toRawUTF8()));
-            expect(!cache.getAnalysis(file, cached), mutation);
+            expect(!loadCached(file), mutation);
         }
 
         beginTest("Silent history round trips and failed analysis needs no history");
         const auto silent = directory.copyFixture("silence_stereo_44100_16.wav");
         expect(cache.storeAnalysis(analyzeFile(silent)));
-        expect(cache.getAnalysis(silent, cached));
+        expect(loadCached(silent));
         expect(cached.shortTermLoudness != nullptr);
         if (cached.shortTermLoudness && !cached.shortTermLoudness->values.empty()) {
             expectEquals(
@@ -467,7 +461,7 @@ private:
         }
         const auto broken = directory.copyFixture("broken.wav");
         expect(cache.storeAnalysis(analyzeFile(broken)));
-        expect(cache.getAnalysis(broken, cached));
+        expect(loadCached(broken));
         expect(cached.hasError() && !cached.shortTermLoudness);
     }
 
@@ -589,11 +583,10 @@ private:
         expectSqlScalar(databaseFile, "SELECT analysis_version FROM file_analysis;", 9);
         expectSqlScalar(databaseFile, "SELECT waveform_version FROM file_analysis;", 1);
         expect(cache.getSeratoTag(identity).has_value());
-        juce::MemoryBlock loadedWaveform;
-        expect(cache.getWaveformData(file, loadedWaveform));
-        expect(loadedWaveform == waveform);
+        const auto loadedWaveform = cache.getWaveformData(file);
+        expect(loadedWaveform.has_value() && *loadedWaveform == waveform);
         expect(cache.storeAnalysis(analyzed));
-        expect(!cache.getWaveformData(file, loadedWaveform));
+        expect(!cache.getWaveformData(file).has_value());
         expect(cache.getSeratoTag(identity).has_value());
         expect(executeSql(databaseFile, "UPDATE file_analysis SET analysis_version = 0;"));
         expect(cache.getSeratoTag(identity).has_value());
@@ -608,9 +601,8 @@ private:
         )SQL"));
         expect(cache.removeAnalysis(file));
         expect(!cache.getSeratoTag(identity));
-        expect(!cache.getWaveformData(file, loadedWaveform));
-        AudioAnalysisRecord loadedAnalysis;
-        expect(!cache.getAnalysis(file, loadedAnalysis));
+        expect(!cache.getWaveformData(file).has_value());
+        expect(!cache.getAnalysis(file).has_value());
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
 
         beginTest("Modification time alone invalidates captured identities and rejects stale writes");
@@ -799,8 +791,7 @@ private:
                 expect(!serato::serializeTag(*loaded).isEmpty());
             }
         }
-        AudioAnalysisRecord analysis;
-        expect(!cache.getAnalysis(file, analysis));
+        expect(!cache.getAnalysis(file).has_value());
         expectSqlScalar(databaseFile, "SELECT count(*) FROM file_analysis;", 0);
         expectSqlScalar(
             databaseFile, "SELECT count(*) FROM serato_tag_cache;", static_cast<int>(serato::allTagKinds.size())
@@ -926,13 +917,11 @@ private:
         for (const auto& positive : positives) {
             expect(cache.storeSeratoTag(identity, positive));
         }
-        juce::MemoryBlock loadedWaveform;
-        expect(cache.getWaveformData(file, loadedWaveform));
-        expect(loadedWaveform == waveform);
-        AudioAnalysisRecord analysis;
-        expect(cache.getAnalysis(file, analysis));
+        const auto loadedWaveform = cache.getWaveformData(file);
+        expect(loadedWaveform.has_value() && *loadedWaveform == waveform);
+        expect(cache.getAnalysis(file).has_value());
         expect(cache.storeAnalysis(analyzed));
-        expect(!cache.getWaveformData(file, loadedWaveform));
+        expect(!cache.getWaveformData(file).has_value());
         expect(executeSql(databaseFile, "UPDATE file_analysis SET analysis_version = 0;"));
         for (const auto& positive : positives) {
             const auto retained = cache.getSeratoTag(identity, positive.kind);

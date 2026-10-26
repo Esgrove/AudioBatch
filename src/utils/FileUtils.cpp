@@ -431,22 +431,32 @@ bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile)
     return disposed;
 }
 
-/// Returns the user-facing error when the output path cannot take the output of the given source,
-/// or an empty string when it can.
+/// Checks that the output path can take the output of the given source,
+/// and returns the user-facing error when it cannot.
 /// A folder at the output path is never replaced, even with overwriteExisting,
 /// and a different file there needs overwriteExisting.
 /// The services check this before rendering, so a doomed file fails before any work is done.
-juce::String checkOutputPath(const juce::File& sourceFile, const juce::File& outputFile, const bool overwriteExisting)
+std::expected<void, juce::String> checkOutputPath(
+    const juce::File& sourceFile,
+    const juce::File& outputFile,
+    const bool overwriteExisting
+)
 {
     if (outputFile == sourceFile || !outputFile.exists()) {
         return {};
     }
 
     if (!outputFile.existsAsFile()) {
-        return format("Output path {} is not a file and cannot be replaced.", outputFile.getFileName());
+        return std::unexpected(
+            format("Output path {} is not a file and cannot be replaced.", outputFile.getFileName())
+        );
     }
 
-    return overwriteExisting ? juce::String() : existingOutputMessage(outputFile);
+    if (!overwriteExisting) {
+        return std::unexpected(existingOutputMessage(outputFile));
+    }
+
+    return {};
 }
 
 /// Renames the backup of a replaced output back to the output path after a failed commit.
@@ -504,9 +514,9 @@ static juce::String keepNewAudioAfterLostOriginal(
 /// When an in-place replace fails after the original was already removed,
 /// the new audio is kept next to it under a "(recovered)" name instead of being deleted with the temporary file.
 /// `disposeFile` moves files to the system trash unless a caller such as a test passes another function.
-/// Returns an empty string on success, or a user-facing error message.
+/// Returns a user-facing error message on failure.
 /// The temporary file is deleted by its own destructor on failure.
-juce::String commitTemporaryOutput(
+std::expected<void, juce::String> commitTemporaryOutput(
     const juce::TemporaryFile& temporaryFile,
     const juce::File& sourceFile,
     const juce::File& outputFile,
@@ -517,8 +527,8 @@ juce::String commitTemporaryOutput(
     const bool replacingSource = outputFile == sourceFile;
     juce::File backupFile;
 
-    if (const auto outputError = checkOutputPath(sourceFile, outputFile, overwriteExisting); outputError.isNotEmpty()) {
-        return outputError;
+    if (auto outputCheck = checkOutputPath(sourceFile, outputFile, overwriteExisting); !outputCheck) {
+        return outputCheck;
     }
 
     if (!replacingSource && outputFile.exists()) {
@@ -528,7 +538,7 @@ juce::String commitTemporaryOutput(
         backupFile = outputFile.getSiblingFile("." + outputFile.getFileName() + ".backup").getNonexistentSibling(false);
 
         if (!outputFile.moveFileTo(backupFile)) {
-            return "Could not move the existing output file aside";
+            return std::unexpected(juce::String("Could not move the existing output file aside"));
         }
     }
 
@@ -536,16 +546,21 @@ juce::String commitTemporaryOutput(
         restoreOutputBackup(backupFile, outputFile);
 
         if (replacingSource && !sourceFile.exists() && temporaryFile.getFile().existsAsFile()) {
-            return keepNewAudioAfterLostOriginal(temporaryFile, outputFile);
+            return std::unexpected(keepNewAudioAfterLostOriginal(temporaryFile, outputFile));
         }
-        return replacingSource ? "Could not replace the original file with the new audio"
-                               : "Could not move the new audio file into place";
+        return std::unexpected(
+            juce::String(
+                replacingSource ? "Could not replace the original file with the new audio"
+                                : "Could not move the new audio file into place"
+            )
+        );
     }
 
     if (!replacingSource && sourceFile.existsAsFile() && !disposeFile(sourceFile)) {
-        deleteFile(outputFile);
+        // A failed delete is logged, and the backup below is restored either way.
+        static_cast<void>(deleteFile(outputFile));
         restoreOutputBackup(backupFile, outputFile);
-        return "Could not move the original audio file to the system trash";
+        return std::unexpected(juce::String("Could not move the original audio file to the system trash"));
     }
 
     if (backupFile.existsAsFile() && !disposeFile(backupFile)) {

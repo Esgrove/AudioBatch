@@ -28,6 +28,6 @@ namespace cli
 {
 [[nodiscard]] std::optional<PluginListGrouping> parsePluginGrouping(const juce::String& value);
 
-int runPluginList(bool rescan, PluginListGrouping grouping);
+[[nodiscard]] int runPluginList(bool rescan, PluginListGrouping grouping);
 }  // namespace cli
 }  // namespace audiobatch

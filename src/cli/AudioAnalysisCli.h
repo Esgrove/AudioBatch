@@ -9,7 +9,7 @@
 #include "normalization/AudioNormalization.h"
 
 #include <cstdint>
-#include <optional>
+#include <expected>
 #include <vector>
 
 namespace audiobatch
@@ -71,8 +71,8 @@ void attachNegativeOptionValues(juce::ArgumentList& arguments);
 
 bool containsExactOption(const juce::ArgumentList& arguments, const juce::StringArray& optionNames);
 
-std::optional<AudioAnalysisCliOptions> parseArguments(juce::ArgumentList arguments, juce::String& errorMessage);
+[[nodiscard]] std::expected<AudioAnalysisCliOptions, juce::String> parseArguments(juce::ArgumentList arguments);
 
-int runAnalysis(const AudioAnalysisCliOptions& options);
+[[nodiscard]] int runAnalysis(const AudioAnalysisCliOptions& options);
 }  // namespace cli
 }  // namespace audiobatch

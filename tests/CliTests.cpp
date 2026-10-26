@@ -8,18 +8,21 @@
 #include "TestSuites.h"
 
 #include <array>
-#include <optional>
+#include <expected>
 #include <vector>
 
 namespace audiobatch::tests
 {
 /// Parses the given arguments as if they followed the executable name on the command line.
-static std::optional<AudioAnalysisCliOptions> parseArguments(
+/// Also copies a parse error into errorMessage, so a check can match its text after a failed parse.
+static std::expected<AudioAnalysisCliOptions, juce::String> parseArguments(
     const juce::StringArray& arguments,
     juce::String& errorMessage
 )
 {
-    return cli::parseArguments(juce::ArgumentList("audiobatch", arguments), errorMessage);
+    auto options = cli::parseArguments(juce::ArgumentList("audiobatch", arguments));
+    errorMessage = options ? juce::String() : options.error();
+    return options;
 }
 
 /// Checks CLI parsing results for valid and invalid argument lists.
