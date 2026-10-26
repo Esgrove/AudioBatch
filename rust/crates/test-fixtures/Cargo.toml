@@ -1,0 +1,16 @@
+[package]
+name = "test-fixtures"
+description = "Locates the committed audio fixtures for the AudioBatch Rust tests"
+publish = false
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

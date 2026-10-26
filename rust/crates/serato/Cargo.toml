@@ -1,0 +1,17 @@
+[package]
+name = "serato-tags"
+description = "Parsers for the Serato DJ GEOB tags embedded in audio files"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+byteorder.workspace = true
+
+[lints]
+workspace = true

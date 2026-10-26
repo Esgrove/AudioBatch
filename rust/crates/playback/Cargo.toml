@@ -1,0 +1,24 @@
+[package]
+name = "audiobatch-playback"
+description = "Audio file preview playback engine for the AudioBatch GUI"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+audioadapter-buffers.workspace = true
+audiobatch-core.workspace = true
+cpal.workspace = true
+crossbeam-channel.workspace = true
+rtrb.workspace = true
+rubato.workspace = true
+
+[dev-dependencies]
+test-fixtures.workspace = true
+
+[lints]
+workspace = true
