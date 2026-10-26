@@ -1,5 +1,6 @@
 /// Audio format helpers shared by analysis, normalization, and plugin processing.
-/// Declares the per-thread format manager, readers with exact unindexed MP3 lengths, the AIFF writer lookup,
+/// Declares the format registration that decodes MP3 files with JUCE's gapless reader, the per-thread format manager,
+/// readers with exact unindexed MP3 lengths, the AIFF writer lookup,
 /// the float sample read shared by the decode loops, the validation of written output,
 /// the conversion of AIFF reader metadata for the AIFF writer, and peak magnitude math.
 
@@ -26,6 +27,7 @@ template<typename Value>
 }
 
 juce::AudioFormat* findAiffFormat(const juce::AudioFormatManager& formatManager);
+void registerAudioFormats(juce::AudioFormatManager& formatManager);
 juce::AudioFormatManager& threadLocalFormatManager();
 std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& file);
 

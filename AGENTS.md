@@ -70,6 +70,9 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       Its `enumFromId` turns the integer ids of JUCE menu items, commands, and table columns into scoped enums.
       Native Windows request types and APIs stay private to its implementation.
     - `AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, and peak math.
+      `registerAudioFormats` puts JUCE's MP3 reader ahead of Core Audio,
+      because Core Audio keeps the encoder delay of MP3 files tagged by FFmpeg encoders,
+      which would move the audio later than the Serato cue points of the file.
     - `AudioMetadata.*` reads and writes tags and embedded art through TagLib
       and provides shared TagLib filename conversion.
       Metadata types and operations remain in `audiobatch`, with filename conversion in `utils`.
@@ -128,7 +131,8 @@ Tests:
 - `tests/fixtures/` holds small committed audio files:
   one second 1 kHz tones at -6.02 dBFS in WAV, AIFF, FLAC, MP3, and Ogg, mono and stereo,
   at several sample rates and bit depths, plus a tagged FLAC file, digital silence, a short three channel AIFF,
- and a broken file.
+  a single click at a known sample in WAV and MP3 for checking that the start of the audio stays in place,
+  and a broken file.
   `tests/fixtures/generate.sh` regenerates them with ffmpeg.
   Tests that modify files work on copies in a temporary directory.
 
@@ -304,9 +308,9 @@ The detailed rules are in `.agents/rules/code-organization.md`.
   or run the `AudioBatchTests` executable directly for the full test log.
 - Add tests for new behaviour in the shared core and the CLI parsing.
   Prefer the committed fixtures over generating audio in a test.
-- Avoid tests that convert non-AIFF sources through normalization,
-  because a successful conversion moves the source to the system trash.
-  Plugin processing tests set `PluginProcessingOptions::disposeFile` to a function that deletes the file instead,
+- A successful conversion of a non-AIFF source moves the source to the system trash.
+  Tests that convert one set `disposeFile` to a function that deletes the file instead,
+  as `testNormalizationOptions` does for normalization and `makeOptions` for plugin processing,
   and `utils::commitTemporaryOutput` takes the same kind of function.
 - `tests/.clang-tidy` disables `readability-magic-numbers`, since tests compare against literal expected values.
 

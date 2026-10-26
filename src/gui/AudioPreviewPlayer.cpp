@@ -84,7 +84,7 @@ private:
 /// Creates a device-free player. The output device opens only when playback starts.
 AudioPreviewPlayer::AudioPreviewPlayer()
 {
-    formatManager.registerBasicFormats();
+    utils::registerAudioFormats(formatManager);
     readAheadThread.startThread(juce::Thread::Priority::high);
     deviceManager.addAudioCallback(this);
     startTimer(deviceStatusIntervalMilliseconds);

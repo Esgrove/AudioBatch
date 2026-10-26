@@ -15,13 +15,49 @@
 
 namespace audiobatch::utils
 {
-/// Returns a format manager private to the calling thread, with the basic formats registered.
+namespace
+{
+/// Samples of layer III synthesis delay that both JUCE's MP3 reader and Core Audio leave out at the start of a file.
+constexpr juce::int64 mp3DecoderDelaySamples {529};
+}  // namespace
+
+/// Registers the formats of juce::AudioFormatManager::registerBasicFormats,
+/// but with JUCE's MP3 reader ahead of Core Audio, since the manager opens a file with the first format that reads it.
+/// JUCE's reader drops the encoder delay recorded in the LAME, Lavf, or Lavc tag of an MP3 file,
+/// while Core Audio keeps it for files tagged by FFmpeg encoders,
+/// which would move the audio later than the Serato markers of the file.
+/// Core Audio still opens an MP3 file that JUCE's reader rejects.
+void registerAudioFormats(juce::AudioFormatManager& formatManager)
+{
+    formatManager.registerFormat(new juce::WavAudioFormat(), true);
+    formatManager.registerFormat(new juce::AiffAudioFormat(), false);
+#if JUCE_USE_FLAC
+    formatManager.registerFormat(new juce::FlacAudioFormat(), false);
+#endif
+#if JUCE_USE_OGGVORBIS
+    formatManager.registerFormat(new juce::OggVorbisAudioFormat(), false);
+#endif
+#if JUCE_USE_OPUS
+    formatManager.registerFormat(new juce::OpusAudioFormat(), false);
+#endif
+#if JUCE_USE_MP3AUDIOFORMAT
+    formatManager.registerFormat(new juce::MP3AudioFormat(), false);
+#endif
+#if JUCE_MAC || JUCE_IOS
+    formatManager.registerFormat(new juce::CoreAudioFormat(), false);
+#endif
+#if JUCE_USE_WINDOWS_MEDIA_FORMAT
+    formatManager.registerFormat(new juce::WindowsMediaAudioFormat(), false);
+#endif
+}
+
+/// Returns a format manager private to the calling thread, with the formats of registerAudioFormats.
 /// Thread-local storage lets worker threads read files concurrently without sharing a manager or locking.
 juce::AudioFormatManager& threadLocalFormatManager()
 {
     thread_local juce::AudioFormatManager formatManager;
     thread_local const bool initialized = [] {
-        formatManager.registerBasicFormats();
+        registerAudioFormats(formatManager);
         return true;
     }();
 
@@ -42,6 +78,7 @@ juce::AudioFormat* findAiffFormat(const juce::AudioFormatManager& formatManager)
 /// Opens an audio reader and corrects the estimated length of MPEG-1 Layer III files without a VBR header.
 /// JUCE estimates their frame count using one frame's byte size, which ignores varying frame padding and trailing tags.
 /// Counting complete, contiguous frames avoids decoding past the audio during small-block plugin processing.
+/// The decoder leaves out its synthesis delay at the start, so that many fewer samples than the frames hold are read.
 /// Files with a frame-count header retain the decoder's length, as do damaged or unsupported MPEG streams.
 std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& file)
 {
@@ -84,7 +121,7 @@ std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& fil
         position += header.frameLength();
     }
 
-    reader->lengthInSamples = sampleCount;
+    reader->lengthInSamples = juce::jmax<juce::int64>(0, sampleCount - mp3DecoderDelaySamples);
     return reader;
 }
 

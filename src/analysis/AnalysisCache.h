@@ -93,7 +93,7 @@ private:
 
     static juce::String normalizedPath(const juce::File& file);
 
-    static constexpr int analysisVersion {9};
+    static constexpr int analysisVersion {10};
     static constexpr int waveformVersion {1};
 
     /// Serializes every use of the connection, which is opened without SQLite's own mutex.
