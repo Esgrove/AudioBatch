@@ -35,10 +35,10 @@ The port covers the key features of the C++ application:
 - Play the selected file in the GUI.
 - Keep a per-file custom gain in the GUI and the cache, applied to the preview and the waveform.
 - Accept files and folders dropped onto the GUI.
-- Normalize files from the CLI to a sample peak or loudness target, written as AIFF with tags and Serato data.
+- Normalize files from the CLI and the GUI to a sample peak or loudness target,
+  written as AIFF with tags and Serato data.
   Lossless sources produce the same samples as the C++ application.
 
-The GUI cannot normalize files yet.
 VST3 / Audio Unit plugin processing stays in the C++ application for now.
 
 ## Workspace Layout
@@ -54,7 +54,8 @@ and every crate inherits them with `.workspace = true`.
   - `waveform.rs` holds the min/max peak overview and its resolution levels.
   - `discovery.rs` expands input paths into the sorted list of supported audio files.
   - `cache.rs` is the SQLite result cache,
-    `coordinator.rs` runs analysis in parallel with cancellation and progress events.
+    `coordinator.rs` runs analysis in parallel with cancellation and progress events,
+    and `normalize_coordinator.rs` does the same for normalization, keeping the cache in step with the outputs.
   - `format.rs` formats levels and file properties for display, `sorting.rs` sorts records.
   - `tags.rs` reads display tags and Serato data with lofty.
   - `normalize.rs` computes the normalization gain and writes the normalized file, ported from `AudioNormalization.cpp`.
