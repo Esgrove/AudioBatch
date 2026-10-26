@@ -98,7 +98,8 @@ The domains depend on each other in one direction only.
       The runner owns the thread pool and the current run id, and publishes a callback only while its run is current.
     - `StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
     - `ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
-    - `version.h` holds the build version constants.
+    - `version.h.in` is the template for the build version constants.
+      CMake generates `utils/version.h` from it in the build directory.
       Put new generic helpers in the matching file instead of a file-local helper function,
       so they are not duplicated across services.
 - `src/cli/` holds the CLI front end.

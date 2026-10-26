@@ -72,6 +72,12 @@ endif()
 
 message(STATUS "Build name: ${APP_BUILD_NAME}")
 
+# The version constants go into a generated header instead of compile definitions,
+# so a new commit or date only rebuilds the files that include it.
+# configure_file leaves the header untouched when its content does not change.
+set(AUDIOBATCH_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+configure_file("src/utils/version.h.in" "${AUDIOBATCH_GENERATED_DIR}/utils/version.h" @ONLY)
+
 # The icons, fonts and test fixtures live at the repository root, shared with the Rust port.
 cmake_path(SET AUDIOBATCH_ASSETS_DIR NORMALIZE "${CMAKE_SOURCE_DIR}/../assets")
 cmake_path(SET AUDIOBATCH_FIXTURES_DIR NORMALIZE "${CMAKE_SOURCE_DIR}/../fixtures")
@@ -150,19 +156,14 @@ find_package(SQLite3 QUIET)
 if(SQLite3_FOUND)
     set(AUDIOBATCH_SQLITE_TARGET SQLite3::SQLite3)
 else()
+    # The amalgamation has no CMakeLists.txt, so FetchContent_MakeAvailable only downloads and extracts it.
     FetchContent_Declare(
         sqlite3
         URL https://www.sqlite.org/2026/sqlite-amalgamation-3510300.zip
+        URL_HASH SHA256=acb1e6f5d832484bf6d32b681e858c38add8b2acdfd42ac5df24b8afb46552b4
         DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
-    FetchContent_GetProperties(sqlite3)
-
-    if(NOT sqlite3_POPULATED)
-        cmake_policy(PUSH)
-        cmake_policy(SET CMP0169 OLD)
-        FetchContent_Populate(sqlite3)
-        cmake_policy(POP)
-    endif()
+    FetchContent_MakeAvailable(sqlite3)
 
     add_library(AudioBatchSQLite STATIC ${sqlite3_SOURCE_DIR}/sqlite3.c)
 
@@ -183,11 +184,14 @@ if(WIN32)
     set(ZLIB_USE_STATIC_LIBS ON)
 endif()
 
+# The dependencies are pinned to the commit of their release tag, because a tag can be moved.
+# A shallow clone needs a branch or tag name, so these are full clones.
+# TagLib is fetched with git instead of an archive, because it has utfcpp as a submodule.
 FetchContent_Declare(
     taglib
     GIT_REPOSITORY https://github.com/taglib/taglib.git
-    GIT_TAG v2.3
-    GIT_SHALLOW TRUE
+    # v2.3
+    GIT_TAG 1b94b93762636ebe5733180c3e825be4621e4c7f
 )
 
 # Configure taglib build options before populating, so they apply on the first configure
@@ -229,23 +233,22 @@ target_include_directories(
         $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/toolkit>
 )
 
+# The SYSTEM target property makes consumers include the TagLib headers as system headers,
+# so they are exempt from this project's warnings-as-errors flags.
+# The SYSTEM option of FetchContent_Declare would also apply to the zlib include directory TagLib finds,
+# which on macOS is the SDK include directory and must not come before the libc++ headers.
+set_target_properties(tag PROPERTIES SYSTEM ON)
+
+# Only the library subdirectory is added, which leaves out the tests and the install rules of the top level project.
 FetchContent_Declare(
     libebur128
     GIT_REPOSITORY https://github.com/jiixyj/libebur128.git
-    GIT_TAG v1.2.6
-    GIT_SHALLOW TRUE
+    # v1.2.6
+    GIT_TAG 67b33abe1558160ed76ada1322329b0e9e058b02
+    SOURCE_SUBDIR ebur128
+    EXCLUDE_FROM_ALL
 )
-FetchContent_GetProperties(libebur128)
-
-if(NOT libebur128_POPULATED)
-    cmake_policy(PUSH)
-    cmake_policy(SET CMP0169 OLD)
-    FetchContent_Populate(libebur128)
-    cmake_policy(POP)
-
-    set(BUILD_SHARED_LIBS OFF CACHE BOOL "Build shared libraries" FORCE)
-    add_subdirectory(${libebur128_SOURCE_DIR}/ebur128 ${libebur128_BINARY_DIR}/ebur128 EXCLUDE_FROM_ALL)
-endif()
+FetchContent_MakeAvailable(libebur128)
 
 target_include_directories(ebur128 PUBLIC ${libebur128_SOURCE_DIR}/ebur128)
 
@@ -259,8 +262,8 @@ endif()
 FetchContent_Declare(
     fmt
     GIT_REPOSITORY https://github.com/fmtlib/fmt.git
-    GIT_TAG 12.2.0
-    GIT_SHALLOW TRUE
+    # 12.2.0
+    GIT_TAG 1be298e1bd68957e4cd352e1f676f00e07dcfb57
     SYSTEM
 )
 
@@ -363,7 +366,7 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/utils/StringFormat.h"
     "src/utils/ThreadUtils.cpp"
     "src/utils/ThreadUtils.h"
-    "src/utils/version.h"
+    "src/utils/version.h.in"
 )
 
 # CLI front end sources, also linked into the tests.
@@ -449,8 +452,9 @@ target_sources(
 target_sources(AudioBatchCli PRIVATE ${AUDIOBATCH_CORE_SOURCES} ${AUDIOBATCH_CLI_SOURCES} "src/cli/CliMain.cpp")
 
 # Project includes are written relative to src, for example "analysis/AudioAnalysis.h".
-target_include_directories(AudioBatch PRIVATE "${CMAKE_SOURCE_DIR}/src")
-target_include_directories(AudioBatchCli PRIVATE "${CMAKE_SOURCE_DIR}/src")
+# The generated directory mirrors that layout for "utils/version.h".
+target_include_directories(AudioBatch PRIVATE "${CMAKE_SOURCE_DIR}/src" "${AUDIOBATCH_GENERATED_DIR}")
+target_include_directories(AudioBatchCli PRIVATE "${CMAKE_SOURCE_DIR}/src" "${AUDIOBATCH_GENERATED_DIR}")
 
 target_compile_definitions(
     AudioBatch
@@ -473,15 +477,6 @@ target_compile_definitions(
         JUCE_WASAPI=0
         JUCE_WEB_BROWSER=0
         JUCE_WIN_PER_MONITOR_DPI_AWARE=1
-        # Version info
-        BUILDTIME_APP_NAME="${CMAKE_PROJECT_NAME}"
-        BUILDTIME_BRANCH="${GIT_BRANCH}"
-        BUILDTIME_BUILD_NAME="${APP_BUILD_NAME}"
-        BUILDTIME_COMMIT="${GIT_HASH}"
-        BUILDTIME_DATE="${DATE}"
-        BUILDTIME_VERSION_NUMBER="${APP_BUILD_VERSION}"
-        BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}"
-        BUILDTIME_VERSION_STRING="${APP_VERSION_STRING}"
 )
 
 # Compile definitions shared by the console executables, the CLI and the tests.
@@ -497,14 +492,6 @@ set(AUDIOBATCH_CONSOLE_DEFINITIONS
     JUCE_USE_OGGVORBIS=1
     JUCE_USE_WINDOWS_MEDIA_FORMAT=0
     JUCE_WEB_BROWSER=0
-    BUILDTIME_APP_NAME="${CMAKE_PROJECT_NAME}"
-    BUILDTIME_BRANCH="${GIT_BRANCH}"
-    BUILDTIME_BUILD_NAME="${APP_BUILD_NAME}"
-    BUILDTIME_COMMIT="${GIT_HASH}"
-    BUILDTIME_DATE="${DATE}"
-    BUILDTIME_VERSION_NUMBER="${APP_BUILD_VERSION}"
-    BUILDTIME_VERSION_INFO="${APP_BUILD_VERSION} ${DATE} ${GIT_HASH}"
-    BUILDTIME_VERSION_STRING="${APP_VERSION_STRING}"
 )
 
 target_compile_definitions(AudioBatchCli PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS})
@@ -667,8 +654,8 @@ if(BUILD_TESTING)
     FetchContent_Declare(
         googletest
         GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG v1.18.0
-        GIT_SHALLOW TRUE
+        # v1.18.0
+        GIT_TAG 063de7e9578f82b369302001269680b4b1553359
         SYSTEM
     )
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
@@ -756,7 +743,7 @@ if(BUILD_TESTING)
             "tests/UtilsTests.cpp"
     )
 
-    target_include_directories(AudioBatchTests PRIVATE "${CMAKE_SOURCE_DIR}/src")
+    target_include_directories(AudioBatchTests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${AUDIOBATCH_GENERATED_DIR}")
     target_link_libraries(AudioBatchTests PRIVATE Assets)
     target_compile_definitions(
         AudioBatchTests PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS}

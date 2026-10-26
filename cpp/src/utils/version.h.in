@@ -1,0 +1,20 @@
+/// Build-time version information for the application.
+/// CMake generates utils/version.h in the build directory from this template when the project is configured.
+/// Only the files that include it are rebuilt when the commit or the build date changes.
+
+#pragma once
+
+/// Build metadata filled in by CMake.
+namespace audiobatch::version
+{
+constexpr auto APP_NAME {"@CMAKE_PROJECT_NAME@"};
+constexpr auto BRANCH {"@GIT_BRANCH@"};
+constexpr auto BUILD_NAME {"@APP_BUILD_NAME@"};
+constexpr auto COMMIT {"@GIT_HASH@"};
+constexpr auto DATE {"@DATE@"};
+constexpr auto VERSION_INFO {"@APP_BUILD_VERSION@ @DATE@ @GIT_HASH@"};
+constexpr auto VERSION_NUMBER {"@APP_BUILD_VERSION@"};
+
+/// Version, build date, commit, and branch, as printed by the --version flag.
+constexpr auto VERSION_STRING {"@APP_VERSION_STRING@"};
+}  // namespace audiobatch::version
