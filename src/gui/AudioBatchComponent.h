@@ -22,7 +22,7 @@
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"
 #include "serato/SeratoPreviewLoader.h"
-#include "utils/ThreadUtils.h"
+#include "utils/MessageThreadBatcher.h"
 
 #include <JuceHeader.h>
 

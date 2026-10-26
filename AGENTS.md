@@ -70,6 +70,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       Metadata types and operations remain in `audiobatch`, with filename conversion in `utils`.
     - `ThreadUtils.*` holds the `CancellationCheck` callback the services poll
       and the cancellable blocking call from a worker to the message thread.
+    - `MessageThreadBatcher.*` holds `AsyncCallback` and `MessageThreadBatcher`,
+      which hand work from worker threads to the message thread in coalesced batches.
     - `StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
     - `ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
     - `version.h` holds the build version constants.
@@ -223,6 +225,8 @@ The detailed rules are in `.agents/rules/code-organization.md`.
   Only `main`, the JUCE application macro, and code that must be in the `juce` namespace stay outside.
 - Do not write a class that only has static member functions.
   Use free functions in a namespace instead, and keep classes for types with state or an invariant.
+- Give a reusable class its own file instead of adding it to a helper file such as `utils/ThreadUtils.h`.
+  Helper files hold free functions and small types only.
 - Do not use `using namespace`. Wrap definitions in the matching namespace block or qualify names.
 - Do not use namespace aliases. Qualify references with the original namespace path.
 - Split files that reach about 1000 lines into focused parts by topic, but avoid very small files.
