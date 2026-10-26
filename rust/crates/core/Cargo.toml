@@ -1,0 +1,28 @@
+[package]
+name = "audiobatch-core"
+description = "Audio analysis, waveform overview, and result cache shared by the AudioBatch CLI and GUI"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+crossbeam-channel.workspace = true
+dirs.workspace = true
+ebur128.workspace = true
+lofty.workspace = true
+rayon.workspace = true
+rusqlite.workspace = true
+serato-tags.workspace = true
+symphonia.workspace = true
+walkdir.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+test-fixtures.workspace = true
+
+[lints]
+workspace = true

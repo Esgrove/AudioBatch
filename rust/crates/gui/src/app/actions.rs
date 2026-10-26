@@ -1,0 +1,302 @@
+//! Menu and transport actions of the main view.
+//!
+//! Covers the file dialogs, analyzing the selected file again, removing it from the list,
+//! moving it to the trash, revealing it in the file manager, clearing the list,
+//! playback, the events of the controls column, the About dialog, and the synthetic stress test.
+
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use audiobatch_playback::{Player, PlayerEvent};
+use gpui_kit::{Context, PathPromptOptions, PromptLevel, SharedString, Task, Window};
+
+use super::{APP_TITLE, AppView, DEFAULT_GAIN_DB, RunKind};
+use crate::controls::{ControlsEvent, SliderControl};
+use crate::demo::{DemoRandom, ROWS_PER_TICK, advance_row, demo_rows, demo_waveform};
+use crate::files::reveal_in_file_manager;
+use crate::waveform::{MINIMUM_ZOOM, PlayheadSource};
+
+/// How often player events are checked.
+const PLAYER_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
+/// How often the stress test updates rows, about thirty times per second.
+const DEMO_TICK_INTERVAL: Duration = Duration::from_millis(33);
+
+impl AppView {
+    /// Opens a dialog for choosing folders or files, then replaces or adds to the list.
+    pub(super) fn prompt_for_paths(directories: bool, replace: bool, cx: &Context<Self>) {
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: !directories,
+            directories,
+            multiple: !replace,
+            prompt: None,
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                let _ = this.update(cx, |view, cx| {
+                    if replace {
+                        view.replace_roots(&paths, cx);
+                    } else {
+                        view.add_roots(&paths, cx);
+                    }
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Scans the listed folders again, analyzing only new and changed files.
+    pub(super) fn rescan(&mut self, cx: &mut Context<Self>) {
+        self.start_run(RunKind::Scan, self.roots.clone(), false, cx);
+    }
+
+    /// Analyzes the selected file again, ignoring its cached result.
+    /// Waits for a scan in progress, whose files would otherwise be left waiting.
+    pub(super) fn reanalyze_selected(&mut self, cx: &mut Context<Self>) {
+        let Some(selected) = self.selected.clone() else {
+            return;
+        };
+        if self
+            .run
+            .as_ref()
+            .is_some_and(|run| run.kind == RunKind::Scan && self.is_analyzing())
+        {
+            self.status = SharedString::from("Wait for the scan to finish before analyzing again");
+            cx.notify();
+            return;
+        }
+        self.start_run(RunKind::Reanalyze, vec![selected], true, cx);
+    }
+
+    /// Removes the selected file from the list and selects the file that took its place.
+    pub(super) fn remove_selected(&mut self, cx: &mut Context<Self>) {
+        let Some(selected) = self.selected.clone() else {
+            return;
+        };
+        self.excluded.insert(selected.clone());
+        self.roots.retain(|root| root != &selected);
+        let removed_index = self.table.update(cx, |state, cx| {
+            let index = state.delegate_mut().remove(&selected);
+            cx.notify();
+            index
+        });
+        self.clear_selection(cx);
+        let next = removed_index.and_then(|index| {
+            let delegate = self.table.read(cx).delegate();
+            let index = index.min(delegate.len().checked_sub(1)?);
+            delegate.row(index).map(|row| (index, row.path.clone()))
+        });
+        if let Some((index, path)) = next {
+            self.table.update(cx, |state, cx| state.set_selected_row(index, cx));
+            self.select_path(&path, false, cx);
+        }
+        self.status = format!("Removed {} from the list", display_name(&selected)).into();
+        cx.notify();
+    }
+
+    /// Moves the selected file to the system trash, forgets its cached result, and removes it from the list.
+    pub(super) fn trash_selected(&mut self, cx: &mut Context<Self>) {
+        let Some(selected) = self.selected.clone() else {
+            return;
+        };
+        if let Some(player) = &mut self.player
+            && player.loaded_path() == Some(selected.as_path())
+        {
+            player.unload();
+        }
+        match trash::delete(&selected) {
+            Ok(()) => {
+                if let Some(coordinator) = &self.coordinator
+                    && let Err(error) = coordinator.cache().remove_analysis(&selected)
+                {
+                    eprintln!(
+                        "Failed to remove the cached result of {}: {error:#}",
+                        selected.display()
+                    );
+                }
+                self.remove_selected(cx);
+                self.status = format!("Moved {} to the trash", display_name(&selected)).into();
+            }
+            Err(error) => {
+                self.status = format!("Could not move {} to the trash: {error}", display_name(&selected)).into();
+            }
+        }
+        cx.notify();
+    }
+
+    /// Shows the selected file in the platform file manager.
+    pub(super) fn reveal_selected(&mut self, cx: &mut Context<Self>) {
+        let Some(selected) = self.selected.clone() else {
+            return;
+        };
+        if let Err(error) = reveal_in_file_manager(&selected) {
+            self.status = format!("Could not show {}: {error}", display_name(&selected)).into();
+            cx.notify();
+        }
+    }
+
+    /// Removes every file and folder and stops any run and playback.
+    pub(super) fn clear_list(&mut self, cx: &mut Context<Self>) {
+        if let Some(coordinator) = &self.coordinator {
+            coordinator.cancel();
+        }
+        self.analysis_task = None;
+        self.demo_task = None;
+        self.roots.clear();
+        self.excluded.clear();
+        self.run = None;
+        self.clear_selection(cx);
+        self.table.update(cx, |state, cx| {
+            state.delegate_mut().clear();
+            cx.notify();
+        });
+        self.status = SharedString::default();
+        cx.notify();
+    }
+
+    /// Plays the selected file, or stops playback while playing.
+    pub(super) fn toggle_playback(&mut self, cx: &mut Context<Self>) {
+        let selected = self.selected.clone();
+        if let Some(player) = &mut self.player {
+            if player.is_playing() {
+                player.pause();
+            } else {
+                let loaded = player.loaded_path().map(Path::to_path_buf);
+                match (loaded, selected) {
+                    (Some(loaded), Some(selected)) if loaded != selected => player.load(&selected, 0.0, true),
+                    (Some(_), _) => player.play(),
+                    (None, Some(selected)) => player.load(&selected, 0.0, true),
+                    (None, None) => {}
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// Resets a slider of the controls column to its default: the whole file for the zoom, and 0 dB for the gain.
+    fn reset_slider(&self, control: SliderControl, window: &mut Window, cx: &mut Context<Self>) {
+        match control {
+            SliderControl::Zoom => {
+                self.zoom_slider
+                    .update(cx, |slider, cx| slider.set_value(MINIMUM_ZOOM as f32, window, cx));
+                self.waveform
+                    .update(cx, |waveform, cx| waveform.set_zoom(MINIMUM_ZOOM, cx));
+            }
+            SliderControl::Gain => {
+                self.gain_slider
+                    .update(cx, |slider, cx| slider.set_value(DEFAULT_GAIN_DB, window, cx));
+                self.apply_gain(DEFAULT_GAIN_DB, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Stops playback and returns to the start of the file.
+    pub(super) fn stop_playback(&mut self, cx: &mut Context<Self>) {
+        if let Some(player) = &mut self.player {
+            player.stop();
+        }
+        cx.notify();
+    }
+
+    /// Handles what the user did in the controls column.
+    pub(super) fn handle_controls_event(&mut self, event: ControlsEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event {
+            ControlsEvent::TogglePlayback => self.toggle_playback(cx),
+            ControlsEvent::ResetSlider(control) => self.reset_slider(control, window, cx),
+            ControlsEvent::OpenSettings => self.open_settings_window(cx),
+        }
+    }
+
+    /// Shows the version in a native dialog.
+    pub(super) fn show_about(window: &mut Window, cx: &mut Context<Self>) {
+        let detail = format!(
+            "Version {}\n\nAnalyzes the peak, true peak, and EBU R128 loudness of audio files.\nRust version of AudioBatch.",
+            env!("CARGO_PKG_VERSION")
+        );
+        let answer = window.prompt(PromptLevel::Info, APP_TITLE, Some(&detail), &["OK"], cx);
+        cx.spawn(async move |_, _| {
+            let _ = answer.await;
+        })
+        .detach();
+    }
+
+    /// Polls player events, reporting errors and refreshing the Play/Stop button when playback ends.
+    /// It also renders again when the output text of the status bar changes,
+    /// for example when the first audio callback reports the buffer size.
+    pub(super) fn spawn_player_poll(cx: &Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(PLAYER_POLL_INTERVAL).await;
+                let alive = this.update(cx, |view, cx| {
+                    let events = view.player.as_ref().map(Player::poll_events).unwrap_or_default();
+                    for event in events {
+                        if crate::debug_enabled() {
+                            eprintln!("player: {event:?}");
+                        }
+                        if let PlayerEvent::Error { message, .. } = event {
+                            view.status = message.into();
+                        }
+                        cx.notify();
+                    }
+                    let output = view.output_label();
+                    if output != view.shown_output {
+                        view.shown_output = output;
+                        cx.notify();
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Starts the synthetic stress test with the given number of rows.
+    pub(super) fn start_demo(&mut self, rows: usize, cx: &mut Context<Self>) {
+        let mut random = DemoRandom::new(0x00a0_d10b);
+        let generated = demo_rows(rows, &mut random);
+        self.table.update(cx, |state, cx| {
+            state.delegate_mut().set_rows(generated);
+            cx.notify();
+        });
+        let (overview, loudness) = demo_waveform();
+        let playhead = Some(PlayheadSource::Simulated {
+            started: Instant::now(),
+            duration: overview.duration_seconds(),
+        });
+        self.waveform.update(cx, |view, cx| {
+            view.show(Some(overview), Some(loudness), cx);
+            view.set_playhead(playhead, cx);
+        });
+        self.roots = vec![PathBuf::from("/demo")];
+        self.status = format!("Stress test: {rows} rows, {ROWS_PER_TICK} updates every {DEMO_TICK_INTERVAL:?}").into();
+        let table = self.table.downgrade();
+        self.demo_task = Some(cx.spawn(async move |_, cx| {
+            loop {
+                cx.background_executor().timer(DEMO_TICK_INTERVAL).await;
+                let updated = table.update(cx, |state, cx| {
+                    let delegate = state.delegate_mut();
+                    let count = delegate.len();
+                    for _ in 0..ROWS_PER_TICK {
+                        let index = random.next_index(count);
+                        delegate.update_row(index, |row| advance_row(row, &mut random));
+                    }
+                    cx.notify();
+                });
+                if updated.is_err() {
+                    break;
+                }
+            }
+        }));
+        cx.notify();
+    }
+}
+
+/// Returns the file name of a path for status messages.
+fn display_name(path: &Path) -> String {
+    path.file_name().map_or_else(
+        || path.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
+}

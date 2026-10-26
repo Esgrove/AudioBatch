@@ -1,0 +1,38 @@
+[package]
+name = "audiobatch-gui"
+description = "AudioBatch RS desktop app, built on gpui-kit"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "audiobatch-gui"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+audiobatch-core.workspace = true
+audiobatch-playback.workspace = true
+crossbeam-channel.workspace = true
+# Pinned exactly, because each release can carry breaking changes from its GPUI snapshot.
+gpui-kit = "=0.8.1"
+# The GPUI and platform crates under the kit, only for the test support the `snapshot` feature needs.
+# The kit's own `test-support` feature is not used, because it pulls in conflicting `proptest` requirements.
+gpui-pre = { version = "=0.3.10", optional = true, features = ["test-support"] }
+gpui-pre-platform = { version = "=0.3.10", optional = true, features = ["test-support"] }
+serde.workspace = true
+serde_json.workspace = true
+trash.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[features]
+# Saves an image of the window for checking the layout, see `src/snapshot.rs`.
+snapshot = ["dep:gpui-pre", "dep:gpui-pre-platform"]
+
+[lints]
+workspace = true

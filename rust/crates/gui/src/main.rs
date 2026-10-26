@@ -1,0 +1,145 @@
+//! Entry point of the `AudioBatch` RS desktop app.
+//!
+//! Usage: `audiobatch-gui [paths...]` analyzes the given files and folders at startup,
+//! and `--autoplay` then selects and plays the first file that analyzed successfully.
+//! `audiobatch-gui --demo-rows <count>` runs the table and waveform stress test with synthetic data instead.
+//! Setting `AUDIOBATCH_GUI_DEBUG` prints diagnostics to stderr.
+
+// The Action derive generates `gpui::` paths, which resolve through the kit under this name.
+extern crate gpui_kit as gpui;
+
+mod app;
+mod controls;
+mod demo;
+mod files;
+mod info_panel;
+mod menus;
+mod results;
+mod settings;
+mod settings_window;
+#[cfg(feature = "snapshot")]
+mod snapshot;
+mod theme;
+mod waveform;
+
+use std::path::PathBuf;
+
+use gpui_kit::{App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+
+use crate::app::{APP_TITLE, AppView, LaunchOptions};
+
+/// Default window width, the C++ default.
+const DEFAULT_WINDOW_WIDTH: f32 = 1920.0;
+
+/// Default window height, the C++ default.
+const DEFAULT_WINDOW_HEIGHT: f32 = 1080.0;
+
+/// Room for the title bar, which the platform adds above the window content.
+const TITLE_BAR_ALLOWANCE: f32 = 40.0;
+
+/// Space left around the restored window on displays smaller than the default size.
+const DISPLAY_MARGIN: f32 = 40.0;
+
+/// Smallest window size.
+const MINIMUM_WINDOW_SIZE: (f32, f32) = (800.0, 600.0);
+
+fn main() {
+    let options = match parse_arguments(std::env::args().skip(1)) {
+        Ok(options) => options,
+        Err(message) => {
+            eprintln!("{message}");
+            eprintln!("Usage: audiobatch-gui [--autoplay] [--demo-rows <count>] [paths...]");
+            return;
+        }
+    };
+
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .run(move |cx: &mut App| {
+            gpui_kit::init(cx);
+            theme::install(cx);
+            menus::install(cx);
+            let window_options = WindowOptions {
+                window_bounds: Some(initial_window_bounds(cx)),
+                window_min_size: Some(size(px(MINIMUM_WINDOW_SIZE.0), px(MINIMUM_WINDOW_SIZE.1))),
+                titlebar: Some(TitlebarOptions {
+                    title: Some(APP_TITLE.into()),
+                    ..Default::default()
+                }),
+                focus: true,
+                ..Default::default()
+            };
+            let window = match gpui_kit::open_window(window_options, cx, |window, cx| {
+                cx.new(|cx| AppView::new(&options, window, cx))
+            }) {
+                Ok((window, _)) => window,
+                Err(error) => {
+                    eprintln!("Failed to open the main window: {error:#}");
+                    cx.quit();
+                    return;
+                }
+            };
+            #[cfg(feature = "snapshot")]
+            snapshot::schedule(window, cx);
+            // Closing the main window quits, also while the Audio Settings window is open.
+            let main_window = window.window_id();
+            cx.on_window_closed(move |cx, closed_window| {
+                if closed_window == main_window || cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
+            cx.activate(true);
+        });
+}
+
+/// Returns where the main window opens on the main display.
+///
+/// The default size opens centered in the visible area, the part not covered by the menu bar, Dock, or taskbar.
+/// When it does not fit there, as on a laptop screen, the window opens maximized,
+/// which fills the visible area exactly on both macOS and Windows,
+/// and restores to the default size shrunk to fit.
+fn initial_window_bounds(cx: &App) -> WindowBounds {
+    let default_size = size(px(DEFAULT_WINDOW_WIDTH), px(DEFAULT_WINDOW_HEIGHT));
+    let Some(visible) = cx.primary_display().map(|display| display.visible_bounds()) else {
+        return WindowBounds::Windowed(Bounds::centered(None, default_size, cx));
+    };
+    let available = size(visible.size.width, visible.size.height - px(TITLE_BAR_ALLOWANCE));
+    if default_size.width <= available.width && default_size.height <= available.height {
+        return WindowBounds::Windowed(Bounds::centered(None, default_size, cx));
+    }
+    let shrunk = size(
+        available.width - px(DISPLAY_MARGIN),
+        available.height - px(DISPLAY_MARGIN),
+    );
+    WindowBounds::Maximized(Bounds::centered(None, default_size.min(&shrunk), cx))
+}
+
+/// Returns true when `AUDIOBATCH_GUI_DEBUG` is set.
+/// The app then prints the waveform frame rate, run summaries, and player events to stderr.
+#[must_use]
+pub fn debug_enabled() -> bool {
+    std::env::var_os("AUDIOBATCH_GUI_DEBUG").is_some()
+}
+
+/// Parses the command line into launch options.
+fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<LaunchOptions, String> {
+    let mut options = LaunchOptions::default();
+    let mut arguments = arguments;
+    while let Some(argument) = arguments.next() {
+        match argument.as_str() {
+            "--demo-rows" => {
+                let value = arguments.next().ok_or("--demo-rows needs a row count")?;
+                let rows = value
+                    .parse::<usize>()
+                    .map_err(|_| format!("Invalid row count: {value}"))?;
+                options.demo_rows = Some(rows);
+            }
+            "--autoplay" => options.autoplay = true,
+            "-h" | "--help" => return Err(String::from("AudioBatch RS")),
+            other if other.starts_with('-') => return Err(format!("Unknown option: {other}")),
+            path => options.paths.push(PathBuf::from(path)),
+        }
+    }
+    Ok(options)
+}
