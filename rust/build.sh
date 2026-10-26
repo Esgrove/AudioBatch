@@ -4,6 +4,7 @@ set -eo pipefail
 USAGE="Usage: $0 [OPTIONS]
 
 Build the Rust binaries in release mode and move them to the Rust workspace root.
+On macOS, the GUI is packaged as the AudioBatchRs.app bundle with the app icon.
 
 OPTIONS: All options are optional
     -h | --help
@@ -56,8 +57,15 @@ else
 fi
 
 for executable in $executables; do
-    print_green "${executable%.exe}"
     rm -f "$executable"
+    if [ "$executable" = "$GUI_BINARY_NAME" ] && [ "$BASH_PLATFORM" = "mac" ]; then
+        print_green "$GUI_APP_BUNDLE"
+        create_mac_app_bundle ./target/release/"$executable" "$REPO/$GUI_APP_BUNDLE"
+        echo "$REPO/$GUI_APP_BUNDLE"
+        echo ""
+        continue
+    fi
+    print_green "${executable%.exe}"
     mv ./target/release/"$executable" "$executable"
     # The GUI has no version option, and its help only prints the usage line.
     if [ "${executable%.exe}" = "$CLI_BINARY_NAME" ]; then

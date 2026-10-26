@@ -4,7 +4,8 @@ set -eo pipefail
 USAGE="Usage: $0 [OPTIONS]
 
 Install the Rust binaries to the Cargo bin directory and the shell completions for the CLI.
-The GUI is installed as a plain binary that runs from the terminal, not as an app bundle.
+On macOS, the GUI is installed as the AudioBatchRs.app bundle in /Applications.
+On other platforms, it is installed as a plain binary next to the CLI.
 
 OPTIONS: All options are optional
     -h | --help
@@ -47,10 +48,17 @@ require_command cargo "Cargo not found in path. Maybe install rustup?"
 
 cd "$REPO"
 
+APP_DESTINATION="/Applications/$GUI_APP_BUNDLE"
+
 print_magenta "Installing binaries..."
 cargo install --force --locked --path crates/cli
 if [ "$CLI_ONLY" = false ]; then
-    cargo install --force --locked --path crates/gui
+    if [ "$BASH_PLATFORM" = "mac" ]; then
+        cargo build --release --locked --bin "$GUI_BINARY_NAME"
+        create_mac_app_bundle ./target/release/"$GUI_BINARY_NAME" "$APP_DESTINATION"
+    else
+        cargo install --force --locked --path crates/gui
+    fi
 fi
 echo ""
 
@@ -58,7 +66,11 @@ print_green "Installed binaries:"
 require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found. Is the Cargo install directory in path?"
 echo "$("$CLI_BINARY_NAME" --version) from $(command -v "$CLI_BINARY_NAME")"
 if [ "$CLI_ONLY" = false ]; then
-    echo "$GUI_BINARY_NAME from $(command -v "$GUI_BINARY_NAME")"
+    if [ "$BASH_PLATFORM" = "mac" ]; then
+        echo "$GUI_BINARY_NAME in $APP_DESTINATION"
+    else
+        echo "$GUI_BINARY_NAME from $(command -v "$GUI_BINARY_NAME")"
+    fi
 fi
 echo ""
 

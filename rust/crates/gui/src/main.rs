@@ -123,11 +123,14 @@ pub fn debug_enabled() -> bool {
 }
 
 /// Parses the command line into launch options.
+///
+/// The process serial number argument that macOS can pass to an app launched from the Finder is skipped.
 fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<LaunchOptions, String> {
     let mut options = LaunchOptions::default();
     let mut arguments = arguments;
     while let Some(argument) = arguments.next() {
         match argument.as_str() {
+            serial_number if serial_number.starts_with("-psn_") => {}
             "--demo-rows" => {
                 let value = arguments.next().ok_or("--demo-rows needs a row count")?;
                 let rows = value
@@ -142,4 +145,43 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<LaunchOpti
         }
     }
     Ok(options)
+}
+
+#[cfg(test)]
+mod test_parse_arguments {
+    use super::*;
+
+    fn parse(arguments: &[&str]) -> Result<LaunchOptions, String> {
+        parse_arguments(arguments.iter().map(ToString::to_string))
+    }
+
+    #[test]
+    fn collects_paths_and_flags() {
+        let options = parse(&["--autoplay", "first.wav", "folder"]).expect("valid arguments");
+        assert!(options.autoplay);
+        assert_eq!(options.paths, [PathBuf::from("first.wav"), PathBuf::from("folder")]);
+        assert_eq!(options.demo_rows, None);
+    }
+
+    #[test]
+    fn reads_demo_row_count() {
+        let options = parse(&["--demo-rows", "250"]).expect("valid arguments");
+        assert_eq!(options.demo_rows, Some(250));
+        assert!(parse(&["--demo-rows"]).is_err());
+        assert!(parse(&["--demo-rows", "many"]).is_err());
+    }
+
+    #[test]
+    fn skips_finder_process_serial_number() {
+        let options = parse(&["-psn_0_123456", "track.aif"]).expect("valid arguments");
+        assert_eq!(options.paths, [PathBuf::from("track.aif")]);
+    }
+
+    #[test]
+    fn rejects_unknown_options() {
+        assert_eq!(
+            parse(&["--verbose"]).err().as_deref(),
+            Some("Unknown option: --verbose")
+        );
+    }
 }
