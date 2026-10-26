@@ -3,7 +3,7 @@
 
 #include "serato/SeratoTagReader.h"
 
-#include "utils/AudioMetadata.h"
+#include "utils/AudioFormatUtils.h"
 #include "utils/Log.h"
 #include <string_view>
 

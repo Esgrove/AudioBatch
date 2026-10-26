@@ -326,6 +326,21 @@ juce::String keepNewAudioAfterLostOriginal(const juce::TemporaryFile& temporaryF
 }
 }  // namespace
 
+/// Captures the absolute path and current file stats.
+FileIdentity::FileIdentity(const juce::File& file) :
+    path(file.getFullPathName()),
+    fileSize(file.getSize()),
+    modifiedTimeMs(file.getLastModificationTime().toMilliseconds())
+{}
+
+/// Requires the same existing file path, size and modification time, with valid captured stats.
+bool FileIdentity::matches(const juce::File& file) const
+{
+    return juce::File::isAbsolutePath(path) && path == file.getFullPathName() && fileSize >= 0 && modifiedTimeMs > 0
+        && file.existsAsFile() && file.getSize() == fileSize
+        && file.getLastModificationTime().toMilliseconds() == modifiedTimeMs;
+}
+
 /// Moves a file or folder to the OS trash or recycle bin.
 /// A missing file is reported separately from a moved one,
 /// so a caller that needs the file to end up in the trash can tell the two apart.

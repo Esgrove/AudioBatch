@@ -1,5 +1,5 @@
 /// Database lifecycle and schema of AnalysisCache.
-/// Implements FileIdentity, construction and destruction, opening the SQLite database with its pragmas,
+/// Implements construction and destruction, opening the SQLite database with its pragmas,
 /// schema creation, and lightweight column migrations.
 
 #include "analysis/AnalysisCache.h"
@@ -23,21 +23,6 @@ struct ColumnMigration {
     const char* definition;
 };
 }  // namespace
-
-/// Captures the absolute path and current file stats without accessing the database.
-FileIdentity::FileIdentity(const juce::File& file) :
-    path(file.getFullPathName()),
-    fileSize(file.getSize()),
-    modifiedTimeMs(file.getLastModificationTime().toMilliseconds())
-{}
-
-/// Requires the same existing file path, size and modification time, with valid captured stats.
-bool FileIdentity::matches(const juce::File& file) const
-{
-    return juce::File::isAbsolutePath(path) && path == file.getFullPathName() && fileSize >= 0 && modifiedTimeMs > 0
-        && file.existsAsFile() && file.getSize() == fileSize
-        && file.getLastModificationTime().toMilliseconds() == modifiedTimeMs;
-}
 
 /// Resolves the default cache database location.
 AnalysisCache::AnalysisCache()

@@ -14,6 +14,7 @@
 #include <expected>
 #include <memory>
 #include <span>
+#include <tfile.h>
 
 namespace audiobatch::utils
 {
@@ -27,6 +28,7 @@ template<typename Value>
 }
 
 juce::AudioFormat* findAiffFormat(const juce::AudioFormatManager& formatManager);
+[[nodiscard]] TagLib::FileName tagLibFileName(const juce::String& fullPath);
 void registerAudioFormats(juce::AudioFormatManager& formatManager);
 juce::AudioFormatManager& threadLocalFormatManager();
 std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& file);

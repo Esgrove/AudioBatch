@@ -5,13 +5,13 @@
 
 #include "analysis/AudioAnalysis.h"
 #include "gui/LiveChain.h"
+#include "metadata/AudioMetadata.h"
 #include "plugins/PluginChainPreparation.h"
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
-#include "utils/AudioMetadata.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include <condition_variable>

@@ -4,6 +4,7 @@
 /// with no local music or sibling repository dependency.
 
 #include "serato/SeratoPreviewLoader.h"
+#include "serato/SeratoTagCache.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include <condition_variable>
@@ -28,7 +29,7 @@ namespace
 {
 /// Captures a worker completion without adopting it, like a queued message-thread callback.
 struct PreviewDelivery {
-    FileIdentity identity;
+    utils::FileIdentity identity;
     std::uint64_t generation;
     std::shared_ptr<const serato::SeratoData> data;
 };
@@ -123,7 +124,9 @@ public:
     SeratoPreviewLoader::Completion completion()
     {
         return [this](
-                   FileIdentity identity, const std::uint64_t generation, std::shared_ptr<const serato::SeratoData> data
+                   utils::FileIdentity identity,
+                   const std::uint64_t generation,
+                   std::shared_ptr<const serato::SeratoData> data
                ) {
             const std::scoped_lock lock(mutex);
             deliveries.push_back({.identity = std::move(identity), .generation = generation, .data = std::move(data)});
@@ -245,7 +248,7 @@ private:
         loader.request(second, 1.0);
         loader.request(third, 1.0);
         const auto latest = loader.request(first, 1.0);
-        expect(!loader.canAdopt(FileIdentity(first), original, first));
+        expect(!loader.canAdopt(utils::FileIdentity(first), original, first));
         expectEquals(static_cast<int>(probe.readPaths().size()), 1);
         probe.release();
         expect(probe.waitForDeliveries(1));
@@ -265,8 +268,8 @@ private:
             expect(batch == std::vector<serato::TagKind>(serato::allTagKinds.begin(), serato::allTagKinds.end()));
         }
         for (const auto kind : serato::allTagKinds) {
-            expect(!cache.getSeratoTag(FileIdentity(second), kind));
-            expect(!cache.getSeratoTag(FileIdentity(third), kind));
+            expect(!serato::getCachedTag(cache, utils::FileIdentity(second), kind));
+            expect(!serato::getCachedTag(cache, utils::FileIdentity(third), kind));
         }
     }
 
@@ -298,7 +301,7 @@ private:
         expect(probe.waitForGeneration(latest));
         expect(loader.isCurrentGeneration(latest));
         loader.cancel();
-        expect(!loader.canAdopt(FileIdentity(first), latest, first));
+        expect(!loader.canAdopt(utils::FileIdentity(first), latest, first));
         expect(!loader.isCurrentGeneration(latest));
         const auto afterClear = loader.request(first, 1.0);
         expect(probe.waitForGeneration(afterClear));
@@ -321,7 +324,7 @@ private:
         AnalysisCache cache(directory.getChildFile("cache.db"));
         const auto first = directory.copyFixture("sine_stereo_44100_16.wav", "first.wav");
         const auto second = directory.copyFixture("sine_stereo_44100_16.wav", "second.wav");
-        const FileIdentity original(first);
+        const utils::FileIdentity original(first);
         PreviewProbe probe(ReadStatus::present, true);
         SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
         const auto originalGeneration = loader.request(first, 1.0);
@@ -342,9 +345,9 @@ private:
         expect(loader.isCurrentGeneration(originalGeneration));
         expect(!probe.wasCancelled());
         for (const auto kind : serato::allTagKinds) {
-            expect(!cache.getSeratoTag(original, kind));
-            expect(!cache.getSeratoTag(FileIdentity(first), kind));
-            expect(!cache.getSeratoTag(FileIdentity(second), kind));
+            expect(!serato::getCachedTag(cache, original, kind));
+            expect(!serato::getCachedTag(cache, utils::FileIdentity(first), kind));
+            expect(!serato::getCachedTag(cache, utils::FileIdentity(second), kind));
         }
 
         const auto latest = loader.request(second, 1.0);
@@ -382,8 +385,8 @@ private:
         expect(probe.queued().empty());
         expectEquals(static_cast<int>(probe.readPaths().size()), 1);
         for (const auto kind : serato::allTagKinds) {
-            expect(!cache.getSeratoTag(FileIdentity(first), kind));
-            expect(!cache.getSeratoTag(FileIdentity(second), kind));
+            expect(!serato::getCachedTag(cache, utils::FileIdentity(first), kind));
+            expect(!serato::getCachedTag(cache, utils::FileIdentity(second), kind));
         }
     }
 
@@ -432,7 +435,7 @@ private:
                 );
             }
             for (const auto kind : serato::allTagKinds) {
-                const auto cached = cache.getSeratoTag(FileIdentity(file), kind);
+                const auto cached = serato::getCachedTag(cache, utils::FileIdentity(file), kind);
                 expect(cached && cached->kind == kind && cached->status() == status);
             }
             expect(!cache.getAnalysis(file).has_value());
@@ -473,12 +476,12 @@ private:
         const auto databaseFile = directory.getChildFile("cache.db");
         AnalysisCache cache(databaseFile);
         const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
-        const FileIdentity identity(file);
-        expect(cache.storeSeratoTag(identity, previewResult(TagKind::overview)));
-        expect(cache.storeSeratoTag(identity, previewResult(TagKind::analysis, ReadStatus::absent)));
-        expect(cache.storeSeratoTag(identity, previewResult(TagKind::autotags, ReadStatus::unsupported)));
-        expect(cache.storeSeratoTag(identity, previewResult(TagKind::beatGrid, ReadStatus::invalid)));
-        expect(cache.storeSeratoTag(identity, previewResult(TagKind::markers)));
+        const utils::FileIdentity identity(file);
+        expect(serato::storeCachedTag(cache, identity, previewResult(TagKind::overview)));
+        expect(serato::storeCachedTag(cache, identity, previewResult(TagKind::analysis, ReadStatus::absent)));
+        expect(serato::storeCachedTag(cache, identity, previewResult(TagKind::autotags, ReadStatus::unsupported)));
+        expect(serato::storeCachedTag(cache, identity, previewResult(TagKind::beatGrid, ReadStatus::invalid)));
+        expect(serato::storeCachedTag(cache, identity, previewResult(TagKind::markers)));
         sqlite3* database = nullptr;
         expectEquals(sqlite3_open(databaseFile.getFullPathName().toRawUTF8(), &database), SQLITE_OK);
         expectEquals(
@@ -517,7 +520,7 @@ private:
         const TemporaryDirectory directory;
         AnalysisCache cache(directory.getChildFile("cache.db"));
         const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
-        const FileIdentity identity(file);
+        const utils::FileIdentity identity(file);
         PreviewProbe probe;
         std::vector<std::vector<TagKind>> batches;
         const SeratoPreviewLoader::Reader reader
@@ -560,10 +563,10 @@ private:
                 }
             }
         }
-        const auto negative = cache.getSeratoTag(identity, TagKind::analysis);
+        const auto negative = serato::getCachedTag(cache, identity, TagKind::analysis);
         expect(negative && negative->status() == ReadStatus::invalid);
-        expect(!cache.getSeratoTag(identity, TagKind::autotags));
-        expect(!cache.getSeratoTag(identity, TagKind::beatGrid));
+        expect(!serato::getCachedTag(cache, identity, TagKind::autotags));
+        expect(!serato::getCachedTag(cache, identity, TagKind::beatGrid));
     }
 
     /// Keeps musical metadata and markers available when overview alone has a stable negative outcome.
@@ -574,8 +577,8 @@ private:
             const TemporaryDirectory directory;
             AnalysisCache cache(directory.getChildFile("cache.db"));
             const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "preview.wav");
-            const FileIdentity identity(file);
-            expect(cache.storeSeratoTag(identity, previewResult(serato::TagKind::overview, status)));
+            const utils::FileIdentity identity(file);
+            expect(serato::storeCachedTag(cache, identity, previewResult(serato::TagKind::overview, status)));
             PreviewProbe probe;
             SeratoPreviewLoader loader(cache, probe.completion(), probe.reader());
             loader.request(file, 1.0);
@@ -658,7 +661,7 @@ private:
                 }
                 loader.cancelAndWait();
                 for (const auto kind : serato::allTagKinds) {
-                    expect(!cache.getSeratoTag(FileIdentity(file), kind));
+                    expect(!serato::getCachedTag(cache, utils::FileIdentity(file), kind));
                 }
             }
             expectEquals(static_cast<int>(probe.readPaths().size()), 2);

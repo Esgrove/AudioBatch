@@ -209,7 +209,7 @@ void AudioBatchComponent::requestSeratoPreview()
 /// Resolves a new file's pending cue start without overriding a manual seek or later metadata refresh.
 /// Never reloads playback or changes waveform geometry, gain, zoom or peak-cache data.
 void AudioBatchComponent::adoptSeratoPreview(
-    const FileIdentity& identity,
+    const utils::FileIdentity& identity,
     const std::uint64_t generation,
     std::shared_ptr<const serato::SeratoData> data
 )

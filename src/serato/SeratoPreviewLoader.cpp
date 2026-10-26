@@ -5,6 +5,7 @@
 #include "serato/SeratoPreviewLoader.h"
 
 #include "analysis/AudioAnalysisTypes.h"
+#include "serato/SeratoTagCache.h"
 #include "utils/Log.h"
 
 #include <algorithm>
@@ -35,7 +36,7 @@ SeratoPreviewLoader::~SeratoPreviewLoader()
 /// Called by the owner thread, never from completion.
 std::uint64_t SeratoPreviewLoader::request(const juce::File& file, const double durationSeconds)
 {
-    const FileIdentity identity(file);
+    const utils::FileIdentity identity(file);
     std::uint64_t nextGeneration = 0;
     {
         const std::scoped_lock lock(mutex);
@@ -87,7 +88,7 @@ bool SeratoPreviewLoader::isCurrentGeneration(const std::uint64_t resultGenerati
 /// A false result forbids adopting metadata, but does not imply the generation has been cancelled.
 /// The GUI additionally checks its URL, reader and thumbnail before applying the returned data.
 bool SeratoPreviewLoader::canAdopt(
-    const FileIdentity& identity,
+    const utils::FileIdentity& identity,
     const std::uint64_t resultGeneration,
     const juce::File& selectedFile
 ) const
@@ -134,7 +135,7 @@ void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std:
                 if (isCancelled()) {
                     return;
                 }
-                results[index] = cache.getSeratoTag(active.identity, allTagKinds[index]);
+                results[index] = getCachedTag(cache, active.identity, allTagKinds[index]);
                 if (!results[index]) {
                     misses.push_back(allTagKinds[index]);
                 }
@@ -205,7 +206,7 @@ ReadOutcome SeratoPreviewLoader::readMisses(
         }
         // A tag the cache could not store is only read from the file again next time.
         if (result.status() != ReadStatus::ioError) {
-            static_cast<void>(cache.storeSeratoTag(active.identity, result));
+            static_cast<void>(storeCachedTag(cache, active.identity, result));
         }
         results[index] = std::move(result);
     }

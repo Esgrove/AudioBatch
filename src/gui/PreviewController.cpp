@@ -67,7 +67,7 @@ bool PreviewController::isWaveformLoadedFromCache() const noexcept
 /// A result for a file that changed on disk is rejected and resolves the pending start position at the beginning.
 /// Returns true when the tags were adopted, after which the caller resolves the start position and shows them.
 bool PreviewController::adoptSeratoData(
-    const FileIdentity& identity,
+    const utils::FileIdentity& identity,
     const std::uint64_t generation,
     std::shared_ptr<const serato::SeratoData> data
 )
@@ -97,7 +97,7 @@ bool PreviewController::load(const juce::File& file, const bool playFromFirstCue
 {
     seratoLoader.cancel();
     // The identity is taken before loading, so a change during the load makes the analysis look outdated.
-    const FileIdentity identity(file);
+    const utils::FileIdentity identity(file);
 
     if (!player.load(juce::URL(file), playFromFirstCuePoint)) {
         state = ReleasedPreview {.file = file};

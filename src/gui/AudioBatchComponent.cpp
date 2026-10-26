@@ -149,17 +149,18 @@ void AudioBatchComponent::configureProcessingControls()
 /// Called from the member initializer of the preview controller, so it only captures a safe pointer to this component.
 serato::SeratoPreviewLoader::Completion AudioBatchComponent::createSeratoPreviewCompletion()
 {
-    return [safeThis = SafePointer(this)](
-               FileIdentity identity, const std::uint64_t generation, std::shared_ptr<const serato::SeratoData> data
-           ) {
-        juce::MessageManager::callAsync(
-            [safeThis, previewIdentity = std::move(identity), generation, previewData = std::move(data)] {
-                if (safeThis != nullptr) {
-                    safeThis->adoptSeratoPreview(previewIdentity, generation, previewData);
+    return
+        [safeThis = SafePointer(this)](
+            utils::FileIdentity identity, const std::uint64_t generation, std::shared_ptr<const serato::SeratoData> data
+        ) {
+            juce::MessageManager::callAsync(
+                [safeThis, previewIdentity = std::move(identity), generation, previewData = std::move(data)] {
+                    if (safeThis != nullptr) {
+                        safeThis->adoptSeratoPreview(previewIdentity, generation, previewData);
+                    }
                 }
-            }
-        );
-    };
+            );
+        };
 }
 
 /// Creates the UI, opens the analysis cache, and starts the initial scan.

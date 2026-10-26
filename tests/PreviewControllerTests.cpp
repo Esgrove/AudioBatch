@@ -27,7 +27,9 @@ public:
         AudioPreviewPlayer player;
         installTestAudioDevice(player.getDeviceManager(), device);
         PreviewController preview(
-            cache, player, [](const FileIdentity&, std::uint64_t, const std::shared_ptr<const serato::SeratoData>&) {}
+            cache,
+            player,
+            [](const utils::FileIdentity&, std::uint64_t, const std::shared_ptr<const serato::SeratoData>&) {}
         );
         const auto file = fixtureFile("silence_stereo_44100_16.wav");
 
@@ -59,7 +61,7 @@ public:
             expect(!player.hasLoadedSource());
             expect(!preview.isWaveformLoadedFromCache());
             expect(preview.getSeratoData() == nullptr);
-            expect(!preview.adoptSeratoData(FileIdentity(file), 1, nullptr));
+            expect(!preview.adoptSeratoData(utils::FileIdentity(file), 1, nullptr));
         }
 
         beginTest("A file that fails to load stays selected as a released preview");

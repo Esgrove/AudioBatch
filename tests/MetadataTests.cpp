@@ -2,10 +2,11 @@
 /// Covers cross-format text, artwork and opaque ID3v2 preservation, and processing without stale Serato overviews.
 
 #include "analysis/AudioAnalysis.h"
+#include "metadata/AudioMetadata.h"
 #include "normalization/AudioNormalization.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
-#include "utils/AudioMetadata.h"
+#include "utils/AudioFormatUtils.h"
 
 #include <aifffile.h>
 #include <array>

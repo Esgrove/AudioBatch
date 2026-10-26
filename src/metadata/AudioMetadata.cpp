@@ -3,9 +3,10 @@
 /// and the generic PICTURE complex property, saves tags for AIFF and WAV output as ID3v2.4,
 /// retains opaque ID3v2 frames, and drops stale Serato overviews when copying processed audio.
 
-#include "utils/AudioMetadata.h"
+#include "metadata/AudioMetadata.h"
 
 #include "serato/SeratoTags.h"
+#include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 
@@ -388,21 +389,6 @@ bool applyMetadata(
     return tag != nullptr && writeId3Frames(*tag, frames);
 }
 }  // namespace
-
-namespace utils
-{
-/// Converts a JUCE path to TagLib's platform filename representation.
-/// Windows copies the wide buffer.
-/// Elsewhere the returned pointer aliases fullPath, which must remain alive for the entire TagLib operation.
-TagLib::FileName tagLibFileName(const juce::String& fullPath)
-{
-#if JUCE_WINDOWS
-    return {fullPath.toWideCharPointer()};
-#else
-    return fullPath.toRawUTF8();
-#endif
-}
-}  // namespace utils
 
 /// Reads text properties, pictures and opaque ID3v2 frames from the given file.
 /// Returns true on success. Output is cleared on entry.

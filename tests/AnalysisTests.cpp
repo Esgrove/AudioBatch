@@ -3,10 +3,10 @@
 /// channel count, sample rate, and bit depth is decoded and measured consistently.
 
 #include "analysis/AudioAnalysis.h"
+#include "metadata/AudioMetadata.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
-#include "utils/AudioMetadata.h"
 #include "utils/StringFormat.h"
 
 #include <array>

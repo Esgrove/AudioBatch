@@ -6,8 +6,8 @@
 #include "normalization/AudioNormalization.h"
 
 #include "analysis/DecodeFailureTracker.h"
+#include "metadata/AudioMetadata.h"
 #include "utils/AudioFormatUtils.h"
-#include "utils/AudioMetadata.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
