@@ -6,11 +6,12 @@
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use audiobatch_cli::args::CliArgs;
+use audiobatch_cli::args::{CliArgs, CliCommand};
+use audiobatch_cli::completion::generate_shell_completion;
 use audiobatch_cli::run::{EXIT_USAGE_ERROR, run_analysis};
 use audiobatch_core::AnalysisCache;
-use clap::Parser;
 use clap::error::ErrorKind;
+use clap::{CommandFactory, Parser};
 use colored::Colorize;
 
 fn main() -> ExitCode {
@@ -27,6 +28,24 @@ fn main() -> ExitCode {
     };
 
     let mut log = io::stderr().lock();
+    let mut output = io::stdout().lock();
+
+    if let Some(CliCommand::Completion {
+        shell,
+        install,
+        verbose,
+    }) = args.command
+    {
+        let command_name = env!("CARGO_BIN_NAME");
+        return match generate_shell_completion(shell, CliArgs::command(), install, verbose, command_name, &mut output) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(error) => {
+                let _ = writeln!(log, "{}", format!("Error: {error:#}").red());
+                ExitCode::from(EXIT_USAGE_ERROR)
+            }
+        };
+    }
+
     let cache = match AnalysisCache::open_default() {
         Ok(cache) => cache,
         Err(error) => {
@@ -35,7 +54,6 @@ fn main() -> ExitCode {
         }
     };
 
-    let mut output = io::stdout().lock();
     match run_analysis(&args, cache, &mut output, &mut log) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {

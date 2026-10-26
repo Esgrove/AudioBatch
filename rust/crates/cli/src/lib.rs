@@ -4,5 +4,6 @@
 //! with the same options, field names, and exit codes as the C++ `audiobatch` CLI.
 
 pub mod args;
+pub mod completion;
 pub mod output;
 pub mod run;
