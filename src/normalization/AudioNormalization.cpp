@@ -40,6 +40,26 @@ AudioNormalizationResult failNormalization(const juce::File& file, const juce::S
     return AudioNormalizationResult::failure(file, message);
 }
 
+/// Moves the finished output into place, disposing of the files it replaces through options.disposeFile.
+/// Normalizing again cannot restore the original exactly, because the output is quantized again,
+/// so an original rewritten in place keeps a copy in the trash like a converted original does.
+/// Returns an empty string on success, or the user-facing error.
+juce::String commitNormalizedOutput(
+    const juce::TemporaryFile& temporaryFile,
+    const juce::File& file,
+    const juce::File& outputFile,
+    const AudioNormalizationOptions& options
+)
+{
+    if (outputFile == file && !utils::disposeOfCopy(file, options.disposeFile)) {
+        return "Could not move a copy of the original file to the system trash";
+    }
+
+    return utils::commitTemporaryOutput(
+        temporaryFile, file, outputFile, options.overwriteExisting, options.disposeFile
+    );
+}
+
 /// Picks a bit depth the writer format supports, preferring the requested depth.
 /// Falls back to the format's highest supported depth so no precision is lost.
 int resolveWriterBitDepth(juce::AudioFormat& format, const int preferredBitsPerSample)
@@ -430,14 +450,7 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, cancelledMessage);
     }
 
-    // Normalizing again cannot restore the original exactly, because the output is quantized again,
-    // so an original rewritten in place keeps a copy in the trash like a converted original does.
-    if (outputFile == file && !utils::disposeOfCopy(file, options.disposeFile)) {
-        return failNormalization(file, "Could not move a copy of the original file to the system trash");
-    }
-
-    if (const auto commitError
-        = utils::commitTemporaryOutput(temporaryFile, file, outputFile, options.overwriteExisting, options.disposeFile);
+    if (const auto commitError = commitNormalizedOutput(temporaryFile, file, outputFile, options);
         commitError.isNotEmpty())
     {
         return failNormalization(file, commitError);

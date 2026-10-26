@@ -127,8 +127,8 @@ std::shared_ptr<const ShortTermLoudnessHistory> deserializeLoudnessHistory(
 /// and casting an unknown value into the enum would later reach std::unreachable in formatStatus.
 std::optional<AudioAnalysisStatus> statusFromColumn(const int value)
 {
-    if (value < std::to_underlying(AudioAnalysisStatus::pending)
-        || value > std::to_underlying(AudioAnalysisStatus::failed))
+    if (std::cmp_less(value, std::to_underlying(AudioAnalysisStatus::pending))
+        || std::cmp_greater(value, std::to_underlying(AudioAnalysisStatus::failed)))
     {
         return std::nullopt;
     }
