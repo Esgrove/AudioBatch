@@ -39,7 +39,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       and `BitDepthDetection.*` detects the source bit depth from the audio file, with a fixed default for MP3 files.
       `DecodeFailureTracker.h` holds the shared rules for read failures while decoding a file block by block.
     - `AnalysisCache.*` manage the SQLite result cache.
-      Its implementation is split into `AnalysisCache.cpp` (analysis, tag and waveform persistence)
+      Its implementation is split into `AnalysisCache.cpp` (analysis and waveform persistence)
       and `AnalysisCacheSchema.cpp` (database lifecycle and schema),
       which share the column and parameter constants in `AnalysisCacheSql.h`.
     - `Sqlite.*` holds the self-closing database and statement handles in the `sqlite` namespace,
@@ -53,7 +53,14 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
 - `src/serato/` holds the Serato tag parsing (`SeratoTags.*`, `SeratoTagReader.*`, `SeratoTagTypes.h`,
   and the fixed-width field readers in `SeratoBytes.h`),
   the overview waveform (`SeratoOverview.*`, `SeratoWaveformColouring.*`),
+  the tag results kept in the analysis cache database (`SeratoTagCache.*`),
   and the background preview loading in `SeratoPreviewLoader.*`.
+- `src/metadata/` holds `AudioMetadata.*`, which reads and writes tags and embedded art through TagLib.
+  It rewrites Serato values as ID3 frames and drops the overview from processed copies, so it depends on `serato/`.
+
+The domains depend on each other in one direction only.
+`analysis/` uses only `utils/`, `serato/` adds `analysis/`, and `metadata/` adds `serato/`.
+`normalization/` and `plugins/` sit above them, and `cli/` and `gui/` on top.
 - `src/plugins/` holds VST3 / Audio Unit plugin hosting.
     - `PluginScanner.*` implement out-of-process plugin scanning and the known-plugins list persistence.
       Each executable relaunches itself as its scan worker:
@@ -68,18 +75,17 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
     - `AppInfo.*` holds startup flag and path argument queries, the version line, the About text, system information,
       and the settings file options.
     - `FileUtils.*` holds the file system helpers, such as moving files to the trash and extension checks.
-      It also chooses the default folder for file browsing.
+      It also chooses the default folder for file browsing,
+      and holds `FileIdentity`, which recognizes an unchanged file by its path, size and modification time.
     - `GuiUtils.*` holds reusable window activation, foreground permission transfer,
       read-only label styling, and failure-summary dialogs.
       Its `enumFromId` turns the integer ids of JUCE menu items, commands, and table columns into scoped enums.
       Native Windows request types and APIs stay private to its implementation.
-    - `AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, and peak math.
+    - `AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, peak math,
+      and the conversion of a path to a TagLib file name.
       `registerAudioFormats` puts JUCE's MP3 reader ahead of Core Audio,
       because Core Audio keeps the encoder delay of MP3 files tagged by FFmpeg encoders,
       which would move the audio later than the Serato cue points of the file.
-    - `AudioMetadata.*` reads and writes tags and embedded art through TagLib
-      and provides shared TagLib filename conversion.
-      Metadata types and operations remain in `audiobatch`, with filename conversion in `utils`.
     - `ThreadUtils.*` holds the `CancellationCheck` callback the services poll
       and the cancellable blocking call from a worker to the message thread.
     - `MessageThreadBatcher.*` holds `AsyncCallback` and `MessageThreadBatcher`,
@@ -141,8 +147,8 @@ also from within the same directory, and never with `../`.
 The source lists are defined in `CMakeLists.txt`.
 `AUDIOBATCH_CORE_SOURCES` holds the shared core and `AUDIOBATCH_CLI_SOURCES` the CLI front end,
 and each target adds its own entry point and target-specific files.
-The shared core is everything in `analysis/`, `normalization/`, and `utils/`,
-plus `plugins/PluginScanner.*` and the Serato tag and overview files.
+The shared core is everything in `analysis/`, `metadata/`, `normalization/`, and `utils/`,
+plus `plugins/PluginScanner.*` and the Serato tag, tag cache, and overview files.
 Add new shared files to the core list, not to each target,
 and remember that a shared file must compile cleanly for both the GUI and the CLI.
 List sources as relative `src/...` paths,

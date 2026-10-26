@@ -5,10 +5,10 @@
 /// because converting other formats moves the original to the system trash.
 
 #include "analysis/AudioAnalysis.h"
+#include "metadata/AudioMetadata.h"
 #include "normalization/AudioNormalization.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
-#include "utils/AudioMetadata.h"
 #include "utils/StringFormat.h"
 #include <type_traits>
 

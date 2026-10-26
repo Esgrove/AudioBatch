@@ -18,10 +18,10 @@
 #include "plugins/PluginProcessing.h"
 
 #include "analysis/DecodeFailureTracker.h"
+#include "metadata/AudioMetadata.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginChainPreparation.h"
 #include "utils/AudioFormatUtils.h"
-#include "utils/AudioMetadata.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"

@@ -7,6 +7,7 @@
 
 #include "analysis/AnalysisCache.h"
 #include "serato/SeratoTagReader.h"
+#include "utils/FileUtils.h"
 #include <condition_variable>
 
 #include <atomic>
@@ -34,7 +35,7 @@ enum class ReadOutcome : std::uint8_t {
 /// Owns the immutable pre-read file identity for a single preview generation.
 struct SeratoPreviewRequest {
     juce::File file;
-    FileIdentity identity;
+    utils::FileIdentity identity;
     std::uint64_t generation;
 };
 
@@ -44,7 +45,7 @@ class SeratoPreviewLoader final
 public:
     /// Receives the requested identity and generation, with null data for missing metadata or identity rejection.
     /// Before resolving an identity-rejected preview, the owner must check the generation and selected path.
-    using Completion = std::function<void(FileIdentity, std::uint64_t, std::shared_ptr<const SeratoData>)>;
+    using Completion = std::function<void(utils::FileIdentity, std::uint64_t, std::shared_ptr<const SeratoData>)>;
     using Reader = std::function<
         std::vector<TagReadResult>(const juce::File&, std::span<const TagKind>, const utils::CancellationCheck&)>;
 
@@ -64,7 +65,7 @@ public:
 
     [[nodiscard]] bool isCurrentGeneration(std::uint64_t resultGeneration) const;
     [[nodiscard]] bool canAdopt(
-        const FileIdentity& identity,
+        const utils::FileIdentity& identity,
         std::uint64_t resultGeneration,
         const juce::File& selectedFile
     ) const;

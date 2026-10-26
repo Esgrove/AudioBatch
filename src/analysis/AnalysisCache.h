@@ -2,12 +2,12 @@
 /// AnalysisCache stores per-file analysis records, short-term loudness history,
 /// and waveform preview data keyed by path, size, and modification time,
 /// so unchanged files are not re-read on later runs.
+/// It owns the database and its schema, including the Serato tag table that serato/SeratoTagCache reads and writes.
 
 #pragma once
 
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/Sqlite.h"
-#include "serato/SeratoTagTypes.h"
 
 #include <JuceHeader.h>
 
@@ -18,18 +18,6 @@
 
 namespace audiobatch
 {
-/// Captures the cache key before tag reading. Reuse this identity for lookup, delivery and persistence.
-/// Size and modification time cannot detect external edits that deliberately preserve both values.
-struct FileIdentity {
-    explicit FileIdentity(const juce::File& file);
-
-    [[nodiscard]] bool matches(const juce::File& file) const;
-
-    juce::String path;
-    std::int64_t fileSize;
-    std::int64_t modifiedTimeMs;
-};
-
 /// A user-controlled gain to store for one file.
 struct CustomGainUpdate {
     juce::File file;
@@ -52,11 +40,6 @@ public:
     AnalysisCache(AnalysisCache&&) = delete;
     AnalysisCache& operator=(AnalysisCache&&) = delete;
 
-    std::optional<serato::TagReadResult> getSeratoTag(
-        const FileIdentity& identity,
-        serato::TagKind kind = serato::TagKind::overview
-    );
-
     [[nodiscard]] juce::File getDatabaseFile() const;
 
     [[nodiscard]] std::optional<AudioAnalysisRecord> getAnalysis(const juce::File& file);
@@ -74,8 +57,9 @@ public:
     [[nodiscard]] bool removeAnalysis(const juce::File& file);
     [[nodiscard]] bool storeAnalysis(const AudioAnalysisRecord& record);
     [[nodiscard]] bool storeCustomGain(const juce::File& file, std::optional<Decibels> customGain);
-    [[nodiscard]] bool storeSeratoTag(const FileIdentity& identity, const serato::TagReadResult& result);
     [[nodiscard]] bool storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData);
+
+    void withDatabase(const std::function<void(sqlite3& database)>& function);
 
 private:
     [[nodiscard]] bool addMissingColumns() const;

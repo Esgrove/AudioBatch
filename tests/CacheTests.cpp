@@ -8,6 +8,7 @@
 #include "analysis/AudioAnalysis.h"
 #include "analysis/Sqlite.h"
 #include "analysis/SqliteTransaction.h"
+#include "serato/SeratoTagCache.h"
 #include "serato/SeratoTags.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
@@ -43,14 +44,14 @@ public:
         beginTest("Numeric Overview data round trips without an analysis row");
         {
             const auto tagFile = directory.copyFixture("sine_stereo_44100_16.wav", "tag_only.wav");
-            const FileIdentity identity(tagFile);
+            const utils::FileIdentity identity(tagFile);
             serato::Overview overview;
             overview.slices.resize(2);
             overview.slices.front().fill(7);
             overview.slices.back().fill(19);
             const auto result = serato::TagReadResult::present(overview);
-            expect(cache.storeSeratoTag(identity, result));
-            const auto loaded = cache.getSeratoTag(identity);
+            expect(serato::storeCachedTag(cache, identity, result));
+            const auto loaded = serato::getCachedTag(cache, identity);
             expect(loaded.has_value());
             const auto loadedOverview = loaded ? tagValue<serato::Overview>(*loaded) : std::nullopt;
             expect(loadedOverview && loadedOverview->slices == overview.slices);
@@ -105,9 +106,9 @@ public:
             expect(cached.has_value() && cached->customGain.has_value());
             expectEquals(cached.value_or(AudioAnalysisRecord {}).customGain.value_or(Decibels {}).value, 1.5f);
 
-            const FileIdentity identity(migratedFile);
-            expect(migratedCache.storeSeratoTag(identity, {}));
-            expect(migratedCache.getSeratoTag(identity).has_value());
+            const utils::FileIdentity identity(migratedFile);
+            expect(serato::storeCachedTag(migratedCache, identity, {}));
+            expect(serato::getCachedTag(migratedCache, identity).has_value());
         }
 
         beginTest("A transaction rolls back unless it is committed");
@@ -482,7 +483,7 @@ private:
         const auto databaseFile = directory.getChildFile("tag_cache.db");
         AnalysisCache cache(databaseFile);
         const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "tag.wav");
-        const FileIdentity identity(file);
+        const utils::FileIdentity identity(file);
         serato::Overview overview;
         overview.slices.resize(3);
         overview.slices.front().fill(3);
@@ -492,9 +493,9 @@ private:
         beginTest("Tag results survive a database reopen without an analysis row");
         {
             AnalysisCache writer(databaseFile);
-            expect(writer.storeSeratoTag(identity, positive));
+            expect(serato::storeCachedTag(writer, identity, positive));
         }
-        const auto reopened = cache.getSeratoTag(identity);
+        const auto reopened = serato::getCachedTag(cache, identity);
         expect(
             reopened && reopened->status() == serato::ReadStatus::present
             && tagValue<serato::Overview>(*reopened).value_or(serato::Overview {}).slices == overview.slices
@@ -504,14 +505,18 @@ private:
         for (const auto status :
              {serato::ReadStatus::absent, serato::ReadStatus::invalid, serato::ReadStatus::unsupported})
         {
-            expect(cache.storeSeratoTag(identity, serato::TagReadResult::missing(serato::TagKind::overview, status)));
-            const auto loaded = cache.getSeratoTag(identity);
+            expect(
+                serato::storeCachedTag(
+                    cache, identity, serato::TagReadResult::missing(serato::TagKind::overview, status)
+                )
+            );
+            const auto loaded = serato::getCachedTag(cache, identity);
             expect(loaded && loaded->status() == status && !loaded->value);
             expectSqlScalar(databaseFile, "SELECT decoded_data IS NULL FROM serato_tag_cache;", 1);
         }
 
         beginTest("Transient and inconsistent results never overwrite a stable result");
-        expect(cache.storeSeratoTag(identity, positive));
+        expect(serato::storeCachedTag(cache, identity, positive));
         for (const auto status :
              {
                  serato::ReadStatus::ioError,
@@ -519,35 +524,37 @@ private:
                  std::bit_cast<serato::ReadStatus>(std::uint8_t {99}),
              })
         {
-            expect(!cache.storeSeratoTag(identity, serato::TagReadResult::missing(serato::TagKind::overview, status)));
+            expect(!serato::storeCachedTag(
+                cache, identity, serato::TagReadResult::missing(serato::TagKind::overview, status)
+            ));
         }
-        expect(!cache.storeSeratoTag(identity, serato::TagReadResult::present(serato::Overview {})));
-        expect(!cache.storeSeratoTag(
-            identity, serato::TagReadResult {.kind = serato::TagKind::analysis, .value = overview}
+        expect(!serato::storeCachedTag(cache, identity, serato::TagReadResult::present(serato::Overview {})));
+        expect(!serato::storeCachedTag(
+            cache, identity, serato::TagReadResult {.kind = serato::TagKind::analysis, .value = overview}
         ));
         serato::Overview oversized;
         oversized.slices.resize(serato::Overview::maxSlices + 1);
-        expect(!cache.storeSeratoTag(identity, serato::TagReadResult::present(std::move(oversized))));
-        const auto retained = cache.getSeratoTag(identity);
+        expect(!serato::storeCachedTag(cache, identity, serato::TagReadResult::present(std::move(oversized))));
+        const auto retained = serato::getCachedTag(cache, identity);
         expect(
             retained && tagValue<serato::Overview>(*retained).value_or(serato::Overview {}).slices == overview.slices
         );
         expect(cache.removeAnalysis(file));
-        expect(!cache.storeSeratoTag(
-            identity, serato::TagReadResult::missing(serato::TagKind::overview, serato::ReadStatus::ioError)
+        expect(!serato::storeCachedTag(
+            cache, identity, serato::TagReadResult::missing(serato::TagKind::overview, serato::ReadStatus::ioError)
         ));
-        expect(!cache.storeSeratoTag(
-            identity, serato::TagReadResult::missing(serato::TagKind::overview, serato::ReadStatus::cancelled)
+        expect(!serato::storeCachedTag(
+            cache, identity, serato::TagReadResult::missing(serato::TagKind::overview, serato::ReadStatus::cancelled)
         ));
-        expect(!cache.getSeratoTag(identity));
+        expect(!serato::getCachedTag(cache, identity));
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
 
         beginTest("Unknown tag kinds miss and cannot be stored");
         const auto unknownKind = std::bit_cast<serato::TagKind>(std::uint8_t {99});
-        expect(!cache.getSeratoTag(identity, unknownKind));
-        expect(
-            !cache.storeSeratoTag(identity, serato::TagReadResult::missing(unknownKind, serato::ReadStatus::absent))
-        );
+        expect(!serato::getCachedTag(cache, identity, unknownKind));
+        expect(!serato::storeCachedTag(
+            cache, identity, serato::TagReadResult::missing(unknownKind, serato::ReadStatus::absent)
+        ));
 
         beginTest("Corrupt state, blob, parser, path and stat fields are cache misses");
         for (const auto* sql :
@@ -581,28 +588,28 @@ private:
         {
             expect(cache.removeAnalysis(file));
             expect(executeSql(databaseFile, "DELETE FROM serato_tag_cache;"));
-            expect(cache.storeSeratoTag(identity, positive));
+            expect(serato::storeCachedTag(cache, identity, positive));
             expect(executeSql(databaseFile, sql));
-            expect(!cache.getSeratoTag(identity), sql);
+            expect(!serato::getCachedTag(cache, identity), sql);
         }
         expect(executeSql(databaseFile, "DELETE FROM serato_tag_cache;"));
 
         beginTest("Analysis and waveform writes leave independently versioned tags untouched");
-        expect(cache.storeSeratoTag(identity, positive));
+        expect(serato::storeCachedTag(cache, identity, positive));
         const auto analyzed = analyzeFile(file);
         expect(cache.storeAnalysis(analyzed));
         const juce::MemoryBlock waveform("cached peaks", 12);
         expect(cache.storeWaveformData(file, waveform));
         expectSqlScalar(databaseFile, "SELECT analysis_version FROM file_analysis;", 10);
         expectSqlScalar(databaseFile, "SELECT waveform_version FROM file_analysis;", 2);
-        expect(cache.getSeratoTag(identity).has_value());
+        expect(serato::getCachedTag(cache, identity).has_value());
         const auto loadedWaveform = cache.getWaveformData(file);
         expect(loadedWaveform.has_value() && *loadedWaveform == waveform);
         expect(cache.storeAnalysis(analyzed));
         expect(!cache.getWaveformData(file).has_value());
-        expect(cache.getSeratoTag(identity).has_value());
+        expect(serato::getCachedTag(cache, identity).has_value());
         expect(executeSql(databaseFile, "UPDATE file_analysis SET analysis_version = 0;"));
-        expect(cache.getSeratoTag(identity).has_value());
+        expect(serato::getCachedTag(cache, identity).has_value());
 
         beginTest("Explicit eviction removes analysis, waveform and all tag kinds");
         expect(cache.storeAnalysis(analyzed));
@@ -613,49 +620,53 @@ private:
             FROM serato_tag_cache;
         )SQL"));
         expect(cache.removeAnalysis(file));
-        expect(!cache.getSeratoTag(identity));
+        expect(!serato::getCachedTag(cache, identity));
         expect(!cache.getWaveformData(file).has_value());
         expect(!cache.getAnalysis(file).has_value());
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
 
         beginTest("Modification time alone invalidates captured identities and rejects stale writes");
-        expect(cache.storeSeratoTag(identity, positive));
+        expect(serato::storeCachedTag(cache, identity, positive));
         expect(file.setLastModificationTime(juce::Time(identity.modifiedTimeMs + 10'000)));
-        const FileIdentity changedTime(file);
+        const utils::FileIdentity changedTime(file);
         expect(!identity.matches(file));
-        expect(!cache.getSeratoTag(identity));
-        expect(!cache.getSeratoTag(changedTime));
-        expect(!cache.storeSeratoTag(identity, positive));
-        expect(cache.storeSeratoTag(
-            changedTime, serato::TagReadResult::missing(serato::TagKind::overview, serato::ReadStatus::absent)
-        ));
-        expect(!cache.storeSeratoTag(identity, positive));
-        expect(cache.getSeratoTag(changedTime).has_value());
+        expect(!serato::getCachedTag(cache, identity));
+        expect(!serato::getCachedTag(cache, changedTime));
+        expect(!serato::storeCachedTag(cache, identity, positive));
+        expect(
+            serato::storeCachedTag(
+                cache,
+                changedTime,
+                serato::TagReadResult::missing(serato::TagKind::overview, serato::ReadStatus::absent)
+            )
+        );
+        expect(!serato::storeCachedTag(cache, identity, positive));
+        expect(serato::getCachedTag(cache, changedTime).has_value());
 
         beginTest("Size alone invalidates captured identities even if the time is restored");
         expect(fixtureFile("sine_mono_44100_16.wav").copyFileTo(file));
         expect(file.setLastModificationTime(juce::Time(changedTime.modifiedTimeMs)));
-        const FileIdentity changedSize(file);
+        const utils::FileIdentity changedSize(file);
         expect(changedSize.fileSize != changedTime.fileSize);
-        expect(!cache.getSeratoTag(changedTime));
-        expect(!cache.getSeratoTag(changedSize));
-        expect(!cache.storeSeratoTag(changedTime, positive));
-        expect(cache.storeSeratoTag(changedSize, positive));
-        expect(cache.getSeratoTag(changedSize).has_value());
+        expect(!serato::getCachedTag(cache, changedTime));
+        expect(!serato::getCachedTag(cache, changedSize));
+        expect(!serato::storeCachedTag(cache, changedTime, positive));
+        expect(serato::storeCachedTag(cache, changedSize, positive));
+        expect(serato::getCachedTag(cache, changedSize).has_value());
 
         beginTest("Missing files and directories cannot be looked up or stored");
-        const FileIdentity missing(directory.getChildFile("missing.wav"));
-        const FileIdentity folder(file.getParentDirectory());
-        expect(!cache.storeSeratoTag(missing, positive));
-        expect(!cache.storeSeratoTag(folder, positive));
-        expect(!cache.getSeratoTag(missing));
-        expect(!cache.getSeratoTag(folder));
+        const utils::FileIdentity missing(directory.getChildFile("missing.wav"));
+        const utils::FileIdentity folder(file.getParentDirectory());
+        expect(!serato::storeCachedTag(cache, missing, positive));
+        expect(!serato::storeCachedTag(cache, folder, positive));
+        expect(!serato::getCachedTag(cache, missing));
+        expect(!serato::getCachedTag(cache, folder));
         expect(!changedSize.matches(directory.getChildFile("other.wav")));
 
         beginTest("Pruning deletes tag-only rows but can stop without deleting them");
         expect(file.deleteFile());
-        expect(!cache.getSeratoTag(changedSize));
-        expect(!cache.storeSeratoTag(changedSize, positive));
+        expect(!serato::getCachedTag(cache, changedSize));
+        expect(!serato::storeCachedTag(cache, changedSize, positive));
         expectEquals(cache.pruneMissingFiles([] { return true; }), 0);
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 1);
         expectEquals(cache.pruneMissingFiles(), 1);
@@ -666,25 +677,25 @@ private:
         expect(parent.createDirectory());
         const auto detachedFile = parent.getChildFile("tone.wav");
         expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(detachedFile));
-        const FileIdentity detachedIdentity(detachedFile);
-        expect(cache.storeSeratoTag(detachedIdentity, positive));
+        const utils::FileIdentity detachedIdentity(detachedFile);
+        expect(serato::storeCachedTag(cache, detachedIdentity, positive));
         expect(parent.deleteRecursively());
         expectEquals(cache.pruneMissingFiles(), 0);
         expect(parent.createDirectory());
         expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(detachedFile));
         expect(detachedFile.setLastModificationTime(juce::Time(detachedIdentity.modifiedTimeMs)));
-        expect(cache.getSeratoTag(detachedIdentity).has_value());
+        expect(serato::getCachedTag(cache, detachedIdentity).has_value());
         expect(cache.removeAnalysis(detachedFile));
 
         beginTest("A tag row replaced after the pruning snapshot retains its new identity");
         expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(file));
-        const FileIdentity beforePrune(file);
-        expect(cache.storeSeratoTag(beforePrune, positive));
+        const utils::FileIdentity beforePrune(file);
+        expect(serato::storeCachedTag(cache, beforePrune, positive));
         expect(file.deleteFile());
         expectEquals(
             cache.pruneMissingFiles([&] {
                 expect(fixtureFile("sine_stereo_48000_24.wav").copyFileTo(file));
-                expect(cache.storeSeratoTag(FileIdentity(file), positive));
+                expect(serato::storeCachedTag(cache, utils::FileIdentity(file), positive));
                 expect(file.deleteFile());
                 return false;
             }),
@@ -696,7 +707,7 @@ private:
         beginTest("Pruning counts analysis and tag rows independently for the same deleted file");
         expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(file));
         expect(cache.storeAnalysis(analyzeFile(file)));
-        expect(cache.storeSeratoTag(FileIdentity(file), positive));
+        expect(serato::storeCachedTag(cache, utils::FileIdentity(file), positive));
         expect(file.deleteFile());
         expectEquals(cache.pruneMissingFiles(), 2);
 
@@ -704,13 +715,13 @@ private:
         const auto malformedDatabase = directory.getChildFile("malformed.db");
         expect(executeSql(malformedDatabase, "CREATE TABLE serato_tag_cache (file_path TEXT);"));
         AnalysisCache malformed(malformedDatabase);
-        expect(!malformed.getSeratoTag(detachedIdentity));
-        expect(!malformed.storeSeratoTag(detachedIdentity, positive));
+        expect(!serato::getCachedTag(malformed, detachedIdentity));
+        expect(!serato::storeCachedTag(malformed, detachedIdentity, positive));
         const auto brokenDatabase = directory.getChildFile("broken.db");
         expect(brokenDatabase.replaceWithText("not an SQLite database"));
         AnalysisCache broken(brokenDatabase);
-        expect(!broken.getSeratoTag(detachedIdentity));
-        expect(!broken.storeSeratoTag(detachedIdentity, positive));
+        expect(!serato::getCachedTag(broken, detachedIdentity));
+        expect(!serato::storeCachedTag(broken, detachedIdentity, positive));
     }
 
     /// Verifies independently versioned owned values, negatives and tag-only coexistence for every supported kind.
@@ -720,7 +731,7 @@ private:
         const auto databaseFile = directory.getChildFile("multi_kind.db");
         AnalysisCache cache(databaseFile);
         const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "multi_kind.wav");
-        const FileIdentity identity(file);
+        const utils::FileIdentity identity(file);
         serato::Overview overview;
         overview.slices.resize(2);
         overview.slices.front().fill(7);
@@ -767,7 +778,7 @@ private:
         AnalysisCache& cache,
         const juce::File& databaseFile,
         const juce::File& file,
-        const FileIdentity& identity,
+        const utils::FileIdentity& identity,
         const std::span<const serato::TagReadResult> positives
     )
     {
@@ -775,11 +786,11 @@ private:
         {
             AnalysisCache writer(databaseFile);
             for (const auto& positive : positives) {
-                expect(writer.storeSeratoTag(identity, positive));
+                expect(serato::storeCachedTag(writer, identity, positive));
             }
         }
         for (const auto& positive : positives) {
-            const auto loaded = cache.getSeratoTag(identity, positive.kind);
+            const auto loaded = serato::getCachedTag(cache, identity, positive.kind);
             expect(loaded && loaded->kind == positive.kind && loaded->status() == serato::ReadStatus::present);
             if (loaded) {
                 expect(serato::serializeTag(*loaded) == serato::serializeTag(positive));
@@ -797,7 +808,7 @@ private:
     void runMultiKindNegativeTests(
         AnalysisCache& cache,
         const juce::File& databaseFile,
-        const FileIdentity& identity,
+        const utils::FileIdentity& identity,
         const std::span<const serato::TagReadResult> positives
     )
     {
@@ -806,8 +817,8 @@ private:
             for (const auto status :
                  {serato::ReadStatus::absent, serato::ReadStatus::invalid, serato::ReadStatus::unsupported})
             {
-                expect(cache.storeSeratoTag(identity, serato::TagReadResult::missing(kind, status)));
-                const auto negative = cache.getSeratoTag(identity, kind);
+                expect(serato::storeCachedTag(cache, identity, serato::TagReadResult::missing(kind, status)));
+                const auto negative = serato::getCachedTag(cache, identity, kind);
                 expect(negative && negative->kind == kind && negative->status() == status);
                 expect(negative && !negative->value);
                 const auto sql = utils::format(
@@ -817,10 +828,10 @@ private:
                 expectSqlScalar(databaseFile, sql.toRawUTF8(), 1);
                 for (const auto& positive : positives) {
                     if (positive.kind != kind) {
-                        const auto retained = cache.getSeratoTag(identity, positive.kind);
+                        const auto retained = serato::getCachedTag(cache, identity, positive.kind);
                         expect(retained && serato::serializeTag(*retained) == serato::serializeTag(positive));
                     } else {
-                        expect(cache.storeSeratoTag(identity, positive));
+                        expect(serato::storeCachedTag(cache, identity, positive));
                     }
                 }
             }
@@ -831,7 +842,7 @@ private:
     void runMultiKindVersionTests(
         AnalysisCache& cache,
         const juce::File& databaseFile,
-        const FileIdentity& identity,
+        const utils::FileIdentity& identity,
         const std::span<const serato::TagReadResult> positives
     )
     {
@@ -839,7 +850,7 @@ private:
         for (const auto kind : serato::allTagKinds) {
             for (const auto status : {serato::ReadStatus::present, serato::ReadStatus::absent}) {
                 if (status == serato::ReadStatus::absent) {
-                    expect(cache.storeSeratoTag(identity, serato::TagReadResult::missing(kind, status)));
+                    expect(serato::storeCachedTag(cache, identity, serato::TagReadResult::missing(kind, status)));
                 }
                 const auto mismatch = utils::format(
                     "UPDATE serato_tag_cache SET parser_version = {} WHERE tag_kind = {};",
@@ -847,12 +858,12 @@ private:
                     static_cast<std::uint32_t>(kind)
                 );
                 expect(executeSql(databaseFile, mismatch.toRawUTF8()));
-                expect(!cache.getSeratoTag(identity, kind));
+                expect(!serato::getCachedTag(cache, identity, kind));
                 for (const auto& positive : positives) {
                     if (positive.kind == kind) {
-                        expect(cache.storeSeratoTag(identity, positive));
+                        expect(serato::storeCachedTag(cache, identity, positive));
                     } else {
-                        const auto retained = cache.getSeratoTag(identity, positive.kind);
+                        const auto retained = serato::getCachedTag(cache, identity, positive.kind);
                         expect(retained && serato::serializeTag(*retained) == serato::serializeTag(positive));
                     }
                 }
@@ -864,27 +875,27 @@ private:
     void runMultiKindRetentionTests(
         AnalysisCache& cache,
         const juce::File& databaseFile,
-        const FileIdentity& identity,
+        const utils::FileIdentity& identity,
         const std::span<const serato::TagReadResult> positives
     )
     {
         beginTest("Corrupt marker data does not lose overview or any other kind");
         expect(executeSql(databaseFile, "UPDATE serato_tag_cache SET decoded_data = X'0105' WHERE tag_kind = 5;"));
-        expect(!cache.getSeratoTag(identity, serato::TagKind::markers));
+        expect(!serato::getCachedTag(cache, identity, serato::TagKind::markers));
         for (const auto& positive : positives) {
             if (positive.kind != serato::TagKind::markers) {
-                const auto retained = cache.getSeratoTag(identity, positive.kind);
+                const auto retained = serato::getCachedTag(cache, identity, positive.kind);
                 expect(retained && serato::serializeTag(*retained) == serato::serializeTag(positive));
             } else {
-                expect(cache.storeSeratoTag(identity, positive));
+                expect(serato::storeCachedTag(cache, identity, positive));
             }
         }
 
         beginTest("Transient results cannot overwrite any independently cached positive kind");
         for (const auto& positive : positives) {
             for (const auto status : {serato::ReadStatus::ioError, serato::ReadStatus::cancelled}) {
-                expect(!cache.storeSeratoTag(identity, serato::TagReadResult::missing(positive.kind, status)));
-                const auto retained = cache.getSeratoTag(identity, positive.kind);
+                expect(!serato::storeCachedTag(cache, identity, serato::TagReadResult::missing(positive.kind, status)));
+                const auto retained = serato::getCachedTag(cache, identity, positive.kind);
                 expect(retained && serato::serializeTag(*retained) == serato::serializeTag(positive));
             }
         }
@@ -895,7 +906,7 @@ private:
         AnalysisCache& cache,
         const juce::File& databaseFile,
         const juce::File& file,
-        const FileIdentity& identity,
+        const utils::FileIdentity& identity,
         const std::span<const serato::TagReadResult> positives
     )
     {
@@ -905,7 +916,7 @@ private:
         const juce::MemoryBlock waveform("cached peaks", 12);
         expect(cache.storeWaveformData(file, waveform));
         for (const auto& positive : positives) {
-            expect(cache.storeSeratoTag(identity, positive));
+            expect(serato::storeCachedTag(cache, identity, positive));
         }
         const auto loadedWaveform = cache.getWaveformData(file);
         expect(loadedWaveform.has_value() && *loadedWaveform == waveform);
@@ -914,20 +925,20 @@ private:
         expect(!cache.getWaveformData(file).has_value());
         expect(executeSql(databaseFile, "UPDATE file_analysis SET analysis_version = 0;"));
         for (const auto& positive : positives) {
-            const auto retained = cache.getSeratoTag(identity, positive.kind);
+            const auto retained = serato::getCachedTag(cache, identity, positive.kind);
             expect(retained && serato::serializeTag(*retained) == serato::serializeTag(positive));
         }
 
         beginTest("Explicit eviction removes every independently populated kind");
         expect(cache.removeAnalysis(file));
         for (const auto kind : serato::allTagKinds) {
-            expect(!cache.getSeratoTag(identity, kind));
+            expect(!serato::getCachedTag(cache, identity, kind));
         }
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
 
         beginTest("Pruning counts all tag-only kinds and cancellation preserves every row");
         for (const auto& positive : positives) {
-            expect(cache.storeSeratoTag(identity, positive));
+            expect(serato::storeCachedTag(cache, identity, positive));
         }
         expect(file.deleteFile());
         expectEquals(cache.pruneMissingFiles([] { return true; }), 0);

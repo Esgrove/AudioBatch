@@ -1,5 +1,6 @@
 /// File system helpers shared by the services and both front ends.
-/// Declares moving files to the system trash, the file manager label for revealing a file,
+/// Declares FileIdentity, which recognizes an unchanged file by its path, size and modification time,
+/// moving files to the system trash, the file manager label for revealing a file,
 /// deleting files with error logging, choosing the default browse folder,
 /// and extension checks for supported audio types.
 
@@ -21,6 +22,18 @@ enum class TrashResult : std::uint8_t {
     alreadyMissing,
     /// The file is still in place.
     failed,
+};
+
+/// Captures the cache key before tag reading. Reuse this identity for lookup, delivery and persistence.
+/// Size and modification time cannot detect external edits that deliberately preserve both values.
+struct FileIdentity {
+    explicit FileIdentity(const juce::File& file);
+
+    [[nodiscard]] bool matches(const juce::File& file) const;
+
+    juce::String path;
+    std::int64_t fileSize;
+    std::int64_t modifiedTimeMs;
 };
 
 /// Disposes of a file that a committed output replaces, and returns true when the file is gone.

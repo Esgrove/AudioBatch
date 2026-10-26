@@ -191,7 +191,7 @@ private:
     );
 
     void adoptSeratoPreview(
-        const FileIdentity& identity,
+        const utils::FileIdentity& identity,
         std::uint64_t generation,
         std::shared_ptr<const serato::SeratoData> data
     );

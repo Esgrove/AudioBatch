@@ -8,6 +8,7 @@
 #include "analysis/AnalysisCache.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "serato/SeratoPreviewLoader.h"
+#include "utils/FileUtils.h"
 
 #include <JuceHeader.h>
 
@@ -32,7 +33,7 @@ struct LoadedPreview {
     juce::File file;
 
     /// The version of the file that was loaded, compared with analysis results of the same path.
-    FileIdentity identity;
+    utils::FileIdentity identity;
 
     /// True when the waveform came from the analysis cache, so it is not stored again.
     bool waveformLoadedFromCache {false};
@@ -41,7 +42,7 @@ struct LoadedPreview {
     std::shared_ptr<const serato::SeratoData> seratoData;
 
     /// The version of the file whose tags were requested or adopted, including files without tags.
-    std::optional<FileIdentity> seratoIdentity;
+    std::optional<utils::FileIdentity> seratoIdentity;
 };
 
 using PreviewState = std::variant<NoPreview, ReleasedPreview, LoadedPreview>;
@@ -72,7 +73,7 @@ public:
     [[nodiscard]] bool isWaveformLoadedFromCache() const noexcept;
 
     [[nodiscard]] bool adoptSeratoData(
-        const FileIdentity& identity,
+        const utils::FileIdentity& identity,
         std::uint64_t generation,
         std::shared_ptr<const serato::SeratoData> data
     );

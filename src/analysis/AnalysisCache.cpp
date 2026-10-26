@@ -1,5 +1,5 @@
-/// Analysis, tag and waveform persistence of AnalysisCache.
-/// Implements the load and store paths for analysis records, Serato tag results,
+/// Analysis and waveform persistence of AnalysisCache.
+/// Implements the load and store paths for analysis records,
 /// waveform previews and custom gain values using prepared statements,
 /// and the removal and pruning of rows for files that changed or no longer exist.
 /// The database lifecycle and schema live in AnalysisCacheSchema.cpp.
@@ -8,7 +8,6 @@
 
 #include "analysis/AnalysisCacheSql.h"
 #include "analysis/SqliteTransaction.h"
-#include "serato/SeratoTags.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -146,149 +145,18 @@ std::optional<AudioAnalysisStatus> statusFromColumn(const int value)
 }
 }  // namespace
 
-/// Returns an independently versioned stable tag result, or a miss for stale or corrupt data.
-/// Validates file identity after the read. Unknown kinds and transient outcomes are never returned.
-std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
-    const FileIdentity& identity,
-    const serato::TagKind kind
-)
+/// Runs the function with the open database connection while holding the cache lock,
+/// so code that keeps its own tables in this database, such as the Serato tag cache,
+/// shares the connection and its serialization with every other cache call.
+/// Does nothing when the database cannot be opened.
+void AnalysisCache::withDatabase(const std::function<void(sqlite3& database)>& function)
 {
-    if (!serato::supportsTagKind(kind) || !juce::File::isAbsolutePath(identity.path)) {
-        return std::nullopt;
-    }
-    const juce::File file(identity.path);
-    if (!identity.matches(file)) {
-        return std::nullopt;
-    }
-    auto status = serato::ReadStatus::absent;
-    juce::MemoryBlock data;
-    {
-        const juce::ScopedLock lock(mutex);
-        if (database == nullptr && !openUnlocked()) {
-            return std::nullopt;
-        }
-        constexpr auto sql = R"SQL(
-                 SELECT file_size, modified_time_ms, parser_version, result_state, decoded_data, updated_at_ms,
-                     file_path, tag_kind
-            FROM serato_tag_cache WHERE file_path = ? AND tag_kind = ?;
-        )SQL";
-        const auto statement = sqlite::prepare(*database, sql);
-        if (statement == nullptr || !sqlite::bindText(*statement, 1, identity.path)
-            || !sqlite::bindInt64(*statement, 2, std::to_underlying(kind)))
-        {
-            return std::nullopt;
-        }
-        auto* const row = statement.get();
-        // Reading a column without a current row is undefined, so a miss returns before any column is read.
-        if (sqlite3_step(row) != SQLITE_ROW) {
-            return std::nullopt;
-        }
-        bool valid = true;
-        for (const auto column :
-             std::array {
-                 serato_column::fileSize,
-                 serato_column::modifiedTimeMs,
-                 serato_column::parserVersion,
-                 serato_column::resultState,
-                 serato_column::updatedAtMs,
-                 serato_column::tagKind,
-             })
-        {
-            valid = valid && sqlite3_column_type(row, column) == SQLITE_INTEGER;
-        }
-        valid = valid && sqlite3_column_int64(row, serato_column::fileSize) == identity.fileSize
-            && sqlite3_column_int64(row, serato_column::modifiedTimeMs) == identity.modifiedTimeMs
-            && sqlite3_column_int64(row, serato_column::parserVersion) == serato::parserVersion(kind)
-            && sqlite3_column_int64(row, serato_column::updatedAtMs) > 0
-            && sqlite3_column_type(row, serato_column::filePath) == SQLITE_TEXT
-            && sqlite::columnText(*row, serato_column::filePath) == identity.path
-            && std::cmp_equal(sqlite3_column_int64(row, serato_column::tagKind), std::to_underlying(kind));
-        const auto state = sqlite3_column_int64(row, serato_column::resultState);
-        const auto stateIs = [state](const serato::ReadStatus candidate) {
-            return std::cmp_equal(state, std::to_underlying(candidate));
-        };
-        if (valid && stateIs(serato::ReadStatus::present)) {
-            const auto bytes = sqlite3_column_bytes(row, serato_column::decodedData);
-            valid = sqlite3_column_type(row, serato_column::decodedData) == SQLITE_BLOB && bytes > 0
-                && std::cmp_less_equal(bytes, maximumOverviewBytes);
-            if (valid) {
-                data = sqlite::columnBlob(*row, serato_column::decodedData);
-            }
-        } else {
-            valid = valid
-                && (stateIs(serato::ReadStatus::absent) || stateIs(serato::ReadStatus::unsupported)
-                    || stateIs(serato::ReadStatus::invalid))
-                && sqlite3_column_type(row, serato_column::decodedData) == SQLITE_NULL;
-        }
-        if (!valid) {
-            return std::nullopt;
-        }
-        status = static_cast<serato::ReadStatus>(state);
-    }
-    const auto result = status == serato::ReadStatus::present ? serato::deserializeTag(kind, data)
-                                                              : serato::TagReadResult::missing(kind, status);
-    return result && identity.matches(file) ? result : std::nullopt;
-}
-
-/// Stores independently serialized tag data or a stable negative without requiring an analysis row.
-/// Serializes outside the database lock and checks the captured identity before writing.
-/// Returns false for stale identities, inconsistent results, transient outcomes or database failures.
-bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const serato::TagReadResult& result)
-{
-    const auto status = result.status();
-    if (!serato::supportsTagKind(result.kind) || status < serato::ReadStatus::present
-        || status > serato::ReadStatus::cancelled || !juce::File::isAbsolutePath(identity.path))
-    {
-        return false;
-    }
-    juce::MemoryBlock data;
-    switch (status) {
-        case serato::ReadStatus::present:
-            data = serato::serializeTag(result);
-            if (data.isEmpty() || data.getSize() > maximumOverviewBytes) {
-                return false;
-            }
-            break;
-        case serato::ReadStatus::absent:
-        case serato::ReadStatus::unsupported:
-        case serato::ReadStatus::invalid:
-            break;
-        case serato::ReadStatus::ioError:
-        case serato::ReadStatus::cancelled:
-            return false;
-    }
-    const juce::File file(identity.path);
-    if (!identity.matches(file)) {
-        return false;
-    }
     const juce::ScopedLock lock(mutex);
     if (database == nullptr && !openUnlocked()) {
-        return false;
+        return;
     }
-    constexpr auto sql = R"SQL(
-        INSERT INTO serato_tag_cache (
-            file_path, tag_kind, file_size, modified_time_ms, parser_version, result_state, decoded_data, updated_at_ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(file_path, tag_kind) DO UPDATE SET
-            file_size = excluded.file_size, modified_time_ms = excluded.modified_time_ms,
-            parser_version = excluded.parser_version, result_state = excluded.result_state,
-            decoded_data = excluded.decoded_data, updated_at_ms = excluded.updated_at_ms;
-    )SQL";
-    const auto statement = sqlite::prepare(*database, sql);
-    if (statement == nullptr) {
-        return false;
-    }
-    const bool dataBound = status == serato::ReadStatus::present
-        ? sqlite::bindBlob(*statement, serato_parameter::decodedData, data)
-        : sqlite::bindNull(*statement, serato_parameter::decodedData);
-    const bool bound = dataBound && sqlite::bindText(*statement, serato_parameter::filePath, identity.path)
-        && sqlite::bindInt64(*statement, serato_parameter::tagKind, std::to_underlying(result.kind))
-        && sqlite::bindInt64(*statement, serato_parameter::fileSize, identity.fileSize)
-        && sqlite::bindInt64(*statement, serato_parameter::modifiedTimeMs, identity.modifiedTimeMs)
-        && sqlite::bindInt64(*statement, serato_parameter::parserVersion, serato::parserVersion(result.kind))
-        && sqlite::bindInt64(*statement, serato_parameter::resultState, std::to_underlying(status))
-        && sqlite::bindInt64(*statement, serato_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
-    return bound && sqlite::stepToCompletion(*statement);
+
+    function(*database);
 }
 
 /// Loads the cached analysis record for the given file,

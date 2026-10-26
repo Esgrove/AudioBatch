@@ -2,7 +2,6 @@
 
 #include "utils/AudioFormatUtils.h"
 
-#include "utils/AudioMetadata.h"
 #include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 
@@ -219,5 +218,17 @@ bool readFloatSamples(
 std::span<float* const> writePointers(juce::AudioBuffer<float>& buffer)
 {
     return {buffer.getArrayOfWritePointers(), static_cast<std::size_t>(buffer.getNumChannels())};
+}
+
+/// Converts a JUCE path to TagLib's platform filename representation.
+/// Windows copies the wide buffer.
+/// Elsewhere the returned pointer aliases fullPath, which must remain alive for the entire TagLib operation.
+TagLib::FileName tagLibFileName(const juce::String& fullPath)
+{
+#if JUCE_WINDOWS
+    return {fullPath.toWideCharPointer()};
+#else
+    return fullPath.toRawUTF8();
+#endif
 }
 }  // namespace audiobatch::utils

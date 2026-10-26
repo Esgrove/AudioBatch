@@ -4,46 +4,10 @@
 
 #pragma once
 
-#include "serato/SeratoTagTypes.h"
-
-#include <cstddef>
-#include <cstdint>
-
 namespace audiobatch
 {
 /// How long SQLite retries a locked database before failing a statement, in milliseconds.
 constexpr int busyTimeoutMilliseconds {2000};
-
-/// Maximum numeric tag cache size, including the explicit serializer header fields.
-constexpr std::size_t maximumOverviewBytes {
-    4 * sizeof(std::uint32_t) + serato::Overview::maxSlices * serato::Overview::bandCount,
-};
-
-/// Zero-based columns for independent tag lookup, including the key's stored SQLite types.
-namespace serato_column
-{
-constexpr int fileSize {0};
-constexpr int modifiedTimeMs {1};
-constexpr int parserVersion {2};
-constexpr int resultState {3};
-constexpr int decodedData {4};
-constexpr int updatedAtMs {5};
-constexpr int filePath {6};
-constexpr int tagKind {7};
-}  // namespace serato_column
-
-/// One-based parameters for independent per-kind tag UPSERT.
-namespace serato_parameter
-{
-constexpr int filePath {1};
-constexpr int tagKind {2};
-constexpr int fileSize {3};
-constexpr int modifiedTimeMs {4};
-constexpr int parserVersion {5};
-constexpr int resultState {6};
-constexpr int decodedData {7};
-constexpr int updatedAtMs {8};
-}  // namespace serato_parameter
 
 /// Zero-based result column indices for the analysis record SELECT in AnalysisCache::getAnalysis.
 /// The order must match the column list of that query exactly.

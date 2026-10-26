@@ -7,7 +7,6 @@
 
 #include <juce_core/juce_core.h>
 
-#include <tfile.h>
 #include <vector>
 
 namespace audiobatch
@@ -56,9 +55,4 @@ struct AudioMetadata {
 [[nodiscard]] bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile);
 bool readMetadata(const juce::File& file, AudioMetadata& outMetadata);
 bool writeMetadata(const juce::File& file, const AudioMetadata& metadata);
-
-namespace utils
-{
-[[nodiscard]] TagLib::FileName tagLibFileName(const juce::String& fullPath);
-}  // namespace utils
 }  // namespace audiobatch

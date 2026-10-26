@@ -4,7 +4,7 @@
 #include "serato/SeratoTagReader.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
-#include "utils/AudioMetadata.h"
+#include "utils/AudioFormatUtils.h"
 #include "utils/StringFormat.h"
 
 #include <aifffile.h>
