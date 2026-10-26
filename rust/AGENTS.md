@@ -93,6 +93,10 @@ CI runs `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, and th
 Other commands:
 
 ```shell
+# Build the release binaries into rust/, or install them and the CLI shell completions
+./build.sh
+./install.sh
+
 # Run the CLI
 cargo run --bin audiobatch-rs -- [args]
 
@@ -113,6 +117,9 @@ that are dispatched before the image is taken.
 The GUI follows the look of the C++ application, so compare it with `cpp/src/gui/` when changing the layout.
 
 Dependencies are compiled with optimizations even in debug builds, because decoding is too slow otherwise.
+`.cargo/config.toml` compiles for the native CPU, and CI clears it with an empty `RUSTFLAGS`.
+The shell scripts in `rust/` source `common.sh`, which reads the binary names from the crate manifests
+and sources `../common.sh` for the platform detection and print helpers shared with `cpp/`.
 
 ## Code Organization
 
