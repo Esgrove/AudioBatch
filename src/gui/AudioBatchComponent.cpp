@@ -48,7 +48,8 @@ void AudioBatchComponent::configureResultsTable()
     resultsTable.addKeyListener(this);
 }
 
-/// Creates the waveform preview, transport and zoom controls, and the metadata info panel.
+/// Sets up the split between the results table and the preview workspace,
+/// and connects the waveform, the section toggle, and the playback and zoom controls.
 void AudioBatchComponent::configurePreviewControls()
 {
     mainVerticalLayout.setItemLayout(
@@ -62,49 +63,19 @@ void AudioBatchComponent::configurePreviewControls()
         2, layout::previewMinimumHeight, layout::previewMaximumProportion, layout::previewPreferredProportion
     );
     addAndMakeVisible(waveformResizeBar);
-    juce::Path chevronPath;
-    chevronPath.startNewSubPath(0.0f, 0.0f);
-    chevronPath.lineTo(layout::previewToggle::glyphWidth * 0.5f, layout::previewToggle::glyphHeight);
-    chevronPath.lineTo(layout::previewToggle::glyphWidth, 0.0f);
-    juce::DrawablePath collapseChevron;
-    collapseChevron.setPath(chevronPath);
-    collapseChevron.setFill(juce::Colours::transparentBlack);
-    collapseChevron.setStrokeFill(juce::CustomLookAndFeel::greyMiddleLight());
-    collapseChevron.setStrokeThickness(layout::previewToggle::strokeWidth);
-    chevronPath.applyTransform(
-        juce::AffineTransform::rotation(
-            juce::MathConstants<float>::pi,
-            layout::previewToggle::glyphWidth * 0.5f,
-            layout::previewToggle::glyphHeight * 0.5f
-        )
-    );
-    juce::DrawablePath expandChevron;
-    expandChevron.setPath(chevronPath);
-    expandChevron.setFill(juce::Colours::transparentBlack);
-    expandChevron.setStrokeFill(juce::CustomLookAndFeel::greyMiddleLight());
-    expandChevron.setStrokeThickness(layout::previewToggle::strokeWidth);
-    previewSectionButton.setImages(&collapseChevron, nullptr, nullptr, nullptr, &expandChevron);
-    previewSectionButton.setEdgeIndent(layout::previewToggle::imageInset);
-    previewSectionButton.setColour(juce::DrawableButton::backgroundColourId, juce::Colours::transparentBlack);
-    previewSectionButton.setColour(juce::DrawableButton::backgroundOnColourId, juce::Colours::transparentBlack);
-    previewSectionButton.setTooltip("Collapse bottom section (Ctrl+Shift+Space / Cmd+Shift+Space).");
-    previewSectionButton.onClick = [this] { togglePreviewSection(); };
-    addAndMakeVisible(previewSectionButton);
+    addAndMakeVisible(previewWorkspace);
 
-    controlsViewport.setViewedComponent(&controlsContent, false);
-    controlsViewport.setScrollBarsShown(true, false);
-    controlsViewport.setScrollBarThickness(layout::scrollBarThickness);
-    controlsViewport.setName("Preview and processing controls");
-    addAndMakeVisible(controlsViewport);
+    previewWorkspace.previewSectionButton.onClick = [this] { togglePreviewSection(); };
 
-    thumbnail = std::make_unique<ThumbnailComponent>(previewPlayer.getFormatManager(), previewPlayer);
-    addAndMakeVisible(thumbnail.get());
-    thumbnail->addChangeListener(this);
+    auto& thumbnail = previewWorkspace.thumbnail;
+    thumbnail.addChangeListener(this);
     previewPlayer.addChangeListener(this);
-    thumbnail->setMouseWheelZoomCallback([this](const double zoomFactor) {
+    thumbnail.setMouseWheelZoomCallback([this](const double zoomFactor) {
+        auto& zoomSlider = previewWorkspace.zoomSlider;
         zoomSlider.setValue(zoomSlider.getValue() * zoomFactor);
     });
-    thumbnail->setMouseWheelGainCallback([this](const float deltaDb) {
+    thumbnail.setMouseWheelGainCallback([this](const float deltaDb) {
+        auto& gainSlider = previewWorkspace.gainSlider;
         if (!gainSlider.isEnabled() || juce::approximatelyEqual(deltaDb, 0.0f)) {
             return;
         }
@@ -114,37 +85,15 @@ void AudioBatchComponent::configurePreviewControls()
             = juce::jlimit(gainSlider.getMinimum(), gainSlider.getMaximum(), gainSlider.getValue() + step);
         gainSlider.setValue(newValue, juce::sendNotificationSync);
     });
-    thumbnail->setThumbnailFullyLoadedCallback([this] { handleThumbnailFullyLoaded(); });
+    thumbnail.setThumbnailFullyLoadedCallback([this] { handleThumbnailFullyLoaded(); });
 
-    startStopButton.setEnabled(false);
-    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
-    startStopButton.setColour(juce::TextButton::buttonOnColourId, juce::CustomLookAndFeel::green());
-    startStopButton.setTooltip("Start or stop preview playback for the selected file.");
-    startStopButton.onClick = [this] { previewPlayer.togglePlayback(); };
-    addAndMakeVisible(startStopButton);
-
-    zoomSlider.setRange(zoom_range::minimumPercent, zoom_range::maximumPercent, 1);
-    zoomSlider.setNumDecimalPlacesToDisplay(0);
-    zoomSlider.setSkewFactor(0.5);
-    zoomSlider.setValue(zoom_range::minimumPercent);
-    zoomSlider.setTextValueSuffix("%");
-    zoomSlider.setTooltip("Adjust waveform zoom. You can also use the mouse wheel over the waveform.");
-    zoomSlider.onValueChange = [this] { zoomLevelChanged(zoomSlider.getValue() * zoom_range::percentToScaleFactor); };
-    controlsContent.addAndMakeVisible(zoomSlider);
-
-    zoomLabel.setText("Zoom", juce::dontSendNotification);
-    zoomLabel.setJustificationType(juce::Justification::centredLeft);
-    zoomSlider.setTextBoxStyle(
-        juce::Slider::TextBoxRight, false, layout::zoomTextBoxWidth, zoomSlider.getTextBoxHeight()
-    );
-    controlsContent.addAndMakeVisible(zoomLabel);
-
-    audioInfo = std::make_unique<AudioInfoPanel>();
-    addAndMakeVisible(*audioInfo);
+    previewWorkspace.startStopButton.onClick = [this] { previewPlayer.togglePlayback(); };
+    previewWorkspace.zoomSlider.onValueChange
+        = [this] { zoomLevelChanged(previewWorkspace.zoomSlider.getValue() * zoom_range::percentToScaleFactor); };
 }
 
-/// Creates the per-file gain, normalization toggle, process, and settings controls,
-/// and connects the plugin chain to the preview.
+/// Connects the plugin chain and the audio settings to the preview,
+/// and connects the gain, normalization, process, plugin chain, and settings controls.
 void AudioBatchComponent::configureProcessingControls()
 {
     const auto refreshLiveChain = [this] {
@@ -171,61 +120,28 @@ void AudioBatchComponent::configureProcessingControls()
     });
     setPreviewPreferences(loadAudioPreviewPreferences(*pluginAppProperties.getUserSettings()));
 
-    pluginButton.setTooltip("Edit the plugin chain, add plugins, or scan for plugins.");
-    pluginButton.onClick = [this] { pluginChain->showMenu(pluginButton); };
-    controlsContent.addAndMakeVisible(pluginButton);
+    previewWorkspace.pluginButton.onClick = [this] { pluginChain->showMenu(previewWorkspace.pluginButton); };
 
-    gainLabel.setText("Input gain", juce::dontSendNotification);
-    gainLabel.setJustificationType(juce::Justification::centredLeft);
-    controlsContent.addAndMakeVisible(gainLabel);
-
-    gainSlider.setRange(-gain_range::maximumDecibels, gain_range::maximumDecibels, gain_range::stepDecibels);
-    gainSlider.setValue(0.0, juce::dontSendNotification);
-    gainSlider.setNumDecimalPlacesToDisplay(1);
-    gainSlider.setTextValueSuffix(" dB");
-    gainSlider.setTooltip("Per-file gain in dB. Non-zero values override normalization for the file.");
-    gainSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    gainSlider.setTextBoxStyle(
-        juce::Slider::TextBoxRight, false, layout::gainTextBoxWidth, gainSlider.getTextBoxHeight()
-    );
-    gainSlider.setDoubleClickReturnValue(true, 0.0);
-    gainSlider.setEnabled(false);
-    gainSlider.onValueChange = [this] {
-        const auto value = static_cast<float>(gainSlider.getValue());
+    previewWorkspace.gainSlider.onValueChange = [this] {
+        const auto value = static_cast<float>(previewWorkspace.gainSlider.getValue());
         applyCustomGainToSelection(
             juce::approximatelyEqual(value, 0.0f) ? std::nullopt : std::optional(Decibels {value})
         );
     };
-    controlsContent.addAndMakeVisible(gainSlider);
 
-    normalizeBeforePluginToggle.setTooltip(
-        "When enabled, files without a custom gain are normalized to the selected peak or loudness target "
-        "before the plugin chain."
-    );
-    normalizeBeforePluginToggle.onClick
-        = [this] { normalizationTargetControl.setEnabled(normalizeBeforePluginToggle.getToggleState()); };
-    controlsContent.addAndMakeVisible(normalizeBeforePluginToggle);
-
-    forceOverwriteToggle.setTooltip(
-        "When enabled, normalizing or processing replaces an existing output file with the same name. "
-        "The replaced file is moved to the system trash."
-    );
-    controlsContent.addAndMakeVisible(forceOverwriteToggle);
-
+    auto& normalizationTargetControl = previewWorkspace.normalizationTargetControl;
+    auto& normalizeBeforePluginToggle = previewWorkspace.normalizeBeforePluginToggle;
+    normalizeBeforePluginToggle.onClick = [this] {
+        previewWorkspace.normalizationTargetControl.setEnabled(
+            previewWorkspace.normalizeBeforePluginToggle.getToggleState()
+        );
+    };
     normalizationTargetControl.loadSettings();
     normalizationTargetControl.setEnabled(normalizeBeforePluginToggle.getToggleState());
-    controlsContent.addAndMakeVisible(normalizationTargetControl);
 
-    processButton.setTooltip("Process selected files through the plugin chain.");
     updateProcessButtonState();
-    processButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::blue());
-    processButton.setColour(juce::TextButton::textColourOffId, juce::CustomLookAndFeel::greyDark());
-    processButton.onClick = [this] { processSelectedRecords(); };
-    addAndMakeVisible(processButton);
-
-    settingsButton.setTooltip("Open audio device and preview settings.");
-    settingsButton.onClick = [this] { showAudioSettingsWindow(); };
-    controlsContent.addAndMakeVisible(settingsButton);
+    previewWorkspace.processButton.onClick = [this] { processSelectedRecords(); };
+    previewWorkspace.settingsButton.onClick = [this] { showAudioSettingsWindow(); };
 }
 
 /// Creates the completion for the Serato tag worker of the preview,
@@ -330,10 +246,10 @@ AudioBatchComponent::~AudioBatchComponent()
     pluginChain->setChainChangedCallback({});
     pluginChain->setLatencyChangedCallback({});
     previewPlayer.setPluginChain(nullptr);
-    thumbnail->removeChangeListener(this);
-    thumbnail->setMouseWheelZoomCallback({});
-    thumbnail->setMouseWheelGainCallback({});
-    thumbnail->setThumbnailFullyLoadedCallback({});
+    previewWorkspace.thumbnail.removeChangeListener(this);
+    previewWorkspace.thumbnail.setMouseWheelZoomCallback({});
+    previewWorkspace.thumbnail.setMouseWheelGainCallback({});
+    previewWorkspace.thumbnail.setThumbnailFullyLoadedCallback({});
     audioSettingsComponent.setPreferencesChangedCallback({});
     resultsTable.setModel(nullptr);
 
@@ -543,7 +459,7 @@ void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArra
 void AudioBatchComponent::updateProcessButtonState()
 {
     const bool hasChain = pluginChain->getNumEnabledValidSlots() > 0;
-    processButton.setEnabled(
+    previewWorkspace.processButton.setEnabled(
         hasChain && hasAnyRecords() && !backgroundWork.isProcessingInProgress()
         && !backgroundWork.isAnalysisInProgress()
     );

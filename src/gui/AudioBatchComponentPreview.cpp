@@ -115,8 +115,8 @@ void AudioBatchComponent::setPreviewPreferences(const AudioPreviewPreferences& p
         juce::ignoreUnused(enabled);
     }
     previewPreferences.pluginChainEnabled = previewPlayer.isPluginPreviewEnabled();
-    thumbnail->setSeratoWaveformColouringEnabled(previewPreferences.seratoWaveformColours);
-    thumbnail->setLoudnessGraphSettings(
+    previewWorkspace.thumbnail.setSeratoWaveformColouringEnabled(previewPreferences.seratoWaveformColours);
+    previewWorkspace.thumbnail.setLoudnessGraphSettings(
         previewPreferences.loudnessGraphEnabled,
         previewPreferences.loudnessGraphMinimum,
         previewPreferences.loudnessGraphMaximum
@@ -144,7 +144,7 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
         requestSeratoPreview();
     }
     const auto seratoData = record.file == preview.getFile() ? preview.getSeratoData() : nullptr;
-    audioInfo->showRecord(record, fileActivity.getActiveLabel(record.fullPath), seratoData.get());
+    previewWorkspace.audioInfo.showRecord(record, fileActivity.getActiveLabel(record.fullPath), seratoData.get());
 }
 
 /// Adopts only complete analysis of the unchanged file backing the loaded preview.
@@ -165,15 +165,15 @@ void AudioBatchComponent::updatePreviewLoudnessHistory()
             }
         }
     }
-    thumbnail->setLoudnessHistory(std::move(history));
+    previewWorkspace.thumbnail.setLoudnessHistory(std::move(history));
 }
 
 /// Loads a file into the preview player and waveform, preferring cached waveform data over decoding the file again.
 /// A file that fails to load stays selected with its preview cleared.
 void AudioBatchComponent::showAudioFile(const juce::File& file)
 {
-    audioInfo->clear();
-    thumbnail->setLoudnessHistory({});
+    previewWorkspace.audioInfo.clear();
+    previewWorkspace.thumbnail.setLoudnessHistory({});
 
     if (!preview.load(file, previewPreferences.playFromFirstCuePoint)) {
         clearPreviewDisplay();
@@ -181,15 +181,15 @@ void AudioBatchComponent::showAudioFile(const juce::File& file)
     }
 
     updatePreviewInputGain(true);
-    startStopButton.setEnabled(true);
-    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green());
-    zoomSlider.setValue(100.0, juce::dontSendNotification);
+    previewWorkspace.startStopButton.setEnabled(true);
+    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green());
+    previewWorkspace.zoomSlider.setValue(100.0, juce::dontSendNotification);
 
     const auto waveformData = file.existsAsFile() ? analysisCache.getWaveformData(file) : std::nullopt;
-    if (waveformData.has_value() && thumbnail->loadFromCacheData(*waveformData)) {
+    if (waveformData.has_value() && previewWorkspace.thumbnail.loadFromCacheData(*waveformData)) {
         preview.setWaveformLoadedFromCache(true);
     } else {
-        thumbnail->setURL(juce::URL(file), previewPlayer.getLoadedLengthInSamples().value_or(0));
+        previewWorkspace.thumbnail.setURL(juce::URL(file), previewPlayer.getLoadedLengthInSamples().value_or(0));
     }
 
     requestSeratoPreview();
@@ -200,8 +200,8 @@ void AudioBatchComponent::showAudioFile(const juce::File& file)
 /// Captures file identity so same-path changes detected during reanalysis trigger a fresh read.
 void AudioBatchComponent::requestSeratoPreview()
 {
-    thumbnail->setSeratoOverview({});
-    thumbnail->setSeratoMarkers({});
+    previewWorkspace.thumbnail.setSeratoOverview({});
+    previewWorkspace.thumbnail.setSeratoMarkers({});
     preview.requestSeratoData();
 }
 
@@ -214,7 +214,7 @@ void AudioBatchComponent::adoptSeratoPreview(
     std::shared_ptr<const serato::SeratoData> data
 )
 {
-    if (thumbnail == nullptr || !preview.adoptSeratoData(identity, generation, std::move(data))) {
+    if (!preview.adoptSeratoData(identity, generation, std::move(data))) {
         return;
     }
 
@@ -224,11 +224,11 @@ void AudioBatchComponent::adoptSeratoPreview(
         seratoData && seratoData->markers ? &*seratoData->markers : nullptr,
         previewPlayer.getLoadedDurationSeconds().value_or(0.0)
     ));
-    thumbnail->setSeratoOverview(
+    previewWorkspace.thumbnail.setSeratoOverview(
         seratoData && seratoData->overview ? std::shared_ptr<const serato::Overview>(seratoData, &*seratoData->overview)
                                            : nullptr
     );
-    thumbnail->setSeratoMarkers(
+    previewWorkspace.thumbnail.setSeratoMarkers(
         seratoData && seratoData->markers ? std::shared_ptr<const serato::Markers>(seratoData, &*seratoData->markers)
                                           : nullptr
     );
@@ -246,7 +246,7 @@ void AudioBatchComponent::handleThumbnailFullyLoaded()
         return;
     }
 
-    const auto waveformData = thumbnail->saveToCacheData();
+    const auto waveformData = previewWorkspace.thumbnail.saveToCacheData();
     if (waveformData.getSize() == 0) {
         return;
     }
@@ -257,12 +257,12 @@ void AudioBatchComponent::handleThumbnailFullyLoaded()
 /// Recolours the play button to match whether the transport is playing.
 void AudioBatchComponent::updatePlaybackButtonForTransportState()
 {
-    if (!startStopButton.isEnabled()) {
+    if (!previewWorkspace.startStopButton.isEnabled()) {
         return;
     }
 
     const auto colour = previewPlayer.isPlaying() ? juce::CustomLookAndFeel::red() : juce::CustomLookAndFeel::green();
-    startStopButton.setColour(juce::TextButton::buttonColourId, colour);
+    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, colour);
 }
 
 /// Reacts to transport and output device changes, and to files dropped onto the waveform preview.
@@ -279,8 +279,8 @@ void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source
         return;
     }
 
-    if (source == thumbnail.get()) {
-        const auto droppedFiles = thumbnail->getLastDroppedFiles();
+    if (source == &previewWorkspace.thumbnail) {
+        const auto droppedFiles = previewWorkspace.thumbnail.getLastDroppedFiles();
 
         if (!droppedFiles.isEmpty()) {
             handleDroppedPaths(droppedFiles);
@@ -307,25 +307,25 @@ void AudioBatchComponent::releasePreviewPlayback()
 /// after the preview was released or failed to load.
 void AudioBatchComponent::clearPreviewDisplay()
 {
-    thumbnail->setSeratoOverview({});
-    thumbnail->setSeratoMarkers({});
-    audioInfo->clear();
-    thumbnail->setURL(juce::URL());
-    startStopButton.setEnabled(false);
-    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
+    previewWorkspace.thumbnail.setSeratoOverview({});
+    previewWorkspace.thumbnail.setSeratoMarkers({});
+    previewWorkspace.audioInfo.clear();
+    previewWorkspace.thumbnail.setURL(juce::URL());
+    previewWorkspace.startStopButton.setEnabled(false);
+    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
 }
 
 /// Maps pinch-zoom gestures onto the waveform zoom slider.
 void AudioBatchComponent::mouseMagnify(const juce::MouseEvent& /*event*/, const float scaleFactor)
 {
-    const auto newZoom = zoomSlider.getValue() * static_cast<double>(scaleFactor * scaleFactor);
-    zoomSlider.setValue(newZoom);
+    const auto newZoom = previewWorkspace.zoomSlider.getValue() * static_cast<double>(scaleFactor * scaleFactor);
+    previewWorkspace.zoomSlider.setValue(newZoom);
 }
 
 /// Forwards the zoom slider value to the waveform preview.
-void AudioBatchComponent::zoomLevelChanged(const double zoomLevel) const
+void AudioBatchComponent::zoomLevelChanged(const double zoomLevel)
 {
-    thumbnail->setZoom(zoomLevel);
+    previewWorkspace.thumbnail.setZoom(zoomLevel);
 }
 
 /// Updates the current selection's custom gain in-memory, in the cache, and the waveform preview.
@@ -379,10 +379,10 @@ void AudioBatchComponent::updateGainControlsForSelection()
     const auto selectedRows = resultsTable.getSelectedRows();
     const bool hasSelection = selectedRows.size() > 0;
 
-    gainSlider.setEnabled(hasSelection);
+    previewWorkspace.gainSlider.setEnabled(hasSelection);
 
     if (!hasSelection) {
-        gainSlider.setValue(0.0, juce::dontSendNotification);
+        previewWorkspace.gainSlider.setValue(0.0, juce::dontSendNotification);
         return;
     }
 
@@ -401,29 +401,27 @@ void AudioBatchComponent::updateGainControlsForSelection()
     }
 
     const auto& record = analysisResults[referenceRow];
-    gainSlider.setValue(static_cast<double>(record.customGain.value_or(Decibels {}).value), juce::dontSendNotification);
+    previewWorkspace.gainSlider.setValue(
+        static_cast<double>(record.customGain.value_or(Decibels {}).value), juce::dontSendNotification
+    );
 }
 
 /// Applies the current file's custom gain to the waveform preview as a display-only scale factor.
-void AudioBatchComponent::updateThumbnailDisplayGain() const
+void AudioBatchComponent::updateThumbnailDisplayGain()
 {
-    if (thumbnail == nullptr) {
-        return;
-    }
-
     const auto previewFile = preview.getFile();
     if (!previewFile.existsAsFile()) {
-        thumbnail->setDisplayGain(1.0f);
+        previewWorkspace.thumbnail.setDisplayGain(1.0f);
         return;
     }
 
     const auto currentRow = analysisResults.findRow(previewFile.getFullPathName());
     if (!currentRow.has_value()) {
-        thumbnail->setDisplayGain(1.0f);
+        previewWorkspace.thumbnail.setDisplayGain(1.0f);
         return;
     }
 
     const auto& record = analysisResults[*currentRow];
-    thumbnail->setDisplayGain(record.customGain.value_or(Decibels {}).toLinearGain().value);
+    previewWorkspace.thumbnail.setDisplayGain(record.customGain.value_or(Decibels {}).toLinearGain().value);
 }
 }  // namespace audiobatch

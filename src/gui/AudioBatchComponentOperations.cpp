@@ -291,8 +291,8 @@ void AudioBatchComponent::normalizeSelectedRecords()
         }
     }
 
-    auto normalizationOptions = normalizationTargetControl.getOptions();
-    normalizationOptions.overwriteExisting = forceOverwriteToggle.getToggleState();
+    auto normalizationOptions = previewWorkspace.normalizationTargetControl.getOptions();
+    normalizationOptions.overwriteExisting = previewWorkspace.forceOverwriteToggle.getToggleState();
     if (backgroundWork.startNormalization(recordsToNormalize, normalizationOptions) <= 0) {
         updateStatusLabel();
         return;
@@ -327,7 +327,7 @@ void AudioBatchComponent::startAnalysis(
         fileActivity.clearAllActive();
         fileActivity.clearAllMessages();
         clearCurrentAudioPreview();
-        audioInfo->clear();
+        previewWorkspace.audioInfo.clear();
         resultsTable.updateContent();
         updateResultsTableColumnWidths();
         resultsTable.repaint();
@@ -396,7 +396,7 @@ juce::Array<juce::File> AudioBatchComponent::releasePreviewBeforeProcessing(
 {
     // Always stop playback before processing, since files may be replaced on disk.
     previewPlayer.stop();
-    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green());
+    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green());
 
     juce::Array<juce::File> filesToProcess;
     for (const auto& record : records) {
@@ -439,10 +439,10 @@ void AudioBatchComponent::processSelectedRecords()
     PluginProcessingOptions options;
     options.plugins
         = enabledPlugins | std::views::transform(&EnabledChainPlugin::descriptorRef) | std::ranges::to<std::vector>();
-    if (normalizeBeforePluginToggle.getToggleState()) {
-        options.normalizeBeforePlugin = normalizationTargetControl.getOptions();
+    if (previewWorkspace.normalizeBeforePluginToggle.getToggleState()) {
+        options.normalizeBeforePlugin = previewWorkspace.normalizationTargetControl.getOptions();
     }
-    options.overwriteExisting = forceOverwriteToggle.getToggleState();
+    options.overwriteExisting = previewWorkspace.forceOverwriteToggle.getToggleState();
 
     // Pre-instantiate one chain of plugin instances per worker on the message thread.
     const auto workerCount = juce::jmin(static_cast<int>(records.size()), getPluginProcessingWorkerCount());

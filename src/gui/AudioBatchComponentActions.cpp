@@ -33,7 +33,7 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
         return resultsTable.keyPressed(key);
     }
 
-    if (thumbnail != nullptr && thumbnail->keyPressed(key)) {
+    if (previewWorkspace.thumbnail.keyPressed(key)) {
         return true;
     }
 
@@ -97,7 +97,7 @@ void AudioBatchComponent::clearAllRecords()
     fileActivity.clearAllActive();
     fileActivity.clearAllMessages();
     clearCurrentAudioPreview();
-    audioInfo->clear();
+    previewWorkspace.audioInfo.clear();
 
     resultsTable.deselectAllRows();
     resultsTable.updateContent();
@@ -193,7 +193,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     addItem(FileMenuItemId::reanalyze, "Re-analyze Selected", backgroundWork.isIdle());
     addItem(
         FileMenuItemId::normalize,
-        utils::format("Normalize to {}", normalizationTargetControl.describeTarget()),
+        utils::format("Normalize to {}", previewWorkspace.normalizationTargetControl.describeTarget()),
         canNormalize
     );
     addItem(FileMenuItemId::normalizeSupport, "Normalization Format Support...", true);
@@ -246,7 +246,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
                     safeThis->processSelectedRecords();
                     break;
                 case FileMenuItemId::clearCustomGain:
-                    safeThis->gainSlider.setValue(0.0, juce::dontSendNotification);
+                    safeThis->previewWorkspace.gainSlider.setValue(0.0, juce::dontSendNotification);
                     safeThis->applyCustomGainToSelection(std::nullopt);
                     break;
             }
@@ -437,7 +437,7 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
     }
 
     if (analysisResults.empty()) {
-        audioInfo->clear();
+        previewWorkspace.audioInfo.clear();
     }
 
     updateStatusLabel();

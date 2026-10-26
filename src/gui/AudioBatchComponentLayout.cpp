@@ -1,6 +1,6 @@
 /// Layout of the main view, with the status bar along the bottom edge,
-/// and the animated expansion of the preview workspace above it.
-/// Reuses live controls, selected-file metrics, and waveform in expanded and compact presentations,
+/// and the split between the results table and the preview workspace above it.
+/// Animates the workspace between its expanded and compact presentations,
 /// preserving the expanded table divider independently of the compact row.
 
 #include "gui/AudioBatchComponent.h"
@@ -31,15 +31,15 @@ void AudioBatchComponent::togglePreviewSection()
     previewSectionExpanded = !previewSectionExpanded;
     animationStartedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     if (!previewSectionExpanded
-        && (controlsViewport.hasKeyboardFocus(true) || audioInfo->hasKeyboardFocus(true)
-            || waveformResizeBar.hasKeyboardFocus(true)))
+        && (previewWorkspace.controlsViewport.hasKeyboardFocus(true)
+            || previewWorkspace.audioInfo.hasKeyboardFocus(true) || waveformResizeBar.hasKeyboardFocus(true)))
     {
-        previewSectionButton.grabKeyboardFocus();
+        previewWorkspace.previewSectionButton.grabKeyboardFocus();
     }
     const auto* action = previewSectionExpanded ? "Collapse bottom section" : "Expand bottom section";
-    previewSectionButton.setButtonText(action);
-    previewSectionButton.setToggleState(!previewSectionExpanded, juce::dontSendNotification);
-    previewSectionButton.setTooltip(utils::format("{} (Ctrl+Shift+Space / Cmd+Shift+Space).", action));
+    previewWorkspace.previewSectionButton.setButtonText(action);
+    previewWorkspace.previewSectionButton.setToggleState(!previewSectionExpanded, juce::dontSendNotification);
+    previewWorkspace.previewSectionButton.setTooltip(utils::format("{} (Ctrl+Shift+Space / Cmd+Shift+Space).", action));
     if (previewAnimationAttachment.isEmpty()) {
         previewAnimationAttachment = juce::VBlankAttachment(this, [this](double) { updatePreviewAnimation(); });
     }
@@ -62,14 +62,6 @@ void AudioBatchComponent::updatePreviewAnimation()
     repaint();
 }
 
-/// Splits a playback row consistently in both workspace presentations.
-void AudioBatchComponent::layoutPlaybackButtons(juce::Rectangle<int> bounds)
-{
-    startStopButton.setBounds(bounds.removeFromLeft((bounds.getWidth() - layout::sectionSpacing) / 2));
-    bounds.removeFromLeft(layout::sectionSpacing);
-    processButton.setBounds(bounds);
-}
-
 /// Puts the status bar along the full width of the bottom edge,
 /// and allocates one shared workspace height above it so the results table and live preview move together.
 /// Secondary controls appear only in the settled expanded layout.
@@ -82,12 +74,8 @@ void AudioBatchComponent::resized()
 
     const bool compact = !previewSectionExpanded || !previewAnimationAttachment.isEmpty();
     waveformResizeBar.setVisible(!compact);
-    controlsViewport.setVisible(!compact);
-    if (compact) {
-        audioInfo->setCompact(true);
-    }
+    previewWorkspace.setCompact(compact);
 
-    juce::Rectangle<int> previewBounds;
     if (compact) {
         const auto maximumExpandedHeight = juce::jmax(
             static_cast<int>(layout::previewMinimumHeight),
@@ -115,7 +103,7 @@ void AudioBatchComponent::resized()
             juce::jmax(layout::compactPreview::height, bounds.getHeight()),
             juce::roundToInt(startHeight + (targetHeight - startHeight) * easedProgress)
         );
-        previewBounds = bounds.removeFromBottom(currentPreviewHeight);
+        previewWorkspace.setBounds(bounds.removeFromBottom(currentPreviewHeight));
         bounds.removeFromBottom(static_cast<int>(layout::resizeBarHeight));
         resultsTable.setBounds(bounds);
     } else {
@@ -131,75 +119,13 @@ void AudioBatchComponent::resized()
             );
             restoreExpandedLayout = false;
         }
-        std::array<juce::Component*, 3> verticalSections {&resultsTable, &waveformResizeBar, thumbnail.get()};
+        std::array<juce::Component*, 3> verticalSections {&resultsTable, &waveformResizeBar, &previewWorkspace};
         mainVerticalLayout.layOutComponents(
             verticalSections.data(), 3, bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(), true, true
         );
-        previewBounds = thumbnail->getBounds();
-        currentPreviewHeight = previewBounds.getHeight();
+        currentPreviewHeight = previewWorkspace.getHeight();
         expandedPreviewProportion = static_cast<double>(currentPreviewHeight) / workspaceAvailableHeight;
     }
     updateResultsTableColumnWidths();
-
-    auto workspace = previewBounds.reduced(layout::compactPreview::padding);
-    const auto columns = layout::previewColumns(workspace);
-    auto playbackRow = columns.controls.withTrimmedLeft(layout::previewToggle::size + layout::compactPreview::spacing);
-    if (compact) {
-        const auto toggleBounds = workspace.removeFromLeft(layout::previewToggle::size);
-        previewSectionButton.setBounds(
-            toggleBounds.withSizeKeepingCentre(layout::previewToggle::size, layout::previewToggle::size)
-        );
-        workspace.removeFromLeft(layout::compactPreview::spacing);
-        layoutPlaybackButtons(workspace.removeFromLeft(playbackRow.getWidth()));
-        workspace.removeFromLeft(layout::sectionSpacing);
-        const auto metricsWidth = juce::jlimit(
-            layout::compactPreview::metricsMinimumWidth,
-            juce::jmax(
-                layout::compactPreview::metricsMinimumWidth,
-                workspace.getWidth() - layout::compactPreview::minimumWaveformWidth - layout::sectionSpacing
-            ),
-            juce::roundToInt(workspace.getWidth() * layout::compactPreview::metricsWidthProportion)
-        );
-        audioInfo->setBounds(workspace.removeFromLeft(metricsWidth));
-        workspace.removeFromLeft(layout::sectionSpacing);
-        thumbnail->setBounds(workspace);
-        return;
-    }
-
-    audioInfo->setBounds(columns.information);
-    audioInfo->setCompact(false);
-    thumbnail->setBounds(columns.waveform);
-    auto controls
-        = columns.controls.reduced(layout::information::horizontalPadding, layout::information::verticalPadding);
-    previewSectionButton.setBounds(
-        controls.removeFromTop(layout::previewToggle::size).withWidth(layout::previewToggle::size)
-    );
-    controls.removeFromTop(layout::previewToggle::expandedSpacing);
-    layoutPlaybackButtons(playbackRow.removeFromBottom(layout::processButtonHeight));
-    controls.setBottom(playbackRow.getBottom() - layout::controlsSectionSpacing);
-    controlsViewport.setBounds(controls);
-    controlsContent.setSize(
-        juce::jmax(0, controls.getWidth() - layout::scrollBarThickness),
-        juce::jmax(controls.getHeight(), layout::controlsContentHeight)
-    );
-    auto content = controlsContent.getLocalBounds();
-    zoomLabel.setBounds(content.removeFromTop(layout::sliderRowHeight));
-    zoomSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
-    content.removeFromTop(layout::controlsSectionSpacing);
-    gainLabel.setBounds(content.removeFromTop(layout::sliderRowHeight));
-    gainSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
-    content.removeFromTop(layout::controlsSectionSpacing);
-    auto normalizeRow = content.removeFromTop(layout::normalizeToggleHeight);
-    normalizeBeforePluginToggle.setBounds(
-        normalizeRow.removeFromLeft((normalizeRow.getWidth() - layout::sectionSpacing) / 2)
-    );
-    normalizeRow.removeFromLeft(layout::sectionSpacing);
-    forceOverwriteToggle.setBounds(normalizeRow);
-    content.removeFromTop(layout::normalizeTargetSpacing);
-    normalizationTargetControl.setBounds(content.removeFromTop(layout::controlButtonHeight));
-    content.removeFromTop(layout::controlsSectionSpacing);
-    pluginButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
-    content.removeFromTop(layout::controlsSectionSpacing);
-    settingsButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
 }
 }  // namespace audiobatch
