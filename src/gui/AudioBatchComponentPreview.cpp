@@ -195,10 +195,9 @@ void AudioBatchComponent::showAudioResource(juce::URL resource)
         startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green());
         zoomSlider.setValue(100.0, juce::dontSendNotification);
 
-        juce::MemoryBlock waveformData;
-        if (currentAudioFile.existsAsFile() && analysisCache.getWaveformData(currentAudioFile, waveformData)
-            && thumbnail->loadFromCacheData(waveformData))
-        {
+        const auto waveformData
+            = currentAudioFile.existsAsFile() ? analysisCache.getWaveformData(currentAudioFile) : std::nullopt;
+        if (waveformData.has_value() && thumbnail->loadFromCacheData(*waveformData)) {
             currentWaveformLoadedFromCache = true;
         } else {
             thumbnail->setURL(currentAudioUrl);
@@ -394,8 +393,9 @@ void AudioBatchComponent::applyCustomGainToSelection(const float gainDb, const b
     }
 
     // The slider calls this on every step of a drag, so all selected files are stored in one transaction.
+    // The cache logs its own failures, and the table keeps the gains either way.
     if (!changedGains.empty()) {
-        analysisCache.storeCustomGains(changedGains);
+        static_cast<void>(analysisCache.storeCustomGains(changedGains));
         resultsTable.repaint();
         updateThumbnailDisplayGain();
         updatePreviewInputGain();

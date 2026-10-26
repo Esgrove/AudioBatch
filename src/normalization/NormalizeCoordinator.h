@@ -41,7 +41,7 @@ public:
     NormalizeCoordinator(NormalizeCoordinator&&) = delete;
     NormalizeCoordinator& operator=(NormalizeCoordinator&&) = delete;
 
-    int start(const std::vector<AudioAnalysisRecord>& records, const AudioNormalizationOptions& options);
+    [[nodiscard]] int start(const std::vector<AudioAnalysisRecord>& records, const AudioNormalizationOptions& options);
 
     void cancelAndWait();
     void setCompletionCallback(CompletionCallback callback);

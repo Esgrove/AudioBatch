@@ -197,8 +197,8 @@ void AnalysisCoordinator::planRun(const AudioAnalysisOptions& options, const int
             return;
         }
 
-        if (AudioAnalysisRecord cachedRecord; !options.refresh && cache.getAnalysis(file, cachedRecord)) {
-            cachedRecords.push_back(std::move(cachedRecord));
+        if (auto cachedRecord = options.refresh ? std::nullopt : cache.getAnalysis(file)) {
+            cachedRecords.push_back(std::move(*cachedRecord));
         } else {
             plan.staleFiles.add(file);
         }
@@ -266,13 +266,13 @@ void AnalysisCoordinator::analyzeStaleFile(
 
     if (cacheResult) {
         // A refresh re-analyzes unchanged files too, and those keep the custom gain the user set for them.
-        if (float customGainDb = 0.0f; cache.getCustomGain(file, result.fileSize, result.modifiedTimeMs, customGainDb))
-        {
-            result.customGainDb = customGainDb;
+        if (const auto customGainDb = cache.getCustomGain(file, result.fileSize, result.modifiedTimeMs)) {
+            result.customGainDb = *customGainDb;
             result.hasCustomGain = true;
         }
 
-        cache.storeAnalysis(result);
+        // The cache logs its own failures, and the result is still published, so the next run only reads it again.
+        static_cast<void>(cache.storeAnalysis(result));
     }
 
     publishResult(result, runId);
@@ -323,7 +323,8 @@ std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(const Audi
 
     setCompletionCallback([&finishedEvent](int /*totalFiles*/, int /*runId*/) { finishedEvent.signal(); });
 
-    start(options);
+    // The completion callback above stays in place for the whole run, so the run id is not needed.
+    static_cast<void>(start(options));
     finishedEvent.wait(-1);
 
     // The callbacks refer to this function's locals, so they must not outlive it.

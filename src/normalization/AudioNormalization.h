@@ -10,7 +10,7 @@
 #include "utils/ThreadUtils.h"
 
 #include <cstdint>
-#include <optional>
+#include <expected>
 #include <vector>
 
 namespace audiobatch
@@ -113,10 +113,9 @@ juce::String getFormatSupportSummary();
 juce::String getNormalizationSupportMessage(const juce::File& file);
 juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord>& records);
 
-std::optional<float> getNormalizationGain(
+[[nodiscard]] std::expected<float, juce::String> getNormalizationGain(
     const AudioAnalysisRecord& record,
-    const AudioNormalizationOptions& options,
-    juce::String& errorMessage
+    const AudioNormalizationOptions& options
 );
 
 bool canNormalizeFile(const juce::File& file);

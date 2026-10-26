@@ -153,8 +153,9 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
 
         // A converted original was moved to the trash, so its cached row is no longer needed,
         // even when the re-analysis of the committed output failed.
+        // The cache logs its own failures, and a stale row only costs another read later.
         if (normalization.committed && normalization.analysisRecord.fullPath != result.fullPath) {
-            cache.removeAnalysis(result.file);
+            static_cast<void>(cache.removeAnalysis(result.file));
         }
 
         if (normalization.hasError()) {
@@ -169,7 +170,7 @@ int cli::runAnalysis(const AudioAnalysisCliOptions& options)
             continue;
         }
 
-        cache.storeAnalysis(normalization.analysisRecord);
+        static_cast<void>(cache.storeAnalysis(normalization.analysisRecord));
 
         normalizedResults.push_back(normalization.analysisRecord);
     }

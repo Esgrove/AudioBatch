@@ -43,8 +43,8 @@ AudioNormalizationResult failNormalization(const juce::File& file, const juce::S
 /// Moves the finished output into place, disposing of the files it replaces through options.disposeFile.
 /// Normalizing again cannot restore the original exactly, because the output is quantized again,
 /// so an original rewritten in place keeps a copy in the trash like a converted original does.
-/// Returns an empty string on success, or the user-facing error.
-juce::String commitNormalizedOutput(
+/// Returns the user-facing error on failure.
+std::expected<void, juce::String> commitNormalizedOutput(
     const juce::TemporaryFile& temporaryFile,
     const juce::File& file,
     const juce::File& outputFile,
@@ -52,7 +52,7 @@ juce::String commitNormalizedOutput(
 )
 {
     if (outputFile == file && !utils::disposeOfCopy(file, options.disposeFile)) {
-        return "Could not move a copy of the original file to the system trash";
+        return std::unexpected(juce::String("Could not move a copy of the original file to the system trash"));
     }
 
     return utils::commitTemporaryOutput(
@@ -103,18 +103,16 @@ int resolvePreferredOutputBitDepth(
 }
 
 /// Streams the source through the writer block by block, applying the normalization gain.
-/// Read failures follow the shared DecodeFailureTracker rules,
-/// and `decodeNotice` receives the tracker's notice about tolerated failures.
-/// Returns an empty string on success, or a user-facing error message,
-/// including when cancellation is requested between blocks.
+/// Read failures follow the shared DecodeFailureTracker rules.
+/// Returns the tracker's notice about tolerated failures, which is empty when there were none,
+/// or a user-facing error message, including when cancellation is requested between blocks.
 /// The written fraction of the file is reported to onProgress after each block.
-juce::String renderNormalizedAudio(
+std::expected<juce::String, juce::String> renderNormalizedAudio(
     juce::AudioFormatReader& reader,
     juce::AudioFormatWriter& writer,
     const float gain,
     const utils::CancellationCheck& isCancelled,
-    const utils::ProgressCallback& onProgress,
-    juce::String& decodeNotice
+    const utils::ProgressCallback& onProgress
 )
 {
     juce::AudioBuffer<float> buffer(static_cast<int>(reader.numChannels), normalizationBlockSize);
@@ -130,7 +128,7 @@ juce::String renderNormalizedAudio(
          samplePosition += normalizationBlockSize)
     {
         if (utils::isCancellationRequested(isCancelled)) {
-            return cancelledMessage;
+            return std::unexpected(juce::String(cancelledMessage));
         }
 
         const auto samplesThisBlock = static_cast<int>(
@@ -151,13 +149,13 @@ juce::String renderNormalizedAudio(
         );
 
         if (!failureTracker.recordBlock(readSucceeded, samplePosition, samplesThisBlock)) {
-            return failureTracker.getErrorMessage();
+            return std::unexpected(failureTracker.getErrorMessage());
         }
 
         buffer.applyGain(gain);
 
         if (!writer.writeFromAudioSampleBuffer(buffer, 0, samplesThisBlock)) {
-            return "Failed while writing normalized audio data";
+            return std::unexpected(juce::String("Failed while writing normalized audio data"));
         }
 
         utils::reportProgress(
@@ -165,8 +163,7 @@ juce::String renderNormalizedAudio(
         );
     }
 
-    decodeNotice = failureTracker.getNotice();
-    return {};
+    return failureTracker.getNotice();
 }
 }  // namespace
 
@@ -218,20 +215,18 @@ juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord
 }
 
 /// Returns the linear gain that brings the analyzed file to the target in the options,
-/// or an empty optional with errorMessage set when the file has no measurable level for that mode.
+/// or the user-facing reason when the file has no measurable level for that mode.
 /// A gain above AudioNormalizationOptions::maximumGainDb, or one that is not finite, is refused instead of capped,
 /// since a capped gain would leave the file short of the target without telling the caller.
-std::optional<float> getNormalizationGain(
+std::expected<float, juce::String> getNormalizationGain(
     const AudioAnalysisRecord& record,
-    const AudioNormalizationOptions& options,
-    juce::String& errorMessage
+    const AudioNormalizationOptions& options
 )
 {
     const auto peak = static_cast<double>(utils::peakMagnitude(record.overallPeak));
 
     if (!std::isfinite(peak) || peak <= 0.0) {
-        errorMessage = "File contains no signal that can be normalized";
-        return std::nullopt;
+        return std::unexpected(juce::String("File contains no signal that can be normalized"));
     }
 
     // Decibels::gainToDecibels clamps at -100 dB by default, which would hide how quiet a nearly silent file is.
@@ -242,8 +237,7 @@ std::optional<float> getNormalizationGain(
         gainDecibels = options.targetPeakDbfs - juce::Decibels::gainToDecibels(peak, decibelFloor);
     } else {
         if (record.integratedLufs <= AudioAnalysisRecord::negativeInfinityLoudness) {
-            errorMessage = "File has no measurable loudness to normalize";
-            return std::nullopt;
+            return std::unexpected(juce::String("File has no measurable loudness to normalize"));
         }
 
         gainDecibels = options.targetLufs - record.integratedLufs;
@@ -257,10 +251,11 @@ std::optional<float> getNormalizationGain(
     }
 
     if (!std::isfinite(gainDecibels) || gainDecibels > AudioNormalizationOptions::maximumGainDb) {
-        errorMessage = utils::format(
-            "Reaching the target would need more than {:.0f} dB of gain", AudioNormalizationOptions::maximumGainDb
+        return std::unexpected(
+            utils::format(
+                "Reaching the target would need more than {:.0f} dB of gain", AudioNormalizationOptions::maximumGainDb
+            )
         );
-        return std::nullopt;
     }
 
     return static_cast<float>(juce::Decibels::decibelsToGain(gainDecibels, decibelFloor));
@@ -310,10 +305,8 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, "File does not exist");
     }
 
-    if (const auto outputError = utils::checkOutputPath(file, outputFile, options.overwriteExisting);
-        outputError.isNotEmpty())
-    {
-        return failNormalization(file, outputError);
+    if (const auto outputCheck = utils::checkOutputPath(file, outputFile, options.overwriteExisting); !outputCheck) {
+        return failNormalization(file, outputCheck.error());
     }
 
     if (!sourceRecord.isReady()) {
@@ -344,11 +337,10 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, "Unsupported or unreadable audio file");
     }
 
-    juce::String gainError;
-    const auto normalizationGain = getNormalizationGain(record, options, gainError);
+    const auto normalizationGain = getNormalizationGain(record, options);
 
-    if (!normalizationGain.has_value()) {
-        return failNormalization(file, gainError);
+    if (!normalizationGain) {
+        return failNormalization(file, normalizationGain.error());
     }
 
     const auto gain = *normalizationGain;
@@ -403,19 +395,16 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, getNormalizationSupportMessage(file));
     }
 
-    juce::String decodeNotice;
+    auto decodeNotice = renderNormalizedAudio(
+        *reader,
+        *writer,
+        gain,
+        isCancelled,
+        utils::makeProgressRange(onProgress, renderProgressStart, renderProgressEnd)
+    );
 
-    if (const auto renderError = renderNormalizedAudio(
-            *reader,
-            *writer,
-            gain,
-            isCancelled,
-            utils::makeProgressRange(onProgress, renderProgressStart, renderProgressEnd),
-            decodeNotice
-        );
-        renderError.isNotEmpty())
-    {
-        return failNormalization(file, renderError);
+    if (!decodeNotice) {
+        return failNormalization(file, decodeNotice.error());
     }
 
     writer.reset();
@@ -424,21 +413,19 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, "Could not preserve metadata while writing normalized audio");
     }
 
-    if (const auto validationError = utils::validateWrittenAudio(
+    if (const auto validation = utils::validateWrittenAudio(
             formatManager,
             temporaryFile.getFile(),
             static_cast<int>(reader->numChannels),
             reader->sampleRate,
             reader->lengthInSamples
         );
-        validationError.isNotEmpty())
+        !validation)
     {
         return failNormalization(
             file,
             utils::format(
-                "Normalized output failed validation: {}. The "
-                "original file was left unchanged.",
-                validationError
+                "Normalized output failed validation: {}. The original file was left unchanged.", validation.error()
             )
         );
     }
@@ -450,10 +437,8 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, cancelledMessage);
     }
 
-    if (const auto commitError = commitNormalizedOutput(temporaryFile, file, outputFile, options);
-        commitError.isNotEmpty())
-    {
-        return failNormalization(file, commitError);
+    if (const auto commit = commitNormalizedOutput(temporaryFile, file, outputFile, options); !commit) {
+        return failNormalization(file, commit.error());
     }
 
     AudioNormalizationResult result;
@@ -461,7 +446,7 @@ AudioNormalizationResult normalizeFile(
     result.fileName = file.getFileName();
     result.fullPath = file.getFullPathName();
     result.committed = true;
-    result.notice = std::move(decodeNotice);
+    result.notice = std::move(*decodeNotice);
     result.analysisRecord = analyzeFile(outputFile, {}, utils::makeProgressRange(onProgress, renderProgressEnd, 1.0f));
     result.succeeded = !result.analysisRecord.hasError();
 

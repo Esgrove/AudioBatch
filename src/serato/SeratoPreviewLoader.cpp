@@ -201,8 +201,9 @@ ReadOutcome SeratoPreviewLoader::readMisses(
         if (results[index]) {
             continue;
         }
+        // A tag the cache could not store is only read from the file again next time.
         if (result.status != ReadStatus::ioError) {
-            cache.storeSeratoTag(active.identity, result);
+            static_cast<void>(cache.storeSeratoTag(active.identity, result));
         }
         results[index] = std::move(result);
     }

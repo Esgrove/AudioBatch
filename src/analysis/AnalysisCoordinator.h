@@ -60,7 +60,7 @@ public:
 
     std::vector<AudioAnalysisRecord> analyzeBlocking(const AudioAnalysisOptions& options);
 
-    int start(const AudioAnalysisOptions& options);
+    [[nodiscard]] int start(const AudioAnalysisOptions& options);
 
     void cancel();
     void cancelAndWait();

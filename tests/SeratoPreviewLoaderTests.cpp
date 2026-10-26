@@ -435,8 +435,7 @@ private:
                 const auto cached = cache.getSeratoTag(FileIdentity(file), kind);
                 expect(cached && cached->kind == kind && cached->status == status);
             }
-            AudioAnalysisRecord record;
-            expect(!cache.getAnalysis(file, record));
+            expect(!cache.getAnalysis(file).has_value());
         }
     }
 

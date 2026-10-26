@@ -6,7 +6,10 @@
 #include "utils/version.h"
 
 #include <algorithm>
+#include <expected>
 #include <map>
+#include <optional>
+#include <utility>
 
 namespace audiobatch
 {
@@ -60,11 +63,11 @@ static std::optional<juce::String> removeOptionWithValue(juce::ArgumentList& arg
 }
 
 /// Returns an error message for the first argument that combines several short options, such as "-rf",
-/// or that is a negative number no option took as its value, such as "-12", or an empty string when there is none.
+/// or that is a negative number no option took as its value, such as "-12".
 /// juce::ArgumentList matches a short option by searching for its letter anywhere in the argument,
 /// and removes the whole argument on the first match, so "-rf" would silently set only one of the flags.
 /// It also converts the option letter to a number string first, so "-12" would match "-r" and several other flags.
-static juce::String findShortOptionError(const juce::ArgumentList& arguments)
+static std::expected<void, juce::String> checkShortOptions(const juce::ArgumentList& arguments)
 {
     for (const auto& argument : arguments.arguments) {
         if (!argument.isShortOption()) {
@@ -72,14 +75,18 @@ static juce::String findShortOptionError(const juce::ArgumentList& arguments)
         }
 
         if (isNumericArgument(argument.text)) {
-            return utils::format(
-                "Unexpected number {}. Pass a negative value right after the option that takes it.", argument.text
+            return std::unexpected(
+                utils::format(
+                    "Unexpected number {}. Pass a negative value right after the option that takes it.", argument.text
+                )
             );
         }
 
         if (argument.text.length() > 2) {
-            return utils::format(
-                "Combined short options are not supported: {}. Pass each option separately.", argument.text
+            return std::unexpected(
+                utils::format(
+                    "Combined short options are not supported: {}. Pass each option separately.", argument.text
+                )
             );
         }
     }
@@ -133,99 +140,111 @@ static std::optional<AudioAnalysisOutputFormat> parseOutputFormat(const juce::St
     return std::nullopt;
 }
 
-/// Parses a target level in the given range for --peak or --lufs into the normalization options.
-/// Returns an error message, or an empty string when the value is valid.
-static juce::String parseTargetLevel(
+/// Parses a target level in the given range for --peak or --lufs.
+/// Returns the level, or an error message when the value is not a number in the range.
+static std::expected<double, juce::String> parseTargetLevel(
     const juce::String& option,
     const juce::String& value,
     const double minimum,
-    const double maximum,
-    double& target
+    const double maximum
 )
 {
     const auto trimmedValue = value.trim();
 
     if (!isNumericArgument(trimmedValue)) {
-        return utils::format("{} needs a number, for example {} {}", option, option, minimum);
+        return std::unexpected(utils::format("{} needs a number, for example {} {}", option, option, minimum));
     }
 
-    target = trimmedValue.getDoubleValue();
+    const auto target = trimmedValue.getDoubleValue();
 
     if (target < minimum || target > maximum) {
-        return utils::format("{} must be between {} and {}", option, minimum, maximum);
+        return std::unexpected(utils::format("{} must be between {} and {}", option, minimum, maximum));
     }
 
-    return {};
+    return target;
 }
 
 /// Removes --peak and --lufs from the arguments and sets the normalization mode and target.
-/// Returns an error message, or an empty string when the options are valid or absent.
-static juce::String parseNormalizationTarget(juce::ArgumentList& arguments, AudioAnalysisCliOptions& options)
+/// Returns an error message when the options are invalid. Absent options leave the defaults in place.
+static std::expected<void, juce::String> parseNormalizationTarget(
+    juce::ArgumentList& arguments,
+    AudioAnalysisCliOptions& options
+)
 {
     const auto peakValue = removeOptionWithValue(arguments, "--peak");
     const auto loudnessValue = removeOptionWithValue(arguments, "--lufs");
 
     if (peakValue.has_value() && loudnessValue.has_value()) {
-        return "--peak and --lufs cannot be used together";
+        return std::unexpected(juce::String("--peak and --lufs cannot be used together"));
     }
 
     if (peakValue.has_value()) {
-        options.hasNormalizationTarget = true;
-        options.normalization.mode = AudioNormalizationMode::peak;
-        return parseTargetLevel(
+        const auto target = parseTargetLevel(
             "--peak",
             *peakValue,
             AudioNormalizationOptions::minimumTargetPeakDbfs,
-            AudioNormalizationOptions::maximumTargetPeakDbfs,
-            options.normalization.targetPeakDbfs
+            AudioNormalizationOptions::maximumTargetPeakDbfs
         );
+
+        if (!target) {
+            return std::unexpected(target.error());
+        }
+
+        options.hasNormalizationTarget = true;
+        options.normalization.mode = AudioNormalizationMode::peak;
+        options.normalization.targetPeakDbfs = *target;
     }
 
     if (loudnessValue.has_value()) {
-        options.hasNormalizationTarget = true;
-        options.normalization.mode = AudioNormalizationMode::loudness;
-        return parseTargetLevel(
+        const auto target = parseTargetLevel(
             "--lufs",
             *loudnessValue,
             AudioNormalizationOptions::minimumTargetLufs,
-            AudioNormalizationOptions::maximumTargetLufs,
-            options.normalization.targetLufs
+            AudioNormalizationOptions::maximumTargetLufs
         );
+
+        if (!target) {
+            return std::unexpected(target.error());
+        }
+
+        options.hasNormalizationTarget = true;
+        options.normalization.mode = AudioNormalizationMode::loudness;
+        options.normalization.targetLufs = *target;
     }
 
     return {};
 }
 
-/// Returns an error message for options that cannot be used together, or an empty string when they can.
+/// Returns an error message for options that cannot be used together.
 /// The plugin listing takes no input paths and no analysis options,
 /// its grouping and rescan options need --list-plugins, and --force, --peak, and --lufs need --normalize.
-static juce::String validateOptionCombinations(
+static std::expected<void, juce::String> checkOptionCombinations(
     const AudioAnalysisCliOptions& options,
     const bool hasGrouping,
     const bool hasAnalysisValueOption
 )
 {
     if ((hasGrouping || options.rescanPlugins) && !options.listPlugins) {
-        return "--group-by and --rescan can only be used with --list-plugins";
+        return std::unexpected(juce::String("--group-by and --rescan can only be used with --list-plugins"));
     }
 
     if (options.listPlugins && !options.inputPaths.isEmpty()) {
-        return "--list-plugins does not take input paths";
+        return std::unexpected(juce::String("--list-plugins does not take input paths"));
     }
 
     const bool hasAnalysisOption = hasAnalysisValueOption || options.recursive || options.refresh || options.normalize
         || options.force || options.reverse || options.hasNormalizationTarget;
 
     if (options.listPlugins && hasAnalysisOption) {
-        return "--list-plugins cannot be combined with analysis options";
+        return std::unexpected(juce::String("--list-plugins cannot be combined with analysis options"));
     }
 
     if (options.force && !options.normalize) {
-        return "--force can only be used with --normalize";
+        return std::unexpected(juce::String("--force can only be used with --normalize"));
     }
 
     if (options.hasNormalizationTarget && !options.normalize) {
-        return "--peak and --lufs can only be used with --normalize";
+        return std::unexpected(juce::String("--peak and --lufs can only be used with --normalize"));
     }
 
     return {};
@@ -327,15 +346,15 @@ juce::String cli::joinArguments(const juce::ArgumentList& arguments)
     return texts.joinIntoString(" ");
 }
 
-/// Parses command-line arguments into a validated options object.
+/// Parses command-line arguments into a validated options object, or returns the error to show the user.
 /// The help and version flags are handled by the caller before parsing.
-std::optional<AudioAnalysisCliOptions> cli::parseArguments(juce::ArgumentList arguments, juce::String& errorMessage)
+std::expected<AudioAnalysisCliOptions, juce::String> cli::parseArguments(juce::ArgumentList arguments)
 {
     AudioAnalysisCliOptions options;
     attachNegativeOptionValues(arguments);
 
-    if (errorMessage = findShortOptionError(arguments); errorMessage.isNotEmpty()) {
-        return std::nullopt;
+    if (auto shortOptions = checkShortOptions(arguments); !shortOptions) {
+        return std::unexpected(std::move(shortOptions).error());
     }
 
     options.recursive = arguments.removeOptionIfFound("--recurse|-r");
@@ -353,21 +372,18 @@ std::optional<AudioAnalysisCliOptions> cli::parseArguments(juce::ArgumentList ar
         const auto workerCountText = workerCountValue->trim();
 
         if (workerCountText.isEmpty() || !workerCountText.containsOnly("0123456789")) {
-            errorMessage = "Worker count must be a whole number greater than zero";
-            return std::nullopt;
+            return std::unexpected(juce::String("Worker count must be a whole number greater than zero"));
         }
 
         // Parsed as a 64-bit value, so a very long number cannot overflow into a small one.
         const auto workerCount = workerCountText.getLargeIntValue();
 
         if (workerCount <= 0) {
-            errorMessage = "Worker count must be greater than zero";
-            return std::nullopt;
+            return std::unexpected(juce::String("Worker count must be greater than zero"));
         }
 
         if (workerCount > maximumWorkerCount || workerCountText.length() > maximumWorkerCountDigits) {
-            errorMessage = utils::format("Worker count must be at most {}", maximumWorkerCount);
-            return std::nullopt;
+            return std::unexpected(utils::format("Worker count must be at most {}", maximumWorkerCount));
         }
 
         options.workerCount = static_cast<int>(workerCount);
@@ -378,15 +394,14 @@ std::optional<AudioAnalysisCliOptions> cli::parseArguments(juce::ArgumentList ar
         const auto sortMode = parseSortMode(*sortValue);
 
         if (!sortMode.has_value()) {
-            errorMessage = "Sort mode must be one of: peak, lufs, name, path";
-            return std::nullopt;
+            return std::unexpected(juce::String("Sort mode must be one of: peak, lufs, name, path"));
         }
 
         options.sortMode = *sortMode;
     }
 
-    if (errorMessage = parseNormalizationTarget(arguments, options); errorMessage.isNotEmpty()) {
-        return std::nullopt;
+    if (auto target = parseNormalizationTarget(arguments, options); !target) {
+        return std::unexpected(std::move(target).error());
     }
 
     const auto outputValue = removeOptionWithValue(arguments, "--output|-o");
@@ -394,8 +409,7 @@ std::optional<AudioAnalysisCliOptions> cli::parseArguments(juce::ArgumentList ar
         const auto outputFormat = parseOutputFormat(*outputValue);
 
         if (!outputFormat.has_value()) {
-            errorMessage = "Output format must be one of: table, csv, json";
-            return std::nullopt;
+            return std::unexpected(juce::String("Output format must be one of: table, csv, json"));
         }
 
         options.outputFormat = *outputFormat;
@@ -406,8 +420,7 @@ std::optional<AudioAnalysisCliOptions> cli::parseArguments(juce::ArgumentList ar
         const auto grouping = cli::parsePluginGrouping(*groupingValue);
 
         if (!grouping.has_value()) {
-            errorMessage = "Plugin grouping must be one of: name, manufacturer, type, format";
-            return std::nullopt;
+            return std::unexpected(juce::String("Plugin grouping must be one of: name, manufacturer, type, format"));
         }
 
         options.pluginGrouping = *grouping;
@@ -415,8 +428,7 @@ std::optional<AudioAnalysisCliOptions> cli::parseArguments(juce::ArgumentList ar
 
     for (const auto& argument : arguments.arguments) {
         if (argument.isOption()) {
-            errorMessage = utils::format("Unknown option: {}", argument.text);
-            return std::nullopt;
+            return std::unexpected(utils::format("Unknown option: {}", argument.text));
         }
 
         options.inputPaths.add(argument.resolveAsFile());
@@ -425,10 +437,10 @@ std::optional<AudioAnalysisCliOptions> cli::parseArguments(juce::ArgumentList ar
     const bool hasAnalysisValueOption
         = workerCountValue.has_value() || sortValue.has_value() || outputValue.has_value();
 
-    if (errorMessage = validateOptionCombinations(options, groupingValue.has_value(), hasAnalysisValueOption);
-        errorMessage.isNotEmpty())
+    if (auto combinations = checkOptionCombinations(options, groupingValue.has_value(), hasAnalysisValueOption);
+        !combinations)
     {
-        return std::nullopt;
+        return std::unexpected(std::move(combinations).error());
     }
 
     return options;

@@ -59,18 +59,23 @@ public:
 
     [[nodiscard]] juce::File getDatabaseFile() const;
 
-    int pruneMissingFiles(const std::function<bool()>& shouldStop = {});
-    int storeCustomGains(const std::vector<CustomGainUpdate>& updates);
+    [[nodiscard]] std::optional<AudioAnalysisRecord> getAnalysis(const juce::File& file);
+    [[nodiscard]] std::optional<float> getCustomGain(
+        const juce::File& file,
+        std::int64_t fileSize,
+        std::int64_t modifiedTimeMs
+    );
+    [[nodiscard]] std::optional<juce::MemoryBlock> getWaveformData(const juce::File& file);
 
-    bool getAnalysis(const juce::File& file, AudioAnalysisRecord& record);
-    bool getCustomGain(const juce::File& file, std::int64_t fileSize, std::int64_t modifiedTimeMs, float& customGainDb);
-    bool getWaveformData(const juce::File& file, juce::MemoryBlock& waveformData);
-    bool open();
-    bool removeAnalysis(const juce::File& file);
-    bool storeAnalysis(const AudioAnalysisRecord& record);
-    bool storeCustomGain(const juce::File& file, float customGainDb, bool hasCustomGain);
-    bool storeSeratoTag(const FileIdentity& identity, const serato::TagReadResult& result);
-    bool storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData);
+    int pruneMissingFiles(const std::function<bool()>& shouldStop = {});
+    [[nodiscard]] int storeCustomGains(const std::vector<CustomGainUpdate>& updates);
+
+    [[nodiscard]] bool open();
+    [[nodiscard]] bool removeAnalysis(const juce::File& file);
+    [[nodiscard]] bool storeAnalysis(const AudioAnalysisRecord& record);
+    [[nodiscard]] bool storeCustomGain(const juce::File& file, float customGainDb, bool hasCustomGain);
+    [[nodiscard]] bool storeSeratoTag(const FileIdentity& identity, const serato::TagReadResult& result);
+    [[nodiscard]] bool storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData);
 
 private:
     [[nodiscard]] bool addMissingColumns() const;

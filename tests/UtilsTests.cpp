@@ -141,14 +141,18 @@ public:
             expect(reader != nullptr);
             const auto length = reader->lengthInSamples;
 
-            expectEquals(utils::validateWrittenAudio(formatManager, fixture, 2, 44100.0, length), juce::String());
-            expect(utils::validateWrittenAudio(formatManager, fixture, 1, 44100.0, length).contains("channels"));
-            expect(utils::validateWrittenAudio(formatManager, fixture, 2, 48000.0, length).contains("sample rate"));
-            expect(utils::validateWrittenAudio(formatManager, fixture, 2, 44100.0, length + 1).contains("samples"));
-            expect(
-                utils::validateWrittenAudio(formatManager, root.getChildFile("missing.aif"), 2, 44100.0, length)
-                    .contains("cannot be read")
-            );
+            const auto validationError =
+                [&formatManager](
+                    const juce::File& file, const int channels, const double sampleRate, const juce::int64 samples
+                ) {
+                    return utils::validateWrittenAudio(formatManager, file, channels, sampleRate, samples).error_or({});
+                };
+
+            expect(utils::validateWrittenAudio(formatManager, fixture, 2, 44100.0, length).has_value());
+            expect(validationError(fixture, 1, 44100.0, length).contains("channels"));
+            expect(validationError(fixture, 2, 48000.0, length).contains("sample rate"));
+            expect(validationError(fixture, 2, 44100.0, length + 1).contains("samples"));
+            expect(validationError(root.getChildFile("missing.aif"), 2, 44100.0, length).contains("cannot be read"));
         }
 
         beginTest("A temporary output replaces its source in place");
@@ -160,7 +164,7 @@ public:
             const juce::TemporaryFile temporaryFile(source);
             expect(temporaryFile.getFile().replaceWithText("new"));
 
-            expectEquals(utils::commitTemporaryOutput(temporaryFile, source, source, false), juce::String());
+            expect(utils::commitTemporaryOutput(temporaryFile, source, source, false).has_value());
             expectEquals(source.loadFileAsString(), juce::String("new"));
         }
 
@@ -175,7 +179,7 @@ public:
             const juce::TemporaryFile temporaryFile(output);
             expect(temporaryFile.getFile().replaceWithText("new"));
 
-            const auto error = utils::commitTemporaryOutput(temporaryFile, source, output, false);
+            const auto error = utils::commitTemporaryOutput(temporaryFile, source, output, false).error_or({});
             expect(error.contains("already exists"), error);
             expectEquals(output.loadFileAsString(), juce::String("unrelated"));
             expectEquals(source.loadFileAsString(), juce::String("source"));
@@ -194,7 +198,7 @@ public:
             const juce::TemporaryFile temporaryFile(output);
             expect(temporaryFile.getFile().replaceWithText("new"));
 
-            const auto error = utils::commitTemporaryOutput(temporaryFile, source, output, true);
+            const auto error = utils::commitTemporaryOutput(temporaryFile, source, output, true).error_or({});
             expect(error.contains("not a file"), error);
             expect(keptFile.existsAsFile());
             expectEquals(source.loadFileAsString(), juce::String("source"));
@@ -212,13 +216,13 @@ public:
             expect(temporaryFile.getFile().replaceWithText("new"));
 
             juce::StringArray disposedContents;
-            const auto error
+            const auto commit
                 = utils::commitTemporaryOutput(temporaryFile, source, output, true, [&](const juce::File& file) {
                       disposedContents.add(file.loadFileAsString());
                       return file.deleteFile();
                   });
 
-            expectEquals(error, juce::String());
+            expect(commit.has_value(), commit.error_or({}));
             expectEquals(output.loadFileAsString(), juce::String("new"));
             expect(!source.exists());
             expectEquals(disposedContents.joinIntoString(","), juce::String("source,previous"));
@@ -237,8 +241,8 @@ public:
             expect(temporaryFile.getFile().replaceWithText("new"));
 
             const auto error = utils::commitTemporaryOutput(temporaryFile, source, output, true, [](const juce::File&) {
-                return false;
-            });
+                                   return false;
+                               }).error_or({});
 
             expect(error.contains("original audio file"), error);
             expectEquals(output.loadFileAsString(), juce::String("previous"));

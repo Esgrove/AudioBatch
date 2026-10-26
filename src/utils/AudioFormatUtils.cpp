@@ -89,9 +89,9 @@ std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& fil
 
 /// Reads back a freshly written audio file and checks that it has the expected channel count,
 /// sample rate, and length, which also catches a short write the writer could not report.
-/// Returns an empty string when it matches, or a user-facing description of the problem.
+/// Returns a user-facing description of the problem when it does not match.
 /// The services run this before the source is replaced or moved to the trash.
-juce::String validateWrittenAudio(
+std::expected<void, juce::String> validateWrittenAudio(
     juce::AudioFormatManager& formatManager,
     const juce::File& file,
     const int expectedChannels,
@@ -102,19 +102,25 @@ juce::String validateWrittenAudio(
     const std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(file));
 
     if (reader == nullptr) {
-        return "the output file cannot be read";
+        return std::unexpected(juce::String("the output file cannot be read"));
     }
 
     if (std::cmp_not_equal(reader->numChannels, expectedChannels)) {
-        return format("the output has {} channels instead of {}", reader->numChannels, expectedChannels);
+        return std::unexpected(
+            format("the output has {} channels instead of {}", reader->numChannels, expectedChannels)
+        );
     }
 
     if (!juce::approximatelyEqual(reader->sampleRate, expectedSampleRate)) {
-        return format("the output sample rate is {} Hz instead of {} Hz", reader->sampleRate, expectedSampleRate);
+        return std::unexpected(
+            format("the output sample rate is {} Hz instead of {} Hz", reader->sampleRate, expectedSampleRate)
+        );
     }
 
     if (reader->lengthInSamples != expectedLength) {
-        return format("the output has {} samples instead of {}", reader->lengthInSamples, expectedLength);
+        return std::unexpected(
+            format("the output has {} samples instead of {}", reader->lengthInSamples, expectedLength)
+        );
     }
 
     return {};

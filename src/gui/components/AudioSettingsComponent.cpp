@@ -13,6 +13,7 @@
 #include <cmath>
 #include <locale>
 #include <memory>
+#include <optional>
 #include <sstream>
 #include <utility>
 
@@ -109,13 +110,14 @@ public:
     }
 };
 
-/// Parses the complete saved or edited text, rejecting partially numeric and non-finite values.
-bool readLoudnessLimit(const juce::String& input, double& value)
+/// Parses the complete saved or edited text, or returns an empty optional for partially numeric and non-finite values.
+std::optional<double> readLoudnessLimit(const juce::String& input)
 {
     std::istringstream stream(input.trim().toStdString());
     stream.imbue(std::locale::classic());
+    double value {};
     stream >> std::noskipws >> value;
-    return !stream.fail() && stream.eof() && std::isfinite(value);
+    return !stream.fail() && stream.eof() && std::isfinite(value) ? std::optional {value} : std::nullopt;
 }
 }  // namespace
 
@@ -147,28 +149,22 @@ AudioPreviewPreferences loadAudioPreviewPreferences(const juce::PropertiesFile& 
         .loudnessGraphEnabled = settings.getBoolValue(loudnessGraphKey, false),
     };
     // PropertiesFile's numeric conversion accepts a numeric prefix, so parse the complete saved text.
-    if (!readLoudnessLimit(
-            settings.getValue(
-                loudnessMinimumKey, utils::format("{}", AudioPreviewPreferences::defaultLoudnessGraphMinimum)
-            ),
-            preferences.loudnessGraphMinimum
-        )
-        || !readLoudnessLimit(
-            settings.getValue(
-                loudnessMaximumKey, utils::format("{}", AudioPreviewPreferences::defaultLoudnessGraphMaximum)
-            ),
-            preferences.loudnessGraphMaximum
-        )
-        || !isValidLoudnessGraphRange(preferences.loudnessGraphMinimum, preferences.loudnessGraphMaximum))
-    {
+    const auto minimum = readLoudnessLimit(
+        settings.getValue(loudnessMinimumKey, utils::format("{}", AudioPreviewPreferences::defaultLoudnessGraphMinimum))
+    );
+    const auto maximum = readLoudnessLimit(
+        settings.getValue(loudnessMaximumKey, utils::format("{}", AudioPreviewPreferences::defaultLoudnessGraphMaximum))
+    );
+
+    if (minimum.has_value() && maximum.has_value() && isValidLoudnessGraphRange(*minimum, *maximum)) {
+        preferences.loudnessGraphMinimum = *minimum;
+        preferences.loudnessGraphMaximum = *maximum;
+    } else {
         utils::logWarn(
             "Invalid saved loudness graph range, restoring {} to {} LUFS",
             AudioPreviewPreferences::defaultLoudnessGraphMinimum,
             AudioPreviewPreferences::defaultLoudnessGraphMaximum
         );
-        const AudioPreviewPreferences defaults;
-        preferences.loudnessGraphMinimum = defaults.loudnessGraphMinimum;
-        preferences.loudnessGraphMaximum = defaults.loudnessGraphMaximum;
     }
     return preferences;
 }
@@ -328,12 +324,12 @@ void AudioSettingsComponent::setPreferencesChangedCallback(std::function<void(co
 /// Forwards a complete preference snapshot so all other surfaces can update together.
 void AudioSettingsComponent::preferencesChanged()
 {
-    auto minimum = displayedPreferences.loudnessGraphMinimum;
-    auto maximum = displayedPreferences.loudnessGraphMaximum;
+    const auto editedMinimum = readLoudnessLimit(loudnessMinimum.getText());
+    const auto editedMaximum = readLoudnessLimit(loudnessMaximum.getText());
+    auto minimum = editedMinimum.value_or(displayedPreferences.loudnessGraphMinimum);
+    auto maximum = editedMaximum.value_or(displayedPreferences.loudnessGraphMaximum);
     loudnessRangeError.setText({}, juce::dontSendNotification);
-    if (!readLoudnessLimit(loudnessMinimum.getText(), minimum) || !readLoudnessLimit(loudnessMaximum.getText(), maximum)
-        || !isValidLoudnessGraphRange(minimum, maximum))
-    {
+    if (!editedMinimum.has_value() || !editedMaximum.has_value() || !isValidLoudnessGraphRange(minimum, maximum)) {
         minimum = displayedPreferences.loudnessGraphMinimum;
         maximum = displayedPreferences.loudnessGraphMaximum;
         loudnessMinimum.setText(utils::format("{:.0f}", minimum), false);

@@ -290,15 +290,16 @@ bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const serato::T
     return bound && sqlite::stepToCompletion(*statement);
 }
 
-/// Loads a cached analysis record for the given file when present and current.
-bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& record)
+/// Loads the cached analysis record for the given file,
+/// or returns an empty optional when there is none for the file's current size, modification time and version.
+std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& file)
 {
     // The file system is queried before taking the lock, so a slow network share does not block other cache calls.
-    auto fileRecord = AudioAnalysisRecord::fromFile(file);
+    auto record = AudioAnalysisRecord::fromFile(file);
     const juce::ScopedLock lock(mutex);
 
     if (database == nullptr && !openUnlocked()) {
-        return false;
+        return std::nullopt;
     }
 
     constexpr auto sql = R"SQL(
@@ -313,26 +314,25 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
 
     const auto prepared = sqlite::prepare(*database, sql);
     if (prepared == nullptr || !sqlite::bindText(*prepared, 1, normalizedPath(file))) {
-        return false;
+        return std::nullopt;
     }
 
     auto* const statement = prepared.get();
 
     if (const auto stepResult = sqlite3_step(statement); stepResult != SQLITE_ROW) {
-        return false;
+        return std::nullopt;
     }
 
     const auto cachedFileSize = sqlite3_column_int64(statement, analysis_column::fileSize);
     const auto cachedModifiedTime = sqlite3_column_int64(statement, analysis_column::modifiedTimeMs);
     const auto cachedVersion = sqlite3_column_int(statement, analysis_column::analysisVersion);
 
-    if (cachedFileSize != fileRecord.fileSize || cachedModifiedTime != fileRecord.modifiedTimeMs
+    if (cachedFileSize != record.fileSize || cachedModifiedTime != record.modifiedTimeMs
         || cachedVersion != analysisVersion)
     {
-        return false;
+        return std::nullopt;
     }
 
-    record = std::move(fileRecord);
     record.fileName = sqlite::columnText(*statement, analysis_column::fileName);
     record.formatName = sqlite::columnText(*statement, analysis_column::formatName);
     record.lengthInSamples = sqlite3_column_int64(statement, analysis_column::lengthInSamples);
@@ -351,7 +351,7 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
     const auto status = statusFromColumn(sqlite3_column_int(statement, analysis_column::status));
     if (!status.has_value()) {
         utils::logWarn("Invalid cached analysis status for {}, reanalysis required", record.fullPath.quoted());
-        return false;
+        return std::nullopt;
     }
     record.status = *status;
     record.errorMessage = sqlite::columnText(*statement, analysis_column::errorMessage);
@@ -369,7 +369,7 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
             utils::logWarn(
                 "Invalid cached short-term loudness history for {}, reanalysis required", record.fullPath.quoted()
             );
-            return false;
+            return std::nullopt;
         }
     }
     record.fromCache = true;
@@ -378,7 +378,7 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
         record.status = AudioAnalysisStatus::cached;
     }
 
-    return true;
+    return record;
 }
 
 /// Stores the completed analysis record for a file.
@@ -486,18 +486,18 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
 
 /// Loads the custom gain stored for a file when the stored row has the given size and modification time,
 /// so a fresh analysis of an unchanged file keeps the gain the user set.
-/// Returns false when the file has no row, no custom gain, or the row describes another version of the file.
-bool AnalysisCache::getCustomGain(
+/// Returns an empty optional when the file has no row or no custom gain,
+/// or when the row describes another version of the file.
+std::optional<float> AnalysisCache::getCustomGain(
     const juce::File& file,
     const std::int64_t fileSize,
-    const std::int64_t modifiedTimeMs,
-    float& customGainDb
+    const std::int64_t modifiedTimeMs
 )
 {
     const juce::ScopedLock lock(mutex);
 
     if (database == nullptr && !openUnlocked()) {
-        return false;
+        return std::nullopt;
     }
 
     constexpr auto sql = R"SQL(
@@ -507,17 +507,13 @@ bool AnalysisCache::getCustomGain(
 
     const auto statement = sqlite::prepare(*database, sql);
     if (statement == nullptr || !sqlite::bindText(*statement, 1, normalizedPath(file))
-        || !sqlite::bindInt64(*statement, 2, fileSize) || !sqlite::bindInt64(*statement, 3, modifiedTimeMs))
+        || !sqlite::bindInt64(*statement, 2, fileSize) || !sqlite::bindInt64(*statement, 3, modifiedTimeMs)
+        || sqlite3_step(statement.get()) != SQLITE_ROW)
     {
-        return false;
+        return std::nullopt;
     }
 
-    const bool found = sqlite3_step(statement.get()) == SQLITE_ROW;
-    if (found) {
-        customGainDb = static_cast<float>(sqlite3_column_double(statement.get(), 0));
-    }
-
-    return found;
+    return static_cast<float>(sqlite3_column_double(statement.get(), 0));
 }
 
 /// Updates only the user-controlled gain fields for a file.
@@ -726,18 +722,17 @@ bool AnalysisCache::removeRowVersion(
     return bound && sqlite::stepToCompletion(*statement) && sqlite3_changes(database.get()) > 0;
 }
 
-/// Loads cached thumbnail waveform data for the given file when available.
-bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& waveformData)
+/// Loads the cached thumbnail waveform data for the given file,
+/// or returns an empty optional when there is none for the file's current size, modification time and version.
+std::optional<juce::MemoryBlock> AnalysisCache::getWaveformData(const juce::File& file)
 {
     // The file system is queried before taking the lock, so a slow network share does not block other cache calls.
     const auto fileSize = file.getSize();
     const auto modifiedTimeMs = file.getLastModificationTime().toMilliseconds();
     const juce::ScopedLock lock(mutex);
 
-    waveformData.reset();
-
     if (database == nullptr && !openUnlocked()) {
-        return false;
+        return std::nullopt;
     }
 
     constexpr auto sql = R"SQL(
@@ -748,13 +743,13 @@ bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& w
 
     const auto prepared = sqlite::prepare(*database, sql);
     if (prepared == nullptr || !sqlite::bindText(*prepared, 1, normalizedPath(file))) {
-        return false;
+        return std::nullopt;
     }
 
     auto* const statement = prepared.get();
 
     if (sqlite3_step(statement) != SQLITE_ROW) {
-        return false;
+        return std::nullopt;
     }
 
     const auto cachedFileSize = sqlite3_column_int64(statement, 0);
@@ -765,11 +760,11 @@ bool AnalysisCache::getWaveformData(const juce::File& file, juce::MemoryBlock& w
     if (cachedFileSize != fileSize || cachedModifiedTime != modifiedTimeMs || cachedWaveformVersion != waveformVersion
         || cachedAnalysisVersion != analysisVersion)
     {
-        return false;
+        return std::nullopt;
     }
 
-    waveformData = sqlite::columnBlob(*statement, 2);
-    return waveformData.getSize() > 0;
+    auto waveformData = sqlite::columnBlob(*statement, 2);
+    return waveformData.isEmpty() ? std::nullopt : std::optional {std::move(waveformData)};
 }
 
 /// Stores serialized waveform preview data for a file.

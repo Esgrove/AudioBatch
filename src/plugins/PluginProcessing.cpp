@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <expected>
 #include <functional>
 #include <memory>
 #include <span>
@@ -67,6 +68,12 @@ struct RenderSummary {
     juce::String decodeNotice;
 };
 
+/// Outcome of writing the final 16-bit output.
+struct WriteSummary {
+    /// True when the final PCM conversion saturated at least one sample.
+    bool clipped {false};
+};
+
 /// Shorthand for building a failure result, keeping the early-return error paths compact.
 PluginProcessingResult fail(const juce::File& file, const juce::String& message)
 {
@@ -92,26 +99,29 @@ juce::File getProcessingOutputFile(const juce::File& input)
     return getNormalizationOutputFile(input);
 }
 
-/// Returns an error message when the record or the plugin chain cannot be processed,
-/// or an empty string when it can.
-static juce::String validateProcessingInputs(
+/// Returns an error message when the record or the plugin chain cannot be processed.
+static std::expected<void, juce::String> validateProcessingInputs(
     const AudioAnalysisRecord& record,
     const PluginProcessingOptions& options,
     const std::vector<juce::AudioPluginInstance*>& chainInstances
 )
 {
     if (!record.file.existsAsFile()) {
-        return "File does not exist";
+        return std::unexpected(juce::String("File does not exist"));
     }
 
     if (!record.isReady()) {
-        return "File analysis must finish before processing";
+        return std::unexpected(juce::String("File analysis must finish before processing"));
     }
 
     const auto chainAvailable = !chainInstances.empty() && chainInstances.size() == options.plugins.size()
         && std::ranges::none_of(chainInstances, [](const auto* instance) { return instance == nullptr; });
 
-    return chainAvailable ? juce::String() : juce::String("Plugin chain instances are not available");
+    if (!chainAvailable) {
+        return std::unexpected(juce::String("Plugin chain instances are not available"));
+    }
+
+    return {};
 }
 
 /// Returns the linear gain applied before the first plugin.
@@ -125,8 +135,7 @@ static float getInputGain(const AudioAnalysisRecord& record, const PluginProcess
     }
 
     if (options.normalizeBeforePlugin.has_value()) {
-        juce::String unusedError;
-        return getNormalizationGain(record, *options.normalizeBeforePlugin, unusedError).value_or(1.0f);
+        return getNormalizationGain(record, *options.normalizeBeforePlugin).value_or(1.0f);
     }
 
     return 1.0f;
@@ -283,8 +292,8 @@ static void measureOutputBlock(const juce::AudioBuffer<float>& block, const int 
 /// and the first `latencySamples` output samples are discarded, so the processed audio lines up with the input
 /// and its end is not cut off. Read failures follow the shared DecodeFailureTracker rules.
 /// The rendered fraction, including the latency and tail, is reported to onProgress after each block.
-/// Returns an error message, or an empty string when the whole file was written.
-static juce::String renderThroughChain(
+/// Returns the length measurements of the written audio, or an error message.
+static std::expected<RenderSummary, juce::String> renderThroughChain(
     juce::AudioFormatReader& reader,
     juce::AudioFormatWriter& writer,
     const std::vector<juce::AudioPluginInstance*>& chainInstances,
@@ -292,11 +301,11 @@ static juce::String renderThroughChain(
     const int numChannels,
     const float inputGain,
     const utils::CancellationCheck& isCancelled,
-    const utils::ProgressCallback& onProgress,
-    RenderSummary& summary
+    const utils::ProgressCallback& onProgress
 )
 {
     const auto latencySamples = preparation.latencySamples;
+    RenderSummary summary;
 
     juce::AudioBuffer<float> buffer(preparation.processChannelCount, plugin_processing::processingBlockSize);
     juce::AudioBuffer<float> readBuffer(numChannels, plugin_processing::processingBlockSize);
@@ -310,7 +319,7 @@ static juce::String renderThroughChain(
          samplePosition += plugin_processing::processingBlockSize)
     {
         if (utils::isCancellationRequested(isCancelled)) {
-            return cancelledMessage;
+            return std::unexpected(juce::String(cancelledMessage));
         }
 
         const auto samplesThisBlock = static_cast<int>(
@@ -331,7 +340,7 @@ static juce::String renderThroughChain(
             );
 
             if (!failureTracker.recordBlock(readSucceeded, samplePosition, samplesToRead)) {
-                return failureTracker.getErrorMessage();
+                return std::unexpected(failureTracker.getErrorMessage());
             }
         }
 
@@ -351,20 +360,20 @@ static juce::String renderThroughChain(
             = prepareOutputView(buffer, numChannels, signalChannels, firstSampleToWrite, samplesToWrite);
 
         if (!isBlockFinite(writeView, samplesToWrite)) {
-            return "The plugin chain produced invalid samples (infinity or NaN)";
+            return std::unexpected(juce::String("The plugin chain produced invalid samples (infinity or NaN)"));
         }
 
         measureOutputBlock(writeView, samplesToWrite, summary);
 
         if (!writer.writeFromAudioSampleBuffer(writeView, 0, samplesToWrite)) {
-            return "Failed while writing processed audio data";
+            return std::unexpected(juce::String("Failed while writing processed audio data"));
         }
 
         summary.samplesWritten += samplesToWrite;
     }
 
     summary.decodeNotice = failureTracker.getNotice();
-    return {};
+    return summary;
 }
 
 /// Returns the number of samples to keep from the rendered output.
@@ -379,18 +388,17 @@ static juce::int64 getFinalLength(const RenderSummary& summary, const juce::int6
 /// Copies the rendered intermediate audio into the final writer, trimming the trailing silence.
 /// Low bits are discarded without dither and out-of-range samples saturate without changing gain.
 /// Explicit quantization avoids the float writer's full-scale scaling changing exact 16-bit sample values.
-/// Sets outputClipped when a sample is saturated during this final PCM conversion.
 /// The written fraction is reported to onProgress after each block.
-/// Returns an error message, or an empty string when the whole output was written.
-static juce::String writeFinalOutput(
+/// Returns whether a sample was saturated during this final PCM conversion, or an error message.
+static std::expected<WriteSummary, juce::String> writeFinalOutput(
     juce::AudioFormatReader& renderedReader,
     juce::AudioFormatWriter& writer,
     const juce::int64 finalLength,
-    bool& outputClipped,
     const utils::CancellationCheck& isCancelled,
     const utils::ProgressCallback& onProgress
 )
 {
+    WriteSummary summary;
     juce::AudioBuffer<float> block(static_cast<int>(renderedReader.numChannels), finalizeBlockSize);
     juce::AudioBuffer<int> quantizedBlock(block.getNumChannels(), finalizeBlockSize);
     std::vector<const int*> outputChannels(static_cast<std::size_t>(block.getNumChannels()) + 1, nullptr);
@@ -400,14 +408,14 @@ static juce::String writeFinalOutput(
 
     for (juce::int64 samplePosition = 0; samplePosition < finalLength; samplePosition += finalizeBlockSize) {
         if (utils::isCancellationRequested(isCancelled)) {
-            return cancelledMessage;
+            return std::unexpected(juce::String(cancelledMessage));
         }
 
         const auto samplesThisBlock
             = static_cast<int>(juce::jmin<juce::int64>(finalizeBlockSize, finalLength - samplePosition));
 
         if (!renderedReader.read(&block, 0, samplesThisBlock, samplePosition, true, true)) {
-            return "Failed while reading the rendered audio";
+            return std::unexpected(juce::String("Failed while reading the rendered audio"));
         }
 
         for (int channel = 0; channel < block.getNumChannels(); ++channel) {
@@ -421,20 +429,20 @@ static juce::String writeFinalOutput(
                 constexpr float minimumPcmValue {-static_cast<float>(outputPcmScale)};
                 constexpr float maximumPcmValue {static_cast<float>(outputPcmScale - 1)};
                 const auto scaled = input[sample] * static_cast<float>(outputPcmScale);
-                outputClipped = outputClipped || scaled < minimumPcmValue || scaled > maximumPcmValue;
+                summary.clipped = summary.clipped || scaled < minimumPcmValue || scaled > maximumPcmValue;
                 const auto limited = juce::jlimit(minimumPcmValue, maximumPcmValue, scaled);
                 output[sample] = static_cast<int>(std::floor(limited)) * outputPcmAlignment;
             }
         }
 
         if (!writer.write(outputChannels.data(), samplesThisBlock)) {
-            return "Failed while writing processed audio data";
+            return std::unexpected(juce::String("Failed while writing processed audio data"));
         }
 
         utils::reportProgress(onProgress, utils::progressFraction(samplePosition + samplesThisBlock, finalLength));
     }
 
-    return {};
+    return summary;
 }
 
 /// Returns the record unchanged when the file still matches it on disk,
@@ -455,8 +463,8 @@ static AudioAnalysisRecord refreshIfChanged(
 /// and releases the chain again.
 /// Plugin setup and release run on the message thread as VST3 requires, and only processBlock runs on this thread.
 /// The render progress is reported to onProgress.
-/// Returns an error message, or an empty string when the whole file was rendered.
-static juce::String renderChainToFile(
+/// Returns the length measurements of the rendered audio, or an error message.
+static std::expected<RenderSummary, juce::String> renderChainToFile(
     juce::AudioFormatReader& reader,
     const juce::File& intermediateFile,
     const std::vector<juce::AudioPluginInstance*>& chainInstances,
@@ -464,15 +472,14 @@ static juce::String renderChainToFile(
     const int numChannels,
     const float inputGain,
     const utils::CancellationCheck& isCancelled,
-    const utils::ProgressCallback& onProgress,
-    RenderSummary& summary
+    const utils::ProgressCallback& onProgress
 )
 {
     juce::WavAudioFormat wavFormat;
     std::unique_ptr<juce::OutputStream> outputStream(intermediateFile.createOutputStream().release());
 
     if (outputStream == nullptr) {
-        return "Could not create temporary output file";
+        return std::unexpected(juce::String("Could not create temporary output file"));
     }
 
     const auto writerOptions = juce::AudioFormatWriterOptions()
@@ -483,7 +490,7 @@ static juce::String renderChainToFile(
     const auto writer = wavFormat.createWriterFor(outputStream, writerOptions);
 
     if (writer == nullptr) {
-        return "Could not create the temporary render file";
+        return std::unexpected(juce::String("Could not create the temporary render file"));
     }
 
     plugin_processing::ChainPreparation preparation;
@@ -493,38 +500,36 @@ static juce::String renderChainToFile(
     );
 
     if (!prepared || preparation.errorMessage.isNotEmpty()) {
-        return prepared ? preparation.errorMessage : juce::String(cancelledMessage);
+        return std::unexpected(prepared ? preparation.errorMessage : juce::String(cancelledMessage));
     }
 
     if (preparation.latencySamples > 0) {
         utils::logDebug("Compensating {} samples of plugin chain latency", preparation.latencySamples);
     }
 
-    const auto renderError = renderThroughChain(
-        reader, *writer, chainInstances, preparation, numChannels, inputGain, isCancelled, onProgress, summary
+    auto summary = renderThroughChain(
+        reader, *writer, chainInstances, preparation, numChannels, inputGain, isCancelled, onProgress
     );
 
     // Release on every path so a failed file does not leave the chain active for the next one.
     // After cancellation the message thread may be blocked waiting for this worker, so the release is skipped,
     // and the plugin instances release their resources when they are destroyed instead.
-    utils::callOnMessageThread(
+    static_cast<void>(utils::callOnMessageThread(
         [&chainInstances] { plugin_processing::releasePluginResources(chainInstances); }, isCancelled
-    );
+    ));
 
-    return renderError;
+    return summary;
 }
 
 /// Writes the trimmed intermediate audio as 16-bit AIFF without additional gain adjustment or dither.
-/// Sets outputClipped only when the final PCM conversion saturates samples.
 /// The write progress is reported to onProgress.
-/// Returns an error message, or an empty string when the output was written.
-static juce::String writeProcessedAiff(
+/// Returns whether the final PCM conversion saturated samples, or an error message.
+static std::expected<WriteSummary, juce::String> writeProcessedAiff(
     juce::AudioFormat& aiffFormat,
     const juce::File& intermediateFile,
     const juce::File& outputFile,
     const juce::AudioFormatReader& sourceReader,
     const juce::int64 finalLength,
-    bool& outputClipped,
     const utils::CancellationCheck& isCancelled,
     const utils::ProgressCallback& onProgress
 )
@@ -533,7 +538,7 @@ static juce::String writeProcessedAiff(
     auto renderedStream = intermediateFile.createInputStream();
 
     if (renderedStream == nullptr) {
-        return "Could not open the rendered audio";
+        return std::unexpected(juce::String("Could not open the rendered audio"));
     }
 
     const std::unique_ptr<juce::AudioFormatReader> renderedReader(
@@ -541,13 +546,13 @@ static juce::String writeProcessedAiff(
     );
 
     if (renderedReader == nullptr) {
-        return "Could not read the rendered audio";
+        return std::unexpected(juce::String("Could not read the rendered audio"));
     }
 
     std::unique_ptr<juce::OutputStream> outputStream(outputFile.createOutputStream().release());
 
     if (outputStream == nullptr) {
-        return "Could not create temporary output file";
+        return std::unexpected(juce::String("Could not create temporary output file"));
     }
 
     const auto writerOptions = juce::AudioFormatWriterOptions()
@@ -558,10 +563,10 @@ static juce::String writeProcessedAiff(
     const auto writer = aiffFormat.createWriterFor(outputStream, writerOptions);
 
     if (writer == nullptr) {
-        return "Could not create AIFF writer for output";
+        return std::unexpected(juce::String("Could not create AIFF writer for output"));
     }
 
-    return writeFinalOutput(*renderedReader, *writer, finalLength, outputClipped, isCancelled, onProgress);
+    return writeFinalOutput(*renderedReader, *writer, finalLength, isCancelled, onProgress);
 }
 
 /// Processes a single file through the given plugin instances in order.
@@ -601,10 +606,8 @@ PluginProcessingResult processFileWithPlugins(
     const auto startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     const auto& file = sourceRecord.file;
 
-    if (const auto inputError = validateProcessingInputs(sourceRecord, options, chainInstances);
-        inputError.isNotEmpty())
-    {
-        return fail(file, inputError);
+    if (const auto inputs = validateProcessingInputs(sourceRecord, options, chainInstances); !inputs) {
+        return fail(file, inputs.error());
     }
 
     const auto renderProgressStart = sourceRecord.matchesFileOnDisk() ? 0.0f : sourceAnalysisProgressShare;
@@ -629,10 +632,8 @@ PluginProcessingResult processFileWithPlugins(
 
     const auto outputFile = getProcessingOutputFile(file);
 
-    if (const auto outputError = utils::checkOutputPath(file, outputFile, options.overwriteExisting);
-        outputError.isNotEmpty())
-    {
-        return fail(file, outputError);
+    if (const auto outputCheck = utils::checkOutputPath(file, outputFile, options.overwriteExisting); !outputCheck) {
+        return fail(file, outputCheck.error());
     }
 
     if (reader->numChannels < 1 || reader->numChannels > maximumProcessingChannels) {
@@ -644,43 +645,39 @@ PluginProcessingResult processFileWithPlugins(
 
     const auto numChannels = static_cast<int>(reader->numChannels);
     const juce::TemporaryFile intermediateFile(".wav");
-    RenderSummary summary;
 
-    if (const auto renderError = renderChainToFile(
-            *reader,
-            intermediateFile.getFile(),
-            chainInstances,
-            options,
-            numChannels,
-            getInputGain(record, options),
-            isCancelled,
-            utils::makeProgressRange(onProgress, renderProgressStart, renderProgressEnd),
-            summary
-        );
-        renderError.isNotEmpty())
-    {
-        return fail(file, renderError);
+    const auto summary = renderChainToFile(
+        *reader,
+        intermediateFile.getFile(),
+        chainInstances,
+        options,
+        numChannels,
+        getInputGain(record, options),
+        isCancelled,
+        utils::makeProgressRange(onProgress, renderProgressStart, renderProgressEnd)
+    );
+
+    if (!summary) {
+        return fail(file, summary.error());
     }
 
     // The hidden name keeps a half-written output out of folder scans,
     // and out of later scans after a crash.
     const juce::TemporaryFile temporaryFile(outputFile, juce::TemporaryFile::useHiddenFile);
-    const auto finalLength = getFinalLength(summary, reader->lengthInSamples);
-    bool outputClipped = false;
+    const auto finalLength = getFinalLength(*summary, reader->lengthInSamples);
 
-    if (const auto writeError = writeProcessedAiff(
-            *aiffFormat,
-            intermediateFile.getFile(),
-            temporaryFile.getFile(),
-            *reader,
-            finalLength,
-            outputClipped,
-            isCancelled,
-            utils::makeProgressRange(onProgress, renderProgressEnd, writeProgressEnd)
-        );
-        writeError.isNotEmpty())
-    {
-        return fail(file, writeError);
+    const auto written = writeProcessedAiff(
+        *aiffFormat,
+        intermediateFile.getFile(),
+        temporaryFile.getFile(),
+        *reader,
+        finalLength,
+        isCancelled,
+        utils::makeProgressRange(onProgress, renderProgressEnd, writeProgressEnd)
+    );
+
+    if (!written) {
+        return fail(file, written.error());
     }
 
     // Carries ID3 tags, embedded artwork, and similar information across formats
@@ -689,12 +686,12 @@ PluginProcessingResult processFileWithPlugins(
         return fail(file, "Could not copy metadata onto the processed output");
     }
 
-    if (const auto validationError = utils::validateWrittenAudio(
+    if (const auto validation = utils::validateWrittenAudio(
             formatManager, temporaryFile.getFile(), numChannels, reader->sampleRate, finalLength
         );
-        validationError.isNotEmpty())
+        !validation)
     {
-        return fail(file, utils::format("Processed output failed validation: {}", validationError));
+        return fail(file, utils::format("Processed output failed validation: {}", validation.error()));
     }
 
     // Check again before touching the original, since cancellation may arrive during the last render block.
@@ -710,11 +707,11 @@ PluginProcessingResult processFileWithPlugins(
         return fail(file, "Could not move a copy of the original file to the system trash");
     }
 
-    if (const auto commitError
+    if (const auto commit
         = utils::commitTemporaryOutput(temporaryFile, file, outputFile, options.overwriteExisting, options.disposeFile);
-        commitError.isNotEmpty())
+        !commit)
     {
-        return fail(file, commitError);
+        return fail(file, commit.error());
     }
 
     PluginProcessingResult result;
@@ -725,16 +722,16 @@ PluginProcessingResult processFileWithPlugins(
 
     juce::StringArray notices;
 
-    if (outputClipped) {
+    if (written->clipped) {
         const juce::String clippingNotice {"Output clipping: final render exceeded the 16-bit PCM range"};
         notices.add(clippingNotice);
         utils::logWarn("Plugin processing warning: {}, {}", outputFile.getFullPathName().quoted(), clippingNotice);
     }
 
-    if (summary.decodeNotice.isNotEmpty()) {
-        notices.add(summary.decodeNotice);
+    if (summary->decodeNotice.isNotEmpty()) {
+        notices.add(summary->decodeNotice);
         utils::logWarn(
-            "Plugin processing warning: {}, {}", outputFile.getFullPathName().quoted(), summary.decodeNotice
+            "Plugin processing warning: {}, {}", outputFile.getFullPathName().quoted(), summary->decodeNotice
         );
     }
 
