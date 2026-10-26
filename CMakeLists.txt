@@ -326,6 +326,7 @@ set(AUDIOBATCH_CORE_SOURCES
     "src/normalization/NormalizeCoordinator.h"
     "src/plugins/PluginScanner.cpp"
     "src/plugins/PluginScanner.h"
+    "src/serato/SeratoBytes.h"
     "src/serato/SeratoOverview.cpp"
     "src/serato/SeratoOverview.h"
     "src/serato/SeratoTagReader.cpp"

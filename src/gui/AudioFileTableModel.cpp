@@ -9,10 +9,59 @@
 #include "gui/FileActivityTracker.h"
 #include "utils/StringFormat.h"
 
+#include <array>
+#include <utility>
+
 namespace audiobatch
 {
 namespace
 {
+/// A results table column as the header registers it.
+struct ColumnDefinition {
+    AudioFileTableColumn column;
+    const char* title;
+    int initialWidth;
+    int minimumWidth;
+    int maximumWidth;
+    bool initiallyVisible;
+};
+
+/// Builds the definition of a column with its initial and minimum widths from GuiLayout.h.
+consteval ColumnDefinition defineColumn(
+    const AudioFileTableColumn column,
+    const char* title,
+    const int maximumWidth,
+    const bool initiallyVisible = true
+)
+{
+    return {
+        .column = column,
+        .title = title,
+        .initialWidth = layout::table::initialColumnWidth(column),
+        .minimumWidth = layout::table::minimumColumnWidth(column),
+        .maximumWidth = maximumWidth,
+        .initiallyVisible = initiallyVisible,
+    };
+}
+
+/// The results table columns in their initial display order.
+constexpr std::array columnDefinitions {
+    defineColumn(AudioFileTableColumn::name, "Name", layout::table::nameMaximumWidth),
+    defineColumn(AudioFileTableColumn::path, "Path", layout::table::pathMaximumWidth),
+    defineColumn(AudioFileTableColumn::type, "Type", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::bitDepth, "Bit Depth", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::bitrate, "Bitrate", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::sampleRate, "Rate", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::overallPeak, "Peak", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::peakLeft, "Peak L", layout::table::metricMaximumWidth, false),
+    defineColumn(AudioFileTableColumn::peakRight, "Peak R", layout::table::metricMaximumWidth, false),
+    defineColumn(AudioFileTableColumn::overallTruePeak, "True Peak", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::maxShortTermLufs, "LUFS-S", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::integratedLufs, "LUFS-I", layout::table::metricMaximumWidth),
+    defineColumn(AudioFileTableColumn::customGain, "Gain", layout::table::metricMaximumWidth, false),
+    defineColumn(AudioFileTableColumn::status, "Status", layout::table::statusMaximumWidth),
+};
+
 /// Inner radius of the activity indicator arc as a proportion of the outer radius,
 /// which turns the pie segment into a ring.
 constexpr float activityIndicatorInnerRadiusProportion {0.52f};
@@ -91,13 +140,13 @@ void drawActivityIndicator(
 AudioFileTableModel::AudioFileTableModel(
     const std::vector<AudioAnalysisRecord>& sourceRecords,
     std::function<void(int row)> onSelectionChanged,
-    std::function<void(int columnId, bool isForwards)> onSortChanged,
-    std::function<void(int row, int columnId, const juce::MouseEvent& event)> onContextMenuRequested,
+    std::function<void(std::optional<AudioFileTableColumn> column, bool isForwards)> onSortChanged,
+    std::function<void(int row, const juce::MouseEvent& event)> onContextMenuRequested,
     std::function<std::optional<FileActivityState>(const AudioAnalysisRecord& record)> activityProvider,
     std::function<OperationMessage(const AudioAnalysisRecord& record)> messageProvider,
     std::function<float()> phaseProvider
 ) :
-    records(&sourceRecords),
+    records(sourceRecords),
     selectionChanged(std::move(onSelectionChanged)),
     sortChanged(std::move(onSortChanged)),
     contextMenuRequested(std::move(onContextMenuRequested)),
@@ -109,128 +158,26 @@ AudioFileTableModel::AudioFileTableModel(
 /// Installs the standard set of columns used by the results table.
 void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
 {
-    header.addColumn(
-        "Name",
-        columnName,
-        layout::table::initialColumnWidth(columnName),
-        layout::table::minimumColumnWidth(columnName),
-        layout::table::nameMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "Path",
-        columnPath,
-        layout::table::initialColumnWidth(columnPath),
-        layout::table::minimumColumnWidth(columnPath),
-        layout::table::pathMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "Type",
-        columnType,
-        layout::table::initialColumnWidth(columnType),
-        layout::table::minimumColumnWidth(columnType),
-        layout::table::metricMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "Bit Depth",
-        columnBitDepth,
-        layout::table::initialColumnWidth(columnBitDepth),
-        layout::table::minimumColumnWidth(columnBitDepth),
-        layout::table::metricMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "Bitrate",
-        columnBitrate,
-        layout::table::initialColumnWidth(columnBitrate),
-        layout::table::minimumColumnWidth(columnBitrate),
-        layout::table::metricMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "Rate",
-        columnSampleRate,
-        layout::table::initialColumnWidth(columnSampleRate),
-        layout::table::minimumColumnWidth(columnSampleRate),
-        layout::table::metricMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "Peak",
-        columnOverallPeak,
-        layout::table::initialColumnWidth(columnOverallPeak),
-        layout::table::minimumColumnWidth(columnOverallPeak),
-        layout::table::metricMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "Peak L",
-        columnPeakLeft,
-        layout::table::initialColumnWidth(columnPeakLeft),
-        layout::table::minimumColumnWidth(columnPeakLeft),
-        layout::table::metricMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "Peak R",
-        columnPeakRight,
-        layout::table::initialColumnWidth(columnPeakRight),
-        layout::table::minimumColumnWidth(columnPeakRight),
-        layout::table::metricMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "True Peak",
-        columnOverallTruePeak,
-        layout::table::initialColumnWidth(columnOverallTruePeak),
-        layout::table::minimumColumnWidth(columnOverallTruePeak),
-        layout::table::metricMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "LUFS-S",
-        columnMaxShortTermLufs,
-        layout::table::initialColumnWidth(columnMaxShortTermLufs),
-        layout::table::minimumColumnWidth(columnMaxShortTermLufs),
-        layout::table::metricMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "LUFS-I",
-        columnIntegratedLufs,
-        layout::table::initialColumnWidth(columnIntegratedLufs),
-        layout::table::minimumColumnWidth(columnIntegratedLufs),
-        layout::table::metricMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "Gain",
-        columnCustomGain,
-        layout::table::initialColumnWidth(columnCustomGain),
-        layout::table::minimumColumnWidth(columnCustomGain),
-        layout::table::metricMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-    header.addColumn(
-        "Status",
-        columnStatus,
-        layout::table::initialColumnWidth(columnStatus),
-        layout::table::minimumColumnWidth(columnStatus),
-        layout::table::statusMaximumWidth,
-        juce::TableHeaderComponent::defaultFlags
-    );
-
-    header.setColumnVisible(columnPeakLeft, false);
-    header.setColumnVisible(columnPeakRight, false);
-    header.setColumnVisible(columnCustomGain, false);
+    for (const auto& definition : columnDefinitions) {
+        const auto columnId = std::to_underlying(definition.column);
+        header.addColumn(
+            definition.title,
+            columnId,
+            definition.initialWidth,
+            definition.minimumWidth,
+            definition.maximumWidth,
+            juce::TableHeaderComponent::defaultFlags
+        );
+        if (!definition.initiallyVisible) {
+            header.setColumnVisible(columnId, false);
+        }
+    }
 }
 
 /// Returns the number of analyzed rows currently available.
 int AudioFileTableModel::getNumRows()
 {
-    return static_cast<int>(records->size());
+    return static_cast<int>(records.size());
 }
 
 /// Packages the selected file paths for external drag-and-drop.
@@ -245,7 +192,7 @@ juce::var AudioFileTableModel::getDragSourceDescription(const juce::SparseSet<in
             continue;
         }
 
-        if (const auto& record = (*records)[static_cast<std::size_t>(rowNumber)]; record.file.existsAsFile()) {
+        if (const auto& record = records[static_cast<std::size_t>(rowNumber)]; record.file.existsAsFile()) {
             filePaths.addIfNotAlreadyThere(record.file.getFullPathName());
         }
     }
@@ -286,11 +233,12 @@ void AudioFileTableModel::paintCell(
 {
     juce::ignoreUnused(rowIsSelected);
 
-    if (!juce::isPositiveAndBelow(rowNumber, getNumRows())) {
+    const auto column = tableColumnFromId(columnId);
+    if (!column.has_value() || !juce::isPositiveAndBelow(rowNumber, getNumRows())) {
         return;
     }
 
-    const auto& record = (*records)[static_cast<std::size_t>(rowNumber)];
+    const auto& record = records[static_cast<std::size_t>(rowNumber)];
     juce::String text;
     OperationMessage operationMessage;
     std::optional<FileActivityState> activityState;
@@ -298,62 +246,58 @@ void AudioFileTableModel::paintCell(
     auto textBounds = juce::Rectangle(4, 0, width - 8, height);
     auto font = juce::CustomLookAndFeel::getTextFont();
 
-    switch (columnId) {
-        case columnName:
+    switch (*column) {
+        case AudioFileTableColumn::name:
             text = record.fileName;
             break;
-        case columnPath:
+        case AudioFileTableColumn::path:
             text = record.fullPath;
             break;
-        case columnType:
+        case AudioFileTableColumn::type:
             text = formatTypeLabel(record);
             font = juce::CustomLookAndFeel::get_mono_font();
             break;
-        case columnBitDepth:
+        case AudioFileTableColumn::bitDepth:
             text = formatBitsPerSampleDisplay(record);
             justification = juce::Justification::centredRight;
             break;
-        case columnBitrate:
+        case AudioFileTableColumn::bitrate:
             text = formatBitrateDisplay(record);
             justification = juce::Justification::centredRight;
             break;
-        case columnSampleRate:
+        case AudioFileTableColumn::sampleRate:
             text = formatSampleRateDisplay(record);
             justification = juce::Justification::centredRight;
             break;
-        case columnPeakLeft:
+        case AudioFileTableColumn::peakLeft:
             text = formatPeakDisplay(record.peakLeft);
             justification = juce::Justification::centredRight;
             break;
-        case columnPeakRight:
+        case AudioFileTableColumn::peakRight:
             text = formatPeakDisplay(record.peakRight);
             justification = juce::Justification::centredRight;
             break;
-        case columnOverallPeak:
+        case AudioFileTableColumn::overallPeak:
             text = formatPeakDisplay(record.overallPeak);
             justification = juce::Justification::centredRight;
             break;
-        case columnOverallTruePeak:
+        case AudioFileTableColumn::overallTruePeak:
             text = formatTruePeakDisplay(record.overallTruePeak);
             justification = juce::Justification::centredRight;
             break;
-        case columnMaxShortTermLufs:
+        case AudioFileTableColumn::maxShortTermLufs:
             text = formatLoudnessDisplay(record.maxShortTermLufs);
             justification = juce::Justification::centredRight;
             break;
-        case columnIntegratedLufs:
+        case AudioFileTableColumn::integratedLufs:
             text = formatLoudnessDisplay(record.integratedLufs);
             justification = juce::Justification::centredRight;
             break;
-        case columnCustomGain:
-            if (record.hasCustomGain) {
-                text = utils::format("{}{:.1f} dB", record.customGainDb >= 0.0f ? "+" : "", record.customGainDb);
-            } else {
-                text = {};
-            }
+        case AudioFileTableColumn::customGain:
+            text = formatCustomGainDisplay(record);
             justification = juce::Justification::centredRight;
             break;
-        case columnStatus:
+        case AudioFileTableColumn::status:
             activityState = activityStateProvider != nullptr ? activityStateProvider(record) : std::nullopt;
 
             if (!activityState.has_value()) {
@@ -376,8 +320,6 @@ void AudioFileTableModel::paintCell(
                 );
                 textBounds.removeFromLeft(static_cast<int>(indicatorSize) + 8);
             }
-            break;
-        default:
             break;
     }
 
@@ -408,27 +350,31 @@ void AudioFileTableModel::selectedRowsChanged(const int lastRowSelected)
 /// Forwards popup-clicks so the owning component can show file actions.
 void AudioFileTableModel::cellClicked(const int rowNumber, const int columnId, const juce::MouseEvent& event)
 {
+    juce::ignoreUnused(columnId);
+
     if (event.mods.isPopupMenu() && contextMenuRequested != nullptr) {
-        contextMenuRequested(rowNumber, columnId, event);
+        contextMenuRequested(rowNumber, event);
     }
 }
 
-/// Notifies the owning component when the active sort column changes.
+/// Notifies the owning component when the active sort column changes, with no column when the table is unsorted.
 void AudioFileTableModel::sortOrderChanged(const int newSortColumnId, const bool isForwards)
 {
     if (sortChanged != nullptr) {
-        sortChanged(newSortColumnId, isForwards);
+        sortChanged(tableColumnFromId(newSortColumnId), isForwards);
     }
 }
 
 /// Shows the full status text for the status column of a file with an error or notice, and no tooltip for other cells.
 juce::String AudioFileTableModel::getCellTooltip(const int rowNumber, const int columnId)
 {
-    if (columnId != columnStatus || !juce::isPositiveAndBelow(rowNumber, static_cast<int>(records->size()))) {
+    if (tableColumnFromId(columnId) != AudioFileTableColumn::status
+        || !juce::isPositiveAndBelow(rowNumber, static_cast<int>(records.size())))
+    {
         return {};
     }
 
-    const auto& record = (*records)[static_cast<std::size_t>(rowNumber)];
+    const auto& record = records[static_cast<std::size_t>(rowNumber)];
 
     if (const auto [text, isError] = getOperationMessage(record); text.isNotEmpty()) {
         return text;

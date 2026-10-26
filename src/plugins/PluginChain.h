@@ -44,6 +44,8 @@ struct ChainInstantiation {
 
 /// A prepared live chain. Its slot-owned instances remain protected by the preview rendering lock.
 struct PreviewChain {
+    /// Non-owning, never null views of the enabled slot instances in chain order.
+    /// They stay valid only while the slots keep their instances, so use them under the preview rendering lock.
     std::vector<juce::AudioPluginInstance*> instances;
     plugin_processing::ChainPreparation preparation;
 };

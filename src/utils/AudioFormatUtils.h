@@ -12,6 +12,7 @@
 #include <cmath>
 #include <expected>
 #include <memory>
+#include <span>
 
 namespace audiobatch::utils
 {
@@ -38,11 +39,12 @@ std::unique_ptr<juce::AudioFormatReader> createAudioReader(const juce::File& fil
 
 std::unordered_map<juce::String, juce::String> aiffWriterMetadata(const juce::StringPairArray& metadata);
 
-bool readFloatSamples(
+[[nodiscard]] bool readFloatSamples(
     juce::AudioFormatReader& reader,
-    float* const* channels,
-    int numChannels,
+    std::span<float* const> channels,
     juce::int64 startSample,
     int numSamples
 );
+
+std::span<float* const> writePointers(juce::AudioBuffer<float>& buffer);
 }  // namespace audiobatch::utils

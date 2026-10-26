@@ -77,7 +77,7 @@ void allowExistingInstanceToActivate(const juce::String& applicationName)
             if (process == nullptr) {
                 return TRUE;
             }
-            constexpr std::size_t maximumWindowsPathLength = 32768;
+            constexpr std::size_t maximumWindowsPathLength = 32'768;
             std::array<wchar_t, maximumWindowsPathLength> executablePathBuffer {};
             auto length = static_cast<DWORD>(executablePathBuffer.size());
             if (QueryFullProcessImageNameW(process.get(), 0, executablePathBuffer.data(), &length) != 0

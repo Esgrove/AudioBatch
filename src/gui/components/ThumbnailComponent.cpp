@@ -196,15 +196,14 @@ void ThumbnailComponent::setURL(const juce::URL& url)
         return;
     }
 
-    if (juce::InputSource* inputSource = new juce::URLInputSource(url); inputSource != nullptr) {
-        thumbnail.setSource(inputSource);
+    // The thumbnail takes ownership of the input source.
+    thumbnail.setSource(new juce::URLInputSource(url));
 
-        if (thumbnail.getTotalLength() > 0.0) {
-            setRange({0.0, thumbnail.getTotalLength()});
-        } else {
-            visibleRange = {};
-            repaint();
-        }
+    if (thumbnail.getTotalLength() > 0.0) {
+        setRange({0.0, thumbnail.getTotalLength()});
+    } else {
+        visibleRange = {};
+        repaint();
     }
 }
 

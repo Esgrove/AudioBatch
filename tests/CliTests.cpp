@@ -13,9 +13,11 @@
 
 namespace audiobatch::tests
 {
+namespace
+{
 /// Parses the given arguments as if they followed the executable name on the command line.
 /// Also copies a parse error into errorMessage, so a check can match its text after a failed parse.
-static std::expected<AudioAnalysisCliOptions, juce::String> parseArguments(
+std::expected<AudioAnalysisCliOptions, juce::String> parseArguments(
     const juce::StringArray& arguments,
     juce::String& errorMessage
 )
@@ -24,6 +26,7 @@ static std::expected<AudioAnalysisCliOptions, juce::String> parseArguments(
     errorMessage = options ? juce::String() : options.error();
     return options;
 }
+}  // namespace
 
 /// Checks CLI parsing results for valid and invalid argument lists.
 class CliTests final : public juce::UnitTest

@@ -15,13 +15,17 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <array>
+#include <optional>
+#include <utility>
+
 namespace audiobatch
 {
 /// Creates the results table header, model, and selection behavior.
 void AudioBatchComponent::configureResultsTable()
 {
-    resultsTable.setHeader(std::make_unique<SecondarySortTableHeader>([this](const int columnId) {
-        handleSecondarySortRequested(columnId);
+    resultsTable.setHeader(std::make_unique<SecondarySortTableHeader>([this](const AudioFileTableColumn column) {
+        handleSecondarySortRequested(column);
     }));
     AudioFileTableModel::configureHeader(resultsTable.getHeader());
     resultsTable.setModel(&fileTableModel);
@@ -34,7 +38,7 @@ void AudioBatchComponent::configureResultsTable()
         const auto [text, isError] = fileActivity.getMessage(record.fullPath);
         return text.isNotEmpty() ? text : formatStatus(record);
     };
-    resultsTable.getHeader().setSortColumnId(sortState.primaryColumnId, sortState.primaryForwards);
+    resultsTable.getHeader().setSortColumnId(toColumnId(sortState.primaryColumn), sortState.primaryForwards);
     refreshSortIndicators();
     addAndMakeVisible(resultsTable);
     resultsTable.addKeyListener(this);
@@ -135,15 +139,10 @@ void AudioBatchComponent::configurePreviewControls()
     addAndMakeVisible(*audioInfo);
 }
 
-/// Creates the plugin chain, per-file gain, normalization toggle, process, and settings controls.
+/// Creates the per-file gain, normalization toggle, process, and settings controls,
+/// and connects the plugin chain to the preview.
 void AudioBatchComponent::configureProcessingControls()
 {
-    pluginAppProperties.setStorageParameters(utils::createApplicationSettingsOptions());
-
-    pluginChain = std::make_unique<PluginChain>(
-        pluginAppProperties, previewPlayer.getRenderingLock(), previewPlayer.getDeviceManager()
-    );
-    previewPlayer.setPluginChain(pluginChain.get());
     const auto refreshLiveChain = [this] {
         const auto refreshed = previewPlayer.refreshPluginChain();
         juce::ignoreUnused(refreshed);
@@ -169,11 +168,7 @@ void AudioBatchComponent::configureProcessingControls()
     setPreviewPreferences(loadAudioPreviewPreferences(*pluginAppProperties.getUserSettings()));
 
     pluginButton.setTooltip("Edit the plugin chain, add plugins, or scan for plugins.");
-    pluginButton.onClick = [this] {
-        if (pluginChain != nullptr) {
-            pluginChain->showMenu(pluginButton);
-        }
-    };
+    pluginButton.onClick = [this] { pluginChain->showMenu(pluginButton); };
     controlsContent.addAndMakeVisible(pluginButton);
 
     gainLabel.setText("Input gain", juce::dontSendNotification);
@@ -335,10 +330,10 @@ AudioBatchComponent::AudioBatchComponent() :
     fileTableModel(
         analysisResults,
         [this](const int row) { handleSelectionChanged(row); },
-        [this](const int columnId, const bool isForwards) { handleSortRequested(columnId, isForwards); },
-        [this](const int row, const int columnId, const juce::MouseEvent& event) {
-            handleFileContextMenuRequested(row, columnId, event);
+        [this](const std::optional<AudioFileTableColumn> column, const bool isForwards) {
+            handleSortRequested(column, isForwards);
         },
+        [this](const int row, const juce::MouseEvent& event) { handleFileContextMenuRequested(row, event); },
         [this](const AudioAnalysisRecord& record) { return fileActivity.getActivityState(record.fullPath); },
         [this](const AudioAnalysisRecord& record) { return fileActivity.getMessage(record.fullPath); },
         [] { return FileActivityTracker::getAnimationPhase(); }
@@ -354,6 +349,14 @@ AudioBatchComponent::AudioBatchComponent() :
     };
 
     logStartupCheckpoint("constructor begin");
+
+    // The plugin chain is created first, so every control and callback configured below can rely on it.
+    pluginAppProperties.setStorageParameters(utils::createApplicationSettingsOptions());
+    pluginChain = std::make_unique<PluginChain>(
+        pluginAppProperties, previewPlayer.getRenderingLock(), previewPlayer.getDeviceManager()
+    );
+    previewPlayer.setPluginChain(pluginChain.get());
+
     currentRootLabel.setJustificationType(juce::Justification::centredLeft);
     addAndMakeVisible(currentRootLabel);
 
@@ -472,22 +475,31 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
 {
     auto& header = resultsTable.getHeader();
 
-    const auto fixedColumnWidth = header.getColumnWidth(columnOverallPeak)
-        + (header.isColumnVisible(columnType) ? header.getColumnWidth(columnType) : 0)
-        + (header.isColumnVisible(columnBitDepth) ? header.getColumnWidth(columnBitDepth) : 0)
-        + (header.isColumnVisible(columnBitrate) ? header.getColumnWidth(columnBitrate) : 0)
-        + (header.isColumnVisible(columnSampleRate) ? header.getColumnWidth(columnSampleRate) : 0)
-        + (header.isColumnVisible(columnPeakLeft) ? header.getColumnWidth(columnPeakLeft) : 0)
-        + (header.isColumnVisible(columnPeakRight) ? header.getColumnWidth(columnPeakRight) : 0)
-        + (header.isColumnVisible(columnOverallTruePeak) ? header.getColumnWidth(columnOverallTruePeak) : 0)
-        + (header.isColumnVisible(columnMaxShortTermLufs) ? header.getColumnWidth(columnMaxShortTermLufs) : 0)
-        + (header.isColumnVisible(columnIntegratedLufs) ? header.getColumnWidth(columnIntegratedLufs) : 0)
-        + (header.isColumnVisible(columnCustomGain) ? header.getColumnWidth(columnCustomGain) : 0)
-        + (header.isColumnVisible(columnStatus) ? header.getColumnWidth(columnStatus) : 0);
+    // Every column other than name and path keeps its width, so only visible ones take space from the flexible columns.
+    constexpr std::array fixedWidthColumns {
+        AudioFileTableColumn::type,
+        AudioFileTableColumn::bitDepth,
+        AudioFileTableColumn::bitrate,
+        AudioFileTableColumn::sampleRate,
+        AudioFileTableColumn::overallPeak,
+        AudioFileTableColumn::peakLeft,
+        AudioFileTableColumn::peakRight,
+        AudioFileTableColumn::overallTruePeak,
+        AudioFileTableColumn::maxShortTermLufs,
+        AudioFileTableColumn::integratedLufs,
+        AudioFileTableColumn::customGain,
+        AudioFileTableColumn::status,
+    };
+    int fixedColumnWidth = 0;
+    for (const auto column : fixedWidthColumns) {
+        if (const auto columnId = std::to_underlying(column); header.isColumnVisible(columnId)) {
+            fixedColumnWidth += header.getColumnWidth(columnId);
+        }
+    }
 
     const auto availableFlexibleWidth = resultsTable.getVisibleContentWidth() - fixedColumnWidth;
-    const auto currentNameWidth = header.getColumnWidth(columnName);
-    const auto currentPathWidth = header.getColumnWidth(columnPath);
+    const auto currentNameWidth = header.getColumnWidth(std::to_underlying(AudioFileTableColumn::name));
+    const auto currentPathWidth = header.getColumnWidth(std::to_underlying(AudioFileTableColumn::path));
     const auto currentFlexibleWidth = currentNameWidth + currentPathWidth;
     constexpr auto defaultFlexibleWidth = layout::table::nameColumnDefaultWidth + layout::table::pathColumnDefaultWidth;
     const auto widthRatio
@@ -507,8 +519,8 @@ void AudioBatchComponent::updateResultsTableColumnWidths() const
         pathWidth = availableFlexibleWidth - nameWidth;
     }
 
-    header.setColumnWidth(columnName, nameWidth);
-    header.setColumnWidth(columnPath, pathWidth);
+    header.setColumnWidth(std::to_underlying(AudioFileTableColumn::name), nameWidth);
+    header.setColumnWidth(std::to_underlying(AudioFileTableColumn::path), pathWidth);
 }
 
 /// True when the table has at least one selected row.
@@ -660,7 +672,7 @@ void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArra
 /// records are loaded, and no processing or analysis is running.
 void AudioBatchComponent::updateProcessButtonState()
 {
-    const bool hasChain = pluginChain != nullptr && pluginChain->getNumEnabledValidSlots() > 0;
+    const bool hasChain = pluginChain->getNumEnabledValidSlots() > 0;
     processButton.setEnabled(hasChain && hasAnyRecords() && !processingProgress.inProgress && !isAnalysisInProgress());
 }
 
@@ -771,9 +783,9 @@ void AudioBatchComponent::sortResults()
 }
 
 /// Applies a new primary sort and refreshes the table, keeping the selected rows selected.
-void AudioBatchComponent::handleSortRequested(const int columnId, const bool isForwards)
+void AudioBatchComponent::handleSortRequested(const std::optional<AudioFileTableColumn> column, const bool isForwards)
 {
-    results_sorting::setPrimarySort(sortState, columnId, isForwards);
+    results_sorting::setPrimarySort(sortState, column, isForwards);
 
     refreshSortIndicators();
 
@@ -784,13 +796,9 @@ void AudioBatchComponent::handleSortRequested(const int columnId, const bool isF
 
 /// Updates the secondary sort requested with a ctrl or cmd click on a header
 /// and refreshes the table.
-void AudioBatchComponent::handleSecondarySortRequested(const int columnId)
+void AudioBatchComponent::handleSecondarySortRequested(const AudioFileTableColumn column)
 {
-    if (columnId <= 0) {
-        return;
-    }
-
-    results_sorting::toggleSecondarySort(sortState, columnId);
+    results_sorting::toggleSecondarySort(sortState, column);
 
     refreshSortIndicators();
 
@@ -803,7 +811,7 @@ void AudioBatchComponent::handleSecondarySortRequested(const int columnId)
 void AudioBatchComponent::refreshSortIndicators() const
 {
     results_sorting::getSecondarySortHeader(resultsTable)
-        .setSecondarySortIndicator(sortState.secondaryColumnId, sortState.secondaryForwards);
+        .setSecondarySortIndicator(sortState.secondaryColumn, sortState.secondaryForwards);
 }
 
 /// Picks the row whose details should be shown for a multi-selection:

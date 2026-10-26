@@ -9,6 +9,7 @@
 #include <memory>
 #include <mpegfile.h>
 #include <mpegheader.h>
+#include <ranges>
 #include <span>
 #include <utility>
 
@@ -143,11 +144,8 @@ std::unordered_map<juce::String, juce::String> aiffWriterMetadata(const juce::St
         return copiedMetadata;
     }
 
-    const auto& keys = metadata.getAllKeys();
-    const auto& values = metadata.getAllValues();
-
-    for (int index = 0; index < keys.size(); ++index) {
-        copiedMetadata.emplace(keys[index], values[index]);
+    for (const auto& [key, value] : std::views::zip(metadata.getAllKeys(), metadata.getAllValues())) {
+        copiedMetadata.emplace(key, value);
     }
 
     return copiedMetadata;
@@ -161,22 +159,28 @@ std::unordered_map<juce::String, juce::String> aiffWriterMetadata(const juce::St
 /// A floating point reader keeps the samples it decoded before the error.
 bool readFloatSamples(
     juce::AudioFormatReader& reader,
-    float* const* channels,
-    const int numChannels,
+    const std::span<float* const> channels,
     const juce::int64 startSample,
     const int numSamples
 )
 {
-    if (reader.read(channels, numChannels, startSample, numSamples)) {
+    if (reader.read(channels.data(), static_cast<int>(channels.size()), startSample, numSamples)) {
         return true;
     }
 
     if (!reader.usesFloatingPointData) {
-        for (auto* const channel : std::span(channels, static_cast<std::size_t>(numChannels))) {
+        for (auto* const channel : channels) {
             juce::FloatVectorOperations::clear(channel, numSamples);
         }
     }
 
     return false;
+}
+
+/// Returns the write pointers of every channel of the buffer as a span,
+/// so the channel count travels with the pointers.
+std::span<float* const> writePointers(juce::AudioBuffer<float>& buffer)
+{
+    return {buffer.getArrayOfWritePointers(), static_cast<std::size_t>(buffer.getNumChannels())};
 }
 }  // namespace audiobatch::utils

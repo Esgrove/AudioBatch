@@ -15,8 +15,11 @@
 #include <generalencapsulatedobjectframe.h>
 #include <id3v2tag.h>
 #include <mpegfile.h>
+#include <ranges>
 #include <string>
 #include <tpropertymap.h>
+#include <utility>
+#include <vector>
 #include <wavfile.h>
 
 namespace audiobatch::serato
@@ -429,11 +432,10 @@ std::vector<TagReadResult> readTags(
     if (kinds.empty() || kinds.size() > maxTagRecords) {
         return {};
     }
-    std::vector<TagReadResult> results;
-    results.reserve(kinds.size());
-    for (const auto kind : kinds) {
-        results.push_back(outcome(kind, supportsTagKind(kind) ? ReadStatus::absent : ReadStatus::unsupported));
-    }
+    auto results = kinds | std::views::transform([](const TagKind kind) {
+                       return outcome(kind, supportsTagKind(kind) ? ReadStatus::absent : ReadStatus::unsupported);
+                   })
+        | std::ranges::to<std::vector>();
     if (utils::isCancellationRequested(isCancelled)) {
         return failedReads(std::move(results), ReadStatus::cancelled);
     }
@@ -474,9 +476,7 @@ std::vector<TagReadResult> readTags(
             result = outcome(result.kind, ReadStatus::cancelled);
         }
         if (result.status == ReadStatus::invalid) {
-            utils::logDebug(
-                "Unusable Serato tag kind {} in {}", static_cast<std::uint32_t>(result.kind), fullPath.quoted()
-            );
+            utils::logDebug("Unusable Serato tag kind {} in {}", std::to_underlying(result.kind), fullPath.quoted());
         }
     }
     if (!tagFile->isValid() || !file.existsAsFile()) {

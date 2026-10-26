@@ -18,9 +18,11 @@ constexpr double bitsPerByte {8.0};
 /// Number of hertz in a kilohertz, used when displaying sample rates.
 constexpr int hertzPerKilohertz {1000};
 
+namespace
+{
 /// Converts a linear amplitude into a decibel string with the given unit suffix.
 /// Silence renders as "-INF" so it never shows a misleading finite value.
-static juce::String formatAmplitudeDisplay(const double amplitude, const juce::String& unitSuffix)
+juce::String formatAmplitudeDisplay(const double amplitude, const juce::String& unitSuffix)
 {
     if (amplitude <= 0.0) {
         return utils::format("-INF{}", unitSuffix);
@@ -31,7 +33,7 @@ static juce::String formatAmplitudeDisplay(const double amplitude, const juce::S
 }
 
 /// Formats a LUFS loudness value with the given unit suffix, rendering the sentinel value as "-INF".
-static juce::String formatLoudnessValue(const double loudness, const juce::String& unitSuffix)
+juce::String formatLoudnessValue(const double loudness, const juce::String& unitSuffix)
 {
     if (loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
         return utils::format("-INF{}", unitSuffix);
@@ -39,6 +41,7 @@ static juce::String formatLoudnessValue(const double loudness, const juce::Strin
 
     return utils::format("{:.2f}{}", loudness, unitSuffix);
 }
+}  // namespace
 
 /// Formats a peak value for display in the GUI and CLI.
 juce::String formatPeakDisplay(const float peak)
@@ -106,6 +109,16 @@ juce::String formatBitrateDisplay(const AudioAnalysisRecord& record)
     }
 
     return utils::format("{} kbps", juce::roundToInt(bitrateKbps));
+}
+
+/// Formats the per-file gain with an explicit sign for display in the GUI, or an empty string for a file without one.
+juce::String formatCustomGainDisplay(const AudioAnalysisRecord& record)
+{
+    if (!record.hasCustomGain) {
+        return {};
+    }
+
+    return utils::format("{}{:.1f} dB", record.customGainDb >= 0.0f ? "+" : "", record.customGainDb);
 }
 
 /// Formats the sample rate for display in the GUI.

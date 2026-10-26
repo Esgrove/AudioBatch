@@ -72,13 +72,12 @@ struct EbuR128StateDeleter {
         ebur128_destroy(&stateToDestroy);
     }
 };
-}  // namespace
 
 /// Marks the record as failed with the given message and logs the error.
 /// Cancellation is logged at debug level only,
 /// because a rescan cancels every file still in flight and none of them failed.
 /// Takes the record by value so callers can hand over a partially filled record with std::move.
-static AudioAnalysisRecord failAnalysis(AudioAnalysisRecord record, const juce::String& message)
+AudioAnalysisRecord failAnalysis(AudioAnalysisRecord record, const juce::String& message)
 {
     record.status = AudioAnalysisStatus::failed;
     record.errorMessage = message;
@@ -93,25 +92,25 @@ static AudioAnalysisRecord failAnalysis(AudioAnalysisRecord record, const juce::
 }
 
 /// Picks the sample extreme with the larger magnitude, preserving its sign.
-static float signedPeakFromExtrema(const float minimum, const float maximum)
+float signedPeakFromExtrema(const float minimum, const float maximum)
 {
     return utils::peakMagnitude(minimum) > utils::peakMagnitude(maximum) ? minimum : maximum;
 }
 
 /// Returns whichever sample peak has the larger magnitude, keeping its sign.
-static float dominantPeak(const float firstPeak, const float secondPeak)
+float dominantPeak(const float firstPeak, const float secondPeak)
 {
     return utils::peakMagnitude(firstPeak) > utils::peakMagnitude(secondPeak) ? firstPeak : secondPeak;
 }
 
 /// Returns whichever true peak has the larger magnitude, keeping its sign.
-static double dominantPeak(const double firstPeak, const double secondPeak)
+double dominantPeak(const double firstPeak, const double secondPeak)
 {
     return utils::peakMagnitude(firstPeak) > utils::peakMagnitude(secondPeak) ? firstPeak : secondPeak;
 }
 
 /// Clamps non-finite or silent loudness readings to the shared negative infinity sentinel.
-static double normalizeLoudness(const double loudness)
+double normalizeLoudness(const double loudness)
 {
     if (!std::isfinite(loudness) || loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
         return AudioAnalysisRecord::negativeInfinityLoudness;
@@ -124,10 +123,7 @@ static double normalizeLoudness(const double loudness)
 /// A mono source is measured as dual mono, because it is played on both speakers,
 /// so a mono file reads the same loudness as the same content in stereo
 /// and loudness normalization brings both to the same perceived level.
-static std::unique_ptr<ebur128_state, EbuR128StateDeleter> createLoudnessState(
-    const int channelCount,
-    const int sampleRate
-)
+std::unique_ptr<ebur128_state, EbuR128StateDeleter> createLoudnessState(const int channelCount, const int sampleRate)
 {
     constexpr auto mode = static_cast<int>(
         static_cast<unsigned int>(EBUR128_MODE_I) | static_cast<unsigned int>(EBUR128_MODE_S)
@@ -147,7 +143,7 @@ static std::unique_ptr<ebur128_state, EbuR128StateDeleter> createLoudnessState(
 }
 
 /// Orders failed records after successful ones, regardless of the requested sort key.
-static int compareAnalysisState(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
+int compareAnalysisState(const AudioAnalysisRecord& lhs, const AudioAnalysisRecord& rhs)
 {
     if (lhs.hasError() != rhs.hasError()) {
         return lhs.hasError() ? 1 : -1;
@@ -157,7 +153,7 @@ static int compareAnalysisState(const AudioAnalysisRecord& lhs, const AudioAnaly
 }
 
 /// Returns the first ordering that is not equivalent, so later keys only break ties of earlier ones.
-static std::weak_ordering firstDifference(const std::initializer_list<std::weak_ordering> orderings)
+std::weak_ordering firstDifference(const std::initializer_list<std::weak_ordering> orderings)
 {
     const auto* const difference = std::ranges::find_if(orderings, [](const auto ordering) { return ordering != 0; });
     return difference != orderings.end() ? *difference : std::weak_ordering::equivalent;
@@ -167,13 +163,13 @@ static std::weak_ordering firstDifference(const std::initializer_list<std::weak_
 /// An approximate comparison would not be transitive, which std::sort requires,
 /// and the other sort keys already break ties between equal values.
 template<typename Value>
-static std::weak_ordering compareValues(const Value lhs, const Value rhs)
+std::weak_ordering compareValues(const Value lhs, const Value rhs)
 {
     return std::weak_order(lhs, rhs);
 }
 
 /// Orders two records ascending by the sort key, with the other columns breaking ties.
-static std::weak_ordering compareBySortMode(
+std::weak_ordering compareBySortMode(
     const AudioAnalysisRecord& lhs,
     const AudioAnalysisRecord& rhs,
     const AudioAnalysisSortMode sortMode
@@ -200,6 +196,7 @@ static std::weak_ordering compareBySortMode(
 
     std::unreachable();
 }
+}  // namespace
 
 /// Returns true when the path is a supported audio file for analysis.
 bool isSupportedAudioFile(const juce::File& file)
@@ -276,10 +273,12 @@ juce::Array<juce::File> collectInputFiles(
     return files;
 }
 
+namespace
+{
 /// Reduces per-channel peaks to the left, right, and overall peak.
 /// A mono source reports its only channel as both left and right.
 template<typename Value>
-static PeakSummary<Value> summarizePeaks(const std::vector<Value>& channelPeaks)
+PeakSummary<Value> summarizePeaks(const std::vector<Value>& channelPeaks)
 {
     const auto left = channelPeaks.front();
     const auto right = channelPeaks.size() > 1 ? channelPeaks[1] : left;
@@ -293,10 +292,10 @@ static PeakSummary<Value> summarizePeaks(const std::vector<Value>& channelPeaks)
 }
 
 /// Interleaves one decoded block for the loudness meter and folds its samples into the per-channel extremes.
-static void interleaveBlock(
+void interleaveBlock(
     const juce::AudioBuffer<float>& readBuffer,
     const int framesThisBlock,
-    std::vector<float>& interleaved,
+    const std::span<float> interleaved,
     DecodeMeasurements& measurements
 )
 {
@@ -318,7 +317,7 @@ static void interleaveBlock(
 /// When decoding has to stop early, the measurement fails instead of reporting levels for part of the file.
 /// Cancellation is checked before each block and also fails the measurement.
 /// The decoded fraction of the file is reported to onProgress after each block.
-static DecodeMeasurements measureDecodedAudio(
+DecodeMeasurements measureDecodedAudio(
     juce::AudioFormatReader& reader,
     ebur128_state* loudnessState,
     const juce::String& fullPath,
@@ -356,9 +355,8 @@ static DecodeMeasurements measureDecodedAudio(
 
         readBuffer.clear();
 
-        const auto readSucceeded = utils::readFloatSamples(
-            reader, readBuffer.getArrayOfWritePointers(), channelCount, samplePosition, framesThisBlock
-        );
+        const auto readSucceeded
+            = utils::readFloatSamples(reader, utils::writePointers(readBuffer), samplePosition, framesThisBlock);
 
         if (!failureTracker.recordBlock(readSucceeded, samplePosition, framesThisBlock)) {
             measurements.errorMessage = failureTracker.getErrorMessage();
@@ -401,6 +399,7 @@ static DecodeMeasurements measureDecodedAudio(
 
     return measurements;
 }
+}  // namespace
 
 /// Analyzes a single supported audio file and returns the populated result record.
 /// When isCancelled starts returning true, decoding stops and a failed record is returned,

@@ -136,7 +136,7 @@ bool createSyntheticContainer(const juce::File& file)
         return false;
     }
     const auto writer = format->createWriterFor(
-        output, juce::AudioFormatWriterOptions().withSampleRate(44100).withNumChannels(1).withBitsPerSample(16)
+        output, juce::AudioFormatWriterOptions().withSampleRate(44'100).withNumChannels(1).withBitsPerSample(16)
     );
     juce::AudioBuffer<float> silence(1, 64);
     silence.clear();
@@ -302,7 +302,7 @@ std::optional<std::uint64_t> fileChecksum(const juce::File& file)
     if (input == nullptr) {
         return std::nullopt;
     }
-    std::uint64_t checksum = 14695981039346656037ULL;
+    std::uint64_t checksum = 14'695'981'039'346'656'037ULL;
     std::array<std::uint8_t, 8192> buffer {};
     while (!input->isExhausted()) {
         const auto count = input->read(buffer.data(), static_cast<int>(buffer.size()));
@@ -311,7 +311,7 @@ std::optional<std::uint64_t> fileChecksum(const juce::File& file)
         }
         for (const auto byte : std::span(buffer).first(static_cast<std::size_t>(count))) {
             checksum ^= byte;
-            checksum *= 1099511628211ULL;
+            checksum *= 1'099'511'628'211ULL;
         }
     }
     return checksum;
@@ -423,7 +423,7 @@ private:
                 corrupt.copyFrom(&changed, static_cast<int>(offset), 1);
                 invalidValues.push_back(juce::Base64::toBase64(corrupt.getData(), corrupt.getSize()));
             }
-            invalidValues.push_back(juce::String::repeatedString("A", 1500000));
+            invalidValues.push_back(juce::String::repeatedString("A", 1'500'000));
             // The first character moved up by 0x100 has the same low byte, which a Latin-1 conversion would keep.
             juce::String nonAscii;
             nonAscii << juce::String::charToString(static_cast<juce::juce_wchar>(0x100 + encoded[0]))

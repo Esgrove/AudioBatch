@@ -15,15 +15,17 @@
 #include "utils/ThreadUtils.h"
 
 #include <algorithm>
+#include <ranges>
 #include <set>
 #include <utility>
+#include <vector>
 
 namespace audiobatch
 {
 namespace
 {
 /// How long cancelAndWait waits for running plugin processing jobs to finish before giving up, in milliseconds.
-constexpr int jobShutdownTimeoutMilliseconds {60000};
+constexpr int jobShutdownTimeoutMilliseconds {60'000};
 
 /// How long a worker waits for a plugin chain to be released before checking for cancellation again, in milliseconds.
 constexpr int chainWaitIntervalMilliseconds {100};
@@ -108,15 +110,8 @@ void PluginRunChains::release(const int chainIndex)
 /// Returns a raw pointer view of the given chain for the service call.
 std::vector<juce::AudioPluginInstance*> PluginRunChains::getChainView(const int chainIndex) const
 {
-    const auto& chain = chains[static_cast<std::size_t>(chainIndex)];
-    std::vector<juce::AudioPluginInstance*> chainView;
-    chainView.reserve(chain.size());
-
-    for (const auto& instance : chain) {
-        chainView.push_back(instance.get());
-    }
-
-    return chainView;
+    return chains[static_cast<std::size_t>(chainIndex)]
+        | std::views::transform([](const auto& instance) { return instance.get(); }) | std::ranges::to<std::vector>();
 }
 
 /// Sets the callback that is invoked for each published result.
@@ -242,9 +237,11 @@ void PluginProcessingCoordinator::cancelAndWait()
     threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
 }
 
+namespace
+{
 /// Returns whether every chain aligns index-for-index with options.plugins and contains no null instances.
 /// At least one chain is required.
-static bool areChainsUsable(const std::vector<PluginChainInstances>& chains, const PluginProcessingOptions& options)
+bool areChainsUsable(const std::vector<PluginChainInstances>& chains, const PluginProcessingOptions& options)
 {
     const auto isUsableChain = [&options](const PluginChainInstances& chain) {
         return !chain.empty() && chain.size() == options.plugins.size()
@@ -255,7 +252,7 @@ static bool areChainsUsable(const std::vector<PluginChainInstances>& chains, con
 }
 
 /// Returns existing records in caller order, retaining the first occurrence of each full path.
-static std::vector<AudioAnalysisRecord> collectQueuedRecords(const std::vector<AudioAnalysisRecord>& records)
+std::vector<AudioAnalysisRecord> collectQueuedRecords(const std::vector<AudioAnalysisRecord>& records)
 {
     std::set<juce::String> seenPaths;
     std::vector<AudioAnalysisRecord> queuedRecords;
@@ -268,6 +265,7 @@ static std::vector<AudioAnalysisRecord> collectQueuedRecords(const std::vector<A
 
     return queuedRecords;
 }
+}  // namespace
 
 /// Reports that a run could not start to the start error callback, if one is set.
 void PluginProcessingCoordinator::reportStartError(const juce::String& message) const

@@ -1,10 +1,12 @@
 /// Synthetic payload tests cover Serato metadata layouts, malformed input and cache round trips.
 /// No test data comes from local music or from another repository's fixtures.
 
+#include "serato/SeratoBytes.h"
 #include "serato/SeratoTags.h"
 #include "TestSuites.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
 #include <limits>
 
@@ -12,6 +14,13 @@ namespace audiobatch::tests
 {
 namespace
 {
+constexpr std::array<std::uint8_t, 8> bigEndianBytes {0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0};
+
+// The field width comes from the span type, so these only compile with exactly the right number of bytes.
+static_assert(serato::readBigEndian<std::uint32_t>(std::span(bigEndianBytes).first<4>()) == 0x1234'5678U);
+static_assert(serato::readBigEndian<std::uint32_t>(std::span(bigEndianBytes).last<4>()) == 0x9abc'def0U);
+static_assert(serato::readBigEndian<std::uint64_t>(std::span(bigEndianBytes)) == 0x1234'5678'9abc'def0ULL);
+
 /// Copies an output stream into unsigned parser input.
 std::vector<std::uint8_t> payloadBytes(const juce::MemoryOutputStream& stream)
 {

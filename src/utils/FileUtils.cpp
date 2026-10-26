@@ -222,12 +222,14 @@ public:
 template<typename Interface>
 using ComPointer = std::unique_ptr<Interface, ComReleaser>;
 
+namespace
+{
 /// Moves the file or folder to the recycle bin through IFileOperation,
 /// refusing to delete it when the drive has no recycle bin.
 /// IFileOperation requires a single-threaded apartment,
 /// so the calling thread is initialized for one when it has no apartment yet,
 /// and the move fails on a thread that already joined the multithreaded apartment.
-static bool moveToRecycleBin(const juce::File& file)
+bool moveToRecycleBin(const juce::File& file)
 {
     const auto apartmentResult = CoInitializeEx(
         nullptr, static_cast<DWORD>(COINIT_APARTMENTTHREADED) | static_cast<DWORD>(COINIT_DISABLE_OLE1DDE)
@@ -283,6 +285,7 @@ static bool moveToRecycleBin(const juce::File& file)
     CoUninitialize();
     return recycled && !file.exists();
 }
+}  // namespace
 #endif
 
 /// Moves a file or folder to the OS trash or recycle bin.
@@ -459,9 +462,11 @@ std::expected<void, juce::String> checkOutputPath(
     return {};
 }
 
+namespace
+{
 /// Renames the backup of a replaced output back to the output path after a failed commit.
 /// Logs where the previous output is when the rename fails, so it can still be recovered by hand.
-static void restoreOutputBackup(const juce::File& backupFile, const juce::File& outputFile)
+void restoreOutputBackup(const juce::File& backupFile, const juce::File& outputFile)
 {
     if (backupFile == juce::File() || !backupFile.existsAsFile()) {
         return;
@@ -480,10 +485,7 @@ static void restoreOutputBackup(const juce::File& backupFile, const juce::File& 
 /// so the temporary file's destructor cannot delete the only remaining copy of the audio.
 /// On Windows, ReplaceFile can delete the original and then fail to move the replacement into place.
 /// Returns the user-facing error describing where the new audio was kept.
-static juce::String keepNewAudioAfterLostOriginal(
-    const juce::TemporaryFile& temporaryFile,
-    const juce::File& outputFile
-)
+juce::String keepNewAudioAfterLostOriginal(const juce::TemporaryFile& temporaryFile, const juce::File& outputFile)
 {
     const auto keptFile
         = outputFile
@@ -502,6 +504,7 @@ static juce::String keepNewAudioAfterLostOriginal(
     logError("The original file {} was removed while being replaced", outputFile.getFullPathName().quoted());
     return "Could not replace the original file, and the new audio could not be kept";
 }
+}  // namespace
 
 /// Moves a finished temporary output into place next to its source and disposes of the source.
 /// When the output path is the source itself, the source is replaced in place.

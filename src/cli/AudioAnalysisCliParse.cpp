@@ -20,9 +20,11 @@ constexpr int minimumWorkerLimit {64};
 /// Longest worker count text that is parsed, which keeps the number far from the 64-bit limit.
 constexpr int maximumWorkerCountDigits {9};
 
+namespace
+{
 /// Returns true when the argument is a plain number such as "-14" or "0.5",
 /// which may start with a minus sign but is a value and not an option.
-static bool isNumericArgument(const juce::String& text)
+bool isNumericArgument(const juce::String& text)
 {
     const auto digits = text.startsWithChar('-') || text.startsWithChar('+') ? text.substring(1) : text;
     return digits.isNotEmpty() && digits.containsOnly("0123456789.") && digits.containsAnyOf("0123456789")
@@ -34,7 +36,7 @@ static bool isNumericArgument(const juce::String& text)
 /// and also as "--group-by=type".
 /// juce::ArgumentList::removeValueForOption only takes the next argument for the short form.
 /// Returns an empty optional when the option is not present, and an empty string when it is present without a value.
-static std::optional<juce::String> removeOptionWithValue(juce::ArgumentList& arguments, const juce::StringRef option)
+std::optional<juce::String> removeOptionWithValue(juce::ArgumentList& arguments, const juce::StringRef option)
 {
     for (int index = 0; index < arguments.size(); ++index) {
         const auto& argument = arguments.arguments.getReference(index);
@@ -67,7 +69,7 @@ static std::optional<juce::String> removeOptionWithValue(juce::ArgumentList& arg
 /// juce::ArgumentList matches a short option by searching for its letter anywhere in the argument,
 /// and removes the whole argument on the first match, so "-rf" would silently set only one of the flags.
 /// It also converts the option letter to a number string first, so "-12" would match "-r" and several other flags.
-static std::expected<void, juce::String> checkShortOptions(const juce::ArgumentList& arguments)
+std::expected<void, juce::String> checkShortOptions(const juce::ArgumentList& arguments)
 {
     for (const auto& argument : arguments.arguments) {
         if (!argument.isShortOption()) {
@@ -96,7 +98,7 @@ static std::expected<void, juce::String> checkShortOptions(const juce::ArgumentL
 
 /// Parses a sort mode name, accepting "loudness" as an alias for "lufs".
 /// Returns an empty optional for an unknown name.
-static std::optional<AudioAnalysisSortMode> parseSortMode(const juce::String& value)
+std::optional<AudioAnalysisSortMode> parseSortMode(const juce::String& value)
 {
     const auto normalizedSort = utils::normalizedToken(value);
 
@@ -121,7 +123,7 @@ static std::optional<AudioAnalysisSortMode> parseSortMode(const juce::String& va
 
 /// Parses an output format name.
 /// Returns an empty optional for an unknown name.
-static std::optional<AudioAnalysisOutputFormat> parseOutputFormat(const juce::String& value)
+std::optional<AudioAnalysisOutputFormat> parseOutputFormat(const juce::String& value)
 {
     const auto normalizedFormat = utils::normalizedToken(value);
 
@@ -142,7 +144,7 @@ static std::optional<AudioAnalysisOutputFormat> parseOutputFormat(const juce::St
 
 /// Parses a target level in the given range for --peak or --lufs.
 /// Returns the level, or an error message when the value is not a number in the range.
-static std::expected<double, juce::String> parseTargetLevel(
+std::expected<double, juce::String> parseTargetLevel(
     const juce::String& option,
     const juce::String& value,
     const double minimum,
@@ -166,7 +168,7 @@ static std::expected<double, juce::String> parseTargetLevel(
 
 /// Removes --peak and --lufs from the arguments and sets the normalization mode and target.
 /// Returns an error message when the options are invalid. Absent options leave the defaults in place.
-static std::expected<void, juce::String> parseNormalizationTarget(
+std::expected<void, juce::String> parseNormalizationTarget(
     juce::ArgumentList& arguments,
     AudioAnalysisCliOptions& options
 )
@@ -218,7 +220,7 @@ static std::expected<void, juce::String> parseNormalizationTarget(
 /// Returns an error message for options that cannot be used together.
 /// The plugin listing takes no input paths and no analysis options,
 /// its grouping and rescan options need --list-plugins, and --force, --peak, and --lufs need --normalize.
-static std::expected<void, juce::String> checkOptionCombinations(
+std::expected<void, juce::String> checkOptionCombinations(
     const AudioAnalysisCliOptions& options,
     const bool hasGrouping,
     const bool hasAnalysisValueOption
@@ -249,6 +251,7 @@ static std::expected<void, juce::String> checkOptionCombinations(
 
     return {};
 }
+}  // namespace
 
 /// Builds the help text shown by the CLI executable.
 juce::String cli::buildUsage(const juce::String& executableName)

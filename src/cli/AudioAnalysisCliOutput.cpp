@@ -17,26 +17,28 @@ constexpr int cliPeakColumnWidth {7};
 constexpr int cliTruePeakColumnWidth {7};
 constexpr int cliLoudnessColumnWidth {8};
 
+namespace
+{
 /// Formats the sample peak value right-aligned to the fixed dBFS column width.
-static juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
+juce::String formattedPeakColumn(const AudioAnalysisRecord& record)
 {
     return formatPeakCompact(static_cast<double>(record.overallPeak)).paddedLeft(' ', cliPeakColumnWidth);
 }
 
 /// Formats the true peak value right-aligned to the fixed dBTP column width.
-static juce::String formattedTruePeakColumn(const AudioAnalysisRecord& record)
+juce::String formattedTruePeakColumn(const AudioAnalysisRecord& record)
 {
     return formatTruePeakCompact(record.overallTruePeak).paddedLeft(' ', cliTruePeakColumnWidth);
 }
 
 /// Formats the integrated loudness value right-aligned to the fixed LUFS column width.
-static juce::String formattedIntegratedLoudnessColumn(const AudioAnalysisRecord& record)
+juce::String formattedIntegratedLoudnessColumn(const AudioAnalysisRecord& record)
 {
     return formatLoudnessCompact(record.integratedLufs).paddedLeft(' ', cliLoudnessColumnWidth);
 }
 
 /// Prints the bold column header line to stdout, matching the widths used by the result rows.
-static void printHeaderRow()
+void printHeaderRow()
 {
     console::printBold(
         "{:>{}}  {:>{}}  {:>{}}  TRACK\n",
@@ -52,7 +54,7 @@ static void printHeaderRow()
 /// Prints one aligned result line to stdout.
 /// The caller chooses the track label so plain analysis can show file names
 /// while normalization output can show full output paths.
-static void printResultRow(const AudioAnalysisRecord& record, const juce::String& trackLabel)
+void printResultRow(const AudioAnalysisRecord& record, const juce::String& trackLabel)
 {
     fmt::print(
         "{}  {}  {}  {}\n",
@@ -65,7 +67,7 @@ static void printResultRow(const AudioAnalysisRecord& record, const juce::String
 
 /// Picks the most informative path available for a normalized record,
 /// falling back from the cached full path to the file object and finally the bare file name.
-static juce::String reportedOutputPath(const AudioAnalysisRecord& record)
+juce::String reportedOutputPath(const AudioAnalysisRecord& record)
 {
     if (record.fullPath.isNotEmpty()) {
         return record.fullPath;
@@ -80,7 +82,7 @@ static juce::String reportedOutputPath(const AudioAnalysisRecord& record)
 
 /// Converts a linear amplitude to dB rounded to two decimals,
 /// or returns a void var, which JSON writes as null, for silence.
-static juce::var decibelsOrNull(const double amplitude)
+juce::var decibelsOrNull(const double amplitude)
 {
     if (amplitude <= 0.0) {
         return {};
@@ -92,7 +94,7 @@ static juce::var decibelsOrNull(const double amplitude)
 
 /// Rounds a loudness value to two decimals,
 /// or returns a void var, which JSON writes as null, for the negative infinity sentinel.
-static juce::var loudnessOrNull(const double loudness)
+juce::var loudnessOrNull(const double loudness)
 {
     if (loudness <= AudioAnalysisRecord::negativeInfinityLoudness) {
         return {};
@@ -103,7 +105,7 @@ static juce::var loudnessOrNull(const double loudness)
 
 /// Builds the machine-readable fields of one record, shared by the CSV and JSON output.
 /// The keys keep their insertion order, which is also the CSV column order.
-static juce::DynamicObject::Ptr buildRecordObject(const AudioAnalysisRecord& record)
+juce::DynamicObject::Ptr buildRecordObject(const AudioAnalysisRecord& record)
 {
     juce::DynamicObject::Ptr object = new juce::DynamicObject();
     object->setProperty("path", reportedOutputPath(record));
@@ -124,6 +126,7 @@ static juce::DynamicObject::Ptr buildRecordObject(const AudioAnalysisRecord& rec
     object->setProperty("error", record.errorMessage);
     return object;
 }
+}  // namespace
 
 /// Returns the records as CSV text with a header line, one line per record, and a trailing newline.
 /// The header is written even when there are no records, so scripts can always parse the columns.

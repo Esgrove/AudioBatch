@@ -47,6 +47,10 @@ private:
     juce::ApplicationCommandManager commandManager;
     std::unique_ptr<juce::CustomLookAndFeel> lookAndFeel {std::make_unique<juce::CustomLookAndFeel>(true)};
 
+    /// The window content, shown without transferring ownership to the window.
+    /// Declared after the look-and-feel it paints with, and destroyed explicitly before it in the destructor.
+    std::unique_ptr<AudioBatchComponent> content;
+
     JUCE_LEAK_DETECTOR(MainWindow)
 };
 }  // namespace audiobatch

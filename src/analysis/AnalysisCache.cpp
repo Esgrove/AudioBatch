@@ -166,7 +166,7 @@ std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
         )SQL";
         const auto statement = sqlite::prepare(*database, sql);
         if (statement == nullptr || !sqlite::bindText(*statement, 1, identity.path)
-            || !sqlite::bindInt64(*statement, 2, static_cast<std::uint32_t>(kind)))
+            || !sqlite::bindInt64(*statement, 2, std::to_underlying(kind)))
         {
             return std::nullopt;
         }
@@ -194,9 +194,11 @@ std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
             && sqlite3_column_int64(row, serato_column::updatedAtMs) > 0
             && sqlite3_column_type(row, serato_column::filePath) == SQLITE_TEXT
             && sqlite::columnText(*row, serato_column::filePath) == identity.path
-            && sqlite3_column_int64(row, serato_column::tagKind) == static_cast<std::uint32_t>(kind);
+            && std::cmp_equal(sqlite3_column_int64(row, serato_column::tagKind), std::to_underlying(kind));
         const auto state = sqlite3_column_int64(row, serato_column::resultState);
-        if (valid && state == static_cast<int>(serato::ReadStatus::present)) {
+        const auto stateIs
+            = [state](const serato::ReadStatus status) { return std::cmp_equal(state, std::to_underlying(status)); };
+        if (valid && stateIs(serato::ReadStatus::present)) {
             const auto bytes = sqlite3_column_bytes(row, serato_column::decodedData);
             valid = sqlite3_column_type(row, serato_column::decodedData) == SQLITE_BLOB && bytes > 0
                 && std::cmp_less_equal(bytes, maximumOverviewBytes);
@@ -205,9 +207,8 @@ std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
             }
         } else {
             valid = valid
-                && (state == static_cast<int>(serato::ReadStatus::absent)
-                    || state == static_cast<int>(serato::ReadStatus::unsupported)
-                    || state == static_cast<int>(serato::ReadStatus::invalid))
+                && (stateIs(serato::ReadStatus::absent) || stateIs(serato::ReadStatus::unsupported)
+                    || stateIs(serato::ReadStatus::invalid))
                 && sqlite3_column_type(row, serato_column::decodedData) == SQLITE_NULL;
         }
         if (!valid) {
@@ -281,11 +282,11 @@ bool AnalysisCache::storeSeratoTag(const FileIdentity& identity, const serato::T
         ? sqlite::bindBlob(*statement, serato_parameter::decodedData, data)
         : sqlite::bindNull(*statement, serato_parameter::decodedData);
     const bool bound = dataBound && sqlite::bindText(*statement, serato_parameter::filePath, identity.path)
-        && sqlite::bindInt64(*statement, serato_parameter::tagKind, static_cast<std::uint32_t>(result.kind))
+        && sqlite::bindInt64(*statement, serato_parameter::tagKind, std::to_underlying(result.kind))
         && sqlite::bindInt64(*statement, serato_parameter::fileSize, identity.fileSize)
         && sqlite::bindInt64(*statement, serato_parameter::modifiedTimeMs, identity.modifiedTimeMs)
         && sqlite::bindInt64(*statement, serato_parameter::parserVersion, serato::parserVersion(result.kind))
-        && sqlite::bindInt64(*statement, serato_parameter::resultState, static_cast<int>(result.status))
+        && sqlite::bindInt64(*statement, serato_parameter::resultState, std::to_underlying(result.status))
         && sqlite::bindInt64(*statement, serato_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds());
     return bound && sqlite::stepToCompletion(*statement);
 }
@@ -462,7 +463,7 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
         && sqlite::bindInt64(statement, analysis_parameter::sampleRate, record.sampleRate)
         && sqlite::bindInt64(statement, analysis_parameter::channels, record.channels)
         && sqlite::bindInt64(statement, analysis_parameter::bitsPerSample, record.bitsPerSample)
-        && sqlite::bindInt64(statement, analysis_parameter::status, static_cast<int>(record.status))
+        && sqlite::bindInt64(statement, analysis_parameter::status, std::to_underlying(record.status))
         && sqlite::bindInt64(statement, analysis_parameter::waveformVersion, 0)
         && sqlite::bindInt64(statement, analysis_parameter::analysisVersion, analysisVersion)
         && sqlite::bindInt64(statement, analysis_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds())

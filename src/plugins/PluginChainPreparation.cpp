@@ -8,6 +8,8 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <span>
+
 #if JUCE_MAC
 #include <AudioToolbox/AudioToolbox.h>
 #endif
@@ -84,6 +86,8 @@ juce::String formatPluginLatency(const juce::int64 samples, const double sampleR
     );
 }
 
+namespace
+{
 /// Tells the plugin it is rendering offline rather than running live on an audio device,
 /// so it can use higher-quality processing that does not need to keep up with realtime,
 /// for example higher oversampling or longer lookahead.
@@ -91,7 +95,7 @@ juce::String formatPluginLatency(const juce::int64 samples, const double sampleR
 /// JUCE passes the mode to VST3 plugins as kOffline in setupProcessing during prepareToPlay.
 /// JUCE's Audio Unit host does not forward the mode,
 /// so it is set directly through kAudioUnitProperty_OfflineRender while the unit is uninitialized.
-static void enableOfflineRendering(juce::AudioPluginInstance& plugin)
+void enableOfflineRendering(juce::AudioPluginInstance& plugin)
 {
     plugin.setNonRealtime(true);
 
@@ -118,11 +122,14 @@ static void enableOfflineRendering(juce::AudioPluginInstance& plugin)
     }
 #endif
 }
+}  // namespace
 
 #if JUCE_MAC
+namespace
+{
 /// Refreshes an Audio Unit's latency immediately after state restoration, without reinitializing it.
 /// JUCE also listens for latency notifications, but those may arrive after per-file preparation returns.
-static void refreshAudioUnitLatency(juce::AudioPluginInstance& plugin, const double sampleRate)
+void refreshAudioUnitLatency(juce::AudioPluginInstance& plugin, const double sampleRate)
 {
     if (const auto* client = plugin.getAudioUnitClient(); client != nullptr) {
         if (auto* audioUnit = client->getAudioUnitHandle(); audioUnit != nullptr) {
@@ -138,6 +145,7 @@ static void refreshAudioUnitLatency(juce::AudioPluginInstance& plugin, const dou
         }
     }
 }
+}  // namespace
 #endif
 
 /// Restores saved settings and prepares an inactive plugin on the message thread.
@@ -171,7 +179,7 @@ void restoreStateAndPrepare(
 /// Releases the resources of every plugin in the chain, leaving the chain inactive for the next file.
 /// Must run on the message thread, because releasing a VST3 plugin deactivates it through setActive.
 /// Plugins that are not prepared ignore the call.
-void releasePluginResources(const std::vector<juce::AudioPluginInstance*>& chainInstances)
+void releasePluginResources(std::span<juce::AudioPluginInstance* const> chainInstances)
 {
     for (auto* plugin : chainInstances) {
         plugin->releaseResources();
@@ -188,7 +196,7 @@ void releasePluginResources(const std::vector<juce::AudioPluginInstance*>& chain
 /// When a plugin rejects the file's channel layout,
 /// the plugins prepared before it are released again so the chain stays usable for the next file.
 ChainPreparation prepareChain(
-    const std::vector<juce::AudioPluginInstance*>& chainInstances,
+    std::span<juce::AudioPluginInstance* const> chainInstances,
     const PluginProcessingOptions& options,
     const int numChannels,
     const double sampleRate

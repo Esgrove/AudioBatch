@@ -45,9 +45,9 @@ public:
         {
             AudioAnalysisRecord record;
             expectEquals(formatSampleRateDisplay(record), juce::String("-"));
-            record.sampleRate = 48000;
+            record.sampleRate = 48'000;
             expectEquals(formatSampleRateDisplay(record), juce::String("48 kHz"));
-            record.sampleRate = 44100;
+            record.sampleRate = 44'100;
             expectEquals(formatSampleRateDisplay(record), juce::String("44.1 kHz"));
         }
 
@@ -68,9 +68,22 @@ public:
         {
             AudioAnalysisRecord record;
             expectEquals(formatBitrateDisplay(record), juce::String("-"));
-            record.fileSize = 40000;
+            record.fileSize = 40'000;
             record.durationSeconds = 1.0;
             expectEquals(formatBitrateDisplay(record), juce::String("320 kbps"));
+        }
+
+        beginTest("Per-file gain shows its sign, and no gain shows nothing");
+        {
+            AudioAnalysisRecord record;
+            record.customGainDb = 3.0f;
+            expectEquals(formatCustomGainDisplay(record), juce::String());
+            record.hasCustomGain = true;
+            expectEquals(formatCustomGainDisplay(record), juce::String("+3.0 dB"));
+            record.customGainDb = 0.0f;
+            expectEquals(formatCustomGainDisplay(record), juce::String("+0.0 dB"));
+            record.customGainDb = -1.5f;
+            expectEquals(formatCustomGainDisplay(record), juce::String("-1.5 dB"));
         }
 
         beginTest("The type label prefers the extension, then the format name");

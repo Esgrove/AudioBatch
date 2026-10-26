@@ -271,7 +271,7 @@ public:
             expect(planCameFirst);
             expectEquals(static_cast<int>(results.size()), 1);
             expect(!results.front().hasCustomGain);
-            expectEquals(results.front().sampleRate, 48000);
+            expectEquals(results.front().sampleRate, 48'000);
         }
 
         beginTest("A refresh rescan keeps the custom gain of an unchanged file");
@@ -607,7 +607,7 @@ private:
 
         beginTest("Modification time alone invalidates captured identities and rejects stale writes");
         expect(cache.storeSeratoTag(identity, positive));
-        expect(file.setLastModificationTime(juce::Time(identity.modifiedTimeMs + 10000)));
+        expect(file.setLastModificationTime(juce::Time(identity.modifiedTimeMs + 10'000)));
         const FileIdentity changedTime(file);
         expect(!identity.matches(file));
         expect(!cache.getSeratoTag(identity));

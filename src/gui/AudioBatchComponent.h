@@ -28,6 +28,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <thread>
 #include <vector>
 
@@ -84,10 +85,10 @@ public:
     [[nodiscard]] bool isContinuePreviewPlaybackEnabled() const noexcept;
     [[nodiscard]] bool isPlayFromFirstCuePointEnabled() const noexcept;
 
-    /// Returns the plugin selection controller, or nullptr before the component finishes constructing.
-    [[nodiscard]] PluginChain* getPluginChain() const noexcept
+    /// Returns the plugin chain, which the constructor creates and the destructor destroys.
+    [[nodiscard]] PluginChain& getPluginChain() const noexcept
     {
-        return pluginChain.get();
+        return *pluginChain;
     }
 
     bool isInterestedInFileDrag(const juce::StringArray& files) override;
@@ -140,14 +141,14 @@ private:
     void handleAnalysisPlan(const AnalysisPlan& plan);
     void handleAnalysisResults(std::vector<AnalysisResultMessage> messages);
     void handleDroppedPaths(const juce::StringArray& paths);
-    void handleFileContextMenuRequested(int row, int columnId, const juce::MouseEvent& event);
+    void handleFileContextMenuRequested(int row, const juce::MouseEvent& event);
     void handleNormalizeComplete(int totalFiles);
     void handleNormalizeResult(const AudioNormalizationResult& result);
     void handleProcessingComplete(int totalFiles);
     void handleProcessingResult(const PluginProcessingResult& result);
-    void handleSecondarySortRequested(int columnId);
+    void handleSecondarySortRequested(AudioFileTableColumn column);
     void handleSelectionChanged(int lastRowSelected);
-    void handleSortRequested(int columnId, bool isForwards);
+    void handleSortRequested(std::optional<AudioFileTableColumn> column, bool isForwards);
     void handleThumbnailFullyLoaded();
     void launchFolderChooser(bool appendToRoots);
     void layoutPlaybackButtons(juce::Rectangle<int> bounds);
@@ -227,13 +228,15 @@ private:
     };
 
     AnalysisCoordinator analysisCoordinator;
+
+    /// The rows of the results table. Declared before the table model, which refers to it.
+    std::vector<AudioAnalysisRecord> analysisResults;
     AudioFileTableModel fileTableModel;
     NormalizeCoordinator normalizeCoordinator;
     PluginProcessingCoordinator pluginCoordinator;
     juce::ApplicationProperties pluginAppProperties;
     juce::StretchableLayoutManager mainVerticalLayout;
     juce::StretchableLayoutResizerBar waveformResizeBar {&mainVerticalLayout, 1, false};
-    std::vector<AudioAnalysisRecord> analysisResults;
 
     /// Plays the previewed file.
     /// Declared before the thumbnail and the audio settings component, which hold references into it.
@@ -268,7 +271,11 @@ private:
     OperationProgress processingProgress;
 
     /// Primary and secondary sort columns of the results table.
-    results_sorting::SortState sortState {.primaryColumnId = columnOverallPeak, .statusText = {}};
+    results_sorting::SortState sortState {
+        .primaryColumn = AudioFileTableColumn::overallPeak,
+        .secondaryColumn = std::nullopt,
+        .statusText = {},
+    };
 
     /// Activity, progress, and last operation messages per file, shown in the status column.
     /// Its callback also runs on every animation tick while files are busy, which keeps the overall progress current.

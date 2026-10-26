@@ -29,8 +29,10 @@ constinit std::atomic_flag crashLogged;
 }  // namespace
 
 #if !JUCE_WINDOWS
+namespace
+{
 /// Returns the conventional name of a fatal signal for the POSIX crash log.
-static constexpr std::string_view signalName(const int signalNumber)
+constexpr std::string_view signalName(const int signalNumber)
 {
     switch (signalNumber) {
         case SIGSEGV:
@@ -49,13 +51,16 @@ static constexpr std::string_view signalName(const int signalNumber)
             return "unknown signal";
     }
 }
+}  // namespace
 #endif
 
+namespace
+{
 /// Logs the reason the process is about to die together with the current stack trace.
 /// Runs inside a signal handler or the terminate handler,
 /// so the logging is best effort: it allocates and takes the logger lock, which is not async-signal-safe.
 /// That is acceptable because the process is terminating either way.
-static void logCrash(const juce::String& reason)
+void logCrash(const juce::String& reason)
 {
     if (crashLogged.test_and_set()) {
         return;
@@ -72,7 +77,7 @@ static void logCrash(const juce::String& reason)
 /// On POSIX systems JUCE passes the signal number and would kill the process with SIGKILL after this returns.
 /// The signal is re-raised with its default action instead,
 /// so the exit status and the system crash report still show the original signal.
-static void handleCrash(void* crashInfo)
+void handleCrash(void* crashInfo)
 {
 #if JUCE_WINDOWS
     juce::ignoreUnused(crashInfo);
@@ -91,7 +96,7 @@ static void handleCrash(void* crashInfo)
 }
 
 /// Terminate handler that logs the uncaught exception, if any, before aborting.
-[[noreturn]] static void handleTerminate()
+[[noreturn]] void handleTerminate()
 {
     juce::String reason = "std::terminate called without an active exception";
 
@@ -108,6 +113,7 @@ static void handleCrash(void* crashInfo)
     logCrash(reason);
     std::abort();
 }
+}  // namespace
 
 /// Makes crashes and uncaught exceptions write an error with a stack trace to the current logger,
 /// so an unexpected quit, for example inside a hosted plugin, leaves a trace in the application log.
@@ -117,13 +123,14 @@ void installCrashLogging()
     juce::SystemStats::setApplicationCrashHandler(handleCrash);
     std::set_terminate(handleTerminate);
 }
+
 /// Creates the default rolling file logger for the application.
 /// The log file goes into the application's log folder and is named after the log name,
 /// which defaults to the application name.
 std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName, const juce::String& logName)
 {
     /// Size in bytes the log file is trimmed to when it is opened.
-    constexpr int maximumInitialLogSize = 32768;
+    constexpr int maximumInitialLogSize = 32'768;
     const auto name = logName.isNotEmpty() ? logName : appName;
     return std::unique_ptr<juce::FileLogger>(
         juce::FileLogger::createDefaultAppLogger(appName, format("{}.log", name), name, maximumInitialLogSize)

@@ -12,35 +12,78 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <cstdint>
+#include <optional>
+#include <utility>
+
 namespace audiobatch
 {
-/// Menu ids used only by the main window's command dispatch.
 namespace
 {
-enum MenuItemId : std::uint8_t {
-    chooseFolderMenuItemId = 1,
-    rescanMenuItemId,
-    clearFilesMenuItemId,
-    removeSelectedMenuItemId,
-    reanalyzeSelectedMenuItemId,
-    audioSettingsMenuItemId,
-    supportedFormatsMenuItemId,
-    aboutMenuItemId,
-    quitMenuItemId,
-    editChainMenuItemId,
-    clearChainMenuItemId,
-    scanPluginsMenuItemId,
-    addFolderMenuItemId,
-    moveSelectedToTrashMenuItemId,
-    revealSelectedMenuItemId,
-    togglePreviewSectionMenuItemId,
-    toggleSeratoWaveformColouringMenuItemId,
-    togglePluginPreviewMenuItemId,
-    togglePreviewCompensationMenuItemId,
-    toggleContinuePlaybackMenuItemId,
-    togglePlayFromFirstCuePointMenuItemId,
-    toggleLoudnessGraphMenuItemId,
+/// Menu bar items that menuItemSelected runs directly.
+/// Their ids stay below the command ids, and both stay far below the Add Plugin submenu ids of juce::KnownPluginList.
+enum class MenuItemId : std::uint8_t {
+    chooseFolder = 1,
+    addFolder,
+    clearFiles,
+    reanalyzeSelected,
+    audioSettings,
+    supportedFormats,
+    editChain,
+    clearChain,
+    scanPlugins,
 };
+
+/// Menu bar commands that the command manager runs through perform, so they can have keyboard shortcuts.
+enum class CommandId : std::uint8_t {
+    rescan = 101,
+    revealSelected,
+    removeSelected,
+    moveSelectedToTrash,
+    about,
+    quit,
+    togglePreviewSection,
+    toggleSeratoWaveformColouring,
+    toggleLoudnessGraph,
+    togglePluginPreview,
+    togglePreviewCompensation,
+    toggleContinuePlayback,
+    togglePlayFromFirstCuePoint,
+};
+
+/// First of the contiguous command ids.
+constexpr CommandId firstCommand {CommandId::rescan};
+/// Last of the contiguous command ids, which new commands replace.
+constexpr CommandId lastCommand {CommandId::togglePlayFromFirstCuePoint};
+
+/// Returns the menu item for a menu bar result id, or nullopt for a command or an Add Plugin submenu id.
+constexpr std::optional<MenuItemId> menuItemFromId(const int menuItemID) noexcept
+{
+    return utils::enumFromId<MenuItemId, MenuItemId::chooseFolder, MenuItemId::scanPlugins>(menuItemID);
+}
+
+/// Returns the command for a JUCE command id, or nullopt for an id this window does not register.
+constexpr std::optional<CommandId> commandFromId(const juce::CommandID commandID) noexcept
+{
+    return utils::enumFromId<CommandId, firstCommand, lastCommand>(commandID);
+}
+
+/// Adds a menu bar item that menuItemSelected runs.
+void addMenuItem(juce::PopupMenu& menu, const MenuItemId item, const juce::String& text, const bool isEnabled = true)
+{
+    menu.addItem(std::to_underlying(item), text, isEnabled);
+}
+
+/// Adds a menu bar item for a command, showing its key press and its registered name unless a display name is given.
+void addCommandItem(
+    juce::PopupMenu& menu,
+    juce::ApplicationCommandManager& commandManager,
+    const CommandId command,
+    const juce::String& displayName = {}
+)
+{
+    menu.addCommandItem(&commandManager, std::to_underlying(command), displayName);
+}
 }  // namespace
 
 /// Builds the window, installs the custom look-and-feel as the global default,
@@ -69,7 +112,8 @@ MainWindow::MainWindow(const juce::String& name) :
 #endif
 
     logStartupCheckpoint("creating main content component");
-    setContentOwned(new AudioBatchComponent(), true);
+    content = std::make_unique<AudioBatchComponent>();
+    setContentNonOwned(content.get(), true);
     logStartupCheckpoint("main content component created");
 
     commandManager.registerAllCommandsForTarget(this);
@@ -109,11 +153,7 @@ void MainWindow::showAndActivate()
     setMinimised(false);
     utils::bringWindowToFront(*this);
 
-    if (auto* content = getContentComponent()) {
-        content->grabKeyboardFocus();
-    } else {
-        grabKeyboardFocus();
-    }
+    content->grabKeyboardFocus();
 
     utils::logDebug("MainWindow startup: showAndActivate end");
 }
@@ -128,6 +168,7 @@ MainWindow::~MainWindow()
     setMenuBar(nullptr);
 #endif
     clearContentComponent();
+    content.reset();
     juce::LookAndFeel::setDefaultLookAndFeel(nullptr);
 }
 
@@ -159,38 +200,38 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
 #if JUCE_MAC
     switch (topLevelMenuIndex) {
         case 0:
-            menu.addCommandItem(&commandManager, aboutMenuItemId);
+            addCommandItem(menu, commandManager, CommandId::about);
             menu.addSeparator();
-            menu.addCommandItem(&commandManager, quitMenuItemId);
+            addCommandItem(menu, commandManager, CommandId::quit);
             break;
         case 1:
-            menu.addItem(chooseFolderMenuItemId, "Choose Folder...");
-            menu.addItem(addFolderMenuItemId, "Add Folder...");
-            menu.addCommandItem(&commandManager, rescanMenuItemId, "Rescan");
+            addMenuItem(menu, MenuItemId::chooseFolder, "Choose Folder...");
+            addMenuItem(menu, MenuItemId::addFolder, "Add Folder...");
+            addCommandItem(menu, commandManager, CommandId::rescan, "Rescan");
             menu.addSeparator();
-            menu.addCommandItem(&commandManager, revealSelectedMenuItemId, utils::revealInFileManagerLabel());
-            menu.addItem(reanalyzeSelectedMenuItemId, "Re-analyze Selected");
-            menu.addCommandItem(&commandManager, removeSelectedMenuItemId, "Remove Selected from List");
-            menu.addCommandItem(&commandManager, moveSelectedToTrashMenuItemId, "Move Selected to Trash");
-            menu.addItem(clearFilesMenuItemId, "Clear All Files");
+            addCommandItem(menu, commandManager, CommandId::revealSelected, utils::revealInFileManagerLabel());
+            addMenuItem(menu, MenuItemId::reanalyzeSelected, "Re-analyze Selected");
+            addCommandItem(menu, commandManager, CommandId::removeSelected, "Remove Selected from List");
+            addCommandItem(menu, commandManager, CommandId::moveSelectedToTrash, "Move Selected to Trash");
+            addMenuItem(menu, MenuItemId::clearFiles, "Clear All Files");
             break;
         case 2:
-            menu.addCommandItem(&commandManager, togglePreviewSectionMenuItemId);
-            menu.addCommandItem(&commandManager, toggleSeratoWaveformColouringMenuItemId);
-            menu.addCommandItem(&commandManager, toggleLoudnessGraphMenuItemId);
-            menu.addCommandItem(&commandManager, togglePluginPreviewMenuItemId);
-            menu.addCommandItem(&commandManager, togglePreviewCompensationMenuItemId);
-            menu.addCommandItem(&commandManager, toggleContinuePlaybackMenuItemId);
-            menu.addCommandItem(&commandManager, togglePlayFromFirstCuePointMenuItemId);
+            addCommandItem(menu, commandManager, CommandId::togglePreviewSection);
+            addCommandItem(menu, commandManager, CommandId::toggleSeratoWaveformColouring);
+            addCommandItem(menu, commandManager, CommandId::toggleLoudnessGraph);
+            addCommandItem(menu, commandManager, CommandId::togglePluginPreview);
+            addCommandItem(menu, commandManager, CommandId::togglePreviewCompensation);
+            addCommandItem(menu, commandManager, CommandId::toggleContinuePlayback);
+            addCommandItem(menu, commandManager, CommandId::togglePlayFromFirstCuePoint);
             menu.addSeparator();
             appendPluginOptionsMenuItems(menu);
             menu.addSeparator();
-            menu.addItem(audioSettingsMenuItemId, "Audio Settings...");
+            addMenuItem(menu, MenuItemId::audioSettings, "Audio Settings...");
             break;
         case 3:
-            menu.addItem(supportedFormatsMenuItemId, "Normalization Format Support...");
+            addMenuItem(menu, MenuItemId::supportedFormats, "Normalization Format Support...");
             menu.addSeparator();
-            menu.addCommandItem(&commandManager, aboutMenuItemId);
+            addCommandItem(menu, commandManager, CommandId::about);
             break;
         default:
             break;
@@ -198,35 +239,35 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
 #else
     switch (topLevelMenuIndex) {
         case 0:
-            menu.addItem(chooseFolderMenuItemId, "Choose Folder...");
-            menu.addItem(addFolderMenuItemId, "Add Folder...");
-            menu.addCommandItem(&commandManager, rescanMenuItemId, "Rescan");
+            addMenuItem(menu, MenuItemId::chooseFolder, "Choose Folder...");
+            addMenuItem(menu, MenuItemId::addFolder, "Add Folder...");
+            addCommandItem(menu, commandManager, CommandId::rescan, "Rescan");
             menu.addSeparator();
-            menu.addCommandItem(&commandManager, revealSelectedMenuItemId, utils::revealInFileManagerLabel());
-            menu.addItem(reanalyzeSelectedMenuItemId, "Re-analyze Selected");
-            menu.addCommandItem(&commandManager, removeSelectedMenuItemId, "Remove Selected from List");
-            menu.addCommandItem(&commandManager, moveSelectedToTrashMenuItemId, "Move Selected to Trash");
-            menu.addItem(clearFilesMenuItemId, "Clear All Files");
+            addCommandItem(menu, commandManager, CommandId::revealSelected, utils::revealInFileManagerLabel());
+            addMenuItem(menu, MenuItemId::reanalyzeSelected, "Re-analyze Selected");
+            addCommandItem(menu, commandManager, CommandId::removeSelected, "Remove Selected from List");
+            addCommandItem(menu, commandManager, CommandId::moveSelectedToTrash, "Move Selected to Trash");
+            addMenuItem(menu, MenuItemId::clearFiles, "Clear All Files");
             menu.addSeparator();
-            menu.addCommandItem(&commandManager, quitMenuItemId);
+            addCommandItem(menu, commandManager, CommandId::quit);
             break;
         case 1:
-            menu.addCommandItem(&commandManager, togglePreviewSectionMenuItemId);
-            menu.addCommandItem(&commandManager, toggleSeratoWaveformColouringMenuItemId);
-            menu.addCommandItem(&commandManager, toggleLoudnessGraphMenuItemId);
-            menu.addCommandItem(&commandManager, togglePluginPreviewMenuItemId);
-            menu.addCommandItem(&commandManager, togglePreviewCompensationMenuItemId);
-            menu.addCommandItem(&commandManager, toggleContinuePlaybackMenuItemId);
-            menu.addCommandItem(&commandManager, togglePlayFromFirstCuePointMenuItemId);
+            addCommandItem(menu, commandManager, CommandId::togglePreviewSection);
+            addCommandItem(menu, commandManager, CommandId::toggleSeratoWaveformColouring);
+            addCommandItem(menu, commandManager, CommandId::toggleLoudnessGraph);
+            addCommandItem(menu, commandManager, CommandId::togglePluginPreview);
+            addCommandItem(menu, commandManager, CommandId::togglePreviewCompensation);
+            addCommandItem(menu, commandManager, CommandId::toggleContinuePlayback);
+            addCommandItem(menu, commandManager, CommandId::togglePlayFromFirstCuePoint);
             menu.addSeparator();
             appendPluginOptionsMenuItems(menu);
             menu.addSeparator();
-            menu.addItem(audioSettingsMenuItemId, "Audio Settings...");
+            addMenuItem(menu, MenuItemId::audioSettings, "Audio Settings...");
             break;
         case 2:
-            menu.addItem(supportedFormatsMenuItemId, "Normalization Format Support...");
+            addMenuItem(menu, MenuItemId::supportedFormats, "Normalization Format Support...");
             menu.addSeparator();
-            menu.addCommandItem(&commandManager, aboutMenuItemId);
+            addCommandItem(menu, commandManager, CommandId::about);
             break;
         default:
             break;
@@ -237,63 +278,47 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
 }
 
 /// Dispatches a chosen menu item to the matching AudioBatchComponent or plugin chain action.
-/// Unknown ids fall through to handlePluginChoiceMenuItem because the Add Plugin submenu generates its ids dynamically.
+/// Commands are skipped, because the menu invokes them through perform before it reports the choice here.
+/// Other unknown ids go to handlePluginChoiceMenuItem, because the Add Plugin submenu generates its ids dynamically.
 void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
 {
     juce::ignoreUnused(topLevelMenuIndex);
 
-    switch (menuItemID) {
-        case chooseFolderMenuItemId:
+    const auto item = menuItemFromId(menuItemID);
+    if (!item.has_value()) {
+        if (!commandFromId(menuItemID).has_value()) {
+            handlePluginChoiceMenuItem(menuItemID);
+        }
+        return;
+    }
+
+    switch (*item) {
+        case MenuItemId::chooseFolder:
             getAudioBatch().chooseRootFolder();
             break;
-        case addFolderMenuItemId:
+        case MenuItemId::addFolder:
             getAudioBatch().addRootFolder();
             break;
-        case clearFilesMenuItemId:
+        case MenuItemId::clearFiles:
             getAudioBatch().clearAllRecords();
             break;
-        case rescanMenuItemId:
-        case removeSelectedMenuItemId:
-        case moveSelectedToTrashMenuItemId:
-        case revealSelectedMenuItemId:
-        case aboutMenuItemId:
-        case quitMenuItemId:
-        case togglePreviewSectionMenuItemId:
-        case toggleSeratoWaveformColouringMenuItemId:
-        case toggleLoudnessGraphMenuItemId:
-        case togglePluginPreviewMenuItemId:
-        case togglePreviewCompensationMenuItemId:
-        case toggleContinuePlaybackMenuItemId:
-        case togglePlayFromFirstCuePointMenuItemId:
-            // Handled by perform, the menu invokes the command before it reports the choice here.
-            break;
-        case reanalyzeSelectedMenuItemId:
+        case MenuItemId::reanalyzeSelected:
             getAudioBatch().reanalyzeSelectedRecords();
             break;
-        case audioSettingsMenuItemId:
+        case MenuItemId::audioSettings:
             getAudioBatch().showAudioSettingsWindow();
             break;
-        case supportedFormatsMenuItemId:
+        case MenuItemId::supportedFormats:
             getAudioBatch().showSupportedNormalizationFormats();
             break;
-
-        case editChainMenuItemId:
-            if (auto* chain = getAudioBatch().getPluginChain()) {
-                chain->showChainEditor();
-            }
+        case MenuItemId::editChain:
+            getAudioBatch().getPluginChain().showChainEditor();
             break;
-        case clearChainMenuItemId:
-            if (auto* chain = getAudioBatch().getPluginChain()) {
-                chain->clearChain();
-            }
+        case MenuItemId::clearChain:
+            getAudioBatch().getPluginChain().clearChain();
             break;
-        case scanPluginsMenuItemId:
-            if (auto* chain = getAudioBatch().getPluginChain()) {
-                chain->showScanWindow();
-            }
-            break;
-        default:
-            handlePluginChoiceMenuItem(menuItemID);
+        case MenuItemId::scanPlugins:
+            getAudioBatch().getPluginChain().showScanWindow();
             break;
     }
 }
@@ -307,21 +332,10 @@ juce::ApplicationCommandTarget* MainWindow::getNextCommandTarget()
 /// Lists the commands that appear in the menu bar with a keyboard shortcut.
 void MainWindow::getAllCommands(juce::Array<juce::CommandID>& commands)
 {
-    commands.addArray({
-        rescanMenuItemId,
-        revealSelectedMenuItemId,
-        removeSelectedMenuItemId,
-        moveSelectedToTrashMenuItemId,
-        aboutMenuItemId,
-        quitMenuItemId,
-        togglePreviewSectionMenuItemId,
-        toggleSeratoWaveformColouringMenuItemId,
-        toggleLoudnessGraphMenuItemId,
-        togglePluginPreviewMenuItemId,
-        togglePreviewCompensationMenuItemId,
-        toggleContinuePlaybackMenuItemId,
-        togglePlayFromFirstCuePointMenuItemId,
-    });
+    constexpr juce::CommandID lastCommandID {std::to_underlying(lastCommand)};
+    for (juce::CommandID commandID = std::to_underlying(firstCommand); commandID <= lastCommandID; ++commandID) {
+        commands.add(commandID);
+    }
 }
 
 /// Describes one command, including the default key presses the menu displays next to its item,
@@ -337,30 +351,34 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
     const auto& audioBatch = getAudioBatch();
     const auto blockedByDialog = audioBatch.isCurrentlyBlockedByAnotherModalComponent();
     const auto canActOnSelection = !blockedByDialog && audioBatch.hasSelectedRecords();
+    const auto command = commandFromId(commandID);
+    if (!command.has_value()) {
+        return;
+    }
 
-    switch (commandID) {
-        case toggleLoudnessGraphMenuItemId:
+    switch (*command) {
+        case CommandId::toggleLoudnessGraph:
             result.setInfo(
                 "Show Loudness Graph", "Overlay source-file short-term loudness on the waveform", "Options", 0
             );
             result.setTicked(audioBatch.isLoudnessGraphEnabled());
             result.setActive(!blockedByDialog);
             break;
-        case togglePluginPreviewMenuItemId:
+        case CommandId::togglePluginPreview:
             result.setInfo(
                 "Preview Plugin Chain", "Listen through enabled plugins and custom input gain", "Options", 0
             );
             result.setTicked(audioBatch.isPluginPreviewEnabled());
             result.setActive(!blockedByDialog);
             break;
-        case togglePreviewCompensationMenuItemId:
+        case CommandId::togglePreviewCompensation:
             result.setInfo(
                 "Compensate Preview Plugin Latency", "Align processed audio with the file position", "Options", 0
             );
             result.setTicked(audioBatch.isPreviewLatencyCompensated());
             result.setActive(!blockedByDialog);
             break;
-        case toggleContinuePlaybackMenuItemId:
+        case CommandId::toggleContinuePlayback:
             result.setInfo(
                 "Continue Playback When Changing Files",
                 "Continue active playback on a newly selected file",
@@ -370,7 +388,7 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
             result.setTicked(audioBatch.isContinuePreviewPlaybackEnabled());
             result.setActive(!blockedByDialog);
             break;
-        case togglePlayFromFirstCuePointMenuItemId:
+        case CommandId::togglePlayFromFirstCuePoint:
             result.setInfo(
                 "Play from First Cue Point",
                 "Load files at the first cue point if it is at or before halfway, otherwise start at zero",
@@ -380,12 +398,12 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
             result.setTicked(audioBatch.isPlayFromFirstCuePointEnabled());
             result.setActive(!blockedByDialog);
             break;
-        case quitMenuItemId:
+        case CommandId::quit:
             result.setInfo("Quit", "Quits the application", fileCategory, 0);
             result.addDefaultKeypress('q', juce::ModifierKeys::commandModifier);
             result.setActive(!blockedByDialog);
             break;
-        case toggleSeratoWaveformColouringMenuItemId:
+        case CommandId::toggleSeratoWaveformColouring:
             result.setInfo(
                 "Serato Waveform Colours", "Uses Serato spectral colours for waveform previews", "Options", 0
             );
@@ -396,7 +414,7 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
             result.setTicked(audioBatch.isSeratoWaveformColouringEnabled());
             result.setActive(!blockedByDialog);
             break;
-        case togglePreviewSectionMenuItemId:
+        case CommandId::togglePreviewSection:
             result.setInfo(
                 audioBatch.isPreviewSectionExpanded() ? "Collapse Bottom Section" : "Expand Bottom Section",
                 "Toggles the compact preview and processing row",
@@ -409,7 +427,7 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
             );
             result.setActive(!blockedByDialog);
             break;
-        case aboutMenuItemId:
+        case CommandId::about:
             result.setInfo(
                 utils::format("About {}", juce::JUCEApplication::getInstance()->getApplicationName()),
                 "Shows application information",
@@ -422,25 +440,25 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
 #endif
             result.setActive(!blockedByDialog);
             break;
-        case rescanMenuItemId:
+        case CommandId::rescan:
             result.setInfo("Rescan", "Re-runs analysis for all root folders", fileCategory, 0);
             result.addDefaultKeypress(juce::KeyPress::F5Key, juce::ModifierKeys::noModifiers);
             result.setActive(!blockedByDialog && !audioBatch.isFileOperationInProgress());
             break;
-        case revealSelectedMenuItemId:
+        case CommandId::revealSelected:
             result.setInfo(
                 utils::revealInFileManagerLabel(), "Reveals the selected file in the file manager", fileCategory, 0
             );
             result.addDefaultKeypress('r', juce::ModifierKeys::commandModifier);
             result.setActive(canActOnSelection);
             break;
-        case removeSelectedMenuItemId:
+        case CommandId::removeSelected:
             result.setInfo("Remove Selected from List", "Removes the selected files from the list", fileCategory, 0);
             result.addDefaultKeypress(juce::KeyPress::deleteKey, juce::ModifierKeys::noModifiers);
             result.addDefaultKeypress(juce::KeyPress::backspaceKey, juce::ModifierKeys::noModifiers);
             result.setActive(canActOnSelection);
             break;
-        case moveSelectedToTrashMenuItemId:
+        case CommandId::moveSelectedToTrash:
             result.setInfo("Move Selected to Trash", "Moves the selected files to the system trash", fileCategory, 0);
 #if JUCE_WINDOWS
             result.addDefaultKeypress(juce::KeyPress::deleteKey, juce::ModifierKeys::ctrlModifier);
@@ -463,8 +481,6 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
 #endif
             result.setActive(canActOnSelection);
             break;
-        default:
-            break;
     }
 }
 
@@ -472,32 +488,37 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
 /// The menu also reports the choice through menuItemSelected, which ignores these commands so each choice runs once.
 bool MainWindow::perform(const InvocationInfo& info)
 {
-    switch (info.commandID) {
-        case toggleLoudnessGraphMenuItemId:
+    const auto command = commandFromId(info.commandID);
+    if (!command.has_value()) {
+        return false;
+    }
+
+    switch (*command) {
+        case CommandId::toggleLoudnessGraph:
             getAudioBatch().toggleLoudnessGraph();
             return true;
-        case togglePluginPreviewMenuItemId:
+        case CommandId::togglePluginPreview:
             getAudioBatch().togglePluginPreview();
             return true;
-        case togglePreviewCompensationMenuItemId:
+        case CommandId::togglePreviewCompensation:
             getAudioBatch().togglePreviewLatencyCompensation();
             return true;
-        case toggleContinuePlaybackMenuItemId:
+        case CommandId::toggleContinuePlayback:
             getAudioBatch().toggleContinuePreviewPlayback();
             return true;
-        case togglePlayFromFirstCuePointMenuItemId:
+        case CommandId::togglePlayFromFirstCuePoint:
             getAudioBatch().togglePlayFromFirstCuePoint();
             return true;
-        case quitMenuItemId:
+        case CommandId::quit:
             juce::JUCEApplication::getInstance()->systemRequestedQuit();
             return true;
-        case toggleSeratoWaveformColouringMenuItemId:
+        case CommandId::toggleSeratoWaveformColouring:
             getAudioBatch().toggleSeratoWaveformColouring();
             return true;
-        case togglePreviewSectionMenuItemId:
+        case CommandId::togglePreviewSection:
             getAudioBatch().togglePreviewSection();
             return true;
-        case aboutMenuItemId: {
+        case CommandId::about: {
             const auto appName = juce::JUCEApplication::getInstance()->getApplicationName();
             juce::AlertWindow::showAsync(
                 juce::MessageBoxOptions::makeOptionsOk(
@@ -511,69 +532,60 @@ bool MainWindow::perform(const InvocationInfo& info)
             );
             return true;
         }
-        case rescanMenuItemId:
+        case CommandId::rescan:
             getAudioBatch().rescanCurrentRoot();
             return true;
-        case revealSelectedMenuItemId:
+        case CommandId::revealSelected:
             getAudioBatch().revealSelectedRecord();
             return true;
-        case removeSelectedMenuItemId:
+        case CommandId::removeSelected:
             getAudioBatch().removeSelectedRecords();
             return true;
-        case moveSelectedToTrashMenuItemId:
+        case CommandId::moveSelectedToTrash:
             getAudioBatch().moveSelectedRecordsToTrash(
                 info.invocationMethod != InvocationInfo::fromKeyPress || !info.keyPress.getModifiers().isShiftDown()
             );
             return true;
-        default:
-            return false;
     }
+    return false;
 }
 
 /// Appends the plugin chain section into a menu, mirroring the popup attached to the Plugin toolbar button.
 void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu) const
 {
-    auto* chain = getAudioBatch().getPluginChain();
-    if (chain == nullptr) {
-        return;
-    }
-
-    const auto summary = chain->getChainSummary();
+    auto& chain = getAudioBatch().getPluginChain();
+    const auto summary = chain.getChainSummary();
     menu.addSectionHeader(
         summary.isEmpty() ? juce::String("No plugins in chain") : utils::format("Chain: {}", summary)
     );
-    menu.addItem(editChainMenuItemId, "Edit Chain...");
+    addMenuItem(menu, MenuItemId::editChain, "Edit Chain...");
     menu.addSeparator();
 
-    const auto& types = chain->getKnownPluginList().getTypes();
+    const auto& types = chain.getKnownPluginList().getTypes();
     juce::PopupMenu addSubmenu;
     juce::KnownPluginList::addToMenu(addSubmenu, types, juce::KnownPluginList::sortByManufacturer);
     menu.addSubMenu("Add Plugin", addSubmenu, !types.isEmpty());
-    menu.addItem(clearChainMenuItemId, "Clear Chain", chain->getNumSlots() > 0);
-    menu.addItem(scanPluginsMenuItemId, "Scan for Plugins...");
+    addMenuItem(menu, MenuItemId::clearChain, "Clear Chain", chain.getNumSlots() > 0);
+    addMenuItem(menu, MenuItemId::scanPlugins, "Scan for Plugins...");
 }
 
 /// Decodes a menu result against the known plugin list and appends the chosen plugin to the chain.
 void MainWindow::handlePluginChoiceMenuItem(const int menuItemID) const
 {
-    auto* chain = getAudioBatch().getPluginChain();
-    if (chain == nullptr) {
-        return;
-    }
-
-    const auto& types = chain->getKnownPluginList().getTypes();
+    auto& chain = getAudioBatch().getPluginChain();
+    const auto& types = chain.getKnownPluginList().getTypes();
     const auto index = juce::KnownPluginList::getIndexChosenByMenu(types, menuItemID);
     if (index < 0 || index >= types.size()) {
         return;
     }
 
-    chain->addPlugin(types.getReference(index));
+    chain.addPlugin(types.getReference(index));
 }
 
-/// Returns the owned content component as its concrete type.
-/// Valid for the whole window lifetime because the constructor always installs an AudioBatchComponent.
+/// Returns the content component.
+/// Valid from the constructor until the destructor, which are the only places that change it.
 AudioBatchComponent& MainWindow::getAudioBatch() const
 {
-    return *dynamic_cast<AudioBatchComponent*>(getContentComponent());
+    return *content;
 }
 }  // namespace audiobatch
