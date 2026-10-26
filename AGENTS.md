@@ -143,6 +143,7 @@ Tests:
 ## Working Rules
 
 - Prefer modern C++23 coding standards and idioms.
+  Use references and smart pointers instead of raw pointers, as described in Ownership and Pointers.
 - Fix JUCE bugs in the fork instead of working around them in project code.
   Commit the fix on the fork's `master` in `JUCE/`, in JUCE's own code style.
   Keep each patch small and upstreamable, so rebasing the fork onto a new JUCE release stays easy.
@@ -212,6 +213,38 @@ Tests:
 - The logging helpers accept fmt format strings and arguments directly:
   `utils::logError("Analysis failed for {}: {}", path.quoted(), message)`.
   Do not wrap the message in a `utils::format` call first.
+
+## Ownership and Pointers
+
+Express ownership in the type, so a reader never has to work out who deletes an object.
+Prefer, in this order, a value or a reference, then a smart pointer, and a raw pointer only as a documented exception.
+
+- Hold sole ownership in `std::unique_ptr` and create objects with `std::make_unique`.
+  Use `std::shared_ptr` with `std::make_shared` only for a lifetime that is genuinely shared,
+  such as run state that queued jobs keep alive after a newer run replaces it.
+  Use `juce::ReferenceCountedObjectPtr` for JUCE reference-counted types such as `juce::DynamicObject`.
+- Do not write `delete`.
+  Use `new` only where a JUCE or TagLib API takes ownership of a raw pointer,
+  and pass the expression straight into that call or return it from the override that hands it to JUCE.
+  When the object needs setting up before the transfer, hold it in a `std::unique_ptr` and pass `.release()` to the API.
+  Never wrap a released pointer in a new smart pointer.
+- Wrap C library handles such as `sqlite3` and `ebur128_state` in a `std::unique_ptr` with a custom deleter
+  or in a small RAII type, as `analysis/Sqlite.h` does.
+- Pass an object that must exist as `T&` or `const T&` instead of a pointer.
+  Pass contiguous elements as a `std::span` instead of a pointer and a count.
+  Return a value or a `std::optional` instead of a nullable pointer, and a `std::unique_ptr` from a factory.
+- Pass a smart pointer to a function only when the function takes part in the ownership.
+  Take a `std::unique_ptr` by value to take the object over, and a `std::shared_ptr` by value to share it.
+  A function that only uses the object takes a reference.
+- Keep a pointer back to an object that may be destroyed first in a `juce::WeakReference`.
+  Capture a component in an asynchronous callback as a `juce::Component::SafePointer` and check it before use.
+- Give a class with a reference data member deleted copy and move operations,
+  which `cppcoreguidelines-avoid-const-or-ref-data-members` in `.clang-tidy` requires.
+- Keep owning containers as `std::vector<std::unique_ptr<T>>`,
+  and use `juce::OwnedArray` only where a JUCE API expects one, as the plugin scanner does.
+- Use a raw pointer only for a non-owning observer that can be null or has to be reseated,
+  or where a JUCE or C API requires one, such as channel pointer arrays and `juce::AudioSource*`.
+  Document on its declaration who owns the object, whether the pointer can be null, and how long it stays valid.
 
 ## Code Organization
 
