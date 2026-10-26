@@ -255,8 +255,21 @@ public:
         {
             const auto record = analyzeFile(fixtureFile("broken.wav"));
             expect(record.hasError());
+            expect(record.error == AnalysisError::unsupported);
             expect(record.errorMessage.isNotEmpty());
             expect(record.shortTermLoudness == nullptr);
+        }
+
+        beginTest("Failed analyses say whether the failure would repeat for the same bytes");
+        {
+            const auto missing = analyzeFile(fixtureFile("missing.wav"));
+            expect(missing.error == AnalysisError::missingFile);
+            const auto cancelled = analyzeFile(fixtureFile("sine_stereo_44100_16.wav"), [] { return true; });
+            expect(cancelled.error == AnalysisError::cancelled);
+            expect(!analyzeFile(fixtureFile("sine_stereo_44100_16.wav")).error.has_value());
+            expect(isRepeatable(AnalysisError::unsupported));
+            expect(!isRepeatable(AnalysisError::decodeFailed));
+            expect(!isRepeatable(AnalysisError::cancelled));
         }
     }
 

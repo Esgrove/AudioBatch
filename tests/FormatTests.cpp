@@ -95,13 +95,12 @@ public:
         beginTest("Per-file gain shows its sign, and no gain shows nothing");
         {
             AudioAnalysisRecord record;
-            record.customGainDb = 3.0f;
             expectEquals(formatCustomGainCompact(record), juce::String());
-            record.hasCustomGain = true;
+            record.customGain = 3.0f;
             expectEquals(formatCustomGainCompact(record), juce::String("+3.0"));
-            record.customGainDb = 0.0f;
+            record.customGain = 0.0f;
             expectEquals(formatCustomGainCompact(record), juce::String("+0.0"));
-            record.customGainDb = -1.5f;
+            record.customGain = -1.5f;
             expectEquals(formatCustomGainCompact(record), juce::String("-1.5"));
         }
 

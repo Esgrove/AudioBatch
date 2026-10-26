@@ -116,8 +116,8 @@ std::expected<void, juce::String> validateProcessingInputs(
 /// A file without a measurable level for the target, such as silence, is left unchanged too.
 float getInputGain(const AudioAnalysisRecord& record, const PluginProcessingOptions& options)
 {
-    if (record.hasCustomGain) {
-        return juce::Decibels::decibelsToGain(record.customGainDb);
+    if (record.customGain) {
+        return juce::Decibels::decibelsToGain(*record.customGain);
     }
 
     if (options.normalizeBeforePlugin.has_value()) {
@@ -725,8 +725,7 @@ PluginProcessingResult processFileWithPlugins(
 
     auto analysis = analyzeFile(outputFile, {}, utils::makeProgressRange(onProgress, writeProgressEnd, 1.0f));
     // Custom gain has been baked in. Clear it on the new record.
-    analysis.customGainDb = 0.0f;
-    analysis.hasCustomGain = false;
+    analysis.customGain.reset();
 
     if (analysis.hasError()) {
         auto error = utils::format("The file was processed, but re-analysis failed: {}", analysis.errorMessage);

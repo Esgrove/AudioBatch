@@ -247,33 +247,29 @@ void AnalysisCoordinator::analyzeStaleFile(
     });
 
     AudioAnalysisRecord result;
-    bool cacheResult = true;
 
     try {
         result = analyzeFile(file, [this, runId] { return isRunCancelled(runId); }, onProgress);
     } catch (...) {
-        // An exception says nothing about the file, so the failure is not cached and the next run tries again.
         result = AudioAnalysisRecord::fromFile(file);
         result.status = AudioAnalysisStatus::failed;
+        result.error = AnalysisError::exception;
         result.errorMessage = utils::format("Analysis failed: {}", utils::describeCurrentException());
         utils::logError("Analysis failed for {}: {}", result.fullPath.quoted(), result.errorMessage);
-        cacheResult = false;
     }
 
     if (isRunCancelled(runId)) {
         return;
     }
 
-    if (cacheResult) {
-        // A refresh re-analyzes unchanged files too, and those keep the custom gain the user set for them.
-        if (const auto customGainDb = cache.getCustomGain(file, result.fileSize, result.modifiedTimeMs)) {
-            result.customGainDb = *customGainDb;
-            result.hasCustomGain = true;
-        }
-
-        // The cache logs its own failures, and the result is still published, so the next run only reads it again.
-        static_cast<void>(cache.storeAnalysis(result));
+    // A refresh re-analyzes unchanged files too, and those keep the custom gain the user set for them.
+    if (!result.hasError()) {
+        result.customGain = cache.getCustomGain(file, result.fileSize, result.modifiedTimeMs);
     }
+
+    // The cache keeps only failures that repeat for the same bytes, so the next run retries the others.
+    // The cache logs its own failures, and the result is still published, so the next run only reads it again.
+    static_cast<void>(cache.storeAnalysis(result));
 
     publishResult(result, runId);
 

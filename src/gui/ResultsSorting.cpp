@@ -192,13 +192,13 @@ int compareRecordsByColumn(
             return compareLoudness(lhs.integratedLufs, rhs.integratedLufs);
 
         case AudioFileTableColumn::customGain: {
-            if (lhs.hasCustomGain != rhs.hasCustomGain) {
-                return lhs.hasCustomGain ? 1 : -1;
+            if (lhs.customGain.has_value() != rhs.customGain.has_value()) {
+                return lhs.customGain ? 1 : -1;
             }
-            if (!lhs.hasCustomGain) {
+            if (!lhs.customGain) {
                 return 0;
             }
-            return compareValues(lhs.customGainDb, rhs.customGainDb);
+            return compareValues(*lhs.customGain, *rhs.customGain);
         }
 
         case AudioFileTableColumn::status:
