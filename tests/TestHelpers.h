@@ -17,6 +17,10 @@ constexpr double fixturePeakDecibels = -6.0206;
 /// A 1 kHz sine on both channels measures the same as its peak level, as in EBU Tech 3341.
 /// Mono fixtures are measured as dual mono, so they read the same as the stereo ones.
 constexpr double fixtureLoudness = fixturePeakDecibels;
+/// Position of the single click in the click fixtures, in samples.
+constexpr juce::int64 clickFixturePosition {11'025};
+/// Length of the click fixtures in samples, which is half a second at 44.1 kHz.
+constexpr juce::int64 clickFixtureLength {22'050};
 
 /// Observes simulated driver ownership without touching hardware. Must outlive the installed device manager.
 struct TestAudioDeviceState {
@@ -84,6 +88,7 @@ juce::File fixtureFile(const juce::String& name);
 
 /// Returns the sample peak of an analysis record in dBFS.
 double peakDecibels(const AudioAnalysisRecord& record);
+juce::int64 peakSamplePosition(const juce::File& file);
 
 bool deleteInsteadOfTrash(const juce::File& file);
 AudioNormalizationOptions testNormalizationOptions();

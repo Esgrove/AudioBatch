@@ -661,6 +661,19 @@ public:
             );
         }
 
+        beginTest("Processing keeps the start of the audio in place through plugin latency");
+        {
+            for (const auto* fixtureName : {"click_mono_44100_16.wav", "click_mono_44100_320k.mp3"}) {
+                const auto source = directory.copyFixture(fixtureName);
+                TestPlugin plugin({.latencySamples = 1000});
+                const auto result = process(source, {&plugin});
+
+                expect(!result.hasError(), result.errorMessage);
+                expectEquals(result.analysisRecord.lengthInSamples, clickFixtureLength);
+                expectEquals(peakSamplePosition(result.outputFile), clickFixturePosition);
+            }
+        }
+
         beginTest("The tail of a plugin is rendered past the end of the source");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "echo.aif");

@@ -3,8 +3,13 @@
 
 #include "TestHelpers.h"
 
+#include "utils/AudioFormatUtils.h"
+
+#include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <memory>
+#include <span>
 #include <utility>
 
 namespace audiobatch::tests
@@ -290,6 +295,27 @@ juce::File fixtureFile(const juce::String& name)
 double peakDecibels(const AudioAnalysisRecord& record)
 {
     return static_cast<double>(juce::Decibels::gainToDecibels(std::abs(record.overallPeak)));
+}
+
+/// Decodes the first channel of an audio file and returns the position of its sample with the largest magnitude,
+/// which for a click fixture shows where its click ended up.
+/// Returns -1 when the file cannot be read.
+juce::int64 peakSamplePosition(const juce::File& file)
+{
+    const auto reader = utils::createAudioReader(file);
+
+    if (reader == nullptr || reader->lengthInSamples <= 0) {
+        return -1;
+    }
+
+    juce::AudioBuffer<float> buffer(1, static_cast<int>(reader->lengthInSamples));
+    if (!reader->read(&buffer, 0, buffer.getNumSamples(), 0, true, false)) {
+        return -1;
+    }
+
+    const std::span samples(buffer.getReadPointer(0), static_cast<std::size_t>(buffer.getNumSamples()));
+    const auto peak = std::ranges::max_element(samples, {}, [](const float sample) { return std::abs(sample); });
+    return std::distance(samples.begin(), peak);
 }
 
 /// FileDisposer for tests, which deletes the file so the user's system trash never fills up with test copies.

@@ -56,6 +56,18 @@ ffmpeg -hide_banner -loglevel error -y \
     -f lavfi -i "aevalsrc=${TONE}|${TONE}|${TONE}:s=44100:d=0.25" \
     -map_metadata -1 -fflags +bitexact -flags:a +bitexact -c:a pcm_s16be sine_3ch_44100_16.aif
 
+# A single click at sample 11025 of half a second of silence,
+# which shows whether decoding or processing moves the start of the audio.
+# The MP3 encoder records its delay and padding in a Lavf tag, which Core Audio does not read.
+click() {
+    ffmpeg -hide_banner -loglevel error -y \
+        -f lavfi -i "aevalsrc=if(eq(n\,11025)\,0.9\,0):s=44100:d=0.5" \
+        -map_metadata -1 -fflags +bitexact -flags:a +bitexact "$@"
+}
+
+click -c:a pcm_s16le click_mono_44100_16.wav
+click -c:a libmp3lame -b:a 320k click_mono_44100_320k.mp3
+
 # Digital silence, which has no peak and no measurable loudness.
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "anullsrc=r=44100:cl=stereo:d=1" \
     -map_metadata -1 -fflags +bitexact -flags:a +bitexact -c:a pcm_s16le silence_stereo_44100_16.wav

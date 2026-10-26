@@ -580,7 +580,7 @@ private:
         expect(cache.storeAnalysis(analyzed));
         const juce::MemoryBlock waveform("cached peaks", 12);
         expect(cache.storeWaveformData(file, waveform));
-        expectSqlScalar(databaseFile, "SELECT analysis_version FROM file_analysis;", 9);
+        expectSqlScalar(databaseFile, "SELECT analysis_version FROM file_analysis;", 10);
         expectSqlScalar(databaseFile, "SELECT waveform_version FROM file_analysis;", 1);
         expect(cache.getSeratoTag(identity).has_value());
         const auto loadedWaveform = cache.getWaveformData(file);

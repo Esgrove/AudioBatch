@@ -393,6 +393,17 @@ private:
             );
         }
 
+        beginTest("Converting an MP3 file keeps the start of the audio in place");
+        {
+            const auto source = directory.copyFixture("click_mono_44100_320k.mp3", "click.mp3");
+            const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
+
+            expect(!result.hasError(), result.errorMessage);
+            expectEquals(result.analysisRecord.file.getFileName(), juce::String("click.aif"));
+            expectEquals(result.analysisRecord.lengthInSamples, clickFixtureLength);
+            expectEquals(peakSamplePosition(result.analysisRecord.file), clickFixturePosition);
+        }
+
         beginTest("An .aif source normalized in place disposes of a copy of the original first");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "backup.aif");

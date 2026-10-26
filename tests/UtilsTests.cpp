@@ -392,7 +392,7 @@ public:
             expect(reader != nullptr);
 
             if (reader != nullptr) {
-                expectEquals(reader->lengthInSamples, static_cast<juce::int64>(41 * 1152));
+                expectEquals(reader->lengthInSamples, static_cast<juce::int64>(41 * 1152 - 529));
                 juce::AudioBuffer<float> buffer(2, 512);
                 for (juce::int64 position = 0; position < reader->lengthInSamples; position += 512) {
                     const auto samples
@@ -409,9 +409,11 @@ public:
             reader = utils::createAudioReader(file);
             expect(reader != nullptr);
             if (reader != nullptr) {
-                expectEquals(reader->lengthInSamples, static_cast<juce::int64>(41 * 1152));
+                expectEquals(reader->lengthInSamples, static_cast<juce::int64>(41 * 1152 - 529));
             }
         }
+
+        runMp3TimingTests();
 
         beginTest("Readers retain indexed MP3 and PCM lengths and reject unreadable files");
         {
@@ -464,6 +466,29 @@ public:
     }
 
 private:
+    /// Checks that MP3 files decode with the timing and length of the audio that was encoded.
+    void runMp3TimingTests()
+    {
+        beginTest("MP3 files decode with the start and length of the encoded audio");
+        {
+            const auto click = fixtureFile("click_mono_44100_320k.mp3");
+            const auto reader = utils::createAudioReader(click);
+            expect(reader != nullptr);
+            if (reader != nullptr) {
+                expectEquals(reader->getFormatName(), juce::String("MP3 file"));
+                expectEquals(reader->lengthInSamples, clickFixtureLength);
+            }
+            expectEquals(peakSamplePosition(click), clickFixturePosition);
+
+            for (const auto* fixtureName :
+                 {"sine_stereo_44100_320k.mp3", "sine_joint_stereo_44100_192k.mp3", "sine_mono_44100_128k.mp3"})
+            {
+                const auto sine = utils::createAudioReader(fixtureFile(fixtureName));
+                expect(sine != nullptr && sine->lengthInSamples == 44'100, fixtureName);
+            }
+        }
+    }
+
     /// Checks moving to the trash and the backups of originals, without touching the system trash.
     void runDisposalTests()
     {
