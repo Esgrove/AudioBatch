@@ -9,7 +9,6 @@
 #include "gui/FileActivityTracker.h"
 #include "utils/StringFormat.h"
 
-#include <algorithm>
 #include <array>
 #include <utility>
 
@@ -233,8 +232,13 @@ void AudioFileTableModel::configureHeader(juce::TableHeaderComponent& header)
 /// Returns what a column shows with its unit, for the header tooltip, or an empty string for an unknown column.
 juce::String AudioFileTableModel::getColumnDescription(const AudioFileTableColumn column)
 {
-    const auto definition = std::ranges::find(columnDefinitions, column, &ColumnDefinition::column);
-    return definition != columnDefinitions.end() ? juce::String(definition->description) : juce::String();
+    for (const auto& definition : columnDefinitions) {
+        if (definition.column == column) {
+            return definition.description;
+        }
+    }
+
+    return {};
 }
 
 /// Returns the number of analyzed rows currently available.
