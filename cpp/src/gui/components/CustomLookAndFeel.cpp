@@ -495,13 +495,18 @@ void CustomLookAndFeel::drawTableHeaderColumn(
     }
 
     graphics.setColour(header.findColour(juce::TableHeaderComponent::textColourId));
-    graphics.setFont(
-        getTextFont().withHeight(
-            static_cast<float>(height) * layout::theme::tableHeaderFontHeightRatio
-            + layout::theme::tableHeaderFontHeightIncrease
-        )
-    );
+    graphics.setFont(getTableHeaderFont(height));
     graphics.drawFittedText(columnName, area, juce::Justification::centredLeft, 1);
+}
+
+/// Returns the column title font for a table header of the given height.
+/// It keeps JUCE's height-proportional title size and adds one logical pixel.
+juce::Font CustomLookAndFeel::getTableHeaderFont(const int headerHeight)
+{
+    return getTextFont().withHeight(
+        static_cast<float>(headerHeight) * layout::theme::tableHeaderFontHeightRatio
+        + layout::theme::tableHeaderFontHeightIncrease
+    );
 }
 
 /// Adds vertical breathing room to default popup rows while preserving separators and explicitly sized menus.
