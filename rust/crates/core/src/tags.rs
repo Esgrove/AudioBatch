@@ -84,7 +84,7 @@ pub fn read_tags(path: &Path) -> Result<FileTags> {
 }
 
 /// Reads the concrete `ID3v2` tag of an MP3, AIFF, or WAV file.
-fn read_id3v2(path: &Path) -> Option<Id3v2Tag> {
+pub(crate) fn read_id3v2(path: &Path) -> Option<Id3v2Tag> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     let mut file = File::open(path).ok()?;
     let options = ParseOptions::new();

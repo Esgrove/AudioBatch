@@ -6,6 +6,9 @@ USAGE="Usage: $0 [OPTIONS] <paths...>
 Compare the analysis results of the Rust and the C++ AudioBatch CLI.
 Runs both on the same paths with --refresh and JSON output,
 then compares the levels of every file within a tolerance.
+With --normalize, both normalize their own copy of the paths in a temporary folder,
+and the re-analyzed outputs are compared instead.
+The originals are left alone, but both CLIs move the replaced copies to the system trash.
 Exits with code 1 when any file differs.
 
 The C++ CLI is taken from AUDIOBATCH_CPP_CLI when set,
@@ -21,6 +24,9 @@ OPTIONS: All options are optional
     -t | --tolerance <dB>
         Allowed level difference in dB or LU. Default: 0.05
 
+    -n | --normalize
+        Normalize copies of the paths with both CLIs and compare the outputs.
+
     --release
         Build and run the Rust CLI in release mode, which is faster on large folders.
 "
@@ -30,6 +36,7 @@ CPP_DIR=$(cd "$RUST_DIR/../cpp" && pwd)
 
 TOLERANCE="0.05"
 RECURSE=()
+NORMALIZE=()
 PROFILE="debug"
 PATHS=()
 
@@ -45,6 +52,9 @@ while [ $# -gt 0 ]; do
         -t | --tolerance)
             TOLERANCE="$2"
             shift
+            ;;
+        -n | --normalize)
+            NORMALIZE=(--normalize)
             ;;
         --release)
             PROFILE="release"
@@ -103,24 +113,48 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 echo "C++ CLI:  $CPP_CLI"
 echo "Rust CLI: $RUST_CLI"
 
-# Both CLIs exit with code 2 when a file fails, which the comparison reports per file instead.
-"$CPP_CLI" --refresh "${RECURSE[@]}" --output json "${PATHS[@]}" > "$WORK_DIR/cpp.json" 2> "$WORK_DIR/cpp.log" || true
-"$RUST_CLI" --refresh "${RECURSE[@]}" --output json "${PATHS[@]}" > "$WORK_DIR/rust.json" 2> "$WORK_DIR/rust.log" || true
+CPP_PATHS=("${PATHS[@]}")
+RUST_PATHS=("${PATHS[@]}")
+CPP_BASE=""
+RUST_BASE=""
+if [ ${#NORMALIZE[@]} -gt 0 ]; then
+    # Each CLI normalizes its own copy, since normalizing replaces and trashes the inputs.
+    CPP_BASE="$WORK_DIR/cpp"
+    RUST_BASE="$WORK_DIR/rust"
+    mkdir -p "$CPP_BASE" "$RUST_BASE"
+    for path in "${PATHS[@]}"; do
+        cp -R "$path" "$CPP_BASE/"
+        cp -R "$path" "$RUST_BASE/"
+    done
+    CPP_PATHS=("$CPP_BASE")
+    RUST_PATHS=("$RUST_BASE")
+    RECURSE=(--recurse)
+fi
 
-python3 - "$WORK_DIR/cpp.json" "$WORK_DIR/rust.json" "$TOLERANCE" << 'EOF'
+# Both CLIs exit with code 2 when a file fails, which the comparison reports per file instead.
+"$CPP_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" --output json "${CPP_PATHS[@]}" \
+    > "$WORK_DIR/cpp.json" 2> "$WORK_DIR/cpp.log" || true
+"$RUST_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" --output json "${RUST_PATHS[@]}" \
+    > "$WORK_DIR/rust.json" 2> "$WORK_DIR/rust.log" || true
+
+python3 - "$WORK_DIR/cpp.json" "$WORK_DIR/rust.json" "$TOLERANCE" "$CPP_BASE" "$RUST_BASE" << 'EOF'
 import json
 import os
 import sys
 
-cpp_path, rust_path, tolerance_text = sys.argv[1:4]
+cpp_path, rust_path, tolerance_text, cpp_base, rust_base = sys.argv[1:6]
 tolerance = float(tolerance_text)
 
-def load(path):
+def load(path, base):
     with open(path, encoding="utf-8") as file:
-        return {os.path.normpath(row["path"]): row for row in json.load(file)}
+        rows = json.load(file)
+    # Normalized copies live in a folder per CLI, so they are matched by their path inside it.
+    if base:
+        return {os.path.relpath(os.path.realpath(row["path"]), os.path.realpath(base)): row for row in rows}
+    return {os.path.normpath(row["path"]): row for row in rows}
 
-cpp_rows = load(cpp_path)
-rust_rows = load(rust_path)
+cpp_rows = load(cpp_path, cpp_base)
+rust_rows = load(rust_path, rust_base)
 
 level_fields = ["peakDbfs", "truePeakDbtp", "integratedLufs", "maxShortTermLufs"]
 exact_fields = ["sampleRate", "channels", "bitsPerSample", "status"]

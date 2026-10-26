@@ -1,13 +1,18 @@
 //! Command line arguments of `audiobatch-rs`.
 //!
-//! The options, their short forms, and their validation follow the analysis options of the C++ `audiobatch` CLI.
-//! Normalization and the plugin listing are not part of the Rust port.
+//! The options, their short forms, and their validation follow the C++ `audiobatch` CLI.
+//! The normalization options are checked after parsing, so their errors read like the C++ ones.
+//! The plugin listing is not part of the Rust port.
 //! The `completion` subcommand is an addition that the C++ CLI does not have.
 
 use std::path::PathBuf;
 use std::thread;
 
 use audiobatch_core::SortMode;
+use audiobatch_core::normalize::{
+    MAXIMUM_TARGET_LUFS, MAXIMUM_TARGET_PEAK_DBFS, MINIMUM_TARGET_LUFS, MINIMUM_TARGET_PEAK_DBFS, NormalizationMode,
+    NormalizationOptions,
+};
 use clap::{Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 
@@ -66,6 +71,22 @@ pub struct CliArgs {
     #[arg(short = 'f', long)]
     pub refresh: bool,
 
+    /// Normalize analyzed files, then report the re-analyzed output peaks
+    #[arg(short = 'n', long)]
+    pub normalize: bool,
+
+    /// Let --normalize replace an existing output file
+    #[arg(short = 'F', long)]
+    pub force: bool,
+
+    /// Normalize to this sample peak, -12 to 0 (default 0)
+    #[arg(long, value_name = "DBFS", allow_hyphen_values = true)]
+    pub peak: Option<String>,
+
+    /// Normalize to this integrated loudness, -24 to -6, with a -0.3 dBTP ceiling
+    #[arg(long, value_name = "LUFS", allow_hyphen_values = true)]
+    pub lufs: Option<String>,
+
     /// Override worker count
     #[arg(short = 'j', long, value_name = "COUNT", value_parser = parse_worker_count)]
     pub jobs: Option<usize>,
@@ -89,6 +110,66 @@ impl CliArgs {
     pub fn worker_count(&self) -> usize {
         self.jobs.unwrap_or_else(available_cpus)
     }
+
+    /// Returns the normalization options of `--normalize`, or `None` without it.
+    ///
+    /// Keeps the default 0 dBFS sample peak target when neither `--peak` nor `--lufs` is given.
+    ///
+    /// # Errors
+    ///
+    /// Returns the C++ CLI message when `--force`, `--peak`, or `--lufs` is given without `--normalize`,
+    /// when both targets are given, or when a target is not a number in its range.
+    pub fn normalization(&self) -> Result<Option<NormalizationOptions>, String> {
+        if self.force && !self.normalize {
+            return Err(String::from("--force can only be used with --normalize"));
+        }
+        if (self.peak.is_some() || self.lufs.is_some()) && !self.normalize {
+            return Err(String::from("--peak and --lufs can only be used with --normalize"));
+        }
+        if !self.normalize {
+            return Ok(None);
+        }
+        let mut options = NormalizationOptions {
+            overwrite_existing: self.force,
+            ..NormalizationOptions::default()
+        };
+        match (&self.peak, &self.lufs) {
+            (Some(_), Some(_)) => return Err(String::from("--peak and --lufs cannot be used together")),
+            (Some(peak), None) => {
+                options.mode = NormalizationMode::Peak;
+                options.target_peak_dbfs =
+                    parse_target_level("--peak", peak, MINIMUM_TARGET_PEAK_DBFS, MAXIMUM_TARGET_PEAK_DBFS)?;
+            }
+            (None, Some(lufs)) => {
+                options.mode = NormalizationMode::Loudness;
+                options.target_lufs = parse_target_level("--lufs", lufs, MINIMUM_TARGET_LUFS, MAXIMUM_TARGET_LUFS)?;
+            }
+            (None, None) => {}
+        }
+        Ok(Some(options))
+    }
+}
+
+/// Parses a target level for `--peak` or `--lufs` within the given range.
+///
+/// Accepts an optional sign, digits, and at most one decimal point, like the C++ CLI.
+fn parse_target_level(option: &str, value: &str, minimum: f64, maximum: f64) -> Result<f64, String> {
+    let text = value.trim();
+    let digits = text.strip_prefix(['-', '+']).unwrap_or(text);
+    let numeric = !digits.is_empty()
+        && digits
+            .chars()
+            .all(|character| character.is_ascii_digit() || character == '.')
+        && digits.chars().any(|character| character.is_ascii_digit())
+        && digits.matches('.').count() <= 1;
+    let target = numeric
+        .then(|| text.parse::<f64>().ok())
+        .flatten()
+        .ok_or_else(|| format!("{option} needs a number, for example {option} {minimum}"))?;
+    if target < minimum || target > maximum {
+        return Err(format!("{option} must be between {minimum} and {maximum}"));
+    }
+    Ok(target)
 }
 
 /// Returns the number of CPUs available to the process.
@@ -182,7 +263,70 @@ mod test_parse_arguments {
     fn unknown_values_are_rejected() {
         assert!(parse(&["--sort", "size"]).is_err());
         assert!(parse(&["--output", "xml"]).is_err());
-        assert!(parse(&["--normalize"]).is_err());
+    }
+
+    /// Parses the arguments and returns the normalization options or their error.
+    fn normalization(arguments: &[&str]) -> Result<Option<NormalizationOptions>, String> {
+        parse(arguments).expect("parses").normalization()
+    }
+
+    #[test]
+    fn normalize_defaults_to_a_zero_peak_target() {
+        assert!(normalization(&[]).expect("valid").is_none());
+        let options = normalization(&["-n"]).expect("valid").expect("normalizes");
+        assert_eq!(options.mode, NormalizationMode::Peak);
+        assert!(options.target_peak_dbfs.abs() < f64::EPSILON);
+        assert!(!options.overwrite_existing);
+    }
+
+    #[test]
+    fn normalize_targets_parse() {
+        let options = normalization(&["--normalize", "--peak", "-1.5", "-F"])
+            .expect("valid")
+            .expect("normalizes");
+        assert_eq!(options.mode, NormalizationMode::Peak);
+        assert!((options.target_peak_dbfs + 1.5).abs() < f64::EPSILON);
+        assert!(options.overwrite_existing);
+
+        let options = normalization(&["-n", "--lufs", "-16"])
+            .expect("valid")
+            .expect("normalizes");
+        assert_eq!(options.mode, NormalizationMode::Loudness);
+        assert!((options.target_lufs + 16.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn normalize_options_need_normalize() {
+        assert_eq!(
+            normalization(&["--force"]).err().as_deref(),
+            Some("--force can only be used with --normalize")
+        );
+        assert_eq!(
+            normalization(&["--peak", "-1"]).err().as_deref(),
+            Some("--peak and --lufs can only be used with --normalize")
+        );
+    }
+
+    #[test]
+    fn invalid_normalize_targets_are_rejected() {
+        assert_eq!(
+            normalization(&["-n", "--peak", "-1", "--lufs", "-14"]).err().as_deref(),
+            Some("--peak and --lufs cannot be used together")
+        );
+        assert_eq!(
+            normalization(&["-n", "--peak", "loud"]).err().as_deref(),
+            Some("--peak needs a number, for example --peak -12")
+        );
+        assert_eq!(
+            normalization(&["-n", "--peak", "1"]).err().as_deref(),
+            Some("--peak must be between -12 and 0")
+        );
+        assert_eq!(
+            normalization(&["-n", "--lufs", "-30"]).err().as_deref(),
+            Some("--lufs must be between -24 and -6")
+        );
+        assert!(normalization(&["-n", "--lufs", "1e1"]).is_err());
+        assert!(normalization(&["-n", "--lufs", "-1.2.3"]).is_err());
     }
 
     #[test]
