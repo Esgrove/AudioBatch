@@ -611,6 +611,27 @@ public:
             expectWithinAbsoluteError(peakDecibels(result.analysisRecord), fixturePeakDecibels - 6.0206, 0.05);
         }
 
+        beginTest("A source with more than two channels is refused and left unchanged");
+        {
+            const auto source = directory.copyFixture("sine_3ch_44100_16.aif", "three_channels.aif");
+            const auto sourceSize = source.getSize();
+            TestPlugin plugin({.gain = 0.5f});
+            auto options = makeOptions({&plugin});
+            int disposedCount = 0;
+            options.disposeFile = [&disposedCount](const juce::File& file) {
+                ++disposedCount;
+                return file.deleteFile();
+            };
+
+            const auto result = processFileWithPlugins(analyzeFile(source), options, {&plugin});
+
+            expect(result.hasError());
+            expect(!result.committed);
+            expect(result.errorMessage.contains("3 channels"), result.errorMessage);
+            expectEquals(disposedCount, 0);
+            expectEquals(source.getSize(), sourceSize);
+        }
+
         beginTest("A converted source is disposed of once its .aif output is in place");
         {
             const auto source = directory.copyFixture("sine_stereo_48000_24.wav", "converted.wav");

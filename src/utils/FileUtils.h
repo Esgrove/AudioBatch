@@ -7,10 +7,20 @@
 
 #include <JuceHeader.h>
 
+#include <cstdint>
 #include <functional>
 
 namespace audiobatch::utils
 {
+/// Outcome of moving a file or folder to the system trash.
+enum class TrashResult : std::uint8_t {
+    /// The file was moved to the trash.
+    moved,
+    /// There was nothing to move, because the file did not exist.
+    alreadyMissing,
+    /// The file is still in place.
+    failed,
+};
 
 /// Disposes of a file that a committed output replaces, and returns true when the file is gone.
 using FileDisposer = std::function<bool(const juce::File&)>;
@@ -23,12 +33,14 @@ juce::String fileExtension(const juce::File& file);
 juce::String normalizeExtension(const juce::String& extension);
 juce::String revealInFileManagerLabel();
 
+[[nodiscard]] TrashResult moveToTrash(const juce::File& file);
+
 bool deleteFile(const juce::File& file);
-bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile);
+[[nodiscard]] bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile);
 bool isAiffFile(const juce::File& file);
 bool isMp3File(const juce::File& file);
 bool isWavFile(const juce::File& file);
-bool moveToTrash(const juce::File& file);
+bool trashFile(const juce::File& file);
 
 void revealFileInFileManager(const juce::File& file);
 void revealParentDirectory(const juce::File& file);
@@ -38,6 +50,6 @@ juce::String commitTemporaryOutput(
     const juce::File& sourceFile,
     const juce::File& outputFile,
     bool overwriteExisting,
-    const FileDisposer& disposeFile = moveToTrash
+    const FileDisposer& disposeFile = trashFile
 );
 }  // namespace audiobatch::utils

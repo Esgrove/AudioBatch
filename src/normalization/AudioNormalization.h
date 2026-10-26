@@ -6,6 +6,7 @@
 #pragma once
 
 #include "analysis/AudioAnalysis.h"
+#include "utils/FileUtils.h"
 #include "utils/ThreadUtils.h"
 
 #include <cstdint>
@@ -38,7 +39,14 @@ struct AudioNormalizationOptions {
     static constexpr double minimumTargetLufs {-24.0};
     /// Highest accepted target integrated loudness, in LUFS.
     static constexpr double maximumTargetLufs {-6.0};
+    /// Largest gain normalization applies, in dB.
+    /// A file that would need more is close to silent, and raising it further would mostly amplify noise.
+    static constexpr double maximumGainDb {40.0};
 
+    /// Disposes of the files a normalized output replaces:
+    /// a converted source, an overwritten output, and a copy of an `.aif` source rewritten in place.
+    /// Moves them to the system trash, unless a caller such as a test passes another function.
+    utils::FileDisposer disposeFile {utils::trashFile};
     /// Replace an existing output file that is not the source itself.
     /// When false, a file whose output path is already taken fails instead of overwriting it.
     bool overwriteExisting {false};

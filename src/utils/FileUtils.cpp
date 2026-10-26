@@ -286,20 +286,30 @@ static bool moveToRecycleBin(const juce::File& file)
 #endif
 
 /// Moves a file or folder to the OS trash or recycle bin.
-/// Returns true when the file did not exist or was moved.
+/// A missing file is reported separately from a moved one,
+/// so a caller that needs the file to end up in the trash can tell the two apart.
 /// On Windows, a file on a drive without a recycle bin, such as a network share, is left in place and fails,
 /// because the shell would otherwise delete it permanently.
-bool moveToTrash(const juce::File& file)
+TrashResult moveToTrash(const juce::File& file)
 {
     if (!file.exists()) {
-        return true;
+        return TrashResult::alreadyMissing;
     }
 
 #if JUCE_WINDOWS
-    return moveToRecycleBin(file);
+    const bool moved = moveToRecycleBin(file);
 #else
-    return file.moveToTrash();
+    const bool moved = file.moveToTrash();
 #endif
+
+    return moved ? TrashResult::moved : TrashResult::failed;
+}
+
+/// FileDisposer that moves the file to the system trash.
+/// Returns true when the file is gone afterwards, including when it did not exist.
+bool trashFile(const juce::File& file)
+{
+    return moveToTrash(file) != TrashResult::failed;
 }
 
 /// Returns the platform-appropriate label for the menu item that reveals a file in the file manager.
@@ -396,19 +406,23 @@ juce::String existingOutputMessage(const juce::File& outputFile)
 /// Used before an in-place rewrite that cannot be repeated to get back to the original,
 /// so the original stays recoverable from the trash.
 /// The copy is made in a new folder in the system temp directory, which is removed afterwards.
+/// Each call gets its own uniquely named folder, because workers back up files concurrently,
+/// and a shared folder name would let one worker delete the copy of another before it reached the trash.
 /// Returns true when the copy was made and disposed of.
 bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile)
 {
     const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
                                .getChildFile("AudioBatch")
-                               .getNonexistentChildFile("original", {}, false);
+                               .getChildFile(format("original-{}", juce::Uuid().toDashedString()));
 
-    if (!directory.createDirectory()) {
+    if (directory.exists() || !directory.createDirectory()) {
         return false;
     }
 
     const auto copy = directory.getChildFile(file.getFileName());
-    const bool disposed = file.copyFileTo(copy) && disposeFile(copy);
+    // The disposer reports a missing file as gone, so the copy is checked first,
+    // otherwise a lost copy would count as a recoverable original.
+    const bool disposed = file.copyFileTo(copy) && copy.existsAsFile() && disposeFile(copy);
 
     if (!directory.deleteRecursively()) {
         logWarn("Could not remove the temporary folder {}", directory.getFullPathName().quoted());

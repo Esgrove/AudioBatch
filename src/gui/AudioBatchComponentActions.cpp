@@ -350,7 +350,7 @@ void AudioBatchComponent::runMoveToTrash(
             releasePreviewPlayback();
         }
 
-        if (!utils::moveToTrash(file)) {
+        if (utils::moveToTrash(file) == utils::TrashResult::failed) {
             failedPaths.add(file.getFullPathName());
             if (isPreviewFile) {
                 showAudioResource(juce::URL(file));

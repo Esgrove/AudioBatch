@@ -13,6 +13,7 @@
 #include "utils/StringFormat.h"
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -198,6 +199,8 @@ juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord
 
 /// Returns the linear gain that brings the analyzed file to the target in the options,
 /// or an empty optional with errorMessage set when the file has no measurable level for that mode.
+/// A gain above AudioNormalizationOptions::maximumGainDb, or one that is not finite, is refused instead of capped,
+/// since a capped gain would leave the file short of the target without telling the caller.
 std::optional<float> getNormalizationGain(
     const AudioAnalysisRecord& record,
     const AudioNormalizationOptions& options,
@@ -206,28 +209,41 @@ std::optional<float> getNormalizationGain(
 {
     const auto peak = static_cast<double>(utils::peakMagnitude(record.overallPeak));
 
-    if (peak <= 0.0) {
+    if (!std::isfinite(peak) || peak <= 0.0) {
         errorMessage = "File contains no signal that can be normalized";
         return std::nullopt;
     }
 
+    // Decibels::gainToDecibels clamps at -100 dB by default, which would hide how quiet a nearly silent file is.
+    constexpr double decibelFloor {-1000.0};
+    double gainDecibels {};
+
     if (options.mode == AudioNormalizationMode::peak) {
-        return static_cast<float>(juce::Decibels::decibelsToGain(options.targetPeakDbfs) / peak);
+        gainDecibels = options.targetPeakDbfs - juce::Decibels::gainToDecibels(peak, decibelFloor);
+    } else {
+        if (record.integratedLufs <= AudioAnalysisRecord::negativeInfinityLoudness) {
+            errorMessage = "File has no measurable loudness to normalize";
+            return std::nullopt;
+        }
+
+        gainDecibels = options.targetLufs - record.integratedLufs;
+
+        // The true peak scales with the gain, so the ceiling caps how far the file can be raised.
+        if (const auto truePeak = juce::jmax(record.overallTruePeak, peak); truePeak > 0.0) {
+            gainDecibels = juce::jmin(
+                gainDecibels, options.truePeakCeilingDbtp - juce::Decibels::gainToDecibels(truePeak, decibelFloor)
+            );
+        }
     }
 
-    if (record.integratedLufs <= AudioAnalysisRecord::negativeInfinityLoudness) {
-        errorMessage = "File has no measurable loudness to normalize";
+    if (!std::isfinite(gainDecibels) || gainDecibels > AudioNormalizationOptions::maximumGainDb) {
+        errorMessage = utils::format(
+            "Reaching the target would need more than {:.0f} dB of gain", AudioNormalizationOptions::maximumGainDb
+        );
         return std::nullopt;
     }
 
-    auto gainDecibels = options.targetLufs - record.integratedLufs;
-
-    // The true peak scales with the gain, so the ceiling caps how far the file can be raised.
-    if (const auto truePeak = juce::jmax(record.overallTruePeak, peak); truePeak > 0.0) {
-        gainDecibels = juce::jmin(gainDecibels, options.truePeakCeilingDbtp - juce::Decibels::gainToDecibels(truePeak));
-    }
-
-    return static_cast<float>(juce::Decibels::decibelsToGain(gainDecibels));
+    return static_cast<float>(juce::Decibels::decibelsToGain(gainDecibels, decibelFloor));
 }
 
 /// Returns the AIFF bit depth for output written from the given source.
@@ -251,7 +267,9 @@ juce::String batchOutputConflictMessage(const juce::File& sourceFile)
 
 /// Rewrites a file to the target level in the options, then re-analyzes the result.
 /// Fails without writing anything when the output path already exists and is not the source,
-/// unless options.overwriteExisting is set, in which case the existing output is moved to the system trash.
+/// unless options.overwriteExisting is set, in which case the existing output is disposed of.
+/// An `.aif` source rewritten in place first has a copy of it disposed of,
+/// and a converted source is disposed of after the output is in place, both through options.disposeFile.
 /// A call cancelled before its output is committed returns a failure result and leaves the original file untouched.
 /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again before computing the gain.
 /// Isolated source blocks that fail to decode are written as decoded and reported in the result notice.
@@ -412,8 +430,14 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, cancelledMessage);
     }
 
+    // Normalizing again cannot restore the original exactly, because the output is quantized again,
+    // so an original rewritten in place keeps a copy in the trash like a converted original does.
+    if (outputFile == file && !utils::disposeOfCopy(file, options.disposeFile)) {
+        return failNormalization(file, "Could not move a copy of the original file to the system trash");
+    }
+
     if (const auto commitError
-        = utils::commitTemporaryOutput(temporaryFile, file, outputFile, options.overwriteExisting);
+        = utils::commitTemporaryOutput(temporaryFile, file, outputFile, options.overwriteExisting, options.disposeFile);
         commitError.isNotEmpty())
     {
         return failNormalization(file, commitError);

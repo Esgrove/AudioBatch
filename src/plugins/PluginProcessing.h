@@ -75,7 +75,7 @@ struct PluginProcessingOptions {
     /// Disposes of the files a processed output replaces:
     /// a converted source, an overwritten output, and a copy of an `.aif` source rewritten in place.
     /// Moves them to the system trash, unless a caller such as a test passes another function.
-    utils::FileDisposer disposeFile {utils::moveToTrash};
+    utils::FileDisposer disposeFile {utils::trashFile};
 };
 
 /// Result payload for a single plugin-processing operation.

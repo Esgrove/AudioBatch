@@ -122,7 +122,7 @@ private:
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "log_noop.aif");
             const auto record = analyzeFile(source);
-            AudioNormalizationOptions options;
+            auto options = testNormalizationOptions();
             options.targetPeakDbfs = peakDecibels(record);
             const ScopedLogCapture capture;
             const auto result = normalizeFile(record, options);
@@ -140,7 +140,7 @@ private:
             const auto existingOutput = directory.getChildFile("collision.aif");
             expect(existingOutput.replaceWithText("unrelated"));
 
-            const auto result = normalizeFile(analyzeFile(source), {});
+            const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
             expect(result.hasError());
             expect(!result.committed);
             expect(result.errorMessage.contains("already exists"), result.errorMessage);
@@ -157,7 +157,7 @@ private:
             const auto folder = directory.getChildFile("folder_output.aif");
             expect(folder.createDirectory());
 
-            AudioNormalizationOptions options;
+            auto options = testNormalizationOptions();
             options.overwriteExisting = true;
             int cancellationChecks = 0;
             const auto result = normalizeFile(analyzeFile(source), options, [&] {
@@ -178,7 +178,7 @@ private:
             const auto sizeBefore = source.getSize();
             const auto record = analyzeFile(source);
 
-            const AudioNormalizationOptions options;
+            const auto options = testNormalizationOptions();
             const auto result = normalizeFile(record, options, [] { return true; });
             expect(result.hasError());
             expectEquals(source.getSize(), sizeBefore);
@@ -204,7 +204,7 @@ private:
             });
             expect(writeMetadata(source, metadata));
 
-            const auto result = normalizeFile(analyzeFile(source), {});
+            const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
             expect(!result.hasError(), result.errorMessage);
 
             AudioMetadata written;
@@ -223,7 +223,7 @@ private:
             );
             {
                 const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "Upper.AIF");
-                const auto result = normalizeFile(analyzeFile(source), {});
+                const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
 
                 expect(!result.hasError(), result.errorMessage);
                 expect(result.analysisRecord.file == source);
@@ -244,7 +244,7 @@ private:
             staleRecord.overallPeak = 0.125f;
             staleRecord.modifiedTimeMs -= 1000;
 
-            const auto result = normalizeFile(staleRecord, {});
+            const auto result = normalizeFile(staleRecord, testNormalizationOptions());
             expect(!result.hasError(), result.errorMessage);
             expectWithinAbsoluteError(result.analysisRecord.integratedLufs, fixtureLoudness - fixturePeakDecibels, 0.1);
         }
@@ -255,7 +255,7 @@ private:
             auto staleRecord = analyzeFile(source);
             juce::MemoryBlock originalBytes;
             expect(source.loadFileAsData(originalBytes));
-            AudioNormalizationOptions options;
+            auto options = testNormalizationOptions();
             options.targetPeakDbfs = peakDecibels(staleRecord);
             staleRecord.modifiedTimeMs -= 1000;
 
@@ -275,7 +275,7 @@ private:
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "refreshed_no_op.aif");
             auto staleRecord = analyzeFile(source);
-            AudioNormalizationOptions options;
+            auto options = testNormalizationOptions();
             options.targetPeakDbfs = peakDecibels(staleRecord);
             staleRecord.modifiedTimeMs -= 1000;
             staleRecord.overallPeak = 0.125f;
@@ -291,7 +291,7 @@ private:
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cancelled_no_op.aif");
             const auto record = analyzeFile(source);
-            AudioNormalizationOptions options;
+            auto options = testNormalizationOptions();
             options.targetPeakDbfs = peakDecibels(record);
 
             const auto result = normalizeFile(record, options, [] { return true; });
@@ -306,7 +306,7 @@ private:
         );
         {
             const auto record = analyzeFile(fixtureFile("sine_stereo_44100_16.wav"));
-            AudioNormalizationOptions options;
+            auto options = testNormalizationOptions();
             options.mode = AudioNormalizationMode::loudness;
             juce::String errorMessage;
 
@@ -335,7 +335,7 @@ private:
         beginTest("In-place loudness normalization reaches the target");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "loudness.aif");
-            AudioNormalizationOptions options;
+            auto options = testNormalizationOptions();
             options.mode = AudioNormalizationMode::loudness;
             options.targetLufs = -14.0;
 
@@ -347,7 +347,7 @@ private:
         beginTest("Peak mode reaches a target below full scale");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "peak.aif");
-            AudioNormalizationOptions options;
+            auto options = testNormalizationOptions();
             options.targetPeakDbfs = -1.0;
 
             const auto result = normalizeFile(analyzeFile(source), options);
@@ -358,9 +358,75 @@ private:
         beginTest("A silent file cannot be normalized");
         {
             const auto source = directory.copyFixture("silence_stereo_44100_16.wav");
-            const auto result = normalizeFile(analyzeFile(source), {});
+            const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
             expect(result.hasError());
             expect(source.existsAsFile());
+        }
+
+        beginTest("A nearly silent file needs more gain than normalization applies");
+        {
+            auto record = analyzeFile(fixtureFile("sine_stereo_44100_16.aif"));
+            // -60 dBFS, so reaching full scale would need about 60 dB of gain.
+            record.overallPeak = 0.001f;
+            record.overallTruePeak = 0.001;
+            record.integratedLufs = -80.0;
+            auto options = testNormalizationOptions();
+            juce::String errorMessage;
+
+            expect(!getNormalizationGain(record, options, errorMessage).has_value());
+            expect(errorMessage.contains("dB of gain"), errorMessage);
+
+            options.mode = AudioNormalizationMode::loudness;
+            errorMessage.clear();
+            expect(!getNormalizationGain(record, options, errorMessage).has_value());
+            expect(errorMessage.contains("dB of gain"), errorMessage);
+
+            // 30 dB of gain stays within the limit.
+            options.mode = AudioNormalizationMode::peak;
+            options.targetPeakDbfs = -30.0;
+            const auto gain = getNormalizationGain(record, options, errorMessage);
+            expect(gain.has_value(), errorMessage);
+            expectWithinAbsoluteError(
+                static_cast<double>(juce::Decibels::gainToDecibels(gain.value_or(0.0f))), 30.0, 0.01
+            );
+        }
+
+        beginTest("An .aif source normalized in place disposes of a copy of the original first");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "backup.aif");
+            const auto sourceSize = source.getSize();
+            auto options = testNormalizationOptions();
+            options.targetPeakDbfs = -1.0;
+            juce::StringArray disposedNames;
+            juce::Array<juce::int64> disposedSizes;
+            options.disposeFile = [&](const juce::File& file) {
+                disposedNames.add(file.getFileName());
+                disposedSizes.add(file.getSize());
+                return file.deleteFile();
+            };
+
+            const auto result = normalizeFile(analyzeFile(source), options);
+            expect(!result.hasError(), result.errorMessage);
+            expectEquals(disposedNames.joinIntoString(","), juce::String("backup.aif"));
+            expectEquals(disposedSizes[0], sourceSize);
+            expectWithinAbsoluteError(peakDecibels(result.analysisRecord), -1.0, peakTolerance);
+        }
+
+        beginTest("An in-place no-op disposes of nothing");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "no_backup.aif");
+            const auto record = analyzeFile(source);
+            auto options = testNormalizationOptions();
+            options.targetPeakDbfs = peakDecibels(record);
+            int disposedCount = 0;
+            options.disposeFile = [&disposedCount](const juce::File& file) {
+                ++disposedCount;
+                return file.deleteFile();
+            };
+
+            const auto result = normalizeFile(record, options);
+            expect(!result.hasError(), result.errorMessage);
+            expectEquals(disposedCount, 0);
         }
     }
 
@@ -377,7 +443,7 @@ private:
         beginTest(utils::format("In-place normalization of {}", fixtureName));
 
         const auto source = directory.copyFixture(fixtureName);
-        const auto result = normalizeFile(analyzeFile(source), {});
+        const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
         expect(!result.hasError(), result.errorMessage);
         expectEquals(result.analysisRecord.fullPath, source.getFullPathName());
         expectEquals(result.analysisRecord.channels, channels);
