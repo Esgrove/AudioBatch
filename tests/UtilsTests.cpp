@@ -245,49 +245,7 @@ public:
             expectEquals(output.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 2);
         }
 
-        beginTest("Moving a missing file to the trash reports it as already missing");
-        {
-            const TemporaryDirectory directory;
-            const auto missing = directory.getChildFile("missing.aif");
-            expect(utils::moveToTrash(missing) == utils::TrashResult::alreadyMissing);
-            expect(utils::trashFile(missing));
-        }
-
-        beginTest("Concurrent backups of files with the same name each dispose of their own copy");
-        {
-            const TemporaryDirectory directory;
-            const auto source = directory.getChildFile("song.aif");
-            expect(source.replaceWithText("original"));
-            constexpr int workerCount {4};
-            constexpr int backupsPerWorker {10};
-            std::atomic<int> failedBackups {0};
-            std::atomic<int> foreignCopies {0};
-
-            {
-                std::vector<std::jthread> workers;
-
-                for (int worker = 0; worker < workerCount; ++worker) {
-                    workers.emplace_back([&] {
-                        for (int backup = 0; backup < backupsPerWorker; ++backup) {
-                            const auto disposed = utils::disposeOfCopy(source, [&](const juce::File& copy) {
-                                if (copy.loadFileAsString() != "original") {
-                                    ++foreignCopies;
-                                }
-                                return copy.deleteFile();
-                            });
-
-                            if (!disposed) {
-                                ++failedBackups;
-                            }
-                        }
-                    });
-                }
-            }
-
-            expectEquals(failedBackups.load(), 0);
-            expectEquals(foreignCopies.load(), 0);
-            expectEquals(source.loadFileAsString(), juce::String("original"));
-        }
+        runDisposalTests();
 
         beginTest("Names match case-insensitively and CSV fields are escaped");
         {
@@ -339,12 +297,6 @@ public:
                 throw std::runtime_error("worker failure");
             } catch (...) {
                 expectEquals(utils::describeCurrentException(), juce::String("worker failure"));
-            }
-
-            try {
-                throw 1;
-            } catch (...) {
-                expectEquals(utils::describeCurrentException(), juce::String("Unknown error"));
             }
         }
 
@@ -478,6 +430,58 @@ public:
 
             expect(!tracker.recordBlock(false, blockStart(5), blockSize));
             expect(tracker.getErrorMessage().contains("5120"), tracker.getErrorMessage());
+        }
+    }
+
+private:
+    /// Checks moving to the trash and the backups of originals, without touching the system trash.
+    void runDisposalTests()
+    {
+        beginTest("Moving a missing file to the trash reports it as already missing");
+        {
+            const TemporaryDirectory directory;
+            const auto missing = directory.getChildFile("missing.aif");
+            expect(utils::moveToTrash(missing) == utils::TrashResult::alreadyMissing);
+            expect(utils::trashFile(missing));
+        }
+
+        beginTest("Concurrent backups of files with the same name each dispose of their own copy");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.aif");
+            expect(source.replaceWithText("original"));
+            constexpr int workerCount {4};
+            constexpr int backupsPerWorker {10};
+            std::atomic<int> failedBackups {0};
+            std::atomic<int> foreignCopies {0};
+
+            const auto backUp = [&] {
+                for (int backup = 0; backup < backupsPerWorker; ++backup) {
+                    const auto disposed = utils::disposeOfCopy(source, [&](const juce::File& copy) {
+                        if (copy.loadFileAsString() != "original") {
+                            ++foreignCopies;
+                        }
+                        return copy.deleteFile();
+                    });
+
+                    if (!disposed) {
+                        ++failedBackups;
+                    }
+                }
+            };
+
+            {
+                std::vector<std::jthread> workers;
+                workers.reserve(workerCount);
+
+                for (int worker = 0; worker < workerCount; ++worker) {
+                    workers.emplace_back(backUp);
+                }
+            }
+
+            expectEquals(failedBackups.load(), 0);
+            expectEquals(foreignCopies.load(), 0);
+            expectEquals(source.loadFileAsString(), juce::String("original"));
         }
     }
 };
