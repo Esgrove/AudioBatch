@@ -5,6 +5,7 @@
 #pragma once
 
 #include "analysis/AudioAnalysisTypes.h"
+#include "normalization/AudioNormalization.h"
 
 #include <JuceHeader.h>
 
@@ -83,6 +84,9 @@ juce::File fixtureFile(const juce::String& name);
 
 /// Returns the sample peak of an analysis record in dBFS.
 double peakDecibels(const AudioAnalysisRecord& record);
+
+bool deleteInsteadOfTrash(const juce::File& file);
+AudioNormalizationOptions testNormalizationOptions();
 
 void installTestAudioDevice(juce::AudioDeviceManager& manager, TestAudioDeviceState& state);
 void renderTestAudioDevice(const TestAudioDeviceState& state, int sampleCount = 512);

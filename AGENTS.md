@@ -120,7 +120,8 @@ Tests:
   Suites are `juce::UnitTest` classes, one per file, created through the factories in `tests/TestSuites.h`.
 - `tests/fixtures/` holds small committed audio files:
   one second 1 kHz tones at -6.02 dBFS in WAV, AIFF, FLAC, MP3, and Ogg, mono and stereo,
-  at several sample rates and bit depths, plus a tagged FLAC file, digital silence, and a broken file.
+  at several sample rates and bit depths, plus a tagged FLAC file, digital silence, a short three channel AIFF,
+ and a broken file.
   `tests/fixtures/generate.sh` regenerates them with ffmpeg.
   Tests that modify files work on copies in a temporary directory.
 

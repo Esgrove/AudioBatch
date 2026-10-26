@@ -291,4 +291,19 @@ double peakDecibels(const AudioAnalysisRecord& record)
 {
     return static_cast<double>(juce::Decibels::gainToDecibels(std::abs(record.overallPeak)));
 }
+
+/// FileDisposer for tests, which deletes the file so the user's system trash never fills up with test copies.
+/// Returns true when the file is gone afterwards.
+bool deleteInsteadOfTrash(const juce::File& file)
+{
+    return !file.exists() || file.deleteFile();
+}
+
+/// Returns default normalization options that delete replaced files instead of moving them to the system trash.
+AudioNormalizationOptions testNormalizationOptions()
+{
+    AudioNormalizationOptions options;
+    options.disposeFile = deleteInsteadOfTrash;
+    return options;
+}
 }  // namespace audiobatch::tests

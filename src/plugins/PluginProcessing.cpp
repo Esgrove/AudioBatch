@@ -73,12 +73,10 @@ PluginProcessingResult fail(const juce::File& file, const juce::String& message)
     return PluginProcessingResult::failure(file, message);
 }
 
-/// Clamps a file's channel count to a sane range
-/// before it is used for buffer allocation and bus configuration.
-int clampChannelCount(const int channels)
-{
-    return juce::jlimit(1, 8, channels);
-}
+/// Most channels a source can have, since processing, like analysis, targets mono and stereo files.
+/// A file with more channels is refused, because the output would drop the extra channels
+/// before the original is replaced.
+constexpr unsigned int maximumProcessingChannels {2};
 }  // namespace
 
 /// Returns true when the file's format can be read for processing.
@@ -637,7 +635,14 @@ PluginProcessingResult processFileWithPlugins(
         return fail(file, outputError);
     }
 
-    const auto numChannels = clampChannelCount(static_cast<int>(reader->numChannels));
+    if (reader->numChannels < 1 || reader->numChannels > maximumProcessingChannels) {
+        return fail(
+            file,
+            utils::format("Only mono and stereo files can be processed, this file has {} channels", reader->numChannels)
+        );
+    }
+
+    const auto numChannels = static_cast<int>(reader->numChannels);
     const juce::TemporaryFile intermediateFile(".wav");
     RenderSummary summary;
 
@@ -699,7 +704,7 @@ PluginProcessingResult processFileWithPlugins(
         return fail(file, cancelledMessage);
     }
 
-    // Unlike normalization, processing cannot be repeated to get back to the original,
+    // Processing cannot be repeated to get back to the original,
     // so an original rewritten in place keeps a copy in the trash like a converted original does.
     if (outputFile == file && !utils::disposeOfCopy(file, options.disposeFile)) {
         return fail(file, "Could not move a copy of the original file to the system trash");

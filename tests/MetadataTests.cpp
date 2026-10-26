@@ -104,7 +104,7 @@ private:
         AudioMetadata before;
         expect(readMetadata(source, before));
         expect(!before.hasUnsupportedId3Frames);
-        const auto normalized = normalizeFile(analyzeFile(source), {});
+        const auto normalized = normalizeFile(analyzeFile(source), testNormalizationOptions());
         expect(!normalized.hasError(), normalized.errorMessage);
         AudioMetadata after;
         expect(readMetadata(source, after));
@@ -133,7 +133,7 @@ private:
         constexpr char encryptionFlag = 4;
         bytes.subspan(static_cast<std::size_t>(frame.begin() - bytes.begin()))[flagsOffset] = encryptionFlag;
         expect(source.replaceWithData(original.getData(), original.getSize()));
-        AudioNormalizationOptions options;
+        auto options = testNormalizationOptions();
         options.targetPeakDbfs = -12.0;
         const auto result = normalizeFile(analyzeFile(source), options);
         expect(result.hasError());
@@ -278,7 +278,7 @@ private:
             AudioMetadata expected;
             expect(readMetadata(output, expected));
             expect(firstPropertyValue(expected, "SERATO_OVERVIEW").isEmpty());
-            const auto result = normalizeFile(analyzeFile(source), {});
+            const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
             expect(!result.hasError(), result.errorMessage);
             AudioMetadata normalized;
             expect(readMetadata(source, normalized));

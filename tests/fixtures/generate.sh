@@ -51,6 +51,11 @@ tone 44100 2 -c:a flac -sample_fmt s16 \
     -metadata title="Test Tone" -metadata artist="AudioBatch" -metadata album="Fixtures" \
     -metadata comment="Custom comment" tagged_stereo_44100_16.flac
 
+# A short three channel tone, which processing refuses instead of dropping a channel.
+ffmpeg -hide_banner -loglevel error -y \
+    -f lavfi -i "aevalsrc=${TONE}|${TONE}|${TONE}:s=44100:d=0.25" \
+    -map_metadata -1 -fflags +bitexact -flags:a +bitexact -c:a pcm_s16be sine_3ch_44100_16.aif
+
 # Digital silence, which has no peak and no measurable loudness.
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "anullsrc=r=44100:cl=stereo:d=1" \
     -map_metadata -1 -fflags +bitexact -flags:a +bitexact -c:a pcm_s16le silence_stereo_44100_16.wav

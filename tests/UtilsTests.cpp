@@ -18,6 +18,7 @@
 #include <bit>
 #include <span>
 #include <thread>
+#include <vector>
 
 namespace audiobatch::tests
 {
@@ -241,6 +242,50 @@ public:
             expectEquals(output.loadFileAsString(), juce::String("previous"));
             expectEquals(source.loadFileAsString(), juce::String("source"));
             expectEquals(output.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 2);
+        }
+
+        beginTest("Moving a missing file to the trash reports it as already missing");
+        {
+            const TemporaryDirectory directory;
+            const auto missing = directory.getChildFile("missing.aif");
+            expect(utils::moveToTrash(missing) == utils::TrashResult::alreadyMissing);
+            expect(utils::trashFile(missing));
+        }
+
+        beginTest("Concurrent backups of files with the same name each dispose of their own copy");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.aif");
+            expect(source.replaceWithText("original"));
+            constexpr int workerCount {4};
+            constexpr int backupsPerWorker {10};
+            std::atomic<int> failedBackups {0};
+            std::atomic<int> foreignCopies {0};
+
+            {
+                std::vector<std::jthread> workers;
+
+                for (int worker = 0; worker < workerCount; ++worker) {
+                    workers.emplace_back([&] {
+                        for (int backup = 0; backup < backupsPerWorker; ++backup) {
+                            const auto disposed = utils::disposeOfCopy(source, [&](const juce::File& copy) {
+                                if (copy.loadFileAsString() != "original") {
+                                    ++foreignCopies;
+                                }
+                                return copy.deleteFile();
+                            });
+
+                            if (!disposed) {
+                                ++failedBackups;
+                            }
+                        }
+                    });
+                }
+            }
+
+            expectEquals(failedBackups.load(), 0);
+            expectEquals(foreignCopies.load(), 0);
+            expectEquals(source.loadFileAsString(), juce::String("original"));
         }
 
         beginTest("Names match case-insensitively and CSV fields are escaped");
