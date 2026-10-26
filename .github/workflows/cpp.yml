@@ -160,7 +160,13 @@ jobs:
           ./format.sh --check
 
   sanitize:
-    # Runs the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer.
+    # Runs the unit tests under AddressSanitizer and UndefinedBehaviorSanitizer,
+    # and under ThreadSanitizer, which cannot be combined with AddressSanitizer.
+    strategy:
+      matrix:
+        sanitizer: [address, thread]
+      fail-fast: false
+    name: sanitize (${{ matrix.sanitizer }})
     runs-on: macos-latest
     steps:
       - name: Check out repository
@@ -174,4 +180,9 @@ jobs:
         run: brew install ninja
 
       - name: Build and run tests with sanitizers
-        run: ./sanitize.sh
+        run: |
+          if [ "${{ matrix.sanitizer }}" = "thread" ]; then
+            ./sanitize.sh --thread
+          else
+            ./sanitize.sh
+          fi

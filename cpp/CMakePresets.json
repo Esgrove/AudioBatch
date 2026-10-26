@@ -116,6 +116,17 @@
       }
     },
     {
+      "name": "macos-tsan",
+      "displayName": "macOS TSan",
+      "description": "Debug build with ThreadSanitizer in cmake-build-mac-tsan.",
+      "inherits": "macos-ninja-base",
+      "binaryDir": "${sourceDir}/cmake-build-mac-tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "AUDIOBATCH_SANITIZE": "thread"
+      }
+    },
+    {
       "name": "macos-fuzz",
       "displayName": "macOS Fuzz",
       "description": "libFuzzer harnesses with AddressSanitizer and UndefinedBehaviorSanitizer, built with Homebrew LLVM in cmake-build-mac-fuzz.",
@@ -161,6 +172,10 @@
     {
       "name": "macos-asan",
       "configurePreset": "macos-asan"
+    },
+    {
+      "name": "macos-tsan",
+      "configurePreset": "macos-tsan"
     },
     {
       "name": "macos-fuzz",
