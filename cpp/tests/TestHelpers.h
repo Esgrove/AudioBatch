@@ -21,6 +21,13 @@ constexpr double fixturePeakDecibels = -6.0206;
 /// A 1 kHz sine on both channels measures the same as its peak level, as in EBU Tech 3341.
 /// Mono fixtures are measured as dual mono, so they read the same as the stereo ones.
 constexpr double fixtureLoudness = fixturePeakDecibels;
+/// Sample peak of the intersample fixture, a quarter sample rate sine whose samples fall between its peaks, in dBFS.
+/// Its sample peak, true peak, and loudness all differ, so a measurement reported in the wrong field fails.
+constexpr double intersampleFixturePeakDecibels {-9.03};
+/// True peak of the intersample fixture, in dBTP.
+constexpr double intersampleFixtureTruePeakDecibels {-5.92};
+/// Integrated loudness of the intersample fixture, in LUFS, raised by the K-weighting at 11 kHz.
+constexpr double intersampleFixtureLoudness {-2.67};
 /// Position of the single click in the click fixtures, in samples.
 constexpr juce::int64 clickFixturePosition {11'025};
 /// Length of the click fixtures in samples, which is half a second at 44.1 kHz.

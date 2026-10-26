@@ -1,6 +1,8 @@
 /// Integration tests for analyzeFile on the committed fixtures.
 /// Every fixture tone has the same level, so the tests check that each format,
 /// channel count, sample rate, and bit depth is decoded and measured consistently.
+/// The intersample fixture has a different sample peak, true peak, and loudness,
+/// which shows that each measurement ends up in its own field.
 
 #include "analysis/AudioAnalysis.h"
 #include "metadata/AudioMetadata.h"
@@ -165,6 +167,19 @@ public:
                     expectEquals(value, static_cast<float>(AudioAnalysisRecord::negativeInfinityLoudness));
                 }
             }
+        }
+
+        beginTest("Sample peak, true peak, and loudness are reported in their own fields");
+        {
+            const auto record = analyzeFile(fixtureFile("intersample_stereo_44100_24.wav"));
+            expect(!record.hasError(), record.errorMessage);
+            expectWithinAbsoluteError(peakDecibels(record), intersampleFixturePeakDecibels, losslessTolerance);
+            expectWithinAbsoluteError(
+                juce::Decibels::gainToDecibels(record.overallTruePeak),
+                intersampleFixtureTruePeakDecibels,
+                losslessTolerance
+            );
+            expectWithinAbsoluteError(record.integratedLufs, intersampleFixtureLoudness, losslessTolerance);
         }
 
         testLoudnessHistory();

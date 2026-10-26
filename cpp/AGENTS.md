@@ -167,7 +167,7 @@ Tests:
   one second 1 kHz tones at -6.02 dBFS in WAV, AIFF, FLAC, MP3, and Ogg, mono and stereo,
   at several sample rates and bit depths, plus a tagged FLAC file, digital silence, a short three channel AIFF,
   a single click at a known sample in WAV and MP3 for checking that the start of the audio stays in place,
-  and a broken file.
+  a quarter sample rate tone whose sample peak, true peak, and loudness all differ, and a broken file.
   `../fixtures/generate.sh` regenerates them with ffmpeg.
   The icons and fonts live in `../assets/` at the repository root for the same reason.
   Tests that modify files work on copies in a temporary directory.
