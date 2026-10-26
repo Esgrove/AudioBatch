@@ -6,6 +6,10 @@
 
 #include "analysis/AnalysisCoordinator.h"
 
+#include "utils/Log.h"
+#include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
+
 #include <mutex>
 
 namespace audiobatch
@@ -232,19 +236,36 @@ void AnalysisCoordinator::analyzeStaleFile(
     const auto onProgress = utils::makeThrottledProgress([this, &file, runId](const float progress) {
         publishProgress(file, progress, runId);
     });
-    auto result = analyzeFile(file, [this, runId] { return isRunCancelled(runId); }, onProgress);
+
+    AudioAnalysisRecord result;
+    bool cacheResult = true;
+
+    try {
+        result = analyzeFile(file, [this, runId] { return isRunCancelled(runId); }, onProgress);
+    } catch (...) {
+        // An exception says nothing about the file, so the failure is not cached and the next run tries again.
+        result = AudioAnalysisRecord::fromFile(file);
+        result.status = AudioAnalysisStatus::failed;
+        result.errorMessage = utils::format("Analysis failed: {}", utils::describeCurrentException());
+        utils::logError("Analysis failed for {}: {}", result.fullPath.quoted(), result.errorMessage);
+        cacheResult = false;
+    }
 
     if (isRunCancelled(runId)) {
         return;
     }
 
-    // A refresh re-analyzes unchanged files too, and those keep the custom gain the user set for them.
-    if (float customGainDb = 0.0f; cache.getCustomGain(file, result.fileSize, result.modifiedTimeMs, customGainDb)) {
-        result.customGainDb = customGainDb;
-        result.hasCustomGain = true;
+    if (cacheResult) {
+        // A refresh re-analyzes unchanged files too, and those keep the custom gain the user set for them.
+        if (float customGainDb = 0.0f; cache.getCustomGain(file, result.fileSize, result.modifiedTimeMs, customGainDb))
+        {
+            result.customGainDb = customGainDb;
+            result.hasCustomGain = true;
+        }
+
+        cache.storeAnalysis(result);
     }
 
-    cache.storeAnalysis(result);
     publishResult(result, runId);
 
     if (pendingFiles->fetch_sub(1) == 1) {

@@ -17,6 +17,7 @@
 #include <atomic>
 #include <bit>
 #include <span>
+#include <stdexcept>
 #include <thread>
 #include <vector>
 
@@ -330,6 +331,21 @@ public:
 
             expectEquals(outcome.load(), 0);
             expect(!ran.load());
+        }
+
+        beginTest("An exception being handled is described by its message");
+        {
+            try {
+                throw std::runtime_error("worker failure");
+            } catch (...) {
+                expectEquals(utils::describeCurrentException(), juce::String("worker failure"));
+            }
+
+            try {
+                throw 1;
+            } catch (...) {
+                expectEquals(utils::describeCurrentException(), juce::String("Unknown error"));
+            }
         }
 
         beginTest("An empty cancellation check never cancels");

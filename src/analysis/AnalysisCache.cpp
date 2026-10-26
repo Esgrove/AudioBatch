@@ -121,6 +121,20 @@ std::shared_ptr<const ShortTermLoudnessHistory> deserializeLoudnessHistory(
     }
     return std::make_shared<const ShortTermLoudnessHistory>(std::move(history));
 }
+
+/// Converts a status read from the database, or returns an empty optional for a value outside the enum.
+/// The database is outside the program's control,
+/// and casting an unknown value into the enum would later reach std::unreachable in formatStatus.
+std::optional<AudioAnalysisStatus> statusFromColumn(const int value)
+{
+    if (value < std::to_underlying(AudioAnalysisStatus::pending)
+        || value > std::to_underlying(AudioAnalysisStatus::failed))
+    {
+        return std::nullopt;
+    }
+
+    return static_cast<AudioAnalysisStatus>(value);
+}
 }  // namespace
 
 /// Returns an independently versioned stable tag result, or a miss for stale or corrupt data.
@@ -155,7 +169,12 @@ std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
         }
         bindText(statement, 1, identity.path);
         sqlite3_bind_int64(statement, 2, static_cast<std::uint32_t>(kind));
-        bool valid = sqlite3_step(statement) == SQLITE_ROW;
+        // Reading a column without a current row is undefined, so a miss returns before any column is read.
+        if (sqlite3_step(statement) != SQLITE_ROW) {
+            sqlite3_finalize(statement);
+            return std::nullopt;
+        }
+        bool valid = true;
         for (const auto column :
              std::array {
                  serato_column::fileSize,
@@ -335,7 +354,13 @@ bool AnalysisCache::getAnalysis(const juce::File& file, AudioAnalysisRecord& rec
     record.sampleRate = sqlite3_column_int(statement, analysis_column::sampleRate);
     record.channels = sqlite3_column_int(statement, analysis_column::channels);
     record.bitsPerSample = sqlite3_column_int(statement, analysis_column::bitsPerSample);
-    record.status = static_cast<AudioAnalysisStatus>(sqlite3_column_int(statement, analysis_column::status));
+    const auto status = statusFromColumn(sqlite3_column_int(statement, analysis_column::status));
+    if (!status.has_value()) {
+        utils::logWarn("Invalid cached analysis status for {}, reanalysis required", record.fullPath.quoted());
+        sqlite3_finalize(statement);
+        return false;
+    }
+    record.status = *status;
     record.errorMessage = columnText(statement, analysis_column::errorMessage);
     record.customGainDb = static_cast<float>(sqlite3_column_double(statement, analysis_column::customGainDb));
     record.hasCustomGain = sqlite3_column_int(statement, analysis_column::hasCustomGain) != 0;

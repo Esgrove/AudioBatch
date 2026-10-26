@@ -145,8 +145,9 @@ void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std:
                 data = collectData(results);
             }
         }
-    } catch (const std::exception& exception) {
-        utils::logDebug("Serato preview read failed: {}", exception.what());
+    } catch (...) {
+        // The worker is a std::jthread, where an escaping exception would terminate the process.
+        utils::logDebug("Serato preview read failed: {}", utils::describeCurrentException());
     }
 
     if (!active.identity.matches(active.file)) {

@@ -5,6 +5,10 @@
 
 #include "normalization/NormalizeCoordinator.h"
 
+#include "utils/Log.h"
+#include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
+
 #include <map>
 
 namespace audiobatch
@@ -203,12 +207,20 @@ int NormalizeCoordinator::start(
                 const auto onProgress = utils::makeThrottledProgress([this, &record, runId](const float progress) {
                     publishProgress(record.file, progress, runId);
                 });
-                publishResult(
-                    normalizeFile(
+
+                AudioNormalizationResult result;
+
+                try {
+                    result = normalizeFile(
                         record, options, [this, runId] { return runId != currentRunId.load(); }, onProgress
-                    ),
-                    runId
-                );
+                    );
+                } catch (...) {
+                    const auto message = utils::format("Normalization failed: {}", utils::describeCurrentException());
+                    utils::logError("Normalization failed for {}: {}", record.fullPath.quoted(), message);
+                    result = AudioNormalizationResult::failure(record.file, message);
+                }
+
+                publishResult(result, runId);
             }
 
             if (pendingFiles->fetch_sub(1) == 1) {
