@@ -72,6 +72,7 @@ public:
     [[nodiscard]] bool isPluginPreviewEnabled() const noexcept;
     [[nodiscard]] double getCurrentPosition() const;
     [[nodiscard]] std::optional<double> getLoadedDurationSeconds() const;
+    [[nodiscard]] std::optional<juce::int64> getLoadedLengthInSamples() const;
     [[nodiscard]] AudioOutputStatus getOutputStatus() const;
 
     /// Returns the device manager, used by the audio settings dialog.

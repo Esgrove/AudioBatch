@@ -67,7 +67,7 @@ public:
     void setSeratoOverview(std::shared_ptr<const serato::Overview> overview);
     void setSeratoWaveformColouringEnabled(bool enabled);
     void setThumbnailFullyLoadedCallback(std::function<void()> callback);
-    void setURL(const juce::URL& url);
+    void setURL(const juce::URL& url, juce::int64 lengthInSamples = 0);
     void setZoom(double zoomLevel);
 
 private:
@@ -82,12 +82,16 @@ private:
     void drawLoudnessAxis(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
     void drawLoudnessCurve(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
     void jumpToHotCue(int slot);
+    void replaceThumbnail(int samplesPerPoint);
     void updatePlaybackPosition();
     void updateCursorPosition();
 
     AudioPreviewPlayer& transportSource;
+    /// Reads the files the thumbnail is drawn from, owned by the main component, which outlives this one.
+    juce::AudioFormatManager& thumbnailFormats;
     juce::AudioThumbnailCache thumbnailCache {128};
-    juce::AudioThumbnail thumbnail;
+    /// Recreated for each file, because a thumbnail keeps the detail it was created or last loaded with.
+    std::unique_ptr<juce::AudioThumbnail> thumbnail;
     juce::DrawableRectangle currentPositionMarker;
     juce::DrawableComponent currentPositionMarkerComponent {currentPositionMarker};
     juce::Range<double> visibleRange;
