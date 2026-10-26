@@ -215,6 +215,8 @@ public:
             expect(errorMessage.contains("--bogus"), errorMessage);
         }
 
+#if !JUCE_WINDOWS
+        // Windows passes argv in the ANSI code page, and JUCE reads the UTF-16 command line of the process instead.
         beginTest("Arguments from the process are decoded as UTF-8");
         {
             // "Björk.flac" and "-j", as the bytes a terminal passes in argv.
@@ -229,6 +231,7 @@ public:
             expectEquals(arguments[0].text.length(), 10);
             expectEquals(cli::joinArguments(arguments), juce::String::fromUTF8("Bj\xc3\xb6rk.flac -j"));
         }
+#endif
 
         runInputTests();
         runOutputTests();
