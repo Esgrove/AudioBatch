@@ -99,6 +99,7 @@ juce::String outcomeNotice(const OperationOutcome& outcome);
 
 bool deleteInsteadOfTrash(const juce::File& file);
 AudioNormalizationOptions testNormalizationOptions();
+serato::TrackInfo makeTrackInfo(double bpm, const juce::String& key);
 
 /// Returns a copy of the value of a present Serato tag result as the given tag type,
 /// or nothing when the result has no value of that type.

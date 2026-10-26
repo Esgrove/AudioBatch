@@ -298,6 +298,15 @@ double peakDecibels(const AudioAnalysisRecord& record)
     return static_cast<double>(juce::Decibels::gainToDecibels(std::abs(record.overallPeak)));
 }
 
+/// Returns track information with only a tempo and a key, the fields most tests care about.
+serato::TrackInfo makeTrackInfo(const double bpm, const juce::String& key)
+{
+    serato::TrackInfo info;
+    info.bpm = bpm;
+    info.key = key;
+    return info;
+}
+
 /// Returns the error of a failed or unanalyzed outcome, or an empty string for a success.
 juce::String outcomeError(const OperationOutcome& outcome)
 {

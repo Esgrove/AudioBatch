@@ -97,10 +97,21 @@ struct Markers {
     std::optional<bool> bpmLocked;
 };
 
-/// Standard BPM and INITIALKEY metadata, independent of Serato's analysis version.
+/// Standard BPM, INITIALKEY, ALBUM, GENRE, DATE, and COMMENT metadata, independent of Serato's analysis version.
 struct TrackInfo {
+    /// Returns true when no field is set.
+    [[nodiscard]] bool isEmpty() const noexcept
+    {
+        return !bpm && key.isEmpty() && album.isEmpty() && genre.isEmpty() && year.isEmpty() && comment.isEmpty();
+    }
+
     std::optional<double> bpm;
     juce::String key;
+    juce::String album;
+    juce::String genre;
+    /// Release year, or the date as written when it does not start with a year.
+    juce::String year;
+    juce::String comment;
 };
 
 /// Owned independent tag values for delivery from a worker to the preview UI.
@@ -151,10 +162,16 @@ struct TagReadResult {
     std::expected<TagValue, ReadStatus> value {std::unexpected(ReadStatus::absent)};
 };
 
+/// Version of the cached track information layout, raised when the album, genre, year, and comment were added.
+inline constexpr std::uint32_t trackInfoParserVersion {2};
+
 /// Reports the independent numeric cache schema version for a supported kind.
 [[nodiscard]] constexpr std::uint32_t parserVersion(const TagKind kind)
 {
-    return kind == TagKind::overview ? overviewParserVersion : 1;
+    if (kind == TagKind::overview) {
+        return overviewParserVersion;
+    }
+    return kind == TagKind::trackInfo ? trackInfoParserVersion : 1;
 }
 
 /// Rejects unrecognized persisted kind identifiers.

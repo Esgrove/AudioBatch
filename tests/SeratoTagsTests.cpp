@@ -135,7 +135,8 @@ private:
         beginTest("Stable kind IDs, versions and analysis are independent of musical key");
         for (std::size_t index = 0; index < serato::allTagKinds.size(); ++index) {
             expectEquals(static_cast<int>(serato::allTagKinds[index]), static_cast<int>(index + 1));
-            expectEquals(static_cast<int>(serato::parserVersion(serato::allTagKinds[index])), 1);
+            const auto expectedVersion = serato::allTagKinds[index] == serato::TagKind::trackInfo ? 2 : 1;
+            expectEquals(static_cast<int>(serato::parserVersion(serato::allTagKinds[index])), expectedVersion);
         }
         expect(!serato::supportsTagKind(std::bit_cast<serato::TagKind>(std::uint8_t {99})));
         const std::array<std::uint8_t, 2> analysis {2, 1};
@@ -317,7 +318,14 @@ private:
         results.push_back(serato::parseTagPayload(serato::TagKind::autotags, autotags));
         results.push_back(serato::parseTagPayload(serato::TagKind::beatGrid, grid));
         results.push_back(serato::parseTagPayload(serato::TagKind::markers, markers));
-        serato::TrackInfo trackInfo {.bpm = 127.25, .key = "F#m"};
+        serato::TrackInfo trackInfo {
+            .bpm = 127.25,
+            .key = "F#m",
+            .album = "Fixtures",
+            .genre = "Techno",
+            .year = "2024",
+            .comment = "Custom comment",
+        };
         results.push_back(serato::TagReadResult::present(trackInfo));
         for (const auto& result : results) {
             const auto cache = serato::serializeTag(result);
@@ -344,6 +352,16 @@ private:
             const auto wrongKind
                 = result.kind == serato::TagKind::analysis ? serato::TagKind::autotags : serato::TagKind::analysis;
             expect(!serato::deserializeTag(wrongKind, cache));
+        }
+        const auto trackInfoCache = serato::serializeTag(serato::TagReadResult::present(trackInfo));
+        const auto decodedTrackInfo = serato::deserializeTag(serato::TagKind::trackInfo, trackInfoCache);
+        expect(decodedTrackInfo.has_value() && decodedTrackInfo->value.has_value());
+        if (decodedTrackInfo && decodedTrackInfo->value) {
+            const auto& info = std::get<serato::TrackInfo>(*decodedTrackInfo->value);
+            expectEquals(info.album, trackInfo.album);
+            expectEquals(info.genre, trackInfo.genre);
+            expectEquals(info.year, trackInfo.year);
+            expectEquals(info.comment, trackInfo.comment);
         }
         trackInfo.bpm = std::numeric_limits<double>::infinity();
         expect(serato::serializeTag(serato::TagReadResult::present(trackInfo)).getSize() == 0);
