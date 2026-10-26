@@ -66,7 +66,7 @@ and every crate inherits them with `.workspace = true`.
 - `crates/cli` (`audiobatch-cli`): the `audiobatch-rs` binary.
   Its options, JSON field names, and exit codes match the C++ `audiobatch` CLI,
   so `scripts/parity.sh` can compare the two directly.
-- `crates/gui` (`audiobatch-gui`): the GUI built on gpui-kit.
+- `crates/gui` (`audiobatch-gui`): the `AudioBatchRs` GUI binary, built on gpui-kit.
   It is the only crate that depends on gpui-kit, which is pinned to an exact version and upgraded by hand.
 - `crates/test-fixtures`: a dev-only helper that locates the shared fixtures and lists their expected properties.
 
@@ -75,7 +75,7 @@ so the GUI framework stays replaceable without touching them.
 
 ## Running Both Versions Side By Side
 
-- The Rust CLI is `audiobatch-rs`, and the Rust app is `AudioBatch RS` with the bundle id `com.esgrove.audiobatch-rs`.
+- The Rust CLI is `audiobatch-rs`, and the Rust app is `AudioBatchRs` with the bundle id `com.esgrove.audiobatch-rs`.
   The C++ versions are `audiobatch` and `AudioBatch` with `com.esgrove.audiobatch`.
 - The Rust cache lives in its own data directory, `AudioBatch-rs`.
   Never open the C++ `analysis.db`, because the two schemas would overwrite each other.
@@ -101,14 +101,14 @@ Other commands:
 cargo run --bin audiobatch-rs -- [args]
 
 # Run the GUI
-cargo run --bin audiobatch-gui
+cargo run --bin AudioBatchRs
 
 # Compare the Rust and C++ CLI output on a folder
 ./scripts/parity.sh <path>
 
 # Save an image of the GUI window and quit, for checking the layout without screen recording permission
 cargo build --release -p audiobatch-gui --features snapshot
-AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png ./target/release/audiobatch-gui --autoplay ../tests/fixtures
+AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png ./target/release/AudioBatchRs --autoplay ../tests/fixtures
 ```
 
 The `snapshot` feature also reads `AUDIOBATCH_GUI_SNAPSHOT_DELAY` in seconds,

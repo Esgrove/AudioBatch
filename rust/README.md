@@ -1,4 +1,4 @@
-# AudioBatch RS
+# AudioBatchRs
 
 Rust port of AudioBatch, built next to the C++ application in the repository root.
 It analyzes audio files for sample peak, true peak, and integrated loudness (EBU R128),
@@ -14,7 +14,7 @@ Normalization and plugin processing are only available there.
 - `crates/playback`: preview playback with cpal, rtrb, and rubato
 - `crates/serato`: parsers for the Serato GEOB tags, extracted from track-rename
 - `crates/cli`: the `audiobatch-rs` command line tool
-- `crates/gui`: the AudioBatch RS app, built on gpui-kit
+- `crates/gui`: the AudioBatchRs app, built on gpui-kit
 - `crates/test-fixtures`: locates the shared test fixtures in `../tests/fixtures`
 
 ## Build
@@ -53,7 +53,7 @@ Options:
 ## GUI
 
 ```shell
-cargo run --release --bin audiobatch-gui -- [--autoplay] [paths...]
+cargo run --release --bin AudioBatchRs -- [--autoplay] [paths...]
 ```
 
 The window follows the layout and colors of the C++ application:
@@ -92,7 +92,7 @@ with a generated waveform and a looping playhead.
 Setting `AUDIOBATCH_GUI_DEBUG=1` prints the waveform frame rate, run summaries, and player events to stderr.
 
 ```shell
-AUDIOBATCH_GUI_DEBUG=1 cargo run --release --bin audiobatch-gui -- --demo-rows 10000
+AUDIOBATCH_GUI_DEBUG=1 cargo run --release --bin AudioBatchRs -- --demo-rows 10000
 ```
 
 ### Window snapshots
@@ -105,7 +105,7 @@ and `AUDIOBATCH_GUI_SNAPSHOT_ACTIONS` lists actions to dispatch first.
 ```shell
 cargo build --release -p audiobatch-gui --features snapshot
 AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png AUDIOBATCH_GUI_SNAPSHOT_ACTIONS=audiobatch::ToggleLoudnessGraph \
-    ./target/release/audiobatch-gui --autoplay ../tests/fixtures
+    ./target/release/AudioBatchRs --autoplay ../tests/fixtures
 ```
 
 ## Test
