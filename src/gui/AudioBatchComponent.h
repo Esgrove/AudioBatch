@@ -17,6 +17,7 @@
 #include "gui/components/ThumbnailComponent.h"
 #include "gui/FileActivityTracker.h"
 #include "gui/GuiLayout.h"
+#include "gui/ResultsModel.h"
 #include "gui/ResultsSorting.h"
 #include "normalization/NormalizeCoordinator.h"
 #include "plugins/PluginChain.h"
@@ -128,7 +129,6 @@ private:
     [[nodiscard]] bool isIdle() const noexcept;
     [[nodiscard]] bool isFileBeingRewritten(const juce::String& fullPath) const;
     [[nodiscard]] std::vector<AudioAnalysisRecord> getSelectedProcessableRecords() const;
-    int findRecordIndex(const juce::String& fullPath) const;
     int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
     std::vector<AudioAnalysisRecord> getSelectedNormalizableRecords() const;
 
@@ -169,7 +169,6 @@ private:
     void showAudioResource(juce::URL resource);
     void showFileContextMenu(int row, juce::Point<int> screenPosition);
     void showPluginProcessingWarning(const juce::String& message);
-    void sortResults();
     void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
     void updateAudioInfo(const AudioAnalysisRecord& record);
     void updateCurrentRootLabel();
@@ -234,7 +233,7 @@ private:
     AnalysisCoordinator analysisCoordinator;
 
     /// The rows of the results table. Declared before the table model, which refers to it.
-    std::vector<AudioAnalysisRecord> analysisResults;
+    ResultsModel analysisResults;
     AudioFileTableModel fileTableModel;
     NormalizeCoordinator normalizeCoordinator;
     PluginProcessingCoordinator pluginCoordinator;

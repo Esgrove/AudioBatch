@@ -37,6 +37,9 @@ std::unique_ptr<juce::UnitTest> createPreviewPlaybackTests();
 /// Creates the suite that checks normalization output paths, collisions, and the written audio.
 std::unique_ptr<juce::UnitTest> createNormalizationTests();
 
+/// Creates the suite that checks merging, removing, and sorting the rows of the results table.
+std::unique_ptr<juce::UnitTest> createResultsModelTests();
+
 /// Creates the suite that checks the results table column comparators and sort order.
 std::unique_ptr<juce::UnitTest> createSortingTests();
 

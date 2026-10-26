@@ -162,7 +162,7 @@ void AudioBatchComponent::showSupportedNormalizationFormats()
 /// Selects the clicked row and opens the per-file action menu.
 void AudioBatchComponent::handleFileContextMenuRequested(const int row, const juce::MouseEvent& event)
 {
-    if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
+    if (!analysisResults.containsRow(row)) {
         return;
     }
 
@@ -176,11 +176,11 @@ void AudioBatchComponent::handleFileContextMenuRequested(const int row, const ju
 /// Shows the context menu for the given row at the supplied screen position.
 void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<int> screenPosition)
 {
-    if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
+    if (!analysisResults.containsRow(row)) {
         return;
     }
 
-    const auto& record = analysisResults[static_cast<std::size_t>(row)];
+    const auto& record = analysisResults[row];
     const auto parentDirectory = record.file.getParentDirectory();
     const auto selectedRecords = getSelectedNormalizableRecords();
     const auto canNormalize = isIdle() && canNormalizeRecords(selectedRecords);
@@ -263,10 +263,8 @@ void AudioBatchComponent::revealSelectedRecord() const
 {
     const auto selectedRows = resultsTable.getSelectedRows();
 
-    if (const auto row = getSelectionDisplayRow(selectedRows, -1);
-        juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size())))
-    {
-        utils::revealFileInFileManager(analysisResults[static_cast<std::size_t>(row)].file);
+    if (const auto row = getSelectionDisplayRow(selectedRows, -1); analysisResults.containsRow(row)) {
+        utils::revealFileInFileManager(analysisResults[row].file);
     }
 }
 
@@ -288,11 +286,11 @@ void AudioBatchComponent::moveSelectedRecordsToTrash(const bool promptForConfirm
     for (int index = 0; index < selectedRows.size(); ++index) {
         const auto rowNumber = selectedRows[index];
 
-        if (!juce::isPositiveAndBelow(rowNumber, static_cast<int>(analysisResults.size()))) {
+        if (!analysisResults.containsRow(rowNumber)) {
             continue;
         }
 
-        const auto& record = analysisResults[static_cast<std::size_t>(rowNumber)];
+        const auto& record = analysisResults[rowNumber];
 
         // The running operation would write its output back to the path of a file being rewritten.
         if (!record.file.exists() || isFileBeingRewritten(record.fullPath)) {
@@ -412,10 +410,9 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
     for (const auto& removedPath : removedPaths) {
         if (analyzing != nullptr) {
             const auto activity = fileActivity.getActivity(removedPath);
-            const auto rowIndex = findRecordIndex(removedPath);
+            const auto row = analysisResults.findRow(removedPath);
             const auto pending = activity == FileActivity::waiting || activity == FileActivity::analyzing
-                || (rowIndex >= 0
-                    && analysisResults[static_cast<std::size_t>(rowIndex)].status == AudioAnalysisStatus::pending);
+                || (row.has_value() && analysisResults[*row].status == AudioAnalysisStatus::pending);
 
             if (pending) {
                 ++removedPendingCount;
@@ -429,13 +426,7 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
         fileActivity.clearMessage(removedPath);
     }
 
-    analysisResults.erase(
-        std::ranges::remove_if(
-            analysisResults,
-            [&removedPaths](const AudioAnalysisRecord& record) { return removedPaths.contains(record.fullPath); }
-        ).begin(),
-        analysisResults.end()
-    );
+    analysisResults.removePaths(removedPaths);
 
     // Only rows still waiting for a result lower the expected count, since finished rows were already counted.
     if (analyzing != nullptr) {
@@ -455,7 +446,7 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
 
     if (resultsTable.getNumSelectedRows() == 0 && !analysisResults.empty()) {
         const juce::ScopedValueSetter<bool> automaticSelection(automaticSelectionChange, true);
-        resultsTable.selectRow(juce::jlimit(0, static_cast<int>(analysisResults.size()) - 1, fallbackRow));
+        resultsTable.selectRow(juce::jlimit(0, analysisResults.size() - 1, fallbackRow));
     }
 
     if (analysisResults.empty()) {

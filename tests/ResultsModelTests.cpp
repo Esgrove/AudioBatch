@@ -1,0 +1,144 @@
+/// Tests for ResultsModel, the rows of the results table.
+/// Covers merging analysis and operation results, the custom gain carried over for unchanged files,
+/// and the path index after removing and sorting rows.
+
+#include "gui/ResultsModel.h"
+#include "TestSuites.h"
+
+#include <optional>
+
+namespace audiobatch::tests
+{
+namespace
+{
+/// Builds an analyzed record for a file with the given name, size, and custom gain.
+AudioAnalysisRecord makeRecord(
+    const juce::String& name,
+    const std::int64_t fileSize = 1000,
+    const std::optional<Decibels> customGain = std::nullopt
+)
+{
+    AudioAnalysisRecord record;
+    record.file = juce::File("/music").getChildFile(name);
+    record.fileName = name;
+    record.fullPath = record.file.getFullPathName();
+    record.fileSize = fileSize;
+    record.modifiedTimeMs = 1'700'000'000'000;
+    record.customGain = customGain;
+    record.status = AudioAnalysisStatus::analyzed;
+    return record;
+}
+
+/// Returns the file names of the rows in their current order, separated by commas.
+juce::String namesOf(const ResultsModel& results)
+{
+    juce::StringArray names;
+    for (const auto& record : results) {
+        names.add(record.fileName);
+    }
+    return names.joinIntoString(", ");
+}
+}  // namespace
+
+/// Checks that the results keep one row per path and find every row by its path.
+class ResultsModelTests final : public juce::UnitTest
+{
+public:
+    ResultsModelTests() : juce::UnitTest("Results model", "AudioBatch") {}
+
+    /// Runs the results model checks.
+    void runTest() override
+    {
+        beginTest("Merging appends new paths and replaces the row of a known path in place");
+        {
+            ResultsModel results;
+            expectEquals(results.merge(makeRecord("a.wav")).row, 0);
+            expectEquals(results.merge(makeRecord("b.wav")).row, 1);
+
+            auto changed = makeRecord("a.wav");
+            changed.overallPeak = 0.5f;
+            expectEquals(results.merge(changed).row, 0);
+
+            expectEquals(results.size(), 2);
+            expect(results.findRow(changed.fullPath) == 0);
+            expectWithinAbsoluteError(results[0].overallPeak, 0.5f, 1.0e-6f);
+            expect(!results.findRow("/music/missing.wav").has_value());
+            expect(!results.containsRow(2));
+        }
+
+        beginTest("A custom gain is carried over only while the file is unchanged");
+        {
+            ResultsModel results;
+            results.merge(makeRecord("a.wav", 1000, Decibels {-3.0f}));
+
+            const auto unchanged = results.merge(makeRecord("a.wav"));
+            expect(unchanged.customGainCarriedOver);
+            expect(sameCustomGain(results[0].customGain, Decibels {-3.0f}));
+
+            const auto sameGain = results.merge(makeRecord("a.wav", 1000, Decibels {-3.0f}));
+            expect(!sameGain.customGainCarriedOver);
+
+            const auto resized = results.merge(makeRecord("a.wav", 2000));
+            expect(!resized.customGainCarriedOver);
+            expect(!results[0].customGain.has_value());
+        }
+
+        beginTest("An output with a new path replaces the row of its source");
+        {
+            ResultsModel results;
+            results.merge(makeRecord("a.wav"));
+            results.merge(makeRecord("b.aif"));
+            results.merge(makeRecord("c.wav"));
+
+            const auto merged = results.replaceAfterOperation(makeRecord("a.wav").fullPath, makeRecord("a.aif"));
+
+            expectEquals(namesOf(results), juce::String("b.aif, c.wav, a.aif"));
+            expectEquals(merged.row, 2);
+            expect(!results.findRow(makeRecord("a.wav").fullPath).has_value());
+
+            // A conversion onto a path that already has a row replaces that row instead of adding a second one.
+            results.replaceAfterOperation(makeRecord("c.wav").fullPath, makeRecord("b.aif"));
+            expectEquals(namesOf(results), juce::String("b.aif, a.aif"));
+        }
+
+        beginTest("Rows are found by path after removing and sorting");
+        {
+            ResultsModel results;
+            for (const auto* name : {"d.wav", "b.wav", "a.wav", "c.wav"}) {
+                results.merge(makeRecord(name));
+            }
+
+            results.removePaths(juce::StringArray {makeRecord("b.wav").fullPath});
+            expect(results.findRow(makeRecord("a.wav").fullPath) == 1);
+
+            results.sort({
+                .primaryColumn = AudioFileTableColumn::name,
+                .secondaryColumn = std::nullopt,
+                .statusText = {},
+            });
+            expectEquals(namesOf(results), juce::String("a.wav, c.wav, d.wav"));
+
+            for (int row = 0; row < results.size(); ++row) {
+                expect(results.findRow(results[row].fullPath) == row);
+            }
+        }
+
+        beginTest("A pending placeholder is only added for a path without a row");
+        {
+            ResultsModel results;
+            results.merge(makeRecord("a.wav"));
+
+            expect(!results.addPending(juce::File("/music/a.wav")));
+            expect(results.addPending(juce::File("/music/b.wav")));
+            expectEquals(results.size(), 2);
+            expect(results[0].status == AudioAnalysisStatus::analyzed);
+            expect(results[1].status == AudioAnalysisStatus::pending);
+        }
+    }
+};
+
+std::unique_ptr<juce::UnitTest> createResultsModelTests()
+{
+    return std::make_unique<ResultsModelTests>();
+}
+}  // namespace audiobatch::tests

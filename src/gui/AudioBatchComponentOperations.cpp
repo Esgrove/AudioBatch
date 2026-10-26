@@ -11,7 +11,6 @@
 #include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
-#include <unordered_map>
 
 #include <algorithm>
 #include <ranges>
@@ -21,25 +20,6 @@
 
 namespace audiobatch
 {
-namespace
-{
-/// Copies the custom gain of the record in the table onto a new record for the same path,
-/// when the file still has the size and modification time the gain was set for.
-/// A custom gain only applies to the version of the file it was set for, so a changed file starts without one.
-/// Returns true when the gain was carried over.
-bool keepCustomGainOfUnchangedFile(const AudioAnalysisRecord& existing, AudioAnalysisRecord& incoming)
-{
-    if (!existing.customGain || existing.fileSize != incoming.fileSize
-        || existing.modifiedTimeMs != incoming.modifiedTimeMs)
-    {
-        return false;
-    }
-
-    incoming.customGain = existing.customGain;
-    return true;
-}
-}  // namespace
-
 /// Resolves rows still marked pending or active after a run completes,
 /// from the cache when possible and otherwise as failed, so no row is left waiting.
 /// Never decodes audio, because it runs on the message thread.
@@ -48,7 +28,8 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
     const auto selectedPaths = getSelectedRecordPaths();
     bool resultsChanged = false;
 
-    for (auto& record : analysisResults) {
+    for (int row = 0; row < analysisResults.size(); ++row) {
+        const auto& record = analysisResults[row];
         const auto activity = fileActivity.getActivity(record.fullPath);
         const auto needsRefresh = activity == FileActivity::analyzing || activity == FileActivity::waiting
             || record.status == AudioAnalysisStatus::pending;
@@ -57,17 +38,19 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
             continue;
         }
 
+        resultsChanged = true;
+
         if (auto refreshedRecord = analysisCache.getAnalysis(record.file)) {
-            record = std::move(*refreshedRecord);
-            resultsChanged = true;
+            analysisResults.setRecord(row, std::move(*refreshedRecord));
             continue;
         }
 
-        record.status = AudioAnalysisStatus::failed;
-        record.errorMessage = record.file.existsAsFile() ? "Analysis did not finish. Re-analyze the file to try again."
+        auto failed = record;
+        failed.status = AudioAnalysisStatus::failed;
+        failed.errorMessage = failed.file.existsAsFile() ? "Analysis did not finish. Re-analyze the file to try again."
                                                          : "File does not exist";
-        utils::logWarn("Analysis failed for {}: {}", record.fullPath.quoted(), record.errorMessage);
-        resultsChanged = true;
+        utils::logWarn("Analysis failed for {}: {}", failed.fullPath.quoted(), failed.errorMessage);
+        analysisResults.setRecord(row, std::move(failed));
     }
 
     fileActivity.clearActiveWithActivities({FileActivity::analyzing, FileActivity::waiting});
@@ -76,8 +59,8 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
         refreshTablePreservingSelection(selectedPaths);
 
         if (currentAudioFile.existsAsFile()) {
-            if (const auto currentIndex = findRecordIndex(currentAudioFile.getFullPathName()); currentIndex >= 0) {
-                updateAudioInfo(analysisResults[static_cast<std::size_t>(currentIndex)]);
+            if (const auto currentRow = analysisResults.findRow(currentAudioFile.getFullPathName())) {
+                updateAudioInfo(analysisResults[*currentRow]);
             }
         }
     }
@@ -88,18 +71,12 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
 /// Merges a batch of analysis results into the table on the message thread,
 /// preserving the custom gain set for a file while the file is unchanged on disk,
 /// and keeping selection and preview in sync.
-/// The whole batch is merged through one index of the rows by path and shown with one sort and table refresh,
-/// so a large rescan no longer re-sorts the table once per file.
+/// The whole batch is merged before one sort and table refresh,
+/// so a large rescan does not re-sort the table once per file.
 /// Results from a replaced run are ignored, since their queued messages can arrive after a new run started.
 void AudioBatchComponent::handleAnalysisResults(std::vector<AnalysisResultMessage> messages)
 {
     const auto selectedPaths = getSelectedRecordPaths();
-    std::unordered_map<juce::String, std::size_t> rowsByPath;
-    rowsByPath.reserve(analysisResults.size());
-
-    for (std::size_t row = 0; row < analysisResults.size(); ++row) {
-        rowsByPath.try_emplace(analysisResults[row].fullPath, row);
-    }
 
     auto* analyzing = std::get_if<AnalyzingWork>(&backgroundWork);
     if (analyzing == nullptr) {
@@ -127,26 +104,18 @@ void AudioBatchComponent::handleAnalysisResults(std::vector<AnalysisResultMessag
             continue;
         }
 
-        if (const auto existing = rowsByPath.find(record.fullPath); existing != rowsByPath.end()) {
-            auto& row = analysisResults[existing->second];
-            const auto incomingGain = record.customGain;
+        const auto merged = analysisResults.merge(std::move(record));
+        const auto& row = analysisResults[merged.row];
 
-            // A gain set while the file was still waiting may only live in the table,
-            // because the cache had no row for this version of the file to store it in yet.
-            // The coordinator stored the row before publishing the result, so the gain can be stored now.
-            // The cache logs its own failures, and the table keeps the gain either way.
-            if (keepCustomGainOfUnchangedFile(row, record) && !sameCustomGain(incomingGain, record.customGain)) {
-                static_cast<void>(analysisCache.storeCustomGain(record.file, record.customGain));
-            }
-
-            row = std::move(record);
-            currentFileChanged = currentFileChanged || currentAudioFile == row.file;
-        } else {
-            currentFileChanged = currentFileChanged || currentAudioFile == record.file;
-            rowsByPath.try_emplace(record.fullPath, analysisResults.size());
-            analysisResults.push_back(std::move(record));
+        // A gain set while the file was still waiting may only live in the table,
+        // because the cache had no row for this version of the file to store it in yet.
+        // The coordinator stored the row before publishing the result, so the gain can be stored now.
+        // The cache logs its own failures, and the table keeps the gain either way.
+        if (merged.customGainCarriedOver) {
+            static_cast<void>(analysisCache.storeCustomGain(row.file, row.customGain));
         }
 
+        currentFileChanged = currentFileChanged || currentAudioFile == row.file;
         tableChanged = true;
     }
 
@@ -155,8 +124,8 @@ void AudioBatchComponent::handleAnalysisResults(std::vector<AnalysisResultMessag
     }
 
     if (currentFileChanged) {
-        if (const auto currentIndex = findRecordIndex(currentAudioFile.getFullPathName()); currentIndex >= 0) {
-            updateAudioInfo(analysisResults[static_cast<std::size_t>(currentIndex)]);
+        if (const auto currentRow = analysisResults.findRow(currentAudioFile.getFullPathName())) {
+            updateAudioInfo(analysisResults[*currentRow]);
             updateGainControlsForSelection();
             updateThumbnailDisplayGain();
         }
@@ -183,20 +152,8 @@ void AudioBatchComponent::replaceRecordAfterOperation(
         }
     }
 
-    // A converted original has a different path than its output, so its row is removed.
-    std::erase_if(analysisResults, [&originalPath, &newRecord](const AudioAnalysisRecord& record) {
-        return record.fullPath == originalPath && record.fullPath != newRecord.fullPath;
-    });
-
-    auto mergedRecord = newRecord;
-
-    if (const auto existingIndex = findRecordIndex(newRecord.fullPath); existingIndex >= 0) {
-        // An operation that left the file unchanged, such as normalizing a file already at the target, keeps its gain.
-        keepCustomGainOfUnchangedFile(analysisResults[static_cast<std::size_t>(existingIndex)], mergedRecord);
-        analysisResults[static_cast<std::size_t>(existingIndex)] = mergedRecord;
-    } else {
-        analysisResults.push_back(mergedRecord);
-    }
+    const auto merged = analysisResults.replaceAfterOperation(originalPath, newRecord);
+    const auto mergedRecord = analysisResults[merged.row];
 
     // The cache logs its own failures, and a row it could not store or remove is only read again later.
     static_cast<void>(analysisCache.storeAnalysis(mergedRecord));
@@ -487,16 +444,10 @@ void AudioBatchComponent::handleAnalysisPlan(const AnalysisPlan& plan)
     }
 
     for (const auto& file : plan.staleFiles) {
-        if (findRecordIndex(file.getFullPathName()) >= 0) {
-            continue;
-        }
-
-        auto placeholder = AudioAnalysisRecord::fromFile(file);
-        placeholder.status = AudioAnalysisStatus::pending;
-        analysisResults.push_back(std::move(placeholder));
+        analysisResults.addPending(file);
     }
 
-    sortResults();
+    analysisResults.sort(sortState);
     resultsTable.updateContent();
     updateResultsTableColumnWidths();
     fileActivity.markActive(plan.staleFiles, FileActivity::waiting);
