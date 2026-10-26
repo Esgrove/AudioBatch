@@ -15,6 +15,8 @@
 #include "utils/ThreadUtils.h"
 
 #include <algorithm>
+#include <functional>
+#include <optional>
 #include <ranges>
 #include <set>
 #include <utility>
@@ -84,11 +86,13 @@ PluginRunChains::PluginRunChains(std::vector<PluginChainInstances> chainInstance
     chains(std::move(chainInstances))
 {
     if (usable) {
-        freeIndices.reserve(chains.size());
+        freeIndices.with([this](std::vector<int>& indices) {
+            indices.reserve(chains.size());
 
-        for (int chainIndex = 0; std::cmp_less(chainIndex, chains.size()); ++chainIndex) {
-            freeIndices.push_back(chainIndex);
-        }
+            for (int chainIndex = 0; std::cmp_less(chainIndex, chains.size()); ++chainIndex) {
+                indices.push_back(chainIndex);
+            }
+        });
     }
 }
 
@@ -105,75 +109,95 @@ PluginRunChains::~PluginRunChains()
     });
 }
 
-/// Returns the index of a free chain, or -1 when none are available.
-int PluginRunChains::acquire()
+/// Takes a free chain from the pool, waiting for one while keepWaiting returns true.
+/// Returns a lease that puts the chain back when it is destroyed,
+/// or nothing when keepWaiting returned false before a chain became free.
+std::optional<ChainLease> PluginRunChains::acquire(const std::function<bool()>& keepWaiting)
 {
-    const juce::ScopedLock scopedLock(lock);
+    while (keepWaiting()) {
+        const auto chainIndex = freeIndices.with([](std::vector<int>& indices) {
+            if (indices.empty()) {
+                return -1;
+            }
+            const auto index = indices.back();
+            indices.pop_back();
+            return index;
+        });
 
-    if (freeIndices.empty()) {
-        return -1;
+        if (chainIndex >= 0) {
+            return std::optional<ChainLease>(std::in_place, *this, chainIndex);
+        }
+
+        // More workers than chains is unusual, so polling while waiting costs little.
+        available.wait(chainWaitIntervalMilliseconds);
     }
 
-    const auto chainIndex = freeIndices.back();
-    freeIndices.pop_back();
-    return chainIndex;
+    return std::nullopt;
+}
+
+/// Returns how many plugin chains the run owns, whether or not they are in use.
+int PluginRunChains::getNumChains() const noexcept
+{
+    return static_cast<int>(chains.size());
+}
+
+/// Wakes a worker waiting for a chain, so it notices that its run was cancelled.
+void PluginRunChains::wakeWaitingWorkers()
+{
+    available.signal();
 }
 
 /// Returns a chain to the free pool and wakes one worker waiting for a chain.
 void PluginRunChains::release(const int chainIndex)
 {
-    if (chainIndex < 0) {
-        return;
-    }
-
-    {
-        const juce::ScopedLock scopedLock(lock);
-        freeIndices.push_back(chainIndex);
-    }
-
+    freeIndices.with([chainIndex](std::vector<int>& indices) { indices.push_back(chainIndex); });
     available.signal();
 }
 
-/// Returns a raw pointer view of the given chain for the service call.
-std::vector<juce::AudioPluginInstance*> PluginRunChains::getChainView(const int chainIndex) const
+/// Takes over a chain that PluginRunChains::acquire removed from the free pool.
+ChainLease::ChainLease(PluginRunChains& chains, const int index) noexcept : runChains(chains), chainIndex(index) {}
+
+/// Returns the chain to the free pool of its run.
+ChainLease::~ChainLease()
 {
-    return chains[static_cast<std::size_t>(chainIndex)]
+    runChains.release(chainIndex);
+}
+
+/// Returns a raw pointer view of the leased chain for the service call, which is valid while the lease lives.
+std::vector<juce::AudioPluginInstance*> ChainLease::getChainView() const
+{
+    return runChains.chains[static_cast<std::size_t>(chainIndex)]
         | std::views::transform([](const auto& instance) { return instance.get(); }) | std::ranges::to<std::vector>();
 }
 
 /// Sets the callback that is invoked for each published result.
 void PluginProcessingCoordinator::setResultCallback(ResultCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    resultCallback = std::move(callback);
+    callbacks.with([&callback](PluginProcessingCallbacks& all) { all.result = std::move(callback); });
 }
 
 /// Sets the callback that is invoked when a run completes.
 void PluginProcessingCoordinator::setCompletionCallback(CompletionCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    completionCallback = std::move(callback);
+    callbacks.with([&callback](PluginProcessingCallbacks& all) { all.completion = std::move(callback); });
 }
 
 /// Sets the callback that is invoked if starting fails.
 void PluginProcessingCoordinator::setStartErrorCallback(StartErrorCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    startErrorCallback = std::move(callback);
+    callbacks.with([&callback](PluginProcessingCallbacks& all) { all.startError = std::move(callback); });
 }
 
 /// Sets the callback that is invoked with the processed fraction of each file.
 void PluginProcessingCoordinator::setProgressCallback(ProgressCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    progressCallback = std::move(callback);
+    callbacks.with([&callback](PluginProcessingCallbacks& all) { all.progress = std::move(callback); });
 }
 
 /// Sets the callback that is invoked when a file's processing begins.
 void PluginProcessingCoordinator::setStartingCallback(StartingCallback callback)
 {
-    const juce::ScopedLock lock(callbackLock);
-    startingCallback = std::move(callback);
+    callbacks.with([&callback](PluginProcessingCallbacks& all) { all.starting = std::move(callback); });
 }
 
 /// Invokes the progress callback for one file being processed, unless the run has been superseded or cancelled.
@@ -183,11 +207,7 @@ void PluginProcessingCoordinator::publishProgress(const juce::File& file, const 
         return;
     }
 
-    ProgressCallback callbackCopy;
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = progressCallback;
-    }
+    const auto callbackCopy = callbacks.with([](const PluginProcessingCallbacks& all) { return all.progress; });
 
     if (callbackCopy != nullptr) {
         callbackCopy(file, progress);
@@ -201,11 +221,7 @@ void PluginProcessingCoordinator::publishStarting(const juce::File& file, const 
         return;
     }
 
-    StartingCallback callbackCopy;
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = startingCallback;
-    }
+    const auto callbackCopy = callbacks.with([](const PluginProcessingCallbacks& all) { return all.starting; });
 
     if (callbackCopy != nullptr) {
         callbackCopy(file);
@@ -219,11 +235,7 @@ void PluginProcessingCoordinator::publishResult(const PluginProcessingResult& re
         return;
     }
 
-    ResultCallback callbackCopy;
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = resultCallback;
-    }
+    const auto callbackCopy = callbacks.with([](const PluginProcessingCallbacks& all) { return all.result; });
 
     if (callbackCopy != nullptr) {
         callbackCopy(result);
@@ -237,11 +249,7 @@ void PluginProcessingCoordinator::publishCompletion(const int totalFiles, const 
         return;
     }
 
-    CompletionCallback callbackCopy;
-    {
-        const juce::ScopedLock lock(callbackLock);
-        callbackCopy = completionCallback;
-    }
+    const auto callbackCopy = callbacks.with([](const PluginProcessingCallbacks& all) { return all.completion; });
 
     if (callbackCopy != nullptr) {
         callbackCopy(totalFiles);
@@ -258,7 +266,7 @@ void PluginProcessingCoordinator::cancelAndWait()
 
     // Wake any workers blocked waiting for a chain.
     if (currentChains != nullptr) {
-        currentChains->available.signal();
+        currentChains->wakeWaitingWorkers();
     }
 
     threadPool.removeAllJobs(true, jobShutdownTimeoutMilliseconds);
@@ -267,11 +275,7 @@ void PluginProcessingCoordinator::cancelAndWait()
 /// Reports that a run could not start to the start error callback, if one is set.
 void PluginProcessingCoordinator::reportStartError(const juce::String& message) const
 {
-    StartErrorCallback errorCallback;
-    {
-        const juce::ScopedLock lock(callbackLock);
-        errorCallback = startErrorCallback;
-    }
+    const auto errorCallback = callbacks.with([](const PluginProcessingCallbacks& all) { return all.startError; });
 
     if (errorCallback != nullptr) {
         errorCallback(message);
@@ -295,16 +299,9 @@ void PluginProcessingCoordinator::runFileJob(
         return;
     }
 
-    auto chainIndex = runChains.acquire();
+    auto lease = runChains.acquire([this, runId] { return runId == currentRunId.load(); });
 
-    // Wait for a chain to become free (worker count > chain count is unusual).
-    while (chainIndex < 0 && runId == currentRunId.load()) {
-        runChains.available.wait(chainWaitIntervalMilliseconds);
-        chainIndex = runChains.acquire();
-    }
-
-    if (runId != currentRunId.load()) {
-        runChains.release(chainIndex);
+    if (!lease || runId != currentRunId.load()) {
         return;
     }
 
@@ -319,11 +316,7 @@ void PluginProcessingCoordinator::runFileJob(
         // Cancellation lets the worker stop waiting for the message thread,
         // which cancelAndWait blocks while it waits for the workers to finish.
         result = processFileWithPlugins(
-            record,
-            options,
-            runChains.getChainView(chainIndex),
-            [this, runId] { return runId != currentRunId.load(); },
-            onProgress
+            record, options, lease->getChainView(), [this, runId] { return runId != currentRunId.load(); }, onProgress
         );
     } catch (...) {
         // Plugins are third-party code, so an exception from one fails only this file
@@ -333,8 +326,8 @@ void PluginProcessingCoordinator::runFileJob(
         result = PluginProcessingResult::failure(record.file, message);
     }
 
-    runChains.release(chainIndex);
-
+    // The chain goes back to the pool before the result is published, so a waiting worker can start right away.
+    lease.reset();
     publishResult(result, runId);
 
     if (pendingFiles.fetch_sub(1) == 1) {
@@ -383,8 +376,7 @@ int PluginProcessingCoordinator::start(
     // The options hold the saved state of every plugin, so the jobs share one copy instead of each holding their own.
     const auto runOptions = std::make_shared<const PluginProcessingOptions>(options);
 
-    const auto concurrentFiles
-        = juce::jmin(totalFiles, threadPool.getNumThreads(), static_cast<int>(currentChains->chains.size()));
+    const auto concurrentFiles = juce::jmin(totalFiles, threadPool.getNumThreads(), currentChains->getNumChains());
     utils::logInfo("Plugin processing started: {} files, up to {} concurrent", totalFiles, concurrentFiles);
 
     for (const auto& record : queuedRecords) {

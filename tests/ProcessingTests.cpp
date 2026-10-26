@@ -416,6 +416,20 @@ public:
             expectEquals(getPluginProcessingWorkerCount(16, 16), 15);
         }
 
+        beginTest("A chain lease returns its chain to the pool when it is destroyed");
+        {
+            PluginRunChains runChains(std::vector<PluginChainInstances>(1), true);
+            expectEquals(runChains.getNumChains(), 1);
+            {
+                const auto lease = runChains.acquire([] { return true; });
+                expect(lease.has_value());
+                int checks = 0;
+                expect(!runChains.acquire([&checks] { return ++checks <= 1; }).has_value());
+            }
+            expect(runChains.acquire([] { return true; }).has_value());
+            expect(!PluginRunChains(std::vector<PluginChainInstances>(1), false).acquire([] { return false; }));
+        }
+
         beginTest("Coordinator queues selected files in input order and skips duplicates and missing files");
         testCoordinator(directory, 1);
 
