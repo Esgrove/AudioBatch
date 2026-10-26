@@ -269,36 +269,51 @@ void PluginChain::changeListenerCallback(juce::ChangeBroadcaster* source)
 /// Audio parameter changes use the shared processor directly and never wait for this update.
 void PluginChain::updatePreviewStatus()
 {
-    const juce::ScopedLock lock(renderingLock);
-    // Watch for the user closing editor windows so we can capture plugin state.
-    bool stateCaptured = false;
+    // Runs on every display frame, so it only takes the rendering lock when an editor closed or a latency changed.
+    // The slots are only changed on the message thread, so checking them needs no lock.
+    const bool editorClosed = std::ranges::any_of(chain, [](const PluginChainEntry& entry) {
+        return entry.wasEditorOpen && isEditorWindowClosed(entry);
+    });
 
-    for (auto& entry : chain) {
-        if (entry.wasEditorOpen && isEditorWindowClosed(entry) && reapClosedEditor(entry)) {
-            stateCaptured = true;
+    if (!editorClosed && !latencyDirty.load()) {
+        return;
+    }
+
+    bool stateCaptured = false;
+    bool latencyChanged = false;
+
+    {
+        const juce::ScopedLock lock(renderingLock);
+
+        // Watch for the user closing editor windows so we can capture plugin state.
+        for (auto& entry : chain) {
+            if (entry.wasEditorOpen && isEditorWindowClosed(entry) && reapClosedEditor(entry)) {
+                stateCaptured = true;
+            }
+        }
+
+        if (latencyDirty.exchange(false)) {
+            for (auto& entry : chain) {
+                if (entry.instance != nullptr && entry.prepared) {
+                    const auto latency = static_cast<juce::int64>(juce::jmax(0, entry.instance->getLatencySamples()));
+                    latencyChanged = latencyChanged || entry.latencySamples != latency;
+                    entry.latencySamples = latency;
+                }
+            }
         }
     }
 
+    // Saving the settings and the listeners can take a while, so they run after the rendering lock is released.
     if (stateCaptured) {
         persistChain();
         sendChangeMessage();
     }
 
-    if (latencyDirty.exchange(false)) {
-        bool changed = false;
-        for (auto& entry : chain) {
-            if (entry.instance != nullptr && entry.prepared) {
-                const auto latency = static_cast<juce::int64>(juce::jmax(0, entry.instance->getLatencySamples()));
-                changed = changed || entry.latencySamples != latency;
-                entry.latencySamples = latency;
-            }
+    if (latencyChanged) {
+        if (latencyChangedCallback) {
+            latencyChangedCallback();
         }
-        if (changed) {
-            if (latencyChangedCallback) {
-                latencyChangedCallback();
-            }
-            sendChangeMessage();
-        }
+        sendChangeMessage();
     }
 }
 
@@ -386,10 +401,12 @@ void PluginChain::showMenu(juce::Component& anchor)
 /// Appends the given plugin to the chain as an enabled slot and opens its editor.
 void PluginChain::addPlugin(const juce::PluginDescription& description)
 {
-    const juce::ScopedLock lock(renderingLock);
-    PluginChainEntry entry;
-    entry.description = description;
-    chain.push_back(std::move(entry));
+    {
+        const juce::ScopedLock lock(renderingLock);
+        PluginChainEntry entry;
+        entry.description = description;
+        chain.push_back(std::move(entry));
+    }
 
     persistChain();
     notifyChainChanged();
@@ -401,23 +418,26 @@ void PluginChain::addPlugin(const juce::PluginDescription& description)
 /// Removes the given slot from the chain, closing its editor window if open.
 void PluginChain::removeSlot(const int index)
 {
-    const juce::ScopedLock lock(renderingLock);
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
         return;
     }
 
-    auto& entry = chain[static_cast<std::size_t>(index)];
-    destroyLiveEntry(entry);
-    chain.erase(chain.begin() + index);
+    {
+        const juce::ScopedLock lock(renderingLock);
+        auto& entry = chain[static_cast<std::size_t>(index)];
+        destroyLiveEntry(entry);
+        chain.erase(chain.begin() + index);
+
+        // The live preview drops the destroyed processor before the audio callback can take the lock again.
+        notifyChainChanged();
+    }
 
     persistChain();
-    notifyChainChanged();
 }
 
 /// Moves a slot to a new position in the chain.
 void PluginChain::moveSlot(const int fromIndex, const int toIndex)
 {
-    const juce::ScopedLock lock(renderingLock);
     const auto numSlots = getNumSlots();
     if (!juce::isPositiveAndBelow(fromIndex, numSlots) || !juce::isPositiveAndBelow(toIndex, numSlots)
         || fromIndex == toIndex)
@@ -425,11 +445,15 @@ void PluginChain::moveSlot(const int fromIndex, const int toIndex)
         return;
     }
 
-    // Entries own their editor windows, so reordering carries any open editor along with its slot.
-    if (fromIndex < toIndex) {
-        std::rotate(chain.begin() + fromIndex, chain.begin() + fromIndex + 1, chain.begin() + toIndex + 1);
-    } else {
-        std::rotate(chain.begin() + toIndex, chain.begin() + fromIndex, chain.begin() + fromIndex + 1);
+    {
+        const juce::ScopedLock lock(renderingLock);
+
+        // Entries own their editor windows, so reordering carries any open editor along with its slot.
+        if (fromIndex < toIndex) {
+            std::rotate(chain.begin() + fromIndex, chain.begin() + fromIndex + 1, chain.begin() + toIndex + 1);
+        } else {
+            std::rotate(chain.begin() + toIndex, chain.begin() + fromIndex, chain.begin() + fromIndex + 1);
+        }
     }
 
     persistChain();
@@ -439,7 +463,6 @@ void PluginChain::moveSlot(const int fromIndex, const int toIndex)
 /// Enables or disables the given slot without removing it from the chain.
 void PluginChain::setSlotEnabled(const int index, const bool enabled)
 {
-    const juce::ScopedLock lock(renderingLock);
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
         return;
     }
@@ -449,7 +472,11 @@ void PluginChain::setSlotEnabled(const int index, const bool enabled)
         return;
     }
 
-    entry.enabled = enabled;
+    {
+        const juce::ScopedLock lock(renderingLock);
+        entry.enabled = enabled;
+    }
+
     persistChain();
     notifyChainChanged();
 }
@@ -457,19 +484,24 @@ void PluginChain::setSlotEnabled(const int index, const bool enabled)
 /// Removes all slots from the chain, closing any open editor windows.
 void PluginChain::clearChain()
 {
-    const juce::ScopedLock lock(renderingLock);
     if (chain.empty()) {
         return;
     }
 
-    for (auto& entry : chain) {
-        destroyLiveEntry(entry);
+    {
+        const juce::ScopedLock lock(renderingLock);
+
+        for (auto& entry : chain) {
+            destroyLiveEntry(entry);
+        }
+
+        chain.clear();
+
+        // The live preview drops the destroyed processors before the audio callback can take the lock again.
+        notifyChainChanged();
     }
 
-    chain.clear();
-
     persistChain();
-    notifyChainChanged();
 }
 
 /// Opens the editor window for the given slot.
@@ -478,7 +510,6 @@ void PluginChain::clearChain()
 /// Closing the window retains the instance so parameter changes affect the same live processor.
 void PluginChain::openEditorForSlot(const int index)
 {
-    const juce::ScopedLock lock(renderingLock);
     if (!juce::isPositiveAndBelow(index, getNumSlots())) {
         return;
     }
@@ -494,14 +525,23 @@ void PluginChain::openEditorForSlot(const int index)
         return;
     }
 
-    // A window the user closed is only hidden, not deleted, and the next display update may not have reaped it yet.
-    // Capture its state and destroy it now so a fresh editor can open below.
-    if (entry.wasEditorOpen && reapClosedEditor(entry)) {
+    bool stateCaptured = false;
+    bool prepared = false;
+
+    {
+        const juce::ScopedLock lock(renderingLock);
+        // A window the user closed is only hidden, not deleted, and the next display update may not have reaped it.
+        // Capture its state and destroy it now so a fresh editor can open below.
+        stateCaptured = entry.wasEditorOpen && reapClosedEditor(entry);
+        prepared = prepareLiveEntry(entry);
+    }
+
+    if (stateCaptured) {
         persistChain();
         sendChangeMessage();
     }
 
-    if (!prepareLiveEntry(entry)) {
+    if (!prepared) {
         juce::AlertWindow::showAsync(
             juce::MessageBoxOptions::makeOptionsOk(
                 juce::MessageBoxIconType::WarningIcon,
@@ -514,6 +554,8 @@ void PluginChain::openEditorForSlot(const int index)
         return;
     }
 
+    // Creating the editor and its window can take a long time for a large plugin interface,
+    // so it runs without the rendering lock. The processor is only destroyed on the message thread.
     auto* editor = entry.instance->createEditorAndMakeActive();
 
     if (editor == nullptr) {
@@ -753,8 +795,13 @@ void PluginChain::persistChain()
         return;
     }
 
-    // Include the latest tweaks from any open editors in the persisted state.
-    captureOpenEditorStates();
+    {
+        // Include the latest tweaks from any open editors in the persisted state.
+        // Capturing calls into the live processors, which is serialized with the audio callback,
+        // while building and saving the settings below only reads the slots and runs without the lock.
+        const juce::ScopedLock lock(renderingLock);
+        captureOpenEditorStates();
+    }
 
     if (chain.empty()) {
         settings->removeValue(pluginChainPropertyKey);
