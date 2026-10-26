@@ -1,12 +1,15 @@
-/// Offscreen cue-arrow and musical-info tests using generated PCM peaks and synthetic metadata.
-/// Exercises the actual preview components without devices, local music or redistributed Serato payloads.
+/// Cue arrow geometry and musical info tests using generated PCM peaks and synthetic metadata.
+/// Exercises the actual preview components without devices, local music, painting or redistributed Serato payloads.
 
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/components/ThumbnailComponent.h"
+#include "gui/GuiLayout.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/StringFormat.h"
 
+#include <algorithm>
 #include <cmath>
 #include <vector>
 
@@ -36,26 +39,32 @@ juce::MemoryBlock previewPeaks(juce::AudioFormatManager& formats, const int chan
     return result;
 }
 
-/// Paints the real preview at the requested physical display scale.
-juce::Image renderPreview(ThumbnailComponent& thumbnail, const float scale = 1.0f)
+/// Width of the preview in the tests, in logical pixels.
+constexpr int previewWidth {260};
+/// Height of the preview in the tests, in logical pixels.
+constexpr int previewHeight {104};
+/// Inset of the waveform from each edge of the preview, in logical pixels.
+constexpr float waveformInset {2.0f};
+/// Width of the waveform inside the preview, in logical pixels.
+constexpr float waveformWidth {previewWidth - 2.0f * waveformInset};
+
+/// Returns the horizontal position of a time in a preview that shows the given range.
+float expectedCuePosition(const double seconds, const juce::Range<double> visibleRange)
 {
-    juce::Image image(juce::Image::ARGB, static_cast<int>(260.0f * scale), static_cast<int>(104.0f * scale), true);
-    juce::Graphics graphics(image);
-    graphics.addTransform(juce::AffineTransform::scale(scale));
-    thumbnail.paint(graphics);
-    return image;
+    return waveformInset
+        + waveformWidth * static_cast<float>((seconds - visibleRange.getStart()) / visibleRange.getLength());
 }
 
-/// Counts exact cue-colour pixels independently of the waveform's blue or indexed spectral brush.
-int colourPixels(const juce::Image& image, const juce::Colour colour)
+/// Returns true when both arrow lists place the same cues in the same places.
+bool sameArrows(const std::vector<CueArrows>& first, const std::vector<CueArrows>& second)
 {
-    int result = 0;
-    for (int row = 0; row < image.getHeight(); ++row) {
-        for (int column = 0; column < image.getWidth(); ++column) {
-            result += image.getPixelAt(column, row) == colour ? 1 : 0;
-        }
-    }
-    return result;
+    return std::ranges::equal(first, second, [](const CueArrows& left, const CueArrows& right) {
+        return left.colour == right.colour
+            && juce::approximatelyEqual(left.horizontalPosition, right.horizontalPosition)
+            && juce::approximatelyEqual(left.halfWidth, right.halfWidth)
+            && juce::approximatelyEqual(left.height, right.height) && juce::approximatelyEqual(left.top, right.top)
+            && juce::approximatelyEqual(left.bottom, right.bottom);
+    });
 }
 
 /// Retrieves a named value regardless of the inspector's card and viewport hierarchy.
@@ -88,7 +97,7 @@ public:
     /// Registers the portable GUI slice through its explicit factory.
     SeratoPreviewTests() : juce::UnitTest("Serato preview presentation", "AudioBatch") {}
 
-    /// Checks arrow direction, colour, projection, bounds, gain, resets and info-field precedence.
+    /// Checks the arrow placement, colour, projection, clipping, resets and info-field precedence.
     void runTest() override
     {
         testCueArrows();
@@ -98,80 +107,93 @@ public:
     }
 
 private:
-    /// Exercises the same inset time projection at full view, zoom, pan and fractional DPI.
+    /// Checks the cue arrow placement at full view, zoom and pan, and that only the cues and the viewport move it.
     void testCueArrows()
     {
-        beginTest("Cue arrows retain their colour and point inward above unchanged mono/stereo peaks");
+        beginTest("Cue arrows hang from both waveform edges, opaque and independent of gain and channels");
         juce::AudioFormatManager formats;
         AudioPreviewPlayer transport;
         ThumbnailComponent thumbnail(formats, transport);
-        thumbnail.setSize(260, 104);
+        thumbnail.setSize(previewWidth, previewHeight);
         const auto colour = juce::Colour(239, 37, 37);
         auto markers = std::make_shared<serato::Markers>();
-        markers->cues.push_back({.positionMilliseconds = 500, .colour = colour, .name = "Test cue"});
+        markers->cues.push_back({.positionMilliseconds = 500, .colour = colour.withAlpha(0.5f), .name = "Test cue"});
+
+        expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
+        expect(thumbnail.getCueArrows().empty());
+        thumbnail.setSeratoMarkers(markers);
+        const auto arrows = thumbnail.getCueArrows();
+        expectEquals(static_cast<int>(arrows.size()), 1);
+        if (arrows.size() == 1) {
+            const auto& cue = arrows.front();
+            expect(cue.colour == colour);
+            expectWithinAbsoluteError(cue.horizontalPosition, expectedCuePosition(0.5, {0.0, 1.0}), 0.001f);
+            expectWithinAbsoluteError(cue.top, waveformInset, 0.001f);
+            expectWithinAbsoluteError(cue.bottom, previewHeight - waveformInset, 0.001f);
+            expectWithinAbsoluteError(cue.height, layout::waveform::cueArrowHeight, 0.001f);
+            expectWithinAbsoluteError(cue.halfWidth, layout::waveform::cueArrowWidth / 2.0f, 0.001f);
+            // The arrows stay near the edges, so they never cover the middle of the waveform.
+            expect(cue.height <= (cue.bottom - cue.top) / 4.0f);
+        }
+
         for (const int channels : {1, 2}) {
             expect(thumbnail.loadFromCacheData(previewPeaks(formats, channels)));
+            thumbnail.setSeratoMarkers(markers);
             for (const float gain : {0.0f, 1.0f, 4.0f}) {
                 thumbnail.setDisplayGain(gain);
-                for (const float scale : {1.0f, 1.5f, 2.0f}) {
-                    thumbnail.setSeratoMarkers({});
-                    const auto before = renderPreview(thumbnail, scale);
-                    thumbnail.setSeratoMarkers(markers);
-                    const auto after = renderPreview(thumbnail, scale);
-                    expect(colourPixels(after, colour) > 20);
-                    int changedCentralPixels = 0;
-                    for (int row = static_cast<int>(18.0f * scale); row < static_cast<int>(86.0f * scale); ++row) {
-                        for (int column = 0; column < after.getWidth(); ++column) {
-                            changedCentralPixels
-                                += before.getPixelAt(column, row) != after.getPixelAt(column, row) ? 1 : 0;
-                        }
-                    }
-                    expectEquals(changedCentralPixels, 0);
-                }
+                expect(sameArrows(thumbnail.getCueArrows(), arrows), utils::format("{} channels", channels));
             }
         }
         thumbnail.setDisplayGain(1.0f);
-        // Each arrow is widest at the waveform edge and narrows towards its tip at the centre.
-        const auto full = renderPreview(thumbnail);
-        expect(full.getPixelAt(130, 3) == colour);
-        expect(full.getPixelAt(132, 3) == colour);
-        expect(full.getPixelAt(130, 7) == colour);
-        expect(full.getPixelAt(132, 7) != colour);
-        expect(full.getPixelAt(130, 100) == colour);
-        expect(full.getPixelAt(132, 100) == colour);
-        expect(full.getPixelAt(130, 96) == colour);
-        expect(full.getPixelAt(132, 96) != colour);
 
-        beginTest("Millisecond cues stay aligned through zoom and pan, and outside cues are clipped");
-        thumbnail.setRange({0.25, 0.75});
-        expect(renderPreview(thumbnail).getPixelAt(130, 3) == colour);
-        thumbnail.setRange({0.4, 0.9});
-        expect(renderPreview(thumbnail).getPixelAt(53, 3) == colour);
+        beginTest("Cue arrows shrink on a short waveform and keep their proportions");
+        thumbnail.setSize(previewWidth, 20);
+        const auto shortArrows = thumbnail.getCueArrows();
+        expectEquals(static_cast<int>(shortArrows.size()), 1);
+        if (shortArrows.size() == 1) {
+            const auto& cue = shortArrows.front();
+            expectWithinAbsoluteError(cue.height, (cue.bottom - cue.top) / 4.0f, 0.001f);
+            expectWithinAbsoluteError(
+                cue.halfWidth * 2.0f / cue.height,
+                layout::waveform::cueArrowWidth / layout::waveform::cueArrowHeight,
+                0.001f
+            );
+        }
+        thumbnail.setSize(previewWidth, previewHeight);
+
+        beginTest("Millisecond cues stay aligned through zoom and pan, and cues outside the view have no arrows");
+        for (const auto range : {juce::Range(0.25, 0.75), juce::Range(0.4, 0.9), juce::Range(-0.25, 0.75)}) {
+            thumbnail.setRange(range);
+            const auto zoomed = thumbnail.getCueArrows();
+            expectEquals(static_cast<int>(zoomed.size()), 1);
+            if (!zoomed.empty()) {
+                expectWithinAbsoluteError(zoomed.front().horizontalPosition, expectedCuePosition(0.5, range), 0.001f);
+            }
+        }
         thumbnail.setRange({0.6, 1.1});
-        expectEquals(colourPixels(renderPreview(thumbnail), colour), 0);
-        thumbnail.setRange({-0.25, 0.75});
-        expect(renderPreview(thumbnail).getPixelAt(194, 3) == colour);
+        expect(thumbnail.getCueArrows().empty());
         markers = std::make_shared<serato::Markers>();
         markers->cues.push_back({.positionMilliseconds = 1500, .colour = colour, .name = "Beyond track"});
         thumbnail.setSeratoMarkers(markers);
         thumbnail.setRange({0.0, 2.0});
-        expectEquals(colourPixels(renderPreview(thumbnail), colour), 0);
+        expect(thumbnail.getCueArrows().empty());
 
-        beginTest("Cues render over an Overview-coloured waveform without requiring an Overview");
+        beginTest("Cue arrows do not depend on the Overview colouring");
         markers = std::make_shared<serato::Markers>();
         markers->cues.push_back({.positionMilliseconds = 500, .colour = colour, .name = {}});
         thumbnail.setSeratoMarkers(markers);
         thumbnail.setRange({0.0, 1.0});
+        const auto withoutOverview = thumbnail.getCueArrows();
         const auto overview = std::make_shared<serato::Overview>();
         std::array<std::uint8_t, serato::Overview::bandCount> slice {};
         slice.fill(30);
         overview->slices.push_back(slice);
         thumbnail.setSeratoOverview(overview);
-        expect(colourPixels(renderPreview(thumbnail), colour) > 20);
+        expectEquals(static_cast<int>(withoutOverview.size()), 1);
+        expect(sameArrows(thumbnail.getCueArrows(), withoutOverview));
         thumbnail.setSeratoOverview({});
-        expect(colourPixels(renderPreview(thumbnail), colour) > 20);
         thumbnail.setRange({});
-        expectEquals(colourPixels(renderPreview(thumbnail), colour), 0);
+        expect(thumbnail.getCueArrows().empty());
     }
 
     /// Ensures neither a new cached source nor a failed or cleared source retains the previous file's cues.
@@ -181,22 +203,21 @@ private:
         juce::AudioFormatManager formats;
         AudioPreviewPlayer transport;
         ThumbnailComponent thumbnail(formats, transport);
-        thumbnail.setSize(260, 104);
+        thumbnail.setSize(previewWidth, previewHeight);
         const auto peaks = previewPeaks(formats, 1);
-        const auto colour = juce::Colour(239, 37, 37);
         const auto markers = std::make_shared<serato::Markers>();
-        markers->cues.push_back({.positionMilliseconds = 500, .colour = colour, .name = {}});
+        markers->cues.push_back({.positionMilliseconds = 500, .colour = juce::Colours::red, .name = {}});
         expect(thumbnail.loadFromCacheData(peaks));
         thumbnail.setSeratoMarkers(markers);
-        expect(colourPixels(renderPreview(thumbnail), colour) > 20);
+        expectEquals(static_cast<int>(thumbnail.getCueArrows().size()), 1);
         expect(thumbnail.loadFromCacheData(peaks));
-        expectEquals(colourPixels(renderPreview(thumbnail), colour), 0);
+        expect(thumbnail.getCueArrows().empty());
         thumbnail.setSeratoMarkers(markers);
         thumbnail.setSeratoMarkers({});
-        expectEquals(colourPixels(renderPreview(thumbnail), colour), 0);
+        expect(thumbnail.getCueArrows().empty());
         thumbnail.setSeratoMarkers(markers);
         thumbnail.setURL({});
-        expectEquals(colourPixels(renderPreview(thumbnail), colour), 0);
+        expect(thumbnail.getCueArrows().empty());
         expect(!thumbnail.loadFromCacheData({}));
     }
 
