@@ -28,9 +28,9 @@ use super::{
 use crate::controls::{ControlsEvent, ControlsState, render_controls};
 use crate::info_panel::render_info_panel;
 use crate::menus::{
-    About, AddFiles, AddFolder, ChooseFolder, ClearList, KEY_CONTEXT, OpenAudioSettings, ReanalyzeSelected,
-    RemoveSelected, Rescan, RevealSelected, SelectOutputDevice, StopPlayback, ToggleLoudnessGraph, TogglePlayback,
-    TrashSelected,
+    About, AddFiles, AddFolder, ChooseFolder, ClearCustomGain, ClearList, KEY_CONTEXT, OpenAudioSettings,
+    ReanalyzeSelected, RemoveSelected, Rescan, RevealSelected, SelectOutputDevice, StopPlayback, ToggleLoudnessGraph,
+    TogglePlayback, TrashSelected,
 };
 use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, fill_status_column};
 use crate::theme::{TEXT_FONT, color, palette, tooltip};
@@ -232,7 +232,7 @@ impl AppView {
             gain: &self.gain_slider,
             playing: self.player.as_ref().is_some_and(Player::is_playing),
             can_play: self.player.is_some() && (self.selected.is_some() || self.is_demo()),
-            can_adjust_gain: self.can_adjust_gain(),
+            can_adjust_gain: self.can_adjust_gain(cx),
         };
         let on_event = cx.listener(|view, event: &ControlsEvent, window, cx| {
             view.handle_controls_event(*event, window, cx);
@@ -278,6 +278,7 @@ impl Render for AppView {
         self.table.update(cx, |state, cx| {
             fill_status_column(state, table_width, window, cx);
         });
+        self.sync_gain_slider(window, cx);
 
         div()
             .id("app")
@@ -289,6 +290,7 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &Rescan, _, cx| view.rescan(cx)))
             .on_action(cx.listener(|view, _: &RevealSelected, _, cx| view.reveal_selected(cx)))
             .on_action(cx.listener(|view, _: &ReanalyzeSelected, _, cx| view.reanalyze_selected(cx)))
+            .on_action(cx.listener(|view, _: &ClearCustomGain, _, cx| view.clear_selected_gain(cx)))
             .on_action(cx.listener(|view, _: &RemoveSelected, _, cx| view.remove_selected(cx)))
             .on_action(cx.listener(|view, _: &TrashSelected, _, cx| view.trash_selected(cx)))
             .on_action(cx.listener(|view, _: &ClearList, _, cx| view.clear_list(cx)))

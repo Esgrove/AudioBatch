@@ -15,6 +15,10 @@ use crate::waveform::WaveformOverview;
 /// The cache and the history store this finite sentinel instead of negative infinity, like the C++ application.
 pub const NEGATIVE_INFINITY_LOUDNESS: f64 = -1000.0;
 
+/// Smallest difference between two custom gains in decibels that counts as a change,
+/// well below the 0.1 dB step of the gain slider.
+const CUSTOM_GAIN_EPSILON_DB: f32 = 1e-4;
+
 /// Lifecycle states of a file analysis record.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AnalysisStatus {
@@ -101,6 +105,8 @@ pub struct AnalysisRecord {
     pub channels: u32,
     /// Source bit depth, or 0 when the format has none.
     pub bits_per_sample: u32,
+    /// Per-file gain in decibels that the user set for this version of the file, applied to the preview.
+    pub custom_gain_db: Option<f32>,
     /// Lifecycle state of the record.
     pub status: AnalysisStatus,
     /// True when the record was loaded from the cache.
@@ -173,6 +179,36 @@ impl AnalysisRecord {
     #[must_use]
     pub fn path_string(&self) -> String {
         self.path.to_string_lossy().into_owned()
+    }
+
+    /// Returns the custom gain as a linear factor, 1 for a file without one.
+    #[must_use]
+    pub fn custom_gain_linear(&self) -> f32 {
+        self.custom_gain_db
+            .map_or(1.0, |decibels| decibels_to_gain(f64::from(decibels)) as f32)
+    }
+}
+
+/// Converts decibels to a linear amplitude factor.
+#[must_use]
+pub fn decibels_to_gain(decibels: f64) -> f64 {
+    10_f64.powf(decibels / 20.0)
+}
+
+/// Returns the custom gain to store for a slider value in decibels.
+/// A value of about 0 dB, or one that is not finite, means no custom gain, as in the C++ application.
+#[must_use]
+pub fn custom_gain_from_decibels(decibels: f32) -> Option<f32> {
+    (decibels.is_finite() && decibels.abs() >= CUSTOM_GAIN_EPSILON_DB).then_some(decibels)
+}
+
+/// Returns true when neither gain is set, or both are set to about the same value.
+#[must_use]
+pub fn same_custom_gain(first: Option<f32>, second: Option<f32>) -> bool {
+    match (first, second) {
+        (None, None) => true,
+        (Some(first), Some(second)) => (first - second).abs() < CUSTOM_GAIN_EPSILON_DB,
+        _ => false,
     }
 }
 
@@ -250,6 +286,31 @@ mod test_record {
         assert!((history.time_at(0) - 1.0).abs() < 1e-9);
         assert!((history.time_at(2) - 2.5).abs() < 1e-9);
         assert!(history.time_at(3).abs() < 1e-9);
+    }
+
+    #[test]
+    fn zero_or_invalid_custom_gain_is_no_gain() {
+        assert_eq!(custom_gain_from_decibels(0.0), None);
+        assert_eq!(custom_gain_from_decibels(-0.000_01), None);
+        assert_eq!(custom_gain_from_decibels(f32::NAN), None);
+        assert_eq!(custom_gain_from_decibels(-1.5), Some(-1.5));
+    }
+
+    #[test]
+    fn custom_gains_compare_with_a_tolerance() {
+        assert!(same_custom_gain(None, None));
+        assert!(same_custom_gain(Some(1.5), Some(1.500_01)));
+        assert!(!same_custom_gain(Some(1.5), Some(1.6)));
+        assert!(!same_custom_gain(Some(1.5), None));
+    }
+
+    #[test]
+    fn custom_gain_converts_to_a_linear_factor() {
+        let mut record = AnalysisRecord::default();
+        assert!((record.custom_gain_linear() - 1.0).abs() < f32::EPSILON);
+        record.custom_gain_db = Some(-6.020_6);
+        assert!((record.custom_gain_linear() - 0.5).abs() < 1e-4);
+        assert!((decibels_to_gain(20.0) - 10.0).abs() < 1e-9);
     }
 
     #[test]

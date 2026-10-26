@@ -50,10 +50,10 @@ const ZOOM_TOOLTIP: &str =
 
 /// Tooltip of the input gain slider.
 const GAIN_TOOLTIP: &str = if cfg!(target_os = "macos") {
-    "Preview gain in dB, also applied to the waveform. \
+    "Per-file gain in dB, saved for the selected file and applied to the preview and the waveform. \
      You can also use Cmd with the mouse wheel over the waveform. Double-click to reset."
 } else {
-    "Preview gain in dB, also applied to the waveform. \
+    "Per-file gain in dB, saved for the selected file and applied to the preview and the waveform. \
      You can also use Ctrl with the mouse wheel over the waveform. Double-click to reset."
 };
 /// A slider of the controls column.
@@ -80,13 +80,13 @@ pub enum ControlsEvent {
 pub struct ControlsState<'a> {
     /// Zoom slider, from 1 to 20 times.
     pub zoom: &'a Entity<SliderState>,
-    /// Input gain slider in decibels.
+    /// Custom gain slider of the selected file in decibels.
     pub gain: &'a Entity<SliderState>,
     /// True while audio plays.
     pub playing: bool,
     /// True when a file is selected or loaded, so Play has something to play.
     pub can_play: bool,
-    /// True when a file is selected, so the input gain has something to apply to.
+    /// True when the selected file has a usable result, so the gain has something to apply to.
     pub can_adjust_gain: bool,
 }
 
