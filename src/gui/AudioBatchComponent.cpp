@@ -536,19 +536,6 @@ void AudioBatchComponent::componentVisibilityChanged(juce::Component& component)
     }
 }
 
-/// Returns the current row index of the record with the given full path, or -1
-/// when it is not in the table.
-int AudioBatchComponent::findRecordIndex(const juce::String& fullPath) const
-{
-    for (std::size_t index = 0; index < analysisResults.size(); ++index) {
-        if (analysisResults[index].fullPath == fullPath) {
-            return static_cast<int>(index);
-        }
-    }
-
-    return -1;
-}
-
 /// Returns the selected files that still exist on disk.
 juce::Array<juce::File> AudioBatchComponent::getSelectedRecordFiles() const
 {
@@ -558,11 +545,11 @@ juce::Array<juce::File> AudioBatchComponent::getSelectedRecordFiles() const
     for (int index = 0; index < selectedRows.size(); ++index) {
         const auto rowNumber = selectedRows[index];
 
-        if (!juce::isPositiveAndBelow(rowNumber, static_cast<int>(analysisResults.size()))) {
+        if (!analysisResults.containsRow(rowNumber)) {
             continue;
         }
 
-        if (const auto& file = analysisResults[static_cast<std::size_t>(rowNumber)].file; file.existsAsFile()) {
+        if (const auto& file = analysisResults[rowNumber].file; file.existsAsFile()) {
             selectedFiles.addIfNotAlreadyThere(file);
         }
     }
@@ -583,11 +570,11 @@ std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedNormalizableRec
     for (int index = 0; index < selectedRows.size(); ++index) {
         const auto rowNumber = selectedRows[index];
 
-        if (!juce::isPositiveAndBelow(rowNumber, static_cast<int>(analysisResults.size()))) {
+        if (!analysisResults.containsRow(rowNumber)) {
             continue;
         }
 
-        const auto& record = analysisResults[static_cast<std::size_t>(rowNumber)];
+        const auto& record = analysisResults[rowNumber];
 
         if (!record.file.existsAsFile() || !record.isReady()) {
             selectedRecords.clear();
@@ -610,11 +597,11 @@ juce::StringArray AudioBatchComponent::getSelectedRecordPaths() const
     for (int index = 0; index < selectedRows.size(); ++index) {
         const auto rowNumber = selectedRows[index];
 
-        if (!juce::isPositiveAndBelow(rowNumber, static_cast<int>(analysisResults.size()))) {
+        if (!analysisResults.containsRow(rowNumber)) {
             continue;
         }
 
-        selectedPaths.addIfNotAlreadyThere(analysisResults[static_cast<std::size_t>(rowNumber)].fullPath);
+        selectedPaths.addIfNotAlreadyThere(analysisResults[rowNumber].fullPath);
     }
 
     return selectedPaths;
@@ -626,8 +613,8 @@ void AudioBatchComponent::restoreSelectionByPaths(const juce::StringArray& selec
     juce::SparseSet<int> selectedRows;
 
     for (const auto& path : selectedPaths) {
-        if (const auto rowNumber = findRecordIndex(path); rowNumber >= 0) {
-            selectedRows.addRange(juce::Range<int>::withStartAndLength(rowNumber, 1));
+        if (const auto rowNumber = analysisResults.findRow(path)) {
+            selectedRows.addRange(juce::Range<int>::withStartAndLength(*rowNumber, 1));
         }
     }
 
@@ -640,7 +627,7 @@ void AudioBatchComponent::restoreSelectionByPaths(const juce::StringArray& selec
 /// and those row numbers point at different files after the change.
 void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArray& selectedPaths)
 {
-    sortResults();
+    analysisResults.sort(sortState);
     resultsTable.setSelectedRows({}, juce::dontSendNotification);
     resultsTable.updateContent();
     updateResultsTableColumnWidths();
@@ -770,14 +757,6 @@ void AudioBatchComponent::updateOutputStatus()
     statusBar.setOutputStatus(previewPlayer.getOutputStatus());
 }
 
-/// Sorts the records by the primary and secondary sort columns.
-/// Failed files always sort last, and file name plus full path act as the final tie breakers,
-/// keeping the order stable across incremental result updates.
-void AudioBatchComponent::sortResults()
-{
-    results_sorting::sortRecords(analysisResults, sortState);
-}
-
 /// Applies a new primary sort and refreshes the table, keeping the selected rows selected.
 void AudioBatchComponent::handleSortRequested(const std::optional<AudioFileTableColumn> column, const bool isForwards)
 {
@@ -822,16 +801,14 @@ int AudioBatchComponent::getSelectionDisplayRow(
     }
 
     if (currentAudioFile.existsAsFile()) {
-        if (const auto currentRow = findRecordIndex(currentAudioFile.getFullPathName());
-            currentRow >= 0 && selectedRows.contains(currentRow))
+        if (const auto currentRow = analysisResults.findRow(currentAudioFile.getFullPathName());
+            currentRow.has_value() && selectedRows.contains(*currentRow))
         {
-            return currentRow;
+            return *currentRow;
         }
     }
 
-    if (juce::isPositiveAndBelow(lastRowSelected, static_cast<int>(analysisResults.size()))
-        && selectedRows.contains(lastRowSelected))
-    {
+    if (analysisResults.containsRow(lastRowSelected) && selectedRows.contains(lastRowSelected)) {
         return lastRowSelected;
     }
 
@@ -845,11 +822,11 @@ void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
     const auto selectedRows = resultsTable.getSelectedRows();
     const auto row = getSelectionDisplayRow(selectedRows, lastRowSelected);
 
-    if (!juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
+    if (!analysisResults.containsRow(row)) {
         return;
     }
 
-    const auto& record = analysisResults[static_cast<std::size_t>(row)];
+    const auto& record = analysisResults[row];
 
     if (record.file.existsAsFile() && currentAudioFile != record.file) {
         const bool continuePlaying
@@ -914,11 +891,11 @@ std::vector<AudioAnalysisRecord> AudioBatchComponent::getSelectedProcessableReco
     for (int index = 0; index < selectedRows.size(); ++index) {
         const auto rowNumber = selectedRows[index];
 
-        if (!juce::isPositiveAndBelow(rowNumber, static_cast<int>(analysisResults.size()))) {
+        if (!analysisResults.containsRow(rowNumber)) {
             continue;
         }
 
-        const auto& record = analysisResults[static_cast<std::size_t>(rowNumber)];
+        const auto& record = analysisResults[rowNumber];
 
         if (!record.file.existsAsFile() || !record.isReady()) {
             continue;

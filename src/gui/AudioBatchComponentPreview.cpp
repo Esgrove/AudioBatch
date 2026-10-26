@@ -158,9 +158,8 @@ void AudioBatchComponent::updatePreviewLoudnessHistory()
     if (previewFileIdentity && previewPlayer.hasLoadedSource() && currentAudioUrl.isLocalFile()
         && currentAudioUrl.getLocalFile() == currentAudioFile && previewFileIdentity->matches(currentAudioFile))
     {
-        const auto row = findRecordIndex(currentAudioFile.getFullPathName());
-        if (juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
-            const auto& record = analysisResults[static_cast<std::size_t>(row)];
+        if (const auto row = analysisResults.findRow(currentAudioFile.getFullPathName())) {
+            const auto& record = analysisResults[*row];
             const auto activity = fileActivity.getActivity(record.fullPath);
             if (record.isReady() && record.fileSize == previewFileIdentity->fileSize
                 && record.modifiedTimeMs == previewFileIdentity->modifiedTimeMs && activity != FileActivity::waiting
@@ -269,9 +268,8 @@ void AudioBatchComponent::adoptSeratoPreview(
                 ? std::shared_ptr<const serato::Markers>(seratoPreviewData, &*seratoPreviewData->markers)
                 : nullptr
         );
-        const auto row = findRecordIndex(currentAudioFile.getFullPathName());
-        if (juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size()))) {
-            updateAudioInfo(analysisResults[static_cast<std::size_t>(row)]);
+        if (const auto row = analysisResults.findRow(currentAudioFile.getFullPathName())) {
+            updateAudioInfo(analysisResults[*row]);
         }
     }
 }
@@ -380,14 +378,12 @@ void AudioBatchComponent::applyCustomGainToSelection(const std::optional<Decibel
     for (int index = 0; index < selectedRows.size(); ++index) {
         const auto rowNumber = selectedRows[index];
 
-        if (!juce::isPositiveAndBelow(rowNumber, static_cast<int>(analysisResults.size()))) {
+        if (!analysisResults.containsRow(rowNumber)) {
             continue;
         }
 
-        auto& record = analysisResults[static_cast<std::size_t>(rowNumber)];
-        if (!sameCustomGain(record.customGain, gain)) {
-            record.customGain = gain;
-            changedGains.push_back({.file = record.file, .customGain = gain});
+        if (analysisResults.setCustomGain(rowNumber, gain)) {
+            changedGains.push_back({.file = analysisResults[rowNumber].file, .customGain = gain});
         }
     }
 
@@ -405,10 +401,8 @@ void AudioBatchComponent::applyCustomGainToSelection(const std::optional<Decibel
 void AudioBatchComponent::updatePreviewInputGain(const bool immediately)
 {
     LinearGain gain;
-    if (const auto row = findRecordIndex(currentAudioFile.getFullPathName());
-        juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size())))
-    {
-        const auto& record = analysisResults[static_cast<std::size_t>(row)];
+    if (const auto row = analysisResults.findRow(currentAudioFile.getFullPathName())) {
+        const auto& record = analysisResults[*row];
         if (record.customGain) {
             gain = record.customGain->toLinearGain();
         }
@@ -432,18 +426,18 @@ void AudioBatchComponent::updateGainControlsForSelection()
     // Use the currently selected display row to drive the slider value.
     int referenceRow = selectedRows[0];
     if (currentAudioFile.existsAsFile()) {
-        if (const auto currentRow = findRecordIndex(currentAudioFile.getFullPathName());
-            currentRow >= 0 && selectedRows.contains(currentRow))
+        if (const auto currentRow = analysisResults.findRow(currentAudioFile.getFullPathName());
+            currentRow.has_value() && selectedRows.contains(*currentRow))
         {
-            referenceRow = currentRow;
+            referenceRow = *currentRow;
         }
     }
 
-    if (!juce::isPositiveAndBelow(referenceRow, static_cast<int>(analysisResults.size()))) {
+    if (!analysisResults.containsRow(referenceRow)) {
         return;
     }
 
-    const auto& record = analysisResults[static_cast<std::size_t>(referenceRow)];
+    const auto& record = analysisResults[referenceRow];
     gainSlider.setValue(static_cast<double>(record.customGain.value_or(Decibels {}).value), juce::dontSendNotification);
 }
 
@@ -459,13 +453,13 @@ void AudioBatchComponent::updateThumbnailDisplayGain() const
         return;
     }
 
-    const auto currentRow = findRecordIndex(currentAudioFile.getFullPathName());
-    if (!juce::isPositiveAndBelow(currentRow, static_cast<int>(analysisResults.size()))) {
+    const auto currentRow = analysisResults.findRow(currentAudioFile.getFullPathName());
+    if (!currentRow.has_value()) {
         thumbnail->setDisplayGain(1.0f);
         return;
     }
 
-    const auto& record = analysisResults[static_cast<std::size_t>(currentRow)];
+    const auto& record = analysisResults[*currentRow];
     thumbnail->setDisplayGain(record.customGain.value_or(Decibels {}).toLinearGain().value);
 }
 }  // namespace audiobatch

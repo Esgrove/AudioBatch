@@ -108,7 +108,9 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       `AudioBatchComponentState.h` holds the progress state of the analysis run and of the normalization
       and plugin processing passes.
     - `AudioPreviewPlayer.*` owns the audio device, transport, and read-ahead thread of the file preview.
-    - `AudioFileTableModel.*` backs the sortable results table, and `ResultsSorting.*` sorts it.
+    - `ResultsModel.*` holds the rows of the results table with an index from path to row,
+ and merges, removes, and sorts them.
+ `AudioFileTableModel.*` shows those rows in the sortable table, and `ResultsSorting.*` compares and sorts records.
     - `FileActivityTracker.*` holds the per-file activity labels and operation messages of the table.
 - `src/gui/components/` holds the reusable UI pieces the main component is built from:
   `AudioInfoPanel.*`, `AudioSettingsComponent.*`, `NormalizationTargetControl.*`, `CustomLookAndFeel.*`,

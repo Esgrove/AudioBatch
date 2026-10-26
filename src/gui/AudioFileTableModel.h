@@ -6,13 +6,13 @@
 
 #include "analysis/AudioAnalysis.h"
 #include "gui/GuiLayout.h"
+#include "gui/ResultsModel.h"
 
 #include <JuceHeader.h>
 
 #include <cstdint>
 #include <functional>
 #include <optional>
-#include <vector>
 
 namespace audiobatch
 {
@@ -46,7 +46,7 @@ class AudioFileTableModel : public juce::TableListBoxModel
 {
 public:
     AudioFileTableModel(
-        const std::vector<AudioAnalysisRecord>& sourceRecords,
+        const ResultsModel& sourceRecords,
         std::function<void(int row)> onSelectionChanged,
         std::function<void(std::optional<AudioFileTableColumn> column, bool isForwards)> onSortChanged,
         std::function<void(int row, const juce::MouseEvent& event)> onContextMenuRequested,
@@ -98,7 +98,7 @@ private:
     [[nodiscard]] OperationMessage getOperationMessage(const AudioAnalysisRecord& record) const;
 
     /// The rows of the table, owned by the component that owns this model and declared before it.
-    const std::vector<AudioAnalysisRecord>& records;
+    const ResultsModel& records;
     std::function<void(int row)> selectionChanged;
     std::function<void(std::optional<AudioFileTableColumn> column, bool isForwards)> sortChanged;
     std::function<void(int row, const juce::MouseEvent& event)> contextMenuRequested;

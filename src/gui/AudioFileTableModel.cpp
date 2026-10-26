@@ -194,7 +194,7 @@ void drawActivityIndicator(
 /// The operation message provider returns the outcome of the last normalize or process run for a record,
 /// or an empty message, and is shown in the status column when the file is idle.
 AudioFileTableModel::AudioFileTableModel(
-    const std::vector<AudioAnalysisRecord>& sourceRecords,
+    const ResultsModel& sourceRecords,
     std::function<void(int row)> onSelectionChanged,
     std::function<void(std::optional<AudioFileTableColumn> column, bool isForwards)> onSortChanged,
     std::function<void(int row, const juce::MouseEvent& event)> onContextMenuRequested,
@@ -240,7 +240,7 @@ juce::String AudioFileTableModel::getColumnDescription(const AudioFileTableColum
 /// Returns the number of analyzed rows currently available.
 int AudioFileTableModel::getNumRows()
 {
-    return static_cast<int>(records.size());
+    return records.size();
 }
 
 /// Packages the selected file paths for external drag-and-drop.
@@ -251,11 +251,11 @@ juce::var AudioFileTableModel::getDragSourceDescription(const juce::SparseSet<in
     for (int index = 0; index < currentlySelectedRows.size(); ++index) {
         const auto rowNumber = currentlySelectedRows[index];
 
-        if (!juce::isPositiveAndBelow(rowNumber, getNumRows())) {
+        if (!records.containsRow(rowNumber)) {
             continue;
         }
 
-        if (const auto& record = records[static_cast<std::size_t>(rowNumber)]; record.file.existsAsFile()) {
+        if (const auto& record = records[rowNumber]; record.file.existsAsFile()) {
             filePaths.addIfNotAlreadyThere(record.file.getFullPathName());
         }
     }
@@ -297,11 +297,11 @@ void AudioFileTableModel::paintCell(
     juce::ignoreUnused(rowIsSelected);
 
     const auto column = tableColumnFromId(columnId);
-    if (!column.has_value() || !juce::isPositiveAndBelow(rowNumber, getNumRows())) {
+    if (!column.has_value() || !records.containsRow(rowNumber)) {
         return;
     }
 
-    const auto& record = records[static_cast<std::size_t>(rowNumber)];
+    const auto& record = records[rowNumber];
     juce::String text;
     OperationMessage operationMessage;
     std::optional<FileActivityState> activityState;
@@ -435,13 +435,11 @@ void AudioFileTableModel::sortOrderChanged(const int newSortColumnId, const bool
 /// Shows the full status text for the status column of a file with an error or notice, and no tooltip for other cells.
 juce::String AudioFileTableModel::getCellTooltip(const int rowNumber, const int columnId)
 {
-    if (tableColumnFromId(columnId) != AudioFileTableColumn::status
-        || !juce::isPositiveAndBelow(rowNumber, static_cast<int>(records.size())))
-    {
+    if (tableColumnFromId(columnId) != AudioFileTableColumn::status || !records.containsRow(rowNumber)) {
         return {};
     }
 
-    const auto& record = records[static_cast<std::size_t>(rowNumber)];
+    const auto& record = records[rowNumber];
 
     if (const auto [text, isError] = getOperationMessage(record); text.isNotEmpty()) {
         return text;
