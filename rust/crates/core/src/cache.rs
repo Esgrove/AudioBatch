@@ -3,6 +3,7 @@
 //! Stores one row per file with the measured levels, the short-term loudness history, and the waveform overview,
 //! keyed by path and validated against the file size and modification time,
 //! so unchanged files are not decoded again on later runs.
+//! Each row also keeps the custom gain the user set for that version of the file.
 //! Ports the analysis part of the C++ `AnalysisCache`, with its own database file and schema,
 //! because the Rust and C++ versions must never write to each other's cache.
 
@@ -13,7 +14,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
-use crate::record::{AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory, file_identity};
+use crate::record::{
+    AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory, custom_gain_from_decibels, file_identity,
+};
 use crate::waveform::{self, WaveformOverview};
 
 /// Directory name of the Rust port's data, kept apart from the C++ application's `AudioBatch` directory.
@@ -50,6 +53,11 @@ struct RowIdentity {
     file_size: i64,
     modified_time_ms: i64,
     analysis_version: i64,
+}
+
+/// The custom gain column of a cached row, which is empty when the user has not set a gain for the file.
+struct StoredGain {
+    custom_gain_db: Option<f32>,
 }
 
 impl AnalysisCache {
@@ -109,7 +117,8 @@ impl AnalysisCache {
                 "SELECT file_size, modified_time_ms, analysis_version, file_name, format_name, length_in_samples,
                         duration_seconds, peak_left, peak_right, overall_peak, true_peak_left, true_peak_right,
                         overall_true_peak, max_short_term_lufs, integrated_lufs, sample_rate, channels,
-                        bits_per_sample, status, error_message, short_term_loudness, waveform_data, waveform_version
+                        bits_per_sample, status, error_message, custom_gain_db, short_term_loudness, waveform_data,
+                        waveform_version
                  FROM file_analysis WHERE file_path = ?1",
                 params![path_key(path)],
                 |row| {
@@ -119,9 +128,9 @@ impl AnalysisCache {
                         analysis_version: row.get(2)?,
                     };
                     read_record_row(row, &mut record)?;
-                    let history: Option<Vec<u8>> = row.get(20)?;
-                    let waveform: Option<Vec<u8>> = row.get(21)?;
-                    let waveform_version: i64 = row.get(22)?;
+                    let history: Option<Vec<u8>> = row.get(21)?;
+                    let waveform: Option<Vec<u8>> = row.get(22)?;
+                    let waveform_version: i64 = row.get(23)?;
                     Ok((identity, history, waveform, waveform_version))
                 },
                     )
@@ -151,6 +160,9 @@ impl AnalysisCache {
 
     /// Stores a completed analysis record, replacing any earlier row for the file.
     /// Failed records are stored too, so an unchanged broken file is not decoded again.
+    /// The custom gain of an earlier row is kept while the file has the same size and modification time,
+    /// and replaced by the record's gain otherwise,
+    /// because a custom gain only applies to the version of the file it was set for.
     ///
     /// # Errors
     ///
@@ -172,22 +184,26 @@ impl AnalysisCache {
                 .ok_or_else(|| anyhow!("Cannot cache analysis without a waveform overview"))?;
             (Some(history), Some(waveform_data))
         };
+        let file_size = i64::try_from(record.file_size).unwrap_or(i64::MAX);
         self.with_connection(|connection| {
-            connection
+            let transaction = connection.transaction()?;
+            let custom_gain = stored_custom_gain(&transaction, &record.path, file_size, record.modified_time_ms)?
+                .map_or(record.custom_gain_db, |stored| stored.custom_gain_db);
+            transaction
                 .execute(
                     "INSERT OR REPLACE INTO file_analysis (
                     file_path, file_name, format_name, file_size, modified_time_ms, length_in_samples,
                     duration_seconds, peak_left, peak_right, overall_peak, true_peak_left, true_peak_right,
                     overall_true_peak, max_short_term_lufs, integrated_lufs, sample_rate, channels, bits_per_sample,
                     status, error_message, short_term_loudness, waveform_data, waveform_version, analysis_version,
-                    updated_at_ms
+                    updated_at_ms, custom_gain_db
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
-                          ?20, ?21, ?22, ?23, ?24, ?25)",
+                          ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
                     params![
                         path_key(&record.path),
                         record.file_name,
                         record.format_name,
-                        i64::try_from(record.file_size).unwrap_or(i64::MAX),
+                        file_size,
                         record.modified_time_ms,
                         i64::try_from(record.length_in_samples).unwrap_or(i64::MAX),
                         record.duration_seconds,
@@ -209,10 +225,42 @@ impl AnalysisCache {
                         i64::from(waveform::SERIALIZATION_VERSION),
                         ANALYSIS_VERSION,
                         now_ms(),
+                        custom_gain.map(f64::from),
                     ],
                 )
                 .context("SQLite could not store the analysis")?;
+            transaction.commit()?;
             Ok(())
+        })
+    }
+
+    /// Returns the custom gain stored for a file when its row describes the given version of the file,
+    /// so a fresh analysis of an unchanged file keeps the gain the user set.
+    #[must_use]
+    pub fn get_custom_gain(&self, path: &Path, file_size: u64, modified_time_ms: i64) -> Option<f32> {
+        let file_size = i64::try_from(file_size).ok()?;
+        self.with_connection(|connection| Ok(stored_custom_gain(connection, path, file_size, modified_time_ms)?))
+            .ok()
+            .flatten()
+            .and_then(|stored| stored.custom_gain_db)
+    }
+
+    /// Sets or clears the custom gain of a file in its cached row.
+    /// Returns true when a row was updated.
+    /// A file without a cached row, such as one still waiting for its analysis, keeps no gain in the cache.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database write fails.
+    pub fn store_custom_gain(&self, path: &Path, custom_gain_db: Option<f32>) -> Result<bool> {
+        self.with_connection(|connection| {
+            let updated = connection
+                .execute(
+                    "UPDATE file_analysis SET custom_gain_db = ?1, updated_at_ms = ?2 WHERE file_path = ?3",
+                    params![custom_gain_db.map(f64::from), now_ms(), path_key(path)],
+                )
+                .context("SQLite could not store the custom gain")?;
+            Ok(updated > 0)
         })
     }
 
@@ -290,7 +338,8 @@ impl AnalysisCache {
                 waveform_data BLOB,
                 waveform_version INTEGER NOT NULL DEFAULT 0,
                 analysis_version INTEGER NOT NULL,
-                updated_at_ms INTEGER NOT NULL
+                updated_at_ms INTEGER NOT NULL,
+                custom_gain_db REAL
             );",
         )?;
         Ok(connection)
@@ -334,7 +383,7 @@ pub fn default_database_path() -> PathBuf {
     data_directory().join("analysis.db")
 }
 
-/// Fills the record fields stored in the row, starting from column 3.
+/// Fills the record fields stored in the row, from column 3 to column 20.
 fn read_record_row(row: &Row<'_>, record: &mut AnalysisRecord) -> rusqlite::Result<()> {
     record.file_name = row.get(3)?;
     record.format_name = row.get::<_, Option<String>>(4)?.unwrap_or_default();
@@ -353,7 +402,36 @@ fn read_record_row(row: &Row<'_>, record: &mut AnalysisRecord) -> rusqlite::Resu
     record.bits_per_sample = row.get(17)?;
     record.status = status_from_code(row.get(18)?);
     record.error_message = row.get::<_, Option<String>>(19)?.unwrap_or_default();
+    record.custom_gain_db = row.get::<_, Option<f64>>(20)?.and_then(stored_gain_to_decibels);
     Ok(())
+}
+
+/// Returns a stored custom gain as decibels, dropping a value that is not a usable gain.
+fn stored_gain_to_decibels(stored: f64) -> Option<f32> {
+    custom_gain_from_decibels(stored as f32)
+}
+
+/// Returns the custom gain column of the row for a file when the row describes the given version of the file,
+/// or `None` when there is no such row.
+fn stored_custom_gain(
+    connection: &Connection,
+    path: &Path,
+    file_size: i64,
+    modified_time_ms: i64,
+) -> rusqlite::Result<Option<StoredGain>> {
+    connection
+        .query_row(
+            "SELECT custom_gain_db FROM file_analysis
+             WHERE file_path = ?1 AND file_size = ?2 AND modified_time_ms = ?3",
+            params![path_key(path), file_size, modified_time_ms],
+            |row| row.get::<_, Option<f64>>(0),
+        )
+        .optional()
+        .map(|stored| {
+            stored.map(|gain| StoredGain {
+                custom_gain_db: gain.and_then(stored_gain_to_decibels),
+            })
+        })
 }
 
 /// Returns the cache key of a file.
@@ -542,6 +620,99 @@ mod test_analysis_cache {
         assert!(!cache.remove_analysis(&first.path).expect("second remove"));
         std::fs::remove_file(&second.path).expect("delete file");
         assert_eq!(cache.prune_missing_files().expect("prunes"), 1);
+    }
+}
+
+#[cfg(test)]
+mod test_custom_gain {
+    use super::*;
+
+    use tempfile::TempDir;
+
+    use crate::analysis::analyze_file;
+
+    fn analyzed_copy(directory: &TempDir, fixture: &str) -> AnalysisRecord {
+        let path = test_fixtures::copy_fixture(directory, fixture, None);
+        analyze_file(&path, &|| false, &mut |_| {})
+    }
+
+    fn cache_in(directory: &TempDir) -> AnalysisCache {
+        let cache = AnalysisCache::with_path(directory.path().join("analysis.db"));
+        cache.open().expect("cache opens");
+        cache
+    }
+
+    #[test]
+    fn stored_gain_comes_back_with_the_record() {
+        let directory = TempDir::new().expect("temp dir");
+        let cache = cache_in(&directory);
+        let record = analyzed_copy(&directory, "sine_stereo_44100_16.wav");
+        cache.store_analysis(&record).expect("stores");
+        assert_eq!(
+            cache
+                .get_analysis(&record.path)
+                .and_then(|cached| cached.custom_gain_db),
+            None
+        );
+        assert!(cache.store_custom_gain(&record.path, Some(-2.5)).expect("stores gain"));
+        assert_eq!(
+            cache
+                .get_analysis(&record.path)
+                .and_then(|cached| cached.custom_gain_db),
+            Some(-2.5)
+        );
+        assert_eq!(
+            cache.get_custom_gain(&record.path, record.file_size, record.modified_time_ms),
+            Some(-2.5)
+        );
+        assert!(cache.store_custom_gain(&record.path, None).expect("clears gain"));
+        assert_eq!(
+            cache
+                .get_analysis(&record.path)
+                .and_then(|cached| cached.custom_gain_db),
+            None
+        );
+    }
+
+    #[test]
+    fn file_without_a_row_keeps_no_gain() {
+        let directory = TempDir::new().expect("temp dir");
+        let cache = cache_in(&directory);
+        let path = directory.path().join("missing.wav");
+        assert!(!cache.store_custom_gain(&path, Some(1.0)).expect("updates nothing"));
+        assert_eq!(cache.get_custom_gain(&path, 0, 0), None);
+    }
+
+    #[test]
+    fn new_analysis_of_an_unchanged_file_keeps_the_gain() {
+        let directory = TempDir::new().expect("temp dir");
+        let cache = cache_in(&directory);
+        let record = analyzed_copy(&directory, "sine_mono_44100_16.wav");
+        cache.store_analysis(&record).expect("stores");
+        cache.store_custom_gain(&record.path, Some(3.0)).expect("stores gain");
+        cache.store_analysis(&record).expect("stores again");
+        assert_eq!(
+            cache
+                .get_analysis(&record.path)
+                .and_then(|cached| cached.custom_gain_db),
+            Some(3.0)
+        );
+    }
+
+    #[test]
+    fn new_analysis_of_a_changed_file_drops_the_gain() {
+        let directory = TempDir::new().expect("temp dir");
+        let cache = cache_in(&directory);
+        let record = analyzed_copy(&directory, "sine_mono_44100_16.wav");
+        cache.store_analysis(&record).expect("stores");
+        cache.store_custom_gain(&record.path, Some(3.0)).expect("stores gain");
+        let mut changed = record;
+        changed.modified_time_ms += 1000;
+        cache.store_analysis(&changed).expect("stores the changed file");
+        assert_eq!(
+            cache.get_custom_gain(&changed.path, changed.file_size, changed.modified_time_ms),
+            None
+        );
     }
 }
 

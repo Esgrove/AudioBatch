@@ -32,6 +32,7 @@ The port covers the key features of the C++ application:
 - List the files with their stats in the CLI and the GUI.
 - Draw a waveform overview of the selected file in the GUI.
 - Play the selected file in the GUI.
+- Keep a per-file custom gain in the GUI and the cache, applied to the preview and the waveform.
 - Accept files and folders dropped onto the GUI.
 
 Normalization, AIFF conversion, and VST3 / Audio Unit plugin processing stay in the C++ application for now.

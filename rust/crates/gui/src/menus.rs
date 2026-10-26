@@ -57,6 +57,11 @@ pub struct RevealSelected;
 #[action(namespace = audiobatch)]
 pub struct ReanalyzeSelected;
 
+/// Clears the custom gain of the selected file.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct ClearCustomGain;
+
 /// Removes the selected file from the list without touching the file.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
@@ -169,6 +174,7 @@ pub fn set_menus(cx: &App, state: &MenuState) {
         MenuItem::separator(),
         MenuItem::action(REVEAL_LABEL, RevealSelected),
         MenuItem::action("Re-analyze Selected", ReanalyzeSelected),
+        MenuItem::action("Clear Per-file Gain", ClearCustomGain),
         MenuItem::action("Remove Selected from List", RemoveSelected),
         MenuItem::action("Move Selected to Trash", TrashSelected),
         MenuItem::action("Clear All Files", ClearList),

@@ -113,6 +113,9 @@ and the output device with its sample rate and buffer size in samples.
 - Click or drag on the waveform to seek.
   The wheel zooms around the playhead, and Command or Control with the wheel changes the input gain.
   Double-click the Zoom or Input gain slider to reset it to 100% or 0 dB.
+- The Input gain slider sets a per-file gain for the selected file, shown in the Gain column.
+  It applies to the preview and the waveform, and is saved in the analysis cache until the file changes.
+  File > Clear Per-file Gain removes it.
 - File > Rescan (F5) picks up new and changed files,
   and the File menu also re-analyzes, removes, trashes, or reveals the selected file.
 - Options > Show Loudness Graph, or the same option in the settings window,

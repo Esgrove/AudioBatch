@@ -1,6 +1,6 @@
 //! Menu and transport actions of the main view.
 //!
-//! Covers the file dialogs, analyzing the selected file again, removing it from the list,
+//! Covers the file dialogs, analyzing the selected file again, clearing its custom gain, removing it from the list,
 //! moving it to the trash, revealing it in the file manager, clearing the list,
 //! playback, the events of the controls column, the About dialog, and the synthetic stress test.
 
@@ -173,7 +173,8 @@ impl AppView {
         cx.notify();
     }
 
-    /// Resets a slider of the controls column to its default: the whole file for the zoom, and 0 dB for the gain.
+    /// Resets a slider of the controls column to its default:
+    /// the whole file for the zoom, and no custom gain for the selected file.
     fn reset_slider(&self, control: SliderControl, window: &mut Window, cx: &mut Context<Self>) {
         match control {
             SliderControl::Zoom => {
@@ -185,7 +186,7 @@ impl AppView {
             SliderControl::Gain => {
                 self.gain_slider
                     .update(cx, |slider, cx| slider.set_value(DEFAULT_GAIN_DB, window, cx));
-                self.apply_gain(DEFAULT_GAIN_DB, cx);
+                self.clear_selected_gain(cx);
             }
         }
         cx.notify();
