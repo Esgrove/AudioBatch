@@ -225,8 +225,8 @@ std::optional<serato::TagReadResult> AnalysisCache::getSeratoTag(
         }
         status = static_cast<serato::ReadStatus>(state);
     }
-    auto result = status == serato::ReadStatus::present ? serato::deserializeTag(kind, data)
-                                                        : serato::TagReadResult::missing(kind, status);
+    const auto result = status == serato::ReadStatus::present ? serato::deserializeTag(kind, data)
+                                                              : serato::TagReadResult::missing(kind, status);
     return result && identity.matches(file) ? result : std::nullopt;
 }
 
