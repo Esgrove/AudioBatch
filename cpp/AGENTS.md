@@ -180,6 +180,8 @@ Tests:
 - JUCE, from the [Esgrove/JUCE](https://github.com/Esgrove/JUCE) fork, as a submodule under `JUCE/`.
 - SQLite 3, resolved via CMake (system package if present, otherwise the fetched amalgamation).
 - libebur128, fetched via CMake, for loudness and true peak analysis.
+  `cmake/PatchLibebur128.cmake` turns the gates that `ebur128_init` writes into globals into constants,
+  so meters can be created on several threads at once.
 - TagLib, fetched via CMake, for cross-format metadata handling.
 - {fmt}, fetched via CMake, for string formatting (see `src/utils/StringFormat.h`).
 

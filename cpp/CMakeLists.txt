@@ -240,6 +240,8 @@ target_include_directories(
 set_target_properties(tag PROPERTIES SYSTEM ON)
 
 # Only the library subdirectory is added, which leaves out the tests and the install rules of the top level project.
+# The patch step turns the gates that ebur128_init writes into globals into constants,
+# so analysis workers can create meters concurrently. See cmake/PatchLibebur128.cmake.
 FetchContent_Declare(
     libebur128
     GIT_REPOSITORY https://github.com/jiixyj/libebur128.git
@@ -247,6 +249,8 @@ FetchContent_Declare(
     GIT_TAG 67b33abe1558160ed76ada1322329b0e9e058b02
     SOURCE_SUBDIR ebur128
     EXCLUDE_FROM_ALL
+    PATCH_COMMAND ${CMAKE_COMMAND} -DEBUR128_SOURCE=<SOURCE_DIR>/ebur128/ebur128.c -P
+                  ${CMAKE_CURRENT_SOURCE_DIR}/cmake/PatchLibebur128.cmake
 )
 FetchContent_MakeAvailable(libebur128)
 
