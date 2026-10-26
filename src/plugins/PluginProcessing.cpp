@@ -406,32 +406,24 @@ std::expected<RenderSummary, juce::String> renderChainToFile(
         return std::unexpected(juce::String("Could not create the temporary render file"));
     }
 
-    plugin_processing::ChainPreparation preparation;
-    const bool prepared = utils::callOnMessageThread(
-        [&] { preparation = plugin_processing::prepareChain(chainInstances, options, numChannels, reader.sampleRate); },
-        isCancelled
-    );
+    plugin_processing::PreparedChain preparedChain(chainInstances, isCancelled);
+    const auto preparation = preparedChain.prepare(options, numChannels, reader.sampleRate);
 
-    if (!prepared || preparation.errorMessage.isNotEmpty()) {
-        return std::unexpected(prepared ? preparation.errorMessage : juce::String(cancelledMessage));
+    if (!preparation.has_value()) {
+        return std::unexpected(juce::String(cancelledMessage));
     }
 
-    if (preparation.latencySamples > 0) {
-        utils::logDebug("Compensating {} samples of plugin chain latency", preparation.latencySamples);
+    if (preparation->errorMessage.isNotEmpty()) {
+        return std::unexpected(preparation->errorMessage);
     }
 
-    auto summary = renderThroughChain(
-        reader, *writer, chainInstances, preparation, numChannels, inputGain, isCancelled, onProgress
+    if (preparation->latencySamples > 0) {
+        utils::logDebug("Compensating {} samples of plugin chain latency", preparation->latencySamples);
+    }
+
+    return renderThroughChain(
+        reader, *writer, chainInstances, *preparation, numChannels, inputGain, isCancelled, onProgress
     );
-
-    // Release on every path so a failed file does not leave the chain active for the next one.
-    // After cancellation the message thread may be blocked waiting for this worker, so the release is skipped,
-    // and the plugin instances release their resources when they are destroyed instead.
-    static_cast<void>(utils::callOnMessageThread(
-        [&chainInstances] { plugin_processing::releasePluginResources(chainInstances); }, isCancelled
-    ));
-
-    return summary;
 }
 
 /// Writes the trimmed intermediate audio as 16-bit AIFF without additional gain adjustment or dither.

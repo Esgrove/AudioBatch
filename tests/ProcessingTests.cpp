@@ -4,6 +4,7 @@
 /// Replaced files are deleted instead of moved to the system trash, so the tests never touch the user's trash.
 
 #include "analysis/AudioAnalysis.h"
+#include "plugins/PluginChain.h"
 #include "plugins/PluginChainPreparation.h"
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"
@@ -21,6 +22,7 @@
 #include <cstring>
 #include <generalencapsulatedobjectframe.h>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <utility>
 #include <variant>
@@ -392,6 +394,52 @@ private:
     bool initialized = false;
 };
 
+/// Records its resource release and its destruction in a log owned by the test, which outlives the plugin.
+class TeardownRecordingPlugin final : public TestPlugin
+{
+public:
+    /// Writes the teardown events to the given log.
+    explicit TeardownRecordingPlugin(juce::StringArray& eventLog) : TestPlugin(TestPluginSettings {}), events(eventLog)
+    {}
+
+    /// Records the destruction after any release.
+    ~TeardownRecordingPlugin() override
+    {
+        events.add("destroy");
+    }
+
+    TeardownRecordingPlugin(const TeardownRecordingPlugin&) = delete;
+    TeardownRecordingPlugin(TeardownRecordingPlugin&&) = delete;
+    TeardownRecordingPlugin& operator=(const TeardownRecordingPlugin&) = delete;
+    TeardownRecordingPlugin& operator=(TeardownRecordingPlugin&&) = delete;
+
+    /// Records the release of the prepared resources.
+    void releaseResources() override
+    {
+        events.add("release");
+        TestPlugin::releaseResources();
+    }
+
+private:
+    juce::StringArray& events;
+};
+
+/// Counts the change notifications of the processors it is registered on.
+class CountingProcessorListener final : public juce::AudioProcessorListener
+{
+public:
+    /// Ignores parameter changes, which the tests do not trigger.
+    void audioProcessorParameterChanged(juce::AudioProcessor* /*processor*/, int /*index*/, float /*value*/) override {}
+
+    /// Counts a change notification.
+    void audioProcessorChanged(juce::AudioProcessor* /*processor*/, const ChangeDetails& /*details*/) override
+    {
+        ++changeCount;
+    }
+
+    int changeCount {0};
+};
+
 /// Checks plugin processing output against the committed fixtures.
 class ProcessingTests final : public juce::UnitTest
 {
@@ -584,6 +632,45 @@ public:
                 expectPreparedGain(plugin, 0.25f);
                 plugin_processing::releasePluginResources(chainOf(plugin));
             }
+        }
+
+        beginTest("A prepared chain releases its plugins when it goes out of scope");
+        {
+            PreparationTestPlugin plugin(true);
+            const auto chain = chainOf(plugin);
+            const utils::CancellationCheck notCancelled = [] { return false; };
+            {
+                plugin_processing::PreparedChain preparedChain(chain, notCancelled);
+                const auto preparation = preparedChain.prepare(makeOptions({&plugin}), 2, 44'100.0);
+
+                expect(preparation.has_value());
+                expect(preparation.has_value() && preparation->errorMessage.isEmpty());
+                expectEquals(plugin.getLifecycle().joinIntoString(","), juce::String("prepare,reset"));
+            }
+            expectEquals(plugin.getLifecycle().joinIntoString(","), juce::String("prepare,reset,release"));
+        }
+
+        beginTest("A live slot keeps its processor when moved and releases it before destroying it");
+        {
+            juce::StringArray events;
+            CountingProcessorListener listener;
+            std::vector<LiveSlot> slots(2);
+            slots.front().attachInstance(std::make_unique<TeardownRecordingPlugin>(events), listener);
+            slots.front().prepared = true;
+            std::swap(slots.front(), slots.back());
+
+            expect(slots.front().instance == nullptr);
+            expect(slots.front().listener == nullptr);
+            expect(!slots.front().prepared);
+            expect(slots.back().instance != nullptr);
+            expect(slots.back().prepared);
+            expect(events.isEmpty(), events.joinIntoString(","));
+
+            slots.back().instance->updateHostDisplay();
+            expectEquals(listener.changeCount, 1);
+
+            slots.pop_back();
+            expectEquals(events.joinIntoString(","), juce::String("release,destroy"));
         }
 
         beginTest("The saved plugin state is restored before every file");
