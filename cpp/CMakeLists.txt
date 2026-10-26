@@ -787,6 +787,59 @@ if(BUILD_TESTING)
     audiobatch_set_source_warnings(AudioBatchTests)
 endif()
 
+# libFuzzer harnesses for the parsers that read untrusted input, built by the macos-fuzz preset.
+# They need a Clang that ships libFuzzer, such as Homebrew LLVM, because Apple Clang does not.
+# CTest runs each harness once over its committed corpus, and fuzzing is started by running a harness directly.
+option(AUDIOBATCH_FUZZ "Build the libFuzzer harnesses" OFF)
+
+if(AUDIOBATCH_FUZZ)
+    enable_testing()
+    set(AUDIOBATCH_FUZZERS SeratoTagFuzzer CliArgumentsFuzzer)
+
+    foreach(fuzzer IN LISTS AUDIOBATCH_FUZZERS)
+        juce_add_console_app(${fuzzer} PRODUCT_NAME ${fuzzer})
+        juce_generate_juce_header(${fuzzer})
+        target_sources(
+            ${fuzzer} PRIVATE ${AUDIOBATCH_CORE_SOURCES} ${AUDIOBATCH_CLI_SOURCES} "tests/fuzz/${fuzzer}.cpp"
+        )
+        target_include_directories(${fuzzer} PRIVATE "${CMAKE_SOURCE_DIR}/src" "${AUDIOBATCH_GENERATED_DIR}")
+        target_compile_definitions(${fuzzer} PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS})
+        target_compile_options(${fuzzer} PRIVATE -fsanitize=fuzzer)
+        target_link_options(${fuzzer} PRIVATE -fsanitize=fuzzer)
+        set_target_properties(${fuzzer} PROPERTIES COMPILE_WARNING_AS_ERROR YES CXX_STANDARD 23)
+
+        if(APPLE)
+            target_link_libraries(
+                ${fuzzer} PRIVATE "$<LINK_LIBRARY:FRAMEWORK,AudioUnit>" "$<LINK_LIBRARY:FRAMEWORK,CoreAudioKit>"
+            )
+        endif()
+
+        # cmake-format: off
+        target_link_libraries(
+            ${fuzzer}
+            PRIVATE
+                ${AUDIOBATCH_SQLITE_TARGET}
+                ebur128
+                fmt::fmt
+                tag
+                juce::juce_audio_basics
+                juce::juce_audio_formats
+                juce::juce_audio_processors
+                juce::juce_core
+                juce::juce_data_structures
+                juce::juce_events
+            PUBLIC
+                juce::juce_recommended_config_flags
+                juce::juce_recommended_warning_flags
+        )
+        # cmake-format: on
+
+        add_test(NAME ${fuzzer}Corpus COMMAND ${fuzzer} -runs=0 "${CMAKE_SOURCE_DIR}/tests/fuzz/corpus/${fuzzer}")
+    endforeach()
+
+    audiobatch_set_source_warnings(${AUDIOBATCH_FUZZERS})
+endif()
+
 audiobatch_set_source_warnings(AudioBatch AudioBatchCli)
 
 # Mirror the src subdirectories as folders in the Visual Studio and Xcode projects.

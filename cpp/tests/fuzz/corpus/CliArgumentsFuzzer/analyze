@@ -1,0 +1,8 @@
+--recurse
+--jobs
+4
+--sort
+lufs
+--output
+json
+music

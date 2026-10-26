@@ -114,6 +114,21 @@
         "CMAKE_BUILD_TYPE": "Debug",
         "AUDIOBATCH_SANITIZE": "address,undefined"
       }
+    },
+    {
+      "name": "macos-fuzz",
+      "displayName": "macOS Fuzz",
+      "description": "libFuzzer harnesses with AddressSanitizer and UndefinedBehaviorSanitizer, built with Homebrew LLVM in cmake-build-mac-fuzz.",
+      "inherits": "macos-ninja-base",
+      "binaryDir": "${sourceDir}/cmake-build-mac-fuzz",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "/opt/homebrew/opt/llvm/bin/clang",
+        "CMAKE_CXX_COMPILER": "/opt/homebrew/opt/llvm/bin/clang++",
+        "AUDIOBATCH_FUZZ": "ON",
+        "AUDIOBATCH_SANITIZE": "address,undefined",
+        "BUILD_TESTING": "OFF"
+      }
     }
   ],
   "buildPresets": [
@@ -146,6 +161,11 @@
     {
       "name": "macos-asan",
       "configurePreset": "macos-asan"
+    },
+    {
+      "name": "macos-fuzz",
+      "configurePreset": "macos-fuzz",
+      "targets": ["SeratoTagFuzzer", "CliArgumentsFuzzer"]
     }
   ]
 }
