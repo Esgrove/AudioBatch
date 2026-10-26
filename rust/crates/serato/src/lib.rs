@@ -9,6 +9,7 @@
 mod analysis;
 mod autotags;
 mod beatgrid;
+pub mod colouring;
 mod markers;
 pub mod native;
 mod overview;
@@ -23,7 +24,7 @@ pub use analysis::AnalysisVersion;
 pub use autotags::AutoTags;
 pub use beatgrid::{BeatGrid, BeatGridMarker};
 pub use markers::{BpmLock, Color, Cue, Loop, Markers};
-pub use overview::{BAND_COUNT, Overview};
+pub use overview::{BAND_COUNT, MAXIMUM_SLICES, OVERVIEW_PARSER_VERSION, OVERVIEW_TAG_KIND, Overview, Slice};
 
 /// Serato tag types, identified by the GEOB frame description.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -138,6 +139,13 @@ impl SeratoData {
             .map(|autotags| autotags.bpm)
             .filter(|&bpm| bpm > 0.0)
             .or_else(|| self.beatgrid.as_ref().and_then(BeatGrid::bpm))
+    }
+
+    /// Returns true when the file had the given tag but it could not be parsed.
+    #[must_use]
+    pub fn failed_to_parse(&self, tag: SeratoTag) -> bool {
+        let prefix = format!("{tag}: ");
+        self.errors.iter().any(|error| error.starts_with(&prefix))
     }
 
     /// Returns the cue points.
@@ -263,6 +271,15 @@ mod test_serato_data {
         assert_eq!(data.analysis, None);
         assert_eq!(data.errors.len(), 1);
         assert!(data.to_string().contains("Error: SeratoAnalysis"));
+        assert!(data.failed_to_parse(SeratoTag::Analysis));
+        assert!(!data.failed_to_parse(SeratoTag::Overview));
+    }
+
+    #[test]
+    fn overview_with_a_partial_slice_failed_to_parse() {
+        let data = SeratoData::parse([("Serato Overview", &[1_u8, 5, 0][..])]).expect("found serato tags");
+        assert_eq!(data.overview, None);
+        assert!(data.failed_to_parse(SeratoTag::Overview));
     }
 
     #[test]

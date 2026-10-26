@@ -1,8 +1,10 @@
-//! The Serato Overview tag: the small waveform raster Serato shows for a track.
+//! The Serato Overview tag: the small coloured raster Serato shows for a whole track.
 //!
-//! Tested payloads hold 240 time columns of 16 vertical cells.
-//! Comparisons with Serato screenshots point to indexed palette colors, not frequency band strengths,
-//! so `levels` only offers the normalized indices as a heuristic for drawing.
+//! Ports `SeratoOverview.cpp` from the C++ project.
+//! A payload holds consecutive time slices of 16 vertical cells, commonly 240 slices whatever the track length.
+//! Each cell is an index into Serato's palette, not a frequency band strength,
+//! so `colouring` decodes the indices into colours instead of reading them as levels.
+//! The cache representation is the C++ one: a `SOVR` header with big-endian fields, then the raw indices.
 
 use std::fmt;
 use std::fmt::Display;
@@ -10,135 +12,238 @@ use std::fmt::Display;
 use anyhow::Result;
 use anyhow::anyhow;
 
-/// Number of vertical cells in each overview column.
+/// Number of vertical cells in each overview slice.
 pub const BAND_COUNT: usize = 16;
 
-/// Raw columns of the embedded Serato Overview raster.
+/// Highest number of slices accepted when parsing or deserializing.
+pub const MAXIMUM_SLICES: usize = 65_536;
+
+/// Version of the overview cache representation, raised when it changes.
+pub const OVERVIEW_PARSER_VERSION: u32 = 1;
+
+/// Stable identifier of the Overview tag kind in the cache, the value of the C++ `TagKind::overview`.
+pub const OVERVIEW_TAG_KIND: u32 = 1;
+
+/// The only payload header Serato is known to write.
+const PAYLOAD_HEADER: [u8; 2] = [0x01, 0x05];
+
+/// Largest valid payload, including the header.
+const MAXIMUM_PAYLOAD_BYTES: usize = PAYLOAD_HEADER.len() + MAXIMUM_SLICES * BAND_COUNT;
+
+/// Magic bytes at the start of a cached overview.
+const CACHE_MAGIC: [u8; 4] = *b"SOVR";
+
+/// Size of the cache header: the magic, the kind, the parser version, and the slice count.
+const CACHE_HEADER_BYTES: usize = 16;
+
+/// Palette indices of one time slice, top to bottom.
+pub type Slice = [u8; BAND_COUNT];
+
+/// Palette index slices of an embedded Serato Overview raster.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Overview {
-    blocks: Vec<[u8; BAND_COUNT]>,
+    slices: Vec<Slice>,
 }
 
 impl Overview {
-    /// Reads the complete 16-byte columns after the two-byte header.
-    ///
-    /// The parser is permissive: it does not validate the header,
-    /// accepts header-only data, and ignores a partial trailing column.
+    /// Creates an overview from slices, for example decoded elsewhere or built in tests.
+    #[must_use]
+    pub const fn from_slices(slices: Vec<Slice>) -> Self {
+        Self { slices }
+    }
+
+    /// Parses the payload of the tag after its GEOB or FLAC wrapper has been removed.
     ///
     /// | Offset | Length | Raw Value     | Type           | Description
     /// | ------ | ------ | ------------- | -------------- | -----------
-    /// |   `00` |   `02` | `01 05`       |                | Observed header
-    /// |   `02` |   `10` | Varies        | 16 * `uint8_t` | First vertical palette column
-    /// |    ... |    ... | Varies        | 16 * `uint8_t` | Subsequent palette columns
+    /// |   `00` |   `02` | `01 05`       |                | Supported header, meaning unspecified
+    /// |   `02` |   `10` | Varies        | 16 * `uint8_t` | Palette indices of time slice 0
+    /// |   `12` |   `10` | Varies        | 16 * `uint8_t` | Palette indices of time slice 1
+    /// |    ... |    ... | Varies        | 16 * `uint8_t` | Subsequent time slices
+    ///
+    /// A payload of N slices is 2 + 16 * N bytes, 3842 bytes for the common 240 slices.
     ///
     /// # Errors
     ///
-    /// Returns an error when the data is shorter than the header.
+    /// Returns an error for another header, no slices, more than `MAXIMUM_SLICES` slices, or a partial slice.
     pub fn parse(data: &[u8]) -> Result<Self> {
-        let payload = data
-            .get(2..)
-            .ok_or_else(|| anyhow!("Data too short to contain initial bytes"))?;
-        let blocks = payload.as_chunks::<BAND_COUNT>().0.to_vec();
-        Ok(Self { blocks })
+        if data.len() > MAXIMUM_PAYLOAD_BYTES {
+            return Err(anyhow!("Overview has more than {MAXIMUM_SLICES} slices"));
+        }
+        let Some(payload) = data.strip_prefix(&PAYLOAD_HEADER) else {
+            return Err(anyhow!("Unsupported overview header"));
+        };
+        if payload.is_empty() {
+            return Err(anyhow!("Overview has no slices"));
+        }
+        let (slices, remainder) = payload.as_chunks::<BAND_COUNT>();
+        if !remainder.is_empty() {
+            return Err(anyhow!("Overview ends with a partial slice"));
+        }
+        Ok(Self {
+            slices: slices.to_vec(),
+        })
     }
 
-    /// Returns the raw columns.
+    /// Reads a cached overview, or returns `None` for another magic, kind, version, count, or length.
     #[must_use]
-    pub fn blocks(&self) -> &[[u8; BAND_COUNT]] {
-        &self.blocks
+    pub fn deserialize(bytes: &[u8]) -> Option<Self> {
+        let (header, cells) = bytes.split_first_chunk::<CACHE_HEADER_BYTES>()?;
+        let ([magic, kind, version, count], []) = header.as_chunks::<4>() else {
+            return None;
+        };
+        if *magic != CACHE_MAGIC
+            || u32::from_be_bytes(*kind) != OVERVIEW_TAG_KIND
+            || u32::from_be_bytes(*version) != OVERVIEW_PARSER_VERSION
+        {
+            return None;
+        }
+        let count = usize::try_from(u32::from_be_bytes(*count)).ok()?;
+        if count == 0 || count > MAXIMUM_SLICES || cells.len() != count * BAND_COUNT {
+            return None;
+        }
+        Some(Self {
+            slices: cells.as_chunks::<BAND_COUNT>().0.to_vec(),
+        })
     }
 
-    /// Averages the cell indices of each column into `rows` rows and normalizes them to the range 0 to 1.
-    ///
-    /// The values are a heuristic for drawing, not frequency strengths or amplitudes.
-    /// `rows` must divide 16, otherwise the remaining cells are left out.
+    /// Writes the cache representation, with the raw palette indices after a header.
+    /// The header has the magic, then the kind, the parser version, and the slice count as big-endian fields.
+    /// Returns an empty vector for an overview without slices or with more than `MAXIMUM_SLICES`.
     #[must_use]
-    pub fn levels(&self, rows: usize) -> Vec<Vec<f32>> {
-        let rows = rows.clamp(1, BAND_COUNT);
-        let cells_per_row = BAND_COUNT / rows;
-        let averaged: Vec<Vec<u16>> = self
-            .blocks
-            .iter()
-            .map(|block| {
-                block
-                    .chunks_exact(cells_per_row)
-                    .take(rows)
-                    .map(|cells| cells.iter().map(|&value| u16::from(value)).sum::<u16>() / cells_per_row as u16)
-                    .collect()
-            })
-            .collect();
-        let maximum = averaged.iter().flatten().copied().max().unwrap_or(0).max(1);
-        averaged
-            .iter()
-            .map(|column| {
-                column
-                    .iter()
-                    .map(|&value| f32::from(value) / f32::from(maximum))
-                    .collect()
-            })
-            .collect()
+    pub fn serialize(&self) -> Vec<u8> {
+        let Ok(count) = u32::try_from(self.slices.len()) else {
+            return Vec::new();
+        };
+        if self.slices.is_empty() || self.slices.len() > MAXIMUM_SLICES {
+            return Vec::new();
+        }
+        let mut bytes = Vec::with_capacity(CACHE_HEADER_BYTES + self.slices.len() * BAND_COUNT);
+        bytes.extend_from_slice(&CACHE_MAGIC);
+        bytes.extend_from_slice(&OVERVIEW_TAG_KIND.to_be_bytes());
+        bytes.extend_from_slice(&OVERVIEW_PARSER_VERSION.to_be_bytes());
+        bytes.extend_from_slice(&count.to_be_bytes());
+        bytes.extend(self.slices.iter().flatten());
+        bytes
+    }
+
+    /// Returns the palette index slices in time order.
+    #[must_use]
+    pub fn slices(&self) -> &[Slice] {
+        &self.slices
     }
 }
 
 impl Display for Overview {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        write!(formatter, "{} columns", self.blocks.len())
+        write!(formatter, "{} slices", self.slices.len())
     }
 }
 
 #[cfg(test)]
-mod test_overview {
+mod test_parse {
     use super::*;
 
-    #[test]
-    fn rejects_data_shorter_than_the_header() {
-        assert!(Overview::parse(&[]).is_err());
-        assert!(Overview::parse(&[0x01]).is_err());
+    /// Returns a payload of synthetic slices whose cells count up from zero.
+    fn payload(count: usize) -> Vec<u8> {
+        let mut bytes = PAYLOAD_HEADER.to_vec();
+        bytes.extend((0..count * BAND_COUNT).map(|index| (index % 256) as u8));
+        bytes
     }
 
     #[test]
-    fn parses_complete_columns_and_ignores_a_partial_one() {
-        let mut data = vec![0x01, 0x05];
-        data.extend_from_slice(&[10; 16]);
-        data.extend_from_slice(&[20; 16]);
-        data.extend_from_slice(&[0xFF; 10]);
-        let overview = Overview::parse(&data).expect("parses");
-        assert_eq!(overview.blocks(), &[[10; 16], [20; 16]]);
-        assert_eq!(overview.to_string(), "2 columns");
+    fn keeps_any_complete_slice_count() {
+        for count in [1, 3, 240, 257] {
+            let overview = Overview::parse(&payload(count)).expect("parses");
+            assert_eq!(overview.slices().len(), count);
+            assert_eq!(overview.slices()[0][15], 15);
+        }
+        assert_eq!(Overview::parse(&payload(2)).expect("parses").to_string(), "2 slices");
     }
 
     #[test]
-    fn header_only_has_no_columns() {
-        let overview = Overview::parse(&[0x01, 0x05]).expect("parses");
-        assert_eq!(overview.blocks().len(), 0);
+    fn rejects_short_payloads_and_partial_slices() {
+        for size in [0, 1, 2, 3, 17, 19, 33] {
+            let mut bytes = payload(2);
+            bytes.truncate(size);
+            assert!(Overview::parse(&bytes).is_err(), "size {size}");
+        }
     }
 
     #[test]
-    fn levels_average_and_normalize_cells() {
-        let mut block = [0u8; 16];
-        block[0] = 10;
-        block[1] = 30;
-        block[14] = 40;
-        block[15] = 40;
-        let overview = Overview { blocks: vec![block] };
-        let levels = overview.levels(8);
-        assert_eq!(levels.len(), 1);
-        assert!((levels[0][0] - 0.5).abs() < f32::EPSILON);
-        assert!((levels[0][7] - 1.0).abs() < f32::EPSILON);
-        assert!(levels[0][1..7].iter().all(|&level| level.abs() < f32::EPSILON));
+    fn rejects_unknown_headers() {
+        for position in [0, 1] {
+            let mut bytes = payload(1);
+            bytes[position] = 0xFF;
+            assert!(Overview::parse(&bytes).is_err());
+        }
     }
 
     #[test]
-    fn silence_has_zero_levels() {
-        let overview = Overview {
-            blocks: vec![[0u8; 16]; 240],
-        };
-        assert!(
-            overview
-                .levels(8)
-                .iter()
-                .flatten()
-                .all(|&level| level.abs() < f32::EPSILON)
+    fn accepts_silent_slices_and_bounds_the_slice_count() {
+        let mut silent = payload(1);
+        silent[2..].fill(0);
+        assert_eq!(Overview::parse(&silent).expect("parses").slices(), &[[0; BAND_COUNT]]);
+        assert_eq!(
+            Overview::parse(&payload(MAXIMUM_SLICES))
+                .expect("parses")
+                .slices()
+                .len(),
+            MAXIMUM_SLICES
         );
+        assert!(Overview::parse(&payload(MAXIMUM_SLICES + 1)).is_err());
+    }
+}
+
+#[cfg(test)]
+mod test_cache_representation {
+    use super::*;
+
+    /// Returns an overview of synthetic slices whose cells count up from zero.
+    fn overview(count: usize) -> Overview {
+        Overview::from_slices(
+            (0..count)
+                .map(|slice| std::array::from_fn(|cell| ((slice * BAND_COUNT + cell) % 256) as u8))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn header_has_magic_kind_version_and_big_endian_count() {
+        let overview = overview(257);
+        let bytes = overview.serialize();
+        assert_eq!(bytes.len(), 16 + 257 * 16);
+        assert_eq!(&bytes[..16], b"SOVR\0\0\0\x01\0\0\0\x01\0\0\x01\x01");
+        assert_eq!(Overview::deserialize(&bytes), Some(overview));
+    }
+
+    #[test]
+    fn round_trips_the_largest_overview() {
+        let overview = overview(MAXIMUM_SLICES);
+        assert_eq!(Overview::deserialize(&overview.serialize()), Some(overview));
+    }
+
+    #[test]
+    fn rejects_corrupt_fields_and_lengths() {
+        let bytes = overview(257).serialize();
+        for offset in [0, 7, 11, 12, 15] {
+            let mut corrupt = bytes.clone();
+            corrupt[offset] ^= 0xFF;
+            assert_eq!(Overview::deserialize(&corrupt), None, "offset {offset}");
+        }
+        for length in [0, 15, bytes.len() - 1, bytes.len() + 1] {
+            let mut corrupt = bytes.clone();
+            corrupt.resize(length, 0);
+            assert_eq!(Overview::deserialize(&corrupt), None, "length {length}");
+        }
+        let mut zero_count = bytes;
+        zero_count[12..16].fill(0);
+        assert_eq!(Overview::deserialize(&zero_count), None);
+    }
+
+    #[test]
+    fn invalid_overviews_have_no_cache_representation() {
+        assert_eq!(Overview::default().serialize(), Vec::<u8>::new());
+        assert_eq!(overview(MAXIMUM_SLICES + 1).serialize(), Vec::<u8>::new());
     }
 }

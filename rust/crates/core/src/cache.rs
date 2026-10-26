@@ -4,6 +4,7 @@
 //! keyed by path and validated against the file size and modification time,
 //! so unchanged files are not decoded again on later runs.
 //! Each row also keeps the custom gain the user set for that version of the file.
+//! A second table, in the `serato` module, keeps what reading each file's Serato Overview tag found.
 //! Ports the analysis part of the C++ `AnalysisCache`, with its own database file and schema,
 //! because the Rust and C++ versions must never write to each other's cache.
 
@@ -18,6 +19,8 @@ use crate::record::{
     AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory, custom_gain_from_decibels, file_identity,
 };
 use crate::waveform::{self, WaveformOverview};
+
+mod serato;
 
 /// Directory name of the Rust port's data, kept apart from the C++ application's `AudioBatch` directory.
 pub const DATA_DIRECTORY_NAME: &str = "AudioBatch-rs";
@@ -264,29 +267,32 @@ impl AnalysisCache {
         })
     }
 
-    /// Removes the cached row of a file. Returns true when a row was removed.
+    /// Removes the cached analysis and Serato tag rows of a file. Returns true when a row was removed.
     ///
     /// # Errors
     ///
     /// Returns an error when the database write fails.
     pub fn remove_analysis(&self, path: &Path) -> Result<bool> {
         self.with_connection(|connection| {
-            let removed = connection.execute(
+            let transaction = connection.transaction()?;
+            let removed = transaction.execute(
                 "DELETE FROM file_analysis WHERE file_path = ?1",
                 params![path_key(path)],
-            )?;
+            )? + serato::remove_rows(&transaction, path)?;
+            transaction.commit()?;
             Ok(removed > 0)
         })
     }
 
-    /// Removes the rows of files that no longer exist, and returns how many were removed.
+    /// Removes the rows of files that no longer exist, and returns how many files had rows.
     ///
     /// # Errors
     ///
     /// Returns an error when the database cannot be read or written.
     pub fn prune_missing_files(&self) -> Result<usize> {
         let paths: Vec<String> = self.with_connection(|connection| {
-            let mut statement = connection.prepare("SELECT file_path FROM file_analysis")?;
+            let mut statement = connection
+                .prepare("SELECT file_path FROM file_analysis UNION SELECT file_path FROM serato_tag_cache")?;
             let paths = statement
                 .query_map([], |row| row.get(0))?
                 .collect::<rusqlite::Result<_>>()?;
@@ -342,6 +348,7 @@ impl AnalysisCache {
                 custom_gain_db REAL
             );",
         )?;
+        connection.execute_batch(serato::SCHEMA)?;
         Ok(connection)
     }
 
