@@ -75,7 +75,7 @@ pub struct CliArgs {
     #[arg(short = 'n', long)]
     pub normalize: bool,
 
-    /// Let --normalize replace an existing output file
+    /// Let normalize replace an existing output file
     #[arg(short = 'F', long)]
     pub force: bool,
 
@@ -96,7 +96,7 @@ pub struct CliArgs {
     pub sort: SortMode,
 
     /// Sort in descending order
-    #[arg(long)]
+    #[arg(short = 'R', long)]
     pub reverse: bool,
 
     /// Print results as table, csv, or json
