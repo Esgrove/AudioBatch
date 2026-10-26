@@ -1,40 +1,22 @@
-name: Build
+name: C++
 
 on:
   push:
     branches:
       - main
     paths:
-      - ".clang-format"
-      - ".clang-tidy"
-      - ".cmake-format.yaml"
-      - ".github/workflows/build.yml"
-      - "build.sh"
-      - "CMakeLists.txt"
-      - "CMakePresets.json"
-      - "common.sh"
-      - "format.sh"
-      - "JUCE"
-      - "lint.sh"
-      - "sanitize.sh"
-      - "src/**"
-      - "tests/**"
+      - ".github/workflows/cpp.yml"
+      - "assets/**"
+      - "cpp/**"
+      - "fixtures/**"
+      - "!**/*.md"
   pull_request:
     paths:
-      - ".clang-format"
-      - ".clang-tidy"
-      - ".cmake-format.yaml"
-      - ".github/workflows/build.yml"
-      - "build.sh"
-      - "CMakeLists.txt"
-      - "CMakePresets.json"
-      - "common.sh"
-      - "format.sh"
-      - "JUCE"
-      - "lint.sh"
-      - "sanitize.sh"
-      - "src/**"
-      - "tests/**"
+      - ".github/workflows/cpp.yml"
+      - "assets/**"
+      - "cpp/**"
+      - "fixtures/**"
+      - "!**/*.md"
 
 # Cancel previous runs for PRs but not pushes to main
 concurrency:
@@ -44,6 +26,7 @@ concurrency:
 defaults:
   run:
     shell: bash
+    working-directory: cpp
 
 jobs:
   build:
@@ -68,8 +51,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: |
-            cmake-build-mac-debug
-            cmake-build-windows-debug
+            cpp/cmake-build-mac-debug
+            cpp/cmake-build-windows-debug
           key: ${{ runner.os }}-cmake-${{ github.sha }}
           restore-keys: ${{ runner.os }}-cmake-
 
@@ -92,7 +75,7 @@ jobs:
           cmake --build "$BUILD_DIR" --target AudioBatchTests --config Debug
           ctest --test-dir "$BUILD_DIR" --build-config Debug --output-on-failure
 
-      # Runs the CLI that build.sh copied to the repository root on the committed test fixtures,
+      # Runs the CLI that build.sh copied to the C++ project root on the committed test fixtures,
       # and checks the reported level and the exit codes.
       - name: CLI smoke test
         run: |
@@ -101,10 +84,10 @@ jobs:
             CLI=./audiobatch.exe
           fi
           "$CLI" --help
-          "$CLI" tests/fixtures/sine_stereo_44100_16.wav | tee smoke-output.txt
+          "$CLI" ../fixtures/sine_stereo_44100_16.wav | tee smoke-output.txt
           grep -- "-6.02" smoke-output.txt
           set +e
-          "$CLI" tests/fixtures/broken.wav
+          "$CLI" ../fixtures/broken.wav
           EXIT_CODE=$?
           set -e
           if [ "$EXIT_CODE" -ne 2 ]; then
@@ -133,7 +116,7 @@ jobs:
       - name: Restore CMake build directory
         uses: actions/cache/restore@v5
         with:
-          path: cmake-build-mac-debug
+          path: cpp/cmake-build-mac-debug
           key: ${{ runner.os }}-cmake-${{ github.sha }}
           restore-keys: ${{ runner.os }}-cmake-
 

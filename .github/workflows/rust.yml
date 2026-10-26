@@ -7,14 +7,16 @@ on:
     paths:
       - ".github/workflows/rust.yml"
       - "assets/Roboto*.ttf"
+      - "fixtures/**"
       - "rust/**"
-      - "tests/fixtures/**"
+      - "!**/*.md"
   pull_request:
     paths:
       - ".github/workflows/rust.yml"
       - "assets/Roboto*.ttf"
+      - "fixtures/**"
       - "rust/**"
-      - "tests/fixtures/**"
+      - "!**/*.md"
 
 # Cancel previous runs for PRs but not pushes to main
 concurrency:
@@ -63,10 +65,10 @@ jobs:
       - name: CLI smoke test
         run: |
           cargo run --quiet --bin audiobatch-rs -- --help
-          cargo run --quiet --bin audiobatch-rs -- ../tests/fixtures/sine_stereo_44100_16.wav | tee smoke-output.txt
+          cargo run --quiet --bin audiobatch-rs -- ../fixtures/sine_stereo_44100_16.wav | tee smoke-output.txt
           grep -- "-6.02" smoke-output.txt
           set +e
-          cargo run --quiet --bin audiobatch-rs -- ../tests/fixtures/broken.wav
+          cargo run --quiet --bin audiobatch-rs -- ../fixtures/broken.wav
           EXIT_CODE=$?
           set -e
           if [ "$EXIT_CODE" -ne 2 ]; then

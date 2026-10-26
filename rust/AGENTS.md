@@ -1,31 +1,26 @@
 # AGENTS.md
 
 This file governs everything under `rust/`, the Rust port of AudioBatch.
-The root `AGENTS.md` describes the C++ application, which is the reference implementation for this port.
+`cpp/AGENTS.md` describes the C++ application in `cpp/`, which is the reference implementation for this port.
 Its build, format, lint, and CMake instructions do not apply here.
 Its prose style, naming, and documentation rules do.
 When the two files disagree about code under `rust/`, this file wins.
 
-## Working Alongside The C++ Project
+## Working Next To The C++ Project
 
-Another agent may be changing the C++ code at the same time.
-
-- Only touch files under `rust/` and `.github/workflows/rust.yml`.
-  Do not edit the root `AGENTS.md`, `.gitignore`, `.pre-commit-config.yaml`, `common.sh`, `CMakeLists.txt`,
-  or anything under `src/` or `tests/`.
-- Stage with explicit paths, `git add rust .github/workflows/rust.yml`.
-  Never use `git add -A`, `git add .`, or `git commit -a`, so the other agent's work in progress stays out of Rust commits.
 - Read the C++ sources freely when porting behaviour.
-  `src/analysis/AudioAnalysis.cpp`, `src/analysis/AnalysisCache*.cpp`, and `src/cli/`
+  `cpp/src/analysis/AudioAnalysis.cpp`, `cpp/src/analysis/AnalysisCache*.cpp`, and `cpp/src/cli/`
   are the closest counterparts of `crates/core` and `crates/cli`.
-- The tests read the shared fixtures in place from the root `tests/fixtures` directory through the `test-fixtures` crate.
+- The tests read the shared fixtures in place from the root `fixtures` directory through the `test-fixtures` crate.
   Do not copy fixtures into `rust/`.
 - The GUI embeds the Roboto fonts from the root `assets` directory, the same files the C++ application bundles.
   Do not copy them into `rust/` either.
+- Stage with explicit paths, for example `git add rust`.
+  Avoid `git add -A`, `git add .`, and `git commit -a`, so unrelated work in progress stays out of Rust commits.
 
 **NEVER run destructive git commands**, including `git checkout -- <file>`, `git restore`, `git reset --hard`,
 `git clean`, and `git stash drop`.
-They can destroy the other agent's uncommitted work.
+They can destroy uncommitted work.
 Ask the user to do it manually if something needs undoing.
 
 ## What It Does
@@ -108,13 +103,13 @@ cargo run --bin AudioBatchRs
 
 # Save an image of the GUI window and quit, for checking the layout without screen recording permission
 cargo build --release -p audiobatch-gui --features snapshot
-AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png ./target/release/AudioBatchRs --autoplay ../tests/fixtures
+AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png ./target/release/AudioBatchRs --autoplay ../fixtures
 ```
 
 The `snapshot` feature also reads `AUDIOBATCH_GUI_SNAPSHOT_DELAY` in seconds,
 and `AUDIOBATCH_GUI_SNAPSHOT_ACTIONS` with action names such as `audiobatch::ToggleLoudnessGraph`
 that are dispatched before the image is taken.
-The GUI follows the look of the C++ application, so compare it with `src/gui/` there when changing the layout.
+The GUI follows the look of the C++ application, so compare it with `cpp/src/gui/` when changing the layout.
 
 Dependencies are compiled with optimizations even in debug builds, because decoding is too slow otherwise.
 
@@ -156,8 +151,7 @@ Use semantic line breaks for comments, docstrings, and documentation.
 Start a new line at sentence boundaries or natural clause boundaries.
 Target about 120 characters per line, but prefer a clean sentence break over a strict width.
 Avoid dashes and semicolons in prose. Use commas and periods to separate ideas.
-The root `format.sh` runs `slb --fix` over the whole repository, including `rust/`,
-so run `slb` here too to keep its changes a no-op.
+Run `slb` in `rust/` to check the prose, and `slb --fix` to reformat it.
 
 ## Testing
 

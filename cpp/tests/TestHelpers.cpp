@@ -289,7 +289,7 @@ juce::File TemporaryDirectory::copyFixture(const juce::String& fixtureName, cons
 
 juce::File fixtureFile(const juce::String& name)
 {
-    // Set by CMake to the absolute path of tests/fixtures.
+    // Set by CMake to the absolute path of the fixtures directory at the repository root.
     return juce::File(AUDIOBATCH_TEST_FIXTURES_DIR).getChildFile(name);
 }
 

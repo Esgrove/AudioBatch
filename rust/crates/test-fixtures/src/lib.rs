@@ -1,10 +1,10 @@
 //! Locates the committed audio fixtures shared by the C++ and Rust test suites.
 //!
-//! The fixtures live in the C++ project's `tests/fixtures` directory at the repository root.
+//! The fixtures live in the `fixtures` directory at the repository root, shared with the C++ project.
 //! Every tone is a one second 1 kHz sine with a peak amplitude of 0.5,
 //! which reads -6.02 dBFS and -6.02 LUFS integrated, also for mono files measured as dual mono.
 //! This is the only place that knows where the fixtures are,
-//! so moving them later changes a single path.
+//! so moving them changes a single path.
 
 use std::path::{Path, PathBuf};
 
@@ -80,7 +80,7 @@ pub const TONE_FIXTURES: [ToneFixture; 15] = [
 /// Returns the absolute path of the fixtures directory.
 #[must_use]
 pub fn fixtures_directory() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tests/fixtures")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../fixtures")
 }
 
 /// Returns the absolute path of the fixture with the given file name.

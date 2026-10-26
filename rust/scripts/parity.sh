@@ -9,7 +9,7 @@ then compares the levels of every file within a tolerance.
 Exits with code 1 when any file differs.
 
 The C++ CLI is taken from AUDIOBATCH_CPP_CLI when set,
-otherwise from the repository root or the CMake debug build directory.
+otherwise from the cpp directory or its CMake debug build directory.
 
 OPTIONS: All options are optional
     -h | --help
@@ -26,7 +26,7 @@ OPTIONS: All options are optional
 "
 
 RUST_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-REPO_DIR=$(cd "$RUST_DIR/.." && pwd)
+CPP_DIR=$(cd "$RUST_DIR/../cpp" && pwd)
 
 TOLERANCE="0.05"
 RECURSE=()
@@ -73,10 +73,10 @@ find_cpp_cli() {
     fi
     local candidate
     for candidate in \
-        "$REPO_DIR/audiobatch" \
-        "$REPO_DIR/audiobatch.exe" \
-        "$REPO_DIR/cmake-build-mac-debug/AudioBatchCli_artefacts/Debug/audiobatch" \
-        "$REPO_DIR/cmake-build-windows-debug/AudioBatchCli_artefacts/Debug/audiobatch.exe"; do
+        "$CPP_DIR/audiobatch" \
+        "$CPP_DIR/audiobatch.exe" \
+        "$CPP_DIR/cmake-build-mac-debug/AudioBatchCli_artefacts/Debug/audiobatch" \
+        "$CPP_DIR/cmake-build-windows-debug/AudioBatchCli_artefacts/Debug/audiobatch.exe"; do
         if [ -x "$candidate" ]; then
             echo "$candidate"
             return

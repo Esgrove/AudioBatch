@@ -1,6 +1,6 @@
 # AudioBatchRs
 
-Rust port of AudioBatch, built next to the C++ application in the repository root.
+Rust port of AudioBatch, built next to the C++ application in `../cpp`.
 It analyzes audio files for sample peak, true peak, and integrated loudness (EBU R128),
 caches the results in SQLite, and lists them in a CLI and a GUI with a waveform overview and playback.
 
@@ -15,7 +15,7 @@ Normalization and plugin processing are only available there.
 - `crates/serato`: parsers for the Serato GEOB tags, extracted from track-rename
 - `crates/cli`: the `audiobatch-rs` command line tool
 - `crates/gui`: the AudioBatchRs app, built on gpui-kit
-- `crates/test-fixtures`: locates the shared test fixtures in `../tests/fixtures`
+- `crates/test-fixtures`: locates the shared test fixtures in `../fixtures`
 
 ## Build
 
@@ -105,7 +105,7 @@ and `AUDIOBATCH_GUI_SNAPSHOT_ACTIONS` lists actions to dispatch first.
 ```shell
 cargo build --release -p audiobatch-gui --features snapshot
 AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png AUDIOBATCH_GUI_SNAPSHOT_ACTIONS=audiobatch::ToggleLoudnessGraph \
-    ./target/release/AudioBatchRs --autoplay ../tests/fixtures
+    ./target/release/AudioBatchRs --autoplay ../fixtures
 ```
 
 ## Test
@@ -115,10 +115,10 @@ cargo nextest run
 ```
 
 `scripts/parity.sh` runs the Rust and the C++ CLI on the same files and compares their JSON output.
-Build the C++ CLI first with the CMake debug preset or `build.sh` in the repository root.
+Build the C++ CLI first with the CMake debug preset or `build.sh` in `../cpp`.
 
 ```shell
-./scripts/parity.sh ../tests/fixtures
+./scripts/parity.sh ../fixtures
 ```
 
 `cargo run -p audiobatch-playback --example play -- <file> [seconds] [sample rate] [buffer size]`

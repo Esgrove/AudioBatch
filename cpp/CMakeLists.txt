@@ -72,8 +72,12 @@ endif()
 
 message(STATUS "Build name: ${APP_BUILD_NAME}")
 
+# The icons, fonts and test fixtures live at the repository root, shared with the Rust port.
+cmake_path(SET AUDIOBATCH_ASSETS_DIR NORMALIZE "${CMAKE_SOURCE_DIR}/../assets")
+cmake_path(SET AUDIOBATCH_FIXTURES_DIR NORMALIZE "${CMAKE_SOURCE_DIR}/../fixtures")
+
 if(WIN32)
-    set(ICON_FILE "${CMAKE_SOURCE_DIR}/assets/icon_win.png")
+    set(ICON_FILE "${AUDIOBATCH_ASSETS_DIR}/icon_win.png")
 else()
     # macOS settings
     set(CMAKE_OSX_DEPLOYMENT_TARGET "15.0" CACHE STRING "Minimum macOS version")
@@ -81,12 +85,12 @@ else()
     # Instead, explicitly specify which targets require schemes.
     set(CMAKE_XCODE_GENERATE_SCHEME OFF)
     set(CMAKE_XCODE_ATTRIBUTE_DEAD_CODE_STRIPPING YES)
-    set(ICON_FILE "${CMAKE_SOURCE_DIR}/assets/icon_mac.png")
+    set(ICON_FILE "${AUDIOBATCH_ASSETS_DIR}/icon_mac.png")
 endif()
 
 if(APPLE)
     # Keep the PNG fallback for older macOS versions alongside the layered Icon Composer artwork.
-    set(ICON_COMPOSER_BUNDLE "${CMAKE_SOURCE_DIR}/assets/icon_mac.icon")
+    set(ICON_COMPOSER_BUNDLE "${AUDIOBATCH_ASSETS_DIR}/icon_mac.icon")
 endif()
 
 # Use ccache for compilation caching when available.
@@ -754,7 +758,7 @@ if(BUILD_TESTING)
     target_link_libraries(AudioBatchTests PRIVATE Assets)
     target_compile_definitions(
         AudioBatchTests PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS}
-                                AUDIOBATCH_TEST_FIXTURES_DIR="${CMAKE_SOURCE_DIR}/tests/fixtures"
+                                AUDIOBATCH_TEST_FIXTURES_DIR="${AUDIOBATCH_FIXTURES_DIR}"
     )
     set_target_properties(AudioBatchTests PROPERTIES COMPILE_WARNING_AS_ERROR YES CXX_STANDARD 23)
 
@@ -818,7 +822,7 @@ endif()
 juce_add_binary_data(
     Assets
     NAMESPACE BinaryData
-    SOURCES "assets/RobotoMono-Regular.ttf" "assets/Roboto-Regular.ttf"
+    SOURCES "${AUDIOBATCH_ASSETS_DIR}/RobotoMono-Regular.ttf" "${AUDIOBATCH_ASSETS_DIR}/Roboto-Regular.ttf"
 )
 
 # The Audio Unit hosting code needs these frameworks for the plugin listing.
