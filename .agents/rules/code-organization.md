@@ -92,3 +92,4 @@ Run `clang-format -i --style=file` on every changed file.
 
 Use `./sanitize.sh` (the `macos-asan` preset) to run the tests under AddressSanitizer and UndefinedBehaviorSanitizer
 when changing ownership, threading, or buffer handling code.
+Use `./sanitize.sh --thread` (the `macos-tsan` preset) to run them under ThreadSanitizer when changing threading code.

@@ -329,6 +329,7 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
 - On Windows, prefer `cmake --preset windows-debug` then `cmake --build --preset windows-debug`.
 - To run the tests under AddressSanitizer and UndefinedBehaviorSanitizer, run `./sanitize.sh`.
   It configures and builds the `macos-asan` preset in `cmake-build-mac-asan`, then runs ctest.
+  `./sanitize.sh --thread` does the same under ThreadSanitizer with the `macos-tsan` preset in `cmake-build-mac-tsan`.
   The `AUDIOBATCH_SANITIZE` CMake option takes a comma separated list such as `address,undefined`.
 - To fuzz, run `cmake --preset macos-fuzz` and `cmake --build --preset macos-fuzz`.
   `ctest --test-dir cmake-build-mac-fuzz` runs each harness once over its corpus.
