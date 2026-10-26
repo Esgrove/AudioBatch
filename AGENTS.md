@@ -113,6 +113,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       It moves their callbacks to the message thread and reports the results to the main component,
       which implements its `BackgroundWorkListener`.
     - `AudioPreviewPlayer.*` owns the audio device, transport, and read-ahead thread of the file preview.
+    - `PreviewController.*` loads and releases the previewed file in that player and reads its Serato tags.
+      Its state is a variant of no preview, a released preview that keeps its file, and a loaded preview.
     - `ResultsModel.*` holds the rows of the results table with an index from path to row,
       and merges, removes, and sorts them.
       `AudioFileTableModel.*` shows those rows in the sortable table, and `ResultsSorting.*` compares and sorts records.

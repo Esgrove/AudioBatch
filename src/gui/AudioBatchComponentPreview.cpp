@@ -7,7 +7,7 @@
 #include "gui/components/CustomLookAndFeel.h"
 #include "utils/Log.h"
 
-#include <cmath>
+#include <variant>
 
 namespace audiobatch
 {
@@ -140,14 +140,11 @@ void AudioBatchComponent::synchronizePreviewPreferences()
 void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 {
     updatePreviewLoudnessHistory();
-    if (record.file == currentAudioFile && seratoPreviewIdentity && !seratoPreviewIdentity->matches(record.file)) {
+    if (preview.isSeratoDataOutdated(record.file)) {
         requestSeratoPreview();
     }
-    audioInfo->showRecord(
-        record,
-        fileActivity.getActiveLabel(record.fullPath),
-        record.file == currentAudioFile ? seratoPreviewData.get() : nullptr
-    );
+    const auto seratoData = record.file == preview.getFile() ? preview.getSeratoData() : nullptr;
+    audioInfo->showRecord(record, fileActivity.getActiveLabel(record.fullPath), seratoData.get());
 }
 
 /// Adopts only complete analysis of the unchanged file backing the loaded preview.
@@ -155,14 +152,13 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 void AudioBatchComponent::updatePreviewLoudnessHistory()
 {
     std::shared_ptr<const ShortTermLoudnessHistory> history;
-    if (previewFileIdentity && previewPlayer.hasLoadedSource() && currentAudioUrl.isLocalFile()
-        && currentAudioUrl.getLocalFile() == currentAudioFile && previewFileIdentity->matches(currentAudioFile))
-    {
-        if (const auto row = analysisResults.findRow(currentAudioFile.getFullPathName())) {
+    const auto* loaded = std::get_if<LoadedPreview>(&preview.getState());
+    if (loaded != nullptr && previewPlayer.hasLoadedSource() && loaded->identity.matches(loaded->file)) {
+        if (const auto row = analysisResults.findRow(loaded->file.getFullPathName())) {
             const auto& record = analysisResults[*row];
             const auto activity = fileActivity.getActivity(record.fullPath);
-            if (record.isReady() && record.fileSize == previewFileIdentity->fileSize
-                && record.modifiedTimeMs == previewFileIdentity->modifiedTimeMs && activity != FileActivity::waiting
+            if (record.isReady() && record.fileSize == loaded->identity.fileSize
+                && record.modifiedTimeMs == loaded->identity.modifiedTimeMs && activity != FileActivity::waiting
                 && activity != FileActivity::analyzing)
             {
                 history = record.shortTermLoudness;
@@ -172,66 +168,41 @@ void AudioBatchComponent::updatePreviewLoudnessHistory()
     thumbnail->setLoudnessHistory(std::move(history));
 }
 
-/// Loads a file URL into the preview player and waveform, preferring cached waveform data over decoding the file again.
-void AudioBatchComponent::showAudioResource(juce::URL resource)
+/// Loads a file into the preview player and waveform, preferring cached waveform data over decoding the file again.
+/// A file that fails to load stays selected with its preview cleared.
+void AudioBatchComponent::showAudioFile(const juce::File& file)
 {
-    // Both branches below clear the remaining Serato presentation state.
-    if (seratoPreviewLoader) {
-        seratoPreviewLoader->cancel();
-    }
     audioInfo->clear();
     thumbnail->setLoudnessHistory({});
-    previewFileIdentity.reset();
-    if (resource.isLocalFile()) {
-        previewFileIdentity.emplace(resource.getLocalFile());
+
+    if (!preview.load(file, previewPreferences.playFromFirstCuePoint)) {
+        clearPreviewDisplay();
+        return;
     }
 
-    if (previewPlayer.load(resource, previewPreferences.playFromFirstCuePoint)) {
-        updatePreviewInputGain(true);
-        currentAudioUrl = std::move(resource);
-        currentWaveformLoadedFromCache = false;
-        startStopButton.setEnabled(true);
-        startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green());
-        zoomSlider.setValue(100.0, juce::dontSendNotification);
+    updatePreviewInputGain(true);
+    startStopButton.setEnabled(true);
+    startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::green());
+    zoomSlider.setValue(100.0, juce::dontSendNotification);
 
-        const auto waveformData
-            = currentAudioFile.existsAsFile() ? analysisCache.getWaveformData(currentAudioFile) : std::nullopt;
-        if (waveformData.has_value() && thumbnail->loadFromCacheData(*waveformData)) {
-            currentWaveformLoadedFromCache = true;
-        } else {
-            thumbnail->setURL(currentAudioUrl, previewPlayer.getLoadedLengthInSamples().value_or(0));
-        }
-
-        requestSeratoPreview();
-        updatePreviewLoudnessHistory();
+    const auto waveformData = file.existsAsFile() ? analysisCache.getWaveformData(file) : std::nullopt;
+    if (waveformData.has_value() && thumbnail->loadFromCacheData(*waveformData)) {
+        preview.setWaveformLoadedFromCache(true);
     } else {
-        currentAudioUrl = {};
-        releasePreviewPlayback();
+        thumbnail->setURL(juce::URL(file), previewPlayer.getLoadedLengthInSamples().value_or(0));
     }
+
+    requestSeratoPreview();
+    updatePreviewLoudnessHistory();
 }
 
 /// Clears stale tag presentation and requests the current preview's independent metadata.
 /// Captures file identity so same-path changes detected during reanalysis trigger a fresh read.
 void AudioBatchComponent::requestSeratoPreview()
 {
-    seratoPreviewData.reset();
-    seratoPreviewIdentity.reset();
     thumbnail->setSeratoOverview({});
     thumbnail->setSeratoMarkers({});
-    const auto duration = previewPlayer.getLoadedDurationSeconds();
-    if (seratoPreviewLoader && currentAudioUrl.isLocalFile() && currentAudioUrl.getLocalFile() == currentAudioFile
-        && duration.has_value() && std::isfinite(*duration) && *duration > 0.0)
-    {
-        seratoPreviewIdentity.emplace(currentAudioFile);
-        if (seratoPreviewLoader->request(currentAudioFile, *duration) == 0) {
-            previewPlayer.completeInitialPosition(0.0);
-        }
-    } else {
-        if (seratoPreviewLoader) {
-            seratoPreviewLoader->cancel();
-        }
-        previewPlayer.completeInitialPosition(0.0);
-    }
+    preview.requestSeratoData();
 }
 
 /// Adopts immutable colours, cues and track info only while the generation, file and URL still match.
@@ -243,34 +214,26 @@ void AudioBatchComponent::adoptSeratoPreview(
     std::shared_ptr<const serato::SeratoData> data
 )
 {
-    if (seratoPreviewLoader && thumbnail != nullptr && previewPlayer.hasLoadedSource() && currentAudioUrl.isWellFormed()
-        && currentAudioUrl.isLocalFile() && currentAudioUrl.getLocalFile() == currentAudioFile
-        && identity.path == currentAudioFile.getFullPathName() && seratoPreviewLoader->isCurrentGeneration(generation))
-    {
-        if (!seratoPreviewLoader->canAdopt(identity, generation, currentAudioFile)) {
-            previewPlayer.completeInitialPosition(0.0);
-            return;
-        }
-        seratoPreviewIdentity = identity;
-        seratoPreviewData = std::move(data);
-        previewPlayer.completeInitialPosition(getPreviewStartPositionSeconds(
-            previewPreferences,
-            seratoPreviewData && seratoPreviewData->markers ? &*seratoPreviewData->markers : nullptr,
-            previewPlayer.getLoadedDurationSeconds().value_or(0.0)
-        ));
-        thumbnail->setSeratoOverview(
-            seratoPreviewData && seratoPreviewData->overview
-                ? std::shared_ptr<const serato::Overview>(seratoPreviewData, &*seratoPreviewData->overview)
-                : nullptr
-        );
-        thumbnail->setSeratoMarkers(
-            seratoPreviewData && seratoPreviewData->markers
-                ? std::shared_ptr<const serato::Markers>(seratoPreviewData, &*seratoPreviewData->markers)
-                : nullptr
-        );
-        if (const auto row = analysisResults.findRow(currentAudioFile.getFullPathName())) {
-            updateAudioInfo(analysisResults[*row]);
-        }
+    if (thumbnail == nullptr || !preview.adoptSeratoData(identity, generation, std::move(data))) {
+        return;
+    }
+
+    const auto seratoData = preview.getSeratoData();
+    previewPlayer.completeInitialPosition(getPreviewStartPositionSeconds(
+        previewPreferences,
+        seratoData && seratoData->markers ? &*seratoData->markers : nullptr,
+        previewPlayer.getLoadedDurationSeconds().value_or(0.0)
+    ));
+    thumbnail->setSeratoOverview(
+        seratoData && seratoData->overview ? std::shared_ptr<const serato::Overview>(seratoData, &*seratoData->overview)
+                                           : nullptr
+    );
+    thumbnail->setSeratoMarkers(
+        seratoData && seratoData->markers ? std::shared_ptr<const serato::Markers>(seratoData, &*seratoData->markers)
+                                          : nullptr
+    );
+    if (const auto row = analysisResults.findRow(preview.getFile().getFullPathName())) {
+        updateAudioInfo(analysisResults[*row]);
     }
 }
 
@@ -278,7 +241,8 @@ void AudioBatchComponent::adoptSeratoPreview(
 /// unless the current waveform was itself loaded from the cache.
 void AudioBatchComponent::handleThumbnailFullyLoaded()
 {
-    if (currentWaveformLoadedFromCache || !currentAudioFile.existsAsFile()) {
+    const auto* loaded = std::get_if<LoadedPreview>(&preview.getState());
+    if (loaded == nullptr || loaded->waveformLoadedFromCache || !loaded->file.existsAsFile()) {
         return;
     }
 
@@ -287,7 +251,7 @@ void AudioBatchComponent::handleThumbnailFullyLoaded()
         return;
     }
 
-    currentWaveformLoadedFromCache = analysisCache.storeWaveformData(currentAudioFile, waveformData);
+    preview.setWaveformLoadedFromCache(analysisCache.storeWaveformData(loaded->file, waveformData));
 }
 
 /// Recolours the play button to match whether the transport is playing.
@@ -327,27 +291,26 @@ void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source
 /// Stops playback and releases the preview file, transport source, and waveform so the file can be replaced.
 void AudioBatchComponent::clearCurrentAudioPreview()
 {
-    currentAudioFile = juce::File();
-    currentAudioUrl = {};
-    releasePreviewPlayback();
+    preview.clear();
+    clearPreviewDisplay();
 }
 
 /// Stops playback, closes the preview file, and clears the waveform, keeping the current file selected,
 /// so the file on disk can be replaced or the preview reset.
 void AudioBatchComponent::releasePreviewPlayback()
 {
-    previewFileIdentity.reset();
-    if (seratoPreviewLoader) {
-        seratoPreviewLoader->cancel();
-    }
-    seratoPreviewData.reset();
-    seratoPreviewIdentity.reset();
+    preview.release();
+    clearPreviewDisplay();
+}
+
+/// Clears the waveform, the Serato overlays, and the info panel, and disables the play button,
+/// after the preview was released or failed to load.
+void AudioBatchComponent::clearPreviewDisplay()
+{
     thumbnail->setSeratoOverview({});
     thumbnail->setSeratoMarkers({});
     audioInfo->clear();
-    previewPlayer.release();
     thumbnail->setURL(juce::URL());
-    currentWaveformLoadedFromCache = false;
     startStopButton.setEnabled(false);
     startStopButton.setColour(juce::TextButton::buttonColourId, juce::CustomLookAndFeel::greyMedium());
 }
@@ -401,7 +364,7 @@ void AudioBatchComponent::applyCustomGainToSelection(const std::optional<Decibel
 void AudioBatchComponent::updatePreviewInputGain(const bool immediately)
 {
     LinearGain gain;
-    if (const auto row = analysisResults.findRow(currentAudioFile.getFullPathName())) {
+    if (const auto row = analysisResults.findRow(preview.getFile().getFullPathName())) {
         const auto& record = analysisResults[*row];
         if (record.customGain) {
             gain = record.customGain->toLinearGain();
@@ -425,8 +388,8 @@ void AudioBatchComponent::updateGainControlsForSelection()
 
     // Use the currently selected display row to drive the slider value.
     int referenceRow = selectedRows[0];
-    if (currentAudioFile.existsAsFile()) {
-        if (const auto currentRow = analysisResults.findRow(currentAudioFile.getFullPathName());
+    if (const auto previewFile = preview.getFile(); previewFile.existsAsFile()) {
+        if (const auto currentRow = analysisResults.findRow(previewFile.getFullPathName());
             currentRow.has_value() && selectedRows.contains(*currentRow))
         {
             referenceRow = *currentRow;
@@ -448,12 +411,13 @@ void AudioBatchComponent::updateThumbnailDisplayGain() const
         return;
     }
 
-    if (!currentAudioFile.existsAsFile()) {
+    const auto previewFile = preview.getFile();
+    if (!previewFile.existsAsFile()) {
         thumbnail->setDisplayGain(1.0f);
         return;
     }
 
-    const auto currentRow = analysisResults.findRow(currentAudioFile.getFullPathName());
+    const auto currentRow = analysisResults.findRow(previewFile.getFullPathName());
     if (!currentRow.has_value()) {
         thumbnail->setDisplayGain(1.0f);
         return;

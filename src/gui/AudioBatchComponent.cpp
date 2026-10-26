@@ -228,26 +228,22 @@ void AudioBatchComponent::configureProcessingControls()
     controlsContent.addAndMakeVisible(settingsButton);
 }
 
-/// Creates the worker that reads the Serato tags of the previewed file,
-/// whose results are adopted on the message thread while this component still exists.
-void AudioBatchComponent::createSeratoPreviewLoader()
+/// Creates the completion for the Serato tag worker of the preview,
+/// which adopts the tags on the message thread while this component still exists.
+/// Called from the member initializer of the preview controller, so it only captures a safe pointer to this component.
+serato::SeratoPreviewLoader::Completion AudioBatchComponent::createSeratoPreviewCompletion()
 {
-    const SafePointer safeThis(this);
-
-    seratoPreviewLoader = std::make_unique<serato::SeratoPreviewLoader>(
-        analysisCache,
-        [safeThis](
-            FileIdentity identity, const std::uint64_t generation, std::shared_ptr<const serato::SeratoData> data
-        ) {
-            juce::MessageManager::callAsync(
-                [safeThis, previewIdentity = std::move(identity), generation, previewData = std::move(data)] {
-                    if (safeThis != nullptr) {
-                        safeThis->adoptSeratoPreview(previewIdentity, generation, previewData);
-                    }
+    return [safeThis = SafePointer(this)](
+               FileIdentity identity, const std::uint64_t generation, std::shared_ptr<const serato::SeratoData> data
+           ) {
+        juce::MessageManager::callAsync(
+            [safeThis, previewIdentity = std::move(identity), generation, previewData = std::move(data)] {
+                if (safeThis != nullptr) {
+                    safeThis->adoptSeratoPreview(previewIdentity, generation, previewData);
                 }
-            );
-        }
-    );
+            }
+        );
+    };
 }
 
 /// Creates the UI, opens the analysis cache, and starts the initial scan.
@@ -306,9 +302,6 @@ AudioBatchComponent::AudioBatchComponent() :
         utils::logError("AudioBatchComponent startup: analysis cache open failed");
     }
 
-    createSeratoPreviewLoader();
-    logStartupCheckpoint("preview metadata worker created");
-
     setOpaque(true);
     setSize(layout::initialComponentWidth, layout::initialComponentHeight);
     setWantsKeyboardFocus(true);
@@ -326,9 +319,7 @@ AudioBatchComponent::~AudioBatchComponent()
     previewPlayer.release();
     fileActivity.clearAllActive();
     utils::logDebug("Application shutdown: stopping preview metadata worker");
-    if (seratoPreviewLoader) {
-        seratoPreviewLoader->cancelAndWait();
-    }
+    preview.stop();
     utils::logDebug("Application shutdown: stopping analysis, normalization, and plugin processing workers");
     backgroundWork.cancelAndWait();
 
@@ -661,8 +652,8 @@ int AudioBatchComponent::getSelectionDisplayRow(
         return -1;
     }
 
-    if (currentAudioFile.existsAsFile()) {
-        if (const auto currentRow = analysisResults.findRow(currentAudioFile.getFullPathName());
+    if (const auto previewFile = preview.getFile(); previewFile.existsAsFile()) {
+        if (const auto currentRow = analysisResults.findRow(previewFile.getFullPathName());
             currentRow.has_value() && selectedRows.contains(*currentRow))
         {
             return *currentRow;
@@ -689,11 +680,10 @@ void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
 
     const auto& record = analysisResults[row];
 
-    if (record.file.existsAsFile() && currentAudioFile != record.file) {
+    if (record.file.existsAsFile() && preview.getFile() != record.file) {
         const bool continuePlaying
             = shouldContinuePreviewPlayback(previewPreferences, previewPlayer.isPlaying(), !automaticSelectionChange);
-        currentAudioFile = record.file;
-        showAudioResource(juce::URL(record.file));
+        showAudioFile(record.file);
         if (continuePlaying && previewPlayer.hasLoadedSource()) {
             previewPlayer.start();
         }

@@ -40,6 +40,9 @@ std::unique_ptr<juce::UnitTest> createPreviewPlaybackTests();
 /// Creates the suite that checks normalization output paths, collisions, and the written audio.
 std::unique_ptr<juce::UnitTest> createNormalizationTests();
 
+/// Creates the suite that checks the transitions between an empty, released, and loaded preview.
+std::unique_ptr<juce::UnitTest> createPreviewControllerTests();
+
 /// Creates the suite that checks merging, removing, and sorting the rows of the results table.
 std::unique_ptr<juce::UnitTest> createResultsModelTests();
 

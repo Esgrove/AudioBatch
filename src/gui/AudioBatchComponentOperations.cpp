@@ -58,8 +58,8 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
     if (resultsChanged) {
         refreshTablePreservingSelection(selectedPaths);
 
-        if (currentAudioFile.existsAsFile()) {
-            if (const auto currentRow = analysisResults.findRow(currentAudioFile.getFullPathName())) {
+        if (const auto previewFile = preview.getFile(); previewFile.existsAsFile()) {
+            if (const auto currentRow = analysisResults.findRow(previewFile.getFullPathName())) {
                 updateAudioInfo(analysisResults[*currentRow]);
             }
         }
@@ -95,7 +95,7 @@ void AudioBatchComponent::analysisResultsReceived(std::vector<AudioAnalysisRecor
             static_cast<void>(analysisCache.storeCustomGain(row.file, row.customGain));
         }
 
-        currentFileChanged = currentFileChanged || currentAudioFile == row.file;
+        currentFileChanged = currentFileChanged || preview.getFile() == row.file;
         tableChanged = true;
     }
 
@@ -104,7 +104,7 @@ void AudioBatchComponent::analysisResultsReceived(std::vector<AudioAnalysisRecor
     }
 
     if (currentFileChanged) {
-        if (const auto currentRow = analysisResults.findRow(currentAudioFile.getFullPathName())) {
+        if (const auto currentRow = analysisResults.findRow(preview.getFile().getFullPathName())) {
             updateAudioInfo(analysisResults[*currentRow]);
             updateGainControlsForSelection();
             updateThumbnailDisplayGain();
@@ -145,13 +145,12 @@ void AudioBatchComponent::replaceRecordAfterOperation(
 
     refreshTablePreservingSelection(selectedPaths);
 
-    if (currentAudioFile == originalFile) {
-        currentAudioFile = newRecord.file;
-        showAudioResource(juce::URL(currentAudioFile));
+    if (preview.getFile() == originalFile) {
+        showAudioFile(newRecord.file);
         updateAudioInfo(mergedRecord);
         updateGainControlsForSelection();
         updateThumbnailDisplayGain();
-    } else if (currentAudioFile == newRecord.file) {
+    } else if (preview.getFile() == newRecord.file) {
         updateAudioInfo(mergedRecord);
     }
 }
@@ -205,7 +204,7 @@ void AudioBatchComponent::normalizeCompleted(const NormalizingWork& pass, const 
 
     utils::showFailureSummary(failures, "Normalize", "normalized", this);
 
-    if (!currentAudioFile.existsAsFile() && resultsTable.getSelectedRow() >= 0) {
+    if (!preview.getFile().existsAsFile() && resultsTable.getSelectedRow() >= 0) {
         handleSelectionChanged(resultsTable.getSelectedRow());
     }
 
@@ -242,7 +241,7 @@ void AudioBatchComponent::analysisCompleted(const AnalyzingWork& run, const int 
     if (resultsTable.getSelectedRow() < 0 && !analysisResults.empty()) {
         const juce::ScopedValueSetter<bool> automaticSelection(automaticSelectionChange, true);
         resultsTable.selectRow(0);
-    } else if (!currentAudioFile.existsAsFile() && resultsTable.getSelectedRow() >= 0) {
+    } else if (!preview.getFile().existsAsFile() && resultsTable.getSelectedRow() >= 0) {
         const juce::ScopedValueSetter<bool> automaticSelection(automaticSelectionChange, true);
         handleSelectionChanged(resultsTable.getSelectedRow());
     }
@@ -287,7 +286,7 @@ void AudioBatchComponent::normalizeSelectedRecords()
     for (const auto& record : recordsToNormalize) {
         filesToNormalize.add(record.file);
 
-        if (record.file == currentAudioFile) {
+        if (record.file == preview.getFile()) {
             clearCurrentAudioPreview();
         }
     }
@@ -404,12 +403,13 @@ juce::Array<juce::File> AudioBatchComponent::releasePreviewBeforeProcessing(
         filesToProcess.add(record.file);
     }
 
-    if (!filesToProcess.contains(currentAudioFile)) {
+    if (!filesToProcess.contains(preview.getFile())) {
         return filesToProcess;
     }
 
     // Release file handles so the on-disk file can be replaced.
-    // Keep currentAudioFile so the result handler can re-load the produced output when processing completes.
+    // The released preview keeps its file,
+    // so the result handler can load the produced output when processing completes.
     releasePreviewPlayback();
 
     return filesToProcess;
@@ -545,7 +545,7 @@ void AudioBatchComponent::processingCompleted(const ProcessingWork& pass, const 
 
     utils::showFailureSummary(failures, "Plugin Processing", "processed", this);
 
-    if (!currentAudioFile.existsAsFile() && resultsTable.getSelectedRow() >= 0) {
+    if (!preview.getFile().existsAsFile() && resultsTable.getSelectedRow() >= 0) {
         handleSelectionChanged(resultsTable.getSelectedRow());
     }
 

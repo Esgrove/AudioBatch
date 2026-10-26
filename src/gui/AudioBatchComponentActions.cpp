@@ -338,7 +338,7 @@ void AudioBatchComponent::runMoveToTrash(
 
     for (int index = 0; index < filesToTrash.size(); ++index) {
         const auto& file = filesToTrash.getReference(index);
-        const auto isPreviewFile = file == currentAudioFile;
+        const auto isPreviewFile = file == preview.getFile();
 
         if (isPreviewFile) {
             releasePreviewPlayback();
@@ -347,7 +347,7 @@ void AudioBatchComponent::runMoveToTrash(
         if (utils::moveToTrash(file) == utils::TrashResult::failed) {
             failedPaths.add(file.getFullPathName());
             if (isPreviewFile) {
-                showAudioResource(juce::URL(file));
+                showAudioFile(file);
             }
             continue;
         }
@@ -399,8 +399,8 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
         }
     }
 
-    const auto currentFileRemoved
-        = currentAudioFile.exists() && removedPaths.contains(currentAudioFile.getFullPathName());
+    const auto previewFile = preview.getFile();
+    const auto currentFileRemoved = previewFile.exists() && removedPaths.contains(previewFile.getFullPathName());
 
     int removedPendingCount = 0;
 
