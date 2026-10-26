@@ -383,6 +383,9 @@ private:
                  "substr(short_term_loudness,37) AS BLOB)",
                  "length_in_samples = length_in_samples + 1",
                  "duration_seconds = duration_seconds + 1",
+                 // Status values outside AudioAnalysisStatus.
+                 "status = 4",
+                 "status = -1",
              })
         {
             expect(cache.storeAnalysis(record));

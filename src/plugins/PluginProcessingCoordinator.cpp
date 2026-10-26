@@ -12,6 +12,7 @@
 #include "plugins/PluginProcessing.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
 
 #include <algorithm>
 #include <set>
@@ -317,15 +318,26 @@ void PluginProcessingCoordinator::runFileJob(
         publishProgress(record.file, progress, runId);
     });
 
-    // Cancellation lets the worker stop waiting for the message thread,
-    // which cancelAndWait blocks while it waits for the workers to finish.
-    const auto result = processFileWithPlugins(
-        record,
-        options,
-        runChains.getChainView(chainIndex),
-        [this, runId] { return runId != currentRunId.load(); },
-        onProgress
-    );
+    PluginProcessingResult result;
+
+    try {
+        // Cancellation lets the worker stop waiting for the message thread,
+        // which cancelAndWait blocks while it waits for the workers to finish.
+        result = processFileWithPlugins(
+            record,
+            options,
+            runChains.getChainView(chainIndex),
+            [this, runId] { return runId != currentRunId.load(); },
+            onProgress
+        );
+    } catch (...) {
+        // Plugins are third-party code, so an exception from one fails only this file
+        // and its chain still goes back to the pool.
+        const auto message = utils::format("Plugin processing failed: {}", utils::describeCurrentException());
+        utils::logError("Plugin processing failed for {}: {}", record.fullPath.quoted(), message);
+        result = PluginProcessingResult::failure(record.file, message);
+    }
+
     runChains.release(chainIndex);
 
     publishResult(result, runId);

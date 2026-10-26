@@ -5,8 +5,11 @@
 /// and callOnMessageThread,
 /// the blocking call from a worker to the JUCE message thread that can be abandoned on cancellation.
 /// VST3 restricts plugin setup and release to the message thread, which plugin processing relies on.
+/// describeCurrentException lets worker jobs turn an exception into a failed result.
 
 #pragma once
+
+#include <JuceHeader.h>
 
 #include <cstdint>
 #include <functional>
@@ -45,6 +48,8 @@ inline void reportProgress(const ProgressCallback& onProgress, const float progr
 }
 
 bool callOnMessageThread(std::function<void()> function, const CancellationCheck& isCancelled);
+
+juce::String describeCurrentException();
 
 ProgressCallback makeProgressRange(const ProgressCallback& onProgress, float start, float end);
 ProgressCallback makeThrottledProgress(ProgressCallback onProgress);

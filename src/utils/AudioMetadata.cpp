@@ -98,10 +98,12 @@ std::vector<juce::MemoryBlock> readId3Frames(TagLib::File& file, bool& hasUnsupp
     if (tag == nullptr) {
         return {};
     }
-    tag->render(TagLib::ID3v2::v4);
     std::vector<juce::MemoryBlock> frames;
     frames.reserve(tag->frameList().size());
     for (const auto* frame : tag->frameList()) {
+        // A frame read from an ID3v2.3 tag renders in the v2.3 layout until its header says otherwise,
+        // and restoreId3Frame parses the bytes as ID3v2.4.
+        frame->header()->setVersion(4);
         const auto bytes = frame->render();
         frames.emplace_back(bytes.data(), bytes.size());
         if (dynamic_cast<const TagLib::ID3v2::UnknownFrame*>(frame) != nullptr) {
@@ -131,10 +133,16 @@ bool equivalentId3Frames(const TagLib::ID3v2::Frame& first, const TagLib::ID3v2:
         return firstPicture->picture() == secondPicture->picture() && firstPicture->type() == secondPicture->type()
             && firstPicture->description() == secondPicture->description();
     }
+    // TagLib's addFrame dereferences the frame, so a payload that cannot be parsed back is never passed to it.
+    auto firstRestored = restoreId3Frame(juce::MemoryBlock(firstBytes.data(), firstBytes.size()));
+    auto secondRestored = restoreId3Frame(juce::MemoryBlock(secondBytes.data(), secondBytes.size()));
+    if (firstRestored == nullptr || secondRestored == nullptr) {
+        return false;
+    }
     TagLib::ID3v2::Tag firstTag;
     TagLib::ID3v2::Tag secondTag;
-    firstTag.addFrame(restoreId3Frame(juce::MemoryBlock(firstBytes.data(), firstBytes.size())).release());
-    secondTag.addFrame(restoreId3Frame(juce::MemoryBlock(secondBytes.data(), secondBytes.size())).release());
+    firstTag.addFrame(firstRestored.release());
+    secondTag.addFrame(secondRestored.release());
     const auto properties = firstTag.properties();
     return !properties.isEmpty() && properties == secondTag.properties();
 }
