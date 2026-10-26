@@ -41,7 +41,8 @@
       "generator": "Ninja",
       "cacheVariables": {
         "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++"
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_OSX_SYSROOT": "macosx"
       },
       "condition": {
         "type": "equals",
