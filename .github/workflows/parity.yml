@@ -1,0 +1,86 @@
+name: Parity
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/parity.yml"
+      - "cpp/**"
+      - "fixtures/**"
+      - "rust/**"
+      - "!**/*.md"
+  pull_request:
+    paths:
+      - ".github/workflows/parity.yml"
+      - "cpp/**"
+      - "fixtures/**"
+      - "rust/**"
+      - "!**/*.md"
+
+# Cancel previous runs for PRs but not pushes to main
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Overrides target-cpu=native from rust/.cargo/config.toml,
+  # which can cause illegal instruction errors on runners with different CPUs.
+  RUSTFLAGS: ""
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  parity:
+    # Runs the C++ and the Rust CLI on the committed fixtures and compares the levels they report.
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Ninja and ccache
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: brew install ninja ccache
+
+      # Restores the macOS Release cache of the C++ workflow's build job.
+      # The path list must match the build job's for the cache to restore.
+      # Restore-only, since the build job owns saving it.
+      - name: Restore C++ build directory
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            cpp/cmake-build-mac-debug
+            cpp/cmake-build-mac-release
+            cpp/cmake-build-windows-debug
+            cpp/cmake-build-windows-release
+          key: ${{ runner.os }}-Release-cmake-${{ github.sha }}
+          restore-keys: ${{ runner.os }}-Release-cmake-
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      # Configures with the same arguments as build.sh, so a restored build directory is reused as it is.
+      - name: Build C++ CLI
+        working-directory: cpp
+        run: |
+          export CCACHE_DIR="$PWD/cmake-build-mac-release/ccache"
+          cmake -S . -B cmake-build-mac-release -G Ninja \
+            -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=Release
+          cmake --build cmake-build-mac-release --target AudioBatchCli
+
+      - name: Compare CLIs
+        working-directory: rust
+        run: |
+          export AUDIOBATCH_CPP_CLI="$PWD/../cpp/cmake-build-mac-release/AudioBatchCli_artefacts/Release/audiobatch"
+          ./scripts/parity.sh --release ../fixtures
