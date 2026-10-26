@@ -22,6 +22,7 @@ extern "C" {
 #include <algorithm>
 #include <compare>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <set>
 #include <utility>
@@ -45,6 +46,13 @@ struct PeakSummary {
     Value overall;
 };
 
+/// Why decoding or measuring a file failed.
+struct MeasurementFailure {
+    AnalysisError error {AnalysisError::measurementFailed};
+    /// The reason shown to the user.
+    juce::String message;
+};
+
 /// Measurements gathered while decoding a file for analysis.
 struct DecodeMeasurements {
     /// Smallest sample seen on each channel.
@@ -54,8 +62,8 @@ struct DecodeMeasurements {
     /// Highest short-term loudness seen across the file.
     double maxShortTermLoudness {AudioAnalysisRecord::negativeInfinityLoudness};
     std::shared_ptr<ShortTermLoudnessHistory> shortTermLoudness;
-    /// Empty when decoding and measuring succeeded.
-    juce::String errorMessage;
+    /// Set when decoding or measuring failed, with the reason.
+    std::optional<MeasurementFailure> failure;
 };
 
 /// Deleter that lets a std::unique_ptr own an ebur128 analyzer state.
@@ -72,16 +80,17 @@ struct EbuR128StateDeleter {
     }
 };
 
-/// Marks the record as failed with the given message and logs the error.
+/// Marks the record as failed with the given error and message, and logs the failure.
 /// Cancellation is logged at debug level only,
 /// because a rescan cancels every file still in flight and none of them failed.
 /// Takes the record by value so callers can hand over a partially filled record with std::move.
-AudioAnalysisRecord failAnalysis(AudioAnalysisRecord record, const juce::String& message)
+AudioAnalysisRecord failAnalysis(AudioAnalysisRecord record, const AnalysisError error, const juce::String& message)
 {
     record.status = AudioAnalysisStatus::failed;
+    record.error = error;
     record.errorMessage = message;
 
-    if (message == cancelledMessage) {
+    if (error == AnalysisError::cancelled) {
         utils::logDebug("Analysis cancelled for {}", record.fullPath.quoted());
     } else {
         utils::logError("Analysis failed for {}: {}", record.fullPath.quoted(), message);
@@ -267,7 +276,7 @@ DecodeMeasurements measureDecodedAudio(
     for (std::int64_t samplePosition = 0; samplePosition < reader.lengthInSamples; samplePosition += analysisBlockSize)
     {
         if (utils::isCancellationRequested(isCancelled)) {
-            measurements.errorMessage = cancelledMessage;
+            measurements.failure = MeasurementFailure {.error = AnalysisError::cancelled, .message = cancelledMessage};
             return measurements;
         }
 
@@ -280,7 +289,9 @@ DecodeMeasurements measureDecodedAudio(
             = utils::readFloatSamples(reader, utils::writePointers(readBuffer), samplePosition, framesThisBlock);
 
         if (!failureTracker.recordBlock(readSucceeded, samplePosition, framesThisBlock)) {
-            measurements.errorMessage = failureTracker.getErrorMessage();
+            measurements.failure = MeasurementFailure {
+                .error = AnalysisError::decodeFailed, .message = failureTracker.getErrorMessage()
+            };
             return measurements;
         }
 
@@ -299,14 +310,18 @@ DecodeMeasurements measureDecodedAudio(
         if (ebur128_add_frames_float(loudnessState, interleaved.data(), static_cast<size_t>(framesThisBlock))
             != EBUR128_SUCCESS)
         {
-            measurements.errorMessage = "Loudness analysis failed while processing audio";
+            measurements.failure = MeasurementFailure {
+                .error = AnalysisError::measurementFailed, .message = "Loudness analysis failed while processing audio"
+            };
             return measurements;
         }
 
         double shortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
 
         if (ebur128_loudness_shortterm(loudnessState, &shortTermLoudness) != EBUR128_SUCCESS) {
-            measurements.errorMessage = "Short-term loudness analysis failed";
+            measurements.failure = MeasurementFailure {
+                .error = AnalysisError::measurementFailed, .message = "Short-term loudness analysis failed"
+            };
             return measurements;
         }
         const auto normalized = normalizeLoudness(shortTermLoudness);
@@ -412,33 +427,35 @@ AudioAnalysisRecord analyzeFile(
     auto record = AudioAnalysisRecord::fromFile(file);
 
     if (!file.existsAsFile()) {
-        return failAnalysis(std::move(record), "File does not exist");
+        return failAnalysis(std::move(record), AnalysisError::missingFile, "File does not exist");
     }
 
     const auto reader = utils::createAudioReader(file);
 
     if (reader == nullptr) {
-        return failAnalysis(std::move(record), "Unsupported or unreadable audio file");
+        return failAnalysis(std::move(record), AnalysisError::unsupported, "Unsupported or unreadable audio file");
     }
 
     const auto channelCount = static_cast<int>(reader->numChannels);
     const auto sampleRate = juce::roundToInt(reader->sampleRate);
 
     if (channelCount <= 0 || sampleRate <= 0) {
-        return failAnalysis(std::move(record), "Unsupported audio stream parameters");
+        return failAnalysis(std::move(record), AnalysisError::unsupported, "Unsupported audio stream parameters");
     }
 
     auto const loudnessState = createLoudnessState(channelCount, sampleRate);
 
     if (loudnessState == nullptr) {
-        return failAnalysis(std::move(record), "Could not initialize loudness analyzer");
+        return failAnalysis(
+            std::move(record), AnalysisError::measurementFailed, "Could not initialize loudness analyzer"
+        );
     }
 
-    const auto [minSamples, maxSamples, maxShortTermLoudness, shortTermLoudness, errorMessage]
+    const auto [minSamples, maxSamples, maxShortTermLoudness, shortTermLoudness, failure]
         = measureDecodedAudio(*reader, loudnessState.get(), record.fullPath, isCancelled, onProgress);
 
-    if (errorMessage.isNotEmpty()) {
-        return failAnalysis(std::move(record), errorMessage);
+    if (failure) {
+        return failAnalysis(std::move(record), failure->error, failure->message);
     }
 
     std::vector signedPeaks(static_cast<size_t>(channelCount), 0.0f);
@@ -458,14 +475,14 @@ AudioAnalysisRecord analyzeFile(
             )
             != EBUR128_SUCCESS)
         {
-            return failAnalysis(std::move(record), "True peak analysis failed");
+            return failAnalysis(std::move(record), AnalysisError::measurementFailed, "True peak analysis failed");
         }
     }
 
     double integratedLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
 
     if (ebur128_loudness_global(loudnessState.get(), &integratedLoudness) != EBUR128_SUCCESS) {
-        return failAnalysis(std::move(record), "Integrated loudness analysis failed");
+        return failAnalysis(std::move(record), AnalysisError::measurementFailed, "Integrated loudness analysis failed");
     }
 
     const auto [truePeakLeft, truePeakRight, truePeakOverall] = summarizePeaks(truePeaks);

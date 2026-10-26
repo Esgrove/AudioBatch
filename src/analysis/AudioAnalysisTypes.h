@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -33,6 +34,22 @@ enum class AudioAnalysisSortMode : std::uint8_t {
     loudness,
 };
 
+/// Why an analysis failed, which decides whether the cache keeps the failed record.
+enum class AnalysisError : std::uint8_t {
+    /// The file does not exist.
+    missingFile,
+    /// No decoder reads the file, or its stream parameters are unusable.
+    /// Reading the same bytes again fails the same way.
+    unsupported,
+    /// Too many audio blocks failed to decode, which a transient read error, such as on a network drive, can cause.
+    decodeFailed,
+    /// The loudness measurement failed.
+    measurementFailed,
+    /// The analysis was cancelled before it finished.
+    cancelled,
+    /// An unexpected exception stopped the analysis.
+    exception,
+};
 /// Input parameters shared by the GUI and CLI analysis flows.
 struct AudioAnalysisOptions {
     juce::Array<juce::File> inputPaths;
@@ -92,9 +109,11 @@ struct AudioAnalysisRecord {
     int sampleRate {0};
     int channels {0};
     int bitsPerSample {0};
-    float customGainDb {0.0f};
-    bool hasCustomGain {false};
+    /// Per-file gain in dB that the user set for this version of the file, which processing applies first.
+    std::optional<float> customGain;
     AudioAnalysisStatus status {AudioAnalysisStatus::pending};
+    /// Why the analysis failed, set on the records of failed analyses.
+    std::optional<AnalysisError> error;
     bool fromCache {false};
 
     /// Returns true when the record represents a failed analysis attempt.
@@ -129,6 +148,18 @@ struct AudioAnalysisRecord {
         return record;
     }
 };
+
+/// Returns true for an error that reading the same bytes again would repeat, so a cached failure stays valid.
+[[nodiscard]] constexpr bool isRepeatable(const AnalysisError error) noexcept
+{
+    return error == AnalysisError::unsupported;
+}
+
+/// Returns true when neither gain is set, or both are set to approximately the same value.
+[[nodiscard]] inline bool sameCustomGain(const std::optional<float> first, const std::optional<float> second)
+{
+    return first.has_value() == second.has_value() && (!first || juce::approximatelyEqual(*first, *second));
+}
 
 /// A normalization or plugin processing run that failed before writing its output, which leaves the source as it was.
 struct OperationFailed {

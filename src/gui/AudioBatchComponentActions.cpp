@@ -209,7 +209,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
         && pluginChain->getNumEnabledValidSlots() > 0;
     addItem(FileMenuItemId::process, "Process With Plugin Chain (output AIFF)", canProcess);
     const bool anyHasGain = std::ranges::any_of(selectedRecords, [](const AudioAnalysisRecord& selectedRecord) {
-        return selectedRecord.hasCustomGain;
+        return selectedRecord.customGain.has_value();
     });
     addItem(FileMenuItemId::clearCustomGain, "Clear Per-file Gain", anyHasGain);
     menu.addSeparator();
@@ -255,7 +255,7 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
                     break;
                 case FileMenuItemId::clearCustomGain:
                     safeThis->gainSlider.setValue(0.0, juce::dontSendNotification);
-                    safeThis->applyCustomGainToSelection(0.0f, false);
+                    safeThis->applyCustomGainToSelection(std::nullopt);
                     break;
             }
         }

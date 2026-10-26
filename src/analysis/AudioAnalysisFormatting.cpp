@@ -130,11 +130,11 @@ juce::String formatBitrateDisplay(const AudioAnalysisRecord& record)
 /// or an empty string for a file without one.
 juce::String formatCustomGainCompact(const AudioAnalysisRecord& record)
 {
-    if (!record.hasCustomGain) {
+    if (!record.customGain) {
         return {};
     }
 
-    return utils::format("{}{:.1f}", record.customGainDb >= 0.0f ? "+" : "", record.customGainDb);
+    return utils::format("{}{:.1f}", *record.customGain >= 0.0f ? "+" : "", *record.customGain);
 }
 
 /// Formats a duration rounded to whole seconds as "m:ss", or "h:mm:ss" from one hour on, such as "3:15".

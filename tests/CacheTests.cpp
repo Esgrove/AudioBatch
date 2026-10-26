@@ -99,11 +99,11 @@ public:
 
             const auto migratedFile = directory.copyFixture("sine_stereo_44100_16.wav", "migrated.wav");
             expect(migratedCache.storeAnalysis(analyzeFile(migratedFile)));
-            expect(migratedCache.storeCustomGain(migratedFile, 1.5f, true));
+            expect(migratedCache.storeCustomGain(migratedFile, 1.5f));
 
             const auto cached = migratedCache.getAnalysis(migratedFile);
-            expect(cached.has_value() && cached->hasCustomGain);
-            expectEquals(cached.value_or(AudioAnalysisRecord {}).customGainDb, 1.5f);
+            expect(cached.has_value() && cached->customGain.has_value());
+            expectEquals(cached.value_or(AudioAnalysisRecord {}).customGain.value_or(0.0f), 1.5f);
 
             const FileIdentity identity(migratedFile);
             expect(migratedCache.storeSeratoTag(identity, {}));
@@ -172,20 +172,20 @@ public:
         {
             const auto gainFile = directory.copyFixture("sine_stereo_44100_16.wav", "gain.wav");
             expect(cache.storeAnalysis(analyzeFile(gainFile)));
-            expect(cache.storeCustomGain(gainFile, -3.5f, true));
+            expect(cache.storeCustomGain(gainFile, -3.5f));
 
             // Analyzing the unchanged file again must not drop the gain.
             expect(cache.storeAnalysis(analyzeFile(gainFile)));
 
             const auto cached = cache.getAnalysis(gainFile);
-            expect(cached.has_value() && cached->hasCustomGain);
-            expectEquals(cached.value_or(AudioAnalysisRecord {}).customGainDb, -3.5f);
+            expect(cached.has_value() && cached->customGain.has_value());
+            expectEquals(cached.value_or(AudioAnalysisRecord {}).customGain.value_or(0.0f), -3.5f);
         }
 
         beginTest("A custom gain for a file without a cached row reports that nothing was stored");
         {
             const auto waitingFile = directory.copyFixture("sine_stereo_44100_16.wav", "waiting.wav");
-            expect(!cache.storeCustomGain(waitingFile, 1.0f, true));
+            expect(!cache.storeCustomGain(waitingFile, 1.0f));
         }
 
         beginTest("Custom gains of several files are stored together, skipping files without a cached row");
@@ -199,18 +199,18 @@ public:
             expectEquals(cache.storeCustomGains({}), 0);
             expectEquals(
                 cache.storeCustomGains({
-                    {.file = first, .customGainDb = 1.5f, .hasCustomGain = true},
-                    {.file = uncached, .customGainDb = 2.0f, .hasCustomGain = true},
-                    {.file = second, .customGainDb = 0.0f, .hasCustomGain = false},
+                    {.file = first, .customGain = 1.5f},
+                    {.file = uncached, .customGain = 2.0f},
+                    {.file = second, .customGain = std::nullopt},
                 }),
                 2
             );
 
             const auto firstCached = cache.getAnalysis(first);
-            expect(firstCached.has_value() && firstCached->hasCustomGain);
-            expectEquals(firstCached.value_or(AudioAnalysisRecord {}).customGainDb, 1.5f);
+            expect(firstCached.has_value() && firstCached->customGain.has_value());
+            expectEquals(firstCached.value_or(AudioAnalysisRecord {}).customGain.value_or(0.0f), 1.5f);
             const auto secondCached = cache.getAnalysis(second);
-            expect(secondCached.has_value() && !secondCached->hasCustomGain);
+            expect(secondCached.has_value() && !secondCached->customGain);
         }
 
         beginTest("A custom gain is cleared when the file changes");
@@ -220,7 +220,7 @@ public:
             expect(cache.storeAnalysis(analyzeFile(gainFile)));
 
             const auto cached = cache.getAnalysis(gainFile);
-            expect(cached.has_value() && !cached->hasCustomGain);
+            expect(cached.has_value() && !cached->customGain);
         }
 
         beginTest("Pruning removes rows of deleted files only");
@@ -242,7 +242,7 @@ public:
             const auto unmountedFile = folder.getChildFile("tone.wav");
             expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(unmountedFile));
             expect(cache.storeAnalysis(analyzeFile(unmountedFile)));
-            expect(cache.storeCustomGain(unmountedFile, 1.5f, true));
+            expect(cache.storeCustomGain(unmountedFile, 1.5f));
             expect(folder.deleteRecursively());
 
             expectEquals(cache.pruneMissingFiles(), 0);
@@ -252,7 +252,7 @@ public:
         {
             const auto plannedFile = directory.copyFixture("sine_stereo_44100_16.wav", "planned.wav");
             expect(cache.storeAnalysis(analyzeFile(plannedFile)));
-            expect(cache.storeCustomGain(plannedFile, 2.0f, true));
+            expect(cache.storeCustomGain(plannedFile, 2.0f));
             expect(fixtureFile("sine_stereo_48000_24.wav").copyFileTo(plannedFile));
 
             AnalysisCoordinator coordinator(cache, 2);
@@ -268,7 +268,7 @@ public:
             expectEquals(planFileCount, 1);
             expect(planCameFirst);
             expectEquals(static_cast<int>(results.size()), 1);
-            expect(!results.front().hasCustomGain);
+            expect(!results.front().customGain);
             expectEquals(results.front().sampleRate, 48'000);
         }
 
@@ -276,7 +276,7 @@ public:
         {
             const auto unchangedFile = directory.copyFixture("sine_stereo_44100_16.wav", "unchanged.wav");
             expect(cache.storeAnalysis(analyzeFile(unchangedFile)));
-            expect(cache.storeCustomGain(unchangedFile, -2.5f, true));
+            expect(cache.storeCustomGain(unchangedFile, -2.5f));
 
             AnalysisCoordinator coordinator(cache, 2);
             AudioAnalysisOptions options;
@@ -285,8 +285,8 @@ public:
             const auto results = coordinator.analyzeBlocking(options);
 
             expectEquals(static_cast<int>(results.size()), 1);
-            expect(!results.empty() && results.front().hasCustomGain);
-            expectEquals(results.empty() ? 0.0f : results.front().customGainDb, -2.5f);
+            expect(!results.empty() && results.front().customGain.has_value());
+            expectEquals(results.empty() ? 0.0f : results.front().customGain.value_or(0.0f), -2.5f);
         }
 
         beginTest("Waveform data round trips and is dropped when the analysis is stored again");
@@ -364,7 +364,7 @@ private:
         {
             AnalysisCache writer(databaseFile);
             expect(writer.storeAnalysis(record));
-            expect(writer.storeCustomGain(file, -2.5f, true));
+            expect(writer.storeCustomGain(file, -2.5f));
         }
         AnalysisCache cache(databaseFile);
         AudioAnalysisRecord cached;
@@ -405,8 +405,8 @@ private:
         expectEquals(static_cast<int>(regenerated.size()), 1);
         expect(!regenerated.empty() && regenerated.front().shortTermLoudness && !regenerated.front().fromCache);
         expect(loadCached(file));
-        expect(cached.hasCustomGain);
-        expectEquals(cached.customGainDb, -2.5f);
+        expect(cached.customGain.has_value());
+        expectEquals(cached.customGain.value_or(0.0f), -2.5f);
 
         beginTest("Invalid headers, counts, timestamps and readings become cache misses");
         for (const auto* mutation :
@@ -461,6 +461,18 @@ private:
         expect(cache.storeAnalysis(analyzeFile(broken)));
         expect(loadCached(broken));
         expect(cached.hasError() && !cached.shortTermLoudness);
+        expect(cached.error == AnalysisError::unsupported);
+
+        beginTest("A failure that may not repeat on the same bytes leaves the cache as it was");
+        const auto cancelledFile = directory.copyFixture("sine_stereo_44100_16.wav", "cancelled.wav");
+        const auto cancelled = analyzeFile(cancelledFile, [] { return true; });
+        expect(cancelled.error == AnalysisError::cancelled);
+        expect(cache.storeAnalysis(cancelled));
+        expect(!loadCached(cancelledFile));
+        expect(cache.storeAnalysis(analyzeFile(cancelledFile)));
+        expect(cache.storeAnalysis(cancelled));
+        expect(loadCached(cancelledFile));
+        expect(!cached.hasError());
     }
 
     /// Exercises tag-only lifecycle, stable outcomes, corruption and independence using fixture copies.

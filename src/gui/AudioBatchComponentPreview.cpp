@@ -362,7 +362,7 @@ void AudioBatchComponent::zoomLevelChanged(const double zoomLevel) const
 }
 
 /// Updates the current selection's custom gain in-memory, in the cache, and the waveform preview.
-void AudioBatchComponent::applyCustomGainToSelection(const float gainDb, const bool hasGain)
+void AudioBatchComponent::applyCustomGainToSelection(const std::optional<float> gain)
 {
     const auto selectedRows = resultsTable.getSelectedRows();
     if (selectedRows.size() == 0) {
@@ -379,16 +379,9 @@ void AudioBatchComponent::applyCustomGainToSelection(const float gainDb, const b
         }
 
         auto& record = analysisResults[static_cast<std::size_t>(rowNumber)];
-        const auto previousHadGain = record.hasCustomGain;
-        const auto previousValue = record.customGainDb;
-
-        record.customGainDb = hasGain ? gainDb : 0.0f;
-        record.hasCustomGain = hasGain;
-
-        if (previousHadGain != record.hasCustomGain || !juce::approximatelyEqual(previousValue, record.customGainDb)) {
-            changedGains.push_back(
-                {.file = record.file, .customGainDb = record.customGainDb, .hasCustomGain = record.hasCustomGain}
-            );
+        if (!sameCustomGain(record.customGain, gain)) {
+            record.customGain = gain;
+            changedGains.push_back({.file = record.file, .customGain = gain});
         }
     }
 
@@ -410,8 +403,8 @@ void AudioBatchComponent::updatePreviewInputGain(const bool immediately)
         juce::isPositiveAndBelow(row, static_cast<int>(analysisResults.size())))
     {
         const auto& record = analysisResults[static_cast<std::size_t>(row)];
-        if (record.hasCustomGain) {
-            gain = juce::Decibels::decibelsToGain(record.customGainDb);
+        if (record.customGain) {
+            gain = juce::Decibels::decibelsToGain(*record.customGain);
         }
     }
     previewPlayer.setInputGain(gain, immediately);
@@ -445,9 +438,7 @@ void AudioBatchComponent::updateGainControlsForSelection()
     }
 
     const auto& record = analysisResults[static_cast<std::size_t>(referenceRow)];
-    gainSlider.setValue(
-        record.hasCustomGain ? static_cast<double>(record.customGainDb) : 0.0, juce::dontSendNotification
-    );
+    gainSlider.setValue(static_cast<double>(record.customGain.value_or(0.0f)), juce::dontSendNotification);
 }
 
 /// Applies the current file's custom gain to the waveform preview as a display-only scale factor.
@@ -469,7 +460,7 @@ void AudioBatchComponent::updateThumbnailDisplayGain() const
     }
 
     const auto& record = analysisResults[static_cast<std::size_t>(currentRow)];
-    const auto gain = record.hasCustomGain ? juce::Decibels::decibelsToGain(record.customGainDb) : 1.0f;
+    const auto gain = record.customGain ? juce::Decibels::decibelsToGain(*record.customGain) : 1.0f;
     thumbnail->setDisplayGain(gain);
 }
 }  // namespace audiobatch

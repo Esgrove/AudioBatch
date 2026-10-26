@@ -29,14 +29,13 @@ namespace
 /// Returns true when the gain was carried over.
 bool keepCustomGainOfUnchangedFile(const AudioAnalysisRecord& existing, AudioAnalysisRecord& incoming)
 {
-    if (!existing.hasCustomGain || existing.fileSize != incoming.fileSize
+    if (!existing.customGain || existing.fileSize != incoming.fileSize
         || existing.modifiedTimeMs != incoming.modifiedTimeMs)
     {
         return false;
     }
 
-    incoming.customGainDb = existing.customGainDb;
-    incoming.hasCustomGain = true;
+    incoming.customGain = existing.customGain;
     return true;
 }
 }  // namespace
@@ -127,17 +126,14 @@ void AudioBatchComponent::handleAnalysisResults(std::vector<AnalysisResultMessag
 
         if (const auto existing = rowsByPath.find(record.fullPath); existing != rowsByPath.end()) {
             auto& row = analysisResults[existing->second];
-            const auto incomingGainDb = record.customGainDb;
-            const auto incomingHasGain = record.hasCustomGain;
+            const auto incomingGain = record.customGain;
 
             // A gain set while the file was still waiting may only live in the table,
             // because the cache had no row for this version of the file to store it in yet.
             // The coordinator stored the row before publishing the result, so the gain can be stored now.
             // The cache logs its own failures, and the table keeps the gain either way.
-            if (keepCustomGainOfUnchangedFile(row, record)
-                && (!incomingHasGain || !juce::approximatelyEqual(incomingGainDb, record.customGainDb)))
-            {
-                static_cast<void>(analysisCache.storeCustomGain(record.file, record.customGainDb, true));
+            if (keepCustomGainOfUnchangedFile(row, record) && !sameCustomGain(incomingGain, record.customGain)) {
+                static_cast<void>(analysisCache.storeCustomGain(record.file, record.customGain));
             }
 
             row = std::move(record);
@@ -705,7 +701,7 @@ void AudioBatchComponent::handleProcessingResult(const PluginProcessingResult& r
         replaceRecordAfterOperation(result.originalFile, output);
         // The custom gain is baked into the processed audio, so the new output starts without one.
         // The cache logs its own failures, and the row in the table is already correct.
-        static_cast<void>(analysisCache.storeCustomGain(output.file, 0.0f, false));
+        static_cast<void>(analysisCache.storeCustomGain(output.file, std::nullopt));
     };
 
     std::visit(

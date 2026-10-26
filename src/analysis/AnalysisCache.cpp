@@ -356,8 +356,13 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
     }
     record.status = *status;
     record.errorMessage = sqlite::columnText(*statement, analysis_column::errorMessage);
-    record.customGainDb = static_cast<float>(sqlite3_column_double(statement, analysis_column::customGainDb));
-    record.hasCustomGain = sqlite3_column_int(statement, analysis_column::hasCustomGain) != 0;
+    // Only failures that repeat for the same bytes are stored.
+    if (record.hasError()) {
+        record.error = AnalysisError::unsupported;
+    }
+    if (sqlite3_column_int(statement, analysis_column::hasCustomGain) != 0) {
+        record.customGain = static_cast<float>(sqlite3_column_double(statement, analysis_column::customGainDb));
+    }
     if (!record.hasError()) {
         if (sqlite3_column_type(statement, analysis_column::shortTermLoudness) == SQLITE_BLOB) {
             record.shortTermLoudness = deserializeLoudnessHistory(
@@ -386,8 +391,14 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
 /// An existing custom gain is kept while the file is unchanged on disk,
 /// and replaced by the record's gain when the file's size or modification time differs,
 /// since a custom gain only applies to the version of the file it was set for.
+/// A failure is only stored when reading the same bytes again would repeat it.
+/// Other failures, such as a cancelled analysis or a transient read error, leave the cache as it was
+/// and return true, so the next run tries the file again.
 bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
 {
+    if (record.hasError() && !(record.error.has_value() && isRepeatable(*record.error))) {
+        return true;
+    }
     const auto loudnessData = serializeLoudnessHistory(record);
     if (!record.hasError() && loudnessData.isEmpty()) {
         utils::logError("Cannot cache analysis without valid loudness history for {}", record.fullPath.quoted());
@@ -467,7 +478,7 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
         && sqlite::bindInt64(statement, analysis_parameter::waveformVersion, 0)
         && sqlite::bindInt64(statement, analysis_parameter::analysisVersion, analysisVersion)
         && sqlite::bindInt64(statement, analysis_parameter::updatedAtMs, juce::Time::getCurrentTime().toMilliseconds())
-        && sqlite::bindInt64(statement, analysis_parameter::hasCustomGain, record.hasCustomGain ? 1 : 0);
+        && sqlite::bindInt64(statement, analysis_parameter::hasCustomGain, record.customGain.has_value() ? 1 : 0);
     const bool numbersBound = sqlite::bindDouble(statement, analysis_parameter::durationSeconds, record.durationSeconds)
         && sqlite::bindDouble(statement, analysis_parameter::peakLeft, static_cast<double>(record.peakLeft))
         && sqlite::bindDouble(statement, analysis_parameter::peakRight, static_cast<double>(record.peakRight))
@@ -477,7 +488,9 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
         && sqlite::bindDouble(statement, analysis_parameter::overallTruePeak, record.overallTruePeak)
         && sqlite::bindDouble(statement, analysis_parameter::maxShortTermLufs, record.maxShortTermLufs)
         && sqlite::bindDouble(statement, analysis_parameter::integratedLufs, record.integratedLufs)
-        && sqlite::bindDouble(statement, analysis_parameter::customGainDb, static_cast<double>(record.customGainDb));
+        && sqlite::bindDouble(statement,
+                              analysis_parameter::customGainDb,
+                              static_cast<double>(record.customGain.value_or(0.0f)));
     const bool blobsBound = sqlite::bindNull(statement, analysis_parameter::waveformData)
         && (record.hasError() ? sqlite::bindNull(statement, analysis_parameter::shortTermLoudness)
                               : sqlite::bindBlob(statement, analysis_parameter::shortTermLoudness, loudnessData));
@@ -520,9 +533,9 @@ std::optional<float> AnalysisCache::getCustomGain(
 /// Updates only the user-controlled gain fields for a file.
 /// Returns true when a cached row was updated.
 /// A file without a cached row, such as one still waiting for its analysis, keeps no gain in the cache.
-bool AnalysisCache::storeCustomGain(const juce::File& file, const float customGainDb, const bool hasCustomGain)
+bool AnalysisCache::storeCustomGain(const juce::File& file, const std::optional<float> customGain)
 {
-    return storeCustomGains({{.file = file, .customGainDb = customGainDb, .hasCustomGain = hasCustomGain}}) > 0;
+    return storeCustomGains({{.file = file, .customGain = customGain}}) > 0;
 }
 
 /// Updates the user-controlled gain fields of several files in one transaction with one prepared statement,
@@ -561,11 +574,12 @@ int AnalysisCache::storeCustomGains(const std::vector<CustomGainUpdate>& updates
     const auto updatedAtMs = juce::Time::getCurrentTime().toMilliseconds();
     int updatedRows = 0;
 
-    for (const auto& [file, customGainDb, hasCustomGain] : updates) {
+    for (const auto& [file, customGain] : updates) {
         sqlite3_reset(statement.get());
-        const bool stored = sqlite::bindDouble(*statement, 1, static_cast<double>(customGainDb))
-            && sqlite::bindInt64(*statement, 2, hasCustomGain ? 1 : 0) && sqlite::bindInt64(*statement, 3, updatedAtMs)
-            && sqlite::bindText(*statement, 4, normalizedPath(file)) && sqlite::stepToCompletion(*statement);
+        const bool stored = sqlite::bindDouble(*statement, 1, static_cast<double>(customGain.value_or(0.0f)))
+            && sqlite::bindInt64(*statement, 2, customGain.has_value() ? 1 : 0)
+            && sqlite::bindInt64(*statement, 3, updatedAtMs) && sqlite::bindText(*statement, 4, normalizedPath(file))
+            && sqlite::stepToCompletion(*statement);
 
         if (!stored) {
             return 0;
