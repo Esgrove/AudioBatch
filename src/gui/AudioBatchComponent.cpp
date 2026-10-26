@@ -299,7 +299,9 @@ void AudioBatchComponent::connectCoordinatorCallbacks()
     };
 
     analysisCoordinator.setPlanCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisPlan));
-    analysisCoordinator.setResultCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisResult));
+    analysisCoordinator.setResultCallback([this](const AudioAnalysisRecord& record, const int runId) {
+        analysisResultBatcher.post({.record = record, .runId = runId});
+    });
     analysisCoordinator.setCompletionCallback(postToMessageThread(&AudioBatchComponent::handleAnalysisComplete));
     analysisCoordinator.setStartingCallback([safeThis](const juce::File& file, const int runId) {
         juce::MessageManager::callAsync([safeThis, file, runId] {

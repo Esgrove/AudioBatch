@@ -22,6 +22,7 @@
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"
 #include "serato/SeratoPreviewLoader.h"
+#include "utils/ThreadUtils.h"
 
 #include <JuceHeader.h>
 
@@ -137,7 +138,7 @@ private:
     void connectProgressCallbacks();
     void handleAnalysisComplete(int totalFiles, int runId);
     void handleAnalysisPlan(const AnalysisPlan& plan);
-    void handleAnalysisResult(const AudioAnalysisRecord& record, int runId);
+    void handleAnalysisResults(std::vector<AnalysisResultMessage> messages);
     void handleDroppedPaths(const juce::StringArray& paths);
     void handleFileContextMenuRequested(int row, int columnId, const juce::MouseEvent& event);
     void handleNormalizeComplete(int totalFiles);
@@ -218,6 +219,12 @@ private:
     /// Removes cached rows of deleted files in the background after startup.
     /// Declared after the cache, so it is stopped and joined before the cache is destroyed.
     std::jthread cachePruneThread;
+
+    /// Hands analysis results from the workers to the message thread, merging each burst with one table refresh.
+    /// Declared before the analysis coordinator, whose workers post to it until the coordinator is destroyed.
+    utils::MessageThreadBatcher<AnalysisResultMessage> analysisResultBatcher {
+        [this](std::vector<AnalysisResultMessage> messages) { handleAnalysisResults(std::move(messages)); }
+    };
 
     AnalysisCoordinator analysisCoordinator;
     AudioFileTableModel fileTableModel;

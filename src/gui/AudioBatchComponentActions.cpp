@@ -87,8 +87,9 @@ void AudioBatchComponent::clearAllRecords()
     }
 
     // Results of a run still in progress would add the rows back.
+    // The run id is reset below, so results that were already queued are dropped too.
     if (analysisRun.running) {
-        analysisCoordinator.cancelAndWait();
+        analysisCoordinator.cancel();
         analysisRun.runId = -1;
         analysisRun.running = false;
     }

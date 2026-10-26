@@ -62,6 +62,7 @@ public:
 
     int start(const AudioAnalysisOptions& options);
 
+    void cancel();
     void cancelAndWait();
     void setCompletionCallback(CompletionCallback callback);
     void setPlanCallback(PlanCallback callback);
