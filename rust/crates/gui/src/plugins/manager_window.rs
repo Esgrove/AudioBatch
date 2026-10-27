@@ -5,8 +5,9 @@
 //! Without custom folders those are the platform's default VST3 folders,
 //! and adding or removing a folder switches to a custom list that starts from the folders shown.
 //! The plugin list shows the known effects by vendor, each with a button that adds it to the chain.
-//! The last group lists the bundles that crashed a scan, which later scans skip until they are removed
-//! from the blacklist, and the bundles the last scan skipped because they took too long or had no effects.
+//! The last group lists the bundles that crashed a scan,
+//! which later scans skip until they are removed from the blacklist,
+//! and the bundles the last scan skipped because they took too long or had no effects.
 //! The main view owns the known plugins: this view sends every change as a `ManagerEvent`,
 //! and the main view applies it and shows the window a new snapshot.
 

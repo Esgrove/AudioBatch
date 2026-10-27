@@ -19,6 +19,7 @@ use std::sync::{Arc, Mutex};
 
 use audiobatch_plugins::{KnownPlugins, PluginDataPaths, ScanReport};
 use gpui_kit::{Div, ParentElement as _, SharedString, Styled as _, Task, div, px};
+use raw_window_handle::RawWindowHandle;
 use vst3_host::{UiDispatcher, UiThread};
 
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
@@ -50,6 +51,8 @@ pub struct PluginHost {
     pub known: KnownPlugins,
     /// The chain the user edits.
     pub chain: LiveChain,
+    /// The main window, which owns the plugin editor windows on Windows.
+    pub editor_owner: Option<RawWindowHandle>,
     /// The scan in progress.
     pub scan: Option<RunningScan>,
     /// What the last scan of this session found.
@@ -68,9 +71,14 @@ pub struct RunningScan {
 
 impl PluginHost {
     /// Loads the known plugins and the saved chain, preparing the chain's instances at `sample_rate`.
+    /// Plugin editors open as windows owned by `editor_owner`.
     /// Returns the host and the messages of the files that could not be read.
     #[must_use]
-    pub fn open(dispatcher: UiDispatcher, sample_rate: u32) -> (Self, Vec<String>) {
+    pub fn open(
+        dispatcher: UiDispatcher,
+        sample_rate: u32,
+        editor_owner: Option<RawWindowHandle>,
+    ) -> (Self, Vec<String>) {
         let paths = PluginDataPaths::default();
         let mut problems = Vec::new();
         let known = KnownPlugins::load_from(&paths.known_plugins).unwrap_or_else(|error| {
@@ -90,6 +98,7 @@ impl PluginHost {
             paths,
             known,
             chain,
+            editor_owner,
             scan: None,
             last_report: None,
         };

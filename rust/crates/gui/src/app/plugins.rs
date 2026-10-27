@@ -30,7 +30,7 @@ use crate::plugins::chain_window::{
     CHAIN_HEIGHT, CHAIN_TITLE, CHAIN_WIDTH, ChainEvent, ChainRow, ChainSnapshot, ChainView,
 };
 use crate::plugins::labels::{chain_summary, group_by_vendor, latency_text, plugin_label, slot_label};
-use crate::plugins::live_chain::LiveSlot;
+use crate::plugins::live_chain::{LiveSlot, SlotId};
 use crate::plugins::manager_window::{
     MANAGER_HEIGHT, MANAGER_TITLE, MANAGER_WIDTH, ManagerEvent, ManagerSnapshot, ManagerView,
 };
@@ -179,7 +179,7 @@ impl AppView {
     }
 
     /// Prepares the live instances again after a change of the output rate or a restart request,
-    /// forgets closed windows, and shows the progress of a scan.
+    /// forgets closed windows, saves the settings of closed editors, and shows the progress of a scan.
     fn plugin_tick(&mut self, cx: &mut Context<Self>) {
         if self.chain_window.as_ref().is_some_and(PluginWindow::is_closed) {
             self.chain_window = None;
@@ -196,7 +196,9 @@ impl AppView {
             self.plugins.chain.set_sample_rate(&ui, sample_rate);
         }
         let restarted = self.plugins.chain.handle_restart_requests(&ui);
-        if rate_changed || restarted {
+        if self.plugins.chain.reap_closed_editors(&ui) {
+            self.chain_changed(cx);
+        } else if rate_changed || restarted {
             self.sync_chain_window(cx);
         }
         if self.plugins.is_scanning() {
@@ -209,7 +211,18 @@ impl AppView {
         let chain = &mut self.plugins.chain;
         let changed = match event {
             ChainEvent::SetEnabled(id, enabled) => chain.set_enabled(*id, *enabled),
-            ChainEvent::Edit(_) => false,
+            ChainEvent::Edit(id) => {
+                if let Err(error) = self.open_editor(*id) {
+                    let label = self
+                        .plugins
+                        .chain
+                        .slot(*id)
+                        .map(|slot| plugin_label(slot.plugin()))
+                        .unwrap_or_default();
+                    self.report_status(format!("{label}: {error:#}"), cx);
+                }
+                false
+            }
             ChainEvent::Move(id, offset) => chain.move_slot(*id, *offset),
             ChainEvent::Remove(id) => chain.remove(*id),
             ChainEvent::Add(plugin) => {
@@ -248,7 +261,9 @@ impl AppView {
         }
     }
 
-    /// Adds a plugin at the end of the chain, reporting a plugin that could not be loaded.
+    /// Adds a plugin at the end of the chain and opens its editor, reporting a plugin that could not be loaded.
+    /// A plugin without an editor is added without a message about it,
+    /// because the user only asked for the plugin.
     fn add_plugin(&mut self, plugin: PluginDescription, cx: &mut Context<Self>) {
         let Some(ui) = UiThread::current() else {
             return;
@@ -266,6 +281,16 @@ impl AppView {
             )
             .into();
         self.chain_changed(cx);
+        if self.plugins.chain.slot(id).is_some_and(LiveSlot::is_ready) {
+            self.open_editor(id).ok();
+        }
+    }
+
+    /// Shows the editor of a slot, opening its window when it has none.
+    fn open_editor(&mut self, id: SlotId) -> anyhow::Result<()> {
+        let ui = UiThread::current().context("Plugin editors can only be opened on the UI thread")?;
+        let owner = self.plugins.editor_owner;
+        self.plugins.chain.open_editor(&ui, id, owner)
     }
 
     /// Saves the chain after a change and shows it in the menus and the windows.
@@ -296,7 +321,7 @@ impl AppView {
                     ToString::to_string,
                 ),
                 failed: slot.error().is_some(),
-                can_edit: false,
+                can_edit: slot.has_instance(),
             })
             .collect();
         let available = group_by_vendor(&self.plugins.known.plugins)

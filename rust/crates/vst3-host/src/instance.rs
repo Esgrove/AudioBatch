@@ -132,6 +132,15 @@ impl InstanceCore {
         &self.edits
     }
 
+    /// Returns the edit controller, if the plugin has one.
+    #[cfg_attr(
+        not(any(feature = "editor", test)),
+        expect(dead_code, reason = "only editor windows and tests reach the controller")
+    )]
+    pub(crate) fn controller(&self) -> Option<&ComPtr<IEditController>> {
+        self.parts.controller.as_ref()
+    }
+
     /// Records that a processor handle was created.
     pub(crate) fn processor_created(&self) {
         self.live_processors.fetch_add(1, Ordering::AcqRel);
@@ -579,13 +588,13 @@ impl PluginInstance {
         Ok(ProcessorHandle::new(Arc::clone(&self.core), &layout, setup))
     }
 
-    /// Returns the edit controller, if the plugin has one.
+    /// Returns the parts shared with processor handles and editor windows.
     #[cfg_attr(
         not(any(feature = "editor", test)),
-        expect(dead_code, reason = "only editor windows open the controller's view")
+        expect(dead_code, reason = "only editor windows and tests reach the controller")
     )]
-    pub(crate) fn controller(&self) -> Option<&ComPtr<IEditController>> {
-        self.core.parts.controller.as_ref()
+    pub(crate) const fn core(&self) -> &Arc<InstanceCore> {
+        &self.core
     }
 
     /// Returns an error while the plugin is active or processor handles exist.
@@ -1049,7 +1058,7 @@ mod test_processing {
     fn controller_edits_reach_the_next_block() {
         let (instance, mut processor) = instance_and_processor(Kind::Gain, 1);
         let (instance, dirty) = on_ui(move |_| {
-            if let Some(controller) = instance.controller() {
+            if let Some(controller) = instance.core().controller() {
                 // SAFETY: the controller is valid and this runs on the UI thread.
                 unsafe { controller.setParamNormalized(EDIT_TRIGGER_PARAMETER, 0.25) };
             }
@@ -1066,7 +1075,7 @@ mod test_processing {
     fn a_flush_delivers_edits_without_a_processor() {
         let state = on_ui(|ui| {
             let instance = active_instance(ui, Kind::Gain, 2).map_err(|error| error.to_string())?;
-            if let Some(controller) = instance.controller() {
+            if let Some(controller) = instance.core().controller() {
                 // SAFETY: the controller is valid and this runs on the UI thread.
                 unsafe { controller.setParamNormalized(EDIT_TRIGGER_PARAMETER, 0.75) };
             }
