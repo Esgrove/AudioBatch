@@ -96,7 +96,7 @@ pub struct CliArgs {
     pub sort: SortMode,
 
     /// Sort in descending order
-    #[arg(short = 'R', long)]
+    #[arg(short = 'S', long)]
     pub reverse: bool,
 
     /// Print results as table, csv, or json

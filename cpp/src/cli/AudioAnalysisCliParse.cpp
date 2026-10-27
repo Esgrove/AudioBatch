@@ -59,7 +59,7 @@ constexpr std::array analysisOptions {
     "--refresh|-f",
     "--normalize|-n",
     "--force|-F",
-    "--reverse",
+    "--reverse|-S",
     "--jobs|-j",
     "--sort|-s",
     "--output|-o",
@@ -317,7 +317,7 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(juce::ArgumentList&
     AnalyzeCommand command;
     command.recursive = arguments.removeOptionIfFound("--recurse|-r");
     command.refresh = arguments.removeOptionIfFound("--refresh|-f");
-    command.reverse = arguments.removeOptionIfFound("--reverse");
+    command.reverse = arguments.removeOptionIfFound("--reverse|-S");
     const bool normalize = arguments.removeOptionIfFound("--normalize|-n");
     const bool force = arguments.removeOptionIfFound("--force|-F");
 
@@ -409,7 +409,7 @@ juce::String cli::buildUsage(const juce::String& executableName)
         "      --lufs <LUFS>       Normalize to this integrated loudness, -24 to -6, with a -0.3 dBTP ceiling",
         "  -j, --jobs <count>      Override worker count",
         "  -s, --sort <mode>       Sort by peak, lufs, name, or path",
-        "      --reverse           Sort in descending order",
+        "  -S, --reverse           Sort in descending order",
         "  -o, --output <format>   Print results as table (default), csv, or json",
         "  -l, --list-plugins      List the available audio plugins and exit",
         "  -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format",
