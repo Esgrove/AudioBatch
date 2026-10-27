@@ -38,6 +38,7 @@ use crate::menus::{
 use crate::normalization::target_value_text;
 use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, fill_status_column};
 use crate::theme::{TEXT_FONT, color, palette, tooltip};
+use crate::waveform::MINIMUM_ZOOM;
 
 /// Height of the overall progress line along the top edge of the status bar.
 const PROGRESS_LINE_HEIGHT: f32 = 3.0;
@@ -297,6 +298,10 @@ impl Render for AppView {
             fill_status_column(state, table_width, window, cx);
         });
         self.sync_gain_slider(window, cx);
+        if std::mem::take(&mut self.zoom_reset_pending) {
+            self.zoom_slider
+                .update(cx, |slider, cx| slider.set_value(MINIMUM_ZOOM as f32, window, cx));
+        }
 
         div()
             .id("app")

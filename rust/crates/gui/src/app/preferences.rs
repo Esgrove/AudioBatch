@@ -110,7 +110,12 @@ impl AppView {
 
     /// Starts the selected file at its first cue point when the option is on,
     /// as long as the playhead has not moved since the file was loaded.
+    /// A file waiting for its cue points to start playing starts now, at the cue or at the beginning.
     pub(super) fn start_at_first_cue(&mut self, path: &Path, cues: &[CueMarker], cx: &Context<Self>) {
+        let waiting = self.start_after_cues.as_deref() == Some(path);
+        if waiting {
+            self.start_after_cues = None;
+        }
         if !self.settings.play_from_first_cue_point {
             return;
         }
@@ -122,11 +127,14 @@ impl AppView {
             .and_then(ResultRow::ready_record)
             .map(|record| record.duration_seconds)
             .or_else(|| self.player.as_ref().and_then(Player::duration_seconds));
-        let Some(start) = duration.and_then(|duration| first_cue_start(cues, duration)) else {
+        let start = duration.and_then(|duration| first_cue_start(cues, duration));
+        let Some(player) = self.player.as_mut().filter(|player| player.loaded_path() == Some(path)) else {
             return;
         };
-        if let Some(player) = &mut self.player
-            && player.loaded_path() == Some(path)
+        if waiting {
+            player.seek(start.unwrap_or(0.0));
+            player.play();
+        } else if let Some(start) = start
             && player.position_seconds() < CUE_START_WINDOW_SECONDS
         {
             player.seek(start);

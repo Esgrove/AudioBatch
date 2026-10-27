@@ -229,6 +229,8 @@ impl AppView {
 
     /// Plays the selected file, or stops playback while playing.
     pub(super) fn toggle_playback(&mut self, cx: &mut Context<Self>) {
+        // An explicit play or stop wins over a start that waits for the cue points.
+        self.start_after_cues = None;
         let selected = self.selected.clone();
         if let Some(player) = &mut self.player {
             if player.is_playing() {

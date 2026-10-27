@@ -191,8 +191,9 @@ and the output device with its sample rate and buffer size in samples.
   marked "[2^]" or "[2v]", and the same click on the main sort column clears it.
 - Press on the waveform to pause there, drag to scrub, and release to play from that point,
   like in the C++ version. Double-click plays from the start.
-  The wheel zooms around the playhead, and Command or Control with the wheel changes the input gain.
-  Double-click the Zoom or Input gain slider to reset it to 100% or 0 dB.
+  The wheel zooms around the playhead, and Command or Control with the wheel changes the input gain in 0.1 dB steps.
+  Double-click the Zoom or Input gain slider to reset it to 100% or 0 dB, and each new file starts at 100%.
+  With playing from the first cue point on, a played file waits for its cue points and starts at the first one.
 - The Input gain slider sets a per-file gain for the selected file, shown in the Gain column.
   It scales the waveform, and the preview while it plays through the plugin chain, as it does in processing.
   A preview without the plugin chain plays the file unchanged, like in the C++ version.
