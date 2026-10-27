@@ -64,13 +64,11 @@ std::unique_ptr<juce::PluginListComponent> PluginLibrary::createScanComponent()
     // so asynchronous-only plugins (AUv3) are still left out of the scan.
     // They are not usable by this app anyway,
     // since all instantiation goes through the synchronous createPluginInstance.
+    // No crash log file is given, because the worker process already reports plugins that crash.
+    // The crash log would only catch this app quitting mid-scan, and would blacklist the plugin being scanned.
     constexpr bool allowAsynchronousInstantiation = false;
     auto component = std::make_unique<juce::PluginListComponent>(
-        formatManager,
-        knownPluginList,
-        getPluginScanCrashLogFile(),
-        appProperties.getUserSettings(),
-        allowAsynchronousInstantiation
+        formatManager, knownPluginList, juce::File(), appProperties.getUserSettings(), allowAsynchronousInstantiation
     );
 
     // Without a scan thread the component scans on the message thread,
