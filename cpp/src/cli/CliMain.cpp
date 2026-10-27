@@ -86,6 +86,8 @@ int runCliMain(const std::span<char*> argv)
     const auto logger = writesLog ? utils::createDefaultLogger(executableName) : nullptr;
     juce::Logger::setCurrentLogger(logger.get());
     utils::installCrashLogging();
+    // The CLI prints what the user needs to stderr itself, so log messages only go to the log file.
+    utils::setConsoleEcho(false);
 
     if (!command) {
         utils::logError(command.error().message);
@@ -109,6 +111,7 @@ int runCliMain(const std::span<char*> argv)
     } catch (const std::system_error& error) {
         // fmt::print throws when stdout is closed early, for example when piping into head.
         utils::logError("Writing output failed: {}", error.what());
+        console::printError(utils::format("Writing output failed: {}", error.what()));
         return exitCli(1);
     }
 

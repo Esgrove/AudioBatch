@@ -1,6 +1,7 @@
 /// Leveled application logging.
 /// The utils logging functions write timestamped messages through the current juce::Logger,
-/// and echo them to stderr in release builds where the file logger does not print to the console.
+/// and echo them to stderr in release builds where the file logger does not print to the console,
+/// unless setConsoleEcho turned the echo off, as the CLI does to print its own messages once.
 /// They accept either a finished message or an fmt format string with its arguments.
 /// installCrashLogging makes crashes and uncaught exceptions leave an error with a stack trace in the log.
 
@@ -26,6 +27,7 @@ inline double elapsedSecondsSince(const double startedAtMilliseconds)
 
 std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appName, const juce::String& logName = {});
 
+void setConsoleEcho(bool enabled);
 void writeToLog(const juce::String& message, Level logLevel = Level::info);
 
 /// Logs a debug message. Debug messages are only logged in debug builds.

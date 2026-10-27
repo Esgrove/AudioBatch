@@ -20,6 +20,53 @@
 
 namespace audiobatch
 {
+namespace
+{
+/// Logs a message and prints it to stderr, where the CLI reports its progress apart from the results on stdout.
+void reportInfo(const juce::String& message)
+{
+    utils::logInfo(message);
+    fmt::print(stderr, "{}\n", message);
+}
+
+/// Logs an error and prints it in red to stderr.
+void reportError(const juce::String& message)
+{
+    utils::logError(message);
+    console::printStyled(stderr, fmt::fg(fmt::terminal_color::red), "{}\n", message);
+}
+
+/// Logs a warning and prints it with the "Warning: " prefix to stderr.
+void reportWarning(const juce::String& message)
+{
+    utils::logWarn(message);
+    console::printWarn(message);
+}
+
+/// Reports every record whose analysis failed, with its path and reason.
+void reportAnalysisFailures(const std::vector<AudioAnalysisRecord>& results)
+{
+    for (const auto& result : results) {
+        if (result.hasError()) {
+            reportError(
+                utils::format("Analysis failed: {}, {}", result.file.getFullPathName().quoted(), result.errorMessage)
+            );
+        }
+    }
+}
+
+/// Prints the notice of a successful normalization, such as audio blocks that failed to decode, when it has one.
+/// The normalization itself already logged it.
+void printNormalizationNotice(const OperationSucceeded& succeeded)
+{
+    if (succeeded.notice.isNotEmpty()) {
+        console::printWarn(
+            utils::format("Normalized {}, {}", succeeded.output.file.getFullPathName().quoted(), succeeded.notice)
+        );
+    }
+}
+}  // namespace
+
 /// Returns an error for every path named on the command line that produced no result:
 /// a path that does not exist, or a file that the analysis skips because it is hidden or not a supported format.
 /// Inside a folder those files are skipped on purpose, but a file named on the command line was asked for,
@@ -62,8 +109,10 @@ int cli::runAnalysis(const AnalyzeCommand& command)
 
     if (inputPaths.isEmpty()) {
         inputPaths.add(juce::File::getCurrentWorkingDirectory());
-        utils::logInfo(
-            "No input paths provided, using current directory: {}", inputPaths[0].getFullPathName().quoted()
+        reportInfo(
+            utils::format(
+                "No input paths provided, using current directory: {}", inputPaths[0].getFullPathName().quoted()
+            )
         );
     }
 
@@ -71,9 +120,7 @@ int cli::runAnalysis(const AnalyzeCommand& command)
 
     // The analysis still works without the cache, it only has to read every file again on the next run.
     if (!cache.open()) {
-        const juce::String cacheWarning {"Could not open the analysis cache, results are not cached"};
-        utils::logWarn(cacheWarning);
-        console::printWarn(cacheWarning);
+        reportWarning("Could not open the analysis cache, results are not cached");
     }
 
     AnalysisCoordinator coordinator(cache, command.workerCount);
@@ -87,20 +134,23 @@ int cli::runAnalysis(const AnalyzeCommand& command)
     const auto analysisElapsedMs = juce::Time::getMillisecondCounterHiRes() - analysisStartedAtMs;
     const auto analysisFailureCount
         = std::ranges::count_if(results, [](const auto& record) { return record.hasError(); });
-    utils::logInfo(
-        "Analysis complete: {:.2f} s, {} files ({} failed)",
-        analysisElapsedMs / utils::millisecondsPerSecond,
-        results.size(),
-        analysisFailureCount
+    reportInfo(
+        utils::format(
+            "Analysis complete: {:.2f} s, {} files ({} failed)",
+            analysisElapsedMs / utils::millisecondsPerSecond,
+            results.size(),
+            analysisFailureCount
+        )
     );
+
+    reportAnalysisFailures(results);
 
     sortRecords(results, command.sortMode, !command.reverse);
 
     const auto skippedInputs = findSkippedInputs(command.inputPaths, results);
 
     for (const auto& error : skippedInputs) {
-        utils::logError(error);
-        console::printError(error);
+        reportError(error);
     }
 
     int failureCount = skippedInputs.size();
@@ -127,7 +177,6 @@ int cli::runAnalysis(const AnalyzeCommand& command)
     for (const auto& result : results) {
         if (result.hasError()) {
             ++failureCount;
-            utils::logError("Analysis failed: {}, {}", result.file.getFullPathName().quoted(), result.errorMessage);
 
             if (command.normalization.has_value()) {
                 normalizedResults.push_back(result);
@@ -142,8 +191,10 @@ int cli::runAnalysis(const AnalyzeCommand& command)
         if (normalizationConflicts.contains(result.file.getFullPathName())) {
             ++failureCount;
             const auto conflictMessage = batchOutputConflictMessage(result.file);
-            utils::logError(
-                "Normalization output conflict: {}, {}", result.file.getFullPathName().quoted(), conflictMessage
+            reportError(
+                utils::format(
+                    "Normalization output conflict: {}, {}", result.file.getFullPathName().quoted(), conflictMessage
+                )
             );
             addNormalizationFailure(result, conflictMessage);
             continue;
@@ -161,7 +212,7 @@ int cli::runAnalysis(const AnalyzeCommand& command)
         };
         const auto reportFailure = [&](const AudioAnalysisRecord& record, const juce::String& error) {
             ++failureCount;
-            utils::logError("Normalization failed: {}, {}", result.file.getFullPathName().quoted(), error);
+            reportError(utils::format("Normalization failed: {}, {}", result.file.getFullPathName().quoted(), error));
             addNormalizationFailure(record, error);
         };
 
@@ -175,6 +226,7 @@ int cli::runAnalysis(const AnalyzeCommand& command)
                 },
                 [&](const OperationSucceeded& succeeded) {
                     forgetConvertedSource(succeeded.output);
+                    printNormalizationNotice(succeeded);
                     static_cast<void>(cache.storeAnalysis(succeeded.output));
                     normalizedResults.push_back(succeeded.output);
                 },

@@ -27,6 +27,9 @@ namespace
 /// Set by the first crash log, so a terminate handler followed by the abort signal it raises logs only once.
 constinit std::atomic_flag crashLogged;
 
+/// True while release builds also print log messages to stderr.
+constinit std::atomic<bool> consoleEcho {true};
+
 #if !JUCE_WINDOWS
 /// Returns the conventional name of a fatal signal for the POSIX crash log.
 constexpr std::string_view signalName(const int signalNumber)
@@ -131,6 +134,13 @@ std::unique_ptr<juce::FileLogger> createDefaultLogger(const juce::String& appNam
     );
 }
 
+/// Turns the release-build stderr echo of log messages on or off.
+/// The CLI turns it off, because it prints its own messages to stderr, which would otherwise appear twice.
+void setConsoleEcho(const bool enabled)
+{
+    consoleEcho.store(enabled);
+}
+
 /// Writes a message with a timestamp to the current logger.
 /// In release builds the message is also printed to stderr, coloured by level when stderr is a terminal,
 /// since the file logger only prints to the console in debug builds.
@@ -143,17 +153,19 @@ void writeToLog(const juce::String& message, [[maybe_unused]] const Level logLev
     // In debug builds, the log messages are printed to console already by juce::FileLogger,
     // so this prevents them from being printed twice in debug builds.
 #if !JUCE_DEBUG
-    switch (logLevel) {
-        case Level::error:
-            console::printStyled(stderr, fmt::fg(fmt::terminal_color::red), "{}\n", logMessage);
-            break;
-        case Level::warn:
-            console::printStyled(stderr, fmt::fg(fmt::terminal_color::yellow), "{}\n", logMessage);
-            break;
-        case Level::debug:
-        case Level::info:
-            fmt::print(stderr, "{}\n", logMessage);
-            break;
+    if (consoleEcho.load()) {
+        switch (logLevel) {
+            case Level::error:
+                console::printStyled(stderr, fmt::fg(fmt::terminal_color::red), "{}\n", logMessage);
+                break;
+            case Level::warn:
+                console::printStyled(stderr, fmt::fg(fmt::terminal_color::yellow), "{}\n", logMessage);
+                break;
+            case Level::debug:
+            case Level::info:
+                fmt::print(stderr, "{}\n", logMessage);
+                break;
+        }
     }
 #endif
     juce::Logger::writeToLog(logMessage);
@@ -168,7 +180,9 @@ void logSystemInfo()
     logInfo("System info\n    {}", version::APP_NAME);
     for (const auto& line : info) {
 #if !JUCE_DEBUG
-        fmt::print(stderr, "    {}\n", line);
+        if (consoleEcho.load()) {
+            fmt::print(stderr, "    {}\n", line);
+        }
 #endif
         juce::Logger::writeToLog(format("    {}", line));
     }
