@@ -18,9 +18,10 @@ use std::sync::Mutex;
 
 use anyhow::{Context as _, Result};
 use jiff::Zoned;
+use tracing::Metadata;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::Layer as _;
-use tracing_subscriber::filter::Targets;
+use tracing_subscriber::filter::{FilterFn, Targets, filter_fn};
 use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::layer::SubscriberExt as _;
@@ -75,7 +76,7 @@ pub fn install(log_name: &str, stderr_level: LevelFilter) -> Result<PathBuf> {
         .with_ansi(std::io::stderr().is_terminal() && std::env::var_os("NO_COLOR").is_none())
         .with_timer(LocalTime)
         .with_target(false)
-        .with_filter(stderr_levels(stderr_level));
+        .with_filter(stderr_filter(stderr_level));
     tracing_subscriber::registry()
         .with(file_layer)
         .with(stderr_layer)
@@ -135,6 +136,18 @@ fn stderr_levels(most_detailed: LevelFilter) -> Targets {
         .with_target(FILE_ONLY_TARGET, LevelFilter::OFF)
 }
 
+/// Returns the filter of the stderr layer, which prints the events `stderr_levels` keeps.
+/// Spans are kept at the levels of the log file,
+/// so a warning on stderr names the spans it was logged in, such as the file a worker is analyzing.
+fn stderr_filter(most_detailed: LevelFilter) -> FilterFn<impl Fn(&Metadata<'_>) -> bool> {
+    let events = stderr_levels(most_detailed);
+    let spans = kept_levels(LevelFilter::TRACE);
+    filter_fn(move |metadata| {
+        let levels = if metadata.is_span() { &spans } else { &events };
+        levels.would_enable(metadata.target(), metadata.level())
+    })
+}
+
 /// Opens the log file for appending, creating it and its folder when missing.
 /// A file larger than the size limit is first cut to its last lines that fit in it.
 fn open_trimmed(path: &Path) -> std::io::Result<File> {
@@ -164,9 +177,26 @@ fn install_panic_hook() {
 
 #[cfg(test)]
 mod test_log_file {
+    use std::sync::Arc;
+
     use tracing::Level;
 
     use super::*;
+
+    /// Writer that collects what a layer prints, standing in for stderr.
+    #[derive(Clone, Default)]
+    struct CapturedOutput(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for CapturedOutput {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("output lock").extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn a_large_log_is_cut_to_its_last_whole_lines() {
@@ -214,5 +244,28 @@ mod test_log_file {
         assert!(!stderr.would_enable("audiobatch_core::output_file", &Level::INFO));
         assert!(!stderr.would_enable("symphonia_core::probe", &Level::ERROR));
         assert!(!stderr.would_enable(FILE_ONLY_TARGET, &Level::ERROR));
+    }
+
+    #[test]
+    fn stderr_warnings_name_the_spans_below_the_stderr_level() {
+        let output = CapturedOutput::default();
+        let writer = output.clone();
+        let layer = tracing_subscriber::fmt::layer()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_target(false)
+            .with_filter(stderr_filter(LevelFilter::WARN));
+        tracing::subscriber::with_default(tracing_subscriber::registry().with(layer), || {
+            let _span =
+                tracing::info_span!(target: "audiobatch_core::analysis", "analyze", file = "song.wav").entered();
+            tracing::info!(target: "audiobatch_core::analysis", "not printed");
+            tracing::warn!(target: "audiobatch_core::analysis", "decoder warning");
+        });
+
+        let printed = String::from_utf8(output.0.lock().expect("output lock").clone()).expect("utf-8");
+        assert!(printed.contains("analyze{file=\"song.wav\"}"), "{printed}");
+        assert!(printed.contains("decoder warning"), "{printed}");
+        assert!(!printed.contains("not printed"), "{printed}");
     }
 }
