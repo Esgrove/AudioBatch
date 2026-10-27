@@ -253,7 +253,7 @@ pub(crate) fn load_recovering<T: Default>(
     match load(path) {
         Ok(value) => Ok((value, None)),
         Err(error) if error.chain().any(<dyn std::error::Error>::is::<serde_json::Error>) => {
-            let moved = path.with_extension("invalid.json");
+            let moved = unused_backup_path(path);
             let message = match fs::rename(path, &moved) {
                 Ok(()) => format!(
                     "The {description} {} could not be read and was moved to {}: {error:#}",
@@ -270,6 +270,19 @@ pub(crate) fn load_recovering<T: Default>(
         }
         Err(error) => Err(error),
     }
+}
+
+/// Returns `<name>.invalid.json` next to the file, or `<name>.invalid-2.json` and so on when that exists,
+/// so moving a second damaged file aside keeps the first one.
+fn unused_backup_path(path: &Path) -> PathBuf {
+    let first = path.with_extension("invalid.json");
+    if !first.exists() {
+        return first;
+    }
+    (2..=u32::MAX)
+        .map(|number| path.with_extension(format!("invalid-{number}.json")))
+        .find(|candidate| !candidate.exists())
+        .unwrap_or(first)
 }
 
 /// Writes a value as pretty JSON with a format version field next to its own fields,
