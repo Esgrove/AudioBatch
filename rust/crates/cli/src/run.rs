@@ -55,6 +55,7 @@ struct NormalizedRecords {
 /// which are stderr for the CLI and hidden in tests so the bars do not mix into the test output.
 /// Once `is_interrupted` returns true, the file being normalized stops before its output is committed,
 /// so its temporary output is removed, no further file is normalized, and the run returns `EXIT_INTERRUPTED`.
+/// The files already committed are still reported, since their originals are gone.
 ///
 /// # Errors
 ///
@@ -145,9 +146,7 @@ pub fn run_analysis(
     } else {
         (records, false)
     };
-    if is_interrupted() {
-        return Ok(EXIT_INTERRUPTED);
-    }
+    let interrupted = is_interrupted();
     sort_records(&mut reported, args.sort, !args.reverse);
 
     let text = match args.output {
@@ -157,7 +156,9 @@ pub fn run_analysis(
     };
     output.write_all(text.as_bytes())?;
     output.flush()?;
-    Ok(if failure_count == 0 {
+    Ok(if interrupted {
+        EXIT_INTERRUPTED
+    } else if failure_count == 0 {
         EXIT_SUCCESS
     } else {
         EXIT_FAILURES
@@ -442,6 +443,33 @@ mod test_run_analysis {
         );
         let rows: Vec<serde_json::Value> = serde_json::from_str(&output).expect("valid json");
         assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn an_interrupted_normalization_still_reports_the_committed_files() {
+        let directory = TempDir::new().expect("temp dir");
+        let tone = copy_fixture(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let normalized = directory.path().join("music").join("song.aif");
+        let args = CliArgs::try_parse_from(["audiobatch-rs", "-n", "-o", "json", &tone]).expect("arguments parse");
+        let cache = Arc::new(AnalysisCache::with_path(directory.path().join("analysis.db")));
+        let dispose: FileDisposer = Arc::new(|path: &std::path::Path| std::fs::remove_file(path).is_ok());
+        let (mut output, mut log) = (Vec::new(), Vec::new());
+
+        let code = run_analysis(
+            &args,
+            cache,
+            dispose,
+            &mut output,
+            &mut log,
+            ProgressDrawTarget::hidden,
+            &|| normalized.exists(),
+        )
+        .expect("run succeeds");
+
+        assert_eq!(code, EXIT_INTERRUPTED);
+        let rows: Vec<serde_json::Value> = serde_json::from_slice(&output).expect("valid json");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["path"], normalized.to_string_lossy().as_ref());
     }
 
     #[test]
