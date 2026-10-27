@@ -355,6 +355,7 @@ mod test_run_analysis {
     use clap::Parser;
     use tempfile::TempDir;
 
+    /// Runs the CLI with the arguments and a cache in the directory, and returns the exit code, stdout, and stderr.
     fn run(arguments: &[&str], directory: &TempDir) -> (u8, String, String) {
         let args = CliArgs::try_parse_from(std::iter::once("audiobatch-rs").chain(arguments.iter().copied()))
             .expect("arguments parse");
@@ -379,6 +380,7 @@ mod test_run_analysis {
         )
     }
 
+    /// Returns the path of a shared fixture as text, for an argument.
     fn fixture(name: &str) -> String {
         test_fixtures::fixture(name).to_string_lossy().into_owned()
     }

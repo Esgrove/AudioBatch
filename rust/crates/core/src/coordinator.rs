@@ -300,11 +300,13 @@ mod test_coordinator {
     use crate::record::{AnalysisStatus, same_custom_gain};
     use crate::test_helpers::block_pool;
 
+    /// Creates a coordinator with four workers and a cache in the directory.
     fn coordinator(directory: &TempDir) -> AnalysisCoordinator {
         let cache = Arc::new(AnalysisCache::with_path(directory.path().join("analysis.db")));
         AnalysisCoordinator::new(cache, 4).expect("pool")
     }
 
+    /// Copies two tones and the broken file into a folder of the directory and returns it.
     fn fixture_folder(directory: &TempDir) -> PathBuf {
         let folder = directory.path().join("audio");
         std::fs::create_dir_all(&folder).expect("create folder");
@@ -314,6 +316,7 @@ mod test_coordinator {
         folder
     }
 
+    /// Returns the options of a recursive run over the folder.
     fn options(folder: &Path, refresh: bool) -> AnalysisOptions {
         AnalysisOptions {
             input_paths: vec![folder.to_path_buf()],

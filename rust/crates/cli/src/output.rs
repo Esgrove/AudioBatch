@@ -196,6 +196,7 @@ mod test_record_output {
 
     use audiobatch_core::AnalysisStatus;
 
+    /// Returns an analyzed record of the -6.02 dBFS stereo test tone.
     fn tone_record() -> AnalysisRecord {
         AnalysisRecord {
             path: "/music/tone.wav".into(),
@@ -214,6 +215,7 @@ mod test_record_output {
         }
     }
 
+    /// Returns an analyzed record of digital silence, with no peak and no loudness.
     fn silent_record() -> AnalysisRecord {
         AnalysisRecord {
             path: "/music/silence.wav".into(),
@@ -225,6 +227,7 @@ mod test_record_output {
         }
     }
 
+    /// Returns a record of a file that failed to analyze, with its error.
     fn failed_record() -> AnalysisRecord {
         AnalysisRecord {
             path: "/music/broken.wav".into(),

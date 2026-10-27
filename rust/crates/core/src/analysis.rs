@@ -295,16 +295,13 @@ fn summarize<T: Copy + Default>(values: &[T], dominant: fn(T, T) -> T) -> Channe
 
 #[cfg(test)]
 mod test_fixture_levels {
-    use super::*;
+    use crate::test_helpers::analyze;
 
     use test_fixtures::{FIXTURE_LOUDNESS, FIXTURE_PEAK_DECIBELS, TONE_FIXTURES};
 
+    /// Returns an amplitude in decibels relative to full scale.
     fn decibels(amplitude: f64) -> f64 {
         20.0 * amplitude.abs().log10()
-    }
-
-    fn analyze(path: &Path) -> AnalysisRecord {
-        analyze_file(path, &|| false, &mut |_| {})
     }
 
     #[test]
@@ -467,7 +464,7 @@ mod test_damaged_files {
 
     use tempfile::TempDir;
 
-    use crate::test_helpers::{half_fixture_copy, scrambled_fixture_copy, truncated_fixture_copy};
+    use crate::test_helpers::{analyze, half_fixture_copy, scrambled_fixture_copy, truncated_fixture_copy};
 
     /// Fixtures of the formats whose decoders read a file up to where it ends.
     const STREAMING_FIXTURES: [&str; 3] = [
@@ -475,10 +472,6 @@ mod test_damaged_files {
         "sine_stereo_44100_16.flac",
         "sine_stereo_44100_320k.mp3",
     ];
-
-    fn analyze(path: &Path) -> AnalysisRecord {
-        analyze_file(path, &|| false, &mut |_| {})
-    }
 
     #[test]
     fn a_truncated_file_is_measured_up_to_where_it_ends() {

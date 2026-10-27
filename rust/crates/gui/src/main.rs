@@ -220,6 +220,7 @@ fn parse_arguments(arguments: impl Iterator<Item = String>) -> Result<LaunchOpti
 mod test_parse_arguments {
     use super::*;
 
+    /// Parses the launch arguments after the program name.
     fn parse(arguments: &[&str]) -> Result<LaunchOptions, String> {
         parse_arguments(arguments.iter().map(ToString::to_string))
     }

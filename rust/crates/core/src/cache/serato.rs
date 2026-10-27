@@ -160,6 +160,7 @@ mod test_serato_cache {
         path: std::path::PathBuf,
     }
 
+    /// Creates a cache and a placeholder audio file in a temporary directory.
     fn setup() -> Setup {
         let directory = TempDir::new().expect("temp dir");
         let cache = AnalysisCache::with_path(directory.path().join("analysis.db"));
@@ -168,6 +169,7 @@ mod test_serato_cache {
         Setup { directory, cache, path }
     }
 
+    /// Returns a present Serato Overview with a repeating colour pattern.
     fn present() -> SeratoOverviewState {
         let slices = (0..240).map(|slice| [(slice % 214 + 2) as u8; BAND_COUNT]).collect();
         SeratoOverviewState::Present(Arc::new(Overview::from_slices(slices)))

@@ -155,6 +155,7 @@ mod test_sort_records {
 
     use crate::record::AnalysisStatus;
 
+    /// Returns a record with the name, sample peak, integrated loudness, and status.
     fn record(name: &str, peak: f32, loudness: f64, status: AnalysisStatus) -> AnalysisRecord {
         AnalysisRecord {
             path: format!("/music/{name}").into(),
@@ -166,6 +167,7 @@ mod test_sort_records {
         }
     }
 
+    /// Returns the file names of the records, in order.
     fn names(records: &[AnalysisRecord]) -> Vec<&str> {
         records.iter().map(|record| record.file_name.as_str()).collect()
     }

@@ -289,6 +289,7 @@ impl ResamplerStage {
 mod test_frame_pipeline {
     use super::*;
 
+    /// Runs the pipeline to the end of the file and returns every frame.
     fn produce_all(pipeline: &mut FramePipeline) -> Vec<Frame> {
         let mut frames = Vec::new();
         while pipeline.produce(&mut frames).expect("decodes") {}

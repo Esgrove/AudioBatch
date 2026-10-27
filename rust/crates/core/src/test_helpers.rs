@@ -4,7 +4,7 @@
 //! which `test-fixtures` cannot depend on.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crossbeam_channel::{Sender, bounded};
 use rayon::ThreadPool;
@@ -13,6 +13,11 @@ use tempfile::TempDir;
 use crate::analysis::analyze_file;
 use crate::cache::AnalysisCache;
 use crate::record::AnalysisRecord;
+
+/// Analyzes a file without cancellation or progress.
+pub fn analyze(path: &Path) -> AnalysisRecord {
+    analyze_file(path, &|| false, &mut |_| {})
+}
 
 /// Copies a fixture into the directory under its own name and analyzes the copy, failed or not.
 pub fn analyze_fixture_copy(directory: &TempDir, fixture: &str) -> AnalysisRecord {

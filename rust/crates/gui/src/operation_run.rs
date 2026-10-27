@@ -180,6 +180,7 @@ mod test_run {
 
     use super::*;
 
+    /// Returns a failed result for a file name.
     fn failure(name: &str) -> OperationResult {
         OperationResult::failure(&PathBuf::from("/music").join(name), "Could not read")
     }

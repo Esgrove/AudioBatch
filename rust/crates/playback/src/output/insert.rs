@@ -398,6 +398,7 @@ mod test_insert_playback {
     }
 
     impl FakeInsert {
+        /// Creates a fake insert with the latency and tail in frames, and the probe that observes it.
         fn new(latency: usize, tail: usize) -> (Box<Self>, Probe) {
             let probe = Probe::default();
             let insert = Self {
@@ -525,6 +526,7 @@ mod test_insert_playback {
         (index + 1) as f32 / 1000.0
     }
 
+    /// Asserts that two samples are equal within rounding, naming the context in the failure.
     fn assert_close(actual: f32, expected: f32, context: &str) {
         assert!(
             (actual - expected).abs() < 1e-6,

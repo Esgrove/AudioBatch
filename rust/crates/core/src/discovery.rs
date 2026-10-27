@@ -120,6 +120,7 @@ mod test_collect_input_files {
 
     use tempfile::TempDir;
 
+    /// Creates a small file, and its parent folders, and returns its path.
     fn create(directory: &Path, name: &str) -> PathBuf {
         let path = directory.join(name);
         if let Some(parent) = path.parent() {

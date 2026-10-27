@@ -227,6 +227,7 @@ mod test_output_renderer {
 
     use crate::preview_insert::insert_channel;
 
+    /// Returns a stereo frame with the value on both channels.
     fn frame(generation: u32, position: u64, value: f32) -> Frame {
         Frame {
             generation,
@@ -236,6 +237,7 @@ mod test_output_renderer {
         }
     }
 
+    /// Creates a renderer for a device with the channel count, with the frames queued, and its shared state.
     fn renderer(frames: &[Frame], channels: usize) -> (OutputRenderer, Arc<SharedState>) {
         let (mut producer, consumer) = RingBuffer::new(64);
         for &value in frames {

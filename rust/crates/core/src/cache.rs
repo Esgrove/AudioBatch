@@ -774,6 +774,7 @@ mod test_custom_gain {
 mod test_history_serialization {
     use super::*;
 
+    /// Returns an analyzed record with a short-term loudness history of the values, and that history.
     fn record_with_history(values: Vec<f32>) -> (AnalysisRecord, ShortTermLoudnessHistory) {
         let history = ShortTermLoudnessHistory {
             values,
