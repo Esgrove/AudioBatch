@@ -197,6 +197,9 @@ and the output device with its sample rate and buffer size in samples.
   Overwrite lets the output replace an existing file of the same name, which is moved to the trash too.
   The Status column shows the progress of each file, and a failure keeps the row with the reason.
   The list cannot change while files are being normalized, and normalization waits for analysis to finish.
+- During an analysis, normalization, or processing run the Process button becomes Cancel,
+  and File > Cancel Run (Command or Control and period) cancels the run too.
+  Files the run has not committed keep their rows, and Clear All Files stops any run.
 - File > Rescan (F5) picks up new and changed files,
   and the File menu also re-analyzes, removes, trashes, or reveals the selected file.
 - Options > Show Loudness Graph, or the same option in the settings window,
@@ -247,7 +250,6 @@ Instruments are listed by scans but cannot be added to the chain.
   but the output is never shorter than the source and trailing audio below -96 dBFS is cut off.
   Samples are truncated to 16 bits without dither or gain changes, since dither and level are up to the plugins,
   and samples beyond full scale saturate, which the result reports.
-  A run can be cancelled, which leaves the files in progress with their originals.
 - Options > Preview Plugin Chain plays the preview through the enabled plugins,
   after the custom gain, at the output device's rate.
   The preview runs in stereo, and a plugin that only supports mono gets both channels folded into one,

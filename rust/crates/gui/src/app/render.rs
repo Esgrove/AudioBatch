@@ -29,7 +29,7 @@ use super::{
 use crate::controls::{ControlsEvent, ControlsState, NormalizeControls, PluginControls, render_controls};
 use crate::info_panel::render_info_panel;
 use crate::menus::{
-    About, AddFiles, AddFolder, AddPluginToChain, CancelProcessing, ChooseFolder, ClearCustomGain, ClearList,
+    About, AddFiles, AddFolder, AddPluginToChain, CancelRun, ChooseFolder, ClearCustomGain, ClearList,
     ClearPluginChain, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
     OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected, RemoveSelected, Rescan,
     RevealSelected, SaveChainPreset, SelectOutputDevice, StopPlayback, ToggleLoudnessGraph, TogglePlayback,
@@ -248,7 +248,7 @@ impl AppView {
                 summary: self.chain_summary(),
                 normalize_first: self.normalize_first,
                 can_process: self.can_process_selected(cx),
-                processing: self.is_processing(),
+                running: self.is_running(),
             },
         };
         let on_event = cx.listener(|view, event: &ControlsEvent, window, cx| {
@@ -335,7 +335,7 @@ impl Render for AppView {
             }))
             .on_action(cx.listener(|view, _: &ProcessSelected, window, cx| view.process_selected(window, cx)))
             .on_action(cx.listener(|view, _: &ProcessAll, window, cx| view.process_all(window, cx)))
-            .on_action(cx.listener(|view, _: &CancelProcessing, _, cx| view.cancel_processing(cx)))
+            .on_action(cx.listener(|view, _: &CancelRun, _, cx| view.cancel_run(cx)))
             .on_action(cx.listener(|_, _: &About, window, cx| Self::show_about(window, cx)))
             .on_drop(cx.listener(|view, paths: &ExternalPaths, window, cx| {
                 view.handle_drop(paths.paths(), window.modifiers().shift, cx);

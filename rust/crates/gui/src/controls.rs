@@ -89,7 +89,8 @@ const PROCESS_TOOLTIP: &str = "Process the selected file with the plugin chain. 
      The output is written as 16-bit AIFF next to the source, and a converted source is moved to the system trash.";
 
 /// Tooltip of the Cancel button while files are processed.
-const CANCEL_TOOLTIP: &str = "Stop plugin processing. Files in progress keep their originals.";
+const CANCEL_TOOLTIP: &str =
+    "Cancel the running analysis, normalization, or processing. Files in progress keep their originals.";
 
 /// Tooltip of the Plugin Chain button.
 const CHAIN_TOOLTIP: &str = "Open the plugin chain, where plugins are added, ordered, bypassed, and edited.";
@@ -124,8 +125,8 @@ pub enum ControlsEvent {
     SetNormalizeFirst(bool),
     /// The Process button was clicked.
     ProcessSelected,
-    /// The Cancel button was clicked while files were processed.
-    CancelProcessing,
+    /// The Cancel button was clicked during an analysis, normalization, or processing run.
+    CancelRun,
     /// The Plugin Chain button was clicked.
     OpenPluginChain,
 }
@@ -138,8 +139,8 @@ pub struct PluginControls {
     pub normalize_first: bool,
     /// True when the selected file can be processed now.
     pub can_process: bool,
-    /// True while files are processed, which turns the button into Cancel.
-    pub processing: bool,
+    /// True during an analysis, normalization, or processing run, which turns the button into Cancel.
+    pub running: bool,
 }
 
 /// Values the normalization group shows.
@@ -344,7 +345,7 @@ fn normalize_group(state: &NormalizeControls<'_>, on_event: &EventCallback) -> D
 }
 
 /// Renders the plugin group: the caption with the chain summary,
-/// and a row with the option that normalizes first and the Process button, which is Cancel while processing.
+/// and a row with the option that normalizes first and the Process button, which is Cancel during any run.
 fn plugin_group(state: &PluginControls, on_event: &EventCallback) -> Div {
     let normalize_first = {
         let on_event = Rc::clone(on_event);
@@ -358,8 +359,8 @@ fn plugin_group(state: &PluginControls, on_event: &EventCallback) -> Div {
     };
     let button = {
         let on_event = Rc::clone(on_event);
-        let (label, tooltip_text, event, enabled) = if state.processing {
-            ("Cancel", CANCEL_TOOLTIP, ControlsEvent::CancelProcessing, true)
+        let (label, tooltip_text, event, enabled) = if state.running {
+            ("Cancel", CANCEL_TOOLTIP, ControlsEvent::CancelRun, true)
         } else {
             (
                 "Process",
