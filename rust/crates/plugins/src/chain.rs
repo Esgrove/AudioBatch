@@ -239,6 +239,24 @@ mod test_plugin_chain {
     }
 
     #[test]
+    fn a_second_damaged_file_keeps_the_first_one_aside() {
+        let folder = TempDir::new().expect("temp dir");
+        let path = folder.path().join("plugin-chain.json");
+        fs::write(&path, b"{ first").expect("written");
+        PluginChain::load_recovering(&path).expect("recovers");
+        fs::write(&path, b"{ second").expect("written");
+        PluginChain::load_recovering(&path).expect("recovers");
+        assert_eq!(
+            fs::read(folder.path().join("plugin-chain.invalid.json")).expect("first"),
+            b"{ first"
+        );
+        assert_eq!(
+            fs::read(folder.path().join("plugin-chain.invalid-2.json")).expect("second"),
+            b"{ second"
+        );
+    }
+
+    #[test]
     fn only_enabled_slots_process_files() {
         let mut bypassed = ChainSlot::new(description("Bypassed"));
         bypassed.enabled = false;
