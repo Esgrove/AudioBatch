@@ -50,6 +50,8 @@ struct AudioMetadata {
     std::vector<juce::MemoryBlock> id3v2Frames;
     /// True when TagLib cannot safely reserialize a known frame, so processing must keep the original file.
     bool hasUnsupportedId3Frames {false};
+    /// True when the properties were read from an ID3v2 tag rather than Vorbis comments or another tag format.
+    bool hasId3Tag {false};
 };
 
 [[nodiscard]] bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile);

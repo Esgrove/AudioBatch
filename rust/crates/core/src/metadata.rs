@@ -20,10 +20,12 @@ use lofty::config::{ParseOptions, WriteOptions};
 use lofty::file::AudioFile;
 use lofty::flac::FlacFile;
 use lofty::id3::v2::{BinaryFrame, ExtendedTextFrame, Frame, FrameId, GeneralEncapsulatedObject, Id3v2Tag};
+use lofty::mp4::{AtomData, AtomIdent, Mp4File};
 use lofty::ogg::tag::VorbisComments;
 use lofty::ogg::{OggPictureStorage, OpusFile, VorbisFile};
+use lofty::picture::PictureType;
 use lofty::prelude::{ItemKey, TagExt, TaggedFileExt};
-use lofty::tag::{Tag, TagType};
+use lofty::tag::{ItemValue, Tag, TagItem, TagType};
 use serato_tags::SeratoTag;
 use serato_tags::native::{GEOB_MIME_TYPE, decode_native_value, native_field_description};
 
@@ -37,6 +39,9 @@ const ENCODER_FIELD: &str = "ENCODER";
 
 /// Separator between the values of a multi-valued `ID3v2.4` text frame.
 const MULTI_VALUE_SEPARATOR: char = '\0';
+
+/// Description of the `USLT` frame `TagLib` writes for the lyrics of a non-`ID3v2` source.
+const LYRICS_DESCRIPTION: &str = "LYRICS";
 
 /// Copies the tags, embedded pictures, and Serato data of the source onto the destination,
 /// leaving out the Serato overview.
@@ -55,6 +60,7 @@ pub fn copy_metadata(source: &Path, destination: &Path) -> Result<()> {
     if tag.is_empty() {
         return Ok(());
     }
+    keep_urls_single_byte(&mut tag);
     tag.save_to_path(destination, WriteOptions::default())
         .with_context(|| format!("Failed to write metadata to {}", destination.display()))
 }
@@ -70,13 +76,89 @@ fn read_source_tag(source: &Path) -> Option<Id3v2Tag> {
         if comments.get(ENCODER_FIELD).is_none() {
             generic.remove_key(ItemKey::EncoderSoftware);
         }
+        map_unsupported_items(&mut generic);
         let mut converted = Id3v2Tag::from(generic);
         add_vorbis_fields(&mut converted, &comments);
         return Some(converted);
     }
     let tagged = lofty::read_from_path(source).ok()?;
-    let tag = tagged.primary_tag().or_else(|| tagged.first_tag())?;
-    Some(Id3v2Tag::from(tag.clone()))
+    let mut generic = tagged.primary_tag().or_else(|| tagged.first_tag())?.clone();
+    if generic.tag_type() == TagType::Mp4Ilst {
+        add_mp4_details(source, &mut generic);
+    }
+    map_unsupported_items(&mut generic);
+    Some(Id3v2Tag::from(generic))
+}
+
+/// Switches `WXXX` frames with a UTF-16 description to UTF-8.
+/// The URL of a `WXXX` frame is always Latin-1, but lofty writes it in the encoding of the description,
+/// so a UTF-16 description would turn the URL into UTF-16 that every reader misreads.
+/// An ASCII URL is the same in UTF-8 and Latin-1.
+fn keep_urls_single_byte(tag: &mut Id3v2Tag) {
+    tag.retain_mut(|frame| {
+        if let Frame::UserUrl(url) = frame
+            && matches!(url.encoding, TextEncoding::UTF16 | TextEncoding::UTF16BE)
+        {
+            url.encoding = TextEncoding::UTF8;
+        }
+        true
+    });
+}
+
+/// Moves the items lofty cannot write to `ID3v2` onto the keys `TagLib` writes them to:
+/// a decimal BPM to `TBPM`, and lyrics to a `USLT` frame described as "LYRICS", as `TagLib` describes it.
+/// The items are inserted without lofty's mapping check, which refuses keys the source format has no field for.
+fn map_unsupported_items(tag: &mut Tag) {
+    if tag.get_string(ItemKey::IntegerBpm).is_none()
+        && let Some(bpm) = tag.get_string(ItemKey::Bpm).map(str::to_string)
+    {
+        tag.insert_unchecked(TagItem::new(ItemKey::IntegerBpm, ItemValue::Text(bpm)));
+    }
+    tag.remove_key(ItemKey::Bpm);
+    if tag.get_string(ItemKey::UnsyncLyrics).is_none()
+        && let Some(lyrics) = tag.get_string(ItemKey::Lyrics).map(str::to_string)
+    {
+        let mut item = TagItem::new(ItemKey::UnsyncLyrics, ItemValue::Text(lyrics));
+        item.set_description(LYRICS_DESCRIPTION.to_string());
+        tag.insert_unchecked(item);
+    }
+    tag.remove_key(ItemKey::Lyrics);
+}
+
+/// Adds what lofty's generic view of an MP4 tag leaves out:
+/// the integer `tmpo` BPM, and the front cover type of the pictures, which the `covr` atom does not state.
+fn add_mp4_details(source: &Path, tag: &mut Tag) {
+    let bpm = File::open(source)
+        .ok()
+        .and_then(|mut file| Mp4File::read_from(&mut file, ParseOptions::new()).ok())
+        .and_then(|mp4| {
+            let atom = mp4.ilst()?.get(&AtomIdent::Fourcc(*b"tmpo"))?;
+            atom.data().find_map(|data| match data {
+                AtomData::SignedInteger(value) => Some(i64::from(*value)),
+                AtomData::UnsignedInteger(value) => Some(i64::from(*value)),
+                _ => None,
+            })
+        });
+    if let Some(bpm) = bpm.filter(|&bpm| bpm > 0) {
+        tag.insert(TagItem::new(ItemKey::IntegerBpm, ItemValue::Text(bpm.to_string())));
+    }
+    for index in 0..tag.pictures().len() {
+        if let Some(picture) = tag
+            .pictures()
+            .get(index)
+            .filter(|picture| picture.pic_type() == PictureType::Other)
+        {
+            let mut front_cover = picture.clone();
+            front_cover.set_pic_type(PictureType::CoverFront);
+            tag.set_picture(index, front_cover);
+        }
+    }
+}
+
+/// Returns true when the generic conversion writes the item to an `ID3v2` frame,
+/// directly or after `map_unsupported_items` moves it.
+fn converts_to_id3v2(item_key: ItemKey) -> bool {
+    matches!(item_key, ItemKey::Bpm | ItemKey::Lyrics) || item_key.map_key(TagType::Id3v2).is_some()
 }
 
 /// Reads the Vorbis comments of a FLAC, Ogg Vorbis, or Opus file, with the FLAC pictures added to them.
@@ -114,9 +196,7 @@ fn add_vorbis_fields(tag: &mut Id3v2Tag, comments: &VorbisComments) {
         {
             tag.insert(serato_frame(description, payload));
         }
-        let mapped = ItemKey::from_key(TagType::VorbisComments, key)
-            .and_then(|item_key| item_key.map_key(TagType::Id3v2))
-            .is_some();
+        let mapped = ItemKey::from_key(TagType::VorbisComments, key).is_some_and(converts_to_id3v2);
         if mapped {
             continue;
         }
@@ -167,7 +247,9 @@ mod test_copy_metadata {
     use std::fs;
 
     use base64::Engine as _;
+    use lofty::id3::v2::ExtendedUrlFrame;
     use lofty::iff::aiff::AiffFile;
+    use lofty::mp4::{Atom, Ilst};
     use lofty::picture::{MimeType, Picture, PictureInformation, PictureType};
     use lofty::prelude::Accessor;
 
@@ -279,6 +361,86 @@ mod test_copy_metadata {
         copy_metadata(&test_fixtures::fixture("sine_stereo_44100_16.wav"), &destination).expect("copies");
 
         assert!(read_aiff_tag(&destination).is_none_or(|tag| tag.is_empty()));
+    }
+
+    #[test]
+    fn vorbis_bpm_and_lyrics_become_their_id3_frames() {
+        let directory = tempfile::tempdir().expect("creates directory");
+        let source = directory.path().join("song.flac");
+        fs::copy(test_fixtures::fixture("tagged_stereo_44100_16.flac"), &source).expect("copies fixture");
+        let tagged = lofty::read_from_path(&source).expect("reads fixture tags");
+        let mut comments = VorbisComments::from(tagged.primary_tag().expect("has comments").clone());
+        comments.push("BPM".to_string(), "128".to_string());
+        comments.push("LYRICS".to_string(), "Words".to_string());
+        comments.save_to_path(&source, WriteOptions::default()).expect("saves");
+        let destination = directory.path().join("song.aif");
+        write_destination(&destination);
+
+        copy_metadata(&source, &destination).expect("copies");
+
+        let tag = read_aiff_tag(&destination).expect("has a tag");
+        assert_eq!(tag.get_text(&FrameId::Valid(Cow::Borrowed("TBPM"))), Some("128"));
+        let lyrics: Vec<(String, String)> = tag
+            .unsync_text()
+            .map(|frame| (frame.description.to_string(), frame.content.to_string()))
+            .collect();
+        assert_eq!(lyrics, vec![(LYRICS_DESCRIPTION.to_string(), "Words".to_string())]);
+        assert_eq!(tag.get_user_text("BPM"), None);
+        assert_eq!(tag.get_user_text("LYRICS"), None);
+    }
+
+    #[test]
+    fn mp4_tempo_and_cover_are_copied() {
+        let directory = tempfile::tempdir().expect("creates directory");
+        let source = directory.path().join("song.m4a");
+        fs::copy(test_fixtures::fixture(test_fixtures::AAC_FIXTURE), &source).expect("copies fixture");
+        let mut ilst = Ilst::new();
+        ilst.set_title("Tone".to_string());
+        ilst.insert(Atom::new(AtomIdent::Fourcc(*b"tmpo"), AtomData::SignedInteger(128)));
+        ilst.insert_picture(Picture::unchecked(vec![1, 2, 3]).mime_type(MimeType::Png).build());
+        ilst.save_to_path(&source, WriteOptions::default()).expect("saves");
+        let destination = directory.path().join("song.aif");
+        write_destination(&destination);
+
+        copy_metadata(&source, &destination).expect("copies");
+
+        let tag = read_aiff_tag(&destination).expect("has a tag");
+        assert_eq!(tag.title().as_deref(), Some("Tone"));
+        assert_eq!(tag.get_text(&FrameId::Valid(Cow::Borrowed("TBPM"))), Some("128"));
+        let picture_types: Vec<PictureType> = tag
+            .into_iter()
+            .filter_map(|frame| match frame {
+                Frame::Picture(picture) => Some(picture.picture.pic_type()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(picture_types, vec![PictureType::CoverFront]);
+    }
+
+    #[test]
+    fn url_with_a_utf16_description_stays_readable() {
+        let directory = tempfile::tempdir().expect("creates directory");
+        let destination = directory.path().join("out.aif");
+        write_destination(&destination);
+        let mut tag = Id3v2Tag::new();
+        tag.insert(Frame::UserUrl(ExtendedUrlFrame::new(
+            TextEncoding::UTF16,
+            Cow::Borrowed("homepage"),
+            Cow::Borrowed("https://example.com"),
+        )));
+
+        keep_urls_single_byte(&mut tag);
+        tag.save_to_path(&destination, WriteOptions::default()).expect("saves");
+
+        let tag = read_aiff_tag(&destination).expect("has a tag");
+        let urls: Vec<(String, String)> = tag
+            .into_iter()
+            .filter_map(|frame| match frame {
+                Frame::UserUrl(url) => Some((url.description.to_string(), url.content.to_string())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(urls, vec![("homepage".to_string(), "https://example.com".to_string())]);
     }
 
     #[test]
