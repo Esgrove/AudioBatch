@@ -5,6 +5,7 @@
 //! and each block feeds the ebur128 meter, the per-channel sample extremes, and the waveform overview.
 //! A mono source is measured as dual mono, so it reads the same loudness as the same content in stereo.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -193,6 +194,25 @@ pub fn analyze_file(path: &Path, is_cancelled: &dyn Fn() -> bool, on_progress: &
             fail(record, kind, &error.to_string())
         }
     }
+}
+
+/// Analyzes a single audio file like `analyze_file`,
+/// and returns a failed record when a decoder panics on a malformed file.
+///
+/// Worker pool jobs analyze through this, since a panic in a pool job would otherwise abort the whole process,
+/// and a panic while analyzing an output that was already committed must not read as the operation failing.
+pub fn analyze_file_catching_panics(
+    path: &Path,
+    is_cancelled: &dyn Fn() -> bool,
+    on_progress: &mut dyn FnMut(f32),
+) -> AnalysisRecord {
+    catch_unwind(AssertUnwindSafe(|| analyze_file(path, is_cancelled, on_progress))).unwrap_or_else(|_| {
+        fail(
+            AnalysisRecord::from_path(path),
+            AnalysisError::Panicked,
+            "Analysis failed unexpectedly",
+        )
+    })
 }
 
 /// Picks the sample extreme with the larger magnitude, preserving its sign.

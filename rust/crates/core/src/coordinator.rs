@@ -8,7 +8,6 @@
 //! Starting a new run or calling `cancel` invalidates the previous run id,
 //! and jobs of an invalidated run stop early and publish nothing more.
 
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -17,10 +16,10 @@ use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
-use crate::analysis::analyze_file;
+use crate::analysis::analyze_file_catching_panics;
 use crate::cache::AnalysisCache;
 use crate::discovery::collect_input_files;
-use crate::record::{AnalysisError, AnalysisOptions, AnalysisRecord, AnalysisStatus};
+use crate::record::{AnalysisOptions, AnalysisRecord};
 
 /// Smallest progress step that is published, so the receiver is not flooded with events.
 const PROGRESS_STEP: f32 = 0.02;
@@ -253,18 +252,7 @@ fn analyze_stale_file(path: &Path, context: &RunContext, pending: &AtomicUsize, 
             });
         }
     };
-    // A panic in a decoder on a malformed file fails only this file,
-    // since a panic in a pool job would otherwise abort the whole process.
-    let mut record = catch_unwind(AssertUnwindSafe(|| {
-        analyze_file(path, &|| context.is_cancelled(), &mut on_progress)
-    }))
-    .unwrap_or_else(|_| {
-        let mut record = AnalysisRecord::from_path(path);
-        record.status = AnalysisStatus::Failed;
-        record.error = Some(AnalysisError::Panicked);
-        record.error_message = "Analysis failed unexpectedly".to_string();
-        record
-    });
+    let mut record = analyze_file_catching_panics(path, &|| context.is_cancelled(), &mut on_progress);
     if context.is_cancelled() {
         return;
     }
@@ -297,7 +285,7 @@ mod test_coordinator {
 
     use tempfile::TempDir;
 
-    use crate::record::{AnalysisStatus, same_custom_gain};
+    use crate::record::{AnalysisError, AnalysisStatus, same_custom_gain};
     use crate::test_helpers::block_pool;
 
     /// Creates a coordinator with four workers and a cache in the directory.
