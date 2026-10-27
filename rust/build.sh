@@ -27,7 +27,7 @@ CLI_ONLY=false
 while [ $# -gt 0 ]; do
     case "$1" in
         -h | --help)
-            print_usage_and_exit
+            print_usage_and_exit 0
             ;;
         -c | --cli-only)
             CLI_ONLY=true

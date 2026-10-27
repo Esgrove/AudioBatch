@@ -27,6 +27,9 @@ OPTIONS: All options are optional
     -b | --build-type <type>
         Specify build type for CMake. Default is 'Release'.
 
+    -c | --cli-only
+        Build only the CLI, without the GUI app.
+
     -t | --test
         Also build and run the tests.
 
@@ -46,12 +49,12 @@ init_options() {
     OPEN_PROJECT=false
     REUSE_BUILD_DIR=false
     RUN_TESTS=false
+    CLI_ONLY=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
             -h | --help)
-                echo "$USAGE"
-                exit 1
+                print_usage_and_exit 0
                 ;;
             -n | --ninja)
                 USE_NINJA=true
@@ -68,6 +71,9 @@ init_options() {
             -b | --build-type)
                 BUILD_TYPE="$2"
                 shift
+                ;;
+            -c | --cli-only)
+                CLI_ONLY=true
                 ;;
             -t | --test)
                 RUN_TESTS=true
@@ -108,6 +114,10 @@ init_options() {
     GUI_TARGET_NAME="AudioBatch"
     CLI_TARGET_NAME="AudioBatchCli"
     CLI_BINARY_NAME="audiobatch"
+    BUILD_TARGETS=("$GUI_TARGET_NAME" "$CLI_TARGET_NAME")
+    if [ "$CLI_ONLY" = true ]; then
+        BUILD_TARGETS=("$CLI_TARGET_NAME")
+    fi
 
     # Use a separate build directory per generator so switching between Ninja and Xcode
     # or Visual Studio does not require wiping the other configuration's build directory.
@@ -192,29 +202,30 @@ build_mac_app() {
 
     if [ "$USE_XCODE" = true ]; then
         if [ -n "$(command -v xcbeautify)" ]; then
-            time cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE" | xcbeautify
+            time cmake --build "$CMAKE_BUILD_DIR" --target "${BUILD_TARGETS[@]}" --config "$BUILD_TYPE" | xcbeautify
         else
             print_yellow "xcbeautify missing, install it with: brew install xcbeautify"
-            time cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE"
+            time cmake --build "$CMAKE_BUILD_DIR" --target "${BUILD_TARGETS[@]}" --config "$BUILD_TYPE"
         fi
         GUI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatch_artefacts/$BUILD_TYPE/$GUI_APP_BUNDLE"
         CLI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatchCli_artefacts/$BUILD_TYPE/$CLI_BINARY_NAME"
     else
         ccache_zero_stats
-        time cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME"
+        time cmake --build "$CMAKE_BUILD_DIR" --target "${BUILD_TARGETS[@]}"
         ccache_show_stats
         GUI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatch_artefacts/$BUILD_TYPE/$GUI_APP_BUNDLE"
         CLI_APP_SOURCE="$CMAKE_BUILD_DIR/AudioBatchCli_artefacts/$BUILD_TYPE/$CLI_BINARY_NAME"
     fi
 
-    require_path "$GUI_APP_SOURCE"
     require_path "$CLI_APP_SOURCE"
-
-    mv -f "$GUI_APP_SOURCE" "$GUI_APP_DESTINATION"
     cp -f "$CLI_APP_SOURCE" "$CLI_APP_DESTINATION"
 
-    print_green "GUI build successful: $GUI_APP_BUNDLE"
-    file "$GUI_APP_DESTINATION"
+    if [ "$CLI_ONLY" != true ]; then
+        require_path "$GUI_APP_SOURCE"
+        mv -f "$GUI_APP_SOURCE" "$GUI_APP_DESTINATION"
+        print_green "GUI build successful: $GUI_APP_BUNDLE"
+        file "$GUI_APP_DESTINATION"
+    fi
 
     print_green "CLI build successful: $CLI_BINARY_NAME"
     file "$CLI_APP_DESTINATION"
@@ -233,20 +244,21 @@ build_windows_app() {
 
     if [ "$USE_NINJA" = true ]; then
         ccache_zero_stats
-        cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE"
+        cmake --build "$CMAKE_BUILD_DIR" --target "${BUILD_TARGETS[@]}" --config "$BUILD_TYPE"
         ccache_show_stats
     else
-        cmake --build "$CMAKE_BUILD_DIR" --target "$GUI_TARGET_NAME" "$CLI_TARGET_NAME" --config "$BUILD_TYPE"
+        cmake --build "$CMAKE_BUILD_DIR" --target "${BUILD_TARGETS[@]}" --config "$BUILD_TYPE"
     fi
 
-    require_path "$GUI_EXECUTABLE_SOURCE"
     require_path "$CLI_EXECUTABLE_SOURCE"
-
-    cp -f "$GUI_EXECUTABLE_SOURCE" "$GUI_EXECUTABLE"
     cp -f "$CLI_EXECUTABLE_SOURCE" "$CLI_EXECUTABLE"
 
-    print_green "GUI build successful: $GUI_EXE"
-    file "$GUI_EXECUTABLE"
+    if [ "$CLI_ONLY" != true ]; then
+        require_path "$GUI_EXECUTABLE_SOURCE"
+        cp -f "$GUI_EXECUTABLE_SOURCE" "$GUI_EXECUTABLE"
+        print_green "GUI build successful: $GUI_EXE"
+        file "$GUI_EXECUTABLE"
+    fi
 
     print_green "CLI build successful: $CLI_EXE"
     file "$CLI_EXECUTABLE"
@@ -254,7 +266,9 @@ build_windows_app() {
 }
 
 check_juce_submodule() {
-    # Update JUCE submodule if needed
+    # Update JUCE submodule if needed.
+    # The git commands need to run inside the repository, whatever directory the script was started from.
+    cd "$REPO" || print_error_and_exit "Failed to cd to $REPO"
     print_magenta "Checking JUCE submodule..."
     if [ ! -d "$JUCE_PATH/modules" ]; then
         print_yellow "JUCE directory not found, cloning submodule..."
@@ -295,10 +309,18 @@ export_cmake_project() {
         fi
     elif [ "$BASH_PLATFORM" = "windows" ]; then
         if [ "$USE_NINJA" = true ]; then
+            # Like the windows-ninja presets, Ninja uses MSVC, which needs a developer command prompt environment.
             print_magenta "Generating Ninja project..."
-            if ! cmake -B "$CMAKE_BUILD_DIR" -G Ninja -DBUILD_TESTING="$RUN_TESTS"; then
+            local ninja_options=(
+                -G Ninja
+                -DCMAKE_C_COMPILER=cl
+                -DCMAKE_CXX_COMPILER=cl
+                -DCMAKE_BUILD_TYPE="$BUILD_TYPE"
+                -DBUILD_TESTING="$RUN_TESTS"
+            )
+            if ! cmake -B "$CMAKE_BUILD_DIR" "${ninja_options[@]}"; then
                 rm -rf "$CMAKE_BUILD_DIR"
-                cmake -B "$CMAKE_BUILD_DIR" -G Ninja -DBUILD_TESTING="$RUN_TESTS"
+                cmake -B "$CMAKE_BUILD_DIR" "${ninja_options[@]}"
             fi
         else
             print_magenta "Generating Visual Studio project..."

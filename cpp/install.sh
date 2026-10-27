@@ -18,7 +18,7 @@ OPTIONS: All options are optional
         Display these instructions.
 
     -c | --cli-only
-        Install only the CLI binary.
+        Build and install only the CLI binary.
 
     -a | --app-only
         Install only the GUI app.
@@ -43,8 +43,7 @@ init_options() {
     while [ $# -gt 0 ]; do
         case "$1" in
             -h | --help)
-                echo "$USAGE"
-                exit 1
+                print_usage_and_exit 0
                 ;;
             -c | --cli-only)
                 INSTALL_CLI=true
@@ -220,11 +219,14 @@ cd "$REPO"
 
 # Build release artifacts first
 print_magenta "Running release build..."
-if [ "$REUSE_BUILD_DIR" = true ]; then
-    "$DIR/build.sh" -b Release --reuse
-else
-    "$DIR/build.sh" -b Release
+BUILD_OPTIONS=()
+if [ "$INSTALL_APP" != true ]; then
+    BUILD_OPTIONS+=(--cli-only)
 fi
+if [ "$REUSE_BUILD_DIR" = true ]; then
+    BUILD_OPTIONS+=(--reuse)
+fi
+"$DIR/build.sh" -b Release "${BUILD_OPTIONS[@]}"
 
 if [ "$INSTALL_CLI" = true ]; then
     install_cli
