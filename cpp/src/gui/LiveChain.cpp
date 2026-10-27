@@ -1,16 +1,13 @@
-/// Implementation of LiveChain.
-/// Covers the popup menu, slot editing operations by slot id, and window handling for the per-slot plugin editors,
-/// the chain editor, and the plugin manager,
-/// including capturing live plugin state from loaded slots before a run or save.
-/// Also implements XML persistence of the chain in application settings,
-/// with migration of the legacy single-plugin selection into a one-slot chain,
-/// and saving the chain as a named preset or replacing it with one.
+/// Implementation of the slots and the core of LiveChain.
+/// Covers the slot teardown order, slot editing operations by slot id,
+/// reaping closed editor windows and capturing live plugin state from loaded slots before a run or save,
+/// and XML persistence of the chain in application settings,
+/// with migration of the legacy single-plugin selection into a one-slot chain.
+/// LiveChainWindows.cpp holds the menu and the windows, LiveChainPresets.cpp the presets,
+/// and LiveChainPreview.cpp the preparation of the slots for the preview.
 
 #include "gui/LiveChain.h"
 
-#include "gui/components/CustomLookAndFeel.h"
-#include "gui/components/PluginChainEditor.h"
-#include "utils/AppInfo.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -24,47 +21,6 @@ constexpr auto pluginChainPropertyKey {"pluginChain"};
 constexpr auto legacySelectedPluginIdPropertyKey {"selectedPluginIdentifier"};
 constexpr auto legacySelectedPluginStatePropertyKey {"selectedPluginState"};
 
-constexpr int editChainMenuItemId {1};
-constexpr int clearChainMenuItemId {2};
-constexpr int scanMenuItemId {3};
-/// First id of the presets submenu in the chain popup menu, which uses the ids from it upwards.
-/// The Add Plugin submenu ids of juce::KnownPluginList start far above any preset count.
-constexpr int presetsMenuFirstItemId {10};
-
-/// Offsets of the presets submenu items from its first item id.
-constexpr int savePresetMenuOffset {0};
-constexpr int showPresetFolderMenuOffset {1};
-constexpr int firstPresetMenuOffset {2};
-
-/// Name of the text field in the dialog that asks for a preset name.
-constexpr auto presetNameFieldName {"presetName"};
-
-/// Tells the user why a preset operation failed.
-void showPresetError(const juce::String& title, const juce::String& message)
-{
-    juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions::makeOptionsOk(juce::MessageBoxIconType::WarningIcon, title, message, "OK"), nullptr
-    );
-}
-
-/// Initial width of the generic parameter editor shown for plugins without a custom editor.
-constexpr int genericEditorWidth {450};
-
-/// Initial height of the generic parameter editor shown for plugins without a custom editor.
-constexpr int genericEditorHeight {600};
-
-/// Initial width of the plugin chain editor window.
-constexpr int chainEditorWidth {560};
-
-/// Initial height of the plugin chain editor window.
-constexpr int chainEditorHeight {420};
-
-/// Initial width of the plugin manager window that lists and scans plugins.
-constexpr int pluginManagerWidth {720};
-
-/// Initial height of the plugin manager window that lists and scans plugins.
-constexpr int pluginManagerHeight {520};
-
 /// Builds the descriptor ref for one chain entry.
 PluginDescriptorRef makeDescriptorRef(const juce::PluginDescription& description, const juce::MemoryBlock& state)
 {
@@ -76,16 +32,6 @@ PluginDescriptorRef makeDescriptorRef(const juce::PluginDescription& description
     descriptorRef.state = state;
     return descriptorRef;
 }
-
-/// Builds a live slot without a processor from its stored form.
-LiveSlot makeLiveSlot(SavedChainSlot savedSlot)
-{
-    LiveSlot entry;
-    entry.description = std::move(savedSlot.description);
-    entry.state = std::move(savedSlot.state);
-    entry.enabled = savedSlot.enabled;
-    return entry;
-}
 }  // namespace
 
 /// Formats a plugin description as "Manufacturer Name (Format)" for chain editor rows, menus, and log messages.
@@ -93,6 +39,13 @@ juce::String formatPluginDescription(const juce::PluginDescription& description)
 {
     return utils::format("{} {} ({})", description.manufacturerName, description.name, description.pluginFormatName);
 }
+
+/// Builds a slot without a processor from its stored form.
+LiveSlot::LiveSlot(SavedChainSlot savedSlot) :
+    description(std::move(savedSlot.description)),
+    state(std::move(savedSlot.state)),
+    enabled(savedSlot.enabled)
+{}
 
 /// Tears the live processor down, so erasing or clearing slots can never skip the teardown order.
 LiveSlot::~LiveSlot()
@@ -416,63 +369,6 @@ bool LiveChain::reapClosedEditor(LiveSlot& entry)
     return stateCaptured;
 }
 
-/// Pops up the plugin menu anchored to the given component.
-/// The menu includes the chain summary, Edit Chain, the Presets and Add Plugin submenus, Clear Chain, and a Scan entry.
-/// Uses desktop space so plugin selection submenus can extend beyond the anchor window.
-void LiveChain::showMenu(juce::Component& anchor)
-{
-    juce::PopupMenu menu;
-
-    const auto summary = getChainSummary();
-    menu.addSectionHeader(
-        summary.isEmpty() ? juce::String("No plugins in chain") : utils::format("Chain: {}", summary)
-    );
-
-    menu.addItem(editChainMenuItemId, "Edit Chain...");
-    menu.addSubMenu("Presets", createPresetsMenu(presetsMenuFirstItemId));
-    menu.addSeparator();
-
-    juce::PopupMenu addSubmenu;
-    library.reload();
-    const auto types = library.getKnownEffectTypes();
-    juce::KnownPluginList::addToMenu(addSubmenu, types, juce::KnownPluginList::sortByManufacturer);
-    menu.addSubMenu("Add Plugin", addSubmenu, !types.isEmpty());
-
-    menu.addItem(clearChainMenuItemId, "Clear Chain", !chain.empty());
-    menu.addItem(scanMenuItemId, "Scan for Plugins...");
-
-    const juce::WeakReference safeThis(this);
-    menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&anchor), [safeThis, types](const int result) {
-        if (safeThis == nullptr || result == 0) {
-            return;
-        }
-
-        switch (result) {
-            case editChainMenuItemId:
-                safeThis->showChainEditor();
-                return;
-            case clearChainMenuItemId:
-                safeThis->clearChain();
-                return;
-            case scanMenuItemId:
-                safeThis->showScanWindow();
-                return;
-            default:
-                break;
-        }
-
-        const auto index = juce::KnownPluginList::getIndexChosenByMenu(types, result);
-        if (index < 0 && safeThis->handlePresetsMenuItem(result, presetsMenuFirstItemId)) {
-            return;
-        }
-        if (index < 0 || index >= types.size()) {
-            return;
-        }
-
-        safeThis->addPlugin(types.getReference(index));
-    });
-}
-
 /// Appends the given plugin to the chain as an enabled slot and opens its editor.
 void LiveChain::addPlugin(const juce::PluginDescription& description)
 {
@@ -584,150 +480,6 @@ void LiveChain::clearChain()
     persistChain();
 }
 
-/// Opens the editor window for the slot.
-/// Multiple slot editors can be open at the same time.
-/// Uses the same format-specific state restoration as processing, then creates the editor.
-/// Closing the window retains the instance so parameter changes affect the same live processor.
-void LiveChain::openEditorForSlot(const PluginSlotId slotId)
-{
-    const auto index = getSlotIndex(slotId);
-    if (!index.has_value()) {
-        return;
-    }
-
-    auto& entry = chain[static_cast<std::size_t>(*index)];
-
-    if (entry.description.fileOrIdentifier.isEmpty()) {
-        return;
-    }
-
-    if (entry.editorWindow != nullptr && entry.editorWindow->isVisible()) {
-        entry.editorWindow->toFront(true);
-        return;
-    }
-
-    bool stateCaptured = false;
-    bool prepared = false;
-
-    {
-        const juce::ScopedLock lock(renderingLock);
-        // A window the user closed is only hidden, not deleted, and the next display update may not have reaped it.
-        // Capture its state and destroy it now so a fresh editor can open below.
-        stateCaptured = entry.wasEditorOpen && reapClosedEditor(entry);
-        prepared = prepareLiveEntry(entry);
-    }
-
-    if (stateCaptured) {
-        persistChain();
-        sendChangeMessage();
-    }
-
-    if (!prepared) {
-        juce::AlertWindow::showAsync(
-            juce::MessageBoxOptions::makeOptionsOk(
-                juce::MessageBoxIconType::WarningIcon,
-                "Plugin Error",
-                utils::format("Could not prepare plugin:\n\n{}", entry.preparationError),
-                "OK"
-            ),
-            nullptr
-        );
-        return;
-    }
-
-    // Creating the editor and its window can take a long time for a large plugin interface,
-    // so it runs without the rendering lock. The processor is only destroyed on the message thread.
-    std::unique_ptr<juce::AudioProcessorEditor> editor(entry.instance->createEditorAndMakeActive());
-
-    if (editor == nullptr) {
-        // No custom editor. Fall back to the generic parameter editor.
-        editor = std::make_unique<juce::GenericAudioProcessorEditor>(*entry.instance);
-        editor->setSize(genericEditorWidth, genericEditorHeight);
-    }
-
-    juce::DialogWindow::LaunchOptions launchOptions;
-    launchOptions.dialogTitle = entry.description.name;
-    launchOptions.escapeKeyTriggersCloseButton = true;
-    launchOptions.useNativeTitleBar = true;
-    launchOptions.resizable = editor->isResizable();
-    launchOptions.content.setOwned(editor.release());
-    launchOptions.useBottomRightCornerResizer = false;
-    launchOptions.dialogBackgroundColour = CustomLookAndFeel::greySemiDark();
-
-    entry.editorWindow = launchOptions.create();
-
-    if (entry.editorWindow != nullptr) {
-        entry.editorWindow->setVisible(true);
-        entry.editorWindow->toFront(true);
-        entry.wasEditorOpen = true;
-    }
-    sendChangeMessage();
-}
-
-/// Opens the chain editor window for adding, reordering, enabling, and removing plugins.
-void LiveChain::showChainEditor()
-{
-    const auto inspectedChain = preparePreview(previewSampleRate, previewBlockSize, true);
-    if (inspectedChain.preparation.errorMessage.isNotEmpty()) {
-        utils::logWarn("Plugin latency inspection: {}", inspectedChain.preparation.errorMessage);
-    }
-    if (chainEditorWindow != nullptr) {
-        // The window hides itself when closed, so reopening only needs to make it visible again.
-        chainEditorWindow->setVisible(true);
-        chainEditorWindow->toFront(true);
-        return;
-    }
-
-    auto editor = std::make_unique<PluginChainEditor>(*this);
-    editor->setSize(chainEditorWidth, chainEditorHeight);
-
-    juce::DialogWindow::LaunchOptions launchOptions;
-    launchOptions.dialogTitle = "Plugin Chain";
-    launchOptions.content.setOwned(editor.release());
-    launchOptions.escapeKeyTriggersCloseButton = true;
-    launchOptions.useNativeTitleBar = true;
-    launchOptions.resizable = true;
-    launchOptions.dialogBackgroundColour = CustomLookAndFeel::greySemiDark();
-
-    chainEditorWindow = launchOptions.create();
-
-    if (chainEditorWindow != nullptr) {
-        chainEditorWindow->setVisible(true);
-        chainEditorWindow->toFront(true);
-    }
-}
-
-/// Opens the plugin manager window that lists the known plugins and scans for new ones.
-void LiveChain::showScanWindow()
-{
-    if (scanWindow != nullptr) {
-        // The window hides itself when closed, so reopening only needs to make it visible again,
-        // after picking up any list a CLI rescan saved while it was hidden.
-        library.reload();
-        scanWindow->setVisible(true);
-        scanWindow->toFront(true);
-        return;
-    }
-
-    auto listComponent = library.createScanComponent();
-    listComponent->setSize(pluginManagerWidth, pluginManagerHeight);
-
-    juce::DialogWindow::LaunchOptions launchOptions;
-    launchOptions.dialogTitle = "Plugin Manager";
-    launchOptions.content.setOwned(listComponent.release());
-    launchOptions.escapeKeyTriggersCloseButton = true;
-    launchOptions.useNativeTitleBar = true;
-    launchOptions.resizable = true;
-    launchOptions.dialogBackgroundColour = CustomLookAndFeel::greySemiDark();
-
-    scanWindow = launchOptions.create();
-
-    if (scanWindow != nullptr) {
-        scanWindow->setVisible(true);
-        scanWindow->toFront(true);
-    }
-}
-
 /// Captures all instantiated slots, including processors whose editor windows have closed.
 void LiveChain::captureOpenEditorStates()
 {
@@ -759,257 +511,6 @@ std::vector<SavedChainSlot> LiveChain::captureSavedSlots()
         slots.push_back({.description = entry.description, .state = entry.state, .enabled = entry.enabled});
     }
     return slots;
-}
-
-/// Returns the folder that holds the chain presets, next to the application settings file.
-juce::File LiveChain::getPresetDirectory() const
-{
-    if (const auto* settings = appProperties.getUserSettings(); settings != nullptr) {
-        return plugin_presets::getPresetDirectory(settings->getFile());
-    }
-    return plugin_presets::getPresetDirectory(utils::createApplicationSettingsOptions().getDefaultFile());
-}
-
-/// Returns the saved chain presets, sorted by name.
-std::vector<ChainPresetInfo> LiveChain::getPresets() const
-{
-    return plugin_presets::listPresets(getPresetDirectory());
-}
-
-/// Saves the chain with the latest state of every instantiated slot as the named preset,
-/// replacing a preset of the same name.
-/// Returns the preset file, or the reason it could not be saved.
-std::expected<juce::File, juce::String> LiveChain::saveAsPreset(const juce::String& name)
-{
-    const auto slots = captureSavedSlots();
-    auto result = plugin_presets::savePreset(getPresetDirectory(), name, slots);
-    if (result.has_value()) {
-        presetName = result->getFileNameWithoutExtension();
-        presetRevision = revision;
-        sendChangeMessage();
-    }
-    return result;
-}
-
-/// Returns the name of the preset the chain was last loaded from or saved as,
-/// or an empty string once a slot was added, removed, moved, enabled, or disabled since then.
-juce::String LiveChain::getCurrentPresetName() const
-{
-    return revision == presetRevision ? presetName : juce::String();
-}
-
-/// Builds the presets submenu with ids counted from the given first id:
-/// saving the chain as a preset, showing the preset folder, and loading each saved preset.
-/// handlePresetsMenuItem decodes the ids with the same first id.
-juce::PopupMenu LiveChain::createPresetsMenu(const int firstItemId) const
-{
-    juce::PopupMenu menu;
-    menu.addItem(firstItemId + savePresetMenuOffset, "Save Chain as Preset...", !chain.empty());
-    menu.addItem(firstItemId + showPresetFolderMenuOffset, "Show Presets Folder");
-
-    const auto presets = getPresets();
-    if (!presets.empty()) {
-        menu.addSeparator();
-        menu.addSectionHeader("Load Preset");
-    }
-
-    const auto currentName = getCurrentPresetName();
-    presetMenuFiles.clear();
-    for (std::size_t index = 0; index < presets.size(); ++index) {
-        const auto& preset = presets[index];
-        menu.addItem(
-            firstItemId + firstPresetMenuOffset + static_cast<int>(index), preset.name, true, preset.name == currentName
-        );
-        presetMenuFiles.push_back(preset.file);
-    }
-
-    return menu;
-}
-
-/// Runs the presets submenu item with the given id, and returns false for an id outside the submenu.
-/// A preset item loads the file the menu was built with, so presets added or removed since then cannot shift it,
-/// and a preset removed since then is not loaded.
-bool LiveChain::handlePresetsMenuItem(const int itemId, const int firstItemId)
-{
-    const auto offset = itemId - firstItemId;
-    if (offset < 0) {
-        return false;
-    }
-
-    if (offset == savePresetMenuOffset) {
-        promptSavePreset();
-        return true;
-    }
-
-    if (offset == showPresetFolderMenuOffset) {
-        showPresetFolder();
-        return true;
-    }
-
-    const auto presetIndex = static_cast<std::size_t>(offset - firstPresetMenuOffset);
-    if (presetIndex >= presetMenuFiles.size()) {
-        return false;
-    }
-
-    if (const auto file = presetMenuFiles[presetIndex]; file.existsAsFile()) {
-        loadPresetAndReport(file);
-    }
-    return true;
-}
-
-/// Asks for a preset name and saves the chain under it, suggesting the name of the current preset.
-/// Asks again before replacing an existing preset of the same name.
-void LiveChain::promptSavePreset()
-{
-    auto window = std::make_unique<juce::AlertWindow>(
-        "Save Chain Preset",
-        "Saves the plugins of the chain, their order, and the settings of each plugin.",
-        juce::MessageBoxIconType::NoIcon
-    );
-    window->addTextEditor(presetNameFieldName, getCurrentPresetName(), "Preset name:");
-    window->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
-    window->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
-
-    // The window runs the callback before it deletes itself, so the callback can still read the name.
-    const juce::Component::SafePointer<juce::AlertWindow> safeWindow(window.get());
-    const juce::WeakReference safeThis(this);
-    auto* modalWindow = window.release();
-    modalWindow->enterModalState(
-        true,
-        juce::ModalCallbackFunction::create([safeThis, safeWindow](const int result) {
-            if (safeThis == nullptr || safeWindow == nullptr || result != 1) {
-                return;
-            }
-            safeThis->savePresetConfirmingReplace(safeWindow->getTextEditorContents(presetNameFieldName));
-        }),
-        true
-    );
-}
-
-/// Saves the chain as the named preset, first asking whether to replace a preset that already has the name.
-void LiveChain::savePresetConfirmingReplace(const juce::String& name)
-{
-    const auto file = plugin_presets::getPresetFile(getPresetDirectory(), name);
-    if (!file.has_value()) {
-        showPresetError("Preset Not Saved", "Enter a name for the preset.");
-        return;
-    }
-
-    if (!file->existsAsFile()) {
-        savePresetAndReport(name);
-        return;
-    }
-
-    const juce::WeakReference safeThis(this);
-    juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions::makeOptionsOkCancel(
-            juce::MessageBoxIconType::QuestionIcon,
-            "Replace Preset",
-            utils::format(
-                "A preset named {} already exists. Replace it?", file->getFileNameWithoutExtension().quoted()
-            ),
-            "Replace",
-            "Cancel"
-        ),
-        [safeThis, name](const int result) {
-            if (safeThis != nullptr && result == 1) {
-                safeThis->savePresetAndReport(name);
-            }
-        }
-    );
-}
-
-/// Saves the chain as the named preset and tells the user when it fails.
-void LiveChain::savePresetAndReport(const juce::String& name)
-{
-    if (const auto result = saveAsPreset(name); !result.has_value()) {
-        utils::logWarn("Could not save plugin chain preset: {}", result.error());
-        showPresetError("Preset Not Saved", result.error());
-    }
-}
-
-/// Replaces the chain with a preset and tells the user when the preset cannot be read.
-void LiveChain::loadPresetAndReport(const juce::File& file)
-{
-    if (const auto result = loadPreset(file); !result.has_value()) {
-        showPresetError("Preset Not Loaded", result.error());
-    }
-}
-
-/// Asks before deleting a preset file, and tells the user when it cannot be deleted.
-void LiveChain::confirmDeletePreset(const ChainPresetInfo& preset)
-{
-    const juce::WeakReference safeThis(this);
-    juce::AlertWindow::showAsync(
-        juce::MessageBoxOptions::makeOptionsOkCancel(
-            juce::MessageBoxIconType::WarningIcon,
-            "Delete Preset",
-            utils::format("Delete the preset {}?", preset.name.quoted()),
-            "Delete",
-            "Cancel"
-        ),
-        [safeThis, preset](const int result) {
-            if (safeThis == nullptr || result != 1) {
-                return;
-            }
-            if (!safeThis->deletePreset(preset.file)) {
-                showPresetError(
-                    "Preset Not Deleted", utils::format("Could not delete {}", preset.file.getFullPathName().quoted())
-                );
-            }
-        }
-    );
-}
-
-/// Opens the preset folder in the platform file manager, creating it first so there is always a folder to show.
-void LiveChain::showPresetFolder() const
-{
-    const auto directory = getPresetDirectory();
-    if (const auto result = directory.createDirectory(); result.failed()) {
-        showPresetError("Presets Folder", result.getErrorMessage());
-        return;
-    }
-    directory.startAsProcess();
-}
-
-/// Replaces the chain with the slots of a preset file, closing the editors of the current slots.
-/// The new slots load their processors lazily, the same way a chain restored from the settings does,
-/// so a plugin that is not installed shows as unavailable instead of failing the load.
-/// Returns the reason when the file cannot be read, and then leaves the chain unchanged.
-std::expected<void, juce::String> LiveChain::loadPreset(const juce::File& file)
-{
-    auto slots = plugin_presets::loadPreset(file);
-    if (!slots.has_value()) {
-        utils::logWarn("Could not load plugin chain preset: {}", slots.error());
-        return std::unexpected(slots.error());
-    }
-
-    {
-        const juce::ScopedLock lock(renderingLock);
-        chain.clear();
-        for (auto& savedSlot : *slots) {
-            appendSlot(makeLiveSlot(std::move(savedSlot)));
-        }
-
-        // The live preview drops the destroyed processors before the audio callback can take the lock again.
-        notifyChainChanged();
-        presetName = file.getFileNameWithoutExtension();
-        presetRevision = revision;
-    }
-
-    persistChain();
-    utils::logInfo("Loaded plugin chain preset {}", file.getFullPathName().quoted());
-    return {};
-}
-
-/// Deletes a preset file, returning whether it is gone.
-bool LiveChain::deletePreset(const juce::File& file)
-{
-    const bool deleted = plugin_presets::deletePreset(file);
-    if (deleted) {
-        sendChangeMessage();
-    }
-    return deleted;
 }
 
 /// Parses a legacy single-plugin selection, or returns an empty optional when its description cannot be loaded.
@@ -1047,7 +548,7 @@ void LiveChain::loadPersistedChain()
         }
 
         for (auto& savedSlot : *slots) {
-            appendSlot(makeLiveSlot(std::move(savedSlot)));
+            appendSlot(LiveSlot(std::move(savedSlot)));
         }
 
         return;

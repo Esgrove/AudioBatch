@@ -44,6 +44,7 @@ struct PreviewChain {
 /// Moving a slot carries the processor and its editor window along and leaves the source slot empty.
 struct LiveSlot {
     LiveSlot() = default;
+    explicit LiveSlot(SavedChainSlot savedSlot);
     ~LiveSlot();
     LiveSlot(LiveSlot&& other) noexcept;
     LiveSlot& operator=(LiveSlot&& other) noexcept;
