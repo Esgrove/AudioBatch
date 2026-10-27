@@ -18,7 +18,7 @@ use crate::chain_signal::{ChainSignal, StageFailure};
 use crate::processing_chain::{PROCESSING_BLOCK_FRAMES, limited_tail};
 
 /// Channels the preview plays, since the playback engine maps every file to stereo.
-pub const PREVIEW_CHANNELS: usize = 2;
+pub(crate) const PREVIEW_CHANNELS: usize = 2;
 
 /// Stage index meaning that no plugin has failed.
 const NO_FAILURE: usize = usize::MAX;

@@ -67,7 +67,7 @@ struct BusBuffers {
 
 impl ProcessError {
     /// The error of a call made while another handle of the same instance was processing.
-    pub const BUSY: Self = Self(kResultFalse);
+    pub(crate) const BUSY: Self = Self(kResultFalse);
 }
 
 impl fmt::Display for ProcessError {

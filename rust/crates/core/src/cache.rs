@@ -23,7 +23,7 @@ use crate::waveform::{self, WaveformOverview};
 mod serato;
 
 /// Directory name of the application data, kept apart from the C++ application's `AudioBatch` directory.
-pub const DATA_DIRECTORY_NAME: &str = "AudioBatch-rs";
+pub(crate) const DATA_DIRECTORY_NAME: &str = "AudioBatch-rs";
 
 /// Version of the analysis rules. Rows written with another version are re-analyzed.
 const ANALYSIS_VERSION: i64 = 2;
@@ -99,12 +99,6 @@ impl AnalysisCache {
         let cache = Self::new();
         cache.open()?;
         Ok(Arc::new(cache))
-    }
-
-    /// Returns the on-disk SQLite file used by the cache.
-    #[must_use]
-    pub fn database_path(&self) -> &Path {
-        &self.database_path
     }
 
     /// Opens the database and creates the schema when needed.
@@ -259,7 +253,7 @@ impl AnalysisCache {
     /// Returns the custom gain stored for a file when its row describes the given version of the file,
     /// so a fresh analysis of an unchanged file keeps the gain the user set.
     #[must_use]
-    pub fn get_custom_gain(&self, path: &Path, file_size: u64, modified_time_ms: i64) -> Option<f32> {
+    pub(crate) fn get_custom_gain(&self, path: &Path, file_size: u64, modified_time_ms: i64) -> Option<f32> {
         let file_size = i64::try_from(file_size).ok()?;
         self.with_connection(|connection| Ok(stored_custom_gain(connection, path, file_size, modified_time_ms)?))
             .ok()
@@ -383,7 +377,7 @@ pub fn data_directory() -> PathBuf {
 
 /// Returns the default database path in the user data directory.
 #[must_use]
-pub fn default_database_path() -> PathBuf {
+pub(crate) fn default_database_path() -> PathBuf {
     data_directory().join("analysis.db")
 }
 

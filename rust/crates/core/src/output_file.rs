@@ -42,7 +42,7 @@ pub fn trash_disposer() -> FileDisposer {
 /// On Windows a file on a drive without a recycle bin, such as a network share, is refused,
 /// since the shell would delete it permanently, which the C++ application refuses too.
 #[must_use]
-pub fn trash_file(path: &Path) -> bool {
+pub(crate) fn trash_file(path: &Path) -> bool {
     if !path.exists() {
         return true;
     }

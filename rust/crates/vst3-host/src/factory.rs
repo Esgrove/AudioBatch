@@ -70,7 +70,7 @@ impl ClassId {
 
     /// Returns the raw TUID of the class id.
     #[must_use]
-    pub fn to_tuid(self) -> TUID {
+    pub(crate) fn to_tuid(self) -> TUID {
         self.0.map(|byte| std::ffi::c_char::from_ne_bytes([byte]))
     }
 

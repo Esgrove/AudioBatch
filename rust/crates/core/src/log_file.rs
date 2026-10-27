@@ -89,7 +89,7 @@ pub fn install(log_name: &str, stderr_level: LevelFilter) -> Result<PathBuf> {
 /// That is `~/Library/Logs/AudioBatch-rs` on macOS, the folder JUCE uses for the C++ application,
 /// and the `logs` folder in the data directory elsewhere.
 #[must_use]
-pub fn log_directory() -> PathBuf {
+pub(crate) fn log_directory() -> PathBuf {
     platform_log_directory().unwrap_or_else(|| data_directory().join("logs"))
 }
 

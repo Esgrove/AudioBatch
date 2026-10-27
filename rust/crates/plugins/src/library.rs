@@ -186,7 +186,7 @@ impl KnownPlugins {
 
     /// Returns true when a bundle is blacklisted.
     #[must_use]
-    pub fn is_blacklisted(&self, bundle: &Path) -> bool {
+    pub(crate) fn is_blacklisted(&self, bundle: &Path) -> bool {
         self.blacklist.iter().any(|entry| entry == bundle)
     }
 

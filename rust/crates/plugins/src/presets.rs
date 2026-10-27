@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::chain::{ChainSlot, PluginChain, deserialize_slots_skipping_damaged};
 
 /// Version of the preset file format, raised when a change would make older versions misread a file.
-pub const PRESET_FORMAT_VERSION: u32 = 1;
+pub(crate) const PRESET_FORMAT_VERSION: u32 = 1;
 
 /// File extension of the preset files.
 const PRESET_EXTENSION: &str = "json";
@@ -92,7 +92,7 @@ impl PresetStore {
 
     /// Returns the path of the named preset, or `None` when the name has no usable characters.
     #[must_use]
-    pub fn path_for(&self, name: &str) -> Option<PathBuf> {
+    pub(crate) fn path_for(&self, name: &str) -> Option<PathBuf> {
         let name = sanitize_preset_name(name);
         (!name.is_empty()).then(|| self.folder.join(format!("{name}.{PRESET_EXTENSION}")))
     }
@@ -197,7 +197,7 @@ pub fn sanitize_preset_name(name: &str) -> String {
 /// # Errors
 ///
 /// Returns an error when the file does not exist, cannot be parsed, or was saved by a newer version.
-pub fn load_preset_file(path: &Path) -> Result<ChainPreset> {
+pub(crate) fn load_preset_file(path: &Path) -> Result<ChainPreset> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

@@ -13,7 +13,7 @@ use std::io::{Seek, SeekFrom, Write};
 use anyhow::{Context, Result, ensure};
 
 /// Bit depths the writer supports.
-pub const SUPPORTED_BIT_DEPTHS: [u32; 3] = [8, 16, 24];
+pub(crate) const SUPPORTED_BIT_DEPTHS: [u32; 3] = [8, 16, 24];
 
 /// Size of the header before the sample data: `FORM`, `COMM`, and the `SSND` chunk header.
 const HEADER_BYTES: u64 = 54;
@@ -67,7 +67,7 @@ impl<W: Write + Seek> AiffWriter<W> {
     ///
     /// Returns an error when the channel count or lengths do not match,
     /// when the file would outgrow the AIFF size fields, or when writing fails.
-    pub fn write_planar(&mut self, planes: &[&[f32]]) -> Result<()> {
+    pub(crate) fn write_planar(&mut self, planes: &[&[f32]]) -> Result<()> {
         self.write_frames(planes, float_to_int32)
     }
 
@@ -160,7 +160,7 @@ impl<W: Write + Seek> AiffWriter<W> {
 /// Converts a float sample to a 32-bit integer like JUCE's `convertFloatsToInts`,
 /// clipping at full scale and rounding half to even.
 #[must_use]
-pub fn float_to_int32(sample: f32) -> i32 {
+pub(crate) fn float_to_int32(sample: f32) -> i32 {
     let sample = f64::from(sample);
     if sample <= -1.0 {
         i32::MIN

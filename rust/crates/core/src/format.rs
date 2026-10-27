@@ -20,24 +20,6 @@ pub fn gain_to_decibels(gain: f64, minimum_decibels: f64) -> f64 {
     }
 }
 
-/// Formats a sample peak with the dBFS unit, rendering silence as "-INF dBFS".
-#[must_use]
-pub fn format_peak_display(peak: f32) -> String {
-    format_amplitude(f64::from(peak).abs(), " dBFS")
-}
-
-/// Formats a true peak with the dBTP unit.
-#[must_use]
-pub fn format_true_peak_display(true_peak: f64) -> String {
-    format_amplitude(true_peak.abs(), " dBTP")
-}
-
-/// Formats a loudness value with the LUFS unit.
-#[must_use]
-pub fn format_loudness_display(loudness: f64) -> String {
-    format_loudness(loudness, " LUFS")
-}
-
 /// Formats a sample peak without a unit, for compact CLI columns.
 #[must_use]
 pub fn format_peak_compact(peak: f64) -> String {
@@ -200,15 +182,15 @@ mod test_level_formatting {
 
     #[test]
     fn peaks_format_as_decibels() {
-        assert_eq!(format_peak_display(0.5), "-6.02 dBFS");
-        assert_eq!(format_peak_display(-0.5), "-6.02 dBFS");
-        assert_eq!(format_peak_display(0.0), "-INF dBFS");
+        assert_eq!(format_peak_compact(0.5), "-6.02");
+        assert_eq!(format_peak_compact(-0.5), "-6.02");
+        assert_eq!(format_peak_compact(0.0), "-INF");
         assert_eq!(format_true_peak_compact(1.0), "0.00");
     }
 
     #[test]
     fn loudness_formats_with_sentinel() {
-        assert_eq!(format_loudness_display(-14.256), "-14.26 LUFS");
+        assert_eq!(format_loudness_compact(-14.256), "-14.26");
         assert_eq!(format_loudness_compact(NEGATIVE_INFINITY_LOUDNESS), "-INF");
     }
 
