@@ -477,14 +477,15 @@ public:
 
         beginTest("Built-in Apple Audio Units are removed from a known plugins list, including blacklisted ones");
         {
-            const auto makeDescription = [](const juce::String& format, const juce::String& identifier, const int id) {
-                juce::PluginDescription description;
-                description.name = identifier;
-                description.pluginFormatName = format;
-                description.fileOrIdentifier = identifier;
-                description.uniqueId = id;
-                return description;
-            };
+            const auto makeDescription
+                = [](const juce::String& format, const juce::String& identifier, const int uniqueId) {
+                      juce::PluginDescription description;
+                      description.name = identifier;
+                      description.pluginFormatName = format;
+                      description.fileOrIdentifier = identifier;
+                      description.uniqueId = uniqueId;
+                      return description;
+                  };
 
             juce::KnownPluginList knownPluginList;
             knownPluginList.addType(makeDescription("AudioUnit", "AudioUnit:Effects/aufx,lmtr,appl", 1));
