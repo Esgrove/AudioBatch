@@ -20,9 +20,13 @@ namespace
 {
 /// Settings key under which older versions stored the known-plugins list.
 constexpr auto legacyKnownPluginListKey {"knownPluginList"};
-/// Name of the scan lock the tests take, apart from the lock of the app, so they never contend with a running
-/// AudioBatch.
-constexpr auto testLockName {"AudioBatchTestsPluginScan"};
+/// Returns the name of the scan lock the tests take, unique to this test process,
+/// so they never contend with a running AudioBatch or another test run on the same machine.
+const juce::String& testLockName()
+{
+    static const juce::String name {"AudioBatchTestsPluginScan-" + juce::Uuid().toDashedString()};
+    return name;
+}
 
 /// A custom scanner that abandons its scan on the first plugin it gets, as the plugin scan does when the lock is busy.
 class AbandoningScanner final : public juce::KnownPluginList::CustomScanner
@@ -173,7 +177,7 @@ private:
 
         beginTest("A scan lock can be taken again by its holder and taken again after its release");
         {
-            PluginScanLock lock(testLockName);
+            PluginScanLock lock(testLockName());
             expect(lock.tryAcquire());
             expect(lock.tryAcquire());
             lock.release();
@@ -183,9 +187,9 @@ private:
 
         beginTest("A scan lock held by another process cannot be taken until that process releases it");
         {
-            LockHolder holder(testLockName, directory.getChildFile("holder"));
+            LockHolder holder(testLockName(), directory.getChildFile("holder"));
             expect(holder.waitUntilHeld(), "the helper process did not take the lock");
-            PluginScanLock lock(testLockName);
+            PluginScanLock lock(testLockName());
             expect(!lock.tryAcquire());
             expect(holder.release(), "the helper process did not exit");
             expectEquals(holder.getExitCode(), 0);
@@ -194,9 +198,9 @@ private:
 
         beginTest("Another process cannot take a scan lock that this process holds");
         {
-            PluginScanLock lock(testLockName);
+            PluginScanLock lock(testLockName());
             expect(lock.tryAcquire());
-            LockHolder holder(testLockName, directory.getChildFile("busy"));
+            LockHolder holder(testLockName(), directory.getChildFile("busy"));
             expect(!holder.waitUntilHeld());
             expect(holder.release());
             expectEquals(holder.getExitCode(), 1);
@@ -414,7 +418,7 @@ private:
         const auto options = temporarySettingsOptions(directory.getChildFile("settings"));
 
         beginTest("The plugin listing succeeds without any known plugins");
-        expectEquals(cli::runPluginList(false, PluginListGrouping::name, options, testLockName), 0);
+        expectEquals(cli::runPluginList(false, PluginListGrouping::name, options, testLockName()), 0);
 
         beginTest("The plugin listing prints a stored list in every grouping without saving it");
         {
@@ -440,16 +444,16 @@ private:
                      PluginListGrouping::format,
                  })
             {
-                expectEquals(cli::runPluginList(false, grouping, options, testLockName), 0);
+                expectEquals(cli::runPluginList(false, grouping, options, testLockName()), 0);
             }
             expectEquals(listFile.loadFileAsString(), savedText);
         }
 
         beginTest("A rescan is refused with exit code 1 while another process holds the scan lock");
         {
-            LockHolder holder(testLockName, directory.getChildFile("holder"));
+            LockHolder holder(testLockName(), directory.getChildFile("holder"));
             expect(holder.waitUntilHeld(), "the helper process did not take the lock");
-            expectEquals(cli::runPluginList(true, PluginListGrouping::name, options, testLockName), 1);
+            expectEquals(cli::runPluginList(true, PluginListGrouping::name, options, testLockName()), 1);
             expect(holder.release());
         }
     }
