@@ -100,7 +100,7 @@ pub struct CliArgs {
     pub reverse: bool,
 
     /// Print results as table, csv, or json
-    #[arg(short = 'o', long, value_enum, value_name = "FORMAT", default_value_t = OutputFormat::Table)]
+    #[arg(short = 'o', long, value_enum, ignore_case = true, value_name = "FORMAT", default_value_t = OutputFormat::Table)]
     pub output: OutputFormat,
 }
 
@@ -249,6 +249,7 @@ mod test_parse_arguments {
         assert!(args.reverse);
         assert_eq!(args.output, OutputFormat::Json);
         assert_eq!(args.paths, vec![PathBuf::from("a.wav")]);
+        assert_eq!(parse(&["-o", "CSV"]).expect("parses").output, OutputFormat::Csv);
     }
 
     #[test]

@@ -123,7 +123,7 @@ pub fn format_csv(records: &[AnalysisRecord]) -> Result<String> {
             row.sample_rate.to_string(),
             row.channels.to_string(),
             row.bits_per_sample.to_string(),
-            row.duration_seconds.to_string(),
+            csv_number(row.duration_seconds),
             optional_number(row.peak_dbfs),
             optional_number(row.true_peak_dbtp),
             optional_number(row.integrated_lufs),
@@ -181,7 +181,12 @@ fn round_to(value: f64, scale: f64) -> f64 {
 
 /// Formats an optional number for CSV, with an empty field for `None`.
 fn optional_number(value: Option<f64>) -> String {
-    value.map(|number| number.to_string()).unwrap_or_default()
+    value.map(csv_number).unwrap_or_default()
+}
+
+/// Formats a number for CSV the way the JSON output writes it, so a whole number keeps its ".0" like the C++ CLI.
+fn csv_number(value: f64) -> String {
+    serde_json::Value::from(value).to_string()
 }
 
 #[cfg(test)]
