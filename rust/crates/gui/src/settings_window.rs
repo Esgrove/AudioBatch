@@ -2,7 +2,8 @@
 //!
 //! It is a separate window with two groups.
 //! "Audio interface and playback" chooses the output device, its sample rate, and its buffer size,
-//! and "Preview preferences" holds the playback options and the loudness graph with its axis range.
+//! and "Preview preferences" holds the plugin chain preview, the playback options,
+//! and the loudness graph with its axis range.
 //! The waveform is always coloured from the Serato Overview tag when a file has one, so there is no option for it.
 //! The main view stays the owner of the settings.
 //! This view sends every change as a complete `GuiSettings`,
@@ -32,7 +33,7 @@ pub const SETTINGS_TITLE: &str = "Audio Settings";
 pub const SETTINGS_WIDTH: f32 = 540.0;
 
 /// Initial height of the window.
-pub const SETTINGS_HEIGHT: f32 = 340.0;
+pub const SETTINGS_HEIGHT: f32 = 410.0;
 
 /// Padding around the content and inside the groups.
 const PADDING: f32 = 12.0;
@@ -69,6 +70,14 @@ const SAMPLE_RATE_TOOLTIP: &str = "Choose the audio device's playback sample rat
 
 /// Tooltip of the buffer size choice.
 const BUFFER_SIZE_TOOLTIP: &str = "Smaller buffers reduce preview latency. Larger buffers can prevent dropouts.";
+
+/// Tooltip of the plugin chain preview option.
+const PLUGIN_PREVIEW_TOOLTIP: &str =
+    "Listen through the enabled plugins of the chain. Does not normalize or write files.";
+
+/// Tooltip of the latency compensation option.
+const COMPENSATION_TOOLTIP: &str = "Align processed audio with the file position. \
+     High-latency chains need a preparation pause after starts or seeks.";
 
 /// Tooltip of the playback continuation option.
 const CONTINUE_TOOLTIP: &str = "Start a newly selected file only if the previous preview was playing.";
@@ -397,6 +406,22 @@ impl SettingsView {
             .text_color(color(palette::ORANGE_RED))
             .children(self.range_error.clone());
         group("Preview preferences")
+            .child(Self::option(
+                "preview-plugin-chain",
+                "Preview plugin chain",
+                PLUGIN_PREVIEW_TOOLTIP,
+                settings.preview_plugin_chain,
+                |settings, checked| settings.preview_plugin_chain = checked,
+                cx,
+            ))
+            .child(Self::option(
+                "compensate-preview-latency",
+                "Compensate plugin latency",
+                COMPENSATION_TOOLTIP,
+                settings.compensate_preview_latency,
+                |settings, checked| settings.compensate_preview_latency = checked,
+                cx,
+            ))
             .child(Self::option(
                 "continue-playback",
                 "Continue playback when changing files",

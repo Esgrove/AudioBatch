@@ -4,7 +4,8 @@
 //! and plugin processing coordinators, the plugin chain, and the preview player.
 //! This module holds the view state, the analysis runs, and the selection.
 //! The menu and transport actions are in `actions`, normalization is in `normalize`,
-//! plugin processing is in `process`, and the plugin chain and the plugin windows are in `plugins`.
+//! plugin processing is in `process`, the plugin chain and the plugin windows are in `plugins`,
+//! and the live preview through the chain is in `preview`.
 //! The tags of the selected file are read in `tags`, and the layout is in `render`.
 //! Coordinator events are drained from their channel by a foreground task in batches,
 //! so a large run updates the table at a steady rate instead of once per event.
@@ -13,6 +14,7 @@ mod actions;
 mod normalize;
 mod plugins;
 mod preferences;
+mod preview;
 mod process;
 mod render;
 mod tags;
@@ -249,6 +251,8 @@ impl AppView {
         let mut menu_state = MenuState {
             output_device: None,
             show_loudness_graph: settings.show_loudness_graph,
+            preview_plugin_chain: settings.preview_plugin_chain,
+            compensate_preview_latency: settings.compensate_preview_latency,
             normalize_target: describe_target(&settings),
             ..MenuState::default()
         };
@@ -314,6 +318,7 @@ impl AppView {
             _plugin_tick_task: plugin_tick_task,
         };
         view.connect_playhead(cx);
+        view.refresh_plugin_preview(cx);
         if let Some(rows) = options.demo_rows {
             view.start_demo(rows, cx);
         } else if !options.paths.is_empty() {

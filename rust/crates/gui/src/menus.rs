@@ -96,6 +96,16 @@ pub struct NormalizeAll;
 #[action(namespace = audiobatch)]
 pub struct ToggleLoudnessGraph;
 
+/// Turns playing the preview through the plugin chain on or off.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct TogglePluginPreview;
+
+/// Turns latency compensation of the plugin chain preview on or off.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct TogglePreviewLatencyCompensation;
+
 /// Opens the Audio Settings window, or brings it to the front.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
@@ -176,6 +186,10 @@ pub struct MenuState {
     pub output_device: Option<String>,
     /// True when the loudness graph is shown.
     pub show_loudness_graph: bool,
+    /// True when the preview plays through the plugin chain.
+    pub preview_plugin_chain: bool,
+    /// True when the plugin chain preview compensates its latency.
+    pub compensate_preview_latency: bool,
     /// Normalization target shown in the normalize items, for example "-14.0 LUFS".
     pub normalize_target: String,
     /// Summary of the plugin chain, for example "2 plugins".
@@ -223,7 +237,7 @@ pub fn install(cx: &mut App) {
     set_menus(cx, &MenuState::default());
 }
 
-/// Builds the menu bar, with check marks on the loudness graph option and the current output device,
+/// Builds the menu bar, with check marks on the options and the current output device,
 /// and the normalization target in the normalize items.
 pub fn set_menus(cx: &App, state: &MenuState) {
     let devices = Player::output_device_names()
@@ -272,13 +286,19 @@ pub fn set_menus(cx: &App, state: &MenuState) {
     }
     menus.push(Menu::new("File").items(file_items));
     menus.push(plugins_menu(state));
-    menus.push(Menu::new("Options").items([
-        MenuItem::action("Show Loudness Graph", ToggleLoudnessGraph).checked(state.show_loudness_graph),
-        MenuItem::separator(),
-        MenuItem::submenu(Menu::new("Output Device").items(devices)),
-        MenuItem::separator(),
-        MenuItem::action("Audio Settings…", OpenAudioSettings),
-    ]));
+    menus.push(
+        Menu::new("Options").items([
+            MenuItem::action("Show Loudness Graph", ToggleLoudnessGraph).checked(state.show_loudness_graph),
+            MenuItem::separator(),
+            MenuItem::action("Preview Plugin Chain", TogglePluginPreview).checked(state.preview_plugin_chain),
+            MenuItem::action("Compensate Preview Plugin Latency", TogglePreviewLatencyCompensation)
+                .checked(state.compensate_preview_latency),
+            MenuItem::separator(),
+            MenuItem::submenu(Menu::new("Output Device").items(devices)),
+            MenuItem::separator(),
+            MenuItem::action("Audio Settings…", OpenAudioSettings),
+        ]),
+    );
     menus.push(Menu::new("Help").items([MenuItem::action("About AudioBatchRs", About)]));
     cx.set_menus(menus);
 }

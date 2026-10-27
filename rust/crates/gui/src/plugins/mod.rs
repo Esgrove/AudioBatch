@@ -1,4 +1,5 @@
-//! Plugin hosting in the desktop app: the known plugins, the live chain, scanning, and the plugin windows.
+//! Plugin hosting in the desktop app: the known plugins, the live chain, scanning, the live preview,
+//! and the plugin windows.
 //!
 //! `PluginHost` holds the plugin state the main view owns.
 //! The known plugins come from `plugins.json`, which scans and the CLI also write,
@@ -12,6 +13,7 @@ pub mod chain_window;
 pub mod labels;
 pub mod live_chain;
 pub mod manager_window;
+pub mod preview;
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,6 +27,7 @@ use vst3_host::{UiDispatcher, UiThread};
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
 use crate::theme::{color, palette, white};
 use live_chain::LiveChain;
+use preview::PluginPreview;
 
 /// Padding inside a window and its panels.
 pub const WINDOW_PADDING: f32 = 12.0;
@@ -51,6 +54,8 @@ pub struct PluginHost {
     pub known: KnownPlugins,
     /// The chain the user edits.
     pub chain: LiveChain,
+    /// What the player holds of the chain for the live preview.
+    pub preview: PluginPreview,
     /// The main window, which owns the plugin editor windows on Windows.
     pub editor_owner: Option<RawWindowHandle>,
     /// The scan in progress.
@@ -98,6 +103,7 @@ impl PluginHost {
             paths,
             known,
             chain,
+            preview: PluginPreview::default(),
             editor_owner,
             scan: None,
             last_report: None,

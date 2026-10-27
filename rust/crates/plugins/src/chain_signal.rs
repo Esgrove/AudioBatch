@@ -13,6 +13,15 @@ use vst3_host::{ProcessError, ProcessorHandle};
 /// Most channels the signal carries.
 const MAXIMUM_SIGNAL_CHANNELS: usize = 2;
 
+/// A plugin of the chain whose `process` call failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StageFailure {
+    /// Position of the plugin in the chain.
+    pub index: usize,
+    /// The failure the plugin reported.
+    pub error: ProcessError,
+}
+
 /// The audio passed from plugin to plugin, one block long.
 pub struct ChainSignal {
     /// The channel buffers, of which the first `width` carry signal.
@@ -48,14 +57,15 @@ impl ChainSignal {
         self.channels.get(channel).map(Vec::as_slice)
     }
 
-    /// Runs the whole block through every processor in order.
+    /// Runs the first `frames` frames of the block through every processor in order.
+    /// `frames` is limited to the block length.
     ///
     /// # Errors
     ///
     /// Returns the failure of the first plugin whose `process` call fails.
-    pub fn process(&mut self, processors: &mut [ProcessorHandle]) -> Result<(), ProcessError> {
-        let frames = self.channels[0].len();
-        for processor in processors {
+    pub fn process(&mut self, processors: &mut [ProcessorHandle], frames: usize) -> Result<(), StageFailure> {
+        let frames = frames.min(self.channels[0].len());
+        for (index, processor) in processors.iter_mut().enumerate() {
             let main_inputs = processor.input_channels();
             self.fit_to(main_inputs.clamp(1, MAXIMUM_SIGNAL_CHANNELS));
             for channel in 0..main_inputs {
@@ -63,15 +73,17 @@ impl ChainSignal {
                     continue;
                 };
                 match self.channels.get(channel).filter(|_| channel < self.width) {
-                    Some(signal) => copy_samples(signal, input),
+                    Some(signal) => copy_samples(signal, input, frames),
                     None => input.fill(0.0),
                 }
             }
-            processor.process(frames)?;
+            processor
+                .process(frames)
+                .map_err(|error| StageFailure { index, error })?;
             let main_outputs = processor.output_channels();
             for (channel, signal) in self.channels.iter_mut().enumerate() {
                 match processor.output_channel(channel) {
-                    Some(output) => copy_samples(output, signal),
+                    Some(output) => copy_samples(output, signal, frames),
                     None => signal.fill(0.0),
                 }
             }
@@ -96,9 +108,9 @@ impl ChainSignal {
     }
 }
 
-/// Copies as many samples as both slices hold.
-fn copy_samples(source: &[f32], target: &mut [f32]) {
-    for (target, source) in target.iter_mut().zip(source) {
+/// Copies up to `frames` samples, as many as both slices hold.
+fn copy_samples(source: &[f32], target: &mut [f32], frames: usize) {
+    for (target, source) in target.iter_mut().zip(source).take(frames) {
         *target = *source;
     }
 }

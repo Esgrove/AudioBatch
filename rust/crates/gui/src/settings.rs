@@ -1,8 +1,10 @@
 //! Preferences of the desktop app that persist between launches.
 //!
 //! They are the audio device and preview preferences of the Audio Settings window:
-//! the output device with its sample rate and buffer size, continuing playback when changing files,
-//! starting from the first cue point, and the loudness graph with its axis range.
+//! the output device with its sample rate and buffer size,
+//! previewing through the plugin chain with or without latency compensation,
+//! continuing playback when changing files, starting from the first cue point,
+//! and the loudness graph with its axis range.
 //! The normalization mode and its peak and loudness targets are kept here too.
 //! They are stored as JSON next to the analysis cache in the `AudioBatch-rs` data directory.
 //! A missing or unreadable file gives the defaults, so a broken file never stops the app from starting.
@@ -55,6 +57,10 @@ pub struct GuiSettings {
     pub sample_rate: Option<u32>,
     /// Output buffer size in frames, or the device default when unset.
     pub buffer_size: Option<u32>,
+    /// Plays the preview through the enabled plugins of the chain.
+    pub preview_plugin_chain: bool,
+    /// Holds the playhead while the preview chain fills its latency, so what is heard lines up with the waveform.
+    pub compensate_preview_latency: bool,
     /// Starts a newly selected file only if the previous one was playing.
     pub continue_playback: bool,
     /// Starts a loaded file at its first cue point when it is in the first half of the file.
@@ -90,6 +96,8 @@ impl Default for GuiSettings {
             output_device: None,
             sample_rate: None,
             buffer_size: None,
+            preview_plugin_chain: false,
+            compensate_preview_latency: true,
             continue_playback: false,
             play_from_first_cue_point: false,
             show_loudness_graph: false,
@@ -210,6 +218,8 @@ mod test_settings_file {
             output_device: Some(String::from("Babyface Pro")),
             sample_rate: Some(96_000),
             buffer_size: Some(256),
+            preview_plugin_chain: true,
+            compensate_preview_latency: false,
             continue_playback: true,
             play_from_first_cue_point: true,
             show_loudness_graph: true,
@@ -241,6 +251,8 @@ mod test_settings_file {
         assert!(settings.show_loudness_graph);
         assert_eq!(settings.output_device, None);
         assert_eq!(settings.loudness_minimum, DEFAULT_LOUDNESS_MINIMUM);
+        assert!(!settings.preview_plugin_chain);
+        assert!(settings.compensate_preview_latency);
     }
 
     #[test]

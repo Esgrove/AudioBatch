@@ -5,7 +5,7 @@
 //! Changes to the scan folders and the blacklist take the scan lock and reload `plugins.json` first,
 //! so they do not undo what a scan in the CLI wrote in the meantime.
 //! A housekeeping tick prepares instances again after a change of the output rate
-//! or a plugin's restart request, and shows the progress of a scan.
+//! or a plugin's restart request, keeps the live preview in step, and shows the progress of a scan.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -143,7 +143,9 @@ impl AppView {
 
     /// Captures the settings of the instances and saves the chain, reporting a failure on stderr.
     /// Used when the app quits, where the status bar is no longer seen.
+    /// The preview chain is taken out of the player first, so it delivers no more edits.
     pub(super) fn save_plugin_chain(&mut self) {
+        self.detach_plugin_preview();
         if let Some(ui) = UiThread::current() {
             self.plugins.chain.capture_states(&ui);
         }
@@ -179,7 +181,8 @@ impl AppView {
     }
 
     /// Prepares the live instances again after a change of the output rate or a restart request,
-    /// forgets closed windows, saves the settings of closed editors, and shows the progress of a scan.
+    /// keeps the preview in step, forgets closed windows, saves the settings of closed editors,
+    /// and shows the progress of a scan.
     fn plugin_tick(&mut self, cx: &mut Context<Self>) {
         if self.chain_window.as_ref().is_some_and(PluginWindow::is_closed) {
             self.chain_window = None;
@@ -190,15 +193,10 @@ impl AppView {
         let Some(ui) = UiThread::current() else {
             return;
         };
-        let sample_rate = self.preview_sample_rate();
-        let rate_changed = sample_rate != self.plugins.chain.sample_rate();
-        if rate_changed {
-            self.plugins.chain.set_sample_rate(&ui, sample_rate);
-        }
-        let restarted = self.plugins.chain.handle_restart_requests(&ui);
+        let prepared = self.sync_plugin_preview(&ui, cx);
         if self.plugins.chain.reap_closed_editors(&ui) {
-            self.chain_changed(cx);
-        } else if rate_changed || restarted {
+            self.save_chain_settings(cx);
+        } else if prepared {
             self.sync_chain_window(cx);
         }
         if self.plugins.is_scanning() {
@@ -293,11 +291,16 @@ impl AppView {
         self.plugins.chain.open_editor(&ui, id, owner)
     }
 
-    /// Saves the chain after a change and shows it in the menus and the windows.
+    /// Saves the chain after a change to its structure, shows it in the menus and the windows,
+    /// and gives the preview the new chain.
     fn chain_changed(&mut self, cx: &mut Context<Self>) {
-        if let Some(ui) = UiThread::current() {
-            self.plugins.chain.capture_states(&ui);
-        }
+        self.save_chain_settings(cx);
+        self.refresh_plugin_preview(cx);
+    }
+
+    /// Captures the settings of the instances, saves the chain, and shows it in the menus and the windows.
+    fn save_chain_settings(&mut self, cx: &mut Context<Self>) {
+        self.capture_plugin_states(cx);
         if let Err(error) = self.plugins.chain.save() {
             self.status = format!("{error:#}").into();
         }
@@ -515,7 +518,7 @@ impl AppView {
     }
 
     /// Shows a message in the status bar.
-    fn report_status(&mut self, message: String, cx: &mut Context<Self>) {
+    pub(super) fn report_status(&mut self, message: String, cx: &mut Context<Self>) {
         self.status = message.into();
         cx.notify();
     }

@@ -6,6 +6,7 @@
 pub mod chain;
 mod chain_signal;
 pub mod library;
+pub mod preview_chain;
 pub mod processing;
 pub mod processing_chain;
 pub mod processing_coordinator;
@@ -18,6 +19,7 @@ mod test_helpers;
 
 pub use chain::{ChainSlot, PluginChain};
 pub use library::{FORMAT_NAME, KnownPlugins, PluginDataPaths, PluginDescription};
+pub use preview_chain::{PreviewChain, PreviewFailure, chain_tail_frames};
 pub use processing::{ProcessingOptions, process_file, processing_output_path};
 pub use processing_chain::{ChainPlugin, MAXIMUM_TAIL_SECONDS, PROCESSING_BLOCK_FRAMES, ProcessingChain};
 pub use processing_coordinator::{ProcessingCoordinator, ProcessingEvent, default_worker_count};
