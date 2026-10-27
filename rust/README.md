@@ -96,9 +96,11 @@ The output of lossless sources has the same samples as the C++ application write
 ```console
 Analyze audio files for sample peak, true peak, and integrated loudness (EBU R128)
 
-Usage: audiobatch-rs [OPTIONS] [PATHS]... [COMMAND]
+Usage: audiobatch-rs [OPTIONS] [PATHS]...
+       audiobatch-rs <COMMAND>
 
 Commands:
+  list        List the available VST3 plugins
   completion  Generate shell completion script
   help        Print this message or the help of the given subcommand(s)
 
@@ -118,6 +120,28 @@ Options:
   -o, --output <FORMAT>  Print results as table, csv, or json [default: table] [possible values: table, csv, json]
   -h, --help             Print help (see more with '--help')
   -V, --version          Print version
+```
+
+### Plugin Listing
+
+`audiobatch-rs list` prints the known VST3 plugins,
+and `--rescan` first scans the plugin folders for new or changed ones.
+The C++ CLI uses the `--list-plugins`, `--group-by`, and `--rescan` options instead,
+while the Rust CLI has a subcommand with its own help.
+Each plugin is loaded in a separate worker process, so a plugin that crashes is blacklisted instead of ending the scan,
+and one that takes longer than three minutes is skipped.
+Bundles that are unchanged since the last scan are not loaded again.
+The list is saved to `plugins.json` in the data folder and shared with the GUI.
+
+```console
+List the available VST3 plugins
+
+Usage: audiobatch-rs list [OPTIONS]
+
+Options:
+  -R, --rescan           Scan for new or changed plugins before listing them
+  -g, --group-by <MODE>  Arrange the plugins in one table, or in sections by manufacturer, type, or format [default: name] [possible values: name, manufacturer, type, format]
+  -h, --help             Print help (see more with '--help')
 ```
 
 ## GUI

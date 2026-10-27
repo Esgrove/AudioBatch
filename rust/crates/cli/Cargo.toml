@@ -16,6 +16,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 audiobatch-core.workspace = true
+audiobatch-plugins.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 colored.workspace = true
@@ -25,10 +26,13 @@ dirs.workspace = true
 indicatif.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+unicode-width.workspace = true
 
 [dev-dependencies]
+audiobatch-test-plugin.workspace = true
 tempfile.workspace = true
 test-fixtures.workspace = true
+vst3-host.workspace = true
 
 [lints]
 workspace = true

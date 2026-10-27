@@ -580,6 +580,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "audiobatch-core",
+ "audiobatch-plugins",
+ "audiobatch-test-plugin",
  "clap",
  "clap_complete",
  "colored",
@@ -591,6 +593,8 @@ dependencies = [
  "serde_json",
  "tempfile",
  "test-fixtures",
+ "unicode-width",
+ "vst3-host",
 ]
 
 [[package]]

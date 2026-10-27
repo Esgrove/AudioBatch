@@ -1,9 +1,14 @@
 //! Command line arguments of `audiobatch-rs`.
 //!
-//! The options, their short forms, and their validation messages are the same as those of the C++ `audiobatch` CLI,
-//! so `scripts/parity.sh` can run both with the same arguments.
+//! The analysis options, their short forms, and their validation messages are the same
+//! as those of the C++ `audiobatch` CLI, so `scripts/parity.sh` can run both with the same arguments.
 //! The normalization options are checked after parsing, so their errors can use those messages.
-//! The `completion` subcommand is the only addition.
+//!
+//! The plugin listing is the `list` subcommand instead of the C++ CLI's `--list-plugins`, `--group-by`,
+//! and `--rescan` options, so it has its own help and its own options.
+//! Analysis options given before `list` make it an input path, the same as for any other subcommand name.
+//! `scripts/parity.sh` does not compare plugin listings.
+//! The `completion` subcommand is the other addition.
 
 use std::path::PathBuf;
 use std::thread;
@@ -13,7 +18,7 @@ use audiobatch_core::normalize::{
     MAXIMUM_TARGET_LUFS, MAXIMUM_TARGET_PEAK_DBFS, MINIMUM_TARGET_LUFS, MINIMUM_TARGET_PEAK_DBFS, NormalizationMode,
     NormalizationOptions,
 };
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 
 /// Lowest upper limit for the worker count, used on machines with few cores.
@@ -31,9 +36,27 @@ pub enum OutputFormat {
     Json,
 }
 
+/// How the plugin listing arranges the plugins.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PluginGrouping {
+    /// One alphabetical table.
+    #[default]
+    Name,
+    /// One section per manufacturer.
+    Manufacturer,
+    /// One section per processing type, such as Dynamics or EQ.
+    Type,
+    /// One section per plugin format.
+    Format,
+}
+
 /// Subcommands that run instead of the analysis.
 #[derive(Subcommand, Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
+    /// List the available VST3 plugins
+    #[command(name = "list")]
+    List(PluginListing),
+
     /// Generate shell completion script
     #[command(name = "completion")]
     Completion {
@@ -53,7 +76,7 @@ pub enum CliCommand {
 
 /// Analyze audio files for sample peak, true peak, and integrated loudness (EBU R128).
 #[derive(Parser, Debug, Clone)]
-#[command(name = "audiobatch-rs", author, version)]
+#[command(name = "audiobatch-rs", author, version, args_conflicts_with_subcommands = true)]
 pub struct CliArgs {
     /// Subcommand to run instead of the analysis
     #[command(subcommand)]
@@ -102,6 +125,25 @@ pub struct CliArgs {
     /// Print results as table, csv, or json
     #[arg(short = 'o', long, value_enum, ignore_case = true, value_name = "FORMAT", default_value_t = OutputFormat::Table)]
     pub output: OutputFormat,
+}
+
+/// Options of the `list` subcommand.
+#[derive(Args, Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct PluginListing {
+    /// Scan for new or changed plugins before listing them
+    #[arg(short = 'R', long)]
+    pub rescan: bool,
+
+    /// Arrange the plugins in one table, or in sections by manufacturer, type, or format
+    #[arg(
+        short = 'g',
+        long = "group-by",
+        value_enum,
+        ignore_case = true,
+        value_name = "MODE",
+        default_value_t
+    )]
+    pub grouping: PluginGrouping,
 }
 
 impl CliArgs {
@@ -343,6 +385,41 @@ mod test_parse_arguments {
             })
         );
         assert!(parse(&["completion", "tcsh"]).is_err());
+    }
+
+    #[test]
+    fn list_command_parses_its_options() {
+        let args = parse(&["list"]).expect("parses");
+        assert_eq!(args.command, Some(CliCommand::List(PluginListing::default())));
+        let args = parse(&["list", "-R", "--group-by", "Manufacturer"]).expect("parses");
+        assert_eq!(
+            args.command,
+            Some(CliCommand::List(PluginListing {
+                rescan: true,
+                grouping: PluginGrouping::Manufacturer,
+            }))
+        );
+        let args = parse(&["list", "-g", "type"]).expect("parses");
+        assert_eq!(
+            args.command,
+            Some(CliCommand::List(PluginListing {
+                rescan: false,
+                grouping: PluginGrouping::Type,
+            }))
+        );
+    }
+
+    #[test]
+    fn list_command_rejects_analysis_options_and_unknown_groupings() {
+        assert!(parse(&["list", "-g", "size"]).is_err());
+        assert!(parse(&["list", "-r"]).is_err());
+        assert!(parse(&["list", "--sort", "name"]).is_err());
+        assert!(parse(&["list", "a.wav"]).is_err());
+        let args = parse(&["-r", "list"]).expect("parses");
+        assert_eq!(args.command, None);
+        assert_eq!(args.paths, vec![PathBuf::from("list")]);
+        assert!(parse(&["-R"]).is_err());
+        assert!(parse(&["--group-by", "type"]).is_err());
     }
 
     #[test]
