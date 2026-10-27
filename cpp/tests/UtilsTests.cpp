@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <memory>
 #include <span>
 #include <stdexcept>
 #include <thread>
@@ -499,6 +500,22 @@ public:
 
             expect(!tracker.recordBlock(false, blockStart(5), blockSize));
             expect(tracker.getErrorMessage().contains("5120"), tracker.getErrorMessage());
+        }
+
+        // The other checks rely on queued messages staying queued,
+        // and stopping the loop ends it for good, so this check runs last.
+        // The CLI plugin scan worker relies on this loop to receive its scan requests.
+        beginTest("The message loop of a console app dispatches messages until it is stopped");
+        {
+            // Shared, so a callback that is never dispatched does not refer to this stack frame.
+            const auto dispatched = std::make_shared<std::atomic<bool>>(false);
+            juce::MessageManager::callAsync([dispatched] {
+                *dispatched = true;
+                juce::MessageManager::getInstance()->stopDispatchLoop();
+            });
+
+            juce::MessageManager::getInstance()->runDispatchLoop();
+            expect(dispatched->load());
         }
     }
 
