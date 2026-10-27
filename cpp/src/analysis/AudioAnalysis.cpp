@@ -38,16 +38,27 @@ namespace
 constexpr double shortTermUpdateRateHz {ShortTermLoudnessHistory::updateRateHz};
 constexpr auto cancelledMessage {"Analysis was cancelled"};
 
+/// Largest channel count the libebur128 loudness meter accepts.
+constexpr int maximumLoudnessChannels {64};
+/// Lowest sample rate the libebur128 loudness meter accepts, in hertz.
+constexpr int minimumLoudnessSampleRate {16};
+/// Highest sample rate the libebur128 loudness meter accepts, in hertz.
+constexpr int maximumLoudnessSampleRate {2'822'400};
+
 /// Left, right, and overall peak reduced from per-channel peaks.
 template<typename Value>
 struct PeakSummary {
-    Value left;
-    Value right;
-    Value overall;
+    /// Peak of the left channel.
+    Value left {};
+    /// Peak of the right channel, the left channel for mono sources.
+    Value right {};
+    /// Peak with the largest magnitude across all channels.
+    Value overall {};
 };
 
 /// Why decoding or measuring a file failed.
 struct MeasurementFailure {
+    /// Kind of the failure, which decides whether the cache keeps it.
     AnalysisError error {AnalysisError::measurementFailed};
     /// The reason shown to the user.
     juce::String message;
@@ -442,7 +453,10 @@ AudioAnalysisRecord analyzeFile(
     const auto channelCount = static_cast<int>(reader->numChannels);
     const auto sampleRate = juce::roundToInt(reader->sampleRate);
 
-    if (channelCount <= 0 || sampleRate <= 0) {
+    // The loudness meter refuses streams outside its limits, which reading the file again cannot change.
+    if (channelCount <= 0 || channelCount > maximumLoudnessChannels || sampleRate < minimumLoudnessSampleRate
+        || sampleRate > maximumLoudnessSampleRate)
+    {
         return failAnalysis(std::move(record), AnalysisError::unsupported, "Unsupported audio stream parameters");
     }
 
