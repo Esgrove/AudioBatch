@@ -308,7 +308,8 @@ void AudioFileTableModel::paintCell(
     OperationMessage operationMessage;
     std::optional<FileActivityState> activityState;
     auto justification = juce::Justification::centredLeft;
-    auto textBounds = juce::Rectangle(4, 0, width - 8, height);
+    auto textBounds
+        = juce::Rectangle(layout::table::cellTextInset, 0, width - layout::table::cellTextInset * 2, height);
     auto font = CustomLookAndFeel::getTextFont().withHeight(layout::theme::tableCellFontHeight);
 
     switch (*column) {
@@ -374,7 +375,9 @@ void AudioFileTableModel::paintCell(
                 text = operationMessage.text.isNotEmpty() ? operationMessage.text : formatStatus(record);
             } else {
                 text = getFileActivityLabel(activityState->activity);
-                const auto indicatorSize = static_cast<float>(juce::jmin(height - 8, 14));
+                const auto indicatorSize = static_cast<float>(juce::jmin(
+                    height - layout::table::activityIndicatorVerticalRoom, layout::table::activityIndicatorMaximumSize
+                ));
                 const auto indicatorArea = juce::Rectangle(
                     static_cast<float>(textBounds.getX()),
                     (static_cast<float>(height) - indicatorSize) * 0.5f,
@@ -387,7 +390,7 @@ void AudioFileTableModel::paintCell(
                     *activityState,
                     activityPhaseProvider != nullptr ? activityPhaseProvider() : 0.0f
                 );
-                textBounds.removeFromLeft(static_cast<int>(indicatorSize) + 8);
+                textBounds.removeFromLeft(static_cast<int>(indicatorSize) + layout::table::activityIndicatorSpacing);
             }
             break;
     }
