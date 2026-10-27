@@ -264,25 +264,29 @@ void BackgroundWorkController::connectOperationCallbacks()
         };
     };
 
-    const auto postProgress = [weakThis](const juce::File& file, const float progress, const int /*runId*/) {
-        juce::MessageManager::callAsync([weakThis, file, progress] {
-            if (auto* controller = weakThis.get()) {
-                controller->fileActivity.setProgress(file.getFullPathName(), progress);
-            }
-        });
+    // Like a start, a progress event that arrives after its pass ended belongs to no current pass,
+    // and would otherwise update the same file in the next pass.
+    const auto postProgress = [weakThis](auto isCurrentRun) {
+        return [weakThis, isCurrentRun](const juce::File& file, const float progress, const int runId) {
+            juce::MessageManager::callAsync([weakThis, file, progress, isCurrentRun, runId] {
+                if (auto* controller = weakThis.get(); controller != nullptr && (controller->*isCurrentRun)(runId)) {
+                    controller->fileActivity.setProgress(file.getFullPathName(), progress);
+                }
+            });
+        };
     };
 
     normalizeCoordinator.setStartingCallback(
         postStarting(FileActivity::normalizing, &BackgroundWorkController::isCurrentNormalizationRun)
     );
-    normalizeCoordinator.setProgressCallback(postProgress);
+    normalizeCoordinator.setProgressCallback(postProgress(&BackgroundWorkController::isCurrentNormalizationRun));
     normalizeCoordinator.setResultCallback(postToMessageThread(&BackgroundWorkController::handleNormalizeResult));
     normalizeCoordinator.setCompletionCallback(postToMessageThread(&BackgroundWorkController::handleNormalizeComplete));
 
     pluginCoordinator.setStartingCallback(
         postStarting(FileActivity::processing, &BackgroundWorkController::isCurrentProcessingRun)
     );
-    pluginCoordinator.setProgressCallback(postProgress);
+    pluginCoordinator.setProgressCallback(postProgress(&BackgroundWorkController::isCurrentProcessingRun));
     pluginCoordinator.setResultCallback(postToMessageThread(&BackgroundWorkController::handleProcessingResult));
     pluginCoordinator.setCompletionCallback(postToMessageThread(&BackgroundWorkController::handleProcessingComplete));
     pluginCoordinator.setStartErrorCallback(postToMessageThread(&BackgroundWorkController::handleProcessingStartError));
