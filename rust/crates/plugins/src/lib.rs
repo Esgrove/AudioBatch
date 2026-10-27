@@ -23,7 +23,7 @@ pub use library::{FORMAT_NAME, KnownPlugins, PluginDataPaths, PluginDescription}
 pub use presets::{
     ChainPreset, PRESET_FORMAT_VERSION, PresetInfo, PresetStore, load_preset_file, sanitize_preset_name,
 };
-pub use preview_chain::{PreviewChain, PreviewFailure, chain_tail_frames};
+pub use preview_chain::{PREVIEW_CHANNELS, PreviewChain, PreviewFailure, chain_tail_frames, prepare_for_preview};
 pub use processing::{ProcessingOptions, process_file, processing_output_path};
 pub use processing_chain::{ChainPlugin, MAXIMUM_TAIL_SECONDS, PROCESSING_BLOCK_FRAMES, ProcessingChain};
 pub use processing_coordinator::{ProcessingCoordinator, ProcessingEvent, default_worker_count};

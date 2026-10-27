@@ -17,12 +17,11 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
-use audiobatch_plugins::{ChainSlot, PluginChain, PluginDescription, PreviewChain, chain_tail_frames};
+use audiobatch_plugins::{
+    ChainSlot, PluginChain, PluginDescription, PreviewChain, chain_tail_frames, prepare_for_preview,
+};
 use raw_window_handle::RawWindowHandle;
-use vst3_host::{EditorWindow, Module, PluginInstance, ProcessMode, UiDispatcher, UiThread};
-
-/// Channels the live instances are prepared for, since the preview always plays stereo.
-const PREVIEW_CHANNELS: usize = 2;
+use vst3_host::{EditorWindow, Module, PluginInstance, UiDispatcher, UiThread};
 
 /// Most frames the preview passes to the live instances in one call.
 pub const PREVIEW_BLOCK_FRAMES: usize = 1024;
@@ -505,15 +504,9 @@ fn load_instance(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> 
     Ok(instance)
 }
 
-/// Prepares an instance for stereo realtime processing at a rate and activates it.
-/// A plugin that only takes mono is prepared for mono, and the preview folds the stereo signal into it.
+/// Prepares an instance for the preview at the output rate, in blocks of up to `PREVIEW_BLOCK_FRAMES`.
 fn prepare_instance(ui: &UiThread, instance: &mut PluginInstance, sample_rate: u32) -> Result<()> {
-    instance.deactivate(ui)?;
-    instance
-        .configure_main_buses(ui, PREVIEW_CHANNELS)
-        .or_else(|_| instance.configure_main_buses(ui, 1))?;
-    instance.setup(ui, ProcessMode::Realtime, f64::from(sample_rate), PREVIEW_BLOCK_FRAMES)?;
-    instance.activate(ui)
+    prepare_for_preview(ui, instance, f64::from(sample_rate), PREVIEW_BLOCK_FRAMES)
 }
 
 #[cfg(test)]
