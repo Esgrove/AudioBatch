@@ -4,6 +4,8 @@
 
 #include "gui/ResultsModel.h"
 
+#include <unordered_set>
+
 #include <algorithm>
 #include <utility>
 
@@ -147,8 +149,9 @@ void ResultsModel::clear() noexcept
 /// Removes the rows of the given full paths and renumbers the rows after them.
 void ResultsModel::removePaths(const juce::StringArray& paths)
 {
-    const auto removed = std::erase_if(records, [&paths](const AudioAnalysisRecord& record) {
-        return paths.contains(record.fullPath);
+    const std::unordered_set<juce::String> removedPaths(paths.begin(), paths.end());
+    const auto removed = std::erase_if(records, [&removedPaths](const AudioAnalysisRecord& record) {
+        return removedPaths.contains(record.fullPath);
     });
 
     if (removed > 0) {

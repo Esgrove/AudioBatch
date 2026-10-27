@@ -8,6 +8,7 @@
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include <unordered_set>
 
 #include <algorithm>
 #include <utility>
@@ -326,7 +327,7 @@ void AudioBatchComponent::moveSelectedRecordsToTrash(const bool promptForConfirm
         }
 
         filesToTrash.add(record.file);
-        removedPaths.addIfNotAlreadyThere(record.fullPath);
+        removedPaths.add(record.fullPath);
     }
 
     if (filesToTrash.isEmpty()) {
@@ -387,7 +388,7 @@ void AudioBatchComponent::runMoveToTrash(
         }
 
         if (juce::isPositiveAndBelow(index, removedPaths.size())) {
-            successfullyRemovedPaths.addIfNotAlreadyThere(removedPaths[index]);
+            successfullyRemovedPaths.add(removedPaths[index]);
         }
     }
 
@@ -422,15 +423,16 @@ void AudioBatchComponent::removeRecordsByPath(const juce::StringArray& removedPa
         return;
     }
 
-    auto remainingSelectedPaths = getSelectedRecordPaths();
-    for (int index = remainingSelectedPaths.size(); --index >= 0;) {
-        if (removedPaths.contains(remainingSelectedPaths[index])) {
-            remainingSelectedPaths.remove(index);
+    const std::unordered_set<juce::String> removedPathSet(removedPaths.begin(), removedPaths.end());
+    juce::StringArray remainingSelectedPaths;
+    for (const auto& path : getSelectedRecordPaths()) {
+        if (!removedPathSet.contains(path)) {
+            remainingSelectedPaths.add(path);
         }
     }
 
     const auto previewFile = preview.getFile();
-    const auto currentFileRemoved = previewFile.exists() && removedPaths.contains(previewFile.getFullPathName());
+    const auto currentFileRemoved = previewFile.exists() && removedPathSet.contains(previewFile.getFullPathName());
 
     int removedPendingCount = 0;
 
