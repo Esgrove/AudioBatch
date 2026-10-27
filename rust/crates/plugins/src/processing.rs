@@ -431,8 +431,8 @@ fn render_blocks(
             break;
         }
         signal
-            .process(&mut prepared.processors)
-            .map_err(|error| error.to_string())?;
+            .process(&mut prepared.processors, PROCESSING_BLOCK_FRAMES)
+            .map_err(|failure| failure.error.to_string())?;
         signal.fit_to(channels as usize);
         let skipped = latency.saturating_sub(position).min(block_frames);
         write_block(&signal, skipped as usize, block_frames as usize, &mut rendered)?;

@@ -177,7 +177,7 @@ impl AppView {
         let Some(ui) = UiThread::current() else {
             return;
         };
-        self.plugins.chain.capture_states(&ui);
+        self.capture_plugin_states(cx);
         if let Err(error) = self.plugins.chain.save() {
             eprintln!("{error:#}");
         }

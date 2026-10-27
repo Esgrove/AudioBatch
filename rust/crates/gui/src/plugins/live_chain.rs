@@ -16,7 +16,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
-use audiobatch_plugins::{ChainSlot, PluginChain, PluginDescription};
+use audiobatch_plugins::{ChainSlot, PluginChain, PluginDescription, PreviewChain, chain_tail_frames};
 use raw_window_handle::RawWindowHandle;
 use vst3_host::{EditorWindow, Module, PluginInstance, ProcessMode, UiDispatcher, UiThread};
 
@@ -262,25 +262,65 @@ impl LiveChain {
         }
     }
 
-    /// Prepares the instances again that asked for a new bus layout, a reload, or reported a new latency.
-    /// Returns true when any instance was prepared again.
-    pub fn handle_restart_requests(&mut self, ui: &UiThread) -> bool {
+    /// Returns the slots whose instances asked for a new bus layout, a reload, or reported a new latency,
+    /// and clears their requests.
+    /// The caller takes their processors back from the preview before preparing them again.
+    pub fn take_restart_requests(&self) -> Vec<SlotId> {
+        self.slots
+            .iter()
+            .filter(|slot| {
+                slot.instance
+                    .as_ref()
+                    .is_some_and(|instance| instance.take_restart_flags().needs_reconfiguration())
+            })
+            .map(|slot| slot.id)
+            .collect()
+    }
+
+    /// Prepares the instances of some slots again at the current rate.
+    pub fn prepare_again(&mut self, ui: &UiThread, ids: &[SlotId]) {
         let sample_rate = self.sample_rate;
-        let mut changed = false;
-        for slot in &mut self.slots {
-            let restart = slot
-                .instance
-                .as_ref()
-                .is_some_and(|instance| instance.take_restart_flags().needs_reconfiguration());
-            if restart {
-                slot.prepare(ui, sample_rate);
-                changed = true;
+        for slot in self.slots.iter_mut().filter(|slot| ids.contains(&slot.id)) {
+            slot.prepare(ui, sample_rate);
+        }
+    }
+
+    /// Builds the preview chain of the enabled slots, or returns `None` when no slot is enabled.
+    ///
+    /// # Errors
+    ///
+    /// Returns "<name>: <error>" for the first enabled slot whose plugin is not loaded or not prepared,
+    /// because previewing without it would not be what the chain sounds like.
+    pub fn preview_chain(&self, ui: &UiThread) -> Result<Option<PreviewChain>, String> {
+        let mut plugins = Vec::new();
+        for slot in self.slots.iter().filter(|slot| slot.is_enabled()) {
+            let name = slot.slot.plugin.name.as_str();
+            match (&slot.instance, &slot.error) {
+                (_, Some(error)) => return Err(format!("{name}: {error}")),
+                (Some(instance), None) => plugins.push((name, instance)),
+                (None, None) => return Err(format!("{name}: The plugin is not loaded")),
             }
         }
-        changed
+        if plugins.is_empty() {
+            return Ok(None);
+        }
+        PreviewChain::new(ui, &plugins).map(Some)
+    }
+
+    /// Returns the sum of the tails the enabled, prepared instances report now, each limited, in frames.
+    #[must_use]
+    pub fn preview_tail_frames(&self, ui: &UiThread) -> usize {
+        let instances = self
+            .slots
+            .iter()
+            .filter(|slot| slot.is_enabled() && slot.is_ready())
+            .filter_map(|slot| slot.instance.as_ref());
+        chain_tail_frames(ui, instances, f64::from(self.sample_rate))
     }
 
     /// Captures the current settings of every instance into the saved slots.
+    /// Edits made in an editor reach an instance's state only through processing,
+    /// so the caller takes the processors back from a paused preview first.
     pub fn capture_states(&mut self, ui: &UiThread) {
         for slot in &mut self.slots {
             slot.capture_state(ui);
@@ -382,9 +422,12 @@ fn load_instance(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> 
 }
 
 /// Prepares an instance for stereo realtime processing at a rate and activates it.
+/// A plugin that only takes mono is prepared for mono, and the preview folds the stereo signal into it.
 fn prepare_instance(ui: &UiThread, instance: &mut PluginInstance, sample_rate: u32) -> Result<()> {
     instance.deactivate(ui)?;
-    instance.configure_main_buses(ui, PREVIEW_CHANNELS)?;
+    instance
+        .configure_main_buses(ui, PREVIEW_CHANNELS)
+        .or_else(|_| instance.configure_main_buses(ui, 1))?;
     instance.setup(ui, ProcessMode::Realtime, f64::from(sample_rate), PREVIEW_BLOCK_FRAMES)?;
     instance.activate(ui)
 }

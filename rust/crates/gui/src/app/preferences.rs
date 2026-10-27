@@ -2,8 +2,9 @@
 //!
 //! Every way of changing a setting ends in `apply_settings`:
 //! the settings window and the Options menu.
-//! It reopens the player when the output configuration changed, updates the waveform and the menu,
-//! saves the settings, and syncs an open settings window with what was actually applied.
+//! It reopens the player when the output configuration changed, keeps the plugin chain preview in step,
+//! updates the waveform and the menu, saves the settings,
+//! and syncs an open settings window with what was actually applied.
 
 use std::path::{Path, PathBuf};
 
@@ -84,6 +85,20 @@ impl AppView {
         self.apply_settings(settings, cx);
     }
 
+    /// Turns playing the preview through the plugin chain on or off, from the Options menu.
+    pub(super) fn toggle_plugin_preview(&mut self, cx: &mut Context<Self>) {
+        let mut settings = self.settings.clone();
+        settings.preview_plugin_chain = !settings.preview_plugin_chain;
+        self.apply_settings(settings, cx);
+    }
+
+    /// Turns latency compensation of the plugin chain preview on or off, from the Options menu.
+    pub(super) fn toggle_preview_latency_compensation(&mut self, cx: &mut Context<Self>) {
+        let mut settings = self.settings.clone();
+        settings.compensate_preview_latency = !settings.compensate_preview_latency;
+        self.apply_settings(settings, cx);
+    }
+
     /// Switches playback to another output device with its default sample rate and buffer size, from the menu.
     pub(super) fn select_output_device(&mut self, name: &str, cx: &mut Context<Self>) {
         let mut settings = self.settings.clone();
@@ -119,10 +134,14 @@ impl AppView {
     }
 
     /// Applies changed settings: reopens the player for a changed output configuration,
-    /// updates the waveform and the menu, saves them, and shows the result in an open settings window.
+    /// gives the preview a changed plugin chain option, updates the waveform and the menu, saves them,
+    /// and shows the result in an open settings window.
     /// An output configuration that cannot be opened keeps the previous one.
+    /// A changed compensation builds a new chain, so it takes effect at once instead of at the next start or seek.
     pub(super) fn apply_settings(&mut self, settings: GuiSettings, cx: &mut Context<Self>) {
         let mut settings = settings;
+        let preview_changed = settings.preview_plugin_chain != self.settings.preview_plugin_chain
+            || settings.compensate_preview_latency != self.settings.compensate_preview_latency;
         let output = settings.output_config();
         if output != self.settings.output_config()
             && let Err(error) = self.reopen_player(&output, cx)
@@ -142,9 +161,14 @@ impl AppView {
             waveform.set_loudness_range(minimum, maximum, cx);
         });
         self.menu_state.show_loudness_graph = show;
+        self.menu_state.preview_plugin_chain = settings.preview_plugin_chain;
+        self.menu_state.compensate_preview_latency = settings.compensate_preview_latency;
         set_menus(cx, &self.menu_state);
         self.settings = settings;
         self.settings.save();
+        if preview_changed {
+            self.refresh_plugin_preview(cx);
+        }
         self.sync_settings_window(cx);
         cx.notify();
     }
@@ -203,6 +227,7 @@ impl AppView {
         });
         let gain = self.player.as_ref().map_or(1.0, Player::gain);
         self.player = None;
+        self.plugins.preview.player_replaced();
         let result = match Player::with_config(output) {
             Ok(player) => {
                 self.install_player(player, resume, gain);

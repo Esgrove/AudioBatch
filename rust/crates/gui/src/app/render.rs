@@ -32,7 +32,8 @@ use crate::menus::{
     About, AddFiles, AddFolder, AddPluginToChain, CancelProcessing, ChooseFolder, ClearCustomGain, ClearList,
     ClearPluginChain, KEY_CONTEXT, NormalizeAll, NormalizeSelected, OpenAudioSettings, OpenPluginChain,
     OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected, RemoveSelected, Rescan, RevealSelected,
-    SelectOutputDevice, StopPlayback, ToggleLoudnessGraph, TogglePlayback, TrashSelected,
+    SelectOutputDevice, StopPlayback, ToggleLoudnessGraph, TogglePlayback, TogglePluginPreview,
+    TogglePreviewLatencyCompensation, TrashSelected,
 };
 use crate::normalization::target_value_text;
 use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, fill_status_column};
@@ -314,6 +315,10 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &TrashSelected, _, cx| view.trash_selected(cx)))
             .on_action(cx.listener(|view, _: &ClearList, _, cx| view.clear_list(cx)))
             .on_action(cx.listener(|view, _: &ToggleLoudnessGraph, _, cx| view.toggle_loudness_graph(cx)))
+            .on_action(cx.listener(|view, _: &TogglePluginPreview, _, cx| view.toggle_plugin_preview(cx)))
+            .on_action(cx.listener(|view, _: &TogglePreviewLatencyCompensation, _, cx| {
+                view.toggle_preview_latency_compensation(cx);
+            }))
             .on_action(cx.listener(|view, _: &OpenAudioSettings, _, cx| view.open_settings_window(cx)))
             .on_action(cx.listener(|view, _: &TogglePlayback, _, cx| view.toggle_playback(cx)))
             .on_action(cx.listener(|view, _: &StopPlayback, _, cx| view.stop_playback(cx)))

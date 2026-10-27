@@ -248,7 +248,7 @@ fn release_plugins(ui: &UiThread, plugins: &mut [ChainPlugin]) {
 }
 
 /// Limits a plugin's reported tail to `MAXIMUM_TAIL_SECONDS`, which also bounds the infinite tail `u32::MAX`.
-fn limited_tail(tail_samples: u32, sample_rate: f64) -> u64 {
+pub(crate) fn limited_tail(tail_samples: u32, sample_rate: f64) -> u64 {
     let maximum = (MAXIMUM_TAIL_SECONDS * sample_rate.max(0.0)).ceil() as u64;
     u64::from(tail_samples).min(maximum)
 }
