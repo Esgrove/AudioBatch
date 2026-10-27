@@ -149,7 +149,8 @@ impl AppView {
     }
 
     /// Cancels the normalization run from the Cancel action.
-    /// Files in progress stop before they are committed and keep their originals, and their rows show their records again.
+    /// Files in progress stop before they are committed and keep their originals,
+    /// and their rows show their records again.
     /// The events of the run are still drained, since a file that was already past normalizing may still commit,
     /// and its row must then show the output that replaced the source.
     pub(super) fn cancel_normalization_run(&mut self, cx: &mut Context<Self>) {

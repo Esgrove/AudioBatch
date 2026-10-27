@@ -46,6 +46,8 @@ This repository holds two versions of it side by side, each with its own agent i
   ruff on the Python scripts, and basic file checks through [prek](https://prek.j178.dev).
 - `.github/workflows/cpp.yml` builds and checks the C++ project, and `rust.yml` the Rust port.
   Each runs only when its own directory, the fixtures, the test plugin, or the assets change.
+  `format.yml` runs the root `./format.sh --check` on every change,
+  and checks that `fixtures/plugin_expected/` matches what its script writes.
   `rust.yml` checks out only the JUCE submodule, to build the test plugin.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
   and is the only workflow that downloads the LFS files.

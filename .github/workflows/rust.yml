@@ -111,7 +111,12 @@ jobs:
           fi
 
   lint:
-    runs-on: macos-latest
+    # Clippy runs on both platforms, since the VST3 host, the editor windows, and the GUI have platform code.
+    strategy:
+      matrix:
+        os: [macos-latest, windows-2025-vs2026]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -127,11 +132,17 @@ jobs:
           workspaces: rust
 
       - name: Check formatting
+        if: runner.os == 'macOS'
         run: cargo fmt --all --check
 
       # Exit non-zero if there are any warnings
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # The snapshot feature renders the GUI to a PNG for checking layouts, and is off in normal builds.
+      - name: Build GUI with the snapshot feature
+        if: runner.os == 'macOS'
+        run: cargo build -p audiobatch-gui --features snapshot
 
   coverage:
     runs-on: macos-latest

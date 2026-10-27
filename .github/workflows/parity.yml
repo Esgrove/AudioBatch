@@ -69,6 +69,10 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: brew install ninja ccache
 
+      - name: Get JUCE commit
+        id: juce
+        run: echo "commit=$(git rev-parse HEAD:cpp/JUCE)" >> "$GITHUB_OUTPUT"
+
       # Restores the macOS Release cache of the C++ workflow's build job.
       # The path list must match the build job's for the cache to restore.
       # Restore-only, since the build job owns saving it.
@@ -80,7 +84,7 @@ jobs:
             cpp/cmake-build-mac-release
             cpp/cmake-build-windows-debug
             cpp/cmake-build-windows-release
-          key: ${{ runner.os }}-Release-cmake-${{ github.sha }}
+          key: ${{ runner.os }}-Release-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'test-plugin/CMakeLists.txt') }}
           restore-keys: ${{ runner.os }}-Release-cmake-
 
       - name: Set up Rust toolchain

@@ -62,9 +62,15 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: brew install ccache
 
+      - name: Get JUCE commit
+        id: juce
+        run: echo "commit=$(git rev-parse HEAD:cpp/JUCE)" >> "$GITHUB_OUTPUT"
+
       # The ccache cache lives inside the build directory (build.sh sets CCACHE_DIR),
       # so caching the build directories also caches the compilation cache.
-      # The lint job restores this cache, and a cache only restores with the same path list it was saved with.
+      # The key changes with the build configuration and JUCE, not with every commit,
+      # so the cache is saved once per configuration instead of once per commit.
+      # The lint and parity jobs restore this cache, and a cache only restores with the same path list it was saved with.
       - name: Cache CMake build directory and ccache
         uses: actions/cache@v5
         with:
@@ -73,7 +79,7 @@ jobs:
             cpp/cmake-build-mac-release
             cpp/cmake-build-windows-debug
             cpp/cmake-build-windows-release
-          key: ${{ runner.os }}-${{ matrix.build-type }}-cmake-${{ github.sha }}
+          key: ${{ runner.os }}-${{ matrix.build-type }}-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'test-plugin/CMakeLists.txt') }}
           restore-keys: ${{ runner.os }}-${{ matrix.build-type }}-cmake-
 
       - name: Build
@@ -151,6 +157,10 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE: 1
         run: brew install llvm ninja ccache
 
+      - name: Get JUCE commit
+        id: juce
+        run: echo "commit=$(git rev-parse HEAD:cpp/JUCE)" >> "$GITHUB_OUTPUT"
+
       # Restores a macOS Debug cache saved by the build job of an earlier run,
       # since this job runs alongside the build job of the same run.
       # It holds the same cmake-build-mac-debug directory, including the fetched dependencies.
@@ -164,7 +174,7 @@ jobs:
             cpp/cmake-build-mac-release
             cpp/cmake-build-windows-debug
             cpp/cmake-build-windows-release
-          key: ${{ runner.os }}-Debug-cmake-${{ github.sha }}
+          key: ${{ runner.os }}-Debug-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'test-plugin/CMakeLists.txt') }}
           restore-keys: ${{ runner.os }}-Debug-cmake-
 
       # clang-tidy only needs the compile database and the generated JUCE and binary data headers,
@@ -185,25 +195,6 @@ jobs:
           LLVM_PREFIX="$(brew --prefix llvm)"
           export PATH="$LLVM_PREFIX/bin:$PATH"
           ./lint.sh --check
-
-  format:
-    # Need to use macOS since Ubuntu apt has an old clang-format version
-    runs-on: macos-latest
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v6
-
-      # format.sh also checks CMake files with cmake-format, which it runs through uvx,
-      # and shell scripts with shfmt.
-      - name: Install formatters
-        env:
-          HOMEBREW_NO_AUTO_UPDATE: 1
-        run: brew install clang-format shfmt uv
-
-      - name: Check formatting
-        run: |
-          clang-format --version
-          ./format.sh --check
 
   sanitize:
     # Runs the unit tests on macOS under AddressSanitizer and UndefinedBehaviorSanitizer,
@@ -261,6 +252,13 @@ jobs:
           cmake --preset macos-fuzz
           cmake --build --preset macos-fuzz
 
+      # The harnesses are only in the compile database of the macos-fuzz preset, so the lint job skips them.
+      - name: Run clang-tidy on the harnesses
+        run: |
+          LLVM_PREFIX="$(brew --prefix llvm)"
+          export PATH="$LLVM_PREFIX/bin:$PATH"
+          ./lint.sh --check --fuzz
+
       - name: Replay corpus
         run: ctest --test-dir cmake-build-mac-fuzz --output-on-failure --no-tests=error
 
@@ -277,7 +275,7 @@ jobs:
 
       - name: Upload crashing inputs
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: fuzz-artifacts
           path: cpp/fuzz-artifacts

@@ -190,7 +190,7 @@ Tests:
   and a broken file.
   `../fixtures/generate.sh` regenerates them with ffmpeg,
   and `../fixtures/serato_overview.py` writes the Serato tag, which ffmpeg cannot.
-- `../test-plugin/` holds `AudioBatch Test MS`, a JUCE VST3 effect with a gain and a mid/side width parameter,
+- `../test-plugin/` holds `AudioBatch Test MS`, a JUCE VST3 effect with a gain, a mid/side width, and a latency parameter,
   which the C++ and the Rust tests both load.
   With `BUILD_TESTING`, `CMakeLists.txt` adds it as a subdirectory
   and passes the bundle path to the tests as `AUDIOBATCH_TEST_VST3_PATH`.

@@ -5,6 +5,8 @@
 
 #include "MidSideTestProcessor.h"
 
+#include <cstddef>
+#include <span>
 #include <utility>
 
 namespace audiobatch::test_plugin
@@ -40,11 +42,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 }
 
 /// Returns the value of a parameter the layout is known to contain.
-std::atomic<float>& getParameterValue(juce::AudioProcessorValueTreeState& parameters, const juce::String& id)
+std::atomic<float>& getParameterValue(
+    const juce::AudioProcessorValueTreeState& parameters,
+    const juce::String& parameterId
+)
 {
-    auto* value = parameters.getRawParameterValue(id);
+    auto* value = parameters.getRawParameterValue(parameterId);
     jassert(value != nullptr);
     return *value;
+}
+/// Returns the samples of one channel of a buffer.
+std::span<float> channelSamples(juce::AudioBuffer<float>& buffer, const int channel)
+{
+    return {buffer.getWritePointer(channel), static_cast<std::size_t>(buffer.getNumSamples())};
 }
 }  // namespace
 
@@ -158,12 +168,11 @@ void MidSideTestProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
     const juce::ScopedNoDenormals noDenormals;
     const float gainValue = gain.load();
     const float widthValue = width.load();
-    const int samples = buffer.getNumSamples();
 
     if (buffer.getNumChannels() == 2) {
-        auto* left = buffer.getWritePointer(0);
-        auto* right = buffer.getWritePointer(1);
-        for (int sample = 0; sample < samples; ++sample) {
+        const auto left = channelSamples(buffer, 0);
+        const auto right = channelSamples(buffer, 1);
+        for (std::size_t sample = 0; sample < left.size(); ++sample) {
             const float mid = (left[sample] + right[sample]) * 0.5F;
             const float side = ((left[sample] - right[sample]) * 0.5F) * widthValue;
             left[sample] = (mid + side) * gainValue;
@@ -171,9 +180,8 @@ void MidSideTestProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::
         }
     } else {
         for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
-            auto* samplesOfChannel = buffer.getWritePointer(channel);
-            for (int sample = 0; sample < samples; ++sample) {
-                samplesOfChannel[sample] = samplesOfChannel[sample] * gainValue;
+            for (auto& sample : channelSamples(buffer, channel)) {
+                sample = sample * gainValue;
             }
         }
     }
@@ -189,17 +197,16 @@ void MidSideTestProcessor::delayBlock(juce::AudioBuffer<float>& buffer)
     }
 
     const int channels = juce::jmin(buffer.getNumChannels(), delayLine.getNumChannels());
-    int position = delayPosition;
+    auto position = static_cast<std::size_t>(delayPosition);
     for (int channel = 0; channel < channels; ++channel) {
-        auto* samplesOfChannel = buffer.getWritePointer(channel);
-        auto* ring = delayLine.getWritePointer(channel);
-        position = delayPosition;
-        for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
-            std::swap(samplesOfChannel[sample], ring[position]);
-            position = (position + 1) % delaySamples;
+        const auto ring = channelSamples(delayLine, channel);
+        position = static_cast<std::size_t>(delayPosition);
+        for (auto& sample : channelSamples(buffer, channel)) {
+            std::swap(sample, ring[position]);
+            position = (position + 1) % ring.size();
         }
     }
-    delayPosition = position;
+    delayPosition = static_cast<int>(position);
 }
 
 /// Saves the parameter values as the XML of the parameter tree.

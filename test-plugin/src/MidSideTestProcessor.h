@@ -46,9 +46,6 @@ public:
     void changeProgramName(int index, const juce::String& newName) override;
 
     [[nodiscard]] bool hasEditor() const override;
-    [[nodiscard]] juce::AudioProcessorEditor* createEditor() override;
-
-    [[nodiscard]] bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
 
     void prepareToPlay(double sampleRate, int maximumBlockSize) override;
     void releaseResources() override;
@@ -57,7 +54,12 @@ public:
     void getStateInformation(juce::MemoryBlock& destinationData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
+protected:
+    [[nodiscard]] bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
+
 private:
+    [[nodiscard]] juce::AudioProcessorEditor* createEditor() override;
+
     void delayBlock(juce::AudioBuffer<float>& buffer);
 
     juce::AudioProcessorValueTreeState parameters;

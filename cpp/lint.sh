@@ -3,7 +3,7 @@ set -eo pipefail
 
 USAGE="Usage: $0 [OPTIONS] [-- CLANG_TIDY_ARGS...]
 
-Lint C++ code in src/ and tests/ with clang-tidy.
+Lint C++ code in src/, tests/, and ../test-plugin/src/ with clang-tidy.
 
 Uses the compile_commands.json from an existing CMake build directory.
 If none is found, configures and builds the platform's Ninja debug preset first.
@@ -24,6 +24,10 @@ OPTIONS: All options are optional
     -s | --staged
         Lint only the sources with staged changes.
 
+    -f | --fuzz
+        Lint only the fuzz harnesses in tests/fuzz/, with the compile database of the macos-fuzz preset,
+        which is the only build that has them.
+
     A changed header in --changed or --staged mode also lints the source file of the same name next to it.
     The files are linted as they are in the working tree.
 
@@ -42,6 +46,7 @@ init_options() {
     CLANG_TIDY_ARGS=()
     # Which sources to lint: all, changed, or staged.
     FILE_SELECTION="all"
+    FUZZ=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -56,6 +61,9 @@ init_options() {
                 ;;
             -s | --staged)
                 FILE_SELECTION="staged"
+                ;;
+            -f | --fuzz)
+                FUZZ=true
                 ;;
             -v | --verbose)
                 set -x
@@ -74,14 +82,15 @@ init_options() {
     done
 }
 
-# Prints the paths, relative to the C++ project, of the files with changes of the selected kind.
+# Prints the paths, relative to the repository root, of the C++ project and test plugin files
+# with changes of the selected kind.
 # Deleted files are left out, and a renamed file is listed under its new name.
 list_changed_files() {
     if [ "$FILE_SELECTION" = "staged" ]; then
-        git diff --cached --name-only --relative --diff-filter=ACMR
+        git -C "$ROOT" diff --cached --name-only --diff-filter=ACMR -- cpp test-plugin
     else
-        git diff HEAD --name-only --relative --diff-filter=ACMR
-        git ls-files --others --exclude-standard
+        git -C "$ROOT" diff HEAD --name-only --diff-filter=ACMR -- cpp test-plugin
+        git -C "$ROOT" ls-files --others --exclude-standard -- cpp test-plugin
     fi
 }
 
@@ -90,12 +99,12 @@ list_changed_files() {
 changed_sources() {
     while IFS= read -r path; do
         case "$path" in
-            src/*.cpp | tests/*.cpp)
-                echo "$REPO/$path"
+            cpp/src/*.cpp | cpp/tests/*.cpp | test-plugin/src/*.cpp)
+                echo "$ROOT/$path"
                 ;;
-            src/*.h | tests/*.h)
-                if [ -f "$REPO/${path%.h}.cpp" ]; then
-                    echo "$REPO/${path%.h}.cpp"
+            cpp/src/*.h | cpp/tests/*.h | test-plugin/src/*.h)
+                if [ -f "$ROOT/${path%.h}.cpp" ]; then
+                    echo "$ROOT/${path%.h}.cpp"
                 fi
                 ;;
         esac
@@ -104,8 +113,10 @@ changed_sources() {
 
 # Prints the absolute paths of the sources to lint, one per line, sorted and without duplicates.
 collect_sources() {
-    if [ "$FILE_SELECTION" = "all" ]; then
-        find "$REPO/src" "$REPO/tests" -type f -name "*.cpp" | sort
+    if [ "$FUZZ" = true ]; then
+        find "$REPO/tests/fuzz" -type f -name "*.cpp" | sort
+    elif [ "$FILE_SELECTION" = "all" ]; then
+        find "$REPO/src" "$REPO/tests" "$ROOT/test-plugin/src" -type f -name "*.cpp" | sort
     else
         list_changed_files | changed_sources | sort -u
     fi
@@ -131,6 +142,7 @@ in_compile_database() {
 init_options "$@"
 
 cd "$REPO"
+ROOT=$(cd "$REPO/.." && pwd)
 
 CLANG_TIDY=$(command -v clang-tidy || true)
 if [ -z "$CLANG_TIDY" ] && [ "$BASH_PLATFORM" = "mac" ] && command -v brew > /dev/null 2>&1; then
@@ -146,12 +158,19 @@ fi
 # Locate a compile_commands.json from one of the known CMake build directories.
 # Prefer the debug build that the editor and the CMake debug presets share.
 BUILD_DIR=""
-for candidate in cmake-build-mac-debug cmake-build-windows-ninja-debug cmake-build-mac-release cmake-build-windows-ninja-release build; do
-    if [ -f "$REPO/$candidate/compile_commands.json" ]; then
-        BUILD_DIR="$REPO/$candidate"
-        break
+if [ "$FUZZ" = true ]; then
+    BUILD_DIR="$REPO/cmake-build-mac-fuzz"
+    if [ ! -f "$BUILD_DIR/compile_commands.json" ]; then
+        print_error_and_exit "No compile database in $BUILD_DIR. Configure it first: cmake --preset macos-fuzz"
     fi
-done
+else
+    for candidate in cmake-build-mac-debug cmake-build-windows-ninja-debug cmake-build-mac-release cmake-build-windows-ninja-release build; do
+        if [ -f "$REPO/$candidate/compile_commands.json" ]; then
+            BUILD_DIR="$REPO/$candidate"
+            break
+        fi
+    done
+fi
 
 if [ -z "$BUILD_DIR" ]; then
     case "$BASH_PLATFORM" in
@@ -202,13 +221,16 @@ if [ "${#SOURCES[@]}" -eq 0 ]; then
 fi
 
 # Do not let clang-tidy infer flags from an unrelated source when the database is stale.
-# The fuzz harnesses are only in the database of the macos-fuzz build, so they are skipped elsewhere.
+# The fuzz harnesses are only in the database of the macos-fuzz build, so they are skipped elsewhere,
+# and the test plugin only in a build with the tests enabled.
 LINTED_SOURCES=()
 for source in "${SOURCES[@]}"; do
     if in_compile_database "$source"; then
         LINTED_SOURCES+=("$source")
     elif [[ "$source" == "$REPO/tests/fuzz/"* ]]; then
         print_yellow "Skipping $source, which only the macos-fuzz preset builds"
+    elif [[ "$source" == "$ROOT/test-plugin/"* ]]; then
+        print_yellow "Skipping $source, which only a build with the tests enabled has"
     else
         print_error_and_exit "Compile database has no entry for $source. Reconfigure and build CMake first, for example: cmake --preset macos-debug && cmake --build --preset macos-debug"
     fi

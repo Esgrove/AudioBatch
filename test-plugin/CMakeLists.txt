@@ -75,6 +75,42 @@ if(NOT MSVC)
     target_compile_options(AudioBatchTestPlugin PRIVATE -ffp-contract=off)
 endif()
 
+# The plugin's own source gets strict warnings as errors, like the application sources.
+# JUCE headers are written to JUCE's own rules, so they are treated as system or external headers.
+# The JUCE module sources compiled into the target keep JUCE's recommended warnings only.
+set(AUDIOBATCH_TEST_PLUGIN_JUCE_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/../cpp/JUCE/modules")
+if(MSVC)
+    set(AUDIOBATCH_TEST_PLUGIN_WARNINGS
+        /W4
+        /WX
+        /permissive-
+        /utf-8
+        /external:I
+        "${AUDIOBATCH_TEST_PLUGIN_JUCE_MODULES}"
+        /external:W0
+    )
+else()
+    set(AUDIOBATCH_TEST_PLUGIN_WARNINGS
+        -isystem
+        "${AUDIOBATCH_TEST_PLUGIN_JUCE_MODULES}"
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wshadow
+        -Wconversion
+        -Wsign-conversion
+        -Wdouble-promotion
+        -Wold-style-cast
+        -Wnon-virtual-dtor
+        -Wimplicit-fallthrough
+        -Werror
+    )
+endif()
+set_source_files_properties(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/MidSideTestProcessor.cpp" TARGET_DIRECTORY AudioBatchTestPlugin
+    PROPERTIES COMPILE_OPTIONS "${AUDIOBATCH_TEST_PLUGIN_WARNINGS}"
+)
+
 target_link_libraries(
     AudioBatchTestPlugin
     PRIVATE juce::juce_audio_processors
