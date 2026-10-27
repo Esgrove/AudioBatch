@@ -25,11 +25,13 @@ struct NoPreview {};
 /// A file is selected for the preview, but the player holds no source for it,
 /// because the file is being rewritten or could not be loaded.
 struct ReleasedPreview {
+    /// The selected file, loaded again once it is safe to read.
     juce::File file;
 };
 
 /// A file is loaded into the preview player.
 struct LoadedPreview {
+    /// The loaded file.
     juce::File file;
 
     /// The version of the file that was loaded, compared with analysis results of the same path.
@@ -86,8 +88,11 @@ public:
     void stop();
 
 private:
+    /// The player the file is loaded into, owned by the main component, which outlives the controller.
     AudioPreviewPlayer& player;
+    /// Reads the Serato tags of the loaded file on its worker thread.
     serato::SeratoPreviewLoader seratoLoader;
+    /// What the preview holds.
     PreviewState state;
 };
 }  // namespace audiobatch

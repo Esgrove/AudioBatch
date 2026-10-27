@@ -218,6 +218,7 @@ private:
     /// Notifies the window when preview command labels or check marks need refreshing.
     std::function<void()> onViewOptionsChanged;
 
+    /// The SQLite cache of the analysis results, waveforms, custom gains, and Serato tags.
     AnalysisCache analysisCache;
 
     /// Removes cached rows of deleted files in the background after startup.
@@ -226,9 +227,13 @@ private:
 
     /// The rows of the results table. Declared before the table model, which refers to it.
     ResultsModel analysisResults;
+    /// Paints and sorts the rows in the results table.
     AudioFileTableModel fileTableModel;
+    /// The application settings, which keep the chain, the plugin list location, and the preferences.
     juce::ApplicationProperties pluginAppProperties;
+    /// Divides the height between the results table and the expanded workspace.
     juce::StretchableLayoutManager mainVerticalLayout;
+    /// The divider that the user drags between the results table and the workspace.
     juce::StretchableLayoutResizerBar waveformResizeBar {&mainVerticalLayout, 1, false};
 
     /// Plays the previewed file.
@@ -243,19 +248,28 @@ private:
     /// The known plugins, created in the constructor once the settings storage is set up.
     /// Declared before the chain, which creates its processors through it.
     std::unique_ptr<PluginLibrary> pluginLibrary;
+    /// The plugin chain, created in the constructor after the library.
     std::unique_ptr<LiveChain> liveChain;
 
     /// The waveform, metrics, and controls below the results table.
     /// Declared after the player and the settings it refers to.
     PreviewWorkspace previewWorkspace {previewPlayer, pluginAppProperties};
 
+    /// The audio settings dialog, created when it is first opened.
     SafePointer<juce::DialogWindow> settingsWindow;
+    /// Every dialog window the component opened, deleted when it is destroyed.
     juce::Array<SafePointer<juce::DialogWindow>> childWindows;
+    /// The root folders that the list was scanned from.
     juce::Array<juce::File> currentRoots;
+    /// The content of the audio settings dialog.
     AudioSettingsComponent audioSettingsComponent {previewPlayer.getDeviceManager()};
+    /// The preview preferences, kept in the settings and shown in the audio settings dialog.
     AudioPreviewPreferences previewPreferences;
+    /// The table of the analyzed files.
     juce::TableListBox resultsTable;
+    /// The folder chooser while it is open.
     std::unique_ptr<juce::FileChooser> directoryChooser;
+    /// Shows the tooltips of the main window.
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 
     /// Primary and secondary sort columns of the results table.
@@ -280,16 +294,24 @@ private:
     /// Root folders, background activity, audio output device, and overall progress along the bottom of the window.
     StatusBar statusBar;
 
+    /// True while the component itself changes the selection, so loading the file does not count as a user choice.
     bool automaticSelectionChange {false};
 
     /// Expanded divider allocation is independent of the animated or compact workspace.
     bool previewSectionExpanded {true};
+    /// True once an expanding animation ended, so the next layout gives the divider back its expanded proportions.
     bool restoreExpandedLayout {false};
+    /// Share of the workspace height the expanded workspace takes.
     double expandedPreviewProportion {-layout::previewPreferredProportion};
+    /// Share of the workspace height the workspace had when the running animation started.
     double animationStartProportion {-layout::previewPreferredProportion};
+    /// When the running collapse or expand animation started.
     double animationStartedAtMilliseconds {0.0};
+    /// Height above the status bar that the table and the workspace share.
     int workspaceAvailableHeight {0};
+    /// Height of the workspace in the last layout.
     int currentPreviewHeight {0};
+    /// Lays the view out on every display frame while the workspace collapses or expands.
     juce::VBlankAttachment previewAnimationAttachment;
 
     JUCE_LEAK_DETECTOR(AudioBatchComponent)

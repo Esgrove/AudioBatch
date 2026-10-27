@@ -519,11 +519,17 @@ private:
         condition.notify_one();
     }
 
+    /// Guards the reply state below, which the coordinator thread writes and the scan call reads.
     std::mutex mutex;
+    /// Wakes the scan call when a reply arrives or the worker goes away.
     std::condition_variable condition;
+    /// The plugin descriptions of the last reply.
     std::unique_ptr<juce::XmlElement> resultXml;
+    /// True once a reply to the current request arrived.
     bool gotResult {false};
+    /// True once the worker process went away.
     bool connectionLost {false};
+    /// True when the worker process was launched and connected.
     bool running {false};
 
     JUCE_LEAK_DETECTOR(PluginScanWorkerProcess)

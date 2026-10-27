@@ -27,6 +27,7 @@ enum class FileActivity : std::uint8_t {
 
 /// Activity of a busy file and how far along it is.
 struct FileActivityState {
+    /// What is happening to the file.
     FileActivity activity {FileActivity::waiting};
     /// Completed fraction in the range 0 to 1, initialized to zero for each activity.
     /// An empty optional represents indeterminate progress.

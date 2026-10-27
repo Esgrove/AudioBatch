@@ -30,28 +30,42 @@ public:
     void resized() override;
     void setCompact(bool shouldBeCompact);
 
+    /// The summary, metrics, and details of the selected file.
     AudioInfoPanel audioInfo;
+    /// The waveform of the previewed file.
     ThumbnailComponent thumbnail;
+    /// Collapses the workspace to the compact row and expands it again.
     juce::DrawableButton previewSectionButton {"Collapse bottom section", juce::DrawableButton::ImageFitted};
+    /// Starts and stops the preview.
     juce::TextButton startStopButton {"Play/Stop"};
+    /// Processes the selected files through the plugin chain, or cancels the running pass.
     juce::TextButton processButton {"Process"};
 
     /// The secondary controls scroll independently while playback and processing stay pinned below them.
     /// Declared before the viewport that shows it without owning it.
     juce::Component controlsContent;
+    /// Scrolls the secondary controls when the column is shorter than they are.
     juce::Viewport controlsViewport;
 
+    /// Caption of the zoom slider.
     juce::Label zoomLabel {"Zoom"};
+    /// Zoom of the waveform in percent.
     juce::Slider zoomSlider {"ZoomSlider"};
+    /// Caption of the gain slider.
     juce::Label gainLabel {"GainLabel"};
+    /// Custom gain of the selected files in decibels.
     IntervalStepSlider gainSlider {"GainSlider"};
+    /// Normalizes the files to the target before the plugin chain processes them.
     juce::ToggleButton normalizeBeforePluginToggle {"Normalize"};
+    /// Lets normalization and processing replace an existing output file.
     juce::ToggleButton forceOverwriteToggle {"Overwrite"};
 
     /// Normalization mode and target, persisted in the settings given to the constructor.
     NormalizationTargetControl normalizationTargetControl;
 
+    /// Opens the plugin chain menu.
     juce::TextButton pluginButton {"Plugin chain"};
+    /// Opens the audio settings dialog.
     juce::TextButton settingsButton {"Audio Settings"};
 
 private:

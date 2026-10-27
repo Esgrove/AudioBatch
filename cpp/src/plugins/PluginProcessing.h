@@ -61,7 +61,9 @@ struct PluginDescriptorRef {
 
 /// One entry in the plugin processing chain.
 struct PluginChainSlot {
+    /// The plugin of the slot and its saved state.
     PluginDescriptorRef plugin;
+    /// True when the slot takes part in processing.
     bool enabled {true};
 };
 

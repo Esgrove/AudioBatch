@@ -18,9 +18,11 @@ namespace audiobatch
 {
 /// The stored form of one chain slot: which plugin it holds, whether it is enabled, and the plugin's saved state.
 struct SavedChainSlot {
+    /// The plugin of the slot.
     juce::PluginDescription description;
     /// The plugin's getStateInformation data, empty when the plugin keeps its defaults.
     juce::MemoryBlock state;
+    /// True when the slot takes part in processing and in the preview.
     bool enabled {true};
 };
 
@@ -28,7 +30,9 @@ struct SavedChainSlot {
 struct ChainPresetInfo {
     /// The name shown to the user, which is the file name without its extension.
     juce::String name;
+    /// The preset file.
     juce::File file;
+    /// Modification time of the preset file when it was listed.
     juce::Time modified;
 };
 

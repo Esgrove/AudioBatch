@@ -35,6 +35,8 @@ struct PreviewChain {
     /// Non-owning, never null views of the enabled slot instances in chain order.
     /// They stay valid only while the slots keep their instances, so use them under the preview rendering lock.
     std::vector<juce::AudioPluginInstance*> instances;
+    /// The summed latency and tails and the widest channel count of the enabled instances,
+    /// with the error of the first enabled slot that could not be prepared.
     plugin_processing::ChainPreparation preparation;
 };
 
@@ -58,18 +60,28 @@ struct LiveSlot {
     void closeEditor();
     void destroyProcessor();
 
+    /// Identifies the slot for as long as it exists, given by the chain when the slot is added.
     PluginSlotId id {};
+    /// The plugin of the slot, which can name a plugin that is not installed.
     juce::PluginDescription description;
+    /// The last captured or loaded state of the plugin, restored when the processor is prepared.
     juce::MemoryBlock state;
+    /// True when the slot takes part in processing and in the preview.
     bool enabled {true};
+    /// The processor that the preview and the editor share, created on first use.
     std::unique_ptr<juce::AudioPluginInstance> instance;
     /// The listener registered on the instance, owned by the live chain that owns the slot.
     /// Null exactly when the slot has no instance.
     juce::AudioProcessorListener* listener {nullptr};
+    /// The editor window of the processor, which hides itself when closed, or null when it is not open.
     juce::Component::SafePointer<juce::DialogWindow> editorWindow;
+    /// Why the processor could not be created or prepared, or empty after it was.
     juce::String preparationError;
+    /// Latency of the prepared processor at the preview rate, or empty while it is not prepared.
     std::optional<juce::int64> latencySamples;
+    /// True while the processor is prepared for the preview rate and block size.
     bool prepared {false};
+    /// True from opening the editor until its closed window has been reaped.
     bool wasEditorOpen {false};
 };
 
@@ -195,21 +207,33 @@ private:
     bool instantiateLiveEntry(LiveSlot& entry);
     bool prepareLiveEntry(LiveSlot& entry);
 
+    /// Called on the message thread after every structural change of the chain.
     ChainChangedCallback chainChangedCallback;
+    /// Called on the message thread after the latency of a prepared processor changed.
     ChainChangedCallback latencyChangedCallback;
 
+    /// The known plugins that slots create their processors through, which outlives the chain.
     PluginLibrary& library;
+    /// The application settings that keep the chain and locate the presets folder.
     juce::ApplicationProperties& appProperties;
+    /// The device manager of the preview, observed for the rate shown in the chain editor.
     juce::AudioDeviceManager& previewDeviceManager;
+    /// The chain editor window, which hides itself when closed, or null before it was first opened.
     juce::Component::SafePointer<juce::DialogWindow> chainEditorWindow;
+    /// The plugin manager window, which hides itself when closed, or null before it was first opened.
     juce::Component::SafePointer<juce::DialogWindow> scanWindow;
+    /// The rendering lock of the preview player, held while a processor in the preview is reconfigured.
     juce::CriticalSection& renderingLock;
+    /// Set by a processor that reported a latency change, from any thread, until the next display update reads it.
     std::atomic<bool> latencyDirty {false};
+    /// Counts the structural changes of the chain, so views can tell a rebuild from a label refresh.
     std::uint64_t revision {0};
+    /// The id given to the last slot added, so every slot gets a new one.
     std::uint64_t lastSlotId {0};
     /// Name of the preset the chain was last loaded from or saved as.
     /// It only names the chain while the revision still equals presetRevision.
     juce::String presetName;
+    /// The revision of the chain when it was last loaded from or saved as a preset.
     std::uint64_t presetRevision {0};
     /// Preset files of the presets submenu last built by createPresetsMenu, in menu id order.
     /// Mutable, because building a menu does not change the chain.
@@ -217,9 +241,12 @@ private:
     /// The presets getPresets listed last, or nothing before the first listing and after a save or delete.
     /// Mutable, because listing the presets does not change the chain.
     mutable std::optional<PresetListCache> presetList;
+    /// The slots in chain order.
     std::vector<LiveSlot> chain;
 
+    /// Sample rate the processors are prepared for, the rate of the preview device or a default without one.
     double previewSampleRate {utils::defaultSampleRate};
+    /// Block size the processors are prepared for.
     int previewBlockSize {512};
 
     JUCE_DECLARE_WEAK_REFERENCEABLE(LiveChain)

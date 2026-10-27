@@ -77,9 +77,13 @@ private:
 
     [[nodiscard]] juce::OwnedArray<juce::PluginDescription> scan(const juce::MemoryBlock& request) const;
 
+    /// The formats the worker loads plugins with.
     juce::AudioPluginFormatManager formatManager;
+    /// Called when the main process goes away, so the worker process can exit.
     std::function<void()> onConnectionLost;
+    /// Guards the pending requests, which arrive on the connection thread and are scanned on the message thread.
     std::mutex pendingRequestsMutex;
+    /// Scan requests waiting for the message thread.
     std::queue<juce::MemoryBlock> pendingRequests;
 
     JUCE_LEAK_DETECTOR(PluginScanWorker)
@@ -130,11 +134,18 @@ public:
     }
 
 private:
+    /// The worker process that loads the plugins, launched when a plugin needs one,
+    /// and dropped when a plugin crashes it or hangs, or the scan is cancelled.
     std::unique_ptr<PluginScanWorkerProcess> worker;
+    /// The plugin files that took longer than the timeout and were skipped.
     juce::StringArray timedOutFiles;
+    /// Called before the first plugin of a scan, which can abandon the scan.
     ScanStartingCallback onScanStarting;
+    /// Called when the scan ends, with whether it ran to its end.
     ScanFinishedCallback onScanFinished;
+    /// True once the first plugin of the scan was reached.
     bool scanStarted {false};
+    /// True when the starting callback abandoned the scan.
     bool scanSkipped {false};
 
     JUCE_LEAK_DETECTOR(OutOfProcessPluginScanner)
@@ -164,7 +175,9 @@ public:
     void release();
 
 private:
+    /// The lock shared with the other processes.
     juce::InterProcessLock lock;
+    /// True while this object holds the lock.
     bool held {false};
 
     JUCE_LEAK_DETECTOR(PluginScanLock)

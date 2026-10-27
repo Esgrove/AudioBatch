@@ -67,8 +67,11 @@ public:
 private:
     void moveBy(int offset);
 
+    /// The chain the row edits, which outlives the editor window.
     LiveChain& liveChain;
+    /// The slot the row acts on, even after other slots moved or were removed.
     PluginSlotId slotId;
+    /// Position of the slot in the chain when the row was built, shown in its name.
     int chainPosition;
 
     /// Maps the vertical centre of the row in its container to the slot index it would drop onto.
@@ -78,16 +81,23 @@ private:
     /// Called when the drag ends, so the editor can commit the reorder.
     std::function<void(PluginChainSlotRow& row, int targetIndex)> onDropped;
 
+    /// Enables or disables the slot.
     juce::ToggleButton enabledToggle;
+    /// The position, manufacturer, name, and format of the plugin.
     juce::Label nameLabel;
+    /// The measured latency of the slot, or why it is not available.
     juce::Label latencyLabel;
+    /// Opens the editor of the plugin.
     juce::TextButton editButton {"Edit"};
     /// Reorder buttons, labelled with Unicode arrows in the constructor.
     juce::TextButton upButton;
     juce::TextButton downButton;
+    /// Removes the slot from the chain.
     juce::TextButton removeButton {"X"};
 
+    /// True while the row is dragged by its background.
     bool dragging {false};
+    /// Height within the row at which the drag grabbed it, so the row follows the mouse without jumping.
     int dragGrabOffsetY {0};
 
     JUCE_LEAK_DETECTOR(PluginChainSlotRow)
@@ -135,6 +145,7 @@ private:
     void updateHintLabel();
     void updateLatencyLabels();
 
+    /// The chain the editor shows and edits, which outlives the editor window.
     LiveChain& liveChain;
 
     /// The preset row above the slot rows.
@@ -149,13 +160,21 @@ private:
     /// Appends a new plugin to the chain.
     /// Lives inside the row container below the last row, so it scrolls with the rows.
     juce::TextButton addButton {"+"};
+    /// Explains how to add a plugin, or how to scan for plugins, while the chain is empty.
     juce::Label hintLabel;
+    /// The summed latency of the enabled slots.
     juce::Label totalLatencyLabel;
+    /// The rate the latencies were measured at, and whether a preview device is open.
     juce::Label processingRateLabel;
+    /// Revision of the chain the rows were built for.
+    /// A change message without a structural change only refreshes the latency labels.
     std::uint64_t displayedRevision {0};
 
+    /// Scrolls the rows.
     juce::Viewport viewport;
+    /// The rows and the add button inside the viewport.
     juce::Component rowContainer;
+    /// One row per slot in chain order.
     std::vector<std::unique_ptr<PluginChainSlotRow>> rows;
 
     /// Shows tooltips for the controls in this window.

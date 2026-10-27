@@ -116,9 +116,13 @@ protected:
     }
 
 private:
+    /// Colour of the glyph, dimmed while the window is inactive.
     juce::Colour colour;
+    /// The glyph while the button is not toggled.
     juce::Path normalShape;
+    /// The glyph while the button is toggled, such as the restore glyph of a maximised window.
     juce::Path toggledShape;
+    /// True to draw on the dark background of the dark theme.
     bool useDarkMode {true};
     JUCE_LEAK_DETECTOR(CustomDocumentWindowButton)
 };

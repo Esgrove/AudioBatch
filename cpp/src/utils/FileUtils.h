@@ -31,8 +31,11 @@ struct FileIdentity {
 
     [[nodiscard]] bool matches(const juce::File& file) const;
 
+    /// Absolute path of the file.
     juce::String path;
+    /// Size of the file in bytes when the identity was captured.
     std::int64_t fileSize;
+    /// Modification time of the file when the identity was captured, in milliseconds since the epoch.
     std::int64_t modifiedTimeMs;
 };
 

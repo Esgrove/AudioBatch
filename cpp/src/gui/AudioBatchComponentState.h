@@ -16,21 +16,31 @@ namespace audiobatch
 {
 /// Persisted preview choices, independent of the current file and audio device.
 struct AudioPreviewPreferences {
-    /// Practical editable LUFS limits for the source loudness axis.
+    /// Lowest editable LUFS limit of the source loudness axis.
     static constexpr double minimumLoudnessGraphLimit {-60.0};
+    /// Highest editable LUFS limit of the source loudness axis.
     static constexpr double maximumLoudnessGraphLimit {6.0};
 
-    /// Initial LUFS axis range shared by settings and waveform presentation.
+    /// Initial bottom of the LUFS axis, shared by the settings and the waveform.
     static constexpr double defaultLoudnessGraphMinimum {-24.0};
+    /// Initial top of the LUFS axis, shared by the settings and the waveform.
     static constexpr double defaultLoudnessGraphMaximum {-4.0};
 
+    /// True to play the preview through the plugin chain.
     bool pluginChainEnabled {false};
+    /// True to delay the preview by the chain latency, so the audio lines up with the waveform position.
     bool latencyCompensated {true};
+    /// True to keep playing when another file is selected during playback.
     bool continuePlayback {false};
+    /// True to start a newly selected file at its first Serato cue point.
     bool playFromFirstCuePoint {false};
+    /// True to colour the waveform with the Serato overview of the file.
     bool seratoWaveformColours {true};
+    /// True to draw the short-term loudness curve over the waveform.
     bool loudnessGraphEnabled {false};
+    /// Bottom of the loudness axis in LUFS.
     double loudnessGraphMinimum {defaultLoudnessGraphMinimum};
+    /// Top of the loudness axis in LUFS.
     double loudnessGraphMaximum {defaultLoudnessGraphMaximum};
 };
 
@@ -67,8 +77,9 @@ struct AnalyzingWork {
     /// Number of files the plan sent to analysis instead of loading from the cache.
     int analyzedFiles {0};
 
-    /// Results received so far, out of the expected count, which only drive the status text.
+    /// Results received so far, which only drive the status text and the progress.
     int completed {0};
+    /// Results the run expects, the number of files its plan found, lowered by rows removed during the run.
     int expected {0};
 
     /// True once the run's plan arrived, so the status shows progress instead of the folder scan.
@@ -81,7 +92,9 @@ struct AnalyzingWork {
 
 /// One analysis result waiting to be merged into the table, with the run it belongs to.
 struct AnalysisResultMessage {
+    /// The analysis result.
     AudioAnalysisRecord record;
+    /// Id of the analysis run that produced it.
     int runId {0};
 };
 
@@ -93,7 +106,9 @@ struct OperationProgress {
     /// Time the pass started, in milliseconds from juce::Time::getMillisecondCounterHiRes.
     double startedAtMilliseconds {0.0};
 
+    /// Files whose result arrived so far.
     int completed {0};
+    /// Files the pass started.
     int expected {0};
 
     /// Id of the coordinator run of the pass, which drops the queued messages of a pass that ended before it.

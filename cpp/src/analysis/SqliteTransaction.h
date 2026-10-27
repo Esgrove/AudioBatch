@@ -27,7 +27,9 @@ public:
     [[nodiscard]] bool isActive() const noexcept;
 
 private:
+    /// The connection the transaction runs on.
     sqlite3& database;
+    /// True from a successful begin until the commit or the rollback.
     bool active {false};
 };
 }  // namespace audiobatch::sqlite

@@ -159,7 +159,9 @@ private:
     [[nodiscard]] bool isCurrentNormalizationRun(int runId) const noexcept;
     [[nodiscard]] bool isCurrentProcessingRun(int runId) const noexcept;
 
+    /// The activities of the table rows, which the passes mark busy and idle, owned by the main component.
     FileActivityTracker& fileActivity;
+    /// Receives the plans, results, and completions, owned by the main component.
     BackgroundWorkListener& listener;
 
     /// The analysis run, normalization pass, or plugin processing pass that is running, if any.
@@ -185,8 +187,11 @@ private:
         }
     };
 
+    /// Runs the analysis passes.
     AnalysisCoordinator analysisCoordinator;
+    /// Runs the normalization passes.
     NormalizeCoordinator normalizeCoordinator;
+    /// Runs the plugin processing passes.
     PluginProcessingCoordinator pluginCoordinator;
 
     JUCE_DECLARE_WEAK_REFERENCEABLE(BackgroundWorkController)

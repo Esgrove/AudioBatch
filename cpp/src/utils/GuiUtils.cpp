@@ -21,8 +21,11 @@ namespace
 #if JUCE_WINDOWS
 /// Identifies the existing executable without granting foreground permission to unrelated applications.
 struct ForegroundPermissionRequest {
+    /// Name of this application, which the window titles of the existing instance start with.
     juce::String applicationName;
+    /// Path of the executable of this application, which the existing instance must run from.
     juce::String executablePath;
+    /// Id of this process, whose own windows are skipped.
     DWORD currentProcessId;
 };
 #endif

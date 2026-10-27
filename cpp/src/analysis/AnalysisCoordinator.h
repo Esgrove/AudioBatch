@@ -87,11 +87,17 @@ private:
         const std::shared_ptr<std::atomic<int>>& pendingFiles
     ) const;
 
+    /// The cache the runs look files up in and store their results in, which outlives the coordinator.
     AnalysisCache& cache;
+    /// Receives the completion of each run.
     RunCallback<int, int> completionCallback;
+    /// Receives the files and stale files each run found.
     RunCallback<const AnalysisPlan&> planCallback;
+    /// Receives the analyzed fraction of each file.
     RunCallback<const juce::File&, float, int> progressCallback;
+    /// Receives each cached and fresh result.
     RunCallback<const AudioAnalysisRecord&, int> resultCallback;
+    /// Receives each file a worker starts to analyze.
     RunCallback<const juce::File&, int> startingCallback;
 
     /// Declared last, so the callbacks the jobs publish to outlive it.

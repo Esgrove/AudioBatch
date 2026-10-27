@@ -82,7 +82,9 @@ public:
     [[nodiscard]] std::vector<juce::AudioPluginInstance*> getChainView() const;
 
 private:
+    /// The run whose pool the chain goes back to.
     PluginRunChains& runChains;
+    /// Index of the leased chain in the run.
     int chainIndex;
 };
 
@@ -159,10 +161,15 @@ private:
         std::span<juce::AudioPluginInstance* const> chainView
     ) const;
 
+    /// Receives the completion of each run.
     RunCallback<int, int> completionCallback;
+    /// Receives the processed fraction of each file.
     RunCallback<const juce::File&, float, int> progressCallback;
+    /// Receives the result of each file.
     RunCallback<const PluginProcessingResult&, int> resultCallback;
+    /// Receives the reason a run could not start its workers.
     RunCallback<juce::String> startErrorCallback;
+    /// Receives each file a worker starts on.
     RunCallback<const juce::File&, int> startingCallback;
 
     /// Chains of the current run. Only accessed on the message thread.

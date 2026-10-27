@@ -13,7 +13,9 @@ namespace audiobatch
 {
 /// One text tag property, with one or more values.
 struct MetadataProperty {
+    /// Uppercase TagLib property name, such as "ARTIST".
     juce::String key;
+    /// The values of the property in tag order.
     juce::StringArray values;
 };
 
@@ -44,7 +46,9 @@ struct AudioMetadata {
         return properties.empty() && pictures.empty() && id3v2Frames.empty() && !hasUnsupportedId3Frames;
     }
 
+    /// The text properties.
     std::vector<MetadataProperty> properties;
+    /// The embedded pictures.
     std::vector<MetadataPicture> pictures;
     /// Owned ID3v2.4 frame bytes, including custom binary frames outside TagLib's PropertyMap.
     std::vector<juce::MemoryBlock> id3v2Frames;

@@ -16,8 +16,11 @@ namespace audiobatch
 {
 /// Adjacent full-height sections of the lower workspace, in parent coordinates.
 struct PreviewColumns {
+    /// The playback, gain, normalization, plugin, and settings controls on the left.
     juce::Rectangle<int> controls;
+    /// The summary and details of the selected file in the middle.
     juce::Rectangle<int> information;
+    /// The waveform, which takes the rest of the width.
     juce::Rectangle<int> waveform;
 };
 

@@ -51,7 +51,9 @@ constexpr int updatedAtMs {8};
 
 /// The validated contents of one cached row.
 struct CachedTagRow {
+    /// Whether the tag was present, or the stable reason it was not.
     ReadStatus status {ReadStatus::absent};
+    /// The serialized tag of a present result, empty otherwise.
     juce::MemoryBlock data;
 };
 

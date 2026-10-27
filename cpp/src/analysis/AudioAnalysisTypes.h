@@ -58,6 +58,7 @@ enum class AnalysisError : std::uint8_t {
 /// A linear amplitude factor, where 1 leaves the signal unchanged.
 /// A separate type from Decibels, so a gain in one unit cannot be passed where the other is expected.
 struct LinearGain {
+    /// The factor the samples are multiplied by.
     float value {1.0f};
 };
 
@@ -69,13 +70,17 @@ struct Decibels {
         return LinearGain {juce::Decibels::decibelsToGain(value)};
     }
 
+    /// The gain in decibels.
     float value {0.0f};
 };
 
 /// Input parameters shared by the GUI and CLI analysis flows.
 struct AudioAnalysisOptions {
+    /// Files and folders to analyze.
     juce::Array<juce::File> inputPaths;
+    /// True to also analyze the files in the subfolders of the given folders.
     bool recursive {false};
+    /// True to analyze every file again instead of reading unchanged files from the cache.
     bool refresh {false};
 };
 
@@ -88,9 +93,13 @@ struct ShortTermLoudnessHistory {
     /// EBU-mode meter update rate, independent of the three-second measurement window.
     static constexpr double updateRateHz {10.0};
 
+    /// Short-term loudness readings in LUFS, one per block in time order.
     std::vector<float> values;
+    /// Sample rate of the analyzed file.
     double sampleRate {0.0};
+    /// Length of the analyzed file in samples.
     std::int64_t lengthInSamples {0};
+    /// Source samples per reading, a tenth of a second at the file's sample rate.
     int samplesPerPoint {0};
 };
 
@@ -108,34 +117,58 @@ inline double ShortTermLoudnessHistory::timeAt(const std::size_t index) const no
 
 /// Analysis metadata and derived peak information for a single audio file.
 struct AudioAnalysisRecord {
+    /// Loudness that stands for silence, where no finite LUFS value exists.
     static constexpr double negativeInfinityLoudness {-1000.0};
 
+    /// The analyzed file.
     juce::File file;
+    /// Name of the file with its extension.
     juce::String fileName;
+    /// Absolute path of the file, which identifies its table row and its cache row.
     juce::String fullPath;
+    /// Name of the audio format that decoded the file, such as "WAV file".
     juce::String formatName;
+    /// Why the analysis failed, or empty when it did not.
     juce::String errorMessage;
+    /// Short-term loudness over the length of the file, shared between copies of the record.
     std::shared_ptr<const ShortTermLoudnessHistory> shortTermLoudness;
+    /// Size of the file in bytes when it was analyzed.
     std::int64_t fileSize {0};
+    /// Modification time of the file when it was analyzed, in milliseconds since the epoch.
     std::int64_t modifiedTimeMs {0};
+    /// Length of the audio in samples per channel.
     std::int64_t lengthInSamples {0};
+    /// Length of the audio in seconds.
     double durationSeconds {0.0};
+    /// Sample peak of the left or only channel as a linear sample value that keeps its sign.
     float peakLeft {0.0f};
+    /// Sample peak of the right channel as a linear sample value that keeps its sign, the left one for a mono file.
     float peakRight {0.0f};
+    /// The sample peak of the channel with the largest magnitude.
     float overallPeak {0.0f};
+    /// True peak of the left or only channel as a linear amplitude.
     double truePeakLeft {0.0};
+    /// True peak of the right channel as a linear amplitude, the left one for a mono file.
     double truePeakRight {0.0};
+    /// The larger of the channel true peaks.
     double overallTruePeak {0.0};
+    /// Largest short-term loudness in LUFS, or negativeInfinityLoudness for silence.
     double maxShortTermLufs {negativeInfinityLoudness};
+    /// Integrated loudness in LUFS, or negativeInfinityLoudness for silence.
     double integratedLufs {negativeInfinityLoudness};
+    /// Sample rate of the file in hertz.
     int sampleRate {0};
+    /// Number of audio channels of the file.
     int channels {0};
+    /// Bit depth of the source audio, as BitDepthDetection resolves it.
     int bitsPerSample {0};
     /// Per-file gain that the user set for this version of the file, which processing applies first.
     std::optional<Decibels> customGain;
+    /// Where the record is in its lifecycle, from a pending placeholder to an analyzed, cached, or failed file.
     AudioAnalysisStatus status {AudioAnalysisStatus::pending};
     /// Why the analysis failed, set on the records of failed analyses.
     std::optional<AnalysisError> error;
+    /// True when the record was read from the analysis cache instead of decoding the file.
     bool fromCache {false};
 
     /// Returns true when the record represents a failed analysis attempt.

@@ -188,8 +188,11 @@ private:
         utils::logInfo("Plugin scan worker started");
     }
 
+    /// The main window, or null when the process runs as a plugin scan worker.
     std::unique_ptr<MainWindow> mainWindow;
+    /// The plugin scan worker, when the process was launched as one.
     std::unique_ptr<PluginScanWorker> pluginScanWorker;
+    /// Writes the application log file.
     std::unique_ptr<juce::FileLogger> logger;
 
     /// Paths the system asked to open before the main window existed.

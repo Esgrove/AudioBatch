@@ -57,8 +57,11 @@ public:
     );
 
 private:
+    /// The instances of the chain in chain order, which the caller owns.
     std::span<juce::AudioPluginInstance* const> chainInstances;
+    /// The cancellation check of the run, which skips the release on the message thread once it returns true.
     const utils::CancellationCheck& isCancelled;
+    /// True after a preparation succeeded, so the destructor releases the chain again.
     bool prepared {false};
 };
 

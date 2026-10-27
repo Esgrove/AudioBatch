@@ -121,33 +121,53 @@ private:
     void updatePlaybackPosition();
     void updateCursorPosition();
 
+    /// The preview player whose position the cursor shows and the mouse scrubs, which outlives this component.
     AudioPreviewPlayer& transportSource;
     /// Reads the files the thumbnail is drawn from, owned by the main component, which outlives this one.
     juce::AudioFormatManager& thumbnailFormats;
+    /// Keeps the waveforms of the recently shown files in memory.
     juce::AudioThumbnailCache thumbnailCache {128};
     /// Recreated for each file, because a thumbnail keeps the detail it was created or last loaded with.
     std::unique_ptr<juce::AudioThumbnail> thumbnail;
+    /// The playback cursor drawn over the waveform.
     juce::DrawableRectangle currentPositionMarker;
+    /// The child component that shows the cursor, so moving it repaints only the region under it.
     juce::DrawableComponent currentPositionMarkerComponent {currentPositionMarker};
+    /// The time range of the file the waveform shows, in seconds.
     juce::Range<double> visibleRange;
+    /// The files last dropped onto the waveform.
     juce::StringArray lastDroppedFiles;
+    /// The first file last dropped onto the waveform.
     juce::URL lastFileDropped;
+    /// Moves the cursor and updates the playback status on every display frame.
     juce::VBlankAttachment positionAttachment;
 
+    /// Called once the waveform of a file was read completely, so the owner can cache it.
     std::function<void()> thumbnailFullyLoadedCallback;
+    /// Called with the zoom factor of a mouse wheel zoom.
     std::function<void(double)> mouseWheelZoomCallback;
+    /// Called with the gain change in decibels of a mouse wheel gain gesture.
     std::function<void(float)> mouseWheelGainCallback;
+    /// The Serato cues of the file, or null without them.
     std::shared_ptr<const serato::Markers> seratoMarkers;
+    /// The Serato overview of the file, or null without one.
     std::shared_ptr<const serato::Overview> seratoOverview;
+    /// The short-term loudness of the file, or null until its analysis has it.
     std::shared_ptr<const ShortTermLoudnessHistory> loudnessHistory;
     /// The coloured waveform of the last paint, cleared when the waveform, the overview, or the colouring changes.
     std::optional<ColouredWaveformCache> colouredWaveform;
 
+    /// True once the fully loaded callback ran for the current file.
     bool hasNotifiedFullyLoaded {false};
+    /// True to draw the loudness axis and curve.
     bool loudnessGraphEnabled {false};
+    /// True to colour the waveform with the Serato overview when the file has one.
     bool seratoWaveformColouringEnabled {true};
+    /// Top of the loudness axis in LUFS.
     double loudnessMaximum {AudioPreviewPreferences::defaultLoudnessGraphMaximum};
+    /// Bottom of the loudness axis in LUFS.
     double loudnessMinimum {AudioPreviewPreferences::defaultLoudnessGraphMinimum};
+    /// Linear gain the waveform is drawn with, which shows the custom gain of the file.
     float displayGain {1.0f};
 };
 }  // namespace audiobatch
