@@ -191,6 +191,16 @@ impl LiveChain {
         self.slots.iter().filter(|slot| slot.is_enabled()).count()
     }
 
+    /// Returns the summary of the chain for the menus and the controls, for example "Pro-Q 4 > (Limiter)".
+    #[must_use]
+    pub fn summary(&self) -> String {
+        super::labels::chain_summary(
+            self.slots
+                .iter()
+                .map(|slot| (slot.plugin().name.as_str(), slot.is_enabled())),
+        )
+    }
+
     /// Returns the rate the instances are prepared at.
     #[must_use]
     pub const fn sample_rate(&self) -> u32 {

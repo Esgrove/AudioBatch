@@ -44,7 +44,7 @@ use crate::menus::{ColumnChoice, MenuState, set_menus};
 use crate::normalization::{describe_target, target_range};
 use crate::operation_run::OperationRun;
 use crate::plugins::chain_window::ChainView;
-use crate::plugins::labels::{chain_summary, group_by_vendor};
+use crate::plugins::labels::group_by_vendor;
 use crate::plugins::manager_window::ManagerView;
 use crate::plugins::{FALLBACK_SAMPLE_RATE, PluginHost};
 use crate::results::{ResultRow, ResultsDelegate, RowState};
@@ -88,6 +88,9 @@ const DEFAULT_GAIN_DB: f32 = 0.0;
 
 /// Difference between the gain slider and the selected file's gain that moves the slider, in decibels.
 const GAIN_SLIDER_TOLERANCE_DB: f32 = 1e-3;
+
+/// Gain change of one wheel event over the waveform in decibels, the step of the gain slider.
+const GAIN_WHEEL_STEP_DB: f32 = 0.1;
 
 /// How long the mouse wheel has to rest before a gain it changed is written to the cache.
 const GAIN_STORE_DELAY: Duration = Duration::from_millis(500);
@@ -176,6 +179,10 @@ pub struct AppView {
     demo_task: Option<Task<()>>,
     /// Files whose custom gain the mouse wheel changed, written to the cache once the wheel rests.
     pending_gain_paths: Vec<PathBuf>,
+    /// File to start playing once its cue points are read, when playing from the first cue is on.
+    start_after_cues: Option<PathBuf>,
+    /// True when a new file reset the waveform zoom, which the next render shows on the zoom slider.
+    zoom_reset_pending: bool,
     /// Writes the pending gain after the delay. Replacing it restarts the delay.
     gain_store_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -304,6 +311,8 @@ impl AppView {
             analysis_task: None,
             demo_task: None,
             pending_gain_paths: Vec::new(),
+            start_after_cues: None,
+            zoom_reset_pending: false,
             gain_store_task: None,
             _subscriptions: subscriptions,
             _player_poll_task: player_poll_task,
@@ -719,6 +728,7 @@ impl AppView {
     ) {
         match event {
             WaveformEvent::ScrubStarted(seconds) => {
+                self.start_after_cues = None;
                 if let Some(player) = &mut self.player {
                     player.pause();
                     player.seek(*seconds);
@@ -748,8 +758,9 @@ impl AppView {
                 self.waveform.update(cx, |waveform, cx| waveform.set_zoom(zoom, cx));
             }
             WaveformEvent::GainBy(decibels) if self.can_adjust_gain(cx) => {
+                // Like the C++ application, each wheel event moves the gain by one slider step.
                 let current = self.gain_slider.read(cx).value().start();
-                let gain = ((current + decibels) * 10.0).round() / 10.0;
+                let gain = ((current + GAIN_WHEEL_STEP_DB.copysign(*decibels)) * 10.0).round() / 10.0;
                 let gain = gain.clamp(MINIMUM_GAIN_DB, MAXIMUM_GAIN_DB);
                 self.gain_slider
                     .update(cx, |slider, cx| slider.set_value(gain, window, cx));
@@ -892,10 +903,18 @@ impl AppView {
             self.selected_tags = None;
             self.clear_tag_marks(cx);
             self.tags_task = Some(self.spawn_tag_read(path.to_path_buf(), cx));
+            // Like the C++ application, each file starts at the whole-file zoom.
+            self.waveform
+                .update(cx, |waveform, cx| waveform.set_zoom(MINIMUM_ZOOM, cx));
+            self.zoom_reset_pending = true;
         }
+        // With playing from the first cue on, a new file stays silent until its cue points are read,
+        // so it starts at the cue instead of jumping there, like in the C++ application.
+        let wait_for_cues = changed && play && self.settings.play_from_first_cue_point;
+        self.start_after_cues = wait_for_cues.then(|| path.to_path_buf());
         if let Some(player) = &mut self.player {
             if changed || player.loaded_path() != Some(path) {
-                player.load(path, 0.0, play);
+                player.load(path, 0.0, play && !wait_for_cues);
             } else if play {
                 player.play();
             }
@@ -1112,7 +1131,7 @@ fn open_startup(
             status = problem.into();
         }
     }
-    menu_state.chain_summary = chain_summary(plugins.chain.enabled_count(), plugins.chain.len());
+    menu_state.chain_summary = plugins.chain.summary();
     menu_state.plugin_groups = group_by_vendor(&plugins.known.plugins);
     menu_state.presets = plugins.preset_names();
     Startup {

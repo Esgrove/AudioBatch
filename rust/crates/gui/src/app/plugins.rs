@@ -30,7 +30,7 @@ use crate::menus::{AddPluginToChain, set_menus};
 use crate::plugins::chain_window::{
     CHAIN_HEIGHT, CHAIN_TITLE, CHAIN_WIDTH, ChainEvent, ChainRow, ChainSnapshot, ChainView,
 };
-use crate::plugins::labels::{chain_summary, group_by_vendor, latency_text, plugin_label, slot_label};
+use crate::plugins::labels::{group_by_vendor, latency_text, plugin_label, slot_label};
 use crate::plugins::live_chain::{LiveSlot, SlotId};
 use crate::plugins::manager_window::{
     MANAGER_HEIGHT, MANAGER_TITLE, MANAGER_WIDTH, ManagerEvent, ManagerSnapshot, ManagerView,
@@ -68,8 +68,7 @@ impl AppView {
 
     /// Returns the summary of the chain, for example "2 plugins".
     pub(super) fn chain_summary(&self) -> String {
-        let chain = &self.plugins.chain;
-        chain_summary(chain.enabled_count(), chain.len())
+        self.plugins.chain.summary()
     }
 
     /// Opens the Plugin Chain window, or brings it to the front when it is already open.

@@ -7,6 +7,9 @@ use audiobatch_plugins::{FORMAT_NAME, PluginDescription};
 /// Vendor group of the plugins that report no vendor.
 pub const UNKNOWN_VENDOR: &str = "Unknown Vendor";
 
+/// Longest chain summary in characters before it is cut off, the same as in the C++ application.
+const MAXIMUM_SUMMARY_LENGTH: usize = 60;
+
 /// The effects of one vendor, for the Add Plugin menu and the plugin lists.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VendorGroup {
@@ -52,14 +55,24 @@ pub fn latency_text(samples: u64, sample_rate: u32) -> String {
     }
 }
 
-/// Returns the summary of a chain from its slot counts, for example "3 plugins, 1 bypassed".
+/// Returns the summary of a chain from the names of its slots and whether each is enabled,
+/// like the C++ application: the names in processing order joined by " > ", with bypassed ones in parentheses,
+/// for example "Pro-Q 4 > (Limiter)", and cut to `MAXIMUM_SUMMARY_LENGTH` characters followed by "...".
 #[must_use]
-pub fn chain_summary(enabled: usize, total: usize) -> String {
-    let plugins = if total == 1 { "plugin" } else { "plugins" };
-    match (total, total.saturating_sub(enabled)) {
-        (0, _) => String::from("Empty"),
-        (_, 0) => format!("{total} {plugins}"),
-        (_, bypassed) => format!("{total} {plugins}, {bypassed} bypassed"),
+pub fn chain_summary<'a>(slots: impl IntoIterator<Item = (&'a str, bool)>) -> String {
+    let names: Vec<String> = slots
+        .into_iter()
+        .map(|(name, enabled)| if enabled { name.to_string() } else { format!("({name})") })
+        .collect();
+    if names.is_empty() {
+        return String::from("Empty");
+    }
+    let summary = names.join(" > ");
+    if summary.chars().count() > MAXIMUM_SUMMARY_LENGTH {
+        let cut: String = summary.chars().take(MAXIMUM_SUMMARY_LENGTH).collect();
+        format!("{cut}...")
+    } else {
+        summary
     }
 }
 
@@ -116,10 +129,16 @@ mod test_labels {
     }
 
     #[test]
-    fn the_summary_counts_bypassed_slots() {
-        assert_eq!(chain_summary(0, 0), "Empty");
-        assert_eq!(chain_summary(1, 1), "1 plugin");
-        assert_eq!(chain_summary(2, 3), "3 plugins, 1 bypassed");
+    fn the_summary_names_the_slots_with_bypassed_ones_in_parentheses() {
+        assert_eq!(chain_summary([]), "Empty");
+        assert_eq!(chain_summary([("Pro-Q 4", true)]), "Pro-Q 4");
+        assert_eq!(
+            chain_summary([("Pro-Q 4", true), ("Limiter", false)]),
+            "Pro-Q 4 > (Limiter)"
+        );
+        let long = chain_summary([("A very long plugin name", true); 4]);
+        assert_eq!(long.chars().count(), MAXIMUM_SUMMARY_LENGTH + 3);
+        assert!(long.ends_with("..."));
     }
 
     #[test]
