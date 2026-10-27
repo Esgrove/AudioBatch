@@ -47,6 +47,10 @@ const MP3_DECODER_DELAY_FRAMES: u64 = 529;
 /// Error message of a file that no decoder reads, shared with the C++ application.
 const UNSUPPORTED_MESSAGE: &str = "Unsupported or unreadable audio file";
 
+/// A stream that ends more than this fraction of a second short of its stated length counts as truncated.
+/// The allowance covers the priming and padding that lossy decoders account for differently.
+const TRUNCATION_TOLERANCE_DIVISOR: u64 = 10;
+
 /// Longest run of silence inserted for one failed packet, in seconds.
 /// Guards against a corrupt packet duration turning into a huge allocation.
 const MAX_FAILED_PACKET_SECONDS: u64 = 1;
@@ -72,6 +76,7 @@ pub struct StreamInfo {
 /// A failed packet that reaches the stated end of the stream is tolerated without being counted,
 /// because MP3 files often overshoot the decodable audio.
 /// Several failures in a row mean the rest of the file cannot be decoded, and the pass must stop.
+/// A stream that ends well short of its stated length is tolerated too, and reported in the notice.
 #[derive(Debug, Default, Clone)]
 pub struct DecodeFailureTracker {
     total_frames: Option<u64>,
@@ -79,6 +84,7 @@ pub struct DecodeFailureTracker {
     consecutive_failures: u32,
     first_failure_position: Option<u64>,
     stopped_at: Option<u64>,
+    truncated_at: Option<u64>,
 }
 
 /// Decodes one audio file into planar `f32` samples, packet by packet.
@@ -100,8 +106,8 @@ pub struct AudioFileDecoder {
     frame_limit: Option<u64>,
     /// Time base of the packet timestamps and durations, which is not always one over the sample rate in MP4.
     time_base: Option<TimeBase>,
-    /// True when packet trimming comes only from symphonia's estimated length,
-    /// which it guesses from the file size for an MP3 file without a frame count header.
+    /// True for an MP3 file without a LAME delay, whose stated length may be symphonia's guess from the file size.
+    /// Packet trimming and the failure rules then ignore the stated length, which may cut real audio short.
     ignore_packet_trim: bool,
 }
 
@@ -118,6 +124,7 @@ impl DecodeFailureTracker {
             consecutive_failures: 0,
             first_failure_position: None,
             stopped_at: None,
+            truncated_at: None,
         }
     }
 
@@ -145,7 +152,13 @@ impl DecodeFailureTracker {
         true
     }
 
-    /// Returns the number of failed packets before the final one.
+    /// Records that the stream ended at the given frame position, well short of its stated length.
+    pub const fn record_truncation(&mut self, position: u64) {
+        self.truncated_at = Some(position);
+    }
+
+    /// Returns the number of failed packets that were counted,
+    /// which leaves out failures at the stated end of the stream.
     #[must_use]
     pub const fn failed_packet_count(&self) -> u32 {
         self.failed_packets
@@ -157,15 +170,30 @@ impl DecodeFailureTracker {
         self.first_failure_position
     }
 
-    /// Returns a user-facing notice about tolerated failures, or `None` when every packet decoded.
+    /// Returns the frame position where a truncated stream ended, if it ended short of its stated length.
+    #[must_use]
+    pub const fn truncated_at(&self) -> Option<u64> {
+        self.truncated_at
+    }
+
+    /// Returns a user-facing notice about tolerated failures and truncation,
+    /// or `None` when every packet decoded and the stream reached its stated length.
     #[must_use]
     pub fn notice(&self) -> Option<String> {
-        self.first_failure_position.map(|position| {
+        let failures = self.first_failure_position.map(|position| {
             format!(
                 "{} audio packet(s) failed to decode, first at sample {position}",
                 self.failed_packets
             )
-        })
+        });
+        let truncation = self
+            .truncated_at
+            .zip(self.total_frames)
+            .map(|(position, total)| format!("The audio ended at sample {position} of the {total} the file states"));
+        match (failures, truncation) {
+            (Some(failures), Some(truncation)) => Some(format!("{failures}. {truncation}")),
+            (failures, truncation) => failures.or(truncation),
+        }
     }
 
     /// Returns the user-facing error after `record_failure` returned false.
@@ -250,20 +278,22 @@ impl AudioFileDecoder {
             expected_frames,
         };
 
-        Ok(Self {
+        let mut decoder = Self {
             format,
             decoder,
             track_id,
             info,
             planar: vec![Vec::new(); channels as usize],
-            failures: DecodeFailureTracker::new(expected_frames),
+            failures: DecodeFailureTracker::default(),
             position: 0,
             leading_frames,
             frames_to_skip: leading_frames,
             frame_limit,
             time_base,
             ignore_packet_trim: mp3_without_delay,
-        })
+        };
+        decoder.failures = DecodeFailureTracker::new(decoder.stated_frames());
+        Ok(decoder)
     }
 
     /// Returns the stream properties.
@@ -301,9 +331,27 @@ impl AudioFileDecoder {
             let mut packet = match self.format.next_packet() {
                 Ok(Some(packet)) => packet,
                 // A truncated final packet and a chained stream both end the track for this purpose.
-                Ok(None) | Err(SymphoniaError::ResetRequired) => return Ok(None),
-                Err(SymphoniaError::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => {
+                Ok(None) | Err(SymphoniaError::ResetRequired) => {
+                    self.record_end_of_stream();
                     return Ok(None);
+                }
+                Err(SymphoniaError::IoError(error)) if error.kind() == ErrorKind::UnexpectedEof => {
+                    self.record_end_of_stream();
+                    return Ok(None);
+                }
+                // A read error of the container counts as a failed packet, so one bad read on a network drive
+                // does not fail the whole file, while repeated errors still stop decoding.
+                // Past the stated length it ends the track, like a failed final packet.
+                Err(SymphoniaError::IoError(_) | SymphoniaError::DecodeError(_)) => {
+                    if self.stated_frames().is_some_and(|total| self.position >= total) {
+                        return Ok(None);
+                    }
+                    if !self.failures.record_failure(self.position, 0) {
+                        return Err(
+                            AnalysisFailure::new(AnalysisError::DecodeFailed, self.failures.error_message()).into(),
+                        );
+                    }
+                    continue;
                 }
                 Err(error) => bail!("Audio decoding failed at sample {}: {error}", self.position),
             };
@@ -322,6 +370,7 @@ impl AudioFileDecoder {
                         continue;
                     }
                     buffer.copy_to_vecs_planar::<f32>(&mut self.planar);
+                    self.fill_missing_channels();
                     let frames = self.trim_chunk();
                     if frames == 0 {
                         continue;
@@ -338,8 +387,7 @@ impl AudioFileDecoder {
                     }
                     // Silence for a failed final packet stops at the stated length, so the file keeps its length.
                     let remaining = self
-                        .info
-                        .expected_frames
+                        .stated_frames()
                         .map_or(u64::MAX, |total| total.saturating_sub(self.position));
                     let silent_frames = packet_frames
                         .min(u64::from(self.info.sample_rate) * MAX_FAILED_PACKET_SECONDS)
@@ -383,11 +431,45 @@ impl AudioFileDecoder {
             )
             .map_err(|error| anyhow!("Seek failed: {error}"))?;
         self.decoder.reset();
-        self.failures = DecodeFailureTracker::new(self.info.expected_frames);
+        self.failures = DecodeFailureTracker::new(self.stated_frames());
         let stream_position = self.frames_of(seeked.actual_ts.get());
         self.frames_to_skip = self.leading_frames.saturating_sub(stream_position);
         self.position = stream_position.saturating_sub(self.leading_frames);
         Ok(self.position)
+    }
+
+    /// Returns the length the container states, when the failure rules and the truncation check may rely on it.
+    /// The stated length of an MP3 file without a LAME delay may be symphonia's guess from the file size,
+    /// so it is not used for them.
+    const fn stated_frames(&self) -> Option<u64> {
+        if self.ignore_packet_trim {
+            None
+        } else {
+            self.info.expected_frames
+        }
+    }
+
+    /// Notes a stream that ended well short of the length its container states, such as a truncated download,
+    /// so the notice of the pass reports it instead of the shorter audio passing silently.
+    fn record_end_of_stream(&mut self) {
+        if let Some(total) = self.stated_frames() {
+            let tolerance = u64::from(self.info.sample_rate) / TRUNCATION_TOLERANCE_DIVISOR;
+            if self.position.saturating_add(tolerance) < total {
+                self.failures.record_truncation(self.position);
+            }
+        }
+    }
+
+    /// Gives every channel of the stream as many samples as the latest packet,
+    /// filling channels the packet did not carry with silence,
+    /// so no caller ever reads the samples of an earlier packet for them.
+    fn fill_missing_channels(&mut self) {
+        let channels = self.info.channels as usize;
+        let frames = self.planar.first().map_or(0, Vec::len);
+        self.planar.resize_with(channels, Vec::new);
+        for channel in &mut self.planar {
+            channel.resize(frames, 0.0);
+        }
     }
 
     /// Converts a timestamp or duration in the track's time base to frames at the sample rate.
@@ -547,6 +629,25 @@ mod test_decode_failure_tracker {
         assert!(tracker.notice().is_none());
         assert_eq!(tracker.failed_packet_count(), 0);
     }
+
+    #[test]
+    fn truncation_is_reported_with_the_stated_length() {
+        let mut tracker = DecodeFailureTracker::new(Some(1000));
+        tracker.record_truncation(400);
+        assert_eq!(tracker.truncated_at(), Some(400));
+        assert_eq!(
+            tracker.notice().as_deref(),
+            Some("The audio ended at sample 400 of the 1000 the file states")
+        );
+        assert!(tracker.record_failure(100, 10));
+        assert_eq!(
+            tracker.notice().as_deref(),
+            Some(
+                "1 audio packet(s) failed to decode, first at sample 100. \
+                 The audio ended at sample 400 of the 1000 the file states"
+            )
+        );
+    }
 }
 
 #[cfg(test)]
@@ -583,6 +684,34 @@ mod test_audio_file_decoder {
         }
         assert_eq!(frames, 44_100);
         assert_eq!(decoder.position(), 44_100);
+        assert!(decoder.failures().notice().is_none());
+    }
+
+    #[test]
+    fn a_truncated_file_decodes_what_it_has_and_reports_the_truncation() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = test_fixtures::copy_fixture(&directory, "sine_stereo_44100_16.wav", None);
+        let length = std::fs::metadata(&path).expect("metadata").len();
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .and_then(|file| file.set_len(length / 2))
+            .expect("truncates the copy");
+
+        let mut decoder = AudioFileDecoder::open(&path).expect("opens");
+        while decoder.next_chunk().expect("decodes").is_some() {}
+
+        let position = decoder.position();
+        assert!(position > 0 && position < 44_100, "{position}");
+        assert_eq!(decoder.failures().truncated_at(), Some(position));
+        assert!(
+            decoder
+                .failures()
+                .notice()
+                .is_some_and(|notice| notice.contains("of the 44100 the file states")),
+            "{:?}",
+            decoder.failures().notice()
+        );
     }
 
     #[test]
