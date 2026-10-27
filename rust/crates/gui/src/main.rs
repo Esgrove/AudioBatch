@@ -6,6 +6,8 @@
 //! Messages go to the `AudioBatchRs.log` log file and to stderr.
 //! Setting `AUDIOBATCH_GUI_DEBUG` adds diagnostics to them.
 //!
+//! Like the C++ application, only one app runs: a second launch hands its paths to the running one and quits.
+//!
 //! The executable also serves as the plugin scan worker,
 //! so a plugin that crashes while it is scanned takes down only the worker process.
 //! The worker flag is checked before anything else starts.
@@ -26,6 +28,7 @@ mod plugins;
 mod results;
 mod settings;
 mod settings_window;
+mod single_instance;
 #[cfg(feature = "snapshot")]
 mod snapshot;
 #[cfg(test)]
@@ -59,7 +62,7 @@ const DISPLAY_MARGIN: f32 = 40.0;
 const MINIMUM_WINDOW_SIZE: (f32, f32) = (800.0, 600.0);
 
 /// Returns true when `AUDIOBATCH_GUI_DEBUG` is set.
-/// The app then prints the waveform frame rate, run summaries, and player events to stderr.
+/// The app then adds the waveform frame rate, analysis summaries, and player events to the log.
 #[must_use]
 pub fn debug_enabled() -> bool {
     std::env::var_os("AUDIOBATCH_GUI_DEBUG").is_some()
@@ -83,6 +86,15 @@ fn main() {
     if let Err(error) = log_file::install(env!("CARGO_BIN_NAME"), LevelFilter::TRACE) {
         eprintln!("{error:#}");
     }
+    // A snapshot run always opens its own window instead of handing its paths to a running app.
+    let launches = if cfg!(feature = "snapshot") {
+        None
+    } else {
+        match single_instance::claim(&options.paths) {
+            single_instance::Claim::Forwarded => return,
+            single_instance::Claim::Primary(launches) => Some(launches),
+        }
+    };
 
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
@@ -109,7 +121,13 @@ fn main() {
                 ..Default::default()
             };
             let window = match gpui_kit::open_window(window_options, cx, |window, cx| {
-                cx.new(|cx| AppView::new(&options, dispatcher, window, cx))
+                cx.new(|cx| {
+                    let mut view = AppView::new(&options, dispatcher, window, cx);
+                    if let Some(launches) = launches.clone() {
+                        view.listen_for_launches(launches, window, cx);
+                    }
+                    view
+                })
             }) {
                 Ok((window, _)) => window,
                 Err(error) => {

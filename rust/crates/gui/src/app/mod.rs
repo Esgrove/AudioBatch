@@ -59,6 +59,9 @@ pub const APP_TITLE: &str = "AudioBatchRs";
 /// How often the analysis and normalization events are applied to the table.
 const ANALYSIS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
+/// How often the paths of later launches are checked.
+const LAUNCH_POLL_INTERVAL: Duration = Duration::from_millis(200);
+
 /// Padding around the window content.
 const CONTENT_PADDING: f32 = 4.0;
 
@@ -187,6 +190,8 @@ pub struct AppView {
     gain_store_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
     _player_poll_task: Task<()>,
+    /// Opens the paths that later launches of the app hand over, when this launch is the running app.
+    launch_task: Option<Task<()>>,
     _plugin_tick_task: Task<()>,
 }
 
@@ -318,6 +323,7 @@ impl AppView {
             gain_store_task: None,
             _subscriptions: subscriptions,
             _player_poll_task: player_poll_task,
+            launch_task: None,
             _plugin_tick_task: plugin_tick_task,
         };
         view.connect_playhead(cx);
@@ -376,6 +382,29 @@ impl AppView {
         self.roots = paths.iter().map(|path| normalize_path(path)).collect();
         self.excluded.clear();
         self.start_run(RunKind::Scan, self.roots.clone(), false, cx);
+    }
+
+    /// Opens the paths that later launches of the app hand over, as if they were dropped onto the window,
+    /// and brings the window to the front, like the C++ application.
+    pub fn listen_for_launches(&mut self, launches: Receiver<Vec<PathBuf>>, window: &Window, cx: &Context<Self>) {
+        self.launch_task = Some(cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor().timer(LAUNCH_POLL_INTERVAL).await;
+                let received: Vec<Vec<PathBuf>> = launches.try_iter().collect();
+                if received.is_empty() {
+                    continue;
+                }
+                let alive = this.update_in(cx, |view, window, cx| {
+                    window.activate_window();
+                    for paths in received.iter().filter(|paths| !paths.is_empty()) {
+                        view.handle_drop(paths, false, cx);
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        }));
     }
 
     /// Adds dropped paths, or replaces the listed folders when folders are dropped without Shift held.
