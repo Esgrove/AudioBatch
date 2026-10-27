@@ -657,6 +657,7 @@ dependencies = [
  "crossbeam-channel",
  "rtrb",
  "rubato",
+ "tempfile",
  "test-fixtures",
 ]
 

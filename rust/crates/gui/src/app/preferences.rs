@@ -78,6 +78,13 @@ impl AppView {
         }
     }
 
+    /// Turns colouring the waveform from the Serato Overview tag on or off, from the Options menu.
+    pub(super) fn toggle_serato_colours(&mut self, cx: &mut Context<Self>) {
+        let mut settings = self.settings.clone();
+        settings.serato_waveform_colours = !settings.serato_waveform_colours;
+        self.apply_settings(settings, cx);
+    }
+
     /// Shows or hides the loudness graph, from the Options menu.
     pub(super) fn toggle_loudness_graph(&mut self, cx: &mut Context<Self>) {
         let mut settings = self.settings.clone();
@@ -159,16 +166,19 @@ impl AppView {
             settings.sample_rate = self.settings.sample_rate;
             settings.buffer_size = self.settings.buffer_size;
         }
-        let (show, minimum, maximum) = (
+        let (show, minimum, maximum, serato_colours) = (
             settings.show_loudness_graph,
             settings.loudness_minimum,
             settings.loudness_maximum,
+            settings.serato_waveform_colours,
         );
         self.waveform.update(cx, |waveform, cx| {
             waveform.set_show_loudness(show, cx);
             waveform.set_loudness_range(minimum, maximum, cx);
+            waveform.set_serato_colours(serato_colours, cx);
         });
         self.menu_state.show_loudness_graph = show;
+        self.menu_state.serato_colours = serato_colours;
         self.menu_state.preview_plugin_chain = settings.preview_plugin_chain;
         self.menu_state.compensate_preview_latency = settings.compensate_preview_latency;
         set_menus(cx, &self.menu_state);
@@ -298,7 +308,14 @@ mod test_first_cue_start {
     use super::*;
 
     fn cues(seconds: &[f64]) -> Vec<CueMarker> {
-        seconds.iter().map(|&seconds| CueMarker { seconds, color: 0 }).collect()
+        seconds
+            .iter()
+            .map(|&seconds| CueMarker {
+                seconds,
+                color: 0,
+                slot: 0,
+            })
+            .collect()
     }
 
     #[test]

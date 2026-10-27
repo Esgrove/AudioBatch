@@ -123,6 +123,8 @@ pub struct CueMarker {
     pub seconds: f64,
     /// Color as a `0xRRGGBB` value.
     pub color: u32,
+    /// Zero-based hot cue slot, which the keys 1 to 8 jump to.
+    pub slot: u8,
 }
 
 /// Paints the overview of one file.
@@ -141,6 +143,8 @@ pub struct WaveformView {
     display_gain: f32,
     /// True from a press on the waveform until the mouse is released.
     scrubbing: bool,
+    /// Whether the Serato Overview colours the envelope.
+    serato_colours: bool,
     show_loudness: bool,
     loudness_range: LoudnessRange,
     /// Plot bounds from the last paint, used to turn a mouse position into a time.
@@ -235,6 +239,7 @@ impl WaveformView {
             visible_start: 0.0,
             display_gain: 1.0,
             scrubbing: false,
+            serato_colours: true,
             show_loudness: false,
             loudness_range: LoudnessRange {
                 minimum: DEFAULT_LOUDNESS_MINIMUM,
@@ -294,6 +299,12 @@ impl WaveformView {
     /// Like the cue points, it stays while a placeholder is shown.
     pub fn set_serato_overview(&mut self, overview: Option<Arc<Overview>>, cx: &mut Context<Self>) {
         self.serato_overview = overview;
+        cx.notify();
+    }
+
+    /// Turns colouring the envelope from the Serato Overview on or off, from Options > Serato Waveform Colours.
+    pub fn set_serato_colours(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.serato_colours = enabled;
         cx.notify();
     }
 
@@ -482,7 +493,7 @@ impl Render for WaveformView {
                 });
                 let data = PaintData {
                     overview,
-                    serato_overview: self.serato_overview.clone(),
+                    serato_overview: self.serato_overview.clone().filter(|_| self.serato_colours),
                     loudness: self.loudness.clone(),
                     show_loudness: self.show_loudness,
                     loudness_range: self.loudness_range,

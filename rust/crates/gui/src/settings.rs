@@ -79,6 +79,8 @@ pub struct GuiSettings {
     pub normalize_target_lufs: f64,
     /// Identifiers of the hidden results table columns, or none for the columns hidden by default.
     pub hidden_columns: Option<Vec<String>>,
+    /// Colour the waveform from the Serato Overview tag of a file that has one.
+    pub serato_waveform_colours: bool,
 }
 
 impl NormalizeMode {
@@ -109,6 +111,7 @@ impl Default for GuiSettings {
             normalize_target_peak_dbfs: DEFAULT_TARGET_PEAK_DBFS,
             normalize_target_lufs: DEFAULT_TARGET_LUFS,
             hidden_columns: None,
+            serato_waveform_colours: true,
         }
     }
 }
@@ -232,6 +235,7 @@ mod test_settings_file {
             normalize_target_peak_dbfs: -1.0,
             normalize_target_lufs: -9.5,
             hidden_columns: Some(vec![String::from("path"), String::from("peak_left")]),
+            serato_waveform_colours: false,
         };
         settings.save_to(&path).expect("saves the settings");
         assert_eq!(GuiSettings::load_from(&path), settings);

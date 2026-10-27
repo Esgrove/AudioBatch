@@ -82,6 +82,31 @@ impl AppView {
         })
     }
 
+    /// Plays the selected file from its Serato hot cue in a slot, from the keys 1 to 8, like the C++ application.
+    /// Nothing happens when the file has no cue in that slot.
+    pub(super) fn jump_to_hot_cue(&mut self, slot: u8, cx: &mut Context<Self>) {
+        let Some((path, tags)) = &self.selected_tags else {
+            return;
+        };
+        let Some(seconds) = cue_markers(tags)
+            .into_iter()
+            .find(|cue| cue.slot == slot)
+            .map(|cue| cue.seconds)
+        else {
+            return;
+        };
+        self.start_after_cues = None;
+        if let Some(player) = self
+            .player
+            .as_mut()
+            .filter(|player| player.loaded_path() == Some(path.as_path()))
+        {
+            player.seek(seconds);
+            player.play();
+        }
+        cx.notify();
+    }
+
     /// Removes the cue points and the Serato colours of the previous selection from the waveform.
     pub(super) fn clear_tag_marks(&self, cx: &mut Context<Self>) {
         self.waveform.update(cx, |waveform, cx| {
@@ -109,6 +134,7 @@ fn cue_markers(tags: &FileTags) -> Vec<CueMarker> {
                 .map(|cue| CueMarker {
                     seconds: f64::from(cue.position) / 1000.0,
                     color: cue.color.to_rgb_u32(),
+                    slot: cue.index,
                 })
                 .collect()
         })
