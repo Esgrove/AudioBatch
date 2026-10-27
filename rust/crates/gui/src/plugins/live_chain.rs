@@ -67,6 +67,9 @@ pub struct LiveChain {
     /// Name of the preset the chain was loaded from or saved as,
     /// until a slot is added, removed, moved, enabled, or bypassed.
     preset_name: Option<String>,
+    /// True when the chain file exists but could not be read, such as one saved by a newer version.
+    /// Saving leaves it alone while the chain is empty, and moves it aside before writing a new chain over it.
+    unread_file: bool,
 }
 
 impl LiveSlot {
@@ -163,20 +166,23 @@ impl LiveChain {
             dispatcher,
             sample_rate,
             preset_name: None,
+            unread_file: false,
         }
     }
 
     /// Loads the chain saved in `path`, without loading its plugins yet.
     /// `load_slots` and `open_editor` load them when the preview, the Plugin Chain window, or an editor needs them.
-    /// A chain file that cannot be read gives an empty chain and the error,
-    /// and one that cannot be parsed is moved aside first, so saving the empty chain cannot destroy it.
+    /// A chain file that cannot be parsed is moved aside first, so saving the empty chain cannot destroy it.
+    /// One that cannot be read at all, or was saved by a newer version, gives an empty chain and the error,
+    /// and stays in place until the user builds a new chain, see `save`.
     #[must_use]
     pub fn load(path: PathBuf, dispatcher: UiDispatcher, sample_rate: u32) -> (Self, Option<String>) {
-        let (saved, error) = match PluginChain::load_recovering(&path) {
-            Ok((saved, message)) => (saved, message),
-            Err(error) => (PluginChain::default(), Some(format!("{error:#}"))),
+        let (saved, error, unread_file) = match PluginChain::load_recovering(&path) {
+            Ok((saved, message)) => (saved, message, false),
+            Err(error) => (PluginChain::default(), Some(format!("{error:#}")), true),
         };
         let mut chain = Self::new(path, dispatcher, sample_rate);
+        chain.unread_file = unread_file;
         for slot in saved.slots {
             let live = chain.new_slot(slot);
             chain.slots.push(live);
@@ -456,11 +462,25 @@ impl LiveChain {
     }
 
     /// Writes the chain to the chain file.
+    /// When the file could not be read at startup, an empty chain is not saved, so the file stays as it is,
+    /// and a new chain moves it aside as `<name>.unread.json` first, so it is never overwritten.
     ///
     /// # Errors
     ///
-    /// Returns an error when the file cannot be written.
-    pub fn save(&self) -> Result<()> {
+    /// Returns an error when the unread file cannot be moved aside or the chain file cannot be written.
+    pub fn save(&mut self) -> Result<()> {
+        if self.unread_file {
+            if self.slots.is_empty() {
+                return Ok(());
+            }
+            if self.path.exists() {
+                let aside = self.path.with_extension("unread.json");
+                std::fs::rename(&self.path, &aside)
+                    .with_context(|| format!("Could not move the unread plugin chain {} aside", self.path.display()))?;
+                tracing::warn!("Moved the unread plugin chain to {}", aside.display());
+            }
+            self.unread_file = false;
+        }
         self.chain()
             .save_to(&self.path)
             .with_context(|| format!("Could not save the plugin chain to {}", self.path.display()))
@@ -611,6 +631,26 @@ mod test_slots {
         chain.set_preset_name(preset());
         chain.clear();
         assert_eq!(chain.preset_name(), None);
+    }
+
+    #[test]
+    fn a_chain_file_from_a_newer_version_is_never_overwritten() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("plugin-chain.json");
+        let newer = r#"{"version": 99, "slots": []}"#;
+        std::fs::write(&path, newer).expect("written");
+        let (dispatcher, _jobs) = ui_channel();
+
+        let (mut chain, error) = LiveChain::load(path.clone(), dispatcher, 48_000);
+        assert!(error.is_some_and(|error| error.contains("newer version")));
+        chain.save().expect("an empty chain is not saved");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), newer);
+
+        push_slot(&mut chain, "A");
+        chain.save().expect("saved");
+        let aside = path.with_extension("unread.json");
+        assert_eq!(std::fs::read_to_string(&aside).expect("moved aside"), newer);
+        assert_eq!(PluginChain::load_from(&path).expect("loads").slots.len(), 1);
     }
 }
 
