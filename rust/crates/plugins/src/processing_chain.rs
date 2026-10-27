@@ -54,6 +54,8 @@ pub(crate) struct PreparedChain {
     pub(crate) latency_samples: u64,
     /// Sum of the plugins' tails, each limited to `MAXIMUM_TAIL_SECONDS`, in samples.
     pub(crate) tail_samples: u64,
+    /// Display names of the plugins, in processing order, for a failure message.
+    pub(crate) names: Vec<String>,
 }
 
 impl ChainPlugin {
@@ -213,6 +215,7 @@ fn prepare_plugins(
         processors: Vec::with_capacity(plugins.len()),
         latency_samples: 0,
         tail_samples: 0,
+        names: plugins.iter().map(|plugin| plugin.name.clone()).collect(),
     };
     let mut failure = None;
     for plugin in plugins.iter_mut() {
