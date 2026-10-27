@@ -342,7 +342,10 @@ std::expected<WriteSummary, juce::String> writeFinalOutput(
                 constexpr float minimumPcmValue {-static_cast<float>(outputPcmScale)};
                 constexpr float maximumPcmValue {static_cast<float>(outputPcmScale - 1)};
                 const auto scaled = input[sample] * static_cast<float>(outputPcmScale);
-                summary.clipped = summary.clipped || scaled < minimumPcmValue || scaled > maximumPcmValue;
+                // Values between the largest step and the next one round down to the largest step,
+                // so only values from the next step on are cut off.
+                summary.clipped
+                    = summary.clipped || scaled < minimumPcmValue || scaled >= static_cast<float>(outputPcmScale);
                 const auto limited = juce::jlimit(minimumPcmValue, maximumPcmValue, scaled);
                 output[sample] = static_cast<int>(std::floor(limited)) * outputPcmAlignment;
             }

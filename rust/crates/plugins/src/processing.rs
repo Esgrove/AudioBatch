@@ -532,7 +532,9 @@ fn quantize(sample: f32) -> (i32, bool) {
     let minimum = -OUTPUT_PCM_SCALE;
     let maximum = OUTPUT_PCM_SCALE - 1.0;
     let scaled = sample * OUTPUT_PCM_SCALE;
-    let saturated = !(minimum..=maximum).contains(&scaled);
+    // Values between the largest step and the next one round down to the largest step,
+    // so only values from the next step on are cut off.
+    let saturated = !(minimum..OUTPUT_PCM_SCALE).contains(&scaled);
     (scaled.clamp(minimum, maximum).floor() as i32, saturated)
 }
 
@@ -548,6 +550,7 @@ mod test_quantize {
         assert_eq!(quantize(1.0 / 32_768.0 * 1.75), (1, false));
         assert_eq!(quantize(-1.0 / 32_768.0 * 0.25), (-1, false));
         assert_eq!(quantize(-1.0), (-32_768, false));
+        assert_eq!(quantize(32_767.5 / 32_768.0), (32_767, false));
         assert_eq!(quantize(1.0), (32_767, true));
         assert_eq!(quantize(-1.5), (-32_768, true));
     }
