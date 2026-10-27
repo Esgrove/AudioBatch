@@ -110,21 +110,35 @@ std::expected<void, juce::String> validateProcessingInputs(
     return {};
 }
 
+/// The gain applied before the first plugin, and why the requested normalization was skipped, if it was.
+struct InputGain {
+    LinearGain gain;
+    /// Empty unless the normalization refused the file.
+    juce::String notice;
+};
+
 /// Returns the linear gain applied before the first plugin.
 /// A custom gain wins, otherwise the file is normalized to the requested peak or loudness target,
 /// and otherwise it is left unchanged.
-/// A file without a measurable level for the target, such as silence, is left unchanged too.
-LinearGain getInputGain(const AudioAnalysisRecord& record, const PluginProcessingOptions& options)
+/// A file the normalization refuses, such as silence or one that needs more than the gain limit,
+/// is processed at unity gain, and the notice says why, like in the Rust version.
+InputGain getInputGain(const AudioAnalysisRecord& record, const PluginProcessingOptions& options)
 {
     if (record.customGain) {
-        return record.customGain->toLinearGain();
+        return {.gain = record.customGain->toLinearGain(), .notice = {}};
     }
 
-    if (options.normalizeBeforePlugin.has_value()) {
-        return getNormalizationGain(record, *options.normalizeBeforePlugin).value_or(LinearGain {});
+    if (!options.normalizeBeforePlugin.has_value()) {
+        return {};
     }
 
-    return LinearGain {};
+    const auto normalizationGain = getNormalizationGain(record, *options.normalizeBeforePlugin);
+    if (!normalizationGain) {
+        InputGain unity;
+        unity.notice = utils::format("Not normalized before the plugins: {}", normalizationGain.error());
+        return unity;
+    }
+    return {.gain = *normalizationGain, .notice = {}};
 }
 
 /// Reads `samplesToRead` frames starting at `samplePosition` into the start of
@@ -666,6 +680,7 @@ PluginProcessingResult processFileWithPlugins(
 
     const auto numChannels = static_cast<int>(reader->numChannels);
     const juce::TemporaryFile intermediateFile(".wav");
+    const auto inputGain = getInputGain(record, options);
 
     const auto summary = renderChainToFile(
         *reader,
@@ -673,7 +688,7 @@ PluginProcessingResult processFileWithPlugins(
         chainInstances,
         options,
         numChannels,
-        getInputGain(record, options).value,
+        inputGain.gain.value,
         isCancelled,
         utils::makeProgressRange(onProgress, renderProgressStart, renderProgressEnd)
     );
@@ -736,6 +751,11 @@ PluginProcessingResult processFileWithPlugins(
     }
 
     juce::StringArray notices;
+
+    if (inputGain.notice.isNotEmpty()) {
+        notices.add(inputGain.notice);
+        utils::logWarn("Plugin processing warning: {}, {}", outputFile.getFullPathName().quoted(), inputGain.notice);
+    }
 
     if (written->clipped) {
         const juce::String clippingNotice {"Output clipping: final render exceeded the 16-bit PCM range"};

@@ -1162,6 +1162,24 @@ public:
             expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels - 6.0, 0.05);
         }
 
+        beginTest("A file the normalization refuses is processed at unity gain with a notice");
+        {
+            const auto source = directory.copyFixture("silence_stereo_44100_16.wav", "pre_refused.wav");
+            TestPlugin plugin({});
+            auto options = makeOptions({&plugin});
+            options.normalizeBeforePlugin = AudioNormalizationOptions {};
+            const auto record = analyzeFile(source);
+
+            const auto result = processFileWithPlugins(record, options, chainOf(plugin));
+
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expectEquals(
+                outcomeNotice(result.outcome),
+                juce::String("Not normalized before the plugins: File contains no signal that can be normalized")
+            );
+            expectEquals(outcomeRecord(result.outcome).lengthInSamples, record.lengthInSamples);
+        }
+
         beginTest("Every source depth produces 16-bit PCM while preserving rate and channel count");
         {
             for (const auto* fixture :

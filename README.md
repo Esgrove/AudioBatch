@@ -84,7 +84,7 @@ The differences below are in the GUIs and in plugin hosting.
 - **`VST3_PATH`** is split with the platform path separator in both versions, which keeps Windows drive letters intact.
 - **Refused pre-normalization gain.** When Normalize is on and a file cannot reach the target,
   because it is silent or would need more than 40 dB of gain,
-  both versions process it at unity gain, but the Rust result has a notice that names the reason.
+  both versions process it at unity gain, with a notice that names the reason.
 - **Processing failures.** Both versions fail the file when a VST3 plugin reports a processing error,
   and turn the preview off with the plugin's name and error.
 - **Mono-only plugins in the preview.** The C++ preview prepares the chain for the loaded file's channel count,
@@ -97,10 +97,6 @@ The differences below are in the GUIs and in plugin hosting.
 
 ## Known issues in the C++ version
 
-- **A refused pre-normalization gain is silent.**
-  `getInputGain` in `PluginProcessing.cpp` falls back to unity gain when `getNormalizationGain` refuses a file,
-  and the result does not say so.
-  Its documentation mentions files without a measurable level, but not the 40 dB gain limit.
 - **Plugin processing cannot be cancelled from the GUI.**
   Only analysis has a cancel action.
   A processing run started on a large selection runs to the end unless the app quits.
