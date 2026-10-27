@@ -108,14 +108,7 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
 
     if (thumbnail->getTotalLength() > 0.0) {
         const auto reduced = waveformBounds();
-        const auto gradient = seratoWaveformColouringEnabled && seratoOverview
-            ? serato::makeOverviewGradient(
-                  *seratoOverview, visibleRange, thumbnail->getTotalLength(), reduced, CustomLookAndFeel::blue()
-              )
-            : std::nullopt;
-        if (gradient) {
-            serato::drawColouredThumbnail(graphics, *thumbnail, reduced, visibleRange, displayGain, *gradient);
-        } else {
+        if (!drawColouredWaveform(graphics, reduced)) {
             thumbnail->drawChannels(graphics, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
         }
         drawLoudnessGraph(graphics);
@@ -135,6 +128,43 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
     }
 }
 
+/// Draws the waveform in the colours of the Serato overview, and returns false when there are no colours to draw.
+/// The coloured image is only rendered again when the bounds, the visible range, the display gain,
+/// the pixel scale, or the renderer differ from the last paint, or the waveform or the overview changed,
+/// so the repaints under the moving playback cursor only draw the cached image.
+bool ThumbnailComponent::drawColouredWaveform(juce::Graphics& graphics, const juce::Rectangle<int> bounds)
+{
+    if (!seratoWaveformColouringEnabled || !seratoOverview) {
+        colouredWaveform.reset();
+        return false;
+    }
+
+    const auto cacheValid = colouredWaveform.has_value() && colouredWaveform->bounds == bounds
+        && colouredWaveform->visibleRange == visibleRange
+        && juce::exactlyEqual(colouredWaveform->displayGain, displayGain)
+        && serato::isRenderedFor(colouredWaveform->rendered, graphics);
+
+    if (!cacheValid) {
+        const auto gradient = serato::makeOverviewGradient(
+            *seratoOverview, visibleRange, thumbnail->getTotalLength(), bounds, CustomLookAndFeel::blue()
+        );
+        if (!gradient) {
+            colouredWaveform.reset();
+            return false;
+        }
+        colouredWaveform = ColouredWaveformCache {
+            .rendered
+            = serato::renderColouredThumbnail(graphics, *thumbnail, bounds, visibleRange, displayGain, *gradient),
+            .bounds = bounds,
+            .visibleRange = visibleRange,
+            .displayGain = displayGain,
+        };
+    }
+
+    serato::drawColouredThumbnail(graphics, colouredWaveform->rendered);
+    return true;
+}
+
 /// Keeps the playback marker full-height immediately while the preview workspace resizes.
 void ThumbnailComponent::resized()
 {
@@ -144,6 +174,7 @@ void ThumbnailComponent::resized()
 /// Restores a previously cached waveform without re-reading the audio file.
 bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData)
 {
+    colouredWaveform.reset();
     loudnessHistory.reset();
     seratoOverview.reset();
     seratoMarkers.reset();
@@ -216,6 +247,7 @@ void ThumbnailComponent::setMouseWheelGainCallback(std::function<void(float)> ca
 /// The length of the file in samples chooses the waveform detail, the finest for short files.
 void ThumbnailComponent::setURL(const juce::URL& url, const juce::int64 lengthInSamples)
 {
+    colouredWaveform.reset();
     loudnessHistory.reset();
     seratoOverview.reset();
     seratoMarkers.reset();
@@ -244,6 +276,7 @@ void ThumbnailComponent::setURL(const juce::URL& url, const juce::int64 lengthIn
 /// A thumbnail keeps its detail from creation or from the last cached data it loaded, so each file needs a new one.
 void ThumbnailComponent::replaceThumbnail(const int samplesPerPoint)
 {
+    colouredWaveform.reset();
     thumbnail->removeChangeListener(this);
     thumbnail = std::make_unique<juce::AudioThumbnail>(samplesPerPoint, thumbnailFormats, thumbnailCache);
     thumbnail->addChangeListener(this);
@@ -273,6 +306,8 @@ void ThumbnailComponent::setRange(const juce::Range<double> newRange)
 /// and fires the fully-loaded callback exactly once per loaded source.
 void ThumbnailComponent::changeListenerCallback(juce::ChangeBroadcaster* /*source*/)
 {
+    // The thumbnail reports each step of reading the file, and every step changes the waveform pixels.
+    colouredWaveform.reset();
     if (thumbnail->getTotalLength() > 0.0 && visibleRange.getLength() <= 0.0) {
         setRange({0.0, thumbnail->getTotalLength()});
     } else {
@@ -665,6 +700,7 @@ void ThumbnailComponent::setSeratoOverview(std::shared_ptr<const serato::Overvie
     if (overview && (overview->slices.empty() || overview->slices.size() > serato::Overview::maxSlices)) {
         overview.reset();
     }
+    colouredWaveform.reset();
     seratoOverview = std::move(overview);
     repaint();
 }
@@ -680,6 +716,7 @@ void ThumbnailComponent::setSeratoWaveformColouringEnabled(const bool enabled)
 {
     if (seratoWaveformColouringEnabled != enabled) {
         seratoWaveformColouringEnabled = enabled;
+        colouredWaveform.reset();
         repaint();
     }
 }
