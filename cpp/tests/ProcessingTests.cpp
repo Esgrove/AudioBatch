@@ -452,6 +452,25 @@ public:
     int changeCount {0};
 };
 
+/// A custom scanner that abandons its scan on the first plugin it gets, as the plugin scan does when the lock is busy.
+class AbandoningScanner final : public juce::KnownPluginList::CustomScanner
+{
+public:
+    /// Abandons the scan, counts the call, and reports the plugin as scanned without loading it.
+    bool findPluginTypesFor(
+        juce::AudioPluginFormat& /*format*/,
+        juce::OwnedArray<juce::PluginDescription>& /*result*/,
+        const juce::String& /*fileOrIdentifier*/
+    ) override
+    {
+        abandonScan();
+        ++calls;
+        return true;
+    }
+
+    int calls {0};
+};
+
 /// Checks plugin processing output against the committed fixtures.
 class ProcessingTests final : public juce::UnitTest
 {
@@ -483,6 +502,26 @@ public:
             expect(!isBuiltInApplePlugin("AudioUnit:Effects/aufx,567h,Vxng"));
             expect(!isBuiltInApplePlugin("AudioUnit:Effects/aufx,appl,Vxng"));
             expect(!isBuiltInApplePlugin("/Library/Audio/Plug-Ins/VST3/MSED.vst3"));
+        }
+
+        beginTest("A custom scanner that abandons its scan stops it without reporting failed files");
+        {
+            juce::KnownPluginList knownPluginList;
+            auto scanner = std::make_unique<AbandoningScanner>();
+            const auto& scannerCalls = scanner->calls;
+            knownPluginList.setCustomScanner(std::move(scanner));
+            juce::VST3PluginFormat format;
+            {
+                juce::PluginDirectoryScanner directoryScanner(knownPluginList, format, {}, false, juce::File(), false);
+                directoryScanner.setFilesOrIdentifiersToScan({"/Missing/First.vst3", "/Missing/Second.vst3"});
+                juce::String pluginBeingScanned;
+                expect(!directoryScanner.scanNextFile(true, pluginBeingScanned));
+                expectEquals(directoryScanner.getFailedFiles().size(), 0);
+                expect(knownPluginList.isCustomScanAbandoned());
+            }
+            expectEquals(scannerCalls, 1);
+            // The request ends with the scan, so the next scan runs again.
+            expect(!knownPluginList.isCustomScanAbandoned());
         }
 
         beginTest("VST3_PATH is split with the platform separator, so Windows drive letters stay intact");

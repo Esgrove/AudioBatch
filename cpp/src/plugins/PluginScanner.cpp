@@ -501,6 +501,10 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
     if (!scanStarted) {
         scanStarted = true;
         scanSkipped = onScanStarting != nullptr && !onScanStarting([this] { return shouldExit(); });
+        if (scanSkipped) {
+            // Ends the scan after this plugin, without listing the plugins it did not load as failed.
+            abandonScan();
+        }
     }
 
     if (scanSkipped) {
