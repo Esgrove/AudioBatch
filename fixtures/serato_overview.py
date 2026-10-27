@@ -1,3 +1,8 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = []
+# ///
 """
 Adds a synthetic rainbow Serato Overview tag to an MP3, AIFF, or FLAC file, stored the way Serato stores it.
 
@@ -130,7 +135,7 @@ def tag_flac(audio: bytes) -> bytes:
             vendor, comments = parse_vorbis_comments(body)
             if any(existing.upper().startswith(b"SERATO_OVERVIEW=") for existing in comments):
                 sys.exit("The FLAC file already has a Serato Overview")
-            blocks[index] = (block_type, vorbis_comment_block(vendor, comments + [comment]))
+            blocks[index] = (block_type, vorbis_comment_block(vendor, [*comments, comment]))
             break
     else:
         streaminfo = next(index for index, (block_type, _) in enumerate(blocks) if block_type == FLAC_STREAMINFO)
@@ -143,6 +148,7 @@ def tag_flac(audio: bytes) -> bytes:
 
 
 def main() -> None:
+    """Tags the file given on the command line."""
     path = Path(sys.argv[1])
     taggers = {".mp3": tag_mp3, ".aif": tag_aiff, ".aiff": tag_aiff, ".flac": tag_flac}
     tagger = taggers.get(path.suffix.lower())

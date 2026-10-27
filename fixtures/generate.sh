@@ -6,7 +6,7 @@ set -eo pipefail
 # Stereo tones carry the same signal on both channels and measure -6.02 LUFS integrated.
 # Mono tones are analyzed as dual mono and therefore measure the same loudness.
 # The files are committed so the tests do not depend on ffmpeg.
-# Requires ffmpeg with the libmp3lame encoder, and python3 for the Serato tag.
+# Requires ffmpeg with the libmp3lame encoder, and uv to run the Python script that writes the Serato tag.
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$DIR"
@@ -93,7 +93,7 @@ serato_swell() {
     ffmpeg -hide_banner -loglevel error -y \
         -f lavfi -i "aevalsrc=${SWELL}|${SWELL}:s=44100:d=2" \
         -map_metadata -1 -fflags +bitexact -flags:a +bitexact "$@"
-    python3 serato_overview.py "$output"
+    uv run --quiet --script serato_overview.py "$output"
 }
 
 serato_swell -id3v2_version 0 -c:a libmp3lame -b:a 128k serato_rainbow_stereo_44100_128k.mp3

@@ -24,8 +24,11 @@ from pathlib import Path
 
 import numpy as np
 from mutagen.aiff import AIFF
+from mutagen.id3 import Frame
 
 AIFF_EXTENSIONS = {".aif", ".aiff"}
+# Binary frame payloads longer than this are compared by their hash, which keeps the report short.
+HASHED_PAYLOAD_BYTES = 64
 
 
 def read_chunks(path: Path) -> tuple[bytes, dict[bytes, bytes]]:
@@ -55,14 +58,14 @@ def decode_samples(chunks: dict[bytes, bytes]) -> np.ndarray:
     return values.astype(np.float64) / sign
 
 
-def frame_fields(frame) -> tuple:
+def frame_fields(frame: Frame) -> tuple:
     """Returns the decoded fields of an ID3v2 frame without its text encoding, hashing binary payloads."""
     fields = []
     for spec in list(frame._framespec) + list(getattr(frame, "_optionalspec", [])):
         if spec.name == "encoding" or not hasattr(frame, spec.name):
             continue
         value = getattr(frame, spec.name)
-        if isinstance(value, bytes) and len(value) > 64:
+        if isinstance(value, bytes) and len(value) > HASHED_PAYLOAD_BYTES:
             value = f"{len(value)} bytes sha1 {hashlib.sha1(value).hexdigest()[:12]}"
         elif isinstance(value, list):
             value = tuple(str(item) for item in value)
@@ -96,13 +99,8 @@ def compare_frames(name: str, cpp_path: Path, rust_path: Path) -> list[str]:
     """Compares the ID3v2 frames of two outputs and returns the differences."""
     cpp_frames = read_frames(cpp_path)
     rust_frames = read_frames(rust_path)
-    differences = []
-    for frame in cpp_frames:
-        if frame not in rust_frames:
-            differences.append(f"{name}: frame only in C++ output: {frame}")
-    for frame in rust_frames:
-        if frame not in cpp_frames:
-            differences.append(f"{name}: frame only in Rust output: {frame}")
+    differences = [f"{name}: frame only in C++ output: {frame}" for frame in cpp_frames if frame not in rust_frames]
+    differences += [f"{name}: frame only in Rust output: {frame}" for frame in rust_frames if frame not in cpp_frames]
     return differences
 
 
@@ -124,6 +122,7 @@ def list_files(folder: Path) -> set[Path]:
 
 
 def main() -> None:
+    """Compares the two folders given on the command line and exits with code 1 when they differ."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("cpp", type=Path, help="Folder the C++ CLI normalized")
     parser.add_argument("rust", type=Path, help="Folder the Rust CLI normalized")
