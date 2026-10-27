@@ -6,7 +6,9 @@
 //! while their shape still comes from the decoded audio.
 //! The view zooms around the playhead and follows it while playing,
 //! and it scales the envelope by the input gain.
-//! A click or drag seeks, the mouse wheel zooms, and Command or Control with the wheel changes the gain.
+//! Like the C++ application, pressing pauses at the clicked time, dragging scrubs, releasing plays from there,
+//! and a double-click plays from the start.
+//! The mouse wheel zooms, and Command or Control with the wheel changes the gain.
 //! While audio plays the view requests a new frame on every render, so the playhead moves smoothly.
 
 use std::cell::Cell;
@@ -21,8 +23,8 @@ use audiobatch_core::{ShortTermLoudnessHistory, WaveformOverview};
 use audiobatch_playback::PlayheadHandle;
 use gpui_kit::{
     App, Bounds, ContentMask, Context, EventEmitter, Hsla, InteractiveElement as _, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollEvent, SharedString,
-    Styled as _, TextAlign, TextRun, Window, canvas, div, fill, font, point, px, size,
+    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollEvent,
+    SharedString, Styled as _, TextAlign, TextRun, Window, canvas, div, fill, font, point, px, size,
 };
 
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
@@ -86,8 +88,14 @@ const WHEEL_ZOOM_FACTOR: f64 = 1.2;
 /// Events the waveform sends to the app view.
 #[derive(Debug, Clone)]
 pub enum WaveformEvent {
-    /// The user clicked or dragged to a time in seconds.
+    /// The user pressed the mouse at a time in seconds, which pauses playback there while the mouse is held.
+    ScrubStarted(f64),
+    /// The user dragged to a time in seconds while scrubbing.
     SeekRequested(f64),
+    /// The user released the mouse after scrubbing, which plays from the scrubbed time.
+    ScrubEnded,
+    /// The user double-clicked, which plays from the start.
+    RestartRequested,
     /// The user zoomed with the wheel by a factor.
     ZoomBy(f64),
     /// The user changed the gain with the wheel by an amount in decibels.
@@ -131,6 +139,8 @@ pub struct WaveformView {
     visible_start: f64,
     /// Linear gain applied to the drawn envelope.
     display_gain: f32,
+    /// True from a press on the waveform until the mouse is released.
+    scrubbing: bool,
     show_loudness: bool,
     loudness_range: LoudnessRange,
     /// Plot bounds from the last paint, used to turn a mouse position into a time.
@@ -224,6 +234,7 @@ impl WaveformView {
             zoom: MINIMUM_ZOOM,
             visible_start: 0.0,
             display_gain: 1.0,
+            scrubbing: false,
             show_loudness: false,
             loudness_range: LoudnessRange {
                 minimum: DEFAULT_LOUDNESS_MINIMUM,
@@ -373,21 +384,33 @@ impl WaveformView {
         }
     }
 
-    /// Seeks to the clicked time.
+    /// Starts scrubbing at the pressed time, or asks to play from the start on a double-click, like the C++ application.
     fn on_mouse_down(&mut self, event: &MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.duration_seconds() > 0.0 {
+        if self.duration_seconds() <= 0.0 {
+            return;
+        }
+        if event.click_count == 2 {
+            self.scrubbing = false;
+            cx.emit(WaveformEvent::RestartRequested);
+            return;
+        }
+        self.scrubbing = true;
+        cx.emit(WaveformEvent::ScrubStarted(self.viewport().x_to_time(event.position.x)));
+    }
+
+    /// Follows the mouse while it is dragged with the left button held after a press on the waveform.
+    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.scrubbing && event.pressed_button == Some(MouseButton::Left) && self.duration_seconds() > 0.0 {
             cx.emit(WaveformEvent::SeekRequested(
                 self.viewport().x_to_time(event.position.x),
             ));
         }
     }
 
-    /// Seeks while the mouse is dragged with the left button held.
-    fn on_mouse_move(&mut self, event: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if event.pressed_button == Some(MouseButton::Left) && self.duration_seconds() > 0.0 {
-            cx.emit(WaveformEvent::SeekRequested(
-                self.viewport().x_to_time(event.position.x),
-            ));
+    /// Ends scrubbing when the mouse is released, inside the waveform or outside it, which plays from the scrubbed time.
+    fn on_mouse_up(&mut self, _event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if std::mem::take(&mut self.scrubbing) {
+            cx.emit(WaveformEvent::ScrubEnded);
         }
     }
 
@@ -494,6 +517,8 @@ impl Render for WaveformView {
             .child(body)
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
+            .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll(cx.listener(Self::on_scroll))
     }
 }

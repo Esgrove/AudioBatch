@@ -189,7 +189,8 @@ and the output device with its sample rate and buffer size in samples.
   The table starts sorted by Peak, quietest first.
   Command or Control click on a header title sets a secondary sort that breaks ties of the main sort,
   marked "[2^]" or "[2v]", and the same click on the main sort column clears it.
-- Click or drag on the waveform to seek.
+- Press on the waveform to pause there, drag to scrub, and release to play from that point,
+  like in the C++ version. Double-click plays from the start.
   The wheel zooms around the playhead, and Command or Control with the wheel changes the input gain.
   Double-click the Zoom or Input gain slider to reset it to 100% or 0 dB.
 - The Input gain slider sets a per-file gain for the selected file, shown in the Gain column.
