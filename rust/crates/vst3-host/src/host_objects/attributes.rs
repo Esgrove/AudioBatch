@@ -47,10 +47,6 @@ impl Class for HostAttributeList {
     type Interfaces = (IAttributeList,);
 }
 
-impl Class for HostMessage {
-    type Interfaces = (IMessage,);
-}
-
 impl HostAttributeList {
     /// Stores a value under an attribute id.
     fn set(&self, id: AttrID, value: AttributeValue) -> tresult {
@@ -173,6 +169,10 @@ impl IAttributeListTrait for HostAttributeList {
             _ => kResultFalse,
         })
     }
+}
+
+impl Class for HostMessage {
+    type Interfaces = (IMessage,);
 }
 
 impl Default for HostMessage {

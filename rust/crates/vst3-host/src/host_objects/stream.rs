@@ -14,6 +14,13 @@ use vst3::{Class, ComWrapper};
 /// Largest stream a plugin may write or size, well above the state of large sample-based instruments.
 const MAXIMUM_STREAM_BYTES: usize = 1 << 30;
 
+/// A growable in-memory stream.
+#[derive(Default)]
+pub struct MemoryStream {
+    /// The contents and position.
+    buffer: Mutex<StreamBuffer>,
+}
+
 /// The bytes of a stream and the position of the next read or write.
 #[derive(Debug, Default)]
 struct StreamBuffer {
@@ -21,13 +28,6 @@ struct StreamBuffer {
     data: Vec<u8>,
     /// Position of the next read or write, which may lie past the end after a seek.
     position: usize,
-}
-
-/// A growable in-memory stream.
-#[derive(Default)]
-pub struct MemoryStream {
-    /// The contents and position.
-    buffer: Mutex<StreamBuffer>,
 }
 
 impl Class for MemoryStream {

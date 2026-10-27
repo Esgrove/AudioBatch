@@ -30,19 +30,6 @@ const TEMPO: f64 = 120.0;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessError(pub i32);
 
-/// Marks an instance as inside a processing call, and clears the mark when dropped.
-/// Two handles of one instance may exist at once, such as while the preview swaps chains,
-/// but VST3 forbids overlapping `process` calls, so only one of them can hold the mark.
-struct ProcessingGuard<'a>(&'a InstanceCore);
-
-/// The buffers of one audio bus.
-struct BusBuffers {
-    /// One buffer of `max_block_frames` samples per channel.
-    channels: Vec<Vec<f32>>,
-    /// Pointers to the channel buffers, as the plugin reads them.
-    pointers: Vec<*mut f32>,
-}
-
 /// Runs a plugin's audio processing on one thread at a time.
 pub struct ProcessorHandle {
     /// The instance the handle belongs to.
@@ -65,13 +52,18 @@ pub struct ProcessorHandle {
     context: ProcessContext,
 }
 
-#[expect(
-    clippy::non_send_fields_in_send_ty,
-    reason = "the pointer fields point into buffers the handle owns and are only used by the thread holding it"
-)]
-// SAFETY: the raw pointers point into buffers the handle owns, which move with it,
-// and VST3 allows `process` and `setProcessing` on any one thread at a time.
-unsafe impl Send for ProcessorHandle {}
+/// Marks an instance as inside a processing call, and clears the mark when dropped.
+/// Two handles of one instance may exist at once, such as while the preview swaps chains,
+/// but VST3 forbids overlapping `process` calls, so only one of them can hold the mark.
+struct ProcessingGuard<'a>(&'a InstanceCore);
+
+/// The buffers of one audio bus.
+struct BusBuffers {
+    /// One buffer of `max_block_frames` samples per channel.
+    channels: Vec<Vec<f32>>,
+    /// Pointers to the channel buffers, as the plugin reads them.
+    pointers: Vec<*mut f32>,
+}
 
 impl ProcessError {
     /// The error of a call made while another handle of the same instance was processing.
@@ -85,48 +77,6 @@ impl fmt::Display for ProcessError {
 }
 
 impl std::error::Error for ProcessError {}
-
-impl<'a> ProcessingGuard<'a> {
-    /// Marks the instance as processing, or returns `None` when another handle already holds the mark.
-    fn begin(core: &'a InstanceCore) -> Option<Self> {
-        core.try_begin_processing().then_some(Self(core))
-    }
-}
-
-impl Drop for ProcessingGuard<'_> {
-    fn drop(&mut self) {
-        self.0.end_processing();
-    }
-}
-
-impl BusBuffers {
-    /// Allocates the buffers of a bus.
-    fn new(channels: usize, frames: usize) -> Self {
-        let mut channels: Vec<Vec<f32>> = (0..channels).map(|_| vec![0.0; frames]).collect();
-        let pointers = channels.iter_mut().map(Vec::as_mut_ptr).collect();
-        Self { channels, pointers }
-    }
-
-    /// Returns the description of the bus that the plugin reads.
-    fn bus(&mut self) -> AudioBusBuffers {
-        AudioBusBuffers {
-            numChannels: i32::try_from(self.channels.len()).unwrap_or(0),
-            silenceFlags: 0,
-            __field0: AudioBusBuffers__type0 {
-                channelBuffers32: self.pointers.as_mut_ptr(),
-            },
-        }
-    }
-
-    /// Sets the first `frames` samples of every channel to zero.
-    fn clear(&mut self, frames: usize) {
-        for channel in &mut self.channels {
-            if let Some(samples) = channel.get_mut(..frames) {
-                samples.fill(0.0);
-            }
-        }
-    }
-}
 
 impl ProcessorHandle {
     /// Creates a handle with buffers for every bus of the layout.
@@ -291,6 +241,14 @@ impl ProcessorHandle {
     }
 }
 
+#[expect(
+    clippy::non_send_fields_in_send_ty,
+    reason = "the pointer fields point into buffers the handle owns and are only used by the thread holding it"
+)]
+// SAFETY: the raw pointers point into buffers the handle owns, which move with it,
+// and VST3 allows `process` and `setProcessing` on any one thread at a time.
+unsafe impl Send for ProcessorHandle {}
+
 impl Drop for ProcessorHandle {
     fn drop(&mut self) {
         self.core.processor_dropped();
@@ -305,6 +263,48 @@ impl fmt::Debug for ProcessorHandle {
             .field("inputs", &self.inputs.len())
             .field("outputs", &self.outputs.len())
             .finish_non_exhaustive()
+    }
+}
+
+impl<'a> ProcessingGuard<'a> {
+    /// Marks the instance as processing, or returns `None` when another handle already holds the mark.
+    fn begin(core: &'a InstanceCore) -> Option<Self> {
+        core.try_begin_processing().then_some(Self(core))
+    }
+}
+
+impl Drop for ProcessingGuard<'_> {
+    fn drop(&mut self) {
+        self.0.end_processing();
+    }
+}
+
+impl BusBuffers {
+    /// Allocates the buffers of a bus.
+    fn new(channels: usize, frames: usize) -> Self {
+        let mut channels: Vec<Vec<f32>> = (0..channels).map(|_| vec![0.0; frames]).collect();
+        let pointers = channels.iter_mut().map(Vec::as_mut_ptr).collect();
+        Self { channels, pointers }
+    }
+
+    /// Returns the description of the bus that the plugin reads.
+    fn bus(&mut self) -> AudioBusBuffers {
+        AudioBusBuffers {
+            numChannels: i32::try_from(self.channels.len()).unwrap_or(0),
+            silenceFlags: 0,
+            __field0: AudioBusBuffers__type0 {
+                channelBuffers32: self.pointers.as_mut_ptr(),
+            },
+        }
+    }
+
+    /// Sets the first `frames` samples of every channel to zero.
+    fn clear(&mut self, frames: usize) {
+        for channel in &mut self.channels {
+            if let Some(samples) = channel.get_mut(..frames) {
+                samples.fill(0.0);
+            }
+        }
     }
 }
 
