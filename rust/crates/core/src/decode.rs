@@ -2,6 +2,9 @@
 //!
 //! `AudioFileDecoder` probes a file, picks its default audio track,
 //! and decodes it packet by packet into planar `f32` samples, with encoder delay and padding trimmed.
+//! Symphonia trims MP3 files with a LAME tag itself.
+//! The decoder trims MP4 files from their edit list, which symphonia leaves alone,
+//! and leaves the synthesis delay out of other MP3 files, as the decoders of the C++ application do.
 //! `DecodeFailureTracker` holds the shared rules for packets that fail to decode,
 //! ported from the C++ `DecodeFailureTracker.h`:
 //! isolated failures are tolerated and replaced with silence,
@@ -25,10 +28,17 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::units::Time;
+use symphonia::core::units::{Duration, Time};
+
+mod gapless;
 
 /// Bit depth assumed for MPEG audio and Vorbis files, which store no source bit depth.
 pub const DEFAULT_MP3_BITS_PER_SAMPLE: u32 = 16;
+
+/// Samples of layer III synthesis delay at the start of a decoded MP3 stream.
+/// A LAME tag includes them in the delay it records.
+/// Without one, JUCE's MP3 reader and Core Audio leave them out, so this decoder does too.
+const MP3_DECODER_DELAY_FRAMES: u64 = 529;
 
 /// Longest run of silence inserted for one failed packet, in seconds.
 /// Guards against a corrupt packet duration turning into a huge allocation.
@@ -73,6 +83,15 @@ pub struct AudioFileDecoder {
     failures: DecodeFailureTracker,
     /// Frames produced so far, including silence for failed packets.
     position: u64,
+    /// Frames at the start of the stream that are left out, such as AAC priming.
+    leading_frames: u64,
+    /// Leading frames still to drop from the next decoded packets.
+    frames_to_skip: u64,
+    /// Total frames to produce, when the container states where the playable audio ends.
+    frame_limit: Option<u64>,
+    /// True when packet trimming comes only from symphonia's estimated length,
+    /// which it guesses from the file size for an MP3 file without a frame count header.
+    ignore_packet_trim: bool,
 }
 
 impl DecodeFailureTracker {
@@ -153,7 +172,8 @@ impl AudioFileDecoder {
             .default_track(TrackType::Audio)
             .ok_or_else(|| anyhow!("Unsupported or unreadable audio file"))?;
         let track_id = track.id;
-        let expected_frames = track.num_frames;
+        let mut expected_frames = track.num_frames;
+        let has_recorded_delay = track.delay.is_some();
         let parameters = match &track.codec_params {
             Some(CodecParameters::Audio(parameters)) => parameters.clone(),
             _ => bail!("Unsupported or unreadable audio file"),
@@ -174,6 +194,22 @@ impl AudioFileDecoder {
             .make_audio_decoder(&parameters, &AudioDecoderOptions::default())
             .map_err(|_| anyhow!("Unsupported audio codec"))?;
 
+        let mp3_without_delay = parameters.codec == CODEC_ID_MP3 && !has_recorded_delay;
+        let mp4_gapless = (format.format_info().short_name == "isomp4")
+            .then(|| gapless::read_mp4_gapless(path, sample_rate))
+            .flatten();
+        let mut leading_frames = 0;
+        let mut frame_limit = None;
+        if let Some(mp4_gapless) = mp4_gapless {
+            leading_frames = mp4_gapless.priming;
+            frame_limit = mp4_gapless.frames;
+            expected_frames =
+                frame_limit.or_else(|| expected_frames.map(|frames| frames.saturating_sub(leading_frames)));
+        } else if mp3_without_delay {
+            leading_frames = MP3_DECODER_DELAY_FRAMES;
+            expected_frames = expected_frames.map(|frames| frames.saturating_sub(leading_frames));
+        }
+
         let info = StreamInfo {
             sample_rate,
             channels,
@@ -190,6 +226,10 @@ impl AudioFileDecoder {
             planar: vec![Vec::new(); channels as usize],
             failures: DecodeFailureTracker::default(),
             position: 0,
+            leading_frames,
+            frames_to_skip: leading_frames,
+            frame_limit,
+            ignore_packet_trim: mp3_without_delay,
         })
     }
 
@@ -222,7 +262,10 @@ impl AudioFileDecoder {
     /// or when too many packets in a row fail to decode.
     pub fn next_chunk(&mut self) -> Result<Option<&[Vec<f32>]>> {
         loop {
-            let packet = match self.format.next_packet() {
+            if self.frame_limit.is_some_and(|limit| self.position >= limit) {
+                return Ok(None);
+            }
+            let mut packet = match self.format.next_packet() {
                 Ok(Some(packet)) => packet,
                 // A truncated final packet and a chained stream both end the track for this purpose.
                 Ok(None) | Err(SymphoniaError::ResetRequired) => return Ok(None),
@@ -234,6 +277,10 @@ impl AudioFileDecoder {
             if packet.track_id != self.track_id {
                 continue;
             }
+            if self.ignore_packet_trim {
+                packet.dur = Duration::new(packet.dur.get() + packet.trim_end.get());
+                packet.trim_end = Duration::ZERO;
+            }
 
             match self.decoder.decode(&packet) {
                 Ok(buffer) => {
@@ -242,7 +289,11 @@ impl AudioFileDecoder {
                         continue;
                     }
                     buffer.copy_to_vecs_planar::<f32>(&mut self.planar);
-                    self.position += buffer.frames() as u64;
+                    let frames = self.trim_chunk();
+                    if frames == 0 {
+                        continue;
+                    }
+                    self.position += frames;
                     return Ok(Some(&self.planar));
                 }
                 Err(SymphoniaError::DecodeError(_) | SymphoniaError::IoError(_)) => {
@@ -261,7 +312,11 @@ impl AudioFileDecoder {
                         channel.clear();
                         channel.resize(silent_frames, 0.0);
                     }
-                    self.position += silent_frames as u64;
+                    let frames = self.trim_chunk();
+                    if frames == 0 {
+                        continue;
+                    }
+                    self.position += frames;
                     return Ok(Some(&self.planar));
                 }
                 Err(error) => bail!("Audio decoding failed at sample {}: {error}", self.position),
@@ -276,7 +331,8 @@ impl AudioFileDecoder {
     ///
     /// Returns an error when the container cannot seek.
     pub fn seek(&mut self, seconds: f64) -> Result<u64> {
-        let time = Time::try_from_secs_f64(seconds.max(0.0)).ok_or_else(|| anyhow!("Invalid seek time {seconds}"))?;
+        let stream_seconds = seconds.max(0.0) + self.leading_frames as f64 / f64::from(self.info.sample_rate);
+        let time = Time::try_from_secs_f64(stream_seconds).ok_or_else(|| anyhow!("Invalid seek time {seconds}"))?;
         let seeked = self
             .format
             .seek(
@@ -289,8 +345,31 @@ impl AudioFileDecoder {
             .map_err(|error| anyhow!("Seek failed: {error}"))?;
         self.decoder.reset();
         self.failures = DecodeFailureTracker::default();
-        self.position = u64::try_from(seeked.actual_ts.get()).unwrap_or(0);
+        let stream_position = u64::try_from(seeked.actual_ts.get()).unwrap_or(0);
+        self.frames_to_skip = self.leading_frames.saturating_sub(stream_position);
+        self.position = stream_position.saturating_sub(self.leading_frames);
         Ok(self.position)
+    }
+
+    /// Drops the leading frames still to skip and the frames past the frame limit from the latest packet,
+    /// and returns how many frames remain.
+    fn trim_chunk(&mut self) -> u64 {
+        let frames = self.planar.first().map_or(0, Vec::len) as u64;
+        let skipped = self.frames_to_skip.min(frames);
+        let remaining = self
+            .frame_limit
+            .map_or(u64::MAX, |limit| limit.saturating_sub(self.position));
+        let kept = (frames - skipped).min(remaining);
+        if skipped > 0 || kept < frames {
+            let start = usize::try_from(skipped).unwrap_or(usize::MAX);
+            let length = usize::try_from(kept).unwrap_or(usize::MAX);
+            for channel in &mut self.planar {
+                channel.drain(..start);
+                channel.truncate(length);
+            }
+        }
+        self.frames_to_skip -= skipped;
+        kept
     }
 }
 
@@ -431,6 +510,34 @@ mod test_audio_file_decoder {
         }
         assert_eq!(frames, 44_100);
         assert_eq!(decoder.position(), 44_100);
+    }
+
+    #[test]
+    fn aac_priming_and_padding_are_trimmed() {
+        let mut decoder = AudioFileDecoder::open(&test_fixtures::fixture(test_fixtures::AAC_FIXTURE)).expect("opens");
+        assert_eq!(decoder.info().expected_frames, Some(44_100));
+        while decoder.next_chunk().expect("decodes").is_some() {}
+        assert_eq!(decoder.position(), 44_100);
+    }
+
+    #[test]
+    fn mp3_without_frame_count_decodes_every_frame_without_the_synthesis_delay() {
+        let mut decoder =
+            AudioFileDecoder::open(&test_fixtures::fixture(test_fixtures::NO_XING_MP3_FIXTURE)).expect("opens");
+        while decoder.next_chunk().expect("decodes").is_some() {}
+        assert_eq!(decoder.position(), test_fixtures::NO_XING_MP3_LENGTH);
+    }
+
+    #[test]
+    fn seeking_counts_from_the_end_of_the_priming() {
+        let mut decoder = AudioFileDecoder::open(&test_fixtures::fixture(test_fixtures::AAC_FIXTURE)).expect("opens");
+        let position = decoder.seek(0.5).expect("seeks");
+        assert!(position <= 22_050, "{position}");
+        let mut frames = position;
+        while let Some(chunk) = decoder.next_chunk().expect("decodes") {
+            frames += chunk.first().map_or(0, Vec::len) as u64;
+        }
+        assert_eq!(frames, 44_100);
     }
 
     #[test]
