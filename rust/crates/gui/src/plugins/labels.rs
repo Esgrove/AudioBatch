@@ -56,7 +56,7 @@ pub fn latency_text(samples: u64, sample_rate: u32) -> String {
 }
 
 /// Returns the summary of a chain from the names of its slots and whether each is enabled,
-/// like the C++ application: the names in processing order joined by " > ", with bypassed ones in parentheses,
+/// the names in processing order joined by " > ", with bypassed ones in parentheses,
 /// for example "Pro-Q 4 > (Limiter)", and cut to `MAXIMUM_SUMMARY_LENGTH` characters followed by "...".
 #[must_use]
 pub fn chain_summary<'a>(slots: impl IntoIterator<Item = (&'a str, bool)>) -> String {

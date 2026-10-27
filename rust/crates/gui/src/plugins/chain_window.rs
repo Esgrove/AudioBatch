@@ -177,7 +177,7 @@ impl ChainView {
         self.preset_select.read(cx).selected_value().map(ToString::to_string)
     }
 
-    /// Loads the picked preset in place of the chain, like the C++ application,
+    /// Loads the picked preset in place of the chain,
     /// and puts its name in the name field, so saving again replaces it.
     fn on_preset_selected(
         &mut self,

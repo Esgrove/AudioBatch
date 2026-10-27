@@ -57,7 +57,7 @@ impl AppView {
         if selected.is_empty() {
             return;
         }
-        // Like the C++ application, the gain applies to every selected file.
+        // The gain applies to every selected file.
         let gain = custom_gain_from_decibels(decibels);
         let changed = self.table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();

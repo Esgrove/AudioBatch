@@ -229,8 +229,9 @@ so both versions look alike, and `cpp/src/gui/` is worth comparing when changing
 
 Dependencies are compiled with optimizations even in debug builds, because decoding is too slow otherwise.
 `.cargo/config.toml` compiles for the native CPU, and CI clears it with an empty `RUSTFLAGS`.
-The shell scripts in `rust/` source `common.sh`, which reads the binary names from the crate manifests
+The shell scripts in `rust/` source `common.sh`, which names the CLI and GUI binaries and the macOS app bundle,
 and sources `../common.sh` for the platform detection and print helpers shared with `cpp/`.
+Keep its binary names in step with the `[[bin]]` names in the crate manifests.
 
 ## Code Organization
 

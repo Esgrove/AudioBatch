@@ -148,13 +148,13 @@ impl AppView {
             self.selected_tags = None;
             self.clear_tag_marks(cx);
             self.tags_task = Some(self.spawn_tag_read(path.to_path_buf(), cx));
-            // Like the C++ application, each file starts at the whole-file zoom.
+            // Each file starts at the whole-file zoom.
             self.waveform
                 .update(cx, |waveform, cx| waveform.set_zoom(MINIMUM_ZOOM, cx));
             self.zoom_reset_pending = true;
         }
         // With playing from the first cue on, a new file stays silent until its cue points are read,
-        // so it starts at the cue instead of jumping there, like in the C++ application.
+        // so it starts at the cue instead of jumping there.
         let wait_for_cues = changed && play && self.settings.play_from_first_cue_point;
         self.start_after_cues = wait_for_cues.then(|| path.to_path_buf());
         if let Some(player) = &mut self.player {

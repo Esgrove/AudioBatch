@@ -9,7 +9,7 @@
 //!
 //! `Player` must stay on the thread that created it, because the cpal stream is not `Send` on every platform.
 //!
-//! Like the C++ application, the output device is open only while playing:
+//! The output device is open only while playing, so other applications can use it the rest of the time:
 //! playing opens the stream, and `close_idle_stream` closes it once playback has stopped for a moment.
 //! Changing the file while playing keeps it open.
 

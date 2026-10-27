@@ -89,7 +89,7 @@ pub struct ToggleSeratoColours;
 #[action(namespace = audiobatch)]
 pub struct TogglePreviewSection;
 
-/// Shows or hides a results table column, like the header menu of the C++ application.
+/// Shows or hides a results table column.
 #[derive(Clone, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch, no_json)]
 pub struct ToggleColumn {

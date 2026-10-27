@@ -6,7 +6,7 @@
 //! it drops frames from older generations, writes the device channels,
 //! and publishes the source position of the last played frame for the playhead.
 //! While a preview insert is attached, playback goes through it instead, see `insert`,
-//! and only then is the insert gain applied, before the insert, like in the C++ application.
+//! and only then is the insert gain applied, before the insert.
 
 pub mod insert;
 
