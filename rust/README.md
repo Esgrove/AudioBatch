@@ -175,6 +175,8 @@ and the output device with its sample rate and buffer size in samples.
 
 - Drop folders to replace the list, or hold Shift to add them. Dropped files are added.
   File > Choose Folder, Add Folder, and Add Files do the same through a dialog.
+  Like the C++ version, only one app runs: launching it again opens the given paths in the running app,
+  as if they were dropped onto its window, and brings it to the front.
 - Select a row to see its levels, details, tags, waveform, and Serato cue points.
   A file with a Serato Overview tag gets a waveform coloured from it,
   while the shape still comes from the decoded audio, and other files are drawn in blue.
