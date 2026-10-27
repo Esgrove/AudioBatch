@@ -253,7 +253,7 @@ void AudioBatchComponent::refreshAnalysis(const AnalysisRows rows)
     juce::Array<juce::File> existingFiles;
     for (const auto& record : analysisResults) {
         if (record.file.existsAsFile()) {
-            existingFiles.addIfNotAlreadyThere(record.file);
+            existingFiles.add(record.file);
         }
     }
 

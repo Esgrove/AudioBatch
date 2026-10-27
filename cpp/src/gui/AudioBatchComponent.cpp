@@ -372,7 +372,7 @@ juce::Array<juce::File> AudioBatchComponent::getSelectedRecordFiles() const
         }
 
         if (const auto& file = analysisResults[rowNumber].file; file.existsAsFile()) {
-            selectedFiles.addIfNotAlreadyThere(file);
+            selectedFiles.add(file);
         }
     }
 
@@ -435,7 +435,7 @@ juce::StringArray AudioBatchComponent::getSelectedRecordPaths() const
             continue;
         }
 
-        selectedPaths.addIfNotAlreadyThere(analysisResults[rowNumber].fullPath);
+        selectedPaths.add(analysisResults[rowNumber].fullPath);
     }
 
     return selectedPaths;

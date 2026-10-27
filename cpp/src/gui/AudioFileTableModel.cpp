@@ -260,7 +260,7 @@ juce::var AudioFileTableModel::getDragSourceDescription(const juce::SparseSet<in
         }
 
         if (const auto& record = records[rowNumber]; record.file.existsAsFile()) {
-            filePaths.addIfNotAlreadyThere(record.file.getFullPathName());
+            filePaths.add(record.file.getFullPathName());
         }
     }
 
