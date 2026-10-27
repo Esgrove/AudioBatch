@@ -170,6 +170,10 @@ impl Player {
         let (event_sender, events) = unbounded();
         let (stream_error_sender, stream_errors) = bounded(STREAM_ERROR_CAPACITY);
 
+        let renderer = Arc::new(Mutex::new(renderer));
+        // A lock may set itself up on first use, which must not happen in the first audio callback.
+        drop(renderer.lock());
+
         let (commands, command_receiver) = unbounded();
         let thread_shared = Arc::clone(&shared);
         let thread_events = event_sender.clone();
@@ -188,7 +192,7 @@ impl Player {
             stream_errors,
             stream_error_sender,
             decode_thread: Some(decode_thread),
-            renderer: Arc::new(Mutex::new(renderer)),
+            renderer,
             stream: None,
             idle_since: None,
             device_name: device_display_name(&device),
@@ -452,6 +456,10 @@ impl Player {
     /// A failure stops playback and is reported as an error event.
     fn ensure_stream(&mut self) {
         self.idle_since = None;
+        if self.shared.stream_lost.swap(false, Ordering::AcqRel) {
+            self.stream = None;
+            self.apply_insert_changes_without_stream();
+        }
         if self.stream.is_some() {
             return;
         }
@@ -559,6 +567,7 @@ where
                     return;
                 }
                 if is_stream_lost(error.kind()) {
+                    errors.shared.stream_lost.store(true, Ordering::Release);
                     errors.shared.playing.store(false, Ordering::Relaxed);
                 }
                 let _ = errors.sender.try_send(error);

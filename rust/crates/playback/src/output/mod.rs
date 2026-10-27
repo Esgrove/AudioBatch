@@ -62,6 +62,9 @@ pub struct SharedState {
     pub latency_compensation: AtomicBool,
     /// Set by the callback when the insert produced output that is not finite, cleared when read.
     pub insert_failed: AtomicBool,
+    /// Set by the stream error callback when the stream stopped for good, such as when its device went away,
+    /// so the next play opens a new stream instead of reusing the dead one.
+    pub stream_lost: AtomicBool,
 }
 
 /// Renders buffered frames into the device buffer inside the audio callback.
@@ -94,6 +97,7 @@ impl SharedState {
             insert_tail_frames: AtomicU64::new(0),
             latency_compensation: AtomicBool::new(true),
             insert_failed: AtomicBool::new(false),
+            stream_lost: AtomicBool::new(false),
         }
     }
 
