@@ -66,6 +66,7 @@ public:
 
     [[nodiscard]] int getCurrentRunId() const noexcept;
     [[nodiscard]] int getNumThreads() const noexcept;
+    [[nodiscard]] bool hasJobs() const;
     [[nodiscard]] bool isCurrent(int runId) const noexcept;
     [[nodiscard]] utils::CancellationCheck makeCancellationCheck(int runId) const;
 

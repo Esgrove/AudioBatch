@@ -73,11 +73,20 @@ PluginProcessingCoordinator::PluginProcessingCoordinator(const int workerCount) 
     runner(workerCount, jobShutdownTimeoutMilliseconds)
 {}
 
-/// Cancels any in-flight work and waits for every job without a timeout,
-/// so workers cannot access destroyed coordinator state.
+/// Cancels any in-flight work and waits for every job, so workers cannot access destroyed coordinator state.
+/// A plugin's processBlock never checks for cancellation, so a plugin that hangs would keep the app from quitting.
+/// When a job is still running after the shutdown timeout, the process ends instead of waiting forever.
+/// Originals are only replaced by finished outputs, so ending the process leaves them untouched.
 PluginProcessingCoordinator::~PluginProcessingCoordinator()
 {
     cancelAndWait();
+    if (runner.hasJobs()) {
+        utils::logError(
+            "A plugin did not stop within {:.0f} s, so AudioBatch ends without waiting for it",
+            jobShutdownTimeoutMilliseconds / utils::millisecondsPerSecond
+        );
+        juce::Process::terminate();
+    }
     runner.waitForAllJobs();
     currentChains.reset();
 }
@@ -109,9 +118,16 @@ PluginRunChains::~PluginRunChains()
         return;
     }
 
-    juce::MessageManager::callAsync([chainsCaptured = std::make_shared<decltype(chains)>(std::move(chains))] {
-        chainsCaptured->clear();
-    });
+    auto chainsCaptured = std::make_shared<decltype(chains)>(std::move(chains));
+    if (juce::MessageManager::callAsync([chainsCaptured] { chainsCaptured->clear(); })) {
+        return;
+    }
+
+    // Posting fails once the app is quitting and the message loop no longer runs.
+    // Destroying the instances here would release plugins off the message thread,
+    // so they are left for the operating system to reclaim when the process exits.
+    auto leaked = std::make_unique<std::shared_ptr<decltype(chains)>>(std::move(chainsCaptured));
+    juce::ignoreUnused(leaked.release());
 }
 
 /// Takes a free chain from the pool, waiting for one while keepWaiting returns true.
