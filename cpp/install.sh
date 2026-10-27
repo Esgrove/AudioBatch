@@ -7,7 +7,8 @@ Install AudioBatch.
 On macOS, installs the CLI binary and GUI app.
 On Windows, installs the CLI binary and GUI app.
 
-The CLI binary is installed to ~/.local/bin.
+The CLI binary is installed to ~/.local/bin, together with its shell completions,
+which completions.sh can also install on its own.
 On macOS, the GUI app is copied to /Applications.
 On Windows, the GUI app is installed to %LOCALAPPDATA%/Programs/AudioBatch,
 with a Start Menu shortcut.
@@ -136,6 +137,8 @@ install_cli() {
     mv -f "$cli_source" "$INSTALL_DIR/$CLI_BINARY_NAME"
     chmod 755 "$INSTALL_DIR/$CLI_BINARY_NAME"
     print_green "Installed CLI binary to $INSTALL_DIR/$CLI_BINARY_NAME"
+
+    install_shell_completions "$INSTALL_DIR/$CLI_BINARY_NAME" true
 }
 
 install_windows_gui_app() {

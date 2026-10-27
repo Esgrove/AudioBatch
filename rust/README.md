@@ -79,7 +79,8 @@ Bash completions go to `~/.bash_completion.d`.
 `audiobatch-rs` takes the analysis and normalization options of the C++ `audiobatch` CLI
 and prints the same table, CSV, and JSON output.
 It exits with code 2 when a file fails and with code 1 for invalid arguments.
-The `completion` subcommand is the only addition.
+The `list` and `completion` subcommands work the same as in the C++ CLI,
+except that only `audiobatch-rs` also generates elvish completions.
 
 `--normalize` writes every analyzed file as a sibling `<name>.aif` at the source sample rate,
 brought to a sample peak of 0 dBFS, or to the `--peak` or `--lufs` target.
@@ -126,8 +127,7 @@ Options:
 
 `audiobatch-rs list` prints the known VST3 plugins,
 and `--rescan` first scans the plugin folders for new or changed ones.
-The C++ CLI uses the `--list-plugins`, `--group-by`, and `--rescan` options instead,
-while the Rust CLI has a subcommand with its own help.
+The C++ CLI has the same subcommand with the same options.
 Each plugin is loaded in a separate worker process, so a plugin that crashes is blacklisted instead of ending the scan,
 and one that takes longer than three minutes is skipped.
 Bundles that are unchanged since the last scan are not loaded again.

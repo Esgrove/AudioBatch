@@ -107,9 +107,17 @@ The domains depend on each other in one direction only.
 - `src/cli/` holds the CLI front end.
     - `CliMain.cpp` is the CLI entry point.
     - `AudioAnalysisCli.{h,cpp}` declare the CLI commands and the `cli` functions that run the analysis workflow.
-      `AudioAnalysisCliParse.cpp` parses and validates the arguments into an `AnalyzeCommand` or a `ListPluginsCommand`,
-      with one name table per enum option shared by the parser and its error messages,
+      `AudioAnalysisCliParse.cpp` parses and validates the arguments into an `AnalyzeCommand`,
+      or the `ListPluginsCommand` or `CompletionCommand` of the `list` and `completion` subcommands,
+      which are only recognised as the first argument.
+      It also builds the usage texts,
       and `AudioAnalysisCliOutput.*` prints the results as a table, CSV, or JSON.
+    - `CliOptions.h` holds the options, the subcommands, and the names each enum option accepts as constant tables.
+      The parser, the usage texts, and the shell completions all read them,
+      so add or change an option there instead of in any one of them.
+    - `ShellCompletion.{h,cpp}` generate the zsh, bash, fish, and PowerShell completion scripts from those tables,
+      and install them to the same per-user directories as the Rust CLI.
+      `completions.sh` installs them for the shells of the platform, and `install.sh` runs it after installing the CLI.
     - `PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
 - `src/gui/` holds the GUI application shell and its main screen.
     - `Main.cpp` is the GUI application entry point, and `MainWindow.*` is its top-level window and menu bar.

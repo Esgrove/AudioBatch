@@ -1,14 +1,18 @@
-/// Tests for the CLI argument parsing in cli::parseArguments and the CSV and JSON output.
-/// Covers option values, aliases, the combinations the CLI rejects, and the machine-readable record fields,
-/// the option matching and UTF-8 decoding of process arguments fixed in the JUCE fork,
-/// and the errors for inputs that produced no result.
+/// Tests for the CLI argument parsing in cli::parseArguments, the usage texts, the shell completion scripts,
+/// and the CSV and JSON output.
+/// Covers option values, aliases, subcommands, the combinations the CLI rejects, and the machine-readable record
+/// fields, the option matching and UTF-8 decoding of process arguments fixed in the JUCE fork, and the errors for
+/// inputs that produced no result.
 
 #include "cli/AudioAnalysisCli.h"
 #include "cli/AudioAnalysisCliOutput.h"
+#include "cli/CliOptions.h"
+#include "cli/ShellCompletion.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/StringFormat.h"
 
+#include <algorithm>
 #include <array>
 #include <expected>
 #include <variant>
@@ -142,22 +146,80 @@ public:
             expect(message.contains("peak, lufs, loudness, name, path"), message);
         }
 
-        beginTest("Plugin listing options require --list-plugins and exclude analysis options");
+        beginTest("Plugin listing options require the list command and exclude analysis options");
         {
             expectError({"-g", "type"}, CliParseErrorKind::missingRequiredOption);
             expectError({"-R"}, CliParseErrorKind::missingRequiredOption);
-            expectError({"-l", "-r"}, CliParseErrorKind::conflictingOptions);
-            expectError({"-l", "music"}, CliParseErrorKind::unexpectedInput);
-            expectError({"-l", "--bogus"}, CliParseErrorKind::unknownOption);
-            expectError({"-l", "-g", "size"}, CliParseErrorKind::invalidValue);
+            expectError({"list", "-r"}, CliParseErrorKind::conflictingOptions);
+            expectError({"list", "music"}, CliParseErrorKind::unexpectedInput);
+            expectError({"list", "--bogus"}, CliParseErrorKind::unknownOption);
+            expectError({"list", "-g", "size"}, CliParseErrorKind::invalidValue);
+            expectError({"--list-plugins"}, CliParseErrorKind::unknownOption);
 
-            auto command = expectCommand<ListPluginsCommand>({"-l", "-g", "manufacturer"});
+            auto command = expectCommand<ListPluginsCommand>({"list"});
+            expect(command.grouping == PluginListGrouping::name);
+            expect(!command.rescan);
+
+            command = expectCommand<ListPluginsCommand>({"list", "-g", "manufacturer"});
             expect(command.grouping == PluginListGrouping::manufacturer);
             expect(!command.rescan);
 
-            command = expectCommand<ListPluginsCommand>({"--list-plugins", "--group-by", "type", "-R"});
+            command = expectCommand<ListPluginsCommand>({"list", "--group-by", "type", "-R"});
             expect(command.grouping == PluginListGrouping::type);
             expect(command.rescan);
+        }
+
+        beginTest("Subcommands are only recognised as the first argument");
+        {
+            const auto subcommandOf = [](const juce::StringArray& arguments) {
+                return cli::findSubcommand(juce::ArgumentList("audiobatch", arguments));
+            };
+            expect(subcommandOf({"list", "-R"}) == CliSubcommand::list);
+            expect(subcommandOf({"completion", "zsh"}) == CliSubcommand::completion);
+            expect(subcommandOf({"-r", "list"}) == CliSubcommand::none);
+            expect(subcommandOf({"./list"}) == CliSubcommand::none);
+            expect(subcommandOf({}) == CliSubcommand::none);
+
+            const auto command = expectCommand<AnalyzeCommand>({"-r", "list"});
+            expect(command.recursive);
+            expectEquals(command.inputPaths.size(), 1);
+            expectEquals(command.inputPaths[0].getFileName(), juce::String("list"));
+        }
+
+        beginTest("The completion command takes one shell and its own options");
+        {
+            auto command = expectCommand<CompletionCommand>({"completion", "zsh"});
+            expect(command.shell == CompletionShell::zsh);
+            expect(!command.install);
+            expect(!command.verbose);
+
+            command = expectCommand<CompletionCommand>({"completion", "PowerShell", "-I", "--verbose"});
+            expect(command.shell == CompletionShell::powershell);
+            expect(command.install);
+            expect(command.verbose);
+
+            expectError({"completion"}, CliParseErrorKind::missingArgument);
+            expectError({"completion", "tcsh"}, CliParseErrorKind::invalidValue);
+            expectError({"completion", "zsh", "bash"}, CliParseErrorKind::unexpectedInput);
+            expectError({"completion", "zsh", "-r"}, CliParseErrorKind::unknownOption);
+        }
+
+        beginTest("Usage texts list the options of each command");
+        {
+            const auto usage = cli::buildUsage("audiobatch");
+            expect(usage.contains("  -j, --jobs <count>      Override worker count"), usage);
+            expect(usage.contains("      --peak <dBFS>       Normalize to this sample peak"), usage);
+            expect(usage.contains("  completion              "), usage);
+            expect(!usage.contains("--group-by"), usage);
+
+            const auto listUsage = cli::buildUsage("audiobatch", CliSubcommand::list);
+            expect(listUsage.contains("Usage: audiobatch list [options]"), listUsage);
+            expect(listUsage.contains("  -g, --group-by <mode>   Group the plugin list"), listUsage);
+            expect(!listUsage.contains("--recurse"), listUsage);
+
+            const auto completionUsage = cli::buildUsage("audiobatch", CliSubcommand::completion);
+            expect(completionUsage.contains("Usage: audiobatch completion <shell> [options]"), completionUsage);
+            expect(completionUsage.contains("zsh, bash, fish, powershell"), completionUsage);
         }
 
         beginTest("Force requires normalize");
@@ -181,7 +243,7 @@ public:
             expect(expectCommand<AnalyzeCommand>({"--output=csv"}).outputFormat == AudioAnalysisOutputFormat::csv);
 
             expectError({"-o", "xml"}, CliParseErrorKind::invalidValue);
-            expectError({"-l", "-o", "json"}, CliParseErrorKind::conflictingOptions);
+            expectError({"list", "-o", "json"}, CliParseErrorKind::conflictingOptions);
         }
 
         beginTest("Normalization targets are parsed and validated");
@@ -242,9 +304,88 @@ public:
 
         runInputTests();
         runOutputTests();
+        runCompletionTests();
     }
 
 private:
+    /// Checks that every completion script offers the options, values, and subcommands of the parser,
+    /// and that each shell's script is installed to its per-user directory.
+    void runCompletionTests()
+    {
+        beginTest("Completion scripts offer every option, value, and subcommand");
+        {
+            for (const auto& shellName : cli::completionShellNames) {
+                const auto script = cli::buildCompletionScript(shellName.value, "audiobatch");
+                const auto label = juce::String(shellName.name);
+                expect(!script.containsChar('\r'), label);
+                expect(!script.contains("@COMMAND@") && !script.contains("@ID@"), label + " has an unfilled token");
+
+                // Fish names long options without their dashes, as in "-l recurse".
+                const auto expectOption = [&](const CliOption& option) {
+                    const auto name = juce::String(option.longName).trimCharactersAtStart("-");
+                    expect(script.contains(name), label + " misses " + option.longName);
+                };
+                std::ranges::for_each(cli::analysisOptions, expectOption);
+                std::ranges::for_each(cli::listOptions, expectOption);
+                std::ranges::for_each(cli::completionOptions, expectOption);
+                for (const auto* value : cli::sortModeValues) {
+                    expect(script.contains(value), label + " misses the sort mode " + value);
+                }
+                for (const auto& subcommand : cli::subcommands) {
+                    expect(script.contains(subcommand.name), label + " misses " + subcommand.name);
+                }
+            }
+
+            const auto zsh = cli::buildCompletionScript(CompletionShell::zsh, "audiobatch");
+            expect(zsh.startsWith("#compdef audiobatch\n"), zsh);
+            expect(zsh.contains(R"('(-s --sort)'{-s,--sort=}'[Sort by peak, lufs, name, or path]:mode:()"), zsh);
+            expect(zsh.contains(R"(shell'\''s completion directory)"), zsh);
+
+            const auto bash = cli::buildCompletionScript(CompletionShell::bash, "audio-batch");
+            expect(bash.contains("complete -o filenames -F _audio_batch audio-batch"), bash);
+
+            const auto fish = cli::buildCompletionScript(CompletionShell::fish, "audiobatch");
+            expect(fish.contains("-s o -l output -x -a 'table csv json'"), fish);
+            expect(fish.contains(R"(shell\'s completion directory)"), fish);
+
+            const auto powerShell = cli::buildCompletionScript(CompletionShell::powershell, "audiobatch");
+            expect(powerShell.contains("-CommandName 'audiobatch'"), powerShell);
+            expect(powerShell.contains("shell''s completion directory"), powerShell);
+        }
+
+        beginTest("Completion scripts are installed to the per-user directory of each shell");
+        {
+            const TemporaryDirectory home;
+            const auto homeDirectory = home.getChildFile({});
+            const auto installPath = [&homeDirectory](const CompletionShell shell) {
+                return cli::findCompletionFile(shell, "audiobatch", homeDirectory).getFullPathName();
+            };
+
+            expectEquals(
+                installPath(CompletionShell::zsh),
+                homeDirectory.getChildFile(".zsh")
+                    .getChildFile("completions")
+                    .getChildFile("_audiobatch")
+                    .getFullPathName()
+            );
+            expectEquals(
+                installPath(CompletionShell::bash),
+                homeDirectory.getChildFile(".bash_completion.d").getChildFile("audiobatch.bash").getFullPathName()
+            );
+            expect(installPath(CompletionShell::fish).endsWith("audiobatch.fish"));
+            expect(installPath(CompletionShell::powershell).endsWith("_audiobatch.ps1"));
+
+            // With oh-my-zsh, the script becomes a custom plugin named after the command.
+            const auto plugins
+                = homeDirectory.getChildFile(".oh-my-zsh").getChildFile("custom").getChildFile("plugins");
+            expect(plugins.createDirectory().wasOk());
+            expectEquals(
+                installPath(CompletionShell::zsh),
+                plugins.getChildFile("audiobatch").getChildFile("_audiobatch").getFullPathName()
+            );
+        }
+    }
+
     /// Checks that inputs named on the command line which produce no result are reported as errors.
     void runInputTests()
     {

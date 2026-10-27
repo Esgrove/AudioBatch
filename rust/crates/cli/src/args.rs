@@ -4,11 +4,10 @@
 //! as those of the C++ `audiobatch` CLI, so `scripts/parity.sh` can run both with the same arguments.
 //! The normalization options are checked after parsing, so their errors can use those messages.
 //!
-//! The plugin listing is the `list` subcommand instead of the C++ CLI's `--list-plugins`, `--group-by`,
-//! and `--rescan` options, so it has its own help and its own options.
+//! The plugin listing is the `list` subcommand, and shell completions the `completion` subcommand,
+//! the same as in the C++ CLI, so each has its own help and its own options.
 //! Analysis options given before `list` make it an input path, the same as for any other subcommand name.
 //! `scripts/parity.sh` does not compare plugin listings.
-//! The `completion` subcommand is the other addition.
 
 use std::path::PathBuf;
 use std::thread;

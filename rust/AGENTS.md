@@ -81,7 +81,10 @@ and every crate inherits them with `.workspace = true`.
   so `scripts/parity.sh` can compare the two directly.
   With `--normalize`, `scripts/compare_outputs.py` also compares the files both CLIs wrote,
   sample by sample and ID3v2 frame by frame, so a change to decoding or tag copying must keep them in agreement.
-  The `completion` subcommand in `completion.rs` is the only addition.
+  The `list` and `completion` subcommands match the C++ CLI too.
+  `completion.rs` generates the scripts with clap, where the C++ CLI builds them from its own option tables,
+  and both install them to the same per-user directories.
+  Only the Rust CLI also supports elvish.
 - `crates/gui` (`audiobatch-gui`): the `AudioBatchRs` GUI binary, built on gpui-kit.
   It is the only crate that depends on gpui-kit, which is pinned to an exact version and upgraded by hand.
   Its `build.rs` embeds the app icon from the root `assets` directory into the Windows executable.

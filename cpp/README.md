@@ -160,6 +160,12 @@ Output of `audiobatch --help`:
 ```text
 audiobatch <version> <date> <commit>
 Usage: audiobatch [options] <paths...>
+       audiobatch list [options]
+       audiobatch completion <shell> [options]
+
+Commands:
+  list                    List the available audio plugins
+  completion              Print or install a shell completion script
 
 Options:
   -h, --help              Print usage and exit
@@ -174,11 +180,9 @@ Options:
   -s, --sort <mode>       Sort by peak, lufs, name, or path
   -S, --reverse           Sort in descending order
   -o, --output <format>   Print results as table (default), csv, or json
-  -l, --list-plugins      List the available audio plugins and exit
-  -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format
-  -R, --rescan            Scan for new or changed plugins before listing them
 
 Short options cannot be combined, so pass -r -f instead of -rf.
+Run audiobatch <command> --help for the options of a command.
 ```
 
 Without a path, AudioBatch analyzes the current directory.
@@ -213,18 +217,78 @@ Log messages go to stderr, keeping stdout available for results.
 Use `--refresh` to bypass cached analysis, including previously failed files.
 Pass short options separately, such as `-r -f`, not `-rf`.
 
-List plugins known to the GUI, or rescan and group them by type:
-
-```shell
-audiobatch --list-plugins
-audiobatch -l -R --group-by type
-```
-
-Plugin listing supports grouping by `name`, `manufacturer`, `type` or `format`.
-Plugin processing itself is GUI-only. CLAP plugins are not supported.
-
 Exit codes: `0` for success, `1` for invalid arguments or output errors,
 and `2` when any file fails analysis or normalization.
+
+### Plugin Listing
+
+`audiobatch list` prints the plugins known to the GUI,
+and `--rescan` first scans the plugin folders for new or changed ones:
+
+```shell
+audiobatch list
+audiobatch list -R --group-by type
+```
+
+A subcommand is only recognised as the first argument,
+so `audiobatch -r list` analyzes a folder named `list`.
+Plugin processing itself is GUI-only. CLAP plugins are not supported.
+
+Output of `audiobatch list --help`:
+
+```text
+audiobatch <version> <date> <commit>
+List the available audio plugins
+
+Usage: audiobatch list [options]
+
+Options:
+  -h, --help              Print usage and exit
+  -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format
+  -R, --rescan            Scan for new or changed plugins before listing them
+```
+
+### Shell Completions
+
+`audiobatch completion` generates completion scripts for zsh, bash, fish, and PowerShell.
+They complete the options, their values, the subcommands, and file paths.
+`install.sh` installs them along with the CLI,
+and `completions.sh` installs them on their own for the shells of the platform:
+zsh on macOS, and bash and PowerShell on Windows.
+
+```shell
+# Install the completions for the shells of this platform
+./completions.sh
+
+# Print the completion script to stdout
+audiobatch completion zsh
+
+# Install the completion script to the shell's completion directory
+audiobatch completion zsh --install --verbose
+```
+
+Zsh completions go to `~/.zsh/completions`, or into a custom plugin when oh-my-zsh is installed.
+Bash completions go to `~/.bash_completion.d`, and fish completions to `~/.config/fish/completions`.
+PowerShell completions go to `Documents\PowerShell\completions` on Windows.
+`completions.sh` prints what to add to the shell config to load them.
+These are the same locations as the Rust `audiobatch-rs` uses.
+
+Output of `audiobatch completion --help`:
+
+```text
+audiobatch <version> <date> <commit>
+Print or install a shell completion script
+
+Usage: audiobatch completion <shell> [options]
+
+Arguments:
+  <shell>                 Shell to generate the script for: zsh, bash, fish, powershell
+
+Options:
+  -h, --help              Print usage and exit
+  -I, --install           Install the script to the shell's completion directory
+  -v, --verbose           Print where the script was installed
+```
 
 ## Architecture
 
@@ -343,7 +407,7 @@ To install the release build, run:
 On Windows, run this from Git Bash.
 The GUI app is installed under `%LOCALAPPDATA%\Programs\AudioBatch`,
 and a Start Menu shortcut is created for Start search.
-The CLI is installed to `~/.local/bin`.
+The CLI is installed to `~/.local/bin`, together with its shell completions.
 Use `--app-only` or `--cli-only` to install just one of the two.
 Pass `--reuse` to skip CMake generation and reuse the existing release build directory.
 
