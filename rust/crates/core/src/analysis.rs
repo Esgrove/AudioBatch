@@ -8,12 +8,13 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use ebur128::{Channel, EbuR128, Mode};
 
 use crate::decode::AudioFileDecoder;
 use crate::record::{
-    AnalysisRecord, AnalysisStatus, NEGATIVE_INFINITY_LOUDNESS, ShortTermLoudnessHistory, normalize_loudness,
+    AnalysisError, AnalysisFailure, AnalysisRecord, AnalysisStatus, NEGATIVE_INFINITY_LOUDNESS,
+    ShortTermLoudnessHistory, normalize_loudness,
 };
 use crate::waveform::{WaveformBuilder, WaveformOverview};
 
@@ -146,7 +147,7 @@ impl BlockMeter {
 pub fn analyze_file(path: &Path, is_cancelled: &dyn Fn() -> bool, on_progress: &mut dyn FnMut(f32)) -> AnalysisRecord {
     let mut record = AnalysisRecord::from_path(path);
     if !path.is_file() {
-        return fail(record, "File does not exist");
+        return fail(record, AnalysisError::MissingFile, "File does not exist");
     }
     match measure_file(path, is_cancelled, on_progress) {
         Ok(measurements) => {
@@ -183,7 +184,13 @@ pub fn analyze_file(path: &Path, is_cancelled: &dyn Fn() -> bool, on_progress: &
             record.from_cache = false;
             record
         }
-        Err(error) => fail(record, &error.to_string()),
+        Err(error) => {
+            // Failures without a kind come from the measurement, which a later run may get past.
+            let kind = error
+                .downcast_ref::<AnalysisFailure>()
+                .map_or(AnalysisError::MeasurementFailed, |failure| failure.kind);
+            fail(record, kind, &error.to_string())
+        }
     }
 }
 
@@ -210,7 +217,7 @@ fn measure_file(
 
     loop {
         if is_cancelled() {
-            bail!(CANCELLED_MESSAGE);
+            return Err(AnalysisFailure::new(AnalysisError::Cancelled, CANCELLED_MESSAGE).into());
         }
         let Some(chunk) = decoder.next_chunk()? else {
             break;
@@ -258,9 +265,10 @@ fn measure_file(
     })
 }
 
-/// Marks the record as failed with the given message.
-fn fail(mut record: AnalysisRecord, message: &str) -> AnalysisRecord {
+/// Marks the record as failed with the given kind and message.
+fn fail(mut record: AnalysisRecord, kind: AnalysisError, message: &str) -> AnalysisRecord {
     record.status = AnalysisStatus::Failed;
+    record.error = Some(kind);
     record.error_message = message.to_string();
     record
 }

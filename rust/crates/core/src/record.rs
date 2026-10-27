@@ -4,6 +4,7 @@
 //! short-term loudness history, and waveform overview,
 //! along with the `AnalysisStatus` lifecycle and the `AnalysisOptions` input parameters.
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
@@ -31,6 +32,27 @@ pub enum AnalysisStatus {
     Analyzed,
     /// Decoding or measuring failed, see the error message.
     Failed,
+}
+
+/// Why an analysis failed, which decides whether the cache keeps the failed record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AnalysisError {
+    /// The file does not exist.
+    MissingFile,
+    /// The file exists but could not be opened for reading,
+    /// for example because of its permissions or a network drive that went away, so a later run may succeed.
+    Unreadable,
+    /// No decoder reads the file, or its stream parameters are unusable.
+    /// Reading the same bytes again fails the same way.
+    Unsupported,
+    /// Too many audio packets failed to decode, which a transient read error, such as on a network drive, can cause.
+    DecodeFailed,
+    /// The loudness measurement failed.
+    MeasurementFailed,
+    /// The analysis was cancelled before it finished.
+    Cancelled,
+    /// The analysis panicked.
+    Panicked,
 }
 
 /// Input parameters shared by the GUI and CLI analysis flows.
@@ -71,6 +93,8 @@ pub struct AnalysisRecord {
     pub format_name: String,
     /// Reason for a failed analysis, empty otherwise.
     pub error_message: String,
+    /// Kind of a failed analysis, `None` otherwise.
+    pub error: Option<AnalysisError>,
     /// Short-term loudness readings across the file, absent for failed records.
     pub short_term_loudness: Option<Arc<ShortTermLoudnessHistory>>,
     /// Min and max overview of the decoded samples, absent for failed records.
@@ -111,6 +135,23 @@ pub struct AnalysisRecord {
     pub status: AnalysisStatus,
     /// True when the record was loaded from the cache.
     pub from_cache: bool,
+}
+
+/// A failed analysis step with the kind of failure, so callers can tell which failures repeat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalysisFailure {
+    /// Kind of the failure.
+    pub kind: AnalysisError,
+    /// User-facing description of the failure.
+    pub message: String,
+}
+
+impl AnalysisError {
+    /// Returns true for an error that reading the same bytes again would repeat, so a cached failure stays valid.
+    #[must_use]
+    pub const fn is_repeatable(self) -> bool {
+        matches!(self, Self::Unsupported)
+    }
 }
 
 impl ShortTermLoudnessHistory {
@@ -188,6 +229,25 @@ impl AnalysisRecord {
             .map_or(1.0, |decibels| decibels_to_gain(f64::from(decibels)) as f32)
     }
 }
+
+impl AnalysisFailure {
+    /// Creates a failure of the given kind with its user-facing message.
+    #[must_use]
+    pub fn new(kind: AnalysisError, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for AnalysisFailure {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for AnalysisFailure {}
 
 /// Converts decibels to a linear amplitude factor.
 #[must_use]
