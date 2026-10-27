@@ -11,7 +11,8 @@ When the two files disagree about code under `rust/`, this file wins.
 - Read the C++ sources freely to understand how a feature behaves,
   but question anything that looks wrong before carrying it over, because that application is not finished either.
   `cpp/src/analysis/AudioAnalysis.cpp`, `cpp/src/analysis/AnalysisCache*.cpp`, and `cpp/src/cli/`
-  are the closest counterparts of `crates/core` and `crates/cli`.
+  are the closest counterparts of `crates/core` and `crates/cli`,
+  and `cpp/src/plugins/` and `cpp/src/gui/LiveChain*.cpp` of `crates/plugins` and the GUI's `plugins/`.
 - The tests read the shared fixtures in place from the root `fixtures` directory through the `test-fixtures` crate.
   Do not copy fixtures into `rust/`.
 - The GUI embeds the Roboto fonts from the root `assets` directory, the same files the C++ application bundles,
@@ -41,8 +42,12 @@ The Rust version covers the key features of the C++ application:
 - Normalize files from the CLI and the GUI to a sample peak or loudness target,
   written as AIFF with tags and Serato data.
   Lossless sources produce the same samples as the C++ application.
+- Scan for VST3 plugins in a worker process and list them in the CLI and the GUI.
+- Process files in the GUI through a chain of VST3 effects, written as 16-bit AIFF with tags and Serato data.
+- Show plugin editors in native windows, and play the preview through the plugin chain.
 
-VST3 / Audio Unit plugin processing stays in the C++ application for now.
+Plugin hosting covers VST3 on macOS and Windows.
+Audio Unit plugins are only hosted by the C++ application.
 
 ## Workspace Layout
 
@@ -71,7 +76,23 @@ and every crate inherits them with `.workspace = true`.
 - `crates/playback` (`audiobatch-playback`): the preview engine.
   A decode thread feeds an `rtrb` ring buffer that the `cpal` output callback reads,
   with `rubato` resampling when the device rate differs from the file rate.
-  It has no GUI dependency.
+  The callback can run the output through a `PreviewInsert`.
+  `output/insert.rs` drives it with the pre-roll of its latency, fades, and the drain of its tail at the end.
+  It has no GUI or plugin dependency, only the trait.
+- `crates/vst3-host` (`vst3-host`): VST3 hosting on top of the raw `vst3` bindings.
+  `module.rs` loads bundles, `factory.rs` lists their classes, `instance.rs` holds the plugin lifecycle,
+  `processor.rs` runs audio processing on preallocated buffers, and `host_objects/` implements the host's COM objects.
+  `thread.rs` holds the UI thread token and the dispatcher, and `ui_bound.rs` a value only the UI thread may use.
+  The `editor` feature adds the native editor windows in `editor/`, with an AppKit and a Win32 backend.
+  It is the only crate besides the test plugin that contains unsafe code.
+- `crates/plugins` (`audiobatch-plugins`): the plugin features, in safe code only.
+  `scanner.rs` scans out of process through `scan_worker.rs`, `library.rs` keeps the known plugins,
+  `chain.rs` the saved chain, `processing.rs` renders one file through a chain,
+  `processing_coordinator.rs` runs batches on a worker pool, and `preview_chain.rs` runs the live chain in the preview.
+  `chain_signal.rs` holds the channel handling that processing and the preview share.
+- `crates/test-plugin` (`audiobatch-test-plugin`): dev-only fake VST3 plugins for the tests.
+  `factory()` serves them inside the test process, and the `module` example builds them into a library
+  that tests wrap in a `.vst3` bundle, found under `target/<profile>/examples`.
 - `crates/serato` (`serato-tags`): parsers for the Serato GEOB tags, extracted from the track-rename project.
   They take raw frame bytes and do no terminal printing, so any tag library and front end can use them.
   `overview.rs` parses the Overview tag strictly and defines its cache representation,
@@ -87,12 +108,46 @@ and every crate inherits them with `.workspace = true`.
   Only the Rust CLI also supports elvish.
 - `crates/gui` (`audiobatch-gui`): the `AudioBatchRs` GUI binary, built on gpui-kit.
   It is the only crate that depends on gpui-kit, which is pinned to an exact version and upgraded by hand.
+  `plugins/` holds the live chain, the Plugin Chain and Plugin Manager windows, and the preview insert,
+  and `app/plugins.rs`, `app/process.rs`, and `app/preview.rs` connect them to the main view.
   Its `build.rs` embeds the app icon from the root `assets` directory into the Windows executable.
   On macOS, `build.sh` and `install.sh` package it as `AudioBatchRs.app` through `create_mac_app_bundle` in `common.sh`.
 - `crates/test-fixtures`: a dev-only helper that locates the shared fixtures and lists their expected properties.
 
 Keep the core and playback crates free of GUI dependencies,
 so the GUI framework stays replaceable without touching them.
+Keep plugin code out of them too, so the preview engine knows plugins only through `PreviewInsert`.
+
+## VST3 Hosting
+
+- **The UI thread rule.** VST3 requires loading modules, creating, setting up, activating, and destroying instances,
+  their state, and their editors on the thread that runs the event loop.
+  Only `process` and `setProcessing` may run elsewhere.
+  Methods that need the UI thread take a `&UiThread`, a token that only exists there and is not `Send`.
+  Other threads reach the UI thread through `UiDispatcher`, and the GUI drains its `UiJobs` on the foreground executor.
+  A worker that waits on the UI thread passes its cancellation check, so it never blocks a UI thread waiting on it.
+- **Unsafe code** is allowed only in `vst3-host` and the test plugin, module by module,
+  with `#![expect(unsafe_code, reason = "...")]`.
+  Every unsafe block has a `// SAFETY:` comment, which the `undocumented_unsafe_blocks` lint enforces.
+  Keep COM pointers inside `vst3-host`, so the crates above it stay safe.
+- **The SDK version.** The `vst3` crate is pinned to `=0.3.0`, whose bindings are generated from VST SDK 3.8.0,
+  the SDK that JUCE bundles in the C++ application.
+  Keep both applications on the same SDK version, and upgrade them together.
+  The bindings are pre-generated, so building needs no SDK or extra toolchain.
+- **Crashes.** Only scanning is isolated in a worker process.
+  A plugin that crashes while processing, previewing, or showing its editor takes the GUI down.
+- **Data files** in the `AudioBatch-rs` data directory:
+  `plugins.json` holds the known plugins, the blacklist, and the custom scan folders,
+  `plugin-chain.json` the chain with its base64 plugin state,
+  `plugin-scan.lock` keeps two scans from running at once,
+  and `plugin-scan-worker.log` collects what plugins print while a worker loads them.
+  None of them is shared with the C++ application, whose chain state and plugin ids are specific to JUCE.
+- **Tests** use the fake plugins of the test plugin crate, never installed plugins.
+  To try real plugins by hand, run `cargo run -p vst3-host --example inspect`
+  or `cargo run -p vst3-host --features editor --example editor -- <bundle>`.
+- **Windows.** CI builds and tests on Windows, including the Win32 editor backend.
+  Locally, `cargo clippy -p vst3-host --features editor --target x86_64-pc-windows-msvc --all-targets -- -D warnings`
+  checks the backend from macOS, after `rustup target add x86_64-pc-windows-msvc`.
 
 ## Running Both Versions Side By Side
 
@@ -209,7 +264,9 @@ Module boundaries:
 - Every Rust source file starts with module-level `//!` documentation describing its purpose.
 - Avoid trailing comments. Put comments on their own line above the code.
 - Compare floating point values for equality with a tolerance, not with `==`.
-- The audio callback in `crates/playback` must not allocate, lock, or block.
+- The audio callback in `crates/playback` must not allocate, lock, or block,
+  and neither may the `PreviewInsert` it runs, such as `PreviewChain`.
+  Anything the callback replaces goes back to the UI thread to be dropped there.
 
 ### Comments and documentation formatting
 
