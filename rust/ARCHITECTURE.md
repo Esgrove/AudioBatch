@@ -25,6 +25,7 @@ flowchart LR
     cli --> core & plugins
     gui --> core & playback & plugins & vst3host
     plugins --> core & vst3host
+    testplugin --> vst3host
     playback --> core
     core --> serato
 

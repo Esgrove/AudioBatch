@@ -226,8 +226,8 @@ cargo nextest run
 ```
 
 `cargo test` works too.
-CI runs `cargo clippy --all-targets -- -D warnings`, `cargo fmt --check`, and the tests on macOS and Windows,
-and a coverage run on macOS.
+CI runs `cargo clippy --all-targets -- -D warnings` and the tests on macOS and Windows,
+and `cargo fmt --check` and a coverage run on macOS.
 
 Other commands:
 
