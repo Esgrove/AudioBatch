@@ -20,7 +20,7 @@ use vst3::Steinberg::{kResultFalse, kResultOk};
 use vst3::{ComPtr, ComWrapper};
 
 use crate::enums::{to_i32, to_u32};
-use crate::host_objects::ParameterChanges;
+use crate::host_objects::{EDIT_QUEUE_CAPACITY, ParameterChanges, ParameterEdit};
 use crate::instance::{BusLayout, InstanceCore, ProcessingSetup, process_mode_value};
 
 /// Tempo reported to plugins, which matters only to tempo-synced effects.
@@ -50,6 +50,10 @@ pub struct ProcessorHandle {
     output_changes: ComWrapper<ParameterChanges>,
     /// Transport information passed to the plugin.
     context: ProcessContext,
+    /// Controller edits that did not fit into the parameter queues of a block, in the order they were made.
+    /// They go first in the next block, so a newer edit of the same parameter is never applied before them.
+    /// The capacity is reserved when the handle is created, so carrying edits never allocates.
+    carried_edits: Vec<ParameterEdit>,
 }
 
 /// Marks an instance as inside a processing call, and clears the mark when dropped.
@@ -112,6 +116,7 @@ impl ProcessorHandle {
             input_buses,
             output_buses,
             input_changes: ParameterChanges::create(),
+            carried_edits: Vec::with_capacity(EDIT_QUEUE_CAPACITY),
             output_changes: ParameterChanges::create(),
             context,
         }
@@ -175,12 +180,20 @@ impl ProcessorHandle {
         }
         self.input_changes.clear();
         self.output_changes.clear();
+        // An edit fails only when every queue of the block is taken by other parameters,
+        // so every later edit of the same parameter fails too, and the carried edits stay in order.
+        let input_changes = &self.input_changes;
+        self.carried_edits
+            .retain(|edit| !input_changes.set(edit.id, edit.value));
         while let Some(edit) = self.core.edits().pop() {
-            // When every queue of this block is taken, the edit waits for the next block instead of being lost.
-            if !self.input_changes.set(edit.id, edit.value) {
+            if self.input_changes.set(edit.id, edit.value) {
+                continue;
+            }
+            if self.carried_edits.len() == self.carried_edits.capacity() {
                 let _ = self.core.edits().push(edit);
                 break;
             }
+            self.carried_edits.push(edit);
         }
         for bus in self.input_buses.iter_mut().chain(self.output_buses.iter_mut()) {
             bus.silenceFlags = 0;
@@ -250,7 +263,11 @@ impl ProcessorHandle {
 unsafe impl Send for ProcessorHandle {}
 
 impl Drop for ProcessorHandle {
+    /// Hands the carried edits back to the instance, so the next handle or flush delivers them.
     fn drop(&mut self) {
+        for edit in self.carried_edits.drain(..) {
+            let _ = self.core.edits().push(edit);
+        }
         self.core.processor_dropped();
     }
 }
