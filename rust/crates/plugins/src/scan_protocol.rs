@@ -71,7 +71,34 @@ mod test_scan_protocol {
 
     #[test]
     fn lines_without_a_valid_reply_are_ignored() {
-        assert_eq!(ScanReply::from_line("plugin output"), None);
-        assert_eq!(ScanReply::from_line("AUDIOBATCH-SCAN-REPLY {broken"), None);
+        for line in [
+            "",
+            "plugin output",
+            "AUDIOBATCH-SCAN-REPLY",
+            "AUDIOBATCH-SCAN-REPLY ",
+            "AUDIOBATCH-SCAN-REPLY {broken",
+            "AUDIOBATCH-SCAN-REPLY {\"plugins\": [",
+            "AUDIOBATCH-SCAN-REPLY {\"plugins\": 5}",
+            "AUDIOBATCH-SCAN-REPLY \"text\"",
+            "AUDIOBATCH-SCAN-REPLY {} trailing plugin output",
+            "{\"plugins\": [], \"error\": null}",
+        ] {
+            assert_eq!(ScanReply::from_line(line), None, "{line:?}");
+        }
+    }
+
+    #[test]
+    fn missing_fields_default_and_a_carriage_return_is_ignored() {
+        assert_eq!(
+            ScanReply::from_line("AUDIOBATCH-SCAN-REPLY {}\r"),
+            Some(ScanReply::default())
+        );
+        assert_eq!(
+            ScanReply::from_line("AUDIOBATCH-SCAN-REPLY {\"error\": \"Failed\", \"unknown\": 1}"),
+            Some(ScanReply {
+                plugins: Vec::new(),
+                error: Some("Failed".to_owned()),
+            })
+        );
     }
 }

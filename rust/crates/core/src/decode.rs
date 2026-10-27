@@ -339,8 +339,9 @@ impl AudioFileDecoder {
                     self.record_end_of_stream();
                     return Ok(None);
                 }
-                // A read error of the container counts as a failed packet, so one bad read on a network drive
-                // does not fail the whole file, while repeated errors still stop decoding.
+                // A read error of the container counts as a failed packet,
+                // so one bad read on a network drive does not fail the whole file,
+                // while repeated errors still stop decoding.
                 // Past the stated length it ends the track, like a failed final packet.
                 Err(SymphoniaError::IoError(_) | SymphoniaError::DecodeError(_)) => {
                     if self.stated_frames().is_some_and(|total| self.position >= total) {
@@ -655,6 +656,7 @@ mod test_audio_file_decoder {
     use std::num::NonZero;
 
     use super::*;
+    use crate::test_helpers::scrambled_fixture_copy;
 
     #[test]
     fn opens_every_tone_fixture() {
@@ -712,6 +714,43 @@ mod test_audio_file_decoder {
             "{:?}",
             decoder.failures().notice()
         );
+    }
+
+    #[test]
+    fn damaged_packets_end_the_stream_with_a_truncation_notice() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        for fixture in ["sine_stereo_44100_16.flac", "sine_stereo_44100_320k.mp3"] {
+            let path = scrambled_fixture_copy(&directory, fixture, &format!("scrambled_{fixture}"));
+            let mut decoder = AudioFileDecoder::open(&path).expect(fixture);
+            while decoder.next_chunk().expect(fixture).is_some() {}
+            let position = decoder.position();
+            assert!(position > 0 && position < 44_100, "{fixture}: {position}");
+            assert_eq!(
+                decoder.failures().notice(),
+                Some(format!(
+                    "The audio ended at sample {position} of the 44100 the file states"
+                )),
+                "{fixture}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_packet_the_codec_cannot_read_stops_decoding_with_its_position() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = scrambled_fixture_copy(&directory, test_fixtures::AAC_FIXTURE, "scrambled.m4a");
+        let mut decoder = AudioFileDecoder::open(&path).expect("opens");
+        let error = loop {
+            match decoder.next_chunk() {
+                Ok(Some(_)) => {}
+                Ok(None) => panic!("the damaged stream decoded to its end"),
+                Err(error) => break error,
+            }
+        };
+        let message = error.to_string();
+        let expected = format!("Audio decoding failed at sample {}", decoder.position());
+        assert!(message.starts_with(&expected), "{message}");
+        assert!(decoder.position() < 44_100);
     }
 
     #[test]

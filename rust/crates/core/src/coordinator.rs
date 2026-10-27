@@ -291,9 +291,13 @@ fn analyze_stale_file(path: &Path, context: &RunContext, pending: &AtomicUsize, 
 mod test_coordinator {
     use super::*;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     use tempfile::TempDir;
 
-    use crate::record::AnalysisStatus;
+    use crate::record::{AnalysisStatus, same_custom_gain};
+    use crate::test_helpers::block_pool;
 
     fn coordinator(directory: &TempDir) -> AnalysisCoordinator {
         let cache = Arc::new(AnalysisCache::with_path(directory.path().join("analysis.db")));
@@ -365,7 +369,11 @@ mod test_coordinator {
             .find(|record| record.path == path)
             .expect("record of the file");
         assert!(!record.from_cache);
-        assert_eq!(record.custom_gain_db, Some(-4.0));
+        assert!(
+            same_custom_gain(record.custom_gain_db, Some(-4.0)),
+            "{:?}",
+            record.custom_gain_db
+        );
     }
 
     #[test]
@@ -406,20 +414,72 @@ mod test_coordinator {
     }
 
     #[test]
-    fn cancelled_run_stops_publishing() {
+    fn cancelled_run_publishes_and_caches_nothing() {
         let directory = TempDir::new().expect("temp dir");
         let folder = fixture_folder(&directory);
         let coordinator = coordinator(&directory);
+        let release = block_pool(&coordinator.pool);
         let (run_id, receiver) = coordinator.start(options(&folder, false));
         coordinator.cancel();
+        drop(release);
         assert!(!coordinator.is_current(run_id));
-        let completed = receiver
-            .iter()
-            .any(|event| matches!(event, AnalysisEvent::Completed { .. }));
-        // The planning job may already have finished before the cancellation, in which case it completed.
-        if completed {
+        let events: Vec<AnalysisEvent> = receiver.iter().collect();
+        assert!(events.is_empty(), "{events:?}");
+        for name in ["sine_stereo_44100_16.wav", "sine_mono_48000_24.aif", "broken.wav"] {
+            assert!(coordinator.cache().get_analysis(&folder.join(name)).is_none(), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_new_run_replaces_the_previous_one() {
+        let directory = TempDir::new().expect("temp dir");
+        let folder = fixture_folder(&directory);
+        let coordinator = coordinator(&directory);
+        let release = block_pool(&coordinator.pool);
+        let (first_id, first) = coordinator.start(options(&folder, false));
+        let (second_id, second) = coordinator.start(options(&folder, false));
+        drop(release);
+        assert!(!coordinator.is_current(first_id));
+        assert!(coordinator.is_current(second_id));
+        let replaced: Vec<AnalysisEvent> = first.iter().collect();
+        assert!(replaced.is_empty(), "{replaced:?}");
+        let events: Vec<AnalysisEvent> = second.iter().collect();
+        assert!(events.iter().all(|event| event.run_id() == second_id));
+        assert!(matches!(
+            events.last(),
+            Some(AnalysisEvent::Completed { total_files: 3, .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_could_not_be_read_is_analyzed_again_on_the_next_run() {
+        let directory = TempDir::new().expect("temp dir");
+        let folder = fixture_folder(&directory);
+        let path = folder.join("sine_stereo_44100_16.wav");
+        let coordinator = coordinator(&directory);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("removes permissions");
+        let unreadable = std::fs::File::open(&path).is_err();
+        let records = coordinator.analyze_blocking(options(&folder, false));
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("restores permissions");
+        if !unreadable {
+            // Running as root ignores the permissions, so there is nothing to check.
             return;
         }
-        assert!(receiver.try_recv().is_err());
+        let failed = records
+            .iter()
+            .find(|record| record.path == path)
+            .expect("record of the file");
+        assert_eq!(failed.error, Some(AnalysisError::Unreadable));
+        assert!(coordinator.cache().get_analysis(&path).is_none());
+
+        let records = coordinator.analyze_blocking(options(&folder, false));
+        let record = records
+            .iter()
+            .find(|record| record.path == path)
+            .expect("record of the file");
+        assert!(!record.from_cache);
+        assert!(record.is_ready(), "{}", record.error_message);
+        assert!(coordinator.cache().get_analysis(&path).is_some());
     }
 }

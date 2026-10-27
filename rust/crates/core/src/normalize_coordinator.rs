@@ -245,7 +245,7 @@ mod test_normalize_coordinator {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::test_helpers::ready_fixture_copy;
+    use crate::test_helpers::{block_pool, ready_fixture_copy};
 
     /// A coordinator with its cache and options whose disposer deletes files.
     struct Setup {
@@ -377,24 +377,68 @@ mod test_normalize_coordinator {
     }
 
     #[test]
-    fn cancelled_run_does_not_complete() {
+    fn run_cancelled_before_it_starts_leaves_every_file() {
         let directory = TempDir::new().expect("temp dir");
-        let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let first = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "first.wav");
+        let second = ready_fixture_copy(&directory, "sine_mono_44100_16.wav", "second.wav");
         let setup = setup(&directory);
-        let (run_id, receiver) = setup.coordinator.start(vec![record], setup.options);
+        let release = block_pool(&setup.coordinator.pool);
+        let (run_id, receiver) = setup
+            .coordinator
+            .start(vec![first.clone(), second.clone()], setup.options);
         setup.coordinator.cancel();
+        drop(release);
         assert!(!setup.coordinator.is_current(run_id));
         let events: Vec<NormalizeEvent> = receiver.iter().collect();
+        assert!(events.is_empty(), "{events:?}");
+        assert!(first.path.is_file() && second.path.is_file());
+        assert!(!directory.path().join("first.aif").exists());
+        assert!(!directory.path().join("second.aif").exists());
+    }
+
+    #[test]
+    fn cancel_during_a_commit_reports_the_committed_file_and_skips_the_rest() {
+        let directory = TempDir::new().expect("temp dir");
+        let first = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "first.wav");
+        let second = ready_fixture_copy(&directory, "sine_mono_44100_16.wav", "second.wav");
+        let cache_folder = directory.path().join("cache");
+        fs::create_dir_all(&cache_folder).expect("creates cache folder");
+        let cache = Arc::new(AnalysisCache::with_path(cache_folder.join("analysis.db")));
+        let coordinator = NormalizeCoordinator::new(cache, 1).expect("pool");
+        let current_run = Arc::clone(&coordinator.current_run);
+        // The disposer runs once the first output is in place, so the cancel lands between the two files.
+        let options = NormalizationOptions {
+            dispose: Arc::new(move |path: &Path| {
+                current_run.fetch_add(1, Ordering::SeqCst);
+                fs::remove_file(path).is_ok()
+            }),
+            ..NormalizationOptions::default()
+        };
+
+        let (run_id, receiver) = coordinator.start(vec![first.clone(), second.clone()], options);
+        let events: Vec<NormalizeEvent> = receiver.iter().collect();
+
+        assert!(!coordinator.is_current(run_id));
         assert!(
             !events
                 .iter()
                 .any(|event| matches!(event, NormalizeEvent::Completed { .. }))
         );
-        for result in results(&events) {
-            assert!(
-                result.output().is_some(),
-                "only committed outputs are reported after a cancel"
-            );
-        }
+        let results = results(&events);
+        assert_eq!(results.len(), 1, "{events:?}");
+        let committed = results.first().expect("one result");
+        assert_eq!(committed.source, first.path);
+        assert_eq!(
+            committed.output().map(|output| output.path.clone()),
+            Some(directory.path().join("first.aif"))
+        );
+        assert!(!first.path.exists());
+        assert!(second.path.is_file());
+        assert!(!directory.path().join("second.aif").exists());
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, NormalizeEvent::Started { path, .. } if *path == second.path))
+        );
     }
 }

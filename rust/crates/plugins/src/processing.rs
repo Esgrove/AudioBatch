@@ -781,6 +781,27 @@ mod test_process_file_failures {
     }
 
     #[test]
+    fn a_plugin_that_fails_to_process_fails_the_file_and_leaves_no_output() {
+        let directory = TempDir::new().expect("temp dir");
+        let converted = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let in_place = ready_fixture_copy(&directory, "sine_mono_48000_24.aif", "other.aif");
+        let original = std::fs::read(&in_place.path).expect("read");
+        let chain = test_chain(&[(Kind::Gain, gain_state(1.0)), (Kind::Failing, gain_state(1.0))]);
+        for record in [&converted, &in_place] {
+            let result = process_file(record, &deleting_options(), &chain, &|| false, &mut |_| {});
+            assert_eq!(
+                result.error(),
+                Some("The plugin failed to process audio (result 1)"),
+                "{}",
+                record.file_name
+            );
+            assert!(result.output().is_none());
+        }
+        assert_eq!(file_names(&directory), ["other.aif", "song.wav"]);
+        assert_eq!(std::fs::read(&in_place.path).expect("read"), original);
+    }
+
+    #[test]
     fn a_plugin_without_the_file_layout_fails_and_the_chain_stays_usable() {
         let directory = TempDir::new().expect("temp dir");
         let stereo = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "stereo.wav");

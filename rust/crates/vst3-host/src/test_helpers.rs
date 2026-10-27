@@ -5,7 +5,7 @@
 //! Jobs on it must not panic, because a panic would end the thread for every later test,
 //! so they return their results and the tests assert on the test thread.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 
 use anyhow::Result;
 use audiobatch_test_plugin::Kind;
@@ -23,6 +23,15 @@ pub const MAX_BLOCK: usize = 256;
 
 /// The dispatcher of the shared test UI thread.
 static DISPATCHER: OnceLock<UiDispatcher> = OnceLock::new();
+
+/// Held by tests that read the call log of the recorder plugins,
+/// which is shared by every test thread when the tests run in one process.
+static RECORDER_LOG: Mutex<()> = Mutex::new(());
+
+/// Returns exclusive use of the recorder call log until the guard is dropped.
+pub fn lock_recorder_log() -> MutexGuard<'static, ()> {
+    RECORDER_LOG.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Returns the dispatcher of the shared test UI thread, starting the thread on first use.
 pub fn dispatcher() -> &'static UiDispatcher {

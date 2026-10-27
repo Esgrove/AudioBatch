@@ -518,23 +518,52 @@ mod test_scanner {
             timeout: Duration,
             cancel: bool,
         ) -> ScanReport {
+            let worker = WorkerCommand {
+                program: worker_path(),
+                arguments: vec![OsString::from(WORKER_FLAG)],
+                environment: environment
+                    .iter()
+                    .map(|(name, value)| (OsString::from(name), OsString::from(value)))
+                    .collect(),
+            };
+            self.scan_with_worker(known, worker, timeout, cancel)
+        }
+
+        /// Scans the folder with the given worker command and a timeout.
+        fn scan_with_worker(
+            &self,
+            known: &mut KnownPlugins,
+            worker: WorkerCommand,
+            timeout: Duration,
+            cancel: bool,
+        ) -> ScanReport {
             let lock = ScanLock::try_acquire(&self.directory.path().join("scan.lock"))
                 .expect("lock file")
                 .expect("no other scan");
             let options = ScanOptions {
                 folders: vec![self.folder.clone()],
-                worker: WorkerCommand {
-                    program: worker_path(),
-                    arguments: vec![OsString::from(WORKER_FLAG)],
-                    environment: environment
-                        .iter()
-                        .map(|(name, value)| (OsString::from(name), OsString::from(value)))
-                        .collect(),
-                },
-                worker_log: Some(self.directory.path().join("worker.log")),
+                worker,
+                worker_log: Some(self.log_path()),
                 timeout,
             };
             scan_plugins(&lock, known, &options, &|| cancel, &mut |_| {}).expect("scan runs")
+        }
+
+        /// Scans the folder with a shell script as the worker,
+        /// which reads the request first so the scan can always send it.
+        #[cfg(unix)]
+        fn scan_with_script(&self, known: &mut KnownPlugins, script: &str) -> ScanReport {
+            let worker = WorkerCommand {
+                program: PathBuf::from("/bin/sh"),
+                arguments: vec![OsString::from("-c"), OsString::from(format!("read request\n{script}"))],
+                environment: Vec::new(),
+            };
+            self.scan_with_worker(known, worker, Duration::from_secs(20), false)
+        }
+
+        /// Returns the path of the worker log.
+        fn log_path(&self) -> PathBuf {
+            self.directory.path().join("worker.log")
         }
 
         /// Scans the folder with extra worker environment variables.
@@ -660,6 +689,54 @@ mod test_scanner {
         let report = setup.scan_with(&mut fresh, &[], Duration::from_secs(20), true);
         assert!(report.cancelled);
         assert_eq!(fresh.plugins, Vec::new());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn worker_output_around_the_reply_is_logged_and_ignored() {
+        let setup = Setup::new();
+        let mut known = KnownPlugins::default();
+        let report = setup.scan_with_script(
+            &mut known,
+            r#"printf 'plugin noise\n\377\376 not text\n\n{"plugins": []}\n'
+printf 'AUDIOBATCH-SCAN-REPLY {"plugins": [], "error": "Could not load"}\r\n'
+exec cat > /dev/null"#,
+        );
+        assert_eq!(report.failed, vec![(setup.bundle.clone(), "Could not load".to_owned())]);
+        assert!(report.crashed.is_empty() && known.blacklist.is_empty());
+        let log = std::fs::read_to_string(setup.log_path()).expect("worker log");
+        assert!(log.contains("plugin noise"), "{log}");
+        assert!(log.contains("not text"), "{log}");
+        assert!(log.contains(r#"{"plugins": []}"#), "{log}");
+        assert!(!log.contains("AUDIOBATCH-SCAN-REPLY"), "{log}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_worker_that_exits_without_a_valid_reply_counts_as_a_crash() {
+        for script in [
+            "exit 0",
+            "printf 'loading\\n'",
+            r#"printf 'AUDIOBATCH-SCAN-REPLY {"plugins": [{"name": "Cut'"#,
+            r#"printf 'AUDIOBATCH-SCAN-REPLY {"plugins": 5}\n'"#,
+        ] {
+            let setup = Setup::new();
+            let mut known = KnownPlugins::default();
+            let report = setup.scan_with_script(&mut known, script);
+            assert_eq!(report.crashed, vec![setup.bundle.clone()], "{script}");
+            assert_eq!(known.blacklist, vec![setup.bundle.clone()], "{script}");
+            assert!(known.plugins.is_empty(), "{script}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_reply_at_the_end_of_the_output_without_a_line_break_is_read() {
+        let setup = Setup::new();
+        let mut known = KnownPlugins::default();
+        let report = setup.scan_with_script(&mut known, "printf 'AUDIOBATCH-SCAN-REPLY {}'");
+        assert_eq!(report.no_plugins, vec![setup.bundle.clone()]);
+        assert!(report.crashed.is_empty() && known.blacklist.is_empty());
     }
 
     #[test]
