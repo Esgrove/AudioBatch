@@ -103,23 +103,78 @@ std::expected<std::optional<Enum>, CliParseError> takeNamedOption(
     );
 }
 
-/// Returns an error for the first argument that combines several short options, such as "-rf".
-/// juce::ArgumentList matches a short option by searching for its letter anywhere in the argument,
-/// and removes the whole argument on the first match, so "-rf" would silently set only one of the flags.
-std::expected<void, CliParseError> checkCombinedShortOptions(const juce::ArgumentList& arguments)
+/// Returns the option whose short form is the given letter, among the options of every command.
+const CliOption* findShortOption(const juce::juce_wchar letter)
 {
-    for (const auto& argument : arguments.arguments) {
-        if (argument.isShortOption() && argument.text.length() > 2) {
-            return parseError(
-                CliParseErrorKind::combinedShortOptions,
-                utils::format(
-                    "Combined short options are not supported: {}. Pass each option separately.", argument.text
-                )
-            );
+    const auto matches = [letter](const CliOption& option) {
+        return option.hasShortName() && juce::String(option.shortName).getLastCharacter() == letter;
+    };
+
+    for (const CliOption& option : {std::cref(cli::helpOption), std::cref(cli::versionOption)}) {
+        if (matches(option)) {
+            return &option;
         }
     }
 
-    return {};
+    for (const auto options :
+         {CliOptionList(cli::analysisOptions), CliOptionList(cli::listOptions), CliOptionList(cli::completionOptions)})
+    {
+        for (const CliOption& option : options) {
+            if (matches(option)) {
+                return &option;
+            }
+        }
+    }
+
+    return nullptr;
+}
+
+/// Splits one argument of combined short options, such as "-rf" or "-j4", into separate arguments,
+/// the way common command line parsers, including the one of the Rust CLI, accept them.
+/// A letter of an option that takes a value takes the rest of the argument as its value,
+/// so "-j4" and "-o=json" become "-j 4" and "-o json".
+/// A letter of no option becomes an option of its own, which the parser then reports as unknown.
+juce::StringArray splitCombinedShortOptions(const juce::String& text)
+{
+    juce::StringArray split;
+
+    for (int index = 1; index < text.length(); ++index) {
+        const auto* option = findShortOption(text[index]);
+        if (option == nullptr) {
+            split.add(utils::format("-{}", text.substring(index, index + 1)));
+            continue;
+        }
+
+        split.add(option->shortName);
+
+        if (option->takesValue()) {
+            if (const auto value = text.substring(index + 1).trimCharactersAtStart("="); value.isNotEmpty()) {
+                split.add(value);
+            }
+            break;
+        }
+    }
+
+    return split;
+}
+
+/// Expands every argument of combined short options into separate arguments.
+/// juce::ArgumentList matches a short option by searching for its letter anywhere in the argument,
+/// and removes the whole argument on the first match, so "-rf" would otherwise set only one of the flags.
+/// Negative numbers such as "-14" are values, and stay as they are.
+juce::ArgumentList expandCombinedShortOptions(const juce::ArgumentList& arguments)
+{
+    juce::StringArray texts;
+
+    for (const auto& argument : arguments.arguments) {
+        if (argument.isShortOption() && argument.text.length() > 2 && !isNumericArgument(argument.text)) {
+            texts.addArray(splitCombinedShortOptions(argument.text));
+        } else {
+            texts.add(argument.text);
+        }
+    }
+
+    return {arguments.executableName, texts};
 }
 
 /// Parses the worker count of --jobs.
@@ -313,6 +368,36 @@ std::expected<CliCommand, CliParseError> parseCompletionCommand(juce::ArgumentLi
     return command;
 }
 
+/// Parses the arguments of the help subcommand, which names at most one command to describe.
+std::expected<CliCommand, CliParseError> parseHelpCommand(const juce::ArgumentList& arguments)
+{
+    if (auto remaining = rejectRemainingOptions(arguments); !remaining) {
+        return std::unexpected(std::move(remaining).error());
+    }
+
+    if (arguments.size() > 1) {
+        return parseError(CliParseErrorKind::unexpectedInput, "The help command takes only one command");
+    }
+
+    if (arguments.size() == 0) {
+        return HelpCommand {};
+    }
+
+    const auto subcommand = cli::findSubcommand(arguments);
+    if (subcommand == CliSubcommand::none) {
+        juce::StringArray names;
+        for (const auto* name : cli::helpCommandValues) {
+            names.add(name);
+        }
+        return parseError(
+            CliParseErrorKind::invalidValue,
+            utils::format("Unknown command: {}, expected one of: {}", arguments[0].text, names.joinIntoString(", "))
+        );
+    }
+
+    return HelpCommand {.subcommand = subcommand};
+}
+
 /// Parses the arguments into an analysis run, with the remaining arguments as its input paths.
 /// The plugin listing options are rejected, and --force, --peak, and --lufs need --normalize.
 std::expected<CliCommand, CliParseError> parseAnalyzeCommand(juce::ArgumentList& arguments)
@@ -430,17 +515,40 @@ juce::String usageRow(const CliOption& option)
     return usageRow(flags, option.description);
 }
 
+/// Returns the placeholder of a subcommand's argument, such as "<shell>" or "[command]",
+/// or an empty string when the subcommand takes no argument.
+std::string argumentPlaceholder(const CliSubcommandInfo& subcommand)
+{
+    if (std::string_view(subcommand.argumentName).empty()) {
+        return {};
+    }
+    return subcommand.argumentRequired ? fmt::format("<{}>", subcommand.argumentName)
+                                       : fmt::format("[{}]", subcommand.argumentName);
+}
+
+/// Returns the subcommand followed by its argument placeholder, such as "completion <shell>".
+std::string subcommandWithArgument(const CliSubcommandInfo& subcommand)
+{
+    const auto placeholder = argumentPlaceholder(subcommand);
+    return placeholder.empty() ? std::string(subcommand.name) : fmt::format("{} {}", subcommand.name, placeholder);
+}
+
+/// Returns the usage line of a subcommand, such as "Usage: audiobatch completion <shell> [options]".
+juce::String subcommandUsageLine(const juce::String& executableName, const CliSubcommandInfo& subcommand)
+{
+    return utils::format("Usage: {} {} [options]", executableName, subcommandWithArgument(subcommand));
+}
+
 /// Builds the help text of a subcommand, with its argument and its options.
 juce::StringArray buildSubcommandUsage(const juce::String& executableName, const CliSubcommandInfo& subcommand)
 {
     const bool takesArgument = !std::string_view(subcommand.argumentName).empty();
-    const auto argument = takesArgument ? utils::format(" <{}>", subcommand.argumentName) : juce::String();
 
     juce::StringArray lines {
         utils::format("{} {}", executableName, version::VERSION_INFO),
         subcommand.description,
         "",
-        utils::format("Usage: {} {}{} [options]", executableName, subcommand.name, argument),
+        subcommandUsageLine(executableName, subcommand),
     };
 
     if (takesArgument) {
@@ -452,7 +560,7 @@ juce::StringArray buildSubcommandUsage(const juce::String& executableName, const
         lines.add("");
         lines.add("Arguments:");
         lines.add(usageRow(
-            fmt::format("<{}>", subcommand.argumentName),
+            argumentPlaceholder(subcommand),
             fmt::format("{}: {}", subcommand.argumentDescription, values.joinIntoString(", "))
         ));
     }
@@ -469,6 +577,15 @@ juce::StringArray buildSubcommandUsage(const juce::String& executableName, const
 }
 }  // namespace
 
+/// Returns the usage line of an analysis run or of a subcommand, which an argument error prints with a hint.
+juce::String cli::buildUsageLine(const juce::String& executableName, const CliSubcommand subcommand)
+{
+    if (const auto info = findSubcommandInfo(subcommand); info.has_value()) {
+        return subcommandUsageLine(executableName, *info);
+    }
+    return utils::format("Usage: {} [options] <paths...>", executableName);
+}
+
 /// Builds the help text shown by the CLI executable for an analysis run, or for one of its subcommands.
 juce::String cli::buildUsage(const juce::String& executableName, const CliSubcommand subcommand)
 {
@@ -478,13 +595,10 @@ juce::String cli::buildUsage(const juce::String& executableName, const CliSubcom
         lines = buildSubcommandUsage(executableName, *info);
     } else {
         lines.add(utils::format("{} {}", executableName, version::VERSION_INFO));
-        lines.add(utils::format("Usage: {} [options] <paths...>", executableName));
+        lines.add(buildUsageLine(executableName, subcommand));
 
         for (const auto& command : subcommands) {
-            const auto argument = std::string_view(command.argumentName).empty()
-                ? std::string()
-                : fmt::format(" <{}>", command.argumentName);
-            lines.add(utils::format("       {} {}{} [options]", executableName, command.name, argument));
+            lines.add(utils::format("       {} {} [options]", executableName, subcommandWithArgument(command)));
         }
 
         lines.add("");
@@ -502,8 +616,7 @@ juce::String cli::buildUsage(const juce::String& executableName, const CliSubcom
         }
 
         lines.add("");
-        lines.add("Short options cannot be combined, so pass -r -f instead of -rf.");
-        lines.add(utils::format("Run {} <command> --help for the options of a command.", executableName));
+        lines.add(utils::format("Run {} help <command> for the options of a command.", executableName));
     }
 
     // Lines are joined with juce::newLine outside the format strings,
@@ -546,12 +659,9 @@ juce::String cli::joinArguments(const juce::ArgumentList& arguments)
 /// Parses command-line arguments into a validated analysis, plugin listing, or completion command,
 /// or returns why the arguments were rejected, with the message to show the user.
 /// The help and version flags are handled by the caller before parsing.
-std::expected<CliCommand, CliParseError> cli::parseArguments(juce::ArgumentList arguments)
+std::expected<CliCommand, CliParseError> cli::parseArguments(const juce::ArgumentList& commandLine)
 {
-    if (auto combined = checkCombinedShortOptions(arguments); !combined) {
-        return std::unexpected(std::move(combined).error());
-    }
-
+    auto arguments = expandCombinedShortOptions(commandLine);
     const auto subcommand = findSubcommand(arguments);
 
     if (subcommand != CliSubcommand::none) {
@@ -563,6 +673,8 @@ std::expected<CliCommand, CliParseError> cli::parseArguments(juce::ArgumentList 
             return parseListPluginsCommand(arguments);
         case CliSubcommand::completion:
             return parseCompletionCommand(arguments);
+        case CliSubcommand::help:
+            return parseHelpCommand(arguments);
         case CliSubcommand::none:
             break;
     }

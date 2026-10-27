@@ -82,7 +82,8 @@ int runCliMain(const std::span<char*> argv)
     const auto command = cli::parseArguments(arguments);
 
     // The completion script only prints or writes one file, so like help and version it leaves no log file.
-    const bool writesLog = !command.has_value() || !std::holds_alternative<CompletionCommand>(*command);
+    const bool writesLog = !command.has_value()
+        || !(std::holds_alternative<CompletionCommand>(*command) || std::holds_alternative<HelpCommand>(*command));
     const auto logger = writesLog ? utils::createDefaultLogger(executableName) : nullptr;
     juce::Logger::setCurrentLogger(logger.get());
     utils::installCrashLogging();
@@ -90,9 +91,13 @@ int runCliMain(const std::span<char*> argv)
     utils::setConsoleEcho(false);
 
     if (!command) {
+        // Like the Rust CLI, an argument error goes to stderr with the usage line and a hint,
+        // so stdout stays empty for a pipeline that reads JSON or CSV.
         utils::logError(command.error().message);
         console::printError(command.error().message);
-        fmt::print("\n{}\n", cli::buildUsage(executableName, subcommand));
+        fmt::print(
+            stderr, "\n{}\n\nFor more information, try '--help'.\n", cli::buildUsageLine(executableName, subcommand)
+        );
         return exitCli(1);
     }
 
@@ -103,6 +108,10 @@ int runCliMain(const std::span<char*> argv)
                 [](const ListPluginsCommand& listing) { return cli::runPluginList(listing.rescan, listing.grouping); },
                 [&executableName](const CompletionCommand& completion) {
                     return cli::runCompletion(completion, executableName);
+                },
+                [&executableName](const HelpCommand& help) {
+                    fmt::print("{}\n", cli::buildUsage(executableName, help.subcommand));
+                    return 0;
                 },
                 [](const AnalyzeCommand& analysis) { return cli::runAnalysis(analysis); },
             },

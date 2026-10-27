@@ -73,6 +73,8 @@ struct CliSubcommandInfo {
     const char* argumentName {""};
     /// Description of that argument for the usage text, which lists the accepted values after it.
     const char* argumentDescription {""};
+    /// Whether the argument must be given, which the usage text shows as "<name>" instead of "[name]".
+    bool argumentRequired {true};
     /// Values the shell completions offer for that argument.
     std::span<const char* const> argumentValues;
 };
@@ -266,6 +268,9 @@ inline constexpr std::array listOptions {std::cref(groupByOption), std::cref(res
 /// The options of the completion subcommand.
 inline constexpr std::array completionOptions {std::cref(installOption), std::cref(verboseOption)};
 
+/// The commands the help subcommand describes.
+inline constexpr auto helpCommandValues = std::to_array<const char*>({"list", "completion", "help"});
+
 /// The subcommands, in the order the usage text and the shell completions list them.
 inline constexpr auto subcommands = std::to_array<CliSubcommandInfo>({
     {
@@ -275,6 +280,7 @@ inline constexpr auto subcommands = std::to_array<CliSubcommandInfo>({
         .options = listOptions,
         .argumentName = "",
         .argumentDescription = "",
+        .argumentRequired = false,
         .argumentValues = {},
     },
     {
@@ -284,7 +290,18 @@ inline constexpr auto subcommands = std::to_array<CliSubcommandInfo>({
         .options = completionOptions,
         .argumentName = "shell",
         .argumentDescription = "Shell to generate the script for",
+        .argumentRequired = true,
         .argumentValues = completionShellValues,
+    },
+    {
+        .subcommand = CliSubcommand::help,
+        .name = "help",
+        .description = "Print this message or the help of the given command",
+        .options = {},
+        .argumentName = "command",
+        .argumentDescription = "Command to print the help of",
+        .argumentRequired = false,
+        .argumentValues = helpCommandValues,
     },
 });
 }  // namespace cli

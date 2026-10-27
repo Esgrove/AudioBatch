@@ -44,12 +44,12 @@ enum class CliSubcommand : std::uint8_t {
     list,
     /// Prints or installs a shell completion script.
     completion,
+    /// Prints the usage text of the CLI or of the command it names.
+    help,
 };
 
 /// Why a command line was rejected, which callers and tests can check without matching the message text.
 enum class CliParseErrorKind : std::uint8_t {
-    /// Several short options in one argument, such as "-rf".
-    combinedShortOptions,
     /// An option that the command does not take.
     unknownOption,
     /// An option value that is not one of the accepted names, or not a number.
@@ -108,6 +108,12 @@ struct CompletionCommand {
     bool verbose {false};
 };
 
+/// A usage text request parsed from the command line, selected by the help subcommand.
+struct HelpCommand {
+    /// The command to describe, or none for the usage text of the analysis run.
+    CliSubcommand subcommand {CliSubcommand::none};
+};
+
 /// A rejected command line.
 struct CliParseError {
     /// The rule the arguments broke.
@@ -117,11 +123,12 @@ struct CliParseError {
 };
 
 /// The command a CLI invocation runs.
-using CliCommand = std::variant<AnalyzeCommand, ListPluginsCommand, CompletionCommand>;
+using CliCommand = std::variant<AnalyzeCommand, ListPluginsCommand, CompletionCommand, HelpCommand>;
 
 namespace cli
 {
 juce::String buildUsage(const juce::String& executableName, CliSubcommand subcommand = CliSubcommand::none);
+juce::String buildUsageLine(const juce::String& executableName, CliSubcommand subcommand = CliSubcommand::none);
 juce::String joinArguments(const juce::ArgumentList& arguments);
 
 [[nodiscard]] CliSubcommand findSubcommand(const juce::ArgumentList& arguments);
@@ -131,7 +138,7 @@ juce::StringArray findSkippedInputs(
     const std::vector<AudioAnalysisRecord>& results
 );
 
-[[nodiscard]] std::expected<CliCommand, CliParseError> parseArguments(juce::ArgumentList arguments);
+[[nodiscard]] std::expected<CliCommand, CliParseError> parseArguments(const juce::ArgumentList& commandLine);
 
 [[nodiscard]] int runAnalysis(const AnalyzeCommand& command);
 }  // namespace cli
