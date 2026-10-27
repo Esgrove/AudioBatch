@@ -62,9 +62,6 @@ The differences below are in the GUIs and in plugin hosting.
 - Audio Unit plugins on macOS. The Rust version hosts VST3 plugins only, on macOS and Windows.
 - A context menu in the results table for normalizing, processing, re-analyzing, revealing, and removing files.
 - A collapsible controls row, and the number keys 1 to 8 for jumping to Serato hot cues.
-- Opening the audio device only while playing.
-  The Rust version opens the device when the window opens and keeps it open.
-
 ### Features only in the Rust version
 
 - Processing all analyzed files through the plugin chain from the Plugins menu, after a confirmation.

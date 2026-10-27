@@ -267,13 +267,17 @@ impl AppView {
     }
 
     /// Polls player events, reporting errors and refreshing the Play/Stop button when playback ends.
-    /// It also renders again when the output text of the status bar changes,
+    /// It also closes the output device once playback has stopped,
+    /// and renders again when the output text of the status bar changes,
     /// for example when the first audio callback reports the buffer size.
     pub(super) fn spawn_player_poll(cx: &Context<Self>) -> Task<()> {
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(PLAYER_POLL_INTERVAL).await;
                 let alive = this.update(cx, |view, cx| {
+                    if let Some(player) = view.player.as_mut() {
+                        player.close_idle_stream();
+                    }
                     let events = view.player.as_ref().map(Player::poll_events).unwrap_or_default();
                     for event in events {
                         if crate::debug_enabled() {

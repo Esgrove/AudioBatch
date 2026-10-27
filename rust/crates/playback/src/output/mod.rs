@@ -127,6 +127,11 @@ impl OutputRenderer {
         }
     }
 
+    /// Makes the insert changes the player sent, without rendering.
+    pub fn apply_insert_changes(&mut self) {
+        self.insert.apply_changes(&self.shared);
+    }
+
     /// Fills an interleaved device buffer, converting each sample with `convert`.
     /// Outputs silence while paused, before the first frame of the current generation arrives, and after the end.
     /// Stale frames are dropped while paused too, so a paused seek leaves room for the new position.

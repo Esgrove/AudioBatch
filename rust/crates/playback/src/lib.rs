@@ -8,6 +8,10 @@
 //! The engine knows nothing about plugins, only the trait.
 //!
 //! `Player` must stay on the thread that created it, because the cpal stream is not `Send` on every platform.
+//!
+//! Like the C++ application, the output device is open only while playing:
+//! playing opens the stream, and `close_idle_stream` closes it once playback has stopped for a moment.
+//! Changing the file while playing keeps it open.
 
 mod device;
 mod engine;
@@ -16,9 +20,10 @@ mod pipeline;
 mod preview_insert;
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -46,6 +51,10 @@ const BUFFER_SECONDS: f64 = 0.5;
 /// Output stream errors kept until the next poll. Later errors are dropped when it is full.
 const STREAM_ERROR_CAPACITY: usize = 8;
 
+/// How long playback stays stopped before `close_idle_stream` closes the output stream,
+/// long enough for the fade of a pause to finish playing.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_millis(300);
+
 /// Read-only view of the playback position, cheap to clone and safe to read from any thread.
 ///
 /// The GUI reads it on every animation frame to draw the playhead without borrowing the player.
@@ -59,10 +68,23 @@ pub struct Player {
     shared: Arc<SharedState>,
     commands: Sender<Command>,
     events: Receiver<PlayerEvent>,
+    /// Reports a stream that could not be opened, the same way the decode thread reports its errors.
+    event_sender: Sender<PlayerEvent>,
     /// Errors from the stream error callback, formatted on the GUI thread instead of the audio thread.
     stream_errors: Receiver<cpal::Error>,
+    stream_error_sender: Sender<cpal::Error>,
     decode_thread: Option<JoinHandle<()>>,
-    _stream: Stream,
+    /// The renderer every stream of this player calls.
+    /// The audio callback only tries the lock, and a stream that misses it outputs silence,
+    /// so the player can make insert changes itself while no stream runs.
+    renderer: Arc<Mutex<OutputRenderer>>,
+    /// The open output stream, only while playing and shortly after.
+    stream: Option<Stream>,
+    /// When playback was first seen stopped with the stream open.
+    idle_since: Option<Instant>,
+    device: Device,
+    config: StreamConfig,
+    sample_format: SampleFormat,
     device_name: String,
     output_rate: u32,
     /// Buffer size in frames the stream was opened with, or `None` for the device default.
@@ -108,12 +130,11 @@ impl PlayheadHandle {
 }
 
 impl Player {
-    /// Opens the named output device, or the default one, and starts its stream.
-    /// The stream outputs silence until a file is loaded and played.
+    /// Chooses the named output device, or the default one, without opening it yet.
     ///
     /// # Errors
     ///
-    /// Returns an error when no output device is available or its stream cannot be started.
+    /// Returns an error when no output device is available.
     pub fn new(device_name: Option<&str>) -> Result<Self> {
         Self::with_config(&OutputConfig {
             device: device_name.map(str::to_string),
@@ -121,13 +142,12 @@ impl Player {
         })
     }
 
-    /// Opens an output device with a chosen sample rate and buffer size, and starts its stream.
+    /// Chooses an output device with a sample rate and buffer size, without opening it yet.
     /// Values the config leaves unset use the device defaults.
     ///
     /// # Errors
     ///
-    /// Returns an error when the device is not available, does not support the sample rate,
-    /// or its stream cannot be started.
+    /// Returns an error when the device is not available or does not support the sample rate.
     pub fn with_config(output: &OutputConfig) -> Result<Self> {
         let device = find_device(output.device.as_deref())?;
         let (config, sample_format) = stream_config(&device, output)?;
@@ -149,19 +169,14 @@ impl Player {
         let renderer = OutputRenderer::new(Arc::clone(&shared), consumer, device_format, insert_renderer);
         let (event_sender, events) = unbounded();
         let (stream_error_sender, stream_errors) = bounded(STREAM_ERROR_CAPACITY);
-        let errors = StreamErrors {
-            shared: Arc::clone(&shared),
-            sender: stream_error_sender,
-        };
-        let stream = build_stream(&device, &config, sample_format, renderer, errors)?;
-        stream.play().context("Could not start the output stream")?;
 
         let (commands, command_receiver) = unbounded();
         let thread_shared = Arc::clone(&shared);
+        let thread_events = event_sender.clone();
         let decode_thread = std::thread::Builder::new()
             .name(String::from("preview-decode"))
             .spawn(move || {
-                run_decode_thread(producer, &command_receiver, &event_sender, &thread_shared, output_rate);
+                run_decode_thread(producer, &command_receiver, &thread_events, &thread_shared, output_rate);
             })
             .context("Could not start the decode thread")?;
 
@@ -169,10 +184,17 @@ impl Player {
             shared,
             commands,
             events,
+            event_sender,
             stream_errors,
+            stream_error_sender,
             decode_thread: Some(decode_thread),
-            _stream: stream,
+            renderer: Arc::new(Mutex::new(renderer)),
+            stream: None,
+            idle_since: None,
             device_name: device_display_name(&device),
+            device,
+            config,
+            sample_format,
             output_rate,
             buffer_size,
             next_generation: NO_GENERATION,
@@ -226,6 +248,9 @@ impl Player {
             generation,
             start_seconds,
         });
+        if play {
+            self.ensure_stream();
+        }
     }
 
     /// Closes the current file and stops playback.
@@ -254,6 +279,29 @@ impl Player {
             self.seek(0.0);
         }
         self.shared.playing.store(true, Ordering::Relaxed);
+        self.ensure_stream();
+    }
+
+    /// Returns true while the output stream is open.
+    #[must_use]
+    pub const fn is_stream_open(&self) -> bool {
+        self.stream.is_some()
+    }
+
+    /// Closes the output stream once playback has been stopped for a moment,
+    /// so the device is free for other applications. Call it regularly from the owner's thread.
+    /// A stream that stopped because its device went away is closed this way too, and the next play opens it again.
+    pub fn close_idle_stream(&mut self) {
+        if self.stream.is_none() || self.is_playing() {
+            self.idle_since = None;
+            return;
+        }
+        let idle_since = *self.idle_since.get_or_insert_with(Instant::now);
+        if idle_since.elapsed() >= STREAM_IDLE_TIMEOUT {
+            self.stream = None;
+            self.idle_since = None;
+            self.apply_insert_changes_without_stream();
+        }
     }
 
     /// Pauses playback at the current position.
@@ -353,7 +401,9 @@ impl Player {
     ///
     /// Returns an error when the audio callback is not taking changes, because the stream is not running.
     pub fn set_insert(&mut self, insert: Option<Box<dyn PreviewInsert>>) -> Result<()> {
-        self.insert.set(insert)
+        self.insert.set(insert)?;
+        self.apply_insert_changes_without_stream();
+        Ok(())
     }
 
     /// Returns the inserts the audio callback replaced since the last call,
@@ -413,6 +463,50 @@ impl Player {
             .unwrap_or_default()
     }
 
+    /// Opens and starts the output stream unless it is open.
+    /// A failure stops playback and is reported as an error event.
+    fn ensure_stream(&mut self) {
+        self.idle_since = None;
+        if self.stream.is_some() {
+            return;
+        }
+        let errors = StreamErrors {
+            shared: Arc::clone(&self.shared),
+            sender: self.stream_error_sender.clone(),
+        };
+        let opened = build_stream(
+            &self.device,
+            &self.config,
+            self.sample_format,
+            Arc::clone(&self.renderer),
+            errors,
+        )
+        .and_then(|stream| {
+            stream.play().context("Could not start the output stream")?;
+            Ok(stream)
+        });
+        match opened {
+            Ok(stream) => self.stream = Some(stream),
+            Err(error) => {
+                self.shared.playing.store(false, Ordering::Relaxed);
+                let _ = self.event_sender.send(PlayerEvent::Error {
+                    path: None,
+                    message: format!("{error:#}"),
+                });
+            }
+        }
+    }
+
+    /// Makes the queued insert changes on this thread while no stream calls the renderer,
+    /// so a detached insert comes back at once instead of waiting for a stream that is not running.
+    fn apply_insert_changes_without_stream(&self) {
+        if self.stream.is_none()
+            && let Ok(mut renderer) = self.renderer.lock()
+        {
+            renderer.apply_insert_changes();
+        }
+    }
+
     /// Makes a new generation current, so the callback drops every frame of the previous one.
     fn advance_generation(&mut self) -> u32 {
         self.next_generation = self.next_generation.wrapping_add(1);
@@ -438,7 +532,7 @@ fn build_stream(
     device: &Device,
     config: &StreamConfig,
     sample_format: SampleFormat,
-    renderer: OutputRenderer,
+    renderer: Arc<Mutex<OutputRenderer>>,
     errors: StreamErrors,
 ) -> Result<Stream> {
     match sample_format {
@@ -455,7 +549,7 @@ fn build_stream(
 fn build_typed_stream<T>(
     device: &Device,
     config: &StreamConfig,
-    mut renderer: OutputRenderer,
+    renderer: Arc<Mutex<OutputRenderer>>,
     errors: StreamErrors,
 ) -> Result<Stream>
 where
@@ -464,7 +558,14 @@ where
     device
         .build_output_stream(
             *config,
-            move |output: &mut [T], _| renderer.render(output, T::from_sample),
+            move |output: &mut [T], _| {
+                // Only a closing stream or the player while no stream runs holds the lock, so it is never waited on.
+                if let Ok(mut renderer) = renderer.try_lock() {
+                    renderer.render(output, T::from_sample);
+                } else {
+                    output.fill(T::from_sample(0.0));
+                }
+            },
             move |error: cpal::Error| {
                 if matches!(
                     error.kind(),
