@@ -1,1 +1,16 @@
-//! Placeholder.
+//! The VST3 plugin features of `AudioBatch`: scanning, plugin chains, offline processing, and the live preview chain.
+//!
+//! Plugin hosting itself is in the `vst3-host` crate, so this crate contains no unsafe code.
+//! Scans load plugins only in a separate worker process, so a crashing plugin cannot take the application down.
+
+pub mod library;
+mod scan_protocol;
+pub mod scan_worker;
+pub mod scanner;
+
+pub use library::{FORMAT_NAME, KnownPlugins, PluginDataPaths, PluginDescription};
+pub use scan_protocol::WORKER_FLAG;
+pub use scan_worker::{is_scan_worker_invocation, run_scan_worker};
+pub use scanner::{
+    SCAN_BUSY_MESSAGE, SCAN_TIMEOUT, ScanLock, ScanOptions, ScanProgress, ScanReport, WorkerCommand, scan_plugins,
+};
