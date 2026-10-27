@@ -135,6 +135,9 @@ pub struct ResultsDelegate {
     /// Keys of the columns in display order, matching `columns`.
     order: Vec<ColumnKey>,
     sort: Option<(ColumnKey, ColumnSort)>,
+    /// File the app has selected.
+    /// The table keeps its selection by index, so a sort from the header selects this file's row again.
+    selected: Option<PathBuf>,
     /// Width the Status column fills, which `fit_column` hands to the table.
     status_fill_width: Pixels,
 }
@@ -307,6 +310,7 @@ impl ResultsDelegate {
             columns,
             order: COLUMNS.iter().map(|spec| spec.key).collect(),
             sort: None,
+            selected: None,
             status_fill_width: px(STATUS_MINIMUM_WIDTH),
         }
     }
@@ -417,8 +421,9 @@ impl ResultsDelegate {
     }
 
     /// Replaces the row of a normalized source with the output record and an optional message.
-    /// A converted source leaves the list, since the output is a new file next to it,
-    /// and the rows are sorted again because the output may sort elsewhere.
+    /// A converted source leaves the list, since the output is a new file next to it.
+    /// The output may belong elsewhere in the order,
+    /// so the caller sorts the rows once after applying a batch of results.
     pub fn replace_after_normalization(&mut self, source: &Path, output: AnalysisRecord, message: Option<RowMessage>) {
         let output_path = output.path.clone();
         if output_path != source {
@@ -431,9 +436,9 @@ impl ResultsDelegate {
         } else {
             let mut row = ResultRow::from_record(output);
             row.message = message;
+            self.index.insert(output_path, self.rows.len());
             self.rows.push(row);
         }
-        self.sort_rows();
     }
 
     /// Stores the result of a file, adding a row when the file is not listed yet.
@@ -493,6 +498,21 @@ impl ResultsDelegate {
         if let Some(row) = self.rows.get_mut(index) {
             update(row);
         }
+    }
+
+    /// Ends the waiting and analyzing states of rows with a result, after their run was replaced.
+    /// Rows without a result stay waiting for the scan that lists them again.
+    pub fn finish_interrupted_rows(&mut self) {
+        for row in &mut self.rows {
+            if matches!(row.state, RowState::Pending | RowState::Analyzing(_)) && row.record.is_some() {
+                row.state = RowState::Done;
+            }
+        }
+    }
+
+    /// Remembers the file the app has selected, so a sort from the header can select its row again.
+    pub fn set_selected_path(&mut self, path: Option<PathBuf>) {
+        self.selected = path;
     }
 
     /// Removes every row.
@@ -602,11 +622,19 @@ impl TableDelegate for ResultsDelegate {
         &mut self,
         column_index: usize,
         sort: ColumnSort,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) {
         self.sort = self.order.get(column_index).map(|&key| (key, sort));
         self.sort_rows();
+        // The table calls this while it is being updated, so its selection can only move afterwards.
+        if let Some(index) = self.selected.as_deref().and_then(|path| self.index_of(path)) {
+            cx.defer_in(window, move |state, _window, cx| {
+                if state.selected_row() != Some(index) {
+                    state.set_selected_row(index, cx);
+                }
+            });
+        }
         cx.notify();
     }
 
@@ -1005,7 +1033,26 @@ mod test_normalization_rows {
         assert!(delegate.row_for(Path::new("/a.wav")).is_none());
         let output = delegate.row_for(Path::new("/a.aif")).expect("output row");
         assert_eq!(output.state, RowState::Done);
+        assert_eq!(delegate.index_of(Path::new("/a.aif")), Some(1));
+        delegate.sort_rows();
         assert_eq!(delegate.index_of(Path::new("/a.aif")), Some(0));
+    }
+
+    #[test]
+    fn interrupted_rows_with_a_result_are_done_again() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav"]);
+        delegate.mark_pending(Path::new("/a.wav"));
+        delegate.mark_started(Path::new("/b.wav"));
+        delegate.set_files(&[
+            PathBuf::from("/a.wav"),
+            PathBuf::from("/b.wav"),
+            PathBuf::from("/c.wav"),
+        ]);
+        delegate.finish_interrupted_rows();
+        let state = |path: &str| delegate.row_for(Path::new(path)).map(|row| row.state);
+        assert_eq!(state("/a.wav"), Some(RowState::Done));
+        assert_eq!(state("/b.wav"), Some(RowState::Done));
+        assert_eq!(state("/c.wav"), Some(RowState::Pending));
     }
 
     #[test]

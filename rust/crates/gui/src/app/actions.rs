@@ -128,7 +128,7 @@ impl AppView {
         }
         self.cancel_normalization();
         self.analysis_task = None;
-        self.demo_task = None;
+        let was_demo = self.demo_task.take().is_some();
         self.roots.clear();
         self.excluded.clear();
         self.run = None;
@@ -137,6 +137,9 @@ impl AppView {
             state.delegate_mut().clear();
             cx.notify();
         });
+        if was_demo {
+            self.connect_playhead(cx);
+        }
         self.status = SharedString::default();
         cx.notify();
     }

@@ -27,7 +27,8 @@ pub fn schedule(window: AnyWindowHandle, cx: &App) {
     let delay = std::env::var("AUDIOBATCH_GUI_SNAPSHOT_DELAY")
         .ok()
         .and_then(|seconds| seconds.parse::<f64>().ok())
-        .map_or(DEFAULT_DELAY, Duration::from_secs_f64);
+        .and_then(|seconds| Duration::try_from_secs_f64(seconds).ok())
+        .unwrap_or(DEFAULT_DELAY);
     let actions: Vec<String> = std::env::var("AUDIOBATCH_GUI_SNAPSHOT_ACTIONS")
         .map(|names| names.split(',').map(|name| name.trim().to_string()).collect())
         .unwrap_or_default();

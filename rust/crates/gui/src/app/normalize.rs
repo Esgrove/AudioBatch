@@ -33,11 +33,12 @@ impl AppView {
     }
 
     /// Returns true when the selected file can be normalized now.
+    /// It runs on every render, so it leaves checking that the file still exists to `normalize_selected`.
     pub(super) fn can_normalize_selected(&self, cx: &Context<Self>) -> bool {
         !self.is_demo()
             && self.normalize_coordinator.is_some()
             && self.normalization_blocked_reason().is_none()
-            && self.selected_record(cx).is_some_and(|record| record.path.is_file())
+            && self.selected_record(cx).is_some()
     }
 
     /// Shows that the list cannot change while files are being normalized.
@@ -56,6 +57,11 @@ impl AppView {
         let records: Vec<AnalysisRecord> = self.selected_record(cx).cloned().into_iter().collect();
         if records.is_empty() {
             self.status = SharedString::from("Select an analyzed file to normalize");
+            cx.notify();
+            return;
+        }
+        if records.iter().any(|record| !record.path.is_file()) {
+            self.status = SharedString::from("The selected file no longer exists");
             cx.notify();
             return;
         }
@@ -216,6 +222,7 @@ impl AppView {
             return;
         };
         let mut completed = false;
+        let mut replaced = false;
         for event in events.into_iter().filter(|event| event.run_id() == run_id) {
             match event {
                 NormalizeEvent::Started { path, .. } => self.mark_normalizing(&path, 0.0, cx),
@@ -225,9 +232,18 @@ impl AppView {
                         run.record(&result);
                     }
                     self.apply_normalization_result(*result, cx);
+                    replaced = true;
                 }
                 NormalizeEvent::Completed { .. } => completed = true,
             }
+        }
+        // Sorting once per batch keeps normalizing a long list from sorting it again for every file.
+        if replaced {
+            self.table.update(cx, |state, cx| {
+                state.delegate_mut().sort_rows();
+                cx.notify();
+            });
+            self.restore_selection(cx);
         }
         if let Some(run) = &mut self.normalize_run {
             run.completed |= completed;
@@ -254,6 +270,7 @@ impl AppView {
 
     /// Replaces the row of a normalized source with its result,
     /// and moves the selection and the listed roots over to a converted output.
+    /// The caller sorts the rows and restores the selection after the batch.
     fn apply_normalization_result(&mut self, result: NormalizationResult, cx: &mut Context<Self>) {
         let source = result.source;
         let output_path = match &result.outcome {
@@ -280,6 +297,7 @@ impl AppView {
             cx.notify();
         });
         if let Some(output_path) = output_path {
+            self.excluded.remove(&output_path);
             for root in &mut self.roots {
                 if *root == source {
                     root.clone_from(&output_path);
@@ -292,7 +310,6 @@ impl AppView {
         } else if self.selected.as_deref() == Some(source.as_path()) {
             self.refresh_selected_waveform(cx);
         }
-        self.restore_selection(cx);
     }
 
     /// Reports the end of a run: the log line, and a dialog listing the failures.
