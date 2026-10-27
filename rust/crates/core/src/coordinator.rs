@@ -8,6 +8,7 @@
 //! Starting a new run or calling `cancel` invalidates the previous run id,
 //! and jobs of an invalidated run stop early and publish nothing more.
 
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -19,7 +20,7 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 use crate::analysis::analyze_file;
 use crate::cache::AnalysisCache;
 use crate::discovery::collect_input_files;
-use crate::record::{AnalysisOptions, AnalysisRecord};
+use crate::record::{AnalysisError, AnalysisOptions, AnalysisRecord, AnalysisStatus};
 
 /// Smallest progress step that is published, so the receiver is not flooded with events.
 const PROGRESS_STEP: f32 = 0.02;
@@ -251,7 +252,18 @@ fn analyze_stale_file(path: &Path, context: &RunContext, pending: &AtomicUsize, 
             });
         }
     };
-    let mut record = analyze_file(path, &|| context.is_cancelled(), &mut on_progress);
+    // A panic in a decoder on a malformed file fails only this file,
+    // since a panic in a pool job would otherwise abort the whole process.
+    let mut record = catch_unwind(AssertUnwindSafe(|| {
+        analyze_file(path, &|| context.is_cancelled(), &mut on_progress)
+    }))
+    .unwrap_or_else(|_| {
+        let mut record = AnalysisRecord::from_path(path);
+        record.status = AnalysisStatus::Failed;
+        record.error = Some(AnalysisError::Panicked);
+        record.error_message = "Analysis failed unexpectedly".to_string();
+        record
+    });
     if context.is_cancelled() {
         return;
     }
