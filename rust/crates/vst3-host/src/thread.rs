@@ -162,12 +162,15 @@ impl UiDispatcher {
         let result = Arc::new(ArrayQueue::new(1));
         let job_state = Arc::clone(&state);
         let job_result = Arc::clone(&result);
+        // The waiting thread is woken as soon as the result is in, instead of at its next poll.
+        let caller = thread::current();
         let posted = self.post(move |ui| {
             if job_state
                 .compare_exchange(CALL_PENDING, CALL_STARTED, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
                 let _ = job_result.push(job(ui));
+                caller.unpark();
             }
         });
         if !posted {
