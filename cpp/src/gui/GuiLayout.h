@@ -165,6 +165,15 @@ constexpr float rowCornerRadius {4.0f};
 constexpr int presetRowHeight {28};
 constexpr int presetLabelWidth {52};
 constexpr int presetButtonWidth {84};
+/// Initial size of the generic parameter editor shown for plugins without a custom editor.
+constexpr int genericEditorWidth {450};
+constexpr int genericEditorHeight {600};
+/// Initial size of the plugin chain editor window.
+constexpr int chainWindowWidth {560};
+constexpr int chainWindowHeight {420};
+/// Initial size of the plugin manager window that lists and scans plugins.
+constexpr int managerWindowWidth {720};
+constexpr int managerWindowHeight {520};
 }  // namespace pluginEditor
 
 /// Device and preview preferences share one scrollable dialog without changing unrelated dialogs.
@@ -186,6 +195,8 @@ constexpr int preferencesHeight {padding * 2 + headingHeight + rowHeight * prefe
 /// Waveform overlays retain fixed logical sizes independently of channel and zoom geometry.
 namespace waveform
 {
+/// Inset of the waveform, the loudness axis, and the cue arrows from the edges of the component.
+constexpr int contentInset {2};
 constexpr float cornerRadius {information::cornerRadius};
 constexpr float cueArrowHeight {8.0f};
 constexpr float cueArrowOutlineWidth {1.5f};
@@ -254,9 +265,17 @@ constexpr float tooltipFontHeight {13.0f};
 constexpr int tooltipMaximumWidth {400};
 }  // namespace theme
 
-/// Initial, minimum, and maximum results-table column widths.
+/// Initial, minimum, and maximum results-table column widths, and the insets of the cell contents.
 namespace table
 {
+/// Horizontal inset of the cell text from both edges of its cell.
+constexpr int cellTextInset {4};
+/// Largest activity indicator in the status column, and the room it leaves above and below it together.
+constexpr int activityIndicatorMaximumSize {14};
+constexpr int activityIndicatorVerticalRoom {8};
+/// Gap between the activity indicator and the activity label.
+constexpr int activityIndicatorSpacing {8};
+
 constexpr int nameColumnMinimumWidth {110};
 constexpr int pathColumnMinimumWidth {140};
 constexpr int typeColumnMinimumWidth {60};

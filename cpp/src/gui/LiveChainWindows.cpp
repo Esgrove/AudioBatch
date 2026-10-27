@@ -5,6 +5,7 @@
 
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/components/PluginChainEditor.h"
+#include "gui/GuiLayout.h"
 #include "gui/LiveChain.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
@@ -19,24 +20,6 @@ constexpr int scanMenuItemId {3};
 /// First id of the presets submenu in the chain popup menu, which uses the ids from it upwards.
 /// The Add Plugin submenu ids of juce::KnownPluginList start far above any preset count.
 constexpr int presetsMenuFirstItemId {10};
-
-/// Initial width of the generic parameter editor shown for plugins without a custom editor.
-constexpr int genericEditorWidth {450};
-
-/// Initial height of the generic parameter editor shown for plugins without a custom editor.
-constexpr int genericEditorHeight {600};
-
-/// Initial width of the plugin chain editor window.
-constexpr int chainEditorWidth {560};
-
-/// Initial height of the plugin chain editor window.
-constexpr int chainEditorHeight {420};
-
-/// Initial width of the plugin manager window that lists and scans plugins.
-constexpr int pluginManagerWidth {720};
-
-/// Initial height of the plugin manager window that lists and scans plugins.
-constexpr int pluginManagerHeight {520};
 }  // namespace
 
 /// Pops up the plugin menu anchored to the given component.
@@ -154,7 +137,7 @@ void LiveChain::openEditorForSlot(const PluginSlotId slotId)
     if (editor == nullptr) {
         // No custom editor. Fall back to the generic parameter editor.
         editor = std::make_unique<juce::GenericAudioProcessorEditor>(*entry.instance);
-        editor->setSize(genericEditorWidth, genericEditorHeight);
+        editor->setSize(layout::pluginEditor::genericEditorWidth, layout::pluginEditor::genericEditorHeight);
     }
 
     juce::DialogWindow::LaunchOptions launchOptions;
@@ -191,7 +174,7 @@ void LiveChain::showChainEditor()
     }
 
     auto editor = std::make_unique<PluginChainEditor>(*this);
-    editor->setSize(chainEditorWidth, chainEditorHeight);
+    editor->setSize(layout::pluginEditor::chainWindowWidth, layout::pluginEditor::chainWindowHeight);
 
     juce::DialogWindow::LaunchOptions launchOptions;
     launchOptions.dialogTitle = "Plugin Chain";
@@ -222,7 +205,7 @@ void LiveChain::showScanWindow()
     }
 
     auto listComponent = library.createScanComponent();
-    listComponent->setSize(pluginManagerWidth, pluginManagerHeight);
+    listComponent->setSize(layout::pluginEditor::managerWindowWidth, layout::pluginEditor::managerWindowHeight);
 
     juce::DialogWindow::LaunchOptions launchOptions;
     launchOptions.dialogTitle = "Plugin Manager";

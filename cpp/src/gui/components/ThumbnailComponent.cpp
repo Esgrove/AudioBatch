@@ -29,6 +29,10 @@ constexpr float positionMarkerAlpha {0.85f};
 /// Fraction of the visible range scrolled per unit of horizontal mouse wheel movement.
 constexpr double horizontalScrollStepRatio {0.10};
 
+/// The vertical mouse wheel zooms by wheelZoomBase raised to the wheel movement times wheelZoomMovementScale.
+constexpr double wheelZoomBase {1.2};
+constexpr double wheelZoomMovementScale {8.0};
+
 /// Fraction of the total length near the start of the file within which zooming always anchors at the playhead.
 constexpr double zoomStartAnchorRatio {0.05};
 
@@ -401,7 +405,7 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
     }
 
     if (std::abs(wheel.deltaY) > 0.0f && mouseWheelZoomCallback) {
-        const auto zoomFactor = std::pow(1.2, static_cast<double>(wheel.deltaY) * 8.0);
+        const auto zoomFactor = std::pow(wheelZoomBase, static_cast<double>(wheel.deltaY) * wheelZoomMovementScale);
         mouseWheelZoomCallback(zoomFactor);
         return;
     }
@@ -446,7 +450,7 @@ double ThumbnailComponent::xToTime(const float xPosition) const
 /// Returns the inset rectangle shared by waveform painting, cursor projection and scrubbing.
 juce::Rectangle<int> ThumbnailComponent::waveformBounds() const
 {
-    auto bounds = getLocalBounds().reduced(2);
+    auto bounds = getLocalBounds().reduced(layout::waveform::contentInset);
     if (loudnessGraphEnabled && thumbnail->getTotalLength() > 0.0) {
         bounds.removeFromLeft(
             std::min(
@@ -504,7 +508,7 @@ void ThumbnailComponent::drawLoudnessAxis(juce::Graphics& graphics, const juce::
 {
     const auto plot = bounds.toFloat();
     graphics.setFont(CustomLookAndFeel::getTextFont().withHeight(layout::waveform::loudnessFontHeight));
-    auto gutter = getLocalBounds().reduced(2);
+    auto gutter = getLocalBounds().reduced(layout::waveform::contentInset);
     gutter.setRight(std::max(gutter.getX(), bounds.getX() - layout::waveform::loudnessAxisGap));
     const auto interval = layout::waveform::loudnessTickInterval(
         juce::roundToInt(loudnessMinimum), juce::roundToInt(loudnessMaximum), bounds.getHeight()
