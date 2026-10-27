@@ -59,7 +59,7 @@ public:
     [[nodiscard]] bool storeCustomGain(const juce::File& file, std::optional<Decibels> customGain);
     [[nodiscard]] bool storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData);
 
-    void withDatabase(const std::function<void(sqlite3& database)>& function);
+    void withDatabase(const std::function<void(sqlite3& database, sqlite::StatementCache& statements)>& function);
 
 private:
     [[nodiscard]] bool addMissingColumns() const;
@@ -71,7 +71,7 @@ private:
         std::int64_t fileSize,
         std::int64_t modifiedTimeMs,
         std::optional<std::int64_t> tagKind = std::nullopt
-    ) const;
+    );
 
     void closeUnlocked();
 
@@ -83,7 +83,12 @@ private:
 
     /// Serializes every use of the connection, which is opened without SQLite's own mutex.
     juce::CriticalSection mutex;
+    /// The SQLite database file of the cache.
     juce::File databaseFile;
+    /// The open connection, or null until open succeeds and after the cache closed it.
     sqlite::Database database;
+    /// The prepared statements of the connection, cleared before the connection closes.
+    /// Declared after it, so they are also finalized first when the cache is destroyed.
+    sqlite::StatementCache statements;
 };
 }  // namespace audiobatch

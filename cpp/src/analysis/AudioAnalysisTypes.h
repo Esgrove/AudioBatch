@@ -159,14 +159,16 @@ struct AudioAnalysisRecord {
     }
 
     /// Builds a baseline record from filesystem metadata before analysis begins.
+    /// A missing file gets a size and modification time of zero,
+    /// which JUCE reports for it without a separate existence check.
     static AudioAnalysisRecord fromFile(const juce::File& file)
     {
         AudioAnalysisRecord record;
         record.file = file;
         record.fileName = file.getFileName();
         record.fullPath = file.getFullPathName();
-        record.fileSize = file.exists() ? file.getSize() : 0;
-        record.modifiedTimeMs = file.exists() ? file.getLastModificationTime().toMilliseconds() : 0;
+        record.fileSize = file.getSize();
+        record.modifiedTimeMs = file.getLastModificationTime().toMilliseconds();
         return record;
     }
 };

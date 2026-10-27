@@ -75,6 +75,7 @@ void AnalysisCache::closeUnlocked()
     const auto startedAtMs = juce::Time::getMillisecondCounterHiRes();
     const auto databasePath = databaseFile.getFullPathName();
 
+    statements.clear();
     database.reset();
 
     utils::logDebug(

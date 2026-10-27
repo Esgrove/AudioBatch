@@ -145,18 +145,20 @@ std::optional<AudioAnalysisStatus> statusFromColumn(const int value)
 }
 }  // namespace
 
-/// Runs the function with the open database connection while holding the cache lock,
+/// Runs the function with the open database connection and its prepared statements while holding the cache lock,
 /// so code that keeps its own tables in this database, such as the Serato tag cache,
-/// shares the connection and its serialization with every other cache call.
+/// shares the connection, its statements, and its serialization with every other cache call.
 /// Does nothing when the database cannot be opened.
-void AnalysisCache::withDatabase(const std::function<void(sqlite3& database)>& function)
+void AnalysisCache::withDatabase(
+    const std::function<void(sqlite3& database, sqlite::StatementCache& statements)>& function
+)
 {
     const juce::ScopedLock lock(mutex);
     if (database == nullptr && !openUnlocked()) {
         return;
     }
 
-    function(*database);
+    function(*database, statements);
 }
 
 /// Loads the cached analysis record for the given file,
@@ -181,8 +183,8 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
         WHERE file_path = ?;
     )SQL";
 
-    const auto prepared = sqlite::prepare(*database, sql);
-    if (prepared == nullptr || !sqlite::bindText(*prepared, 1, normalizedPath(file))) {
+    const auto prepared = statements.borrow(*database, sql);
+    if (!prepared.isValid() || !sqlite::bindText(*prepared, 1, normalizedPath(file))) {
         return std::nullopt;
     }
 
@@ -327,8 +329,8 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             END;
     )SQL";
 
-    const auto prepared = sqlite::prepare(*database, sql);
-    if (prepared == nullptr) {
+    const auto prepared = statements.borrow(*database, sql);
+    if (!prepared.isValid()) {
         return false;
     }
 
@@ -388,8 +390,8 @@ std::optional<Decibels> AnalysisCache::getCustomGain(
         WHERE file_path = ? AND file_size = ? AND modified_time_ms = ? AND has_custom_gain = 1;
     )SQL";
 
-    const auto statement = sqlite::prepare(*database, sql);
-    if (statement == nullptr || !sqlite::bindText(*statement, 1, normalizedPath(file))
+    const auto statement = statements.borrow(*database, sql);
+    if (!statement.isValid() || !sqlite::bindText(*statement, 1, normalizedPath(file))
         || !sqlite::bindInt64(*statement, 2, fileSize) || !sqlite::bindInt64(*statement, 3, modifiedTimeMs)
         || sqlite3_step(statement.get()) != SQLITE_ROW)
     {
@@ -435,8 +437,8 @@ int AnalysisCache::storeCustomGains(const std::vector<CustomGainUpdate>& updates
         WHERE file_path = ?;
     )SQL";
 
-    const auto statement = sqlite::prepare(*database, sql);
-    if (statement == nullptr) {
+    const auto statement = statements.borrow(*database, sql);
+    if (!statement.isValid()) {
         return 0;
     }
 
@@ -479,8 +481,8 @@ bool AnalysisCache::removeAnalysis(const juce::File& file)
     for (const auto* sql :
          {"DELETE FROM file_analysis WHERE file_path = ?;", "DELETE FROM serato_tag_cache WHERE file_path = ?;"})
     {
-        const auto statement = sqlite::prepare(*database, sql);
-        if (statement == nullptr || !sqlite::bindText(*statement, 1, normalizedPath(file))
+        const auto statement = statements.borrow(*database, sql);
+        if (!statement.isValid() || !sqlite::bindText(*statement, 1, normalizedPath(file))
             || !sqlite::stepToCompletion(*statement))
         {
             return false;
@@ -571,7 +573,7 @@ bool AnalysisCache::removeRowVersion(
     const std::int64_t fileSize,
     const std::int64_t modifiedTimeMs,
     const std::optional<std::int64_t> tagKind
-) const
+)
 {
     const juce::ScopedLock lock(mutex);
 
@@ -584,8 +586,8 @@ bool AnalysisCache::removeRowVersion(
           "?;"
         : "DELETE FROM file_analysis WHERE file_path = ? AND file_size = ? AND modified_time_ms = ?;";
 
-    const auto statement = sqlite::prepare(*database, sql);
-    if (statement == nullptr) {
+    const auto statement = statements.borrow(*database, sql);
+    if (!statement.isValid()) {
         return false;
     }
 
@@ -615,8 +617,8 @@ std::optional<juce::MemoryBlock> AnalysisCache::getWaveformData(const juce::File
         WHERE file_path = ?;
     )SQL";
 
-    const auto prepared = sqlite::prepare(*database, sql);
-    if (prepared == nullptr || !sqlite::bindText(*prepared, 1, normalizedPath(file))) {
+    const auto prepared = statements.borrow(*database, sql);
+    if (!prepared.isValid() || !sqlite::bindText(*prepared, 1, normalizedPath(file))) {
         return std::nullopt;
     }
 
@@ -664,8 +666,8 @@ bool AnalysisCache::storeWaveformData(const juce::File& file, const juce::Memory
           AND analysis_version = ?;
     )SQL";
 
-    const auto statement = sqlite::prepare(*database, sql);
-    if (statement == nullptr) {
+    const auto statement = statements.borrow(*database, sql);
+    if (!statement.isValid()) {
         return false;
     }
 
