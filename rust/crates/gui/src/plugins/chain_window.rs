@@ -1,6 +1,7 @@
 //! The Plugin Chain window: the saved presets and the slots of the live chain in processing order.
 //!
-//! The presets panel at the top loads or deletes a saved preset, and saves the chain under a name.
+//! The presets panel at the top loads a saved preset as soon as it is picked, deletes one,
+//! and saves the chain under a name.
 //! Deleting a preset and replacing one with the same name ask for confirmation first.
 //! Each row has an enable checkbox, the slot label with its position, the latency,
 //! and buttons that open the editor, move the slot, and remove it.
@@ -44,9 +45,6 @@ const ENABLE_TOOLTIP: &str = "Bypass the plugin without losing its settings.";
 
 /// Tooltip of the Edit button.
 const EDIT_TOOLTIP: &str = "Open the plugin's editor window.";
-
-/// Tooltip of the preset Load button.
-const LOAD_PRESET_TOOLTIP: &str = "Replace the chain with the chosen preset, with the settings of each plugin.";
 
 /// Tooltip of the preset Save button.
 const SAVE_PRESET_TOOLTIP: &str = "Save the plugins, their order, and their settings under this name.";
@@ -179,7 +177,8 @@ impl ChainView {
         self.preset_select.read(cx).selected_value().map(ToString::to_string)
     }
 
-    /// Puts the chosen preset's name in the name field, so saving again replaces it.
+    /// Loads the picked preset in place of the chain, like the C++ application,
+    /// and puts its name in the name field, so saving again replaces it.
     fn on_preset_selected(
         &mut self,
         _select: &Entity<SelectState<Vec<SharedString>>>,
@@ -190,7 +189,8 @@ impl ChainView {
         if let SelectEvent::Confirm(Some(name)) = event {
             let name = name.clone();
             self.preset_name
-                .update(cx, |state, cx| state.set_value(name, window, cx));
+                .update(cx, |state, cx| state.set_value(name.clone(), window, cx));
+            cx.emit(ChainEvent::LoadPreset(name.to_string()));
         }
         cx.notify();
     }
@@ -262,7 +262,8 @@ impl ChainView {
         .detach();
     }
 
-    /// Renders the presets panel: the preset choice with Load and Delete, and the name field with Save.
+    /// Renders the presets panel: the preset choice, which loads the picked preset, with Delete,
+    /// and the name field with Save.
     fn render_presets(&self, cx: &Context<Self>) -> Div {
         let selected = self.selected_preset(cx);
         let has_name = !sanitize_preset_name(&self.preset_name.read(cx).value()).is_empty();
@@ -282,18 +283,6 @@ impl ChainView {
                         .placeholder("Choose a preset…")
                         .disabled(self.snapshot.presets.is_empty()),
                 ),
-            )
-            .child(
-                Button::new("preset-load")
-                    .label("Load")
-                    .small()
-                    .tooltip(LOAD_PRESET_TOOLTIP)
-                    .disabled(selected.is_none())
-                    .on_click(cx.listener(|view, _, _, cx| {
-                        if let Some(name) = view.selected_preset(cx) {
-                            cx.emit(ChainEvent::LoadPreset(name));
-                        }
-                    })),
             )
             .child(
                 Button::new("preset-delete")
