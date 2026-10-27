@@ -5,12 +5,17 @@
 //! It never allocates, locks, or blocks:
 //! it drops frames from older generations, applies the gain, writes the device channels,
 //! and publishes the source position of the last played frame for the playhead.
+//! While a preview insert is attached, playback goes through it instead, see `insert`.
 
+pub mod insert;
+
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use rtrb::Consumer;
 
 use crate::pipeline::Frame;
+use insert::{DeviceFormat, InsertRenderer};
 
 /// Generation value meaning that no file is loaded.
 pub const NO_GENERATION: u32 = 0;
@@ -45,13 +50,22 @@ pub struct SharedState {
     pub underruns: AtomicU64,
     /// Frames the last audio callback asked for, the device buffer size in practice, 0 before the first callback.
     pub callback_frames: AtomicU32,
+    /// Number of insert changes the audio callback has made.
+    pub insert_changes_applied: AtomicU64,
+    /// Frames of output that may follow the end of the input in the current insert.
+    pub insert_tail_frames: AtomicU64,
+    /// Whether a reset insert is pre-rolled for its latency, so the output lines up with the playhead.
+    pub latency_compensation: AtomicBool,
+    /// Set by the callback when the insert produced output that is not finite, cleared when read.
+    pub insert_failed: AtomicBool,
 }
 
 /// Renders buffered frames into the device buffer inside the audio callback.
 pub struct OutputRenderer {
-    shared: std::sync::Arc<SharedState>,
+    shared: Arc<SharedState>,
     consumer: Consumer<Frame>,
-    channels: usize,
+    device: DeviceFormat,
+    insert: InsertRenderer,
 }
 
 impl SharedState {
@@ -71,6 +85,10 @@ impl SharedState {
             ended_generation: AtomicU32::new(NO_GENERATION),
             callback_frames: AtomicU32::new(0),
             underruns: AtomicU64::new(0),
+            insert_changes_applied: AtomicU64::new(0),
+            insert_tail_frames: AtomicU64::new(0),
+            latency_compensation: AtomicBool::new(true),
+            insert_failed: AtomicBool::new(false),
         }
     }
 
@@ -88,13 +106,19 @@ impl Default for SharedState {
 }
 
 impl OutputRenderer {
-    /// Creates a renderer for a device with the given channel count.
+    /// Creates a renderer for a device format, receiving preview inserts through `insert`.
     #[must_use]
-    pub const fn new(shared: std::sync::Arc<SharedState>, consumer: Consumer<Frame>, channels: usize) -> Self {
+    pub const fn new(
+        shared: Arc<SharedState>,
+        consumer: Consumer<Frame>,
+        device: DeviceFormat,
+        insert: InsertRenderer,
+    ) -> Self {
         Self {
             shared,
             consumer,
-            channels,
+            device,
+            insert,
         }
     }
 
@@ -102,22 +126,32 @@ impl OutputRenderer {
     /// Outputs silence while paused, before the first frame of the current generation arrives, and after the end.
     /// Stale frames are dropped while paused too, so a paused seek leaves room for the new position.
     pub fn render<T: Copy>(&mut self, output: &mut [T], convert: impl Fn(f32) -> T) {
-        let generation = self.shared.generation.load(Ordering::Acquire);
-        let playing = self.shared.playing.load(Ordering::Relaxed);
-        let gain = self.shared.gain();
-        let channels = self.channels.max(1);
-        let mut last_position = None;
-        let mut ran_out = false;
+        let channels = self.device.channels.max(1);
         self.shared.callback_frames.store(
             u32::try_from(output.len() / channels).unwrap_or(u32::MAX),
             Ordering::Relaxed,
         );
+        self.insert.apply_changes(&self.shared);
+        if self.insert.has_insert() {
+            self.insert
+                .render(&mut self.consumer, &self.shared, output, self.device, &convert);
+            return;
+        }
 
+        let generation = self.shared.generation.load(Ordering::Acquire);
+        let playing = self.shared.playing.load(Ordering::Relaxed);
+        let gain = self.shared.gain();
+        let mut last_position = None;
+        let mut ran_out = false;
         if !playing {
-            self.drop_stale_frames(generation);
+            drop_stale_frames(&mut self.consumer, generation);
         }
         for device_frame in output.chunks_mut(channels) {
-            let frame = if playing { self.next_frame(generation) } else { None };
+            let frame = if playing {
+                pop_current_frame(&mut self.consumer, generation)
+            } else {
+                None
+            };
             if playing && frame.is_none() {
                 ran_out = true;
             }
@@ -141,22 +175,22 @@ impl OutputRenderer {
             }
         }
     }
+}
 
-    /// Pops the next frame of the current generation, discarding stale frames on the way.
-    fn next_frame(&mut self, generation: u32) -> Option<Frame> {
-        while let Ok(frame) = self.consumer.pop() {
-            if frame.generation == generation {
-                return Some(frame);
-            }
+/// Pops the next frame of the current generation, discarding stale frames on the way.
+fn pop_current_frame(consumer: &mut Consumer<Frame>, generation: u32) -> Option<Frame> {
+    while let Ok(frame) = consumer.pop() {
+        if frame.generation == generation {
+            return Some(frame);
         }
-        None
     }
+    None
+}
 
-    /// Drops the frames of older generations at the front of the buffer without consuming current ones.
-    fn drop_stale_frames(&mut self, generation: u32) {
-        while self.consumer.peek().is_ok_and(|frame| frame.generation != generation) {
-            let _ = self.consumer.pop();
-        }
+/// Drops the frames of older generations at the front of the buffer without consuming current ones.
+fn drop_stale_frames(consumer: &mut Consumer<Frame>, generation: u32) {
+    while consumer.peek().is_ok_and(|frame| frame.generation != generation) {
+        let _ = consumer.pop();
     }
 }
 
@@ -180,9 +214,9 @@ fn write_frame<T: Copy>(device_frame: &mut [T], left: f32, right: f32, convert: 
 mod test_output_renderer {
     use super::*;
 
-    use std::sync::Arc;
-
     use rtrb::RingBuffer;
+
+    use crate::preview_insert::insert_channel;
 
     fn frame(generation: u32, position: u64, value: f32) -> Frame {
         Frame {
@@ -199,7 +233,12 @@ mod test_output_renderer {
             producer.push(value).expect("capacity");
         }
         let shared = Arc::new(SharedState::new());
-        (OutputRenderer::new(Arc::clone(&shared), consumer, channels), shared)
+        let (_control, insert) = insert_channel(Arc::clone(&shared));
+        let device = DeviceFormat { channels, rate: 48_000 };
+        (
+            OutputRenderer::new(Arc::clone(&shared), consumer, device, insert),
+            shared,
+        )
     }
 
     #[test]
