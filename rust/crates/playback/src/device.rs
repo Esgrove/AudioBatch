@@ -3,7 +3,7 @@
 //! `OutputConfig` is the device, sample rate, and buffer size chosen in the settings,
 //! each falling back to what the device prefers when unset.
 //! `DeviceCapabilities` lists the common sample rates and buffer sizes a device supports,
-//! for the settings window to offer, like the device selector of the C++ application.
+//! for the settings window to offer.
 
 use anyhow::{Context, Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait};

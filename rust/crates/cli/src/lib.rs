@@ -1,7 +1,8 @@
-//! Command line front end of the `AudioBatch` Rust port.
+//! Command line front end of `AudioBatch`.
 //!
-//! Parses the arguments, runs the analysis through the shared core, and prints the results as a table, CSV, or JSON,
-//! with the same options, field names, and exit codes as the C++ `audiobatch` CLI.
+//! Parses the arguments, runs the analysis through the shared core, and prints the results as a table, CSV, or JSON.
+//! The options, field names, and exit codes are the same as those of the C++ `audiobatch` CLI,
+//! so `scripts/parity.sh` can compare the two directly.
 
 pub mod args;
 pub mod completion;

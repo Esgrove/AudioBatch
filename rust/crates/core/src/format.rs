@@ -1,7 +1,7 @@
 //! Display formatting of analysis values for the GUI and the CLI.
 //!
-//! Formats peak, true peak, and loudness levels, bitrate, sample rate, bit depth, file type, duration, and status,
-//! following `AudioAnalysisFormatting.cpp` of the C++ application.
+//! Formats peak, true peak, and loudness levels, bitrate, sample rate, bit depth, file type, duration, and status.
+//! The CLI table uses the same text as the C++ CLI, so `scripts/parity.sh` can compare the two.
 
 use crate::decode::is_mp3_path;
 use crate::record::{AnalysisRecord, AnalysisStatus, is_silent_loudness};

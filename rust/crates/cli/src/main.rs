@@ -1,7 +1,7 @@
-//! Entry point of `audiobatch-rs`, the command line front end of the `AudioBatch` Rust port.
+//! Entry point of `audiobatch-rs`, the command line front end of `AudioBatch`.
 //!
 //! Translates argument errors and write failures into exit code 1, failed files into exit code 2,
-//! and prints help and version with exit code 0, like the C++ CLI.
+//! and prints help and version with exit code 0.
 
 use std::io::{self, Write};
 use std::process::ExitCode;
@@ -18,7 +18,7 @@ use colored::Colorize;
 use indicatif::ProgressDrawTarget;
 
 /// Parses the arguments, then prints shell completions or analyzes and normalizes the given paths.
-/// The exit code tells usage errors and failed files apart, matching the C++ CLI.
+/// The exit code tells usage errors and failed files apart.
 fn main() -> ExitCode {
     let args = match CliArgs::try_parse() {
         Ok(args) => args,

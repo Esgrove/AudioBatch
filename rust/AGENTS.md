@@ -1,14 +1,15 @@
 # AGENTS.md
 
-This file governs everything under `rust/`, the Rust port of AudioBatch.
-`cpp/AGENTS.md` describes the C++ application in `cpp/`, which is the reference implementation for this port.
+This file governs everything under `rust/`, the Rust version of AudioBatch.
+`cpp/AGENTS.md` describes the C++ application in `cpp/`, a sibling implementation that is still in progress.
 Its build, format, lint, and CMake instructions do not apply here.
 Its prose style, naming, and documentation rules do.
 When the two files disagree about code under `rust/`, this file wins.
 
 ## Working Next To The C++ Project
 
-- Read the C++ sources freely when porting behaviour.
+- Read the C++ sources freely to understand how a feature behaves,
+  but question anything that looks wrong before carrying it over, because that application is not finished either.
   `cpp/src/analysis/AudioAnalysis.cpp`, `cpp/src/analysis/AnalysisCache*.cpp`, and `cpp/src/cli/`
   are the closest counterparts of `crates/core` and `crates/cli`.
 - The tests read the shared fixtures in place from the root `fixtures` directory through the `test-fixtures` crate.
@@ -26,14 +27,14 @@ Ask the user to do it manually if something needs undoing.
 
 ## What It Does
 
-The port covers the key features of the C++ application:
+The Rust version covers the key features of the C++ application:
 
 - Analyze audio files for decoded sample peak, true peak, and integrated loudness (EBU R128).
 - Cache analysis results in SQLite so unchanged files are not decoded again.
 - List the files with their stats in the CLI and the GUI.
 - Draw a waveform overview of the selected file in the GUI,
-  coloured from the Serato Overview tag like the C++ application when the file has one.
-- Cache the Serato Overview of each file in a `serato_tag_cache` table with the C++ schema.
+  coloured from the Serato Overview tag when the file has one.
+- Cache the Serato Overview of each file in a `serato_tag_cache` table with the same schema as the C++ cache.
 - Play the selected file in the GUI.
 - Keep a per-file custom gain in the GUI and the cache, applied to the preview and the waveform.
 - Accept files and folders dropped onto the GUI.
@@ -52,7 +53,7 @@ and every crate inherits them with `.workspace = true`.
 - `crates/core` (`audiobatch-core`): the shared library used by the CLI and the GUI.
   - `analysis.rs` decodes a file and measures peaks and loudness, and builds the waveform overview in the same pass.
   - `decode.rs` wraps symphonia: probing, the decode loop, and the read failure rules.
-    It trims the gapless padding the way the C++ decoders do,
+    It trims the gapless padding the way the decoders of the C++ application do, so both measure the same samples,
     reading the MP4 edit list in `decode/gapless.rs`, which symphonia parses but never applies,
     and leaving out the MP3 synthesis delay when no LAME header states the encoder delay.
   - `record.rs` holds `AnalysisRecord`, its status, and the short-term loudness history.
@@ -64,23 +65,23 @@ and every crate inherits them with `.workspace = true`.
   - `format.rs` formats levels and file properties for display, `sorting.rs` sorts records.
   - `tags.rs` reads display tags and Serato data with lofty, and tells what the Serato Overview read found.
     Serato data comes from the `GEOB` frames of MP3, AIFF, and WAV files, and the `SERATO_*` comments of FLAC files.
-  - `normalize.rs` computes the normalization gain and writes the normalized file, ported from `AudioNormalization.cpp`.
+  - `normalize.rs` computes the normalization gain and writes the normalized file.
     `aiff.rs` is its AIFF writer, `metadata.rs` copies the tags onto the output,
-    and `output_file.rs` commits the output and disposes of the replaced files, ported from `FileUtils.cpp`.
+    and `output_file.rs` commits the output and disposes of the replaced files.
 - `crates/playback` (`audiobatch-playback`): the preview engine.
   A decode thread feeds an `rtrb` ring buffer that the `cpal` output callback reads,
   with `rubato` resampling when the device rate differs from the file rate.
   It has no GUI dependency.
 - `crates/serato` (`serato-tags`): parsers for the Serato GEOB tags, extracted from the track-rename project.
   They take raw frame bytes and do no terminal printing, so any tag library and front end can use them.
-  `overview.rs` parses the Overview tag as strictly as `SeratoOverview.cpp` and keeps its cache representation,
-  and `colouring.rs` ports the palette decoding and the column colours of `SeratoWaveformColouring.cpp`.
+  `overview.rs` parses the Overview tag strictly and defines its cache representation,
+  and `colouring.rs` decodes the palette indices and computes the column colours of the waveform.
 - `crates/cli` (`audiobatch-cli`): the `audiobatch-rs` binary.
   Its options, JSON field names, and exit codes match the C++ `audiobatch` CLI,
   so `scripts/parity.sh` can compare the two directly.
   With `--normalize`, `scripts/compare_outputs.py` also compares the files both CLIs wrote,
   sample by sample and ID3v2 frame by frame, so a change to decoding or tag copying must keep them in agreement.
-  The `completion` subcommand in `completion.rs` is the only addition the C++ CLI does not have.
+  The `completion` subcommand in `completion.rs` is the only addition.
 - `crates/gui` (`audiobatch-gui`): the `AudioBatchRs` GUI binary, built on gpui-kit.
   It is the only crate that depends on gpui-kit, which is pinned to an exact version and upgraded by hand.
   Its `build.rs` embeds the app icon from the root `assets` directory into the Windows executable.
@@ -142,7 +143,8 @@ AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png ./target/release/AudioBatchRs --autoplay ..
 The `snapshot` feature also reads `AUDIOBATCH_GUI_SNAPSHOT_DELAY` in seconds,
 and `AUDIOBATCH_GUI_SNAPSHOT_ACTIONS` with action names such as `audiobatch::ToggleLoudnessGraph`
 that are dispatched before the image is taken.
-The GUI follows the look of the C++ application, so compare it with `cpp/src/gui/` when changing the layout.
+The GUI shares its palette, fonts, and icons with the C++ application,
+so both versions look alike, and `cpp/src/gui/` is worth comparing when changing the layout.
 
 Dependencies are compiled with optimizations even in debug builds, because decoding is too slow otherwise.
 `.cargo/config.toml` compiles for the native CPU, and CI clears it with an empty `RUSTFLAGS`.
@@ -188,7 +190,7 @@ Module boundaries:
 - Do not use plain `unwrap`. Use proper error handling, or `.expect()` in constants and tests.
 - Use `anyhow` with `Result<T>` for errors in application code.
 - Use `clap` with derive macros. Every CLI argument has both a short and a long option,
-  except where the C++ CLI has only a long one, which the port matches.
+  except where the C++ CLI has only a long one, because both CLIs take the same arguments.
 - Use the `colored` crate for terminal colors.
 - After changing CLI arguments, update the usage in `README.md` from the short help,
   `cargo run --bin audiobatch-rs -- -h`.
@@ -215,6 +217,17 @@ Avoid dashes and semicolons in prose. Use commas and periods to separate ideas.
 Quote literal user input values, for example "y" and "n".
 Do not wrap prose by splitting a sentence at an arbitrary point in the middle.
 Run `slb` in `rust/` to check the prose, and `slb --fix` to reformat it.
+
+Comments, docstrings, and documentation describe the current behaviour and why it is so.
+They contain no development history and no notes about porting,
+such as "ported from `PluginProcessing.cpp`", "follows the C++ panel", or "like the C++ application".
+Mention the C++ application only when it matters for the implementation:
+
+- A requirement shared with it, stated with its reason.
+  Examples are the CLI options, messages, and exit codes that `scripts/parity.sh` compares,
+  the normalized output that `scripts/compare_outputs.py` compares, the shared fixtures and assets,
+  and the VST SDK version kept in step with JUCE's.
+- A deliberate difference, with its reason.
 
 ## Testing
 

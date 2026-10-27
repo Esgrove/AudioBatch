@@ -3,7 +3,7 @@
 //! A new selection first shows the Serato Overview kept in the cache, so the waveform is coloured right away,
 //! then reads the tags on a background thread.
 //! The read result replaces the cached overview, and a changed result is written back to the cache.
-//! A failed read keeps what the cache had, like the C++ preview loader, which never caches a read error.
+//! A failed read keeps what the cache had and is never cached, because the error may be temporary.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

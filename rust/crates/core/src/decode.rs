@@ -4,9 +4,9 @@
 //! and decodes it packet by packet into planar `f32` samples, with encoder delay and padding trimmed.
 //! Symphonia trims MP3 files with a LAME tag itself.
 //! The decoder trims MP4 files from their edit list, which symphonia leaves alone,
-//! and leaves the synthesis delay out of other MP3 files, as the decoders of the C++ application do.
-//! `DecodeFailureTracker` holds the shared rules for packets that fail to decode,
-//! ported from the C++ `DecodeFailureTracker.h`:
+//! and leaves the synthesis delay out of other MP3 files.
+//! Both trims match the decoders the C++ application uses, so both applications measure and write the same samples.
+//! `DecodeFailureTracker` holds the shared rules for packets that fail to decode:
 //! isolated failures are tolerated and replaced with silence,
 //! while several failures in a row stop decoding with an error,
 //! so no pass silently works on truncated audio.
@@ -55,7 +55,7 @@ pub struct StreamInfo {
     pub channels: u32,
     /// Source bit depth, the lossy default for formats that store none, or 0 for other lossy codecs.
     pub bits_per_sample: u32,
-    /// Container format name in the style of the C++ application, for example "WAV file".
+    /// Container format name, for example "WAV file".
     pub format_name: String,
     /// Playable length in frames, when the container states it.
     pub expected_frames: Option<u64>,
@@ -327,7 +327,7 @@ impl AudioFileDecoder {
                     if !self.failures.record_failure(self.position, packet_frames) {
                         bail!(self.failures.error_message());
                     }
-                    // Silence for a failed final packet stops at the stated length, as the C++ final block does.
+                    // Silence for a failed final packet stops at the stated length, so the file keeps its length.
                     let remaining = self
                         .info
                         .expected_frames
@@ -423,8 +423,7 @@ pub fn is_mp3_path(path: &Path) -> bool {
 
 /// Determines the best available source bit depth of a track.
 ///
-/// MPEG audio, AAC, and Vorbis get the default of 16, because the formats store no sample depth,
-/// which is also what the C++ application reports for them.
+/// MPEG audio, AAC, and Vorbis get the default of 16, because the formats store no sample depth.
 /// ALAC states its depth in the magic cookie of its codec configuration,
 /// and gets the default too when the cookie does not parse.
 /// Floating point PCM states no bit depth in its parameters, so it gets the width of its sample type.

@@ -1,7 +1,7 @@
 //! Sorting of analysis records and natural string ordering.
 //!
 //! Failed records always sort after successful ones, regardless of the requested key,
-//! and the other columns break ties, like the C++ `sortRecords`.
+//! and the other columns break ties, so the order is the same on every run.
 
 use std::cmp::Ordering;
 use std::str::FromStr;

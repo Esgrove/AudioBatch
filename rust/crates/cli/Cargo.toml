@@ -1,6 +1,6 @@
 [package]
 name = "audiobatch-cli"
-description = "Command line front end of the AudioBatch Rust port"
+description = "Command line front end of AudioBatch"
 default-run = "audiobatch-rs"
 version.workspace = true
 edition.workspace = true

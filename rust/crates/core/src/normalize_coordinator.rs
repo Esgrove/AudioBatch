@@ -1,7 +1,6 @@
 //! Background normalization runs on a worker pool, with cancellation and progress events.
 //!
-//! Ports the C++ `NormalizeCoordinator` for the GUI.
-//! Each run normalizes a fixed list of analyzed records, one pool job per file,
+//! The GUI uses it. Each run normalizes a fixed list of analyzed records, one pool job per file,
 //! and keeps the cache in step with the files on disk:
 //! a converted source leaves the cache, and the analysis of each normalized output is stored.
 //! A file that writes the same output as another file in the run fails without being touched.

@@ -1,6 +1,5 @@
 //! Colours of the Serato Overview raster, for colouring a waveform drawn from the audio.
 //!
-//! Ports the colour math of `SeratoWaveformColouring.cpp` from the C++ project.
 //! Each cell is an index into a zero-based 6x6x6 RGB cube:
 //! red is `index / 36 * 51`, green is `index % 36 / 6 * 51`, and blue is `index % 6 * 51`.
 //! Indices 0 and 1 are background, and 216 to 255 are unverified, so both are skipped.
@@ -11,7 +10,7 @@
 
 use crate::overview::{Overview, Slice};
 
-/// Most colours computed for one viewport, the C++ limit on gradient stops.
+/// Most colours computed for one viewport, which bounds the gradient stops of a drawn waveform.
 pub const MAXIMUM_COLOUR_STOPS: usize = 4096;
 
 /// Number of levels of each component in the colour cube.

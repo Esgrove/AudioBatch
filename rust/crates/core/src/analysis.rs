@@ -1,6 +1,5 @@
 //! Audio analysis of a single file: sample peak, true peak, and EBU R128 loudness.
 //!
-//! Ports `analyzeFile` and `measureDecodedAudio` from the C++ `AudioAnalysis.cpp`.
 //! The decoded packets are regrouped into fixed blocks of one tenth of a second,
 //! one block per short-term loudness update as EBU Tech 3341 asks for,
 //! and each block feeds the ebur128 meter, the per-channel sample extremes, and the waveform overview.

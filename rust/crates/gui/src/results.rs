@@ -1,8 +1,5 @@
 //! The results table: one row per file with its analysis status and levels.
 //!
-//! The columns, their order, their default widths,
-//! and the cell styling follow `AudioFileTableModel.cpp` of the C++ application,
-//! with an added Length column after the file type.
 //! The titles are short, and their tooltips describe each column with its unit, so the cells hold only numbers.
 //! Columns can be reordered by dragging their headers, and the Status column fills the width left over.
 //! Failed files have white text with reduced opacity, cells have a faint divider between them,
@@ -32,7 +29,7 @@ use gpui_kit::{
 
 use crate::theme::{MONO_FONT, color, palette, tooltip, white};
 
-/// Height of a table row, as in the C++ results table.
+/// Height of a table row.
 pub const ROW_HEIGHT: f32 = 24.0;
 
 /// Height of the header row.
@@ -84,7 +81,7 @@ pub enum RowState {
     Done,
 }
 
-/// Columns of the results table, in the order of the C++ application with Length added after Type.
+/// Columns of the results table, in their default order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColumnKey {
     Name,
@@ -117,7 +114,7 @@ pub struct ResultRow {
     pub message: Option<RowMessage>,
 }
 
-/// A message about the last operation on a file, like the activity messages of the C++ table.
+/// A message about the last operation on a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RowMessage {
     /// Text shown in the Status column and its tooltip.
@@ -157,7 +154,7 @@ struct ColumnSpec {
 
 /// Column definitions in the default order.
 /// The short titles leave the units to the header tooltips, so the numeric columns stay narrow.
-/// The widths are the C++ defaults, wider where a title needs the room next to the sort indicator.
+/// The widths fit typical values, and are wider where a title needs the room next to the sort indicator.
 /// The Name and Path widths are a starting point that `ResultsDelegate::new` stretches,
 /// and the Status width is the least it gets, because it fills whatever the table has left.
 const COLUMNS: [ColumnSpec; 13] = [
@@ -238,7 +235,7 @@ impl ResultRow {
         self.state == RowState::Done && self.record.as_ref().is_some_and(AnalysisRecord::has_error)
     }
 
-    /// Returns the status text, with the activity labels of the C++ application while the file is busy,
+    /// Returns the status text, with an activity label while the file is busy,
     /// and the message of the last normalization once it is done.
     #[must_use]
     pub fn status_text(&self) -> String {
@@ -277,7 +274,7 @@ impl ResultRow {
 
 impl ResultsDelegate {
     /// Creates an empty table whose Name and Path columns share the width the other columns leave free,
-    /// in the 140 to 160 ratio of their C++ defaults.
+    /// in the 140 to 160 ratio of their default widths.
     /// The table's scrollbars overlay the rows, so the columns can use its whole width.
     #[must_use]
     pub fn new(table_width: f32) -> Self {
@@ -521,7 +518,7 @@ impl ResultsDelegate {
         self.index.clear();
     }
 
-    /// Sorts the rows by the current sort column, or by path when none is chosen, like the C++ default.
+    /// Sorts the rows by the current sort column, or by path when none is chosen.
     pub fn sort_rows(&mut self) {
         let ordering = self
             .sort
@@ -716,7 +713,7 @@ impl TableDelegate for ResultsDelegate {
             _ => cell,
         };
         let cell = cell.id(("cell", column_index));
-        // Like the C++ table, the Status cell shows a failure reason or a notice as its tooltip.
+        // The Status cell shows a failure reason or a notice as its tooltip, because the cell is too narrow for it.
         let status_tooltip = row
             .filter(|_| key == ColumnKey::Status)
             .and_then(ResultRow::status_tooltip);
@@ -926,7 +923,7 @@ fn compare_rows(first: &ResultRow, second: &ResultRow, key: ColumnKey) -> Orderi
         ColumnKey::BitDepth => first_record.bits_per_sample.cmp(&second_record.bits_per_sample),
         ColumnKey::Bitrate => average_bitrate_kbps(first_record).total_cmp(&average_bitrate_kbps(second_record)),
         ColumnKey::Type => format_type_label(first_record).cmp(&format_type_label(second_record)),
-        // Files without a gain come first in ascending order, like the C++ table.
+        // Files without a gain come first in ascending order.
         ColumnKey::Gain => match (first_record.custom_gain_db, second_record.custom_gain_db) {
             (Some(first_gain), Some(second_gain)) => first_gain.total_cmp(&second_gain),
             (first_gain, second_gain) => first_gain.is_some().cmp(&second_gain.is_some()),

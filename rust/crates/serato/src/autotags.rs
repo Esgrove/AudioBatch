@@ -38,7 +38,7 @@ impl AutoTags {
     /// |   `09` |   `07` | `2d 33 2e 32 35 37 00` |      `-3.257` | ASCII (zero-terminated) | Auto Gain
     /// |   `16` |   `06` | `30 2e 30 30 30 00`    |       `0.000` | ASCII (zero-terminated) | Gain dB
     ///
-    /// The checks match the C++ parser, so both apps reject the same damaged tags.
+    /// The checks are strict, so a damaged tag fails instead of yielding wrong values.
     ///
     /// # Errors
     ///
@@ -98,7 +98,7 @@ fn fixed_number(bytes: &[u8]) -> anyhow::Result<f32> {
     parse_tag_number(text).map(|value| value as f32)
 }
 
-/// Strictly parses a finite ASCII number with no ignored text, like `parseTagNumber` in the C++ app.
+/// Strictly parses a finite ASCII number with no ignored text.
 fn parse_tag_number(text: &str) -> anyhow::Result<f64> {
     let trimmed = text.trim_matches([' ', '\t']);
     if trimmed.is_empty()

@@ -1,10 +1,10 @@
 //! The Serato Overview tag: the small coloured raster Serato shows for a whole track.
 //!
-//! Ports `SeratoOverview.cpp` from the C++ project.
 //! A payload holds consecutive time slices of 16 vertical cells, commonly 240 slices whatever the track length.
 //! Each cell is an index into Serato's palette, not a frequency band strength,
 //! so `colouring` decodes the indices into colours instead of reading them as levels.
-//! The cache representation is the C++ one: a `SOVR` header with big-endian fields, then the raw indices.
+//! The cache representation is a `SOVR` header with big-endian fields, then the raw indices.
+//! It is the representation the C++ application stores, so both `serato_tag_cache` tables share one schema.
 
 use std::fmt;
 use std::fmt::Display;
@@ -21,7 +21,7 @@ pub const MAXIMUM_SLICES: usize = 65_536;
 /// Version of the overview cache representation, raised when it changes.
 pub const OVERVIEW_PARSER_VERSION: u32 = 1;
 
-/// Stable identifier of the Overview tag kind in the cache, the value of the C++ `TagKind::overview`.
+/// Stable identifier of the Overview tag kind in the cache, part of the shared `serato_tag_cache` schema.
 pub const OVERVIEW_TAG_KIND: u32 = 1;
 
 /// The only payload header Serato is known to write.

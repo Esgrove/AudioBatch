@@ -1,4 +1,4 @@
-//! Normalizing files from the main view, following the normalization pass of the C++ application.
+//! Normalizing files from the main view.
 //!
 //! A run normalizes the selected file, or every analyzed file after a confirmation,
 //! on the normalization coordinator, which shares the analysis cache.
@@ -23,7 +23,7 @@ use crate::normalization::{
 use crate::results::RowMessage;
 use crate::settings::NormalizeMode;
 
-/// Title of the normalization dialogs, the C++ failure summary title.
+/// Title of the normalization dialogs.
 const DIALOG_TITLE: &str = "Normalize";
 
 impl AppView {

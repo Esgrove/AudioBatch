@@ -1,9 +1,10 @@
 //! The Serato tag table of the analysis cache, which keeps what reading a file's Serato Overview tag found.
 //!
-//! Ports the `serato_tag_cache` table of the C++ `AnalysisCache` with the same schema and stored values.
+//! The `serato_tag_cache` table keeps the same schema and stored values as the C++ application's table,
+//! although each application has its own database file.
 //! A row is keyed by path and tag kind.
 //! It only holds while the file keeps the stored size and modification time and the parser keeps the stored version.
-//! Present overviews keep their decoded slices in the C++ `SOVR` representation.
+//! Present overviews keep their decoded slices in the `SOVR` representation.
 //! Files without an overview, with an invalid one, or in a format without Serato tags keep only their state,
 //! so the tag is not read again until the file changes.
 
@@ -18,7 +19,7 @@ use super::{AnalysisCache, now_ms, path_key};
 use crate::record::file_identity;
 use crate::tags::SeratoOverviewState;
 
-/// Schema of the Serato tag table, the same as in the C++ cache.
+/// Schema of the Serato tag table.
 pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS serato_tag_cache (
     file_path TEXT NOT NULL,
     tag_kind INTEGER NOT NULL,
@@ -31,7 +32,7 @@ pub(super) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS serato_tag_cache (
     PRIMARY KEY (file_path, tag_kind)
 );";
 
-/// Stored state of a present tag, the value of the C++ `ReadStatus::present`.
+/// Stored state of a present tag.
 const STATE_PRESENT: i64 = 1;
 
 /// Stored state of a missing tag.

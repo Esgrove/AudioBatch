@@ -82,7 +82,7 @@ impl Markers {
     /// Parses every entry of base64 encoded Serato Markers2 tag data.
     ///
     /// Entry types this parser does not know, such as Serato's flips, are skipped by their length,
-    /// and zero padding after the empty terminating name is accepted, like the C++ parser.
+    /// and zero padding after the empty terminating name is accepted.
     ///
     /// # Errors
     ///

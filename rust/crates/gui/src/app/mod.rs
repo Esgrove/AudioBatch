@@ -48,7 +48,7 @@ const ANALYSIS_POLL_INTERVAL: Duration = Duration::from_millis(50);
 /// Padding around the window content.
 const CONTENT_PADDING: f32 = 4.0;
 
-/// Height of the status bar at the bottom of the window, the height of the C++ status bar.
+/// Height of the status bar at the bottom of the window.
 const STATUS_BAR_HEIGHT: f32 = 24.0;
 
 /// Width of the outline around the results table.
@@ -526,7 +526,7 @@ impl AppView {
         cx.notify();
     }
 
-    /// Sets the status text from the progress of the current run, with the wording of the C++ application.
+    /// Sets the status text from the progress of the current run.
     fn update_run_status(&mut self, cx: &Context<Self>) {
         let Some(run) = &self.run else {
             return;

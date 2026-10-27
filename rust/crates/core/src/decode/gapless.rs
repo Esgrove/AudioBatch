@@ -4,7 +4,7 @@
 //! An MP4 file records the playable part in the edit list of the audio track,
 //! and files from Apple encoders also in the `iTunSMPB` iTunes atom.
 //! `read_mp4_gapless` walks the boxes of the file to find either one,
-//! so the decoder can leave out the priming and padding the way Core Audio does for the C++ application.
+//! so the decoder can leave out the priming and padding the way Core Audio does.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};

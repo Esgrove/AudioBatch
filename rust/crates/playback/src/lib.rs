@@ -3,7 +3,7 @@
 //! Plays one audio file at a time through an output device.
 //! A decode thread feeds a lock-free `rtrb` ring buffer that the `cpal` audio callback reads,
 //! with `rubato` resampling when the file rate differs from the device rate.
-//! The engine mirrors the C++ `AudioPreviewPlayer` and has no GUI dependency.
+//! The engine has no GUI dependency.
 //!
 //! `Player` must stay on the thread that created it, because the cpal stream is not `Send` on every platform.
 

@@ -1,6 +1,5 @@
 //! Writing processed output next to its source without losing either file on failure.
 //!
-//! Ports `checkOutputPath`, `disposeOfCopy`, and `commitTemporaryOutput` from the C++ `FileUtils.cpp`.
 //! Output is rendered into a hidden temporary file in the destination folder,
 //! then renamed into place, which is atomic within one folder.
 //! A file being replaced is first renamed to a hidden backup, so a failed commit can put it back.
@@ -33,7 +32,7 @@ pub fn trash_disposer() -> FileDisposer {
 /// Moves a file to the system trash.
 /// Returns true when the file is gone afterwards, including when it did not exist.
 ///
-/// On macOS the file goes through `NSFileManager` like the C++ application's,
+/// On macOS the file goes through `NSFileManager`,
 /// rather than through Finder, which needs an automation permission and a logged in session.
 #[must_use]
 pub fn trash_file(path: &Path) -> bool {

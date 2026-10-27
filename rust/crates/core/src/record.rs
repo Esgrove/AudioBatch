@@ -3,7 +3,6 @@
 //! Defines `AnalysisRecord`, which carries the per-file peak, true peak, loudness,
 //! short-term loudness history, and waveform overview,
 //! along with the `AnalysisStatus` lifecycle and the `AnalysisOptions` input parameters.
-//! Mirrors `AudioAnalysisTypes.h` of the C++ application.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,7 +11,8 @@ use std::time::UNIX_EPOCH;
 use crate::waveform::WaveformOverview;
 
 /// Loudness reported for silence and other unmeasurable signals, in LUFS.
-/// The cache and the history store this finite sentinel instead of negative infinity, like the C++ application.
+/// The cache and the history store this finite sentinel instead of negative infinity,
+/// which SQLite and JSON cannot represent.
 pub const NEGATIVE_INFINITY_LOUDNESS: f64 = -1000.0;
 
 /// Smallest difference between two custom gains in decibels that counts as a change,
@@ -196,7 +196,7 @@ pub fn decibels_to_gain(decibels: f64) -> f64 {
 }
 
 /// Returns the custom gain to store for a slider value in decibels.
-/// A value of about 0 dB, or one that is not finite, means no custom gain, as in the C++ application.
+/// A value of about 0 dB, or one that is not finite, means no custom gain.
 #[must_use]
 pub fn custom_gain_from_decibels(decibels: f32) -> Option<f32> {
     (decibels.is_finite() && decibels.abs() >= CUSTOM_GAIN_EPSILON_DB).then_some(decibels)

@@ -1,7 +1,7 @@
 //! The controls column at the left of the preview:
 //! zoom, input gain, the normalization target, the Audio Settings button, and Play/Stop.
 //!
-//! Follows the controls of the C++ application, with the zoom and gain sliders and their value labels on top
+//! The zoom and gain sliders and their value labels are on top,
 //! and the large Play/Stop button at the bottom, green while stopped and red while playing.
 //! The normalization group has the Peak and Loudness modes, the target slider of the chosen mode,
 //! the overwrite option, and the button that normalizes the selected file.
@@ -9,7 +9,6 @@
 //! and the output device in the status bar of the main window.
 //! Everything above the button scrolls when the preview is short, so the button always stays visible.
 //! Double-clicking a slider resets it to its default value.
-//! The tooltips are the ones of the C++ controls, reworded where this version behaves differently.
 
 use std::rc::Rc;
 
@@ -27,10 +26,10 @@ use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
 use crate::settings::NormalizeMode;
 use crate::theme::{MONO_FONT, color, palette, tooltip, white};
 
-/// Height of the Play/Stop button, the C++ process button height.
+/// Height of the Play/Stop button.
 const PLAY_BUTTON_HEIGHT: f32 = 38.0;
 
-/// Height of the Audio Settings button, the C++ control button height.
+/// Height of the Audio Settings button.
 const SETTINGS_BUTTON_HEIGHT: f32 = 28.0;
 
 /// Tooltip of the Audio Settings button.
@@ -62,14 +61,14 @@ const GAIN_TOOLTIP: &str = if cfg!(target_os = "macos") {
      You can also use Ctrl with the mouse wheel over the waveform. Double-click to reset."
 };
 
-/// Tooltip of the normalization mode buttons, the C++ mode box tooltip.
+/// Tooltip of the normalization mode buttons.
 const MODE_TOOLTIP: &str =
     "Normalize to a sample peak level, or to an integrated loudness limited to a -0.3 dBTP true peak.";
 
 /// Tooltip of the normalization target slider.
 const TARGET_TOOLTIP: &str = "Target level for normalization. Double-click to reset.";
 
-/// Tooltip of the overwrite option, the C++ toggle tooltip without plugin processing.
+/// Tooltip of the overwrite option.
 const OVERWRITE_TOOLTIP: &str = "When enabled, normalizing replaces an existing output file with the same name. \
      The replaced file is moved to the system trash.";
 

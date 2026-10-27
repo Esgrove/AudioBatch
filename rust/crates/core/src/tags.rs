@@ -4,7 +4,7 @@
 //! Serato stores its data as `GEOB` frames, which only the concrete `ID3v2` tag keeps,
 //! so MP3, AIFF, and WAV files are read a second time through their own file types for those frames.
 //! FLAC files keep the same data as native `SERATO_*` Vorbis comments,
-//! which are unwrapped into the frame payloads, as the C++ `SeratoTagReader` does.
+//! which are unwrapped into the frame payloads.
 
 use std::borrow::Cow;
 use std::fs::File;
@@ -23,7 +23,7 @@ use lofty::prelude::{Accessor, ItemKey, TaggedFileExt};
 use serato_tags::native::{decode_native_value, native_field_description};
 use serato_tags::{Overview, SeratoData, SeratoTag};
 
-/// What reading the Serato Overview tag of a file found, the read results the C++ tag cache keeps.
+/// What reading the Serato Overview tag of a file found, the read results the tag cache keeps.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeratoOverviewState {
     /// The file has a valid overview.
@@ -63,7 +63,7 @@ pub struct FileTags {
 
 impl SeratoOverviewState {
     /// Returns the overview state of a file from the tags read from it.
-    /// A valid duplicate wins over an invalid one, like in the C++ reader.
+    /// A valid duplicate wins over an invalid one.
     #[must_use]
     pub fn from_tags(path: &Path, tags: &FileTags) -> Self {
         if !supports_serato_data(path) {

@@ -1,8 +1,7 @@
 //! Normalization from the desktop app: the target, the options of a run, and the progress of a run.
 //!
-//! Follows `NormalizationTargetControl.cpp` and the normalization pass of the C++ application.
 //! The target is a sample peak in dBFS or an integrated loudness in LUFS,
-//! limited to the ranges of the core library and stepped like the C++ slider.
+//! limited to the ranges of the core library, in steps of 0.1 dB for peaks and 0.5 LU for loudness.
 //! A run counts its finished files and collects the failures,
 //! so the status bar can show the progress and the end of the run can list what went wrong.
 
@@ -25,7 +24,7 @@ pub const ALREADY_NORMALIZING: &str = "Normalization already in progress";
 /// Status text when the list is changed while files are being normalized.
 pub const NORMALIZATION_IN_PROGRESS: &str = "Normalization in progress";
 
-/// Most failures listed by name at the end of a run, like the C++ failure summary.
+/// Most failures listed by name at the end of a run, so the summary dialog stays a readable size.
 const MAXIMUM_LISTED_FAILURES: usize = 8;
 
 /// Range and step of the target slider for one normalization mode.
@@ -79,7 +78,7 @@ impl NormalizeRun {
         }
     }
 
-    /// Returns the status bar text while the run is in progress, as in the C++ application.
+    /// Returns the status bar text while the run is in progress.
     #[must_use]
     pub fn progress_text(&self) -> String {
         format!("Normalizing {}/{}", self.finished, self.total)
@@ -95,7 +94,7 @@ impl NormalizeRun {
         }
     }
 
-    /// Returns the log line of a completed run, with its duration and counts like the C++ log.
+    /// Returns the log line of a completed run, with its duration and counts.
     #[must_use]
     pub fn log_line(&self) -> String {
         format!(
@@ -148,7 +147,7 @@ pub const fn target_range(mode: NormalizeMode) -> TargetRange {
     }
 }
 
-/// Describes the target for the menu, for example "-14.0 LUFS" or "0.0 dBFS peak", like the C++ control.
+/// Describes the target for the menu, for example "-14.0 LUFS" or "0.0 dBFS peak".
 #[must_use]
 pub fn describe_target(settings: &GuiSettings) -> String {
     match settings.normalize_mode {
