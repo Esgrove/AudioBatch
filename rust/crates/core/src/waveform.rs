@@ -143,6 +143,9 @@ impl WaveformOverview {
         if channels == 0 || frames_per_bucket == 0 {
             return None;
         }
+        if (bucket_count as u64).checked_mul(frames_per_bucket)? < length_in_frames {
+            return None;
+        }
         let peak_count = bucket_count.checked_mul(channels as usize)?;
         let payload = reader.remaining();
         if payload.len() != peak_count.checked_mul(2)? {
@@ -255,7 +258,9 @@ impl WaveformOverview {
                 continue;
             }
             let first_bucket = (column_start.max(0.0) / bucket_frames).floor() as usize;
-            let last_bucket = ((column_end / bucket_frames).ceil() as usize).clamp(first_bucket + 1, bucket_count);
+            let last_bucket = ((column_end / bucket_frames).ceil() as usize)
+                .max(first_bucket + 1)
+                .min(bucket_count);
             let merged = (first_bucket..last_bucket)
                 .filter_map(|bucket| level.peaks.get(bucket * channel_count + channel))
                 .copied()
@@ -479,6 +484,10 @@ mod test_waveform {
         let mut bytes = builder.finish(44_100, 1000).to_bytes();
         bytes.pop();
         assert!(WaveformOverview::from_bytes(&bytes).is_none());
+
+        let mut empty = WaveformBuilder::new(1, None).finish(44_100, 0).to_bytes();
+        empty.splice(16..24, 1000_u64.to_le_bytes());
+        assert!(WaveformOverview::from_bytes(&empty).is_none());
     }
 
     #[test]

@@ -58,7 +58,9 @@ pub fn collect_input_files(input_paths: &[PathBuf], recursive: bool, is_cancelle
             break;
         }
         if input_path.is_dir() {
+            // Links are followed like the C++ noCycles walk, and walkdir reports a loop as an error entry.
             let walker = WalkDir::new(input_path)
+                .follow_links(true)
                 .min_depth(1)
                 .max_depth(if recursive { usize::MAX } else { 1 })
                 .into_iter()
@@ -174,6 +176,26 @@ mod test_collect_input_files {
         let files = collect_input_files(&[indirect], false, &|| false);
         assert_eq!(files, vec![normalize_path(&file)]);
         assert!(!files[0].to_string_lossy().contains(".."));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_files_and_folders_are_followed_without_looping() {
+        let directory = TempDir::new().expect("temp dir");
+        let target = create(directory.path(), "library/target.wav");
+        let scanned = directory.path().join("scanned");
+        std::fs::create_dir(&scanned).expect("create folder");
+        std::os::unix::fs::symlink(&target, scanned.join("linked.wav")).expect("link file");
+        std::os::unix::fs::symlink(directory.path().join("library"), scanned.join("folder")).expect("link folder");
+        std::os::unix::fs::symlink(&scanned, scanned.join("loop")).expect("link loop");
+        let files = collect_input_files(std::slice::from_ref(&scanned), true, &|| false);
+        assert_eq!(
+            files,
+            vec![
+                normalize_path(&scanned.join("folder/target.wav")),
+                normalize_path(&scanned.join("linked.wav"))
+            ]
+        );
     }
 
     #[test]

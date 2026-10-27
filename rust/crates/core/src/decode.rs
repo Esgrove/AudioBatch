@@ -28,7 +28,7 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, TrackType};
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::units::{Duration, Time};
+use symphonia::core::units::{Duration, Time, TimeBase};
 use symphonia_common::apple::audio::alac::MagicCookie;
 
 mod gapless;
@@ -53,7 +53,7 @@ pub struct StreamInfo {
     pub sample_rate: u32,
     /// Number of channels.
     pub channels: u32,
-    /// Source bit depth, the MP3 default for MPEG audio, or 0 when the format has none.
+    /// Source bit depth, the lossy default for formats that store none, or 0 for other lossy codecs.
     pub bits_per_sample: u32,
     /// Container format name in the style of the C++ application, for example "WAV file".
     pub format_name: String,
@@ -64,10 +64,12 @@ pub struct StreamInfo {
 /// Tracks packet decode failures for one decode pass over a file.
 ///
 /// Isolated failures are tolerated, because some decoders fail mid-stream on files that others handle fine.
-/// Failures at the end of the stream are tolerated too, because MP3 files often overshoot the decodable audio.
+/// A failed packet that reaches the stated end of the stream is tolerated without being counted,
+/// because MP3 files often overshoot the decodable audio.
 /// Several failures in a row mean the rest of the file cannot be decoded, and the pass must stop.
 #[derive(Debug, Default, Clone)]
 pub struct DecodeFailureTracker {
+    total_frames: Option<u64>,
     failed_packets: u32,
     consecutive_failures: u32,
     first_failure_position: Option<u64>,
@@ -91,6 +93,8 @@ pub struct AudioFileDecoder {
     frames_to_skip: u64,
     /// Total frames to produce, when the container states where the playable audio ends.
     frame_limit: Option<u64>,
+    /// Time base of the packet timestamps and durations, which is not always one over the sample rate in MP4.
+    time_base: Option<TimeBase>,
     /// True when packet trimming comes only from symphonia's estimated length,
     /// which it guesses from the file size for an MP3 file without a frame count header.
     ignore_packet_trim: bool,
@@ -100,14 +104,32 @@ impl DecodeFailureTracker {
     /// Number of consecutive failed packets after which decoding stops.
     pub const MAXIMUM_CONSECUTIVE_FAILURES: u32 = 3;
 
+    /// Creates a tracker for a stream with the given length in frames, when the container states it.
+    #[must_use]
+    pub const fn new(total_frames: Option<u64>) -> Self {
+        Self {
+            total_frames,
+            failed_packets: 0,
+            consecutive_failures: 0,
+            first_failure_position: None,
+            stopped_at: None,
+        }
+    }
+
     /// Records a packet that decoded.
     pub const fn record_success(&mut self) {
         self.consecutive_failures = 0;
     }
 
-    /// Records a packet that failed to decode at the given frame position.
+    /// Records a packet of the given length that failed to decode at the given frame position.
     /// Returns false when decoding must stop, after which `error_message` describes the failure.
-    pub fn record_failure(&mut self, position: u64) -> bool {
+    pub fn record_failure(&mut self, position: u64, frames: u64) -> bool {
+        if self
+            .total_frames
+            .is_some_and(|total| position.saturating_add(frames) >= total)
+        {
+            return true;
+        }
         self.failed_packets += 1;
         self.consecutive_failures += 1;
         self.first_failure_position.get_or_insert(position);
@@ -118,7 +140,7 @@ impl DecodeFailureTracker {
         true
     }
 
-    /// Returns the number of failed packets.
+    /// Returns the number of failed packets before the final one.
     #[must_use]
     pub const fn failed_packet_count(&self) -> u32 {
         self.failed_packets
@@ -143,9 +165,9 @@ impl DecodeFailureTracker {
 
     /// Returns the user-facing error after `record_failure` returned false.
     #[must_use]
-    pub fn error_message(&self, total_frames: Option<u64>) -> String {
+    pub fn error_message(&self) -> String {
         let position = self.stopped_at.unwrap_or_default();
-        total_frames.map_or_else(
+        self.total_frames.map_or_else(
             || format!("Audio decoding failed at sample {position}"),
             |total| format!("Audio decoding failed at sample {position} of {total}"),
         )
@@ -174,6 +196,7 @@ impl AudioFileDecoder {
             .default_track(TrackType::Audio)
             .ok_or_else(|| anyhow!("Unsupported or unreadable audio file"))?;
         let track_id = track.id;
+        let time_base = track.time_base;
         let mut expected_frames = track.num_frames;
         let has_recorded_delay = track.delay.is_some();
         let parameters = match &track.codec_params {
@@ -226,11 +249,12 @@ impl AudioFileDecoder {
             track_id,
             info,
             planar: vec![Vec::new(); channels as usize],
-            failures: DecodeFailureTracker::default(),
+            failures: DecodeFailureTracker::new(expected_frames),
             position: 0,
             leading_frames,
             frames_to_skip: leading_frames,
             frame_limit,
+            time_base,
             ignore_packet_trim: mp3_without_delay,
         })
     }
@@ -299,14 +323,18 @@ impl AudioFileDecoder {
                     return Ok(Some(&self.planar));
                 }
                 Err(SymphoniaError::DecodeError(_) | SymphoniaError::IoError(_)) => {
-                    if !self.failures.record_failure(self.position) {
-                        bail!(self.failures.error_message(self.info.expected_frames));
+                    let packet_frames = self.frames_of(i64::try_from(packet.dur.get()).unwrap_or(i64::MAX));
+                    if !self.failures.record_failure(self.position, packet_frames) {
+                        bail!(self.failures.error_message());
                     }
-                    let silent_frames = packet
-                        .dur
-                        .get()
+                    // Silence for a failed final packet stops at the stated length, as the C++ final block does.
+                    let remaining = self
+                        .info
+                        .expected_frames
+                        .map_or(u64::MAX, |total| total.saturating_sub(self.position));
+                    let silent_frames = packet_frames
                         .min(u64::from(self.info.sample_rate) * MAX_FAILED_PACKET_SECONDS)
-                        as usize;
+                        .min(remaining) as usize;
                     if silent_frames == 0 {
                         continue;
                     }
@@ -346,11 +374,21 @@ impl AudioFileDecoder {
             )
             .map_err(|error| anyhow!("Seek failed: {error}"))?;
         self.decoder.reset();
-        self.failures = DecodeFailureTracker::default();
-        let stream_position = u64::try_from(seeked.actual_ts.get()).unwrap_or(0);
+        self.failures = DecodeFailureTracker::new(self.info.expected_frames);
+        let stream_position = self.frames_of(seeked.actual_ts.get());
         self.frames_to_skip = self.leading_frames.saturating_sub(stream_position);
         self.position = stream_position.saturating_sub(self.leading_frames);
         Ok(self.position)
+    }
+
+    /// Converts a timestamp or duration in the track's time base to frames at the sample rate.
+    fn frames_of(&self, timestamp: i64) -> u64 {
+        let Some(time_base) = self.time_base else {
+            return u64::try_from(timestamp).unwrap_or(0);
+        };
+        let numerator = i128::from(timestamp) * i128::from(time_base.numer.get()) * i128::from(self.info.sample_rate);
+        let denominator = i128::from(time_base.denom.get());
+        u64::try_from((numerator + denominator / 2) / denominator).unwrap_or(if numerator < 0 { 0 } else { u64::MAX })
     }
 
     /// Drops the leading frames still to skip and the frames past the frame limit from the latest packet,
@@ -454,9 +492,9 @@ mod test_decode_failure_tracker {
     #[test]
     fn isolated_failures_are_tolerated() {
         let mut tracker = DecodeFailureTracker::default();
-        assert!(tracker.record_failure(100));
+        assert!(tracker.record_failure(100, 10));
         tracker.record_success();
-        assert!(tracker.record_failure(200));
+        assert!(tracker.record_failure(200, 10));
         tracker.record_success();
         assert_eq!(tracker.failed_packet_count(), 2);
         assert_eq!(tracker.first_failure_position(), Some(100));
@@ -469,15 +507,29 @@ mod test_decode_failure_tracker {
 
     #[test]
     fn consecutive_failures_stop_decoding() {
+        let mut tracker = DecodeFailureTracker::new(Some(1000));
+        assert!(tracker.record_failure(10, 10));
+        assert!(tracker.record_failure(20, 10));
+        assert!(!tracker.record_failure(30, 10));
+        assert_eq!(tracker.error_message(), "Audio decoding failed at sample 30 of 1000");
+
         let mut tracker = DecodeFailureTracker::default();
-        assert!(tracker.record_failure(10));
-        assert!(tracker.record_failure(20));
-        assert!(!tracker.record_failure(30));
-        assert_eq!(
-            tracker.error_message(Some(1000)),
-            "Audio decoding failed at sample 30 of 1000"
-        );
-        assert_eq!(tracker.error_message(None), "Audio decoding failed at sample 30");
+        for position in [10, 20, 30] {
+            tracker.record_failure(position, 10);
+        }
+        assert_eq!(tracker.error_message(), "Audio decoding failed at sample 30");
+    }
+
+    #[test]
+    fn failures_reaching_the_end_are_tolerated_without_counting() {
+        let mut tracker = DecodeFailureTracker::new(Some(1000));
+        for _ in 0..=DecodeFailureTracker::MAXIMUM_CONSECUTIVE_FAILURES {
+            assert!(tracker.record_failure(990, 10));
+        }
+        assert_eq!(tracker.failed_packet_count(), 0);
+        assert!(tracker.notice().is_none());
+        assert!(tracker.record_failure(980, 10));
+        assert_eq!(tracker.failed_packet_count(), 1);
     }
 
     #[test]
@@ -491,6 +543,8 @@ mod test_decode_failure_tracker {
 
 #[cfg(test)]
 mod test_audio_file_decoder {
+    use std::num::NonZero;
+
     use super::*;
 
     #[test]
@@ -558,6 +612,18 @@ mod test_audio_file_decoder {
         let position = decoder.seek(0.5).expect("seeks");
         assert!(position <= 24_000, "{position}");
         assert!(decoder.next_chunk().expect("decodes").is_some());
+    }
+
+    #[test]
+    fn timestamps_convert_from_the_track_time_base() {
+        let mut decoder = AudioFileDecoder::open(&test_fixtures::fixture(test_fixtures::AAC_FIXTURE)).expect("opens");
+        assert_eq!(decoder.frames_of(44_100), 44_100);
+        decoder.time_base = Some(TimeBase::new(
+            NonZero::new(1).expect("nonzero"),
+            NonZero::new(1000).expect("nonzero"),
+        ));
+        assert_eq!(decoder.frames_of(500), 22_050);
+        assert_eq!(decoder.frames_of(-5), 0);
     }
 
     #[test]

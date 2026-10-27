@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use audiobatch_core::record::file_identity;
 use audiobatch_core::serato_tags::Overview;
 use audiobatch_core::{FileTags, SeratoOverviewState, read_tags};
 use gpui_kit::{Context, Task};
@@ -48,12 +49,16 @@ impl AppView {
             let (tags, state) = cx
                 .background_executor()
                 .spawn(async move {
+                    let identity = file_identity(&read_path);
                     let tags = read_tags(&read_path).ok();
                     let state = tags
                         .as_ref()
                         .map(|tags| SeratoOverviewState::from_tags(&read_path, tags));
+                    // A file rewritten while its tags were read would cache the old overview under its new identity.
                     if let (Some(cache), Some(state)) = (&cache, &state)
                         && cached.as_ref() != Some(state)
+                        && identity.is_some()
+                        && file_identity(&read_path) == identity
                         && let Err(error) = cache.store_serato_overview(&read_path, state)
                     {
                         eprintln!("Failed to cache the Serato tags of {}: {error:#}", read_path.display());

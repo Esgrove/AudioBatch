@@ -211,6 +211,7 @@ pub fn normalization_output_path(source: &Path) -> PathBuf {
 ///
 /// A source that already is its output, such as `<name>.aif` normalized in place, always wins.
 /// Otherwise the source that sorts first by path wins, so the result does not depend on input order.
+/// A source listed more than once does not conflict with itself.
 #[must_use]
 pub fn find_batch_output_conflicts(records: &[AnalysisRecord]) -> HashSet<PathBuf> {
     let mut ordered: Vec<&Path> = records.iter().map(|record| record.path.as_path()).collect();
@@ -219,6 +220,7 @@ pub fn find_batch_output_conflicts(records: &[AnalysisRecord]) -> HashSet<PathBu
         let second_in_place = normalization_output_path(second) == *second;
         second_in_place.cmp(&first_in_place).then_with(|| first.cmp(second))
     });
+    ordered.dedup();
     let mut claimed: HashSet<String> = HashSet::new();
     let mut conflicts = HashSet::new();
     for source in ordered {
@@ -676,6 +678,12 @@ mod test_output_files {
             find_batch_output_conflicts(&records),
             HashSet::from([PathBuf::from("/music/song.wav")])
         );
+    }
+
+    #[test]
+    fn repeated_source_does_not_conflict_with_itself() {
+        let records = [record("/music/song.wav"), record("/music/song.wav")];
+        assert!(find_batch_output_conflicts(&records).is_empty());
     }
 
     #[test]

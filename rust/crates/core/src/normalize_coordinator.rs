@@ -9,6 +9,7 @@
 //! Jobs of an invalidated run stop early, and only report files whose output was already committed,
 //! because the receiver must still learn that those sources were replaced.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -116,12 +117,15 @@ impl NormalizeCoordinator {
     /// Starts normalizing the records in the background, cancelling the previous run,
     /// and returns the run id and its event receiver.
     /// The records must be analyzed, and the receiver disconnects once every job of the run has finished.
+    /// A file listed more than once is normalized once.
     #[must_use]
     pub fn start(
         &self,
-        records: Vec<AnalysisRecord>,
+        mut records: Vec<AnalysisRecord>,
         options: NormalizationOptions,
     ) -> (u64, Receiver<NormalizeEvent>) {
+        let mut seen = HashSet::new();
+        records.retain(|record| seen.insert(record.path.clone()));
         let run_id = self.current_run.fetch_add(1, Ordering::SeqCst) + 1;
         let (sender, receiver) = unbounded();
         let conflicts = find_batch_output_conflicts(&records);
