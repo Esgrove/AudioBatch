@@ -178,8 +178,10 @@ and the output device with its sample rate and buffer size in samples.
 - Select a row to see its levels, details, tags, waveform, and Serato cue points.
   A file with a Serato Overview tag gets a waveform coloured from it,
   while the shape still comes from the decoded audio, and other files are drawn in blue.
-  Serato data is read from MP3, AIFF, WAV, and FLAC files.
+  Options > Serato Waveform Colours (Command or Control and Shift and S) turns the colouring off.
+  Serato data is read from MP3, AIFF, WAV, and FLAC files, and the keys 1 to 8 play from the hot cue in that slot.
   Double-click a row, press space, or use Play to play, and press escape to stop and return to the start.
+  Like in the C++ version, the preview plays mono and stereo files, and refuses files with more channels.
 - Command or Control click adds a row to the selection or takes it out, Shift click selects a range,
   and Command or Control and A, or File > Select All Files, selects every row.
   The preview shows the file selected first, and the gain, normalizing, processing, re-analyzing,

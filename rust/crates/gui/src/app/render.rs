@@ -30,10 +30,11 @@ use crate::controls::{ControlsEvent, ControlsState, NormalizeControls, PluginCon
 use crate::info_panel::render_info_panel;
 use crate::menus::{
     About, AddFiles, AddFolder, AddPluginToChain, CancelRun, ChooseFolder, ClearCustomGain, ClearList,
-    ClearPluginChain, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
+    ClearPluginChain, JumpToHotCue, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
     OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected, RemoveSelected, Rescan,
     RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice, StopPlayback, ToggleColumn, ToggleLoudnessGraph,
-    TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, TrashSelected, TrashSelectedNow,
+    TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, ToggleSeratoColours, TrashSelected,
+    TrashSelectedNow,
 };
 use crate::normalization::target_value_text;
 use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, fill_status_column};
@@ -323,6 +324,8 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &TrashSelectedNow, window, cx| view.trash_selected(false, window, cx)))
             .on_action(cx.listener(|view, _: &ClearList, _, cx| view.clear_list(cx)))
             .on_action(cx.listener(|view, _: &ToggleLoudnessGraph, _, cx| view.toggle_loudness_graph(cx)))
+            .on_action(cx.listener(|view, _: &ToggleSeratoColours, _, cx| view.toggle_serato_colours(cx)))
+            .on_action(cx.listener(|view, action: &JumpToHotCue, _, cx| view.jump_to_hot_cue(action.slot, cx)))
             .on_action(cx.listener(|view, _: &TogglePluginPreview, _, cx| view.toggle_plugin_preview(cx)))
             .on_action(cx.listener(|view, _: &TogglePreviewLatencyCompensation, _, cx| {
                 view.toggle_preview_latency_compensation(cx);

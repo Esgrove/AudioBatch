@@ -249,6 +249,7 @@ impl AppView {
         let mut menu_state = MenuState {
             output_device: None,
             show_loudness_graph: settings.show_loudness_graph,
+            serato_colours: settings.serato_waveform_colours,
             preview_plugin_chain: settings.preview_plugin_chain,
             compensate_preview_latency: settings.compensate_preview_latency,
             normalize_target: describe_target(&settings),
@@ -265,6 +266,7 @@ impl AppView {
         set_menus(cx, &menu_state);
         waveform.update(cx, |waveform, cx| {
             waveform.set_show_loudness(settings.show_loudness_graph, cx);
+            waveform.set_serato_colours(settings.serato_waveform_colours, cx);
             waveform.set_loudness_range(settings.loudness_minimum, settings.loudness_maximum, cx);
         });
 

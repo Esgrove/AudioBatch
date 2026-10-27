@@ -71,6 +71,19 @@ pub struct ClearCustomGain;
 #[action(namespace = audiobatch)]
 pub struct RemoveSelected;
 
+/// Plays the selected file from a Serato hot cue, from the keys 1 to 8.
+#[derive(Clone, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch, no_json)]
+pub struct JumpToHotCue {
+    /// Zero-based hot cue slot.
+    pub slot: u8,
+}
+
+/// Turns colouring the waveform from the Serato Overview tag on or off.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct ToggleSeratoColours;
+
 /// Shows or hides a results table column, like the header menu of the C++ application.
 #[derive(Clone, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch, no_json)]
@@ -218,6 +231,8 @@ pub struct MenuState {
     pub output_device: Option<String>,
     /// True when the loudness graph is shown.
     pub show_loudness_graph: bool,
+    /// True when the Serato Overview colours the waveform.
+    pub serato_colours: bool,
     /// True when the preview plays through the plugin chain.
     pub preview_plugin_chain: bool,
     /// True when the plugin chain preview compensates its latency.
@@ -274,6 +289,15 @@ pub fn install(cx: &mut App) {
         KeyBinding::new(primary!("."), CancelRun, context),
         KeyBinding::new(primary!("r"), RevealSelected, context),
         KeyBinding::new(primary!("a"), SelectAll, context),
+        KeyBinding::new(primary!("shift-s"), ToggleSeratoColours, context),
+        KeyBinding::new("1", JumpToHotCue { slot: 0 }, context),
+        KeyBinding::new("2", JumpToHotCue { slot: 1 }, context),
+        KeyBinding::new("3", JumpToHotCue { slot: 2 }, context),
+        KeyBinding::new("4", JumpToHotCue { slot: 3 }, context),
+        KeyBinding::new("5", JumpToHotCue { slot: 4 }, context),
+        KeyBinding::new("6", JumpToHotCue { slot: 5 }, context),
+        KeyBinding::new("7", JumpToHotCue { slot: 6 }, context),
+        KeyBinding::new("8", JumpToHotCue { slot: 7 }, context),
         KeyBinding::new("delete", RemoveSelected, context),
         KeyBinding::new("backspace", RemoveSelected, context),
         KeyBinding::new(primary!("backspace"), TrashSelected, context),
@@ -344,6 +368,7 @@ pub fn set_menus(cx: &App, state: &MenuState) {
     menus.push(
         Menu::new("Options").items([
             MenuItem::action("Show Loudness Graph", ToggleLoudnessGraph).checked(state.show_loudness_graph),
+            MenuItem::action("Serato Waveform Colours", ToggleSeratoColours).checked(state.serato_colours),
             MenuItem::submenu(Menu::new("Columns").items(state.columns.iter().map(|column| {
                 MenuItem::action(column.title, ToggleColumn { id: column.id.clone() }).checked(column.visible)
             }))),

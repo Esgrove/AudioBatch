@@ -18,6 +18,7 @@ rtrb.workspace = true
 rubato.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 test-fixtures.workspace = true
 
 [lints]

@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use audioadapter_buffers::direct::SequentialSliceOfVecs;
 use audiobatch_core::decode::{AudioFileDecoder, StreamInfo};
 use rubato::{Fft, FixedSync, Resampler};
@@ -62,9 +62,13 @@ impl FramePipeline {
     ///
     /// # Errors
     ///
-    /// Returns an error when the file cannot be decoded, seeked, or resampled.
+    /// Returns an error when the file cannot be decoded, seeked, or resampled,
+    /// or has more than two channels, which the preview refuses like the C++ application.
     pub fn open(path: &Path, output_rate: u32, generation: u32, start_seconds: f64) -> Result<Self> {
         let decoder = AudioFileDecoder::open(path)?;
+        if !(1..=2).contains(&decoder.info().channels) {
+            bail!("Audio preview requires a mono or stereo file");
+        }
         let source_rate = decoder.info().sample_rate;
         let resampler = (source_rate != output_rate)
             .then(|| ResamplerStage::new(source_rate, output_rate))
@@ -312,6 +316,35 @@ mod test_frame_pipeline {
                 .iter()
                 .all(|frame| (frame.left - frame.right).abs() < f32::EPSILON)
         );
+    }
+
+    #[test]
+    fn a_file_with_more_than_two_channels_is_refused() {
+        const CHANNELS: u16 = 3;
+        const FRAMES: u32 = 64;
+        let data_bytes = FRAMES * u32::from(CHANNELS) * 2;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16_u32.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&CHANNELS.to_le_bytes());
+        wav.extend_from_slice(&44_100_u32.to_le_bytes());
+        wav.extend_from_slice(&(44_100 * u32::from(CHANNELS) * 2).to_le_bytes());
+        wav.extend_from_slice(&(CHANNELS * 2).to_le_bytes());
+        wav.extend_from_slice(&16_u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_bytes.to_le_bytes());
+        wav.resize(wav.len() + data_bytes as usize, 0);
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("three_channels.wav");
+        std::fs::write(&path, wav).expect("written");
+
+        let error = FramePipeline::open(&path, 44_100, 1, 0.0)
+            .err()
+            .expect("three channels are refused");
+        assert_eq!(error.to_string(), "Audio preview requires a mono or stereo file");
     }
 
     #[test]
