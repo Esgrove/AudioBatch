@@ -340,8 +340,6 @@ DecodeMeasurements measureDecodedAudio(
 }
 }  // namespace
 
-/// Internal helpers for peak comparisons and stable record sorting.
-
 /// Returns true when the path is a supported audio file for analysis.
 bool isSupportedAudioFile(const juce::File& file)
 {
@@ -367,10 +365,7 @@ juce::Array<juce::File> collectInputFiles(
     std::set<juce::String> seenPaths;
 
     auto const addFile = [&](const juce::File& file) {
-        // Dot-prefixed files are skipped on every platform, because juce::File::isHidden only checks the hidden
-        // attribute on Windows. This includes AppleDouble "._" files, which hold macOS metadata on non-Apple file
-        // systems and are never audio.
-        if (file.isHidden() || file.getFileName().startsWithChar('.') || !isSupportedAudioFile(file)) {
+        if (utils::isHiddenFile(file) || !isSupportedAudioFile(file)) {
             return;
         }
 

@@ -432,6 +432,14 @@ juce::String fileExtension(const juce::File& file)
     return normalizeExtension(file.getFileExtension());
 }
 
+/// Returns true for a file that analysis skips as hidden: one with the hidden attribute or a name starting with a dot.
+/// Dot-prefixed files count on every platform, because juce::File::isHidden only checks the attribute on Windows.
+/// This includes AppleDouble "._" files, which hold macOS metadata on non-Apple file systems and are never audio.
+bool isHiddenFile(const juce::File& file)
+{
+    return file.isHidden() || file.getFileName().startsWithChar('.');
+}
+
 /// Returns true for an MP3 file.
 bool isMp3File(const juce::File& file)
 {
