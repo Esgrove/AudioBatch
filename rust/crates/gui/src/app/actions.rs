@@ -94,7 +94,7 @@ impl AppView {
                 if let Some(coordinator) = &self.coordinator
                     && let Err(error) = coordinator.cache().remove_analysis(&selected)
                 {
-                    eprintln!(
+                    tracing::warn!(
                         "Failed to remove the cached result of {}: {error:#}",
                         selected.display()
                     );
@@ -277,7 +277,7 @@ impl AppView {
                     let events = view.player.as_ref().map(Player::poll_events).unwrap_or_default();
                     for event in events {
                         if crate::debug_enabled() {
-                            eprintln!("player: {event:?}");
+                            tracing::info!("player: {event:?}");
                         }
                         if let PlayerEvent::Error { message, .. } = event {
                             view.status = message.into();

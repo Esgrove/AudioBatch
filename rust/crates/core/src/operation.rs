@@ -92,12 +92,12 @@ pub fn update_cache(cache: &AnalysisCache, source: &AnalysisRecord, result: &Ope
     if output.path != source.path
         && let Err(error) = cache.remove_analysis(&source.path)
     {
-        eprintln!("Could not update the cache: {error:#}");
+        tracing::warn!("Could not update the cache: {error:#}");
     }
     if matches!(result.outcome, OperationOutcome::Succeeded { .. })
         && let Err(error) = cache.store_analysis(output)
     {
-        eprintln!("Could not update the cache: {error:#}");
+        tracing::warn!("Could not update the cache: {error:#}");
     }
 }
 

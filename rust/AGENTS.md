@@ -148,6 +148,13 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
   `plugin-scan.lock` keeps two scans from running at once,
   and `plugin-scan-worker.log` collects what plugins print while a worker loads them.
   None of them is shared with the C++ application, whose chain state and plugin ids are specific to JUCE.
+- **Logging** goes through the `tracing` macros, never `eprintln!` in library code.
+  `audiobatch_core::log_file::install` writes the log file and prints to stderr,
+  and forwards records of crates that use the `log` facade.
+  The CLI logs the messages it prints itself with the `FILE_ONLY_TARGET` target, so they are not printed twice.
+  `analyze_file`, `normalize_file`, and `process_file` open a span with the file path,
+  so messages from worker threads name their file.
+  Never hold a stderr lock across a run, since worker threads log to stderr, and never log from the audio callback.
 - **Tests** use the fake plugins of the test plugin crate and the JUCE `AudioBatch Test MS` VST3 in `../test-plugin/`,
   never installed plugins.
   `crates/plugins/tests/juce_test_plugin.rs` saves its settings in a preset, loads it back, processes a fixture,

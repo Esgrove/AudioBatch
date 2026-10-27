@@ -323,9 +323,7 @@ impl AppView {
 
     /// Reports the end of a normalization or processing run: the log line, and a dialog listing the failures.
     pub(super) fn finish_operation_run(&mut self, run: &OperationRun, window: &mut Window, cx: &mut Context<Self>) {
-        if crate::debug_enabled() {
-            eprintln!("{}", run.log_line());
-        }
+        tracing::info!("{}", run.log_line());
         if let Some(message) = run.failure_message() {
             let answer = window.prompt(
                 PromptLevel::Warning,

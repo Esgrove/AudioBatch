@@ -41,7 +41,7 @@ pub fn schedule(window: AnyWindowHandle, cx: &App) {
             for name in actions.iter().filter(|name| !name.is_empty()) {
                 match cx.build_action(name, None) {
                     Ok(action) => window.dispatch_action(action, cx),
-                    Err(error) => eprintln!("Unknown action {name}: {error}"),
+                    Err(error) => tracing::error!("Unknown action {name}: {error}"),
                 }
             }
             window.refresh();
@@ -55,10 +55,10 @@ pub fn schedule(window: AnyWindowHandle, cx: &App) {
         let _ = target.update(cx, |_, window, cx| {
             match window.render_to_image() {
                 Ok(image) => match image.save(&path) {
-                    Ok(()) => eprintln!("Saved a snapshot to {}", path.display()),
-                    Err(error) => eprintln!("Failed to save the snapshot: {error}"),
+                    Ok(()) => tracing::info!("Saved a snapshot to {}", path.display()),
+                    Err(error) => tracing::error!("Failed to save the snapshot: {error}"),
                 },
-                Err(error) => eprintln!("Failed to render the snapshot: {error:#}"),
+                Err(error) => tracing::error!("Failed to render the snapshot: {error:#}"),
             }
             cx.quit();
         });

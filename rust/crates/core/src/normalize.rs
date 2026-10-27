@@ -270,6 +270,7 @@ pub fn normalize_file(
     on_progress: &mut dyn FnMut(f32),
 ) -> OperationResult {
     let source = source_record.path.as_path();
+    let _span = tracing::info_span!("normalize", file = %source.display()).entered();
     let output = normalization_output_path(source);
     if !source.is_file() {
         return fail(source, "File does not exist");
@@ -332,7 +333,7 @@ pub fn normalize_file(
     };
 
     if let Err(error) = copy_metadata(source, temporary.path()) {
-        eprintln!("{error:#}");
+        tracing::error!("{error:#}");
         return fail(source, "Could not preserve metadata while writing normalized audio");
     }
     if let Err(error) = rendered.validate(temporary.path()) {

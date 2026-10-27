@@ -130,6 +130,17 @@ Options:
   -V, --version          Print version
 ```
 
+Results go to stdout, and messages and progress go to stderr.
+
+### Log Files
+
+The CLI writes `audiobatch-rs.log` and the GUI `AudioBatchRs.log`,
+in `~/Library/Logs/AudioBatch-rs` on macOS and in the `logs` folder of the `AudioBatch-rs` data directory elsewhere.
+Like the C++ application, each file is trimmed to its last 32 KB when it is opened, and each run starts with a banner.
+Messages logged while a file is analyzed, normalized, or processed name the file,
+and a panic is logged with its backtrace.
+The CLI prints each message once to stderr, and the GUI prints everything it logs to stderr as well.
+
 ### Plugin Listing
 
 `audiobatch-rs list` prints the known VST3 plugins,
@@ -249,7 +260,7 @@ because only scans run plugins in a separate process.
 
 `--demo-rows <count>` fills the table with synthetic rows and updates 64 random rows thirty times per second,
 with a generated waveform and a looping playhead.
-Setting `AUDIOBATCH_GUI_DEBUG=1` prints the waveform frame rate, run summaries, and player events to stderr.
+Setting `AUDIOBATCH_GUI_DEBUG=1` adds the waveform frame rate, analysis summaries, and player events to the log.
 
 ```shell
 AUDIOBATCH_GUI_DEBUG=1 cargo run --release --bin AudioBatchRs -- --demo-rows 10000

@@ -3,7 +3,8 @@
 //! Usage: `AudioBatchRs [paths...]` analyzes the given files and folders at startup,
 //! and `--autoplay` then selects and plays the first file that analyzed successfully.
 //! `AudioBatchRs --demo-rows <count>` runs the table and waveform stress test with synthetic data instead.
-//! Setting `AUDIOBATCH_GUI_DEBUG` prints diagnostics to stderr.
+//! Messages go to the `AudioBatchRs.log` log file and to stderr.
+//! Setting `AUDIOBATCH_GUI_DEBUG` adds diagnostics to them.
 //!
 //! The executable also serves as the plugin scan worker,
 //! so a plugin that crashes while it is scanned takes down only the worker process.
@@ -34,8 +35,10 @@ mod waveform;
 
 use std::path::PathBuf;
 
+use audiobatch_core::log_file;
 use audiobatch_plugins::{is_scan_worker_invocation, run_scan_worker};
 use gpui_kit::{App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use tracing::level_filters::LevelFilter;
 use vst3_host::{UiDispatcher, UiThread, ui_channel};
 
 use crate::app::{APP_TITLE, AppView, LaunchOptions};
@@ -76,6 +79,10 @@ fn main() {
             return;
         }
     };
+    // Like the C++ application, the GUI prints every message it logs to stderr as well.
+    if let Err(error) = log_file::install(env!("CARGO_BIN_NAME"), LevelFilter::TRACE) {
+        eprintln!("{error:#}");
+    }
 
     gpui_kit::application()
         .with_assets(gpui_kit::assets::Assets)
@@ -86,7 +93,7 @@ fn main() {
             let dispatcher = match start_plugin_jobs(cx) {
                 Ok(dispatcher) => dispatcher,
                 Err(error) => {
-                    eprintln!("Failed to start the plugin host: {error:#}");
+                    tracing::error!("Failed to start the plugin host: {error:#}");
                     cx.quit();
                     return;
                 }
@@ -106,7 +113,7 @@ fn main() {
             }) {
                 Ok((window, _)) => window,
                 Err(error) => {
-                    eprintln!("Failed to open the main window: {error:#}");
+                    tracing::error!("Failed to open the main window: {error:#}");
                     cx.quit();
                     return;
                 }

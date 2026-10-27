@@ -555,7 +555,7 @@ impl AppView {
         }
         if completed {
             if crate::debug_enabled() {
-                eprintln!("analysis: {}", self.status);
+                tracing::info!("analysis: {}", self.status);
             }
             if std::mem::take(&mut self.autoplay_pending) {
                 let first_playable = {
@@ -763,7 +763,7 @@ impl AppView {
         if let Some(coordinator) = &self.coordinator
             && let Err(error) = coordinator.cache().store_custom_gain(path, custom_gain_db)
         {
-            eprintln!("Failed to store the custom gain of {}: {error:#}", path.display());
+            tracing::warn!("Failed to store the custom gain of {}: {error:#}", path.display());
         }
     }
 
@@ -997,7 +997,7 @@ fn open_startup(
     let sample_rate = player.as_ref().map_or(FALLBACK_SAMPLE_RATE, Player::output_rate);
     let (plugins, plugin_problems) = PluginHost::open(dispatcher, sample_rate, editor_owner);
     for problem in plugin_problems {
-        eprintln!("{problem}");
+        tracing::warn!("{problem}");
         if status.is_empty() {
             status = problem.into();
         }

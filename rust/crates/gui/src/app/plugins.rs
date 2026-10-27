@@ -185,7 +185,7 @@ impl AppView {
             self.plugins.chain.capture_states(&ui);
         }
         if let Err(error) = self.plugins.chain.save() {
-            eprintln!("{error:#}");
+            tracing::error!("{error:#}");
         }
     }
 
