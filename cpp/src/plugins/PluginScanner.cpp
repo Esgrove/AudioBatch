@@ -128,7 +128,9 @@ void removeBuiltInApplePlugins(juce::KnownPluginList& knownPluginList)
         }
     }
 
-    for (const auto& file : knownPluginList.getBlacklistedFiles()) {
+    // A copy, since removeFromBlacklist changes the array that getBlacklistedFiles refers to.
+    const auto blacklistedFiles = knownPluginList.getBlacklistedFiles();
+    for (const auto& file : blacklistedFiles) {
         if (isBuiltInApplePlugin(file)) {
             knownPluginList.removeFromBlacklist(file);
         }
