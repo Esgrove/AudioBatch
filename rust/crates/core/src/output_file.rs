@@ -28,12 +28,22 @@ pub fn trash_disposer() -> FileDisposer {
 
 /// Moves a file to the system trash.
 /// Returns true when the file is gone afterwards, including when it did not exist.
+///
+/// On macOS the file goes through `NSFileManager` like the C++ application's,
+/// rather than through Finder, which needs an automation permission and a logged in session.
 #[must_use]
 pub fn trash_file(path: &Path) -> bool {
     if !path.exists() {
         return true;
     }
-    match trash::delete(path) {
+    #[allow(unused_mut)]
+    let mut context = trash::TrashContext::default();
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        context.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    match context.delete(path) {
         Ok(()) => !path.exists(),
         Err(error) => {
             eprintln!("Could not move {} to the trash: {error}", path.display());
