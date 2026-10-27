@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::Result;
+use audiobatch_core::discovery::normalize_path;
 use audiobatch_core::normalize::{
     NormalizationOptions, NormalizationOutcome, batch_output_conflict_message, find_batch_output_conflicts,
     normalize_file,
@@ -109,6 +110,11 @@ pub fn run_analysis(
     let mut failure_count = failures.len();
 
     sort_records(&mut records, args.sort, !args.reverse);
+    let skipped_inputs = find_skipped_inputs(&args.paths, &records);
+    for error in &skipped_inputs {
+        writeln!(log, "{}", error.red())?;
+    }
+    failure_count += skipped_inputs.len();
     let (mut reported, show_full_paths) = if let Some(options) = &normalization {
         let normalized = normalize_records(&records, options, &normalization_cache, log, progress_target())?;
         failure_count += normalized.failure_count;
@@ -205,6 +211,36 @@ fn normalize_records(
     Ok(normalized)
 }
 
+/// Returns an error for every path named on the command line that produced no result:
+/// a path that does not exist, or a file the analysis skips because it is hidden or not a supported format.
+///
+/// Inside a folder those files are skipped on purpose, but a file named on the command line was asked for,
+/// so skipping it silently would report success for work that was never done.
+/// Follows `cli::findSkippedInputs` of the C++ CLI.
+fn find_skipped_inputs(input_paths: &[PathBuf], records: &[AnalysisRecord]) -> Vec<String> {
+    let mut errors = Vec::new();
+    for input in input_paths {
+        let full_path = normalize_path(input);
+        if !input.exists() {
+            errors.push(format!("Input not found: \"{}\"", full_path.display()));
+            continue;
+        }
+        if input.is_dir() || records.iter().any(|record| record.path == full_path) {
+            continue;
+        }
+        let hidden = input
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with('.'));
+        let reason = if hidden {
+            "Hidden files are not analyzed"
+        } else {
+            "Not a supported audio file"
+        };
+        errors.push(format!("{reason}: \"{}\"", full_path.display()));
+    }
+    errors
+}
+
 /// Marks the record as failed with the error, so the CSV and JSON output list it with its reason.
 fn failed_record(mut record: AnalysisRecord, error: String) -> AnalysisRecord {
     record.status = AnalysisStatus::Failed;
@@ -299,6 +335,38 @@ mod test_run_analysis {
         let path = folder.join(name);
         std::fs::copy(test_fixtures::fixture(fixture_name), &path).expect("copies fixture");
         path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn skipped_inputs_fail_the_run() {
+        let directory = TempDir::new().expect("temp dir");
+        let tone = copy_fixture(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let notes = directory.path().join("music/notes.txt");
+        let hidden = directory.path().join("music/.hidden.wav");
+        std::fs::write(&notes, b"text").expect("writes notes");
+        std::fs::write(&hidden, b"data").expect("writes hidden file");
+        let missing = directory.path().join("music/missing.wav");
+        let paths = [&notes, &hidden, &missing].map(|path| path.to_string_lossy().into_owned());
+        let (code, output, log) = run(&["-o", "json", &tone, &paths[0], &paths[1], &paths[2]], &directory);
+        assert_eq!(code, EXIT_FAILURES, "{log}");
+        assert!(log.contains("Not a supported audio file"), "{log}");
+        assert!(log.contains("Hidden files are not analyzed"), "{log}");
+        assert!(
+            log.contains(&format!("Input not found: \"{}\"", missing.display())),
+            "{log}"
+        );
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&output).expect("valid json");
+        assert_eq!(rows.len(), 1);
+    }
+
+    #[test]
+    fn folder_input_skips_unsupported_files_quietly() {
+        let directory = TempDir::new().expect("temp dir");
+        copy_fixture(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        std::fs::write(directory.path().join("music/notes.txt"), b"text").expect("writes notes");
+        let folder = directory.path().join("music").to_string_lossy().into_owned();
+        let (code, _, log) = run(&[&folder], &directory);
+        assert_eq!(code, EXIT_SUCCESS, "{log}");
     }
 
     #[test]

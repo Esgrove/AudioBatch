@@ -5,6 +5,7 @@
 
 use std::io::{self, Write};
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use audiobatch_cli::args::{CliArgs, CliCommand};
 use audiobatch_cli::completion::generate_shell_completion;
@@ -50,13 +51,12 @@ fn main() -> ExitCode {
         };
     }
 
-    let cache = match AnalysisCache::open_default() {
-        Ok(cache) => cache,
-        Err(error) => {
-            let _ = writeln!(log, "{}", format!("Error: {error:#}").red());
-            return ExitCode::from(EXIT_USAGE_ERROR);
-        }
-    };
+    // The analysis still works without the cache, it only has to read every file again on the next run.
+    let cache = AnalysisCache::open_default().unwrap_or_else(|error| {
+        let warning = format!("Could not open the analysis cache, results are not cached: {error:#}");
+        let _ = writeln!(log, "{}", warning.yellow());
+        Arc::new(AnalysisCache::in_memory())
+    });
 
     match run_analysis(
         &args,

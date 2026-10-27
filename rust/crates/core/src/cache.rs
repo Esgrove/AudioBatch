@@ -83,6 +83,13 @@ impl AnalysisCache {
         }
     }
 
+    /// Creates a cache that keeps results only while the process runs,
+    /// for when the database file cannot be opened.
+    #[must_use]
+    pub fn in_memory() -> Self {
+        Self::with_path(":memory:")
+    }
+
     /// Opens the default cache, ready to share between threads.
     ///
     /// # Errors
@@ -570,6 +577,15 @@ mod test_analysis_cache {
         assert_eq!(cached.short_term_loudness, record.short_term_loudness);
         assert_eq!(cached.waveform, record.waveform);
         assert_eq!(cached.format_name, record.format_name);
+    }
+
+    #[test]
+    fn in_memory_cache_stores_records() {
+        let directory = TempDir::new().expect("temp dir");
+        let cache = AnalysisCache::in_memory();
+        let record = analyze_fixture_copy(&directory, "sine_stereo_44100_16.wav");
+        cache.store_analysis(&record).expect("stores");
+        assert!(cache.get_analysis(&record.path).is_some());
     }
 
     #[test]
