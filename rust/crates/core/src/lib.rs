@@ -12,6 +12,7 @@ pub mod coordinator;
 pub mod decode;
 pub mod discovery;
 pub mod format;
+pub mod log_file;
 pub mod metadata;
 pub mod normalize;
 pub mod normalize_coordinator;

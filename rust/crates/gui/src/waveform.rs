@@ -504,7 +504,7 @@ impl FrameCounter {
         self.frames += 1;
         let elapsed = self.window_start.elapsed();
         if elapsed.as_secs_f64() >= 1.0 {
-            eprintln!(
+            tracing::info!(
                 "waveform: {:.1} frames per second",
                 f64::from(self.frames) / elapsed.as_secs_f64()
             );
@@ -746,7 +746,7 @@ fn paint_loudness_axis(
         );
         let origin = point(px(label_right) - line.width(), px(top));
         if let Err(error) = line.paint(origin, px(line_height), TextAlign::Left, None, window, cx) {
-            eprintln!("Failed to paint a loudness label: {error:#}");
+            tracing::warn!("Failed to paint a loudness label: {error:#}");
         }
     }
 }

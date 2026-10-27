@@ -145,6 +145,7 @@ impl BlockMeter {
 /// The decoded fraction of the file is reported to `on_progress` while decoding,
 /// when the container states the length.
 pub fn analyze_file(path: &Path, is_cancelled: &dyn Fn() -> bool, on_progress: &mut dyn FnMut(f32)) -> AnalysisRecord {
+    let _span = tracing::info_span!("analyze", file = %path.display()).entered();
     let mut record = AnalysisRecord::from_path(path);
     if !path.is_file() {
         return fail(record, AnalysisError::MissingFile, "File does not exist");

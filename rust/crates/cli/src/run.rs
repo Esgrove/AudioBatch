@@ -20,13 +20,12 @@ use audiobatch_core::{
     AnalysisCache, AnalysisCoordinator, AnalysisEvent, AnalysisOptions, AnalysisRecord, AnalysisStatus,
 };
 use clap::CommandFactory as _;
-use colored::Colorize;
 use crossbeam_channel::RecvTimeoutError;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use crate::args::{CliArgs, OutputFormat};
 use crate::output::{format_csv, format_json, format_table};
-use crate::{write_error, write_warning};
+use crate::{write_error, write_failure, write_info, write_warning};
 
 /// Exit code when every file was analyzed.
 pub const EXIT_SUCCESS: u8 = 0;
@@ -86,7 +85,7 @@ pub fn run_analysis(
     let mut input_paths = args.paths.clone();
     if input_paths.is_empty() {
         let current = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        writeln!(
+        write_info!(
             log,
             "No input paths provided, using current directory: \"{}\"",
             current.display()
@@ -108,7 +107,7 @@ pub fn run_analysis(
         return Ok(EXIT_INTERRUPTED);
     }
     let failures: Vec<&AnalysisRecord> = records.iter().filter(|record| record.has_error()).collect();
-    writeln!(
+    write_info!(
         log,
         "Analysis complete: {:.2} s, {} files ({} failed)",
         started.elapsed().as_secs_f64(),
@@ -116,15 +115,11 @@ pub fn run_analysis(
         failures.len()
     )?;
     for record in &failures {
-        writeln!(
+        write_failure!(
             log,
-            "{}",
-            format!(
-                "Analysis failed: \"{}\", {}",
-                record.path.display(),
-                record.error_message
-            )
-            .red()
+            "Analysis failed: \"{}\", {}",
+            record.path.display(),
+            record.error_message
         )?;
     }
     let mut failure_count = failures.len();
@@ -132,7 +127,7 @@ pub fn run_analysis(
     sort_records(&mut records, args.sort, !args.reverse);
     let skipped_inputs = find_skipped_inputs(&args.paths, &records);
     for error in &skipped_inputs {
-        writeln!(log, "{}", error.red())?;
+        write_failure!(log, "{error}")?;
     }
     failure_count += skipped_inputs.len();
     let (mut reported, show_full_paths) = if let Some(options) = &normalization {
@@ -280,11 +275,7 @@ fn failed_record(mut record: AnalysisRecord, error: String) -> AnalysisRecord {
 
 /// Writes a red error line about a file to the log.
 fn log_error(log: &mut dyn Write, label: &str, record: &AnalysisRecord, error: &str) -> Result<()> {
-    writeln!(
-        log,
-        "{}",
-        format!("{label}: \"{}\", {error}", record.path.display()).red()
-    )?;
+    write_failure!(log, "{label}: \"{}\", {error}", record.path.display())?;
     Ok(())
 }
 

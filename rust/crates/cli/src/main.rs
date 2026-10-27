@@ -16,11 +16,13 @@ use audiobatch_cli::plugin_list::{PluginListContext, run_plugin_list};
 use audiobatch_cli::run::{EXIT_INTERRUPTED, EXIT_USAGE_ERROR, run_analysis};
 use audiobatch_cli::{write_error, write_warning};
 use audiobatch_core::AnalysisCache;
+use audiobatch_core::log_file::{self, FILE_ONLY_TARGET};
 use audiobatch_core::output_file::trash_disposer;
 use audiobatch_plugins::{PluginDataPaths, WorkerCommand, is_scan_worker_invocation, run_scan_worker};
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use indicatif::ProgressDrawTarget;
+use tracing::level_filters::LevelFilter;
 
 /// Set by the first Ctrl-C, which the analysis and normalization poll to stop cleanly.
 static INTERRUPTED: AtomicBool = AtomicBool::new(false);
@@ -40,12 +42,22 @@ fn main() -> ExitCode {
             return ExitCode::SUCCESS;
         }
         Err(error) => {
+            open_log_file();
+            let message = error.render().to_string();
+            let first_line = message.lines().next().unwrap_or_default();
+            tracing::error!(target: FILE_ONLY_TARGET, "{}", first_line.trim_start_matches("error: "));
             let _ = error.print();
             return ExitCode::from(EXIT_USAGE_ERROR);
         }
     };
 
-    let mut log = io::stderr().lock();
+    // Like help and version, the completion script leaves no log file.
+    if !matches!(args.command, Some(CliCommand::Completion { .. })) {
+        open_log_file();
+    }
+
+    // stderr is locked for each message only, since the worker threads log to it as well.
+    let mut log = io::stderr();
     let mut output = io::stdout().lock();
 
     match args.command {
@@ -117,6 +129,15 @@ fn main() -> ExitCode {
             let _ = write_error!(&mut log, "{error:#}");
             ExitCode::from(EXIT_USAGE_ERROR)
         }
+    }
+}
+
+/// Opens the log file, which also prints the warnings and errors of the libraries to stderr.
+/// The CLI's own messages are printed by the message helpers, so they only go to the file.
+/// Without a log file the CLI still works, so a failure is only reported.
+fn open_log_file() {
+    if let Err(error) = log_file::install(env!("CARGO_BIN_NAME"), LevelFilter::WARN) {
+        let _ = write_warning!(&mut io::stderr(), "{error:#}");
     }
 }
 

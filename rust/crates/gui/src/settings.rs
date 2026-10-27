@@ -149,7 +149,7 @@ impl GuiSettings {
     pub fn save(&self) {
         let path = settings_path();
         if let Err(error) = self.save_to(&path) {
-            eprintln!("Failed to save the settings to {}: {error:#}", path.display());
+            tracing::error!("Failed to save the settings to {}: {error:#}", path.display());
         }
     }
 

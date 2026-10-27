@@ -2,10 +2,12 @@
 //!
 //! Every helper writes to the given writer instead of stderr directly,
 //! so the tests can capture the messages and check them.
+//! Each message also goes to the log file, without being printed a second time.
 //! The macros take the writer first, then `format!` arguments.
 
 use std::io::{self, Write};
 
+use audiobatch_core::log_file::FILE_ONLY_TARGET;
 use colored::Colorize;
 
 /// Writes "Error: " and the message in red.
@@ -14,6 +16,7 @@ use colored::Colorize;
 ///
 /// Returns an error when the log cannot be written.
 pub fn write_error(log: &mut dyn Write, message: &str) -> io::Result<()> {
+    tracing::error!(target: FILE_ONLY_TARGET, "{message}");
     writeln!(log, "{}", format!("Error: {message}").red())
 }
 
@@ -23,7 +26,28 @@ pub fn write_error(log: &mut dyn Write, message: &str) -> io::Result<()> {
 ///
 /// Returns an error when the log cannot be written.
 pub fn write_warning(log: &mut dyn Write, message: &str) -> io::Result<()> {
+    tracing::warn!(target: FILE_ONLY_TARGET, "{message}");
     writeln!(log, "{}", format!("Warning: {message}").yellow())
+}
+
+/// Writes the message in red without a prefix, for failures that name what failed themselves.
+///
+/// # Errors
+///
+/// Returns an error when the log cannot be written.
+pub fn write_failure(log: &mut dyn Write, message: &str) -> io::Result<()> {
+    tracing::error!(target: FILE_ONLY_TARGET, "{message}");
+    writeln!(log, "{}", message.red())
+}
+
+/// Writes the message as it is.
+///
+/// # Errors
+///
+/// Returns an error when the log cannot be written.
+pub fn write_info(log: &mut dyn Write, message: &str) -> io::Result<()> {
+    tracing::info!(target: FILE_ONLY_TARGET, "{message}");
+    writeln!(log, "{message}")
 }
 
 /// Writes the message in bold.
@@ -32,6 +56,7 @@ pub fn write_warning(log: &mut dyn Write, message: &str) -> io::Result<()> {
 ///
 /// Returns an error when the log cannot be written.
 pub fn write_bold(log: &mut dyn Write, message: &str) -> io::Result<()> {
+    tracing::info!(target: FILE_ONLY_TARGET, "{message}");
     writeln!(log, "{}", message.bold())
 }
 
@@ -41,6 +66,7 @@ pub fn write_bold(log: &mut dyn Write, message: &str) -> io::Result<()> {
 ///
 /// Returns an error when the log cannot be written.
 pub fn write_dimmed(log: &mut dyn Write, message: &str) -> io::Result<()> {
+    tracing::info!(target: FILE_ONLY_TARGET, "{message}");
     writeln!(log, "{}", message.dimmed())
 }
 
@@ -57,6 +83,22 @@ macro_rules! write_error {
 macro_rules! write_warning {
     ($log:expr, $($arg:tt)*) => {
         $crate::messages::write_warning($log, &format!($($arg)*))
+    };
+}
+
+/// Writes a formatted failure message with `write_failure`.
+#[macro_export]
+macro_rules! write_failure {
+    ($log:expr, $($arg:tt)*) => {
+        $crate::messages::write_failure($log, &format!($($arg)*))
+    };
+}
+
+/// Writes a formatted plain message with `write_info`.
+#[macro_export]
+macro_rules! write_info {
+    ($log:expr, $($arg:tt)*) => {
+        $crate::messages::write_info($log, &format!($($arg)*))
     };
 }
 
@@ -107,6 +149,15 @@ mod test_messages {
             written(|log| write_warning!(log, "{} skipped", 2)),
             "Warning: 2 skipped\n"
         );
+    }
+
+    #[test]
+    fn failures_and_plain_messages_have_no_prefix() {
+        assert_eq!(
+            written(|log| write_failure!(log, "Analysis failed: {}", "a.wav")),
+            "Analysis failed: a.wav\n"
+        );
+        assert_eq!(written(|log| write_info!(log, "{} files", 2)), "2 files\n");
     }
 
     #[test]

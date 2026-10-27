@@ -187,7 +187,7 @@ impl AppView {
         };
         self.capture_plugin_states(cx);
         if let Err(error) = self.plugins.chain.save() {
-            eprintln!("{error:#}");
+            tracing::error!("{error:#}");
         }
         let chain = self.plugins.chain.chain();
         let mut chains = Vec::new();

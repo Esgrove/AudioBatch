@@ -27,6 +27,7 @@ gpui-pre-platform = { version = "=0.3.10", optional = true, features = ["test-su
 raw-window-handle.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tracing.workspace = true
 trash.workspace = true
 vst3-host = { workspace = true, features = ["editor"] }
 

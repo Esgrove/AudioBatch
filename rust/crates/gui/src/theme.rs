@@ -168,12 +168,12 @@ pub fn install(cx: &mut App) {
         .text_system()
         .add_fonts(vec![Cow::Borrowed(ROBOTO), Cow::Borrowed(ROBOTO_MONO)])
     {
-        eprintln!("Failed to load the bundled fonts: {error:#}");
+        tracing::error!("Failed to load the bundled fonts: {error:#}");
     }
     let dark: ThemeConfig = match serde_json::from_str(THEME_CONFIG) {
         Ok(config) => config,
         Err(error) => {
-            eprintln!("Invalid theme configuration: {error}");
+            tracing::error!("Invalid theme configuration: {error}");
             return;
         }
     };

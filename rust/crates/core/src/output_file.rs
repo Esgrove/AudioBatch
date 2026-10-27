@@ -50,7 +50,7 @@ pub fn trash_file(path: &Path) -> bool {
     if let Some(folder) = path.parent()
         && !windows_recycle_bin::folder_has_recycle_bin(folder)
     {
-        eprintln!(
+        tracing::warn!(
             "Did not move {} to the recycle bin, because its drive would delete it permanently",
             path.display()
         );
@@ -66,7 +66,7 @@ pub fn trash_file(path: &Path) -> bool {
     match context.delete(path) {
         Ok(()) => !path.exists(),
         Err(error) => {
-            eprintln!("Could not move {} to the trash: {error}", path.display());
+            tracing::warn!("Could not move {} to the trash: {error}", path.display());
             false
         }
     }
@@ -233,7 +233,7 @@ pub fn commit_temporary_output(
 
     if !replacing_source && source.is_file() && !dispose(source) {
         if let Err(error) = fs::remove_file(output) {
-            eprintln!("Failed to delete file {}: {error}", output.display());
+            tracing::error!("Failed to delete file {}: {error}", output.display());
         }
         restore_backup(backup.as_deref(), output);
         return Err("Could not move the original audio file to the system trash".to_string());
@@ -242,7 +242,7 @@ pub fn commit_temporary_output(
     if let Some(backup) = backup.filter(|backup| backup.is_file())
         && !dispose(&backup)
     {
-        eprintln!(
+        tracing::warn!(
             "Could not move the replaced output to the system trash, it was kept as {}",
             backup.display()
         );
@@ -254,7 +254,7 @@ pub fn commit_temporary_output(
 fn temporary_root() -> PathBuf {
     let root = std::env::temp_dir().join("AudioBatch-rs");
     if let Err(error) = fs::create_dir_all(&root) {
-        eprintln!("Could not create {}: {error}", root.display());
+        tracing::warn!("Could not create {}: {error}", root.display());
     }
     root
 }
@@ -280,7 +280,7 @@ fn keep_new_audio_after_lost_original(temporary: NamedTempFile, output: &Path) -
     if let Some(kept) = kept
         && temporary.persist_noclobber(&kept).is_ok()
     {
-        eprintln!(
+        tracing::error!(
             "The original file {} was removed while being replaced, the new audio was kept as {}",
             output.display(),
             kept.display()
@@ -290,7 +290,7 @@ fn keep_new_audio_after_lost_original(temporary: NamedTempFile, output: &Path) -
             file_name(&kept)
         );
     }
-    eprintln!(
+    tracing::error!(
         "The original file {} was removed while being replaced",
         output.display()
     );
@@ -312,7 +312,7 @@ fn restore_backup(backup: Option<&Path>, output: &Path) {
         return;
     };
     if fs::rename(backup, output).is_err() {
-        eprintln!(
+        tracing::error!(
             "Could not restore the previous output {} from its backup {}",
             output.display(),
             backup.display()

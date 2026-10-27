@@ -211,6 +211,7 @@ pub fn process_file(
     on_progress: &mut dyn FnMut(f32),
 ) -> OperationResult {
     let source = source_record.path.as_path();
+    let _span = tracing::info_span!("process", file = %source.display()).entered();
     match try_process_file(source_record, options, chain, is_cancelled, on_progress) {
         Ok(result) => result,
         Err(error) => OperationResult::failure(source, error),
@@ -280,7 +281,7 @@ fn try_process_file(
         &mut progress_range(on_progress, RENDER_PROGRESS_END, WRITE_PROGRESS_END),
     )?;
     if let Err(error) = copy_metadata(source, temporary.path()) {
-        eprintln!("{error:#}");
+        tracing::error!("{error:#}");
         return Err("Could not copy metadata onto the processed output".to_string());
     }
     validate_written_audio(temporary.path(), rendered.channels, rendered.sample_rate, final_frames)
