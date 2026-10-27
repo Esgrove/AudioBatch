@@ -61,11 +61,23 @@ The differences below are in the GUIs and in plugin hosting.
 
 - Audio Unit plugins on macOS. The Rust version hosts VST3 plugins only, on macOS and Windows.
 - A context menu in the results table for normalizing, processing, re-analyzing, revealing, and removing files.
-- A collapsible controls row, and the number keys 1 to 8 for jumping to Serato hot cues.
+  The Rust version has the same commands in its File and Plugins menus.
 
 ### Features only in the Rust version
 
 - File > Add Files… adds individual files to the list.
+- The CLI also installs completions for elvish.
+
+### Audio formats
+
+- The C++ version reads WAV, AIFF, FLAC, Ogg Vorbis, and MP3 with JUCE on every platform,
+  and on macOS also what Core Audio reads, such as AAC, Apple Lossless, and CAF.
+- The Rust version reads with symphonia on every platform,
+  so it also reads AAC files on Windows.
+  It reads WAV and BWF, AIFF and AIFC, FLAC, Ogg Vorbis, MP3, AAC and Apple Lossless in M4A, and CAF.
+- Both write the normalized and processed files as AIFF.
+  For lossless sources both write the same samples,
+  and for lossy sources the two decoders can differ by a step or two of the output.
 
 ### Runs
 
