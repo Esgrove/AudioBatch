@@ -44,14 +44,15 @@ bool areChainsUsable(const std::vector<PluginChainInstances>& chains, const Plug
     return !chains.empty() && std::ranges::all_of(chains, isUsableChain);
 }
 
-/// Returns existing records in caller order, retaining the first occurrence of each full path.
+/// Returns the records in caller order, retaining the first occurrence of each full path.
+/// A file that has gone missing is kept, so its processing fails with a message instead of being left out silently.
 std::vector<AudioAnalysisRecord> collectQueuedRecords(const std::vector<AudioAnalysisRecord>& records)
 {
     std::set<juce::String> seenPaths;
     std::vector<AudioAnalysisRecord> queuedRecords;
     queuedRecords.reserve(records.size());
     for (const auto& record : records) {
-        if (record.file.existsAsFile() && seenPaths.insert(record.fullPath).second) {
+        if (seenPaths.insert(record.fullPath).second) {
             queuedRecords.push_back(record);
         }
     }

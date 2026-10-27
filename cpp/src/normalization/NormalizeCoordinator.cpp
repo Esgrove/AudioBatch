@@ -82,11 +82,8 @@ int NormalizeCoordinator::start(
     const auto runId = runner.getCurrentRunId();
     std::map<juce::String, AudioAnalysisRecord> recordsByPath;
 
+    // A file that has gone missing is queued too, so it is reported as a failure instead of being left out silently.
     for (const auto& record : records) {
-        if (!record.file.existsAsFile()) {
-            continue;
-        }
-
         recordsByPath.insert_or_assign(record.fullPath, record);
     }
 

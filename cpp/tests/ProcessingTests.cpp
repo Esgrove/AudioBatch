@@ -530,7 +530,7 @@ public:
             expect(!PluginRunChains(std::vector<PluginChainInstances>(1), false).acquire([] { return false; }));
         }
 
-        beginTest("Coordinator queues selected files in input order and skips duplicates and missing files");
+        beginTest("Coordinator queues selected files in input order, skips duplicates, and fails missing files");
         testCoordinator(directory, 1);
 
         beginTest("Coordinator can start six independent files concurrently");
@@ -1111,12 +1111,14 @@ private:
         missing.file = directory.getChildFile("missing.wav");
         missing.fullPath = missing.file.getFullPathName();
         records.push_back(missing);
+        expectedPaths.push_back(missing.fullPath);
 
         std::mutex mutex;
         std::condition_variable condition;
         std::vector<juce::String> startedPaths;
         int completedFiles = 0;
         int resultCount = 0;
+        juce::String missingFileError;
         bool released = workerCount == 1;
         PluginProcessingCoordinator coordinator(workerCount);
         coordinator.setStartingCallback([&](const juce::File& file, int /*runId*/) {
@@ -1126,9 +1128,12 @@ private:
             condition.notify_all();
             condition.wait_for(lock, std::chrono::seconds(10), [&] { return released; });
         });
-        coordinator.setResultCallback([&](const PluginProcessingResult&, int /*runId*/) {
+        coordinator.setResultCallback([&](const PluginProcessingResult& result, int /*runId*/) {
             const std::scoped_lock lock(mutex);
             ++resultCount;
+            if (result.originalFile == missing.file) {
+                missingFileError = outcomeError(result.outcome);
+            }
         });
         coordinator.setCompletionCallback([&](const int totalFiles, int /*runId*/) {
             const std::scoped_lock lock(mutex);
@@ -1143,24 +1148,25 @@ private:
             chains.push_back(std::move(chain));
         }
         const auto options = makeOptions({chains.front().front().get()});
-        expectEquals(coordinator.start(records, options, std::move(chains)), 6);
+        expectEquals(coordinator.start(records, options, std::move(chains)), 7);
         {
             std::unique_lock lock(mutex);
             if (workerCount > 1) {
-                expect(condition.wait_for(lock, std::chrono::seconds(5), [&] { return startedPaths.size() == 6; }));
+                expect(condition.wait_for(lock, std::chrono::seconds(5), [&] { return startedPaths.size() >= 6; }));
                 released = true;
                 condition.notify_all();
             }
-            expect(condition.wait_for(lock, std::chrono::seconds(10), [&] { return completedFiles == 6; }));
+            expect(condition.wait_for(lock, std::chrono::seconds(10), [&] { return completedFiles == 7; }));
         }
         coordinator.cancelAndWait();
-        expectEquals(resultCount, 6);
+        expectEquals(resultCount, 7);
+        expectEquals(missingFileError, juce::String("File does not exist"));
         const auto messages = capture.getMessages();
         expect(!messages.isEmpty());
         if (!messages.isEmpty()) {
             expect(
                 messages[0].endsWith(
-                    utils::format("[INFO]: Plugin processing started: 6 files, up to {} concurrent", workerCount)
+                    utils::format("[INFO]: Plugin processing started: 7 files, up to {} concurrent", workerCount)
                 )
             );
         }
