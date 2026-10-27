@@ -255,16 +255,7 @@ mod test_normalize_coordinator {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::analysis::analyze_file;
-
-    /// Copies a fixture into the directory and returns its analysis.
-    fn analyzed_copy(directory: &TempDir, fixture: &str, name: &str) -> AnalysisRecord {
-        let path = directory.path().join(name);
-        fs::copy(test_fixtures::fixture(fixture), &path).expect("copies fixture");
-        let record = analyze_file(&path, &|| false, &mut |_| {});
-        assert!(record.is_ready(), "{}", record.error_message);
-        record
-    }
+    use crate::test_helpers::ready_fixture_copy;
 
     /// A coordinator with its cache and options whose disposer deletes files.
     struct Setup {
@@ -317,8 +308,8 @@ mod test_normalize_coordinator {
     #[test]
     fn normalizes_every_file_and_updates_the_cache() {
         let directory = TempDir::new().expect("temp dir");
-        let first = analyzed_copy(&directory, "sine_stereo_44100_16.wav", "first.wav");
-        let second = analyzed_copy(&directory, "sine_mono_44100_16.wav", "second.wav");
+        let first = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "first.wav");
+        let second = ready_fixture_copy(&directory, "sine_mono_44100_16.wav", "second.wav");
         let setup = setup(&directory);
         setup.cache.store_analysis(&first).expect("stores");
 
@@ -343,7 +334,7 @@ mod test_normalize_coordinator {
     #[test]
     fn each_file_starts_before_it_finishes() {
         let directory = TempDir::new().expect("temp dir");
-        let record = analyzed_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
         let setup = setup(&directory);
         let (_, receiver) = setup.coordinator.start(vec![record], setup.options);
         let events = collect(&receiver);
@@ -364,8 +355,8 @@ mod test_normalize_coordinator {
     #[test]
     fn conflicting_file_fails_without_being_touched() {
         let directory = TempDir::new().expect("temp dir");
-        let wav = analyzed_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
-        let flac = analyzed_copy(&directory, "sine_stereo_44100_16.flac", "song.flac");
+        let wav = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let flac = ready_fixture_copy(&directory, "sine_stereo_44100_16.flac", "song.flac");
         let setup = setup(&directory);
         let (_, receiver) = setup.coordinator.start(vec![wav, flac], setup.options);
         let events = collect(&receiver);
@@ -398,7 +389,7 @@ mod test_normalize_coordinator {
     #[test]
     fn cancelled_run_does_not_complete() {
         let directory = TempDir::new().expect("temp dir");
-        let record = analyzed_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
         let setup = setup(&directory);
         let (run_id, receiver) = setup.coordinator.start(vec![record], setup.options);
         setup.coordinator.cancel();

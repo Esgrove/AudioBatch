@@ -75,17 +75,6 @@ const DEFAULT_GAIN_DB: f32 = 0.0;
 /// Difference between the gain slider and the selected file's gain that moves the slider, in decibels.
 const GAIN_SLIDER_TOLERANCE_DB: f32 = 1e-3;
 
-/// Startup options from the command line.
-#[derive(Debug, Default, Clone)]
-pub struct LaunchOptions {
-    /// Files and folders to analyze at startup.
-    pub paths: Vec<PathBuf>,
-    /// Number of synthetic rows for the stress test, when set.
-    pub demo_rows: Option<usize>,
-    /// Selects and plays the first analyzed file once the startup analysis completes.
-    pub autoplay: bool,
-}
-
 /// What an analysis run covers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RunKind {
@@ -95,23 +84,15 @@ enum RunKind {
     Reanalyze,
 }
 
-/// Progress of the current analysis run.
-#[derive(Debug, Clone)]
-struct RunProgress {
-    run_id: u64,
-    kind: RunKind,
-    planned: bool,
-    total: usize,
-    finished: usize,
-    completed: bool,
-}
-
-/// The sliders of the controls column.
-struct Sliders {
-    zoom: Entity<SliderState>,
-    gain: Entity<SliderState>,
-    peak_target: Entity<SliderState>,
-    loudness_target: Entity<SliderState>,
+/// Startup options from the command line.
+#[derive(Debug, Default, Clone)]
+pub struct LaunchOptions {
+    /// Files and folders to analyze at startup.
+    pub paths: Vec<PathBuf>,
+    /// Number of synthetic rows for the stress test, when set.
+    pub demo_rows: Option<usize>,
+    /// Selects and plays the first analyzed file once the startup analysis completes.
+    pub autoplay: bool,
 }
 
 /// The root view of the main window.
@@ -164,6 +145,25 @@ pub struct AppView {
     demo_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
     _player_poll_task: Task<()>,
+}
+
+/// Progress of the current analysis run.
+#[derive(Debug, Clone)]
+struct RunProgress {
+    run_id: u64,
+    kind: RunKind,
+    planned: bool,
+    total: usize,
+    finished: usize,
+    completed: bool,
+}
+
+/// The sliders of the controls column.
+struct Sliders {
+    zoom: Entity<SliderState>,
+    gain: Entity<SliderState>,
+    peak_target: Entity<SliderState>,
+    loudness_target: Entity<SliderState>,
 }
 
 impl AppView {
@@ -262,6 +262,13 @@ impl AppView {
             view.add_roots(&options.paths, cx);
         }
         view
+    }
+
+    /// Clears the custom gain of the selected file, in the table and in the cache.
+    pub(super) fn clear_selected_gain(&self, cx: &mut Context<Self>) {
+        self.change_selected_gain(DEFAULT_GAIN_DB, cx);
+        self.store_selected_gain(cx);
+        cx.notify();
     }
 
     /// Points the waveform playhead at the current player.
@@ -627,13 +634,6 @@ impl AppView {
         if let (Some(selected), Some(record)) = (&self.selected, self.selected_record(cx)) {
             self.store_custom_gain(selected, record.custom_gain_db);
         }
-    }
-
-    /// Clears the custom gain of the selected file, in the table and in the cache.
-    pub(super) fn clear_selected_gain(&self, cx: &mut Context<Self>) {
-        self.change_selected_gain(DEFAULT_GAIN_DB, cx);
-        self.store_selected_gain(cx);
-        cx.notify();
     }
 
     /// Writes the custom gain of a file to the cache.

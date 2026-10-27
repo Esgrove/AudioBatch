@@ -12,6 +12,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use audiobatch_playback::{OutputConfig, Player, device_capabilities};
 
+/// Plays the file given as the first argument, optionally on a device configuration from the other arguments.
 fn main() -> Result<()> {
     let mut arguments = std::env::args().skip(1);
     let path = PathBuf::from(arguments.next().context("Give an audio file to play")?);

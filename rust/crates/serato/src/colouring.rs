@@ -57,6 +57,13 @@ impl OverviewColour {
 }
 
 impl Contributions {
+    /// Returns the contributions of one slice with unit weight per cell.
+    fn of_slice(cells: &Slice) -> Self {
+        let mut contributions = Self::default();
+        contributions.add_slice(cells, 1.0);
+        contributions
+    }
+
     /// Adds the valid cells of a slice, each with the given weight.
     fn add_slice(&mut self, cells: &Slice, weight: f64) {
         for &index in cells {
@@ -74,13 +81,6 @@ impl Contributions {
             }
             self.weight += weight;
         }
-    }
-
-    /// Returns the contributions of one slice with unit weight per cell.
-    fn of_slice(cells: &Slice) -> Self {
-        let mut contributions = Self::default();
-        contributions.add_slice(cells, 1.0);
-        contributions
     }
 
     /// Returns the mean colour, or none when no valid cell contributed.

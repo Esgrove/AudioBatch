@@ -16,6 +16,8 @@ use clap::{CommandFactory, Parser};
 use colored::Colorize;
 use indicatif::ProgressDrawTarget;
 
+/// Parses the arguments, then prints shell completions or analyzes and normalizes the given paths.
+/// The exit code tells usage errors and failed files apart, matching the C++ CLI.
 fn main() -> ExitCode {
     let args = match CliArgs::try_parse() {
         Ok(args) => args,

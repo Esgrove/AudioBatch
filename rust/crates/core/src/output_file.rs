@@ -8,11 +8,15 @@
 //! which moves them to the system trash unless a caller such as a test passes another one.
 
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use tempfile::NamedTempFile;
+#[cfg(target_os = "macos")]
+use trash::macos::{DeleteMethod, TrashContextExtMacos};
 
 /// Highest number tried for a backup name when earlier backups are still around.
 const MAXIMUM_BACKUP_INDEX: u32 = 1000;
@@ -36,13 +40,13 @@ pub fn trash_file(path: &Path) -> bool {
     if !path.exists() {
         return true;
     }
-    #[allow(unused_mut)]
+    #[cfg_attr(
+        not(target_os = "macos"),
+        expect(unused_mut, reason = "only macOS changes the delete method")
+    )]
     let mut context = trash::TrashContext::default();
     #[cfg(target_os = "macos")]
-    {
-        use trash::macos::{DeleteMethod, TrashContextExtMacos};
-        context.set_delete_method(DeleteMethod::NsFileManager);
-    }
+    context.set_delete_method(DeleteMethod::NsFileManager);
     match context.delete(path) {
         Ok(()) => !path.exists(),
         Err(error) => {
@@ -100,10 +104,7 @@ pub fn create_temporary_output(output: &Path) -> Result<NamedTempFile> {
     builder.prefix(&prefix).suffix(&extension);
     // Temporary files are private by default, but the output should get the usual permissions.
     #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        builder.permissions(fs::Permissions::from_mode(0o666));
-    }
+    builder.permissions(fs::Permissions::from_mode(0o666));
     builder
         .tempfile_in(directory.unwrap_or_else(|| Path::new(".")))
         .context("Could not create temporary output file")

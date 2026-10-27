@@ -342,27 +342,6 @@ impl SettingsView {
         cx.notify();
     }
 
-    /// Renders an option checkbox that changes one setting.
-    fn option(
-        id: &'static str,
-        label: &'static str,
-        tooltip_text: &'static str,
-        checked: bool,
-        update: fn(&mut GuiSettings, bool),
-        cx: &Context<Self>,
-    ) -> Checkbox {
-        Checkbox::new(id)
-            .label(label)
-            .checked(checked)
-            .tooltip(tooltip_text)
-            .text_size(px(FONT_SIZE))
-            .on_change(cx.listener(move |view, checked: &bool, _, cx| {
-                let mut settings = view.settings.clone();
-                update(&mut settings, *checked);
-                view.send(settings, cx);
-            }))
-    }
-
     /// Renders the device group: the output device, the sample rate, and the buffer size.
     fn render_device_group(&self) -> Div {
         group("Audio interface and playback")
@@ -436,6 +415,27 @@ impl SettingsView {
             ))
             .child(loudness_row)
             .child(error)
+    }
+
+    /// Renders an option checkbox that changes one setting.
+    fn option(
+        id: &'static str,
+        label: &'static str,
+        tooltip_text: &'static str,
+        checked: bool,
+        update: fn(&mut GuiSettings, bool),
+        cx: &Context<Self>,
+    ) -> Checkbox {
+        Checkbox::new(id)
+            .label(label)
+            .checked(checked)
+            .tooltip(tooltip_text)
+            .text_size(px(FONT_SIZE))
+            .on_change(cx.listener(move |view, checked: &bool, _, cx| {
+                let mut settings = view.settings.clone();
+                update(&mut settings, *checked);
+                view.send(settings, cx);
+            }))
     }
 }
 

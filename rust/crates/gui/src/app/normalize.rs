@@ -32,17 +32,6 @@ impl AppView {
         self.normalize_task.is_some() && self.normalize_run.as_ref().is_some_and(|run| !run.completed)
     }
 
-    /// Returns why normalization cannot start now, or none when it can.
-    fn normalization_blocked_reason(&self) -> Option<&'static str> {
-        if self.is_normalizing() {
-            Some(ALREADY_NORMALIZING)
-        } else if self.is_analyzing() {
-            Some(BLOCKED_BY_ANALYSIS)
-        } else {
-            None
-        }
-    }
-
     /// Returns true when the selected file can be normalized now.
     pub(super) fn can_normalize_selected(&self, cx: &Context<Self>) -> bool {
         !self.is_demo()
@@ -145,6 +134,26 @@ impl AppView {
         set_target(&mut self.settings, mode, default);
         self.store_normalize_target(cx);
         cx.notify();
+    }
+
+    /// Stops listening to the normalization run, letting files in progress finish with their originals intact.
+    pub(super) fn cancel_normalization(&mut self) {
+        if let Some(coordinator) = &self.normalize_coordinator {
+            coordinator.cancel();
+        }
+        self.normalize_task = None;
+        self.normalize_run = None;
+    }
+
+    /// Returns why normalization cannot start now, or none when it can.
+    fn normalization_blocked_reason(&self) -> Option<&'static str> {
+        if self.is_normalizing() {
+            Some(ALREADY_NORMALIZING)
+        } else if self.is_analyzing() {
+            Some(BLOCKED_BY_ANALYSIS)
+        } else {
+            None
+        }
     }
 
     /// Puts the normalization target into the labels of the normalize menu items.
@@ -304,15 +313,6 @@ impl AppView {
         if self.selected.as_deref().is_some_and(|selected| !selected.exists()) {
             self.clear_selection(cx);
         }
-    }
-
-    /// Stops listening to the normalization run, letting files in progress finish with their originals intact.
-    pub(super) fn cancel_normalization(&mut self) {
-        if let Some(coordinator) = &self.normalize_coordinator {
-            coordinator.cancel();
-        }
-        self.normalize_task = None;
-        self.normalize_run = None;
     }
 }
 

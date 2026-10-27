@@ -18,6 +18,8 @@ pub mod output_file;
 pub mod record;
 pub mod sorting;
 pub mod tags;
+#[cfg(test)]
+mod test_helpers;
 pub mod waveform;
 
 pub use analysis::analyze_file;

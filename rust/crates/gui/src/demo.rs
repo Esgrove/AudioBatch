@@ -89,30 +89,6 @@ pub fn advance_row(row: &mut ResultRow, random: &mut DemoRandom) {
     };
 }
 
-/// Generates a plausible record for a row.
-fn demo_record(row: &ResultRow, random: &mut DemoRandom) -> AnalysisRecord {
-    let peak = 0.7_f64.mul_add(random.next_unit(), 0.3) as f32;
-    let loudness = 18.0_f64.mul_add(-random.next_unit(), -6.0);
-    AnalysisRecord {
-        path: row.path.clone(),
-        file_name: row.file_name.to_string(),
-        format_name: String::from("WAV file"),
-        file_size: 40_000_000,
-        duration_seconds: 240.0_f64.mul_add(random.next_unit(), 120.0),
-        overall_peak: peak,
-        peak_left: peak,
-        peak_right: peak * 0.95,
-        overall_true_peak: f64::from(peak) * 1.02,
-        integrated_lufs: loudness,
-        max_short_term_lufs: loudness + 3.0,
-        sample_rate: DEMO_SAMPLE_RATE,
-        channels: 2,
-        bits_per_sample: 24,
-        status: AnalysisStatus::Analyzed,
-        ..Default::default()
-    }
-}
-
 /// Generates a three minute overview and loudness history with a varying envelope.
 #[must_use]
 pub fn demo_waveform() -> (Arc<WaveformOverview>, Arc<ShortTermLoudnessHistory>) {
@@ -143,4 +119,28 @@ pub fn demo_waveform() -> (Arc<WaveformOverview>, Arc<ShortTermLoudnessHistory>)
         samples_per_point: DEMO_SAMPLE_RATE / 10,
     });
     (overview, history)
+}
+
+/// Generates a plausible record for a row.
+fn demo_record(row: &ResultRow, random: &mut DemoRandom) -> AnalysisRecord {
+    let peak = 0.7_f64.mul_add(random.next_unit(), 0.3) as f32;
+    let loudness = 18.0_f64.mul_add(-random.next_unit(), -6.0);
+    AnalysisRecord {
+        path: row.path.clone(),
+        file_name: row.file_name.to_string(),
+        format_name: String::from("WAV file"),
+        file_size: 40_000_000,
+        duration_seconds: 240.0_f64.mul_add(random.next_unit(), 120.0),
+        overall_peak: peak,
+        peak_left: peak,
+        peak_right: peak * 0.95,
+        overall_true_peak: f64::from(peak) * 1.02,
+        integrated_lufs: loudness,
+        max_short_term_lufs: loudness + 3.0,
+        sample_rate: DEMO_SAMPLE_RATE,
+        channels: 2,
+        bits_per_sample: 24,
+        status: AnalysisStatus::Analyzed,
+        ..Default::default()
+    }
 }

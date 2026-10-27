@@ -185,22 +185,6 @@ struct PaintData {
     playhead: Option<(f64, f32)>,
 }
 
-impl FrameCounter {
-    /// Records one redraw and prints the rate once per second.
-    fn tick(&mut self) {
-        self.frames += 1;
-        let elapsed = self.window_start.elapsed();
-        if elapsed.as_secs_f64() >= 1.0 {
-            eprintln!(
-                "waveform: {:.1} frames per second",
-                f64::from(self.frames) / elapsed.as_secs_f64()
-            );
-            self.frames = 0;
-            self.window_start = Instant::now();
-        }
-    }
-}
-
 impl PlayheadSource {
     /// Returns the playhead time in seconds.
     #[must_use]
@@ -224,45 +208,6 @@ impl PlayheadSource {
             Self::Player(handle) => handle.is_playing(),
             Self::Simulated { .. } => true,
         }
-    }
-}
-
-impl Viewport {
-    /// Returns the horizontal position of a time.
-    fn time_to_x(&self, seconds: f64) -> f32 {
-        let fraction = if self.length > 0.0 {
-            ((seconds - self.start) / self.length) as f32
-        } else {
-            0.0
-        };
-        fraction.mul_add(f32::from(self.plot.size.width), f32::from(self.plot.origin.x))
-    }
-
-    /// Returns the time at a horizontal position.
-    fn x_to_time(&self, x: Pixels) -> f64 {
-        let width = f32::from(self.plot.size.width);
-        if width <= 0.0 {
-            return self.start;
-        }
-        let fraction = f64::from((f32::from(x - self.plot.origin.x) / width).clamp(0.0, 1.0));
-        fraction.mul_add(self.length, self.start)
-    }
-
-    /// Returns true when a time is inside the visible range.
-    fn contains(&self, seconds: f64) -> bool {
-        seconds >= self.start && seconds <= self.start + self.length
-    }
-}
-
-impl LoudnessRange {
-    /// Returns the vertical position of a loudness value, without clamping values outside the axis range.
-    fn to_y(self, value: f64, plot: Bounds<Pixels>) -> f32 {
-        let minimum = f64::from(self.minimum);
-        let fraction = ((value - minimum) / (f64::from(self.maximum) - minimum)) as f32;
-        fraction.mul_add(
-            -f32::from(plot.size.height),
-            f32::from(plot.origin.y + plot.size.height),
-        )
     }
 }
 
@@ -551,6 +496,61 @@ impl Render for WaveformView {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_scroll(cx.listener(Self::on_scroll))
+    }
+}
+
+impl FrameCounter {
+    /// Records one redraw and prints the rate once per second.
+    fn tick(&mut self) {
+        self.frames += 1;
+        let elapsed = self.window_start.elapsed();
+        if elapsed.as_secs_f64() >= 1.0 {
+            eprintln!(
+                "waveform: {:.1} frames per second",
+                f64::from(self.frames) / elapsed.as_secs_f64()
+            );
+            self.frames = 0;
+            self.window_start = Instant::now();
+        }
+    }
+}
+
+impl Viewport {
+    /// Returns the horizontal position of a time.
+    fn time_to_x(&self, seconds: f64) -> f32 {
+        let fraction = if self.length > 0.0 {
+            ((seconds - self.start) / self.length) as f32
+        } else {
+            0.0
+        };
+        fraction.mul_add(f32::from(self.plot.size.width), f32::from(self.plot.origin.x))
+    }
+
+    /// Returns the time at a horizontal position.
+    fn x_to_time(&self, x: Pixels) -> f64 {
+        let width = f32::from(self.plot.size.width);
+        if width <= 0.0 {
+            return self.start;
+        }
+        let fraction = f64::from((f32::from(x - self.plot.origin.x) / width).clamp(0.0, 1.0));
+        fraction.mul_add(self.length, self.start)
+    }
+
+    /// Returns true when a time is inside the visible range.
+    fn contains(&self, seconds: f64) -> bool {
+        seconds >= self.start && seconds <= self.start + self.length
+    }
+}
+
+impl LoudnessRange {
+    /// Returns the vertical position of a loudness value, without clamping values outside the axis range.
+    fn to_y(self, value: f64, plot: Bounds<Pixels>) -> f32 {
+        let minimum = f64::from(self.minimum);
+        let fraction = ((value - minimum) / (f64::from(self.maximum) - minimum)) as f32;
+        fraction.mul_add(
+            -f32::from(plot.size.height),
+            f32::from(plot.origin.y + plot.size.height),
+        )
     }
 }
 

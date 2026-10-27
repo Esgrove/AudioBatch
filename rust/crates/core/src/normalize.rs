@@ -126,6 +126,14 @@ pub struct NormalizationResult {
     pub outcome: NormalizationOutcome,
 }
 
+/// What rendering wrote, for validating the output.
+struct RenderedAudio {
+    channels: u32,
+    sample_rate: u32,
+    frames: u64,
+    notice: Option<String>,
+}
+
 impl Default for NormalizationOptions {
     fn default() -> Self {
         Self {
@@ -417,14 +425,6 @@ pub fn normalize_file(
     succeed(source, analysis, rendered.notice)
 }
 
-/// What rendering wrote, for validating the output.
-struct RenderedAudio {
-    channels: u32,
-    sample_rate: u32,
-    frames: u64,
-    notice: Option<String>,
-}
-
 /// Streams the source through the AIFF writer packet by packet, applying the gain.
 ///
 /// Returns the user-facing error on failure, including when cancellation is requested between packets.
@@ -622,13 +622,19 @@ mod test_normalization_gain {
 }
 
 #[cfg(test)]
-mod test_output_paths {
+mod test_output_files {
     use super::*;
 
     /// Builds a record for the path.
     fn record(path: &str) -> AnalysisRecord {
+        record_with_depth(path, 0)
+    }
+
+    /// Builds a record with the path and bit depth.
+    fn record_with_depth(path: &str, bits_per_sample: u32) -> AnalysisRecord {
         AnalysisRecord {
             path: PathBuf::from(path),
+            bits_per_sample,
             ..AnalysisRecord::default()
         }
     }
@@ -679,28 +685,14 @@ mod test_output_paths {
             "Another selected file is also written to song.aif"
         );
     }
-}
-
-#[cfg(test)]
-mod test_output_bit_depth {
-    use super::*;
-
-    /// Builds a record with the path and bit depth.
-    fn record(path: &str, bits_per_sample: u32) -> AnalysisRecord {
-        AnalysisRecord {
-            path: PathBuf::from(path),
-            bits_per_sample,
-            ..AnalysisRecord::default()
-        }
-    }
 
     #[test]
     fn keeps_supported_depths_and_falls_back_to_24() {
-        assert_eq!(output_bit_depth(&record("a.wav", 16)), 16);
-        assert_eq!(output_bit_depth(&record("a.wav", 24)), 24);
-        assert_eq!(output_bit_depth(&record("a.wav", 32)), 24);
-        assert_eq!(output_bit_depth(&record("a.mp3", 0)), 16);
-        assert_eq!(output_bit_depth(&record("a.m4a", 0)), 24);
+        assert_eq!(output_bit_depth(&record_with_depth("a.wav", 16)), 16);
+        assert_eq!(output_bit_depth(&record_with_depth("a.wav", 24)), 24);
+        assert_eq!(output_bit_depth(&record_with_depth("a.wav", 32)), 24);
+        assert_eq!(output_bit_depth(&record_with_depth("a.mp3", 0)), 16);
+        assert_eq!(output_bit_depth(&record_with_depth("a.m4a", 0)), 24);
     }
 }
 
@@ -712,18 +704,10 @@ mod test_normalize_file {
     use super::*;
     use crate::record::AnalysisStatus;
     use crate::tags::read_tags;
+    use crate::test_helpers::ready_fixture_copy;
 
     /// Files disposed of during a test, by file name.
     type Disposed = Arc<Mutex<Vec<String>>>;
-
-    /// Copies a fixture into the directory and returns its analysis.
-    fn analyzed_copy(directory: &tempfile::TempDir, fixture: &str, name: &str) -> AnalysisRecord {
-        let path = directory.path().join(name);
-        fs::copy(test_fixtures::fixture(fixture), &path).expect("copies fixture");
-        let record = analyze_file(&path, &|| false, &mut |_| {});
-        assert!(record.is_ready(), "{}", record.error_message);
-        record
-    }
 
     /// Options with a disposer that deletes files and records their names.
     fn options(mode: NormalizationMode) -> (NormalizationOptions, Disposed) {
@@ -761,7 +745,7 @@ mod test_normalize_file {
     #[test]
     fn peak_normalizes_a_wav_file_to_aiff() {
         let directory = tempfile::tempdir().expect("creates directory");
-        let record = analyzed_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
         let (options, disposed) = options(NormalizationMode::Peak);
 
         let result = normalize(&record, &options);
@@ -783,7 +767,7 @@ mod test_normalize_file {
     #[test]
     fn loudness_normalizes_to_the_target() {
         let directory = tempfile::tempdir().expect("creates directory");
-        let record = analyzed_copy(&directory, "sine_stereo_48000_24.flac", "song.flac");
+        let record = ready_fixture_copy(&directory, "sine_stereo_48000_24.flac", "song.flac");
         let (options, _) = options(NormalizationMode::Loudness);
 
         let result = normalize(&record, &options);
@@ -800,7 +784,7 @@ mod test_normalize_file {
     #[test]
     fn float_source_is_written_as_24_bit() {
         let directory = tempfile::tempdir().expect("creates directory");
-        let record = analyzed_copy(&directory, "sine_stereo_44100_32f.wav", "song.wav");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_32f.wav", "song.wav");
         let (options, _) = options(NormalizationMode::Peak);
 
         let result = normalize(&record, &options);
@@ -811,7 +795,7 @@ mod test_normalize_file {
     #[test]
     fn mp3_source_keeps_its_length_and_is_written_as_16_bit() {
         let directory = tempfile::tempdir().expect("creates directory");
-        let record = analyzed_copy(&directory, "sine_stereo_44100_320k.mp3", "song.mp3");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_320k.mp3", "song.mp3");
         let (options, _) = options(NormalizationMode::Peak);
 
         let result = normalize(&record, &options);
@@ -824,7 +808,7 @@ mod test_normalize_file {
     #[test]
     fn tags_are_copied_to_the_output() {
         let directory = tempfile::tempdir().expect("creates directory");
-        let record = analyzed_copy(&directory, "tagged_stereo_44100_16.flac", "song.flac");
+        let record = ready_fixture_copy(&directory, "tagged_stereo_44100_16.flac", "song.flac");
         let (options, _) = options(NormalizationMode::Peak);
 
         let result = normalize(&record, &options);
@@ -837,7 +821,7 @@ mod test_normalize_file {
     #[test]
     fn aiff_source_is_rewritten_in_place_with_a_copy_disposed_of() {
         let directory = tempfile::tempdir().expect("creates directory");
-        let record = analyzed_copy(&directory, "sine_stereo_44100_16.aif", "song.aif");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.aif", "song.aif");
         let (options, disposed) = options(NormalizationMode::Peak);
 
         let result = normalize(&record, &options);
@@ -852,7 +836,7 @@ mod test_normalize_file {
     #[test]
     fn file_already_at_target_is_left_unchanged() {
         let directory = tempfile::tempdir().expect("creates directory");
-        let record = analyzed_copy(&directory, "sine_stereo_44100_16.aif", "song.aif");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.aif", "song.aif");
         let (options, disposed) = options(NormalizationMode::Peak);
         let normalized = normalize(&record, &options).output().expect("has output").clone();
         let contents = fs::read(&normalized.path).expect("reads");
@@ -868,7 +852,7 @@ mod test_normalize_file {
     #[test]
     fn existing_output_needs_overwrite() {
         let directory = tempfile::tempdir().expect("creates directory");
-        let record = analyzed_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
         fs::write(directory.path().join("song.aif"), b"existing").expect("writes");
         let (mut options, disposed) = options(NormalizationMode::Peak);
 
@@ -891,7 +875,7 @@ mod test_normalize_file {
     #[test]
     fn unfinished_analysis_is_refused() {
         let directory = tempfile::tempdir().expect("creates directory");
-        let mut record = analyzed_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let mut record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
         record.status = AnalysisStatus::Pending;
         let (options, _) = options(NormalizationMode::Peak);
 
@@ -904,7 +888,7 @@ mod test_normalize_file {
     #[test]
     fn cancelled_normalization_leaves_the_original() {
         let directory = tempfile::tempdir().expect("creates directory");
-        let record = analyzed_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
         let (options, disposed) = options(NormalizationMode::Peak);
 
         let result = normalize_file(&record, &options, &|| true, &mut |_| {});
@@ -917,7 +901,7 @@ mod test_normalize_file {
     #[test]
     fn progress_reaches_the_end() {
         let directory = tempfile::tempdir().expect("creates directory");
-        let record = analyzed_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
         let (options, _) = options(NormalizationMode::Peak);
         let mut reported = Vec::new();
 

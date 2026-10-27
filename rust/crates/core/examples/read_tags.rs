@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 use audiobatch_core::read_tags;
 
+/// Prints the tags and Serato data of every path given as an argument.
 fn main() {
     for path in std::env::args().skip(1).map(PathBuf::from) {
         println!("{}", path.display());

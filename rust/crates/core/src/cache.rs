@@ -555,24 +555,13 @@ mod test_analysis_cache {
 
     use tempfile::TempDir;
 
-    use crate::analysis::analyze_file;
-
-    fn analyzed_copy(directory: &TempDir, fixture: &str) -> AnalysisRecord {
-        let path = test_fixtures::copy_fixture(directory, fixture, None);
-        analyze_file(&path, &|| false, &mut |_| {})
-    }
-
-    fn cache_in(directory: &TempDir) -> AnalysisCache {
-        let cache = AnalysisCache::with_path(directory.path().join("cache/analysis.db"));
-        cache.open().expect("cache opens");
-        cache
-    }
+    use crate::test_helpers::{analyze_fixture_copy, temporary_cache};
 
     #[test]
     fn stored_record_round_trips() {
         let directory = TempDir::new().expect("temp dir");
-        let cache = cache_in(&directory);
-        let record = analyzed_copy(&directory, "sine_stereo_44100_16.wav");
+        let cache = temporary_cache(&directory);
+        let record = analyze_fixture_copy(&directory, "sine_stereo_44100_16.wav");
         cache.store_analysis(&record).expect("stores");
         let cached = cache.get_analysis(&record.path).expect("cache hit");
         assert_eq!(cached.status, AnalysisStatus::Cached);
@@ -587,8 +576,8 @@ mod test_analysis_cache {
     #[test]
     fn changed_file_misses() {
         let directory = TempDir::new().expect("temp dir");
-        let cache = cache_in(&directory);
-        let record = analyzed_copy(&directory, "sine_mono_44100_16.wav");
+        let cache = temporary_cache(&directory);
+        let record = analyze_fixture_copy(&directory, "sine_mono_44100_16.wav");
         cache.store_analysis(&record).expect("stores");
         std::fs::write(&record.path, b"changed").expect("overwrite");
         assert!(cache.get_analysis(&record.path).is_none());
@@ -597,8 +586,8 @@ mod test_analysis_cache {
     #[test]
     fn failed_record_is_cached_as_failed() {
         let directory = TempDir::new().expect("temp dir");
-        let cache = cache_in(&directory);
-        let record = analyzed_copy(&directory, "broken.wav");
+        let cache = temporary_cache(&directory);
+        let record = analyze_fixture_copy(&directory, "broken.wav");
         assert!(record.has_error());
         cache.store_analysis(&record).expect("stores");
         let cached = cache.get_analysis(&record.path).expect("cache hit");
@@ -609,8 +598,8 @@ mod test_analysis_cache {
     #[test]
     fn record_without_history_is_rejected() {
         let directory = TempDir::new().expect("temp dir");
-        let cache = cache_in(&directory);
-        let mut record = analyzed_copy(&directory, "sine_mono_24000_16.wav");
+        let cache = temporary_cache(&directory);
+        let mut record = analyze_fixture_copy(&directory, "sine_mono_24000_16.wav");
         record.short_term_loudness = None;
         assert!(cache.store_analysis(&record).is_err());
     }
@@ -618,9 +607,9 @@ mod test_analysis_cache {
     #[test]
     fn remove_and_prune_delete_rows() {
         let directory = TempDir::new().expect("temp dir");
-        let cache = cache_in(&directory);
-        let first = analyzed_copy(&directory, "sine_stereo_44100_16.wav");
-        let second = analyzed_copy(&directory, "sine_mono_44100_16.wav");
+        let cache = temporary_cache(&directory);
+        let first = analyze_fixture_copy(&directory, "sine_stereo_44100_16.wav");
+        let second = analyze_fixture_copy(&directory, "sine_mono_44100_16.wav");
         cache.store_analysis(&first).expect("stores");
         cache.store_analysis(&second).expect("stores");
         assert!(cache.remove_analysis(&first.path).expect("removes"));
@@ -632,28 +621,15 @@ mod test_analysis_cache {
 
 #[cfg(test)]
 mod test_custom_gain {
-    use super::*;
-
     use tempfile::TempDir;
 
-    use crate::analysis::analyze_file;
-
-    fn analyzed_copy(directory: &TempDir, fixture: &str) -> AnalysisRecord {
-        let path = test_fixtures::copy_fixture(directory, fixture, None);
-        analyze_file(&path, &|| false, &mut |_| {})
-    }
-
-    fn cache_in(directory: &TempDir) -> AnalysisCache {
-        let cache = AnalysisCache::with_path(directory.path().join("analysis.db"));
-        cache.open().expect("cache opens");
-        cache
-    }
+    use crate::test_helpers::{analyze_fixture_copy, temporary_cache};
 
     #[test]
     fn stored_gain_comes_back_with_the_record() {
         let directory = TempDir::new().expect("temp dir");
-        let cache = cache_in(&directory);
-        let record = analyzed_copy(&directory, "sine_stereo_44100_16.wav");
+        let cache = temporary_cache(&directory);
+        let record = analyze_fixture_copy(&directory, "sine_stereo_44100_16.wav");
         cache.store_analysis(&record).expect("stores");
         assert_eq!(
             cache
@@ -684,7 +660,7 @@ mod test_custom_gain {
     #[test]
     fn file_without_a_row_keeps_no_gain() {
         let directory = TempDir::new().expect("temp dir");
-        let cache = cache_in(&directory);
+        let cache = temporary_cache(&directory);
         let path = directory.path().join("missing.wav");
         assert!(!cache.store_custom_gain(&path, Some(1.0)).expect("updates nothing"));
         assert_eq!(cache.get_custom_gain(&path, 0, 0), None);
@@ -693,8 +669,8 @@ mod test_custom_gain {
     #[test]
     fn new_analysis_of_an_unchanged_file_keeps_the_gain() {
         let directory = TempDir::new().expect("temp dir");
-        let cache = cache_in(&directory);
-        let record = analyzed_copy(&directory, "sine_mono_44100_16.wav");
+        let cache = temporary_cache(&directory);
+        let record = analyze_fixture_copy(&directory, "sine_mono_44100_16.wav");
         cache.store_analysis(&record).expect("stores");
         cache.store_custom_gain(&record.path, Some(3.0)).expect("stores gain");
         cache.store_analysis(&record).expect("stores again");
@@ -709,8 +685,8 @@ mod test_custom_gain {
     #[test]
     fn new_analysis_of_a_changed_file_drops_the_gain() {
         let directory = TempDir::new().expect("temp dir");
-        let cache = cache_in(&directory);
-        let record = analyzed_copy(&directory, "sine_mono_44100_16.wav");
+        let cache = temporary_cache(&directory);
+        let record = analyze_fixture_copy(&directory, "sine_mono_44100_16.wav");
         cache.store_analysis(&record).expect("stores");
         cache.store_custom_gain(&record.path, Some(3.0)).expect("stores gain");
         let mut changed = record;
