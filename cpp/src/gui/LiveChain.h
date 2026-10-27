@@ -198,6 +198,9 @@ private:
     /// It only names the chain while the revision still equals presetRevision.
     juce::String presetName;
     std::uint64_t presetRevision {0};
+    /// Preset files of the presets submenu last built by createPresetsMenu, in menu id order.
+    /// Mutable, because building a menu does not change the chain.
+    mutable std::vector<juce::File> presetMenuFiles;
     std::vector<LiveSlot> chain;
 
     double previewSampleRate {utils::defaultSampleRate};
