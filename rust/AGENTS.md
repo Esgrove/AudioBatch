@@ -52,6 +52,9 @@ and every crate inherits them with `.workspace = true`.
 - `crates/core` (`audiobatch-core`): the shared library used by the CLI and the GUI.
   - `analysis.rs` decodes a file and measures peaks and loudness, and builds the waveform overview in the same pass.
   - `decode.rs` wraps symphonia: probing, the decode loop, and the read failure rules.
+    It trims the gapless padding the way the C++ decoders do,
+    reading the MP4 edit list in `decode/gapless.rs`, which symphonia parses but never applies,
+    and leaving out the MP3 synthesis delay when no LAME header states the encoder delay.
   - `record.rs` holds `AnalysisRecord`, its status, and the short-term loudness history.
   - `waveform.rs` holds the min/max peak overview and its resolution levels.
   - `discovery.rs` expands input paths into the sorted list of supported audio files.
@@ -75,6 +78,8 @@ and every crate inherits them with `.workspace = true`.
 - `crates/cli` (`audiobatch-cli`): the `audiobatch-rs` binary.
   Its options, JSON field names, and exit codes match the C++ `audiobatch` CLI,
   so `scripts/parity.sh` can compare the two directly.
+  With `--normalize`, `scripts/compare_outputs.py` also compares the files both CLIs wrote,
+  sample by sample and ID3v2 frame by frame, so a change to decoding or tag copying must keep them in agreement.
   The `completion` subcommand in `completion.rs` is the only addition the C++ CLI does not have.
 - `crates/gui` (`audiobatch-gui`): the `AudioBatchRs` GUI binary, built on gpui-kit.
   It is the only crate that depends on gpui-kit, which is pinned to an exact version and upgraded by hand.
@@ -127,7 +132,7 @@ cargo run --bin AudioBatchRs
 
 # Compare the Rust and C++ CLI output on a folder, or their normalized output of copies of it
 ./scripts/parity.sh <path>
-./scripts/parity.sh --normalize <path>
+./scripts/parity.sh --normalize [--peak <dBFS> | --lufs <LUFS>] ../fixtures/normalization
 
 # Save an image of the GUI window and quit, for checking the layout without screen recording permission
 cargo build --release -p audiobatch-gui --features snapshot

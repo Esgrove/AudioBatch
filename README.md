@@ -21,6 +21,7 @@ They keep separate analysis caches, and their CLIs print the same table, CSV, an
 AudioBatch/
 ├── assets/      icons and fonts for both applications
 ├── fixtures/    committed audio fixtures shared by both test suites, and generate.sh
+│   └── normalization/  a Git LFS collection for comparing the normalized output of both CLIs
 ├── cpp/         the C++ project with its CMake build and the JUCE submodule
 └── rust/        the Rust Cargo workspace
 ```
