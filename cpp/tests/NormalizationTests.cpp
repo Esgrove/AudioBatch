@@ -119,23 +119,29 @@ private:
     {
         const TemporaryDirectory directory;
 
-        beginTest("The coordinator normalizes each existing file once and then reports completion");
+        beginTest("The coordinator normalizes each file once, fails a missing file, and then reports completion");
         {
             std::vector<AudioAnalysisRecord> records;
             for (const auto* fileName : {"first.aif", "second.aif", "third.aif"}) {
                 records.push_back(analyzeFile(directory.copyFixture("sine_stereo_44100_16.aif", fileName)));
             }
             records.push_back(records.front());
-            records.push_back(recordForPath(directory.getChildFile("missing.aif").getFullPathName()));
+            const auto missingFile = directory.getChildFile("missing.aif");
+            records.push_back(recordForPath(missingFile.getFullPathName()));
             auto options = testNormalizationOptions();
             options.targetPeakDbfs = -1.0;
 
             const auto run = runToCompletion(records, options, 2);
-            expectEquals(run.queuedFiles, 3);
-            expectEquals(run.completedFiles, 3);
-            expectEquals(static_cast<int>(run.startedFiles.size()), 3);
-            expectEquals(static_cast<int>(run.results.size()), 3);
+            expectEquals(run.queuedFiles, 4);
+            expectEquals(run.completedFiles, 4);
+            expectEquals(static_cast<int>(run.startedFiles.size()), 4);
+            expectEquals(static_cast<int>(run.results.size()), 4);
             expectEquals(static_cast<int>(run.runIds.size()), 1);
+            const auto missingResult = findResult(run, missingFile);
+            expect(missingResult.has_value());
+            if (missingResult) {
+                expectEquals(outcomeError(missingResult->outcome), juce::String("File does not exist"));
+            }
             for (const auto& record : std::span(records).first(3)) {
                 const auto result = findResult(run, record.file);
                 expect(result.has_value(), record.fileName);
@@ -167,11 +173,9 @@ private:
             expect(converted.existsAsFile());
         }
 
-        beginTest("A run without existing files completes at once with no files");
+        beginTest("A run without files completes at once with no files");
         {
-            const auto run = runToCompletion(
-                {recordForPath(directory.getChildFile("gone.aif").getFullPathName())}, testNormalizationOptions(), 1
-            );
+            const auto run = runToCompletion({}, testNormalizationOptions(), 1);
             expectEquals(run.queuedFiles, 0);
             expectEquals(run.completedFiles, 0);
             expect(run.results.empty());
