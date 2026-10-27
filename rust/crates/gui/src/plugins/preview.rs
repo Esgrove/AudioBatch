@@ -40,8 +40,8 @@ impl PreviewInsert for ChainInsert {
         self.0.tail_frames()
     }
 
-    fn reset(&mut self) {
-        self.0.reset();
+    fn reset(&mut self, position_frames: u64) {
+        self.0.reset(position_frames);
     }
 
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) -> bool {

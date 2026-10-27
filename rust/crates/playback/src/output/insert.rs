@@ -129,7 +129,7 @@ impl InsertRenderer {
             playback.active = false;
             return;
         }
-        playback.follow_transport(insert, shared, generation);
+        playback.follow_transport(insert, shared, generation, device.rate);
         if !playback.active {
             drop_stale_frames(frames, generation);
             return;
@@ -210,10 +210,22 @@ impl InsertPlayback {
     /// Follows the player's transport.
     /// Playing after a stop, a pause, a seek, or an insert change resets the insert.
     /// A pause fades out, except during the pre-roll, where nothing is heard yet, and after a seek.
-    fn follow_transport(&mut self, insert: &mut dyn PreviewInsert, shared: &SharedState, generation: u32) {
+    fn follow_transport(
+        &mut self,
+        insert: &mut dyn PreviewInsert,
+        shared: &SharedState,
+        generation: u32,
+        device_rate: u32,
+    ) {
         if shared.playing.load(Ordering::Relaxed) {
             if !self.active || self.fade_out.is_some() || self.needs_reset || self.generation != generation {
-                self.reset(insert, generation, shared.latency_compensation.load(Ordering::Relaxed));
+                let position = device_position(shared, device_rate);
+                self.reset(
+                    insert,
+                    generation,
+                    shared.latency_compensation.load(Ordering::Relaxed),
+                    position,
+                );
             }
         } else if self.active {
             if self.pre_roll > 0 || self.generation != generation {
@@ -240,9 +252,10 @@ impl InsertPlayback {
         shared.ended.store(true, Ordering::Release);
     }
 
-    /// Resets the insert and starts playback through it for a generation.
-    fn reset(&mut self, insert: &mut dyn PreviewInsert, generation: u32, compensate: bool) {
-        insert.reset();
+    /// Resets the insert to start at `position` frames of the output rate,
+    /// and starts playback through it for a generation.
+    fn reset(&mut self, insert: &mut dyn PreviewInsert, generation: u32, compensate: bool, position: u64) {
+        insert.reset(position);
         *self = Self {
             active: true,
             generation,
@@ -314,6 +327,16 @@ impl InsertPlayback {
                 .store((start + advanced).min(self.end_position), Ordering::Relaxed);
         }
     }
+}
+
+/// Returns the playhead converted from source frames to frames at the output rate.
+fn device_position(shared: &SharedState, device_rate: u32) -> u64 {
+    let source_rate = shared.source_rate.load(Ordering::Relaxed);
+    if source_rate == 0 {
+        return 0;
+    }
+    let position = shared.position.load(Ordering::Relaxed);
+    (position as f64 * f64::from(device_rate) / f64::from(source_rate)).round() as u64
 }
 
 #[cfg(test)]
@@ -389,7 +412,7 @@ mod test_insert_playback {
             self.tail
         }
 
-        fn reset(&mut self) {
+        fn reset(&mut self, _position_frames: u64) {
             self.delay_left.fill(0.0);
             self.delay_right.fill(0.0);
             self.index = 0;
