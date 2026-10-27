@@ -664,6 +664,26 @@ private:
             expect(!result.hasError(), outcomeError(result.outcome));
             expectEquals(disposedCount, 0);
         }
+
+        beginTest("An .aif normalized to 0 dBFS is left as it is when normalized to 0 dBFS again");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "full_scale.aif");
+            auto options = testNormalizationOptions();
+            options.targetPeakDbfs = 0.0;
+            const auto first = normalizeFile(analyzeFile(source), options);
+            expect(!first.hasError(), outcomeError(first.outcome));
+            const auto normalizedSize = source.getSize();
+
+            int disposedCount = 0;
+            options.disposeFile = [&disposedCount](const juce::File& file) {
+                ++disposedCount;
+                return file.deleteFile();
+            };
+            const auto second = normalizeFile(analyzeFile(source), options);
+            expect(!second.hasError(), outcomeError(second.outcome));
+            expectEquals(disposedCount, 0);
+            expectEquals(source.getSize(), normalizedSize);
+        }
     }
 
     /// Normalizes a copy of an `.aif` fixture in place,

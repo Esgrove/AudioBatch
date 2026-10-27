@@ -67,6 +67,12 @@ const SOURCE_ANALYSIS_PROGRESS_SHARE: f32 = 0.3;
 /// Progress at which rendering ends and analyzing the output begins.
 const RENDER_PROGRESS_END: f32 = 0.8;
 
+/// Steps of the output bit depth that a full-scale sample may move by while a file still counts as at its target.
+/// A 16-bit file whose peak is the largest positive sample, 32767 of 32768, needs a gain one step above unity
+/// to reach 0 dBFS, and rewriting it would produce the same samples again.
+/// The C++ application uses the same tolerance.
+const AT_TARGET_TOLERANCE_STEPS: f64 = 1.5;
+
 /// The level normalization brings a file to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum NormalizationMode {
@@ -297,7 +303,7 @@ pub fn normalize_file(
         Err(error) => return fail(source, error),
     };
 
-    if approximately_equal(gain, 1.0) && output == source {
+    if output == source && is_at_target(gain, output_bit_depth(&record)) {
         let analysis = analyze_file(
             source,
             is_cancelled,
@@ -427,10 +433,11 @@ fn succeed(source: &Path, output: AnalysisRecord, notice: Option<String>) -> Ope
     OperationResult::success(source, output, notice)
 }
 
-/// Returns true when two gains differ by no more than float rounding.
-fn approximately_equal(first: f32, second: f32) -> bool {
-    let difference = (first - second).abs();
-    difference <= f32::MIN_POSITIVE || difference <= f32::EPSILON * first.abs().max(second.abs())
+/// Returns true when the gain is so close to unity that rewriting a file of the given output bit depth
+/// would change no sample by more than about one step, so an in-place file is left as it is.
+fn is_at_target(gain: f32, output_bit_depth: u32) -> bool {
+    let full_scale_steps = f64::from(2_u32.pow(output_bit_depth.clamp(1, 32) - 1));
+    (f64::from(gain) - 1.0).abs() <= AT_TARGET_TOLERANCE_STEPS / full_scale_steps
 }
 
 /// Returns true when two paths name the same file, ignoring case where the file system usually does.
@@ -763,6 +770,21 @@ mod test_normalize_file {
 
         assert!(result.error().is_none(), "{:?}", result.error());
         assert_eq!(fs::read(&normalized.path).expect("reads"), contents);
+        assert!(disposed.lock().expect("lock").is_empty());
+    }
+
+    #[test]
+    fn a_peak_one_step_below_full_scale_counts_as_at_target() {
+        let directory = tempfile::tempdir().expect("creates directory");
+        let mut record = ready_fixture_copy(&directory, "sine_stereo_44100_16.aif", "song.aif");
+        record.overall_peak = 32_767.0 / 32_768.0;
+        let contents = fs::read(&record.path).expect("reads");
+        let (options, disposed) = options(NormalizationMode::Peak);
+
+        let result = normalize(&record, &options);
+
+        assert!(result.error().is_none(), "{:?}", result.error());
+        assert_eq!(fs::read(&record.path).expect("reads"), contents);
         assert!(disposed.lock().expect("lock").is_empty());
     }
 

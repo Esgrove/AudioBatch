@@ -34,6 +34,19 @@ constexpr float sourceAnalysisProgressShare {0.3f};
 /// Progress at which rendering the normalized audio ends and analyzing the output begins.
 constexpr float renderProgressEnd {0.8f};
 
+/// Steps of the output bit depth that a full-scale sample may move by while a file still counts as at its target.
+/// A 16-bit file whose peak is the largest positive sample, 32767 of 32768, needs a gain one step above unity
+/// to reach 0 dBFS, and rewriting it would produce the same samples again.
+constexpr double atTargetToleranceSteps {1.5};
+
+/// Returns true when the gain is so close to unity that rewriting a file of the given output bit depth
+/// would change no sample by more than about one step, so an in-place file is left as it is.
+bool isAtTarget(const LinearGain gain, const int outputBitDepth)
+{
+    const auto fullScaleSteps = std::ldexp(1.0, juce::jlimit(1, 32, outputBitDepth) - 1);
+    return std::abs(static_cast<double>(gain.value) - 1.0) <= atTargetToleranceSteps / fullScaleSteps;
+}
+
 /// Logs the failure and builds a failure result for the given file.
 AudioNormalizationResult failNormalization(const juce::File& file, const juce::String& message)
 {
@@ -341,7 +354,7 @@ AudioNormalizationResult normalizeFile(
 
     const auto gain = normalizationGain->value;
 
-    if (juce::approximatelyEqual(gain, 1.0f) && outputFile == file) {
+    if (outputFile == file && isAtTarget(*normalizationGain, getNormalizationOutputBitDepth(record, *reader))) {
         auto analysis = analyzeFile(file, isCancelled, utils::makeProgressRange(onProgress, renderProgressStart, 1.0f));
 
         if (analysis.hasError()) {
