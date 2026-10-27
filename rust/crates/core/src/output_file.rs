@@ -17,6 +17,8 @@ use tempfile::NamedTempFile;
 #[cfg(target_os = "macos")]
 use trash::macos::{DeleteMethod, TrashContextExtMacos};
 
+use crate::decode::AudioFileDecoder;
+
 /// Highest number tried for a backup name when earlier backups are still around.
 const MAXIMUM_BACKUP_INDEX: u32 = 1000;
 
@@ -107,6 +109,33 @@ pub fn create_temporary_output(output: &Path) -> Result<NamedTempFile> {
     builder
         .tempfile_in(directory.unwrap_or_else(|| Path::new(".")))
         .context("Could not create temporary output file")
+}
+
+/// Checks that a written file reads back with the channels, sample rate, and length that were rendered.
+///
+/// # Errors
+///
+/// Returns the user-facing reason when the file does not match.
+pub fn validate_written_audio(path: &Path, channels: u32, sample_rate: u32, frames: u64) -> Result<(), String> {
+    let decoder = AudioFileDecoder::open(path).map_err(|_| "the output file cannot be read".to_string())?;
+    let info = decoder.info();
+    if info.channels != channels {
+        return Err(format!(
+            "the output has {} channels instead of {channels}",
+            info.channels
+        ));
+    }
+    if info.sample_rate != sample_rate {
+        return Err(format!(
+            "the output sample rate is {} Hz instead of {sample_rate} Hz",
+            info.sample_rate
+        ));
+    }
+    let written_frames = info.expected_frames.unwrap_or_default();
+    if written_frames != frames {
+        return Err(format!("the output has {written_frames} samples instead of {frames}"));
+    }
+    Ok(())
 }
 
 /// Disposes of a copy of the file under the same name, leaving the file itself in place.

@@ -11,9 +11,9 @@ use std::time::Instant;
 use anyhow::Result;
 use audiobatch_core::discovery::normalize_path;
 use audiobatch_core::normalize::{
-    NormalizationOptions, NormalizationOutcome, batch_output_conflict_message, find_batch_output_conflicts,
-    normalize_file,
+    NormalizationOptions, batch_output_conflict_message, find_batch_output_conflicts, normalize_file,
 };
+use audiobatch_core::operation::OperationOutcome;
 use audiobatch_core::output_file::FileDisposer;
 use audiobatch_core::sorting::sort_records;
 use audiobatch_core::{
@@ -182,17 +182,17 @@ fn normalize_records(
             write_warning!(log, "Could not update the cache: {error:#}")?;
         }
         match result.outcome {
-            NormalizationOutcome::Failed { error } => {
+            OperationOutcome::Failed { error } => {
                 log_error(log, "Normalization failed", record, &error)?;
                 normalized.records.push(failed_record(record.clone(), error));
                 normalized.failure_count += 1;
             }
-            NormalizationOutcome::CommittedButUnanalyzed { output, error } => {
+            OperationOutcome::CommittedButUnanalyzed { output, error } => {
                 log_error(log, "Normalization failed", record, &error)?;
                 normalized.records.push(failed_record(output, error));
                 normalized.failure_count += 1;
             }
-            NormalizationOutcome::Succeeded { output, notice } => {
+            OperationOutcome::Succeeded { output, notice } => {
                 if let Some(notice) = notice {
                     write_warning!(log, "Normalized \"{}\", {notice}", output.path.display())?;
                 }

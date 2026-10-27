@@ -9,7 +9,7 @@
 
 use std::path::Path;
 
-use audiobatch_core::normalize::{NormalizationOutcome, NormalizationResult};
+use audiobatch_core::operation::{OperationOutcome, OperationResult};
 use audiobatch_core::{AnalysisRecord, NormalizeEvent};
 use crossbeam_channel::Receiver;
 use gpui_kit::{Context, PromptLevel, SharedString, Task, Window};
@@ -271,25 +271,26 @@ impl AppView {
     /// Replaces the row of a normalized source with its result,
     /// and moves the selection and the listed roots over to a converted output.
     /// The caller sorts the rows and restores the selection after the batch.
-    fn apply_normalization_result(&mut self, result: NormalizationResult, cx: &mut Context<Self>) {
+    fn apply_normalization_result(&mut self, result: OperationResult, cx: &mut Context<Self>) {
         let source = result.source;
         let output_path = match &result.outcome {
-            NormalizationOutcome::Failed { .. } => None,
-            NormalizationOutcome::CommittedButUnanalyzed { output, .. }
-            | NormalizationOutcome::Succeeded { output, .. } => Some(output.path.clone()),
+            OperationOutcome::Failed { .. } => None,
+            OperationOutcome::CommittedButUnanalyzed { output, .. } | OperationOutcome::Succeeded { output, .. } => {
+                Some(output.path.clone())
+            }
         };
         self.table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
             match result.outcome {
-                NormalizationOutcome::Failed { error } => delegate.fail_normalization(&source, &error),
-                NormalizationOutcome::CommittedButUnanalyzed { output, error } => {
+                OperationOutcome::Failed { error } => delegate.fail_normalization(&source, &error),
+                OperationOutcome::CommittedButUnanalyzed { output, error } => {
                     let message = RowMessage {
                         text: error,
                         is_error: true,
                     };
                     delegate.replace_after_normalization(&source, output, Some(message));
                 }
-                NormalizationOutcome::Succeeded { output, notice } => {
+                OperationOutcome::Succeeded { output, notice } => {
                     let message = notice.map(|text| RowMessage { text, is_error: false });
                     delegate.replace_after_normalization(&source, output, message);
                 }

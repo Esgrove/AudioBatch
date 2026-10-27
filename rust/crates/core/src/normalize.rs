@@ -21,8 +21,10 @@ use crate::analysis::analyze_file;
 use crate::decode::{AudioFileDecoder, DEFAULT_LOSSY_BITS_PER_SAMPLE, is_mp3_path};
 use crate::format::gain_to_decibels;
 use crate::metadata::copy_metadata;
+use crate::operation::{OperationOutcome, OperationResult, progress_range};
 use crate::output_file::{
     FileDisposer, check_output_path, commit_temporary_output, create_temporary_output, dispose_of_copy, trash_disposer,
+    validate_written_audio,
 };
 use crate::record::{AnalysisRecord, NEGATIVE_INFINITY_LOUDNESS};
 
@@ -75,30 +77,6 @@ pub enum NormalizationMode {
     Loudness,
 }
 
-/// What normalizing one file produced.
-#[derive(Debug, Clone)]
-pub enum NormalizationOutcome {
-    /// Nothing was changed on disk.
-    Failed {
-        /// User-facing reason.
-        error: String,
-    },
-    /// The output is in place, but analyzing it failed.
-    CommittedButUnanalyzed {
-        /// The failed analysis of the output file.
-        output: AnalysisRecord,
-        /// User-facing reason.
-        error: String,
-    },
-    /// The output is in place and analyzed.
-    Succeeded {
-        /// Analysis of the output file.
-        output: AnalysisRecord,
-        /// Notice about source packets that failed to decode and were written as silence.
-        notice: Option<String>,
-    },
-}
-
 /// Settings for normalizing files.
 #[derive(Clone)]
 pub struct NormalizationOptions {
@@ -114,15 +92,6 @@ pub struct NormalizationOptions {
     pub overwrite_existing: bool,
     /// Disposes of the files that normalization replaces.
     pub dispose: FileDisposer,
-}
-
-/// The result of normalizing one file.
-#[derive(Debug, Clone)]
-pub struct NormalizationResult {
-    /// The source file.
-    pub source: PathBuf,
-    /// What happened.
-    pub outcome: NormalizationOutcome,
 }
 
 /// What rendering wrote, for validating the output.
@@ -159,35 +128,10 @@ impl fmt::Debug for NormalizationOptions {
     }
 }
 
-impl NormalizationResult {
-    /// Builds a failed result for the source.
-    #[must_use]
-    pub fn failure(source: &Path, error: impl Into<String>) -> Self {
-        Self {
-            source: source.to_path_buf(),
-            outcome: NormalizationOutcome::Failed { error: error.into() },
-        }
-    }
-
-    /// Returns the user-facing error, when normalization failed in any way.
-    #[must_use]
-    pub fn error(&self) -> Option<&str> {
-        match &self.outcome {
-            NormalizationOutcome::Failed { error } | NormalizationOutcome::CommittedButUnanalyzed { error, .. } => {
-                Some(error)
-            }
-            NormalizationOutcome::Succeeded { .. } => None,
-        }
-    }
-
-    /// Returns the analysis of the output file, when the output was committed.
-    #[must_use]
-    pub const fn output(&self) -> Option<&AnalysisRecord> {
-        match &self.outcome {
-            NormalizationOutcome::Failed { .. } => None,
-            NormalizationOutcome::CommittedButUnanalyzed { output, .. }
-            | NormalizationOutcome::Succeeded { output, .. } => Some(output),
-        }
+impl RenderedAudio {
+    /// Checks that the written file reads back as what was rendered.
+    fn validate(&self, path: &Path) -> Result<(), String> {
+        validate_written_audio(path, self.channels, self.sample_rate, self.frames)
     }
 }
 
@@ -318,7 +262,7 @@ pub fn normalize_file(
     options: &NormalizationOptions,
     is_cancelled: &dyn Fn() -> bool,
     on_progress: &mut dyn FnMut(f32),
-) -> NormalizationResult {
+) -> OperationResult {
     let source = source_record.path.as_path();
     let output = normalization_output_path(source);
     if !source.is_file() {
@@ -385,7 +329,7 @@ pub fn normalize_file(
         eprintln!("{error:#}");
         return fail(source, "Could not preserve metadata while writing normalized audio");
     }
-    if let Err(error) = validate_written_audio(temporary.path(), &rendered) {
+    if let Err(error) = rendered.validate(temporary.path()) {
         return fail(
             source,
             format!("Normalized output failed validation: {error}. The original file was left unchanged."),
@@ -415,9 +359,9 @@ pub fn normalize_file(
             "The file was normalized, but re-analysis failed: {}",
             analysis.error_message
         );
-        return NormalizationResult {
+        return OperationResult {
             source: source.to_path_buf(),
-            outcome: NormalizationOutcome::CommittedButUnanalyzed {
+            outcome: OperationOutcome::CommittedButUnanalyzed {
                 output: analysis,
                 error,
             },
@@ -473,48 +417,14 @@ fn render_normalized_audio(
     })
 }
 
-/// Checks that the written file reads back with the channels, sample rate, and length that were rendered.
-fn validate_written_audio(path: &Path, rendered: &RenderedAudio) -> Result<(), String> {
-    let decoder = AudioFileDecoder::open(path).map_err(|_| "the output file cannot be read".to_string())?;
-    let info = decoder.info();
-    if info.channels != rendered.channels {
-        return Err(format!(
-            "the output has {} channels instead of {}",
-            info.channels, rendered.channels
-        ));
-    }
-    if info.sample_rate != rendered.sample_rate {
-        return Err(format!(
-            "the output sample rate is {} Hz instead of {} Hz",
-            info.sample_rate, rendered.sample_rate
-        ));
-    }
-    let frames = info.expected_frames.unwrap_or_default();
-    if frames != rendered.frames {
-        return Err(format!(
-            "the output has {frames} samples instead of {}",
-            rendered.frames
-        ));
-    }
-    Ok(())
-}
-
 /// Builds a failed result, which the caller reports.
-fn fail(source: &Path, error: impl Into<String>) -> NormalizationResult {
-    NormalizationResult::failure(source, error)
+fn fail(source: &Path, error: impl Into<String>) -> OperationResult {
+    OperationResult::failure(source, error)
 }
 
 /// Builds a successful result.
-fn succeed(source: &Path, output: AnalysisRecord, notice: Option<String>) -> NormalizationResult {
-    NormalizationResult {
-        source: source.to_path_buf(),
-        outcome: NormalizationOutcome::Succeeded { output, notice },
-    }
-}
-
-/// Maps progress from 0 to 1 onto the range from `start` to `end` of the caller's progress.
-fn progress_range(on_progress: &mut dyn FnMut(f32), start: f32, end: f32) -> impl FnMut(f32) + '_ {
-    move |fraction| on_progress((end - start).mul_add(fraction.clamp(0.0, 1.0), start))
+fn succeed(source: &Path, output: AnalysisRecord, notice: Option<String>) -> OperationResult {
+    OperationResult::success(source, output, notice)
 }
 
 /// Returns true when two gains differ by no more than float rounding.
@@ -735,7 +645,7 @@ mod test_normalize_file {
     }
 
     /// Normalizes without cancellation or progress.
-    fn normalize(record: &AnalysisRecord, options: &NormalizationOptions) -> NormalizationResult {
+    fn normalize(record: &AnalysisRecord, options: &NormalizationOptions) -> OperationResult {
         normalize_file(record, options, &|| false, &mut |_| {})
     }
 
