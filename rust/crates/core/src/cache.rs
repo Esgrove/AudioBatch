@@ -16,7 +16,7 @@ use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::record::{
-    AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory, custom_gain_from_decibels, file_identity,
+    AnalysisError, AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory, custom_gain_from_decibels, file_identity,
 };
 use crate::waveform::{self, WaveformOverview};
 
@@ -161,6 +161,8 @@ impl AnalysisCache {
         }
         record.from_cache = true;
         if record.has_error() {
+            // Only failures that repeat for the same bytes are stored.
+            record.error = Some(AnalysisError::Unsupported);
             return Some(record);
         }
         record.short_term_loudness = Some(Arc::new(deserialize_history(&history?, &record)?));
@@ -173,7 +175,9 @@ impl AnalysisCache {
     }
 
     /// Stores a completed analysis record, replacing any earlier row for the file.
-    /// Failed records are stored too, so an unchanged broken file is not decoded again.
+    /// A failure that reading the same bytes again would repeat is stored too,
+    /// so an unchanged broken file is not decoded again.
+    /// Other failures, such as a file that could not be opened, are skipped, so the next run tries the file again.
     /// The custom gain of an earlier row is kept while the file has the same size and modification time,
     /// and replaced by the record's gain otherwise,
     /// because a custom gain only applies to the version of the file it was set for.
@@ -183,6 +187,9 @@ impl AnalysisCache {
     /// Returns an error when the record is a successful one without a valid history or waveform,
     /// or when the database write fails.
     pub fn store_analysis(&self, record: &AnalysisRecord) -> Result<()> {
+        if record.has_error() && !record.error.is_some_and(AnalysisError::is_repeatable) {
+            return Ok(());
+        }
         let (history, waveform_data) = if record.has_error() {
             (None, None)
         } else {
@@ -559,8 +566,12 @@ fn deserialize_history(bytes: &[u8], record: &AnalysisRecord) -> Option<ShortTer
 mod test_analysis_cache {
     use super::*;
 
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
     use tempfile::TempDir;
 
+    use crate::analysis::analyze_file;
     use crate::test_helpers::{analyze_fixture_copy, temporary_cache};
 
     #[test]
@@ -625,7 +636,46 @@ mod test_analysis_cache {
         cache.store_analysis(&record).expect("stores");
         let cached = cache.get_analysis(&record.path).expect("cache hit");
         assert_eq!(cached.status, AnalysisStatus::Failed);
+        assert_eq!(cached.error, Some(AnalysisError::Unsupported));
         assert_eq!(cached.error_message, record.error_message);
+    }
+
+    #[test]
+    fn failures_that_may_not_repeat_are_not_cached() {
+        let directory = TempDir::new().expect("temp dir");
+        let cache = temporary_cache(&directory);
+        let mut record = analyze_fixture_copy(&directory, "sine_stereo_44100_16.wav");
+        record.status = AnalysisStatus::Failed;
+        for kind in [
+            AnalysisError::Unreadable,
+            AnalysisError::DecodeFailed,
+            AnalysisError::MeasurementFailed,
+            AnalysisError::Panicked,
+        ] {
+            record.error = Some(kind);
+            record.error_message = format!("{kind:?}");
+            cache.store_analysis(&record).expect("skips the record");
+            assert!(cache.get_analysis(&record.path).is_none(), "{kind:?} was cached");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_that_cannot_be_opened_is_not_cached() {
+        let directory = TempDir::new().expect("temp dir");
+        let cache = temporary_cache(&directory);
+        let path = test_fixtures::copy_fixture(&directory, "sine_stereo_44100_16.wav", None);
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).expect("removes permissions");
+        let record = analyze_file(&path, &|| false, &mut |_| {});
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("restores permissions");
+        if std::fs::File::open(&path).is_ok() && record.error.is_none() {
+            // Running as root ignores the permissions, so there is nothing to check.
+            return;
+        }
+        assert_eq!(record.error, Some(AnalysisError::Unreadable));
+        assert_eq!(record.error_message, "File could not be opened for reading");
+        cache.store_analysis(&record).expect("skips the record");
+        assert!(cache.get_analysis(&path).is_none());
     }
 
     #[test]

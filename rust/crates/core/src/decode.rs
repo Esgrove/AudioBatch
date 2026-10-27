@@ -15,7 +15,7 @@ use std::fs::File;
 use std::io::ErrorKind;
 use std::path::Path;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::codecs::audio::well_known::{
     CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3, CODEC_ID_PCM_F32BE,
@@ -31,6 +31,8 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Duration, Time, TimeBase};
 use symphonia_common::apple::audio::alac::MagicCookie;
 
+use crate::record::{AnalysisError, AnalysisFailure};
+
 mod gapless;
 
 /// Bit depth assumed for lossy files, whose formats store no source bit depth.
@@ -41,6 +43,9 @@ pub const DEFAULT_LOSSY_BITS_PER_SAMPLE: u32 = 16;
 /// A LAME tag includes them in the delay it records.
 /// Without one, JUCE's MP3 reader and Core Audio leave them out, so this decoder does too.
 const MP3_DECODER_DELAY_FRAMES: u64 = 529;
+
+/// Error message of a file that no decoder reads, shared with the C++ application.
+const UNSUPPORTED_MESSAGE: &str = "Unsupported or unreadable audio file";
 
 /// Longest run of silence inserted for one failed packet, in seconds.
 /// Guards against a corrupt packet duration turning into a huge allocation.
@@ -182,7 +187,9 @@ impl AudioFileDecoder {
     /// Returns an error when the file cannot be opened, has no supported audio track,
     /// or has stream parameters the analysis cannot use.
     pub fn open(path: &Path) -> Result<Self> {
-        let file = File::open(path).with_context(|| format!("Failed to open {}", path.display()))?;
+        let unsupported = |message: &str| AnalysisFailure::new(AnalysisError::Unsupported, message);
+        let file = File::open(path)
+            .map_err(|_| AnalysisFailure::new(AnalysisError::Unreadable, "File could not be opened for reading"))?;
         let source = MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
         let mut hint = Hint::new();
         if let Some(extension) = path.extension().and_then(|extension| extension.to_str()) {
@@ -190,18 +197,18 @@ impl AudioFileDecoder {
         }
         let format = symphonia::default::get_probe()
             .probe(&hint, source, FormatOptions::default(), MetadataOptions::default())
-            .map_err(|_| anyhow!("Unsupported or unreadable audio file"))?;
+            .map_err(|_| unsupported(UNSUPPORTED_MESSAGE))?;
 
         let track = format
             .default_track(TrackType::Audio)
-            .ok_or_else(|| anyhow!("Unsupported or unreadable audio file"))?;
+            .ok_or_else(|| unsupported(UNSUPPORTED_MESSAGE))?;
         let track_id = track.id;
         let time_base = track.time_base;
         let mut expected_frames = track.num_frames;
         let has_recorded_delay = track.delay.is_some();
         let parameters = match &track.codec_params {
             Some(CodecParameters::Audio(parameters)) => parameters.clone(),
-            _ => bail!("Unsupported or unreadable audio file"),
+            _ => return Err(unsupported(UNSUPPORTED_MESSAGE).into()),
         };
 
         let sample_rate = parameters.sample_rate.unwrap_or(0);
@@ -210,14 +217,14 @@ impl AudioFileDecoder {
             .as_ref()
             .map_or(0, |channels| u32::try_from(channels.count()).unwrap_or(0));
         if sample_rate == 0 || channels == 0 {
-            bail!("Unsupported audio stream parameters");
+            return Err(unsupported("Unsupported audio stream parameters").into());
         }
 
         let bits_per_sample = source_bits_per_sample(&parameters);
 
         let decoder = symphonia::default::get_codecs()
             .make_audio_decoder(&parameters, &AudioDecoderOptions::default())
-            .map_err(|_| anyhow!("Unsupported audio codec"))?;
+            .map_err(|_| unsupported("Unsupported audio codec"))?;
 
         let mp3_without_delay = parameters.codec == CODEC_ID_MP3 && !has_recorded_delay;
         let mp4_gapless = (format.format_info().short_name == "isomp4")
@@ -325,7 +332,9 @@ impl AudioFileDecoder {
                 Err(SymphoniaError::DecodeError(_) | SymphoniaError::IoError(_)) => {
                     let packet_frames = self.frames_of(i64::try_from(packet.dur.get()).unwrap_or(i64::MAX));
                     if !self.failures.record_failure(self.position, packet_frames) {
-                        bail!(self.failures.error_message());
+                        return Err(
+                            AnalysisFailure::new(AnalysisError::DecodeFailed, self.failures.error_message()).into(),
+                        );
                     }
                     // Silence for a failed final packet stops at the stated length, so the file keeps its length.
                     let remaining = self
