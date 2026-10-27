@@ -34,9 +34,12 @@ enum class ReadOutcome : std::uint8_t {
 
 /// Owns the immutable pre-read file identity for a single preview generation.
 struct SeratoPreviewRequest {
+    /// The file to read the tags of.
     juce::File file;
+    /// Size and modification time of the file when it was requested, which the cache entries must match.
     utils::FileIdentity identity;
-    std::uint64_t generation;
+    /// Number of the request, so a result for an older selection is recognised and dropped.
+    std::uint64_t generation {0};
 };
 
 /// Loads the active selection with at most one active read and one replaceable pending request.

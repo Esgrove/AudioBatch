@@ -111,7 +111,7 @@ struct CompletionCommand {
 /// A rejected command line.
 struct CliParseError {
     /// The rule the arguments broke.
-    CliParseErrorKind kind;
+    CliParseErrorKind kind {};
     /// The explanation shown to the user.
     juce::String message;
 };

@@ -19,8 +19,10 @@ namespace audiobatch
 /// One name an enum option accepts on the command line, such as "csv" for --output.
 template<typename Enum>
 struct OptionName {
-    const char* name;
-    Enum value;
+    /// The name as it is typed on the command line.
+    const char* name {nullptr};
+    /// The enum value the name selects.
+    Enum value {};
 };
 
 /// One command line option, which the parser matches and the usage text and the shell completions describe.
