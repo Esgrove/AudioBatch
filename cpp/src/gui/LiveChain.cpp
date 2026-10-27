@@ -637,20 +637,20 @@ void LiveChain::openEditorForSlot(const PluginSlotId slotId)
 
     // Creating the editor and its window can take a long time for a large plugin interface,
     // so it runs without the rendering lock. The processor is only destroyed on the message thread.
-    auto* editor = entry.instance->createEditorAndMakeActive();
+    std::unique_ptr<juce::AudioProcessorEditor> editor(entry.instance->createEditorAndMakeActive());
 
     if (editor == nullptr) {
         // No custom editor. Fall back to the generic parameter editor.
-        editor = new juce::GenericAudioProcessorEditor(*entry.instance);
+        editor = std::make_unique<juce::GenericAudioProcessorEditor>(*entry.instance);
         editor->setSize(genericEditorWidth, genericEditorHeight);
     }
 
     juce::DialogWindow::LaunchOptions launchOptions;
     launchOptions.dialogTitle = entry.description.name;
-    launchOptions.content.setOwned(editor);
     launchOptions.escapeKeyTriggersCloseButton = true;
     launchOptions.useNativeTitleBar = true;
     launchOptions.resizable = editor->isResizable();
+    launchOptions.content.setOwned(editor.release());
     launchOptions.useBottomRightCornerResizer = false;
     launchOptions.dialogBackgroundColour = CustomLookAndFeel::greySemiDark();
 
@@ -678,12 +678,12 @@ void LiveChain::showChainEditor()
         return;
     }
 
-    auto* editor = new PluginChainEditor(*this);
+    auto editor = std::make_unique<PluginChainEditor>(*this);
     editor->setSize(chainEditorWidth, chainEditorHeight);
 
     juce::DialogWindow::LaunchOptions launchOptions;
     launchOptions.dialogTitle = "Plugin Chain";
-    launchOptions.content.setOwned(editor);
+    launchOptions.content.setOwned(editor.release());
     launchOptions.escapeKeyTriggersCloseButton = true;
     launchOptions.useNativeTitleBar = true;
     launchOptions.resizable = true;
