@@ -1,5 +1,7 @@
-//! The Plugin Chain window: the slots of the live chain in processing order.
+//! The Plugin Chain window: the saved presets and the slots of the live chain in processing order.
 //!
+//! The presets panel at the top loads or deletes a saved preset, and saves the chain under a name.
+//! Deleting a preset and replacing one with the same name ask for confirmation first.
 //! Each row has an enable checkbox, the slot label with its position, the latency,
 //! and buttons that open the editor, move the slot, and remove it.
 //! A slot whose plugin could not be loaded shows its error instead of the latency.
@@ -8,15 +10,16 @@
 //! The main view owns the chain: this view sends every change as a `ChainEvent`,
 //! and the main view applies it and shows the window a new snapshot.
 
-use audiobatch_plugins::PluginDescription;
+use audiobatch_plugins::{PluginDescription, sanitize_preset_name};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::{Disableable as _, IndexPath, Sizable as _};
 use gpui_kit::{
     AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
-    px,
+    ParentElement as _, PromptLevel, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    Window, div, px,
 };
 
 use super::live_chain::SlotId;
@@ -31,7 +34,7 @@ pub const CHAIN_TITLE: &str = "Plugin Chain";
 pub const CHAIN_WIDTH: f32 = 640.0;
 
 /// Initial height of the window.
-pub const CHAIN_HEIGHT: f32 = 420.0;
+pub const CHAIN_HEIGHT: f32 = 540.0;
 
 /// Width of the latency column.
 const LATENCY_WIDTH: f32 = 150.0;
@@ -41,6 +44,12 @@ const ENABLE_TOOLTIP: &str = "Bypass the plugin without losing its settings.";
 
 /// Tooltip of the Edit button.
 const EDIT_TOOLTIP: &str = "Open the plugin's editor window.";
+
+/// Tooltip of the preset Load button.
+const LOAD_PRESET_TOOLTIP: &str = "Replace the chain with the chosen preset, with the settings of each plugin.";
+
+/// Tooltip of the preset Save button.
+const SAVE_PRESET_TOOLTIP: &str = "Save the plugins, their order, and their settings under this name.";
 
 /// Something the user did in the chain window.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,6 +66,12 @@ pub enum ChainEvent {
     Add(PluginDescription),
     /// Every slot was removed.
     Clear,
+    /// The chain was saved as the named preset, replacing a preset of the same name.
+    SavePreset(String),
+    /// The named preset was loaded in place of the chain.
+    LoadPreset(String),
+    /// The named preset was deleted.
+    DeletePreset(String),
 }
 
 /// One slot as the window shows it.
@@ -87,6 +102,10 @@ pub struct ChainSnapshot {
     pub sample_rate: String,
     /// The effects that can be added, with their labels.
     pub available: Vec<(String, PluginDescription)>,
+    /// Names of the saved presets, in the order they are listed.
+    pub presets: Vec<String>,
+    /// Name of the preset the chain matches, when it was loaded from or saved as one and has not changed since.
+    pub current_preset: Option<String>,
 }
 
 /// The content of the Plugin Chain window.
@@ -94,6 +113,8 @@ pub struct ChainView {
     focus_handle: FocusHandle,
     snapshot: ChainSnapshot,
     add_select: Entity<SelectState<Vec<SharedString>>>,
+    preset_select: Entity<SelectState<Vec<SharedString>>>,
+    preset_name: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -101,13 +122,21 @@ impl ChainView {
     /// Creates the window content showing a snapshot.
     pub fn new(snapshot: ChainSnapshot, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let add_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
-        let subscriptions = vec![cx.subscribe_in(&add_select, window, Self::on_add_selected)];
+        let preset_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
+        let preset_name = cx.new(|cx| InputState::new(window, cx).placeholder("Preset name"));
+        let subscriptions = vec![
+            cx.subscribe_in(&add_select, window, Self::on_add_selected),
+            cx.subscribe_in(&preset_select, window, Self::on_preset_selected),
+            cx.subscribe_in(&preset_name, window, Self::on_preset_name_input),
+        ];
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let mut view = Self {
             focus_handle,
             snapshot: ChainSnapshot::default(),
             add_select,
+            preset_select,
+            preset_name,
             _subscriptions: subscriptions,
         };
         view.sync(snapshot, window, cx);
@@ -127,8 +156,173 @@ impl ChainView {
                 state.set_selected_index(None, window, cx);
             });
         }
+        if snapshot.presets != self.snapshot.presets {
+            let names = snapshot.presets.iter().cloned().map(SharedString::from).collect();
+            self.preset_select
+                .update(cx, |state, cx| state.set_items(names, window, cx));
+        }
+        if snapshot.current_preset != self.snapshot.current_preset
+            && let Some(current) = &snapshot.current_preset
+        {
+            let current = SharedString::from(current.clone());
+            self.preset_select
+                .update(cx, |state, cx| state.set_selected_value(&current, window, cx));
+            self.preset_name
+                .update(cx, |state, cx| state.set_value(current, window, cx));
+        }
         self.snapshot = snapshot;
         cx.notify();
+    }
+
+    /// Returns the preset chosen in the preset select.
+    fn selected_preset(&self, cx: &Context<Self>) -> Option<String> {
+        self.preset_select.read(cx).selected_value().map(ToString::to_string)
+    }
+
+    /// Puts the chosen preset's name in the name field, so saving again replaces it.
+    fn on_preset_selected(
+        &mut self,
+        _select: &Entity<SelectState<Vec<SharedString>>>,
+        event: &SelectEvent<Vec<SharedString>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let SelectEvent::Confirm(Some(name)) = event {
+            let name = name.clone();
+            self.preset_name
+                .update(cx, |state, cx| state.set_value(name, window, cx));
+        }
+        cx.notify();
+    }
+
+    /// Saves the preset when Enter is pressed in the name field, and refreshes the Save button while typing.
+    fn on_preset_name_input(
+        &mut self,
+        _input: &Entity<InputState>,
+        event: &InputEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            InputEvent::PressEnter { .. } => self.save_preset(window, cx),
+            InputEvent::Change => cx.notify(),
+            InputEvent::Focus | InputEvent::Blur => {}
+        }
+    }
+
+    /// Saves the chain under the typed name, asking first when a preset of that name exists.
+    fn save_preset(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = sanitize_preset_name(&self.preset_name.read(cx).value());
+        if name.is_empty() || self.snapshot.rows.is_empty() {
+            return;
+        }
+        let exists = self
+            .snapshot
+            .presets
+            .iter()
+            .any(|preset| preset.to_lowercase() == name.to_lowercase());
+        if !exists {
+            cx.emit(ChainEvent::SavePreset(name));
+            return;
+        }
+        let detail = format!("A preset named \"{name}\" already exists. Replace it with the current chain?");
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Replace Preset",
+            Some(&detail),
+            &["Replace", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await == Ok(0) {
+                let _ = this.update(cx, |_, cx| cx.emit(ChainEvent::SavePreset(name)));
+            }
+        })
+        .detach();
+    }
+
+    /// Deletes the chosen preset after a confirmation.
+    fn delete_preset(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(name) = self.selected_preset(cx) else {
+            return;
+        };
+        let detail = format!("Delete the preset \"{name}\"? The current chain is not changed.");
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Delete Preset",
+            Some(&detail),
+            &["Delete", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await == Ok(0) {
+                let _ = this.update(cx, |_, cx| cx.emit(ChainEvent::DeletePreset(name)));
+            }
+        })
+        .detach();
+    }
+
+    /// Renders the presets panel: the preset choice with Load and Delete, and the name field with Save.
+    fn render_presets(&self, cx: &Context<Self>) -> Div {
+        let selected = self.selected_preset(cx);
+        let has_name = !sanitize_preset_name(&self.preset_name.read(cx).value()).is_empty();
+        let title = self.snapshot.current_preset.as_ref().map_or_else(
+            || String::from("Presets"),
+            |current| format!("Presets (loaded: {current})"),
+        );
+        let choose_row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(ROW_SPACING))
+            .child(
+                div().flex_1().min_w_0().child(
+                    Select::new(&self.preset_select)
+                        .small()
+                        .placeholder("Choose a preset…")
+                        .disabled(self.snapshot.presets.is_empty()),
+                ),
+            )
+            .child(
+                Button::new("preset-load")
+                    .label("Load")
+                    .small()
+                    .tooltip(LOAD_PRESET_TOOLTIP)
+                    .disabled(selected.is_none())
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        if let Some(name) = view.selected_preset(cx) {
+                            cx.emit(ChainEvent::LoadPreset(name));
+                        }
+                    })),
+            )
+            .child(
+                Button::new("preset-delete")
+                    .label("Delete")
+                    .small()
+                    .danger()
+                    .disabled(selected.is_none())
+                    .on_click(cx.listener(|view, _, window, cx| view.delete_preset(window, cx))),
+            );
+        let save_row = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(ROW_SPACING))
+            .child(div().flex_none().child("Save as"))
+            .child(div().flex_1().min_w_0().child(Input::new(&self.preset_name).small()))
+            .child(
+                Button::new("preset-save")
+                    .label("Save")
+                    .small()
+                    .tooltip(SAVE_PRESET_TOOLTIP)
+                    .disabled(!has_name || self.snapshot.rows.is_empty())
+                    .on_click(cx.listener(|view, _, window, cx| view.save_preset(window, cx))),
+            );
+        let mut presets = panel(title).child(choose_row).child(save_row);
+        if self.snapshot.presets.is_empty() {
+            presets = presets.child(hint("No presets are saved yet. Name the chain above and save it."));
+        }
+        presets
     }
 
     /// Adds the chosen effect and clears the choice, so the same effect can be added again.
@@ -294,6 +488,7 @@ impl Render for ChainView {
             .text_color(color(palette::GREY_LIGHT))
             .font_family(TEXT_FONT)
             .text_size(px(WINDOW_FONT_SIZE))
+            .child(self.render_presets(cx))
             .child(slots)
             .child(add_row)
             .children(available_hint)

@@ -215,6 +215,12 @@ Instruments are listed by scans but cannot be added to the chain.
   Plugins > Edit Chain… opens the Plugin Chain window, which enables, reorders, removes,
   and opens the editor of each plugin, and shows the latency of each plugin and of the whole chain.
   The chain and the plugins' settings are saved after every change, when an editor closes, and on quit.
+- The Presets row of the Plugin Chain window saves the chain under a name,
+  with the plugins, their order, which ones are enabled, and their settings,
+  and lists the saved presets to load or delete.
+  Plugins > Chain Presets loads a preset from the menu too, with the loaded one checked.
+  Each preset is a JSON file in the `chain-presets` folder of the data directory.
+  Changing the chain afterwards keeps the preset file as it is, until it is saved again.
 - Process, or Plugins > Process Selected With Plugin Chain, renders the selected file through the enabled plugins,
   and Plugins > Process All Files With Plugin Chain… renders every analyzed file after a confirmation.
   Before the first plugin each file gets its custom gain,
@@ -267,6 +273,18 @@ AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png AUDIOBATCH_GUI_SNAPSHOT_ACTIONS=audiobatch:
 ```shell
 cargo nextest run
 ```
+
+The plugin tests also load `AudioBatch Test MS`, the JUCE VST3 in `../test-plugin/` that the C++ tests use,
+and check its output against the expected files in `../fixtures/plugin_expected/`.
+Build it once with CMake and the JUCE submodule:
+
+```shell
+git submodule update --init ../cpp/JUCE
+../test-plugin/build.sh
+```
+
+The tests find the bundle in `../test-plugin/build`, or at the path in `AUDIOBATCH_TEST_VST3`.
+Without it they are skipped, except when the `CI` variable is set, where they fail.
 
 `scripts/parity.sh` runs the Rust and the C++ CLI on the same files,
 and `scripts/compare_levels.py` compares their JSON output.

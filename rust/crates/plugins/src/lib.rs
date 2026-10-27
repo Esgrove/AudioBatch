@@ -6,6 +6,7 @@
 pub mod chain;
 mod chain_signal;
 pub mod library;
+pub mod presets;
 pub mod preview_chain;
 pub mod processing;
 pub mod processing_chain;
@@ -19,6 +20,9 @@ mod test_helpers;
 
 pub use chain::{ChainSlot, PluginChain};
 pub use library::{FORMAT_NAME, KnownPlugins, PluginDataPaths, PluginDescription};
+pub use presets::{
+    ChainPreset, PRESET_FORMAT_VERSION, PresetInfo, PresetStore, load_preset_file, sanitize_preset_name,
+};
 pub use preview_chain::{PreviewChain, PreviewFailure, chain_tail_frames};
 pub use processing::{ProcessingOptions, process_file, processing_output_path};
 pub use processing_chain::{ChainPlugin, MAXIMUM_TAIL_SECONDS, PROCESSING_BLOCK_FRAMES, ProcessingChain};

@@ -1004,6 +1004,7 @@ fn open_startup(
     }
     menu_state.chain_summary = chain_summary(plugins.chain.enabled_count(), plugins.chain.len());
     menu_state.plugin_groups = group_by_vendor(&plugins.known.plugins);
+    menu_state.presets = plugins.preset_names();
     Startup {
         coordinators,
         player,

@@ -80,14 +80,16 @@ and every crate inherits them with `.workspace = true`.
   `output/insert.rs` drives it with the pre-roll of its latency, fades, and the drain of its tail at the end.
   It has no GUI or plugin dependency, only the trait.
 - `crates/vst3-host` (`vst3-host`): VST3 hosting on top of the raw `vst3` bindings.
-  `module.rs` loads bundles, `factory.rs` lists their classes, `instance.rs` holds the plugin lifecycle,
+  `module.rs` loads bundles, `factory.rs` lists their classes,
+  `instance.rs` holds the plugin lifecycle and the host side parameter changes of `set_parameter`,
   `processor.rs` runs audio processing on preallocated buffers, and `host_objects/` implements the host's COM objects.
   `thread.rs` holds the UI thread token and the dispatcher, and `ui_bound.rs` a value only the UI thread may use.
   The `editor` feature adds the native editor windows in `editor/`, with an AppKit and a Win32 backend.
   It is the only crate besides the test plugin that contains unsafe code.
 - `crates/plugins` (`audiobatch-plugins`): the plugin features, in safe code only.
   `scanner.rs` scans out of process through `scan_worker.rs`, `library.rs` keeps the known plugins,
-  `chain.rs` the saved chain, `processing.rs` renders one file through a chain,
+  `chain.rs` the saved chain, `presets.rs` the named chain presets,
+  `processing.rs` renders one file through a chain,
   `processing_coordinator.rs` runs batches on a worker pool, and `preview_chain.rs` runs the live chain in the preview.
   `chain_signal.rs` holds the channel handling that processing and the preview share.
 - `crates/test-plugin` (`audiobatch-test-plugin`): dev-only fake VST3 plugins for the tests.
@@ -113,6 +115,9 @@ and every crate inherits them with `.workspace = true`.
   Its `build.rs` embeds the app icon from the root `assets` directory into the Windows executable.
   On macOS, `build.sh` and `install.sh` package it as `AudioBatchRs.app` through `create_mac_app_bundle` in `common.sh`.
 - `crates/test-fixtures`: a dev-only helper that locates the shared fixtures and lists their expected properties.
+  It also locates the JUCE test VST3, lists the outputs that plugin must produce,
+  and holds `null_test`, which compares two decoded signals in 16-bit steps
+  and finds the delay between them when they do not cancel.
 
 Keep the core and playback crates free of GUI dependencies,
 so the GUI framework stays replaceable without touching them.
@@ -139,10 +144,15 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
 - **Data files** in the `AudioBatch-rs` data directory:
   `plugins.json` holds the known plugins, the blacklist, and the custom scan folders,
   `plugin-chain.json` the chain with its base64 plugin state,
+  `chain-presets/` one `<name>.json` file per chain preset in the same form,
   `plugin-scan.lock` keeps two scans from running at once,
   and `plugin-scan-worker.log` collects what plugins print while a worker loads them.
   None of them is shared with the C++ application, whose chain state and plugin ids are specific to JUCE.
-- **Tests** use the fake plugins of the test plugin crate, never installed plugins.
+- **Tests** use the fake plugins of the test plugin crate and the JUCE `AudioBatch Test MS` VST3 in `../test-plugin/`,
+  never installed plugins.
+  `crates/plugins/tests/juce_test_plugin.rs` saves its settings in a preset, loads it back, processes a fixture,
+  and requires the output to cancel against the expected file that `../fixtures/plugin_expected.py` computes.
+  These tests skip when the bundle has not been built with `../test-plugin/build.sh`, and fail in CI.
   To try real plugins by hand, run `cargo run -p vst3-host --example inspect`
   or `cargo run -p vst3-host --features editor --example editor -- <bundle>`.
 - **Windows.** CI builds and tests on Windows, including the Win32 editor backend.

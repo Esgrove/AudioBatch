@@ -30,10 +30,10 @@ use crate::controls::{ControlsEvent, ControlsState, NormalizeControls, PluginCon
 use crate::info_panel::render_info_panel;
 use crate::menus::{
     About, AddFiles, AddFolder, AddPluginToChain, CancelProcessing, ChooseFolder, ClearCustomGain, ClearList,
-    ClearPluginChain, KEY_CONTEXT, NormalizeAll, NormalizeSelected, OpenAudioSettings, OpenPluginChain,
-    OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected, RemoveSelected, Rescan, RevealSelected,
-    SelectOutputDevice, StopPlayback, ToggleLoudnessGraph, TogglePlayback, TogglePluginPreview,
-    TogglePreviewLatencyCompensation, TrashSelected,
+    ClearPluginChain, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
+    OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected, RemoveSelected, Rescan,
+    RevealSelected, SaveChainPreset, SelectOutputDevice, StopPlayback, ToggleLoudnessGraph, TogglePlayback,
+    TogglePluginPreview, TogglePreviewLatencyCompensation, TrashSelected,
 };
 use crate::normalization::target_value_text;
 use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, fill_status_column};
@@ -329,6 +329,10 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &OpenPluginManager, _, cx| view.open_manager_window(cx)))
             .on_action(cx.listener(|view, _: &ClearPluginChain, _, cx| view.clear_plugin_chain(cx)))
             .on_action(cx.listener(|view, action: &AddPluginToChain, _, cx| view.add_plugin_from_menu(action, cx)))
+            .on_action(cx.listener(|view, _: &SaveChainPreset, _, cx| view.open_chain_window(cx)))
+            .on_action(cx.listener(|view, action: &LoadChainPreset, _, cx| {
+                view.load_chain_preset(&action.name, cx);
+            }))
             .on_action(cx.listener(|view, _: &ProcessSelected, window, cx| view.process_selected(window, cx)))
             .on_action(cx.listener(|view, _: &ProcessAll, window, cx| view.process_all(window, cx)))
             .on_action(cx.listener(|view, _: &CancelProcessing, _, cx| view.cancel_processing(cx)))

@@ -8,6 +8,7 @@
 //! A slot whose plugin cannot be loaded keeps its saved settings and shows its error,
 //! so a plugin that is missing for now does not lose its settings.
 //! The caller saves the chain after every structural change.
+//! Loading a preset replaces every slot, and the chain remembers the preset's name until its slots change.
 //! The settings of the instances are captured when processing starts, an editor closes, and the app quits.
 //! Each slot can show its plugin's editor in a native window.
 //! The window only hides when the user closes it,
@@ -59,6 +60,9 @@ pub struct LiveChain {
     dispatcher: UiDispatcher,
     /// Rate the instances are prepared at, the preview's output rate.
     sample_rate: u32,
+    /// Name of the preset the chain was loaded from or saved as,
+    /// until a slot is added, removed, moved, enabled, or bypassed.
+    preset_name: Option<String>,
 }
 
 impl LiveSlot {
@@ -142,6 +146,7 @@ impl LiveChain {
             path,
             dispatcher,
             sample_rate,
+            preset_name: None,
         }
     }
 
@@ -191,6 +196,18 @@ impl LiveChain {
         self.sample_rate
     }
 
+    /// Returns the name of the preset the chain matches, when it was loaded from or saved as one
+    /// and its slots have not changed since.
+    #[must_use]
+    pub fn preset_name(&self) -> Option<&str> {
+        self.preset_name.as_deref()
+    }
+
+    /// Records the preset the chain now matches, after it was saved as one.
+    pub fn set_preset_name(&mut self, name: Option<String>) {
+        self.preset_name = name;
+    }
+
     /// Returns the summed latency of the enabled slots whose instances are ready, in samples.
     #[must_use]
     pub fn total_latency_samples(&self) -> u64 {
@@ -206,14 +223,31 @@ impl LiveChain {
         let live = self.create_slot(ui, ChainSlot::new(plugin));
         let id = live.id;
         self.slots.push(live);
+        self.preset_name = None;
         id
+    }
+
+    /// Replaces every slot with the slots of a saved chain, such as a preset, and creates their instances.
+    /// The new slots get new ids, so windows and events of the old slots no longer find them.
+    /// The caller takes the processors back from the preview first, because the old instances are destroyed.
+    pub fn replace(&mut self, ui: &UiThread, chain: PluginChain, preset_name: Option<String>) {
+        self.slots.clear();
+        for slot in chain.slots {
+            let live = self.create_slot(ui, slot);
+            self.slots.push(live);
+        }
+        self.preset_name = preset_name;
     }
 
     /// Removes a slot. Returns false when there is no such slot.
     pub fn remove(&mut self, id: SlotId) -> bool {
         let count = self.slots.len();
         self.slots.retain(|slot| slot.id != id);
-        self.slots.len() != count
+        let removed = self.slots.len() != count;
+        if removed {
+            self.preset_name = None;
+        }
+        removed
     }
 
     /// Moves a slot by an offset, negative towards the start.
@@ -229,6 +263,7 @@ impl LiveChain {
             Some(target) if target != index => {
                 let slot = self.slots.remove(index);
                 self.slots.insert(target, slot);
+                self.preset_name = None;
                 true
             }
             _ => false,
@@ -240,6 +275,7 @@ impl LiveChain {
         match self.slots.iter_mut().find(|slot| slot.id == id) {
             Some(slot) if slot.slot.enabled != enabled => {
                 slot.slot.enabled = enabled;
+                self.preset_name = None;
                 true
             }
             _ => false,
@@ -249,6 +285,7 @@ impl LiveChain {
     /// Removes every slot.
     pub fn clear(&mut self) {
         self.slots.clear();
+        self.preset_name = None;
     }
 
     /// Prepares every instance again at another rate.
@@ -506,5 +543,90 @@ mod test_slots {
         assert_eq!(chain.total_latency_samples(), 0);
         chain.clear();
         assert_eq!(chain.len(), 0);
+    }
+
+    #[test]
+    fn structural_changes_forget_the_preset_name() {
+        let mut chain = chain_of(&["A", "B"]);
+        let first = chain.slots().first().map(LiveSlot::id).expect("first slot");
+        let preset = || Some(String::from("Mastering"));
+
+        chain.set_preset_name(preset());
+        assert_eq!(chain.preset_name(), Some("Mastering"));
+        assert!(!chain.move_slot(first, -1));
+        assert!(!chain.set_enabled(first, true));
+        assert_eq!(chain.preset_name(), Some("Mastering"));
+
+        assert!(chain.move_slot(first, 1));
+        assert_eq!(chain.preset_name(), None);
+        chain.set_preset_name(preset());
+        assert!(chain.set_enabled(first, false));
+        assert_eq!(chain.preset_name(), None);
+        chain.set_preset_name(preset());
+        assert!(chain.remove(first));
+        assert_eq!(chain.preset_name(), None);
+        chain.set_preset_name(preset());
+        chain.clear();
+        assert_eq!(chain.preset_name(), None);
+    }
+}
+
+#[cfg(test)]
+mod test_replace {
+    use std::sync::OnceLock;
+
+    use vst3_host::ui_channel;
+
+    use super::*;
+    use crate::test_helpers::effect;
+
+    /// The dispatcher of the one UI thread these tests share, since a process can have only one.
+    static DISPATCHER: OnceLock<UiDispatcher> = OnceLock::new();
+
+    /// Returns the dispatcher of the shared test UI thread, starting the thread on first use.
+    fn dispatcher() -> &'static UiDispatcher {
+        DISPATCHER.get_or_init(|| UiThread::spawn_dedicated().expect("no other UI thread in the test process"))
+    }
+
+    /// Returns a saved slot of a plugin whose bundle does not exist, with a state and an enabled flag.
+    fn missing_slot(name: &str, component: &[u8], enabled: bool) -> ChainSlot {
+        let mut plugin = effect("Acme", name);
+        plugin.bundle = PathBuf::from(format!("/missing/{name}.vst3"));
+        let mut slot = ChainSlot::new(plugin);
+        slot.component_state = component.to_vec();
+        slot.enabled = enabled;
+        slot
+    }
+
+    #[test]
+    fn replacing_loads_the_preset_slots_with_new_ids_and_keeps_missing_plugins_settings() {
+        let preset = PluginChain {
+            slots: vec![
+                missing_slot("Width", b"wide", false),
+                missing_slot("Gain", b"loud", true),
+            ],
+        };
+        let expected = preset.clone();
+        let (dispatcher_for_chain, _jobs) = ui_channel();
+        let result = dispatcher()
+            .call(
+                move |ui| {
+                    let mut chain =
+                        LiveChain::new(PathBuf::from("/data/plugin-chain.json"), dispatcher_for_chain, 48_000);
+                    let old = chain.add(ui, effect("Acme", "Old"));
+                    chain.replace(ui, preset, Some(String::from("Wide")));
+                    let ids: Vec<SlotId> = chain.slots().iter().map(LiveSlot::id).collect();
+                    let errors = chain.slots().iter().filter(|slot| slot.error().is_some()).count();
+                    (old, ids, errors, chain.chain(), chain.preset_name().map(str::to_owned))
+                },
+                &|| false,
+            )
+            .expect("the test UI thread runs the job");
+        let (old, ids, errors, saved, preset_name) = result;
+        assert_eq!(ids.len(), 2);
+        assert!(!ids.contains(&old));
+        assert_eq!(errors, 2);
+        assert_eq!(saved, expected);
+        assert_eq!(preset_name.as_deref(), Some("Wide"));
     }
 }
