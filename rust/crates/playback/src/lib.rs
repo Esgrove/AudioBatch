@@ -4,6 +4,8 @@
 //! A decode thread feeds a lock-free `rtrb` ring buffer that the `cpal` audio callback reads,
 //! with `rubato` resampling when the file rate differs from the device rate.
 //! The engine has no GUI dependency.
+//! A `PreviewInsert`, such as a plugin chain, can process the output inside the audio callback.
+//! The engine knows nothing about plugins, only the trait.
 //!
 //! `Player` must stay on the thread that created it, because the cpal stream is not `Send` on every platform.
 
@@ -11,6 +13,7 @@ mod device;
 mod engine;
 mod output;
 mod pipeline;
+mod preview_insert;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,10 +28,16 @@ use rtrb::RingBuffer;
 
 pub use device::{DeviceCapabilities, OutputConfig, device_capabilities};
 pub use engine::PlayerEvent;
+pub use preview_insert::PreviewInsert;
 
 use device::{device_display_name, find_device, stream_config};
 use engine::{Command, run_decode_thread};
+use output::insert::DeviceFormat;
 use output::{NO_GENERATION, OutputRenderer, SharedState};
+use preview_insert::{InsertControl, insert_channel};
+
+/// What the player reports when the preview insert produced output that is not finite.
+pub const NON_FINITE_INSERT_MESSAGE: &str = "A live plugin produced non-finite audio. Preview was stopped.";
 
 /// Ring buffer length in seconds of output audio.
 /// Long enough to ride out a slow disk, short enough that a seek drops little decoded audio.
@@ -60,6 +69,8 @@ pub struct Player {
     buffer_size: Option<u32>,
     next_generation: u32,
     loaded_path: Option<PathBuf>,
+    /// Hands preview inserts to the audio callback and takes back the ones it replaced.
+    insert: InsertControl,
 }
 
 /// The state the stream error callback needs.
@@ -130,7 +141,12 @@ impl Player {
         let shared = Arc::new(SharedState::new());
         let capacity = (f64::from(output_rate) * BUFFER_SECONDS) as usize;
         let (producer, consumer) = RingBuffer::new(capacity.max(1024));
-        let renderer = OutputRenderer::new(Arc::clone(&shared), consumer, channels);
+        let (insert, insert_renderer) = insert_channel(Arc::clone(&shared));
+        let device_format = DeviceFormat {
+            channels,
+            rate: output_rate,
+        };
+        let renderer = OutputRenderer::new(Arc::clone(&shared), consumer, device_format, insert_renderer);
         let (event_sender, events) = unbounded();
         let (stream_error_sender, stream_errors) = bounded(STREAM_ERROR_CAPACITY);
         let errors = StreamErrors {
@@ -161,6 +177,7 @@ impl Player {
             buffer_size,
             next_generation: NO_GENERATION,
             loaded_path: None,
+            insert,
         })
     }
 
@@ -325,7 +342,42 @@ impl Player {
         self.shared.underruns.load(Ordering::Relaxed)
     }
 
-    /// Returns the events since the last call, including output errors and the end of playback.
+    /// Hands an insert to the audio callback, which processes the output through it from its next block,
+    /// or removes the current insert with none.
+    /// The insert it replaces comes back through `take_retired_inserts`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the audio callback is not taking changes, because the stream is not running.
+    pub fn set_insert(&mut self, insert: Option<Box<dyn PreviewInsert>>) -> Result<()> {
+        self.insert.set(insert)
+    }
+
+    /// Returns the inserts the audio callback replaced since the last call,
+    /// so they are dropped on this thread instead of the audio thread.
+    #[must_use]
+    pub fn take_retired_inserts(&mut self) -> Vec<Box<dyn PreviewInsert>> {
+        self.insert.take_retired()
+    }
+
+    /// Returns true when the audio callback has made every insert change, so a removed insert is no longer used.
+    #[must_use]
+    pub fn is_insert_settled(&self) -> bool {
+        self.insert.is_settled()
+    }
+
+    /// Sets how many frames of output may follow the end of the file in the current insert.
+    pub fn set_insert_tail(&self, frames: usize) {
+        self.insert.set_tail(frames);
+    }
+
+    /// Sets whether the insert is pre-rolled for its latency on every start, seek, and change,
+    /// so the output lines up with the playhead.
+    pub fn set_latency_compensation(&self, enabled: bool) {
+        self.shared.latency_compensation.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Returns the events since the last call, including output errors, insert failures, and the end of playback.
     #[must_use]
     pub fn poll_events(&self) -> Vec<PlayerEvent> {
         let mut events: Vec<PlayerEvent> = self.events.try_iter().collect();
@@ -337,6 +389,12 @@ impl Player {
                 format!("Audio output error: {error}")
             },
         }));
+        if self.shared.insert_failed.swap(false, Ordering::AcqRel) {
+            events.push(PlayerEvent::Error {
+                path: None,
+                message: String::from(NON_FINITE_INSERT_MESSAGE),
+            });
+        }
         if self.shared.ended.swap(false, Ordering::AcqRel) {
             events.push(PlayerEvent::Ended);
         }
