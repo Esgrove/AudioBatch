@@ -30,6 +30,8 @@ struct PluginExpectation {
     const char* source;
     float gain;
     float width;
+    /// Latency in samples, which the host must compensate for the output to cancel against the expected file.
+    int latency;
     const char* expected;
 };
 
@@ -39,31 +41,45 @@ constexpr std::array pluginExpectations {
         .source = "stereo_split_44100_16.wav",
         .gain = 0.5f,
         .width = 0.5f,
+        .latency = 0,
         .expected = "plugin_expected/ms_gain_0.5_width_0.5_stereo_split_44100_16.wav",
     },
     PluginExpectation {
         .source = "stereo_split_44100_16.wav",
         .gain = 1.0f,
         .width = 0.0f,
+        .latency = 0,
         .expected = "plugin_expected/ms_gain_1_width_0_stereo_split_44100_16.wav",
     },
     PluginExpectation {
         .source = "stereo_split_44100_16.wav",
         .gain = 1.0f,
         .width = 2.0f,
+        .latency = 0,
         .expected = "plugin_expected/ms_gain_1_width_2_stereo_split_44100_16.wav",
     },
     PluginExpectation {
         .source = "sine_mono_44100_16.wav",
         .gain = 0.5f,
         .width = 1.0f,
+        .latency = 0,
         .expected = "plugin_expected/ms_gain_0.5_width_1_sine_mono_44100_16.wav",
+    },
+    PluginExpectation {
+        .source = "stereo_split_44100_16.wav",
+        .gain = 0.5f,
+        .width = 0.5f,
+        .latency = 256,
+        .expected = "plugin_expected/ms_gain_0.5_width_0.5_latency_256_stereo_split_44100_16.wav",
     },
 };
 
-/// Index of the gain parameter of the test plugin, and of the width parameter after it.
+/// Index of the gain parameter of the test plugin, and of the width and latency parameters after it.
 constexpr int gainParameterIndex {0};
 constexpr int widthParameterIndex {1};
+constexpr int latencyParameterIndex {2};
+/// Largest latency of the test plugin in samples, which maps linearly from zero.
+constexpr float testLatencyMaximum {1024.0f};
 /// Largest plain value of both test plugin parameters, which map linearly from zero.
 constexpr float testParameterMaximum {2.0f};
 
@@ -430,7 +446,7 @@ private:
             juce::AudioDeviceManager previewDeviceManager;
             LiveChain chain(library, properties, renderingLock, previewDeviceManager);
             const auto source = temporary.copyFixture("stereo_split_44100_16.wav", "identity.wav");
-            const auto output = processWithChain(library, chain.getEnabledPlugins(), source);
+            const auto output = processWithChain(library, chain.getEnabledPlugins(), source, 0);
             const auto result = nullTestFiles(fixtureFile("stereo_split_44100_16.wav"), output);
             expect(result.cancels(), result.describe());
         }
@@ -439,9 +455,10 @@ private:
         for (const auto& expectation : pluginExpectations) {
             beginTest(
                 utils::format(
-                    "The test VST3 output for gain {} and width {} on {} cancels against {}",
+                    "The test VST3 output for gain {}, width {}, and latency {} on {} cancels against {}",
                     expectation.gain,
                     expectation.width,
+                    expectation.latency,
                     expectation.source,
                     expectation.expected
                 )
@@ -461,7 +478,7 @@ private:
 
             const auto source
                 = temporary.copyFixture(expectation.source, utils::format("case_{}_{}", caseIndex, expectation.source));
-            const auto output = processWithChain(library, chain.getEnabledPlugins(), source);
+            const auto output = processWithChain(library, chain.getEnabledPlugins(), source, expectation.latency);
             const auto result = nullTestFiles(fixtureFile(expectation.expected), output);
             expect(result.cancels(), result.describe());
             ++caseIndex;
@@ -491,14 +508,18 @@ private:
         }
 
         const auto& parameters = preview.instances.front()->getParameters();
-        expect(parameters.size() > widthParameterIndex);
-        if (parameters.size() <= widthParameterIndex) {
+        expect(parameters.size() > latencyParameterIndex);
+        if (parameters.size() <= latencyParameterIndex) {
             return {};
         }
         expectEquals(parameters[gainParameterIndex]->getName(32), juce::String("Gain"));
         expectEquals(parameters[widthParameterIndex]->getName(32), juce::String("Width"));
+        expectEquals(parameters[latencyParameterIndex]->getName(32), juce::String("Latency"));
         parameters[gainParameterIndex]->setValueNotifyingHost(expectation.gain / testParameterMaximum);
         parameters[widthParameterIndex]->setValueNotifyingHost(expectation.width / testParameterMaximum);
+        parameters[latencyParameterIndex]->setValueNotifyingHost(
+            static_cast<float>(expectation.latency) / testLatencyMaximum
+        );
 
         const auto saved = chain.saveAsPreset(presetName);
         expect(saved.has_value(), saved.has_value() ? juce::String() : saved.error());
@@ -506,11 +527,13 @@ private:
     }
 
     /// Instantiates the plugins as a processing run does, processes the source through them,
+    /// checks that the first plugin reported the expected latency, which processing compensated,
     /// and returns the output file, which does not exist when processing failed.
     juce::File processWithChain(
         const PluginLibrary& library,
         const std::vector<EnabledChainPlugin>& enabledPlugins,
-        const juce::File& source
+        const juce::File& source,
+        const int expectedLatencySamples
     )
     {
         auto instantiation = library.instantiateChains(enabledPlugins, 1);
@@ -528,6 +551,7 @@ private:
             analyzeFile(source), makeOptions(enabledPlugins, instantiation.initialStates), chain
         );
         expect(!result.hasError(), utils::format("Processing {} failed", source.getFileName()));
+        expectEquals(chain.front()->getLatencySamples(), expectedLatencySamples);
         return getProcessingOutputFile(source);
     }
 };
