@@ -436,6 +436,11 @@ AudioAnalysisRecord analyzeFile(
     const auto reader = utils::createAudioReader(file);
 
     if (reader == nullptr) {
+        // JUCE returns no reader both for a format it cannot decode and for a file it cannot open,
+        // and only the first fails the same way on the next run.
+        if (file.createInputStream() == nullptr) {
+            return failAnalysis(std::move(record), AnalysisError::unreadable, "File could not be opened for reading");
+        }
         return failAnalysis(std::move(record), AnalysisError::unsupported, "Unsupported or unreadable audio file");
     }
 
