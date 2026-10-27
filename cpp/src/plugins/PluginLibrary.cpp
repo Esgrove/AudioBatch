@@ -49,7 +49,7 @@ juce::Array<juce::PluginDescription> PluginLibrary::getKnownTypes() const
 }
 
 /// Returns the known effect plugins, the ones a chain can process audio with.
-/// Instruments are left out of the menus that add to a chain, like in the Rust version.
+/// Instruments are left out of the menus that add to a chain, since a chain only processes audio.
 juce::Array<juce::PluginDescription> PluginLibrary::getKnownEffectTypes() const
 {
     auto types = knownPluginList.getTypes();

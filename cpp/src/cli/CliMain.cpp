@@ -91,7 +91,7 @@ int runCliMain(const std::span<char*> argv)
     utils::setConsoleEcho(false);
 
     if (!command) {
-        // Like the Rust CLI, an argument error goes to stderr with the usage line and a hint,
+        // An argument error goes to stderr with the usage line and a hint,
         // so stdout stays empty for a pipeline that reads JSON or CSV.
         utils::logError(command.error().message);
         console::printError(command.error().message);

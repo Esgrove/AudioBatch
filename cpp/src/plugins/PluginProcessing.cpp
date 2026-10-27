@@ -121,7 +121,7 @@ struct InputGain {
 /// A custom gain wins, otherwise the file is normalized to the requested peak or loudness target,
 /// and otherwise it is left unchanged.
 /// A file the normalization refuses, such as silence or one that needs more than the gain limit,
-/// is processed at unity gain, and the notice says why, like in the Rust version.
+/// is processed at unity gain, and the notice says why.
 InputGain getInputGain(const AudioAnalysisRecord& record, const PluginProcessingOptions& options)
 {
     if (record.customGain) {

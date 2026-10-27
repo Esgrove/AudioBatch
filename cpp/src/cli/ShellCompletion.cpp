@@ -2,7 +2,7 @@
 /// Each script is a fixed template for its shell, filled in with the options, value names,
 /// and subcommands from the tables in CliOptions.h, so the completions offer exactly what the parser accepts.
 /// A subcommand is only recognised as the first argument, the same as in the parser.
-/// The install locations are the per-user directories the Rust audiobatch-rs CLI uses.
+/// The install locations are the per-user directories audiobatch-rs uses too, so both CLIs install alike.
 
 #include "cli/ShellCompletion.h"
 
@@ -499,7 +499,7 @@ end
 }
 
 /// Returns the user's home directory, from HOME when it is set outside Windows,
-/// the same as the shells that load the scripts and the Rust CLI.
+/// the same as the shells that load the scripts.
 /// JUCE asks the system instead on macOS, which ignores HOME.
 juce::File findHomeDirectory()
 {

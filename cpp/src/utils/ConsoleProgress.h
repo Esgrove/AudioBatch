@@ -10,8 +10,7 @@
 
 namespace audiobatch::console
 {
-/// Draws "[elapsed] [bar] done/total name" on one stderr line, rewritten in place,
-/// the same layout the Rust CLI draws.
+/// Draws "[elapsed] [bar] done/total name" on one stderr line, rewritten in place.
 /// Thread-safe, so worker callbacks can advance it, and it erases its line when it finishes or is destroyed.
 class ProgressLine
 {

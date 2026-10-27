@@ -130,7 +130,7 @@ const CliOption* findShortOption(const juce::juce_wchar letter)
 }
 
 /// Splits one argument of combined short options, such as "-rf" or "-j4", into separate arguments,
-/// the way common command line parsers, including the one of the Rust CLI, accept them.
+/// the way common command line parsers accept them.
 /// A letter of an option that takes a value takes the rest of the argument as its value,
 /// so "-j4" and "-o=json" become "-j 4" and "-o json".
 /// A letter of no option becomes an option of its own, which the parser then reports as unknown.

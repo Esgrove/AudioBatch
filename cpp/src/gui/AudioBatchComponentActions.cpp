@@ -75,7 +75,7 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
 }
 
 /// Removes every analyzed file from the table without touching the files on disk.
-/// Stops any running analysis, normalization, or processing first, like the Rust version,
+/// Stops any running analysis, normalization, or processing first,
 /// since their results would add rows back. Files a run already committed stay on disk.
 void AudioBatchComponent::clearAllRecords()
 {

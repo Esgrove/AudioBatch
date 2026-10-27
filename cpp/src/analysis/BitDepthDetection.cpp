@@ -64,7 +64,7 @@ int resolveMp4BitsPerSample(const juce::File& file)
 /// MP3 and AAC files use the default of 16,
 /// because the formats store no sample depth and the decoder does not expose the original encoding depth.
 /// ALAC files read through a platform decoder report the depth in their sample description,
-/// as the Rust application does for them.
+/// which both applications report, since the parity script compares the depth.
 int resolveSourceBitsPerSample(const juce::AudioFormatReader& reader, const juce::File& file)
 {
     if (reportsDecodedBitDepth(reader, file)) {
