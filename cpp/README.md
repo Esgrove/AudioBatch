@@ -169,10 +169,12 @@ audiobatch <version> <date> <commit>
 Usage: audiobatch [options] <paths...>
        audiobatch list [options]
        audiobatch completion <shell> [options]
+       audiobatch help [command] [options]
 
 Commands:
   list                    List the available audio plugins
   completion              Print or install a shell completion script
+  help                    Print this message or the help of the given command
 
 Options:
   -h, --help              Print usage and exit
@@ -188,8 +190,7 @@ Options:
   -S, --reverse           Sort in descending order
   -o, --output <format>   Print results as table (default), csv, or json
 
-Short options cannot be combined, so pass -r -f instead of -rf.
-Run audiobatch <command> --help for the options of a command.
+Run audiobatch help <command> for the options of a command.
 ```
 
 Without a path, AudioBatch analyzes the current directory.
@@ -220,9 +221,11 @@ audiobatch -r -s lufs --reverse -o csv "music/library" > levels.csv
 ```
 
 Default output is a table of peak, true peak, loudness and track name.
-Log messages go to stderr, keeping stdout available for results.
+Errors, warnings, and progress go to stderr, keeping stdout available for results.
+The full log goes to the log file.
 Use `--refresh` to bypass cached analysis, including previously failed files.
-Pass short options separately, such as `-r -f`, not `-rf`.
+Short options can be combined, such as `-rf`,
+and an option that takes a value takes the rest of the group, such as `-rj4`.
 
 Exit codes: `0` for success, `1` for invalid arguments or output errors,
 and `2` when any file fails analysis or normalization.

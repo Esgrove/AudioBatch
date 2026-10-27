@@ -19,6 +19,7 @@ use audiobatch_core::sorting::sort_records;
 use audiobatch_core::{
     AnalysisCache, AnalysisCoordinator, AnalysisEvent, AnalysisOptions, AnalysisRecord, AnalysisStatus,
 };
+use clap::CommandFactory as _;
 use colored::Colorize;
 use crossbeam_channel::RecvTimeoutError;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -71,7 +72,13 @@ pub fn run_analysis(
     let normalization = match args.normalization() {
         Ok(normalization) => normalization.map(|options| NormalizationOptions { dispose, ..options }),
         Err(error) => {
+            // The same usage line and hint that clap prints after its own argument errors.
             write_error!(log, "{error}")?;
+            writeln!(
+                log,
+                "\n{}\n\nFor more information, try '--help'.",
+                CliArgs::command().render_usage()
+            )?;
             return Ok(EXIT_USAGE_ERROR);
         }
     };

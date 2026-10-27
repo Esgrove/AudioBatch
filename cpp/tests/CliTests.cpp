@@ -78,9 +78,29 @@ public:
             expectEquals(command.inputPaths.size(), 1);
         }
 
-        beginTest("Combined short options are rejected");
+        beginTest("Combined short options are split, and an option that takes a value takes the rest");
         {
-            expectError({"-rf"}, CliParseErrorKind::combinedShortOptions);
+            auto command = expectCommand<AnalyzeCommand>({"-rfS", "music"});
+            expect(command.recursive);
+            expect(command.refresh);
+            expect(command.reverse);
+            expectEquals(command.inputPaths.size(), 1);
+
+            command = expectCommand<AnalyzeCommand>({"-rj4", "-ojson"});
+            expect(command.recursive);
+            expectEquals(command.workerCount, 4);
+            expect(command.outputFormat == AudioAnalysisOutputFormat::json);
+
+            command = expectCommand<AnalyzeCommand>({"-o=csv", "-rj", "3"});
+            expect(command.outputFormat == AudioAnalysisOutputFormat::csv);
+            expectEquals(command.workerCount, 3);
+
+            const auto listing = expectCommand<ListPluginsCommand>({"list", "-Rgtype"});
+            expect(listing.rescan);
+            expect(listing.grouping == PluginListGrouping::type);
+
+            const auto message = expectError({"-rx"}, CliParseErrorKind::unknownOption);
+            expectEquals(message, juce::String("Unknown option: -x"));
         }
 
         beginTest("Negative numbers never match short options");
@@ -225,6 +245,21 @@ public:
             const auto completionUsage = cli::buildUsage("audiobatch", CliSubcommand::completion);
             expect(completionUsage.contains("Usage: audiobatch completion <shell> [options]"), completionUsage);
             expect(completionUsage.contains("zsh, bash, fish, powershell"), completionUsage);
+
+            const auto helpUsage = cli::buildUsage("audiobatch", CliSubcommand::help);
+            expect(helpUsage.contains("Usage: audiobatch help [command] [options]"), helpUsage);
+        }
+
+        beginTest("The help command takes at most one command to describe");
+        {
+            expect(expectCommand<HelpCommand>({"help"}).subcommand == CliSubcommand::none);
+            expect(expectCommand<HelpCommand>({"help", "list"}).subcommand == CliSubcommand::list);
+            expect(expectCommand<HelpCommand>({"help", "completion"}).subcommand == CliSubcommand::completion);
+            expect(expectCommand<HelpCommand>({"help", "help"}).subcommand == CliSubcommand::help);
+
+            expectError({"help", "analyze"}, CliParseErrorKind::invalidValue);
+            expectError({"help", "list", "completion"}, CliParseErrorKind::unexpectedInput);
+            expectError({"help", "-r"}, CliParseErrorKind::unknownOption);
         }
 
         beginTest("Force requires normalize");
