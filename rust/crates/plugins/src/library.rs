@@ -23,6 +23,9 @@ const SCAN_LOCK_FILE_NAME: &str = "plugin-scan.lock";
 /// File name of the scan worker's log.
 const WORKER_LOG_FILE_NAME: &str = "plugin-scan-worker.log";
 
+/// File name of the saved plugin chain.
+const CHAIN_FILE_NAME: &str = "plugin-chain.json";
+
 /// Format name shown for every plugin, since VST3 is the only supported format.
 pub const FORMAT_NAME: &str = "VST3";
 
@@ -84,6 +87,8 @@ pub struct PluginDataPaths {
     pub scan_lock: PathBuf,
     /// The log of the scan worker's stderr.
     pub worker_log: PathBuf,
+    /// The plugin chain files are processed with.
+    pub chain: PathBuf,
 }
 
 impl PluginDescription {
@@ -126,13 +131,7 @@ impl KnownPlugins {
     ///
     /// Returns an error when the directory or the file cannot be written.
     pub fn save_to(&self, path: &Path) -> Result<()> {
-        let directory = path.parent().unwrap_or_else(|| Path::new("."));
-        fs::create_dir_all(directory)?;
-        let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
-        temporary.write_all(serde_json::to_string_pretty(self)?.as_bytes())?;
-        temporary.as_file().sync_all()?;
-        temporary.persist(path)?;
-        Ok(())
+        write_json_atomically(path, self)
     }
 
     /// Returns the folders a scan searches: the custom folders, or the default ones when there are none.
@@ -185,6 +184,7 @@ impl PluginDataPaths {
             known_plugins: folder.join(KNOWN_PLUGINS_FILE_NAME),
             scan_lock: folder.join(SCAN_LOCK_FILE_NAME),
             worker_log: folder.join(WORKER_LOG_FILE_NAME),
+            chain: folder.join(CHAIN_FILE_NAME),
         }
     }
 }
@@ -205,6 +205,22 @@ pub fn bundle_modified_ms(bundle: &Path) -> i64 {
         .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
         .and_then(|duration| i64::try_from(duration.as_millis()).ok())
         .unwrap_or_default()
+}
+
+/// Writes a value as pretty JSON, replacing the file atomically and creating its directory when needed,
+/// so a reader never sees a partly written file.
+///
+/// # Errors
+///
+/// Returns an error when the directory or the file cannot be written.
+pub(crate) fn write_json_atomically(path: &Path, value: &impl Serialize) -> Result<()> {
+    let directory = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(directory)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
+    temporary.write_all(serde_json::to_string_pretty(value)?.as_bytes())?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(path)?;
+    Ok(())
 }
 
 #[cfg(test)]

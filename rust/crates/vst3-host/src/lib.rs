@@ -21,6 +21,7 @@ pub mod platform_events;
 pub mod processor;
 pub(crate) mod strings;
 pub mod thread;
+pub mod ui_bound;
 
 #[cfg(test)]
 mod test_helpers;
@@ -34,3 +35,4 @@ pub use module_info::read_module_info;
 pub use platform_events::pump_platform_events;
 pub use processor::{ProcessError, ProcessorHandle};
 pub use thread::{CallError, UiDispatcher, UiJob, UiJobs, UiThread, ui_channel};
+pub use ui_bound::UiBound;
