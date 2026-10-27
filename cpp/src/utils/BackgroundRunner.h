@@ -99,6 +99,9 @@ private:
     std::atomic<int> currentRunId {0};
     /// The run asked to stop, or -1 when none was.
     std::atomic<int> stoppedRunId {-1};
+    /// True after a wait for the running jobs timed out, until the pool is empty again,
+    /// so later waits for the same hung job return at once instead of waiting the whole timeout again.
+    std::atomic<bool> waitTimedOut {false};
     /// How long cancelAndWait waits for the running jobs to finish.
     int shutdownTimeoutMilliseconds;
 };

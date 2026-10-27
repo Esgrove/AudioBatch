@@ -238,6 +238,8 @@ AudioBatchComponent::~AudioBatchComponent()
     fileActivity.clearAllActive();
     utils::logDebug("Application shutdown: stopping preview metadata worker");
     preview.stop();
+    // A plugin job that hangs makes the shutdown end the process, so the chain is saved first.
+    liveChain->saveChain();
     utils::logDebug("Application shutdown: stopping analysis, normalization, and plugin processing workers");
     backgroundWork.cancelAndWait();
 
@@ -483,10 +485,13 @@ void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArra
 /// records are loaded, and no processing or analysis is running.
 void AudioBatchComponent::updateProcessButtonState()
 {
-    const auto normalizable = getSelectedNormalizableRecords();
-    previewWorkspace.normalizationTargetControl.setNormalizeEnabled(
-        backgroundWork.isIdle() && !normalizable.empty() && canNormalizeRecords(normalizable)
-    );
+    // Collecting the normalizable selection checks each file on disk, so it is skipped while a pass runs.
+    bool normalizeEnabled = false;
+    if (backgroundWork.isIdle()) {
+        const auto normalizable = getSelectedNormalizableRecords();
+        normalizeEnabled = !normalizable.empty() && canNormalizeRecords(normalizable);
+    }
+    previewWorkspace.normalizationTargetControl.setNormalizeEnabled(normalizeEnabled);
 
     // While a pass runs, the button cancels it.
     if (!backgroundWork.isIdle()) {
