@@ -3,7 +3,7 @@
 //! Covers the file dialogs, analyzing the selected file again, clearing its custom gain, removing it from the list,
 //! moving it to the trash, revealing it in the file manager, clearing the list,
 //! playback, the events of the controls column, the About dialog, and the synthetic stress test.
-//! Removing or trashing files waits while files are being normalized.
+//! Removing or trashing files waits while files are being normalized or processed with plugins.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -52,7 +52,7 @@ impl AppView {
         let Some(selected) = self.selected.clone() else {
             return;
         };
-        if self.blocked_by_normalization(cx) {
+        if self.blocked_by_file_operation(cx) {
             return;
         }
         self.excluded.insert(selected.clone());
@@ -81,7 +81,7 @@ impl AppView {
         let Some(selected) = self.selected.clone() else {
             return;
         };
-        if self.blocked_by_normalization(cx) {
+        if self.blocked_by_file_operation(cx) {
             return;
         }
         if let Some(player) = &mut self.player
@@ -121,12 +121,13 @@ impl AppView {
     }
 
     /// Removes every file and folder and stops any run and playback.
-    /// Files being normalized finish their current block and keep their originals.
+    /// Files being normalized or processed finish their current block and keep their originals.
     pub(super) fn clear_list(&mut self, cx: &mut Context<Self>) {
         if let Some(coordinator) = &self.coordinator {
             coordinator.cancel();
         }
         self.cancel_normalization();
+        self.stop_processing();
         self.analysis_task = None;
         let was_demo = self.demo_task.take().is_some();
         self.roots.clear();
@@ -183,6 +184,10 @@ impl AppView {
                 cx.notify();
             }
             ControlsEvent::NormalizeSelected => self.normalize_selected(window, cx),
+            ControlsEvent::SetNormalizeFirst(normalize_first) => self.set_normalize_first(normalize_first, cx),
+            ControlsEvent::ProcessSelected => self.process_selected(window, cx),
+            ControlsEvent::CancelProcessing => self.cancel_processing(cx),
+            ControlsEvent::OpenPluginChain => self.open_chain_window(cx),
         }
     }
 

@@ -1,10 +1,14 @@
 //! The controls column at the left of the preview:
-//! zoom, input gain, the normalization target, the Audio Settings button, and Play/Stop.
+//! zoom, input gain, the normalization target, plugin processing, the Plugin Chain and Audio Settings buttons,
+//! and Play/Stop.
 //!
 //! The zoom and gain sliders and their value labels are on top,
 //! and the large Play/Stop button at the bottom, green while stopped and red while playing.
 //! The normalization group has the Peak and Loudness modes, the target slider of the chosen mode,
 //! the overwrite option, and the button that normalizes the selected file.
+//! The overwrite option applies to plugin processing too.
+//! The plugin group shows the chain summary, the option that normalizes files before the plugins,
+//! and the button that processes the selected file, which cancels the run while files are processed.
 //! The playback position is shown by the playhead on the waveform,
 //! and the output device in the status bar of the main window.
 //! Everything above the button scrolls when the preview is short, so the button always stays visible.
@@ -69,12 +73,26 @@ const MODE_TOOLTIP: &str =
 const TARGET_TOOLTIP: &str = "Target level for normalization. Double-click to reset.";
 
 /// Tooltip of the overwrite option.
-const OVERWRITE_TOOLTIP: &str = "When enabled, normalizing replaces an existing output file with the same name. \
-     The replaced file is moved to the system trash.";
+const OVERWRITE_TOOLTIP: &str = "When enabled, normalizing or processing replaces an existing output file \
+     with the same name. The replaced file is moved to the system trash.";
 
 /// Tooltip of the Normalize button.
 const NORMALIZE_TOOLTIP: &str = "Normalize the selected file to the target. \
      The output is written as AIFF next to the source, and a converted source is moved to the system trash.";
+
+/// Tooltip of the option that normalizes before the plugins.
+const NORMALIZE_FIRST_TOOLTIP: &str = "When enabled, files without a custom gain are normalized \
+     to the selected peak or loudness target before the plugin chain.";
+
+/// Tooltip of the Process button.
+const PROCESS_TOOLTIP: &str = "Process the selected file with the plugin chain. \
+     The output is written as 16-bit AIFF next to the source, and a converted source is moved to the system trash.";
+
+/// Tooltip of the Cancel button while files are processed.
+const CANCEL_TOOLTIP: &str = "Stop plugin processing. Files in progress keep their originals.";
+
+/// Tooltip of the Plugin Chain button.
+const CHAIN_TOOLTIP: &str = "Open the plugin chain, where plugins are added, ordered, bypassed, and edited.";
 
 /// A slider of the controls column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +120,26 @@ pub enum ControlsEvent {
     SetOverwrite(bool),
     /// The Normalize button was clicked.
     NormalizeSelected,
+    /// The option that normalizes before the plugins was switched on or off.
+    SetNormalizeFirst(bool),
+    /// The Process button was clicked.
+    ProcessSelected,
+    /// The Cancel button was clicked while files were processed.
+    CancelProcessing,
+    /// The Plugin Chain button was clicked.
+    OpenPluginChain,
+}
+
+/// Values the plugin group shows.
+pub struct PluginControls {
+    /// Summary of the chain, for example "2 plugins".
+    pub summary: String,
+    /// True when files are normalized before the plugins.
+    pub normalize_first: bool,
+    /// True when the selected file can be processed now.
+    pub can_process: bool,
+    /// True while files are processed, which turns the button into Cancel.
+    pub processing: bool,
 }
 
 /// Values the normalization group shows.
@@ -132,6 +170,8 @@ pub struct ControlsState<'a> {
     pub can_adjust_gain: bool,
     /// The normalization group.
     pub normalize: NormalizeControls<'a>,
+    /// The plugin group.
+    pub plugins: PluginControls,
 }
 
 /// Callback that receives the events of the controls column.
@@ -172,6 +212,17 @@ pub fn render_controls(
             send_on_double_click(&on_event, ControlsEvent::ResetSlider(SliderControl::Gain)),
         ))
         .child(normalize_group(&state.normalize, &on_event))
+        .child(plugin_group(&state.plugins, &on_event))
+        .child({
+            let on_event = Rc::clone(&on_event);
+            Button::new("plugin-chain")
+                .label("Plugin Chain")
+                .tooltip(CHAIN_TOOLTIP)
+                .w_full()
+                .h(px(SETTINGS_BUTTON_HEIGHT))
+                .flex_none()
+                .on_click(move |_, window, cx| on_event(&ControlsEvent::OpenPluginChain, window, cx))
+        })
         .child({
             let on_event = Rc::clone(&on_event);
             Button::new("audio-settings")
@@ -289,6 +340,72 @@ fn normalize_group(state: &NormalizeControls<'_>, on_event: &EventCallback) -> D
                 .gap(px(8.0))
                 .child(overwrite)
                 .child(normalize),
+        )
+}
+
+/// Renders the plugin group: the caption with the chain summary,
+/// and a row with the option that normalizes first and the Process button, which is Cancel while processing.
+fn plugin_group(state: &PluginControls, on_event: &EventCallback) -> Div {
+    let normalize_first = {
+        let on_event = Rc::clone(on_event);
+        Checkbox::new("process-normalize-first")
+            .label("Normalize")
+            .tooltip(NORMALIZE_FIRST_TOOLTIP)
+            .checked(state.normalize_first)
+            .on_change(move |checked: &bool, window, cx| {
+                on_event(&ControlsEvent::SetNormalizeFirst(*checked), window, cx);
+            })
+    };
+    let button = {
+        let on_event = Rc::clone(on_event);
+        let (label, tooltip_text, event, enabled) = if state.processing {
+            ("Cancel", CANCEL_TOOLTIP, ControlsEvent::CancelProcessing, true)
+        } else {
+            (
+                "Process",
+                PROCESS_TOOLTIP,
+                ControlsEvent::ProcessSelected,
+                state.can_process,
+            )
+        };
+        Button::new("process-selected")
+            .label(label)
+            .tooltip(tooltip_text)
+            .disabled(!enabled)
+            .flex_1()
+            .h(px(SETTINGS_BUTTON_HEIGHT))
+            .on_click(move |_, window, cx| on_event(&event, window, cx))
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(6.0))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .text_size(px(CAPTION_FONT_SIZE))
+                .child(
+                    div()
+                        .text_color(color(palette::GREY_MIDDLE_LIGHT))
+                        .child("Plugin chain"),
+                )
+                .child(
+                    div()
+                        .font_family(MONO_FONT)
+                        .text_color(color(palette::GREY_LIGHT))
+                        .child(state.summary.clone()),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(8.0))
+                .child(normalize_first)
+                .child(button),
         )
 }
 

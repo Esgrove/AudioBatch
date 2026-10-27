@@ -625,6 +625,7 @@ dependencies = [
  "anyhow",
  "audiobatch-core",
  "audiobatch-playback",
+ "audiobatch-plugins",
  "crossbeam-channel",
  "gpui-kit",
  "gpui-pre",
@@ -633,6 +634,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "trash",
+ "vst3-host",
  "winresource",
 ]
 

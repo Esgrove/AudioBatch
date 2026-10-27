@@ -1,8 +1,9 @@
-//! Normalizing files from the main view.
+//! Normalizing files from the main view, and the result handling it shares with plugin processing.
 //!
 //! A run normalizes the selected file, or every analyzed file after a confirmation,
 //! on the normalization coordinator, which shares the analysis cache.
-//! Analysis and normalization never run at the same time, and changes to the list wait for a run to finish.
+//! Analysis, normalization, and plugin processing never run at the same time,
+//! and changes to the list wait for a run to finish.
 //! Each result replaces the row of its source: a converted source makes way for its `.aif` output,
 //! and a failure keeps the row with the reason in its Status column.
 //! The end of a run shows its summary in the status bar and lists any failures in a dialog.
@@ -17,14 +18,15 @@ use gpui_kit::{Context, PromptLevel, SharedString, Task, Window};
 use super::{AppView, drain_events};
 use crate::menus::set_menus;
 use crate::normalization::{
-    ALREADY_NORMALIZING, BLOCKED_BY_ANALYSIS, NORMALIZATION_IN_PROGRESS, NormalizeRun, describe_target,
+    ALREADY_NORMALIZING, BLOCKED_BY_ANALYSIS, BLOCKED_BY_PROCESSING, NORMALIZATION_IN_PROGRESS, describe_target,
     normalization_options, set_target, target_range,
 };
+use crate::operation_run::{OperationKind, OperationRun};
 use crate::results::RowMessage;
 use crate::settings::NormalizeMode;
 
-/// Title of the normalization dialogs.
-const DIALOG_TITLE: &str = "Normalize";
+/// Status text when the list is changed while files are being processed with plugins.
+const PROCESSING_IN_PROGRESS: &str = "Plugin processing in progress";
 
 impl AppView {
     /// Returns true while a normalization run is in progress.
@@ -41,15 +43,19 @@ impl AppView {
             && self.selected_record(cx).is_some()
     }
 
-    /// Shows that the list cannot change while files are being normalized.
+    /// Shows that the list cannot change while files are being normalized or processed with plugins.
     /// Returns true when the change has to wait.
-    pub(super) fn blocked_by_normalization(&mut self, cx: &mut Context<Self>) -> bool {
-        if self.is_normalizing() {
-            self.status = SharedString::from(NORMALIZATION_IN_PROGRESS);
-            cx.notify();
-            return true;
-        }
-        false
+    pub(super) fn blocked_by_file_operation(&mut self, cx: &mut Context<Self>) -> bool {
+        let reason = if self.is_normalizing() {
+            NORMALIZATION_IN_PROGRESS
+        } else if self.is_processing() {
+            PROCESSING_IN_PROGRESS
+        } else {
+            return false;
+        };
+        self.status = SharedString::from(reason);
+        cx.notify();
+        true
     }
 
     /// Normalizes the selected file to the target.
@@ -94,7 +100,7 @@ impl AppView {
         );
         let answer = window.prompt(
             PromptLevel::Warning,
-            DIALOG_TITLE,
+            OperationKind::Normalize.dialog_title(),
             Some(&detail),
             &["Normalize", "Cancel"],
             cx,
@@ -155,6 +161,8 @@ impl AppView {
     fn normalization_blocked_reason(&self) -> Option<&'static str> {
         if self.is_normalizing() {
             Some(ALREADY_NORMALIZING)
+        } else if self.is_processing() {
+            Some(BLOCKED_BY_PROCESSING)
         } else if self.is_analyzing() {
             Some(BLOCKED_BY_ANALYSIS)
         } else {
@@ -209,7 +217,7 @@ impl AppView {
         let total = records.len();
         let (run_id, receiver) =
             coordinator.start(records, normalization_options(&self.settings, self.overwrite_existing));
-        let run = NormalizeRun::new(run_id, total);
+        let run = OperationRun::new(OperationKind::Normalize, run_id, total);
         self.status = run.progress_text().into();
         self.normalize_run = Some(run);
         self.normalize_task = Some(spawn_normalize_drain(receiver, window, cx));
@@ -231,7 +239,7 @@ impl AppView {
                     if let Some(run) = &mut self.normalize_run {
                         run.record(&result);
                     }
-                    self.apply_normalization_result(*result, cx);
+                    self.apply_operation_result(*result, cx);
                     replaced = true;
                 }
                 NormalizeEvent::Completed { .. } => completed = true,
@@ -254,8 +262,8 @@ impl AppView {
             }
             .into();
         }
-        if completed {
-            self.finish_normalization(window, cx);
+        if completed && let Some(run) = self.normalize_run.clone() {
+            self.finish_operation_run(&run, window, cx);
         }
         cx.notify();
     }
@@ -268,10 +276,10 @@ impl AppView {
         });
     }
 
-    /// Replaces the row of a normalized source with its result,
+    /// Replaces the row of a normalized or processed source with its result,
     /// and moves the selection and the listed roots over to a converted output.
     /// The caller sorts the rows and restores the selection after the batch.
-    fn apply_normalization_result(&mut self, result: OperationResult, cx: &mut Context<Self>) {
+    pub(super) fn apply_operation_result(&mut self, result: OperationResult, cx: &mut Context<Self>) {
         let source = result.source;
         let output_path = match &result.outcome {
             OperationOutcome::Failed { .. } => None,
@@ -282,17 +290,17 @@ impl AppView {
         self.table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
             match result.outcome {
-                OperationOutcome::Failed { error } => delegate.fail_normalization(&source, &error),
+                OperationOutcome::Failed { error } => delegate.fail_operation(&source, &error),
                 OperationOutcome::CommittedButUnanalyzed { output, error } => {
                     let message = RowMessage {
                         text: error,
                         is_error: true,
                     };
-                    delegate.replace_after_normalization(&source, output, Some(message));
+                    delegate.replace_after_operation(&source, output, Some(message));
                 }
                 OperationOutcome::Succeeded { output, notice } => {
                     let message = notice.map(|text| RowMessage { text, is_error: false });
-                    delegate.replace_after_normalization(&source, output, message);
+                    delegate.replace_after_operation(&source, output, message);
                 }
             }
             cx.notify();
@@ -313,16 +321,19 @@ impl AppView {
         }
     }
 
-    /// Reports the end of a run: the log line, and a dialog listing the failures.
-    fn finish_normalization(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(run) = &self.normalize_run else {
-            return;
-        };
+    /// Reports the end of a normalization or processing run: the log line, and a dialog listing the failures.
+    pub(super) fn finish_operation_run(&mut self, run: &OperationRun, window: &mut Window, cx: &mut Context<Self>) {
         if crate::debug_enabled() {
             eprintln!("{}", run.log_line());
         }
         if let Some(message) = run.failure_message() {
-            let answer = window.prompt(PromptLevel::Warning, DIALOG_TITLE, Some(&message), &["OK"], cx);
+            let answer = window.prompt(
+                PromptLevel::Warning,
+                run.kind.dialog_title(),
+                Some(&message),
+                &["OK"],
+                cx,
+            );
             cx.spawn(async move |_, _| {
                 let _ = answer.await;
             })

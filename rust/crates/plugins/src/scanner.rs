@@ -185,6 +185,37 @@ impl ScanOptions {
     }
 }
 
+impl ScanReport {
+    /// Returns a one-line summary of what changed and what could not be scanned,
+    /// for example "Scan finished: 3 added, 1 blacklisted after a crash".
+    #[must_use]
+    pub fn summary(&self) -> String {
+        let counts = [
+            (self.added.len(), "added"),
+            (self.updated.len(), "updated"),
+            (self.removed.len(), "removed"),
+            (self.crashed.len(), "blacklisted after a crash"),
+            (self.timed_out.len(), "timed out"),
+            (self.no_plugins.len(), "without audio effects"),
+        ];
+        let parts: Vec<String> = counts
+            .iter()
+            .filter(|(count, _)| *count > 0)
+            .map(|(count, label)| format!("{count} {label}"))
+            .collect();
+        let outcome = if self.cancelled {
+            "Scan cancelled"
+        } else {
+            "Scan finished"
+        };
+        if parts.is_empty() {
+            format!("{outcome}: no changes")
+        } else {
+            format!("{outcome}: {}", parts.join(", "))
+        }
+    }
+}
+
 impl WorkerProcess {
     /// Starts a worker, sending its stderr to `log` when given.
     fn start(command: &WorkerCommand, log: Option<&File>) -> Result<Self> {
@@ -609,5 +640,20 @@ mod test_scanner {
         let report = setup.scan_with(&mut fresh, &[], Duration::from_secs(20), true);
         assert!(report.cancelled);
         assert_eq!(fresh.plugins, Vec::new());
+    }
+
+    #[test]
+    fn the_summary_lists_only_what_happened() {
+        assert_eq!(ScanReport::default().summary(), "Scan finished: no changes");
+        let report = ScanReport {
+            crashed: vec![PathBuf::from("/Crash.vst3")],
+            timed_out: vec![PathBuf::from("/Slow.vst3"), PathBuf::from("/Slower.vst3")],
+            cancelled: true,
+            ..ScanReport::default()
+        };
+        assert_eq!(
+            report.summary(),
+            "Scan cancelled: 1 blacklisted after a crash, 2 timed out"
+        );
     }
 }

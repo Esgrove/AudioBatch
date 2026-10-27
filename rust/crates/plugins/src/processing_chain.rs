@@ -64,6 +64,8 @@ impl ChainPlugin {
     }
 
     /// Loads the plugin of a slot and creates an instance with the slot's settings.
+    /// A slot without saved settings gets the defaults of the new instance,
+    /// because restoring an empty state would leave each file with whatever the previous file left behind.
     ///
     /// # Errors
     ///
@@ -71,7 +73,13 @@ impl ChainPlugin {
     pub fn from_slot(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> Result<Self> {
         let module = Module::load(ui, &slot.plugin.bundle)?;
         let instance = PluginInstance::create(ui, &module, slot.plugin.class_id, Some(dispatcher.clone()))?;
-        Ok(Self::new(slot.plugin.name.clone(), instance, slot.state()))
+        let saved = slot.state();
+        let state = if saved == PluginState::default() {
+            instance.state(ui).unwrap_or(saved)
+        } else {
+            saved
+        };
+        Ok(Self::new(slot.plugin.name.clone(), instance, state))
     }
 
     /// Returns the display name.

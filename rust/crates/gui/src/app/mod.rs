@@ -1,16 +1,19 @@
 //! The main window of `AudioBatch` RS.
 //!
-//! `AppView` owns the results table, the preview section, the analysis and normalization coordinators,
-//! and the preview player.
+//! `AppView` owns the results table, the preview section, the analysis, normalization,
+//! and plugin processing coordinators, the plugin chain, and the preview player.
 //! This module holds the view state, the analysis runs, and the selection.
-//! The menu and transport actions are in `actions`, and normalization is in `normalize`.
+//! The menu and transport actions are in `actions`, normalization is in `normalize`,
+//! plugin processing is in `process`, and the plugin chain and the plugin windows are in `plugins`.
 //! The tags of the selected file are read in `tags`, and the layout is in `render`.
 //! Coordinator events are drained from their channel by a foreground task in batches,
 //! so a large run updates the table at a steady rate instead of once per event.
 
 mod actions;
 mod normalize;
+mod plugins;
 mod preferences;
+mod process;
 mod render;
 mod tags;
 
@@ -25,18 +28,26 @@ use audiobatch_core::{
     AnalysisCache, AnalysisCoordinator, AnalysisEvent, AnalysisOptions, AnalysisRecord, FileTags, NormalizeCoordinator,
 };
 use audiobatch_playback::Player;
+use audiobatch_plugins::{ProcessingCoordinator, default_worker_count};
 use crossbeam_channel::{Receiver, TryRecvError};
 use gpui_kit::component::slider::{SliderEvent, SliderScale, SliderState};
 use gpui_kit::component::table::{TableEvent, TableState};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, Pixels, SharedString, Size, Subscription, Task, Window,
 };
+use vst3_host::UiDispatcher;
 
 use crate::menus::{MenuState, set_menus};
-use crate::normalization::{NormalizeRun, describe_target, target_range};
+use crate::normalization::{describe_target, target_range};
+use crate::operation_run::OperationRun;
+use crate::plugins::chain_window::ChainView;
+use crate::plugins::labels::{chain_summary, group_by_vendor};
+use crate::plugins::manager_window::ManagerView;
+use crate::plugins::{FALLBACK_SAMPLE_RATE, PluginHost};
 use crate::results::{ResultRow, ResultsDelegate, RowState};
 use crate::settings::{GuiSettings, NormalizeMode};
 use crate::waveform::{MAXIMUM_ZOOM, MINIMUM_ZOOM, NO_FILE_TEXT, PlayheadSource, WaveformEvent, WaveformView};
+use plugins::PluginWindow;
 use preferences::{SettingsWindow, open_player};
 
 /// Window title, followed by the analysis progress while a run is in progress.
@@ -113,11 +124,25 @@ pub struct AppView {
     /// Normalizes files in the background, sharing the cache of the analysis coordinator.
     normalize_coordinator: Option<Arc<NormalizeCoordinator>>,
     /// Progress of the current or last normalization run.
-    normalize_run: Option<NormalizeRun>,
+    normalize_run: Option<OperationRun>,
     /// Applies the events of the normalization run. Dropping it stops listening to the run.
     normalize_task: Option<Task<()>>,
-    /// Replaces an existing output file when normalizing, for this session only.
+    /// Processes files with the plugin chain in the background, sharing the cache of the analysis coordinator.
+    process_coordinator: Option<Arc<ProcessingCoordinator>>,
+    /// Progress of the current or last plugin processing run.
+    process_run: Option<OperationRun>,
+    /// Applies the events of the processing run. Dropping it stops listening to the run.
+    process_task: Option<Task<()>>,
+    /// Normalizes files before the plugin chain, for this session only.
+    normalize_first: bool,
+    /// Replaces an existing output file when normalizing or processing, for this session only.
     overwrite_existing: bool,
+    /// The known plugins, the plugin chain, and the plugin scan.
+    plugins: PluginHost,
+    /// The Plugin Chain window while it is open.
+    chain_window: Option<PluginWindow<ChainView>>,
+    /// The Plugin Manager window while it is open.
+    manager_window: Option<PluginWindow<ManagerView>>,
     player: Option<Player>,
     /// Folders and files the list is built from.
     roots: Vec<PathBuf>,
@@ -152,6 +177,7 @@ pub struct AppView {
     gain_store_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
     _player_poll_task: Task<()>,
+    _plugin_tick_task: Task<()>,
 }
 
 /// Progress of the current analysis run.
@@ -165,6 +191,22 @@ struct RunProgress {
     completed: bool,
 }
 
+/// The background coordinators, sharing one analysis cache, or none when the cache cannot be opened.
+#[derive(Default)]
+struct Coordinators {
+    analysis: Option<Arc<AnalysisCoordinator>>,
+    normalize: Option<Arc<NormalizeCoordinator>>,
+    process: Option<Arc<ProcessingCoordinator>>,
+}
+
+/// What the main view opens at startup, with the problem to show in the status line.
+struct Startup {
+    coordinators: Coordinators,
+    player: Option<Player>,
+    plugins: PluginHost,
+    status: SharedString,
+}
+
 /// The sliders of the controls column.
 struct Sliders {
     zoom: Entity<SliderState>,
@@ -174,8 +216,10 @@ struct Sliders {
 }
 
 impl AppView {
-    /// Creates the main view, opens the cache and the audio device, and starts any startup analysis.
-    pub fn new(options: &LaunchOptions, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// Creates the main view, opens the cache, the audio device, and the plugin chain,
+    /// and starts any startup analysis.
+    /// The dispatcher runs plugin calls from the processing workers on this thread.
+    pub fn new(options: &LaunchOptions, dispatcher: UiDispatcher, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (content_width, workspace_height) = content_size(window.viewport_size());
         let table = cx.new(|cx| {
             TableState::new(
@@ -197,32 +241,22 @@ impl AppView {
         subscriptions.extend(slider_subscriptions);
         subscriptions.push(cx.on_app_quit(|view, cx| {
             view.flush_gain_store(cx);
+            view.save_plugin_chain();
             async {}
         }));
 
-        let mut status = SharedString::default();
-        let (coordinator, normalize_coordinator) = open_coordinators().map_or_else(
-            |error| {
-                status = format!("Analysis unavailable: {error:#}").into();
-                (None, None)
-            },
-            |(analysis, normalize)| (Some(Arc::new(analysis)), Some(Arc::new(normalize))),
-        );
         let mut menu_state = MenuState {
             output_device: None,
             show_loudness_graph: settings.show_loudness_graph,
             normalize_target: describe_target(&settings),
+            ..MenuState::default()
         };
-        let player = match open_player(&settings.output_config()) {
-            Ok(player) => {
-                menu_state.output_device = Some(player.device_name().to_string());
-                Some(player)
-            }
-            Err(error) => {
-                status = format!("Playback unavailable: {error:#}").into();
-                None
-            }
-        };
+        let Startup {
+            coordinators,
+            player,
+            plugins,
+            status,
+        } = open_startup(&settings, dispatcher, &mut menu_state);
         set_menus(cx, &menu_state);
         waveform.update(cx, |waveform, cx| {
             waveform.set_show_loudness(settings.show_loudness_graph, cx);
@@ -232,6 +266,7 @@ impl AppView {
         let focus_handle = cx.focus_handle();
         window.focus(&focus_handle, cx);
         let player_poll_task = Self::spawn_player_poll(cx);
+        let plugin_tick_task = Self::spawn_plugin_tick(cx);
 
         let mut view = Self {
             focus_handle,
@@ -241,11 +276,18 @@ impl AppView {
             gain_slider: sliders.gain,
             peak_target_slider: sliders.peak_target,
             loudness_target_slider: sliders.loudness_target,
-            coordinator,
-            normalize_coordinator,
+            coordinator: coordinators.analysis,
+            normalize_coordinator: coordinators.normalize,
             normalize_run: None,
             normalize_task: None,
+            process_coordinator: coordinators.process,
+            process_run: None,
+            process_task: None,
+            normalize_first: false,
             overwrite_existing: false,
+            plugins,
+            chain_window: None,
+            manager_window: None,
             player,
             roots: Vec::new(),
             excluded: HashSet::new(),
@@ -267,6 +309,7 @@ impl AppView {
             gain_store_task: None,
             _subscriptions: subscriptions,
             _player_poll_task: player_poll_task,
+            _plugin_tick_task: plugin_tick_task,
         };
         view.connect_playhead(cx);
         if let Some(rows) = options.demo_rows {
@@ -296,7 +339,7 @@ impl AppView {
     /// Adds folders and files to the list and scans every listed root again.
     /// Cached files come back immediately, so only new or changed files are decoded.
     fn add_roots(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
-        if self.blocked_by_normalization(cx) {
+        if self.blocked_by_file_operation(cx) {
             return;
         }
         let mut added = false;
@@ -317,7 +360,7 @@ impl AppView {
 
     /// Replaces the listed folders and files and scans them.
     fn replace_roots(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
-        if self.blocked_by_normalization(cx) {
+        if self.blocked_by_file_operation(cx) {
             return;
         }
         self.roots = paths.iter().map(|path| normalize_path(path)).collect();
@@ -351,7 +394,7 @@ impl AppView {
         let Some(coordinator) = self.coordinator.clone() else {
             return;
         };
-        if inputs.is_empty() || self.is_demo() || self.blocked_by_normalization(cx) {
+        if inputs.is_empty() || self.is_demo() || self.blocked_by_file_operation(cx) {
             return;
         }
         if self.is_analyzing() {
@@ -404,16 +447,20 @@ impl AppView {
     }
 
     /// Returns the activity and the overall progress of the current run from 0 to 1,
-    /// or none when no analysis or normalization run is in progress.
+    /// or none when no analysis, normalization, or plugin processing run is in progress.
     /// Files being worked on count with their fraction, so the line moves smoothly on long files.
     fn overall_progress(&self, cx: &Context<Self>) -> Option<(&'static str, f32)> {
-        let (activity, finished, total) =
-            if let Some(run) = self.normalize_run.as_ref().filter(|_| self.is_normalizing()) {
-                ("Normalizing", run.finished, run.total)
-            } else {
-                let run = self.run.as_ref().filter(|_| self.is_analyzing())?;
-                ("Analyzing", run.finished, run.total)
-            };
+        let file_run = self
+            .normalize_run
+            .as_ref()
+            .filter(|_| self.is_normalizing())
+            .or_else(|| self.process_run.as_ref().filter(|_| self.is_processing()));
+        let (activity, finished, total) = if let Some(run) = file_run {
+            (run.kind.activity(), run.finished, run.total)
+        } else {
+            let run = self.run.as_ref().filter(|_| self.is_analyzing())?;
+            ("Analyzing", run.finished, run.total)
+        };
         if total == 0 {
             return Some((activity, 0.0));
         }
@@ -887,23 +934,69 @@ fn placeholder_text(row: &ResultRow) -> String {
         RowState::Pending => String::from("Waiting for analysis"),
         RowState::Analyzing(fraction) => format!("Analyzing {:.0}%", fraction * 100.0),
         RowState::Normalizing(fraction) => format!("Normalizing {:.0}%", fraction * 100.0),
+        RowState::Processing(fraction) => format!("Processing {:.0}%", fraction * 100.0),
         RowState::Done if row.has_error() => String::from("Could not read this file"),
         RowState::Done => String::from("No waveform for this file"),
     }
 }
 
-/// Opens the default analysis cache, and the analysis and normalization coordinators sharing it,
-/// each with one worker per CPU.
+/// Opens the default analysis cache, and the coordinators sharing it.
+/// Analysis and normalization get one worker per CPU.
+/// Plugin processing leaves one physical core free, because plugins are much heavier per file
+/// and the preview and the editors keep running on the UI thread.
 /// Falls back to a cache in the temporary directory when the default location cannot be opened.
-fn open_coordinators() -> anyhow::Result<(AnalysisCoordinator, NormalizeCoordinator)> {
+fn open_coordinators() -> anyhow::Result<Coordinators> {
     let cache = AnalysisCache::open_default().or_else(|_| {
         let cache = AnalysisCache::with_path(std::env::temp_dir().join("AudioBatch-rs").join("analysis.db"));
         cache.open()?;
         anyhow::Ok(Arc::new(cache))
     })?;
     let workers = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-    let normalize = NormalizeCoordinator::new(Arc::clone(&cache), workers)?;
-    Ok((AnalysisCoordinator::new(cache, workers)?, normalize))
+    Ok(Coordinators {
+        normalize: Some(Arc::new(NormalizeCoordinator::new(Arc::clone(&cache), workers)?)),
+        process: Some(Arc::new(ProcessingCoordinator::new(
+            Arc::clone(&cache),
+            default_worker_count(),
+        )?)),
+        analysis: Some(Arc::new(AnalysisCoordinator::new(cache, workers)?)),
+    })
+}
+
+/// Opens the coordinators, the audio device, and the plugin chain, and fills in their part of the menus.
+/// A problem with playback replaces one with analysis in the status line,
+/// and plugin problems are shown only when neither failed.
+fn open_startup(settings: &GuiSettings, dispatcher: UiDispatcher, menu_state: &mut MenuState) -> Startup {
+    let mut status = SharedString::default();
+    let coordinators = open_coordinators().unwrap_or_else(|error| {
+        status = format!("Analysis unavailable: {error:#}").into();
+        Coordinators::default()
+    });
+    let player = match open_player(&settings.output_config()) {
+        Ok(player) => {
+            menu_state.output_device = Some(player.device_name().to_string());
+            Some(player)
+        }
+        Err(error) => {
+            status = format!("Playback unavailable: {error:#}").into();
+            None
+        }
+    };
+    let sample_rate = player.as_ref().map_or(FALLBACK_SAMPLE_RATE, Player::output_rate);
+    let (plugins, plugin_problems) = PluginHost::open(dispatcher, sample_rate);
+    for problem in plugin_problems {
+        eprintln!("{problem}");
+        if status.is_empty() {
+            status = problem.into();
+        }
+    }
+    menu_state.chain_summary = chain_summary(plugins.chain.enabled_count(), plugins.chain.len());
+    menu_state.plugin_groups = group_by_vendor(&plugins.known.plugins);
+    Startup {
+        coordinators,
+        player,
+        plugins,
+        status,
+    }
 }
 
 /// Takes every event waiting in a coordinator channel.
