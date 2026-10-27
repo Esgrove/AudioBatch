@@ -3,7 +3,7 @@
 /// before any logging starts, so those flags only print to the console.
 /// Every other invocation sets up file logging and runs the analysis workflow or the plugin listing,
 /// translating the outcome into a process exit code.
-/// The completion subcommand runs without a log file, since it only prints or installs a script.
+/// The completion and help subcommands run without a log file, since they only print or install a script.
 /// When launched as a plugin scan worker by a plugin rescan, it runs the worker instead.
 
 #include "cli/AudioAnalysisCli.h"
@@ -66,7 +66,11 @@ int runCliMain(const std::span<char*> argv)
     // Help and version only print to the console.
     // They are checked before parsing, so they win over any other argument, even an invalid one,
     // and return before the logger is created, so they never touch the log file.
-    if (arguments.containsOption("--version|-V")) {
+    // JUCE matches a short option by its letter anywhere in an argument,
+    // so combined short options are expanded first to keep the value in "-spath" from reading as -h.
+    const auto expanded = cli::expandShortOptions(arguments);
+
+    if (expanded.containsOption("--version|-V")) {
         fmt::print("{}\n", utils::versionLine(executableName));
         return 0;
     }
@@ -74,7 +78,7 @@ int runCliMain(const std::span<char*> argv)
     // A subcommand has its own usage text, so "list --help" describes the options of the listing.
     const auto subcommand = cli::findSubcommand(arguments);
 
-    if (arguments.containsOption("--help|-h")) {
+    if (expanded.containsOption("--help|-h")) {
         fmt::print("{}\n", cli::buildUsage(executableName, subcommand));
         return 0;
     }
@@ -87,7 +91,8 @@ int runCliMain(const std::span<char*> argv)
     const auto logger = writesLog ? utils::createDefaultLogger(executableName) : nullptr;
     juce::Logger::setCurrentLogger(logger.get());
     utils::installCrashLogging();
-    // The CLI prints what the user needs to stderr itself, so log messages only go to the log file.
+    // The CLI prints what the user needs to stderr itself, so log messages are not echoed to stderr as well.
+    // Debug builds still print them through JUCE's debug output.
     utils::setConsoleEcho(false);
 
     if (!command) {

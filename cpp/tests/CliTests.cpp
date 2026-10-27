@@ -106,6 +106,19 @@ public:
             expectEquals(message, juce::String("Unknown option: -x"));
         }
 
+        beginTest("A value that contains the letter of the help or version flag is not taken for the flag");
+        {
+            for (const auto* attached : {"-spath", "-s=path"}) {
+                const auto expanded
+                    = cli::expandShortOptions(juce::ArgumentList("audiobatch", juce::StringArray {attached, "music"}));
+                expect(!expanded.containsOption("--help|-h"), attached);
+                expect(!expanded.containsOption("--version|-V"), attached);
+                expect(expectCommand<AnalyzeCommand>({attached, "music"}).sortMode == AudioAnalysisSortMode::path);
+            }
+            const auto combined = cli::expandShortOptions(juce::ArgumentList("audiobatch", juce::StringArray {"-rh"}));
+            expect(combined.containsOption("--help|-h"));
+        }
+
         beginTest("Negative numbers never match short options");
         {
             expectError({"-j", "-1"}, CliParseErrorKind::invalidValue);
