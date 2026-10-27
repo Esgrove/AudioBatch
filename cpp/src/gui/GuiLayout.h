@@ -60,9 +60,11 @@ constexpr int informationMaximumWidth {270};
 constexpr double controlsWidthProportion {0.14};
 constexpr double informationWidthProportion {0.22};
 constexpr int sliderRowHeight {24};
+/// The Peak and Loudness buttons above the target slider and the Normalize button.
+constexpr int normalizationTargetHeight {controlButtonHeight * 2 + normalizeTargetSpacing};
 constexpr int controlsContentHeight {
-    sliderRowHeight * 4 + normalizeToggleHeight + normalizeTargetSpacing + controlButtonHeight * 3
-        + controlsSectionSpacing * 4,
+    sliderRowHeight * 4 + normalizeToggleHeight + normalizeTargetSpacing + normalizationTargetHeight
+        + controlButtonHeight * 2 + controlsSectionSpacing * 4,
 };
 constexpr int dialogContentWidth {500};
 constexpr int dialogContentHeight {250};
@@ -73,7 +75,6 @@ constexpr int tooltipDelayMilliseconds {700};
 namespace previewToggle
 {
 constexpr int size {14};
-constexpr int expandedSpacing {4};
 constexpr int imageInset {2};
 constexpr float glyphWidth {10.0f};
 constexpr float glyphHeight {5.0f};
@@ -97,7 +98,7 @@ constexpr int animationDurationMilliseconds {180};
 
 }  // namespace compactPreview
 
-/// Reserve scrollbar width even when hidden, avoiding width/height relayout feedback.
+/// Width of the controls column scroll bar, reserved only while the controls overflow the column.
 constexpr int scrollBarThickness {8};
 
 /// Bottom status bar with the root path, the status text, and the audio output device,

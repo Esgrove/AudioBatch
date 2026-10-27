@@ -1,5 +1,6 @@
 /// Implementation of NormalizationTargetControl:
-/// configuring the mode selector and slider, switching the slider range by mode, and persisting the settings.
+/// configuring the mode buttons, the slider, and the Normalize button,
+/// switching the slider range by mode, and persisting the settings.
 
 #include "gui/components/NormalizationTargetControl.h"
 
@@ -8,7 +9,7 @@
 
 namespace audiobatch
 {
-/// Slider steps, combo box ids, and setting keys of the normalization target control.
+/// Slider steps, the radio group of the mode buttons, and setting keys of the normalization target control.
 /// The target ranges come from AudioNormalizationOptions, which the CLI validates against too.
 namespace normalize_target
 {
@@ -16,10 +17,10 @@ namespace normalize_target
 constexpr double peakStepDecibels {0.1};
 /// Step of the target loudness, in LU.
 constexpr double loudnessStepDecibels {0.5};
-/// Combo box item id of the peak mode, which must be non-zero.
-constexpr int peakModeItemId {1};
-/// Combo box item id of the loudness mode.
-constexpr int loudnessModeItemId {2};
+/// Radio group of the Peak and Loudness buttons, which must be non-zero.
+constexpr int modeRadioGroupId {1};
+/// Share of the slider row the Normalize button takes.
+constexpr float normalizeButtonProportion {0.4f};
 constexpr auto modeSettingKey {"normalizeMode"};
 constexpr auto targetPeakSettingKey {"normalizeTargetPeakDbfs"};
 constexpr auto targetLufsSettingKey {"normalizeTargetLufs"};
@@ -30,17 +31,21 @@ constexpr auto targetLufsSettingKey {"normalizeTargetLufs"};
 NormalizationTargetControl::NormalizationTargetControl(juce::ApplicationProperties& applicationProperties) :
     properties(applicationProperties)
 {
-    modeBox.addItem("Peak", normalize_target::peakModeItemId);
-    modeBox.addItem("Loudness", normalize_target::loudnessModeItemId);
-    modeBox.setSelectedId(normalize_target::peakModeItemId, juce::dontSendNotification);
-    modeBox.setTooltip(
-        "Normalize to a sample peak level, or to an integrated loudness limited to a -0.3 dBTP true peak."
-    );
-    modeBox.onChange = [this] {
-        updateSlider();
-        saveSettings();
-    };
-    addAndMakeVisible(modeBox);
+    for (auto* button : {&peakButton, &loudnessButton}) {
+        button->setClickingTogglesState(true);
+        button->setRadioGroupId(normalize_target::modeRadioGroupId);
+        addAndMakeVisible(*button);
+    }
+    peakButton.setConnectedEdges(juce::Button::ConnectedOnRight);
+    loudnessButton.setConnectedEdges(juce::Button::ConnectedOnLeft);
+    peakButton.setTooltip("Normalize to a sample peak level.");
+    loudnessButton.setTooltip("Normalize to an integrated loudness limited to a -0.3 dBTP true peak.");
+    peakButton.setToggleState(true, juce::dontSendNotification);
+    peakButton.onClick = [this] { selectMode(false); };
+    loudnessButton.onClick = [this] { selectMode(true); };
+
+    normalizeButton.setTooltip("Normalize the selected files to the target.");
+    addAndMakeVisible(normalizeButton);
 
     targetSlider.setSliderStyle(juce::Slider::LinearBar);
     targetSlider.setNumDecimalPlacesToDisplay(1);
@@ -75,9 +80,7 @@ void NormalizationTargetControl::loadSettings()
     );
 
     const auto loudness = settings->getValue(normalize_target::modeSettingKey) == "loudness";
-    modeBox.setSelectedId(
-        loudness ? normalize_target::loudnessModeItemId : normalize_target::peakModeItemId, juce::dontSendNotification
-    );
+    (loudness ? loudnessButton : peakButton).setToggleState(true, juce::dontSendNotification);
     updateSlider();
 }
 
@@ -102,19 +105,35 @@ juce::String NormalizationTargetControl::describeTarget() const
     return utils::format("{:.1f} dBFS peak", targetPeakDbfs);
 }
 
-/// Lays out the mode selector and the target slider in two equal halves.
+/// Lays out the mode buttons in two equal halves of the top row,
+/// and the target slider with the Normalize button on its right in the bottom row.
 void NormalizationTargetControl::resized()
 {
     auto bounds = getLocalBounds();
-    modeBox.setBounds(bounds.removeFromLeft((bounds.getWidth() - layout::sectionSpacing) / 2));
-    bounds.removeFromLeft(layout::sectionSpacing);
-    targetSlider.setBounds(bounds);
+    auto modeRow = bounds.removeFromTop(layout::controlButtonHeight);
+    peakButton.setBounds(modeRow.removeFromLeft(modeRow.getWidth() / 2));
+    loudnessButton.setBounds(modeRow);
+    bounds.removeFromTop(layout::normalizeTargetSpacing);
+    auto sliderRow = bounds.removeFromTop(layout::controlButtonHeight);
+    normalizeButton.setBounds(sliderRow.removeFromRight(
+        juce::roundToInt(static_cast<float>(sliderRow.getWidth()) * normalize_target::normalizeButtonProportion)
+    ));
+    sliderRow.removeFromRight(layout::sectionSpacing);
+    targetSlider.setBounds(sliderRow);
 }
 
 /// Returns true when loudness mode is selected.
 bool NormalizationTargetControl::isLoudnessMode() const
 {
-    return modeBox.getSelectedId() == normalize_target::loudnessModeItemId;
+    return loudnessButton.getToggleState();
+}
+
+/// Switches to the clicked mode, showing that mode's remembered target.
+void NormalizationTargetControl::selectMode(const bool loudness)
+{
+    (loudness ? loudnessButton : peakButton).setToggleState(true, juce::dontSendNotification);
+    updateSlider();
+    saveSettings();
 }
 
 /// Writes the mode and both targets to the user settings.
