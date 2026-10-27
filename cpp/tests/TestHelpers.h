@@ -97,8 +97,44 @@ private:
     juce::File directory;
 };
 
+/// Result of a null test that subtracts an expected file from an actual file, sample by sample in 16-bit steps.
+/// Both files are read as integer sample values, so any difference of a single step counts.
+struct NullTestResult {
+    /// False when either file could not be read, which leaves every other field empty.
+    bool readable {false};
+    int expectedChannels {0};
+    int actualChannels {0};
+    juce::int64 expectedLength {0};
+    juce::int64 actualLength {0};
+    /// Number of samples over all channels that differ within the common length.
+    juce::int64 differingSamples {0};
+    /// Largest absolute difference within the common length, in 16-bit steps.
+    int peakDifference {0};
+    /// Offset of the actual first channel against the expected one, in samples, where the two correlate best.
+    /// It is zero for aligned audio, and tells by how much a delayed or early output is shifted.
+    /// Only computed when the files do not cancel.
+    int bestLag {0};
+
+    /// Returns true when both files have the same layout and length and every sample cancels out.
+    [[nodiscard]] bool cancels() const noexcept
+    {
+        return readable && expectedChannels == actualChannels && expectedLength == actualLength
+            && differingSamples == 0;
+    }
+
+    /// Describes the result for a failed expectation:
+    /// the layouts and lengths, the differing sample count, the residual peak in dBFS, and the best lag.
+    [[nodiscard]] juce::String describe() const;
+};
+
+/// Subtracts the expected file from the actual file sample by sample, and finds the lag at which they correlate best.
+NullTestResult nullTestFiles(const juce::File& expected, const juce::File& actual);
+
 /// Returns the committed fixture with the given file name from the root fixtures directory.
 juce::File fixtureFile(const juce::String& name);
+
+/// Returns the AudioBatch Test MS VST3 bundle that CMake builds from test-plugin/ next to the tests.
+juce::File testPluginBundle();
 
 /// Returns the sample peak of an analysis record in dBFS.
 double peakDecibels(const AudioAnalysisRecord& record);

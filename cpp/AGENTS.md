@@ -76,6 +76,9 @@ The domains depend on each other in one direction only.
       It scans from the plugin manager on one background thread and creates the plugin instances of a processing run.
     - `PluginChainPreparation.*`, `PluginProcessing.*`, and `PluginProcessingCoordinator.*`
       implement batch processing through a plugin chain.
+    - `PluginChainPresets.*` turn a chain into XML and back, for the chain in the settings and for the presets.
+      Each preset is one `.xml` file in the `Chain Presets` folder next to the settings file,
+      named after the preset, with the plugins, their order, their enabled flags, and their state.
 - `src/utils/` holds the shared helpers, split by area, all in the `utils` namespace unless noted:
     - `Log.*` holds the leveled logging functions.
     - `AppInfo.*` holds startup flag and path argument queries, the version line, the About text, system information,
@@ -139,6 +142,8 @@ The domains depend on each other in one direction only.
       which implements its `BackgroundWorkListener`.
     - `AudioPreviewPlayer.*` owns the audio device, transport, and read-ahead thread of the file preview.
     - `LiveChain.*` holds the user's plugin chain, its settings persistence, and its editor and plugin manager windows.
+      It also saves, loads, and deletes the chain presets, and remembers which preset the chain came from
+      until the chain changes.
       Each slot owns the processor the preview and its editor share, and `LiveChainPreview.cpp` prepares them.
       The chain editor rows refer to their slot by `PluginSlotId` instead of by position.
     - `PreviewController.*` loads and releases the previewed file in that player and reads its Serato tags.
@@ -181,9 +186,19 @@ Tests:
   MP3, AIFF, and FLAC files with a synthetic rainbow Serato Overview of six colour bands in each Serato container,
   an AAC tone whose priming and padding only the MP4 edit list records,
   an MP3 tone without the Xing frame, so no header states its delay or its length,
+  a stereo file with different tones on its two channels, so both its mid and its side signal carry audio,
   and a broken file.
   `../fixtures/generate.sh` regenerates them with ffmpeg,
   and `../fixtures/serato_overview.py` writes the Serato tag, which ffmpeg cannot.
+- `../test-plugin/` holds `AudioBatch Test MS`, a JUCE VST3 effect with a gain and a mid/side width parameter,
+  which the C++ and the Rust tests both load.
+  With `BUILD_TESTING`, `CMakeLists.txt` adds it as a subdirectory
+  and passes the bundle path to the tests as `AUDIOBATCH_TEST_VST3_PATH`.
+  `../fixtures/plugin_expected.py` computes what the plugin must output with numpy, independently of both hosts,
+  into `../fixtures/plugin_expected/`.
+  `PluginPresetTests.cpp` saves the plugin's settings in a preset, loads it into a new chain, processes a fixture,
+  and requires the output to cancel against the expected file with `nullTestFiles` from `TestHelpers.h`.
+  Keep the processing in the plugin, the script, and the expected file lists of both test suites in step.
   `../fixtures/normalization/` holds a larger Git LFS collection that the tests do not read.
   The Rust parity script normalizes it with both CLIs and compares the output files.
   The icons and fonts live in `../assets/` at the repository root for the same reason.
@@ -392,7 +407,8 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   cmake-format runs through `uvx` when it is not installed.
   The fallback uses Python 3.14 because cmakelang's token scanner is incompatible with Python 3.15.
   After changing `CMakeLists.txt`, run `./format.sh` or cmake-format on it.
-- `./format.sh` covers this `cpp/` directory and `../fixtures/generate.sh`,
+- `./format.sh` covers this `cpp/` directory, the sources, CMake file, and scripts of `../test-plugin/`,
+  and `../fixtures/generate.sh`,
   and also checks the prose with `slb` when it is installed.
 - `../.pre-commit-config.yaml` at the repository root runs clang-format, cmake-format, cargo fmt,
   and basic file checks through [prek](https://prek.j178.dev).

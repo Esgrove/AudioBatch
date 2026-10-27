@@ -134,6 +134,13 @@ Scan for installed plugins from the plugin menu, then build and configure an eff
 Plugins can be reordered, enabled or disabled, and the chain is saved between sessions.
 Scanning isolates plugin crashes so they do not take down the app.
 
+The preset row of the chain window saves the chain under a name,
+with the plugins, their order, which ones are enabled, and their settings,
+and loads or deletes the saved presets.
+The Chain Presets submenu of the plugin menu and the Presets submenu of the chain menu list them too,
+and Show Presets Folder opens the `Chain Presets` folder next to the settings file,
+which holds one XML file per preset.
+
 Processing uses offline rendering, compensates plugin latency and preserves reverb and delay tails.
 Output is 16-bit PCM AIFF. Samples beyond full scale saturate and are reported, without gain reduction.
 You can normalize before the chain or set a custom input gain for each file.
@@ -423,7 +430,9 @@ Build and run tests with the script (Release by default):
 ./build.sh --test -b Debug
 ```
 
+The tests build the `AudioBatch Test MS` VST3 in `../test-plugin/` as part of the project,
+and check its output against the expected files in `../fixtures/plugin_expected/`.
+
 ## TODO
 
 - User config file
-- Save and load plugin chains

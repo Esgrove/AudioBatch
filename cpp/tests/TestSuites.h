@@ -33,6 +33,10 @@ std::unique_ptr<juce::UnitTest> createGuiFontTests();
 /// Creates the suite that checks reading and writing tags across formats.
 std::unique_ptr<juce::UnitTest> createMetadataTests();
 
+/// Creates the suite that saves and loads chain presets,
+/// and null tests the output of the repository's test VST3 against the committed expected files.
+std::unique_ptr<juce::UnitTest> createPluginPresetTests();
+
 /// Creates the suite that runs files through in-process test plugins.
 std::unique_ptr<juce::UnitTest> createProcessingTests();
 std::unique_ptr<juce::UnitTest> createPreviewPlaybackTests();

@@ -460,6 +460,8 @@ target_sources(
         "src/plugins/PluginPreviewSource.h"
         "src/plugins/PluginChainPreparation.cpp"
         "src/plugins/PluginChainPreparation.h"
+        "src/plugins/PluginChainPresets.cpp"
+        "src/plugins/PluginChainPresets.h"
         "src/plugins/PluginProcessing.cpp"
         "src/plugins/PluginProcessing.h"
         "src/plugins/PluginProcessingCoordinator.cpp"
@@ -679,6 +681,9 @@ if(BUILD_TESTING)
     set(INSTALL_GTEST OFF CACHE BOOL "" FORCE)
     FetchContent_MakeAvailable(googletest)
 
+    # The VST3 test plugin shared with the Rust tests, which sets AUDIOBATCH_TEST_PLUGIN_BUNDLE to its bundle path.
+    add_subdirectory(../test-plugin test-plugin)
+
     juce_add_console_app(
         AudioBatchTests
         PRODUCT_NAME "AudioBatchTests"
@@ -725,6 +730,8 @@ if(BUILD_TESTING)
             "src/plugins/PluginPreviewSource.cpp"
             "src/plugins/PluginPreviewSource.h"
             "src/plugins/PluginChainPreparation.h"
+            "src/plugins/PluginChainPresets.cpp"
+            "src/plugins/PluginChainPresets.h"
             "src/plugins/PluginProcessing.cpp"
             "src/plugins/PluginProcessing.h"
             "src/plugins/PluginProcessingCoordinator.cpp"
@@ -742,6 +749,7 @@ if(BUILD_TESTING)
             "tests/GuiFontTests.cpp"
             "tests/MetadataTests.cpp"
             "tests/NormalizationTests.cpp"
+            "tests/PluginPresetTests.cpp"
             "tests/ProcessingTests.cpp"
             "tests/PreviewControllerTests.cpp"
             "tests/PreviewPlaybackTests.cpp"
@@ -762,9 +770,11 @@ if(BUILD_TESTING)
     target_include_directories(AudioBatchTests PRIVATE "${CMAKE_SOURCE_DIR}/src" "${AUDIOBATCH_GENERATED_DIR}")
     target_link_libraries(AudioBatchTests PRIVATE Assets)
     target_compile_definitions(
-        AudioBatchTests PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS}
-                                AUDIOBATCH_TEST_FIXTURES_DIR="${AUDIOBATCH_FIXTURES_DIR}"
+        AudioBatchTests
+        PRIVATE ${AUDIOBATCH_CONSOLE_DEFINITIONS} AUDIOBATCH_TEST_FIXTURES_DIR="${AUDIOBATCH_FIXTURES_DIR}"
+                AUDIOBATCH_TEST_VST3_PATH="${AUDIOBATCH_TEST_PLUGIN_BUNDLE}"
     )
+    add_dependencies(AudioBatchTests AudioBatchTestPlugin_VST3)
     set_target_properties(AudioBatchTests PROPERTIES COMPILE_WARNING_AS_ERROR YES CXX_STANDARD 23)
 
     if(APPLE)

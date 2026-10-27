@@ -1,6 +1,7 @@
 /// Implementation of PluginChainEditor and its PluginChainSlotRow component.
 /// Covers building the rows and wiring their controls to the slots of the owning LiveChain,
-/// laying out the hint label and the scrolling row list with its add button,
+/// laying out the preset row, the hint label, and the scrolling row list with its add button,
+/// loading and deleting the presets chosen in the preset list,
 /// drag-to-reorder gestures with a live drop-position preview,
 /// and deferred row rebuilds when the chain changes.
 
@@ -168,6 +169,20 @@ void PluginChainSlotRow::moveBy(const int offset)
 /// and registers as a change listener so the rows follow external chain changes.
 PluginChainEditor::PluginChainEditor(LiveChain& chain) : liveChain(chain)
 {
+    presetLabel.setColour(juce::Label::textColourId, CustomLookAndFeel::greyMiddle());
+    addAndMakeVisible(presetLabel);
+    presetBox.setTextWhenNothingSelected("Choose a preset to load");
+    presetBox.setTextWhenNoChoicesAvailable("No saved presets");
+    presetBox.setTooltip("Replace the chain with a saved preset.");
+    presetBox.onChange = [this] { loadSelectedPreset(); };
+    addAndMakeVisible(presetBox);
+    savePresetButton.setTooltip("Save the plugins of the chain, their order, and their settings as a preset.");
+    savePresetButton.onClick = [this] { liveChain.promptSavePreset(); };
+    addAndMakeVisible(savePresetButton);
+    deletePresetButton.setTooltip("Delete the selected preset.");
+    deletePresetButton.onClick = [this] { deleteSelectedPreset(); };
+    addAndMakeVisible(deletePresetButton);
+
     addButton.setTooltip("Add a plugin to the end of the chain.");
     addButton.onClick = [this] { showAddPluginMenu(); };
     rowContainer.addAndMakeVisible(addButton);
@@ -186,6 +201,7 @@ PluginChainEditor::PluginChainEditor(LiveChain& chain) : liveChain(chain)
 
     liveChain.addChangeListener(this);
     rebuildRows();
+    refreshPresets();
 }
 
 /// Unregisters from the chain's change notifications.
@@ -194,10 +210,20 @@ PluginChainEditor::~PluginChainEditor()
     liveChain.removeChangeListener(this);
 }
 
-/// Lays out the hint label and the scrolling row list with its add button.
+/// Lays out the preset row, the hint label, and the scrolling row list with its add button.
 void PluginChainEditor::resized()
 {
     auto area = getLocalBounds().reduced(layout::pluginEditor::margin);
+
+    auto presetRow = area.removeFromTop(layout::pluginEditor::presetRowHeight);
+    area.removeFromTop(layout::pluginEditor::margin);
+    presetLabel.setBounds(presetRow.removeFromLeft(layout::pluginEditor::presetLabelWidth));
+    deletePresetButton.setBounds(presetRow.removeFromRight(layout::pluginEditor::presetButtonWidth));
+    presetRow.removeFromRight(layout::pluginEditor::rowPadding);
+    savePresetButton.setBounds(presetRow.removeFromRight(layout::pluginEditor::presetButtonWidth));
+    presetRow.removeFromRight(layout::pluginEditor::rowPadding);
+    presetBox.setBounds(presetRow);
+
     auto footer = area.removeFromBottom(layout::pluginEditor::footerHeight);
     totalLatencyLabel.setBounds(footer.removeFromTop(layout::pluginEditor::footerLineHeight));
     processingRateLabel.setBounds(footer);
@@ -228,13 +254,56 @@ void PluginChainEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
     }
 }
 
-/// Performs the row rebuild deferred by changeListenerCallback().
+/// Performs the row rebuild deferred by changeListenerCallback(), and refreshes the preset list,
+/// since saving or deleting a preset also notifies the listeners of the chain.
 void PluginChainEditor::handleAsyncUpdate()
 {
     if (displayedRevision != liveChain.getRevision()) {
         rebuildRows();
     } else {
         updateLatencyLabels();
+    }
+    refreshPresets();
+}
+
+/// Lists the saved presets and selects the one the chain was loaded from or saved as, without loading it again.
+void PluginChainEditor::refreshPresets()
+{
+    listedPresets = liveChain.getPresets();
+    const auto currentName = liveChain.getCurrentPresetName();
+
+    presetBox.clear(juce::dontSendNotification);
+    for (std::size_t index = 0; index < listedPresets.size(); ++index) {
+        const auto itemId = static_cast<int>(index) + 1;
+        presetBox.addItem(listedPresets[index].name, itemId);
+        if (listedPresets[index].name == currentName) {
+            presetBox.setSelectedId(itemId, juce::dontSendNotification);
+        }
+    }
+
+    savePresetButton.setEnabled(liveChain.getNumSlots() > 0);
+    deletePresetButton.setEnabled(presetBox.getSelectedId() != 0);
+}
+
+/// Replaces the chain with the preset chosen in the list.
+void PluginChainEditor::loadSelectedPreset()
+{
+    const auto index = presetBox.getSelectedId() - 1;
+    if (!juce::isPositiveAndBelow(index, static_cast<int>(listedPresets.size()))) {
+        return;
+    }
+
+    liveChain.loadPresetAndReport(listedPresets[static_cast<std::size_t>(index)].file);
+    // A failed load leaves the chain unchanged, so the list shows the current preset again.
+    refreshPresets();
+}
+
+/// Asks before deleting the preset chosen in the list.
+void PluginChainEditor::deleteSelectedPreset()
+{
+    const auto index = presetBox.getSelectedId() - 1;
+    if (juce::isPositiveAndBelow(index, static_cast<int>(listedPresets.size()))) {
+        liveChain.confirmDeletePreset(listedPresets[static_cast<std::size_t>(index)]);
     }
 }
 

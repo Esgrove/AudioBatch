@@ -1,17 +1,22 @@
 /// Implementation of the shared test helpers:
-/// the self-deleting temporary directory and the lookup of the committed audio fixtures.
+/// the self-deleting temporary directory, the lookup of the committed audio fixtures and the test plugin,
+/// and the null test that compares a processed file against its expected output.
 
 #include "TestHelpers.h"
 
 #include "utils/AudioFormatUtils.h"
+#include "utils/StringFormat.h"
 
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <span>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace audiobatch::tests
 {
@@ -211,7 +216,131 @@ public:
 private:
     TestAudioDeviceState& state;
 };
+
+/// Largest lag in either direction that the null test checks for the best correlation, in samples.
+constexpr int maximumNullTestLag {256};
+
+/// Scale from a float sample to a 16-bit sample value.
+constexpr float pcm16Scale {32'768.0f};
+
+/// Samples of a file as 16-bit values, one vector per channel.
+using IntegerChannels = std::vector<std::vector<int>>;
+
+/// Reads a file as 16-bit sample values, or returns nothing when it cannot be read.
+/// The float samples of a 16-bit file are exact multiples of one step, so rounding loses nothing.
+std::optional<IntegerChannels> readIntegerSamples(const juce::File& file)
+{
+    const std::unique_ptr<juce::AudioFormatReader> reader(utils::threadLocalFormatManager().createReaderFor(file));
+    if (reader == nullptr) {
+        return std::nullopt;
+    }
+
+    const auto length = static_cast<int>(reader->lengthInSamples);
+    juce::AudioBuffer<float> buffer(static_cast<int>(reader->numChannels), length);
+    if (!reader->read(&buffer, 0, length, 0, true, true)) {
+        return std::nullopt;
+    }
+
+    IntegerChannels channels(static_cast<std::size_t>(buffer.getNumChannels()));
+    for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
+        auto& values = channels[static_cast<std::size_t>(channel)];
+        values.reserve(static_cast<std::size_t>(length));
+        for (int sample = 0; sample < length; ++sample) {
+            values.push_back(static_cast<int>(std::lround(buffer.getSample(channel, sample) * pcm16Scale)));
+        }
+    }
+    return channels;
+}
+
+/// Returns the lag of the actual signal against the expected one, within the checked range,
+/// at which their cross-correlation is largest.
+int findBestLag(const std::vector<int>& expected, const std::vector<int>& actual)
+{
+    const auto expectedLength = static_cast<int>(expected.size());
+    const auto actualLength = static_cast<int>(actual.size());
+    int bestLag = 0;
+    double bestCorrelation = -std::numeric_limits<double>::infinity();
+
+    for (int lag = -maximumNullTestLag; lag <= maximumNullTestLag; ++lag) {
+        double correlation = 0.0;
+        for (int sample = juce::jmax(0, -lag); sample < expectedLength && sample + lag < actualLength; ++sample) {
+            const int actualSample = sample + lag;
+            correlation += static_cast<double>(expected[static_cast<std::size_t>(sample)])
+                * static_cast<double>(actual[static_cast<std::size_t>(actualSample)]);
+        }
+        if (correlation > bestCorrelation) {
+            bestCorrelation = correlation;
+            bestLag = lag;
+        }
+    }
+    return bestLag;
+}
 }  // namespace
+
+juce::String NullTestResult::describe() const
+{
+    if (!readable) {
+        return "one of the files could not be read";
+    }
+
+    const auto residual = peakDifference > 0
+        ? utils::format("{:.1f} dBFS", juce::Decibels::gainToDecibels(static_cast<float>(peakDifference) / pcm16Scale))
+        : juce::String("silent");
+    return utils::format(
+        "{} channels and {} samples expected, {} channels and {} samples written, "
+        "{} samples differ, residual peak {} ({} steps), best correlation at a lag of {} samples",
+        expectedChannels,
+        expectedLength,
+        actualChannels,
+        actualLength,
+        differingSamples,
+        residual,
+        peakDifference,
+        bestLag
+    );
+}
+
+NullTestResult nullTestFiles(const juce::File& expected, const juce::File& actual)
+{
+    NullTestResult result;
+    const auto expectedSamples = readIntegerSamples(expected);
+    const auto actualSamples = readIntegerSamples(actual);
+    if (!expectedSamples.has_value() || !actualSamples.has_value()) {
+        return result;
+    }
+
+    result.readable = true;
+    result.expectedChannels = static_cast<int>(expectedSamples->size());
+    result.actualChannels = static_cast<int>(actualSamples->size());
+    result.expectedLength = expectedSamples->empty() ? 0 : static_cast<juce::int64>(expectedSamples->front().size());
+    result.actualLength = actualSamples->empty() ? 0 : static_cast<juce::int64>(actualSamples->front().size());
+
+    const auto channels = juce::jmin(expectedSamples->size(), actualSamples->size());
+    for (std::size_t channel = 0; channel < channels; ++channel) {
+        const auto& expectedChannel = (*expectedSamples)[channel];
+        const auto& actualChannel = (*actualSamples)[channel];
+        const auto length = juce::jmin(expectedChannel.size(), actualChannel.size());
+        for (std::size_t sample = 0; sample < length; ++sample) {
+            const auto difference = std::abs(actualChannel[sample] - expectedChannel[sample]);
+            if (difference != 0) {
+                ++result.differingSamples;
+                result.peakDifference = juce::jmax(result.peakDifference, difference);
+            }
+        }
+    }
+
+    // The lag only explains a difference, so matching files skip the correlation.
+    if (channels > 0 && !result.cancels()) {
+        result.bestLag = findBestLag(expectedSamples->front(), actualSamples->front());
+    }
+    return result;
+}
+
+juce::File testPluginBundle()
+{
+    // Set by CMake to the bundle that the test plugin target builds for the configuration of the tests.
+    return {AUDIOBATCH_TEST_VST3_PATH};
+}
 
 /// Removes native backends before installing the simulated interface, preventing tests from opening hardware.
 void installTestAudioDevice(juce::AudioDeviceManager& manager, TestAudioDeviceState& state)

@@ -160,6 +160,10 @@ constexpr int margin {8};
 constexpr int rowIconButtonWidth {24};
 constexpr int rowEditButtonWidth {48};
 constexpr float rowCornerRadius {4.0f};
+/// The preset row above the slot rows, with its label, preset list, and save and delete buttons.
+constexpr int presetRowHeight {28};
+constexpr int presetLabelWidth {52};
+constexpr int presetButtonWidth {84};
 }  // namespace pluginEditor
 
 /// Device and preview preferences share one scrollable dialog without changing unrelated dialogs.
