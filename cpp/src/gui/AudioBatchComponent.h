@@ -33,6 +33,14 @@
 
 namespace audiobatch
 {
+/// An output that a normalization or processing pass committed in place of its source file.
+struct CommittedOutput {
+    /// Source file whose row the output replaces.
+    juce::File source;
+    /// Analysis of the output file, which may have a new path when the source was converted.
+    AudioAnalysisRecord output;
+};
+
 /// Main application view that coordinates analysis, playback preview, and file-list interactions.
 class AudioBatchComponent :
     public juce::Component,
@@ -117,9 +125,9 @@ private:
     void analysisPlanReceived(const AnalysisPlan& plan, const AnalyzingWork& run) override;
     void analysisResultsReceived(std::vector<AudioAnalysisRecord> records) override;
     void analysisCompleted(const AnalyzingWork& run, int totalFiles) override;
-    void normalizeResultReceived(const AudioNormalizationResult& result) override;
+    void normalizeResultsReceived(std::vector<AudioNormalizationResult> results) override;
     void normalizeCompleted(const NormalizingWork& pass, int totalFiles) override;
-    void processingResultReceived(const PluginProcessingResult& result) override;
+    void processingResultsReceived(std::vector<PluginProcessingResult> results) override;
     void processingCompleted(const ProcessingWork& pass, int totalFiles) override;
     void processingStartFailed(const juce::String& errorMessage) override;
     void updatePreviewAnimation();
@@ -161,7 +169,7 @@ private:
     void releasePreviewPlayback();
     void removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow);
     void repaintStatusColumn();
-    void replaceRecordAfterOperation(const juce::File& originalFile, const AudioAnalysisRecord& newRecord);
+    void replaceRecordsAfterOperation(const std::vector<CommittedOutput>& outputs);
     void requestSeratoPreview();
     void restoreSelectionByPaths(const juce::StringArray& selectedPaths);
     void setRoots(const juce::Array<juce::File>& folders);

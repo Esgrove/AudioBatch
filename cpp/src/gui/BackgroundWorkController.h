@@ -16,6 +16,7 @@
 #include <JuceHeader.h>
 
 #include <optional>
+#include <variant>
 #include <vector>
 
 namespace audiobatch
@@ -28,6 +29,31 @@ struct BackgroundProgress {
     juce::String activityName;
     /// Completed fraction from 0 to 1, or empty while the pass does not know its file count yet.
     std::optional<float> fraction;
+};
+
+/// A worker started on a file of a normalization or processing pass.
+struct FileStartedEvent {
+    /// The file the worker started on.
+    juce::File file;
+};
+
+/// A worker reported how far along it is with a file of a normalization or processing pass.
+struct FileProgressEvent {
+    /// The file the worker is on.
+    juce::File file;
+    /// Completed fraction of the file from 0 to 1.
+    float progress {0.0f};
+};
+
+/// One event of a normalization or processing pass on its way to the message thread, with the run it belongs to.
+/// The starts, progress reports, and results of a pass travel through one batcher,
+/// so they arrive in the order the workers sent them, and a start never arrives after the result of its file.
+template<typename Result>
+struct OperationEvent {
+    /// What happened to the file.
+    std::variant<FileStartedEvent, FileProgressEvent, Result> event;
+    /// Id of the coordinator run the event belongs to.
+    int runId {0};
 };
 
 /// Receives the events of the background work on the message thread.
@@ -52,14 +78,16 @@ public:
     /// Called when the running analysis has finished, after its last results and once the controller is idle again.
     virtual void analysisCompleted(const AnalyzingWork& run, int totalFiles) = 0;
 
-    /// Called with the result of one file of the running normalization pass, after its completed count went up.
-    virtual void normalizeResultReceived(const AudioNormalizationResult& result) = 0;
+    /// Called with a batch of normalization results in the order they arrived, after the completed count went up.
+    /// A result is passed on even after its pass ended, because its output file was already written.
+    virtual void normalizeResultsReceived(std::vector<AudioNormalizationResult> results) = 0;
 
     /// Called when the running normalization pass has finished, once the controller is idle again.
     virtual void normalizeCompleted(const NormalizingWork& pass, int totalFiles) = 0;
 
-    /// Called with the result of one file of the running processing pass, after its completed count went up.
-    virtual void processingResultReceived(const PluginProcessingResult& result) = 0;
+    /// Called with a batch of plugin processing results in the order they arrived, after the completed count went up.
+    /// A result is passed on even after its pass ended, because its output file was already written.
+    virtual void processingResultsReceived(std::vector<PluginProcessingResult> results) = 0;
 
     /// Called when the running processing pass has finished, once the controller is idle again.
     virtual void processingCompleted(const ProcessingWork& pass, int totalFiles) = 0;
@@ -122,9 +150,9 @@ private:
     void handleAnalysisPlan(const AnalysisPlan& plan);
     void handleAnalysisResults(std::vector<AnalysisResultMessage> messages);
     void handleNormalizeComplete(int totalFiles, int runId);
-    void handleNormalizeResult(const AudioNormalizationResult& result, int runId);
+    void handleNormalizeEvents(std::vector<OperationEvent<AudioNormalizationResult>> events);
     void handleProcessingComplete(int totalFiles, int runId);
-    void handleProcessingResult(const PluginProcessingResult& result, int runId);
+    void handleProcessingEvents(std::vector<OperationEvent<PluginProcessingResult>> events);
     void handleProcessingStartError(const juce::String& errorMessage);
 
     [[nodiscard]] bool isCurrentAnalysisRun(int runId) const noexcept;
@@ -141,6 +169,20 @@ private:
     /// Declared before the analysis coordinator, whose workers post to it until the coordinator is destroyed.
     utils::MessageThreadBatcher<AnalysisResultMessage> analysisResultBatcher {
         [this](std::vector<AnalysisResultMessage> messages) { handleAnalysisResults(std::move(messages)); }
+    };
+    /// Hands the starts, progress reports, and results of normalization to the message thread in batches.
+    /// Declared before the normalize coordinator, whose workers post to it until the coordinator is destroyed.
+    utils::MessageThreadBatcher<OperationEvent<AudioNormalizationResult>> normalizeEventBatcher {
+        [this](std::vector<OperationEvent<AudioNormalizationResult>> events) {
+            handleNormalizeEvents(std::move(events));
+        }
+    };
+    /// Hands the starts, progress reports, and results of plugin processing to the message thread in batches.
+    /// Declared before the plugin coordinator, whose workers post to it until the coordinator is destroyed.
+    utils::MessageThreadBatcher<OperationEvent<PluginProcessingResult>> processingEventBatcher {
+        [this](std::vector<OperationEvent<PluginProcessingResult>> events) {
+            handleProcessingEvents(std::move(events));
+        }
     };
 
     AnalysisCoordinator analysisCoordinator;
