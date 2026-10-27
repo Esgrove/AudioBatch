@@ -4,6 +4,7 @@
 /// and OutOfProcessPluginScanner, the KnownPluginList::CustomScanner the main process installs
 /// to send each plugin file to the worker and collect the descriptions it reports back.
 /// A worker crash is reported as a failed scan, which makes KnownPluginList blacklist that plugin.
+/// Also declares the plugin format registration, which leaves the Audio Units built into macOS out of every scan.
 
 #pragma once
 
@@ -19,13 +20,16 @@ namespace audiobatch
 /// Unique id that marks the command line of a plugin scan worker process.
 constexpr auto pluginScanWorkerProcessUid {"audiobatch-plugin-scan-worker"};
 
+[[nodiscard]] bool isBuiltInApplePlugin(const juce::String& fileOrIdentifier);
 [[nodiscard]] bool isPluginScanWorkerCommandLine(const juce::String& commandLine);
 [[nodiscard]] bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList);
 [[nodiscard]] juce::File getKnownPluginListFile();
 [[nodiscard]] juce::File getPluginScanCrashLogFile();
 
+void addPluginFormats(juce::AudioPluginFormatManager& formatManager);
 void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList);
 void migrateKnownPluginList(juce::PropertiesFile& settings);
+void removeBuiltInApplePlugins(juce::KnownPluginList& knownPluginList);
 
 /// Child side of out-of-process plugin scanning.
 /// Receives scan requests from the main process, loads the plugin file on the message thread,

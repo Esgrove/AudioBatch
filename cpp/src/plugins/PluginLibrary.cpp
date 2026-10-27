@@ -16,11 +16,11 @@ namespace
 constexpr int pluginScanThreadCount {1};
 }  // namespace
 
-/// Registers the default plugin formats, installs the out-of-process scanner,
+/// Registers the plugin formats, installs the out-of-process scanner,
 /// and restores the known-plugins list from its file.
 PluginLibrary::PluginLibrary(juce::ApplicationProperties& applicationProperties) : appProperties(applicationProperties)
 {
-    juce::addDefaultFormatsToManager(formatManager);
+    addPluginFormats(formatManager);
     knownPluginList.addChangeListener(this);
 
     // Load plugins in a separate worker process while scanning,

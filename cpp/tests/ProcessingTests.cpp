@@ -1,6 +1,7 @@
 /// Tests for processFileWithPlugins with small in-process test plugins.
 /// Covers mono files through stereo-only and mixed-width chains, undithered 16-bit output without a clip guard,
 /// latency compensation, rendering and trimming the tail, per-file state, cancellation, and the output length.
+/// Also covers leaving the Audio Units built into macOS out of the known-plugins list.
 /// Replaced files are deleted instead of moved to the system trash, so the tests never touch the user's trash.
 
 #include "analysis/AudioAnalysis.h"
@@ -9,6 +10,7 @@
 #include "plugins/PluginChainPreparation.h"
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"
+#include "plugins/PluginScanner.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
@@ -462,6 +464,45 @@ public:
             expectEquals(getPluginProcessingWorkerCount(0, 1), 1);
             expectEquals(getPluginProcessingWorkerCount(0, -1), 1);
             expectEquals(getPluginProcessingWorkerCount(16, 16), 15);
+        }
+
+        beginTest("Built-in Apple Audio Units are recognised by the manufacturer code of their identifier");
+        {
+            expect(isBuiltInApplePlugin("AudioUnit:Effects/aufx,lmtr,appl"));
+            expect(isBuiltInApplePlugin("AudioUnit:Synths/aumu,dls ,appl"));
+            expect(!isBuiltInApplePlugin("AudioUnit:Effects/aufx,567h,Vxng"));
+            expect(!isBuiltInApplePlugin("AudioUnit:Effects/aufx,appl,Vxng"));
+            expect(!isBuiltInApplePlugin("/Library/Audio/Plug-Ins/VST3/MSED.vst3"));
+        }
+
+        beginTest("Built-in Apple Audio Units are removed from a known plugins list, including blacklisted ones");
+        {
+            const auto makeDescription = [](const juce::String& format, const juce::String& identifier, const int id) {
+                juce::PluginDescription description;
+                description.name = identifier;
+                description.pluginFormatName = format;
+                description.fileOrIdentifier = identifier;
+                description.uniqueId = id;
+                return description;
+            };
+
+            juce::KnownPluginList knownPluginList;
+            knownPluginList.addType(makeDescription("AudioUnit", "AudioUnit:Effects/aufx,lmtr,appl", 1));
+            knownPluginList.addType(makeDescription("AudioUnit", "AudioUnit:Effects/aufx,567h,Vxng", 2));
+            knownPluginList.addType(makeDescription("VST3", "/Library/Audio/Plug-Ins/VST3/MSED.vst3", 3));
+            knownPluginList.addToBlacklist("AudioUnit:Effects/aufx,dely,appl");
+            knownPluginList.addToBlacklist("/Library/Audio/Plug-Ins/VST3/Broken.vst3");
+
+            removeBuiltInApplePlugins(knownPluginList);
+
+            const auto types = knownPluginList.getTypes();
+            expectEquals(types.size(), 2);
+            expect(std::ranges::none_of(types, [](const juce::PluginDescription& type) {
+                return isBuiltInApplePlugin(type.fileOrIdentifier);
+            }));
+            expect(
+                knownPluginList.getBlacklistedFiles() == juce::StringArray("/Library/Audio/Plug-Ins/VST3/Broken.vst3")
+            );
         }
 
         beginTest("A chain lease returns its chain to the pool when it is destroyed");

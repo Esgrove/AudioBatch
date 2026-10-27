@@ -68,6 +68,7 @@ The domains depend on each other in one direction only.
 `normalization/` and `plugins/` sit above them, and `cli/` and `gui/` on top.
 - `src/plugins/` holds VST3 / Audio Unit plugin hosting.
     - `PluginScanner.*` implement out-of-process plugin scanning and the known-plugins list persistence.
+      `addPluginFormats` registers the plugin formats, and leaves the Audio Units built into macOS out of every scan.
       Each executable relaunches itself as its scan worker:
       `gui/Main.cpp` and `cli/CliMain.cpp` detect the worker command line before doing anything else.
       The CLI links `juce_audio_processors` for this, which also pulls in the JUCE GUI modules.
