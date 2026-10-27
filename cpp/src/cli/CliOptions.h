@@ -62,6 +62,7 @@ using CliOptionList = std::span<const std::reference_wrapper<const CliOption>>;
 
 /// A subcommand, which runs instead of the analysis when it is the first argument.
 struct CliSubcommandInfo {
+    /// The subcommand the entry describes.
     CliSubcommand subcommand {CliSubcommand::none};
     /// The word that selects the subcommand, such as "list".
     const char* name {""};
@@ -95,42 +96,42 @@ consteval std::array<const char*, count> namesOf(const std::array<OptionName<Enu
 }
 
 /// Names accepted by --sort, with "loudness" as an alias for "lufs".
-inline constexpr auto sortModeNames = std::to_array<OptionName<AudioAnalysisSortMode>>({
+inline constexpr auto sortModeNames {std::to_array<OptionName<AudioAnalysisSortMode>>({
     {.name = "peak", .value = AudioAnalysisSortMode::peak},
     {.name = "lufs", .value = AudioAnalysisSortMode::loudness},
     {.name = "loudness", .value = AudioAnalysisSortMode::loudness},
     {.name = "name", .value = AudioAnalysisSortMode::name},
     {.name = "path", .value = AudioAnalysisSortMode::path},
-});
+})};
 
 /// Names accepted by --output.
-inline constexpr auto outputFormatNames = std::to_array<OptionName<AudioAnalysisOutputFormat>>({
+inline constexpr auto outputFormatNames {std::to_array<OptionName<AudioAnalysisOutputFormat>>({
     {.name = "table", .value = AudioAnalysisOutputFormat::table},
     {.name = "csv", .value = AudioAnalysisOutputFormat::csv},
     {.name = "json", .value = AudioAnalysisOutputFormat::json},
-});
+})};
 
 /// Names accepted by --group-by.
-inline constexpr auto pluginGroupingNames = std::to_array<OptionName<PluginListGrouping>>({
+inline constexpr auto pluginGroupingNames {std::to_array<OptionName<PluginListGrouping>>({
     {.name = "name", .value = PluginListGrouping::name},
     {.name = "manufacturer", .value = PluginListGrouping::manufacturer},
     {.name = "type", .value = PluginListGrouping::type},
     {.name = "format", .value = PluginListGrouping::format},
-});
+})};
 
 /// Shell names accepted by the completion subcommand.
-inline constexpr auto completionShellNames = std::to_array<OptionName<CompletionShell>>({
+inline constexpr auto completionShellNames {std::to_array<OptionName<CompletionShell>>({
     {.name = "zsh", .value = CompletionShell::zsh},
     {.name = "bash", .value = CompletionShell::bash},
     {.name = "fish", .value = CompletionShell::fish},
     {.name = "powershell", .value = CompletionShell::powershell},
-});
+})};
 
 /// The names of the enum option tables, which the options below offer as completions.
-inline constexpr auto sortModeValues = namesOf(sortModeNames);
-inline constexpr auto outputFormatValues = namesOf(outputFormatNames);
-inline constexpr auto pluginGroupingValues = namesOf(pluginGroupingNames);
-inline constexpr auto completionShellValues = namesOf(completionShellNames);
+inline constexpr auto sortModeValues {namesOf(sortModeNames)};
+inline constexpr auto outputFormatValues {namesOf(outputFormatNames)};
+inline constexpr auto pluginGroupingValues {namesOf(pluginGroupingNames)};
+inline constexpr auto completionShellValues {namesOf(completionShellNames)};
 
 inline constexpr CliOption helpOption {
     .longName = "--help",
@@ -269,10 +270,10 @@ inline constexpr std::array listOptions {std::cref(groupByOption), std::cref(res
 inline constexpr std::array completionOptions {std::cref(installOption), std::cref(verboseOption)};
 
 /// The commands the help subcommand describes.
-inline constexpr auto helpCommandValues = std::to_array<const char*>({"list", "completion", "help"});
+inline constexpr auto helpCommandValues {std::to_array<const char*>({"list", "completion", "help"})};
 
 /// The subcommands, in the order the usage text and the shell completions list them.
-inline constexpr auto subcommands = std::to_array<CliSubcommandInfo>({
+inline constexpr auto subcommands {std::to_array<CliSubcommandInfo>({
     {
         .subcommand = CliSubcommand::list,
         .name = "list",
@@ -303,6 +304,6 @@ inline constexpr auto subcommands = std::to_array<CliSubcommandInfo>({
         .argumentRequired = false,
         .argumentValues = helpCommandValues,
     },
-});
+})};
 }  // namespace cli
 }  // namespace audiobatch

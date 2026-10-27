@@ -20,6 +20,10 @@ namespace audiobatch
 {
 namespace
 {
+/// First id of the plugin chain presets submenu, which uses the ids from it upwards.
+/// It sits above the command ids and far below the Add Plugin submenu ids of juce::KnownPluginList.
+constexpr int presetsMenuFirstItemId {1000};
+
 /// Menu bar items that menuItemSelected runs directly.
 /// Their ids stay below the command ids, and both stay far below the Add Plugin submenu ids of juce::KnownPluginList.
 enum class MenuItemId : std::uint8_t {
@@ -53,10 +57,6 @@ enum class CommandId : std::uint8_t {
     togglePlayFromFirstCuePoint,
     cancelRun,
 };
-
-/// First id of the plugin chain presets submenu, which uses the ids from it upwards.
-/// It sits above the command ids and far below the Add Plugin submenu ids of juce::KnownPluginList.
-constexpr int presetsMenuFirstItemId {1000};
 
 /// First of the contiguous command ids.
 constexpr CommandId firstCommand {CommandId::rescan};

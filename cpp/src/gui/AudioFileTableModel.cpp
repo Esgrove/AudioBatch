@@ -16,16 +16,49 @@ namespace audiobatch
 {
 namespace
 {
+/// Inner radius of the activity indicator arc as a proportion of the outer radius,
+/// which turns the pie segment into a ring.
+constexpr float activityIndicatorInnerRadiusProportion {0.52f};
+
+/// Opacity of the white outline drawn around the activity indicator ring.
+constexpr float activityIndicatorOutlineAlpha {0.12f};
+
+/// Opacity of the blue fill drawn behind selected rows.
+constexpr float selectedRowHighlightAlpha {0.22f};
+
+/// Opacity of the cell text for rows with an analysis error, dimmed to set them apart.
+constexpr float errorCellTextAlpha {0.72f};
+
+/// Opacity of the cell text for rows without errors.
+constexpr float normalCellTextAlpha {0.95f};
+
+/// Opacity of the one pixel vertical divider drawn at the right edge of each cell.
+constexpr float cellDividerAlpha {0.08f};
+
+/// Opacity of the status text of a waiting row, dimmed to set it apart from the rows being worked on.
+constexpr float waitingStatusTextAlpha {0.55f};
+
+/// Smallest progress drawn as a filled arc, so a just started file does not show a sliver.
+constexpr float minimumDrawnProgress {0.005f};
+
+/// Length of the spinning arc shown while a busy file's progress is unknown, as a fraction of a full turn.
+constexpr float spinnerArcTurns {0.6f};
+
 /// A results table column as the header registers it.
 struct ColumnDefinition {
+    /// The column, whose value is also its JUCE column id.
     AudioFileTableColumn column;
     /// Short title shown in the header.
     const char* title;
     /// What the column shows with its unit, for the header tooltip.
     const char* description;
+    /// Width of the column when the table is first shown.
     int initialWidth;
+    /// Narrowest width the user can drag the column to.
     int minimumWidth;
+    /// Widest width the user can drag the column to.
     int maximumWidth;
+    /// True when the column is shown before the user changes the visible columns.
     bool initiallyVisible;
 };
 
@@ -116,34 +149,6 @@ constexpr std::array columnDefinitions {
     ),
     defineColumn(AudioFileTableColumn::status, "Status", "Analysis status", layout::table::statusMaximumWidth),
 };
-
-/// Inner radius of the activity indicator arc as a proportion of the outer radius,
-/// which turns the pie segment into a ring.
-constexpr float activityIndicatorInnerRadiusProportion {0.52f};
-
-/// Opacity of the white outline drawn around the activity indicator ring.
-constexpr float activityIndicatorOutlineAlpha {0.12f};
-
-/// Opacity of the blue fill drawn behind selected rows.
-constexpr float selectedRowHighlightAlpha {0.22f};
-
-/// Opacity of the cell text for rows with an analysis error, dimmed to set them apart.
-constexpr float errorCellTextAlpha {0.72f};
-
-/// Opacity of the cell text for rows without errors.
-constexpr float normalCellTextAlpha {0.95f};
-
-/// Opacity of the one pixel vertical divider drawn at the right edge of each cell.
-constexpr float cellDividerAlpha {0.08f};
-
-/// Opacity of the status text of a waiting row, dimmed to set it apart from the rows being worked on.
-constexpr float waitingStatusTextAlpha {0.55f};
-
-/// Smallest progress drawn as a filled arc, so a just started file does not show a sliver.
-constexpr float minimumDrawnProgress {0.005f};
-
-/// Length of the spinning arc shown while a busy file's progress is unknown, as a fraction of a full turn.
-constexpr float spinnerArcTurns {0.6f};
 
 /// Draws the small activity indicator shown in the Status column while a row is busy.
 /// A waiting row gets an empty ring.

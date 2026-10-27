@@ -21,12 +21,19 @@ namespace audiobatch
 {
 namespace
 {
+/// Tag of the element that holds the plugin descriptions of a worker reply.
 constexpr auto resultsXmlTag {"PLUGINS"};
+/// Name of the known-plugins list file next to the settings file.
 constexpr auto knownPluginListFileName {"KnownPlugins.xml"};
+/// Settings key under which older versions kept the known-plugins list.
 constexpr auto legacyKnownPluginListPropertyKey {"knownPluginList"};
+/// Start of the identifier of every Audio Unit.
 constexpr auto audioUnitIdentifierPrefix {"AudioUnit:"};
+/// Manufacturer code that ends the identifiers of the Audio Units built into macOS.
 constexpr auto appleManufacturerCode {"appl"};
+/// Environment variable with extra folders to search for VST3 plugins.
 constexpr auto vst3PathVariable {"VST3_PATH"};
+/// How often waiting for a worker reply checks whether the scan was cancelled.
 constexpr auto responsePollInterval {std::chrono::milliseconds(50)};
 
 /// Outcome of waiting for the reply to one scan request.
@@ -34,33 +41,11 @@ enum class PluginScanResponseState : std::uint8_t { timeout, gotResult, connecti
 
 /// Reply to one scan request.
 struct PluginScanResponse {
+    /// Whether a reply arrived, the wait timed out, or the worker went away.
     PluginScanResponseState state {PluginScanResponseState::timeout};
+    /// The plugin descriptions the worker replied with, or null without a reply.
     std::unique_ptr<juce::XmlElement> xml;
 };
-
-/// Adds the plugin descriptions in a worker reply to the scan results, skipping entries that do not parse.
-void addDescriptions(const juce::XmlElement* reply, juce::OwnedArray<juce::PluginDescription>& result)
-{
-    if (reply == nullptr) {
-        return;
-    }
-
-    for (const auto* element : reply->getChildIterator()) {
-        if (auto description = std::make_unique<juce::PluginDescription>(); description->loadFromXml(*element)) {
-            result.add(std::move(description));
-        }
-    }
-}
-
-/// Builds a scan request for one plugin file or identifier.
-juce::MemoryBlock createScanRequest(const juce::String& formatName, const juce::String& fileOrIdentifier)
-{
-    juce::MemoryBlock request;
-    juce::MemoryOutputStream stream(request, false);
-    stream.writeString(formatName);
-    stream.writeString(fileOrIdentifier);
-    return request;
-}
 
 #if JUCE_PLUGINHOST_AU && JUCE_MAC
 /// Audio Unit format that leaves the Audio Units built into macOS out of plugin scans.
@@ -108,6 +93,30 @@ public:
     }
 };
 #endif
+
+/// Adds the plugin descriptions in a worker reply to the scan results, skipping entries that do not parse.
+void addDescriptions(const juce::XmlElement* reply, juce::OwnedArray<juce::PluginDescription>& result)
+{
+    if (reply == nullptr) {
+        return;
+    }
+
+    for (const auto* element : reply->getChildIterator()) {
+        if (auto description = std::make_unique<juce::PluginDescription>(); description->loadFromXml(*element)) {
+            result.add(std::move(description));
+        }
+    }
+}
+
+/// Builds a scan request for one plugin file or identifier.
+juce::MemoryBlock createScanRequest(const juce::String& formatName, const juce::String& fileOrIdentifier)
+{
+    juce::MemoryBlock request;
+    juce::MemoryOutputStream stream(request, false);
+    stream.writeString(formatName);
+    stream.writeString(fileOrIdentifier);
+    return request;
+}
 }  // namespace
 
 /// Rebuilds the search path JUCE made from VST3_PATH and the standard folders,

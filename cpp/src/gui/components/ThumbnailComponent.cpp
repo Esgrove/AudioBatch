@@ -51,6 +51,18 @@ constexpr int minimumSamplesPerThumbnailPoint {16};
 /// Coarsest waveform detail, which keeps the cached waveform of a long file small.
 constexpr int maximumSamplesPerThumbnailPoint {1024};
 
+/// Opacity of the outline drawn while the waveform has keyboard focus.
+constexpr float focusOutlineAlpha {0.6f};
+
+/// Opacity of the white labels of the loudness axis.
+constexpr float loudnessLabelAlpha {0.8f};
+
+/// Opacity of the white grid lines at the loudness axis ticks.
+constexpr float loudnessGridAlpha {0.12f};
+
+/// Opacity of the black outline drawn under the loudness curve, which keeps it readable over the waveform.
+constexpr float loudnessOutlineAlpha {0.65f};
+
 /// Returns the source samples per waveform point for a file:
 /// the power of two that gives it about thumbnailTargetPoints points, within the finest and coarsest detail.
 /// A 30 second file gets 128 samples per point, and an unknown length the coarsest detail.
@@ -67,12 +79,6 @@ int samplesPerThumbnailPoint(const juce::int64 lengthInSamples)
     }
     return samplesPerPoint;
 }
-
-/// Opacity of the outline drawn while the waveform has keyboard focus.
-constexpr float focusOutlineAlpha {0.6f};
-constexpr float loudnessLabelAlpha {0.8f};
-constexpr float loudnessGridAlpha {0.12f};
-constexpr float loudnessOutlineAlpha {0.65f};
 }  // namespace
 
 /// Creates a thumbnail view backed by the shared transport source.
