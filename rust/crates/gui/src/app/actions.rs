@@ -5,6 +5,7 @@
 //! playback, the events of the controls column, the About dialog, and the synthetic stress test.
 //! Removing or trashing files waits while files are being normalized or processed with plugins.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -67,14 +68,11 @@ impl AppView {
             let delegate = self.table.read(cx).delegate();
             paths.iter().filter_map(|path| delegate.index_of(path)).min()
         };
-        for path in paths {
-            self.excluded.insert(path.clone());
-            self.roots.retain(|root| root != path);
-        }
+        let removed: HashSet<PathBuf> = paths.iter().cloned().collect();
+        self.roots.retain(|root| !removed.contains(root));
+        self.excluded.extend(removed.iter().cloned());
         self.table.update(cx, |state, cx| {
-            for path in paths {
-                state.delegate_mut().remove(path);
-            }
+            state.delegate_mut().remove_many(&removed);
             cx.notify();
         });
         self.clear_selection(cx);
@@ -134,20 +132,18 @@ impl AppView {
                 player.unload();
             }
             match trash::delete(path) {
-                Ok(()) => {
-                    if let Some(coordinator) = &self.coordinator
-                        && let Err(error) = coordinator.cache().remove_analysis(path)
-                    {
-                        tracing::warn!("Failed to remove the cached result of {}: {error:#}", path.display());
-                    }
-                    trashed.push(path.clone());
-                }
+                Ok(()) => trashed.push(path.clone()),
                 Err(error) => {
                     tracing::warn!("Could not move {} to the trash: {error}", path.display());
                     first_failure
                         .get_or_insert_with(|| format!("Could not move {} to the trash: {error}", display_name(path)));
                 }
             }
+        }
+        if let Some(coordinator) = &self.coordinator
+            && let Err(error) = coordinator.cache().remove_analyses(&trashed)
+        {
+            tracing::warn!("Failed to remove the cached results of the trashed files: {error:#}");
         }
         if !trashed.is_empty() {
             self.remove_paths(&trashed, cx);

@@ -297,6 +297,26 @@ impl AnalysisCache {
         })
     }
 
+    /// Removes the cached analysis and Serato tag rows of several files in one transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the database write fails, in which case no row is removed.
+    pub fn remove_analyses(&self, paths: &[PathBuf]) -> Result<()> {
+        self.with_connection(|connection| {
+            let transaction = connection.transaction()?;
+            for path in paths {
+                transaction.execute(
+                    "DELETE FROM file_analysis WHERE file_path = ?1",
+                    params![path_key(path)],
+                )?;
+                serato::remove_rows(&transaction, path)?;
+            }
+            transaction.commit()?;
+            Ok(())
+        })
+    }
+
     /// Opens a connection and ensures the schema is current.
     fn connect(&self) -> Result<Connection> {
         if let Some(parent) = self.database_path.parent() {
@@ -692,6 +712,24 @@ mod test_analysis_cache {
         assert!(cache.remove_analysis(&first.path).expect("removes"));
         assert!(!cache.remove_analysis(&first.path).expect("second remove"));
         assert!(cache.get_analysis(&second.path).is_some());
+    }
+
+    #[test]
+    fn remove_many_deletes_every_given_row_in_one_transaction() {
+        let directory = TempDir::new().expect("temp dir");
+        let cache = temporary_cache(&directory);
+        let first = analyze_fixture_copy(&directory, "sine_stereo_44100_16.wav");
+        let second = analyze_fixture_copy(&directory, "sine_mono_44100_16.wav");
+        let kept = analyze_fixture_copy(&directory, "sine_stereo_44100_16.flac");
+        for record in [&first, &second, &kept] {
+            cache.store_analysis(record).expect("stores");
+        }
+        cache
+            .remove_analyses(&[first.path.clone(), second.path.clone()])
+            .expect("removes");
+        assert!(cache.get_analysis(&first.path).is_none());
+        assert!(cache.get_analysis(&second.path).is_none());
+        assert!(cache.get_analysis(&kept.path).is_some());
     }
 }
 
