@@ -62,8 +62,8 @@ void reportAnalysisFailures(const std::vector<AudioAnalysisRecord>& results)
     }
 }
 
-/// Runs the analysis with a progress line on stderr, which counts the files that are decoded,
-/// leaving out the results that came from the cache, like the progress bar of the Rust CLI.
+/// Runs the analysis with a progress line on stderr, which counts only the files that are decoded,
+/// leaving out the results that came from the cache.
 std::vector<AudioAnalysisRecord> analyzeWithProgress(
     AnalysisCoordinator& coordinator,
     const AudioAnalysisOptions& options
@@ -238,9 +238,8 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
         )
     );
 
-    reportAnalysisFailures(results);
-
     sortRecords(results, command.sortMode, !command.reverse);
+    reportAnalysisFailures(results);
 
     const auto skippedInputs = findSkippedInputs(command.inputPaths, results);
 

@@ -133,6 +133,8 @@ juce::String joinArguments(const juce::ArgumentList& arguments);
 
 [[nodiscard]] CliSubcommand findSubcommand(const juce::ArgumentList& arguments);
 
+[[nodiscard]] juce::ArgumentList expandShortOptions(const juce::ArgumentList& arguments);
+
 juce::StringArray findSkippedInputs(
     const juce::Array<juce::File>& inputPaths,
     const std::vector<AudioAnalysisRecord>& results

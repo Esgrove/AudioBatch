@@ -162,19 +162,22 @@ juce::StringArray splitCombinedShortOptions(const juce::String& text)
 /// juce::ArgumentList matches a short option by searching for its letter anywhere in the argument,
 /// and removes the whole argument on the first match, so "-rf" would otherwise set only one of the flags.
 /// Negative numbers such as "-14" are values, and stay as they are.
+/// The arguments are added as they are, since building the list from strings would unquote them a second time.
 juce::ArgumentList expandCombinedShortOptions(const juce::ArgumentList& arguments)
 {
-    juce::StringArray texts;
+    juce::ArgumentList expanded {arguments.executableName, juce::StringArray {}};
 
     for (const auto& argument : arguments.arguments) {
         if (argument.isShortOption() && argument.text.length() > 2 && !isNumericArgument(argument.text)) {
-            texts.addArray(splitCombinedShortOptions(argument.text));
+            for (const auto& text : splitCombinedShortOptions(argument.text)) {
+                expanded.arguments.add({.text = text});
+            }
         } else {
-            texts.add(argument.text);
+            expanded.arguments.add(argument);
         }
     }
 
-    return {arguments.executableName, texts};
+    return expanded;
 }
 
 /// Parses the worker count of --jobs.
@@ -656,7 +659,14 @@ juce::String cli::joinArguments(const juce::ArgumentList& arguments)
     return texts.joinIntoString(" ");
 }
 
-/// Parses command-line arguments into a validated analysis, plugin listing, or completion command,
+/// Returns the arguments with every argument of combined short options expanded into separate arguments,
+/// so a short option can be matched exactly, and the value in "-spath" is not taken for the -h flag.
+juce::ArgumentList cli::expandShortOptions(const juce::ArgumentList& arguments)
+{
+    return expandCombinedShortOptions(arguments);
+}
+
+/// Parses command-line arguments into a validated analysis, plugin listing, completion, or help command,
 /// or returns why the arguments were rejected, with the message to show the user.
 /// The help and version flags are handled by the caller before parsing.
 std::expected<CliCommand, CliParseError> cli::parseArguments(const juce::ArgumentList& commandLine)
