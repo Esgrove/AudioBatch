@@ -50,6 +50,9 @@ public:
     /// Called once per run from a worker thread, before any of its results.
     using PlanCallback = std::function<void(const AnalysisPlan& plan)>;
 
+    /// Called by analyzeBlocking for each result as it arrives, from a worker thread.
+    using ResultObserver = std::function<void(const AudioAnalysisRecord& result)>;
+
     explicit AnalysisCoordinator(AnalysisCache& analysisCache, int workerCount = juce::SystemStats::getNumCpus());
 
     ~AnalysisCoordinator();
@@ -59,7 +62,10 @@ public:
     AnalysisCoordinator(AnalysisCoordinator&&) = delete;
     AnalysisCoordinator& operator=(AnalysisCoordinator&&) = delete;
 
-    std::vector<AudioAnalysisRecord> analyzeBlocking(const AudioAnalysisOptions& options);
+    std::vector<AudioAnalysisRecord> analyzeBlocking(
+        const AudioAnalysisOptions& options,
+        const ResultObserver& onResult = nullptr
+    );
 
     [[nodiscard]] int start(const AudioAnalysisOptions& options);
 

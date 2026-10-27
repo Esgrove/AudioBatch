@@ -4,16 +4,20 @@
 
 #include "cli/AudioAnalysisCli.h"
 
+#include "analysis/AnalysisCoordinator.h"
 #include "analysis/AudioAnalysis.h"
 #include "cli/AudioAnalysisCliOutput.h"
 #include "normalization/AudioNormalization.h"
 #include "utils/ConsolePrint.h"
+#include "utils/ConsoleProgress.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
 #include <iterator>
+#include <mutex>
+#include <set>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -53,6 +57,48 @@ void reportAnalysisFailures(const std::vector<AudioAnalysisRecord>& results)
             );
         }
     }
+}
+
+/// Runs the analysis with a progress line on stderr, which counts the files that are decoded,
+/// leaving out the results that came from the cache, like the progress bar of the Rust CLI.
+std::vector<AudioAnalysisRecord> analyzeWithProgress(
+    AnalysisCoordinator& coordinator,
+    const AudioAnalysisOptions& options
+)
+{
+    console::ProgressLine progress;
+    std::mutex staleMutex;
+    std::set<juce::String> stalePaths;
+
+    coordinator.setPlanCallback([&](const AnalysisPlan& plan) {
+        {
+            const std::scoped_lock lock(staleMutex);
+            for (const auto& file : plan.staleFiles) {
+                stalePaths.insert(file.getFullPathName());
+            }
+        }
+        progress.setTotal(plan.staleFiles.size());
+    });
+    coordinator.setStartingCallback([&progress](const juce::File& file, int /*runId*/) {
+        progress.setMessage(file.getFileName());
+    });
+
+    auto results = coordinator.analyzeBlocking(options, [&](const AudioAnalysisRecord& record) {
+        bool decoded {false};
+        {
+            const std::scoped_lock lock(staleMutex);
+            decoded = stalePaths.contains(record.fullPath);
+        }
+        if (decoded) {
+            progress.increment();
+        }
+    });
+
+    // The callbacks refer to this function's locals, so they must not outlive it.
+    coordinator.setPlanCallback({});
+    coordinator.setStartingCallback({});
+    progress.finish();
+    return results;
 }
 
 /// Prints the notice of a successful normalization, such as audio blocks that failed to decode, when it has one.
@@ -130,7 +176,7 @@ int cli::runAnalysis(const AnalyzeCommand& command)
     analysisOptions.refresh = command.refresh;
 
     const auto analysisStartedAtMs = juce::Time::getMillisecondCounterHiRes();
-    auto results = coordinator.analyzeBlocking(analysisOptions);
+    auto results = analyzeWithProgress(coordinator, analysisOptions);
     const auto analysisElapsedMs = juce::Time::getMillisecondCounterHiRes() - analysisStartedAtMs;
     const auto analysisFailureCount
         = std::ranges::count_if(results, [](const auto& record) { return record.hasError(); });
@@ -157,6 +203,7 @@ int cli::runAnalysis(const AnalyzeCommand& command)
     std::vector<AudioAnalysisRecord> normalizedResults;
 
     juce::StringArray normalizationConflicts;
+    console::ProgressLine normalizationProgress;
 
     if (command.normalization.has_value()) {
         normalizedResults.reserve(results.size());
@@ -165,6 +212,7 @@ int cli::runAnalysis(const AnalyzeCommand& command)
             return !record.hasError();
         });
         normalizationConflicts = findBatchOutputConflicts(normalizableResults);
+        normalizationProgress.setTotal(static_cast<int>(normalizableResults.size()));
     }
 
     // The CSV and JSON output of a normalize run lists failed files too, with their error.
@@ -191,16 +239,21 @@ int cli::runAnalysis(const AnalyzeCommand& command)
         if (normalizationConflicts.contains(result.file.getFullPathName())) {
             ++failureCount;
             const auto conflictMessage = batchOutputConflictMessage(result.file);
+            normalizationProgress.finish();
             reportError(
                 utils::format(
                     "Normalization output conflict: {}, {}", result.file.getFullPathName().quoted(), conflictMessage
                 )
             );
             addNormalizationFailure(result, conflictMessage);
+            normalizationProgress.increment();
             continue;
         }
 
+        normalizationProgress.setMessage(result.file.getFileName());
         const auto normalization = normalizeFile(result, *command.normalization);
+        // Messages about the file start on a clean line, and the progress line is drawn again after them.
+        normalizationProgress.finish();
 
         // A converted original was moved to the trash, so its cached row is no longer needed,
         // even when the re-analysis of the committed output failed.
@@ -233,7 +286,9 @@ int cli::runAnalysis(const AnalyzeCommand& command)
             },
             normalization.outcome
         );
+        normalizationProgress.increment();
     }
+    normalizationProgress.finish();
 
     if (command.normalization.has_value()) {
         sortRecords(normalizedResults, command.sortMode, !command.reverse);
