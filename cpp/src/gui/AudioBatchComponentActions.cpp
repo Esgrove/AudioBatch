@@ -200,9 +200,13 @@ void AudioBatchComponent::showFileContextMenu(const int row, const juce::Point<i
     menu.addSeparator();
     const bool canProcess = backgroundWork.isIdle() && liveChain->getNumEnabledValidSlots() > 0;
     addItem(FileMenuItemId::process, "Process With Plugin Chain (output AIFF)", canProcess);
-    const bool anyHasGain = std::ranges::any_of(selectedRecords, [](const AudioAnalysisRecord& selectedRecord) {
-        return selectedRecord.customGain.has_value();
-    });
+    // Every selected row counts, since a gain can be cleared from a row that cannot be normalized.
+    const auto selectedRows = resultsTable.getSelectedRows();
+    bool anyHasGain {false};
+    for (int index = 0; index < selectedRows.size() && !anyHasGain; ++index) {
+        const auto rowNumber = selectedRows[index];
+        anyHasGain = analysisResults.containsRow(rowNumber) && analysisResults[rowNumber].customGain.has_value();
+    }
     addItem(FileMenuItemId::clearCustomGain, "Clear Per-file Gain", anyHasGain);
     menu.addSeparator();
     addItem(FileMenuItemId::removeFromList, "Remove from List", true);
