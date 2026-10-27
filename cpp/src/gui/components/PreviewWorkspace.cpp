@@ -18,7 +18,7 @@ PreviewWorkspace::PreviewWorkspace(AudioPreviewPlayer& previewPlayer, juce::Appl
     normalizationTargetControl(settings)
 {
     configurePreviewSectionButton();
-    addAndMakeVisible(previewSectionButton);
+    controlsContent.addAndMakeVisible(previewSectionButton);
 
     controlsViewport.setViewedComponent(&controlsContent, false);
     controlsViewport.setScrollBarsShown(true, false);
@@ -51,25 +51,34 @@ bool PreviewWorkspace::isCompact() const noexcept
 }
 
 /// Switches between the expanded section and the compact row, hiding the secondary controls in the compact row.
+/// The section toggle sits in the Zoom row of the controls while expanded, and leads the compact row.
 void PreviewWorkspace::setCompact(const bool shouldBeCompact)
 {
     if (shouldBeCompact == isCompact()) {
         return;
     }
     controlsViewport.setVisible(!shouldBeCompact);
+    if (shouldBeCompact) {
+        addAndMakeVisible(previewSectionButton);
+    } else {
+        controlsContent.addAndMakeVisible(previewSectionButton);
+    }
     audioInfo.setCompact(shouldBeCompact);
     resized();
 }
 
 /// Lays out the metrics, the waveform, and the controls in columns,
 /// or in one row with the toggle, the playback buttons, the metrics, and the waveform when compact.
+/// The controls and the pinned playback row share the same margins, so the column is centred,
+/// and the scroll bar takes width only while the controls overflow the column.
 void PreviewWorkspace::resized()
 {
     const auto workspace = getLocalBounds().reduced(layout::compactPreview::padding);
     const auto columns = layout::previewColumns(workspace);
-    auto playbackRow = columns.controls.withTrimmedLeft(layout::previewToggle::size + layout::compactPreview::spacing);
     if (isCompact()) {
-        layoutCompact(workspace, playbackRow.getWidth());
+        layoutCompact(
+            workspace, columns.controls.getWidth() - layout::previewToggle::size - layout::compactPreview::spacing
+        );
         return;
     }
 
@@ -77,19 +86,21 @@ void PreviewWorkspace::resized()
     thumbnail.setBounds(columns.waveform);
     auto controls
         = columns.controls.reduced(layout::information::horizontalPadding, layout::information::verticalPadding);
-    previewSectionButton.setBounds(
-        controls.removeFromTop(layout::previewToggle::size).withWidth(layout::previewToggle::size)
-    );
-    controls.removeFromTop(layout::previewToggle::expandedSpacing);
-    layoutPlaybackButtons(playbackRow.removeFromBottom(layout::processButtonHeight));
-    controls.setBottom(playbackRow.getBottom() - layout::controlsSectionSpacing);
+    layoutPlaybackButtons(controls.removeFromBottom(layout::processButtonHeight));
+    controls.removeFromBottom(layout::controlsSectionSpacing);
     controlsViewport.setBounds(controls);
+    const bool overflows = layout::controlsContentHeight > controls.getHeight();
     controlsContent.setSize(
-        juce::jmax(0, controls.getWidth() - layout::scrollBarThickness),
+        juce::jmax(0, controls.getWidth() - (overflows ? layout::scrollBarThickness : 0)),
         juce::jmax(controls.getHeight(), layout::controlsContentHeight)
     );
     auto content = controlsContent.getLocalBounds();
-    zoomLabel.setBounds(content.removeFromTop(layout::sliderRowHeight));
+    auto zoomRow = content.removeFromTop(layout::sliderRowHeight);
+    previewSectionButton.setBounds(
+        zoomRow.removeFromRight(layout::previewToggle::size)
+            .withSizeKeepingCentre(layout::previewToggle::size, layout::previewToggle::size)
+    );
+    zoomLabel.setBounds(zoomRow);
     zoomSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
     content.removeFromTop(layout::controlsSectionSpacing);
     gainLabel.setBounds(content.removeFromTop(layout::sliderRowHeight));
@@ -102,7 +113,7 @@ void PreviewWorkspace::resized()
     normalizeRow.removeFromLeft(layout::sectionSpacing);
     forceOverwriteToggle.setBounds(normalizeRow);
     content.removeFromTop(layout::normalizeTargetSpacing);
-    normalizationTargetControl.setBounds(content.removeFromTop(layout::controlButtonHeight));
+    normalizationTargetControl.setBounds(content.removeFromTop(layout::normalizationTargetHeight));
     content.removeFromTop(layout::controlsSectionSpacing);
     pluginButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
     content.removeFromTop(layout::controlsSectionSpacing);

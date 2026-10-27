@@ -1,6 +1,6 @@
 /// GUI control for choosing the normalization target.
-/// Declares NormalizationTargetControl, a mode selector for peak
-/// or loudness normalization next to a slider for the target level, with both targets persisted in the user settings.
+/// Declares NormalizationTargetControl, Peak and Loudness mode buttons above a slider for the target level
+/// and the Normalize button, with the mode and both targets persisted in the user settings.
 
 #pragma once
 
@@ -10,7 +10,8 @@
 
 namespace audiobatch
 {
-/// Mode selector and target slider for normalization, laid out side by side.
+/// Peak and Loudness mode buttons on one row, and the target slider with the Normalize button below them,
+/// like the normalization group of the Rust version.
 /// Each mode remembers its own target, and the mode and both targets are saved in the user settings.
 class NormalizationTargetControl final : public juce::Component
 {
@@ -25,15 +26,21 @@ public:
 
     void resized() override;
 
+    /// Normalizes the selected files to the target. The owner connects it and keeps its enabled state.
+    juce::TextButton normalizeButton {"Normalize"};
+
 private:
     [[nodiscard]] bool isLoudnessMode() const;
 
     void saveSettings() const;
 
+    void selectMode(bool loudness);
+
     void updateSlider();
 
     juce::ApplicationProperties& properties;
-    juce::ComboBox modeBox;
+    juce::TextButton peakButton {"Peak"};
+    juce::TextButton loudnessButton {"Loudness"};
     juce::Slider targetSlider {"NormalizeTarget"};
     /// Remembered peak mode target, in dBFS, kept while loudness mode is selected.
     double targetPeakDbfs {AudioNormalizationOptions::defaultTargetPeakDbfs};

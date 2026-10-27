@@ -130,6 +130,7 @@ void AudioBatchComponent::configureProcessingControls()
     };
 
     previewWorkspace.normalizationTargetControl.loadSettings();
+    previewWorkspace.normalizationTargetControl.normalizeButton.onClick = [this] { normalizeSelectedRecords(); };
 
     updateProcessButtonState();
     previewWorkspace.processButton.onClick = [this] {
@@ -471,6 +472,11 @@ void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArra
 /// records are loaded, and no processing or analysis is running.
 void AudioBatchComponent::updateProcessButtonState()
 {
+    const auto normalizable = getSelectedNormalizableRecords();
+    previewWorkspace.normalizationTargetControl.normalizeButton.setEnabled(
+        backgroundWork.isIdle() && !normalizable.empty() && canNormalizeRecords(normalizable)
+    );
+
     // While a pass runs, the button cancels it, like the Process button of the Rust version.
     if (!backgroundWork.isIdle()) {
         previewWorkspace.processButton.setButtonText("Cancel");
@@ -611,6 +617,7 @@ void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
 {
     const auto selectedRows = resultsTable.getSelectedRows();
     const auto row = getSelectionDisplayRow(selectedRows, lastRowSelected);
+    updateProcessButtonState();
 
     if (!analysisResults.containsRow(row)) {
         return;

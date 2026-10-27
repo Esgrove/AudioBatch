@@ -50,7 +50,7 @@ The Up and Down arrow keys navigate the song list even while the waveform has ke
 Number keys `1` to `8` jump to the corresponding Serato hot cue and start playback from either the song list
 or waveform, without clicking or moving keyboard focus first.
 
-Use the small outlined arrow in the controls' top-left corner, or the collapse/expand command in the Options menu.
+Use the small outlined arrow at the right end of the Zoom row, or the collapse/expand command in the Options menu.
 The shortcut is `Ctrl+Shift+Space` on Windows and `Cmd+Shift+Space` on macOS.
 The compact row keeps Play/Stop, Process, all four metrics, and a smaller waveform visible.
 Other controls are hidden but retain their settings.
@@ -129,7 +129,8 @@ These preferences do not add controls to the main preview workspace.
 
 ### Normalization
 
-Select files, choose a mode and target, then normalize from the results context menu.
+Select files, choose Peak or Loudness and the target, then press Normalize next to the target,
+or normalize from the results context menu.
 
 - **Peak:** -12 to 0 dBFS, default 0 dBFS.
 - **Loudness:** -24 to -6 LUFS, default -14 LUFS, with a -0.3 dBTP ceiling to avoid clipping.
