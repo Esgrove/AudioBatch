@@ -33,6 +33,8 @@ The fixtures and the test plugin are described in [`fixtures/README.md`](fixture
 and [`test-plugin/README.md`](test-plugin/README.md).
 
 Build and test each version from its own directory, as described in its README.
+Each version explains how its parts work together in its `ARCHITECTURE.md`,
+[`cpp/ARCHITECTURE.md`](cpp/ARCHITECTURE.md) and [`rust/ARCHITECTURE.md`](rust/ARCHITECTURE.md).
 
 ## Scripts
 

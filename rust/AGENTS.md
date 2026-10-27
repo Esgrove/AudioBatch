@@ -51,6 +51,9 @@ Audio Unit plugins are only hosted by the C++ application.
 
 ## Workspace Layout
 
+[`ARCHITECTURE.md`](ARCHITECTURE.md) explains how the parts work together, with charts.
+This section lists the files.
+
 `rust/Cargo.toml` is a virtual workspace.
 Shared package metadata, dependency versions, and lints are defined once there,
 and every crate inherits them with `.workspace = true`.

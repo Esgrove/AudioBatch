@@ -22,6 +22,9 @@ The CLI takes the same arguments and prints the same output as the C++ CLI, so t
 - `crates/gui`: the AudioBatchRs app, built on gpui-kit
 - `crates/test-fixtures`: locates the shared test fixtures in `../fixtures`
 
+[`ARCHITECTURE.md`](ARCHITECTURE.md) explains how the crates work together,
+with the threads, the analysis and processing pipelines, the preview, and VST3 hosting.
+
 ## Build
 
 Run the commands from this directory.

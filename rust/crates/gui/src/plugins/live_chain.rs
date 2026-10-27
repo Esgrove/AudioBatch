@@ -1,8 +1,10 @@
 //! The plugin chain the user edits, with a live instance for each slot.
 //!
-//! Each slot gets an instance as soon as it is added or loaded,
-//! prepared for stereo realtime processing at the preview rate,
+//! A slot gets an instance prepared for stereo realtime processing at the preview rate
+//! when it is added or a preset replaces the chain,
 //! so the chain window can show its latency and the editor and the preview can use it.
+//! The slots of the chain restored at startup create their instances when first needed:
+//! when the preview plays through the chain, an editor opens, or the chain window shows them.
 //! Slots are referred to by a `SlotId` that is never reused,
 //! so an id held by a window or an event cannot point at another slot after the chain changed.
 //! A slot whose plugin cannot be loaded keeps its saved settings and shows its error,
