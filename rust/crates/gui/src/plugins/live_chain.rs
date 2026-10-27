@@ -46,6 +46,9 @@ pub struct LiveSlot {
     latency_samples: u32,
     /// Why the plugin could not be loaded or prepared.
     error: Option<String>,
+    /// True once loading the plugin was tried.
+    /// The chain restored at startup loads its plugins only when they are first needed, like the C++ application.
+    load_attempted: bool,
 }
 
 /// The plugin chain the user edits, saved to the chain file.
@@ -108,6 +111,18 @@ impl LiveSlot {
         self.instance.is_some()
     }
 
+    /// Loads the plugin with the slot's saved settings and prepares it at a rate.
+    fn load(&mut self, ui: &UiThread, dispatcher: &UiDispatcher, sample_rate: u32) {
+        self.load_attempted = true;
+        match load_instance(ui, dispatcher, &self.slot) {
+            Ok(instance) => {
+                self.instance = Some(instance);
+                self.prepare(ui, sample_rate);
+            }
+            Err(error) => self.error = Some(format!("{error:#}")),
+        }
+    }
+
     /// Prepares the instance for stereo realtime processing at a rate, and reads its latency.
     fn prepare(&mut self, ui: &UiThread, sample_rate: u32) {
         let Some(instance) = &mut self.instance else {
@@ -150,21 +165,36 @@ impl LiveChain {
         }
     }
 
-    /// Loads the chain saved in `path` and creates its instances.
+    /// Loads the chain saved in `path`, without loading its plugins yet.
+    /// `load_slots` and `open_editor` load them when the preview, the Plugin Chain window, or an editor needs them.
     /// A chain file that cannot be read gives an empty chain and the error,
     /// and one that cannot be parsed is moved aside first, so saving the empty chain cannot destroy it.
     #[must_use]
-    pub fn load(ui: &UiThread, path: PathBuf, dispatcher: UiDispatcher, sample_rate: u32) -> (Self, Option<String>) {
+    pub fn load(path: PathBuf, dispatcher: UiDispatcher, sample_rate: u32) -> (Self, Option<String>) {
         let (saved, error) = match PluginChain::load_recovering(&path) {
             Ok((saved, message)) => (saved, message),
             Err(error) => (PluginChain::default(), Some(format!("{error:#}"))),
         };
         let mut chain = Self::new(path, dispatcher, sample_rate);
         for slot in saved.slots {
-            let live = chain.create_slot(ui, slot);
+            let live = chain.new_slot(slot);
             chain.slots.push(live);
         }
         (chain, error)
+    }
+
+    /// Loads and prepares the plugins of the slots that have not been loaded yet, only the enabled ones when asked.
+    /// Returns true when it loaded any.
+    pub fn load_slots(&mut self, ui: &UiThread, enabled_only: bool) -> bool {
+        let sample_rate = self.sample_rate;
+        let mut loaded = false;
+        for slot in &mut self.slots {
+            if !slot.load_attempted && (slot.is_enabled() || !enabled_only) {
+                slot.load(ui, &self.dispatcher, sample_rate);
+                loaded = true;
+            }
+        }
+        loaded
     }
 
     /// Returns the slots in processing order.
@@ -391,6 +421,12 @@ impl LiveChain {
             editor.show(ui);
             return Ok(());
         }
+        if !slot.load_attempted {
+            slot.load(ui, &self.dispatcher, self.sample_rate);
+        }
+        if let Some(error) = &slot.error {
+            anyhow::bail!("{error}");
+        }
         let instance = slot.instance.as_ref().context("The plugin is not loaded")?;
         slot.editor = Some(EditorWindow::open(ui, instance, &slot.slot.plugin.name, owner)?);
         Ok(())
@@ -436,24 +472,24 @@ impl LiveChain {
 
     /// Creates the live slot of a saved slot, with a new id, and loads and prepares its instance.
     fn create_slot(&mut self, ui: &UiThread, slot: ChainSlot) -> LiveSlot {
+        let mut live = self.new_slot(slot);
+        live.load(ui, &self.dispatcher, self.sample_rate);
+        live
+    }
+
+    /// Creates the live slot of a saved slot, with a new id, without loading its plugin yet.
+    const fn new_slot(&mut self, slot: ChainSlot) -> LiveSlot {
         let id = SlotId(self.next_id);
         self.next_id += 1;
-        let mut live = LiveSlot {
+        LiveSlot {
             id,
             slot,
             editor: None,
             instance: None,
             latency_samples: 0,
             error: None,
-        };
-        match load_instance(ui, &self.dispatcher, &live.slot) {
-            Ok(instance) => {
-                live.instance = Some(instance);
-                live.prepare(ui, self.sample_rate);
-            }
-            Err(error) => live.error = Some(format!("{error:#}")),
+            load_attempted: false,
         }
-        live
     }
 }
 
@@ -508,6 +544,7 @@ mod test_slots {
             instance: None,
             latency_samples: 100,
             error: Some(String::from("Missing")),
+            load_attempted: true,
         });
         id
     }
@@ -639,5 +676,52 @@ mod test_replace {
         assert_eq!(errors, 2);
         assert_eq!(saved, expected);
         assert_eq!(preset_name.as_deref(), Some("Wide"));
+    }
+
+    #[test]
+    fn a_restored_chain_loads_its_plugins_only_when_they_are_needed() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("plugin-chain.json");
+        PluginChain {
+            slots: vec![
+                missing_slot("Width", b"wide", false),
+                missing_slot("Gain", b"loud", true),
+            ],
+        }
+        .save_to(&path)
+        .expect("saved");
+        let (dispatcher_for_chain, _jobs) = ui_channel();
+        let errors = |chain: &LiveChain| chain.slots().iter().filter(|slot| slot.error().is_some()).count();
+        let result = dispatcher()
+            .call(
+                move |ui| {
+                    let (mut chain, error) = LiveChain::load(path, dispatcher_for_chain, 48_000);
+                    let errors_after_load = errors(&chain);
+                    let enabled_loaded = chain.load_slots(ui, true);
+                    let errors_after_enabled = errors(&chain);
+                    let all_loaded = chain.load_slots(ui, false);
+                    let again = chain.load_slots(ui, false);
+                    (
+                        error,
+                        errors_after_load,
+                        enabled_loaded,
+                        errors_after_enabled,
+                        all_loaded,
+                        errors(&chain),
+                        again,
+                    )
+                },
+                &|| false,
+            )
+            .expect("the test UI thread runs the job");
+        let (error, errors_after_load, enabled_loaded, errors_after_enabled, all_loaded, errors_after_all, again) =
+            result;
+        assert_eq!(error, None);
+        assert_eq!(errors_after_load, 0);
+        assert!(enabled_loaded);
+        assert_eq!(errors_after_enabled, 1);
+        assert!(all_loaded);
+        assert_eq!(errors_after_all, 2);
+        assert!(!again);
     }
 }

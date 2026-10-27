@@ -30,14 +30,18 @@ impl AppView {
     /// or the instances are not yet prepared for the player's rate, which the next tick does.
     /// An enabled plugin that is not ready turns the preview off with its error.
     pub(super) fn refresh_plugin_preview(&mut self, cx: &mut Context<Self>) {
+        let Some(ui) = UiThread::current() else {
+            return;
+        };
+        // The enabled plugins load the first time the preview needs them.
+        if self.settings.preview_plugin_chain {
+            self.plugins.chain.load_slots(&ui, true);
+        }
         let Some(player) = &mut self.player else {
             self.plugins.preview.detached();
             return;
         };
         player.set_latency_compensation(self.settings.compensate_preview_latency);
-        let Some(ui) = UiThread::current() else {
-            return;
-        };
         let chain = if self.settings.preview_plugin_chain && self.plugins.chain.sample_rate() == player.output_rate() {
             self.plugins.chain.preview_chain(&ui)
         } else {

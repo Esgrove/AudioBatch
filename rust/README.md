@@ -249,6 +249,8 @@ Instruments are listed by scans but cannot be added to the chain.
   Plugins > Edit Chain… opens the Plugin Chain window, which enables, reorders, removes,
   and opens the editor of each plugin, and shows the latency of each plugin and of the whole chain.
   The chain and the plugins' settings are saved after every change, when an editor closes, and on quit.
+  Like the C++ version, the saved chain's plugins load only when first needed:
+  when the preview plays through the chain, when the Plugin Chain window opens, or when an editor opens.
 - The Presets row of the Plugin Chain window saves the chain under a name,
   with the plugins, their order, which ones are enabled, and their settings,
   and lists the saved presets, which load as soon as one is picked, like in the C++ version, or can be deleted.
