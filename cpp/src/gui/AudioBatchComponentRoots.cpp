@@ -98,7 +98,7 @@ void AudioBatchComponent::setRoots(const juce::Array<juce::File>& folders)
     }
 
     updateCurrentRootLabel();
-    refreshAnalysis(false);
+    refreshAnalysis(AnalysisRows::replace);
 }
 
 /// Appends folders to the root folders and analyzes them without clearing the current results.
@@ -148,7 +148,7 @@ void AudioBatchComponent::addRoots(const juce::Array<juce::File>& folders)
         }
     }
 
-    startAnalysis(existingRoots, true, false, false);
+    startAnalysis(existingRoots, true, false, AnalysisRows::add);
 }
 
 /// Shows the root folders on the left of the status bar:
@@ -173,10 +173,11 @@ void AudioBatchComponent::updateCurrentRootLabel()
     statusBar.setPath(labelText, rootPaths.joinIntoString("\n"));
 }
 
-/// Re-runs analysis for all current root folders.
+/// Scans the root folders again, analyzing only new and changed files and keeping the rows of the others,
+/// like the Rust version. Re-analyze Selected is the action that ignores the cache.
 void AudioBatchComponent::rescanCurrentRoot()
 {
-    refreshAnalysis(true);
+    refreshAnalysis(AnalysisRows::sync);
 }
 
 /// Opens dropped paths, appending dropped directories to the root folders when Shift is held.
@@ -229,11 +230,12 @@ void AudioBatchComponent::openPaths(const juce::StringArray& paths, const bool a
     }
 
     utils::logInfo("Opening {} files", files.size());
-    startAnalysis(files, false, false, false);
+    startAnalysis(files, false, false, AnalysisRows::add);
 }
 
-/// Re-analyzes all root folders that still exist, or the files already in the table when no root folder has been set.
-void AudioBatchComponent::refreshAnalysis(const bool forceRefresh)
+/// Analyzes all root folders that still exist, or the files already in the table when no root folder has been set.
+/// Cached results of unchanged files are used.
+void AudioBatchComponent::refreshAnalysis(const AnalysisRows rows)
 {
     juce::Array<juce::File> existingRoots;
     for (const auto& root : currentRoots) {
@@ -243,11 +245,11 @@ void AudioBatchComponent::refreshAnalysis(const bool forceRefresh)
     }
 
     if (!existingRoots.isEmpty()) {
-        startAnalysis(existingRoots, true, forceRefresh, true);
+        startAnalysis(existingRoots, true, false, rows);
         return;
     }
 
-    // No root directory set, so re-analyze individual files already in the results table.
+    // No root directory set, so analyze the individual files already in the results table.
     juce::Array<juce::File> existingFiles;
     for (const auto& record : analysisResults) {
         if (record.file.existsAsFile()) {
@@ -259,7 +261,7 @@ void AudioBatchComponent::refreshAnalysis(const bool forceRefresh)
         return;
     }
 
-    startAnalysis(existingFiles, false, forceRefresh, true);
+    startAnalysis(existingFiles, false, false, rows);
 }
 
 /// Lets rows dragged out of the application drop as file copies into other applications,

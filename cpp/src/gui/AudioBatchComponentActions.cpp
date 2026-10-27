@@ -67,7 +67,7 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
     }
 
     if (key == juce::KeyPress::F5Key) {
-        refreshAnalysis(true);
+        rescanCurrentRoot();
         return true;
     }
 
@@ -143,7 +143,7 @@ void AudioBatchComponent::reanalyzeSelectedRecords()
         return;
     }
 
-    startAnalysis(selectedFiles, false, true, false);
+    startAnalysis(selectedFiles, false, true, AnalysisRows::add);
 }
 
 /// Shows which file types can be normalized in the current build.

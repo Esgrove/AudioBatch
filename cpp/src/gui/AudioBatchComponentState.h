@@ -34,6 +34,16 @@ struct AudioPreviewPreferences {
     double loudnessGraphMaximum {defaultLoudnessGraphMaximum};
 };
 
+/// What an analysis run does with the rows already in the table.
+enum class AnalysisRows : std::uint8_t {
+    /// Adds the files of the run to the rows and updates the rows of files it analyzes again.
+    add,
+    /// Clears the table first, for a run over new root folders.
+    replace,
+    /// Keeps the rows of the files the run finds and drops the others, for a rescan.
+    sync,
+};
+
 /// No analysis, normalization, or plugin processing is running.
 struct IdleWork {};
 
@@ -64,7 +74,8 @@ struct AnalyzingWork {
     /// True once the run's plan arrived, so the status shows progress instead of the folder scan.
     bool planReceived {false};
 
-    /// True when the run replaces the results list, which picks the message shown when no files are found.
+    /// True when the files of the run make up the whole results list,
+    /// which drops the rows of other files when the plan arrives and picks the message shown when no files are found.
     bool replacesResults {false};
 };
 
