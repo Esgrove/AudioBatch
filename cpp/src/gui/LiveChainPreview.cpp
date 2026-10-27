@@ -48,7 +48,7 @@ bool LiveChain::prepareLiveEntry(LiveSlot& entry)
     }
     auto& plugin = *entry.instance;
     plugin.setNonRealtime(false);
-    if (!plugin_processing::configurePluginChannels(plugin, previewChannels, previewSampleRate, previewBlockSize)) {
+    if (!plugin_processing::configurePluginChannels(plugin, previewChannels)) {
         entry.preparationError = "The plugin does not support mono or stereo preview";
     } else if (juce::jmax(plugin.getTotalNumInputChannels(), plugin.getTotalNumOutputChannels()) >= 32) {
         entry.preparationError = "The plugin exposes too many auxiliary channels for real-time preview";

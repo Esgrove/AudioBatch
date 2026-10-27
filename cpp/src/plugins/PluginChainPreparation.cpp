@@ -77,15 +77,11 @@ void refreshAudioUnitLatency(juce::AudioPluginInstance& plugin, const double sam
 }  // namespace
 
 /// Reconfigures the plugin's main input and output buses to match the file when possible.
-/// We preserve the plugin's existing bus count and only override the main bus channel set,
-/// because some plugins have sidechain or aux buses that should be left alone.
-/// If that fails we fall back through several common configurations.
-bool configurePluginChannels(
-    juce::AudioPluginInstance& plugin,
-    const int numChannels,
-    const double sampleRate,
-    const int blockSize
-)
+/// The plugin's existing bus count is kept and only the main bus channel set is changed,
+/// because some plugins have sidechain or aux buses that must be left alone.
+/// A mono file falls back to a stereo layout, since plenty of effect plugins are stereo-only.
+/// Returns false when the plugin accepts neither, and leaves its layout unchanged then.
+bool configurePluginChannels(juce::AudioPluginInstance& plugin, const int numChannels)
 {
     auto const trySetMainBusChannels = [&plugin](const juce::AudioChannelSet& channelSet) {
         auto layout = plugin.getBusesLayout();
@@ -104,30 +100,11 @@ bool configurePluginChannels(
         return plugin.checkBusesLayoutSupported(layout) && plugin.setBusesLayout(layout);
     };
 
-    bool layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::canonicalChannelSet(numChannels));
-
-    if (!layoutConfigured && numChannels == 2) {
-        layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::stereo());
+    if (trySetMainBusChannels(juce::AudioChannelSet::canonicalChannelSet(numChannels))) {
+        return true;
     }
 
-    if (!layoutConfigured && numChannels == 1) {
-        layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::mono());
-        // Plenty of effect plugins are stereo-only.
-        // Let mono files run through a stereo configuration in that case.
-        if (!layoutConfigured) {
-            layoutConfigured = trySetMainBusChannels(juce::AudioChannelSet::stereo());
-        }
-    }
-
-    if (!layoutConfigured && numChannels <= 2) {
-        // Last resort: ask the processor to accept the channel counts directly.
-        // Some plugins do not honor setBusesLayout but still process correctly if play config details are set.
-        plugin.setPlayConfigDetails(numChannels, numChannels, sampleRate, blockSize);
-        layoutConfigured
-            = plugin.getTotalNumInputChannels() >= numChannels && plugin.getTotalNumOutputChannels() >= numChannels;
-    }
-
-    return layoutConfigured;
+    return numChannels == 1 && trySetMainBusChannels(juce::AudioChannelSet::stereo());
 }
 
 /// Bounds an effect's tail so infinite tails cannot keep either preview or offline rendering alive indefinitely.
@@ -209,7 +186,7 @@ ChainPreparation prepareChain(
     for (std::size_t pluginIndex = 0; pluginIndex < chainInstances.size(); ++pluginIndex) {
         auto* plugin = chainInstances[pluginIndex];
 
-        if (!configurePluginChannels(*plugin, numChannels, sampleRate, processingBlockSize)) {
+        if (!configurePluginChannels(*plugin, numChannels)) {
             releasePluginResources(chainInstances);
             preparation.errorMessage = utils::format(
                 "Plugin {} does not support the file's channel layout ({} channels)",
