@@ -73,6 +73,18 @@ struct LiveSlot {
     bool wasEditorOpen {false};
 };
 
+/// The saved presets that LiveChain listed last, kept until the presets folder changes.
+/// Adding, removing, or renaming a preset file changes the modification time of the folder,
+/// and saving or deleting a preset through the chain drops the list as well.
+struct PresetListCache {
+    /// The listed presets, sorted by name.
+    std::vector<ChainPresetInfo> presets;
+    /// The folder the presets were listed from.
+    juce::File directory;
+    /// Modification time of the folder when the presets were listed.
+    juce::Time directoryModified;
+};
+
 /// Owns the user's plugin chain and its editor and plugin manager windows.
 /// The chain is an ordered list of plugins that files are processed through in sequence.
 /// Not a visible component: callers display a single button (or menu item) that invokes showMenu().
@@ -201,6 +213,9 @@ private:
     /// Preset files of the presets submenu last built by createPresetsMenu, in menu id order.
     /// Mutable, because building a menu does not change the chain.
     mutable std::vector<juce::File> presetMenuFiles;
+    /// The presets getPresets listed last, or nothing before the first listing and after a save or delete.
+    /// Mutable, because listing the presets does not change the chain.
+    mutable std::optional<PresetListCache> presetList;
     std::vector<LiveSlot> chain;
 
     double previewSampleRate {utils::defaultSampleRate};
