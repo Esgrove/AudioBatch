@@ -279,7 +279,8 @@ Tests:
   Types, enums, aliases, constants, and data members keep their docs in the header.
 - Prefer full names instead of abbreviations in identifiers,
   for example `directories` instead of `dirs` and `description` instead of `desc`.
-  Established domain terms and API names (`midi`, `xml`, `id`, `dB`) are fine.
+  Established domain terms and API names (`midi`, `xml`, `id`, `dB`) are fine,
+  and so are `min` and `max`, which are common and unambiguous.
 - Avoid single character variable names.
   They are only allowed in for loops when it makes sense
   and it is clear what the variable is, for example a plain loop index.

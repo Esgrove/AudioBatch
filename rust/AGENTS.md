@@ -281,7 +281,7 @@ Module boundaries:
   `cargo run --bin audiobatch-rs -- -h`.
 - Use descriptive names. No single character variables, except `x` and `y` for plot and screen coordinates.
 - Prefer full names over abbreviations, for example `directories` instead of `dirs`.
-  Established domain terms such as `lufs`, `db`, and `id` are fine,
+  Established domain terms such as `lufs`, `db`, and `id` are fine, and so are the common `min` and `max`,
   and so are the names the frameworks use throughout, such as gpui's `cx` and `window` and clap's `args`.
 - Give every struct, enum, and function a docstring that explains what it does and why,
   including threading constraints and non-obvious behaviour.
