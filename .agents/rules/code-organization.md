@@ -1,6 +1,16 @@
+---
+description: Declaration order and file organization of the C++ sources
+globs: cpp/src/**,cpp/tests/**,test-plugin/src/**
+paths:
+  - "cpp/src/**"
+  - "cpp/tests/**"
+  - "test-plugin/src/**"
+alwaysApply: false
+---
+
 # Code organization
 
-These rules apply to every C++ source and header under `cpp/src/` and `cpp/tests/`.
+These rules apply to every C++ source and header under `cpp/src/`, `cpp/tests/`, and `test-plugin/src/`.
 Paths below are relative to `cpp/`, and `AGENTS.md` means `cpp/AGENTS.md`.
 
 ## Declaration order
@@ -50,7 +60,8 @@ Within a struct or class:
 - Include project headers by their path relative to `src/`, such as `#include "analysis/AudioAnalysis.h"`,
   also from within the same directory, and never with `../`.
 - Split a file that reaches about 1000 lines into focused parts by topic.
-  Each part should be a few hundred lines, with a shared internal header for constants and helpers used by several parts.
+  Each part should be a few hundred lines,
+  with a shared internal header for constants and helpers used by several parts.
 - Avoid very small files.
   Fold a tiny header or source into the file of the closest topic,
   or merge small related files into one.
@@ -60,7 +71,8 @@ Within a struct or class:
 - When a `.cpp` file exists for a header, document each function on its definition in the `.cpp`.
   Do not repeat the docstring on the declaration in the header.
 - The header keeps the file-level comment and docs for types, enums, aliases, constants and data members.
-- Code that has no `.cpp`, such as header-only files, inline functions, and templates, is documented where it is defined.
+- Code that has no `.cpp`, such as header-only files, inline functions, and templates,
+  is documented where it is defined.
 - Moved comments follow the semantic line break rules in `AGENTS.md`.
 
 ## Compile-time evaluation
