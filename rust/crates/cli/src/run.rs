@@ -3,7 +3,7 @@
 //!
 //! Log messages and failures go to stderr, so stdout only carries the results.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -257,6 +257,7 @@ fn file_name_of(path: &Path) -> String {
 /// Inside a folder those files are skipped on purpose, but a file named on the command line was asked for,
 /// so skipping it silently would report success for work that was never done.
 fn find_skipped_inputs(input_paths: &[PathBuf], records: &[AnalysisRecord]) -> Vec<String> {
+    let analyzed: HashSet<&Path> = records.iter().map(|record| record.path.as_path()).collect();
     let mut errors = Vec::new();
     for input in input_paths {
         let full_path = normalize_path(input);
@@ -264,7 +265,7 @@ fn find_skipped_inputs(input_paths: &[PathBuf], records: &[AnalysisRecord]) -> V
             errors.push(format!("Input not found: \"{}\"", full_path.display()));
             continue;
         }
-        if input.is_dir() || records.iter().any(|record| record.path == full_path) {
+        if input.is_dir() || analyzed.contains(full_path.as_path()) {
             continue;
         }
         let hidden = input
