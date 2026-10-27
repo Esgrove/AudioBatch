@@ -24,6 +24,7 @@ use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use crate::args::{CliArgs, OutputFormat};
 use crate::output::{format_csv, format_json, format_table};
+use crate::{write_error, write_warning};
 
 /// Exit code when every file was analyzed.
 pub const EXIT_SUCCESS: u8 = 0;
@@ -60,7 +61,7 @@ pub fn run_analysis(
     let normalization = match args.normalization() {
         Ok(normalization) => normalization.map(|options| NormalizationOptions { dispose, ..options }),
         Err(error) => {
-            writeln!(log, "{}", format!("Error: {error}").red())?;
+            write_error!(log, "{error}")?;
             return Ok(EXIT_USAGE_ERROR);
         }
     };
@@ -178,7 +179,7 @@ fn normalize_records(
             && output.path != record.path
             && let Err(error) = cache.remove_analysis(&record.path)
         {
-            writeln!(log, "{}", format!("Could not update the cache: {error:#}").yellow())?;
+            write_warning!(log, "Could not update the cache: {error:#}")?;
         }
         match result.outcome {
             NormalizationOutcome::Failed { error } => {
@@ -193,14 +194,10 @@ fn normalize_records(
             }
             NormalizationOutcome::Succeeded { output, notice } => {
                 if let Some(notice) = notice {
-                    writeln!(
-                        log,
-                        "{}",
-                        format!("Normalization warning: \"{}\", {notice}", output.path.display()).yellow()
-                    )?;
+                    write_warning!(log, "Normalized \"{}\", {notice}", output.path.display())?;
                 }
                 if let Err(error) = cache.store_analysis(&output) {
-                    writeln!(log, "{}", format!("Could not update the cache: {error:#}").yellow())?;
+                    write_warning!(log, "Could not update the cache: {error:#}")?;
                 }
                 normalized.records.push(output);
             }

@@ -13,12 +13,12 @@ use audiobatch_cli::args::{CliArgs, CliCommand, PluginListing};
 use audiobatch_cli::completion::generate_shell_completion;
 use audiobatch_cli::plugin_list::{PluginListContext, run_plugin_list};
 use audiobatch_cli::run::{EXIT_USAGE_ERROR, run_analysis};
+use audiobatch_cli::{write_error, write_warning};
 use audiobatch_core::AnalysisCache;
 use audiobatch_core::output_file::trash_disposer;
 use audiobatch_plugins::{PluginDataPaths, WorkerCommand, is_scan_worker_invocation, run_scan_worker};
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
-use colored::Colorize;
 use indicatif::ProgressDrawTarget;
 
 /// Parses the arguments, then prints shell completions, lists plugins, or analyzes and normalizes the given paths.
@@ -61,7 +61,7 @@ fn main() -> ExitCode {
             ) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(error) => {
-                    let _ = writeln!(log, "{}", format!("Error: {error:#}").red());
+                    let _ = write_error!(&mut log, "{error:#}");
                     ExitCode::from(EXIT_USAGE_ERROR)
                 }
             };
@@ -70,7 +70,7 @@ fn main() -> ExitCode {
             return match list_plugins(listing, &mut output, &mut log) {
                 Ok(code) => ExitCode::from(code),
                 Err(error) => {
-                    let _ = writeln!(log, "{}", format!("Error: {error:#}").red());
+                    let _ = write_error!(&mut log, "{error:#}");
                     ExitCode::from(EXIT_USAGE_ERROR)
                 }
             };
@@ -80,8 +80,10 @@ fn main() -> ExitCode {
 
     // The analysis still works without the cache, it only has to read every file again on the next run.
     let cache = AnalysisCache::open_default().unwrap_or_else(|error| {
-        let warning = format!("Could not open the analysis cache, results are not cached: {error:#}");
-        let _ = writeln!(log, "{}", warning.yellow());
+        let _ = write_warning!(
+            &mut log,
+            "Could not open the analysis cache, results are not cached: {error:#}"
+        );
         Arc::new(AnalysisCache::in_memory())
     });
 
@@ -96,7 +98,7 @@ fn main() -> ExitCode {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
             // Writing fails when stdout is closed early, for example when piping into head.
-            let _ = writeln!(log, "{}", format!("Error: {error:#}").red());
+            let _ = write_error!(&mut log, "{error:#}");
             ExitCode::from(EXIT_USAGE_ERROR)
         }
     }
