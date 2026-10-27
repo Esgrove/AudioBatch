@@ -363,10 +363,17 @@ void ThumbnailComponent::mouseDoubleClick(const juce::MouseEvent& /*event*/)
 }
 
 /// Scrubs the transport to the time under the cursor while the mouse is held down.
+/// Playback first fades out, and the position follows the cursor from the drag events after the fade has rendered,
+/// since moving it during the fade would cut the fade off with a click.
 void ThumbnailComponent::mouseDrag(const juce::MouseEvent& event)
 {
-    if (canMoveTransport()) {
+    if (!canMoveTransport()) {
+        return;
+    }
+    if (transportSource.isPlaying()) {
         transportSource.stop();
+    }
+    if (!transportSource.isStopping()) {
         transportSource.setPosition(juce::jmax(0.0, xToTime(static_cast<float>(event.x))));
     }
 }

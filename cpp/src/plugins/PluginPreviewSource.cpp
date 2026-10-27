@@ -188,7 +188,7 @@ void PluginPreviewSource::copyOutput(
         info.buffer->addFrom(0, info.startSample + offset, scratch, 1, 0, samples);
         info.buffer->applyGain(0, info.startSample + offset, samples, 0.5f);
     }
-    if (wet && transitionSamples < transitionLengthSamples) {
+    if (transitionSamples < transitionLengthSamples) {
         const auto rampSamples = juce::jmin(samples, transitionLengthSamples - transitionSamples);
         info.buffer->applyGainRamp(
             info.startSample + offset,

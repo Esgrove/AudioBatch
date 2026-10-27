@@ -446,6 +446,13 @@ bool AudioPreviewPlayer::isPlaying() const
     return startWhenInitialPositionReady || publishedPlaying.load();
 }
 
+/// Reports a stop whose fade-out the audio callback has not finished rendering yet.
+/// Reads the published state, so mouse handlers never take the rendering lock.
+bool AudioPreviewPlayer::isStopping() const
+{
+    return publishedStopping.load();
+}
+
 /// Reports the actual wet-path setting, including a failed attempt to enable a plugin.
 bool AudioPreviewPlayer::isPluginPreviewEnabled() const noexcept
 {
