@@ -202,6 +202,7 @@ and the output device with its sample rate and buffer size in samples.
   Files the run has not committed keep their rows, and Clear All Files stops any run.
 - File > Rescan (F5) picks up new and changed files,
   and the File menu also re-analyzes, removes, trashes, or reveals the selected file.
+  Moving a file to the trash asks first, and Command or Control with Shift and Backspace skips the question.
 - Options > Show Loudness Graph, or the same option in the settings window,
   draws the short-term loudness over the waveform, and Options > Output Device switches the audio device.
 - Like the C++ version, the audio device is open only while playing.
