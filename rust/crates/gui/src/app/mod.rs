@@ -174,8 +174,8 @@ pub struct AppView {
     analysis_task: Option<Task<()>>,
     /// Drives the stress test, present only in demo mode.
     demo_task: Option<Task<()>>,
-    /// File whose custom gain the mouse wheel changed, written to the cache once the wheel rests.
-    pending_gain_path: Option<PathBuf>,
+    /// Files whose custom gain the mouse wheel changed, written to the cache once the wheel rests.
+    pending_gain_paths: Vec<PathBuf>,
     /// Writes the pending gain after the delay. Replacing it restarts the delay.
     gain_store_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
@@ -233,6 +233,7 @@ impl AppView {
             .sortable(true)
             .col_resizable(true)
             .row_selectable(true)
+            .select_on_modifier_click(false)
         });
         let waveform = cx.new(|_| WaveformView::new());
         let settings = GuiSettings::load();
@@ -311,7 +312,7 @@ impl AppView {
             autoplay_pending: options.autoplay,
             analysis_task: None,
             demo_task: None,
-            pending_gain_path: None,
+            pending_gain_paths: Vec::new(),
             gain_store_task: None,
             _subscriptions: subscriptions,
             _player_poll_task: player_poll_task,
@@ -327,7 +328,7 @@ impl AppView {
         view
     }
 
-    /// Clears the custom gain of the selected file, in the table and in the cache.
+    /// Clears the custom gain of the selected files, in the table and in the cache.
     pub(super) fn clear_selected_gain(&self, cx: &mut Context<Self>) {
         self.change_selected_gain(DEFAULT_GAIN_DB, cx);
         self.store_selected_gain(cx);
@@ -650,8 +651,45 @@ impl AppView {
         };
         let path = table.read(cx).delegate().row(index).map(|row| row.path.clone());
         if let Some(path) = path {
+            // A plain click on another row selects only that file.
+            // The table also selects the row of the same file again after a sort, which keeps the other selected files.
+            if self.selected.as_deref() != Some(path.as_path()) {
+                table.update(cx, |state, _| state.delegate_mut().select_only(Some(path.clone())));
+            }
             self.select_path(&path, play, cx);
         }
+    }
+
+    /// Returns the selected files, the file the preview plays first.
+    pub(super) fn selected_paths(&self, cx: &App) -> Vec<PathBuf> {
+        self.table.read(cx).delegate().selected_paths()
+    }
+
+    /// Returns the analyzed records of the selected files, the file the preview plays first.
+    pub(super) fn selected_ready_records(&self, cx: &App) -> Vec<AnalysisRecord> {
+        let delegate = self.table.read(cx).delegate();
+        delegate
+            .selected_paths()
+            .iter()
+            .filter_map(|path| delegate.row_for(path).and_then(|row| row.ready_record()).cloned())
+            .collect()
+    }
+
+    /// Selects every file in the list, keeping the file the preview plays, or the first file when none is selected.
+    pub(super) fn select_all(&mut self, cx: &mut Context<Self>) {
+        if self.selected.is_none() {
+            let first = self.table.read(cx).delegate().row(0).map(|row| row.path.clone());
+            let Some(first) = first else {
+                return;
+            };
+            self.table.update(cx, |state, cx| state.set_selected_row(0, cx));
+            self.select_path(&first, false, cx);
+        }
+        self.table.update(cx, |state, cx| {
+            state.delegate_mut().select_all();
+            cx.notify();
+        });
+        cx.notify();
     }
 
     /// Handles seeks, wheel zoom, and wheel gain from the waveform.
@@ -700,12 +738,18 @@ impl AppView {
                 .update(cx, |waveform, cx| waveform.set_display_gain(linear, cx));
             return;
         }
-        let Some(selected) = self.selected.clone() else {
+        let selected = self.selected_paths(cx);
+        if selected.is_empty() {
             return;
-        };
+        }
+        // Like the C++ application, the gain applies to every selected file.
         let gain = custom_gain_from_decibels(decibels);
         let changed = self.table.update(cx, |state, cx| {
-            let changed = state.delegate_mut().set_custom_gain(&selected, gain);
+            let delegate = state.delegate_mut();
+            let mut changed = false;
+            for path in &selected {
+                changed |= delegate.set_custom_gain(path, gain);
+            }
             if changed {
                 cx.notify();
             }
@@ -716,10 +760,10 @@ impl AppView {
         }
     }
 
-    /// Stores the custom gain of the selected file in the cache.
+    /// Stores the custom gain of the selected files in the cache.
     fn store_selected_gain(&self, cx: &App) {
-        if let (Some(selected), Some(record)) = (&self.selected, self.selected_record(cx)) {
-            self.store_custom_gain(selected, record.custom_gain_db);
+        for record in self.selected_ready_records(cx) {
+            self.store_custom_gain(&record.path, record.custom_gain_db);
         }
     }
 
@@ -727,33 +771,32 @@ impl AppView {
     /// so a wheel gesture does not write to the database on the UI thread for every step.
     /// A pending gain of another file is written right away.
     fn schedule_gain_store(&mut self, cx: &Context<Self>) {
-        let Some(selected) = self.selected.clone() else {
+        let selected = self.selected_paths(cx);
+        if selected.is_empty() {
             return;
-        };
-        if self.pending_gain_path.as_ref().is_some_and(|path| *path != selected) {
+        }
+        if self.pending_gain_paths != selected {
             self.flush_gain_store(cx);
         }
-        self.pending_gain_path = Some(selected);
+        self.pending_gain_paths = selected;
         self.gain_store_task = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(GAIN_STORE_DELAY).await;
             let _ = this.update(cx, |view, cx| view.flush_gain_store(cx));
         }));
     }
 
-    /// Writes the current custom gain of the file the mouse wheel changed, if any, to the cache.
+    /// Writes the current custom gain of the files the mouse wheel changed, if any, to the cache.
     fn flush_gain_store(&mut self, cx: &App) {
-        let Some(path) = self.pending_gain_path.take() else {
-            return;
-        };
-        let gain = self
-            .table
-            .read(cx)
-            .delegate()
-            .row_for(&path)
-            .and_then(|row| row.ready_record())
-            .map(|record| record.custom_gain_db);
-        if let Some(gain) = gain {
-            self.store_custom_gain(&path, gain);
+        let paths = std::mem::take(&mut self.pending_gain_paths);
+        let delegate = self.table.read(cx).delegate();
+        for path in paths {
+            let gain = delegate
+                .row_for(&path)
+                .and_then(|row| row.ready_record())
+                .map(|record| record.custom_gain_db);
+            if let Some(gain) = gain {
+                self.store_custom_gain(&path, gain);
+            }
         }
     }
 

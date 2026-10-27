@@ -10,7 +10,7 @@
 //! so lists of many thousands of files stay smooth.
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::f32::consts::{PI, TAU};
 use std::path::{Path, PathBuf};
 
@@ -24,8 +24,9 @@ use audiobatch_core::record::same_custom_gain;
 use audiobatch_core::sorting::{SortMode, compare_by_mode, compare_natural};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::{
-    App, Bounds, Context, InteractiveElement as _, IntoElement, ParentElement as _, PathBuilder, Pixels, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Window, canvas, div, point, px,
+    App, Bounds, Context, Div, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _,
+    PathBuilder, Pixels, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, canvas, div,
+    point, px, rgba,
 };
 
 use crate::theme::{MONO_FONT, color, palette, tooltip, white};
@@ -38,6 +39,9 @@ pub const HEADER_HEIGHT: f32 = 28.0;
 
 /// Font size of the cells.
 const CELL_FONT_SIZE: f32 = 14.0;
+
+/// Background of the rows selected besides the app's selected file, the colour the table gives its selected row.
+const SELECTION_BACKGROUND: u32 = 0x76A8_DA38;
 
 /// Font size of the column titles.
 const HEADER_FONT_SIZE: f32 = 14.0;
@@ -135,9 +139,12 @@ pub struct ResultsDelegate {
     /// Keys of the columns in display order, matching `columns`.
     order: Vec<ColumnKey>,
     sort: Option<(ColumnKey, ColumnSort)>,
-    /// File the app has selected.
+    /// File the app has selected, which the preview plays.
     /// The table keeps its selection by index, so a sort from the header selects this file's row again.
     selected: Option<PathBuf>,
+    /// Files selected besides `selected`, by Command or Control clicks, Shift clicks, and Select All.
+    /// Actions on the selection work on them too.
+    extra_selected: HashSet<PathBuf>,
     /// Width the Status column fills, which `fit_column` hands to the table.
     status_fill_width: Pixels,
 }
@@ -313,6 +320,7 @@ impl ResultsDelegate {
             order: COLUMNS.iter().map(|spec| spec.key).collect(),
             sort: None,
             selected: None,
+            extra_selected: HashSet::new(),
             status_fill_width: px(STATUS_MINIMUM_WIDTH),
         }
     }
@@ -374,12 +382,14 @@ impl ResultsDelegate {
             })
             .collect();
         self.sort_rows();
+        self.extra_selected.retain(|path| self.index.contains_key(path));
     }
 
     /// Replaces every row, for example with synthetic rows.
     pub fn set_rows(&mut self, rows: Vec<ResultRow>) {
         self.rows = rows;
         self.sort_rows();
+        self.extra_selected.retain(|path| self.index.contains_key(path));
     }
 
     /// Marks a listed file as waiting, for a run that works on only some of the files.
@@ -510,6 +520,7 @@ impl ResultsDelegate {
     pub fn remove(&mut self, path: &Path) -> Option<usize> {
         let index = self.index_of(path)?;
         self.rows.remove(index);
+        self.extra_selected.remove(path);
         self.rebuild_index();
         Some(index)
     }
@@ -537,14 +548,85 @@ impl ResultsDelegate {
     }
 
     /// Remembers the file the app has selected, so a sort from the header can select its row again.
+    /// The other selected files stay selected.
     pub fn set_selected_path(&mut self, path: Option<PathBuf>) {
+        if let Some(path) = &path {
+            self.extra_selected.remove(path);
+        }
+        if path.is_none() {
+            self.extra_selected.clear();
+        }
         self.selected = path;
+    }
+
+    /// Makes the file the only selected one, for a plain click on its row.
+    pub fn select_only(&mut self, path: Option<PathBuf>) {
+        self.extra_selected.clear();
+        self.selected = path;
+    }
+
+    /// Returns the selected files, the app's selected file first and the others in row order.
+    #[must_use]
+    pub fn selected_paths(&self) -> Vec<PathBuf> {
+        let extra = self
+            .rows
+            .iter()
+            .filter(|row| self.extra_selected.contains(&row.path))
+            .map(|row| row.path.clone());
+        self.selected.iter().cloned().chain(extra).collect()
+    }
+
+    /// Selects every row besides the app's selected file.
+    pub fn select_all(&mut self) {
+        self.extra_selected = self
+            .rows
+            .iter()
+            .map(|row| row.path.clone())
+            .filter(|path| self.selected.as_ref() != Some(path))
+            .collect();
+    }
+
+    /// Adds the row to the selection, or takes it out, for a Command or Control click.
+    /// The app's selected file stays selected, since the preview plays it.
+    pub fn toggle_row(&mut self, index: usize) {
+        let Some(path) = self.rows.get(index).map(|row| row.path.clone()) else {
+            return;
+        };
+        if self.selected.as_ref() == Some(&path) {
+            return;
+        }
+        if !self.extra_selected.remove(&path) {
+            self.extra_selected.insert(path);
+        }
+    }
+
+    /// Selects the rows from the app's selected file to the row, for a Shift click.
+    pub fn select_range_to(&mut self, index: usize) {
+        let Some(anchor) = self.selected.as_deref().and_then(|path| self.index_of(path)) else {
+            return;
+        };
+        let (first, last) = (anchor.min(index), anchor.max(index));
+        self.extra_selected = self
+            .rows
+            .get(first..=last)
+            .unwrap_or_default()
+            .iter()
+            .map(|row| row.path.clone())
+            .filter(|path| self.selected.as_ref() != Some(path))
+            .collect();
+    }
+
+    /// Returns true when the app has selected a file, which a Command, Control, or Shift click extends.
+    #[must_use]
+    pub const fn has_selection(&self) -> bool {
+        self.selected.is_some()
     }
 
     /// Removes every row.
     pub fn clear(&mut self) {
         self.rows.clear();
         self.index.clear();
+        self.extra_selected.clear();
     }
 
     /// Sorts the rows by the current sort column, or by path when none is chosen.
@@ -693,6 +775,47 @@ impl TableDelegate for ResultsDelegate {
             Some(spec) => title.tooltip(tooltip(spec.description)),
             None => title,
         }
+    }
+
+    /// Highlights the rows selected besides the app's selected file, which the table highlights itself,
+    /// and extends the selection on a Command or Control click and on a Shift click.
+    /// Without a selected file, the click selects its row like a plain one.
+    fn render_tr(
+        &mut self,
+        row_index: usize,
+        _window: &mut Window,
+        cx: &mut Context<TableState<Self>>,
+    ) -> Stateful<Div> {
+        let selected = self
+            .rows
+            .get(row_index)
+            .is_some_and(|row| self.extra_selected.contains(&row.path));
+        let row = div().id(("row", row_index));
+        let row = if selected {
+            row.bg(rgba(SELECTION_BACKGROUND))
+        } else {
+            row
+        };
+        row.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |state, event: &MouseDownEvent, _window, cx| {
+                let modifiers = event.modifiers;
+                let extends = modifiers.shift || modifiers.secondary(cx);
+                if !extends {
+                    return;
+                }
+                if !state.delegate().has_selection() {
+                    state.set_selected_row(row_index, cx);
+                    return;
+                }
+                if modifiers.shift {
+                    state.delegate_mut().select_range_to(row_index);
+                } else {
+                    state.delegate_mut().toggle_row(row_index);
+                }
+                cx.notify();
+            }),
+        )
     }
 
     fn render_td(
@@ -1027,6 +1150,73 @@ mod test_custom_gain {
         assert_eq!(compare_rows(&without, &lower, ColumnKey::Gain), Ordering::Less);
         assert_eq!(compare_rows(&lower, &higher, ColumnKey::Gain), Ordering::Less);
         assert_eq!(compare_rows(&higher, &without, ColumnKey::Gain), Ordering::Greater);
+    }
+}
+
+#[cfg(test)]
+mod test_selection {
+    use super::*;
+
+    /// Returns a delegate with pending rows for the paths, sorted by path.
+    fn delegate_with(paths: &[&str]) -> ResultsDelegate {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_files(&paths.iter().map(PathBuf::from).collect::<Vec<_>>());
+        delegate
+    }
+
+    fn selected(delegate: &ResultsDelegate) -> Vec<String> {
+        delegate
+            .selected_paths()
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn toggling_adds_and_removes_rows_but_keeps_the_selected_file() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav", "/c.wav"]);
+        delegate.select_only(Some(PathBuf::from("/b.wav")));
+        delegate.toggle_row(2);
+        assert_eq!(selected(&delegate), ["/b.wav", "/c.wav"]);
+        delegate.toggle_row(1);
+        assert_eq!(selected(&delegate), ["/b.wav", "/c.wav"]);
+        delegate.toggle_row(2);
+        assert_eq!(selected(&delegate), ["/b.wav"]);
+    }
+
+    #[test]
+    fn a_shift_click_selects_the_range_from_the_selected_file() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav", "/c.wav", "/d.wav"]);
+        delegate.select_only(Some(PathBuf::from("/c.wav")));
+        delegate.select_range_to(0);
+        assert_eq!(selected(&delegate), ["/c.wav", "/a.wav", "/b.wav"]);
+        delegate.select_range_to(3);
+        assert_eq!(selected(&delegate), ["/c.wav", "/d.wav"]);
+    }
+
+    #[test]
+    fn select_all_and_a_plain_click() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav", "/c.wav"]);
+        delegate.select_only(Some(PathBuf::from("/a.wav")));
+        delegate.select_all();
+        assert_eq!(selected(&delegate), ["/a.wav", "/b.wav", "/c.wav"]);
+        delegate.set_selected_path(Some(PathBuf::from("/a.wav")));
+        assert_eq!(selected(&delegate).len(), 3);
+        delegate.select_only(Some(PathBuf::from("/b.wav")));
+        assert_eq!(selected(&delegate), ["/b.wav"]);
+    }
+
+    #[test]
+    fn removed_and_vanished_rows_leave_the_selection() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav", "/c.wav"]);
+        delegate.select_only(Some(PathBuf::from("/a.wav")));
+        delegate.select_all();
+        delegate.remove(Path::new("/b.wav"));
+        assert_eq!(selected(&delegate), ["/a.wav", "/c.wav"]);
+        delegate.set_files(&[PathBuf::from("/a.wav")]);
+        assert_eq!(selected(&delegate), ["/a.wav"]);
+        delegate.set_selected_path(None);
+        assert_eq!(selected(&delegate), Vec::<String>::new());
     }
 }
 

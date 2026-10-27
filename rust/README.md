@@ -180,6 +180,10 @@ and the output device with its sample rate and buffer size in samples.
   while the shape still comes from the decoded audio, and other files are drawn in blue.
   Serato data is read from MP3, AIFF, WAV, and FLAC files.
   Double-click a row, press space, or use Play to play, and press escape to stop and return to the start.
+- Command or Control click adds a row to the selection or takes it out, Shift click selects a range,
+  and Command or Control and A, or File > Select All Files, selects every row.
+  The preview shows the file selected first, and the gain, normalizing, processing, re-analyzing,
+  removing, and trashing work on every selected file, like in the C++ version.
 - Drag a column header to reorder the columns, and hover it to see what the column shows and in which unit.
 - Click or drag on the waveform to seek.
   The wheel zooms around the playhead, and Command or Control with the wheel changes the input gain.

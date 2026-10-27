@@ -32,7 +32,7 @@ use crate::menus::{
     About, AddFiles, AddFolder, AddPluginToChain, CancelRun, ChooseFolder, ClearCustomGain, ClearList,
     ClearPluginChain, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
     OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected, RemoveSelected, Rescan,
-    RevealSelected, SaveChainPreset, SelectOutputDevice, StopPlayback, ToggleLoudnessGraph, TogglePlayback,
+    RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice, StopPlayback, ToggleLoudnessGraph, TogglePlayback,
     TogglePluginPreview, TogglePreviewLatencyCompensation, TrashSelected, TrashSelectedNow,
 };
 use crate::normalization::target_value_text;
@@ -312,6 +312,7 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &NormalizeAll, window, cx| view.normalize_all(window, cx)))
             .on_action(cx.listener(|view, _: &ClearCustomGain, _, cx| view.clear_selected_gain(cx)))
             .on_action(cx.listener(|view, _: &RemoveSelected, _, cx| view.remove_selected(cx)))
+            .on_action(cx.listener(|view, _: &SelectAll, _, cx| view.select_all(cx)))
             .on_action(cx.listener(|view, _: &TrashSelected, window, cx| view.trash_selected(true, window, cx)))
             .on_action(cx.listener(|view, _: &TrashSelectedNow, window, cx| view.trash_selected(false, window, cx)))
             .on_action(cx.listener(|view, _: &ClearList, _, cx| view.clear_list(cx)))
