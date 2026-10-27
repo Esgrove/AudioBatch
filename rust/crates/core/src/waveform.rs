@@ -10,10 +10,10 @@ use std::sync::Arc;
 
 /// Bucket count at which the builder merges neighbouring buckets.
 /// The finished overview has between half this and this many buckets per channel.
-const MAX_BUCKETS: usize = 8192;
+const MAXIMUM_BUCKETS: usize = 8192;
 
 /// Smallest bucket size in frames, used for very short files.
-const MIN_FRAMES_PER_BUCKET: u64 = 64;
+const MINIMUM_FRAMES_PER_BUCKET: u64 = 64;
 
 /// Scale between a sample in the range -1 to 1 and its 8-bit quantized value.
 const QUANTIZATION_SCALE: f32 = 127.0;
@@ -288,8 +288,8 @@ impl WaveformBuilder {
     #[must_use]
     pub fn new(channels: usize, expected_frames: Option<u64>) -> Self {
         let channels = channels.max(1);
-        let target = expected_frames.unwrap_or(0) / (MAX_BUCKETS as u64 / 2);
-        let frames_per_bucket = target.max(MIN_FRAMES_PER_BUCKET).next_power_of_two();
+        let target = expected_frames.unwrap_or(0) / (MAXIMUM_BUCKETS as u64 / 2);
+        let frames_per_bucket = target.max(MINIMUM_FRAMES_PER_BUCKET).next_power_of_two();
         Self {
             channels,
             frames_per_bucket,
@@ -360,7 +360,7 @@ impl WaveformBuilder {
             self.peaks.push(QuantizedPeak::from_range(minimum, maximum));
         }
         self.frames_in_bucket = 0;
-        if self.peaks.len() / self.channels >= MAX_BUCKETS {
+        if self.peaks.len() / self.channels >= MAXIMUM_BUCKETS {
             self.peaks = merge_bucket_pairs(&self.peaks, self.channels);
             self.frames_per_bucket *= 2;
         }
@@ -446,8 +446,8 @@ mod test_waveform {
             builder.push(&[&block, &block]);
         }
         let overview = builder.finish(44_100, 4096 * 2000);
-        assert!(overview.bucket_count() <= MAX_BUCKETS);
-        assert!(overview.bucket_count() >= MAX_BUCKETS / 4);
+        assert!(overview.bucket_count() <= MAXIMUM_BUCKETS);
+        assert!(overview.bucket_count() >= MAXIMUM_BUCKETS / 4);
         assert_eq!(overview.channels(), 2);
     }
 
