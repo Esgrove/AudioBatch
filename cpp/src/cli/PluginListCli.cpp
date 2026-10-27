@@ -306,13 +306,18 @@ void rescanPlugins(
 
     for (auto* format : formatManager.getFormats()) {
         const auto searchPath = juce::PluginListComponent::getLastSearchPath(settings, *format);
-        console::printStyled(
-            stderr,
-            fmt::emphasis::bold,
-            "Scanning {} plugins in {}\n",
-            formatLabel(format->getName()),
-            searchPath.toString()
-        );
+        // Audio Units are registered with the system instead of found in folders, so they have no search path.
+        if (searchPath.getNumPaths() > 0) {
+            console::printStyled(
+                stderr,
+                fmt::emphasis::bold,
+                "Scanning {} plugins in {}\n",
+                formatLabel(format->getName()),
+                searchPath.toString()
+            );
+        } else {
+            console::printStyled(stderr, fmt::emphasis::bold, "Scanning {} plugins\n", formatLabel(format->getName()));
+        }
 
         // Plugins that are already listed and unchanged are not loaded again.
         constexpr bool recursive = true;
@@ -404,7 +409,7 @@ int cli::runPluginList(const bool rescan, const PluginListGrouping grouping)
     int exitCode = 0;
     if (rescan) {
         juce::AudioPluginFormatManager formatManager;
-        juce::addDefaultFormatsToManager(formatManager);
+        addPluginFormats(formatManager);
         rescanPlugins(*settings, knownPluginList, formatManager);
 
         if (!saveKnownPluginList(knownPluginList)) {

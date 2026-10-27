@@ -5,6 +5,8 @@
 /// Also covers the worker process lifetime in the main process,
 /// which launches a worker on demand and drops it after a crash, a cancel, or the end of a scan,
 /// and the known-plugins list file with its migration out of the settings.
+/// The plugin formats are registered with an Audio Unit format that leaves out the Audio Units built into macOS,
+/// and loading the known-plugins list drops any of them that an older version saved.
 
 #include "plugins/PluginScanner.h"
 
@@ -23,6 +25,8 @@ constexpr auto resultsXmlTag {"PLUGINS"};
 constexpr auto knownPluginListFileName {"KnownPlugins.xml"};
 constexpr auto legacyKnownPluginListPropertyKey {"knownPluginList"};
 constexpr auto crashLogFileName {"audiobatch_plugin_scan_crash_log.txt"};
+constexpr auto audioUnitIdentifierPrefix {"AudioUnit:"};
+constexpr auto appleManufacturerCode {"appl"};
 constexpr auto responsePollInterval {std::chrono::milliseconds(50)};
 /// Longest wait for the worker to scan one plugin.
 /// Without it, a plugin that hangs in the worker would block the scan for good:
@@ -62,7 +66,75 @@ juce::MemoryBlock createScanRequest(const juce::String& formatName, const juce::
     stream.writeString(fileOrIdentifier);
     return request;
 }
+
+#if JUCE_PLUGINHOST_AU && JUCE_MAC
+/// Audio Unit format that leaves the Audio Units built into macOS out of plugin scans.
+/// Only the list of plugins to scan is filtered, so every other Audio Unit scans and loads as usual.
+class AudioUnitFormatWithoutBuiltInPlugins final : public juce::AudioUnitPluginFormat
+{
+public:
+    /// Lists the registered Audio Units except the ones built into macOS.
+    juce::StringArray searchPathsForPlugins(
+        const juce::FileSearchPath& directoriesToSearch,
+        const bool recursive,
+        const bool allowPluginsWhichRequireAsynchronousInstantiation
+    ) override
+    {
+        juce::StringArray identifiers;
+
+        for (const auto& identifier : AudioUnitPluginFormat::searchPathsForPlugins(
+                 directoriesToSearch, recursive, allowPluginsWhichRequireAsynchronousInstantiation
+             ))
+        {
+            if (!isBuiltInApplePlugin(identifier)) {
+                identifiers.add(identifier);
+            }
+        }
+
+        return identifiers;
+    }
+};
+#endif
 }  // namespace
+
+/// Returns true for an Audio Unit built into macOS, such as AUPeakLimiter or AUGraphicEQ.
+/// They are recognised by the Apple manufacturer code that ends their identifier,
+/// for example "AudioUnit:Effects/aufx,lmtr,appl".
+bool isBuiltInApplePlugin(const juce::String& fileOrIdentifier)
+{
+    return fileOrIdentifier.startsWith(audioUnitIdentifierPrefix)
+        && fileOrIdentifier.fromLastOccurrenceOf(",", false, false) == appleManufacturerCode;
+}
+
+/// Registers the VST3 and Audio Unit formats that CMakeLists.txt enables, in the order juce::addDefaultFormatsToManager
+/// uses, with an Audio Unit format that leaves the Audio Units built into macOS out of plugin scans.
+void addPluginFormats([[maybe_unused]] juce::AudioPluginFormatManager& formatManager)
+{
+#if JUCE_PLUGINHOST_AU && JUCE_MAC
+    formatManager.addFormat(std::make_unique<AudioUnitFormatWithoutBuiltInPlugins>());
+#endif
+
+#if JUCE_PLUGINHOST_VST3
+    formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
+#endif
+}
+
+/// Removes the Audio Units built into macOS from a known-plugins list, including blacklisted ones,
+/// since the scans leave them out and a list saved by an older version may still contain them.
+void removeBuiltInApplePlugins(juce::KnownPluginList& knownPluginList)
+{
+    for (const auto& type : knownPluginList.getTypes()) {
+        if (isBuiltInApplePlugin(type.fileOrIdentifier)) {
+            knownPluginList.removeType(type);
+        }
+    }
+
+    for (const auto& file : knownPluginList.getBlacklistedFiles()) {
+        if (isBuiltInApplePlugin(file)) {
+            knownPluginList.removeFromBlacklist(file);
+        }
+    }
+}
 
 /// Returns true when the command line launches this executable as a plugin scan worker.
 /// Uses the same check as ChildProcessWorker: the worker prefix must start the command line.
@@ -85,11 +157,13 @@ juce::File getKnownPluginListFile()
 /// Restores the known-plugins list from KnownPlugins.xml.
 /// When that file does not exist yet, reads the list stored in the settings by older versions instead.
 /// Leaves the list unchanged when nothing has been stored.
+/// Drops the Audio Units built into macOS, which older versions scanned.
 void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList)
 {
     if (const auto file = getKnownPluginListFile(); file.existsAsFile()) {
         if (const auto element = juce::parseXML(file); element != nullptr) {
             knownPluginList.recreateFromXml(*element);
+            removeBuiltInApplePlugins(knownPluginList);
         } else {
             utils::logError("Could not parse the known plugins list: {}", file.getFullPathName().quoted());
         }
@@ -101,6 +175,7 @@ void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPlugin
     const auto legacyXmlText = settings.getValue(legacyKnownPluginListPropertyKey);
     if (const auto element = juce::parseXML(legacyXmlText); element != nullptr) {
         knownPluginList.recreateFromXml(*element);
+        removeBuiltInApplePlugins(knownPluginList);
     }
 }
 
@@ -156,13 +231,13 @@ juce::File getPluginScanCrashLogFile()
 
 //==============================================================================
 
-/// Creates the worker with the default plugin formats.
+/// Creates the worker with the plugin formats of the main process.
 /// The connection-lost callback runs when the main process goes away or finishes scanning,
 /// and should shut the worker process down.
 PluginScanWorker::PluginScanWorker(std::function<void()> connectionLostCallback) :
     onConnectionLost(std::move(connectionLostCallback))
 {
-    juce::addDefaultFormatsToManager(formatManager);
+    addPluginFormats(formatManager);
 }
 
 /// Cancels any pending scan dispatch before the worker is destroyed.
