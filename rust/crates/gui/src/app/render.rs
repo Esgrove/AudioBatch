@@ -32,8 +32,8 @@ use crate::menus::{
     About, AddFiles, AddFolder, AddPluginToChain, CancelRun, ChooseFolder, ClearCustomGain, ClearList,
     ClearPluginChain, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
     OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected, RemoveSelected, Rescan,
-    RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice, StopPlayback, ToggleLoudnessGraph, TogglePlayback,
-    TogglePluginPreview, TogglePreviewLatencyCompensation, TrashSelected, TrashSelectedNow,
+    RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice, StopPlayback, ToggleColumn, ToggleLoudnessGraph,
+    TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, TrashSelected, TrashSelectedNow,
 };
 use crate::normalization::target_value_text;
 use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, fill_status_column};
@@ -313,6 +313,7 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &ClearCustomGain, _, cx| view.clear_selected_gain(cx)))
             .on_action(cx.listener(|view, _: &RemoveSelected, _, cx| view.remove_selected(cx)))
             .on_action(cx.listener(|view, _: &SelectAll, _, cx| view.select_all(cx)))
+            .on_action(cx.listener(|view, action: &ToggleColumn, _, cx| view.toggle_column(&action.id, cx)))
             .on_action(cx.listener(|view, _: &TrashSelected, window, cx| view.trash_selected(true, window, cx)))
             .on_action(cx.listener(|view, _: &TrashSelectedNow, window, cx| view.trash_selected(false, window, cx)))
             .on_action(cx.listener(|view, _: &ClearList, _, cx| view.clear_list(cx)))

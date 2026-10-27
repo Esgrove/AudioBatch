@@ -185,6 +185,10 @@ and the output device with its sample rate and buffer size in samples.
   The preview shows the file selected first, and the gain, normalizing, processing, re-analyzing,
   removing, and trashing work on every selected file, like in the C++ version.
 - Drag a column header to reorder the columns, and hover it to see what the column shows and in which unit.
+  Options > Columns shows or hides columns, and Peak L, Peak R, and Gain start hidden, like in the C++ version.
+  The table starts sorted by Peak, quietest first.
+  Command or Control click on a header title sets a secondary sort that breaks ties of the main sort,
+  marked "[2^]" or "[2v]", and the same click on the main sort column clears it.
 - Click or drag on the waveform to seek.
   The wheel zooms around the playhead, and Command or Control with the wheel changes the input gain.
   Double-click the Zoom or Input gain slider to reset it to 100% or 0 dB.

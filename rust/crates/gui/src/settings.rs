@@ -77,6 +77,8 @@ pub struct GuiSettings {
     pub normalize_target_peak_dbfs: f64,
     /// Integrated loudness target of loudness normalization in LUFS.
     pub normalize_target_lufs: f64,
+    /// Identifiers of the hidden results table columns, or none for the columns hidden by default.
+    pub hidden_columns: Option<Vec<String>>,
 }
 
 impl NormalizeMode {
@@ -106,6 +108,7 @@ impl Default for GuiSettings {
             normalize_mode: NormalizeMode::Peak,
             normalize_target_peak_dbfs: DEFAULT_TARGET_PEAK_DBFS,
             normalize_target_lufs: DEFAULT_TARGET_LUFS,
+            hidden_columns: None,
         }
     }
 }
@@ -228,6 +231,7 @@ mod test_settings_file {
             normalize_mode: NormalizeMode::Loudness,
             normalize_target_peak_dbfs: -1.0,
             normalize_target_lufs: -9.5,
+            hidden_columns: Some(vec![String::from("path"), String::from("peak_left")]),
         };
         settings.save_to(&path).expect("saves the settings");
         assert_eq!(GuiSettings::load_from(&path), settings);
