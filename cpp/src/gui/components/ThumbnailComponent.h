@@ -1,6 +1,6 @@
 /// Waveform preview for the currently loaded audio file.
 /// Declares ThumbnailComponent, a JUCE component that draws the audio thumbnail,
-/// follows and scrubs the shared transport source,
+/// shows the playback position of the shared transport source and scrubs it,
 /// overlays optional cached short-term loudness with an adjustable LUFS-S axis,
 /// supports zoom and gain mouse-wheel gestures, Serato hot cue jumps with the number keys, file drag-and-drop,
 /// and caching of the rendered waveform data.
@@ -38,7 +38,7 @@ struct CueArrows {
     float bottom {0.0f};
 };
 
-/// Waveform preview component with transport following, scrubbing, zooming, and drag-and-drop.
+/// Waveform preview component with a playback cursor, scrubbing, zooming, and drag-and-drop.
 class ThumbnailComponent :
     public juce::Component,
     public juce::ChangeListener,
@@ -91,7 +91,6 @@ public:
     void setZoom(double zoomLevel);
 
 private:
-    [[nodiscard]] bool canMoveTransport() const noexcept;
     [[nodiscard]] double xToTime(float xPosition) const;
     [[nodiscard]] float timeToX(double time) const;
     [[nodiscard]] float loudnessToY(double value, juce::Rectangle<int> bounds) const;
@@ -127,7 +126,6 @@ private:
     std::shared_ptr<const ShortTermLoudnessHistory> loudnessHistory;
 
     bool hasNotifiedFullyLoaded {false};
-    bool isFollowingTransport {false};
     bool loudnessGraphEnabled {false};
     bool seratoWaveformColouringEnabled {true};
     double loudnessMaximum {AudioPreviewPreferences::defaultLoudnessGraphMaximum};

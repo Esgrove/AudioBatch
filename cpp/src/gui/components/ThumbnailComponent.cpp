@@ -371,9 +371,6 @@ void ThumbnailComponent::mouseDoubleClick(const juce::MouseEvent& /*event*/)
 /// since moving it during the fade would cut the fade off with a click.
 void ThumbnailComponent::mouseDrag(const juce::MouseEvent& event)
 {
-    if (!canMoveTransport()) {
-        return;
-    }
     if (transportSource.isPlaying()) {
         transportSource.stop();
     }
@@ -413,12 +410,7 @@ void ThumbnailComponent::mouseWheelMove(const juce::MouseEvent& event, const juc
     auto newStart = visibleRange.getStart()
         - static_cast<double>(wheel.deltaX) * visibleRange.getLength() * horizontalScrollStepRatio;
     newStart = juce::jlimit(0.0, juce::jmax(0.0, thumbnail->getTotalLength() - visibleRange.getLength()), newStart);
-
-    if (canMoveTransport()) {
-        setRange({newStart, newStart + visibleRange.getLength()});
-    }
-
-    repaint();
+    setRange({newStart, newStart + visibleRange.getLength()});
 }
 
 /// Converts a time into a horizontal pixel position within the visible range.
@@ -623,15 +615,7 @@ void ThumbnailComponent::drawLoudnessCurve(juce::Graphics& graphics, const juce:
     );
 }
 
-/// Reports whether user interaction may reposition the transport.
-/// Repositioning is blocked while the view is following an actively playing transport.
-bool ThumbnailComponent::canMoveTransport() const noexcept
-{
-    return !(isFollowingTransport && transportSource.isPlaying());
-}
-
-/// Keeps the playback cursor in sync with the display refresh,
-/// scrolling the visible range along with the transport when follow mode is active.
+/// Keeps the playback cursor in sync with the display refresh.
 /// Updates playback status before skipping hidden or idle drawing, and hides the marker once playback stops.
 void ThumbnailComponent::updatePlaybackPosition()
 {
@@ -642,11 +626,7 @@ void ThumbnailComponent::updatePlaybackPosition()
         return;
     }
 
-    if (canMoveTransport()) {
-        updateCursorPosition();
-    } else {
-        setRange(visibleRange.movedToStartAt(transportSource.getCurrentPosition() - visibleRange.getLength() / 2.0));
-    }
+    updateCursorPosition();
 }
 
 /// Moves the playback position marker to the current transport time
