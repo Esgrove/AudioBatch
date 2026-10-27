@@ -71,10 +71,15 @@ pub struct ClearCustomGain;
 #[action(namespace = audiobatch)]
 pub struct RemoveSelected;
 
-/// Moves the selected file to the system trash.
+/// Moves the selected file to the system trash after a confirmation.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
 pub struct TrashSelected;
+
+/// Moves the selected file to the system trash without asking, from the shortcut with Shift held.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct TrashSelectedNow;
 
 /// Removes every file and folder from the list.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
@@ -245,6 +250,7 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("delete", RemoveSelected, context),
         KeyBinding::new("backspace", RemoveSelected, context),
         KeyBinding::new(primary!("backspace"), TrashSelected, context),
+        KeyBinding::new(primary!("shift-backspace"), TrashSelectedNow, context),
         KeyBinding::new("space", TogglePlayback, context),
         KeyBinding::new("escape", StopPlayback, context),
         KeyBinding::new(primary!(","), OpenAudioSettings, context),

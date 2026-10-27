@@ -77,22 +77,48 @@ impl AppView {
     }
 
     /// Moves the selected file to the system trash, forgets its cached result, and removes it from the list.
-    pub(super) fn trash_selected(&mut self, cx: &mut Context<Self>) {
+    /// Asks first unless `confirm` is false, like the C++ application, where Shift with the shortcut skips the prompt.
+    pub(super) fn trash_selected(&mut self, confirm: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(selected) = self.selected.clone() else {
             return;
         };
         if self.blocked_by_file_operation(cx) {
             return;
         }
+        if !confirm {
+            self.move_to_trash(&selected, cx);
+            return;
+        }
+        let detail = format!("Move\n\n{}\n\nto the system trash?", selected.display());
+        let answer = window.prompt(
+            PromptLevel::Warning,
+            "Move to Trash",
+            Some(&detail),
+            &["Move to Trash", "Cancel"],
+            cx,
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await == Ok(0) {
+                let _ = this.update(cx, |view, cx| view.move_to_trash(&selected, cx));
+            }
+        })
+        .detach();
+    }
+
+    /// Moves a file to the system trash and removes its row, while it is still the selected file.
+    fn move_to_trash(&mut self, selected: &Path, cx: &mut Context<Self>) {
+        if self.selected.as_deref() != Some(selected) || self.blocked_by_file_operation(cx) {
+            return;
+        }
         if let Some(player) = &mut self.player
-            && player.loaded_path() == Some(selected.as_path())
+            && player.loaded_path() == Some(selected)
         {
             player.unload();
         }
-        match trash::delete(&selected) {
+        match trash::delete(selected) {
             Ok(()) => {
                 if let Some(coordinator) = &self.coordinator
-                    && let Err(error) = coordinator.cache().remove_analysis(&selected)
+                    && let Err(error) = coordinator.cache().remove_analysis(selected)
                 {
                     tracing::warn!(
                         "Failed to remove the cached result of {}: {error:#}",
@@ -100,10 +126,10 @@ impl AppView {
                     );
                 }
                 self.remove_selected(cx);
-                self.status = format!("Moved {} to the trash", display_name(&selected)).into();
+                self.status = format!("Moved {} to the trash", display_name(selected)).into();
             }
             Err(error) => {
-                self.status = format!("Could not move {} to the trash: {error}", display_name(&selected)).into();
+                self.status = format!("Could not move {} to the trash: {error}", display_name(selected)).into();
             }
         }
         cx.notify();
