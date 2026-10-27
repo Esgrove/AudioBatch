@@ -42,6 +42,12 @@ void BackgroundRunner::addJob(std::function<void()> job)
     threadPool.addJob(std::move(job));
 }
 
+/// Returns true while any job is queued or running.
+bool BackgroundRunner::hasJobs() const
+{
+    return threadPool.getNumJobs() > 0;
+}
+
 /// Ends the current run without waiting, so the calling thread never blocks on a slow file.
 /// Queued jobs are dropped, and running jobs are signalled and stop at their next run id check.
 void BackgroundRunner::cancel()
