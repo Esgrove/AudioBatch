@@ -609,7 +609,7 @@ void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu)
     addMenuItem(menu, MenuItemId::processAll, "Process All Files...", chain.getNumEnabledValidSlots() > 0);
 }
 
-/// Returns the label of the Normalize All Files item, which names the current target like the Rust version.
+/// Returns the label of the Normalize All Files item, which names the current target.
 juce::String MainWindow::getNormalizeAllLabel() const
 {
     return utils::format("Normalize All Files to {}...", getAudioBatch().describeNormalizationTarget());

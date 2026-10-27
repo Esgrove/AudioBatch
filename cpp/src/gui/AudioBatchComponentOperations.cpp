@@ -265,8 +265,7 @@ void AudioBatchComponent::normalizeSelectedRecords()
     normalizeRecords(getSelectedNormalizableRecords());
 }
 
-/// Asks for confirmation, then normalizes every analyzed file in the list whose format can be normalized,
-/// like Normalize All Files in the Rust version.
+/// Asks for confirmation, then normalizes every analyzed file in the list whose format can be normalized.
 void AudioBatchComponent::normalizeAllRecords()
 {
     auto records = getAllReadyRecords();
@@ -488,8 +487,7 @@ void AudioBatchComponent::processSelectedRecords()
     processRecords(records);
 }
 
-/// Asks for confirmation, then runs the plugin chain over every analyzed file in the list that can be processed,
-/// like Process All Files in the Rust version.
+/// Asks for confirmation, then runs the plugin chain over every analyzed file in the list that can be processed.
 void AudioBatchComponent::processAllRecords()
 {
     if (liveChain->getNumEnabledValidSlots() == 0) {

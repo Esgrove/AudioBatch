@@ -10,8 +10,7 @@
 
 namespace audiobatch
 {
-/// Peak and Loudness mode buttons on one row, and the target slider with the Normalize button below them,
-/// like the normalization group of the Rust version.
+/// Peak and Loudness mode buttons on one row, and the target slider with the Normalize button below them.
 /// Each mode remembers its own target, and the mode and both targets are saved in the user settings.
 class NormalizationTargetControl final : public juce::Component
 {

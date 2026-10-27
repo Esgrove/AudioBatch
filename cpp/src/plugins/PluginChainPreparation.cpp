@@ -107,8 +107,7 @@ bool configurePluginChannels(juce::AudioPluginInstance& plugin, const int numCha
     return numChannels == 1 && trySetMainBusChannels(juce::AudioChannelSet::stereo());
 }
 
-/// Configures the plugin's main buses for the stereo preview, or for mono when it only supports mono,
-/// like the Rust version.
+/// Configures the plugin's main buses for the stereo preview, or for mono when it only supports mono.
 /// processBlockThroughChain folds both channels into a mono plugin and copies its output to both,
 /// so a mono-only plugin works in the preview of any file, and its editor can open.
 /// Offline processing still refuses a stereo file through a mono-only plugin.

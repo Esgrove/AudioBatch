@@ -174,7 +174,7 @@ void AudioBatchComponent::updateCurrentRootLabel()
 }
 
 /// Scans the root folders again, analyzing only new and changed files and keeping the rows of the others,
-/// like the Rust version. Re-analyze Selected is the action that ignores the cache.
+/// so a rescan is quick. Re-analyze Selected is the action that ignores the cache.
 void AudioBatchComponent::rescanCurrentRoot()
 {
     refreshAnalysis(AnalysisRows::sync);

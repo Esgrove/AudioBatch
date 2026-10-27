@@ -477,7 +477,7 @@ void AudioBatchComponent::updateProcessButtonState()
         backgroundWork.isIdle() && !normalizable.empty() && canNormalizeRecords(normalizable)
     );
 
-    // While a pass runs, the button cancels it, like the Process button of the Rust version.
+    // While a pass runs, the button cancels it.
     if (!backgroundWork.isIdle()) {
         previewWorkspace.processButton.setButtonText("Cancel");
         previewWorkspace.processButton.setTooltip("Cancel the running analysis, normalization, or processing.");
