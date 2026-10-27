@@ -24,7 +24,7 @@ pub const NATIVE_FIELDS: [(&str, &str); 6] = [
 pub const GEOB_MIME_TYPE: &str = "application/octet-stream";
 
 /// Longest base64 text accepted, in bytes, which bounds the decoded size too.
-const MAX_ENCODED_BYTES: usize = 4 * 1024 * 1024;
+const MAXIMUM_ENCODED_BYTES: usize = 4 * 1024 * 1024;
 
 /// Base64 engine that accepts both padded and unpadded text.
 const LENIENT_BASE64: GeneralPurpose = GeneralPurpose::new(
@@ -49,7 +49,7 @@ pub fn native_field_description(name: &str) -> Option<&'static str> {
 /// or a length that no base64 encoding produces.
 #[must_use]
 pub fn decode_tag_base64(text: &[u8]) -> Option<Vec<u8>> {
-    if text.len() > MAX_ENCODED_BYTES {
+    if text.len() > MAXIMUM_ENCODED_BYTES {
         return None;
     }
     let mut cleaned: Vec<u8> = Vec::with_capacity(text.len());
