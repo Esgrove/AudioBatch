@@ -26,8 +26,11 @@ public:
 
     void resized() override;
 
-    /// Normalizes the selected files to the target. The owner connects it and keeps its enabled state.
-    juce::TextButton normalizeButton {"Normalize"};
+    /// Enables or disables the Normalize button, which the owner keeps in step with the selection.
+    void setNormalizeEnabled(bool enabled);
+
+    /// Sets the callback the Normalize button calls to normalize the selected files to the target.
+    void setNormalizeCallback(std::function<void()> callback);
 
 private:
     [[nodiscard]] bool isLoudnessMode() const;
@@ -41,6 +44,7 @@ private:
     juce::ApplicationProperties& properties;
     juce::TextButton peakButton {"Peak"};
     juce::TextButton loudnessButton {"Loudness"};
+    juce::TextButton normalizeButton {"Normalize"};
     juce::Slider targetSlider {"NormalizeTarget"};
     /// Remembered peak mode target, in dBFS, kept while loudness mode is selected.
     double targetPeakDbfs {AudioNormalizationOptions::defaultTargetPeakDbfs};
