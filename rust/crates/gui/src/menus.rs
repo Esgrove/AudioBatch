@@ -84,6 +84,11 @@ pub struct JumpToHotCue {
 #[action(namespace = audiobatch)]
 pub struct ToggleSeratoColours;
 
+/// Collapses the preview into its compact row, or expands it again.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct TogglePreviewSection;
+
 /// Shows or hides a results table column, like the header menu of the C++ application.
 #[derive(Clone, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch, no_json)]
@@ -233,6 +238,8 @@ pub struct MenuState {
     pub show_loudness_graph: bool,
     /// True when the Serato Overview colours the waveform.
     pub serato_colours: bool,
+    /// True while the preview is collapsed into its compact row.
+    pub preview_compact: bool,
     /// True when the preview plays through the plugin chain.
     pub preview_plugin_chain: bool,
     /// True when the plugin chain preview compensates its latency.
@@ -290,6 +297,7 @@ pub fn install(cx: &mut App) {
         KeyBinding::new(primary!("r"), RevealSelected, context),
         KeyBinding::new(primary!("a"), SelectAll, context),
         KeyBinding::new(primary!("shift-s"), ToggleSeratoColours, context),
+        KeyBinding::new(primary!("shift-space"), TogglePreviewSection, context),
         KeyBinding::new("1", JumpToHotCue { slot: 0 }, context),
         KeyBinding::new("2", JumpToHotCue { slot: 1 }, context),
         KeyBinding::new("3", JumpToHotCue { slot: 2 }, context),
@@ -372,6 +380,14 @@ pub fn set_menus(cx: &App, state: &MenuState) {
             MenuItem::submenu(Menu::new("Columns").items(state.columns.iter().map(|column| {
                 MenuItem::action(column.title, ToggleColumn { id: column.id.clone() }).checked(column.visible)
             }))),
+            MenuItem::action(
+                if state.preview_compact {
+                    "Expand Bottom Section"
+                } else {
+                    "Collapse Bottom Section"
+                },
+                TogglePreviewSection,
+            ),
             MenuItem::separator(),
             MenuItem::action("Preview Plugin Chain", TogglePluginPreview).checked(state.preview_plugin_chain),
             MenuItem::action("Compensate Preview Plugin Latency", TogglePreviewLatencyCompensation)

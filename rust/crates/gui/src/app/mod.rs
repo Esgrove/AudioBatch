@@ -32,6 +32,7 @@ use audiobatch_core::{
 use audiobatch_playback::Player;
 use audiobatch_plugins::{ProcessingCoordinator, default_worker_count};
 use crossbeam_channel::{Receiver, TryRecvError};
+use gpui_kit::base::ResizableState;
 use gpui_kit::component::slider::{SliderEvent, SliderScale, SliderState};
 use gpui_kit::component::table::{TableEvent, TableState};
 use gpui_kit::{
@@ -174,6 +175,10 @@ pub struct AppView {
     window_title: String,
     /// Initial height of the preview, from the window size at startup.
     preview_height: f32,
+    /// Sizes of the table and the expanded preview, kept while the preview is collapsed.
+    workspace_split: Entity<ResizableState>,
+    /// True while the preview is collapsed into its compact row.
+    preview_compact: bool,
     /// True until the first completed run has selected and started playing its first file.
     autoplay_pending: bool,
     /// Applies the events of the current run. Dropping it stops listening to the run.
@@ -314,6 +319,8 @@ impl AppView {
             settings_window: None,
             window_title: String::from(APP_TITLE),
             preview_height: (workspace_height * PREVIEW_PROPORTION).max(PREVIEW_MINIMUM_HEIGHT),
+            workspace_split: cx.new(|_| ResizableState::default()),
+            preview_compact: false,
             autoplay_pending: options.autoplay,
             analysis_task: None,
             demo_task: None,
