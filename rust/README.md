@@ -247,6 +247,9 @@ Instruments are listed by scans but cannot be added to the chain.
   A run can be cancelled, which leaves the files in progress with their originals.
 - Options > Preview Plugin Chain plays the preview through the enabled plugins,
   after the custom gain, at the output device's rate.
+  The preview runs in stereo, and a plugin that only supports mono gets both channels folded into one,
+  with its output copied to both.
+  The output of a mono file is folded back to mono, so it sounds like the processed file.
   With Options > Compensate Preview Plugin Latency, each start and seek first fills the chain's latency in silence,
   so what is heard lines up with the waveform.
   At the end of a file the plugins' tails keep playing, up to 20 seconds each, while the playhead waits at the end.

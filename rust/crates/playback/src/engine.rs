@@ -190,6 +190,7 @@ fn open_pipeline(
             let frames = info.expected_frames.unwrap_or(0);
             shared.source_rate.store(info.sample_rate, Ordering::Relaxed);
             shared.source_frames.store(frames, Ordering::Relaxed);
+            shared.source_mono.store(info.channels == 1, Ordering::Relaxed);
             let start_frame = (start_seconds.max(0.0) * f64::from(info.sample_rate)) as u64;
             shared.position.store(start_frame, Ordering::Relaxed);
             let _ = events.send(PlayerEvent::Loaded {
