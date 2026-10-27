@@ -9,6 +9,7 @@
 #include "normalization/NormalizeCoordinator.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/StringFormat.h"
 #include <condition_variable>
 
 #include <algorithm>
@@ -20,6 +21,7 @@
 #include <set>
 #include <span>
 #include <thread>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -132,7 +134,10 @@ public:
         testCoordinatorCancellation(directory);
 
         beginTest("A stopped run reports its unfinished files as cancelled, leaves them unchanged, and completes");
-        testCoordinatorStop(directory);
+        testCoordinatorStop(directory, 0);
+
+        beginTest("A file committed before a stop keeps its result and its normalized output");
+        testCoordinatorStop(directory, 1);
     }
 
 private:
@@ -170,14 +175,19 @@ private:
         return run;
     }
 
-    /// Holds the first file of a run in its starting callback, asks the run to stop,
-    /// and checks that every file is published as cancelled, the run completes, and no output is written.
-    void testCoordinatorStop(const TemporaryDirectory& directory)
+    /// Lets the first committedBeforeStop files of a run finish, holds the next one in its starting callback,
+    /// and asks the run to stop.
+    /// Checks that the finished files keep their results and outputs,
+    /// that every other file is published as cancelled and left unchanged, and that the run completes.
+    void testCoordinatorStop(const TemporaryDirectory& directory, const int committedBeforeStop)
     {
+        constexpr int fileCount {3};
         std::vector<AudioAnalysisRecord> records;
         std::vector<juce::MemoryBlock> originalBytes;
-        for (const auto* fileName : {"stop_held.aif", "stop_queued.aif"}) {
-            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", fileName);
+        for (int index = 0; index < fileCount; ++index) {
+            const auto source = directory.copyFixture(
+                "sine_stereo_44100_16.aif", utils::format("stop_{}_{}.aif", committedBeforeStop, index)
+            );
             records.push_back(analyzeFile(source));
             expect(source.loadFileAsData(originalBytes.emplace_back()));
         }
@@ -193,7 +203,9 @@ private:
             std::unique_lock lock(mutex);
             ++startedFiles;
             condition.notify_all();
-            condition.wait_for(lock, coordinatorTimeout, [&] { return released; });
+            if (startedFiles > committedBeforeStop) {
+                condition.wait_for(lock, coordinatorTimeout, [&] { return released; });
+            }
         });
         coordinator.setResultCallback([&](const AudioNormalizationResult& result, int /*runId*/) {
             const std::scoped_lock lock(mutex);
@@ -207,25 +219,35 @@ private:
 
         auto options = testNormalizationOptions();
         options.targetPeakDbfs = -1.0;
-        expectEquals(coordinator.start(records, options), 2);
+        expectEquals(coordinator.start(records, options), fileCount);
         std::unique_lock lock(mutex);
-        expect(condition.wait_for(lock, coordinatorTimeout, [&] { return startedFiles == 1; }));
+        expect(condition.wait_for(lock, coordinatorTimeout, [&] { return startedFiles == committedBeforeStop + 1; }));
         coordinator.requestStop();
         released = true;
         condition.notify_all();
         expect(condition.wait_for(lock, coordinatorTimeout, [&] { return completedFiles >= 0; }));
 
-        expectEquals(completedFiles, 2);
-        expectEquals(startedFiles, 1);
-        expectEquals(static_cast<int>(results.size()), 2);
-        for (const auto& result : results) {
-            const auto* failed = std::get_if<OperationFailed>(&result.outcome);
-            expect(failed != nullptr && failed->cancelled, result.fileName);
-        }
-        for (const auto& [record, original] : std::views::zip(records, originalBytes)) {
+        expectEquals(completedFiles, fileCount);
+        expectEquals(startedFiles, committedBeforeStop + 1);
+        expectEquals(static_cast<int>(results.size()), fileCount);
+        for (std::size_t index = 0; index < records.size(); ++index) {
+            const auto& record = records[index];
+            const auto result = std::ranges::find(results, record.file, &AudioNormalizationResult::file);
+            expect(result != results.end(), record.fileName);
+            if (result == results.end()) {
+                continue;
+            }
             juce::MemoryBlock remaining;
             expect(record.file.loadFileAsData(remaining));
-            expect(remaining == original, record.fileName);
+            const auto& original = originalBytes[index];
+            if (std::cmp_less(index, committedBeforeStop)) {
+                expect(std::holds_alternative<OperationSucceeded>(result->outcome), outcomeError(result->outcome));
+                expect(remaining != original, record.fileName);
+            } else {
+                const auto* failed = std::get_if<OperationFailed>(&result->outcome);
+                expect(failed != nullptr && failed->cancelled, record.fileName);
+                expect(remaining == original, record.fileName);
+            }
         }
     }
 
