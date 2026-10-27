@@ -189,6 +189,58 @@ void removeBuiltInApplePlugins(juce::KnownPluginList& knownPluginList)
     }
 }
 
+/// Removes the plugins and blacklist entries whose files are gone from a search folder that still exists,
+/// the same rule as in the Rust version.
+/// Plugins outside the searched folders, such as Audio Units or plugins on a disconnected drive, are kept.
+/// Returns the number of plugins removed.
+int removeMissingPlugins(
+    juce::KnownPluginList& knownPluginList,
+    const juce::AudioPluginFormatManager& formatManager,
+    juce::PropertiesFile& settings
+)
+{
+    juce::Array<juce::File> existingFolders;
+    for (auto* format : formatManager.getFormats()) {
+        const auto searchPath = juce::PluginListComponent::getLastSearchPath(settings, *format);
+        for (int index = 0; index < searchPath.getNumPaths(); ++index) {
+            if (const auto folder = searchPath[index]; folder.isDirectory()) {
+                existingFolders.addIfNotAlreadyThere(folder);
+            }
+        }
+    }
+
+    const auto isMissing = [&existingFolders](const juce::String& fileOrIdentifier) {
+        if (!juce::File::isAbsolutePath(fileOrIdentifier)) {
+            return false;
+        }
+        const juce::File file(fileOrIdentifier);
+        return !file.exists() && std::ranges::any_of(existingFolders, [&file](const juce::File& folder) {
+            return file.isAChildOf(folder);
+        });
+    };
+
+    int removedCount = 0;
+    for (const auto& type : knownPluginList.getTypes()) {
+        if (isMissing(type.fileOrIdentifier)) {
+            knownPluginList.removeType(type);
+            ++removedCount;
+        }
+    }
+
+    // A copy, since removeFromBlacklist changes the array that getBlacklistedFiles refers to.
+    const auto blacklistedFiles = knownPluginList.getBlacklistedFiles();
+    for (const auto& file : blacklistedFiles) {
+        if (isMissing(file)) {
+            knownPluginList.removeFromBlacklist(file);
+        }
+    }
+
+    if (removedCount > 0) {
+        utils::logInfo("Removed {} plugins that no longer exist", removedCount);
+    }
+    return removedCount;
+}
+
 /// Returns true when the command line launches this executable as a plugin scan worker.
 /// Uses the same check as ChildProcessWorker: the worker prefix must start the command line.
 bool isPluginScanWorkerCommandLine(const juce::String& commandLine)
@@ -572,12 +624,13 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
 }
 
 /// Stops the worker process once the scan has finished and invokes the scan-finished callback.
+/// KnownPluginList clears the abandon request only after this call, so shouldExit still tells a cancelled scan apart.
 void OutOfProcessPluginScanner::scanFinished()
 {
     worker.reset();
 
     if (scanStarted && onScanFinished != nullptr) {
-        onScanFinished();
+        onScanFinished(!scanSkipped && !shouldExit());
     }
 
     scanStarted = false;
