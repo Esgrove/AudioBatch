@@ -793,6 +793,16 @@ impl ResultsDelegate {
         COLUMNS.iter().find(|spec| spec.key == key)
     }
 
+    /// Remembers the widths of the shown columns, in display order, as the table has them now,
+    /// so rebuilding the columns, such as to show or hide one, keeps the widths the user gave them.
+    pub fn remember_column_widths(&mut self, widths: &[Pixels]) {
+        for (key, &width) in self.order.iter().zip(widths) {
+            if let Some((_, column)) = self.all_columns.iter_mut().find(|(column_key, _)| column_key == key) {
+                *column = column.clone().width(width);
+            }
+        }
+    }
+
     /// Rebuilds the shown columns: the ones still shown keep their display order,
     /// and a column shown again goes back after the shown column that precedes it in the default order.
     fn rebuild_visible_columns(&mut self) {
@@ -1710,6 +1720,18 @@ mod test_column_visibility_and_sort {
             .filter_map(|index| delegate.row(index))
             .map(|row| row.file_name.to_string())
             .collect()
+    }
+
+    #[test]
+    fn showing_a_column_keeps_the_widths_of_the_others() {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        let widths: Vec<Pixels> = (0..delegate.columns.len())
+            .map(|index| px(50.0 + index as f32))
+            .collect();
+        delegate.remember_column_widths(&widths);
+        delegate.set_column_visible(ColumnKey::Gain, true);
+        let first = delegate.columns.first().expect("a shown column");
+        assert_eq!(first.width, px(50.0));
     }
 
     #[test]

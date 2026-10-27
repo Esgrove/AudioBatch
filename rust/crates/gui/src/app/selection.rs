@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use audiobatch_core::AnalysisRecord;
 use audiobatch_playback::Player;
 use gpui_kit::component::table::{TableEvent, TableState};
-use gpui_kit::{App, Context, Entity, Window};
+use gpui_kit::{App, Context, Entity, Pixels, Window};
 
 use super::AppView;
 use crate::menus::{ColumnChoice, set_menus};
@@ -96,7 +96,9 @@ impl AppView {
             return;
         };
         let hidden = self.table.update(cx, |state, cx| {
+            let widths: Vec<Pixels> = (0..).map_while(|index| state.col_width(index)).collect();
             let delegate = state.delegate_mut();
+            delegate.remember_column_widths(&widths);
             let visible = delegate.is_column_visible(key);
             delegate.set_column_visible(key, !visible);
             let hidden = delegate.hidden_columns();
