@@ -645,6 +645,31 @@ impl ResultsDelegate {
         }
     }
 
+    /// Settles the rows a cancelled analysis left waiting or analyzing, so no row stays busy:
+    /// with the cached result when `cached` has one, the previous result when the row has one,
+    /// and otherwise with a message to analyze the file again, or that it no longer exists.
+    pub fn finish_cancelled_analysis(&mut self, cached: impl Fn(&Path) -> Option<AnalysisRecord>) {
+        for row in &mut self.rows {
+            if !matches!(row.state, RowState::Pending | RowState::Analyzing(_)) {
+                continue;
+            }
+            row.state = RowState::Done;
+            if let Some(record) = cached(&row.path) {
+                row.record = Some(record);
+            } else if row.record.is_none() {
+                let text = if row.path.exists() {
+                    "Analysis did not finish. Re-analyze the file to try again."
+                } else {
+                    "File does not exist"
+                };
+                row.message = Some(RowMessage {
+                    text: text.to_string(),
+                    is_error: true,
+                });
+            }
+        }
+    }
+
     /// Remembers the file the app has selected, so a sort from the header can select its row again.
     /// The other selected files stay selected.
     pub fn set_selected_path(&mut self, path: Option<PathBuf>) {
@@ -1413,6 +1438,23 @@ mod test_selection {
         assert_eq!(selected(&delegate), ["/c.wav", "/a.wav", "/b.wav"]);
         delegate.select_range_to(3);
         assert_eq!(selected(&delegate), ["/c.wav", "/d.wav"]);
+    }
+
+    #[test]
+    fn a_cancelled_analysis_leaves_no_row_waiting() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav"]);
+        let cached = AnalysisRecord {
+            path: PathBuf::from("/a.wav"),
+            ..AnalysisRecord::default()
+        };
+        delegate.finish_cancelled_analysis(|path| (path == Path::new("/a.wav")).then(|| cached.clone()));
+        let first = delegate.row_for(Path::new("/a.wav")).expect("first row");
+        assert_eq!(first.state, RowState::Done);
+        assert!(first.record.is_some());
+        let second = delegate.row_for(Path::new("/b.wav")).expect("second row");
+        assert_eq!(second.state, RowState::Done);
+        assert_eq!(second.status_text(), "File does not exist");
+        assert!(second.shows_error());
     }
 
     #[test]
