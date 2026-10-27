@@ -102,6 +102,10 @@ public:
             expectEquals(formatCustomGainCompact(record), juce::String("+0.0"));
             record.customGain = Decibels {-1.5f};
             expectEquals(formatCustomGainCompact(record), juce::String("-1.5"));
+            record.customGain = Decibels {-0.0f};
+            expectEquals(formatCustomGainCompact(record), juce::String("+0.0"));
+            record.customGain = Decibels {-0.04f};
+            expectEquals(formatCustomGainCompact(record), juce::String("+0.0"));
         }
 
         beginTest("The type label prefers the extension, then the format name");
