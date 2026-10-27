@@ -11,6 +11,7 @@ publish = false
 
 [dependencies]
 vst3.workspace = true
+vst3-host.workspace = true
 
 [[example]]
 name = "module"

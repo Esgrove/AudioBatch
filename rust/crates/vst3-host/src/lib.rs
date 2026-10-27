@@ -23,7 +23,7 @@ pub mod module;
 pub mod module_info;
 pub mod platform_events;
 pub mod processor;
-pub(crate) mod strings;
+pub mod strings;
 pub mod thread;
 pub mod ui_bound;
 
