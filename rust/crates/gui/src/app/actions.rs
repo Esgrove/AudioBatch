@@ -145,6 +145,40 @@ impl AppView {
         cx.notify();
     }
 
+    /// Cancels the running analysis, normalization, or processing, from the Cancel button or File > Cancel Run.
+    /// Files a run has not committed keep their rows, like in the C++ application.
+    pub(super) fn cancel_run(&mut self, cx: &mut Context<Self>) {
+        if self.is_processing() {
+            self.cancel_processing(cx);
+        } else if self.is_normalizing() {
+            self.cancel_normalization_run(cx);
+        } else if self.is_analyzing() {
+            self.cancel_analysis(cx);
+        }
+    }
+
+    /// Returns true during an analysis, normalization, or processing run.
+    pub(super) fn is_running(&self) -> bool {
+        self.is_analyzing() || self.is_normalizing() || self.is_processing()
+    }
+
+    /// Cancels the analysis run, settling the rows it left waiting or analyzing.
+    fn cancel_analysis(&mut self, cx: &mut Context<Self>) {
+        if let Some(coordinator) = &self.coordinator {
+            coordinator.cancel();
+        }
+        self.analysis_task = None;
+        if let Some(run) = &mut self.run {
+            run.completed = true;
+        }
+        self.table.update(cx, |state, cx| {
+            state.delegate_mut().finish_interrupted_rows();
+            cx.notify();
+        });
+        self.status = SharedString::from("Analysis cancelled");
+        cx.notify();
+    }
+
     /// Plays the selected file, or stops playback while playing.
     pub(super) fn toggle_playback(&mut self, cx: &mut Context<Self>) {
         let selected = self.selected.clone();
@@ -186,7 +220,7 @@ impl AppView {
             ControlsEvent::NormalizeSelected => self.normalize_selected(window, cx),
             ControlsEvent::SetNormalizeFirst(normalize_first) => self.set_normalize_first(normalize_first, cx),
             ControlsEvent::ProcessSelected => self.process_selected(window, cx),
-            ControlsEvent::CancelProcessing => self.cancel_processing(cx),
+            ControlsEvent::CancelRun => self.cancel_run(cx),
             ControlsEvent::OpenPluginChain => self.open_chain_window(cx),
         }
     }

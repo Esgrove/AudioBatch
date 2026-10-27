@@ -177,10 +177,11 @@ pub struct ProcessSelected;
 #[action(namespace = audiobatch)]
 pub struct ProcessAll;
 
-/// Cancels the plugin processing run, leaving the files in progress unchanged.
+/// Cancels the running analysis, normalization, or plugin processing,
+/// leaving the files it has not committed unchanged.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
-pub struct CancelProcessing;
+pub struct CancelRun;
 
 /// Adds a known effect at the end of the plugin chain.
 #[derive(Clone, PartialEq, Eq, Debug, gpui_kit::Action)]
@@ -239,6 +240,7 @@ pub fn install(cx: &mut App) {
         KeyBinding::new(primary!("o"), ChooseFolder, None),
         KeyBinding::new(primary!("shift-o"), AddFolder, None),
         KeyBinding::new("f5", Rescan, None),
+        KeyBinding::new(primary!("."), CancelRun, context),
         KeyBinding::new(primary!("r"), RevealSelected, context),
         KeyBinding::new("delete", RemoveSelected, context),
         KeyBinding::new("backspace", RemoveSelected, context),
@@ -285,6 +287,8 @@ pub fn set_menus(cx: &App, state: &MenuState) {
         MenuItem::action("Remove Selected from List", RemoveSelected),
         MenuItem::action("Move Selected to Trash", TrashSelected),
         MenuItem::action("Clear All Files", ClearList),
+        MenuItem::separator(),
+        MenuItem::action("Cancel Run", CancelRun),
     ];
     if !cfg!(target_os = "macos") {
         file_items.push(MenuItem::separator());
@@ -373,6 +377,5 @@ fn plugins_menu(state: &MenuState) -> Menu {
         MenuItem::separator(),
         MenuItem::action("Process Selected With Plugin Chain (output AIFF)", ProcessSelected),
         MenuItem::action("Process All Files With Plugin Chain…", ProcessAll),
-        MenuItem::action("Cancel Plugin Processing", CancelProcessing),
     ])
 }

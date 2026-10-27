@@ -148,6 +148,29 @@ impl AppView {
         cx.notify();
     }
 
+    /// Cancels the normalization run from the Cancel action.
+    /// Files in progress stop before they are committed and keep their originals, and their rows show their records again.
+    /// The events of the run are still drained, since a file that was already past normalizing may still commit,
+    /// and its row must then show the output that replaced the source.
+    pub(super) fn cancel_normalization_run(&mut self, cx: &mut Context<Self>) {
+        if !self.is_normalizing() {
+            return;
+        }
+        if let Some(coordinator) = &self.normalize_coordinator {
+            coordinator.cancel();
+        }
+        if let Some(run) = &mut self.normalize_run {
+            run.cancelled = true;
+            run.completed = true;
+        }
+        self.table.update(cx, |state, cx| {
+            state.delegate_mut().finish_interrupted_rows();
+            cx.notify();
+        });
+        self.status = SharedString::from("Normalization cancelled");
+        cx.notify();
+    }
+
     /// Stops listening to the normalization run, letting files in progress finish with their originals intact.
     pub(super) fn cancel_normalization(&mut self) {
         if let Some(coordinator) = &self.normalize_coordinator {
@@ -226,12 +249,16 @@ impl AppView {
 
     /// Applies a batch of normalization events to the table, the selection, and the status bar.
     fn apply_normalize_events(&mut self, events: Vec<NormalizeEvent>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(run_id) = self.normalize_run.as_ref().map(|run| run.run_id) else {
+        let Some((run_id, cancelled)) = self.normalize_run.as_ref().map(|run| (run.run_id, run.cancelled)) else {
             return;
         };
         let mut completed = false;
         let mut replaced = false;
         for event in events.into_iter().filter(|event| event.run_id() == run_id) {
+            // After a cancel, only outputs that replaced their source are applied.
+            if cancelled && !matches!(&event, NormalizeEvent::Finished { result, .. } if result.output().is_some()) {
+                continue;
+            }
             match event {
                 NormalizeEvent::Started { path, .. } => self.mark_normalizing(&path, 0.0, cx),
                 NormalizeEvent::Progress { path, fraction, .. } => self.mark_normalizing(&path, fraction, cx),
@@ -253,7 +280,7 @@ impl AppView {
             });
             self.restore_selection(cx);
         }
-        if let Some(run) = &mut self.normalize_run {
+        if let Some(run) = self.normalize_run.as_mut().filter(|run| !run.cancelled) {
             run.completed |= completed;
             self.status = if run.completed {
                 run.summary()
