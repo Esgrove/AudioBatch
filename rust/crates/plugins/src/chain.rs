@@ -13,7 +13,10 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use vst3_host::PluginState;
 
-use crate::library::{PluginDescription, load_recovering, write_json_atomically};
+use crate::library::{PluginDescription, load_recovering, read_versioned_json, write_versioned_json};
+
+/// Format version of `plugin-chain.json`, raised when a change cannot be read by older versions.
+const CHAIN_FORMAT_VERSION: u32 = 1;
 
 /// One plugin of the chain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,7 +85,8 @@ impl PluginChain {
     /// Returns an error when the file exists but cannot be read or parsed.
     pub fn load_from(path: &Path) -> Result<Self> {
         match fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text).with_context(|| format!("Invalid plugin chain {}", path.display())),
+            Ok(text) => read_versioned_json(&text, CHAIN_FORMAT_VERSION, path)
+                .with_context(|| format!("Invalid plugin chain {}", path.display())),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(error).with_context(|| format!("Could not read the plugin chain {}", path.display())),
         }
@@ -105,7 +109,7 @@ impl PluginChain {
     ///
     /// Returns an error when the directory or the file cannot be written.
     pub fn save_to(&self, path: &Path) -> Result<()> {
-        write_json_atomically(path, self)
+        write_versioned_json(path, CHAIN_FORMAT_VERSION, self)
     }
 
     /// Returns the slots that process files, in order.
@@ -245,5 +249,32 @@ mod test_plugin_chain {
         assert!(chain.has_enabled_slots());
         chain.slots.pop();
         assert!(!chain.has_enabled_slots());
+    }
+
+    #[test]
+    fn saves_the_format_version_and_reads_files_without_one() {
+        let folder = TempDir::new().expect("temp dir");
+        let path = folder.path().join("plugin-chain.json");
+        let chain = PluginChain {
+            slots: vec![ChainSlot::new(description("Versioned"))],
+        };
+        chain.save_to(&path).expect("saved");
+        let json: serde_json::Value = serde_json::from_str(&fs::read_to_string(&path).expect("read")).expect("json");
+        assert_eq!(json["version"], CHAIN_FORMAT_VERSION);
+
+        let unversioned = serde_json::json!({"slots": json["slots"]});
+        fs::write(&path, unversioned.to_string()).expect("written");
+        assert_eq!(PluginChain::load_from(&path).expect("loaded"), chain);
+    }
+
+    #[test]
+    fn refuses_a_chain_saved_by_a_newer_version_without_moving_it() {
+        let folder = TempDir::new().expect("temp dir");
+        let path = folder.path().join("plugin-chain.json");
+        let newer = serde_json::json!({"version": CHAIN_FORMAT_VERSION + 1, "slots": []});
+        fs::write(&path, newer.to_string()).expect("written");
+        let error = PluginChain::load_recovering(&path).expect_err("newer");
+        assert!(format!("{error:#}").contains("newer version"), "{error:#}");
+        assert!(path.exists());
     }
 }

@@ -5,12 +5,13 @@
 //! Its format is separate from the C++ application's `KnownPlugins.xml`, which identifies plugins by JUCE hashes.
 
 use std::fs;
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use anyhow::{Context as _, Result};
+use anyhow::{Context as _, Result, bail};
+use audiobatch_core::atomic_write::write_atomically;
 use audiobatch_core::cache::data_directory;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use vst3_host::{ClassId, ClassInfo, default_search_folders};
 
@@ -28,6 +29,12 @@ const CHAIN_FILE_NAME: &str = "plugin-chain.json";
 
 /// Name of the folder of the saved chain presets.
 const PRESETS_FOLDER_NAME: &str = "chain-presets";
+
+/// Format version of `plugins.json`, raised when a change cannot be read by older versions.
+const KNOWN_PLUGINS_FORMAT_VERSION: u32 = 1;
+
+/// Name of the format version field in the JSON data files.
+const VERSION_FIELD: &str = "version";
 
 /// Format name shown for every plugin, since VST3 is the only supported format.
 pub const FORMAT_NAME: &str = "VST3";
@@ -96,6 +103,16 @@ pub struct PluginDataPaths {
     pub presets: PathBuf,
 }
 
+/// A value written with its format version next to its own fields.
+#[derive(Serialize)]
+struct Versioned<'a, T> {
+    /// Format version of the file.
+    version: u32,
+    /// The value, whose fields are written next to the version.
+    #[serde(flatten)]
+    value: &'a T,
+}
+
 impl PluginDescription {
     /// Creates the description of a class in a bundle.
     #[must_use]
@@ -124,7 +141,8 @@ impl KnownPlugins {
     /// Returns an error when the file exists but cannot be read or parsed.
     pub fn load_from(path: &Path) -> Result<Self> {
         match fs::read_to_string(path) {
-            Ok(text) => serde_json::from_str(&text).with_context(|| format!("Invalid plugin list {}", path.display())),
+            Ok(text) => read_versioned_json(&text, KNOWN_PLUGINS_FORMAT_VERSION, path)
+                .with_context(|| format!("Invalid plugin list {}", path.display())),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(error).with_context(|| format!("Could not read the plugin list {}", path.display())),
         }
@@ -147,7 +165,7 @@ impl KnownPlugins {
     ///
     /// Returns an error when the directory or the file cannot be written.
     pub fn save_to(&self, path: &Path) -> Result<()> {
-        write_json_atomically(path, self)
+        write_versioned_json(path, KNOWN_PLUGINS_FORMAT_VERSION, self)
     }
 
     /// Returns the folders a scan searches: the custom folders, or the default ones when there are none.
@@ -254,20 +272,33 @@ pub(crate) fn load_recovering<T: Default>(
     }
 }
 
-/// Writes a value as pretty JSON, replacing the file atomically and creating its directory when needed,
-/// so a reader never sees a partly written file.
+/// Writes a value as pretty JSON with a format version field next to its own fields,
+/// replacing the file atomically and creating its directory when needed, so a reader never sees a partly written file.
 ///
 /// # Errors
 ///
 /// Returns an error when the directory or the file cannot be written.
-pub(crate) fn write_json_atomically(path: &Path, value: &impl Serialize) -> Result<()> {
-    let directory = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(directory)?;
-    let mut temporary = tempfile::NamedTempFile::new_in(directory)?;
-    temporary.write_all(serde_json::to_string_pretty(value)?.as_bytes())?;
-    temporary.as_file().sync_all()?;
-    temporary.persist(path)?;
-    Ok(())
+pub(crate) fn write_versioned_json(path: &Path, version: u32, value: &impl Serialize) -> Result<()> {
+    let versioned = Versioned { version, value };
+    write_atomically(path, serde_json::to_string_pretty(&versioned)?.as_bytes())
+}
+
+/// Reads a value from JSON written by `write_versioned_json`.
+/// A file without a version field is from before the field existed, and reads as version 1.
+///
+/// # Errors
+///
+/// Returns an error when the text cannot be parsed, or the file was written by a newer version of `AudioBatch`.
+pub(crate) fn read_versioned_json<T: DeserializeOwned>(text: &str, supported_version: u32, path: &Path) -> Result<T> {
+    let json: serde_json::Value = serde_json::from_str(text)?;
+    let version = json.get(VERSION_FIELD).and_then(serde_json::Value::as_u64).unwrap_or(1);
+    if version > u64::from(supported_version) {
+        bail!(
+            "{} was saved by a newer version of AudioBatch, format {version} instead of {supported_version}",
+            path.display()
+        );
+    }
+    Ok(serde_json::from_value(json)?)
 }
 
 #[cfg(test)]
