@@ -19,6 +19,9 @@ use trash::macos::{DeleteMethod, TrashContextExtMacos};
 
 use crate::decode::AudioFileDecoder;
 
+#[cfg(windows)]
+mod windows_recycle_bin;
+
 /// Highest number tried for a backup name when earlier backups are still around.
 const MAXIMUM_BACKUP_INDEX: u32 = 1000;
 
@@ -36,10 +39,22 @@ pub fn trash_disposer() -> FileDisposer {
 ///
 /// On macOS the file goes through `NSFileManager`,
 /// rather than through Finder, which needs an automation permission and a logged in session.
+/// On Windows a file on a drive without a recycle bin, such as a network share, is refused,
+/// since the shell would delete it permanently, which the C++ application refuses too.
 #[must_use]
 pub fn trash_file(path: &Path) -> bool {
     if !path.exists() {
         return true;
+    }
+    #[cfg(windows)]
+    if let Some(folder) = path.parent()
+        && !windows_recycle_bin::folder_has_recycle_bin(folder)
+    {
+        eprintln!(
+            "Did not move {} to the recycle bin, because its drive would delete it permanently",
+            path.display()
+        );
+        return false;
     }
     #[cfg_attr(
         not(target_os = "macos"),
@@ -186,7 +201,10 @@ pub fn commit_temporary_output(
     check_output_path(source, output, overwrite_existing)?;
 
     let backup = if !replacing_source && output.exists() {
-        let path = backup_path(output);
+        // Renaming onto a taken backup name would overwrite an earlier backup, so a full set of backups fails.
+        let Some(path) = backup_path(output) else {
+            return Err("Could not move the existing output file aside".to_string());
+        };
         if fs::rename(output, &path).is_err() {
             return Err("Could not move the existing output file aside".to_string());
         }
@@ -195,8 +213,17 @@ pub fn commit_temporary_output(
         None
     };
 
-    if temporary.persist(output).is_err() {
+    // The data reaches the disk before the rename, so a power loss cannot leave an empty file in place.
+    if temporary.as_file().sync_all().is_err() {
         restore_backup(backup.as_deref(), output);
+        return Err("Could not write the new audio to the disk".to_string());
+    }
+
+    if let Err(error) = temporary.persist(output) {
+        restore_backup(backup.as_deref(), output);
+        if replacing_source && !source.exists() && error.file.path().is_file() {
+            return Err(keep_new_audio_after_lost_original(error.file, output));
+        }
         return Err(if replacing_source {
             "Could not replace the original file with the new audio".to_string()
         } else {
@@ -232,17 +259,51 @@ fn temporary_root() -> PathBuf {
     root
 }
 
-/// Returns an unused hidden backup path next to the output.
-fn backup_path(output: &Path) -> PathBuf {
-    let name = file_name(output);
-    let first = output.with_file_name(format!(".{name}.backup"));
-    if !first.exists() {
-        return first;
+/// Moves the new audio out of the temporary file after an in-place replace lost the original,
+/// so dropping the temporary file cannot delete the only remaining copy of the audio.
+/// On Windows, replacing a file can remove the original and then fail to move the replacement into place.
+/// The audio is kept next to the original as "<name> (recovered).<extension>", the name the C++ application uses.
+/// Returns the user-facing error that says where the new audio was kept.
+fn keep_new_audio_after_lost_original(temporary: NamedTempFile, output: &Path) -> String {
+    let stem = output
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let extension = output
+        .extension()
+        .map(|extension| format!(".{}", extension.to_string_lossy()))
+        .unwrap_or_default();
+    let kept = std::iter::once(format!("{stem} (recovered){extension}"))
+        .chain((2..=MAXIMUM_BACKUP_INDEX).map(|index| format!("{stem} (recovered){index}{extension}")))
+        .map(|name| output.with_file_name(name))
+        .find(|candidate| !candidate.exists());
+    if let Some(kept) = kept
+        && temporary.persist_noclobber(&kept).is_ok()
+    {
+        eprintln!(
+            "The original file {} was removed while being replaced, the new audio was kept as {}",
+            output.display(),
+            kept.display()
+        );
+        return format!(
+            "Could not replace the original file. The new audio was kept as {}",
+            file_name(&kept)
+        );
     }
-    (1..=MAXIMUM_BACKUP_INDEX)
-        .map(|index| output.with_file_name(format!(".{name}.backup.{index}")))
+    eprintln!(
+        "The original file {} was removed while being replaced",
+        output.display()
+    );
+    "Could not replace the original file, and the new audio could not be kept".to_string()
+}
+
+/// Returns an unused hidden backup path next to the output,
+/// or `None` when every backup name up to the highest index is taken.
+fn backup_path(output: &Path) -> Option<PathBuf> {
+    let name = file_name(output);
+    std::iter::once(output.with_file_name(format!(".{name}.backup")))
+        .chain((1..=MAXIMUM_BACKUP_INDEX).map(|index| output.with_file_name(format!(".{name}.backup.{index}"))))
         .find(|candidate| !candidate.exists())
-        .unwrap_or(first)
 }
 
 /// Renames the backup back to the output path, when there is one.
@@ -443,5 +504,51 @@ mod test_commit_temporary_output {
         assert!(dispose_of_copy(&source, &dispose));
         assert!(source.is_file());
         assert_eq!(*disposed.lock().expect("lock"), vec!["song.aif".to_string()]);
+    }
+
+    #[test]
+    fn new_audio_is_kept_when_the_original_was_lost() {
+        let directory = tempfile::tempdir().expect("creates directory");
+        let output = directory.path().join("song.aif");
+        fs::write(directory.path().join("song (recovered).aif"), b"earlier").expect("writes");
+
+        let error = keep_new_audio_after_lost_original(temporary_with(&output, b"new"), &output);
+
+        assert_eq!(
+            error,
+            "Could not replace the original file. The new audio was kept as song (recovered)2.aif"
+        );
+        assert_eq!(
+            fs::read(directory.path().join("song (recovered)2.aif")).expect("reads"),
+            b"new"
+        );
+        assert_eq!(
+            fs::read(directory.path().join("song (recovered).aif")).expect("reads"),
+            b"earlier"
+        );
+    }
+
+    #[test]
+    fn a_full_set_of_backups_fails_instead_of_overwriting_one() {
+        let directory = tempfile::tempdir().expect("creates directory");
+        let source = directory.path().join("song.wav");
+        let output = directory.path().join("song.aif");
+        fs::write(&source, b"source").expect("writes");
+        fs::write(&output, b"previous").expect("writes");
+        fs::write(directory.path().join(".song.aif.backup"), b"backup").expect("writes");
+        for index in 1..=MAXIMUM_BACKUP_INDEX {
+            fs::write(directory.path().join(format!(".song.aif.backup.{index}")), b"backup").expect("writes");
+        }
+        let dispose = recording_disposer(Arc::new(Mutex::new(Vec::new())), &[]);
+
+        let error = commit_temporary_output(temporary_with(&output, b"new"), &source, &output, true, &dispose)
+            .expect_err("commit fails");
+
+        assert_eq!(error, "Could not move the existing output file aside");
+        assert_eq!(fs::read(&output).expect("reads"), b"previous");
+        assert_eq!(
+            fs::read(directory.path().join(".song.aif.backup")).expect("reads"),
+            b"backup"
+        );
     }
 }
