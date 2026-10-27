@@ -144,6 +144,9 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
     - `LiveChain.*` holds the user's plugin chain, its settings persistence, and its editor and plugin manager windows.
       It also saves, loads, and deletes the chain presets, and remembers which preset the chain came from
       until the chain changes.
+      Its implementation is split into `LiveChain.cpp` (the slots, editing, and persistence),
+      `LiveChainWindows.cpp` (the menu and the editor, chain editor, and plugin manager windows),
+      `LiveChainPresets.cpp` (saving, loading, and deleting presets), and `LiveChainPreview.cpp`.
       Each slot owns the processor the preview and its editor share, and `LiveChainPreview.cpp` prepares them.
       The chain editor rows refer to their slot by `PluginSlotId` instead of by position.
     - `PreviewController.*` loads and releases the previewed file in that player and reads its Serato tags.
