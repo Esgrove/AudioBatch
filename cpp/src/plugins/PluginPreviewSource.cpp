@@ -2,6 +2,7 @@
 /// Preparation allocates scratch storage outside the callback,
 /// while rendering consumes bounded input blocks, primes plugin latency,
 /// and feeds silence through effect tails.
+/// The chain runs in stereo, and the output of a mono file is folded back to mono like the processed file.
 
 #include "plugins/PluginPreviewSource.h"
 
@@ -236,6 +237,12 @@ int PluginPreviewSource::processInputBlock(const int samples, const juce::int64 
         }
         signalChannels = processBlockThroughChain(blockView, plugins, sourceChannels, midi, pluginViews);
         failedPluginIndex = findFailedProcessCall(plugins);
+        // Processing writes a mono file as the average of the chain's channels, so its preview sounds the same.
+        if (sourceChannels == 1 && signalChannels >= 2) {
+            scratch.addFrom(0, 0, scratch, 1, 0, samples);
+            scratch.applyGain(0, 0, samples, 0.5f);
+            signalChannels = 1;
+        }
     }
     if (failedPluginIndex >= 0 || !isBlockFinite(blockView, samples)) {
         failed = true;

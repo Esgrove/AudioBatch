@@ -48,8 +48,8 @@ bool LiveChain::prepareLiveEntry(LiveSlot& entry)
     }
     auto& plugin = *entry.instance;
     plugin.setNonRealtime(false);
-    if (!plugin_processing::configurePluginChannels(plugin, previewChannels)) {
-        entry.preparationError = "The plugin does not support mono or stereo preview";
+    if (!plugin_processing::configurePreviewChannels(plugin)) {
+        entry.preparationError = "The plugin supports neither a stereo nor a mono layout";
     } else if (juce::jmax(plugin.getTotalNumInputChannels(), plugin.getTotalNumOutputChannels()) >= 32) {
         entry.preparationError = "The plugin exposes too many auxiliary channels for real-time preview";
     }
@@ -66,17 +66,17 @@ bool LiveChain::prepareLiveEntry(LiveSlot& entry)
 
 /// Configures the enabled live processors while keeping disabled instantiated slots in the same device context.
 /// Inspection additionally prepares disabled slots so every row can display an actual measured latency.
+/// The preview always runs in stereo, so loading a file with another channel count does not prepare the plugins again.
 PreviewChain LiveChain::preparePreview(
     const double sampleRate,
     const int blockSize,
-    const int channels,
     const bool inspectAll,
     const bool loadEnabled
 )
 {
     const juce::ScopedLock lock(renderingLock);
-    const bool contextChanged = !juce::approximatelyEqual(sampleRate, previewSampleRate)
-        || blockSize != previewBlockSize || channels != previewChannels;
+    const bool contextChanged
+        = !juce::approximatelyEqual(sampleRate, previewSampleRate) || blockSize != previewBlockSize;
     if (contextChanged) {
         captureOpenEditorStates();
         for (auto& entry : chain) {
@@ -88,11 +88,10 @@ PreviewChain LiveChain::preparePreview(
         }
         previewSampleRate = sampleRate;
         previewBlockSize = blockSize;
-        previewChannels = channels;
     }
 
     PreviewChain result;
-    result.preparation.processChannelCount = channels;
+    result.preparation.processChannelCount = 2;
     for (auto& entry : chain) {
         if (!inspectAll && entry.instance == nullptr && (!entry.enabled || !loadEnabled)) {
             continue;

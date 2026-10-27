@@ -483,7 +483,7 @@ private:
         juce::CriticalSection renderingLock;
         juce::AudioDeviceManager previewDeviceManager;
         LiveChain chain(library, properties, renderingLock, previewDeviceManager);
-        const auto preview = chain.preparePreview(44'100.0, 512, 2);
+        const auto preview = chain.preparePreview(44'100.0, 512);
         expect(preview.preparation.errorMessage.isEmpty(), preview.preparation.errorMessage);
         expectEquals(static_cast<int>(preview.instances.size()), 1);
         if (preview.instances.empty()) {

@@ -87,10 +87,9 @@ The differences below are in the GUIs and in plugin hosting.
   both versions process it at unity gain, with a notice that names the reason.
 - **Processing failures.** Both versions fail the file when a VST3 plugin reports a processing error,
   and turn the preview off with the plugin's name and error.
-- **Mono-only plugins in the preview.** The C++ preview prepares the chain for the loaded file's channel count,
-  so a plugin that only supports mono turns the preview off for every stereo file.
-  The Rust preview runs in stereo, and prepares a plugin that refuses stereo for mono,
-  folding the signal into it and copying its output to both channels.
+- **Preview channels.** Both previews run the plugin chain in stereo for every file,
+  and prepare a plugin that refuses stereo for mono, folding the signal into it and copying its output to both channels.
+  The output of a mono file is folded back to mono, so it sounds like the processed file.
   Offline processing refuses a stereo file through a mono-only plugin in both versions.
 - **Custom gain in the preview.** Both previews apply a file's custom gain only in front of the plugin chain,
   so a preview without plugins plays the file unchanged, and both draw the waveform with it.

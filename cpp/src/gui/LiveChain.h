@@ -118,7 +118,6 @@ public:
     [[nodiscard]] PreviewChain preparePreview(
         double sampleRate,
         int blockSize,
-        int channels,
         bool inspectAll = false,
         bool loadEnabled = true
     );
@@ -205,7 +204,6 @@ private:
 
     double previewSampleRate {utils::defaultSampleRate};
     int previewBlockSize {512};
-    int previewChannels {2};
 
     JUCE_DECLARE_WEAK_REFERENCEABLE(LiveChain)
     JUCE_LEAK_DETECTOR(LiveChain)
