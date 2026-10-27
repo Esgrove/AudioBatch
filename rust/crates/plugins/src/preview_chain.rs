@@ -12,13 +12,13 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
-use vst3_host::{PluginInstance, ProcessError, ProcessorHandle, UiThread};
+use vst3_host::{PluginInstance, ProcessError, ProcessMode, ProcessorHandle, UiThread};
 
 use crate::chain_signal::{ChainSignal, StageFailure};
 use crate::processing_chain::{PROCESSING_BLOCK_FRAMES, limited_tail};
 
 /// Channels the preview plays, since the playback engine maps every file to stereo.
-const PREVIEW_CHANNELS: usize = 2;
+pub const PREVIEW_CHANNELS: usize = 2;
 
 /// Stage index meaning that no plugin has failed.
 const NO_FAILURE: usize = usize::MAX;
@@ -212,10 +212,31 @@ pub fn chain_tail_frames<'a>(
         .sum()
 }
 
+/// Prepares an instance for stereo realtime processing at a rate and activates it.
+/// A plugin that only takes mono is prepared for mono, and the preview folds the stereo signal into it.
+///
+/// # Errors
+///
+/// Returns an error when the plugin cannot be deactivated, takes neither stereo nor mono,
+/// or refuses the processing setup or the activation.
+pub fn prepare_for_preview(
+    ui: &UiThread,
+    instance: &mut PluginInstance,
+    sample_rate: f64,
+    block_frames: usize,
+) -> anyhow::Result<()> {
+    instance.deactivate(ui)?;
+    instance
+        .configure_main_buses(ui, PREVIEW_CHANNELS)
+        .or_else(|_| instance.configure_main_buses(ui, 1))?;
+    instance.setup(ui, ProcessMode::Realtime, sample_rate, block_frames)?;
+    instance.activate(ui)
+}
+
 #[cfg(test)]
 mod test_preview_chain {
     use audiobatch_test_plugin::{DELAY_LATENCY, Kind};
-    use vst3_host::{ClassId, Module, PluginState, ProcessMode};
+    use vst3_host::{ClassId, Module, PluginState};
 
     use super::*;
     use crate::test_helpers::{dispatcher, gain_state};
@@ -239,14 +260,8 @@ mod test_preview_chain {
                         let mut instance = PluginInstance::create(ui, &module, class_id, Some(dispatcher().clone()))
                             .map_err(|error| error.to_string())?;
                         instance.set_state(ui, state).map_err(|error| error.to_string())?;
-                        instance
-                            .configure_main_buses(ui, PREVIEW_CHANNELS)
-                            .or_else(|_| instance.configure_main_buses(ui, 1))
-                            .map_err(|error| error.to_string())?;
-                        instance
-                            .setup(ui, ProcessMode::Realtime, RATE, SETUP_BLOCK_FRAMES)
-                            .map_err(|error| error.to_string())?;
-                        instance.activate(ui).map_err(|error| error.to_string())?;
+                        prepare_for_preview(ui, &mut instance, RATE, SETUP_BLOCK_FRAMES)
+                            .map_err(|error| format!("{error:#}"))?;
                         instances.push((kind.name(), instance));
                     }
                     let named: Vec<(&str, &PluginInstance)> =
