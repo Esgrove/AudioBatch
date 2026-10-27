@@ -3,6 +3,7 @@
 //! It shows the file name split into artist and title at the first " - ", a status line while the file has no result,
 //! four metric cards for the levels, and a scrollable list of technical details and tags.
 //! The tooltips show the full path on the name, and each value spelled out.
+//! The compact variant for the collapsed preview shows only the four metric cards, in one row.
 
 use audiobatch_core::format::{
     format_bitrate, format_bits_per_sample, format_loudness_compact, format_peak_compact, format_sample_rate,
@@ -67,6 +68,21 @@ const METRIC_CAPTION_LINE_HEIGHT: f32 = 14.0;
 
 /// Separator between the artist and the title in a file name.
 const TITLE_SEPARATOR: &str = " - ";
+
+/// Space between the cards of the compact panel, and between a card's labels and its value.
+pub const COMPACT_METRIC_SPACING: f32 = 5.0;
+
+/// One level measurement shown on a metric card.
+struct Metric {
+    /// Full name of the measurement, used in the tooltip and as the element id.
+    name: &'static str,
+    /// Short caption shown on the card.
+    caption: &'static str,
+    /// Unit of the value.
+    unit: &'static str,
+    /// Formatted value, or a dash when there is no result.
+    value: String,
+}
 
 /// Renders the panel for the selected row and its tags, or the empty state when nothing is selected.
 pub fn render_info_panel(row: Option<&ResultRow>, tags: Option<&FileTags>) -> AnyElement {
@@ -168,13 +184,72 @@ fn heading_line(id: &'static str, text: String, path: Option<&str>) -> Stateful<
     }
 }
 
-/// Renders the four level cards in two rows, with dashes when there is no result.
-fn metric_grid(record: Option<&AnalysisRecord>) -> Div {
+/// Renders the compact variant for the collapsed preview: the four level cards in one row,
+/// each with its caption above its unit on the left and the value on the right, and dashes when there is no result.
+/// The file name and the details are left out, like the compact panel of the C++ application.
+pub fn render_compact_info_panel(row: Option<&ResultRow>) -> Div {
+    let metrics = metrics(row.and_then(ResultRow::ready_record));
+    div()
+        .size_full()
+        .flex()
+        .flex_row()
+        .gap(px(COMPACT_METRIC_SPACING))
+        .children(metrics.into_iter().map(|metric| {
+            metric_card_frame(&metric)
+                .h_full()
+                .flex_row()
+                .items_center()
+                .gap(px(COMPACT_METRIC_SPACING))
+                .px(px(6.0))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .flex_none()
+                        .text_size(px(CAPTION_FONT_SIZE))
+                        .line_height(px(METRIC_CAPTION_LINE_HEIGHT))
+                        .text_color(color(palette::GREY_MIDDLE_LIGHT))
+                        .child(metric.caption)
+                        .child(metric.unit),
+                )
+                .child(metric_value(metric.value).flex_1().text_right())
+        }))
+}
+
+/// Returns the four level metrics of a record, with dashes when there is no result.
+fn metrics(record: Option<&AnalysisRecord>) -> [Metric; 4] {
     let value = |format: fn(&AnalysisRecord) -> String| record.map_or_else(|| String::from("-"), format);
-    let peak = value(|record| format_peak_compact(f64::from(record.overall_peak)));
-    let true_peak = value(|record| format_true_peak_compact(record.overall_true_peak));
-    let short_term = value(|record| format_loudness_compact(record.max_short_term_lufs));
-    let integrated = value(|record| format_loudness_compact(record.integrated_lufs));
+    [
+        Metric {
+            name: "Peak",
+            caption: "Peak",
+            unit: "dBFS",
+            value: value(|record| format_peak_compact(f64::from(record.overall_peak))),
+        },
+        Metric {
+            name: "True peak",
+            caption: "True peak",
+            unit: "dBTP",
+            value: value(|record| format_true_peak_compact(record.overall_true_peak)),
+        },
+        Metric {
+            name: "Max short-term",
+            caption: "Short-term",
+            unit: "LUFS",
+            value: value(|record| format_loudness_compact(record.max_short_term_lufs)),
+        },
+        Metric {
+            name: "Integrated loudness",
+            caption: "Integrated",
+            unit: "LUFS",
+            value: value(|record| format_loudness_compact(record.integrated_lufs)),
+        },
+    ]
+}
+
+/// Renders the four level cards in two rows.
+fn metric_grid(record: Option<&AnalysisRecord>) -> Div {
+    let [peak, true_peak, short_term, integrated] = metrics(record);
     div()
         .flex()
         .flex_col()
@@ -185,37 +260,27 @@ fn metric_grid(record: Option<&AnalysisRecord>) -> Div {
                 .flex()
                 .flex_row()
                 .gap(px(SECTION_SPACING))
-                .child(metric_card("Peak", "Peak", "dBFS", peak))
-                .child(metric_card("True peak", "True peak", "dBTP", true_peak)),
+                .child(metric_card(peak))
+                .child(metric_card(true_peak)),
         )
         .child(
             div()
                 .flex()
                 .flex_row()
                 .gap(px(SECTION_SPACING))
-                .child(metric_card("Max short-term", "Short-term", "LUFS", short_term))
-                .child(metric_card("Integrated loudness", "Integrated", "LUFS", integrated)),
+                .child(metric_card(short_term))
+                .child(metric_card(integrated)),
         )
 }
 
 /// Renders a metric card: the caption and unit on top, the value large below.
-/// The tooltip spells out the measurement with its value and unit.
-fn metric_card(name: &'static str, caption: &'static str, unit: &'static str, value: String) -> Stateful<Div> {
+fn metric_card(metric: Metric) -> Stateful<Div> {
     let caption_color: Hsla = color(palette::GREY_MIDDLE_LIGHT);
-    div()
-        .id(name)
-        .tooltip(tooltip(format!("{name}: {value} {unit}")))
-        .flex_1()
-        .min_w_0()
+    metric_card_frame(&metric)
         .h(px(METRIC_HEIGHT))
-        .flex()
         .flex_col()
         .justify_between()
         .p(px(6.0))
-        .rounded(px(CORNER_RADIUS))
-        .bg(color(palette::GREY_MEDIUM_DARK))
-        .border_1()
-        .border_color(white(OUTLINE_ALPHA))
         .child(
             div()
                 .flex()
@@ -224,18 +289,36 @@ fn metric_card(name: &'static str, caption: &'static str, unit: &'static str, va
                 .text_size(px(CAPTION_FONT_SIZE))
                 .line_height(px(METRIC_CAPTION_LINE_HEIGHT))
                 .text_color(caption_color)
-                .child(caption)
-                .child(unit),
+                .child(metric.caption)
+                .child(metric.unit),
         )
-        .child(
-            div()
-                .font_family(MONO_FONT)
-                .text_size(px(METRIC_FONT_SIZE))
-                .line_height(px(METRIC_LINE_HEIGHT))
-                .text_color(color(palette::GREY_SUPER_LIGHT))
-                .truncate()
-                .child(value),
-        )
+        .child(metric_value(metric.value))
+}
+
+/// Renders the outlined frame of a metric card, with a tooltip spelling out the measurement with its value and unit.
+fn metric_card_frame(metric: &Metric) -> Stateful<Div> {
+    div()
+        .id(metric.name)
+        .tooltip(tooltip(format!("{}: {} {}", metric.name, metric.value, metric.unit)))
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .rounded(px(CORNER_RADIUS))
+        .bg(color(palette::GREY_MEDIUM_DARK))
+        .border_1()
+        .border_color(white(OUTLINE_ALPHA))
+}
+
+/// Renders the large value of a metric card.
+fn metric_value(value: String) -> Div {
+    div()
+        .min_w_0()
+        .font_family(MONO_FONT)
+        .text_size(px(METRIC_FONT_SIZE))
+        .line_height(px(METRIC_LINE_HEIGHT))
+        .text_color(color(palette::GREY_SUPER_LIGHT))
+        .truncate()
+        .child(value)
 }
 
 /// Renders a field name and its value, with both in the tooltip for a value too long to show.

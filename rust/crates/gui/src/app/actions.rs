@@ -260,6 +260,7 @@ impl AppView {
     pub(super) fn handle_controls_event(&mut self, event: ControlsEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event {
             ControlsEvent::TogglePlayback => self.toggle_playback(cx),
+            ControlsEvent::TogglePreviewSection => self.toggle_preview_section(cx),
             ControlsEvent::ResetSlider(control) => self.reset_slider(control, window, cx),
             ControlsEvent::OpenSettings => self.open_settings_window(cx),
             ControlsEvent::SetNormalizeMode(mode) => self.set_normalize_mode(mode, cx),

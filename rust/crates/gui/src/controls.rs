@@ -1,17 +1,15 @@
-//! The controls column at the left of the preview:
-//! zoom, input gain, the normalization target, plugin processing, the Plugin Chain and Audio Settings buttons,
-//! and Play/Stop.
+//! The controls column at the left of the preview, laid out like the C++ application:
+//! zoom, input gain, the Normalize and Overwrite options, the normalization target,
+//! the Plugin Chain and Audio Settings buttons, and Play/Stop and Process side by side at the bottom.
 //!
-//! The zoom and gain sliders and their value labels are on top,
-//! and the large Play/Stop button at the bottom, green while stopped and red while playing.
-//! The normalization group has the Peak and Loudness modes, the target slider of the chosen mode,
-//! the overwrite option, and the button that normalizes the selected file.
-//! The overwrite option applies to plugin processing too.
-//! The plugin group shows the chain summary, the option that normalizes files before the plugins,
-//! and the button that processes the selected file, which cancels the run while files are processed.
-//! The playback position is shown by the playhead on the waveform,
-//! and the output device in the status bar of the main window.
-//! Everything above the button scrolls when the preview is short, so the button always stays visible.
+//! The chevron at the right end of the Zoom row collapses the preview into its compact row,
+//! which shows the same chevron and the same Play/Stop and Process buttons.
+//! Play/Stop is green while stopped and red while playing,
+//! and Process turns into Cancel during an analysis, normalization, or processing run.
+//! The Normalize option normalizes files before the plugins, and the Overwrite option applies to both.
+//! The target has the Peak and Loudness modes, the target slider of the chosen mode,
+//! and the button that normalizes the selected files.
+//! Everything above the playback row scrolls when the preview is short, so the buttons always stay visible.
 //! Double-clicking a slider resets it to its default value.
 
 use std::rc::Rc;
@@ -20,30 +18,42 @@ use gpui_kit::base::Selectable as _;
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::slider::{Slider, SliderState};
-use gpui_kit::component::{Disableable as _, Sizable as _};
+use gpui_kit::component::{Disableable as _, IconName, Sizable as _};
 use gpui_kit::{
-    App, Div, ElementId, Entity, InteractiveElement as _, MouseButton, MouseUpEvent, ParentElement as _, Stateful,
-    StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    AnyElement, App, Div, ElementId, Entity, InteractiveElement as _, IntoElement as _, MouseButton, MouseUpEvent,
+    ParentElement as _, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, px, relative,
 };
 
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
 use crate::settings::NormalizeMode;
 use crate::theme::{MONO_FONT, color, palette, tooltip, white};
 
-/// Height of the Play/Stop button.
-const PLAY_BUTTON_HEIGHT: f32 = 38.0;
+/// Height of the Play/Stop and Process buttons.
+pub const PLAYBACK_BUTTON_HEIGHT: f32 = 38.0;
 
-/// Height of the Audio Settings button.
-const SETTINGS_BUTTON_HEIGHT: f32 = 28.0;
+/// Width and height of the chevron that collapses and expands the preview.
+pub const SECTION_TOGGLE_SIZE: f32 = 18.0;
 
-/// Tooltip of the Audio Settings button.
-const SETTINGS_TOOLTIP: &str = "Open audio device and preview settings.";
+/// Height of the Plugin Chain, Audio Settings, and Normalize buttons.
+const BUTTON_HEIGHT: f32 = 28.0;
 
 /// Space between the control groups.
 const GROUP_SPACING: f32 = 10.0;
 
+/// Space inside a control group, and between the two buttons of the playback row.
+const ITEM_SPACING: f32 = 6.0;
+
+/// Horizontal padding of the controls column.
+const HORIZONTAL_PADDING: f32 = 10.0;
+
+/// Vertical padding of the controls column.
+const VERTICAL_PADDING: f32 = 8.0;
+
 /// Font size of the captions and their values.
 const CAPTION_FONT_SIZE: f32 = 12.0;
+
+/// Share of the target row given to the Normalize button, like the C++ application.
+const NORMALIZE_BUTTON_PROPORTION: f32 = 0.4;
 
 /// Horizontal inset of a slider track: the thumb radius plus the width of its hover ring.
 /// The thumb is centred on the track ends, so a smaller inset lets the scroll area clip it at either end.
@@ -51,6 +61,20 @@ const SLIDER_INSET: f32 = 11.0;
 
 /// Tooltip of the Play/Stop button.
 const PLAY_TOOLTIP: &str = "Start or stop preview playback for the selected file.";
+
+/// Tooltip of the chevron while the preview is expanded.
+const COLLAPSE_TOOLTIP: &str = if cfg!(target_os = "macos") {
+    "Collapse bottom section (Cmd+Shift+Space)."
+} else {
+    "Collapse bottom section (Ctrl+Shift+Space)."
+};
+
+/// Tooltip of the chevron while the preview is collapsed.
+const EXPAND_TOOLTIP: &str = if cfg!(target_os = "macos") {
+    "Expand bottom section (Cmd+Shift+Space)."
+} else {
+    "Expand bottom section (Ctrl+Shift+Space)."
+};
 
 /// Tooltip of the zoom slider.
 const ZOOM_TOOLTIP: &str =
@@ -77,7 +101,7 @@ const OVERWRITE_TOOLTIP: &str = "When enabled, normalizing or processing replace
      with the same name. The replaced file is moved to the system trash.";
 
 /// Tooltip of the Normalize button.
-const NORMALIZE_TOOLTIP: &str = "Normalize the selected file to the target. \
+const NORMALIZE_TOOLTIP: &str = "Normalize the selected files to the target. \
      The output is written as AIFF next to the source, and a converted source is moved to the system trash.";
 
 /// Tooltip of the option that normalizes before the plugins.
@@ -85,15 +109,18 @@ const NORMALIZE_FIRST_TOOLTIP: &str = "When enabled, files without a custom gain
      to the selected peak or loudness target before the plugin chain.";
 
 /// Tooltip of the Process button.
-const PROCESS_TOOLTIP: &str = "Process the selected file with the plugin chain. \
+const PROCESS_TOOLTIP: &str = "Process the selected files with the plugin chain. \
      The output is written as 16-bit AIFF next to the source, and a converted source is moved to the system trash.";
 
 /// Tooltip of the Cancel button while files are processed.
 const CANCEL_TOOLTIP: &str =
     "Cancel the running analysis, normalization, or processing. Files in progress keep their originals.";
 
-/// Tooltip of the Plugin Chain button.
+/// Tooltip of the Plugin Chain button, followed by the chain summary.
 const CHAIN_TOOLTIP: &str = "Open the plugin chain, where plugins are added, ordered, bypassed, and edited.";
+
+/// Tooltip of the Audio Settings button.
+const SETTINGS_TOOLTIP: &str = "Open audio device and preview settings.";
 
 /// A slider of the controls column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,11 +133,13 @@ pub enum SliderControl {
     NormalizeTarget,
 }
 
-/// Something the user did in the controls column.
+/// Something the user did in the controls column or the compact row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControlsEvent {
     /// Play/Stop was clicked.
     TogglePlayback,
+    /// The chevron was clicked to collapse or expand the preview.
+    TogglePreviewSection,
     /// A slider was double-clicked to reset it.
     ResetSlider(SliderControl),
     /// The Audio Settings button was clicked.
@@ -131,19 +160,20 @@ pub enum ControlsEvent {
     OpenPluginChain,
 }
 
-/// Values the plugin group shows.
-pub struct PluginControls {
-    /// Summary of the chain, for example "2 plugins".
-    pub summary: String,
-    /// True when files are normalized before the plugins.
-    pub normalize_first: bool,
-    /// True when the selected file can be processed now.
+/// Values the Play/Stop and Process buttons show, in the controls column and in the compact row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlaybackControls {
+    /// True while audio plays.
+    pub playing: bool,
+    /// True when a file is selected or loaded, so Play has something to play.
+    pub can_play: bool,
+    /// True when the selected files can be processed now.
     pub can_process: bool,
-    /// True during an analysis, normalization, or processing run, which turns the button into Cancel.
+    /// True during an analysis, normalization, or processing run, which turns Process into Cancel.
     pub running: bool,
 }
 
-/// Values the normalization group shows.
+/// Values the normalization controls show.
 pub struct NormalizeControls<'a> {
     /// The chosen mode.
     pub mode: NormalizeMode,
@@ -153,7 +183,9 @@ pub struct NormalizeControls<'a> {
     pub target_text: String,
     /// True when an existing output is replaced.
     pub overwrite: bool,
-    /// True when the selected file can be normalized now.
+    /// True when files are normalized before the plugins.
+    pub normalize_first: bool,
+    /// True when the selected files can be normalized now.
     pub can_normalize: bool,
 }
 
@@ -163,28 +195,21 @@ pub struct ControlsState<'a> {
     pub zoom: &'a Entity<SliderState>,
     /// Custom gain slider of the selected file in decibels.
     pub gain: &'a Entity<SliderState>,
-    /// True while audio plays.
-    pub playing: bool,
-    /// True when a file is selected or loaded, so Play has something to play.
-    pub can_play: bool,
     /// True when the selected file has a usable result, so the gain has something to apply to.
     pub can_adjust_gain: bool,
-    /// The normalization group.
+    /// The normalization controls.
     pub normalize: NormalizeControls<'a>,
-    /// The plugin group.
-    pub plugins: PluginControls,
+    /// Summary of the plugin chain, for example "Pro-Q 4 > (Limiter)", shown in the Plugin Chain tooltip.
+    pub chain_summary: String,
+    /// The Play/Stop and Process buttons.
+    pub playback: PlaybackControls,
 }
 
 /// Callback that receives the events of the controls column.
-type EventCallback = Rc<dyn Fn(&ControlsEvent, &mut Window, &mut App)>;
+pub type EventCallback = Rc<dyn Fn(&ControlsEvent, &mut Window, &mut App)>;
 
 /// Renders the controls column, sending what the user does to `on_event`.
-pub fn render_controls(
-    state: &ControlsState<'_>,
-    on_event: impl Fn(&ControlsEvent, &mut Window, &mut App) + 'static,
-    cx: &App,
-) -> Div {
-    let on_event: EventCallback = Rc::new(on_event);
+pub fn render_controls(state: &ControlsState<'_>, on_event: &EventCallback, cx: &App) -> Div {
     let zoom = f64::from(state.zoom.read(cx).value().start());
     let gain = state.gain.read(cx).value().start();
 
@@ -196,82 +221,186 @@ pub fn render_controls(
         .flex()
         .flex_col()
         .gap(px(GROUP_SPACING))
-        .child(slider_group(
-            "Zoom",
-            format!("{:.0}%", zoom * 100.0),
-            Slider::new(state.zoom),
-            ZOOM_TOOLTIP,
-            true,
-            send_on_double_click(&on_event, ControlsEvent::ResetSlider(SliderControl::Zoom)),
+        .child(
+            slider_group(
+                "Zoom",
+                format!("{:.0}%", zoom * 100.0),
+                ZOOM_TOOLTIP,
+                true,
+                Some(render_section_toggle(false, on_event).into_any_element()),
+            )
+            .child(slider_track(
+                Slider::new(state.zoom),
+                true,
+                send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::Zoom)),
+            )),
+        )
+        .child(
+            slider_group(
+                "Input gain",
+                format!("{gain:+.1} dB"),
+                GAIN_TOOLTIP,
+                state.can_adjust_gain,
+                None,
+            )
+            .child(slider_track(
+                Slider::new(state.gain),
+                state.can_adjust_gain,
+                send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::Gain)),
+            )),
+        )
+        .child(option_row(&state.normalize, on_event))
+        .child(target_group(&state.normalize, on_event))
+        .child(column_button(
+            "plugin-chain",
+            "Plugin Chain",
+            format!("{CHAIN_TOOLTIP}\nChain: {}", state.chain_summary),
+            ControlsEvent::OpenPluginChain,
+            on_event,
         ))
-        .child(slider_group(
-            "Input gain",
-            format!("{gain:+.1} dB"),
-            Slider::new(state.gain),
-            GAIN_TOOLTIP,
-            state.can_adjust_gain,
-            send_on_double_click(&on_event, ControlsEvent::ResetSlider(SliderControl::Gain)),
-        ))
-        .child(normalize_group(&state.normalize, &on_event))
-        .child(plugin_group(&state.plugins, &on_event))
-        .child({
-            let on_event = Rc::clone(&on_event);
-            Button::new("plugin-chain")
-                .label("Plugin Chain")
-                .tooltip(CHAIN_TOOLTIP)
-                .w_full()
-                .h(px(SETTINGS_BUTTON_HEIGHT))
-                .flex_none()
-                .on_click(move |_, window, cx| on_event(&ControlsEvent::OpenPluginChain, window, cx))
-        })
-        .child({
-            let on_event = Rc::clone(&on_event);
-            Button::new("audio-settings")
-                .label("Audio Settings")
-                .tooltip(SETTINGS_TOOLTIP)
-                .w_full()
-                .h(px(SETTINGS_BUTTON_HEIGHT))
-                .flex_none()
-                .on_click(move |_, window, cx| on_event(&ControlsEvent::OpenSettings, window, cx))
-        });
+        .child(column_button(
+            "audio-settings",
+            "Audio Settings",
+            String::from(SETTINGS_TOOLTIP),
+            ControlsEvent::OpenSettings,
+            on_event,
+        ));
 
     div()
         .size_full()
         .flex()
         .flex_col()
-        .gap(px(8.0))
-        .px(px(10.0))
-        .py(px(8.0))
+        .gap(px(GROUP_SPACING))
+        .px(px(HORIZONTAL_PADDING))
+        .py(px(VERTICAL_PADDING))
         .rounded(px(CORNER_RADIUS))
         .bg(color(palette::GREY_SEMI_DARK))
         .border_1()
         .border_color(white(OUTLINE_ALPHA))
         .child(settings)
-        .child(play_button(state, on_event))
+        .child(render_playback_row(state.playback, on_event).h(px(PLAYBACK_BUTTON_HEIGHT)))
 }
 
-/// Renders the Play/Stop button: green while stopped, red while playing, and grey with nothing to play.
+/// Renders Play/Stop and Process side by side, filling the height and width they are given.
+/// Play/Stop is green while stopped, red while playing, and grey with nothing to play.
 /// The solid colors come from the theme's success and danger buttons,
 /// because a custom button variant only tints its background with the color.
-fn play_button(state: &ControlsState<'_>, on_event: EventCallback) -> Button {
-    let button = Button::new("play-stop")
-        .label(if state.playing { "Stop" } else { "Play" })
-        .tooltip(PLAY_TOOLTIP)
-        .disabled(!state.can_play)
-        .w_full()
-        .h(px(PLAY_BUTTON_HEIGHT))
+pub fn render_playback_row(state: PlaybackControls, on_event: &EventCallback) -> Div {
+    let play = {
+        let on_event = Rc::clone(on_event);
+        let button = Button::new("play-stop")
+            .label(if state.playing { "Stop" } else { "Play" })
+            .tooltip(PLAY_TOOLTIP)
+            .disabled(!state.can_play)
+            .flex_1()
+            .h_full()
+            .on_click(move |_, window, cx| on_event(&ControlsEvent::TogglePlayback, window, cx));
+        match (state.can_play, state.playing) {
+            (false, _) => button,
+            (true, false) => button.success(),
+            (true, true) => button.danger(),
+        }
+    };
+    let process = {
+        let on_event = Rc::clone(on_event);
+        let (label, tooltip_text, event, enabled) = if state.running {
+            ("Cancel", CANCEL_TOOLTIP, ControlsEvent::CancelRun, true)
+        } else {
+            (
+                "Process",
+                PROCESS_TOOLTIP,
+                ControlsEvent::ProcessSelected,
+                state.can_process,
+            )
+        };
+        let button = Button::new("process-selected")
+            .label(label)
+            .tooltip(tooltip_text)
+            .disabled(!enabled)
+            .flex_1()
+            .h_full()
+            .on_click(move |_, window, cx| on_event(&event, window, cx));
+        if enabled { button.primary() } else { button }
+    };
+    div()
+        .flex()
+        .flex_row()
         .flex_none()
-        .on_click(move |_, window, cx| on_event(&ControlsEvent::TogglePlayback, window, cx));
-    match (state.can_play, state.playing) {
-        (false, _) => button,
-        (true, false) => button.success(),
-        (true, true) => button.danger(),
-    }
+        .gap(px(ITEM_SPACING))
+        .child(play)
+        .child(process)
 }
 
-/// Renders the normalization group: the mode buttons, the target slider,
-/// and a row with the overwrite option and the Normalize button.
-fn normalize_group(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
+/// Renders the chevron that collapses the preview, pointing down while expanded and up while collapsed.
+pub fn render_section_toggle(compact: bool, on_event: &EventCallback) -> Button {
+    let on_event = Rc::clone(on_event);
+    Button::new("preview-section")
+        .icon(if compact {
+            IconName::ChevronUp
+        } else {
+            IconName::ChevronDown
+        })
+        .ghost()
+        .xsmall()
+        .tooltip(if compact { EXPAND_TOOLTIP } else { COLLAPSE_TOOLTIP })
+        .w(px(SECTION_TOGGLE_SIZE))
+        .h(px(SECTION_TOGGLE_SIZE))
+        .flex_none()
+        .on_click(move |_, window, cx| on_event(&ControlsEvent::TogglePreviewSection, window, cx))
+}
+
+/// Renders a full-width button of the controls column that sends `event` when clicked.
+fn column_button(
+    id: &'static str,
+    label: &'static str,
+    tooltip_text: String,
+    event: ControlsEvent,
+    on_event: &EventCallback,
+) -> Button {
+    let on_event = Rc::clone(on_event);
+    Button::new(id)
+        .label(label)
+        .tooltip(tooltip_text)
+        .w_full()
+        .h(px(BUTTON_HEIGHT))
+        .flex_none()
+        .on_click(move |_, window, cx| on_event(&event, window, cx))
+}
+
+/// Renders the option that normalizes before the plugins and the overwrite option in two equal halves.
+fn option_row(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
+    let normalize_first = {
+        let on_event = Rc::clone(on_event);
+        Checkbox::new("process-normalize-first")
+            .label("Normalize")
+            .tooltip(NORMALIZE_FIRST_TOOLTIP)
+            .checked(state.normalize_first)
+            .on_change(move |checked: &bool, window, cx| {
+                on_event(&ControlsEvent::SetNormalizeFirst(*checked), window, cx);
+            })
+    };
+    let overwrite = {
+        let on_event = Rc::clone(on_event);
+        Checkbox::new("normalize-overwrite")
+            .label("Overwrite")
+            .tooltip(OVERWRITE_TOOLTIP)
+            .checked(state.overwrite)
+            .on_change(move |checked: &bool, window, cx| {
+                on_event(&ControlsEvent::SetOverwrite(*checked), window, cx);
+            })
+    };
+    div()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(ITEM_SPACING))
+        .child(div().flex_1().min_w_0().child(normalize_first))
+        .child(div().flex_1().min_w_0().child(overwrite))
+}
+
+/// Renders the normalization target: the mode buttons, the caption with the target,
+/// and the target slider with the Normalize button on its right.
+fn target_group(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
     let modes = {
         let on_event = Rc::clone(on_event);
         ButtonGroup::new("normalize-mode")
@@ -300,114 +429,32 @@ fn normalize_group(state: &NormalizeControls<'_>, on_event: &EventCallback) -> D
                 on_event(&ControlsEvent::SetNormalizeMode(mode), window, cx);
             })
     };
-    let overwrite = {
-        let on_event = Rc::clone(on_event);
-        Checkbox::new("normalize-overwrite")
-            .label("Overwrite")
-            .tooltip(OVERWRITE_TOOLTIP)
-            .checked(state.overwrite)
-            .on_change(move |checked: &bool, window, cx| {
-                on_event(&ControlsEvent::SetOverwrite(*checked), window, cx);
-            })
-    };
     let normalize = {
         let on_event = Rc::clone(on_event);
         Button::new("normalize-selected")
             .label("Normalize")
             .tooltip(NORMALIZE_TOOLTIP)
             .disabled(!state.can_normalize)
-            .flex_1()
-            .h(px(SETTINGS_BUTTON_HEIGHT))
+            .w(relative(NORMALIZE_BUTTON_PROPORTION))
+            .h(px(BUTTON_HEIGHT))
+            .flex_none()
             .on_click(move |_, window, cx| on_event(&ControlsEvent::NormalizeSelected, window, cx))
     };
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(6.0))
-        .child(modes)
-        .child(slider_group(
-            "Normalize target",
-            state.target_text.clone(),
-            Slider::new(state.target),
-            TARGET_TOOLTIP,
-            true,
-            send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::NormalizeTarget)),
-        ))
-        .child(
+    div().flex().flex_col().gap(px(ITEM_SPACING)).child(modes).child(
+        slider_group("Target", state.target_text.clone(), TARGET_TOOLTIP, true, None).child(
             div()
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(8.0))
-                .child(overwrite)
+                .gap(px(ITEM_SPACING))
+                .child(div().flex_1().min_w_0().child(slider_track(
+                    Slider::new(state.target),
+                    true,
+                    send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::NormalizeTarget)),
+                )))
                 .child(normalize),
-        )
-}
-
-/// Renders the plugin group: the caption with the chain summary,
-/// and a row with the option that normalizes first and the Process button, which is Cancel during any run.
-fn plugin_group(state: &PluginControls, on_event: &EventCallback) -> Div {
-    let normalize_first = {
-        let on_event = Rc::clone(on_event);
-        Checkbox::new("process-normalize-first")
-            .label("Normalize")
-            .tooltip(NORMALIZE_FIRST_TOOLTIP)
-            .checked(state.normalize_first)
-            .on_change(move |checked: &bool, window, cx| {
-                on_event(&ControlsEvent::SetNormalizeFirst(*checked), window, cx);
-            })
-    };
-    let button = {
-        let on_event = Rc::clone(on_event);
-        let (label, tooltip_text, event, enabled) = if state.running {
-            ("Cancel", CANCEL_TOOLTIP, ControlsEvent::CancelRun, true)
-        } else {
-            (
-                "Process",
-                PROCESS_TOOLTIP,
-                ControlsEvent::ProcessSelected,
-                state.can_process,
-            )
-        };
-        Button::new("process-selected")
-            .label(label)
-            .tooltip(tooltip_text)
-            .disabled(!enabled)
-            .flex_1()
-            .h(px(SETTINGS_BUTTON_HEIGHT))
-            .on_click(move |_, window, cx| on_event(&event, window, cx))
-    };
-    div()
-        .flex()
-        .flex_col()
-        .gap(px(6.0))
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .justify_between()
-                .text_size(px(CAPTION_FONT_SIZE))
-                .child(
-                    div()
-                        .text_color(color(palette::GREY_MIDDLE_LIGHT))
-                        .child("Plugin chain"),
-                )
-                .child(
-                    div()
-                        .font_family(MONO_FONT)
-                        .text_color(color(palette::GREY_LIGHT))
-                        .child(state.summary.clone()),
-                ),
-        )
-        .child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(8.0))
-                .child(normalize_first)
-                .child(button),
-        )
+        ),
+    )
 }
 
 /// Returns a mouse up listener that sends an event on the second click of a double click.
@@ -425,29 +472,31 @@ fn send_on_double_click(
     }
 }
 
-/// Renders a caption with its value on the right, above a slider that `on_mouse_up` listens to.
-/// A disabled group dims its value, and its slider ignores dragging and double-clicks.
+/// Renders a slider group: a caption with its value and an optional accessory on the right.
+/// The caller adds the slider below.
+/// A disabled group dims its value.
 fn slider_group(
     title: &'static str,
     value: String,
-    slider: Slider,
     tooltip_text: &'static str,
     enabled: bool,
-    on_mouse_up: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
+    accessory: Option<AnyElement>,
 ) -> Stateful<Div> {
     div()
         .id(ElementId::Name(title.into()))
         .flex()
         .flex_col()
-        .gap(px(6.0))
+        .gap(px(ITEM_SPACING))
         .tooltip(tooltip(tooltip_text))
         .child(
             div()
                 .flex()
                 .flex_row()
-                .justify_between()
+                .items_center()
+                .gap(px(ITEM_SPACING))
                 .child(
                     div()
+                        .flex_1()
                         .text_size(px(CAPTION_FONT_SIZE))
                         .text_color(color(palette::GREY_MIDDLE_LIGHT))
                         .child(title),
@@ -462,16 +511,24 @@ fn slider_group(
                             palette::GREY_MIDDLE
                         }))
                         .child(value),
-                ),
+                )
+                .children(accessory),
         )
-        .child(
-            div()
-                .px(px(SLIDER_INSET))
-                .capture_any_mouse_up(move |mouse_event, window, cx| {
-                    if enabled {
-                        on_mouse_up(mouse_event, window, cx);
-                    }
-                })
-                .child(slider.disabled(!enabled)),
-        )
+}
+
+/// Renders a slider inset so its thumb is not clipped, with `on_mouse_up` listening to it.
+/// A disabled slider ignores dragging and double-clicks.
+fn slider_track(
+    slider: Slider,
+    enabled: bool,
+    on_mouse_up: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
+) -> Div {
+    div()
+        .px(px(SLIDER_INSET))
+        .capture_any_mouse_up(move |mouse_event, window, cx| {
+            if enabled {
+                on_mouse_up(mouse_event, window, cx);
+            }
+        })
+        .child(slider.disabled(!enabled))
 }

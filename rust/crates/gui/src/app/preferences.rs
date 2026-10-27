@@ -85,6 +85,15 @@ impl AppView {
         self.apply_settings(settings, cx);
     }
 
+    /// Collapses the preview into its compact row, or expands it again with the divider where it was.
+    /// Like the C++ application, the choice lasts for this session only.
+    pub(super) fn toggle_preview_section(&mut self, cx: &mut Context<Self>) {
+        self.preview_compact = !self.preview_compact;
+        self.menu_state.preview_compact = self.preview_compact;
+        set_menus(cx, &self.menu_state);
+        cx.notify();
+    }
+
     /// Shows or hides the loudness graph, from the Options menu.
     pub(super) fn toggle_loudness_graph(&mut self, cx: &mut Context<Self>) {
         let mut settings = self.settings.clone();

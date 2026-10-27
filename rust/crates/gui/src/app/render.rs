@@ -26,18 +26,21 @@ use super::{
     APP_TITLE, AppView, CONTENT_PADDING, PREVIEW_MINIMUM_HEIGHT, SECTION_SPACING, STATUS_BAR_HEIGHT,
     TABLE_FRAME_BORDER, content_size,
 };
-use crate::controls::{ControlsEvent, ControlsState, NormalizeControls, PluginControls, render_controls};
-use crate::info_panel::render_info_panel;
+use crate::controls::{
+    ControlsEvent, ControlsState, EventCallback, NormalizeControls, PlaybackControls, SECTION_TOGGLE_SIZE,
+    render_controls, render_playback_row, render_section_toggle,
+};
+use crate::info_panel::{COMPACT_METRIC_SPACING, render_compact_info_panel, render_info_panel};
 use crate::menus::{
     About, AddFiles, AddFolder, AddPluginToChain, CancelRun, ChooseFolder, ClearCustomGain, ClearList,
     ClearPluginChain, JumpToHotCue, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
     OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected, RemoveSelected, Rescan,
     RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice, StopPlayback, ToggleColumn, ToggleLoudnessGraph,
-    TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, ToggleSeratoColours, TrashSelected,
-    TrashSelectedNow,
+    TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, TogglePreviewSection, ToggleSeratoColours,
+    TrashSelected, TrashSelectedNow,
 };
 use crate::normalization::target_value_text;
-use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, fill_status_column};
+use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, ResultRow, fill_status_column};
 use crate::theme::{TEXT_FONT, color, palette, tooltip};
 use crate::waveform::MINIMUM_ZOOM;
 
@@ -91,6 +94,21 @@ const INFORMATION_MAXIMUM_WIDTH: f32 = 270.0;
 
 /// Share of the window width given to the information panel.
 const INFORMATION_WIDTH_PROPORTION: f32 = 0.22;
+
+/// Height of the collapsed preview, including the space below the table.
+const COMPACT_PREVIEW_HEIGHT: f32 = 52.0;
+
+/// Space between the chevron and the playback buttons of the compact row.
+const COMPACT_SPACING: f32 = 6.0;
+
+/// Share of the width right of the playback buttons given to the compact metrics.
+const COMPACT_METRICS_PROPORTION: f32 = 0.35;
+
+/// Narrowest width of the compact metrics: four cards 100 pixels wide with the spacing between them.
+const COMPACT_METRICS_MINIMUM_WIDTH: f32 = 400.0 + COMPACT_METRIC_SPACING * 3.0;
+
+/// Narrowest width the compact row leaves the waveform before the metrics stop shrinking it.
+const COMPACT_WAVEFORM_MINIMUM_WIDTH: f32 = 140.0;
 
 impl AppView {
     /// Returns the status bar text for the audio output:
@@ -218,16 +236,34 @@ impl AppView {
         )
     }
 
+    /// Returns the row of the selected file, for the information panel.
+    fn selected_row(&self, cx: &App) -> Option<ResultRow> {
+        self.selected
+            .as_ref()
+            .and_then(|path| self.table.read(cx).delegate().row_for(path).cloned())
+    }
+
+    /// Returns what the Play/Stop and Process buttons show.
+    fn playback_controls(&self, cx: &Context<Self>) -> PlaybackControls {
+        PlaybackControls {
+            playing: self.player.as_ref().is_some_and(Player::is_playing),
+            can_play: self.player.is_some() && (self.selected.is_some() || self.is_demo()),
+            can_process: self.can_process_selected(cx),
+            running: self.is_running(),
+        }
+    }
+
+    /// Returns the callback that hands the events of the controls to the view.
+    fn controls_listener(cx: &Context<Self>) -> EventCallback {
+        Rc::new(cx.listener(|view, event: &ControlsEvent, window, cx| {
+            view.handle_controls_event(*event, window, cx);
+        }))
+    }
+
     /// Renders the preview: the controls, the information panel, and the waveform side by side.
     fn render_preview(&self, content_width: f32, cx: &Context<Self>) -> Div {
-        let controls_width =
-            (content_width * CONTROLS_WIDTH_PROPORTION).clamp(CONTROLS_MINIMUM_WIDTH, CONTROLS_MAXIMUM_WIDTH);
         let information_width =
             (content_width * INFORMATION_WIDTH_PROPORTION).clamp(INFORMATION_MINIMUM_WIDTH, INFORMATION_MAXIMUM_WIDTH);
-        let selected_row = self
-            .selected
-            .as_ref()
-            .and_then(|path| self.table.read(cx).delegate().row_for(path).cloned());
         let selected_tags = self
             .selected_tags
             .as_ref()
@@ -236,26 +272,18 @@ impl AppView {
         let controls = ControlsState {
             zoom: &self.zoom_slider,
             gain: &self.gain_slider,
-            playing: self.player.as_ref().is_some_and(Player::is_playing),
-            can_play: self.player.is_some() && (self.selected.is_some() || self.is_demo()),
             can_adjust_gain: self.can_adjust_gain(cx),
             normalize: NormalizeControls {
                 mode: self.settings.normalize_mode,
                 target: self.normalize_target_slider(self.settings.normalize_mode),
                 target_text: target_value_text(&self.settings),
                 overwrite: self.overwrite_existing,
+                normalize_first: self.normalize_first,
                 can_normalize: self.can_normalize_selected(cx),
             },
-            plugins: PluginControls {
-                summary: self.chain_summary(),
-                normalize_first: self.normalize_first,
-                can_process: self.can_process_selected(cx),
-                running: self.is_running(),
-            },
+            chain_summary: self.chain_summary(),
+            playback: self.playback_controls(cx),
         };
-        let on_event = cx.listener(|view, event: &ControlsEvent, window, cx| {
-            view.handle_controls_event(*event, window, cx);
-        });
 
         div()
             .size_full()
@@ -265,19 +293,94 @@ impl AppView {
             .gap(px(SECTION_SPACING))
             .child(
                 div()
-                    .w(px(controls_width))
+                    .w(px(controls_width(content_width)))
                     .h_full()
                     .flex_none()
-                    .child(render_controls(&controls, on_event, cx)),
+                    .child(render_controls(&controls, &Self::controls_listener(cx), cx)),
             )
             .child(
                 div()
                     .w(px(information_width))
                     .h_full()
                     .flex_none()
-                    .child(render_info_panel(selected_row.as_ref(), selected_tags.as_deref())),
+                    .child(render_info_panel(
+                        self.selected_row(cx).as_ref(),
+                        selected_tags.as_deref(),
+                    )),
             )
             .child(div().flex_1().min_w_0().h_full().child(self.waveform.clone()))
+    }
+
+    /// Renders the collapsed preview in one row, like the compact row of the C++ application:
+    /// the chevron, Play/Stop and Process as wide as in the expanded controls, the four metrics, and the waveform.
+    fn render_compact_preview(&self, content_width: f32, cx: &Context<Self>) -> Div {
+        let on_event = Self::controls_listener(cx);
+        let playback_width = controls_width(content_width) - SECTION_TOGGLE_SIZE - COMPACT_SPACING;
+        let remaining = SECTION_SPACING.mul_add(-2.0, content_width - controls_width(content_width));
+        let metrics_width = (remaining * COMPACT_METRICS_PROPORTION).clamp(
+            COMPACT_METRICS_MINIMUM_WIDTH,
+            (remaining - COMPACT_WAVEFORM_MINIMUM_WIDTH).max(COMPACT_METRICS_MINIMUM_WIDTH),
+        );
+        div()
+            .h(px(COMPACT_PREVIEW_HEIGHT))
+            .flex_none()
+            .pt(px(DIVIDER_SPACING))
+            .flex()
+            .flex_row()
+            .items_center()
+            .child(render_section_toggle(true, &on_event))
+            .child(
+                render_playback_row(self.playback_controls(cx), &on_event)
+                    .ml(px(COMPACT_SPACING))
+                    .w(px(playback_width))
+                    .h_full(),
+            )
+            .child(
+                div()
+                    .ml(px(SECTION_SPACING))
+                    .w(px(metrics_width))
+                    .h_full()
+                    .flex_none()
+                    .child(render_compact_info_panel(self.selected_row(cx).as_ref())),
+            )
+            .child(
+                div()
+                    .ml(px(SECTION_SPACING))
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .child(self.waveform.clone()),
+            )
+    }
+
+    /// Renders the results table above the preview:
+    /// split by a draggable divider while expanded, and above the compact row while collapsed.
+    fn render_workspace(&self, content_width: f32, workspace_height: f32, cx: &Context<Self>) -> Div {
+        if self.preview_compact {
+            return div()
+                .size_full()
+                .flex()
+                .flex_col()
+                .child(div().flex_1().min_h_0().child(self.render_table()))
+                .child(self.render_compact_preview(content_width, cx));
+        }
+        let preview_maximum = (workspace_height * PREVIEW_MAXIMUM_PROPORTION).max(PREVIEW_MINIMUM_HEIGHT + 1.0);
+        div().size_full().child(
+            v_resizable("workspace")
+                .with_state(&self.workspace_split)
+                .with_handle_appearance(divider_appearance())
+                .child(
+                    resizable_panel()
+                        .size_range(px(TABLE_MINIMUM_HEIGHT)..Pixels::MAX)
+                        .child(self.render_table()),
+                )
+                .child(
+                    resizable_panel()
+                        .size(px(self.preview_height))
+                        .size_range(px(PREVIEW_MINIMUM_HEIGHT)..px(preview_maximum))
+                        .child(self.render_preview(content_width, cx)),
+                ),
+        )
     }
 }
 
@@ -293,7 +396,6 @@ impl Render for AppView {
         self.update_window_title(progress, window);
         let progress = progress.map(|(_, fraction)| fraction);
         let (content_width, workspace_height) = content_size(window.viewport_size());
-        let preview_maximum = (workspace_height * PREVIEW_MAXIMUM_PROPORTION).max(PREVIEW_MINIMUM_HEIGHT + 1.0);
         let table_width = TABLE_FRAME_BORDER.mul_add(-2.0, content_width);
         self.table.update(cx, |state, cx| {
             fill_status_column(state, table_width, window, cx);
@@ -325,6 +427,7 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &ClearList, _, cx| view.clear_list(cx)))
             .on_action(cx.listener(|view, _: &ToggleLoudnessGraph, _, cx| view.toggle_loudness_graph(cx)))
             .on_action(cx.listener(|view, _: &ToggleSeratoColours, _, cx| view.toggle_serato_colours(cx)))
+            .on_action(cx.listener(|view, _: &TogglePreviewSection, _, cx| view.toggle_preview_section(cx)))
             .on_action(cx.listener(|view, action: &JumpToHotCue, _, cx| view.jump_to_hot_cue(action.slot, cx)))
             .on_action(cx.listener(|view, _: &TogglePluginPreview, _, cx| view.toggle_plugin_preview(cx)))
             .on_action(cx.listener(|view, _: &TogglePreviewLatencyCompensation, _, cx| {
@@ -360,21 +463,10 @@ impl Render for AppView {
             .text_size(px(15.0))
             .child(
                 div().flex_1().min_h_0().flex().flex_col().p(px(CONTENT_PADDING)).child(
-                    div().flex_1().min_h_0().child(
-                        v_resizable("workspace")
-                            .with_handle_appearance(divider_appearance())
-                            .child(
-                                resizable_panel()
-                                    .size_range(px(TABLE_MINIMUM_HEIGHT)..Pixels::MAX)
-                                    .child(self.render_table()),
-                            )
-                            .child(
-                                resizable_panel()
-                                    .size(px(self.preview_height))
-                                    .size_range(px(PREVIEW_MINIMUM_HEIGHT)..px(preview_maximum))
-                                    .child(self.render_preview(content_width, cx)),
-                            ),
-                    ),
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(self.render_workspace(content_width, workspace_height, cx)),
                 ),
             )
             .child(self.render_status_bar(progress))
@@ -399,6 +491,11 @@ fn divider_appearance() -> ResizeHandleRenderer {
         };
         Some(line.into_any_element())
     })
+}
+
+/// Returns the width of the controls column, which the compact row also uses for its chevron and playback buttons.
+fn controls_width(content_width: f32) -> f32 {
+    (content_width * CONTROLS_WIDTH_PROPORTION).clamp(CONTROLS_MINIMUM_WIDTH, CONTROLS_MAXIMUM_WIDTH)
 }
 
 /// Renders the overall progress of a run as a thin line along the top edge of the status bar.

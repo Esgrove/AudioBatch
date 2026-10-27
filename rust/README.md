@@ -203,7 +203,14 @@ and the output device with its sample rate and buffer size in samples.
   A preview without the plugin chain plays the file unchanged, like in the C++ version.
   The gain is saved in the analysis cache until the file changes.
   File > Clear Per-file Gain removes it.
-- The Normalize group chooses a sample peak target from -12 to 0 dBFS,
+- The controls follow the C++ layout: Zoom, Input gain, the Normalize and Overwrite options,
+  the Peak and Loudness target with its Normalize button, Plugin Chain, Audio Settings,
+  and Play/Stop and Process side by side at the bottom.
+  The chevron at the right end of the Zoom row, Options > Collapse Bottom Section,
+  or Command or Control with Shift and Space collapses the preview into one row with the chevron,
+  Play/Stop and Process, the four level metrics, and the waveform.
+  The same chevron or shortcut expands it again, with the divider where it was.
+- The Peak and Loudness buttons choose a sample peak target from -12 to 0 dBFS,
   or a loudness target from -24 to -6 LUFS limited to a -0.3 dBTP true peak.
   The Normalize button and File > Normalize Selected normalize the selected file,
   and File > Normalize All Files normalizes every analyzed file after a confirmation.
