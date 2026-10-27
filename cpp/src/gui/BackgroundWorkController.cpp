@@ -25,18 +25,23 @@ namespace
 /// since they would otherwise mark the same file busy in the next pass.
 /// A result counts towards its pass while the pass runs,
 /// and is returned even after the pass ended, because its output file was already written.
+/// Every event of the discarded run is dropped, results too, since the list they belonged to was cleared.
 template<typename Pass, typename Result>
 std::vector<Result> applyOperationEvents(
     std::vector<OperationEvent<Result>> events,
     BackgroundWork& work,
     FileActivityTracker& fileActivity,
     const FileActivity activity,
-    const juce::String Result::* resultPath
+    const juce::String Result::* resultPath,
+    const int discardedRunId
 )
 {
     std::vector<Result> results;
 
     for (auto& [event, runId] : events) {
+        if (runId == discardedRunId) {
+            continue;
+        }
         auto* pass = std::get_if<Pass>(&work);
         const auto isCurrentRun = pass != nullptr && pass->runId == runId;
 
@@ -202,6 +207,14 @@ bool BackgroundWorkController::cancelCurrentWork()
 /// for clearing the list. Files already committed stay on disk.
 void BackgroundWorkController::stopAllWork()
 {
+    // Results of these runs may still be queued or posted by a worker that passed its last check,
+    // and they would bring rows back into the cleared list.
+    if (const auto* normalizing = std::get_if<NormalizingWork>(&work)) {
+        discardedNormalizeRunId = normalizing->runId;
+    }
+    if (const auto* processing = std::get_if<ProcessingWork>(&work)) {
+        discardedProcessingRunId = processing->runId;
+    }
     analysisCoordinator.cancel();
     normalizeCoordinator.cancel();
     pluginCoordinator.cancel();
@@ -448,7 +461,12 @@ void BackgroundWorkController::handleNormalizeComplete(const int totalFiles, con
 void BackgroundWorkController::handleNormalizeEvents(std::vector<OperationEvent<AudioNormalizationResult>> events)
 {
     auto results = applyOperationEvents<NormalizingWork>(
-        std::move(events), work, fileActivity, FileActivity::normalizing, &AudioNormalizationResult::fullPath
+        std::move(events),
+        work,
+        fileActivity,
+        FileActivity::normalizing,
+        &AudioNormalizationResult::fullPath,
+        discardedNormalizeRunId
     );
     if (!results.empty()) {
         listener.normalizeResultsReceived(std::move(results));
@@ -476,7 +494,12 @@ void BackgroundWorkController::handleProcessingComplete(const int totalFiles, co
 void BackgroundWorkController::handleProcessingEvents(std::vector<OperationEvent<PluginProcessingResult>> events)
 {
     auto results = applyOperationEvents<ProcessingWork>(
-        std::move(events), work, fileActivity, FileActivity::processing, &PluginProcessingResult::originalFullPath
+        std::move(events),
+        work,
+        fileActivity,
+        FileActivity::processing,
+        &PluginProcessingResult::originalFullPath,
+        discardedProcessingRunId
     );
     if (!results.empty()) {
         listener.processingResultsReceived(std::move(results));
