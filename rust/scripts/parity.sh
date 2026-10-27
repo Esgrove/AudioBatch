@@ -11,6 +11,8 @@ and the re-analyzed outputs are compared instead.
 Every normalized output must also reach the target, or the true peak ceiling in loudness mode.
 compare_outputs.py then compares the files both CLIs left behind:
 the file names, the AIFF format, the samples, and the ID3v2 frames.
+The outputs of lossless sources must have identical samples,
+and the outputs of lossy sources may differ by the decoders' tolerance.
 Both scripts run with uv, which installs the Python packages they need.
 The originals are left alone, but both CLIs move the replaced copies to the system trash.
 Exits with code 1 when any file differs.
@@ -143,13 +145,19 @@ CPP_BASE=""
 RUST_BASE=""
 if [ ${#NORMALIZE[@]} -gt 0 ]; then
     # Each CLI normalizes its own copy, since normalizing replaces and trashes the inputs.
+    # Every path gets a numbered folder, so paths with the same base name do not overwrite each other.
     CPP_BASE="$WORK_DIR/cpp"
     RUST_BASE="$WORK_DIR/rust"
     mkdir -p "$CPP_BASE" "$RUST_BASE"
+    index=0
     for path in "${PATHS[@]}"; do
-        cp -R "$path" "$CPP_BASE/"
-        cp -R "$path" "$RUST_BASE/"
+        index=$((index + 1))
+        mkdir -p "$CPP_BASE/$index" "$RUST_BASE/$index"
+        cp -R "${path%/}" "$CPP_BASE/$index/"
+        cp -R "${path%/}" "$RUST_BASE/$index/"
     done
+    # The sources tell compare_outputs.py which outputs come from lossless files and must match exactly.
+    (cd "$CPP_BASE" && find . -type f ! -name ".*" | sed 's|^\./||') > "$WORK_DIR/sources.txt"
     CPP_PATHS=("$CPP_BASE")
     RUST_PATHS=("$RUST_BASE")
     RECURSE=(--recurse)
@@ -173,6 +181,7 @@ uv run --quiet --script "$RUST_DIR/scripts/compare_levels.py" "$WORK_DIR/cpp.jso
     --tolerance "$TOLERANCE" "${COMPARE_OPTIONS[@]}" || STATUS=1
 
 if [ ${#NORMALIZE[@]} -gt 0 ]; then
-    uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$CPP_BASE" "$RUST_BASE" || STATUS=1
+    uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$CPP_BASE" "$RUST_BASE" \
+        --sources "$WORK_DIR/sources.txt" || STATUS=1
 fi
 exit $STATUS
