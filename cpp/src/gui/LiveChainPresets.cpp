@@ -257,6 +257,8 @@ void LiveChain::showPresetFolder() const
 /// Replaces the chain with the slots of a preset file, closing the editors of the current slots.
 /// The new slots load their processors lazily, the same way a chain restored from the settings does,
 /// so a plugin that is not installed shows as unavailable instead of failing the load.
+/// The processors of the current slots are destroyed after the live preview has dropped them,
+/// without holding the rendering lock.
 /// Returns the reason when the file cannot be read, and then leaves the chain unchanged.
 std::expected<void, juce::String> LiveChain::loadPreset(const juce::File& file)
 {
@@ -267,13 +269,15 @@ std::expected<void, juce::String> LiveChain::loadPreset(const juce::File& file)
     }
 
     {
-        const juce::ScopedLock lock(renderingLock);
-        chain.clear();
-        for (auto& savedSlot : *slots) {
-            appendSlot(LiveSlot(std::move(savedSlot)));
+        std::vector<LiveSlot> replaced;
+        {
+            const juce::ScopedLock lock(renderingLock);
+            replaced.swap(chain);
+            for (auto& savedSlot : *slots) {
+                appendSlot(LiveSlot(std::move(savedSlot)));
+            }
         }
 
-        // The live preview drops the destroyed processors before the audio callback can take the lock again.
         notifyChainChanged();
         presetName = file.getFileNameWithoutExtension();
         presetRevision = revision;

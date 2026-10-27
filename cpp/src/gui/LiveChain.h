@@ -192,6 +192,7 @@ private:
     void notifyChainChanged();
     void persistChain();
 
+    bool instantiateLiveEntry(LiveSlot& entry);
     bool prepareLiveEntry(LiveSlot& entry);
 
     ChainChangedCallback chainChangedCallback;

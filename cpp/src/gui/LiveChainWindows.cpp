@@ -101,14 +101,13 @@ void LiveChain::openEditorForSlot(const PluginSlotId slotId)
         return;
     }
 
-    bool stateCaptured = false;
-    bool prepared = false;
-
-    {
+    // A window the user closed is only hidden, not deleted, and the next display update may not have reaped it.
+    // Capture its state and destroy it now so a fresh editor can open below.
+    // Neither that nor creating the processor of the slot touches the live preview, so only preparing takes the lock.
+    const bool stateCaptured = entry.wasEditorOpen && reapClosedEditor(entry);
+    bool prepared = instantiateLiveEntry(entry);
+    if (prepared) {
         const juce::ScopedLock lock(renderingLock);
-        // A window the user closed is only hidden, not deleted, and the next display update may not have reaped it.
-        // Capture its state and destroy it now so a fresh editor can open below.
-        stateCaptured = entry.wasEditorOpen && reapClosedEditor(entry);
         prepared = prepareLiveEntry(entry);
     }
 
