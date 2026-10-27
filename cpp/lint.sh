@@ -111,6 +111,23 @@ collect_sources() {
     fi
 }
 
+# Returns success when the compile database has an entry for the source.
+# On Windows the database holds native paths, with forward or escaped backward slashes,
+# while the sources are collected as Git Bash paths, so both native forms are checked there.
+in_compile_database() {
+    local database="$BUILD_DIR/compile_commands.json"
+    if grep -Fq "\"file\": \"$1\"" "$database"; then
+        return 0
+    fi
+    if [ "$BASH_PLATFORM" != "windows" ] || ! command -v cygpath > /dev/null 2>&1; then
+        return 1
+    fi
+    local mixed
+    mixed=$(cygpath -m "$1")
+    local escaped="${mixed//\//\\\\}"
+    grep -Fiq "\"file\": \"$mixed\"" "$database" || grep -Fiq "\"file\": \"$escaped\"" "$database"
+}
+
 init_options "$@"
 
 cd "$REPO"
@@ -188,7 +205,7 @@ fi
 # The fuzz harnesses are only in the database of the macos-fuzz build, so they are skipped elsewhere.
 LINTED_SOURCES=()
 for source in "${SOURCES[@]}"; do
-    if grep -Fq "\"file\": \"$source\"" "$BUILD_DIR/compile_commands.json"; then
+    if in_compile_database "$source"; then
         LINTED_SOURCES+=("$source")
     elif [[ "$source" == "$REPO/tests/fuzz/"* ]]; then
         print_yellow "Skipping $source, which only the macos-fuzz preset builds"

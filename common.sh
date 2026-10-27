@@ -56,10 +56,10 @@ print_usage_and_exit() {
     exit "${1:-1}"
 }
 
-# Print an error message and exit the program
+# Print an error message to stderr and exit the program.
+# Use exit code if given as the second argument, otherwise default to 1.
 print_error_and_exit() {
-    print_red "ERROR: $1"
-    # use exit code if given as argument, otherwise default to 1
+    print_error "$1"
     exit "${2:-1}"
 }
 
