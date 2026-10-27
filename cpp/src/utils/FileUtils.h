@@ -56,6 +56,7 @@ juce::String revealInFileManagerLabel();
 [[nodiscard]] bool deleteFile(const juce::File& file);
 [[nodiscard]] bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile);
 bool isAiffFile(const juce::File& file);
+bool isHiddenFile(const juce::File& file);
 bool isMp3File(const juce::File& file);
 bool isWavFile(const juce::File& file);
 bool trashFile(const juce::File& file);

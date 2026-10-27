@@ -8,6 +8,7 @@
 #include "cli/AudioAnalysisCliOutput.h"
 #include "normalization/AudioNormalization.h"
 #include "utils/ConsolePrint.h"
+#include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
@@ -44,7 +45,7 @@ juce::StringArray cli::findSkippedInputs(
             continue;
         }
 
-        if (input.isHidden() || input.getFileName().startsWithChar('.')) {
+        if (utils::isHiddenFile(input)) {
             errors.add(utils::format("Hidden files are not analyzed: {}", input.getFullPathName().quoted()));
         } else {
             errors.add(utils::format("Not a supported audio file: {}", input.getFullPathName().quoted()));
