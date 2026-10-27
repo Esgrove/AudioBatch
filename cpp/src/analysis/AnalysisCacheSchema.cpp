@@ -19,8 +19,10 @@ namespace
 {
 /// A column that older databases lack, with the definition used to add it.
 struct ColumnMigration {
-    const char* name;
-    const char* definition;
+    /// Name of the column.
+    const char* name {nullptr};
+    /// SQL type and constraints of the column, as ALTER TABLE ADD COLUMN takes them.
+    const char* definition {nullptr};
 };
 }  // namespace
 
