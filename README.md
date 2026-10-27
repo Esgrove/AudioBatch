@@ -22,9 +22,11 @@ They keep separate analysis caches, and their CLIs print the same table, CSV, an
 AudioBatch/
 ├── assets/      icons and fonts for both applications
 ├── fixtures/    committed audio fixtures shared by both test suites, and generate.sh
-│   └── normalization/  a Git LFS collection for comparing the normalized output of both CLIs
+│   ├── normalization/    a Git LFS collection for comparing the normalized output of both CLIs
+│   └── plugin_expected/  what the test plugin must output, computed by plugin_expected.py
 ├── cpp/         the C++ project with its CMake build and the JUCE submodule
-└── rust/        the Rust Cargo workspace
+├── rust/        the Rust Cargo workspace
+└── test-plugin/ a JUCE VST3 with gain and mid/side width that both test suites load
 ```
 
 Build and test each version from its own directory, as described in its README.

@@ -10,6 +10,7 @@ on:
       - "common.sh"
       - "cpp/**"
       - "fixtures/**"
+      - "test-plugin/**"
       - "!**/*.md"
   pull_request:
     paths:
@@ -18,6 +19,7 @@ on:
       - "common.sh"
       - "cpp/**"
       - "fixtures/**"
+      - "test-plugin/**"
       - "!**/*.md"
 
 # Cancel previous runs for PRs but not pushes to main
