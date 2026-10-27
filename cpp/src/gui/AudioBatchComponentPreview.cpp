@@ -3,6 +3,7 @@
 /// and the custom gain controls.
 
 #include "gui/AudioBatchComponent.h"
+#include "gui/AudioBatchComponentConstants.h"
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "utils/Log.h"
@@ -276,6 +277,12 @@ void AudioBatchComponent::changeListenerCallback(juce::ChangeBroadcaster* source
 
     if (source == &previewPlayer.getDeviceManager()) {
         updateOutputStatus();
+        // Only a device chosen in the audio settings has a state, so automatic opens never replace the choice.
+        if (const auto state = previewPlayer.createDeviceState(); state != nullptr) {
+            auto* settings = pluginAppProperties.getUserSettings();
+            settings->setValue(audioDeviceStatePropertyKey, state.get());
+            settings->saveIfNeeded();
+        }
         return;
     }
 

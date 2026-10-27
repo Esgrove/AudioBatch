@@ -195,6 +195,7 @@ AudioBatchComponent::AudioBatchComponent() :
         *pluginLibrary, pluginAppProperties, previewPlayer.getRenderingLock(), previewPlayer.getDeviceManager()
     );
     previewPlayer.setLiveChain(liveChain.get());
+    previewPlayer.setSavedDeviceState(pluginAppProperties.getUserSettings()->getXmlValue(audioDeviceStatePropertyKey));
 
     addAndMakeVisible(statusBar);
     previewPlayer.getDeviceManager().addChangeListener(this);
