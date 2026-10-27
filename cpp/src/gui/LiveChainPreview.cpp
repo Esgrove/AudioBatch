@@ -87,6 +87,17 @@ PreviewChain LiveChain::preparePreview(
     const bool loadEnabled
 )
 {
+    const auto visits = [inspectAll, loadEnabled](const LiveSlot& entry) {
+        return inspectAll || entry.instance != nullptr || (entry.enabled && loadEnabled);
+    };
+    // Plugins load before the lock is taken, since new processors are not part of the preview yet.
+    // The preview then keeps playing while large plugins load, such as when the chain window opens during playback.
+    for (auto& entry : chain) {
+        if (visits(entry)) {
+            static_cast<void>(instantiateLiveEntry(entry));
+        }
+    }
+
     const juce::ScopedLock lock(renderingLock);
     const bool contextChanged
         = !juce::approximatelyEqual(sampleRate, previewSampleRate) || blockSize != previewBlockSize;
@@ -106,10 +117,11 @@ PreviewChain LiveChain::preparePreview(
     PreviewChain result;
     result.preparation.processChannelCount = 2;
     for (auto& entry : chain) {
-        if (!inspectAll && entry.instance == nullptr && (!entry.enabled || !loadEnabled)) {
+        if (!visits(entry)) {
             continue;
         }
-        if (!prepareLiveEntry(entry)) {
+        // A plugin that could not be loaded above is not tried again while the lock is held.
+        if (entry.instance == nullptr || !prepareLiveEntry(entry)) {
             if (entry.enabled && result.preparation.errorMessage.isEmpty()) {
                 result.preparation.errorMessage
                     = utils::format("{}: {}", entry.description.name, entry.preparationError);

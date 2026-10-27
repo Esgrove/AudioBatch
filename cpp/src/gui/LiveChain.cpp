@@ -153,6 +153,13 @@ LiveChain::LiveChain(
 }
 
 /// Closes all editor, chain-editor, and scan windows and destroys their plugin instances.
+/// Saves the chain to the settings now, with the current settings of every prepared slot,
+/// such as before a shutdown that may end the process before the chain is destroyed.
+void LiveChain::saveChain()
+{
+    persistChain();
+}
+
 LiveChain::~LiveChain()
 {
     const juce::ScopedLock lock(renderingLock);

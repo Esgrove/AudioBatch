@@ -93,8 +93,13 @@ void BackgroundRunner::waitForAllJobs()
 }
 
 /// Signals the running jobs and waits for them to finish, up to the shutdown timeout.
+/// After a wait timed out, later waits return at once while the same jobs still run,
+/// so the owners that wait one after another during shutdown do not each wait the whole timeout.
 void BackgroundRunner::waitForRunningJobs()
 {
-    threadPool.removeAllJobs(true, shutdownTimeoutMilliseconds);
+    if (waitTimedOut && threadPool.getNumJobs() != 0) {
+        return;
+    }
+    waitTimedOut = !threadPool.removeAllJobs(true, shutdownTimeoutMilliseconds);
 }
 }  // namespace audiobatch

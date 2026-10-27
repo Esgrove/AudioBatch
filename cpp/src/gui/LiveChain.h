@@ -158,6 +158,8 @@ public:
     [[nodiscard]] juce::String getCurrentPresetName() const;
     [[nodiscard]] juce::PopupMenu createPresetsMenu(int firstItemId) const;
     std::expected<juce::File, juce::String> saveAsPreset(const juce::String& name);
+
+    void saveChain();
     std::expected<void, juce::String> loadPreset(const juce::File& file);
     bool deletePreset(const juce::File& file);
     bool handlePresetsMenuItem(int itemId, int firstItemId);
