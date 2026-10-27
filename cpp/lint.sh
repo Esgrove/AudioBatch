@@ -82,8 +82,8 @@ init_options() {
     done
 }
 
-# Prints the paths, relative to the repository root, of the C++ project and test plugin files
-# with changes of the selected kind.
+# Prints the paths, relative to the repository root,
+# of the C++ project and test plugin files with changes of the selected kind.
 # Deleted files are left out, and a renamed file is listed under its new name.
 list_changed_files() {
     if [ "$FILE_SELECTION" = "staged" ]; then
