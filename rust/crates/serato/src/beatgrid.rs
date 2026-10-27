@@ -34,6 +34,18 @@ pub struct BeatGrid {
     pub markers: Vec<BeatGridMarker>,
 }
 
+impl Display for BeatGridMarker {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Terminal { position, bpm } => write!(formatter, "{position:.3}s {bpm:.3} BPM"),
+            Self::NonTerminal {
+                position,
+                beats_till_next,
+            } => write!(formatter, "{position:.3}s {beats_till_next} beats"),
+        }
+    }
+}
+
 impl BeatGrid {
     /// Parses the beatgrid tag, a header followed by zero or more markers and a single footer byte.
     ///
@@ -89,18 +101,6 @@ impl BeatGrid {
             BeatGridMarker::Terminal { bpm, .. } => Some(*bpm),
             BeatGridMarker::NonTerminal { .. } => None,
         })
-    }
-}
-
-impl Display for BeatGridMarker {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Terminal { position, bpm } => write!(formatter, "{position:.3}s {bpm:.3} BPM"),
-            Self::NonTerminal {
-                position,
-                beats_till_next,
-            } => write!(formatter, "{position:.3}s {beats_till_next} beats"),
-        }
     }
 }
 

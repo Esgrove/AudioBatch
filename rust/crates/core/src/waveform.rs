@@ -36,14 +36,6 @@ pub struct QuantizedPeak {
     pub max: i8,
 }
 
-/// One resolution level of the overview.
-/// Buckets are stored frame by frame, with one peak per channel in each bucket.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct WaveformLevel {
-    frames_per_bucket: u64,
-    peaks: Vec<QuantizedPeak>,
-}
-
 /// Bounded min and max overview of a decoded file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WaveformOverview {
@@ -64,6 +56,19 @@ pub struct WaveformBuilder {
     current_min: Vec<f32>,
     current_max: Vec<f32>,
     peaks: Vec<QuantizedPeak>,
+}
+
+/// One resolution level of the overview.
+/// Buckets are stored frame by frame, with one peak per channel in each bucket.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WaveformLevel {
+    frames_per_bucket: u64,
+    peaks: Vec<QuantizedPeak>,
+}
+
+/// Small cursor over a little-endian byte slice, returning `None` when the data runs out.
+struct ByteReader<'a> {
+    bytes: &'a [u8],
 }
 
 impl QuantizedPeak {
@@ -355,11 +360,6 @@ impl WaveformBuilder {
             self.frames_per_bucket *= 2;
         }
     }
-}
-
-/// Small cursor over a little-endian byte slice, returning `None` when the data runs out.
-struct ByteReader<'a> {
-    bytes: &'a [u8],
 }
 
 impl<'a> ByteReader<'a> {

@@ -34,6 +34,12 @@ pub const EXIT_USAGE_ERROR: u8 = 1;
 /// Exit code when at least one file failed, matching the C++ CLI.
 pub const EXIT_FAILURES: u8 = 2;
 
+/// Records to report after normalization, and how many files failed to normalize.
+struct NormalizedRecords {
+    records: Vec<AnalysisRecord>,
+    failure_count: usize,
+}
+
 /// Runs the analysis workflow and returns the process exit code.
 ///
 /// Files replaced by normalization go to `dispose`, which moves them to the trash for the CLI.
@@ -124,12 +130,6 @@ pub fn run_analysis(
     } else {
         EXIT_FAILURES
     })
-}
-
-/// Records to report after normalization, and how many files failed to normalize.
-struct NormalizedRecords {
-    records: Vec<AnalysisRecord>,
-    failure_count: usize,
 }
 
 /// Normalizes every analyzed record in order and returns the records to report.

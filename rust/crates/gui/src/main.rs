@@ -44,6 +44,14 @@ const DISPLAY_MARGIN: f32 = 40.0;
 /// Smallest window size.
 const MINIMUM_WINDOW_SIZE: (f32, f32) = (800.0, 600.0);
 
+/// Returns true when `AUDIOBATCH_GUI_DEBUG` is set.
+/// The app then prints the waveform frame rate, run summaries, and player events to stderr.
+#[must_use]
+pub fn debug_enabled() -> bool {
+    std::env::var_os("AUDIOBATCH_GUI_DEBUG").is_some()
+}
+
+/// Parses the launch options and opens the main window, quitting when it closes.
 fn main() {
     let options = match parse_arguments(std::env::args().skip(1)) {
         Ok(options) => options,
@@ -114,13 +122,6 @@ fn initial_window_bounds(cx: &App) -> WindowBounds {
         available.height - px(DISPLAY_MARGIN),
     );
     WindowBounds::Maximized(Bounds::centered(None, default_size.min(&shrunk), cx))
-}
-
-/// Returns true when `AUDIOBATCH_GUI_DEBUG` is set.
-/// The app then prints the waveform frame rate, run summaries, and player events to stderr.
-#[must_use]
-pub fn debug_enabled() -> bool {
-    std::env::var_os("AUDIOBATCH_GUI_DEBUG").is_some()
 }
 
 /// Parses the command line into launch options.

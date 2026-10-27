@@ -146,15 +146,6 @@ impl Player {
         })
     }
 
-    /// Returns the names of the available output devices.
-    #[must_use]
-    pub fn output_device_names() -> Vec<String> {
-        cpal::default_host()
-            .output_devices()
-            .map(|devices| devices.map(|device| device_display_name(&device)).collect())
-            .unwrap_or_default()
-    }
-
     /// Returns the name of the device this player outputs to.
     #[must_use]
     pub fn device_name(&self) -> &str {
@@ -321,6 +312,15 @@ impl Player {
             events.push(PlayerEvent::Ended);
         }
         events
+    }
+
+    /// Returns the names of the available output devices.
+    #[must_use]
+    pub fn output_device_names() -> Vec<String> {
+        cpal::default_host()
+            .output_devices()
+            .map(|devices| devices.map(|device| device_display_name(&device)).collect())
+            .unwrap_or_default()
     }
 
     /// Makes a new generation current, so the callback drops every frame of the previous one.

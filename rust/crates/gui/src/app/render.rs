@@ -88,6 +88,25 @@ const INFORMATION_MAXIMUM_WIDTH: f32 = 270.0;
 const INFORMATION_WIDTH_PROPORTION: f32 = 0.22;
 
 impl AppView {
+    /// Returns the status bar text for the audio output, like the C++ application:
+    /// the device name, its sample rate, and its buffer size, for example "Speakers, 48 kHz, 512 samples".
+    /// The buffer size is left out until the first audio callback reports it.
+    pub(super) fn output_label(&self) -> SharedString {
+        self.player.as_ref().map_or_else(
+            || SharedString::from("No output device"),
+            |player| {
+                let mut parts = vec![
+                    player.device_name().to_string(),
+                    format!("{} kHz", format_kilohertz(player.output_rate())),
+                ];
+                if let Some(frames) = player.buffer_frames() {
+                    parts.push(format!("{frames} samples"));
+                }
+                SharedString::from(parts.join(", "))
+            },
+        )
+    }
+
     /// Sets the window title, with the activity and its progress while a run is in progress.
     fn update_window_title(&mut self, progress: Option<(&str, f32)>, window: &mut Window) {
         let title = progress.map_or_else(
@@ -107,25 +126,6 @@ impl AppView {
             [single] => single.display().to_string(),
             [first, rest @ ..] => format!("{} (+{} more)", first.display(), rest.len()),
         }
-    }
-
-    /// Returns the status bar text for the audio output, like the C++ application:
-    /// the device name, its sample rate, and its buffer size, for example "Speakers, 48 kHz, 512 samples".
-    /// The buffer size is left out until the first audio callback reports it.
-    pub(super) fn output_label(&self) -> SharedString {
-        self.player.as_ref().map_or_else(
-            || SharedString::from("No output device"),
-            |player| {
-                let mut parts = vec![
-                    player.device_name().to_string(),
-                    format!("{} kHz", format_kilohertz(player.output_rate())),
-                ];
-                if let Some(frames) = player.buffer_frames() {
-                    parts.push(format!("{frames} samples"));
-                }
-                SharedString::from(parts.join(", "))
-            },
-        )
     }
 
     /// Renders the status bar along the bottom edge of the window, like the C++ application:

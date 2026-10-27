@@ -142,6 +142,17 @@ impl Markers {
     }
 }
 
+impl Display for Markers {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BpmLock(bpm_lock) => write!(formatter, "{bpm_lock}"),
+            Self::Color(color) => write!(formatter, "Color: {color}"),
+            Self::Cue(cue) => write!(formatter, "{cue}"),
+            Self::Loop(saved_loop) => write!(formatter, "{saved_loop}"),
+        }
+    }
+}
+
 impl BpmLock {
     /// Parses a BPM lock entry, a single boolean byte.
     fn load(data: &[u8]) -> Result<Self> {
@@ -149,6 +160,12 @@ impl BpmLock {
             [value] => Ok(Self { enabled: *value != 0 }),
             _ => Err(anyhow!("Invalid data length for BpmLock")),
         }
+    }
+}
+
+impl Display for BpmLock {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "BPM Lock: {}", self.enabled)
     }
 }
 
@@ -167,16 +184,22 @@ impl Color {
         Self { red, green, blue }
     }
 
+    /// Parses a track color entry of four bytes, where the first byte is ignored.
+    fn load(data: &[u8]) -> Result<Self> {
+        let bytes: [u8; 4] = data.try_into().context("Invalid data length for Color")?;
+        Ok(Self::new_argb(bytes))
+    }
+
     /// Returns the color as a `0xRRGGBB` value.
     #[must_use]
     pub const fn to_rgb_u32(self) -> u32 {
         ((self.red as u32) << 16) | ((self.green as u32) << 8) | self.blue as u32
     }
+}
 
-    /// Parses a track color entry of four bytes, where the first byte is ignored.
-    fn load(data: &[u8]) -> Result<Self> {
-        let bytes: [u8; 4] = data.try_into().context("Invalid data length for Color")?;
-        Ok(Self::new_argb(bytes))
+impl Display for Color {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        write!(formatter, "[{},{},{}]", self.red, self.green, self.blue)
     }
 }
 
@@ -221,6 +244,18 @@ impl Cue {
     }
 }
 
+impl Display for Cue {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        let seconds = f64::from(self.position) / 1000.0;
+        write!(
+            formatter,
+            "Cue {}: {:<12} {seconds:>7.3}s",
+            u16::from(self.index) + 1,
+            self.name
+        )
+    }
+}
+
 impl Loop {
     /// Parses a saved loop entry.
     ///
@@ -261,41 +296,6 @@ impl Loop {
             locked,
             name,
         })
-    }
-}
-
-impl Display for Markers {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::BpmLock(bpm_lock) => write!(formatter, "{bpm_lock}"),
-            Self::Color(color) => write!(formatter, "Color: {color}"),
-            Self::Cue(cue) => write!(formatter, "{cue}"),
-            Self::Loop(saved_loop) => write!(formatter, "{saved_loop}"),
-        }
-    }
-}
-
-impl Display for BpmLock {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        write!(formatter, "BPM Lock: {}", self.enabled)
-    }
-}
-
-impl Display for Color {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        write!(formatter, "[{},{},{}]", self.red, self.green, self.blue)
-    }
-}
-
-impl Display for Cue {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        let seconds = f64::from(self.position) / 1000.0;
-        write!(
-            formatter,
-            "Cue {}: {:<12} {seconds:>7.3}s",
-            u16::from(self.index) + 1,
-            self.name
-        )
     }
 }
 

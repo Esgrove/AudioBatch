@@ -208,7 +208,7 @@ fn extended_float(value: u32) -> [u8; 10] {
 }
 
 #[cfg(test)]
-mod test_float_to_int32 {
+mod test_sample_encoding {
     use super::*;
 
     #[test]
@@ -225,11 +225,6 @@ mod test_float_to_int32 {
         assert_eq!(float_to_int32(0.5), 1_073_741_824);
         assert_eq!(float_to_int32(-0.5), -1_073_741_824);
     }
-}
-
-#[cfg(test)]
-mod test_extended_float {
-    use super::*;
 
     #[test]
     fn encodes_common_sample_rates() {

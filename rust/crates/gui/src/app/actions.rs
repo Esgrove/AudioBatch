@@ -24,28 +24,6 @@ const PLAYER_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const DEMO_TICK_INTERVAL: Duration = Duration::from_millis(33);
 
 impl AppView {
-    /// Opens a dialog for choosing folders or files, then replaces or adds to the list.
-    pub(super) fn prompt_for_paths(directories: bool, replace: bool, cx: &Context<Self>) {
-        let receiver = cx.prompt_for_paths(PathPromptOptions {
-            files: !directories,
-            directories,
-            multiple: !replace,
-            prompt: None,
-        });
-        cx.spawn(async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = receiver.await {
-                let _ = this.update(cx, |view, cx| {
-                    if replace {
-                        view.replace_roots(&paths, cx);
-                    } else {
-                        view.add_roots(&paths, cx);
-                    }
-                });
-            }
-        })
-        .detach();
-    }
-
     /// Scans the listed folders again, analyzing only new and changed files.
     pub(super) fn rescan(&mut self, cx: &mut Context<Self>) {
         self.start_run(RunKind::Scan, self.roots.clone(), false, cx);
@@ -182,26 +160,6 @@ impl AppView {
         cx.notify();
     }
 
-    /// Resets a slider of the controls column to its default:
-    /// the whole file for the zoom, no custom gain for the selected file, and the default normalization target.
-    fn reset_slider(&mut self, control: SliderControl, window: &mut Window, cx: &mut Context<Self>) {
-        match control {
-            SliderControl::Zoom => {
-                self.zoom_slider
-                    .update(cx, |slider, cx| slider.set_value(MINIMUM_ZOOM as f32, window, cx));
-                self.waveform
-                    .update(cx, |waveform, cx| waveform.set_zoom(MINIMUM_ZOOM, cx));
-            }
-            SliderControl::Gain => {
-                self.gain_slider
-                    .update(cx, |slider, cx| slider.set_value(DEFAULT_GAIN_DB, window, cx));
-                self.clear_selected_gain(cx);
-            }
-            SliderControl::NormalizeTarget => self.reset_normalize_target(window, cx),
-        }
-        cx.notify();
-    }
-
     /// Stops playback and returns to the start of the file.
     pub(super) fn stop_playback(&mut self, cx: &mut Context<Self>) {
         if let Some(player) = &mut self.player {
@@ -223,6 +181,68 @@ impl AppView {
             }
             ControlsEvent::NormalizeSelected => self.normalize_selected(window, cx),
         }
+    }
+
+    /// Starts the synthetic stress test with the given number of rows.
+    pub(super) fn start_demo(&mut self, rows: usize, cx: &mut Context<Self>) {
+        let mut random = DemoRandom::new(0x00a0_d10b);
+        let generated = demo_rows(rows, &mut random);
+        self.table.update(cx, |state, cx| {
+            state.delegate_mut().set_rows(generated);
+            cx.notify();
+        });
+        let (overview, loudness) = demo_waveform();
+        let playhead = Some(PlayheadSource::Simulated {
+            started: Instant::now(),
+            duration: overview.duration_seconds(),
+        });
+        self.waveform.update(cx, |view, cx| {
+            view.show(Some(overview), Some(loudness), cx);
+            view.set_playhead(playhead, cx);
+        });
+        self.roots = vec![PathBuf::from("/demo")];
+        self.status = format!("Stress test: {rows} rows, {ROWS_PER_TICK} updates every {DEMO_TICK_INTERVAL:?}").into();
+        let table = self.table.downgrade();
+        self.demo_task = Some(cx.spawn(async move |_, cx| {
+            loop {
+                cx.background_executor().timer(DEMO_TICK_INTERVAL).await;
+                let updated = table.update(cx, |state, cx| {
+                    let delegate = state.delegate_mut();
+                    let count = delegate.len();
+                    for _ in 0..ROWS_PER_TICK {
+                        let index = random.next_index(count);
+                        delegate.update_row(index, |row| advance_row(row, &mut random));
+                    }
+                    cx.notify();
+                });
+                if updated.is_err() {
+                    break;
+                }
+            }
+        }));
+        cx.notify();
+    }
+
+    /// Opens a dialog for choosing folders or files, then replaces or adds to the list.
+    pub(super) fn prompt_for_paths(directories: bool, replace: bool, cx: &Context<Self>) {
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: !directories,
+            directories,
+            multiple: !replace,
+            prompt: None,
+        });
+        cx.spawn(async move |this, cx| {
+            if let Ok(Ok(Some(paths))) = receiver.await {
+                let _ = this.update(cx, |view, cx| {
+                    if replace {
+                        view.replace_roots(&paths, cx);
+                    } else {
+                        view.add_roots(&paths, cx);
+                    }
+                });
+            }
+        })
+        .detach();
     }
 
     /// Shows the version in a native dialog.
@@ -269,43 +289,23 @@ impl AppView {
         })
     }
 
-    /// Starts the synthetic stress test with the given number of rows.
-    pub(super) fn start_demo(&mut self, rows: usize, cx: &mut Context<Self>) {
-        let mut random = DemoRandom::new(0x00a0_d10b);
-        let generated = demo_rows(rows, &mut random);
-        self.table.update(cx, |state, cx| {
-            state.delegate_mut().set_rows(generated);
-            cx.notify();
-        });
-        let (overview, loudness) = demo_waveform();
-        let playhead = Some(PlayheadSource::Simulated {
-            started: Instant::now(),
-            duration: overview.duration_seconds(),
-        });
-        self.waveform.update(cx, |view, cx| {
-            view.show(Some(overview), Some(loudness), cx);
-            view.set_playhead(playhead, cx);
-        });
-        self.roots = vec![PathBuf::from("/demo")];
-        self.status = format!("Stress test: {rows} rows, {ROWS_PER_TICK} updates every {DEMO_TICK_INTERVAL:?}").into();
-        let table = self.table.downgrade();
-        self.demo_task = Some(cx.spawn(async move |_, cx| {
-            loop {
-                cx.background_executor().timer(DEMO_TICK_INTERVAL).await;
-                let updated = table.update(cx, |state, cx| {
-                    let delegate = state.delegate_mut();
-                    let count = delegate.len();
-                    for _ in 0..ROWS_PER_TICK {
-                        let index = random.next_index(count);
-                        delegate.update_row(index, |row| advance_row(row, &mut random));
-                    }
-                    cx.notify();
-                });
-                if updated.is_err() {
-                    break;
-                }
+    /// Resets a slider of the controls column to its default:
+    /// the whole file for the zoom, no custom gain for the selected file, and the default normalization target.
+    fn reset_slider(&mut self, control: SliderControl, window: &mut Window, cx: &mut Context<Self>) {
+        match control {
+            SliderControl::Zoom => {
+                self.zoom_slider
+                    .update(cx, |slider, cx| slider.set_value(MINIMUM_ZOOM as f32, window, cx));
+                self.waveform
+                    .update(cx, |waveform, cx| waveform.set_zoom(MINIMUM_ZOOM, cx));
             }
-        }));
+            SliderControl::Gain => {
+                self.gain_slider
+                    .update(cx, |slider, cx| slider.set_value(DEFAULT_GAIN_DB, window, cx));
+                self.clear_selected_gain(cx);
+            }
+            SliderControl::NormalizeTarget => self.reset_normalize_target(window, cx),
+        }
         cx.notify();
     }
 }

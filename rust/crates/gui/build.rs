@@ -12,6 +12,7 @@ use std::path::PathBuf;
 /// The multi-size Windows icon, generated from `assets/icon_win.png`, relative to the crate directory.
 const WINDOWS_ICON: &str = "../../../assets/icon_win.ico";
 
+/// Embeds the Windows resources, and reruns when the icon changes.
 #[cfg_attr(
     not(windows),
     expect(clippy::unnecessary_wraps, reason = "only Windows embeds resources")

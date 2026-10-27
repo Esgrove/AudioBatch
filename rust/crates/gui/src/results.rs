@@ -311,29 +311,6 @@ impl ResultsDelegate {
         }
     }
 
-    /// Returns the display index of the Status column, which stretches to fill the table width.
-    fn status_index(&self) -> Option<usize> {
-        self.order.iter().position(|&key| key == ColumnKey::Status)
-    }
-
-    /// Returns the definition of the column at a display index.
-    fn spec_at(&self, col_ix: usize) -> Option<&'static ColumnSpec> {
-        let key = *self.order.get(col_ix)?;
-        COLUMNS.iter().find(|spec| spec.key == key)
-    }
-
-    /// Moves a column to another display index when the user drags its header.
-    /// The table moves its own header state.
-    /// The delegate keeps its display order and column definitions in step, so the cells and titles follow the header.
-    fn reorder_column(&mut self, col_ix: usize, to_ix: usize) {
-        if col_ix < self.order.len() && to_ix < self.order.len() {
-            let key = self.order.remove(col_ix);
-            self.order.insert(to_ix, key);
-            let column = self.columns.remove(col_ix);
-            self.columns.insert(to_ix, column);
-        }
-    }
-
     /// Returns the row at a display index.
     #[must_use]
     pub fn row(&self, index: usize) -> Option<&ResultRow> {
@@ -546,6 +523,29 @@ impl ResultsDelegate {
         self.rebuild_index();
     }
 
+    /// Returns the display index of the Status column, which stretches to fill the table width.
+    fn status_index(&self) -> Option<usize> {
+        self.order.iter().position(|&key| key == ColumnKey::Status)
+    }
+
+    /// Returns the definition of the column at a display index.
+    fn spec_at(&self, column_index: usize) -> Option<&'static ColumnSpec> {
+        let key = *self.order.get(column_index)?;
+        COLUMNS.iter().find(|spec| spec.key == key)
+    }
+
+    /// Moves a column to another display index when the user drags its header.
+    /// The table moves its own header state.
+    /// The delegate keeps its display order and column definitions in step, so the cells and titles follow the header.
+    fn reorder_column(&mut self, column_index: usize, target_index: usize) {
+        if column_index < self.order.len() && target_index < self.order.len() {
+            let key = self.order.remove(column_index);
+            self.order.insert(target_index, key);
+            let column = self.columns.remove(column_index);
+            self.columns.insert(target_index, column);
+        }
+    }
+
     /// Returns a mutable row by path.
     fn row_mut(&mut self, path: &Path) -> Option<&mut ResultRow> {
         let index = *self.index.get(path)?;
@@ -591,42 +591,51 @@ impl TableDelegate for ResultsDelegate {
         self.rows.len()
     }
 
-    fn column(&self, col_ix: usize, _cx: &App) -> Column {
-        self.columns.get(col_ix).cloned().unwrap_or_else(|| Column::new("", ""))
+    fn column(&self, column_index: usize, _cx: &App) -> Column {
+        self.columns
+            .get(column_index)
+            .cloned()
+            .unwrap_or_else(|| Column::new("", ""))
     }
 
     fn perform_sort(
         &mut self,
-        col_ix: usize,
+        column_index: usize,
         sort: ColumnSort,
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) {
-        self.sort = self.order.get(col_ix).map(|&key| (key, sort));
+        self.sort = self.order.get(column_index).map(|&key| (key, sort));
         self.sort_rows();
         cx.notify();
     }
 
-    fn move_column(&mut self, col_ix: usize, to_ix: usize, _window: &mut Window, _cx: &mut Context<TableState<Self>>) {
-        self.reorder_column(col_ix, to_ix);
+    fn move_column(
+        &mut self,
+        column_index: usize,
+        target_index: usize,
+        _window: &mut Window,
+        _cx: &mut Context<TableState<Self>>,
+    ) {
+        self.reorder_column(column_index, target_index);
     }
 
     fn render_th(
         &mut self,
-        col_ix: usize,
+        column_index: usize,
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let title = div()
-            .id(("column-title", col_ix))
+            .id(("column-title", column_index))
             .size_full()
             .flex()
             .items_center()
             .px(px(CELL_INSET))
             .text_size(px(HEADER_FONT_SIZE))
             .truncate()
-            .child(self.column(col_ix, cx).name);
-        match self.spec_at(col_ix) {
+            .child(self.column(column_index, cx).name);
+        match self.spec_at(column_index) {
             Some(spec) => title.tooltip(tooltip(spec.description)),
             None => title,
         }
@@ -634,15 +643,15 @@ impl TableDelegate for ResultsDelegate {
 
     fn render_td(
         &mut self,
-        row_ix: usize,
-        col_ix: usize,
+        row_index: usize,
+        column_index: usize,
         _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
-        let text = self.cell_string(row_ix, col_ix);
-        let row = self.rows.get(row_ix);
+        let text = self.cell_string(row_index, column_index);
+        let row = self.rows.get(row_index);
         let (key, right_aligned) = self
-            .spec_at(col_ix)
+            .spec_at(column_index)
             .map_or((ColumnKey::Name, false), |spec| (spec.key, spec.right_aligned));
         let state = row.map_or(RowState::Done, |row| row.state);
         let failed = row.is_some_and(ResultRow::has_error);
@@ -678,7 +687,7 @@ impl TableDelegate for ResultsDelegate {
             }
             _ => cell,
         };
-        let cell = cell.id(("cell", col_ix));
+        let cell = cell.id(("cell", column_index));
         // Like the C++ table, the Status cell shows a failure reason or a notice as its tooltip.
         let status_tooltip = row
             .filter(|_| key == ColumnKey::Status)
@@ -703,19 +712,19 @@ impl TableDelegate for ResultsDelegate {
 
     fn fit_column(
         &mut self,
-        col_ix: usize,
+        column_index: usize,
         _window: &mut Window,
         _cx: &mut Context<TableState<Self>>,
     ) -> Option<Pixels> {
-        (self.order.get(col_ix) == Some(&ColumnKey::Status)).then_some(self.status_fill_width)
+        (self.order.get(column_index) == Some(&ColumnKey::Status)).then_some(self.status_fill_width)
     }
 
-    fn cell_label(&self, row_ix: usize, col_ix: usize, _cx: &App) -> Option<SharedString> {
-        Some(self.cell_string(row_ix, col_ix).into())
+    fn cell_label(&self, row_index: usize, column_index: usize, _cx: &App) -> Option<SharedString> {
+        Some(self.cell_string(row_index, column_index).into())
     }
 
-    fn cell_text(&self, row_ix: usize, col_ix: usize, _cx: &App) -> String {
-        self.cell_string(row_ix, col_ix)
+    fn cell_text(&self, row_index: usize, column_index: usize, _cx: &App) -> String {
+        self.cell_string(row_index, column_index)
     }
 }
 
@@ -733,8 +742,8 @@ pub fn fill_status_column(
         return;
     };
     let others: f32 = (0..state.delegate().columns.len())
-        .filter(|&col_ix| col_ix != status)
-        .filter_map(|col_ix| state.col_width(col_ix))
+        .filter(|&column_index| column_index != status)
+        .filter_map(|column_index| state.col_width(column_index))
         .map(f32::from)
         .sum();
     let target = (table_width - others)
