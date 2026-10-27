@@ -434,14 +434,23 @@ impl ResultsDelegate {
 
     /// Replaces the row of a normalized or processed source with the output record and an optional message.
     /// A converted source leaves the list, since the output is a new file next to it.
+    /// A file left unchanged, such as one already at the normalization target, keeps the custom gain of its row,
+    /// since the gain still applies to the same version of the file.
     /// The output may belong elsewhere in the order,
     /// so the caller sorts the rows once after applying a batch of results.
-    pub fn replace_after_operation(&mut self, source: &Path, output: AnalysisRecord, message: Option<RowMessage>) {
+    pub fn replace_after_operation(&mut self, source: &Path, mut output: AnalysisRecord, message: Option<RowMessage>) {
         let output_path = output.path.clone();
         if output_path != source {
             self.remove(source);
         }
         if let Some(row) = self.row_mut(&output_path) {
+            if let Some(previous) = &row.record
+                && output.custom_gain_db.is_none()
+                && previous.file_size == output.file_size
+                && previous.modified_time_ms == output.modified_time_ms
+            {
+                output.custom_gain_db = previous.custom_gain_db;
+            }
             row.state = RowState::Done;
             row.record = Some(output);
             row.message = message;
@@ -512,11 +521,16 @@ impl ResultsDelegate {
         }
     }
 
-    /// Ends the waiting and analyzing states of rows with a result, after their run was replaced.
+    /// Ends the waiting, analyzing, normalizing, and processing states of rows with a result,
+    /// after their run was replaced or cancelled.
     /// Rows without a result stay waiting for the scan that lists them again.
     pub fn finish_interrupted_rows(&mut self) {
         for row in &mut self.rows {
-            if matches!(row.state, RowState::Pending | RowState::Analyzing(_)) && row.record.is_some() {
+            if matches!(
+                row.state,
+                RowState::Pending | RowState::Analyzing(_) | RowState::Normalizing(_) | RowState::Processing(_)
+            ) && row.record.is_some()
+            {
                 row.state = RowState::Done;
             }
         }
@@ -1049,6 +1063,42 @@ mod test_operation_rows {
         assert_eq!(delegate.index_of(Path::new("/a.aif")), Some(1));
         delegate.sort_rows();
         assert_eq!(delegate.index_of(Path::new("/a.aif")), Some(0));
+    }
+
+    #[test]
+    fn an_unchanged_file_keeps_its_custom_gain_and_a_rewritten_one_loses_it() {
+        let mut source = record("/a.aif");
+        source.custom_gain_db = Some(-3.0);
+        source.file_size = 100;
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_rows(vec![ResultRow::from_record(source)]);
+
+        let mut unchanged = record("/a.aif");
+        unchanged.file_size = 100;
+        delegate.replace_after_operation(Path::new("/a.aif"), unchanged, None);
+        let gain = |delegate: &ResultsDelegate| {
+            delegate
+                .row_for(Path::new("/a.aif"))
+                .and_then(|row| row.record.as_ref())
+                .and_then(|record| record.custom_gain_db)
+        };
+        assert_eq!(gain(&delegate), Some(-3.0));
+
+        let mut rewritten = record("/a.aif");
+        rewritten.file_size = 200;
+        delegate.replace_after_operation(Path::new("/a.aif"), rewritten, None);
+        assert_eq!(gain(&delegate), None);
+    }
+
+    #[test]
+    fn processing_rows_are_done_again_after_a_cancel() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav"]);
+        delegate.mark_processing(Path::new("/a.wav"), 0.5);
+        delegate.mark_normalizing(Path::new("/b.wav"), 0.25);
+        delegate.finish_interrupted_rows();
+        for path in ["/a.wav", "/b.wav"] {
+            assert_eq!(delegate.row_for(Path::new(path)).expect("row").state, RowState::Done);
+        }
     }
 
     #[test]
