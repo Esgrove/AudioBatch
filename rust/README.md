@@ -201,6 +201,9 @@ and the output device with its sample rate and buffer size in samples.
   and the File menu also re-analyzes, removes, trashes, or reveals the selected file.
 - Options > Show Loudness Graph, or the same option in the settings window,
   draws the short-term loudness over the waveform, and Options > Output Device switches the audio device.
+- Like the C++ version, the audio device is open only while playing.
+  Playing opens it, selecting another file while playing keeps it open,
+  and it closes shortly after playback stops, so other applications can use it.
 - The Audio Settings button, or Options > Audio Settings… (Command or Control and comma),
   opens the settings window.
   It chooses the output device, sample rate, and buffer size, previewing through the plugin chain,
