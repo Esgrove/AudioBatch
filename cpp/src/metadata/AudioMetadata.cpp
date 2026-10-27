@@ -556,14 +556,19 @@ bool writeMetadata(const juce::File& file, const AudioMetadata& metadata)
 
 /// Copies the tags, embedded pictures and opaque ID3v2 frames onto a freshly written processed output.
 /// Drops the Serato overview, which must be regenerated for the changed audio.
-/// A source without readable metadata is not an error, because some inputs have none that TagLib can read,
-/// but failing to write metadata that was read is, so the caller can keep the original and its tags.
-/// Returns false only when writing failed.
+/// A source in a format TagLib does not read is not an error, because some inputs have no metadata it can read.
+/// A source that cannot be opened at all is, since its tags would be lost while the original goes to the trash,
+/// and so is failing to write metadata that was read, so the caller can keep the original and its tags.
+/// Returns false when the source could not be opened or writing failed.
 bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile)
 {
     AudioMetadata metadata;
 
     if (!readMetadata(sourceFile, metadata)) {
+        if (sourceFile.createInputStream() == nullptr) {
+            utils::logError("Could not open {} to copy its metadata", sourceFile.getFullPathName().quoted());
+            return false;
+        }
         utils::logInfo("No metadata could be read from {}", sourceFile.getFullPathName().quoted());
         return true;
     }
