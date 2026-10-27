@@ -12,6 +12,7 @@
 
 #include <JuceHeader.h>
 
+#include <chrono>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -21,6 +22,12 @@ namespace audiobatch
 {
 /// Unique id that marks the command line of a plugin scan worker process.
 constexpr auto pluginScanWorkerProcessUid {"audiobatch-plugin-scan-worker"};
+
+/// Longest wait for the worker to scan one plugin, the same as in the Rust version.
+/// Without it, a plugin that hangs in the worker would block the scan for good:
+/// the CLI rescan cannot be cancelled, and the GUI scan would wait until the user cancels it.
+/// Generous, because a copy-protected plugin can show a licensing prompt in the worker while it is scanned.
+constexpr auto pluginScanTimeout {std::chrono::seconds(180)};
 
 [[nodiscard]] bool isBuiltInApplePlugin(const juce::String& fileOrIdentifier);
 [[nodiscard]] bool isPluginScanWorkerCommandLine(const juce::String& commandLine);
@@ -115,8 +122,16 @@ public:
 
     void scanFinished() override;
 
+    /// Returns the plugin files that took longer than the timeout to scan and were skipped, since the scanner was
+    /// created.
+    [[nodiscard]] const juce::StringArray& getTimedOutFiles() const noexcept
+    {
+        return timedOutFiles;
+    }
+
 private:
     std::unique_ptr<PluginScanWorkerProcess> worker;
+    juce::StringArray timedOutFiles;
     ScanStartingCallback onScanStarting;
     ScanFinishedCallback onScanFinished;
     bool scanStarted {false};

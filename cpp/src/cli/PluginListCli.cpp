@@ -286,7 +286,10 @@ void rescanPlugins(
     const juce::AudioPluginFormatManager& formatManager
 )
 {
-    knownPluginList.setCustomScanner(std::make_unique<OutOfProcessPluginScanner>());
+    auto ownedScanner = std::make_unique<OutOfProcessPluginScanner>();
+    // The list owns the scanner from here on, and keeps it until the end of this function.
+    const auto& customScanner = *ownedScanner;
+    knownPluginList.setCustomScanner(std::move(ownedScanner));
 
     const auto blacklistedBefore = knownPluginList.getBlacklistedFiles();
     const auto showProgress = console::isColorEnabled(stderr);
@@ -343,8 +346,19 @@ void rescanPlugins(
         }
     }
 
+    for (const auto& file : customScanner.getTimedOutFiles()) {
+        console::printWarn(
+            utils::format(
+                "Plugin took longer than {} seconds to scan and was skipped: {}", pluginScanTimeout.count(), file
+            )
+        );
+    }
+
+    // JUCE also lists a skipped plugin as a file without plugins, so it is only reported as timed out.
     for (const auto& file : failedFiles) {
-        console::printWarn(utils::format("No plugins found in {}", file));
+        if (!customScanner.getTimedOutFiles().contains(file)) {
+            console::printWarn(utils::format("No plugins found in {}", file));
+        }
     }
 }
 }  // namespace
