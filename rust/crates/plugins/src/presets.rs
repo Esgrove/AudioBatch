@@ -14,7 +14,7 @@ use anyhow::{Context as _, Result, bail};
 use audiobatch_core::sorting::compare_natural;
 use serde::{Deserialize, Serialize};
 
-use crate::chain::{ChainSlot, PluginChain};
+use crate::chain::{ChainSlot, PluginChain, deserialize_slots_skipping_damaged};
 use crate::library::write_json_atomically;
 
 /// Version of the preset file format, raised when a change would make older versions misread a file.
@@ -36,8 +36,8 @@ pub struct ChainPreset {
     pub name: String,
     /// Format version of the file.
     pub version: u32,
-    /// The slots, in processing order.
-    #[serde(default)]
+    /// The slots, in processing order. A damaged slot is skipped when the preset is read.
+    #[serde(default, deserialize_with = "deserialize_slots_skipping_damaged")]
     pub slots: Vec<ChainSlot>,
 }
 

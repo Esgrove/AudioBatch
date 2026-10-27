@@ -13,7 +13,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use vst3_host::PluginState;
 
-use crate::library::{PluginDescription, write_json_atomically};
+use crate::library::{PluginDescription, load_recovering, write_json_atomically};
 
 /// One plugin of the chain.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,8 +41,8 @@ pub struct ChainSlot {
 /// The plugins files are processed with, in order.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PluginChain {
-    /// The slots, in processing order.
-    #[serde(default)]
+    /// The slots, in processing order. A damaged slot is skipped when the chain is read.
+    #[serde(default, deserialize_with = "deserialize_slots_skipping_damaged")]
     pub slots: Vec<ChainSlot>,
 }
 
@@ -75,7 +75,7 @@ impl ChainSlot {
 }
 
 impl PluginChain {
-    /// Reads the chain from a file. A missing file gives an empty chain.
+    /// Reads the chain from a file. A missing file gives an empty chain, and damaged slots are skipped.
     ///
     /// # Errors
     ///
@@ -86,6 +86,17 @@ impl PluginChain {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(error).with_context(|| format!("Could not read the plugin chain {}", path.display())),
         }
+    }
+
+    /// Reads the chain from a file, recovering from a file that cannot be parsed.
+    /// Such a file is moved aside, so saving the empty chain that replaces it cannot destroy it,
+    /// and the returned message says where it went.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file exists but cannot be read.
+    pub fn load_recovering(path: &Path) -> Result<(Self, Option<String>)> {
+        load_recovering(path, Self::load_from, "plugin chain")
     }
 
     /// Writes the chain to a file, replacing it atomically and creating its directory when needed.
@@ -107,6 +118,18 @@ impl PluginChain {
     pub fn has_enabled_slots(&self) -> bool {
         self.slots.iter().any(|slot| slot.enabled)
     }
+}
+
+/// Reads the slots of a chain or preset, leaving out every slot that cannot be read,
+/// such as one with invalid base64 state, so one damaged slot does not lose the whole chain.
+pub(crate) fn deserialize_slots_skipping_damaged<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Vec<ChainSlot>, D::Error> {
+    let values = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(values
+        .into_iter()
+        .filter_map(|value| serde_json::from_value(value).ok())
+        .collect())
 }
 
 /// Writes bytes as base64 text.
@@ -174,17 +197,40 @@ mod test_plugin_chain {
     }
 
     #[test]
-    fn missing_file_is_an_empty_chain_and_invalid_state_is_an_error() {
+    fn missing_file_is_an_empty_chain_and_a_damaged_slot_is_skipped() {
         let folder = TempDir::new().expect("temp dir");
         let path = folder.path().join("plugin-chain.json");
         assert_eq!(PluginChain::load_from(&path).expect("loaded"), PluginChain::default());
         let mut json = serde_json::to_value(PluginChain {
-            slots: vec![ChainSlot::new(description("Effect"))],
+            slots: vec![
+                ChainSlot::new(description("Damaged")),
+                ChainSlot::new(description("Kept")),
+            ],
         })
         .expect("serialized");
         json["slots"][0]["component_state"] = "not base64!".into();
         fs::write(&path, json.to_string()).expect("written");
-        assert!(PluginChain::load_from(&path).is_err());
+        let loaded = PluginChain::load_from(&path).expect("loaded");
+        let names: Vec<&str> = loaded.slots.iter().map(|slot| slot.plugin.name.as_str()).collect();
+        assert_eq!(names, ["Kept"]);
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_parsed_is_moved_aside() {
+        let folder = TempDir::new().expect("temp dir");
+        let path = folder.path().join("plugin-chain.json");
+        fs::write(&path, b"{ not json").expect("written");
+
+        let (chain, message) = PluginChain::load_recovering(&path).expect("recovers");
+
+        assert_eq!(chain, PluginChain::default());
+        let moved = folder.path().join("plugin-chain.invalid.json");
+        assert_eq!(fs::read(&moved).expect("moved aside"), b"{ not json");
+        assert!(!path.exists());
+        assert!(
+            message.is_some_and(|message| message.contains("plugin-chain.invalid.json")),
+            "the message names the moved file"
+        );
     }
 
     #[test]

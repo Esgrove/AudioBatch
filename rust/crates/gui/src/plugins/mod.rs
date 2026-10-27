@@ -88,10 +88,16 @@ impl PluginHost {
     ) -> (Self, Vec<String>) {
         let paths = PluginDataPaths::default();
         let mut problems = Vec::new();
-        let known = KnownPlugins::load_from(&paths.known_plugins).unwrap_or_else(|error| {
-            problems.push(format!("{error:#}"));
-            KnownPlugins::default()
-        });
+        let known = match KnownPlugins::load_recovering(&paths.known_plugins) {
+            Ok((known, message)) => {
+                problems.extend(message);
+                known
+            }
+            Err(error) => {
+                problems.push(format!("{error:#}"));
+                KnownPlugins::default()
+            }
+        };
         let chain = match UiThread::current() {
             Some(ui) => {
                 let (chain, error) = LiveChain::load(&ui, paths.chain.clone(), dispatcher.clone(), sample_rate);

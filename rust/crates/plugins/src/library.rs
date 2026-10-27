@@ -130,6 +130,17 @@ impl KnownPlugins {
         }
     }
 
+    /// Reads the list from a file, recovering from a file that cannot be parsed.
+    /// Such a file is moved aside and an empty list is returned, so scans and folder edits keep working,
+    /// and the returned message says where the file went.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the file exists but cannot be read.
+    pub fn load_recovering(path: &Path) -> Result<(Self, Option<String>)> {
+        load_recovering(path, Self::load_from, "plugin list")
+    }
+
     /// Writes the list to a file, replacing it atomically and creating its directory when needed.
     ///
     /// # Errors
@@ -213,6 +224,36 @@ pub fn bundle_modified_ms(bundle: &Path) -> i64 {
         .unwrap_or_default()
 }
 
+/// Loads a JSON data file with `load`, and when it cannot be parsed,
+/// moves it aside as `<name>.invalid.json` and returns the default value with a message that says so.
+/// A file that cannot be read at all is still an error, since moving it would not help.
+pub(crate) fn load_recovering<T: Default>(
+    path: &Path,
+    load: impl Fn(&Path) -> Result<T>,
+    description: &str,
+) -> Result<(T, Option<String>)> {
+    match load(path) {
+        Ok(value) => Ok((value, None)),
+        Err(error) if error.chain().any(<dyn std::error::Error>::is::<serde_json::Error>) => {
+            let moved = path.with_extension("invalid.json");
+            let message = match fs::rename(path, &moved) {
+                Ok(()) => format!(
+                    "The {description} {} could not be read and was moved to {}: {error:#}",
+                    path.display(),
+                    moved.display()
+                ),
+                Err(rename_error) => {
+                    return Err(rename_error).with_context(|| {
+                        format!("The {description} {} could not be read or moved aside", path.display())
+                    });
+                }
+            };
+            Ok((T::default(), Some(message)))
+        }
+        Err(error) => Err(error),
+    }
+}
+
 /// Writes a value as pretty JSON, replacing the file atomically and creating its directory when needed,
 /// so a reader never sees a partly written file.
 ///
@@ -273,6 +314,11 @@ mod test_known_plugins {
         );
         fs::write(&path, "{ not json").expect("invalid file");
         assert!(KnownPlugins::load_from(&path).is_err());
+        let (recovered, message) = KnownPlugins::load_recovering(&path).expect("recovers");
+        assert_eq!(recovered, KnownPlugins::default());
+        assert!(message.is_some());
+        assert!(path.with_extension("invalid.json").is_file());
+        assert!(!path.exists());
     }
 
     #[test]

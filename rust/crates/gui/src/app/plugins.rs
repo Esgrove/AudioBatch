@@ -502,15 +502,18 @@ impl AppView {
             let Some(lock) = lock else {
                 return Ok(None);
             };
-            let known = KnownPlugins::load_from(&paths.known_plugins)?;
+            let (known, recovered) = KnownPlugins::load_recovering(&paths.known_plugins)?;
             let options = ScanOptions::new(known.search_folders(), Some(paths.worker_log.clone()))?;
-            Ok(Some((lock, known, options)))
+            Ok(Some((lock, known, options, recovered)))
         });
-        let (lock, mut known, options) = match prepared {
+        let (lock, mut known, options, recovered) = match prepared {
             Ok(Some(prepared)) => prepared,
             Ok(None) => return self.report_status(String::from(SCAN_BUSY_MESSAGE), cx),
             Err(error) => return self.report_status(format!("Could not start the plugin scan: {error:#}"), cx),
         };
+        if let Some(message) = recovered {
+            self.report_status(message, cx);
+        }
         let cancel = Arc::new(AtomicBool::new(false));
         let progress = Arc::new(Mutex::new((0.0, PathBuf::new())));
         let scan = {
@@ -571,7 +574,8 @@ impl AppView {
             let Some(lock) = lock else {
                 return Ok(None);
             };
-            let mut known = KnownPlugins::load_from(&path)?;
+            // A file that cannot be parsed is moved aside, so the edit starts a new list instead of failing every time.
+            let (mut known, _) = KnownPlugins::load_recovering(&path)?;
             edit(&mut known);
             known.sort();
             known.save_to(&path)?;

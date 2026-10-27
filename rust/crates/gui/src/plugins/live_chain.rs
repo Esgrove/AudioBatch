@@ -151,11 +151,12 @@ impl LiveChain {
     }
 
     /// Loads the chain saved in `path` and creates its instances.
-    /// A chain file that cannot be read gives an empty chain and the error.
+    /// A chain file that cannot be read gives an empty chain and the error,
+    /// and one that cannot be parsed is moved aside first, so saving the empty chain cannot destroy it.
     #[must_use]
     pub fn load(ui: &UiThread, path: PathBuf, dispatcher: UiDispatcher, sample_rate: u32) -> (Self, Option<String>) {
-        let (saved, error) = match PluginChain::load_from(&path) {
-            Ok(saved) => (saved, None),
+        let (saved, error) = match PluginChain::load_recovering(&path) {
+            Ok((saved, message)) => (saved, message),
             Err(error) => (PluginChain::default(), Some(format!("{error:#}"))),
         };
         let mut chain = Self::new(path, dispatcher, sample_rate);
