@@ -336,11 +336,11 @@ mod test_run_analysis {
     fn skipped_inputs_fail_the_run() {
         let directory = TempDir::new().expect("temp dir");
         let tone = copy_fixture(&directory, "sine_stereo_44100_16.wav", "song.wav");
-        let notes = directory.path().join("music/notes.txt");
-        let hidden = directory.path().join("music/.hidden.wav");
+        let notes = directory.path().join("music").join("notes.txt");
+        let hidden = directory.path().join("music").join(".hidden.wav");
         std::fs::write(&notes, b"text").expect("writes notes");
         std::fs::write(&hidden, b"data").expect("writes hidden file");
-        let missing = directory.path().join("music/missing.wav");
+        let missing = directory.path().join("music").join("missing.wav");
         let paths = [&notes, &hidden, &missing].map(|path| path.to_string_lossy().into_owned());
         let (code, output, log) = run(&["-o", "json", &tone, &paths[0], &paths[1], &paths[2]], &directory);
         assert_eq!(code, EXIT_FAILURES, "{log}");
