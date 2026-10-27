@@ -1,6 +1,7 @@
 //! Atomic replacement of small data files, such as the settings and the plugin lists.
 //!
-//! The contents go to a temporary file in the same directory, which is flushed to disk and then renamed over the target,
+//! The contents go to a temporary file in the same directory,
+//! which is flushed to disk and then renamed over the target,
 //! so a reader, or the next launch after a crash, never sees a partly written file.
 
 use std::fs;
