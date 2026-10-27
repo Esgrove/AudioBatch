@@ -33,6 +33,8 @@ int processBlockThroughChain(
     std::span<juce::AudioBuffer<float>> preparedViews = {}
 );
 
+void foldStereoToMono(juce::AudioBuffer<float>& buffer, int firstSample, int numSamples);
+
 [[nodiscard]] bool isBlockFinite(const juce::AudioBuffer<float>& block, int numSamples);
 [[nodiscard]] int findFailedProcessCall(std::span<juce::AudioPluginInstance* const> chainInstances) noexcept;
 [[nodiscard]] juce::String describeFailedProcessCall(const juce::AudioPluginInstance& plugin);

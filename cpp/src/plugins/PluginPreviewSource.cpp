@@ -239,8 +239,7 @@ int PluginPreviewSource::processInputBlock(const int samples, const juce::int64 
         failedPluginIndex = findFailedProcessCall(plugins);
         // Processing writes a mono file as the average of the chain's channels, so its preview sounds the same.
         if (sourceChannels == 1 && signalChannels >= 2) {
-            scratch.addFrom(0, 0, scratch, 1, 0, samples);
-            scratch.applyGain(0, 0, samples, 0.5f);
+            foldStereoToMono(scratch, 0, samples);
             signalChannels = 1;
         }
     }
