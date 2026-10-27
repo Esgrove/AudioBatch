@@ -122,6 +122,16 @@ void NormalizationTargetControl::resized()
     targetSlider.setBounds(sliderRow);
 }
 
+void NormalizationTargetControl::setNormalizeEnabled(const bool enabled)
+{
+    normalizeButton.setEnabled(enabled);
+}
+
+void NormalizationTargetControl::setNormalizeCallback(std::function<void()> callback)
+{
+    normalizeButton.onClick = std::move(callback);
+}
+
 /// Returns true when loudness mode is selected.
 bool NormalizationTargetControl::isLoudnessMode() const
 {
