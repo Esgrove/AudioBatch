@@ -87,6 +87,8 @@ struct RenderedAudio {
     last_audible_frame: Option<u64>,
     /// Notice about source packets that failed to decode and were rendered as silence.
     decode_notice: Option<String>,
+    /// Notice naming the plugins that refused their saved settings and processed with their current ones.
+    settings_notice: Option<String>,
 }
 
 /// Reads the source in blocks of the chain's size, applying the input gain.
@@ -300,6 +302,7 @@ fn try_process_file(
         gain_notice,
         clipped.then(|| "Output clipping: the final render exceeded the 16-bit range".to_string()),
         rendered.decode_notice,
+        rendered.settings_notice,
     ]
     .into_iter()
     .flatten()
@@ -370,6 +373,12 @@ fn render_chain_to_file(
     let sample_rate = decoder.info().sample_rate;
     let file = tempfile::tempfile().map_err(|_| "Could not create the temporary render file".to_string())?;
     let mut prepared = chain.prepare(channels as usize, f64::from(sample_rate), is_cancelled)?;
+    let settings_notice = (!prepared.refused_settings.is_empty()).then(|| {
+        format!(
+            "{} did not accept the saved settings and processed with its current settings",
+            prepared.refused_settings.join(", ")
+        )
+    });
     let rendered = render_blocks(
         decoder,
         &mut prepared,
@@ -383,6 +392,7 @@ fn render_chain_to_file(
     chain.release(is_cancelled);
     let mut rendered = rendered?;
     rendered.decode_notice = decoder.failures().notice();
+    rendered.settings_notice = settings_notice;
     Ok(rendered)
 }
 
@@ -414,6 +424,7 @@ fn render_blocks(
         frames_written: 0,
         last_audible_frame: None,
         decode_notice: None,
+        settings_notice: None,
     };
     loop {
         if is_cancelled() {
@@ -769,6 +780,7 @@ mod test_process_file_failures {
 
     use audiobatch_test_plugin::Kind;
     use tempfile::TempDir;
+    use vst3_host::PluginState;
 
     use super::*;
     use crate::test_helpers::{deleting_options, file_names, gain_state, ready_fixture_copy, test_chain};
@@ -805,6 +817,27 @@ mod test_process_file_failures {
         }
         assert_eq!(file_names(&directory), ["other.aif", "song.wav"]);
         assert_eq!(std::fs::read(&in_place.path).expect("read"), original);
+    }
+
+    #[test]
+    fn a_plugin_that_refuses_its_settings_processes_with_a_notice() {
+        let directory = TempDir::new().expect("temp dir");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let too_short = PluginState {
+            component: vec![1, 2, 3],
+            controller: Vec::new(),
+        };
+        let chain = test_chain(&[(Kind::Gain, too_short)]);
+        let result = process_file(&record, &deleting_options(), &chain, &|| false, &mut |_| {});
+        let OperationOutcome::Succeeded { notice, .. } = &result.outcome else {
+            panic!("processing fails: {:?}", result.error());
+        };
+        assert!(
+            notice
+                .as_deref()
+                .is_some_and(|notice| notice.contains("Test Gain did not accept the saved settings")),
+            "{notice:?}"
+        );
     }
 
     #[test]

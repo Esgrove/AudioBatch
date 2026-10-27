@@ -107,6 +107,10 @@ The differences below are in the GUIs and in plugin hosting.
   both versions process it at unity gain, with a notice that names the reason.
 - **Processing failures.** Both versions fail the file when a VST3 plugin reports a processing error,
   and turn the preview off with the plugin's name and error.
+- **Refused plugin settings.** Only the Rust version can tell when a VST3 plugin refuses its saved settings,
+  since JUCE does not report it.
+  Its live chain then keeps the saved settings instead of the plugin's defaults until the editor opens,
+  and a processed file gets a notice that names the plugin.
 - **Preview channels.** Both previews run the plugin chain in stereo for every file,
   and prepare a plugin that refuses stereo for mono, folding the signal into it and copying its output to both channels.
   The output of a mono file is folded back to mono, so it sounds like the processed file.
