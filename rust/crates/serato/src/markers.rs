@@ -81,9 +81,13 @@ pub struct Loop {
 impl Markers {
     /// Parses every entry of base64 encoded Serato Markers2 tag data.
     ///
+    /// Entry types this parser does not know, such as Serato's flips, are skipped by their length,
+    /// and zero padding after the empty terminating name is accepted, like the C++ parser.
+    ///
     /// # Errors
     ///
-    /// Returns an error when the base64 payload or one of its entries is malformed.
+    /// Returns an error when the base64 payload or one of its known entries is malformed,
+    /// or when anything but zero bytes follows the terminating name.
     pub fn parse(data: &[u8]) -> Result<Vec<Self>> {
         let base64_end = data
             .iter()
@@ -110,11 +114,16 @@ impl Markers {
         }
 
         let mut entries = Vec::new();
-        while let Ok(name_bytes) = read_until_null(&mut cursor) {
-            let entry_name = String::from_utf8(name_bytes)?;
-            if entry_name.trim().is_empty() && cursor.position() as usize == cursor.get_ref().len() {
+        loop {
+            let name_bytes = read_until_null(&mut cursor)?;
+            if name_bytes.is_empty() {
+                let rest = cursor.get_ref().get(cursor.position() as usize..).unwrap_or_default();
+                if rest.iter().any(|&byte| byte != 0) {
+                    return Err(anyhow!("Unexpected data after the final Markers2 entry"));
+                }
                 break;
             }
+            let entry_name = String::from_utf8(name_bytes)?;
             let entry_length = cursor.read_u32::<BigEndian>()? as usize;
             let start = cursor.position() as usize;
             let end = start
@@ -124,21 +133,21 @@ impl Markers {
                 .get_ref()
                 .get(start..end)
                 .context("Marker entry exceeds payload")?;
-            entries.push(Self::load(&entry_name, entry_data)?);
+            entries.extend(Self::load(&entry_name, entry_data)?);
             cursor.set_position(end as u64);
         }
         Ok(entries)
     }
 
-    /// Parses a single entry based on its name.
-    fn load(entry_name: &str, data: &[u8]) -> Result<Self> {
-        match entry_name {
-            "BPMLOCK" => Ok(Self::BpmLock(BpmLock::load(data)?)),
-            "COLOR" => Ok(Self::Color(Color::load(data)?)),
-            "CUE" => Ok(Self::Cue(Cue::load(data)?)),
-            "LOOP" => Ok(Self::Loop(Loop::load(data)?)),
-            _ => Err(anyhow!("Unknown entry type: {entry_name}")),
-        }
+    /// Parses a single entry based on its name, or returns `None` for an entry type this parser does not know.
+    fn load(entry_name: &str, data: &[u8]) -> Result<Option<Self>> {
+        Ok(Some(match entry_name {
+            "BPMLOCK" => Self::BpmLock(BpmLock::load(data)?),
+            "COLOR" => Self::Color(Color::load(data)?),
+            "CUE" => Self::Cue(Cue::load(data)?),
+            "LOOP" => Self::Loop(Loop::load(data)?),
+            _ => return Ok(None),
+        }))
     }
 }
 
@@ -467,6 +476,26 @@ mod test_markers_parse {
                 Markers::Color(Color::new([0x11, 0x22, 0x33])),
             ]
         );
+    }
+
+    #[test]
+    fn skips_unknown_entries_and_accepts_zero_padding() {
+        let mut payload = vec![0x01, 0x01];
+        payload.extend_from_slice(b"FLIP\0");
+        payload.extend_from_slice(&3_u32.to_be_bytes());
+        payload.extend_from_slice(&[1, 2, 3]);
+        payload.extend_from_slice(b"BPMLOCK\0");
+        payload.extend_from_slice(&1_u32.to_be_bytes());
+        payload.push(0);
+        payload.extend_from_slice(&[0, 0, 0]);
+        let markers = Markers::parse(&encode(&payload)).expect("parses");
+        assert_eq!(markers, vec![Markers::BpmLock(BpmLock { enabled: false })]);
+    }
+
+    #[test]
+    fn rejects_data_after_the_terminator() {
+        let payload = [0x01, 0x01, 0x00, 0x00, 0x07];
+        assert!(Markers::parse(&encode(&payload)).is_err());
     }
 
     #[test]
