@@ -40,7 +40,7 @@ FileActivityTracker::~FileActivityTracker() = default;
 void FileActivityTracker::markActive(const juce::Array<juce::File>& files, const FileActivity activity)
 {
     for (const auto& file : files) {
-        activeStates[file.getFullPathName()] = {.activity = activity, .progress = 0.0f};
+        storeState(file.getFullPathName(), {.activity = activity, .progress = 0.0f});
         messages.erase(file.getFullPathName());
     }
 
@@ -51,7 +51,7 @@ void FileActivityTracker::markActive(const juce::Array<juce::File>& files, const
 /// Resets progress before repainting so no previous fill or indeterminate arc appears at startup.
 void FileActivityTracker::setActive(const juce::String& fullPath, const FileActivity activity)
 {
-    activeStates[fullPath] = {.activity = activity, .progress = 0.0f};
+    storeState(fullPath, {.activity = activity, .progress = 0.0f});
     activityChanged();
 }
 
@@ -66,13 +66,17 @@ void FileActivityTracker::setProgress(const juce::String& fullPath, const float 
         return;
     }
 
-    iterator->second.progress = juce::jlimit(0.0f, 1.0f, progress);
+    const auto limited = juce::jlimit(0.0f, 1.0f, progress);
+    progressTotal += static_cast<double>(limited) - static_cast<double>(iterator->second.progress.value_or(0.0f));
+    iterator->second.progress = limited;
 }
 
 /// Marks one file idle.
 void FileActivityTracker::clearActive(const juce::String& fullPath)
 {
-    activeStates.erase(fullPath);
+    if (const auto iterator = activeStates.find(fullPath); iterator != activeStates.end()) {
+        eraseState(iterator);
+    }
     activityChanged();
 }
 
@@ -80,15 +84,20 @@ void FileActivityTracker::clearActive(const juce::String& fullPath)
 void FileActivityTracker::clearAllActive()
 {
     activeStates.clear();
+    progressTotal = 0.0;
     activityChanged();
 }
 
 /// Marks idle every file whose activity is one of the given activities.
 void FileActivityTracker::clearActiveWithActivities(const std::initializer_list<FileActivity> activities)
 {
-    std::erase_if(activeStates, [&activities](const auto& entry) {
-        return std::ranges::find(activities, entry.second.activity) != activities.end();
-    });
+    for (auto iterator = activeStates.begin(); iterator != activeStates.end();) {
+        if (std::ranges::find(activities, iterator->second.activity) != activities.end()) {
+            iterator = eraseState(iterator);
+        } else {
+            ++iterator;
+        }
+    }
     activityChanged();
 }
 
@@ -115,16 +124,35 @@ std::optional<FileActivityState> FileActivityTracker::getActivityState(const juc
 
 /// Returns the sum of the completed fractions of the busy files,
 /// which added to the number of finished files gives the progress of the whole run in files.
+/// The sum is kept up to date as the states change, because the progress line reads it on every display frame.
 float FileActivityTracker::getProgressTotal() const
 {
-    float total = 0.0f;
+    return static_cast<float>(juce::jmax(0.0, progressTotal));
+}
 
-    for (const auto& [path, state] : activeStates) {
-        juce::ignoreUnused(path);
-        total += state.progress.value_or(0.0f);
+/// Sets the activity state of a file and keeps the running progress total in step with it.
+void FileActivityTracker::storeState(const juce::String& fullPath, const FileActivityState state)
+{
+    if (const auto [iterator, inserted] = activeStates.try_emplace(fullPath, state); !inserted) {
+        progressTotal -= static_cast<double>(iterator->second.progress.value_or(0.0f));
+        iterator->second = state;
     }
+    progressTotal += static_cast<double>(state.progress.value_or(0.0f));
+}
 
-    return total;
+/// Removes the state of a file from the running progress total and the busy files,
+/// and returns the iterator to the state after it.
+/// The total starts again from zero once no file is busy, so rounding errors do not build up across runs.
+std::map<juce::String, FileActivityState>::iterator FileActivityTracker::eraseState(
+    const std::map<juce::String, FileActivityState>::iterator iterator
+)
+{
+    progressTotal -= static_cast<double>(iterator->second.progress.value_or(0.0f));
+    const auto next = activeStates.erase(iterator);
+    if (activeStates.empty()) {
+        progressTotal = 0.0;
+    }
+    return next;
 }
 
 /// Returns true while any file is busy.
