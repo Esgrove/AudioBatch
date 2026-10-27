@@ -3,21 +3,21 @@
 //!
 //! Log messages and failures go to stderr, so stdout only carries the results.
 
+use std::collections::HashMap;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use audiobatch_core::discovery::normalize_path;
-use audiobatch_core::normalize::{
-    NormalizationOptions, batch_output_conflict_message, find_batch_output_conflicts, normalize_file,
-};
-use audiobatch_core::operation::OperationOutcome;
+use audiobatch_core::normalize::{NormalizationOptions, find_batch_output_conflicts};
+use audiobatch_core::operation::{OperationOutcome, OperationResult};
 use audiobatch_core::output_file::FileDisposer;
 use audiobatch_core::sorting::sort_records;
 use audiobatch_core::{
     AnalysisCache, AnalysisCoordinator, AnalysisEvent, AnalysisOptions, AnalysisRecord, AnalysisStatus,
+    NormalizeCoordinator, NormalizeEvent,
 };
 use clap::CommandFactory as _;
 use crossbeam_channel::RecvTimeoutError;
@@ -134,7 +134,8 @@ pub fn run_analysis(
         let normalized = normalize_records(
             &records,
             options,
-            &normalization_cache,
+            normalization_cache,
+            args.worker_count(),
             log,
             progress_target(),
             is_interrupted,
@@ -163,16 +164,19 @@ pub fn run_analysis(
     })
 }
 
-/// Normalizes every analyzed record in order and returns the records to report.
+/// Normalizes the analyzed records on `worker_count` workers and returns the records to report, in input order.
 ///
+/// The work goes through the same `NormalizeCoordinator` the GUI uses,
+/// which fails a file that loses a batch output conflict without touching it,
+/// removes a converted source from the cache, and stores the analysis of each output.
 /// Files that failed analysis are reported as they are, and were already counted as failures.
-/// A file that loses a batch output conflict fails without being touched.
-/// A converted source leaves the cache, and the analysis of each output is stored.
-/// Normalization stops once `is_interrupted` returns true.
+/// Once `is_interrupted` returns true, the run is cancelled: files being rendered keep their originals,
+/// and only the results of files already committed are reported.
 fn normalize_records(
     records: &[AnalysisRecord],
     options: &NormalizationOptions,
-    cache: &AnalysisCache,
+    cache: Arc<AnalysisCache>,
+    worker_count: usize,
     log: &mut dyn Write,
     progress_target: ProgressDrawTarget,
     is_interrupted: &dyn Fn() -> bool,
@@ -180,45 +184,52 @@ fn normalize_records(
     let analyzed: Vec<AnalysisRecord> = records.iter().filter(|record| !record.has_error()).cloned().collect();
     let conflicts = find_batch_output_conflicts(&analyzed);
     let progress = ProgressBar::with_draw_target(Some(analyzed.len() as u64), progress_target);
+    let coordinator = NormalizeCoordinator::new(cache, worker_count)?;
+    let (_, receiver) = coordinator.start(analyzed, options.clone());
+    let mut results: HashMap<PathBuf, OperationResult> = HashMap::new();
+    loop {
+        if is_interrupted() {
+            coordinator.cancel();
+        }
+        match receiver.recv_timeout(INTERRUPT_POLL_INTERVAL) {
+            Ok(NormalizeEvent::Started { path, .. }) => {
+                progress.set_message(file_name_of(&path));
+            }
+            Ok(NormalizeEvent::Finished { result, .. }) => {
+                progress.inc(1);
+                results.insert(result.source.clone(), *result);
+            }
+            Ok(NormalizeEvent::Completed { .. }) | Err(RecvTimeoutError::Disconnected) => break,
+            Ok(NormalizeEvent::Progress { .. }) | Err(RecvTimeoutError::Timeout) => {}
+        }
+    }
+    progress.finish_and_clear();
+
     let mut normalized = NormalizedRecords {
         records: Vec::with_capacity(records.len()),
         failure_count: 0,
     };
-
     for record in records {
-        if is_interrupted() {
-            break;
-        }
         if record.has_error() {
             normalized.records.push(record.clone());
             continue;
         }
-        if conflicts.contains(&record.path) {
-            let error = batch_output_conflict_message(&record.path);
-            log_error(log, "Normalization output conflict", record, &error)?;
-            normalized.records.push(failed_record(record.clone(), error));
-            normalized.failure_count += 1;
-            progress.inc(1);
+        let Some(result) = results.remove(&record.path) else {
             continue;
-        }
-
-        progress.set_message(record.file_name.clone());
-        let result = normalize_file(record, options, is_interrupted, &mut |_| {});
-        progress.inc(1);
-        if let Some(output) = result.output()
-            && output.path != record.path
-            && let Err(error) = cache.remove_analysis(&record.path)
-        {
-            write_warning!(log, "Could not update the cache: {error:#}")?;
-        }
+        };
+        let label = if conflicts.contains(&record.path) {
+            "Normalization output conflict"
+        } else {
+            "Normalization failed"
+        };
         match result.outcome {
             OperationOutcome::Failed { error } => {
-                log_error(log, "Normalization failed", record, &error)?;
+                log_error(log, label, record, &error)?;
                 normalized.records.push(failed_record(record.clone(), error));
                 normalized.failure_count += 1;
             }
             OperationOutcome::CommittedButUnanalyzed { output, error } => {
-                log_error(log, "Normalization failed", record, &error)?;
+                log_error(log, label, record, &error)?;
                 normalized.records.push(failed_record(output, error));
                 normalized.failure_count += 1;
             }
@@ -226,15 +237,18 @@ fn normalize_records(
                 if let Some(notice) = notice {
                     write_warning!(log, "Normalized \"{}\", {notice}", output.path.display())?;
                 }
-                if let Err(error) = cache.store_analysis(&output) {
-                    write_warning!(log, "Could not update the cache: {error:#}")?;
-                }
                 normalized.records.push(output);
             }
         }
     }
-    progress.finish_and_clear();
     Ok(normalized)
+}
+
+/// Returns the file name of a path for the progress message.
+fn file_name_of(path: &Path) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// Returns an error for every path named on the command line that produced no result:
@@ -453,6 +467,31 @@ mod test_run_analysis {
             "{output}"
         );
         assert!(!std::path::Path::new(&source).exists());
+    }
+
+    #[test]
+    fn normalize_runs_files_on_several_workers() {
+        let directory = TempDir::new().expect("temp dir");
+        for (fixture_name, name) in [
+            ("sine_stereo_44100_16.wav", "first.wav"),
+            ("sine_mono_44100_16.wav", "second.wav"),
+            ("sine_stereo_44100_16.flac", "third.flac"),
+        ] {
+            copy_fixture(&directory, fixture_name, name);
+        }
+        let folder = directory.path().join("music").to_string_lossy().into_owned();
+        let (code, output, log) = run(&["-n", "-j", "3", "-o", "json", &folder], &directory);
+        assert_eq!(code, EXIT_SUCCESS, "{log}");
+        let rows: Vec<serde_json::Value> = serde_json::from_str(&output).expect("valid json");
+        let mut names: Vec<&str> = rows.iter().filter_map(|row| row["name"].as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["first.aif", "second.aif", "third.aif"]);
+        for row in &rows {
+            assert!(
+                row["peakDbfs"].as_f64().is_some_and(|peak| peak.abs() < 0.01),
+                "{output}"
+            );
+        }
     }
 
     #[test]
