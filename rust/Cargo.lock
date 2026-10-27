@@ -647,6 +647,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "audiobatch-plugins"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "audiobatch-core",
+ "audiobatch-test-plugin",
+ "base64 0.23.1",
+ "crossbeam-channel",
+ "num_cpus",
+ "rayon",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "test-fixtures",
+ "vst3-host",
+]
+
+[[package]]
+name = "audiobatch-test-plugin"
+version = "0.1.0"
+dependencies = [
+ "vst3",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1159,6 +1184,12 @@ checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
  "windows-sys 0.61.2",
 ]
+
+[[package]]
+name = "com-scrape-types"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5ce183b975b8fc736a20919c4002717255fbd867df575c792aeefa9a56a73ad0"
 
 [[package]]
 name = "combine"
@@ -7940,6 +7971,36 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "vst3"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e31e3fe7a6f028ded8c5a9984cf283319e6dc63572c9b71da1d4ee9d71d3b6bf"
+dependencies = [
+ "com-scrape-types",
+]
+
+[[package]]
+name = "vst3-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-channel",
+ "audiobatch-test-plugin",
+ "crossbeam-queue",
+ "libloading",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-core-foundation",
+ "objc2-foundation 0.3.2",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "vst3",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -1,0 +1,20 @@
+[package]
+name = "audiobatch-test-plugin"
+description = "Fake VST3 plugins for the AudioBatch tests, usable in process or as a module"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+vst3.workspace = true
+
+[[example]]
+name = "module"
+crate-type = ["cdylib"]
+
+[lints]
+workspace = true

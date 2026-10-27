@@ -1,0 +1,28 @@
+[package]
+name = "audiobatch-plugins"
+description = "VST3 plugin scanning, plugin chains, offline processing, and the live preview chain of AudioBatch"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+audiobatch-core.workspace = true
+base64.workspace = true
+crossbeam-channel.workspace = true
+num_cpus.workspace = true
+rayon.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+vst3-host.workspace = true
+
+[dev-dependencies]
+audiobatch-test-plugin.workspace = true
+test-fixtures.workspace = true
+
+[lints]
+workspace = true
