@@ -134,11 +134,13 @@ juce::MemoryBlock columnBlob(sqlite3_stmt& statement, const int columnIndex)
     return data;
 }
 
-/// Reads a text column as a juce::String, mapping SQL NULL to an empty string.
+/// Reads a text column as UTF-8, which is how the cache stores text, mapping SQL NULL to an empty string.
+/// The text is not inspected for byte order marks, so it comes back exactly as it was stored.
 juce::String columnText(sqlite3_stmt& statement, const int columnIndex)
 {
-    const auto* text = sqlite3_column_blob(&statement, columnIndex);
-    return text != nullptr ? juce::String::createStringFromData(text, sqlite3_column_bytes(&statement, columnIndex))
+    // The blob accessor returns the stored bytes of a text value without converting them.
+    const auto* text = static_cast<const char*>(sqlite3_column_blob(&statement, columnIndex));
+    return text != nullptr ? juce::String::fromUTF8(text, sqlite3_column_bytes(&statement, columnIndex))
                            : juce::String();
 }
 }  // namespace audiobatch::sqlite
