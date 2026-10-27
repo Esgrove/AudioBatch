@@ -13,6 +13,10 @@
 
 #include <array>
 
+#if !JUCE_WINDOWS
+#include <sys/stat.h>
+#endif
+
 namespace audiobatch::tests
 {
 /// Expected properties of one fixture tone.
@@ -343,9 +347,28 @@ public:
             expect(cancelled.error == AnalysisError::cancelled);
             expect(!analyzeFile(fixtureFile("sine_stereo_44100_16.wav")).error.has_value());
             expect(isRepeatable(AnalysisError::unsupported));
+            expect(!isRepeatable(AnalysisError::unreadable));
             expect(!isRepeatable(AnalysisError::decodeFailed));
             expect(!isRepeatable(AnalysisError::cancelled));
         }
+
+#if !JUCE_WINDOWS
+        beginTest("A file that cannot be opened fails as unreadable instead of unsupported");
+        {
+            const TemporaryDirectory directory;
+            const auto unreadableFile = directory.copyFixture("sine_stereo_44100_16.wav");
+            const auto& path = unreadableFile.getFullPathName();
+            expectEquals(::chmod(path.toRawUTF8(), 0), 0);
+            const bool permissionsApply = unreadableFile.createInputStream() == nullptr;
+            const auto record = analyzeFile(unreadableFile);
+            expectEquals(::chmod(path.toRawUTF8(), S_IRUSR | S_IWUSR), 0);
+            // Running as root ignores the permissions, so there is nothing to check then.
+            if (permissionsApply) {
+                expect(record.error == AnalysisError::unreadable);
+                expectEquals(record.errorMessage, juce::String("File could not be opened for reading"));
+            }
+        }
+#endif
     }
 
 private:

@@ -39,6 +39,9 @@ enum class AudioAnalysisSortMode : std::uint8_t {
 enum class AnalysisError : std::uint8_t {
     /// The file does not exist.
     missingFile,
+    /// The file exists but could not be opened for reading,
+    /// for example because of its permissions or a network drive that went away, so a later run may succeed.
+    unreadable,
     /// No decoder reads the file, or its stream parameters are unusable.
     /// Reading the same bytes again fails the same way.
     unsupported,
