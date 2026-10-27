@@ -17,11 +17,13 @@ This repository holds two versions of it side by side, each with its own agent i
   or in the one named by their first argument, `cpp` or `rust`, through `run_project_scripts` in `common.sh`.
   `format.sh` also formats the root shell scripts and the prose outside the projects,
   and runs ruff on the Python scripts.
-- `fixtures/` holds the committed audio fixtures that both test suites read in place.
+- `fixtures/` holds the committed audio fixtures that both test suites read in place,
+  and `fixtures/README.md` lists them with what each one tests.
   `fixtures/generate.sh` regenerates them with ffmpeg,
   and calls `fixtures/serato_overview.py` to add the rainbow Serato Overview tag that ffmpeg cannot write.
   When a fixture changes, update the expected values in the C++ tests and in the Rust `test-fixtures` crate.
 - `test-plugin/` holds `AudioBatch Test MS`, the JUCE VST3 effect that both test suites load,
+  described in `test-plugin/README.md`,
   with a gain, a mid/side width, and a latency parameter that the hosts must compensate.
   The C++ build adds it with its tests,
   and `test-plugin/build.sh` builds it into `test-plugin/build` for the Rust tests.
