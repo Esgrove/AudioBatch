@@ -17,7 +17,7 @@ use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
 use crate::aiff::{AiffWriter, SUPPORTED_BIT_DEPTHS};
-use crate::analysis::analyze_file;
+use crate::analysis::{analyze_file, analyze_file_catching_panics};
 use crate::decode::{AudioFileDecoder, DEFAULT_LOSSY_BITS_PER_SAMPLE, is_mp3_path};
 use crate::format::gain_to_decibels;
 use crate::metadata::copy_metadata;
@@ -356,7 +356,7 @@ pub(crate) fn normalize_file(
         return fail(source, error);
     }
 
-    let analysis = analyze_file(
+    let analysis = analyze_file_catching_panics(
         &output,
         &|| false,
         &mut progress_range(on_progress, RENDER_PROGRESS_END, 1.0),

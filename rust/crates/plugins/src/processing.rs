@@ -16,7 +16,7 @@ use std::io::{BufReader, BufWriter, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::Path;
 
 use audiobatch_core::aiff::AiffWriter;
-use audiobatch_core::analysis::analyze_file;
+use audiobatch_core::analysis::{analyze_file, analyze_file_catching_panics};
 use audiobatch_core::decode::AudioFileDecoder;
 use audiobatch_core::metadata::copy_metadata;
 use audiobatch_core::normalize::{NormalizationOptions, normalization_gain, normalization_output_path};
@@ -307,7 +307,7 @@ fn try_process_file(
     .into_iter()
     .flatten()
     .collect();
-    let analysis = analyze_file(
+    let analysis = analyze_file_catching_panics(
         &output,
         &|| false,
         &mut progress_range(on_progress, WRITE_PROGRESS_END, 1.0),
