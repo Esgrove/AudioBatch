@@ -4,14 +4,19 @@ The Rust version of AudioBatch, developed next to the C++ application in `../cpp
 It analyzes audio files for sample peak, true peak, and integrated loudness (EBU R128),
 caches the results in SQLite, and lists them in a CLI and a GUI with a waveform overview and playback.
 Both also normalize files to a sample peak or loudness target, written as AIFF with their tags carried over.
+The GUI hosts VST3 effects on macOS and Windows:
+it processes files through a plugin chain, shows the plugins' editors, and can play the preview through the chain.
+The CLI lists the plugins a scan found.
 The CLI takes the same arguments and prints the same output as the C++ CLI, so the two can be compared directly.
-Plugin processing is only available in the C++ application.
 
 ## Crates
 
 - `crates/core`: decoding with symphonia, analysis with ebur128,
   the waveform overview, tags with lofty, the SQLite cache, and normalization to AIFF
-- `crates/playback`: preview playback with cpal, rtrb, and rubato
+- `crates/playback`: preview playback with cpal, rtrb, and rubato, with an optional insert such as a plugin chain
+- `crates/vst3-host`: VST3 hosting on the `vst3` bindings: modules, instances, processing, and editor windows
+- `crates/plugins`: plugin scanning in a worker process, the plugin chain, batch processing, and the preview chain
+- `crates/test-plugin`: fake VST3 plugins for the tests
 - `crates/serato`: parsers for the Serato GEOB tags, extracted from track-rename
 - `crates/cli`: the `audiobatch-rs` command line tool
 - `crates/gui`: the AudioBatchRs app, built on gpui-kit
@@ -183,7 +188,7 @@ and the output device with its sample rate and buffer size in samples.
   draws the short-term loudness over the waveform, and Options > Output Device switches the audio device.
 - The Audio Settings button, or Options > Audio Settings… (Command or Control and comma),
   opens the settings window.
-  It chooses the output device, sample rate, and buffer size,
+  It chooses the output device, sample rate, and buffer size, previewing through the plugin chain,
   continuing playback when changing files, starting at the first cue point, and the loudness graph with its range.
   The settings are saved in `gui-settings.json` next to the analysis cache.
 - Hovering the controls, the information panel, and the status bar shows tooltips.
@@ -192,6 +197,45 @@ and the output device with its sample rate and buffer size in samples.
 The analysis cache lives in the `AudioBatch-rs` folder of the user data directory,
 apart from the cache of the C++ application.
 It also keeps the Serato Overview of each file, so the waveform is coloured before the tags are read again.
+
+### Plugins
+
+The GUI hosts VST3 audio effects on macOS and Windows.
+Instruments are listed by scans but cannot be added to the chain.
+
+- Plugins > Plugin Manager… scans the plugin folders, which are the platform's standard VST3 folders
+  after the folders in `VST3_PATH`, unless custom folders are set there.
+  Each plugin is loaded in a worker process, so a plugin that crashes is blacklisted instead of ending the scan,
+  and one that takes longer than three minutes is skipped.
+  The manager lists the known effects and the blacklisted bundles, which can be removed from the blacklist.
+- Plugins > Add Plugin, the Plugin Manager, or the Plugin Chain window adds an effect at the end of the chain
+  and opens its editor in a window of its own.
+  Plugins > Edit Chain… opens the Plugin Chain window, which enables, reorders, removes,
+  and opens the editor of each plugin, and shows the latency of each plugin and of the whole chain.
+  The chain and the plugins' settings are saved after every change, when an editor closes, and on quit.
+- Process, or Plugins > Process Selected With Plugin Chain, renders the selected file through the enabled plugins,
+  and Plugins > Process All Files With Plugin Chain… renders every analyzed file after a confirmation.
+  Before the first plugin each file gets its custom gain,
+  or with the Normalize option next to Process, its normalization gain.
+  Each file starts from the plugins' saved settings, and the output is a 16-bit AIFF `<name>.aif` next to the source,
+  with the tags and Serato data carried over, like normalization writes.
+  The latency of the chain is removed, and the tails of the plugins are rendered, up to 20 seconds per plugin,
+  but the output is never shorter than the source and trailing audio below -96 dBFS is cut off.
+  Samples are truncated to 16 bits without dither or gain changes, since dither and level are up to the plugins,
+  and samples beyond full scale saturate, which the result reports.
+  A run can be cancelled, which leaves the files in progress with their originals.
+- Options > Preview Plugin Chain plays the preview through the enabled plugins,
+  after the custom gain, at the output device's rate.
+  With Options > Compensate Preview Plugin Latency, each start and seek first fills the chain's latency in silence,
+  so what is heard lines up with the waveform.
+  At the end of a file the plugins' tails keep playing, up to 20 seconds each, while the playhead waits at the end.
+  A plugin that cannot be prepared or fails to process turns the preview off with its name and error,
+  and output that is not finite stops playback.
+
+Scans write `plugins.json`, the list of known plugins that the CLI shares,
+and the chain is saved in `plugin-chain.json`, both in the `AudioBatch-rs` folder.
+A plugin that crashes while processing, previewing, or showing its editor ends the app,
+because only scans run plugins in a separate process.
 
 ### Stress test
 
