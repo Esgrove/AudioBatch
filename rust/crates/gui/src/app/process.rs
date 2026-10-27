@@ -18,6 +18,7 @@ use crossbeam_channel::Receiver;
 use gpui_kit::{Context, PromptLevel, SharedString, Task, Window};
 use vst3_host::UiThread;
 
+use super::analysis::ANALYSIS_POLL_INTERVAL;
 use super::{AppView, drain_events};
 use crate::normalization::normalization_options;
 use crate::operation_run::{OperationKind, OperationRun};
@@ -319,7 +320,7 @@ fn spawn_process_drain(receiver: Receiver<ProcessingEvent>, window: &Window, cx:
             if disconnected {
                 break;
             }
-            cx.background_executor().timer(super::ANALYSIS_POLL_INTERVAL).await;
+            cx.background_executor().timer(ANALYSIS_POLL_INTERVAL).await;
         }
     })
 }

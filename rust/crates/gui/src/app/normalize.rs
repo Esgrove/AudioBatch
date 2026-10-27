@@ -13,8 +13,10 @@ use std::path::Path;
 use audiobatch_core::operation::{OperationOutcome, OperationResult};
 use audiobatch_core::{AnalysisRecord, NormalizeEvent};
 use crossbeam_channel::Receiver;
-use gpui_kit::{Context, PromptLevel, SharedString, Task, Window};
+use gpui_kit::component::slider::{SliderEvent, SliderState};
+use gpui_kit::{Context, Entity, PromptLevel, SharedString, Task, Window};
 
+use super::analysis::ANALYSIS_POLL_INTERVAL;
 use super::{AppView, drain_events};
 use crate::menus::set_menus;
 use crate::normalization::{
@@ -123,15 +125,31 @@ impl AppView {
         cx.notify();
     }
 
+    /// Returns the target slider of a normalization mode.
+    pub(super) const fn normalize_target_slider(&self, mode: NormalizeMode) -> &Entity<SliderState> {
+        match mode {
+            NormalizeMode::Peak => &self.peak_target_slider,
+            NormalizeMode::Loudness => &self.loudness_target_slider,
+        }
+    }
+
+    /// Stores the target while a target slider moves, and saves it when the slider is released.
+    pub(super) fn on_target_slider_event(&mut self, mode: NormalizeMode, event: &SliderEvent, cx: &mut Context<Self>) {
+        match event {
+            SliderEvent::Change(value) => self.change_normalize_target(mode, value.start(), cx),
+            SliderEvent::Release(_) => self.store_normalize_target(cx),
+        }
+    }
+
     /// Stores the target of a mode while its slider moves.
-    pub(super) fn change_normalize_target(&mut self, mode: NormalizeMode, value: f32, cx: &mut Context<Self>) {
+    fn change_normalize_target(&mut self, mode: NormalizeMode, value: f32, cx: &mut Context<Self>) {
         if set_target(&mut self.settings, mode, value) {
             cx.notify();
         }
     }
 
     /// Saves the target once the slider is released, and shows it in the menus.
-    pub(super) fn store_normalize_target(&mut self, cx: &Context<Self>) {
+    fn store_normalize_target(&mut self, cx: &Context<Self>) {
         self.settings.save();
         self.refresh_normalize_menus(cx);
     }
@@ -387,7 +405,7 @@ fn spawn_normalize_drain(receiver: Receiver<NormalizeEvent>, window: &Window, cx
             if disconnected {
                 break;
             }
-            cx.background_executor().timer(super::ANALYSIS_POLL_INTERVAL).await;
+            cx.background_executor().timer(ANALYSIS_POLL_INTERVAL).await;
         }
     })
 }

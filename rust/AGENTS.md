@@ -110,6 +110,9 @@ and every crate inherits them with `.workspace = true`.
   Only the Rust CLI also supports elvish.
 - `crates/gui` (`audiobatch-gui`): the `AudioBatchRs` GUI binary, built on gpui-kit.
   It is the only crate that depends on gpui-kit, which is pinned to an exact version and upgraded by hand.
+  `app/mod.rs` holds the main view state, `app/startup.rs` what it opens at startup,
+  `app/analysis.rs` the analysis runs, `app/selection.rs` the selection, `app/gain.rs` the per-file gain,
+  `app/actions.rs` the menu and transport actions, `app/normalize.rs` normalization, and `app/render.rs` the layout.
   `plugins/` holds the live chain, the Plugin Chain and Plugin Manager windows, and the preview insert,
   and `app/plugins.rs`, `app/process.rs`, and `app/preview.rs` connect them to the main view.
   Its `build.rs` embeds the app icon from the root `assets` directory into the Windows executable.
