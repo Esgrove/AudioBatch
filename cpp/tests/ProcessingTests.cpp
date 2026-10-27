@@ -8,6 +8,7 @@
 #include "gui/LiveChain.h"
 #include "metadata/AudioMetadata.h"
 #include "plugins/PluginChainPreparation.h"
+#include "plugins/PluginPreviewSource.h"
 #include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"
 #include "plugins/PluginScanner.h"
@@ -42,6 +43,8 @@ struct TestPluginSettings {
     bool swapChannels = false;
     /// Accepts a mono main bus in addition to stereo.
     bool acceptsMono = false;
+    /// Refuses a stereo main bus, which together with acceptsMono makes a mono-only plugin.
+    bool refusesStereo = false;
     /// Replaces the first sample of every block with infinity, like an unstable filter.
     bool producesInfinity = false;
     /// Multiplies the gain by this factor after every block, like a plugin that adapts to its input.
@@ -256,7 +259,8 @@ protected:
             return true;
         }
 
-        return input == juce::AudioChannelSet::stereo() && output == juce::AudioChannelSet::stereo();
+        return !settings.refusesStereo && input == juce::AudioChannelSet::stereo()
+            && output == juce::AudioChannelSet::stereo();
     }
 
 private:
@@ -525,6 +529,29 @@ public:
 
     int calls {0};
 };
+
+namespace
+{
+/// Renders the start of the audio through a live preview of one plugin, prepared like the GUI prepares it,
+/// and returns one block of the stereo output, past the fade-in.
+juce::AudioBuffer<float> renderPreviewBlock(juce::AudioBuffer<float>& audio, juce::AudioPluginInstance& plugin)
+{
+    constexpr double rate {48'000.0};
+    constexpr int blockSize {256};
+    plugin.prepareToPlay(rate, blockSize);
+    juce::MemoryAudioSource input(audio, false);
+    PluginPreviewSource source;
+    source.setInput(&input, audio.getNumSamples() / rate, audio.getNumChannels());
+    plugin_processing::ChainPreparation preparation;
+    preparation.processChannelCount = 2;
+    source.setChain({&plugin}, preparation, true, false);
+    source.prepareToPlay(blockSize, rate);
+    source.start();
+    juce::AudioBuffer<float> output(2, blockSize);
+    source.getNextAudioBlock({&output, 0, blockSize});
+    return output;
+}
+}  // namespace
 
 /// Checks plugin processing output against the committed fixtures.
 class ProcessingTests final : public juce::UnitTest
@@ -1160,6 +1187,33 @@ public:
 
             expect(!result.hasError(), outcomeError(result.outcome));
             expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), fixturePeakDecibels - 6.0, 0.05);
+        }
+
+        beginTest("The preview runs a mono-only plugin on a stereo file by folding both channels into it");
+        {
+            TestPlugin plugin({.acceptsMono = true, .refusesStereo = true});
+            expect(!plugin_processing::configurePluginChannels(plugin, 2));
+            expect(plugin_processing::configurePreviewChannels(plugin));
+            expectEquals(plugin.getMainBusNumInputChannels(), 1);
+
+            juce::AudioBuffer<float> audio(2, 1024);
+            juce::FloatVectorOperations::fill(audio.getWritePointer(0), 0.5f, audio.getNumSamples());
+            juce::FloatVectorOperations::fill(audio.getWritePointer(1), 0.25f, audio.getNumSamples());
+            const auto output = renderPreviewBlock(audio, plugin);
+            expectWithinAbsoluteError(output.getSample(0, 255), 0.375f, 0.00001f);
+            expectWithinAbsoluteError(output.getSample(1, 255), 0.375f, 0.00001f);
+        }
+
+        beginTest("The preview of a mono file is folded back to mono after a stereo plugin, like the written file");
+        {
+            TestPlugin plugin({.rightGain = 0.0f});
+            expect(plugin_processing::configurePreviewChannels(plugin));
+
+            juce::AudioBuffer<float> audio(1, 1024);
+            juce::FloatVectorOperations::fill(audio.getWritePointer(0), 0.5f, audio.getNumSamples());
+            const auto output = renderPreviewBlock(audio, plugin);
+            expectWithinAbsoluteError(output.getSample(0, 255), 0.25f, 0.00001f);
+            expectWithinAbsoluteError(output.getSample(1, 255), 0.25f, 0.00001f);
         }
 
         beginTest("A file the normalization refuses is processed at unity gain with a notice");

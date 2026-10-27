@@ -957,12 +957,12 @@ private:
         expect(!chain.getSlotLatency(slotId).has_value());
         expect(chain.getTotalLatency().has_value());
         expectEquals(chain.getTotalLatency().value_or(-1), juce::int64 {0});
-        const auto disabled = chain.preparePreview(44'100.0, 128, 1, false, false);
+        const auto disabled = chain.preparePreview(44'100.0, 128, false, false);
         expect(disabled.instances.empty());
         expectWithinAbsoluteError(chain.getPreviewSampleRate(), 44'100.0, 0.001);
         chain.setSlotEnabled(slotId, true);
         expect(!chain.getTotalLatency().has_value());
-        const auto unavailable = chain.preparePreview(44'100.0, 128, 1);
+        const auto unavailable = chain.preparePreview(44'100.0, 128);
         expect(unavailable.preparation.errorMessage.isNotEmpty());
         expect(unavailable.instances.empty());
         expect(!chain.getTotalLatency().has_value());

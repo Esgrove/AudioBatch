@@ -280,9 +280,7 @@ bool AudioPreviewPlayer::refreshPluginChain()
     previewSource.stop();
     PreviewChain chain;
     if (liveChain != nullptr) {
-        const auto channels
-            = readerSource != nullptr ? static_cast<int>(readerSource->getAudioFormatReader()->numChannels) : 2;
-        chain = liveChain->preparePreview(sampleRate, blockSize, channels, false, pluginPreviewEnabled);
+        chain = liveChain->preparePreview(sampleRate, blockSize, false, pluginPreviewEnabled);
     }
     const auto error = pluginPreviewEnabled ? chain.preparation.errorMessage : juce::String();
     if (error.isNotEmpty()) {

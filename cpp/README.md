@@ -59,6 +59,9 @@ Plugin editor adjustments affect the preview in real time, and closing an editor
 The current file's custom input gain is applied before the live chain, including when no plugins are enabled.
 Disabling plugin preview returns to unchanged dry playback.
 Preview never applies automatic normalization or writes audio files.
+The chain runs in stereo, and a plugin that only supports mono gets both channels folded into one,
+with its output copied to both.
+The output of a mono file is folded back to mono, so it sounds like the processed file.
 
 Each plugin row shows `Latency: X samples (Y ms)`.
 The chain window's footer shows the enabled plugins' total latency and the real-time processing sample rate.

@@ -107,6 +107,16 @@ bool configurePluginChannels(juce::AudioPluginInstance& plugin, const int numCha
     return numChannels == 1 && trySetMainBusChannels(juce::AudioChannelSet::stereo());
 }
 
+/// Configures the plugin's main buses for the stereo preview, or for mono when it only supports mono,
+/// like the Rust version.
+/// processBlockThroughChain folds both channels into a mono plugin and copies its output to both,
+/// so a mono-only plugin works in the preview of any file, and its editor can open.
+/// Offline processing still refuses a stereo file through a mono-only plugin.
+bool configurePreviewChannels(juce::AudioPluginInstance& plugin)
+{
+    return configurePluginChannels(plugin, 2) || configurePluginChannels(plugin, 1);
+}
+
 /// Bounds an effect's tail so infinite tails cannot keep either preview or offline rendering alive indefinitely.
 juce::int64 getPluginTailSamples(const juce::AudioPluginInstance& plugin, const double sampleRate)
 {

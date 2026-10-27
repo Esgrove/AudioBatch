@@ -667,7 +667,7 @@ void LiveChain::openEditorForSlot(const PluginSlotId slotId)
 /// Opens the chain editor window for adding, reordering, enabling, and removing plugins.
 void LiveChain::showChainEditor()
 {
-    const auto inspectedChain = preparePreview(previewSampleRate, previewBlockSize, previewChannels, true);
+    const auto inspectedChain = preparePreview(previewSampleRate, previewBlockSize, true);
     if (inspectedChain.preparation.errorMessage.isNotEmpty()) {
         utils::logWarn("Plugin latency inspection: {}", inspectedChain.preparation.errorMessage);
     }
