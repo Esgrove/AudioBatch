@@ -56,6 +56,8 @@ pub(crate) struct PreparedChain {
     pub(crate) tail_samples: u64,
     /// Display names of the plugins, in processing order, for a failure message.
     pub(crate) names: Vec<String>,
+    /// Display names of the plugins that refused their saved settings and process with their current ones.
+    pub(crate) refused_settings: Vec<String>,
 }
 
 impl ChainPlugin {
@@ -91,12 +93,14 @@ impl ChainPlugin {
     }
 
     /// Restores the settings, configures the buses for the file, sets up offline processing, and activates.
-    fn prepare(&mut self, ui: &UiThread, channels: usize, sample_rate: f64) -> Result<(), String> {
+    /// Returns false when the plugin refused its saved settings, so it processes with its current ones.
+    fn prepare(&mut self, ui: &UiThread, channels: usize, sample_rate: f64) -> Result<bool, String> {
         let name = &self.name;
         self.instance
             .deactivate(ui)
             .map_err(|error| format!("Plugin \"{name}\" could not be stopped: {error}"))?;
-        self.instance
+        let accepted = self
+            .instance
             .set_state(ui, &self.state)
             .map_err(|error| format!("Plugin \"{name}\" could not restore its settings: {error}"))?;
         self.instance.configure_main_buses(ui, channels).map_err(|_| {
@@ -107,7 +111,8 @@ impl ChainPlugin {
             .map_err(|error| format!("Plugin \"{name}\" could not be prepared: {error}"))?;
         self.instance
             .activate(ui)
-            .map_err(|error| format!("Plugin \"{name}\" could not be prepared: {error}"))
+            .map_err(|error| format!("Plugin \"{name}\" could not be prepared: {error}"))?;
+        Ok(accepted)
     }
 }
 
@@ -216,12 +221,17 @@ fn prepare_plugins(
         latency_samples: 0,
         tail_samples: 0,
         names: plugins.iter().map(|plugin| plugin.name.clone()).collect(),
+        refused_settings: Vec::new(),
     };
     let mut failure = None;
     for plugin in plugins.iter_mut() {
-        if let Err(error) = plugin.prepare(ui, channels, sample_rate) {
-            failure = Some(error);
-            break;
+        match plugin.prepare(ui, channels, sample_rate) {
+            Ok(true) => {}
+            Ok(false) => prepared.refused_settings.push(plugin.name.clone()),
+            Err(error) => {
+                failure = Some(error);
+                break;
+            }
         }
         match plugin.instance.processor(ui) {
             Ok(processor) => prepared.processors.push(processor),
