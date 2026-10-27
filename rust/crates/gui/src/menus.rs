@@ -71,6 +71,14 @@ pub struct ClearCustomGain;
 #[action(namespace = audiobatch)]
 pub struct RemoveSelected;
 
+/// Shows or hides a results table column, like the header menu of the C++ application.
+#[derive(Clone, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch, no_json)]
+pub struct ToggleColumn {
+    /// Identifier of the column.
+    pub id: SharedString,
+}
+
 /// Selects every file in the list.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
@@ -224,6 +232,19 @@ pub struct MenuState {
     pub presets: Vec<String>,
     /// Name of the preset the chain matches, which the submenu checks.
     pub current_preset: Option<String>,
+    /// The results table columns the user can show or hide, for the Columns submenu.
+    pub columns: Vec<ColumnChoice>,
+}
+
+/// One results table column in the Columns submenu.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ColumnChoice {
+    /// Identifier of the column.
+    pub id: SharedString,
+    /// Title of the column.
+    pub title: &'static str,
+    /// True while the column shows.
+    pub visible: bool,
 }
 
 /// Prefixes a keystroke with the platform's primary shortcut modifier.
@@ -323,6 +344,9 @@ pub fn set_menus(cx: &App, state: &MenuState) {
     menus.push(
         Menu::new("Options").items([
             MenuItem::action("Show Loudness Graph", ToggleLoudnessGraph).checked(state.show_loudness_graph),
+            MenuItem::submenu(Menu::new("Columns").items(state.columns.iter().map(|column| {
+                MenuItem::action(column.title, ToggleColumn { id: column.id.clone() }).checked(column.visible)
+            }))),
             MenuItem::separator(),
             MenuItem::action("Preview Plugin Chain", TogglePluginPreview).checked(state.preview_plugin_chain),
             MenuItem::action("Compensate Preview Plugin Latency", TogglePreviewLatencyCompensation)

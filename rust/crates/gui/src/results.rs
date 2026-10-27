@@ -24,9 +24,9 @@ use audiobatch_core::record::same_custom_gain;
 use audiobatch_core::sorting::{SortMode, compare_by_mode, compare_natural};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::{
-    App, Bounds, Context, Div, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent, ParentElement as _,
-    PathBuilder, Pixels, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, canvas, div,
-    point, px, rgba,
+    App, Bounds, ClickEvent, Context, Div, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
+    ParentElement as _, PathBuilder, Pixels, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _,
+    Window, canvas, div, point, px, rgba,
 };
 
 use crate::theme::{MONO_FONT, color, palette, tooltip, white};
@@ -42,6 +42,9 @@ const CELL_FONT_SIZE: f32 = 14.0;
 
 /// Background of the rows selected besides the app's selected file, the colour the table gives its selected row.
 const SELECTION_BACKGROUND: u32 = 0x76A8_DA38;
+
+/// Columns hidden until the user shows them, like in the C++ application.
+pub const DEFAULT_HIDDEN_COLUMNS: [ColumnKey; 3] = [ColumnKey::PeakLeft, ColumnKey::PeakRight, ColumnKey::Gain];
 
 /// Font size of the column titles.
 const HEADER_FONT_SIZE: f32 = 14.0;
@@ -89,8 +92,8 @@ pub enum RowState {
 }
 
 /// Columns of the results table, in their default order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ColumnKey {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ColumnKey {
     Name,
     Path,
     Type,
@@ -99,6 +102,8 @@ enum ColumnKey {
     Bitrate,
     SampleRate,
     Peak,
+    PeakLeft,
+    PeakRight,
     TruePeak,
     ShortTerm,
     Integrated,
@@ -134,11 +139,18 @@ pub struct RowMessage {
 pub struct ResultsDelegate {
     rows: Vec<ResultRow>,
     index: HashMap<PathBuf, usize>,
-    /// Column definitions for the table in display order, which changes when the user drags a column.
+    /// Definitions of the shown columns in display order, which changes when the user drags a column.
     columns: Vec<Column>,
-    /// Keys of the columns in display order, matching `columns`.
+    /// Keys of the shown columns in display order, matching `columns`.
     order: Vec<ColumnKey>,
+    /// Definitions of every column, shown or hidden, in the default order.
+    all_columns: Vec<(ColumnKey, Column)>,
+    /// Columns the user has hidden.
+    hidden: HashSet<ColumnKey>,
     sort: Option<(ColumnKey, ColumnSort)>,
+    /// Column that orders rows the primary sort leaves equal, and whether it is ascending,
+    /// set by a Command or Control click on a header like in the C++ application.
+    secondary_sort: Option<(ColumnKey, bool)>,
     /// File the app has selected, which the preview plays.
     /// The table keeps its selection by index, so a sort from the header selects this file's row again.
     selected: Option<PathBuf>,
@@ -167,7 +179,7 @@ struct ColumnSpec {
 /// The widths fit typical values, and are wider where a title needs the room next to the sort indicator.
 /// The Name and Path widths are a starting point that `ResultsDelegate::new` stretches,
 /// and the Status width is the least it gets, because it fills whatever the table has left.
-const COLUMNS: [ColumnSpec; 13] = [
+const COLUMNS: [ColumnSpec; 15] = [
     column_spec(ColumnKey::Name, "Name", "File name", 140.0, false),
     column_spec(ColumnKey::Path, "Path", "Full path of the file", 160.0, false),
     column_spec(ColumnKey::Type, "Type", "File type", 66.0, false),
@@ -188,6 +200,20 @@ const COLUMNS: [ColumnSpec; 13] = [
     column_spec(ColumnKey::Bitrate, "Bitrate", "Average bitrate in kbps", 76.0, true),
     column_spec(ColumnKey::SampleRate, "Rate", "Sample rate in kHz", 70.0, true),
     column_spec(ColumnKey::Peak, "Peak", "Sample peak in dBFS", 76.0, true),
+    column_spec(
+        ColumnKey::PeakLeft,
+        "Peak L",
+        "Sample peak of the left channel in dBFS",
+        76.0,
+        true,
+    ),
+    column_spec(
+        ColumnKey::PeakRight,
+        "Peak R",
+        "Sample peak of the right channel in dBFS",
+        76.0,
+        true,
+    ),
     column_spec(ColumnKey::TruePeak, "True Peak", "True peak in dBTP", 92.0, true),
     column_spec(
         ColumnKey::ShortTerm,
@@ -298,11 +324,11 @@ impl ResultsDelegate {
         let free = (table_width - fixed).max(300.0);
         let name_width = (free * 140.0 / 300.0).max(140.0).floor();
         let path_width = (free - name_width).max(160.0).floor();
-        let columns = COLUMNS
+        let all_columns = COLUMNS
             .iter()
             .map(|spec| {
                 let column = Column::new(column_id(spec.key), spec.title).sortable().p_0();
-                match spec.key {
+                let column = match spec.key {
                     ColumnKey::Name => column.width(px(name_width)),
                     ColumnKey::Path => column.width(px(path_width)),
                     ColumnKey::Status => column
@@ -310,19 +336,82 @@ impl ResultsDelegate {
                         .min_width(px(STATUS_MINIMUM_WIDTH))
                         .max_width(px(STATUS_MAXIMUM_WIDTH)),
                     _ => column.width(px(spec.width)),
-                }
+                };
+                (spec.key, column)
             })
             .collect();
-        Self {
+        let mut delegate = Self {
             rows: Vec::new(),
             index: HashMap::new(),
-            columns,
-            order: COLUMNS.iter().map(|spec| spec.key).collect(),
-            sort: None,
+            columns: Vec::new(),
+            order: Vec::new(),
+            all_columns,
+            hidden: DEFAULT_HIDDEN_COLUMNS.into_iter().collect(),
+            // Like the C++ application, the quietest files come first until the user picks another sort.
+            sort: Some((ColumnKey::Peak, ColumnSort::Ascending)),
+            secondary_sort: None,
             selected: None,
             extra_selected: HashSet::new(),
             status_fill_width: px(STATUS_MINIMUM_WIDTH),
+        };
+        delegate.apply_sort_to_columns();
+        delegate
+    }
+
+    /// Returns the columns the user can show or hide, with their titles, in the default order.
+    /// The Name column always shows.
+    pub fn column_choices() -> impl Iterator<Item = (ColumnKey, &'static str)> {
+        COLUMNS
+            .iter()
+            .filter(|spec| spec.key != ColumnKey::Name)
+            .map(|spec| (spec.key, spec.title))
+    }
+
+    /// Returns the column with the identifier the settings store, if there is one.
+    #[must_use]
+    pub fn column_from_id(id: &str) -> Option<ColumnKey> {
+        COLUMNS.iter().map(|spec| spec.key).find(|&key| column_id(key) == id)
+    }
+
+    /// Returns the identifier of a column, which the settings store.
+    #[must_use]
+    pub const fn column_identifier(key: ColumnKey) -> &'static str {
+        column_id(key)
+    }
+
+    /// Returns true when the column shows.
+    #[must_use]
+    pub fn is_column_visible(&self, key: ColumnKey) -> bool {
+        !self.hidden.contains(&key)
+    }
+
+    /// Returns the hidden columns in the default order.
+    #[must_use]
+    pub fn hidden_columns(&self) -> Vec<ColumnKey> {
+        COLUMNS
+            .iter()
+            .map(|spec| spec.key)
+            .filter(|key| self.hidden.contains(key))
+            .collect()
+    }
+
+    /// Hides exactly the given columns. The Name column always shows.
+    pub fn set_hidden_columns(&mut self, hidden: impl IntoIterator<Item = ColumnKey>) {
+        self.hidden = hidden.into_iter().filter(|&key| key != ColumnKey::Name).collect();
+        self.rebuild_visible_columns();
+    }
+
+    /// Shows or hides a column. The table must refresh its columns afterwards.
+    pub fn set_column_visible(&mut self, key: ColumnKey, visible: bool) {
+        if key == ColumnKey::Name {
+            return;
         }
+        if visible {
+            self.hidden.remove(&key);
+        } else {
+            self.hidden.insert(key);
+        }
+        self.rebuild_visible_columns();
     }
 
     /// Returns the row at a display index.
@@ -634,14 +723,22 @@ impl ResultsDelegate {
         let ordering = self
             .sort
             .and_then(|(key, sort)| (sort != ColumnSort::Default).then_some((key, sort == ColumnSort::Ascending)));
+        let directed = |ordering: Ordering, ascending: bool| if ascending { ordering } else { ordering.reverse() };
+        let secondary = self.secondary_sort;
         match ordering {
             Some((key, ascending)) => self.rows.sort_by(|first, second| {
                 // Failed and unfinished rows always go last.
                 let first_ready = first.ready_record().is_some();
                 let second_ready = second.ready_record().is_some();
                 second_ready.cmp(&first_ready).then_with(|| {
-                    let ordering = compare_rows(first, second, key);
-                    if ascending { ordering } else { ordering.reverse() }
+                    let by_secondary = || {
+                        secondary.map_or(Ordering::Equal, |(secondary_key, secondary_ascending)| {
+                            directed(compare_column(first, second, secondary_key), secondary_ascending)
+                        })
+                    };
+                    directed(compare_column(first, second, key), ascending)
+                        .then_with(by_secondary)
+                        .then_with(|| directed(compare_rows(first, second, key), ascending))
                 })
             }),
             None => self.rows.sort_by(|first, second| {
@@ -660,6 +757,73 @@ impl ResultsDelegate {
     fn spec_at(&self, column_index: usize) -> Option<&'static ColumnSpec> {
         let key = *self.order.get(column_index)?;
         COLUMNS.iter().find(|spec| spec.key == key)
+    }
+
+    /// Rebuilds the shown columns: the ones still shown keep their display order,
+    /// and a column shown again goes back after the shown column that precedes it in the default order.
+    fn rebuild_visible_columns(&mut self) {
+        let mut order: Vec<ColumnKey> = self
+            .order
+            .iter()
+            .copied()
+            .filter(|key| !self.hidden.contains(key))
+            .collect();
+        let defaults: Vec<ColumnKey> = COLUMNS.iter().map(|spec| spec.key).collect();
+        for (position, &key) in defaults.iter().enumerate() {
+            if self.hidden.contains(&key) || order.contains(&key) {
+                continue;
+            }
+            let after = defaults
+                .get(..position)
+                .unwrap_or_default()
+                .iter()
+                .rev()
+                .find_map(|previous| order.iter().position(|shown| shown == previous));
+            order.insert(after.map_or(0, |index| index + 1), key);
+        }
+        self.columns = order
+            .iter()
+            .filter_map(|key| {
+                self.all_columns
+                    .iter()
+                    .find(|(column_key, _)| column_key == key)
+                    .map(|(_, column)| column.clone())
+            })
+            .collect();
+        self.order = order;
+    }
+
+    /// Marks the primary sort column with its direction and every other column as unsorted,
+    /// so the table shows the right indicators after it refreshes its columns.
+    fn apply_sort_to_columns(&mut self) {
+        let sort = self.sort;
+        for (key, column) in &mut self.all_columns {
+            let direction = match sort {
+                Some((sorted, direction)) if sorted == *key => direction,
+                _ => ColumnSort::Default,
+            };
+            *column = column.clone().sort(direction);
+        }
+        self.rebuild_visible_columns();
+    }
+
+    /// Sets, flips, or clears the secondary sort for a Command or Control click on a header, like the C++ application.
+    /// The primary column clears it, the current secondary column flips its direction,
+    /// and any other column becomes the ascending secondary sort.
+    pub fn toggle_secondary_sort(&mut self, column_index: usize) {
+        let Some(&key) = self.order.get(column_index) else {
+            return;
+        };
+        let primary = self
+            .sort
+            .filter(|(_, sort)| *sort != ColumnSort::Default)
+            .map(|(key, _)| key);
+        self.secondary_sort = match self.secondary_sort {
+            _ if primary == Some(key) => None,
+            Some((current, ascending)) if current == key => Some((current, !ascending)),
+            _ => Some((key, true)),
+        };
+        self.sort_rows();
     }
 
     /// Moves a column to another display index when the user drags its header.
@@ -734,6 +898,11 @@ impl TableDelegate for ResultsDelegate {
         cx: &mut Context<TableState<Self>>,
     ) {
         self.sort = self.order.get(column_index).map(|&key| (key, sort));
+        // Sorting twice by one column adds nothing.
+        if self.sort.map(|(key, _)| key) == self.secondary_sort.map(|(key, _)| key) {
+            self.secondary_sort = None;
+        }
+        self.apply_sort_to_columns();
         self.sort_rows();
         // The table calls this while it is being updated, so its selection can only move afterwards.
         if let Some(index) = self.selected.as_deref().and_then(|path| self.index_of(path)) {
@@ -756,12 +925,21 @@ impl TableDelegate for ResultsDelegate {
         self.reorder_column(column_index, target_index);
     }
 
+    /// Renders a header title, with the secondary sort marker of the C++ application, "[2^]" or "[2v]",
+    /// and sets the secondary sort on a Command or Control click.
     fn render_th(
         &mut self,
         column_index: usize,
         _window: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        let name = self.column(column_index, cx).name;
+        let name = match self.secondary_sort {
+            Some((key, ascending)) if self.order.get(column_index) == Some(&key) => {
+                SharedString::from(format!("{name} {}", if ascending { "[2^]" } else { "[2v]" }))
+            }
+            _ => name,
+        };
         let title = div()
             .id(("column-title", column_index))
             .size_full()
@@ -770,7 +948,14 @@ impl TableDelegate for ResultsDelegate {
             .px(px(CELL_INSET))
             .text_size(px(HEADER_FONT_SIZE))
             .truncate()
-            .child(self.column(column_index, cx).name);
+            .child(name)
+            .on_click(cx.listener(move |state, event: &ClickEvent, _window, cx| {
+                if event.modifiers().secondary(cx) {
+                    cx.stop_propagation();
+                    state.delegate_mut().toggle_secondary_sort(column_index);
+                    cx.notify();
+                }
+            }));
         match self.spec_at(column_index) {
             Some(spec) => title.tooltip(tooltip(spec.description)),
             None => title,
@@ -1021,6 +1206,8 @@ const fn column_id(key: ColumnKey) -> &'static str {
         ColumnKey::Bitrate => "bitrate",
         ColumnKey::SampleRate => "sample_rate",
         ColumnKey::Peak => "peak",
+        ColumnKey::PeakLeft => "peak_left",
+        ColumnKey::PeakRight => "peak_right",
         ColumnKey::TruePeak => "true_peak",
         ColumnKey::ShortTerm => "short_term",
         ColumnKey::Integrated => "integrated",
@@ -1037,6 +1224,8 @@ fn level_text(record: &AnalysisRecord, key: ColumnKey) -> String {
         ColumnKey::Bitrate => format_bitrate_compact(record),
         ColumnKey::SampleRate => format_sample_rate_compact(record),
         ColumnKey::Peak => format_peak_compact(f64::from(record.overall_peak)),
+        ColumnKey::PeakLeft => format_peak_compact(f64::from(record.peak_left)),
+        ColumnKey::PeakRight => format_peak_compact(f64::from(record.peak_right)),
         ColumnKey::TruePeak => format_true_peak_compact(record.overall_true_peak),
         ColumnKey::ShortTerm => format_loudness_compact(record.max_short_term_lufs),
         ColumnKey::Integrated => format_loudness_compact(record.integrated_lufs),
@@ -1058,12 +1247,32 @@ fn compare_rows(first: &ResultRow, second: &ResultRow, key: ColumnKey) -> Orderi
     let (Some(first_record), Some(second_record)) = (first.ready_record(), second.ready_record()) else {
         return by_name();
     };
-    let ordering = match key {
-        ColumnKey::Name => return compare_by_mode(first_record, second_record, SortMode::Name),
-        ColumnKey::Path => return compare_by_mode(first_record, second_record, SortMode::Path),
-        ColumnKey::Peak => return compare_by_mode(first_record, second_record, SortMode::Peak),
-        ColumnKey::Integrated => return compare_by_mode(first_record, second_record, SortMode::Loudness),
+    match key {
+        ColumnKey::Name => compare_by_mode(first_record, second_record, SortMode::Name),
+        ColumnKey::Path => compare_by_mode(first_record, second_record, SortMode::Path),
+        ColumnKey::Peak => compare_by_mode(first_record, second_record, SortMode::Peak),
+        ColumnKey::Integrated => compare_by_mode(first_record, second_record, SortMode::Loudness),
+        _ => compare_column(first, second, key).then_with(by_name),
+    }
+}
+
+/// Orders two rows ascending by a column alone, leaving ties equal, so a secondary sort can break them.
+/// Rows without a usable record compare equal.
+fn compare_column(first: &ResultRow, second: &ResultRow, key: ColumnKey) -> Ordering {
+    let (Some(first_record), Some(second_record)) = (first.ready_record(), second.ready_record()) else {
+        return Ordering::Equal;
+    };
+    match key {
+        ColumnKey::Name => compare_natural(&first.file_name, &second.file_name),
+        ColumnKey::Path => compare_natural(&first.path.to_string_lossy(), &second.path.to_string_lossy()),
+        ColumnKey::Peak => first_record
+            .overall_peak
+            .abs()
+            .total_cmp(&second_record.overall_peak.abs()),
+        ColumnKey::Integrated => first_record.integrated_lufs.total_cmp(&second_record.integrated_lufs),
         ColumnKey::Status => first.status_text().cmp(&second.status_text()),
+        ColumnKey::PeakLeft => first_record.peak_left.abs().total_cmp(&second_record.peak_left.abs()),
+        ColumnKey::PeakRight => first_record.peak_right.abs().total_cmp(&second_record.peak_right.abs()),
         ColumnKey::TruePeak => first_record
             .overall_true_peak
             .abs()
@@ -1081,8 +1290,7 @@ fn compare_rows(first: &ResultRow, second: &ResultRow, key: ColumnKey) -> Orderi
             (Some(first_gain), Some(second_gain)) => first_gain.total_cmp(&second_gain),
             (first_gain, second_gain) => first_gain.is_some().cmp(&second_gain.is_some()),
         },
-    };
-    ordering.then_with(by_name)
+    }
 }
 
 #[cfg(test)]
@@ -1234,8 +1442,10 @@ mod test_operation_rows {
         }
     }
 
+    /// Returns a delegate with ready rows for the paths, ordered by path instead of the default Peak sort.
     fn delegate_with(paths: &[&str]) -> ResultsDelegate {
         let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.sort = None;
         delegate.set_rows(paths.iter().map(|path| ResultRow::from_record(record(path))).collect());
         delegate
     }
@@ -1387,7 +1597,7 @@ mod test_column_reorder {
     #[test]
     fn status_index_follows_the_moved_status_column() {
         let mut delegate = ResultsDelegate::new(1600.0);
-        let last = COLUMNS.len() - 1;
+        let last = delegate.order.len() - 1;
         assert_eq!(delegate.status_index(), Some(last));
         delegate.reorder_column(last, 1);
         assert_eq!(delegate.status_index(), Some(1));
@@ -1398,7 +1608,82 @@ mod test_column_reorder {
     fn out_of_range_move_changes_nothing() {
         let mut delegate = ResultsDelegate::new(1600.0);
         let before = delegate.order.clone();
-        delegate.reorder_column(0, COLUMNS.len());
+        delegate.reorder_column(0, delegate.order.len());
         assert_eq!(delegate.order, before);
+    }
+}
+
+#[cfg(test)]
+mod test_column_visibility_and_sort {
+    use super::*;
+
+    use audiobatch_core::AnalysisStatus;
+
+    fn column_keys(delegate: &ResultsDelegate) -> Vec<String> {
+        delegate.columns.iter().map(|column| column.key.to_string()).collect()
+    }
+
+    fn record(name: &str, peak: f32, integrated_lufs: f64) -> AnalysisRecord {
+        AnalysisRecord {
+            path: PathBuf::from(format!("/{name}")),
+            file_name: name.to_string(),
+            status: AnalysisStatus::Analyzed,
+            overall_peak: peak,
+            integrated_lufs,
+            ..Default::default()
+        }
+    }
+
+    fn names(delegate: &ResultsDelegate) -> Vec<String> {
+        (0..delegate.len())
+            .filter_map(|index| delegate.row(index))
+            .map(|row| row.file_name.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn peak_l_peak_r_and_gain_start_hidden_and_come_back_in_their_place() {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        assert!(!column_keys(&delegate).contains(&String::from("peak_left")));
+        assert!(!delegate.is_column_visible(ColumnKey::Gain));
+        delegate.set_column_visible(ColumnKey::PeakLeft, true);
+        let keys = column_keys(&delegate);
+        let peak = keys.iter().position(|key| key == "peak");
+        let peak_left = keys.iter().position(|key| key == "peak_left");
+        assert_eq!(peak_left, peak.map(|index| index + 1));
+        delegate.set_column_visible(ColumnKey::Path, false);
+        assert!(!column_keys(&delegate).contains(&String::from("path")));
+        assert_eq!(
+            delegate.hidden_columns(),
+            [ColumnKey::Path, ColumnKey::PeakRight, ColumnKey::Gain]
+        );
+        delegate.set_column_visible(ColumnKey::Name, false);
+        assert!(delegate.is_column_visible(ColumnKey::Name));
+    }
+
+    #[test]
+    fn rows_sort_by_peak_ascending_by_default_and_a_secondary_column_breaks_ties() {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_rows(
+            [
+                record("a.wav", 0.5, -10.0),
+                record("b.wav", 0.25, -20.0),
+                record("c.wav", 0.5, -30.0),
+            ]
+            .into_iter()
+            .map(ResultRow::from_record)
+            .collect(),
+        );
+        // The Peak sort breaks its own ties by loudness, quietest first.
+        assert_eq!(names(&delegate), ["b.wav", "c.wav", "a.wav"]);
+        let integrated = delegate.order.iter().position(|&key| key == ColumnKey::Integrated);
+        delegate.toggle_secondary_sort(integrated.expect("the LUFS-I column shows"));
+        assert_eq!(delegate.secondary_sort, Some((ColumnKey::Integrated, true)));
+        assert_eq!(names(&delegate), ["b.wav", "c.wav", "a.wav"]);
+        delegate.toggle_secondary_sort(integrated.expect("the LUFS-I column shows"));
+        assert_eq!(names(&delegate), ["b.wav", "a.wav", "c.wav"]);
+        let peak = delegate.order.iter().position(|&key| key == ColumnKey::Peak);
+        delegate.toggle_secondary_sort(peak.expect("the Peak column shows"));
+        assert_eq!(delegate.secondary_sort, None);
     }
 }

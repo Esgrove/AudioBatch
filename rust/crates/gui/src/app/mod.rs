@@ -40,7 +40,7 @@ use gpui_kit::{
 use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
 use vst3_host::UiDispatcher;
 
-use crate::menus::{MenuState, set_menus};
+use crate::menus::{ColumnChoice, MenuState, set_menus};
 use crate::normalization::{describe_target, target_range};
 use crate::operation_run::OperationRun;
 use crate::plugins::chain_window::ChainView;
@@ -224,19 +224,9 @@ impl AppView {
     /// The dispatcher runs plugin calls from the processing workers on this thread.
     pub fn new(options: &LaunchOptions, dispatcher: UiDispatcher, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (content_width, workspace_height) = content_size(window.viewport_size());
-        let table = cx.new(|cx| {
-            TableState::new(
-                ResultsDelegate::new(TABLE_FRAME_BORDER.mul_add(-2.0, content_width)),
-                window,
-                cx,
-            )
-            .sortable(true)
-            .col_resizable(true)
-            .row_selectable(true)
-            .select_on_modifier_click(false)
-        });
-        let waveform = cx.new(|_| WaveformView::new());
         let settings = GuiSettings::load();
+        let table = new_results_table(content_width, &settings, window, cx);
+        let waveform = cx.new(|_| WaveformView::new());
         let (sliders, slider_subscriptions) = new_sliders(&settings, window, cx);
         let mut subscriptions = vec![
             cx.subscribe_in(&table, window, Self::on_table_event),
@@ -255,6 +245,7 @@ impl AppView {
             preview_plugin_chain: settings.preview_plugin_chain,
             compensate_preview_latency: settings.compensate_preview_latency,
             normalize_target: describe_target(&settings),
+            columns: column_choices(table.read(cx).delegate()),
             ..MenuState::default()
         };
         let editor_owner = window.window_handle().ok().map(|handle| handle.as_raw());
@@ -675,6 +666,32 @@ impl AppView {
             .collect()
     }
 
+    /// Shows or hides a results table column from Options > Columns, and saves the choice.
+    pub(super) fn toggle_column(&mut self, id: &str, cx: &mut Context<Self>) {
+        let Some(key) = ResultsDelegate::column_from_id(id) else {
+            return;
+        };
+        let hidden = self.table.update(cx, |state, cx| {
+            let delegate = state.delegate_mut();
+            let visible = delegate.is_column_visible(key);
+            delegate.set_column_visible(key, !visible);
+            let hidden = delegate.hidden_columns();
+            state.refresh(cx);
+            cx.notify();
+            hidden
+        });
+        self.settings.hidden_columns = Some(
+            hidden
+                .into_iter()
+                .map(|key| ResultsDelegate::column_identifier(key).to_string())
+                .collect(),
+        );
+        self.settings.save();
+        self.menu_state.columns = column_choices(self.table.read(cx).delegate());
+        set_menus(cx, &self.menu_state);
+        cx.notify();
+    }
+
     /// Selects every file in the list, keeping the file the preview plays, or the first file when none is selected.
     pub(super) fn select_all(&mut self, cx: &mut Context<Self>) {
         if self.selected.is_none() {
@@ -902,6 +919,38 @@ impl AppView {
             }
         });
     }
+}
+
+/// Creates the results table for the content width, with multi-row selection kept by the delegate.
+/// It hides the columns the settings name, or the columns hidden by default when no choice is saved.
+fn new_results_table(
+    content_width: f32,
+    settings: &GuiSettings,
+    window: &mut Window,
+    cx: &mut Context<AppView>,
+) -> Entity<TableState<ResultsDelegate>> {
+    let mut delegate = ResultsDelegate::new(TABLE_FRAME_BORDER.mul_add(-2.0, content_width));
+    if let Some(hidden) = &settings.hidden_columns {
+        delegate.set_hidden_columns(hidden.iter().filter_map(|id| ResultsDelegate::column_from_id(id)));
+    }
+    cx.new(|cx| {
+        TableState::new(delegate, window, cx)
+            .sortable(true)
+            .col_resizable(true)
+            .row_selectable(true)
+            .select_on_modifier_click(false)
+    })
+}
+
+/// Returns the columns of the Columns submenu, checked while they show.
+fn column_choices(delegate: &ResultsDelegate) -> Vec<ColumnChoice> {
+    ResultsDelegate::column_choices()
+        .map(|(key, title)| ColumnChoice {
+            id: ResultsDelegate::column_identifier(key).into(),
+            title,
+            visible: delegate.is_column_visible(key),
+        })
+        .collect()
 }
 
 /// Returns the content width and the height left for the table and the preview in a window of the given size.
