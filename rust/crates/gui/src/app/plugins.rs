@@ -76,6 +76,10 @@ impl AppView {
         if activate(self.chain_window.as_ref(), cx) {
             return;
         }
+        // The window shows the latency of every slot, so the plugins load the first time it opens.
+        if let Some(ui) = UiThread::current() {
+            self.plugins.chain.load_slots(&ui, false);
+        }
         let snapshot = self.chain_snapshot();
         let options = plugin_window_options(CHAIN_TITLE, CHAIN_WIDTH, CHAIN_HEIGHT, cx);
         match gpui_kit::open_window(options, cx, move |window, cx| {

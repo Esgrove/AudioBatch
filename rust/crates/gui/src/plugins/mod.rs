@@ -22,7 +22,7 @@ use std::sync::{Arc, Mutex};
 use audiobatch_plugins::{KnownPlugins, PluginDataPaths, PresetStore, ScanReport};
 use gpui_kit::{Div, ParentElement as _, SharedString, Styled as _, Task, div, px};
 use raw_window_handle::RawWindowHandle;
-use vst3_host::{UiDispatcher, UiThread};
+use vst3_host::UiDispatcher;
 
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
 use crate::theme::{color, palette, white};
@@ -98,14 +98,8 @@ impl PluginHost {
                 KnownPlugins::default()
             }
         };
-        let chain = match UiThread::current() {
-            Some(ui) => {
-                let (chain, error) = LiveChain::load(&ui, paths.chain.clone(), dispatcher.clone(), sample_rate);
-                problems.extend(error);
-                chain
-            }
-            None => LiveChain::new(paths.chain.clone(), dispatcher.clone(), sample_rate),
-        };
+        let (chain, error) = LiveChain::load(paths.chain.clone(), dispatcher.clone(), sample_rate);
+        problems.extend(error);
         let presets = PresetStore::new(paths.presets.clone());
         let host = Self {
             dispatcher,
