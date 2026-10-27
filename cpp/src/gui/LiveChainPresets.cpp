@@ -39,9 +39,22 @@ juce::File LiveChain::getPresetDirectory() const
 }
 
 /// Returns the saved chain presets, sorted by name.
+/// The folder is only listed again when its modification time changed since the last listing,
+/// because every chain change and every menu build asks for the presets.
 std::vector<ChainPresetInfo> LiveChain::getPresets() const
 {
-    return plugin_presets::listPresets(getPresetDirectory());
+    const auto directory = getPresetDirectory();
+    const auto directoryModified = directory.getLastModificationTime();
+    if (!presetList.has_value() || presetList->directory != directory
+        || presetList->directoryModified != directoryModified)
+    {
+        presetList = PresetListCache {
+            .presets = plugin_presets::listPresets(directory),
+            .directory = directory,
+            .directoryModified = directoryModified,
+        };
+    }
+    return presetList->presets;
 }
 
 /// Saves the chain with the latest state of every instantiated slot as the named preset,
@@ -51,6 +64,7 @@ std::expected<juce::File, juce::String> LiveChain::saveAsPreset(const juce::Stri
 {
     const auto slots = captureSavedSlots();
     auto result = plugin_presets::savePreset(getPresetDirectory(), name, slots);
+    presetList.reset();
     if (result.has_value()) {
         presetName = result->getFileNameWithoutExtension();
         presetRevision = revision;
@@ -274,6 +288,7 @@ std::expected<void, juce::String> LiveChain::loadPreset(const juce::File& file)
 bool LiveChain::deletePreset(const juce::File& file)
 {
     const bool deleted = plugin_presets::deletePreset(file);
+    presetList.reset();
     if (deleted) {
         sendChangeMessage();
     }
