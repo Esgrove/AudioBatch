@@ -44,7 +44,7 @@ pub fn find_bundles(folders: &[PathBuf]) -> Vec<PathBuf> {
                 bundles.push(folder.clone());
             }
         } else {
-            collect_bundles(folder, &mut bundles);
+            collect_bundles(folder, &mut bundles, &mut HashSet::new());
         }
     }
     bundles.sort();
@@ -60,7 +60,15 @@ pub fn is_bundle_path(path: &Path) -> bool {
 }
 
 /// Adds the bundles below a folder.
-fn collect_bundles(folder: &Path, bundles: &mut Vec<PathBuf>) {
+/// Symlinked folders are followed, but each real folder is visited once,
+/// so a link that points back up the tree cannot recurse without end.
+fn collect_bundles(folder: &Path, bundles: &mut Vec<PathBuf>, visited: &mut HashSet<PathBuf>) {
+    let Ok(real_folder) = std::fs::canonicalize(folder) else {
+        return;
+    };
+    if !visited.insert(real_folder) {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(folder) else {
         return;
     };
@@ -75,7 +83,7 @@ fn collect_bundles(folder: &Path, bundles: &mut Vec<PathBuf>) {
         if is_bundle_path(&path) {
             bundles.push(path);
         } else if path.is_dir() {
-            collect_bundles(&path, bundles);
+            collect_bundles(&path, bundles, visited);
         }
     }
 }
@@ -145,6 +153,19 @@ mod test_discovery {
         let bundle = folder.path().join("Effect.vst3");
         std::fs::create_dir_all(&bundle).expect("bundle");
         assert_eq!(find_bundles(std::slice::from_ref(&bundle)), vec![bundle]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symlink_back_up_the_tree_is_not_followed_forever() {
+        let folder = tempfile::tempdir().expect("temporary folder");
+        let vendor = folder.path().join("Vendor");
+        std::fs::create_dir_all(vendor.join("Effect.vst3")).expect("bundle");
+        std::os::unix::fs::symlink(folder.path(), vendor.join("Loop")).expect("symlink");
+        assert_eq!(
+            find_bundles(&[folder.path().to_path_buf()]),
+            vec![vendor.join("Effect.vst3")]
+        );
     }
 
     #[test]
