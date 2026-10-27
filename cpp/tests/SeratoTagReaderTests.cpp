@@ -341,28 +341,28 @@ private:
     void testRainbowFixtures()
     {
         beginTest("The committed rainbow fixtures have 240 overview slices in six colour bands in every container");
-        for (const auto* name :
+        for (const auto* fixtureName :
              {
                  "serato_rainbow_stereo_44100_128k.mp3",
                  "serato_rainbow_stereo_44100_16.aif",
                  "serato_rainbow_stereo_44100_16.flac",
              })
         {
-            const auto result = serato::readTag(fixtureFile(name));
+            const auto result = serato::readTag(fixtureFile(fixtureName));
             expectStatus(result, serato::ReadStatus::present);
             const auto overview = tagValue<serato::Overview>(result);
-            expect(overview.has_value(), name);
+            expect(overview.has_value(), fixtureName);
             if (overview) {
-                expectRainbowBands(*overview, name);
+                expectRainbowBands(*overview, fixtureName);
             }
         }
     }
 
     /// Checks the slice count and the colour of the first and last slice of every band of a rainbow overview.
-    void expectRainbowBands(const serato::Overview& overview, const juce::String& name)
+    void expectRainbowBands(const serato::Overview& overview, const juce::String& fixtureName)
     {
         constexpr std::size_t sliceCount {240};
-        expectEquals(overview.slices.size(), sliceCount, name);
+        expectEquals(overview.slices.size(), sliceCount, fixtureName);
         if (overview.slices.size() != sliceCount) {
             return;
         }
@@ -380,7 +380,9 @@ private:
                 const auto colour = serato::colourForOverviewSlice(overview.slices[slice], juce::Colours::black);
                 expect(
                     colour.getARGB() == bands[band],
-                    utils::format("{} slice {} is {} instead of {:08x}", name, slice, colour.toString(), bands[band])
+                    utils::format(
+                        "{} slice {} is {} instead of {:08x}", fixtureName, slice, colour.toString(), bands[band]
+                    )
                 );
             }
         }
