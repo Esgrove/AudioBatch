@@ -36,6 +36,9 @@ while [ $# -gt 0 ]; do
         -v | --verbose)
             set -x
             ;;
+        -r | --reuse)
+            # Ignored here, for compatibility with cpp/install.sh
+            ;;
         *)
             print_error "Unknown option: $1"
             print_usage_and_exit

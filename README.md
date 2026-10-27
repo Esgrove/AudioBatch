@@ -10,7 +10,8 @@ The repository holds two versions of the application side by side:
   It is the reference implementation and the full-featured version,
   with normalization, AIFF conversion, and VST3 / Audio Unit plugin processing.
 - [`rust/`](rust/README.md): the Rust port, the `AudioBatchRs` GUI built on gpui-kit and the `audiobatch-rs` CLI.
-  It covers analysis, the results table, the waveform overview, and playback.
+  It covers analysis, the results table, the waveform overview, playback, normalization,
+  and VST3 plugin processing on macOS and Windows.
 
 Both versions run side by side.
 They keep separate analysis caches, and their CLIs print the same table, CSV, and JSON output.
@@ -27,6 +28,26 @@ AudioBatch/
 ```
 
 Build and test each version from its own directory, as described in its README.
+
+## Scripts
+
+The scripts in the repository root run the scripts of the same name in both projects:
+
+```shell
+# Build the release binaries of both versions
+./build.sh
+
+# Install both CLIs, GUI apps, and shell completions
+./install.sh
+
+# Format both projects, the root shell scripts, and the Python scripts, add --check to only verify them
+./format.sh
+```
+
+Name a project first to run only its script, such as `./build.sh rust` or `./install.sh cpp --app-only`.
+The options are passed on to the project scripts,
+so running both projects accepts only the options both scripts have, such as `--cli-only` for `install.sh`.
+`./build.sh cpp --help` shows the options of the C++ build script.
 
 ## Future work
 

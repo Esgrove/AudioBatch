@@ -71,6 +71,38 @@ require_command() {
     fi
 }
 
+# Run a script of both projects, or of the one project named by the first argument, "cpp" or "rust".
+# The first argument is the script name, and the remaining arguments are passed to each project script.
+# Help options without a project name print the calling script's USAGE text instead.
+run_project_scripts() {
+    local script="$1"
+    shift
+    local root
+    root=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+    local projects=(cpp rust)
+    case "$1" in
+        cpp | rust)
+            projects=("$1")
+            shift
+            ;;
+        *)
+            local argument
+            for argument in "$@"; do
+                if [ "$argument" = "-h" ] || [ "$argument" = "--help" ]; then
+                    print_usage_and_exit 0
+                fi
+            done
+            ;;
+    esac
+
+    local project
+    for project in "${projects[@]}"; do
+        print_magenta "Running $project/$script $*"
+        "$root/$project/$script" "$@"
+    done
+}
+
 # Install the shell completions of a CLI binary that has the completion subcommand,
 # for the shells of this platform: bash and PowerShell on Windows, zsh on macOS, and zsh and bash on Linux.
 # The first argument is the binary, a name in path or a path to it.
