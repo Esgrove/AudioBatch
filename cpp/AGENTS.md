@@ -428,7 +428,7 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   and also checks the prose with `slb` when it is installed.
 - `../.pre-commit-config.yaml` at the repository root runs clang-format, cmake-format, cargo fmt,
   and basic file checks through [prek](https://prek.j178.dev).
-- CI runs `./format.sh --check` in the `C++` workflow, `../.github/workflows/cpp.yml`.
+- CI runs the root `../format.sh --check`, which includes this directory, in `../.github/workflows/format.yml`.
 
 ## Linting
 
@@ -440,6 +440,8 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
   including untracked ones, and `./lint.sh --staged` only the staged ones.
   A changed header also lints the source file of the same name next to it.
 - `./lint.sh --check` exits with code 1 when clang-tidy reports any warning.
+- `./lint.sh --fuzz` lints the fuzz harnesses in `tests/fuzz/`,
+  which only the `macos-fuzz` preset builds, so configure it first with `cmake --preset macos-fuzz`.
   CI runs it on macOS with the latest Homebrew LLVM, so the build must stay free of clang-tidy warnings.
 - If `clang-tidy` reports a check that is genuinely a poor fit for the project,
   disable it explicitly in `.clang-tidy` and add a short comment explaining why.

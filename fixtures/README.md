@@ -37,7 +37,7 @@ at 24, 44.1, 48, and 96 kHz, with 16 and 24 bit integer and 32 bit float samples
 | `tagged_stereo_44100_16.flac`            | Tag reading and the metadata round trip                                   |
 | `sine_3ch_44100_16.aif`                  | Three channels, which processing and the preview refuse                   |
 | `intersample_stereo_44100_24.wav`        | Sample peak, true peak, and loudness that all differ                      |
-| `click_mono_44100_16.wav` and `.mp3`     | A single click at sample 11025, which shows any shift of the audio start  |
+| `click_mono_44100_16.wav` and `click_mono_44100_320k.mp3` | A single click at sample 11025, which shows any shift of the audio start  |
 | `serato_rainbow_stereo_44100_*`          | A synthetic rainbow Serato Overview tag in MP3, AIFF, and FLAC            |
 | `silence_stereo_44100_16.wav`            | Digital silence, with no peak and no measurable loudness                  |
 | `stereo_split_44100_16.wav`              | Different left and right tones, so mid and side both carry audio          |

@@ -65,13 +65,29 @@ The differences below are in the GUIs and in plugin hosting.
 ### Features only in the C++ version
 
 - Audio Unit plugins on macOS. The Rust version hosts VST3 plugins only, on macOS and Windows.
+  Its `audiobatch list` also lists instruments, which the Rust CLI leaves out.
 - A context menu in the results table for normalizing, processing, re-analyzing, revealing, and removing files.
-  The Rust version has the same commands in its File and Plugins menus.
+  The Rust version has the same commands in its File and Plugins menus,
+  except Open Parent Folder and Normalization Format Support.
+- Help > Normalization Format Support… lists the formats this platform can normalize.
+- A generic parameter editor for plugins without an editor of their own.
+- Dragging rows out of the results table into other applications.
+- Choosing the audio driver and the active output channels in Audio Settings.
+  The Rust version chooses the output device, its sample rate, and the buffer size.
+- `--headless` starts the GUI app without showing its window.
+- The plugin manager is the stock JUCE plugin list, while the Rust version has its own plugin manager window.
+- The analysis cache keeps every Serato tag the preview reads,
+  while the Rust cache keeps only the Serato Overview and reads the cue points from the file again.
 
 ### Features only in the Rust version
 
 - File > Add Files… adds individual files to the list.
 - The CLI also installs completions for elvish.
+- The CLI handles Ctrl-C: the file being normalized keeps its original and leaves no temporary file,
+  the files already committed are still reported, and the CLI exits with code 130.
+  A second Ctrl-C ends it at once.
+- Shortcuts for opening a folder (Command or Control and O), adding one (the same with Shift),
+  stopping playback (Escape), and Audio Settings (Command or Control and comma).
 
 ### Audio formats
 
@@ -91,12 +107,33 @@ The differences below are in the GUIs and in plugin hosting.
   from the Cancel button that replaces Process during a run, or from File > Cancel Run (Command or Control and period).
   Files a cancelled run has not committed keep their rows, and files it already committed show their new output.
 - Clear All Files stops any run in both versions.
+  The C++ version keeps the scanned folders, so Rescan brings the rows back,
+  and Rescan also brings back rows that were removed.
+  The Rust version forgets the folders with Clear All Files and keeps removed files out of later rescans.
+- Dropping files and folders together analyzes only the files in the C++ version,
+  and makes all of them the new roots in the Rust version.
+
+### Menus and controls
+
+- The C++ version puts the plugin items in the Options menu, with Scan for Plugins….
+  The Rust version has a Plugins menu with Plugin Manager… and Process Selected With Plugin Chain.
+- Only the Rust File menu has Normalize Selected, Clear Per-file Gain, and Select All Files,
+  and only its Options menu has Output Device and Columns.
+  Only the C++ Options menu has Continue Playback When Changing Files and Play from First Cue Point,
+  which the Rust version has in Audio Settings.
+- The C++ version disables the menu items that cannot run, such as Cancel Run when idle or Reveal without a selection.
+  The Rust version keeps them enabled.
+- The Plugin chain button opens a menu in the C++ version and the chain window in the Rust version.
+- The Process button needs an enabled plugin and any file in the C++ version,
+  and a selected, analyzed file in the Rust version.
+- Preview errors show in a dialog in the C++ version and in the status bar in the Rust version.
 
 ### Plugin hosting
 
 - **Data files.** The Rust version keeps its plugin list and chain in its own `AudioBatch-rs` folder.
   The chain state that JUCE saves is specific to JUCE, and its plugin ids are hashes, so the two cannot share them.
-- **Scan lock.** When a CLI rescan holds the scan lock, both GUIs skip their scan and show one message.
+- **Scan lock.** When a CLI rescan holds the scan lock, both GUIs skip their scan and say so,
+  the C++ version in a dialog and the Rust version in the status bar.
 - **Missing plugins.** Both CLIs and both GUIs remove the plugins and blacklist entries whose files are gone
   after every scan that runs to its end,
   but only inside scanned folders that exist, so plugins on an unmounted drive stay listed.
@@ -105,8 +142,9 @@ The differences below are in the GUIs and in plugin hosting.
 - **Refused pre-normalization gain.** When Normalize is on and a file cannot reach the target,
   because it is silent or would need more than 40 dB of gain,
   both versions process it at unity gain, with a notice that names the reason.
-- **Processing failures.** Both versions fail the file when a VST3 plugin reports a processing error,
-  and turn the preview off with the plugin's name and error.
+- **Processing failures.** Both versions fail the file when a VST3 plugin reports a processing error.
+  In the preview, both stop playback and name the plugin and its error.
+  The Rust version also turns plugin preview off, while the C++ version keeps it on for the next play.
 - **Refused plugin settings.** Only the Rust version can tell when a VST3 plugin refuses its saved settings,
   since JUCE does not report it.
   Its live chain then keeps the saved settings instead of the plugin's defaults until the editor opens,
@@ -116,7 +154,10 @@ The differences below are in the GUIs and in plugin hosting.
   The output of a mono file is folded back to mono, so it sounds like the processed file.
   Offline processing refuses a stereo file through a mono-only plugin in both versions.
 - **Custom gain in the preview.** Both previews apply a file's custom gain only in front of the plugin chain,
-  so a preview without plugins plays the file unchanged, and both draw the waveform with it.
+  and both draw the waveform with it.
+  With plugin preview off, both play the file unchanged.
+  With it on, the C++ version applies the gain even when the chain is empty or every plugin is bypassed,
+  while the Rust version plays the file unchanged until a plugin is enabled.
 
 ## Future work
 

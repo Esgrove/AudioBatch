@@ -397,7 +397,8 @@ cmake --build --preset windows-debug
 
 For Ninja with MSVC and a compilation database, use `windows-ninja-debug` instead.
 
-The build produces `AudioBatch.app` / `AudioBatchApp.exe` (GUI) and `audiobatch` (CLI).
+The build produces `AudioBatch.app` or `AudioBatch.exe` (GUI) and `audiobatch` (CLI).
+`build.sh` copies them into this directory, where the Windows GUI becomes `AudioBatchApp.exe`.
 
 For release builds, use the build script:
 
