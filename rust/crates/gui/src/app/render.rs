@@ -311,7 +311,7 @@ impl AppView {
             .child(div().flex_1().min_w_0().h_full().child(self.waveform.clone()))
     }
 
-    /// Renders the collapsed preview in one row, like the compact row of the C++ application:
+    /// Renders the collapsed preview in one row:
     /// the chevron, Play/Stop and Process as wide as in the expanded controls, the four metrics, and the waveform.
     fn render_compact_preview(&self, content_width: f32, cx: &Context<Self>) -> Div {
         let on_event = Self::controls_listener(cx);

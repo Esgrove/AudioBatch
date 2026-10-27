@@ -6,7 +6,7 @@
 //! while their shape still comes from the decoded audio.
 //! The view zooms around the playhead and follows it while playing,
 //! and it scales the envelope by the input gain.
-//! Like the C++ application, pressing pauses at the clicked time, dragging scrubs, releasing plays from there,
+//! Pressing pauses at the clicked time, dragging scrubs, releasing plays from there,
 //! and a double-click plays from the start.
 //! The mouse wheel zooms, and Command or Control with the wheel changes the gain.
 //! While audio plays the view requests a new frame on every render, so the playhead moves smoothly.
@@ -395,7 +395,7 @@ impl WaveformView {
         }
     }
 
-    /// Starts scrubbing at the pressed time, or asks to play from the start on a double-click, like the C++ application.
+    /// Starts scrubbing at the pressed time, or asks to play from the start on a double-click.
     fn on_mouse_down(&mut self, event: &MouseDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if self.duration_seconds() <= 0.0 {
             return;

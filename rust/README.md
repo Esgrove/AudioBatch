@@ -217,7 +217,9 @@ and the output device with its sample rate and buffer size in samples.
   Each file is written as a sibling `.aif` that replaces its row, and a converted source is moved to the system trash.
   Overwrite lets the output replace an existing file of the same name, which is moved to the trash too.
   The Status column shows the progress of each file, and a failure keeps the row with the reason.
-  The list cannot change while files are being normalized, and normalization waits for analysis to finish.
+  While files are normalized or processed, adding, rescanning, removing, and trashing files are refused with a message,
+  and Clear All Files stops the run instead.
+  Normalization waits for a running analysis to finish.
 - During an analysis, normalization, or processing run the Process button becomes Cancel,
   and File > Cancel Run (Command or Control and period) cancels the run too.
   Files the run has not committed keep their rows, and Clear All Files stops any run.

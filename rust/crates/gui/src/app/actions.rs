@@ -90,7 +90,7 @@ impl AppView {
     }
 
     /// Moves the selected file to the system trash, forgets its cached result, and removes it from the list.
-    /// Asks first unless `confirm` is false, like the C++ application, where Shift with the shortcut skips the prompt.
+    /// Asks first unless `confirm` is false, as it is for the shortcut with Shift held.
     pub(super) fn trash_selected(&mut self, confirm: bool, window: &mut Window, cx: &mut Context<Self>) {
         let selected = self.selected_paths(cx);
         if selected.is_empty() || self.blocked_by_file_operation(cx) {
@@ -195,7 +195,7 @@ impl AppView {
     }
 
     /// Cancels the running analysis, normalization, or processing, from the Cancel button or File > Cancel Run.
-    /// Files a run has not committed keep their rows, like in the C++ application.
+    /// Files a run has not committed keep their rows.
     pub(super) fn cancel_run(&mut self, cx: &mut Context<Self>) {
         if self.is_processing() {
             self.cancel_processing(cx);
@@ -427,7 +427,7 @@ impl AppView {
                 self.waveform.update(cx, |waveform, cx| waveform.set_zoom(zoom, cx));
             }
             WaveformEvent::GainBy(decibels) if self.can_adjust_gain(cx) => {
-                // Like the C++ application, each wheel event moves the gain by one slider step.
+                // Each wheel event moves the gain by one slider step.
                 let current = self.gain_slider.read(cx).value().start();
                 let gain = ((current + GAIN_WHEEL_STEP_DB.copysign(*decibels)) * 10.0).round() / 10.0;
                 let gain = gain.clamp(MINIMUM_GAIN_DB, MAXIMUM_GAIN_DB);

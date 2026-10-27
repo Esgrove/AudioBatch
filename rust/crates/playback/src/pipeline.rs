@@ -63,7 +63,7 @@ impl FramePipeline {
     /// # Errors
     ///
     /// Returns an error when the file cannot be decoded, seeked, or resampled,
-    /// or has more than two channels, which the preview refuses like the C++ application.
+    /// or has more than two channels, which the preview refuses.
     pub fn open(path: &Path, output_rate: u32, generation: u32, start_seconds: f64) -> Result<Self> {
         let decoder = AudioFileDecoder::open(path)?;
         if !(1..=2).contains(&decoder.info().channels) {

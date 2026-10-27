@@ -186,7 +186,7 @@ fn heading_line(id: &'static str, text: String, path: Option<&str>) -> Stateful<
 
 /// Renders the compact variant for the collapsed preview: the four level cards in one row,
 /// each with its caption above its unit on the left and the value on the right, and dashes when there is no result.
-/// The file name and the details are left out, like the compact panel of the C++ application.
+/// The file name and the details are left out, so the metrics fit next to the waveform.
 pub fn render_compact_info_panel(row: Option<&ResultRow>) -> Div {
     let metrics = metrics(row.and_then(ResultRow::ready_record));
     div()

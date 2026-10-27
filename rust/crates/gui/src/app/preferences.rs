@@ -86,7 +86,7 @@ impl AppView {
     }
 
     /// Collapses the preview into its compact row, or expands it again with the divider where it was.
-    /// Like the C++ application, the choice lasts for this session only.
+    /// The choice lasts for this session only.
     pub(super) fn toggle_preview_section(&mut self, cx: &mut Context<Self>) {
         self.preview_compact = !self.preview_compact;
         self.menu_state.preview_compact = self.preview_compact;

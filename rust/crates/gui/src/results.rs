@@ -43,7 +43,7 @@ const CELL_FONT_SIZE: f32 = 14.0;
 /// Background of the rows selected besides the app's selected file, the colour the table gives its selected row.
 const SELECTION_BACKGROUND: u32 = 0x76A8_DA38;
 
-/// Columns hidden until the user shows them, like in the C++ application.
+/// Columns hidden until the user shows them.
 pub const DEFAULT_HIDDEN_COLUMNS: [ColumnKey; 3] = [ColumnKey::PeakLeft, ColumnKey::PeakRight, ColumnKey::Gain];
 
 /// Font size of the column titles.
@@ -149,7 +149,7 @@ pub struct ResultsDelegate {
     hidden: HashSet<ColumnKey>,
     sort: Option<(ColumnKey, ColumnSort)>,
     /// Column that orders rows the primary sort leaves equal, and whether it is ascending,
-    /// set by a Command or Control click on a header like in the C++ application.
+    /// set by a Command or Control click on a header.
     secondary_sort: Option<(ColumnKey, bool)>,
     /// File the app has selected, which the preview plays.
     /// The table keeps its selection by index, so a sort from the header selects this file's row again.
@@ -347,7 +347,7 @@ impl ResultsDelegate {
             order: Vec::new(),
             all_columns,
             hidden: DEFAULT_HIDDEN_COLUMNS.into_iter().collect(),
-            // Like the C++ application, the quietest files come first until the user picks another sort.
+            // The quietest files come first until the user picks another sort.
             sort: Some((ColumnKey::Peak, ColumnSort::Ascending)),
             secondary_sort: None,
             selected: None,
@@ -807,7 +807,7 @@ impl ResultsDelegate {
         self.rebuild_visible_columns();
     }
 
-    /// Sets, flips, or clears the secondary sort for a Command or Control click on a header, like the C++ application.
+    /// Sets, flips, or clears the secondary sort for a Command or Control click on a header.
     /// The primary column clears it, the current secondary column flips its direction,
     /// and any other column becomes the ascending secondary sort.
     pub fn toggle_secondary_sort(&mut self, column_index: usize) {
@@ -925,7 +925,7 @@ impl TableDelegate for ResultsDelegate {
         self.reorder_column(column_index, target_index);
     }
 
-    /// Renders a header title, with the secondary sort marker of the C++ application, "[2^]" or "[2v]",
+    /// Renders a header title, with the secondary sort marker "[2^]" or "[2v]",
     /// and sets the secondary sort on a Command or Control click.
     fn render_th(
         &mut self,

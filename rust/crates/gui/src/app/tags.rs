@@ -82,7 +82,7 @@ impl AppView {
         })
     }
 
-    /// Plays the selected file from its Serato hot cue in a slot, from the keys 1 to 8, like the C++ application.
+    /// Plays the selected file from its Serato hot cue in a slot, from the keys 1 to 8.
     /// Nothing happens when the file has no cue in that slot.
     pub(super) fn jump_to_hot_cue(&mut self, slot: u8, cx: &mut Context<Self>) {
         let Some((path, tags)) = &self.selected_tags else {

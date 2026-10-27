@@ -1,4 +1,4 @@
-//! Keeps one app running, like the C++ application: a second launch hands its paths to the running app and quits.
+//! Keeps one app running: a second launch hands its paths to the running app and quits.
 //!
 //! The running app listens on a loopback TCP port and writes the port to a file in the data directory.
 //! A launch connects to that port, checks that the app answers with its greeting, and sends its paths, one per line.

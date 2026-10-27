@@ -1,4 +1,4 @@
-//! The controls column at the left of the preview, laid out like the C++ application:
+//! The controls column at the left of the preview:
 //! zoom, input gain, the Normalize and Overwrite options, the normalization target,
 //! the Plugin Chain and Audio Settings buttons, and Play/Stop and Process side by side at the bottom.
 //!
@@ -52,7 +52,7 @@ const VERTICAL_PADDING: f32 = 8.0;
 /// Font size of the captions and their values.
 const CAPTION_FONT_SIZE: f32 = 12.0;
 
-/// Share of the target row given to the Normalize button, like the C++ application.
+/// Share of the target row given to the Normalize button.
 const NORMALIZE_BUTTON_PROPORTION: f32 = 0.4;
 
 /// Horizontal inset of a slider track: the thumb radius plus the width of its hover ring.

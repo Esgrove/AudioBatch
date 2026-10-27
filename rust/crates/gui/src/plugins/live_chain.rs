@@ -46,7 +46,7 @@ pub struct LiveSlot {
     /// Why the plugin could not be loaded or prepared.
     error: Option<String>,
     /// True once loading the plugin was tried.
-    /// The chain restored at startup loads its plugins only when they are first needed, like the C++ application.
+    /// The chain restored at startup loads its plugins only when they are first needed, so startup does not wait.
     load_attempted: bool,
 }
 

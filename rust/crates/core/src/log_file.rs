@@ -37,7 +37,7 @@ const MAXIMUM_INITIAL_LOG_BYTES: u64 = 32_768;
 /// Target prefixes of the `AudioBatch` crates, whose messages are kept below the warning level.
 const OWN_TARGET_PREFIXES: [&str; 4] = ["audiobatch", "AudioBatchRs", "serato_tags", "vst3_host"];
 
-/// Formats the local time of day at the start of each line, like the C++ application.
+/// Formats the local time of day at the start of each line.
 struct LocalTime;
 
 impl FormatTime for LocalTime {

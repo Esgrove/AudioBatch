@@ -6,7 +6,7 @@
 //! Messages go to the `AudioBatchRs.log` log file and to stderr.
 //! Setting `AUDIOBATCH_GUI_DEBUG` adds diagnostics to them.
 //!
-//! Like the C++ application, only one app runs: a second launch hands its paths to the running one and quits.
+//! Only one app runs: a second launch hands its paths to the running one and quits.
 //!
 //! The executable also serves as the plugin scan worker,
 //! so a plugin that crashes while it is scanned takes down only the worker process.
@@ -82,7 +82,7 @@ fn main() {
             return;
         }
     };
-    // Like the C++ application, the GUI prints every message it logs to stderr as well.
+    // The GUI prints every message it logs to stderr as well, so a terminal launch shows them.
     if let Err(error) = log_file::install(env!("CARGO_BIN_NAME"), LevelFilter::TRACE) {
         eprintln!("{error:#}");
     }

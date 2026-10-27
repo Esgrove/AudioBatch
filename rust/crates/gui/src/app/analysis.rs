@@ -79,7 +79,7 @@ impl AppView {
     }
 
     /// Opens the paths that later launches of the app hand over, as if they were dropped onto the window,
-    /// and brings the window to the front, like the C++ application.
+    /// and brings the window to the front.
     pub fn listen_for_launches(&mut self, launches: Receiver<Vec<PathBuf>>, window: &Window, cx: &Context<Self>) {
         self.launch_task = Some(cx.spawn_in(window, async move |this, cx| {
             loop {
