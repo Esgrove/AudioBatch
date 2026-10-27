@@ -16,7 +16,7 @@ use vst3::Steinberg::Vst::{
     AudioBusBuffers, AudioBusBuffers__type0, IAudioProcessor, IAudioProcessorTrait as _, IParameterChanges,
     ProcessContext, ProcessContext_::StatesAndFlags_, ProcessData, SymbolicSampleSizes_,
 };
-use vst3::Steinberg::kResultOk;
+use vst3::Steinberg::{kResultFalse, kResultOk};
 use vst3::{ComPtr, ComWrapper};
 
 use crate::enums::{to_i32, to_u32};
@@ -29,6 +29,11 @@ const TEMPO: f64 = 120.0;
 /// A failed `process` call, with the result code the plugin returned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessError(pub i32);
+
+/// Marks an instance as inside a processing call, and clears the mark when dropped.
+/// Two handles of one instance may exist at once, such as while the preview swaps chains,
+/// but VST3 forbids overlapping `process` calls, so only one of them can hold the mark.
+struct ProcessingGuard<'a>(&'a InstanceCore);
 
 /// The buffers of one audio bus.
 struct BusBuffers {
@@ -68,6 +73,11 @@ pub struct ProcessorHandle {
 // and VST3 allows `process` and `setProcessing` on any one thread at a time.
 unsafe impl Send for ProcessorHandle {}
 
+impl ProcessError {
+    /// The error of a call made while another handle of the same instance was processing.
+    pub const BUSY: Self = Self(kResultFalse);
+}
+
 impl fmt::Display for ProcessError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "The plugin failed to process audio (result {})", self.0)
@@ -75,6 +85,19 @@ impl fmt::Display for ProcessError {
 }
 
 impl std::error::Error for ProcessError {}
+
+impl<'a> ProcessingGuard<'a> {
+    /// Marks the instance as processing, or returns `None` when another handle already holds the mark.
+    fn begin(core: &'a InstanceCore) -> Option<Self> {
+        core.try_begin_processing().then_some(Self(core))
+    }
+}
+
+impl Drop for ProcessingGuard<'_> {
+    fn drop(&mut self) {
+        self.0.end_processing();
+    }
+}
 
 impl BusBuffers {
     /// Allocates the buffers of a bus.
@@ -190,6 +213,9 @@ impl ProcessorHandle {
     ///
     /// Returns the result code when the plugin reports a failure.
     pub fn process(&mut self, frames: usize) -> Result<(), ProcessError> {
+        let Some(_processing) = ProcessingGuard::begin(&self.core) else {
+            return Err(ProcessError::BUSY);
+        };
         let frames = frames.min(self.setup.max_block_frames);
         for bus in self.inputs.iter_mut().skip(1) {
             bus.clear(frames);
@@ -200,7 +226,11 @@ impl ProcessorHandle {
         self.input_changes.clear();
         self.output_changes.clear();
         while let Some(edit) = self.core.edits().pop() {
-            self.input_changes.set(edit.id, edit.value);
+            // When every queue of this block is taken, the edit waits for the next block instead of being lost.
+            if !self.input_changes.set(edit.id, edit.value) {
+                let _ = self.core.edits().push(edit);
+                break;
+            }
         }
         for bus in self.input_buses.iter_mut().chain(self.output_buses.iter_mut()) {
             bus.silenceFlags = 0;
@@ -233,12 +263,19 @@ impl ProcessorHandle {
 
     /// Clears the plugin's internal buffers, such as delay lines, by stopping and restarting processing,
     /// and moves the reported position to `position` samples.
+    /// Does nothing while another handle of the same instance is processing, since VST3 forbids overlapping calls.
     pub fn reset(&mut self, position: u64) {
-        let processor = self.processor();
-        // SAFETY: the plugin is active, and VST3 allows `setProcessing` on the processing thread.
-        unsafe {
-            processor.setProcessing(0);
-            processor.setProcessing(1);
+        {
+            let Some(_processing) = ProcessingGuard::begin(&self.core) else {
+                return;
+            };
+            let processor = self.processor();
+            // SAFETY: the plugin is active, no other handle is in a processing call,
+            // and VST3 allows `setProcessing` on the processing thread.
+            unsafe {
+                processor.setProcessing(0);
+                processor.setProcessing(1);
+            }
         }
         self.set_position(position);
     }

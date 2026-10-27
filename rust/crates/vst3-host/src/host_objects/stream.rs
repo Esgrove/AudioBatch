@@ -11,6 +11,9 @@ use vst3::Steinberg::{
 };
 use vst3::{Class, ComWrapper};
 
+/// Largest stream a plugin may write or size, well above the state of large sample-based instruments.
+const MAXIMUM_STREAM_BYTES: usize = 1 << 30;
+
 /// The bytes of a stream and the position of the next read or write.
 #[derive(Debug, Default)]
 struct StreamBuffer {
@@ -90,7 +93,10 @@ impl IBStreamTrait for MemoryStream {
             // SAFETY: the plugin passes `num_bytes` readable bytes, checked for null above.
             let source = unsafe { std::slice::from_raw_parts(buffer.cast::<u8>(), count) };
             let start = stream.position;
-            let end = start + count;
+            // A seek far past the end followed by a write would otherwise overflow or grow the buffer without bound.
+            let Some(end) = start.checked_add(count).filter(|&end| end <= MAXIMUM_STREAM_BYTES) else {
+                return kResultFalse;
+            };
             if stream.data.len() < end {
                 stream.data.resize(end, 0);
             }
@@ -157,6 +163,9 @@ impl ISizeableStreamTrait for MemoryStream {
         let Ok(size) = usize::try_from(size) else {
             return kInvalidArgument;
         };
+        if size > MAXIMUM_STREAM_BYTES {
+            return kResultFalse;
+        }
         self.buffer
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -170,6 +179,26 @@ impl ISizeableStreamTrait for MemoryStream {
 mod test_memory_stream {
     use super::*;
     use crate::enums::to_i32;
+
+    #[test]
+    fn writes_and_sizes_past_the_limit_are_refused() {
+        let stream = MemoryStream::default();
+        let mut payload = *b"x";
+        let mut written = 0;
+        // SAFETY: the payload buffer is live and one byte long.
+        unsafe {
+            assert_eq!(
+                stream.seek(i64::MAX, to_i32(IStreamSeekMode_::kIBSeekSet), std::ptr::null_mut()),
+                kResultOk
+            );
+            assert_eq!(
+                stream.write(payload.as_mut_ptr().cast(), 1, &raw mut written),
+                kResultFalse
+            );
+            assert_eq!(stream.setStreamSize(i64::MAX), kResultFalse);
+        }
+        assert_eq!(stream.data(), Vec::<u8>::new());
+    }
 
     #[test]
     fn written_bytes_read_back() {
