@@ -85,6 +85,8 @@ pub struct PluginExpectation {
     pub gain: f32,
     /// Stereo width parameter value.
     pub width: f32,
+    /// Latency parameter value in samples, which a host must compensate to produce the expected output.
+    pub latency: u32,
     /// File name of the expected output inside `fixtures/plugin_expected`.
     pub expected: &'static str,
 }
@@ -104,31 +106,44 @@ impl PluginExpectation {
 }
 
 /// The expected outputs of the `AudioBatch Test MS` plugin.
-/// The width and the gain are the plain parameter values, each on a 0 to 2 range.
-pub const PLUGIN_EXPECTATIONS: [PluginExpectation; 4] = [
+///
+/// The width and the gain are the plain parameter values, each on a 0 to 2 range, and the latency is in samples.
+/// The last case delays the output, so it only cancels when the host compensates the latency and renders the tail.
+pub const PLUGIN_EXPECTATIONS: [PluginExpectation; 5] = [
     PluginExpectation {
         source: STEREO_SPLIT_FIXTURE,
         gain: 0.5,
         width: 0.5,
+        latency: 0,
         expected: "ms_gain_0.5_width_0.5_stereo_split_44100_16.wav",
     },
     PluginExpectation {
         source: STEREO_SPLIT_FIXTURE,
         gain: 1.0,
         width: 0.0,
+        latency: 0,
         expected: "ms_gain_1_width_0_stereo_split_44100_16.wav",
     },
     PluginExpectation {
         source: STEREO_SPLIT_FIXTURE,
         gain: 1.0,
         width: 2.0,
+        latency: 0,
         expected: "ms_gain_1_width_2_stereo_split_44100_16.wav",
     },
     PluginExpectation {
         source: "sine_mono_44100_16.wav",
         gain: 0.5,
         width: 1.0,
+        latency: 0,
         expected: "ms_gain_0.5_width_1_sine_mono_44100_16.wav",
+    },
+    PluginExpectation {
+        source: STEREO_SPLIT_FIXTURE,
+        gain: 0.5,
+        width: 0.5,
+        latency: 256,
+        expected: "ms_gain_0.5_width_0.5_latency_256_stereo_split_44100_16.wav",
     },
 ];
 

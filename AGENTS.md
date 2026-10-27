@@ -22,7 +22,7 @@ This repository holds two versions of it side by side, each with its own agent i
   and calls `fixtures/serato_overview.py` to add the rainbow Serato Overview tag that ffmpeg cannot write.
   When a fixture changes, update the expected values in the C++ tests and in the Rust `test-fixtures` crate.
 - `test-plugin/` holds `AudioBatch Test MS`, the JUCE VST3 effect that both test suites load,
-  with a gain and a mid/side width parameter.
+  with a gain, a mid/side width, and a latency parameter that the hosts must compensate.
   The C++ build adds it with its tests,
   and `test-plugin/build.sh` builds it into `test-plugin/build` for the Rust tests.
   It builds with the JUCE submodule in `cpp/JUCE`, and `cpp/format.sh` formats it.

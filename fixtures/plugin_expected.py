@@ -10,6 +10,8 @@ Both applications process a file through the plugin chain and write 16-bit AIFF,
 and their tests compare that output against these files sample by sample.
 The script repeats the arithmetic of test-plugin/src/MidSideTestProcessor.cpp in float32, operation by operation,
 then floors to 16 bits without dither and saturates, the way both applications write their output.
+With a latency, the plugin delays its output, and both hosts render the delayed tail and drop the delayed start,
+so a correct latency compensation writes the same samples as the plugin without latency.
 Each expected file is named after the parameter values and the source fixture.
 The files are written as 16-bit WAV with the standard library, so only numpy is needed.
 """
@@ -28,12 +30,13 @@ HALF = np.float32(0.5)
 SAMPLE_WIDTH_BYTES = 2
 STEREO_CHANNELS = 2
 
-# Source fixture, gain, and width of each expected output.
+# Source fixture, gain, width, and latency in samples of each expected output.
 CASES = [
-    ("stereo_split_44100_16.wav", 0.5, 0.5),
-    ("stereo_split_44100_16.wav", 1.0, 0.0),
-    ("stereo_split_44100_16.wav", 1.0, 2.0),
-    ("sine_mono_44100_16.wav", 0.5, 1.0),
+    ("stereo_split_44100_16.wav", 0.5, 0.5, 0),
+    ("stereo_split_44100_16.wav", 1.0, 0.0, 0),
+    ("stereo_split_44100_16.wav", 1.0, 2.0, 0),
+    ("sine_mono_44100_16.wav", 0.5, 1.0, 0),
+    ("stereo_split_44100_16.wav", 0.5, 0.5, 256),
 ]
 
 
@@ -58,8 +61,8 @@ def write_pcm16(path: Path, samples: np.ndarray, sample_rate: int) -> None:
         writer.writeframes(samples.astype("<i2").tobytes())
 
 
-def process(samples: np.ndarray, gain: float, width: float) -> np.ndarray:
-    """Apply the plugin arithmetic to int16 samples and return the floored int16 output."""
+def process(samples: np.ndarray, gain: float, width: float, latency: int) -> np.ndarray:
+    """Apply the plugin arithmetic to int16 samples and return the floored int16 output a compensating host writes."""
     audio = samples.astype(np.float32) / PCM_SCALE
     gain_value = np.float32(gain)
     width_value = np.float32(width)
@@ -73,23 +76,36 @@ def process(samples: np.ndarray, gain: float, width: float) -> np.ndarray:
     else:
         output = audio * gain_value
 
+    output = compensate_latency(delay(output, latency), latency)
     scaled = output.astype(np.float32) * PCM_SCALE
     limited = np.clip(scaled, np.float32(-32768.0), np.float32(32767.0))
     return np.floor(limited).astype(np.int16)
 
 
-def expected_name(source: str, gain: float, width: float) -> str:
+def delay(output: np.ndarray, latency: int) -> np.ndarray:
+    """Delay the plugin output by the latency, the way its delay line does, while the host renders the tail."""
+    silence = np.zeros((latency, output.shape[1]), dtype=output.dtype)
+    return np.concatenate([silence, output])
+
+
+def compensate_latency(rendered: np.ndarray, latency: int) -> np.ndarray:
+    """Drop the delayed start the way both hosts compensate the reported latency, keeping the source length."""
+    return rendered[latency:]
+
+
+def expected_name(source: str, gain: float, width: float, latency: int) -> str:
     """Return the expected file name, such as ms_gain_0.5_width_0.5_stereo_split_44100_16.wav."""
-    return f"ms_gain_{gain:g}_width_{width:g}_{source}"
+    latency_part = f"latency_{latency}_" if latency else ""
+    return f"ms_gain_{gain:g}_width_{width:g}_{latency_part}{source}"
 
 
 def main() -> None:
     """Write every expected output into the plugin_expected directory."""
     OUTPUT_DIRECTORY.mkdir(exist_ok=True)
-    for source, gain, width in CASES:
+    for source, gain, width, latency in CASES:
         samples, sample_rate = read_pcm16(FIXTURES / source)
-        output = process(samples, gain, width)
-        destination = OUTPUT_DIRECTORY / expected_name(source, gain, width)
+        output = process(samples, gain, width, latency)
+        destination = OUTPUT_DIRECTORY / expected_name(source, gain, width, latency)
         write_pcm16(destination, output, sample_rate)
         print(f"{destination.relative_to(FIXTURES)}: {len(output)} frames")
 

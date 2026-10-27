@@ -17,11 +17,17 @@ constexpr int widthParameterIndex {1};
 constexpr float parameterMaximum {2.0F};
 /// Default of both parameters, which leaves the signal unchanged.
 constexpr float parameterDefault {1.0F};
+/// Index and VST3 id of the latency parameter, in samples.
+constexpr int latencyParameterIndex {2};
+/// Largest latency in samples. A power of two, so whole sample values map to exact normalized values.
+constexpr int latencyMaximum {1024};
 
-/// A mid/side width and gain effect without an editor, latency, or tail.
+/// A mid/side width and gain effect without an editor or tail, with an optional latency.
 /// A stereo input is split into mid and side, the side is scaled by the width,
 /// and both output channels are scaled by the gain.
 /// A mono input is only scaled by the gain.
+/// The output is then delayed by the latency, which the plugin reports so hosts can compensate it.
+/// The latency is read when the plugin is prepared, and defaults to none.
 class MidSideTestProcessor final : public juce::AudioProcessor
 {
 public:
@@ -52,8 +58,17 @@ public:
     void setStateInformation(const void* data, int sizeInBytes) override;
 
 private:
+    void delayBlock(juce::AudioBuffer<float>& buffer);
+
     juce::AudioProcessorValueTreeState parameters;
     std::atomic<float>& gain;
     std::atomic<float>& width;
+    std::atomic<float>& latency;
+    /// One ring buffer per channel holding the last latency samples, allocated when the plugin is prepared.
+    juce::AudioBuffer<float> delayLine;
+    /// Latency in samples the plugin reported when it was prepared.
+    int delaySamples {0};
+    /// Position in the ring buffers of the oldest delayed sample.
+    int delayPosition {0};
 };
 }  // namespace audiobatch::test_plugin
