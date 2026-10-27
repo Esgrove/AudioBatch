@@ -18,7 +18,9 @@ namespace audiobatch
 {
 /// Description plus descriptor reference for one enabled slot, in chain order.
 struct EnabledChainPlugin {
+    /// The plugin to create.
     juce::PluginDescription description;
+    /// The identifier, the names, and the captured state of the plugin, as processing takes them.
     PluginDescriptorRef descriptorRef;
 };
 
@@ -93,8 +95,11 @@ private:
     /// Declared before the list, so it outlives the scanner that the list owns.
     PluginScanLock pluginScanLock;
 
+    /// The application settings, which locate the list file and hold the list of older versions.
     juce::ApplicationProperties& appProperties;
+    /// The VST3 and Audio Unit formats that create the plugin instances.
     juce::AudioPluginFormatManager formatManager;
+    /// The known plugins and the blacklist, as the plugin manager shows and scans them.
     juce::KnownPluginList knownPluginList;
     /// Modification time of the list file when this library last loaded or saved it.
     juce::Time loadedModificationTime;

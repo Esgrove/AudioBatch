@@ -52,6 +52,7 @@ public:
 private:
     void rebuildIndex();
 
+    /// The rows in table order.
     std::vector<AudioAnalysisRecord> records;
     /// The row of each record by its full path, rebuilt whenever rows move.
     std::unordered_map<juce::String, std::size_t> rowsByPath;

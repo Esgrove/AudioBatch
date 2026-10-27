@@ -256,6 +256,7 @@ private:
         palette_argb::greyLight,
     };
 
+    /// True for the dark variant of the palette, which the window buttons follow.
     bool darkTheme;
 };
 }  // namespace audiobatch

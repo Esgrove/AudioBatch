@@ -46,7 +46,9 @@ private:
     void handlePluginChoiceMenuItem(int menuItemID) const;
     [[nodiscard]] juce::String getNormalizeAllLabel() const;
 
+    /// Runs the menu bar commands and their keyboard shortcuts.
     juce::ApplicationCommandManager commandManager;
+    /// The dark look of the window and every component in it.
     std::unique_ptr<CustomLookAndFeel> lookAndFeel {std::make_unique<CustomLookAndFeel>(true)};
     /// The plugins the Add Plugin submenu of the menu bar was last built from, in menu id order.
     juce::Array<juce::PluginDescription> pluginMenuTypes;

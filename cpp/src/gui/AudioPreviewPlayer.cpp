@@ -48,6 +48,7 @@ public:
     }
 
 private:
+    /// Set when a read fails, owned by the player, which outlives the source.
     std::atomic<bool>& readFailure;
 };
 
@@ -77,6 +78,7 @@ public:
     }
 
 private:
+    /// Set when a block finds no buffered input, owned by the player, which outlives the source.
     std::atomic<bool>& underrunFlag;
 };
 }  // namespace

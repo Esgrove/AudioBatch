@@ -28,11 +28,14 @@ enum class MessageThreadCallState : std::uint8_t { pending, running, abandoned }
 /// This guarantees that the function never starts after the worker has stopped waiting for it,
 /// so it can safely refer to the worker's stack and to the plugin chain the worker holds.
 struct MessageThreadCall {
+    /// The function to run on the message thread.
     std::function<void()> function;
     /// Exception thrown by the function, rethrown on the waiting worker.
     /// Written before finished is signalled, so the worker reads it only after the wait succeeded.
     std::exception_ptr exception;
+    /// Whether the call is pending, running, or abandoned by the worker.
     std::atomic<MessageThreadCallState> state {MessageThreadCallState::pending};
+    /// Signalled when the function returned or threw.
     juce::WaitableEvent finished;
 };
 }  // namespace

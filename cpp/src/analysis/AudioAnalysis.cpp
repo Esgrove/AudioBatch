@@ -72,6 +72,7 @@ struct DecodeMeasurements {
     std::vector<float> maxSamples;
     /// Highest short-term loudness seen across the file.
     double maxShortTermLoudness {AudioAnalysisRecord::negativeInfinityLoudness};
+    /// Short-term loudness of every block, which the record of the file shares.
     std::shared_ptr<ShortTermLoudnessHistory> shortTermLoudness;
     /// Set when decoding or measuring failed, with the reason.
     std::optional<MeasurementFailure> failure;

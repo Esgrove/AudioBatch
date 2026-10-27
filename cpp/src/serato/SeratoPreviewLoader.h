@@ -88,14 +88,22 @@ private:
         const utils::CancellationCheck& isCancelled
     ) const;
 
+    /// The cache the tag results are read from and stored in, which outlives the loader.
     AnalysisCache& cache;
+    /// Receives the data of each current request on the worker thread.
     Completion completion;
+    /// Reads the tags that the cache misses.
     Reader reader;
 
+    /// Counts the requests and cancellations, so a result of an older request is never delivered.
     std::atomic<std::uint64_t> generation {0};
+    /// True once the loader stopped for good.
     std::atomic<bool> stopped {false};
+    /// Wakes the worker when a request arrives or the loader stops.
     std::condition_variable_any condition;
+    /// Guards the pending request.
     std::mutex mutex;
+    /// The latest request the worker has not started yet, which a newer request replaces.
     std::optional<SeratoPreviewRequest> pending;
 
     /// Starts only after every queue member it accesses has been initialized.

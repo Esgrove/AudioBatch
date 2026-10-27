@@ -48,52 +48,75 @@ inline constexpr std::array allTagKinds {
 
 /// Serato's analysis engine version, not the musical key of the track.
 struct Analysis {
+    /// Major version of the analysis engine.
     std::uint8_t majorVersion {0};
+    /// Minor version of the analysis engine.
     std::uint8_t minorVersion {0};
 };
 
 /// Serato tempo and gain adjustments in beats per minute and decibels.
 struct Autotags {
+    /// Tempo that Serato detected, in beats per minute.
     double bpm {0};
+    /// Gain that Serato's automatic gain applies, in decibels.
     double autoGain {0};
+    /// Gain that the user set in Serato, in decibels.
     double gain {0};
 };
 
 /// A grid anchor in seconds. The final anchor has BPM instead of beats until the next anchor.
 struct BeatGridMarker {
+    /// Position of the anchor in the track, in seconds.
     double positionSeconds {0};
+    /// Beats from this anchor to the next one, zero for the final anchor.
     std::uint32_t beatsUntilNext {0};
+    /// Tempo from the final anchor on, empty for the other anchors.
     std::optional<double> bpm;
 };
 
 /// Owned ordered grid anchors, including the terminal BPM anchor.
 struct BeatGrid {
+    /// The anchors in track order.
     std::vector<BeatGridMarker> markers;
 };
 
 /// An owned hot cue with its original zero-based index and millisecond position.
 struct CuePoint {
+    /// Position of the cue in the track, in milliseconds.
     std::uint32_t positionMilliseconds {0};
+    /// Zero-based hot cue slot, which the number keys jump to.
     std::uint8_t index {0};
+    /// Colour Serato shows the cue in.
     juce::Colour colour;
+    /// Label of the cue, or empty when it has none.
     juce::String name;
 };
 
 /// An owned saved loop and its lock state.
 struct Loop {
+    /// Start of the loop in the track, in milliseconds.
     std::uint32_t startMilliseconds {0};
+    /// End of the loop in the track, in milliseconds, never before its start.
     std::uint32_t endMilliseconds {0};
+    /// Zero-based saved loop slot.
     std::uint8_t index {0};
+    /// Colour Serato shows the loop in.
     juce::Colour colour;
+    /// True when the loop is locked against changes in Serato.
     bool locked {false};
+    /// Label of the loop, or empty when it has none.
     juce::String name;
 };
 
 /// Marker records retain absent colour and BPM lock separately from explicit values.
 struct Markers {
+    /// The hot cues in the order the tag stores them.
     std::vector<CuePoint> cues;
+    /// The saved loops in the order the tag stores them.
     std::vector<Loop> loops;
+    /// Colour of the track in the Serato library, or empty when the tag has none.
     std::optional<juce::Colour> colour;
+    /// Whether the beat grid is locked, or empty when the tag does not say.
     std::optional<bool> bpmLocked;
 };
 
@@ -105,22 +128,34 @@ struct TrackInfo {
         return !bpm && key.isEmpty() && album.isEmpty() && genre.isEmpty() && year.isEmpty() && comment.isEmpty();
     }
 
+    /// Tempo from the BPM tag, in beats per minute.
     std::optional<double> bpm;
+    /// Musical key from the INITIALKEY tag.
     juce::String key;
+    /// Album name.
     juce::String album;
+    /// Genre name.
     juce::String genre;
     /// Release year, or the date as written when it does not start with a year.
     juce::String year;
+    /// Comment, or the DESCRIPTION of a Vorbis comment that has no COMMENT.
     juce::String comment;
 };
 
 /// Owned independent tag values for delivery from a worker to the preview UI.
+/// Each kind is empty when the file has no usable tag of it.
 struct SeratoData {
+    /// The overview waveform colours.
     std::optional<Overview> overview;
+    /// The version of the Serato analysis.
     std::optional<Analysis> analysis;
+    /// The tempo and gains of the Serato Autotags tag.
     std::optional<Autotags> autotags;
+    /// The beat grid anchors.
     std::optional<BeatGrid> beatGrid;
+    /// The cues, loops, track colour, and grid lock.
     std::optional<Markers> markers;
+    /// The standard tempo, key, album, genre, year, and comment tags.
     std::optional<TrackInfo> trackInfo;
 };
 
@@ -157,6 +192,7 @@ struct TagReadResult {
         return value.has_value() ? ReadStatus::present : value.error();
     }
 
+    /// The kind that was requested.
     TagKind kind {TagKind::overview};
     /// The value of a present tag, which matches the kind, or the status of a missing one.
     std::expected<TagValue, ReadStatus> value {std::unexpected(ReadStatus::absent)};

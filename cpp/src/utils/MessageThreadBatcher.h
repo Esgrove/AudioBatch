@@ -88,8 +88,11 @@ private:
         }
     }
 
+    /// Receives each batch on the message thread.
     Handler handler;
+    /// Guards the pending values, which workers post while the message thread takes them.
     std::mutex mutex;
+    /// The values posted since the last delivery, in posting order.
     std::vector<Value> pending;
 
     /// Declared last, so it is destroyed first and a pending delivery never reaches the destroyed values.

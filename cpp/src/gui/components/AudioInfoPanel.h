@@ -17,7 +17,9 @@ namespace audiobatch
 {
 /// One full-width read-only detail with a field caption and value.
 struct AudioInfoRow {
+    /// Caption of the detail, such as "Format".
     juce::String field;
+    /// The value shown next to the caption.
     juce::String value;
 };
 
@@ -33,9 +35,13 @@ public:
     void resized() override;
 
 private:
+    /// Name of the value, such as "Peak".
     juce::Label captionLabel;
+    /// Unit of the value, such as "dBFS".
     juce::Label unitLabel;
+    /// The formatted value.
     juce::Label valueLabel;
+    /// True in the compact row, which stacks the caption over the unit beside the value.
     bool compactMode {false};
 };
 
@@ -66,24 +72,38 @@ private:
     void ensureLabelCount(std::size_t requiredCount);
     void setRows(std::vector<AudioInfoRow> newRows);
 
+    /// The file name, or the part before " - " when the name holds an artist and a title.
     juce::Label filenameLabel {"File"};
+    /// The part of the file name after " - ", shown only for such names.
     juce::Label titleLabel {"Title"};
+    /// The status of a file that is not analyzed yet or failed, hidden otherwise.
     juce::Label statusLabel {"Status"};
+    /// The cards of the peak, true peak, maximum short-term loudness, and integrated loudness.
     std::array<AudioInfoMetric, 4> metrics {
         AudioInfoMetric {"Peak", "Peak", "dBFS"},
         AudioInfoMetric {"True peak", "True peak", "dBTP"},
         AudioInfoMetric {"Max short-term", "Short-term", "LUFS"},
         AudioInfoMetric {"Integrated loudness", "Integrated", "LUFS"},
     };
+    /// The content of the details viewport, with the error and the detail rows.
     juce::Component detailsContent;
+    /// The error message of a failed analysis, empty otherwise.
     juce::Label errorLabel {"Error"};
+    /// Path of the shown file, so an update of the same file keeps the scroll position of the details.
     juce::String displayedPath;
+    /// Scrolls the details below the summary.
     juce::Viewport detailsViewport;
+    /// The detail rows that the labels show.
     std::vector<AudioInfoRow> rows;
+    /// The caption labels of the detail rows, created as rows are needed and reused afterwards.
     std::vector<std::unique_ptr<juce::Label>> fieldLabels;
+    /// The value labels of the detail rows, created as rows are needed and reused afterwards.
     std::vector<std::unique_ptr<juce::Label>> valueLabels;
+    /// True in the compact row, which shows only the metric cards.
     bool compactMode {false};
+    /// True when the file name was split into a name and a title.
     bool hasTitle {false};
+    /// True when the status label is shown.
     bool hasStatus {false};
 };
 }  // namespace audiobatch

@@ -40,10 +40,15 @@ private:
 
     void updateSlider();
 
+    /// The application settings the mode and the targets are kept in.
     juce::ApplicationProperties& properties;
+    /// Selects normalizing to a sample peak.
     juce::TextButton peakButton {"Peak"};
+    /// Selects normalizing to an integrated loudness.
     juce::TextButton loudnessButton {"Loudness"};
+    /// Normalizes the selected files.
     juce::TextButton normalizeButton {"Normalize"};
+    /// The target of the selected mode, in dBFS or LUFS.
     juce::Slider targetSlider {"NormalizeTarget"};
     /// Remembered peak mode target, in dBFS, kept while loudness mode is selected.
     double targetPeakDbfs {AudioNormalizationOptions::defaultTargetPeakDbfs};

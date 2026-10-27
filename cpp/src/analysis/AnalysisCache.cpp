@@ -28,9 +28,13 @@ constexpr std::size_t loudnessHistoryHeaderBytes {32};
 
 /// One cached row, identified by path and the file version it describes.
 struct CachedRow {
+    /// Path of the file the row describes.
     juce::String path;
+    /// Size of the file when the row was stored.
     std::int64_t fileSize {0};
+    /// Modification time of the file when the row was stored, in milliseconds since the epoch.
     std::int64_t modifiedTimeMs {0};
+    /// The Serato tag kind of a tag row, or empty for an analysis row.
     std::optional<std::int64_t> tagKind;
 };
 

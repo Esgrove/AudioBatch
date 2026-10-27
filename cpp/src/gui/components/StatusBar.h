@@ -33,8 +33,11 @@ public:
 private:
     [[nodiscard]] juce::Rectangle<int> getProgressBounds() const;
 
+    /// The root folders of the list.
     juce::Label pathLabel {"Root folders"};
+    /// What the application is doing, or a summary of the list.
     juce::Label statusLabel {"Status"};
+    /// The preview output device and its configuration.
     juce::Label outputLabel {"Audio output"};
 
     /// Overall progress in tenths of a percent, or -1 when no pass of known size runs.

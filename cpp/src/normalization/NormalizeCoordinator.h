@@ -55,9 +55,13 @@ public:
     void setStartingCallback(StartingCallback callback);
 
 private:
+    /// Receives the completion of each run.
     RunCallback<int, int> completionCallback;
+    /// Receives the normalized fraction of each file.
     RunCallback<const juce::File&, float, int> progressCallback;
+    /// Receives the result of each file.
     RunCallback<const AudioNormalizationResult&, int> resultCallback;
+    /// Receives each file a worker starts on.
     RunCallback<const juce::File&, int> startingCallback;
 
     /// Declared last, so the callbacks the jobs publish to outlive it.

@@ -19,9 +19,13 @@ namespace audiobatch
 namespace
 {
 struct AudioNormalizationFormatSupport {
+    /// Name of the audio format, such as "MP3 file".
     juce::String formatName;
+    /// The file extensions the format reads.
     juce::StringArray fileExtensions;
+    /// True when this build can normalize files of the format.
     bool canNormalize {false};
+    /// Why the format can or cannot be normalized, for the support dialog.
     juce::String detail;
 };
 

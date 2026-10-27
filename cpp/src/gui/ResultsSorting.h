@@ -39,9 +39,13 @@ public:
 private:
     void cacheBaseColumnNames();
 
+    /// Called when the user asks for a secondary sort by a column.
     SecondarySortCallback secondarySortRequested;
+    /// Describes the column under the mouse for the header tooltip.
     ColumnDescriber describeColumn;
+    /// Direction of the secondary sort that the header marks.
     bool secondarySortForwards {true};
+    /// The column the header marks as the secondary sort, or empty without one.
     std::optional<AudioFileTableColumn> secondarySortColumn;
     /// Column names without the secondary sort marker, keyed by JUCE column id.
     std::map<int, juce::String> baseColumnNames;
@@ -53,9 +57,13 @@ namespace results_sorting
 /// The primary and secondary sort columns of the results table.
 /// An empty column means no sort on that level.
 struct SortState {
+    /// The column the rows are sorted by first.
     std::optional<AudioFileTableColumn> primaryColumn;
+    /// True to sort the primary column in ascending order.
     bool primaryForwards {true};
+    /// The column that orders the rows with equal primary values.
     std::optional<AudioFileTableColumn> secondaryColumn;
+    /// True to sort the secondary column in ascending order.
     bool secondaryForwards {true};
     /// Returns the text the status column shows for a record, such as the message of its last operation.
     /// The status column sorts by this text when set, and by the analysis status otherwise.

@@ -44,7 +44,9 @@ public:
     }
 
 private:
+    /// The callback, or empty when none is set.
     std::function<void(Args...)> callback;
+    /// Guards the callback, which a worker copies while the message thread replaces it.
     juce::CriticalSection callbackLock;
 };
 
@@ -91,10 +93,13 @@ public:
     void waitForRunningJobs();
 
 private:
+    /// Runs the jobs.
     juce::ThreadPool threadPool;
+    /// Id of the current run, raised by every cancellation.
     std::atomic<int> currentRunId {0};
     /// The run asked to stop, or -1 when none was.
     std::atomic<int> stoppedRunId {-1};
+    /// How long cancelAndWait waits for the running jobs to finish.
     int shutdownTimeoutMilliseconds;
 };
 }  // namespace audiobatch

@@ -92,10 +92,15 @@ public:
     static constexpr int maximumConsecutiveFailures {3};
 
 private:
+    /// Length of the decoded audio in samples, which locates the final block.
     juce::int64 totalSamples;
+    /// Position of the first failed block before the final block, or -1 when there was none.
     juce::int64 failedBlockPosition {-1};
+    /// Position of the block at which decoding gave up, or -1 while it goes on.
     juce::int64 stoppedAt {-1};
+    /// Failed blocks before the final block.
     int failedBlocks {0};
+    /// Failed blocks in a row up to the last recorded block.
     int consecutiveFailures {0};
 };
 }  // namespace audiobatch

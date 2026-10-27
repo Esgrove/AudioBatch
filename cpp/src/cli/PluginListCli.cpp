@@ -28,7 +28,9 @@ enum class Column : std::uint8_t { name, manufacturer, type, format, version };
 
 /// The plugins of one group, with the label as first seen.
 struct Group {
+    /// The heading of the group, such as a manufacturer name.
     juce::String label;
+    /// The plugins in the group.
     std::vector<juce::PluginDescription> plugins;
 };
 
