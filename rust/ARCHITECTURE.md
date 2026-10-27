@@ -193,6 +193,8 @@ Blocking reads, such as the tags of the selected file and plugin scans, run on t
 Only one app runs at a time.
 `single_instance::claim` finds a running app through a port file in the data directory and a loopback socket,
 and hands it the paths when it answers with its greeting.
+The port file is readable only by the user and holds a random token that a launch must send before its paths,
+and a lock file makes launches that start at the same time decide one after the other.
 Otherwise this launch becomes the running app,
 and `listen_for_launches` opens the paths of later launches as if they were dropped onto the window.
 
