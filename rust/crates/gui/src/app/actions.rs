@@ -216,8 +216,11 @@ impl AppView {
         if let Some(run) = &mut self.run {
             run.completed = true;
         }
+        let cache = self.coordinator.as_ref().map(|coordinator| coordinator.cache());
         self.table.update(cx, |state, cx| {
-            state.delegate_mut().finish_interrupted_rows();
+            state
+                .delegate_mut()
+                .finish_cancelled_analysis(|path| cache.as_ref().and_then(|cache| cache.get_analysis(path)));
             cx.notify();
         });
         self.status = SharedString::from("Analysis cancelled");
