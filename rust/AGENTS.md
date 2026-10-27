@@ -75,33 +75,53 @@ and every crate inherits them with `.workspace = true`.
     Serato data comes from the `GEOB` frames of MP3, AIFF, and WAV files, and the `SERATO_*` comments of FLAC files.
   - `normalize.rs` computes the normalization gain and writes the normalized file.
     `aiff.rs` is its AIFF writer, `metadata.rs` copies the tags onto the output,
-    and `output_file.rs` commits the output and disposes of the replaced files.
+    and `output_file.rs` commits the output and disposes of the replaced files,
+    with `output_file/windows_recycle_bin.rs` telling whether a folder's files go to the Windows recycle bin.
+  - `operation.rs` holds the result of an operation that rewrites one file, and the cache update after it.
+  - `log_file.rs` sets up the `tracing` log file and the stderr output of both front ends,
+    and `atomic_write.rs` replaces small data files, such as the settings, atomically.
+  - `test_helpers.rs` holds the fixture builders that the unit tests of several modules share.
 - `crates/playback` (`audiobatch-playback`): the preview engine.
   A decode thread feeds an `rtrb` ring buffer that the `cpal` output callback reads,
   with `rubato` resampling when the device rate differs from the file rate.
   The callback can run the output through a `PreviewInsert`.
   `output/insert.rs` drives it with the pre-roll of its latency, fades, and the drain of its tail at the end.
   It has no GUI or plugin dependency, only the trait.
+  `lib.rs` holds the `Player`, `device.rs` the output device selection and stream configuration,
+  `engine.rs` the decode thread, `pipeline.rs` the conversion of a file to stereo frames at the device rate,
+  `output/mod.rs` the shared state and the callback renderer, and `preview_insert.rs` the `PreviewInsert` trait.
 - `crates/vst3-host` (`vst3-host`): VST3 hosting on top of the raw `vst3` bindings.
   `module.rs` loads bundles, `factory.rs` lists their classes,
   `instance.rs` holds the plugin lifecycle and the host side parameter changes of `set_parameter`,
   `processor.rs` runs audio processing on preallocated buffers, and `host_objects/` implements the host's COM objects.
   `thread.rs` holds the UI thread token and the dispatcher, and `ui_bound.rs` a value only the UI thread may use.
-  The `editor` feature adds the native editor windows in `editor/`, with an AppKit and a Win32 backend.
+  The `editor` feature adds the native editor windows in `editor/`, with an AppKit and a Win32 backend,
+  in `editor/macos.rs` and `editor/windows.rs`, with `editor/unsupported.rs` for the other platforms,
+  and `editor/plug_frame.rs` passes the size requests of a view to its window.
+  `host_objects/` holds the host application, the attribute lists and messages, the component handler,
+  the parameter changes, and the memory stream, one file each.
+  `discovery.rs` finds bundles on disk, `module_info.rs` reads their `moduleinfo.json` without loading them,
+  `platform_events.rs` runs the platform event loop in a process without a GUI framework,
+  `strings.rs` converts the fixed-size string fields of the VST3 structs, and `enums.rs` the enum constants.
   It is the only crate besides the test plugin that contains unsafe code.
 - `crates/plugins` (`audiobatch-plugins`): the plugin features, in safe code only.
   `scanner.rs` scans out of process through `scan_worker.rs`, `library.rs` keeps the known plugins,
   `chain.rs` the saved chain, `presets.rs` the named chain presets,
   `processing.rs` renders one file through a chain,
   `processing_coordinator.rs` runs batches on a worker pool, and `preview_chain.rs` runs the live chain in the preview.
-  `chain_signal.rs` holds the channel handling that processing and the preview share.
+  `chain_signal.rs` holds the channel handling that processing and the preview share,
+  `processing_chain.rs` the instances one processing worker renders with,
+  and `scan_protocol.rs` the messages between a scan and its worker process.
 - `crates/test-plugin` (`audiobatch-test-plugin`): dev-only fake VST3 plugins for the tests.
   `factory()` serves them inside the test process, and the `module` example builds them into a library
-  that tests wrap in a `.vst3` bundle, found under `target/<profile>/examples`.
+  that `bundle.rs` wraps in a `.vst3` bundle, found under `target/<profile>/examples`.
+  `factory.rs`, `controller.rs`, and `processor.rs` implement the COM interfaces of the fake plugins.
 - `crates/serato` (`serato-tags`): parsers for the Serato GEOB tags, extracted from the track-rename project.
   They take raw frame bytes and do no terminal printing, so any tag library and front end can use them.
   `overview.rs` parses the Overview tag strictly and defines its cache representation,
   and `colouring.rs` decodes the palette indices and computes the column colours of the waveform.
+  `markers.rs` parses Markers2 with the cue points, loops, and track color, `beatgrid.rs` the BeatGrid,
+  `autotags.rs` the Autotags with the BPM and gain, and `native.rs` the Serato comments of FLAC and Ogg files.
 - `crates/cli` (`audiobatch-cli`): the `audiobatch-rs` binary.
   Its options, JSON field names, and exit codes match the C++ `audiobatch` CLI,
   so `scripts/parity.sh` can compare the two directly.
@@ -111,18 +131,33 @@ and every crate inherits them with `.workspace = true`.
   `completion.rs` generates the scripts with clap, where the C++ CLI builds them from its own option tables,
   and both install them to the same per-user directories.
   Only the Rust CLI also supports elvish.
+  `args.rs` defines the arguments, `run.rs` the analysis and normalization workflow,
+  `output.rs` the table, CSV, and JSON output, `plugin_list.rs` the `list` subcommand,
+  and `messages.rs` the coloured log messages, which the log file also receives.
 - `crates/gui` (`audiobatch-gui`): the `AudioBatchRs` GUI binary, built on gpui-kit.
   It is the only crate that depends on gpui-kit, which is pinned to an exact version and upgraded by hand.
   `app/mod.rs` holds the main view state, `app/startup.rs` what it opens at startup,
   `app/analysis.rs` the analysis runs, `app/selection.rs` the selection, `app/gain.rs` the per-file gain,
   `app/actions.rs` the menu and transport actions, `app/normalize.rs` normalization, and `app/render.rs` the layout.
-  `plugins/` holds the live chain, the Plugin Chain and Plugin Manager windows, and the preview insert,
+  `app/preferences.rs` holds the Audio Settings window and the preview options,
+  and `app/tags.rs` the tags of the selected file with its Serato cue points and Overview.
+  `plugins/` holds the live chain in `live_chain.rs`,
+  the Plugin Chain and Plugin Manager windows in `chain_window.rs` and `manager_window.rs`,
+  the preview insert in `preview.rs`, and their texts in `labels.rs`,
   and `app/plugins.rs`, `app/process.rs`, and `app/preview.rs` connect them to the main view.
+  The views outside `app/` are `results.rs` for the table, `waveform.rs` for the waveform,
+  `controls.rs` and `info_panel.rs` for the controls column and the information panel,
+  and `settings_window.rs` for the Audio Settings window.
+  `menus.rs` defines the actions, the shortcuts, and the menu bar, `theme.rs` the palette and the fonts,
+  `settings.rs` the saved preferences, `normalization.rs` the normalization target and options,
+  `operation_run.rs` the progress of a normalization or processing run, and `files.rs` revealing files.
+  `single_instance.rs` hands the paths of a second launch to the running app,
+  `demo.rs` holds the data of the `--demo-rows` stress test, and `snapshot.rs` the `snapshot` feature.
   Its `build.rs` embeds the app icon from the root `assets` directory into the Windows executable.
   On macOS, `build.sh` and `install.sh` package it as `AudioBatchRs.app` through `create_mac_app_bundle` in `common.sh`.
 - `crates/test-fixtures`: a dev-only helper that locates the shared fixtures and lists their expected properties.
   It also locates the JUCE test VST3, lists the outputs that plugin must produce,
-  and holds `null_test`, which compares two decoded signals in 16-bit steps
+  and holds `null_test` in `null_test.rs`, which compares two decoded signals in 16-bit steps
   and finds the delay between them when they do not cancel.
 
 Keep the core and playback crates free of GUI dependencies,
