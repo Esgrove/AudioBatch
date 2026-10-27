@@ -56,6 +56,7 @@ public:
     ) const;
 
     [[nodiscard]] juce::Array<juce::PluginDescription> getKnownTypes() const;
+    [[nodiscard]] juce::Array<juce::PluginDescription> getKnownEffectTypes() const;
 
     [[nodiscard]] std::unique_ptr<juce::PluginListComponent> createScanComponent();
 

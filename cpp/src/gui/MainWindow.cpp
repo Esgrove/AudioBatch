@@ -574,7 +574,7 @@ void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu)
     menu.addSeparator();
 
     chain.getLibrary().reload();
-    pluginMenuTypes = chain.getLibrary().getKnownTypes();
+    pluginMenuTypes = chain.getLibrary().getKnownEffectTypes();
     juce::PopupMenu addSubmenu;
     juce::KnownPluginList::addToMenu(addSubmenu, pluginMenuTypes, juce::KnownPluginList::sortByManufacturer);
     menu.addSubMenu("Add Plugin", addSubmenu, !pluginMenuTypes.isEmpty());

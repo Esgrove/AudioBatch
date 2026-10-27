@@ -434,7 +434,7 @@ void LiveChain::showMenu(juce::Component& anchor)
 
     juce::PopupMenu addSubmenu;
     library.reload();
-    const auto types = library.getKnownTypes();
+    const auto types = library.getKnownEffectTypes();
     juce::KnownPluginList::addToMenu(addSubmenu, types, juce::KnownPluginList::sortByManufacturer);
     menu.addSubMenu("Add Plugin", addSubmenu, !types.isEmpty());
 
