@@ -278,7 +278,7 @@ impl PluginInstance {
             setup: None,
         };
         if separate_controller {
-            let component_state = instance.component_state(ui)?;
+            let component_state = instance.component_state(ui);
             instance.load_controller_component_state(ui, &component_state);
         }
         Ok(instance)
@@ -490,11 +490,14 @@ impl PluginInstance {
 
     /// Captures the component and controller state.
     ///
+    /// A plugin that reports a failure, such as a stateless plugin that does not implement saving,
+    /// gives whatever it wrote, often nothing, the way JUCE hosts treat it, so it can still be saved in a chain.
+    ///
     /// # Errors
     ///
-    /// Returns an error when the component cannot save its state.
+    /// Never fails at the moment, and keeps the `Result` so callers handle a future failure.
     pub fn state(&self, ui: &UiThread) -> Result<PluginState> {
-        let component = self.component_state(ui)?;
+        let component = self.component_state(ui);
         let controller = self.core.parts.controller.as_ref().map_or_else(Vec::new, |controller| {
             let stream = MemoryStream::create();
             let pointer = stream
@@ -512,10 +515,12 @@ impl PluginInstance {
 
     /// Restores a captured state into the component and the controller.
     /// Empty blobs are skipped, so an empty state keeps the plugin's defaults.
+    /// A plugin that refuses a state keeps its current settings and stays usable, the way JUCE hosts treat it,
+    /// since some plugins report a failure for a state they do not need, such as an empty one.
     ///
     /// # Errors
     ///
-    /// Returns an error when the plugin is active or the component refuses the state.
+    /// Returns an error when the plugin is active.
     pub fn set_state(&mut self, ui: &UiThread, state: &PluginState) -> Result<()> {
         self.ensure_reconfigurable()?;
         if !state.component.is_empty() {
@@ -524,9 +529,7 @@ impl PluginInstance {
                 .to_com_ptr::<IBStream>()
                 .map_or(std::ptr::null_mut(), |stream| stream.as_ptr());
             // SAFETY: the component and the stream are valid for the call.
-            if unsafe { self.core.parts.component.setState(pointer) } != kResultOk {
-                bail!("The plugin could not restore its saved state");
-            }
+            unsafe { self.core.parts.component.setState(pointer) };
             if self.core.parts.separate_controller {
                 self.load_controller_component_state(ui, &state.component);
             }
@@ -670,17 +673,15 @@ impl PluginInstance {
         Ok(())
     }
 
-    /// Captures the component state.
-    fn component_state(&self, _ui: &UiThread) -> Result<Vec<u8>> {
+    /// Captures the component state, which is whatever the plugin wrote, even when it reported a failure.
+    fn component_state(&self, _ui: &UiThread) -> Vec<u8> {
         let stream = MemoryStream::create();
         let pointer = stream
             .to_com_ptr::<IBStream>()
             .map_or(std::ptr::null_mut(), |stream| stream.as_ptr());
         // SAFETY: the component and the stream are valid for the call.
-        if unsafe { self.core.parts.component.getState(pointer) } != kResultOk {
-            bail!("The plugin could not save its state");
-        }
-        Ok(stream.data())
+        unsafe { self.core.parts.component.getState(pointer) };
+        stream.data()
     }
 
     /// Gives a separate controller the component state, so its parameters match the processor.
