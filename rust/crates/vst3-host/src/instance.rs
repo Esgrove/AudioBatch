@@ -507,7 +507,8 @@ impl PluginInstance {
         Ok(PluginState { component, controller })
     }
 
-    /// Restores a captured state into the component and the controller.
+    /// Restores a captured state into the component and the controller,
+    /// and returns false when the component refused its state.
     /// Empty blobs are skipped, so an empty state keeps the plugin's defaults.
     /// A plugin that refuses a state keeps its current settings and stays usable, the way JUCE hosts treat it,
     /// since some plugins report a failure for a state they do not need, such as an empty one.
@@ -515,15 +516,16 @@ impl PluginInstance {
     /// # Errors
     ///
     /// Returns an error when the plugin is active.
-    pub fn set_state(&mut self, ui: &UiThread, state: &PluginState) -> Result<()> {
+    pub fn set_state(&mut self, ui: &UiThread, state: &PluginState) -> Result<bool> {
         self.ensure_reconfigurable()?;
+        let mut accepted = true;
         if !state.component.is_empty() {
             let stream = MemoryStream::with_data(state.component.clone());
             let pointer = stream
                 .to_com_ptr::<IBStream>()
                 .map_or(std::ptr::null_mut(), |stream| stream.as_ptr());
             // SAFETY: the component and the stream are valid for the call.
-            unsafe { self.core.parts.component.setState(pointer) };
+            accepted = unsafe { self.core.parts.component.setState(pointer) } == kResultOk;
             if self.core.parts.separate_controller {
                 self.load_controller_component_state(ui, &state.component);
             }
@@ -536,7 +538,7 @@ impl PluginInstance {
             // SAFETY: the controller and the stream are valid for the call.
             unsafe { controller.setState(pointer) };
         }
-        Ok(())
+        Ok(accepted)
     }
 
     /// Sets a parameter to a normalized value between 0 and 1, the way a host automates it.
@@ -902,6 +904,7 @@ mod test_lifecycle {
             let deactivate = instance.deactivate(ui).map_err(|error| error.to_string());
             let set_state = instance
                 .set_state(ui, &PluginState::default())
+                .map(|_| ())
                 .map_err(|error| error.to_string());
             (instance, [deactivate, set_state])
         });
@@ -1048,9 +1051,9 @@ mod test_plugin_failures {
         })
         .expect("instances that refuse a state");
         let (gain_result, gain_state, failing_result, failing_state) = results;
-        assert_eq!(gain_result, Ok(()));
+        assert_eq!(gain_result, Ok(false));
         assert_eq!(gain_state.component, 1.0_f64.to_le_bytes());
-        assert_eq!(failing_result, Ok(()));
+        assert_eq!(failing_result, Ok(false));
         assert_eq!(
             failing_state.component,
             1.0_f64.to_le_bytes().get(..FAILING_STATE_BYTES).expect("prefix")
