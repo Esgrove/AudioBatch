@@ -361,6 +361,13 @@ public:
         return running;
     }
 
+    /// True once the worker process has gone away.
+    [[nodiscard]] bool hasLostConnection()
+    {
+        const std::scoped_lock lock(mutex);
+        return connectionLost;
+    }
+
     /// Sends a scan request to the worker. Returns false when the worker is no longer reachable.
     bool sendRequest(const juce::MemoryBlock& request)
     {
@@ -369,6 +376,8 @@ public:
 
     /// Waits a short while for the reply to the last request.
     /// Returns a timeout response when nothing arrived yet, so the caller can check for cancellation.
+    /// A reply wins over a lost connection that arrived with it,
+    /// since the worker finished the plugin before it went away and the plugin must not be blacklisted.
     PluginScanResponse waitForResponse()
     {
         std::unique_lock lock(mutex);
@@ -378,7 +387,7 @@ public:
         }
 
         PluginScanResponse response;
-        response.state = connectionLost ? PluginScanResponseState::connectionLost : PluginScanResponseState::gotResult;
+        response.state = gotResult ? PluginScanResponseState::gotResult : PluginScanResponseState::connectionLost;
         response.xml = std::move(resultXml);
         gotResult = false;
         return response;
@@ -497,6 +506,10 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
 
             case PluginScanResponseState::gotResult:
                 addDescriptions(xml.get(), result);
+                // A worker that went away after replying is relaunched for the next plugin.
+                if (worker->hasLostConnection()) {
+                    worker.reset();
+                }
                 return true;
         }
     }
