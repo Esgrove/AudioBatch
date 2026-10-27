@@ -418,7 +418,7 @@ int PluginChainEditor::rowIndexForPosition(const int containerY) const
 void PluginChainEditor::showAddPluginMenu()
 {
     liveChain.getLibrary().reload();
-    const auto types = liveChain.getLibrary().getKnownTypes();
+    const auto types = liveChain.getLibrary().getKnownEffectTypes();
 
     juce::PopupMenu menu;
     juce::KnownPluginList::addToMenu(menu, types, juce::KnownPluginList::sortByManufacturer);
@@ -446,7 +446,7 @@ void PluginChainEditor::updateHintLabel()
         return;
     }
 
-    const bool hasKnownPlugins = !liveChain.getLibrary().getKnownTypes().isEmpty();
+    const bool hasKnownPlugins = !liveChain.getLibrary().getKnownEffectTypes().isEmpty();
     hintLabel.setText(
         hasKnownPlugins ? "No plugins in chain. Use the + button to get started."
                         : "No plugins found. Use the Plugins menu to scan for installed plugins.",

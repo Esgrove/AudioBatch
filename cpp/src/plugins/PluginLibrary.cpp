@@ -48,6 +48,15 @@ juce::Array<juce::PluginDescription> PluginLibrary::getKnownTypes() const
     return knownPluginList.getTypes();
 }
 
+/// Returns the known effect plugins, the ones a chain can process audio with.
+/// Instruments are left out of the menus that add to a chain, like in the Rust version.
+juce::Array<juce::PluginDescription> PluginLibrary::getKnownEffectTypes() const
+{
+    auto types = knownPluginList.getTypes();
+    types.removeIf([](const juce::PluginDescription& type) { return type.isInstrument; });
+    return types;
+}
+
 /// Creates the plugin manager component that lists the known plugins and scans for new ones.
 /// Reloads the known-plugins list from its file first, so changes from a CLI rescan are kept.
 /// The caller owns the component and must destroy it before this library.
