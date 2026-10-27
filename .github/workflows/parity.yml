@@ -29,6 +29,9 @@ env:
   # which can cause illegal instruction errors on runners with different CPUs.
   RUSTFLAGS: ""
 
+permissions:
+  contents: read
+
 defaults:
   run:
     shell: bash
@@ -59,7 +62,7 @@ jobs:
         run: git lfs pull
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v10
+        uses: astral-sh/setup-uv@v10.3.2
 
       - name: Install Ninja and ccache
         env:
