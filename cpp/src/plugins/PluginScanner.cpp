@@ -28,11 +28,6 @@ constexpr auto audioUnitIdentifierPrefix {"AudioUnit:"};
 constexpr auto appleManufacturerCode {"appl"};
 constexpr auto vst3PathVariable {"VST3_PATH"};
 constexpr auto responsePollInterval {std::chrono::milliseconds(50)};
-/// Longest wait for the worker to scan one plugin.
-/// Without it, a plugin that hangs in the worker would block the scan for good:
-/// the CLI rescan cannot be cancelled, and the GUI scan would wait until the user cancels it.
-/// Generous, because a copy-protected plugin can show a licensing prompt in the worker while it is scanned.
-constexpr auto pluginScanTimeout {std::chrono::minutes(3)};
 
 /// Outcome of waiting for the reply to one scan request.
 enum class PluginScanResponseState : std::uint8_t { timeout, gotResult, connectionLost };
@@ -598,10 +593,11 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
                 if (std::chrono::steady_clock::now() >= deadline) {
                     // Skipped instead of blacklisted, so a plugin that was only slow is scanned again next time.
                     utils::logWarn(
-                        "Plugin scan timed out after {} minutes, skipping {}",
-                        std::chrono::duration_cast<std::chrono::minutes>(pluginScanTimeout).count(),
+                        "Plugin scan timed out after {} seconds, skipping {}",
+                        pluginScanTimeout.count(),
                         fileOrIdentifier.quoted()
                     );
+                    timedOutFiles.addIfNotAlreadyThere(fileOrIdentifier);
                     worker.reset();
                     return true;
                 }
