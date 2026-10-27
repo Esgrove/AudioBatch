@@ -35,6 +35,7 @@ void useTemporarySettings(juce::ApplicationProperties& properties, const Tempora
     options.applicationName = "PreviewChainTests";
     options.filenameSuffix = ".xml";
     options.folderName = temporary.getChildFile("properties").getFullPathName();
+    options.osxLibrarySubFolder = "Application Support";
     options.storageFormat = juce::PropertiesFile::storeAsXML;
     properties.setStorageParameters(options);
 }
@@ -775,6 +776,41 @@ private:
         }
         expectEquals(device.opens, device.closes);
         expect(device.callback == nullptr);
+
+        beginTest("Only a device chosen in the settings is saved, and the next session opens it on the first play");
+        std::unique_ptr<juce::XmlElement> savedState;
+        {
+            AudioPreviewPlayer player;
+            installTestAudioDevice(player.getDeviceManager(), device);
+            expect(player.load(audioUrl));
+            player.start();
+            expect(player.createDeviceState() == nullptr);
+            const auto setup = player.getDeviceManager().getAudioDeviceSetup();
+            player.stop();
+            renderTestAudioDevice(device);
+            player.updatePlaybackStatus();
+            expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+            // JUCE ignores choosing the setup the open device already has, so the choice is made while it is closed.
+            expect(player.getDeviceManager().setAudioDeviceSetup(setup, true).isEmpty());
+            savedState = player.createDeviceState();
+            expect(savedState != nullptr);
+        }
+        {
+            AudioPreviewPlayer player;
+            installTestAudioDevice(player.getDeviceManager(), device);
+            player.setSavedDeviceState(std::move(savedState));
+            expect(player.load(audioUrl));
+            expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+            player.start();
+            expect(player.isPlaying());
+            expectEquals(player.getOutputStatus().deviceName, juce::String("Test output"));
+            const auto restored = player.createDeviceState();
+            expect(restored != nullptr);
+            if (restored != nullptr) {
+                expectEquals(restored->getStringAttribute("audioOutputDeviceName"), juce::String("Test output"));
+            }
+        }
+        expectEquals(device.opens, device.closes);
     }
 
     /// Checks the status bar text of the output device for fractional rates and values that are not known yet.

@@ -113,8 +113,11 @@ bool AudioPreviewPlayer::openAudioDevice()
     setup.inputDeviceName.clear();
     setup.inputChannels.clear();
     setup.useDefaultInputChannels = false;
-    const auto error = setup.outputDeviceName.isEmpty() ? deviceManager.initialise(0, 2, nullptr, true, {}, &setup)
-                                                        : deviceManager.setAudioDeviceSetup(setup, false);
+    // The first open restores the device saved by the last session, or the default device when it is gone.
+    const auto savedState = std::exchange(savedDeviceState, nullptr);
+    const auto error = setup.outputDeviceName.isEmpty()
+        ? deviceManager.initialise(0, 2, savedState.get(), true, {}, &setup)
+        : deviceManager.setAudioDeviceSetup(setup, false);
     if (error.isNotEmpty() || deviceManager.getCurrentAudioDevice() == nullptr) {
         closeAudioDevice();
         reportError(error.isNotEmpty() ? error : juce::String("No audio output device is available"));
@@ -123,6 +126,19 @@ bool AudioPreviewPlayer::openAudioDevice()
     cancelPendingUpdate();
     handleAsyncUpdate();
     return deviceReady.load();
+}
+
+/// Keeps the device state of an earlier session, which the first open restores instead of the default device.
+/// Opens nothing by itself.
+void AudioPreviewPlayer::setSavedDeviceState(std::unique_ptr<juce::XmlElement> state)
+{
+    savedDeviceState = std::move(state);
+}
+
+/// Returns the device the user chose in the audio settings, for saving, or nullptr before any choice.
+std::unique_ptr<juce::XmlElement> AudioPreviewPlayer::createDeviceState() const
+{
+    return deviceManager.createStateXml();
 }
 
 /// Releases the driver on the message thread, retaining its selected configuration for the next explicit play.

@@ -63,6 +63,8 @@ public:
     bool setPluginPreviewEnabled(bool enabled);
     void setLatencyCompensated(bool enabled);
     void setInputGain(LinearGain gain, bool immediately = false);
+    void setSavedDeviceState(std::unique_ptr<juce::XmlElement> state);
+    [[nodiscard]] std::unique_ptr<juce::XmlElement> createDeviceState() const;
     bool refreshPluginChain();
     void togglePlayback();
     void updatePlaybackStatus();
@@ -144,6 +146,9 @@ private:
     std::atomic<bool> publishedPlaying {false};
     std::atomic<bool> publishedStopping {false};
     std::atomic<bool> publishedFailed {false};
+
+    /// Device state saved by an earlier session, used and cleared by the first open.
+    std::unique_ptr<juce::XmlElement> savedDeviceState;
 
     /// Tail length last applied to the preview source, so an unchanged tail does not take the rendering lock.
     juce::int64 appliedTailSamples {-1};

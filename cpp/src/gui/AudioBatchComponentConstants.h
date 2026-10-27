@@ -12,6 +12,9 @@
 
 namespace audiobatch
 {
+/// Settings key of the output device the user chose in the audio settings, restored by the first playback.
+constexpr auto audioDeviceStatePropertyKey {"audioDeviceState"};
+
 /// Items of the per-file context menu, whose values are the JUCE popup menu result ids.
 /// New items go at the end, and fileMenuItemFromId names the last one.
 enum class FileMenuItemId : std::uint8_t {
