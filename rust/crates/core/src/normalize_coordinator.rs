@@ -19,9 +19,9 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 
 use crate::cache::AnalysisCache;
 use crate::normalize::{
-    NormalizationOptions, NormalizationOutcome, NormalizationResult, batch_output_conflict_message,
-    find_batch_output_conflicts, normalize_file,
+    NormalizationOptions, batch_output_conflict_message, find_batch_output_conflicts, normalize_file,
 };
+use crate::operation::{OperationResult, update_cache};
 use crate::record::AnalysisRecord;
 
 /// Smallest progress step that is published, so the receiver is not flooded with events.
@@ -51,7 +51,7 @@ pub enum NormalizeEvent {
         /// Run the event belongs to.
         run_id: u64,
         /// The result.
-        result: Box<NormalizationResult>,
+        result: Box<OperationResult>,
     },
     /// Every file of the run has a result. Not sent for a cancelled run.
     Completed {
@@ -192,7 +192,7 @@ fn normalize_job(record: &AnalysisRecord, conflicting: bool, context: &RunContex
         return;
     }
     if conflicting {
-        let result = NormalizationResult::failure(&record.path, batch_output_conflict_message(&record.path));
+        let result = OperationResult::failure(&record.path, batch_output_conflict_message(&record.path));
         context.publish(NormalizeEvent::Finished {
             run_id: context.run_id,
             result: Box::new(result),
@@ -229,25 +229,6 @@ fn normalize_job(record: &AnalysisRecord, conflicting: bool, context: &RunContex
         context.publish(finished);
     }
     context.finish_file();
-}
-
-/// Keeps the cache in step with a committed output:
-/// a converted source leaves the cache, and an analyzed output is stored.
-/// A failed cache write only costs a re-analysis later, so it is reported and otherwise ignored.
-fn update_cache(cache: &AnalysisCache, source: &AnalysisRecord, result: &NormalizationResult) {
-    let Some(output) = result.output() else {
-        return;
-    };
-    if output.path != source.path
-        && let Err(error) = cache.remove_analysis(&source.path)
-    {
-        eprintln!("Could not update the cache: {error:#}");
-    }
-    if matches!(result.outcome, NormalizationOutcome::Succeeded { .. })
-        && let Err(error) = cache.store_analysis(output)
-    {
-        eprintln!("Could not update the cache: {error:#}");
-    }
 }
 
 #[cfg(test)]
@@ -298,7 +279,7 @@ mod test_normalize_coordinator {
     }
 
     /// Returns the results of the finished events.
-    fn results(events: &[NormalizeEvent]) -> Vec<&NormalizationResult> {
+    fn results(events: &[NormalizeEvent]) -> Vec<&OperationResult> {
         events
             .iter()
             .filter_map(|event| match event {
@@ -363,7 +344,7 @@ mod test_normalize_coordinator {
         let setup = setup(&directory);
         let (_, receiver) = setup.coordinator.start(vec![wav, flac], setup.options);
         let events = collect(&receiver);
-        let failed: Vec<&NormalizationResult> = results(&events)
+        let failed: Vec<&OperationResult> = results(&events)
             .into_iter()
             .filter(|result| result.error().is_some())
             .collect();

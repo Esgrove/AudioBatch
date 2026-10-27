@@ -10,8 +10,9 @@ use std::time::Instant;
 
 use audiobatch_core::normalize::{
     DEFAULT_TARGET_LUFS, DEFAULT_TARGET_PEAK_DBFS, MAXIMUM_TARGET_LUFS, MAXIMUM_TARGET_PEAK_DBFS, MINIMUM_TARGET_LUFS,
-    MINIMUM_TARGET_PEAK_DBFS, NormalizationOptions, NormalizationResult,
+    MINIMUM_TARGET_PEAK_DBFS, NormalizationOptions,
 };
+use audiobatch_core::operation::OperationResult;
 
 use crate::settings::{GuiSettings, NormalizeMode};
 
@@ -71,7 +72,7 @@ impl NormalizeRun {
     }
 
     /// Counts the result of one file and remembers its failure.
-    pub fn record(&mut self, result: &NormalizationResult) {
+    pub fn record(&mut self, result: &OperationResult) {
         self.finished += 1;
         if let Some(error) = result.error() {
             self.failures.push(format!("{}: {error}", file_name(&result.source)));
@@ -261,8 +262,8 @@ mod test_run {
 
     use super::*;
 
-    fn failure(name: &str) -> NormalizationResult {
-        NormalizationResult::failure(&PathBuf::from("/music").join(name), "Could not read")
+    fn failure(name: &str) -> OperationResult {
+        OperationResult::failure(&PathBuf::from("/music").join(name), "Could not read")
     }
 
     #[test]

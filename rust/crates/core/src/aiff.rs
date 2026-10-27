@@ -1,8 +1,8 @@
-//! Minimal AIFF writer for normalized output.
+//! Minimal AIFF writer for normalized and plugin-processed output.
 //!
 //! Writes uncompressed big-endian PCM in a `FORM` container with one `COMM` and one `SSND` chunk,
 //! at 8, 16, or 24 bits.
-//! Samples convert to integers by rounding the float scaled to the 32-bit range and then keeping the high bits.
+//! Float samples convert to integers by rounding the float scaled to the 32-bit range and then keeping the high bits.
 //! That is how JUCE converts them in the C++ application,
 //! and `scripts/compare_outputs.py` expects both applications to write the same sample values.
 //! The header is written with placeholder sizes first and patched in `finish`,
@@ -68,6 +68,27 @@ impl<W: Write + Seek> AiffWriter<W> {
     /// Returns an error when the channel count or lengths do not match,
     /// when the file would outgrow the AIFF size fields, or when writing fails.
     pub fn write_planar(&mut self, planes: &[&[f32]]) -> Result<()> {
+        self.write_frames(planes, float_to_int32)
+    }
+
+    /// Appends one block of planar PCM values at the writer's bit depth, one slice per channel,
+    /// such as -32768 to 32767 for 16 bits, for samples the caller has already quantized.
+    /// Values outside that range are clamped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the channel count or lengths do not match,
+    /// when the file would outgrow the AIFF size fields, or when writing fails.
+    pub fn write_planar_pcm(&mut self, planes: &[&[i32]]) -> Result<()> {
+        let bits = u32::from(self.bits_per_sample);
+        let maximum = (1_i32 << (bits - 1)) - 1;
+        let minimum = -maximum - 1;
+        let shift = 32 - bits;
+        self.write_frames(planes, |value: i32| value.clamp(minimum, maximum) << shift)
+    }
+
+    /// Appends one block of planar samples, converting each to a 32-bit integer whose high bits are written.
+    fn write_frames<T: Copy + Default>(&mut self, planes: &[&[T]], to_int32: impl Fn(T) -> i32) -> Result<()> {
         ensure!(
             planes.len() == usize::from(self.channels),
             "Expected {} channels of audio, got {}",
@@ -88,7 +109,7 @@ impl<W: Write + Seek> AiffWriter<W> {
         for frame in 0..frames {
             for plane in planes {
                 let sample = plane.get(frame).copied().unwrap_or_default();
-                let value = float_to_int32(sample);
+                let value = to_int32(sample);
                 let bytes = value.to_be_bytes();
                 self.scratch.extend(bytes.iter().take(bytes_per_sample));
             }
@@ -272,6 +293,25 @@ mod test_aiff_writer {
         assert_eq!(bytes.get(..4), Some(b"FORM".as_slice()));
         assert_eq!(bytes.get(4..8), Some((54_u32 + 8 - 8).to_be_bytes().as_slice()));
         assert_eq!(bytes.get(22..26), Some(2_u32.to_be_bytes().as_slice()));
+    }
+
+    #[test]
+    fn writes_quantized_values_unchanged_and_clamps_the_rest() {
+        let left = [32_767_i32, -32_768, 1, 40_000];
+        let right = [-1_i32, 0, -40_000, 256];
+        let mut writer = AiffWriter::new(Cursor::new(Vec::new()), 2, 44_100, 16).expect("starts writer");
+        writer.write_planar_pcm(&[&left, &right]).expect("writes");
+        let bytes = writer.finish().expect("finishes").into_inner();
+        let expected: Vec<u8> = [32_767_i16, -1, -32_768, 0, 1, -32_768, 32_767, 256]
+            .iter()
+            .flat_map(|value| value.to_be_bytes())
+            .collect();
+        assert_eq!(bytes.get(54..), Some(expected.as_slice()));
+
+        let mut writer = AiffWriter::new(Cursor::new(Vec::new()), 1, 44_100, 24).expect("starts writer");
+        writer.write_planar_pcm(&[&[-8_388_608, 8_388_607]]).expect("writes");
+        let bytes = writer.finish().expect("finishes").into_inner();
+        assert_eq!(bytes.get(54..), Some([0x80, 0, 0, 0x7F, 0xFF, 0xFF].as_slice()));
     }
 
     #[test]

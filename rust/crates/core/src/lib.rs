@@ -3,6 +3,7 @@
 //! Decodes audio files with symphonia, measures sample peak, true peak, and EBU R128 loudness with ebur128,
 //! builds the waveform overview in the same decode pass, and caches the results in SQLite.
 //! Normalizes analyzed files to a peak or loudness target as AIFF, carrying their tags and Serato data over.
+//! `OperationResult` reports what normalization and plugin processing did to each file.
 
 pub mod aiff;
 pub mod analysis;
@@ -14,6 +15,7 @@ pub mod format;
 pub mod metadata;
 pub mod normalize;
 pub mod normalize_coordinator;
+pub mod operation;
 pub mod output_file;
 pub mod record;
 pub mod sorting;
@@ -26,6 +28,7 @@ pub use analysis::analyze_file;
 pub use cache::AnalysisCache;
 pub use coordinator::{AnalysisCoordinator, AnalysisEvent};
 pub use normalize_coordinator::{NormalizeCoordinator, NormalizeEvent};
+pub use operation::{OperationOutcome, OperationResult};
 pub use record::{AnalysisOptions, AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory};
 pub use serato_tags;
 pub use sorting::SortMode;
