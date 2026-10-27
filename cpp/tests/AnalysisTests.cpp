@@ -128,6 +128,13 @@ constexpr std::array toneFixtures {
         .lossy = true,
     },
     ToneFixture {
+        .fileName = "sine_stereo_44100_192k_no_xing.mp3",
+        .channels = 2,
+        .sampleRate = 44'100,
+        .bitsPerSample = 16,
+        .lossy = true,
+    },
+    ToneFixture {
         .fileName = "sine_stereo_48000.ogg",
         .channels = 2,
         .sampleRate = 48'000,

@@ -32,6 +32,9 @@ constexpr double intersampleFixtureLoudness {-2.67};
 constexpr juce::int64 clickFixturePosition {11'025};
 /// Length of the click fixtures in samples, which is half a second at 44.1 kHz.
 constexpr juce::int64 clickFixtureLength {22'050};
+/// Decoded length of the MP3 tone without the Xing frame:
+/// its 40 frames of 1152 samples without the 529 samples of decoder delay.
+constexpr juce::int64 noXingFixtureLength {(40 * 1152) - 529};
 
 /// Observes simulated driver ownership without touching hardware. Must outlive the installed device manager.
 struct TestAudioDeviceState {

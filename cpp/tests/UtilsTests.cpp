@@ -1,6 +1,7 @@
 /// Tests for the shared helpers in AppInfo, FileUtils, AudioFormatUtils, ThreadUtils, ConsolePrint,
 /// and DecodeFailureTracker.
 
+#include "analysis/BitDepthDetection.h"
 #include "analysis/DecodeFailureTracker.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
@@ -522,7 +523,21 @@ private:
                 const auto sine = utils::createAudioReader(fixtureFile(fixtureName));
                 expect(sine != nullptr && sine->lengthInSamples == 44'100, fixtureName);
             }
+
+            const auto noXing = utils::createAudioReader(fixtureFile("sine_stereo_44100_192k_no_xing.mp3"));
+            expect(noXing != nullptr && noXing->lengthInSamples == noXingFixtureLength);
         }
+
+#if JUCE_MAC
+        beginTest("AAC files decode without the priming and padding recorded in the MP4 edit list");
+        {
+            const auto aac = utils::createAudioReader(fixtureFile("sine_stereo_44100_aac.m4a"));
+            expect(aac != nullptr && aac->lengthInSamples == 44'100);
+            if (aac != nullptr) {
+                expectEquals(analysis::resolveSourceBitsPerSample(*aac, fixtureFile("sine_stereo_44100_aac.m4a")), 0);
+            }
+        }
+#endif
     }
 
     /// Checks moving to the trash and the backups of originals, without touching the system trash.

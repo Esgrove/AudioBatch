@@ -50,6 +50,16 @@ pub const SERATO_OVERVIEW_SLICES: usize = 240;
 /// Colours of the bands in the Serato Overview of the Serato fixtures, as `0xRRGGBB` values.
 pub const SERATO_OVERVIEW_BANDS: [u32; 6] = [0xFF_0000, 0xFF_FF00, 0x00_FF00, 0x00_FFFF, 0x00_00FF, 0xFF_00FF];
 
+/// File name of the AAC tone, whose priming and padding only the MP4 edit list records.
+pub const AAC_FIXTURE: &str = "sine_stereo_44100_aac.m4a";
+
+/// File name of the MP3 tone without the Xing frame, so no header states its delay or its length.
+pub const NO_XING_MP3_FIXTURE: &str = "sine_stereo_44100_192k_no_xing.mp3";
+
+/// Decoded length of the MP3 tone without the Xing frame:
+/// its 40 frames of 1152 samples without the 529 samples of decoder delay, as both applications decode it.
+pub const NO_XING_MP3_LENGTH: u64 = 40 * 1152 - 529;
+
 /// Allowed level difference for lossless fixtures, in dB or LU.
 pub const LOSSLESS_TOLERANCE: f64 = 0.05;
 
@@ -92,7 +102,7 @@ impl ToneFixture {
 /// The tone fixtures and what analysis should report for them.
 ///
 /// MP3 and Ogg Vorbis files report the fixed default of 16 bits, since the formats store no source bit depth.
-pub const TONE_FIXTURES: [ToneFixture; 15] = [
+pub const TONE_FIXTURES: [ToneFixture; 17] = [
     tone("sine_stereo_44100_16.wav", 2, 44_100, 16, false),
     tone("sine_stereo_48000_24.wav", 2, 48_000, 24, false),
     tone("sine_mono_44100_16.wav", 1, 44_100, 16, false),
@@ -108,6 +118,8 @@ pub const TONE_FIXTURES: [ToneFixture; 15] = [
     tone("sine_joint_stereo_44100_192k.mp3", 2, 44_100, 16, true),
     tone("sine_mono_44100_128k.mp3", 1, 44_100, 16, true),
     tone("sine_stereo_48000.ogg", 2, 48_000, 16, true),
+    tone(NO_XING_MP3_FIXTURE, 2, 44_100, 16, true),
+    tone(AAC_FIXTURE, 2, 44_100, 0, true),
 ];
 
 /// Returns the absolute path of the fixtures directory.
