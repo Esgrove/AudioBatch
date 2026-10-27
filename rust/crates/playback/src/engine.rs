@@ -78,6 +78,9 @@ pub fn run_decode_thread(
     let mut pipeline: Option<(PathBuf, FramePipeline)> = None;
     let mut pending: Vec<Frame> = Vec::with_capacity(16_384);
     let mut cursor = 0;
+    // The end is published only once the last frames are in the ring buffer,
+    // or the callback could stop playback while the tail is still waiting in `pending`.
+    let mut finish_after_pending: Option<u32> = None;
 
     loop {
         let has_pending = cursor < pending.len();
@@ -109,23 +112,19 @@ pub fn run_decode_thread(
                 } => {
                     pending.clear();
                     cursor = 0;
+                    finish_after_pending = None;
                     pipeline = open_pipeline(path, generation, start_seconds, output_rate, events, shared);
                 }
                 Command::Seek { seconds, generation } => {
                     pending.clear();
                     cursor = 0;
-                    if let Some((path, current)) = &mut pipeline
-                        && let Err(error) = current.seek(seconds, generation)
-                    {
-                        let _ = events.send(PlayerEvent::Error {
-                            path: Some(path.clone()),
-                            message: format!("{error:#}"),
-                        });
-                    }
+                    finish_after_pending = None;
+                    pipeline = seek_pipeline(pipeline.take(), seconds, generation, events, shared);
                 }
                 Command::Unload => {
                     pending.clear();
                     cursor = 0;
+                    finish_after_pending = None;
                     pipeline = None;
                 }
                 Command::Shutdown => return,
@@ -139,17 +138,13 @@ pub fn run_decode_thread(
             if let Some((path, current)) = &mut pipeline {
                 match current.produce(&mut pending) {
                     Ok(true) => {}
-                    Ok(false) => shared
-                        .finished_generation
-                        .store(current.generation(), Ordering::Release),
+                    Ok(false) => finish_after_pending = Some(current.generation()),
                     Err(error) => {
                         let _ = events.send(PlayerEvent::Error {
                             path: Some(path.clone()),
                             message: format!("{error:#}"),
                         });
-                        shared
-                            .finished_generation
-                            .store(current.generation(), Ordering::Release);
+                        finish_after_pending = Some(current.generation());
                         pipeline = None;
                     }
                 }
@@ -162,11 +157,17 @@ pub fn run_decode_thread(
             }
             cursor += 1;
         }
+        if cursor >= pending.len()
+            && let Some(generation) = finish_after_pending.take()
+        {
+            shared.finished_generation.store(generation, Ordering::Release);
+        }
     }
 }
 
 /// Opens the pipeline for a load command and publishes the stream properties.
 /// Reports a failure as an event and returns `None`.
+/// A load that a newer one has replaced is skipped, so it never publishes the properties of the wrong file.
 fn open_pipeline(
     path: PathBuf,
     generation: u32,
@@ -175,7 +176,15 @@ fn open_pipeline(
     events: &Sender<PlayerEvent>,
     shared: &SharedState,
 ) -> Option<(PathBuf, FramePipeline)> {
-    match FramePipeline::open(&path, output_rate, generation, start_seconds) {
+    let is_current = || shared.load_generation.load(Ordering::Acquire) == generation;
+    if !is_current() {
+        return None;
+    }
+    let opened = FramePipeline::open(&path, output_rate, generation, start_seconds);
+    if !is_current() {
+        return None;
+    }
+    match opened {
         Ok(pipeline) => {
             let info = pipeline.info();
             let frames = info.expected_frames.unwrap_or(0);
@@ -192,6 +201,41 @@ fn open_pipeline(
         }
         Err(error) => {
             shared.playing.store(false, Ordering::Relaxed);
+            shared.finished_generation.store(generation, Ordering::Release);
+            let _ = events.send(PlayerEvent::Error {
+                path: Some(path),
+                message: format!("{error:#}"),
+            });
+            None
+        }
+    }
+}
+
+/// Moves the pipeline to a new time and publishes the target as the playhead position.
+/// A failed seek, or a seek without an open file, finishes the generation and stops playback,
+/// so the player does not wait forever for frames that never come.
+fn seek_pipeline(
+    pipeline: Option<(PathBuf, FramePipeline)>,
+    seconds: f64,
+    generation: u32,
+    events: &Sender<PlayerEvent>,
+    shared: &SharedState,
+) -> Option<(PathBuf, FramePipeline)> {
+    let Some((path, mut current)) = pipeline else {
+        shared.finished_generation.store(generation, Ordering::Release);
+        return None;
+    };
+    match current.seek(seconds, generation) {
+        Ok(()) => {
+            if shared.generation.load(Ordering::Acquire) == generation {
+                let target = (seconds.max(0.0) * f64::from(current.info().sample_rate)) as u64;
+                shared.position.store(target, Ordering::Relaxed);
+            }
+            Some((path, current))
+        }
+        Err(error) => {
+            shared.playing.store(false, Ordering::Relaxed);
+            shared.finished_generation.store(generation, Ordering::Release);
             let _ = events.send(PlayerEvent::Error {
                 path: Some(path),
                 message: format!("{error:#}"),
