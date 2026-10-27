@@ -19,13 +19,12 @@ use std::thread::JoinHandle;
 
 use anyhow::{Context, Result, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{BufferSize, Device, FromSample, SampleFormat, SizedSample, Stream, StreamConfig};
-use crossbeam_channel::{Receiver, Sender, unbounded};
+use cpal::{BufferSize, Device, ErrorKind, FromSample, SampleFormat, SizedSample, Stream, StreamConfig};
+use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use rtrb::RingBuffer;
 
 pub use device::{DeviceCapabilities, OutputConfig, device_capabilities};
 pub use engine::PlayerEvent;
-pub use pipeline::{Frame, FramePipeline};
 
 use device::{device_display_name, find_device, stream_config};
 use engine::{Command, run_decode_thread};
@@ -34,6 +33,9 @@ use output::{NO_GENERATION, OutputRenderer, SharedState};
 /// Ring buffer length in seconds of output audio.
 /// Long enough to ride out a slow disk, short enough that a seek drops little decoded audio.
 const BUFFER_SECONDS: f64 = 0.5;
+
+/// Output stream errors kept until the next poll. Later errors are dropped when it is full.
+const STREAM_ERROR_CAPACITY: usize = 8;
 
 /// Read-only view of the playback position, cheap to clone and safe to read from any thread.
 ///
@@ -48,6 +50,8 @@ pub struct Player {
     shared: Arc<SharedState>,
     commands: Sender<Command>,
     events: Receiver<PlayerEvent>,
+    /// Errors from the stream error callback, formatted on the GUI thread instead of the audio thread.
+    stream_errors: Receiver<cpal::Error>,
     decode_thread: Option<JoinHandle<()>>,
     _stream: Stream,
     device_name: String,
@@ -56,6 +60,14 @@ pub struct Player {
     buffer_size: Option<u32>,
     next_generation: u32,
     loaded_path: Option<PathBuf>,
+}
+
+/// The state the stream error callback needs.
+/// The callback can run on the audio thread, so it only stores atomics.
+/// It sends the error unformatted through a bounded channel, which does not allocate.
+struct StreamErrors {
+    shared: Arc<SharedState>,
+    sender: Sender<cpal::Error>,
 }
 
 impl PlayheadHandle {
@@ -120,7 +132,12 @@ impl Player {
         let (producer, consumer) = RingBuffer::new(capacity.max(1024));
         let renderer = OutputRenderer::new(Arc::clone(&shared), consumer, channels);
         let (event_sender, events) = unbounded();
-        let stream = build_stream(&device, &config, sample_format, renderer, event_sender.clone())?;
+        let (stream_error_sender, stream_errors) = bounded(STREAM_ERROR_CAPACITY);
+        let errors = StreamErrors {
+            shared: Arc::clone(&shared),
+            sender: stream_error_sender,
+        };
+        let stream = build_stream(&device, &config, sample_format, renderer, errors)?;
         stream.play().context("Could not start the output stream")?;
 
         let (commands, command_receiver) = unbounded();
@@ -136,6 +153,7 @@ impl Player {
             shared,
             commands,
             events,
+            stream_errors,
             decode_thread: Some(decode_thread),
             _stream: stream,
             device_name: device_display_name(&device),
@@ -179,6 +197,7 @@ impl Player {
     /// Opening happens on the decode thread, which reports the result as an event.
     pub fn load(&mut self, path: &Path, start_seconds: f64, play: bool) {
         let generation = self.advance_generation();
+        self.shared.load_generation.store(generation, Ordering::Release);
         self.shared.source_rate.store(0, Ordering::Relaxed);
         self.shared.source_frames.store(0, Ordering::Relaxed);
         self.shared.position.store(0, Ordering::Relaxed);
@@ -207,11 +226,13 @@ impl Player {
         if self.loaded_path.is_none() {
             return;
         }
-        let at_end = self.shared.finished_generation.load(Ordering::Acquire)
-            == self.shared.generation.load(Ordering::Acquire)
-            && self
-                .duration_seconds()
-                .is_some_and(|duration| self.position_seconds() >= duration - 0.01);
+        let generation = self.shared.generation.load(Ordering::Acquire);
+        let ended = self.shared.ended_generation.load(Ordering::Acquire) == generation;
+        let at_end = ended
+            || (self.shared.finished_generation.load(Ordering::Acquire) == generation
+                && self
+                    .duration_seconds()
+                    .is_some_and(|duration| self.position_seconds() >= duration - 0.01));
         if at_end {
             self.seek(0.0);
         }
@@ -304,10 +325,18 @@ impl Player {
         self.shared.underruns.load(Ordering::Relaxed)
     }
 
-    /// Returns the events since the last call, including the end of playback.
+    /// Returns the events since the last call, including output errors and the end of playback.
     #[must_use]
     pub fn poll_events(&self) -> Vec<PlayerEvent> {
         let mut events: Vec<PlayerEvent> = self.events.try_iter().collect();
+        events.extend(self.stream_errors.try_iter().map(|error| PlayerEvent::Error {
+            path: None,
+            message: if is_stream_lost(error.kind()) {
+                format!("The audio output stopped: {error}")
+            } else {
+                format!("Audio output error: {error}")
+            },
+        }));
         if self.shared.ended.swap(false, Ordering::AcqRel) {
             events.push(PlayerEvent::Ended);
         }
@@ -349,14 +378,14 @@ fn build_stream(
     config: &StreamConfig,
     sample_format: SampleFormat,
     renderer: OutputRenderer,
-    events: Sender<PlayerEvent>,
+    errors: StreamErrors,
 ) -> Result<Stream> {
     match sample_format {
-        SampleFormat::F32 => build_typed_stream::<f32>(device, config, renderer, events),
-        SampleFormat::F64 => build_typed_stream::<f64>(device, config, renderer, events),
-        SampleFormat::I16 => build_typed_stream::<i16>(device, config, renderer, events),
-        SampleFormat::I32 => build_typed_stream::<i32>(device, config, renderer, events),
-        SampleFormat::U16 => build_typed_stream::<u16>(device, config, renderer, events),
+        SampleFormat::F32 => build_typed_stream::<f32>(device, config, renderer, errors),
+        SampleFormat::F64 => build_typed_stream::<f64>(device, config, renderer, errors),
+        SampleFormat::I16 => build_typed_stream::<i16>(device, config, renderer, errors),
+        SampleFormat::I32 => build_typed_stream::<i32>(device, config, renderer, errors),
+        SampleFormat::U16 => build_typed_stream::<u16>(device, config, renderer, errors),
         other => bail!("Unsupported output sample format {other}"),
     }
 }
@@ -366,7 +395,7 @@ fn build_typed_stream<T>(
     device: &Device,
     config: &StreamConfig,
     mut renderer: OutputRenderer,
-    events: Sender<PlayerEvent>,
+    errors: StreamErrors,
 ) -> Result<Stream>
 where
     T: SizedSample + FromSample<f32>,
@@ -375,13 +404,27 @@ where
         .build_output_stream(
             *config,
             move |output: &mut [T], _| renderer.render(output, T::from_sample),
-            move |error| {
-                let _ = events.send(PlayerEvent::Error {
-                    path: None,
-                    message: format!("Audio output error: {error}"),
-                });
+            move |error: cpal::Error| {
+                if matches!(
+                    error.kind(),
+                    ErrorKind::Xrun | ErrorKind::DeviceChanged | ErrorKind::RealtimeDenied
+                ) {
+                    return;
+                }
+                if is_stream_lost(error.kind()) {
+                    errors.shared.playing.store(false, Ordering::Relaxed);
+                }
+                let _ = errors.sender.try_send(error);
             },
             None,
         )
         .context("Could not open the output stream")
+}
+
+/// Returns true for the errors after which the stream no longer plays, such as a disconnected device.
+const fn is_stream_lost(kind: ErrorKind) -> bool {
+    matches!(
+        kind,
+        ErrorKind::DeviceNotAvailable | ErrorKind::StreamInvalidated | ErrorKind::HostUnavailable
+    )
 }

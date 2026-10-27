@@ -23,6 +23,8 @@ const UNITY_GAIN_BITS: u32 = 0x3F80_0000;
 pub struct SharedState {
     /// Current load or seek. Frames of other generations are stale.
     pub generation: AtomicU32,
+    /// Generation of the latest load. The decode thread skips older loads and does not publish their properties.
+    pub load_generation: AtomicU32,
     /// True while the user wants audio to play.
     pub playing: AtomicBool,
     /// Linear output gain, stored as `f32` bits.
@@ -37,6 +39,8 @@ pub struct SharedState {
     pub finished_generation: AtomicU32,
     /// Set by the callback when playback ran to the end, cleared when read.
     pub ended: AtomicBool,
+    /// Generation whose playback ran to the end, so playing again starts over.
+    pub ended_generation: AtomicU32,
     /// Count of callbacks that ran out of buffered audio while playing.
     pub underruns: AtomicU64,
     /// Frames the last audio callback asked for, the device buffer size in practice, 0 before the first callback.
@@ -56,6 +60,7 @@ impl SharedState {
     pub const fn new() -> Self {
         Self {
             generation: AtomicU32::new(NO_GENERATION),
+            load_generation: AtomicU32::new(NO_GENERATION),
             playing: AtomicBool::new(false),
             gain_bits: AtomicU32::new(UNITY_GAIN_BITS),
             position: AtomicU64::new(0),
@@ -63,6 +68,7 @@ impl SharedState {
             source_frames: AtomicU64::new(0),
             finished_generation: AtomicU32::new(NO_GENERATION),
             ended: AtomicBool::new(false),
+            ended_generation: AtomicU32::new(NO_GENERATION),
             callback_frames: AtomicU32::new(0),
             underruns: AtomicU64::new(0),
         }
@@ -94,6 +100,7 @@ impl OutputRenderer {
 
     /// Fills an interleaved device buffer, converting each sample with `convert`.
     /// Outputs silence while paused, before the first frame of the current generation arrives, and after the end.
+    /// Stale frames are dropped while paused too, so a paused seek leaves room for the new position.
     pub fn render<T: Copy>(&mut self, output: &mut [T], convert: impl Fn(f32) -> T) {
         let generation = self.shared.generation.load(Ordering::Acquire);
         let playing = self.shared.playing.load(Ordering::Relaxed);
@@ -106,6 +113,9 @@ impl OutputRenderer {
             Ordering::Relaxed,
         );
 
+        if !playing {
+            self.drop_stale_frames(generation);
+        }
         for device_frame in output.chunks_mut(channels) {
             let frame = if playing { self.next_frame(generation) } else { None };
             if playing && frame.is_none() {
@@ -124,6 +134,7 @@ impl OutputRenderer {
         if playing && ran_out {
             if self.shared.finished_generation.load(Ordering::Acquire) == generation && generation != NO_GENERATION {
                 self.shared.playing.store(false, Ordering::Relaxed);
+                self.shared.ended_generation.store(generation, Ordering::Release);
                 self.shared.ended.store(true, Ordering::Release);
             } else {
                 self.shared.underruns.fetch_add(1, Ordering::Relaxed);
@@ -139,6 +150,13 @@ impl OutputRenderer {
             }
         }
         None
+    }
+
+    /// Drops the frames of older generations at the front of the buffer without consuming current ones.
+    fn drop_stale_frames(&mut self, generation: u32) {
+        while self.consumer.peek().is_ok_and(|frame| frame.generation != generation) {
+            let _ = self.consumer.pop();
+        }
     }
 }
 
@@ -215,6 +233,20 @@ mod test_output_renderer {
         renderer.render(&mut output, |sample| sample);
         assert!(!shared.playing.load(Ordering::Relaxed));
         assert!(shared.ended.load(Ordering::Relaxed));
+        assert_eq!(shared.ended_generation.load(Ordering::Relaxed), 3);
+    }
+
+    #[test]
+    fn paused_output_drops_stale_frames_and_keeps_current_ones() {
+        let (mut renderer, shared) = renderer(&[frame(1, 0, 0.9), frame(1, 1, 0.9), frame(2, 50, 0.5)], 2);
+        shared.generation.store(2, Ordering::Relaxed);
+        let mut output = [0.0_f32; 2];
+        renderer.render(&mut output, |sample| sample);
+        assert_eq!(output, [0.0; 2]);
+        assert_eq!(renderer.consumer.slots(), 1);
+        shared.playing.store(true, Ordering::Relaxed);
+        renderer.render(&mut output, |sample| sample);
+        assert_eq!(output, [0.5, -0.5]);
     }
 
     #[test]

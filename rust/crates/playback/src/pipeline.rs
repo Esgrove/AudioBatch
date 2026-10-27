@@ -33,7 +33,6 @@ pub struct Frame {
 pub struct FramePipeline {
     decoder: AudioFileDecoder,
     generation: u32,
-    output_rate: u32,
     /// Source position of the next decoded frame.
     position: u64,
     /// Decoded frames before this source position are dropped, for sample-accurate seeks.
@@ -73,7 +72,6 @@ impl FramePipeline {
         let mut pipeline = Self {
             decoder,
             generation,
-            output_rate,
             position: 0,
             skip_until: 0,
             resampler,
@@ -101,12 +99,6 @@ impl FramePipeline {
     #[must_use]
     pub const fn is_finished(&self) -> bool {
         self.finished
-    }
-
-    /// Returns the output sample rate.
-    #[must_use]
-    pub const fn output_rate(&self) -> u32 {
-        self.output_rate
     }
 
     /// Moves to the given time and starts tagging frames with a new generation.
