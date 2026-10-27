@@ -197,7 +197,10 @@ build_mac_app() {
     GUI_APP_DESTINATION="$REPO/$GUI_APP_BUNDLE"
     CLI_APP_DESTINATION="$REPO/$CLI_BINARY_NAME"
 
-    rm -rf "${GUI_APP_DESTINATION:?}"
+    # A CLI only build keeps the app of an earlier full build.
+    if [ "$CLI_ONLY" != true ]; then
+        rm -rf "${GUI_APP_DESTINATION:?}"
+    fi
     rm -f "$CLI_APP_DESTINATION"
 
     if [ "$USE_XCODE" = true ]; then
@@ -240,7 +243,10 @@ build_windows_app() {
     GUI_EXECUTABLE="$REPO/AudioBatchApp.exe"
     CLI_EXECUTABLE="$REPO/$CLI_EXE"
 
-    rm -f "$GUI_EXECUTABLE" "$CLI_EXECUTABLE"
+    if [ "$CLI_ONLY" != true ]; then
+        rm -f "$GUI_EXECUTABLE"
+    fi
+    rm -f "$CLI_EXECUTABLE"
 
     if [ "$USE_NINJA" = true ]; then
         ccache_zero_stats

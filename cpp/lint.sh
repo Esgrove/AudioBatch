@@ -216,6 +216,9 @@ while IFS= read -r source; do
 done < <(collect_sources)
 
 if [ "${#SOURCES[@]}" -eq 0 ]; then
+    if [ "$FUZZ" = true ]; then
+        print_error_and_exit "No fuzz harnesses found in $REPO/tests/fuzz"
+    fi
     print_green "No $FILE_SELECTION C++ sources to lint"
     exit 0
 fi
@@ -227,7 +230,7 @@ LINTED_SOURCES=()
 for source in "${SOURCES[@]}"; do
     if in_compile_database "$source"; then
         LINTED_SOURCES+=("$source")
-    elif [[ "$source" == "$REPO/tests/fuzz/"* ]]; then
+    elif [[ "$source" == "$REPO/tests/fuzz/"* ]] && [ "$FUZZ" != true ]; then
         print_yellow "Skipping $source, which only the macos-fuzz preset builds"
     elif [[ "$source" == "$ROOT/test-plugin/"* ]]; then
         print_yellow "Skipping $source, which only a build with the tests enabled has"

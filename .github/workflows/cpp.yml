@@ -79,7 +79,7 @@ jobs:
             cpp/cmake-build-mac-release
             cpp/cmake-build-windows-debug
             cpp/cmake-build-windows-release
-          key: ${{ runner.os }}-${{ matrix.build-type }}-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'test-plugin/CMakeLists.txt') }}
+          key: ${{ runner.os }}-${{ matrix.build-type }}-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'cpp/cmake/*.cmake', 'test-plugin/CMakeLists.txt') }}
           restore-keys: ${{ runner.os }}-${{ matrix.build-type }}-cmake-
 
       - name: Build
@@ -174,7 +174,7 @@ jobs:
             cpp/cmake-build-mac-release
             cpp/cmake-build-windows-debug
             cpp/cmake-build-windows-release
-          key: ${{ runner.os }}-Debug-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'test-plugin/CMakeLists.txt') }}
+          key: ${{ runner.os }}-Debug-cmake-${{ steps.juce.outputs.commit }}-${{ hashFiles('cpp/CMakeLists.txt', 'cpp/CMakePresets.json', 'cpp/cmake/*.cmake', 'test-plugin/CMakeLists.txt') }}
           restore-keys: ${{ runner.os }}-Debug-cmake-
 
       # clang-tidy only needs the compile database and the generated JUCE and binary data headers,

@@ -55,8 +55,11 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.2
 
+      # The folder is emptied first, so a file the script no longer writes shows up as deleted.
       - name: Regenerate the expected outputs
-        run: uv run fixtures/plugin_expected.py
+        run: |
+          rm -rf fixtures/plugin_expected
+          uv run fixtures/plugin_expected.py
 
       - name: Check for differences
         run: |
