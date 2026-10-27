@@ -522,6 +522,29 @@ impl PluginInstance {
         Ok(())
     }
 
+    /// Sets a parameter to a normalized value between 0 and 1, the way a host automates it.
+    ///
+    /// The controller takes the value at once.
+    /// The processor gets it with the next block of a processor handle,
+    /// or with `flush_parameter_edits` while the plugin is active and no handle exists.
+    /// Values outside 0 to 1 are clamped.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the plugin has no edit controller or the controller refuses the value.
+    pub fn set_parameter(&self, _ui: &UiThread, id: u32, normalized: f64) -> Result<()> {
+        let Some(controller) = &self.core.parts.controller else {
+            bail!("The plugin has no edit controller");
+        };
+        let value = normalized.clamp(0.0, 1.0);
+        // SAFETY: the controller is valid for the call.
+        if unsafe { controller.setParamNormalized(id, value) } != kResultOk {
+            bail!("The plugin refused the value {value} for parameter {id}");
+        }
+        self.core.edits.force_push(ParameterEdit { id, value });
+        Ok(())
+    }
+
     /// Delivers queued parameter edits to the processor with a zero-length `process` call,
     /// so that a following `state` includes them.
     ///
@@ -963,7 +986,7 @@ mod test_buses {
 #[cfg(test)]
 mod test_processing {
     use audiobatch_test_plugin::{
-        DELAY_LATENCY, ECHO_DELAY, ECHO_LEVEL, EDIT_TRIGGER_PARAMETER, INITIAL_CONTROLLER_STATE, Kind,
+        DELAY_LATENCY, ECHO_DELAY, ECHO_LEVEL, EDIT_TRIGGER_PARAMETER, GAIN_PARAMETER, INITIAL_CONTROLLER_STATE, Kind,
     };
 
     use super::*;
@@ -1084,6 +1107,36 @@ mod test_processing {
         })
         .expect("state after the flush");
         assert_eq!(state.component, 0.75_f64.to_le_bytes());
+    }
+
+    #[test]
+    fn a_host_parameter_change_reaches_the_state_after_a_flush() {
+        let state = on_ui(|ui| {
+            let instance = active_instance(ui, Kind::Gain, 2).map_err(|error| error.to_string())?;
+            instance
+                .set_parameter(ui, GAIN_PARAMETER, 0.25)
+                .map_err(|error| error.to_string())?;
+            instance.flush_parameter_edits(ui);
+            instance.state(ui).map_err(|error| error.to_string())
+        })
+        .expect("state after the parameter change");
+        assert_eq!(state.component, 0.25_f64.to_le_bytes());
+    }
+
+    #[test]
+    fn a_host_parameter_change_reaches_the_next_block_and_is_clamped() {
+        let (instance, mut processor) = instance_and_processor(Kind::Gain, 1);
+        let (instance, result) = on_ui(move |ui| {
+            let result = instance
+                .set_parameter(ui, GAIN_PARAMETER, 1.5)
+                .and_then(|()| instance.set_parameter(ui, GAIN_PARAMETER, -1.0))
+                .map_err(|error| error.to_string());
+            (instance, result)
+        });
+        assert_eq!(result, Ok(()));
+        assert_eq!(process_impulse(&mut processor, 2), vec![vec![0.0, 0.0]]);
+        drop(processor);
+        drop(instance);
     }
 
     #[test]
