@@ -9,14 +9,18 @@ Compares the files the C++ and the Rust CLI leave behind after normalizing their
 Both folders must hold the same file names after the sources were moved to the trash,
 and the sources that failed to normalize must be left as they were.
 Every AIFF output pair must have the same container form and COMM chunk, the same samples, and the same ID3v2 frames.
-With --sources, the outputs of lossless sources must have identical samples,
-and only the outputs of lossy sources, which the two decoders may decode differently, may differ by the tolerance.
+With --lossy, the outputs of lossless sources must have identical samples,
+and only the outputs of the lossy sources it lists, which the two decoders may decode differently,
+may differ by the tolerance.
 Without it, every output may differ by the tolerance.
+--list-lossy prints that list for a folder, and must run before normalizing,
+since normalizing moves the sources to the trash.
 Frames are compared by their decoded fields, so a different text encoding of the same text is no difference,
 and a frame that appears more often in one output than in the other is a difference too.
 Exits with code 1 when anything differs.
 
-Usage: uv run compare_outputs.py <C++ folder> <Rust folder> [--tolerance <dBFS>] [--sources <list file>]
+Usage: uv run compare_outputs.py <C++ folder> <Rust folder> [--tolerance <dBFS>] [--lossy <list file>]
+       uv run compare_outputs.py --list-lossy <folder> > <list file>
 """
 
 import argparse
@@ -26,12 +30,15 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+import mutagen
 import numpy as np
 from mutagen.aiff import AIFF
 from mutagen.id3 import Frame
+from mutagen.mp4 import MP4
 
 AIFF_EXTENSIONS = {".aif", ".aiff"}
 # Sources whose decoders may differ between the two applications, so their outputs are compared with the tolerance.
+# An MP4 file may hold lossless ALAC instead, which is told apart by its codec.
 LOSSY_EXTENSIONS = {".mp3", ".m4a", ".aac", ".mp4", ".ogg", ".oga", ".opus"}
 # Binary frame payloads longer than this are compared by their hash, which keeps the report short.
 HASHED_PAYLOAD_BYTES = 64
@@ -118,6 +125,8 @@ def compare_samples(name: str, cpp: dict[bytes, bytes], rust: dict[bytes, bytes]
     """Compares the sample data of two outputs and returns the differences, exactly when there is no tolerance."""
     if cpp.get(b"SSND") == rust.get(b"SSND"):
         return []
+    if b"SSND" not in cpp or b"SSND" not in rust:
+        return [f"{name}: SSND chunk only in the {'C++' if b'SSND' in cpp else 'Rust'} output"]
     if cpp[b"SSND"][:8] != rust[b"SSND"][:8]:
         return [f"{name}: SSND offset and block size {cpp[b'SSND'][:8]!r} in C++, {rust[b'SSND'][:8]!r} in Rust"]
     cpp_samples, full_scale = decode_samples(cpp)
@@ -174,9 +183,20 @@ def compare_outputs(cpp_path: Path, rust_path: Path, tolerance: float | None) ->
     )
 
 
+def is_lossy(path: Path) -> bool:
+    """Returns true for a source with lossy audio, which an MP4 file with ALAC audio is not."""
+    if path.suffix.lower() not in LOSSY_EXTENSIONS:
+        return False
+    try:
+        audio = mutagen.File(path)
+    except mutagen.MutagenError:
+        return True
+    return not (isinstance(audio, MP4) and audio.info.codec == "alac")
+
+
 def lossy_outputs(sources: list[Path]) -> set[Path]:
-    """Returns the output paths, without their extension, written from at least one lossy source."""
-    return {source.with_suffix("") for source in sources if source.suffix.lower() in LOSSY_EXTENSIONS}
+    """Returns the output paths, without their extension, written from at least one of the lossy sources."""
+    return {source.with_suffix("") for source in sources}
 
 
 def list_files(folder: Path) -> set[Path]:
@@ -187,22 +207,37 @@ def list_files(folder: Path) -> set[Path]:
 def main() -> None:
     """Compares the two folders given on the command line and exits with code 1 when they differ."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("cpp", type=Path, help="Folder the C++ CLI normalized")
-    parser.add_argument("rust", type=Path, help="Folder the Rust CLI normalized")
+    parser.add_argument("cpp", type=Path, nargs="?", help="Folder the C++ CLI normalized")
+    parser.add_argument("rust", type=Path, nargs="?", help="Folder the Rust CLI normalized")
     parser.add_argument(
         "-t", "--tolerance", type=float, default=-72.0, help="Largest allowed sample difference in dBFS"
     )
     parser.add_argument(
-        "-s",
-        "--sources",
+        "-l",
+        "--lossy",
         type=Path,
-        help="File listing the source paths relative to the folders, one per line, written before normalizing",
+        help="File listing the lossy source paths relative to the folders, one per line, written by --list-lossy",
+    )
+    parser.add_argument(
+        "-L",
+        "--list-lossy",
+        type=Path,
+        metavar="FOLDER",
+        help="Print the paths of the lossy sources in the folder relative to it, and exit",
     )
     arguments = parser.parse_args()
 
+    if arguments.list_lossy is not None:
+        for path in sorted(list_files(arguments.list_lossy)):
+            if is_lossy(arguments.list_lossy / path):
+                print(path)
+        return
+    if arguments.cpp is None or arguments.rust is None:
+        parser.error("the C++ and the Rust folder are required")
+
     lossy = None
-    if arguments.sources is not None:
-        lines = arguments.sources.read_text(encoding="utf-8").splitlines()
+    if arguments.lossy is not None:
+        lines = arguments.lossy.read_text(encoding="utf-8").splitlines()
         lossy = lossy_outputs([Path(line) for line in lines if line.strip()])
 
     cpp_files = list_files(arguments.cpp)

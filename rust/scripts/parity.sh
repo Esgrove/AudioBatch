@@ -102,7 +102,8 @@ find_cpp_cli() {
         echo "$AUDIOBATCH_CPP_CLI"
         return
     fi
-    # The CMake presets put the CLI straight in the artefacts folder and build.sh in a folder per build type,
+    # The CMake presets put the CLI in a folder per build type inside the artefacts folder,
+    # older builds put it straight in the artefacts folder, and build.sh copies it into cpp/,
     # so the most recently built one is used.
     local candidate
     local newest=""
@@ -112,7 +113,8 @@ find_cpp_cli() {
         "$CPP_DIR/cmake-build-mac-debug/AudioBatchCli_artefacts/audiobatch" \
         "$CPP_DIR/cmake-build-mac-debug/AudioBatchCli_artefacts/Debug/audiobatch" \
         "$CPP_DIR/cmake-build-windows-debug/AudioBatchCli_artefacts/audiobatch.exe" \
-        "$CPP_DIR/cmake-build-windows-debug/AudioBatchCli_artefacts/Debug/audiobatch.exe"; do
+        "$CPP_DIR/cmake-build-windows-debug/AudioBatchCli_artefacts/Debug/audiobatch.exe" \
+        "$CPP_DIR/cmake-build-windows-ninja-debug/AudioBatchCli_artefacts/Debug/audiobatch.exe"; do
         if [ -x "$candidate" ] && { [ -z "$newest" ] || [ "$candidate" -nt "$newest" ]; }; then
             newest="$candidate"
         fi
@@ -156,8 +158,9 @@ if [ ${#NORMALIZE[@]} -gt 0 ]; then
         cp -R "${path%/}" "$CPP_BASE/$index/"
         cp -R "${path%/}" "$RUST_BASE/$index/"
     done
-    # The sources tell compare_outputs.py which outputs come from lossless files and must match exactly.
-    (cd "$CPP_BASE" && find . -type f ! -name ".*" | sed 's|^\./||') > "$WORK_DIR/sources.txt"
+    # The lossy sources tell compare_outputs.py which outputs may differ by the tolerance,
+    # and are listed now, since normalizing moves the sources to the trash.
+    uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" --list-lossy "$CPP_BASE" > "$WORK_DIR/lossy.txt"
     CPP_PATHS=("$CPP_BASE")
     RUST_PATHS=("$RUST_BASE")
     RECURSE=(--recurse)
@@ -182,6 +185,6 @@ uv run --quiet --script "$RUST_DIR/scripts/compare_levels.py" "$WORK_DIR/cpp.jso
 
 if [ ${#NORMALIZE[@]} -gt 0 ]; then
     uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$CPP_BASE" "$RUST_BASE" \
-        --sources "$WORK_DIR/sources.txt" || STATUS=1
+        --lossy "$WORK_DIR/lossy.txt" || STATUS=1
 fi
 exit $STATUS
