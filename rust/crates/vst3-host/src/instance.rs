@@ -87,6 +87,8 @@ pub(crate) struct InstanceCore {
     active: AtomicBool,
     /// Number of processor handles alive.
     live_processors: AtomicUsize,
+    /// Whether a processor handle is inside a processing call.
+    processing: AtomicBool,
 }
 
 /// The COM objects of an instance.
@@ -150,6 +152,19 @@ impl InstanceCore {
     pub(crate) fn processor_dropped(&self) {
         self.live_processors.fetch_sub(1, Ordering::AcqRel);
     }
+
+    /// Marks the instance as inside a processing call, and returns false when another handle already is.
+    /// Lock-free, so it may run in an audio callback.
+    pub(crate) fn try_begin_processing(&self) -> bool {
+        self.processing
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+    }
+
+    /// Clears the mark of `try_begin_processing`.
+    pub(crate) fn end_processing(&self) {
+        self.processing.store(false, Ordering::Release);
+    }
 }
 
 impl Drop for InstanceCore {
@@ -159,10 +174,14 @@ impl Drop for InstanceCore {
         let active = *self.active.get_mut();
         if let Some(ui) = UiThread::current() {
             parts.teardown(&ui, active);
-        } else if let Some(dispatcher) = self.dispatcher.take() {
-            // When the UI thread has already stopped, the process is exiting
-            // and the job is dropped without terminating the plugin.
-            dispatcher.post(move |ui| parts.teardown(ui, active));
+            return;
+        }
+        // The parts stay in ManuallyDrop until they reach the UI thread.
+        // Without a dispatcher, or when the UI thread has stopped and drops the job without running it,
+        // they are leaked, since releasing them here would run plugin destructors on the wrong thread.
+        let parts = ManuallyDrop::new(parts);
+        if let Some(dispatcher) = self.dispatcher.take() {
+            dispatcher.post(move |ui| ManuallyDrop::into_inner(parts).teardown(ui, active));
         }
     }
 }
@@ -252,6 +271,7 @@ impl PluginInstance {
                 dispatcher,
                 active: AtomicBool::new(false),
                 live_processors: AtomicUsize::new(0),
+                processing: AtomicBool::new(false),
             }),
             class_id,
             layout: None,
@@ -531,11 +551,16 @@ impl PluginInstance {
     ///
     /// # Errors
     ///
-    /// Returns an error when the plugin has no edit controller or the controller refuses the value.
+    /// Returns an error when the value is not a finite number,
+    /// or when the plugin has no edit controller or the controller refuses the value.
     pub fn set_parameter(&self, _ui: &UiThread, id: u32, normalized: f64) -> Result<()> {
         let Some(controller) = &self.core.parts.controller else {
             bail!("The plugin has no edit controller");
         };
+        // Clamping keeps NaN as it is, so a value that is not a number would reach the plugin.
+        if !normalized.is_finite() {
+            bail!("The value {normalized} for parameter {id} is not a finite number");
+        }
         let value = normalized.clamp(0.0, 1.0);
         // SAFETY: the controller is valid for the call.
         if unsafe { controller.setParamNormalized(id, value) } != kResultOk {
@@ -554,9 +579,16 @@ impl PluginInstance {
         if !self.is_active() || self.core.live_processors.load(Ordering::Acquire) > 0 || self.core.edits.is_empty() {
             return;
         }
+        if !self.core.try_begin_processing() {
+            return;
+        }
         let changes = ParameterChanges::create();
         while let Some(edit) = self.core.edits.pop() {
-            changes.set(edit.id, edit.value);
+            // Edits past the capacity of one call wait for the next flush or block instead of being lost.
+            if !changes.set(edit.id, edit.value) {
+                let _ = self.core.edits.push(edit);
+                break;
+            }
         }
         let changes_pointer = changes
             .as_com_ref::<IParameterChanges>()
@@ -578,9 +610,10 @@ impl PluginInstance {
             outputEvents: std::ptr::null_mut(),
             processContext: std::ptr::null_mut(),
         };
-        // SAFETY: the processor is active, no processor handle runs concurrently,
+        // SAFETY: the processor is active, the processing mark keeps any other call out,
         // and `data` and the parameter changes live for the call.
         unsafe { self.core.parts.processor.process(&raw mut data) };
+        self.core.end_processing();
     }
 
     /// Returns and clears the restart requests the plugin made.
