@@ -26,8 +26,11 @@ AudioBatch/
 │   └── plugin_expected/  what the test plugin must output, computed by plugin_expected.py
 ├── cpp/         the C++ project with its CMake build and the JUCE submodule
 ├── rust/        the Rust Cargo workspace
-└── test-plugin/ a JUCE VST3 with gain and mid/side width that both test suites load
+└── test-plugin/ a JUCE VST3 with gain, mid/side width, and latency that both test suites load
 ```
+
+The fixtures and the test plugin are described in [`fixtures/README.md`](fixtures/README.md)
+and [`test-plugin/README.md`](test-plugin/README.md).
 
 Build and test each version from its own directory, as described in its README.
 
