@@ -147,7 +147,7 @@ private:
     void launchFolderChooser(bool appendToRoots);
     void normalizeSelectedRecords();
     void reconcilePendingAnalysisResults();
-    void refreshAnalysis(bool forceRefresh);
+    void refreshAnalysis(AnalysisRows rows);
     void refreshSortIndicators() const;
     void refreshTablePreservingSelection(const juce::StringArray& selectedPaths);
     void releasePreviewPlayback();
@@ -159,7 +159,7 @@ private:
     void showAudioFile(const juce::File& file);
     void showFileContextMenu(int row, juce::Point<int> screenPosition);
     void showPluginProcessingWarning(const juce::String& message);
-    void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
+    void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, AnalysisRows rows);
     void updateAudioInfo(const AudioAnalysisRecord& record);
     void updateCurrentRootLabel();
     void updateGainControlsForSelection();

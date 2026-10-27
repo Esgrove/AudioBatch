@@ -313,7 +313,7 @@ void AudioBatchComponent::startAnalysis(
     const juce::Array<juce::File>& inputPaths,
     const bool recursive,
     const bool forceRefresh,
-    const bool clearResults
+    const AnalysisRows rows
 )
 {
     if (const auto blockedReason = getFileOperationBlockedReason(backgroundWork.getWork()); blockedReason.isNotEmpty())
@@ -322,7 +322,7 @@ void AudioBatchComponent::startAnalysis(
         return;
     }
 
-    if (clearResults) {
+    if (rows == AnalysisRows::replace) {
         analysisResults.clear();
         fileActivity.clearAllActive();
         fileActivity.clearAllMessages();
@@ -335,14 +335,30 @@ void AudioBatchComponent::startAnalysis(
     }
 
     statusBar.setStatusText("Scanning for audio files...");
-    backgroundWork.startAnalysis(inputPaths, recursive, forceRefresh, clearResults);
+    backgroundWork.startAnalysis(inputPaths, recursive, forceRefresh, rows != AnalysisRows::add);
     updateProcessButtonState();
 }
 
 /// Adds pending rows for the files the run analyzes and shows the progress text.
+/// A run whose files make up the whole list first drops the rows of the files it did not find,
+/// such as files deleted since the last scan.
 /// Called once per run on the message thread, after the coordinator has scanned the input folders.
 void AudioBatchComponent::analysisPlanReceived(const AnalysisPlan& plan, const AnalyzingWork& run)
 {
+    if (run.replacesResults) {
+        std::set<juce::String> foundPaths;
+        for (const auto& file : plan.files) {
+            foundPaths.insert(file.getFullPathName());
+        }
+        juce::StringArray goneRows;
+        for (const auto& record : analysisResults) {
+            if (!foundPaths.contains(record.fullPath)) {
+                goneRows.add(record.fullPath);
+            }
+        }
+        removeRecordsByPath(goneRows, 0);
+    }
+
     if (run.expected == 0) {
         statusBar.setStatusText(run.replacesResults ? "No supported audio files found" : "No supported dropped files");
         updateProcessButtonState();
