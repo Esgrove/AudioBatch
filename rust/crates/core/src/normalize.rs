@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use crate::aiff::{AiffWriter, SUPPORTED_BIT_DEPTHS};
 use crate::analysis::analyze_file;
-use crate::decode::{AudioFileDecoder, DEFAULT_MP3_BITS_PER_SAMPLE, is_mp3_path};
+use crate::decode::{AudioFileDecoder, DEFAULT_LOSSY_BITS_PER_SAMPLE, is_mp3_path};
 use crate::format::gain_to_decibels;
 use crate::metadata::copy_metadata;
 use crate::output_file::{
@@ -292,7 +292,7 @@ pub fn output_bit_depth(record: &AnalysisRecord) -> u32 {
     let preferred = if record.bits_per_sample > 0 {
         record.bits_per_sample
     } else if is_mp3_path(&record.path) {
-        DEFAULT_MP3_BITS_PER_SAMPLE
+        DEFAULT_LOSSY_BITS_PER_SAMPLE
     } else {
         0
     };

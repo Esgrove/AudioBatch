@@ -20,8 +20,8 @@ struct ToneFixture {
     const char* fileName;
     int channels;
     int sampleRate;
-    /// Expected source bit depth, or 0 where it is not checked.
-    /// MP3 files report the fixed default of 16 bits, since the format stores no source bit depth.
+    /// Expected source bit depth.
+    /// MP3 and Ogg Vorbis files report the fixed default of 16 bits, since the formats store no source bit depth.
     int bitsPerSample;
     /// True for lossy formats, which get a wider level tolerance.
     bool lossy;
@@ -138,7 +138,7 @@ constexpr std::array toneFixtures {
         .fileName = "sine_stereo_48000.ogg",
         .channels = 2,
         .sampleRate = 48'000,
-        .bitsPerSample = 0,
+        .bitsPerSample = 16,
         .lossy = true,
     },
 };
@@ -418,9 +418,7 @@ private:
         expectEquals(record.channels, fixture.channels);
         expectEquals(record.sampleRate, fixture.sampleRate);
 
-        if (fixture.bitsPerSample > 0) {
-            expectEquals(record.bitsPerSample, fixture.bitsPerSample);
-        }
+        expectEquals(record.bitsPerSample, fixture.bitsPerSample);
 
         const auto tolerance = fixture.lossy ? lossyTolerance : losslessTolerance;
         expectWithinAbsoluteError(peakDecibels(record), fixturePeakDecibels, tolerance);

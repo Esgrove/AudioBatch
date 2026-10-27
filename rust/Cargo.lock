@@ -607,6 +607,7 @@ dependencies = [
  "rusqlite",
  "serato-tags",
  "symphonia",
+ "symphonia-common",
  "tempfile",
  "test-fixtures",
  "trash",

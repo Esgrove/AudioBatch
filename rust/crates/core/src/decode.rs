@@ -18,9 +18,9 @@ use std::path::Path;
 use anyhow::{Context, Result, anyhow, bail};
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::codecs::audio::well_known::{
-    CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3, CODEC_ID_PCM_F32BE, CODEC_ID_PCM_F32BE_PLANAR, CODEC_ID_PCM_F32LE,
-    CODEC_ID_PCM_F32LE_PLANAR, CODEC_ID_PCM_F64BE, CODEC_ID_PCM_F64BE_PLANAR, CODEC_ID_PCM_F64LE,
-    CODEC_ID_PCM_F64LE_PLANAR, CODEC_ID_VORBIS,
+    CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3, CODEC_ID_PCM_F32BE,
+    CODEC_ID_PCM_F32BE_PLANAR, CODEC_ID_PCM_F32LE, CODEC_ID_PCM_F32LE_PLANAR, CODEC_ID_PCM_F64BE,
+    CODEC_ID_PCM_F64BE_PLANAR, CODEC_ID_PCM_F64LE, CODEC_ID_PCM_F64LE_PLANAR, CODEC_ID_VORBIS,
 };
 use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoder, AudioDecoderOptions};
 use symphonia::core::errors::Error as SymphoniaError;
@@ -29,11 +29,13 @@ use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Tr
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Duration, Time};
+use symphonia_common::apple::audio::alac::MagicCookie;
 
 mod gapless;
 
-/// Bit depth assumed for MPEG audio and Vorbis files, which store no source bit depth.
-pub const DEFAULT_MP3_BITS_PER_SAMPLE: u32 = 16;
+/// Bit depth assumed for lossy files, whose formats store no source bit depth.
+/// It is also the depth their normalized output is written in.
+pub const DEFAULT_LOSSY_BITS_PER_SAMPLE: u32 = 16;
 
 /// Samples of layer III synthesis delay at the start of a decoded MP3 stream.
 /// A LAME tag includes them in the delay it records.
@@ -383,13 +385,22 @@ pub fn is_mp3_path(path: &Path) -> bool {
 
 /// Determines the best available source bit depth of a track.
 ///
-/// MPEG audio and Vorbis get the default of 16, because the formats store no sample depth,
+/// MPEG audio, AAC, and Vorbis get the default of 16, because the formats store no sample depth,
 /// which is also what the C++ application reports for them.
+/// ALAC states its depth in the magic cookie of its codec configuration,
+/// and gets the default too when the cookie does not parse.
 /// Floating point PCM states no bit depth in its parameters, so it gets the width of its sample type.
 /// Other lossy codecs report 0, since their decoded depth says nothing about the source.
 fn source_bits_per_sample(parameters: &AudioCodecParameters) -> u32 {
-    if [CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3, CODEC_ID_VORBIS].contains(&parameters.codec) {
-        return DEFAULT_MP3_BITS_PER_SAMPLE;
+    if [CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3, CODEC_ID_AAC, CODEC_ID_VORBIS].contains(&parameters.codec) {
+        return DEFAULT_LOSSY_BITS_PER_SAMPLE;
+    }
+    if parameters.codec == CODEC_ID_ALAC {
+        return parameters
+            .extra_data
+            .as_deref()
+            .and_then(|extra_data| MagicCookie::read(extra_data).ok())
+            .map_or(DEFAULT_LOSSY_BITS_PER_SAMPLE, |cookie| u32::from(cookie.bit_depth));
     }
     if let Some(bits) = parameters.bits_per_sample {
         return bits;
@@ -555,5 +566,29 @@ mod test_audio_file_decoder {
         assert_eq!(format_display_name("aiff", Path::new("a.aif")), "AIFF file");
         assert_eq!(format_display_name("mp3", Path::new("a.mp3")), "MP3 file");
         assert_eq!(format_display_name("ogg", Path::new("a.ogg")), "Ogg-Vorbis file");
+    }
+
+    #[test]
+    fn alac_reports_the_depth_of_its_magic_cookie() {
+        let mut cookie = vec![0, 0, 0x10, 0, 0, 24, 40, 10, 14, 2, 0, 255];
+        cookie.extend_from_slice(&[0; 8]);
+        cookie.extend_from_slice(&48_000_u32.to_be_bytes());
+        let mut parameters = AudioCodecParameters::new();
+        parameters
+            .for_codec(CODEC_ID_ALAC)
+            .with_extra_data(cookie.into_boxed_slice());
+        assert_eq!(source_bits_per_sample(&parameters), 24);
+
+        parameters.extra_data = None;
+        assert_eq!(source_bits_per_sample(&parameters), DEFAULT_LOSSY_BITS_PER_SAMPLE);
+    }
+
+    #[test]
+    fn lossy_codecs_report_the_default_depth() {
+        for codec in [CODEC_ID_MP3, CODEC_ID_AAC, CODEC_ID_VORBIS] {
+            let mut parameters = AudioCodecParameters::new();
+            parameters.for_codec(codec).with_bits_per_sample(32);
+            assert_eq!(source_bits_per_sample(&parameters), DEFAULT_LOSSY_BITS_PER_SAMPLE);
+        }
     }
 }

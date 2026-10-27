@@ -75,7 +75,7 @@ pub struct ToneFixture {
     pub channels: u32,
     /// Sample rate in hertz.
     pub sample_rate: u32,
-    /// Expected source bit depth, or 0 where the format has none to check.
+    /// Expected source bit depth.
     pub bits_per_sample: u32,
     /// True for lossy formats, which get a wider level tolerance.
     pub lossy: bool,
@@ -101,7 +101,7 @@ impl ToneFixture {
 
 /// The tone fixtures and what analysis should report for them.
 ///
-/// MP3 and Ogg Vorbis files report the fixed default of 16 bits, since the formats store no source bit depth.
+/// MP3, AAC, and Ogg Vorbis files report the fixed default of 16 bits, since the formats store no source bit depth.
 pub const TONE_FIXTURES: [ToneFixture; 17] = [
     tone("sine_stereo_44100_16.wav", 2, 44_100, 16, false),
     tone("sine_stereo_48000_24.wav", 2, 48_000, 24, false),
@@ -119,7 +119,7 @@ pub const TONE_FIXTURES: [ToneFixture; 17] = [
     tone("sine_mono_44100_128k.mp3", 1, 44_100, 16, true),
     tone("sine_stereo_48000.ogg", 2, 48_000, 16, true),
     tone(NO_XING_MP3_FIXTURE, 2, 44_100, 16, true),
-    tone(AAC_FIXTURE, 2, 44_100, 0, true),
+    tone(AAC_FIXTURE, 2, 44_100, 16, true),
 ];
 
 /// Returns the absolute path of the fixtures directory.
