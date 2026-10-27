@@ -113,6 +113,7 @@ void PluginPreviewSource::resetPlayback()
     preRollRemaining = wet && compensation ? latencySamples : 0;
     transitionSamples = 0;
     failed = false;
+    failedPluginIndex = -1;
     stopRequested = false;
     fadeOutRemaining = 0;
     for (auto* plugin : plugins) {
@@ -234,12 +235,23 @@ int PluginPreviewSource::processInputBlock(const int samples, const juce::int64 
             }
         }
         signalChannels = processBlockThroughChain(blockView, plugins, sourceChannels, midi, pluginViews);
+        failedPluginIndex = findFailedProcessCall(plugins);
     }
-    if (!isBlockFinite(blockView, samples)) {
+    if (failedPluginIndex >= 0 || !isBlockFinite(blockView, samples)) {
         failed = true;
         playing = false;
     }
     return signalChannels;
+}
+
+/// Describes why rendering failed, for the host to show after hasFailed returned true.
+/// Must run on the message thread with the rendering stopped, since it reads the plugin's name.
+juce::String PluginPreviewSource::describeFailure() const
+{
+    if (failedPluginIndex >= 0 && std::cmp_less(failedPluginIndex, plugins.size())) {
+        return describeFailedProcessCall(*plugins[static_cast<std::size_t>(failedPluginIndex)]);
+    }
+    return "A live plugin produced non-finite audio";
 }
 
 /// Renders at most one block's worth of work per output block, including muted pre-roll.

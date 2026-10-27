@@ -258,6 +258,12 @@ std::expected<RenderSummary, juce::String> renderThroughChain(
         }
 
         const auto signalChannels = processBlockThroughChain(buffer, chainInstances, numChannels, midi);
+
+        // JUCE carries on after a failed process call, so a plugin that reports one fails the file here.
+        if (const auto failedIndex = findFailedProcessCall(chainInstances); failedIndex >= 0) {
+            return std::unexpected(describeFailedProcessCall(*chainInstances[static_cast<std::size_t>(failedIndex)]));
+        }
+
         utils::reportProgress(onProgress, utils::progressFraction(samplePosition + samplesThisBlock, totalSamples));
 
         // Skip the output samples that still fall within the chain latency.
@@ -556,6 +562,32 @@ bool isBlockFinite(const juce::AudioBuffer<float>& block, const int numSamples)
     }
 
     return true;
+}
+
+/// Returns the index of the first plugin whose last process call reported a failure, or -1 when none did.
+/// Only VST3 plugins report one, through the result JUCE keeps of their process call.
+/// Allocation-free, so the preview can check it in the audio callback.
+int findFailedProcessCall(const std::span<juce::AudioPluginInstance* const> chainInstances) noexcept
+{
+    for (std::size_t index = 0; index < chainInstances.size(); ++index) {
+        if (const auto* client = chainInstances[index]->getVST3Client();
+            client != nullptr && client->getLastProcessResult() != 0)
+        {
+            return static_cast<int>(index);
+        }
+    }
+    return -1;
+}
+
+/// Describes the failed process call of a plugin for the user, with the plugin's name and its result code.
+juce::String describeFailedProcessCall(const juce::AudioPluginInstance& plugin)
+{
+    const auto* client = plugin.getVST3Client();
+    return utils::format(
+        "{}: The plugin failed to process audio (result {})",
+        plugin.getName(),
+        client != nullptr ? client->getLastProcessResult() : 0
+    );
 }
 
 /// Processes a single file through the given plugin instances in order.
