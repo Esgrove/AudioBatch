@@ -3,7 +3,7 @@
 //!
 //! `PluginHost` holds the plugin state the main view owns.
 //! The known plugins come from `plugins.json`, which scans and the CLI also write,
-//! and the live chain from `plugin-chain.json`.
+//! the live chain from `plugin-chain.json`, and the chain presets from the `chain-presets` folder.
 //! A scan runs on a background thread and starts the executable again as its worker process,
 //! so a plugin that crashes while it is scanned takes down only the worker.
 //! The chain editor and the plugin manager are separate windows that show snapshots of this state
@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use audiobatch_plugins::{KnownPlugins, PluginDataPaths, ScanReport};
+use audiobatch_plugins::{KnownPlugins, PluginDataPaths, PresetStore, ScanReport};
 use gpui_kit::{Div, ParentElement as _, SharedString, Styled as _, Task, div, px};
 use raw_window_handle::RawWindowHandle;
 use vst3_host::{UiDispatcher, UiThread};
@@ -54,6 +54,8 @@ pub struct PluginHost {
     pub known: KnownPlugins,
     /// The chain the user edits.
     pub chain: LiveChain,
+    /// The saved chain presets.
+    pub presets: PresetStore,
     /// What the player holds of the chain for the live preview.
     pub preview: PluginPreview,
     /// The main window, which owns the plugin editor windows on Windows.
@@ -98,11 +100,13 @@ impl PluginHost {
             }
             None => LiveChain::new(paths.chain.clone(), dispatcher.clone(), sample_rate),
         };
+        let presets = PresetStore::new(paths.presets.clone());
         let host = Self {
             dispatcher,
             paths,
             known,
             chain,
+            presets,
             preview: PluginPreview::default(),
             editor_owner,
             scan: None,
@@ -127,6 +131,16 @@ impl PluginHost {
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
         Some((fraction, name))
+    }
+
+    /// Returns the names of the saved presets in the order they are listed,
+    /// or none when the preset folder cannot be read.
+    #[must_use]
+    pub fn preset_names(&self) -> Vec<String> {
+        self.presets
+            .list()
+            .map(|presets| presets.into_iter().map(|preset| preset.name).collect())
+            .unwrap_or_default()
     }
 
     /// Asks the scan in progress to stop at the next bundle.

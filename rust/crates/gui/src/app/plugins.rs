@@ -2,6 +2,7 @@
 //!
 //! Every change to the chain, from the Plugin Chain window, the Plugin Manager, or the Plugins menu,
 //! captures the settings of the instances, saves the chain, and refreshes the menus and the open windows.
+//! Saving a preset captures the settings first, and loading one replaces every slot with the preset's slots.
 //! Changes to the scan folders and the blacklist take the scan lock and reload `plugins.json` first,
 //! so they do not undo what a scan in the CLI wrote in the meantime.
 //! A housekeeping tick prepares instances again after a change of the output rate
@@ -141,6 +142,40 @@ impl AppView {
         self.chain_changed(cx);
     }
 
+    /// Replaces the chain with a saved preset, with the settings of each plugin,
+    /// and reports the plugins of the preset that could not be loaded.
+    /// The preview chain is taken out of the player first, because the old instances are destroyed.
+    pub(super) fn load_chain_preset(&mut self, name: &str, cx: &mut Context<Self>) {
+        let Some(ui) = UiThread::current() else {
+            return;
+        };
+        let preset = match self.plugins.presets.load(name) {
+            Ok(preset) => preset,
+            Err(error) => return self.report_status(format!("Could not load the preset: {error:#}"), cx),
+        };
+        self.detach_plugin_preview();
+        let preset_name = preset.name.clone();
+        self.plugins.chain.replace(&ui, preset.chain(), Some(preset.name));
+        let failed: Vec<String> = self
+            .plugins
+            .chain
+            .slots()
+            .iter()
+            .filter(|slot| slot.error().is_some())
+            .map(|slot| plugin_label(slot.plugin()))
+            .collect();
+        self.status = if failed.is_empty() {
+            format!("Loaded the preset {preset_name}")
+        } else {
+            format!(
+                "Loaded the preset {preset_name}, but these plugins could not be loaded: {}",
+                failed.join(", ")
+            )
+        }
+        .into();
+        self.chain_changed(cx);
+    }
+
     /// Captures the settings of the instances and saves the chain, reporting a failure on stderr.
     /// Used when the app quits, where the status bar is no longer seen.
     /// The preview chain is taken out of the player first, so it delivers no more edits.
@@ -170,9 +205,17 @@ impl AppView {
     pub(super) fn refresh_plugin_views(&mut self, cx: &mut Context<Self>) {
         let summary = self.chain_summary();
         let groups = group_by_vendor(&self.plugins.known.plugins);
-        if self.menu_state.chain_summary != summary || self.menu_state.plugin_groups != groups {
+        let presets = self.plugins.preset_names();
+        let current_preset = self.plugins.chain.preset_name().map(str::to_owned);
+        if self.menu_state.chain_summary != summary
+            || self.menu_state.plugin_groups != groups
+            || self.menu_state.presets != presets
+            || self.menu_state.current_preset != current_preset
+        {
             self.menu_state.chain_summary = summary;
             self.menu_state.plugin_groups = groups;
+            self.menu_state.presets = presets;
+            self.menu_state.current_preset = current_preset;
             set_menus(cx, &self.menu_state);
         }
         self.sync_chain_window(cx);
@@ -229,6 +272,18 @@ impl AppView {
             }
             ChainEvent::Clear => {
                 self.clear_plugin_chain(cx);
+                false
+            }
+            ChainEvent::SavePreset(name) => {
+                self.save_chain_preset(name, cx);
+                false
+            }
+            ChainEvent::LoadPreset(name) => {
+                self.load_chain_preset(name, cx);
+                false
+            }
+            ChainEvent::DeletePreset(name) => {
+                self.delete_chain_preset(name, cx);
                 false
             }
         };
@@ -307,6 +362,39 @@ impl AppView {
         self.refresh_plugin_views(cx);
     }
 
+    /// Saves the chain, with the current settings of each plugin, as the named preset.
+    fn save_chain_preset(&mut self, name: &str, cx: &mut Context<Self>) {
+        if self.plugins.chain.len() == 0 {
+            return self.report_status(String::from("Add a plugin before saving the chain as a preset"), cx);
+        }
+        self.capture_plugin_states(cx);
+        match self.plugins.presets.save(name, &self.plugins.chain.chain()) {
+            Ok(path) => {
+                let saved = path
+                    .file_stem()
+                    .map_or_else(|| name.to_owned(), |stem| stem.to_string_lossy().into_owned());
+                self.status = format!("Saved the plugin chain as the preset {saved}").into();
+                self.plugins.chain.set_preset_name(Some(saved));
+            }
+            Err(error) => self.status = format!("{error:#}").into(),
+        }
+        self.save_chain_settings(cx);
+    }
+
+    /// Deletes the named preset. The chain itself is not changed.
+    fn delete_chain_preset(&mut self, name: &str, cx: &mut Context<Self>) {
+        match self.plugins.presets.delete(name) {
+            Ok(_) => {
+                if self.plugins.chain.preset_name() == Some(name) {
+                    self.plugins.chain.set_preset_name(None);
+                }
+                self.status = format!("Deleted the preset {name}").into();
+            }
+            Err(error) => self.status = format!("{error:#}").into(),
+        }
+        self.refresh_plugin_views(cx);
+    }
+
     /// Collects what the Plugin Chain window shows.
     fn chain_snapshot(&self) -> ChainSnapshot {
         let chain = &self.plugins.chain;
@@ -337,6 +425,8 @@ impl AppView {
             total_latency: latency_text(chain.total_latency_samples(), sample_rate),
             sample_rate: format!("{} kHz", format_kilohertz(sample_rate)),
             available,
+            presets: self.plugins.preset_names(),
+            current_preset: chain.preset_name().map(str::to_owned),
         }
     }
 

@@ -5,10 +5,16 @@
 //! which reads -6.02 dBFS and -6.02 LUFS integrated, also for mono files measured as dual mono.
 //! This is the only place that knows where the fixtures are,
 //! so moving them changes a single path.
+//! It also locates the test VST3 that `test-plugin/` builds, lists the outputs that plugin must produce,
+//! and holds the null test that compares a processed output against its expected file.
+
+mod null_test;
 
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
+
+pub use null_test::{NullTestResult, null_test};
 
 /// Peak level of the fixture tones, which have a peak amplitude of 0.5, in dBFS.
 pub const FIXTURE_PEAK_DECIBELS: f64 = -6.0206;
@@ -59,6 +65,72 @@ pub const NO_XING_MP3_FIXTURE: &str = "sine_stereo_44100_192k_no_xing.mp3";
 /// Decoded length of the MP3 tone without the Xing frame:
 /// its 40 frames of 1152 samples without the 529 samples of decoder delay, as both applications decode it.
 pub const NO_XING_MP3_LENGTH: u64 = 40 * 1152 - 529;
+
+/// File name of the stereo fixture with a 1 kHz tone at half scale on the left
+/// and a 440 Hz tone at quarter scale on the right, so both its mid and its side signal carry audio.
+pub const STEREO_SPLIT_FIXTURE: &str = "stereo_split_44100_16.wav";
+
+/// Name of the variable that points the tests to the `AudioBatch Test MS` VST3 bundle.
+pub const TEST_PLUGIN_VARIABLE: &str = "AUDIOBATCH_TEST_VST3";
+
+/// One output the `AudioBatch Test MS` plugin in `test-plugin/` must produce, computed by `plugin_expected.py`.
+///
+/// Both applications compare their processed output against these files sample by sample,
+/// so they agree with each other through the shared files.
+#[derive(Debug, Clone, Copy)]
+pub struct PluginExpectation {
+    /// File name of the source fixture.
+    pub source: &'static str,
+    /// Linear gain parameter value.
+    pub gain: f32,
+    /// Stereo width parameter value.
+    pub width: f32,
+    /// File name of the expected output inside `fixtures/plugin_expected`.
+    pub expected: &'static str,
+}
+
+impl PluginExpectation {
+    /// Returns the absolute path of the source fixture.
+    #[must_use]
+    pub fn source_path(&self) -> PathBuf {
+        fixture(self.source)
+    }
+
+    /// Returns the absolute path of the expected output.
+    #[must_use]
+    pub fn expected_path(&self) -> PathBuf {
+        fixtures_directory().join("plugin_expected").join(self.expected)
+    }
+}
+
+/// The expected outputs of the `AudioBatch Test MS` plugin.
+/// The width and the gain are the plain parameter values, each on a 0 to 2 range.
+pub const PLUGIN_EXPECTATIONS: [PluginExpectation; 4] = [
+    PluginExpectation {
+        source: STEREO_SPLIT_FIXTURE,
+        gain: 0.5,
+        width: 0.5,
+        expected: "ms_gain_0.5_width_0.5_stereo_split_44100_16.wav",
+    },
+    PluginExpectation {
+        source: STEREO_SPLIT_FIXTURE,
+        gain: 1.0,
+        width: 0.0,
+        expected: "ms_gain_1_width_0_stereo_split_44100_16.wav",
+    },
+    PluginExpectation {
+        source: STEREO_SPLIT_FIXTURE,
+        gain: 1.0,
+        width: 2.0,
+        expected: "ms_gain_1_width_2_stereo_split_44100_16.wav",
+    },
+    PluginExpectation {
+        source: "sine_mono_44100_16.wav",
+        gain: 0.5,
+        width: 1.0,
+        expected: "ms_gain_0.5_width_1_sine_mono_44100_16.wav",
+    },
+];
 
 /// Allowed level difference for lossless fixtures, in dB or LU.
 pub const LOSSLESS_TOLERANCE: f64 = 0.05;
@@ -134,6 +206,22 @@ pub fn fixture(name: &str) -> PathBuf {
     fixtures_directory().join(name)
 }
 
+/// Returns the `AudioBatch Test MS` VST3 bundle that `test-plugin/build.sh` builds, or `None` when it is missing.
+///
+/// The `AUDIOBATCH_TEST_VST3` variable overrides the default location in `test-plugin/build`.
+/// The bundle is built with `CMake` from the JUCE submodule, so a plain `cargo test` may not have it.
+#[must_use]
+pub fn test_plugin_bundle() -> Option<PathBuf> {
+    let bundle = std::env::var_os(TEST_PLUGIN_VARIABLE).map_or_else(
+        || {
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../../test-plugin/build/AudioBatchTestPlugin_artefacts/Release/VST3/AudioBatch Test MS.vst3")
+        },
+        PathBuf::from,
+    );
+    bundle.is_dir().then_some(bundle)
+}
+
 /// Copies a fixture into the given temporary directory, optionally under a new name, and returns the copy.
 /// Tests that modify files work on copies so the committed fixtures never change.
 ///
@@ -182,6 +270,18 @@ mod test_fixture_paths {
             assert!(fixture(name).is_file(), "Missing fixture {name}");
         }
         assert!(fixture(INTERSAMPLE_FIXTURE).is_file());
+        for expectation in PLUGIN_EXPECTATIONS {
+            assert!(
+                expectation.source_path().is_file(),
+                "Missing fixture {}",
+                expectation.source
+            );
+            assert!(
+                expectation.expected_path().is_file(),
+                "Missing fixture {}",
+                expectation.expected
+            );
+        }
     }
 
     #[test]

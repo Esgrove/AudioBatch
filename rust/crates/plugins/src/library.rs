@@ -26,6 +26,9 @@ const WORKER_LOG_FILE_NAME: &str = "plugin-scan-worker.log";
 /// File name of the saved plugin chain.
 const CHAIN_FILE_NAME: &str = "plugin-chain.json";
 
+/// Name of the folder of the saved chain presets.
+const PRESETS_FOLDER_NAME: &str = "chain-presets";
+
 /// Format name shown for every plugin, since VST3 is the only supported format.
 pub const FORMAT_NAME: &str = "VST3";
 
@@ -89,6 +92,8 @@ pub struct PluginDataPaths {
     pub worker_log: PathBuf,
     /// The plugin chain files are processed with.
     pub chain: PathBuf,
+    /// The folder of the saved chain presets.
+    pub presets: PathBuf,
 }
 
 impl PluginDescription {
@@ -185,6 +190,7 @@ impl PluginDataPaths {
             scan_lock: folder.join(SCAN_LOCK_FILE_NAME),
             worker_log: folder.join(WORKER_LOG_FILE_NAME),
             chain: folder.join(CHAIN_FILE_NAME),
+            presets: folder.join(PRESETS_FOLDER_NAME),
         }
     }
 }

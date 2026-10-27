@@ -154,6 +154,19 @@ pub struct ClosePluginWindow;
 #[action(namespace = audiobatch)]
 pub struct ClearPluginChain;
 
+/// Opens the Plugin Chain window to save the chain as a preset.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct SaveChainPreset;
+
+/// Replaces the plugin chain with a saved preset.
+#[derive(Clone, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch, no_json)]
+pub struct LoadChainPreset {
+    /// Name of the preset.
+    pub name: SharedString,
+}
+
 /// Processes the selected file with the plugin chain.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
@@ -196,6 +209,10 @@ pub struct MenuState {
     pub chain_summary: String,
     /// The known effects by vendor, for the Add Plugin submenu.
     pub plugin_groups: Vec<VendorGroup>,
+    /// Names of the saved chain presets, for the Chain Presets submenu.
+    pub presets: Vec<String>,
+    /// Name of the preset the chain matches, which the submenu checks.
+    pub current_preset: Option<String>,
 }
 
 /// Prefixes a keystroke with the platform's primary shortcut modifier.
@@ -303,8 +320,27 @@ pub fn set_menus(cx: &App, state: &MenuState) {
     cx.set_menus(menus);
 }
 
+/// Builds the Chain Presets submenu: saving the chain, then the saved presets with the current one checked.
+fn presets_menu(state: &MenuState) -> Menu {
+    let mut items = vec![MenuItem::action("Save Chain as Preset…", SaveChainPreset)];
+    if !state.presets.is_empty() {
+        items.push(MenuItem::separator());
+    }
+    items.extend(state.presets.iter().map(|name| {
+        let checked = state.current_preset.as_deref() == Some(name.as_str());
+        MenuItem::action(
+            name.clone(),
+            LoadChainPreset {
+                name: name.clone().into(),
+            },
+        )
+        .checked(checked)
+    }));
+    Menu::new("Chain Presets").items(items)
+}
+
 /// Builds the Plugins menu: the chain summary, the chain items, the Add Plugin submenu by vendor,
-/// the plugin manager, and processing.
+/// the chain presets, the plugin manager, and processing.
 fn plugins_menu(state: &MenuState) -> Menu {
     let vendors: Vec<MenuItem> = state
         .plugin_groups
@@ -330,6 +366,7 @@ fn plugins_menu(state: &MenuState) -> Menu {
         MenuItem::separator(),
         MenuItem::action("Edit Chain…", OpenPluginChain),
         MenuItem::submenu(add_plugin),
+        MenuItem::submenu(presets_menu(state)),
         MenuItem::action("Clear Chain", ClearPluginChain),
         MenuItem::separator(),
         MenuItem::action("Plugin Manager…", OpenPluginManager),
