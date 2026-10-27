@@ -53,7 +53,7 @@ const TRUNCATION_TOLERANCE_DIVISOR: u64 = 10;
 
 /// Longest run of silence inserted for one failed packet, in seconds.
 /// Guards against a corrupt packet duration turning into a huge allocation.
-const MAX_FAILED_PACKET_SECONDS: u64 = 1;
+const MAXIMUM_FAILED_PACKET_SECONDS: u64 = 1;
 
 /// Stream properties of an opened audio file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -391,7 +391,7 @@ impl AudioFileDecoder {
                         .stated_frames()
                         .map_or(u64::MAX, |total| total.saturating_sub(self.position));
                     let silent_frames = packet_frames
-                        .min(u64::from(self.info.sample_rate) * MAX_FAILED_PACKET_SECONDS)
+                        .min(u64::from(self.info.sample_rate) * MAXIMUM_FAILED_PACKET_SECONDS)
                         .min(remaining) as usize;
                     if silent_frames == 0 {
                         continue;

@@ -7,7 +7,7 @@ use audiobatch_plugins::{FORMAT_NAME, PluginDescription};
 /// Vendor group of the plugins that report no vendor.
 pub const UNKNOWN_VENDOR: &str = "Unknown Vendor";
 
-/// Longest chain summary in characters before it is cut off, the same as in the C++ application.
+/// Longest chain summary in characters before it is cut off.
 const MAXIMUM_SUMMARY_LENGTH: usize = 60;
 
 /// The effects of one vendor, for the Add Plugin menu and the plugin lists.
