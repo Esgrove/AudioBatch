@@ -63,7 +63,7 @@ void logCrash(const juce::String& reason)
         return;
     }
 
-    logError(
+    logErrorAlways(
         "Application terminated unexpectedly: {}\nStack trace:\n{}",
         reason,
         juce::SystemStats::getStackBacktrace().trimEnd()
@@ -169,6 +169,20 @@ void writeToLog(const juce::String& message, [[maybe_unused]] const Level logLev
     }
 #endif
     juce::Logger::writeToLog(logMessage);
+}
+
+/// Logs an error the user needs to see, and prints it to stderr even when the console echo is off,
+/// such as a crash or a failure that leaves the CLI with nothing else to show.
+/// Release builds print it in red when the echo is off, since writeToLog then leaves it to the log file only.
+/// Debug builds print every log message through JUCE's debug output already.
+void logErrorAlways(const juce::String& message)
+{
+    logError(message);
+#if !JUCE_DEBUG
+    if (!consoleEcho.load()) {
+        console::printStyled(stderr, fmt::fg(fmt::terminal_color::red), "{}\n", message);
+    }
+#endif
 }
 
 /// Logs the collected system information as an indented block.
