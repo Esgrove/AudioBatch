@@ -10,6 +10,7 @@ on:
       - "common.sh"
       - "cpp/**"
       - "fixtures/**"
+      - "!fixtures/normalization/**"
       - "test-plugin/**"
       - "!**/*.md"
   pull_request:
@@ -19,6 +20,7 @@ on:
       - "common.sh"
       - "cpp/**"
       - "fixtures/**"
+      - "!fixtures/normalization/**"
       - "test-plugin/**"
       - "!**/*.md"
 
@@ -26,6 +28,9 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 defaults:
   run:
@@ -53,6 +58,8 @@ jobs:
 
       - name: Install ccache
         if: runner.os == 'macOS'
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
         run: brew install ccache
 
       # The ccache cache lives inside the build directory (build.sh sets CCACHE_DIR),
@@ -87,7 +94,7 @@ jobs:
           # build.sh configures without tests, so enable the test target explicitly.
           cmake -S . -B "$BUILD_DIR" -DBUILD_TESTING=ON
           cmake --build "$BUILD_DIR" --target AudioBatchTests --config "$BUILD_TYPE"
-          ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_TYPE" --output-on-failure
+          ctest --test-dir "$BUILD_DIR" --build-config "$BUILD_TYPE" --output-on-failure --no-tests=error
 
       # Runs the CLI that build.sh copied to the C++ project root on the committed test fixtures,
       # and checks the reported level and the exit codes.
@@ -138,12 +145,14 @@ jobs:
           submodules: recursive
 
       # Skip the automatic `brew update`, which takes minutes and is not needed for the runner image's formulae.
-      - name: Install LLVM and Ninja
+      # The restored build directory was configured with ccache as the compiler launcher, so ccache must exist.
+      - name: Install LLVM, Ninja, and ccache
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
-        run: brew install llvm ninja
+        run: brew install llvm ninja ccache
 
-      # Restores the build job's macOS Debug cache.
+      # Restores a macOS Debug cache saved by the build job of an earlier run,
+      # since this job runs alongside the build job of the same run.
       # It holds the same cmake-build-mac-debug directory, including the fetched dependencies.
       # The path list must match the build job's for the cache to restore.
       # Restore-only, since the build job owns saving it.
@@ -253,7 +262,7 @@ jobs:
           cmake --build --preset macos-fuzz
 
       - name: Replay corpus
-        run: ctest --test-dir cmake-build-mac-fuzz --output-on-failure
+        run: ctest --test-dir cmake-build-mac-fuzz --output-on-failure --no-tests=error
 
       # New inputs go to a scratch corpus, so the committed corpus stays as it is.
       - name: Fuzz
