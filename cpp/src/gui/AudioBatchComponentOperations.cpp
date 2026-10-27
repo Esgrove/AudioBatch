@@ -11,8 +11,10 @@
 #include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include <unordered_map>
 
 #include <algorithm>
+#include <optional>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -114,85 +116,108 @@ void AudioBatchComponent::analysisResultsReceived(std::vector<AudioAnalysisRecor
     updateProcessButtonState();
 }
 
-/// Replaces the row of a file that a normalize or process run rewrote with the record of its output,
-/// which may have a new path when the source was converted.
-/// Updates the selection, the cache, and the preview to follow the file to its new path.
-void AudioBatchComponent::replaceRecordAfterOperation(
-    const juce::File& originalFile,
-    const AudioAnalysisRecord& newRecord
-)
+/// Replaces the rows of the files that a normalize or process run rewrote with the records of their outputs,
+/// which may have new paths when the sources were converted.
+/// Updates the selection, the cache, and the preview to follow each file to its new path,
+/// and sorts and refreshes the table once for the whole batch.
+void AudioBatchComponent::replaceRecordsAfterOperation(const std::vector<CommittedOutput>& outputs)
 {
-    const auto& originalPath = originalFile.getFullPathName();
-    auto selectedPaths = getSelectedRecordPaths();
+    if (outputs.empty()) {
+        return;
+    }
 
-    for (int index = 0; index < selectedPaths.size(); ++index) {
-        if (selectedPaths[index] == originalPath) {
-            selectedPaths.set(index, newRecord.fullPath);
+    const auto previewFile = preview.getFile();
+    std::optional<juce::File> previewOutput;
+    bool previewRecordChanged = false;
+    std::unordered_map<juce::String, juce::String> movedPaths;
+
+    for (const auto& [originalFile, newRecord] : outputs) {
+        const auto& originalPath = originalFile.getFullPathName();
+        const auto merged = analysisResults.replaceAfterOperation(originalPath, newRecord);
+
+        // The cache logs its own failures, and a row it could not store or remove is only read again later.
+        static_cast<void>(analysisCache.storeAnalysis(analysisResults[merged.row]));
+
+        // A converted original was moved to the trash, so its cached row is no longer needed.
+        if (newRecord.fullPath != originalPath) {
+            static_cast<void>(analysisCache.removeAnalysis(originalFile));
+            movedPaths.insert_or_assign(originalPath, newRecord.fullPath);
+        }
+
+        if (previewFile == originalFile) {
+            previewOutput = newRecord.file;
+        } else if (previewFile == newRecord.file) {
+            previewRecordChanged = true;
         }
     }
 
-    const auto merged = analysisResults.replaceAfterOperation(originalPath, newRecord);
-    const auto mergedRecord = analysisResults[merged.row];
-
-    // The cache logs its own failures, and a row it could not store or remove is only read again later.
-    static_cast<void>(analysisCache.storeAnalysis(mergedRecord));
-
-    // A converted original was moved to the trash, so its cached row is no longer needed.
-    if (newRecord.fullPath != originalPath) {
-        static_cast<void>(analysisCache.removeAnalysis(originalFile));
+    auto selectedPaths = getSelectedRecordPaths();
+    for (int index = 0; index < selectedPaths.size(); ++index) {
+        if (const auto moved = movedPaths.find(selectedPaths[index]); moved != movedPaths.end()) {
+            selectedPaths.set(index, moved->second);
+        }
     }
 
     refreshTablePreservingSelection(selectedPaths);
 
-    if (preview.getFile() == originalFile) {
-        showAudioFile(newRecord.file);
-        updateAudioInfo(mergedRecord);
+    if (previewOutput.has_value()) {
+        showAudioFile(*previewOutput);
+        if (const auto row = analysisResults.findRow(previewOutput->getFullPathName())) {
+            updateAudioInfo(analysisResults[*row]);
+        }
         updateGainControlsForSelection();
         updateThumbnailDisplayGain();
-    } else if (preview.getFile() == newRecord.file) {
-        updateAudioInfo(mergedRecord);
+    } else if (previewRecordChanged) {
+        if (const auto row = analysisResults.findRow(previewFile.getFullPathName())) {
+            updateAudioInfo(analysisResults[*row]);
+        }
     }
 }
 
-/// Applies one normalization result on the message thread.
-/// Replaces the record, since the output path may differ from the source,
+/// Applies a batch of normalization results on the message thread.
+/// Replaces the records, since the output paths may differ from the sources,
 /// updates the cache, and reloads the preview when the current file was normalized.
-void AudioBatchComponent::normalizeResultReceived(const AudioNormalizationResult& result)
+void AudioBatchComponent::normalizeResultsReceived(std::vector<AudioNormalizationResult> results)
 {
     const auto reportFailure
         = [this](const juce::String& fileName, const juce::String& path, const juce::String& error) {
               backgroundWork.recordFailure(utils::format("{}: {}", fileName, error));
               fileActivity.setMessage(path, {.text = error, .isError = true});
-              resultsTable.repaint();
           };
 
-    std::visit(
-        Overloaded {
-            [&](const OperationFailed& failed) {
-                // A cancelled file was left unchanged, so its row stays as it was.
-                if (failed.cancelled) {
-                    resultsTable.repaint();
-                } else {
-                    reportFailure(result.fileName, result.fullPath, failed.error);
-                }
+    std::vector<CommittedOutput> outputs;
+    for (auto& result : results) {
+        std::visit(
+            Overloaded {
+                [&](const OperationFailed& failed) {
+                    // A cancelled file was left unchanged, so its row stays as it was.
+                    if (!failed.cancelled) {
+                        reportFailure(result.fileName, result.fullPath, failed.error);
+                    }
+                },
+                [&](CommittedButUnanalyzed& unanalyzed) {
+                    // A committed output replaces its source even when its re-analysis failed,
+                    // since a converted source is already in the trash.
+                    reportFailure(unanalyzed.output.fileName, unanalyzed.output.fullPath, unanalyzed.error);
+                    outputs.push_back({.source = result.file, .output = std::move(unanalyzed.output)});
+                },
+                [&](OperationSucceeded& succeeded) {
+                    if (succeeded.notice.isNotEmpty()) {
+                        fileActivity.setMessage(
+                            succeeded.output.fullPath, {.text = succeeded.notice, .isError = false}
+                        );
+                    }
+                    // A successful in-place no-op is applied too,
+                    // since it carries a refreshed analysis of a changed file.
+                    outputs.push_back({.source = result.file, .output = std::move(succeeded.output)});
+                },
             },
-            [&](const CommittedButUnanalyzed& unanalyzed) {
-                // A committed output replaces its source even when its re-analysis failed,
-                // since a converted source is already in the trash.
-                replaceRecordAfterOperation(result.file, unanalyzed.output);
-                reportFailure(unanalyzed.output.fileName, unanalyzed.output.fullPath, unanalyzed.error);
-            },
-            [&](const OperationSucceeded& succeeded) {
-                if (succeeded.notice.isNotEmpty()) {
-                    fileActivity.setMessage(succeeded.output.fullPath, {.text = succeeded.notice, .isError = false});
-                }
-                // A successful in-place no-op is applied too, since it carries a refreshed analysis of a changed file.
-                replaceRecordAfterOperation(result.file, succeeded.output);
-            },
-        },
-        result.outcome
-    );
+            result.outcome
+        );
+    }
 
+    replaceRecordsAfterOperation(outputs);
+    resultsTable.repaint();
     updateStatusLabel();
 }
 
@@ -574,49 +599,59 @@ void AudioBatchComponent::processRecords(const std::vector<AudioAnalysisRecord>&
     updateStatusLabel();
 }
 
-/// Applies one plugin processing result on the message thread.
-/// Replaces the record, drops stale cache rows and persisted gain, and reloads the preview when needed.
-void AudioBatchComponent::processingResultReceived(const PluginProcessingResult& result)
+/// Applies a batch of plugin processing results on the message thread.
+/// Replaces the records, drops stale cache rows and persisted gain, and reloads the preview when needed.
+void AudioBatchComponent::processingResultsReceived(std::vector<PluginProcessingResult> results)
 {
-    const auto reportFailure = [&](const juce::String& fileName, const juce::String& path, const juce::String& error) {
+    const auto reportFailure = [this](
+                                   const PluginProcessingResult& result,
+                                   const juce::String& fileName,
+                                   const juce::String& path,
+                                   const juce::String& error
+                               ) {
         backgroundWork.recordFailure(utils::format("{}: {}", fileName, error));
         fileActivity.setMessage(path, {.text = error, .isError = true});
-        resultsTable.repaint();
         utils::logError("Plugin processing failed for {}: {}", result.originalFullPath.quoted(), error);
     };
+
     // A committed output replaces its source even when its re-analysis failed,
     // since a converted source is already in the trash.
-    const auto replaceSource = [&](const AudioAnalysisRecord& output) {
-        replaceRecordAfterOperation(result.originalFile, output);
-        // The custom gain is baked into the processed audio, so the new output starts without one.
-        // The cache logs its own failures, and the row in the table is already correct.
-        static_cast<void>(analysisCache.storeCustomGain(output.file, std::nullopt));
-    };
+    std::vector<CommittedOutput> outputs;
+    for (auto& result : results) {
+        std::visit(
+            Overloaded {
+                [&](const OperationFailed& failed) {
+                    // A cancelled file was left unchanged, so its row stays as it was.
+                    if (!failed.cancelled) {
+                        reportFailure(result, result.fileName, result.originalFullPath, failed.error);
+                    }
+                },
+                [&](CommittedButUnanalyzed& unanalyzed) {
+                    reportFailure(result, unanalyzed.output.fileName, unanalyzed.output.fullPath, unanalyzed.error);
+                    outputs.push_back({.source = result.originalFile, .output = std::move(unanalyzed.output)});
+                },
+                [&](OperationSucceeded& succeeded) {
+                    if (succeeded.notice.isNotEmpty()) {
+                        fileActivity.setMessage(
+                            succeeded.output.fullPath, {.text = succeeded.notice, .isError = false}
+                        );
+                    }
+                    outputs.push_back({.source = result.originalFile, .output = std::move(succeeded.output)});
+                },
+            },
+            result.outcome
+        );
+    }
 
-    std::visit(
-        Overloaded {
-            [&](const OperationFailed& failed) {
-                // A cancelled file was left unchanged, so its row stays as it was.
-                if (failed.cancelled) {
-                    resultsTable.repaint();
-                } else {
-                    reportFailure(result.fileName, result.originalFullPath, failed.error);
-                }
-            },
-            [&](const CommittedButUnanalyzed& unanalyzed) {
-                replaceSource(unanalyzed.output);
-                reportFailure(unanalyzed.output.fileName, unanalyzed.output.fullPath, unanalyzed.error);
-            },
-            [&](const OperationSucceeded& succeeded) {
-                if (succeeded.notice.isNotEmpty()) {
-                    fileActivity.setMessage(succeeded.output.fullPath, {.text = succeeded.notice, .isError = false});
-                }
-                replaceSource(succeeded.output);
-            },
-        },
-        result.outcome
-    );
+    replaceRecordsAfterOperation(outputs);
 
+    // The custom gain is baked into the processed audio, so the new outputs start without one.
+    // The cache logs its own failures, and the rows in the table are already correct.
+    for (const auto& committed : outputs) {
+        static_cast<void>(analysisCache.storeCustomGain(committed.output.file, std::nullopt));
+    }
+
+    resultsTable.repaint();
     updateStatusLabel();
 }
 

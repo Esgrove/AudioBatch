@@ -1,5 +1,5 @@
 /// Implementation of BackgroundWorkController.
-/// Covers moving the coordinator callbacks to the message thread,
+/// Covers moving the coordinator callbacks to the message thread, the results in batches,
 /// dropping the messages of replaced runs and of rows removed during a run,
 /// carrying the inputs of a replaced analysis run over to the next one,
 /// and the blocked reasons and progress text derived from the state of the running pass.
@@ -13,9 +13,61 @@
 #include <functional>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace audiobatch
 {
+namespace
+{
+/// Applies a batch of start, progress, and result events of a normalization or processing pass in posting order,
+/// and returns the results to pass on.
+/// Starts and progress reports of a pass that is no longer running are dropped,
+/// since they would otherwise mark the same file busy in the next pass.
+/// A result counts towards its pass while the pass runs,
+/// and is returned even after the pass ended, because its output file was already written.
+template<typename Pass, typename Result>
+std::vector<Result> applyOperationEvents(
+    std::vector<OperationEvent<Result>> events,
+    BackgroundWork& work,
+    FileActivityTracker& fileActivity,
+    const FileActivity activity,
+    const juce::String Result::* resultPath
+)
+{
+    std::vector<Result> results;
+
+    for (auto& [event, runId] : events) {
+        auto* pass = std::get_if<Pass>(&work);
+        const auto isCurrentRun = pass != nullptr && pass->runId == runId;
+
+        std::visit(
+            Overloaded {
+                [&](const FileStartedEvent& started) {
+                    if (isCurrentRun) {
+                        fileActivity.setActive(started.file.getFullPathName(), activity);
+                    }
+                },
+                [&](const FileProgressEvent& progressed) {
+                    if (isCurrentRun) {
+                        fileActivity.setProgress(progressed.file.getFullPathName(), progressed.progress);
+                    }
+                },
+                [&](Result& result) {
+                    if (isCurrentRun) {
+                        ++pass->completed;
+                    }
+                    fileActivity.clearActive(result.*resultPath);
+                    results.push_back(std::move(result));
+                },
+            },
+            event
+        );
+    }
+
+    return results;
+}
+}  // namespace
+
 /// Creates the coordinators and connects their callbacks.
 /// The cache, the activity tracker, and the listener must outlive the controller.
 BackgroundWorkController::BackgroundWorkController(
@@ -275,7 +327,8 @@ void BackgroundWorkController::connectAnalysisCallbacks()
 /// Connects the normalization and plugin processing coordinators to the message thread handlers
 /// and the activity tracker.
 /// Files switch from waiting to busy when a worker starts on them.
-/// A start arriving after its pass ended belongs to no current pass, so it does not mark the file busy again.
+/// The starts, progress reports, and results of each pass go through the batcher of the pass,
+/// so a burst of results costs one table refresh, and the completion goes through the message queue after them.
 void BackgroundWorkController::connectOperationCallbacks()
 {
     const juce::WeakReference<BackgroundWorkController> weakThis(this);
@@ -290,42 +343,22 @@ void BackgroundWorkController::connectOperationCallbacks()
         };
     };
 
-    const auto postStarting = [weakThis](const FileActivity activity, auto isCurrentRun) {
-        return [weakThis, activity, isCurrentRun](const juce::File& file, const int runId) {
-            juce::MessageManager::callAsync([weakThis, file, activity, isCurrentRun, runId] {
-                if (const auto* controller = weakThis.get();
-                    controller != nullptr && (controller->*isCurrentRun)(runId))
-                {
-                    controller->fileActivity.setActive(file.getFullPathName(), activity);
-                }
-            });
-        };
+    const auto postEvents = [](auto& batcher, auto& coordinator) {
+        coordinator.setStartingCallback([&batcher](const juce::File& file, const int runId) {
+            batcher.post({.event = FileStartedEvent {.file = file}, .runId = runId});
+        });
+        coordinator.setProgressCallback([&batcher](const juce::File& file, const float progress, const int runId) {
+            batcher.post({.event = FileProgressEvent {.file = file, .progress = progress}, .runId = runId});
+        });
+        coordinator.setResultCallback([&batcher](const auto& result, const int runId) {
+            batcher.post({.event = result, .runId = runId});
+        });
     };
 
-    // Like a start, a progress event that arrives after its pass ended belongs to no current pass,
-    // and would otherwise update the same file in the next pass.
-    const auto postProgress = [weakThis](auto isCurrentRun) {
-        return [weakThis, isCurrentRun](const juce::File& file, const float progress, const int runId) {
-            juce::MessageManager::callAsync([weakThis, file, progress, isCurrentRun, runId] {
-                if (auto* controller = weakThis.get(); controller != nullptr && (controller->*isCurrentRun)(runId)) {
-                    controller->fileActivity.setProgress(file.getFullPathName(), progress);
-                }
-            });
-        };
-    };
-
-    normalizeCoordinator.setStartingCallback(
-        postStarting(FileActivity::normalizing, &BackgroundWorkController::isCurrentNormalizationRun)
-    );
-    normalizeCoordinator.setProgressCallback(postProgress(&BackgroundWorkController::isCurrentNormalizationRun));
-    normalizeCoordinator.setResultCallback(postToMessageThread(&BackgroundWorkController::handleNormalizeResult));
+    postEvents(normalizeEventBatcher, normalizeCoordinator);
     normalizeCoordinator.setCompletionCallback(postToMessageThread(&BackgroundWorkController::handleNormalizeComplete));
 
-    pluginCoordinator.setStartingCallback(
-        postStarting(FileActivity::processing, &BackgroundWorkController::isCurrentProcessingRun)
-    );
-    pluginCoordinator.setProgressCallback(postProgress(&BackgroundWorkController::isCurrentProcessingRun));
-    pluginCoordinator.setResultCallback(postToMessageThread(&BackgroundWorkController::handleProcessingResult));
+    postEvents(processingEventBatcher, pluginCoordinator);
     pluginCoordinator.setCompletionCallback(postToMessageThread(&BackgroundWorkController::handleProcessingComplete));
     pluginCoordinator.setStartErrorCallback(postToMessageThread(&BackgroundWorkController::handleProcessingStartError));
 }
@@ -395,10 +428,13 @@ void BackgroundWorkController::handleAnalysisResults(std::vector<AnalysisResultM
 }
 
 /// Ends the normalization pass and reports its completion.
+/// The events still queued in the batcher are delivered first, so the pass counts its last results.
 /// A pass that started no files has already ended,
 /// and other work, even another normalization pass, may run by the time its completion arrives.
 void BackgroundWorkController::handleNormalizeComplete(const int totalFiles, const int runId)
 {
+    normalizeEventBatcher.deliverPending();
+
     if (!isCurrentNormalizationRun(runId)) {
         return;
     }
@@ -408,22 +444,25 @@ void BackgroundWorkController::handleNormalizeComplete(const int totalFiles, con
     listener.normalizeCompleted(pass, totalFiles);
 }
 
-/// Counts one normalization result towards its pass and passes it on.
-/// A result is passed on even after its pass ended, because its output file was already written.
-void BackgroundWorkController::handleNormalizeResult(const AudioNormalizationResult& result, const int runId)
+/// Applies a batch of normalization events and passes the results in it on together.
+void BackgroundWorkController::handleNormalizeEvents(std::vector<OperationEvent<AudioNormalizationResult>> events)
 {
-    if (isCurrentNormalizationRun(runId)) {
-        ++std::get<NormalizingWork>(work).completed;
+    auto results = applyOperationEvents<NormalizingWork>(
+        std::move(events), work, fileActivity, FileActivity::normalizing, &AudioNormalizationResult::fullPath
+    );
+    if (!results.empty()) {
+        listener.normalizeResultsReceived(std::move(results));
     }
-    fileActivity.clearActive(result.fullPath);
-    listener.normalizeResultReceived(result);
 }
 
 /// Ends the plugin processing pass and reports its completion.
+/// The events still queued in the batcher are delivered first, so the pass counts its last results.
 /// A pass that started no files or failed to start has already ended,
 /// and another pass may run by the time its completion arrives.
 void BackgroundWorkController::handleProcessingComplete(const int totalFiles, const int runId)
 {
+    processingEventBatcher.deliverPending();
+
     if (!isCurrentProcessingRun(runId)) {
         return;
     }
@@ -433,15 +472,15 @@ void BackgroundWorkController::handleProcessingComplete(const int totalFiles, co
     listener.processingCompleted(pass, totalFiles);
 }
 
-/// Counts one plugin processing result towards its pass and passes it on.
-/// A result is passed on even after its pass ended, because its output file was already written.
-void BackgroundWorkController::handleProcessingResult(const PluginProcessingResult& result, const int runId)
+/// Applies a batch of plugin processing events and passes the results in it on together.
+void BackgroundWorkController::handleProcessingEvents(std::vector<OperationEvent<PluginProcessingResult>> events)
 {
-    if (isCurrentProcessingRun(runId)) {
-        ++std::get<ProcessingWork>(work).completed;
+    auto results = applyOperationEvents<ProcessingWork>(
+        std::move(events), work, fileActivity, FileActivity::processing, &PluginProcessingResult::originalFullPath
+    );
+    if (!results.empty()) {
+        listener.processingResultsReceived(std::move(results));
     }
-    fileActivity.clearActive(result.originalFullPath);
-    listener.processingResultReceived(result);
 }
 
 /// Ends a processing pass whose workers could not start, and reports the error.
