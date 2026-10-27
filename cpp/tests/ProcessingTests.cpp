@@ -485,6 +485,32 @@ public:
             expect(!isBuiltInApplePlugin("/Library/Audio/Plug-Ins/VST3/MSED.vst3"));
         }
 
+        beginTest("VST3_PATH is split with the platform separator, so Windows drive letters stay intact");
+        {
+            // What JUCE makes of VST3_PATH=C:\Plugins;D:\More on Windows, followed by its standard folder.
+            const juce::FileSearchPath windowsJucePath(R"(C;\Plugins;D;\More;C:\Program Files\Common Files\VST3)");
+            expectEquals(
+                buildVst3SearchPath(windowsJucePath, R"(C:\Plugins;D:\More)", ";").toString(),
+                juce::String(R"(C:\Plugins;D:\More;C:\Program Files\Common Files\VST3)")
+            );
+
+            // On macOS and Linux JUCE already splits the variable correctly, and the path stays the same.
+            const juce::FileSearchPath macJucePath("/Users/me/VST3;/opt/vst3;/Library/Audio/Plug-Ins/VST3");
+            expectEquals(
+                buildVst3SearchPath(macJucePath, "/Users/me/VST3:/opt/vst3", ":").toString(), macJucePath.toString()
+            );
+
+            // A folder of the variable that is also a standard folder is listed once.
+            expectEquals(
+                buildVst3SearchPath(juce::FileSearchPath("/Library/VST3"), "/Library/VST3", ":").toString(),
+                juce::String("/Library/VST3")
+            );
+            expectEquals(
+                buildVst3SearchPath(juce::FileSearchPath("/Library/VST3"), {}, ":").toString(),
+                juce::String("/Library/VST3")
+            );
+        }
+
         beginTest("Built-in Apple Audio Units are removed from a known plugins list, including blacklisted ones");
         {
             const auto makeDescription

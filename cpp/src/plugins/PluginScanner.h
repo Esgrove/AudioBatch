@@ -26,6 +26,11 @@ constexpr auto pluginScanWorkerProcessUid {"audiobatch-plugin-scan-worker"};
 [[nodiscard]] bool isPluginScanWorkerCommandLine(const juce::String& commandLine);
 [[nodiscard]] bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList, const juce::File& file);
 [[nodiscard]] juce::File getKnownPluginListFile(const juce::PropertiesFile& settings);
+[[nodiscard]] juce::FileSearchPath buildVst3SearchPath(
+    const juce::FileSearchPath& juceSearchPath,
+    const juce::String& variableValue,
+    const juce::String& listSeparator
+);
 
 void addPluginFormats(juce::AudioPluginFormatManager& formatManager);
 void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList);

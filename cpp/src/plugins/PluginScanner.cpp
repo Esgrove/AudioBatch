@@ -26,6 +26,7 @@ constexpr auto knownPluginListFileName {"KnownPlugins.xml"};
 constexpr auto legacyKnownPluginListPropertyKey {"knownPluginList"};
 constexpr auto audioUnitIdentifierPrefix {"AudioUnit:"};
 constexpr auto appleManufacturerCode {"appl"};
+constexpr auto vst3PathVariable {"VST3_PATH"};
 constexpr auto responsePollInterval {std::chrono::milliseconds(50)};
 /// Longest wait for the worker to scan one plugin.
 /// Without it, a plugin that hangs in the worker would block the scan for good:
@@ -94,7 +95,57 @@ public:
     }
 };
 #endif
+
+#if JUCE_PLUGINHOST_VST3
+/// VST3 format whose default search path splits VST3_PATH with the separator of the platform's path lists.
+/// JUCE replaces every ":" in the variable with ";", which splits a Windows path such as C:\Plugins in two.
+class VST3FormatWithPlatformSearchPath final : public juce::VST3PluginFormat
+{
+public:
+    /// Returns the folders of VST3_PATH, then the standard VST3 folders of the platform.
+    juce::FileSearchPath getDefaultLocationsToSearch() override
+    {
+        return buildVst3SearchPath(
+            VST3PluginFormat::getDefaultLocationsToSearch(),
+            juce::SystemStats::getEnvironmentVariable(vst3PathVariable, {}),
+            juce::File::getSeparatorChar() == '\\' ? ";" : ":"
+        );
+    }
+};
+#endif
 }  // namespace
+
+/// Rebuilds the search path JUCE made from VST3_PATH and the standard folders,
+/// with the variable split at `listSeparator`, the separator of the platform's path lists.
+/// JUCE splits the variable at both ";" and ":", so the entries it made from the variable are taken out first,
+/// leaving the standard folders, which then follow the variable's folders without duplicates.
+/// Works on the raw strings, because an entry such as "C" is not a valid juce::File.
+juce::FileSearchPath buildVst3SearchPath(
+    const juce::FileSearchPath& juceSearchPath,
+    const juce::String& variableValue,
+    const juce::String& listSeparator
+)
+{
+    auto juceVariableEntries = juce::StringArray::fromTokens(variableValue.replace(":", ";"), ";", "\"");
+    juceVariableEntries.trim();
+    juceVariableEntries.removeEmptyStrings();
+
+    auto entries = juce::StringArray::fromTokens(variableValue, listSeparator, "\"");
+    entries.trim();
+    entries.removeEmptyStrings();
+
+    for (int index = 0; index < juceSearchPath.getNumPaths(); ++index) {
+        const auto entry = juceSearchPath.getRawString(index);
+        if (const auto variableIndex = juceVariableEntries.indexOf(entry); variableIndex >= 0) {
+            juceVariableEntries.remove(variableIndex);
+            continue;
+        }
+        entries.add(entry);
+    }
+
+    entries.removeDuplicates(!juce::File::areFileNamesCaseSensitive());
+    return {entries.joinIntoString(";")};
+}
 
 /// Returns true for an Audio Unit built into macOS, such as AUPeakLimiter or AUGraphicEQ.
 /// They are recognised by the Apple manufacturer code that ends their identifier,
@@ -106,7 +157,8 @@ bool isBuiltInApplePlugin(const juce::String& fileOrIdentifier)
 }
 
 /// Registers the VST3 and Audio Unit formats that CMakeLists.txt enables, in the order juce::addDefaultFormatsToManager
-/// uses, with an Audio Unit format that leaves the Audio Units built into macOS out of plugin scans.
+/// uses, with an Audio Unit format that leaves the Audio Units built into macOS out of plugin scans,
+/// and a VST3 format that keeps Windows drive letters in VST3_PATH intact.
 void addPluginFormats([[maybe_unused]] juce::AudioPluginFormatManager& formatManager)
 {
 #if JUCE_PLUGINHOST_AU && JUCE_MAC
@@ -114,7 +166,7 @@ void addPluginFormats([[maybe_unused]] juce::AudioPluginFormatManager& formatMan
 #endif
 
 #if JUCE_PLUGINHOST_VST3
-    formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
+    formatManager.addFormat(std::make_unique<VST3FormatWithPlatformSearchPath>());
 #endif
 }
 
