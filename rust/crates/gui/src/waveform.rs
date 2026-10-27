@@ -418,7 +418,8 @@ impl WaveformView {
         }
     }
 
-    /// Ends scrubbing when the mouse is released, inside the waveform or outside it, which plays from the scrubbed time.
+    /// Ends scrubbing when the mouse is released, inside the waveform or outside it,
+    /// which plays from the scrubbed time.
     fn on_mouse_up(&mut self, _event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
         if std::mem::take(&mut self.scrubbing) {
             cx.emit(WaveformEvent::ScrubEnded);

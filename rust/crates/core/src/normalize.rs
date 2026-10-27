@@ -68,8 +68,8 @@ const SOURCE_ANALYSIS_PROGRESS_SHARE: f32 = 0.3;
 const RENDER_PROGRESS_END: f32 = 0.8;
 
 /// Steps of the output bit depth that a full-scale sample may move by while a file still counts as at its target.
-/// A 16-bit file whose peak is the largest positive sample, 32767 of 32768, needs a gain one step above unity
-/// to reach 0 dBFS, and rewriting it would produce the same samples again.
+/// A 16-bit file whose peak is the largest positive sample, 32767 of 32768,
+/// needs a gain one step above unity to reach 0 dBFS, and rewriting it would produce the same samples again.
 /// The C++ application uses the same tolerance.
 const AT_TARGET_TOLERANCE_STEPS: f64 = 1.5;
 
@@ -434,8 +434,9 @@ fn succeed(source: &Path, output: AnalysisRecord, notice: Option<String>) -> Ope
     OperationResult::success(source, output, notice)
 }
 
-/// Returns true when the gain is so close to unity that rewriting a file of the given output bit depth
-/// would change no sample by more than about one step, so an in-place file is left as it is.
+/// Returns true when the gain is so close to unity
+/// that rewriting a file of the given output bit depth would change no sample by more than about one step,
+/// so an in-place file is left as it is.
 fn is_at_target(gain: f32, output_bit_depth: u32) -> bool {
     let full_scale_steps = f64::from(2_u32.pow(output_bit_depth.clamp(1, 32) - 1));
     (f64::from(gain) - 1.0).abs() <= AT_TARGET_TOLERANCE_STEPS / full_scale_steps

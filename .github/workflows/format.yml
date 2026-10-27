@@ -1,0 +1,64 @@
+name: Format
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+# Cancel previous runs for PRs but not pushes to main
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  format:
+    # Runs the root format.sh, which checks both projects with their own format scripts,
+    # the root shell scripts with shfmt, and the Python scripts with ruff.
+    # Needs macOS, since Ubuntu apt has an old clang-format version.
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      # The C++ format script checks CMake files with cmake-format, which it runs through uvx.
+      - name: Install formatters
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: 1
+        run: brew install clang-format shfmt uv
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: |
+          clang-format --version
+          ./format.sh --check
+
+  plugin-expected:
+    # The expected outputs of the test plugin must be what fixtures/plugin_expected.py writes,
+    # so a changed script cannot leave stale files behind for the C++ and Rust tests.
+    runs-on: macos-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.2
+
+      - name: Regenerate the expected outputs
+        run: uv run fixtures/plugin_expected.py
+
+      - name: Check for differences
+        run: |
+          git status --porcelain fixtures/plugin_expected
+          test -z "$(git status --porcelain fixtures/plugin_expected)"
