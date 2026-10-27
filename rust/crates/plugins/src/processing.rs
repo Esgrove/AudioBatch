@@ -27,7 +27,7 @@ use audiobatch_core::output_file::{
 };
 use audiobatch_core::record::AnalysisRecord;
 
-use crate::chain_signal::ChainSignal;
+use crate::chain_signal::{ChainSignal, StageFailure};
 use crate::processing_chain::{CANCELLED_MESSAGE, PROCESSING_BLOCK_FRAMES, PreparedChain, ProcessingChain};
 
 /// Level below which rendered tail samples count as silence and are trimmed from the end of the output.
@@ -435,7 +435,7 @@ fn render_blocks(
         }
         signal
             .process(&mut prepared.processors, PROCESSING_BLOCK_FRAMES)
-            .map_err(|failure| failure.error.to_string())?;
+            .map_err(|failure| describe_failed_stage(&prepared.names, failure))?;
         signal.fit_to(channels as usize);
         let skipped = latency.saturating_sub(position).min(block_frames);
         write_block(&signal, skipped as usize, block_frames as usize, &mut rendered)?;
@@ -444,6 +444,12 @@ fn render_blocks(
         on_progress((position as f64 / estimated_total.max(1) as f64).min(1.0) as f32);
     }
     Ok(rendered)
+}
+
+/// Describes the failed process call of a plugin for the user, with the plugin's name and its result code.
+fn describe_failed_stage(names: &[String], failure: StageFailure) -> String {
+    let name = names.get(failure.index).map_or("A plugin", String::as_str);
+    format!("{name}: {}", failure.error)
 }
 
 /// Appends frames `first..end` of the signal to the render file, interleaved,
@@ -791,7 +797,7 @@ mod test_process_file_failures {
             let result = process_file(record, &deleting_options(), &chain, &|| false, &mut |_| {});
             assert_eq!(
                 result.error(),
-                Some("The plugin failed to process audio (result 1)"),
+                Some("Test Failing: The plugin failed to process audio (result 1)"),
                 "{}",
                 record.file_name
             );
