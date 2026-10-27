@@ -1,7 +1,8 @@
 //! The host context plugins are initialized with.
 //!
-//! It reports the host name, creates the message and attribute list objects that plugins use to talk
-//! between their processor and controller, and tells plugins which optional host interfaces exist.
+//! It reports the host name, creates the message and attribute list objects
+//! that plugins use to talk between their processor and controller,
+//! and tells plugins which optional host interfaces exist.
 
 #![expect(
     unsafe_code,

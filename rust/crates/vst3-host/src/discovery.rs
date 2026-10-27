@@ -3,8 +3,8 @@
 //! The default folders are the standard VST3 locations of each platform,
 //! after the folders in the `VST3_PATH` environment variable.
 //! `VST3_PATH` is split with the platform's path list separator, so Windows drive letters stay intact.
-//! The search is recursive but does not descend into `.vst3` entries, because a bundle can contain other files
-//! with that extension, such as the library inside a Windows bundle.
+//! The search is recursive but does not descend into `.vst3` entries,
+//! because a bundle can contain other files with that extension, such as the library inside a Windows bundle.
 
 use std::collections::HashSet;
 use std::env;

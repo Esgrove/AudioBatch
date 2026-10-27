@@ -5,8 +5,9 @@
 //! Only `process` and `setProcessing` may run on a processing thread.
 //! `UiThread` is a token that exists only on the registered UI thread, and it is not `Send`,
 //! so every lifecycle method that takes `&UiThread` can only be called there.
-//! `UiDispatcher` lets other threads run jobs on the UI thread, and `UiJobs` is the receiving end that the
-//! UI thread drains, from the GUI's foreground executor or from a plain loop in a process without a GUI.
+//! `UiDispatcher` lets other threads run jobs on the UI thread,
+//! and `UiJobs` is the receiving end that the UI thread drains,
+//! from the GUI's foreground executor or from a plain loop in a process without a GUI.
 
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicU8, Ordering};
