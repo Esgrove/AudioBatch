@@ -27,7 +27,6 @@ pub fn from_utf16(characters: &[u16]) -> String {
 }
 
 /// Copies text into a `char8` array, truncating it so the array always ends with a null.
-#[cfg(test)]
 pub fn to_char8(text: &str, target: &mut [c_char]) {
     let capacity = target.len().saturating_sub(1);
     let mut written = 0;

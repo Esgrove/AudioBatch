@@ -685,6 +685,7 @@ name = "audiobatch-test-plugin"
 version = "0.1.0"
 dependencies = [
  "vst3",
+ "vst3-host",
 ]
 
 [[package]]

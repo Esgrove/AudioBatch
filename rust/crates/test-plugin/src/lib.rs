@@ -10,13 +10,10 @@
 //! The `module` example builds the same factory into a library with the VST3 entry points,
 //! which tests wrap into a `.vst3` bundle with `create_bundle`.
 
-#![expect(unsafe_code, reason = "implements the VST3 COM interfaces of the fake plugins")]
-
 mod bundle;
 mod controller;
 mod factory;
 mod processor;
-mod text;
 
 use std::sync::{Mutex, PoisonError};
 use std::thread::ThreadId;

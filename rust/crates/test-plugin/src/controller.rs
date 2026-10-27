@@ -4,6 +4,11 @@
 //! Setting `EDIT_TRIGGER_PARAMETER` makes it report a gain edit to the component handler,
 //! the way an editor reports a change the user made.
 
+#![expect(
+    unsafe_code,
+    reason = "implements the VST3 edit controller COM interfaces of the fake plugins"
+)]
+
 use std::ffi::{CStr, c_char};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -18,9 +23,9 @@ use vst3::Steinberg::{
     tresult,
 };
 use vst3::{Class, ComPtr, ComRef};
+use vst3_host::strings::to_utf16;
 
 use crate::processor::CONNECTED_MESSAGE;
-use crate::text::copy_utf16;
 use crate::{EDIT_TRIGGER_PARAMETER, GAIN_PARAMETER, INITIAL_CONTROLLER_STATE, record};
 
 /// The edit controller of a fake plugin.
@@ -141,9 +146,9 @@ impl IEditControllerTrait for TestController {
         // SAFETY: the host passes a writable ParameterInfo, checked for null above.
         let info = unsafe { &mut *info };
         info.id = GAIN_PARAMETER;
-        copy_utf16("Gain", &mut info.title);
-        copy_utf16("Gain", &mut info.shortTitle);
-        copy_utf16("", &mut info.units);
+        to_utf16("Gain", &mut info.title);
+        to_utf16("Gain", &mut info.shortTitle);
+        to_utf16("", &mut info.units);
         info.stepCount = 0;
         info.defaultNormalizedValue = 1.0;
         info.unitId = 0;
@@ -156,7 +161,7 @@ impl IEditControllerTrait for TestController {
             return kInvalidArgument;
         }
         // SAFETY: the host passes a writable String128, checked for null above.
-        copy_utf16(&format!("{value:.2}"), unsafe { &mut *string });
+        to_utf16(&format!("{value:.2}"), unsafe { &mut *string });
         kResultOk
     }
 

@@ -4,6 +4,11 @@
 //! When connected to its controller, the processor sends it a message created through the host context,
 //! which checks that the host can create messages.
 
+#![expect(
+    unsafe_code,
+    reason = "implements the VST3 component and audio processor COM interfaces of the fake plugins"
+)]
+
 use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,8 +26,8 @@ use vst3::Steinberg::{
     kResultFalse, kResultOk, kResultTrue, tresult,
 };
 use vst3::{Class, ComPtr, ComRef, Interface};
+use vst3_host::strings::to_utf16;
 
-use crate::text::copy_utf16;
 use crate::{DELAY_LATENCY, ECHO_DELAY, ECHO_LEVEL, FAILING_STATE_BYTES, GAIN_PARAMETER, Kind, record};
 
 /// Id of the message the processor sends to its controller when they are connected.
@@ -241,7 +246,7 @@ impl IComponentTrait for TestProcessor {
         bus.mediaType = media_type;
         bus.direction = direction;
         bus.channelCount = i32::try_from(arrangement.count_ones()).unwrap_or_default();
-        copy_utf16(name, &mut bus.name);
+        to_utf16(name, &mut bus.name);
         bus.busType = i32::try_from(i64::from(bus_type)).unwrap_or_default();
         bus.flags = if index == 0 {
             u32::try_from(i64::from(BusFlags_::kDefaultActive)).unwrap_or_default()

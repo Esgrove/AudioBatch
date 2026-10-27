@@ -3,6 +3,8 @@
 //! It lists a component class for every kind and the two controller classes,
 //! with the extended class information of `IPluginFactory2`.
 
+#![expect(unsafe_code, reason = "implements the VST3 plugin factory COM interface")]
+
 use std::ffi::c_void;
 
 use vst3::Steinberg::{
@@ -11,10 +13,10 @@ use vst3::Steinberg::{
     kResultFalse, kResultOk, tresult,
 };
 use vst3::{Class, ComWrapper};
+use vst3_host::strings::to_char8;
 
 use crate::controller::TestController;
 use crate::processor::TestProcessor;
-use crate::text::copy_char8;
 use crate::{CONTROLLER_ID, Kind, RECORDER_CONTROLLER_ID, VENDOR};
 
 /// Category of audio effect components.
@@ -55,9 +57,9 @@ impl IPluginFactoryTrait for Factory {
         }
         // SAFETY: the host passes a writable PFactoryInfo, checked for null above.
         let info = unsafe { &mut *info };
-        copy_char8(VENDOR, &mut info.vendor);
-        copy_char8("https://example.com", &mut info.url);
-        copy_char8("", &mut info.email);
+        to_char8(VENDOR, &mut info.vendor);
+        to_char8("https://example.com", &mut info.url);
+        to_char8("", &mut info.email);
         info.flags = i32::try_from(i64::from(FactoryFlags_::kUnicode)).unwrap_or_default();
         kResultOk
     }
@@ -77,8 +79,8 @@ impl IPluginFactoryTrait for Factory {
         let info = unsafe { &mut *info };
         info.cid = entry.id;
         info.cardinality = i32::try_from(i64::from(ClassCardinality_::kManyInstances)).unwrap_or_default();
-        copy_char8(entry.category, &mut info.category);
-        copy_char8(entry.name, &mut info.name);
+        to_char8(entry.category, &mut info.category);
+        to_char8(entry.name, &mut info.name);
         kResultOk
     }
 
@@ -119,13 +121,13 @@ impl IPluginFactory2Trait for Factory {
         let info = unsafe { &mut *info };
         info.cid = entry.id;
         info.cardinality = i32::try_from(i64::from(ClassCardinality_::kManyInstances)).unwrap_or_default();
-        copy_char8(entry.category, &mut info.category);
-        copy_char8(entry.name, &mut info.name);
+        to_char8(entry.category, &mut info.category);
+        to_char8(entry.name, &mut info.name);
         info.classFlags = 0;
-        copy_char8(entry.subcategories, &mut info.subCategories);
-        copy_char8(VENDOR, &mut info.vendor);
-        copy_char8(VERSION, &mut info.version);
-        copy_char8(SDK_VERSION, &mut info.sdkVersion);
+        to_char8(entry.subcategories, &mut info.subCategories);
+        to_char8(VENDOR, &mut info.vendor);
+        to_char8(VERSION, &mut info.version);
+        to_char8(SDK_VERSION, &mut info.sdkVersion);
         kResultOk
     }
 }
