@@ -607,6 +607,25 @@ private:
             expect(loser.existsAsFile());
         }
 
+        beginTest("Normalizing several files on several workers converts each one and caches its output");
+        {
+            const auto first = directory.copyFixture("sine_stereo_44100_16.wav", "parallel_first.wav");
+            const auto second = directory.copyFixture("sine_mono_44100_16.wav", "parallel_second.wav");
+            const auto third = directory.copyFixture("sine_stereo_44100_16.flac", "parallel_third.flac");
+            auto command = makeCommand({first, second, third});
+            command.workerCount = 3;
+            command.normalization = testNormalizationOptions();
+            command.normalization->targetPeakDbfs = -1.0;
+            expectEquals(cli::runAnalysis(command, cache), 0);
+            for (const auto& source : {first, second, third}) {
+                const auto output = source.withFileExtension("aif");
+                expect(output.existsAsFile(), output.getFileName());
+                expect(!source.existsAsFile(), source.getFileName());
+                expectWithinAbsoluteError(peakDecibels(analyzeFile(output)), -1.0, 0.01);
+                expect(cache.getAnalysis(output).has_value(), output.getFileName());
+            }
+        }
+
         beginTest("The analysis still succeeds when the cache cannot be opened");
         {
             const auto notDatabase = directory.getChildFile("not_a_database.db");

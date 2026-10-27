@@ -8,14 +8,17 @@
 #include "analysis/AudioAnalysis.h"
 #include "cli/AudioAnalysisCliOutput.h"
 #include "normalization/AudioNormalization.h"
+#include "normalization/NormalizeCoordinator.h"
 #include "utils/ConsolePrint.h"
 #include "utils/ConsoleProgress.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include <unordered_set>
 
 #include <algorithm>
 #include <iterator>
+#include <map>
 #include <mutex>
 #include <set>
 #include <utility>
@@ -101,6 +104,44 @@ std::vector<AudioAnalysisRecord> analyzeWithProgress(
     return results;
 }
 
+/// Normalizes the records on `workerCount` workers through the normalization coordinator,
+/// showing the progress line while the run lasts,
+/// and returns the result of each record by the full path of its source.
+/// A record that loses a batch output conflict comes back as a failure without being touched.
+std::map<juce::String, AudioNormalizationResult> normalizeWithProgress(
+    const std::vector<AudioAnalysisRecord>& records,
+    const AudioNormalizationOptions& options,
+    const int workerCount
+)
+{
+    console::ProgressLine progress;
+    progress.setTotal(static_cast<int>(records.size()));
+    std::mutex resultsMutex;
+    std::map<juce::String, AudioNormalizationResult> results;
+    juce::WaitableEvent completed;
+
+    // The coordinator is declared last, so it is destroyed, waiting for its jobs, before the locals they use.
+    NormalizeCoordinator coordinator(workerCount);
+    coordinator.setStartingCallback([&progress](const juce::File& file, int /*runId*/) {
+        progress.setMessage(file.getFileName());
+    });
+    coordinator.setResultCallback([&](const AudioNormalizationResult& result, int /*runId*/) {
+        {
+            const std::scoped_lock lock(resultsMutex);
+            results.insert_or_assign(result.file.getFullPathName(), result);
+        }
+        progress.increment();
+    });
+    coordinator.setCompletionCallback([&completed](int /*totalFiles*/, int /*runId*/) { completed.signal(); });
+
+    static_cast<void>(coordinator.start(records, options));
+    completed.wait();
+    progress.finish();
+
+    const std::scoped_lock lock(resultsMutex);
+    return results;
+}
+
 /// Prints the notice of a successful normalization, such as audio blocks that failed to decode, when it has one.
 /// The normalization itself already logged it.
 void printNormalizationNotice(const OperationSucceeded& succeeded)
@@ -123,6 +164,10 @@ juce::StringArray cli::findSkippedInputs(
 )
 {
     juce::StringArray errors;
+    std::unordered_set<juce::String> analyzedPaths;
+    for (const auto& record : results) {
+        analyzedPaths.insert(record.file.getFullPathName());
+    }
 
     for (const auto& input : inputPaths) {
         if (!input.exists()) {
@@ -130,11 +175,7 @@ juce::StringArray cli::findSkippedInputs(
             continue;
         }
 
-        if (input.isDirectory()
-            || std::ranges::any_of(
-                results, [&input](const AudioAnalysisRecord& record) { return record.file == input; }
-            ))
-        {
+        if (input.isDirectory() || analyzedPaths.contains(input.getFullPathName())) {
             continue;
         }
 
@@ -211,7 +252,7 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
     std::vector<AudioAnalysisRecord> normalizedResults;
 
     juce::StringArray normalizationConflicts;
-    console::ProgressLine normalizationProgress;
+    std::map<juce::String, AudioNormalizationResult> normalizations;
 
     if (command.normalization.has_value()) {
         normalizedResults.reserve(results.size());
@@ -220,7 +261,7 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
             return !record.hasError();
         });
         normalizationConflicts = findBatchOutputConflicts(normalizableResults);
-        normalizationProgress.setTotal(static_cast<int>(normalizableResults.size()));
+        normalizations = normalizeWithProgress(normalizableResults, *command.normalization, command.workerCount);
     }
 
     // The CSV and JSON output of a normalize run lists failed files too, with their error.
@@ -247,21 +288,19 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
         if (normalizationConflicts.contains(result.file.getFullPathName())) {
             ++failureCount;
             const auto conflictMessage = batchOutputConflictMessage(result.file);
-            normalizationProgress.finish();
             reportError(
                 utils::format(
                     "Normalization output conflict: {}, {}", result.file.getFullPathName().quoted(), conflictMessage
                 )
             );
             addNormalizationFailure(result, conflictMessage);
-            normalizationProgress.increment();
             continue;
         }
 
-        normalizationProgress.setMessage(result.file.getFileName());
-        const auto normalization = normalizeFile(result, *command.normalization);
-        // Messages about the file start on a clean line, and the progress line is drawn again after them.
-        normalizationProgress.finish();
+        const auto found = normalizations.find(result.file.getFullPathName());
+        const auto normalization = found != normalizations.end()
+            ? found->second
+            : AudioNormalizationResult::failure(result.file, "The file was not normalized");
 
         // A converted original was moved to the trash, so its cached row is no longer needed,
         // even when the re-analysis of the committed output failed.
@@ -294,9 +333,7 @@ int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
             },
             normalization.outcome
         );
-        normalizationProgress.increment();
     }
-    normalizationProgress.finish();
 
     if (command.normalization.has_value()) {
         sortRecords(normalizedResults, command.sortMode, !command.reverse);
