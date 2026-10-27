@@ -274,7 +274,7 @@ void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPlugin
             knownPluginList.recreateFromXml(*element);
             removeBuiltInApplePlugins(knownPluginList);
         } else {
-            utils::logError("Could not parse the known plugins list: {}", file.getFullPathName().quoted());
+            utils::logErrorAlways("Could not parse the known plugins list: {}", file.getFullPathName().quoted());
         }
 
         return;
@@ -580,7 +580,7 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
         if (!worker->isRunning()) {
             // Without a worker there is nothing to isolate the plugin with.
             // Skip it instead of blacklisting, so a later scan can try again.
-            utils::logError("Could not launch the plugin scan worker process");
+            utils::logErrorAlways("Could not launch the plugin scan worker process");
             worker.reset();
             return true;
         }

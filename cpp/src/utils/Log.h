@@ -87,6 +87,15 @@ void logError(fmt::format_string<Args...> formatString, Args&&... args)
     logError(utils::format(formatString, std::forward<Args>(args)...));
 }
 
+void logErrorAlways(const juce::String& message);
+
+/// Formats and logs an error the user needs to see, and prints it to stderr even when the console echo is off.
+template<typename... Args>
+void logErrorAlways(fmt::format_string<Args...> formatString, Args&&... args)
+{
+    logErrorAlways(utils::format(formatString, std::forward<Args>(args)...));
+}
+
 void logSystemInfo();
 
 void installCrashLogging();
