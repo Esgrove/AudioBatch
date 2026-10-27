@@ -115,7 +115,7 @@ Options:
       --lufs <LUFS>      Normalize to this integrated loudness, -24 to -6, with a -0.3 dBTP ceiling
   -j, --jobs <COUNT>     Override worker count
   -s, --sort <MODE>      Sort by peak, lufs, name, or path [default: peak]
-  -R, --reverse          Sort in descending order
+  -S, --reverse          Sort in descending order
   -o, --output <FORMAT>  Print results as table, csv, or json [default: table] [possible values: table, csv, json]
   -h, --help             Print help (see more with '--help')
   -V, --version          Print version

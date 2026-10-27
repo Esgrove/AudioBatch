@@ -172,7 +172,7 @@ Options:
       --lufs <LUFS>       Normalize to this integrated loudness, -24 to -6, with a -0.3 dBTP ceiling
   -j, --jobs <count>      Override worker count
   -s, --sort <mode>       Sort by peak, lufs, name, or path
-      --reverse           Sort in descending order
+  -S, --reverse           Sort in descending order
   -o, --output <format>   Print results as table (default), csv, or json
   -l, --list-plugins      List the available audio plugins and exit
   -g, --group-by <mode>   Group the plugin list by name (alphabetical), manufacturer, type, or format
