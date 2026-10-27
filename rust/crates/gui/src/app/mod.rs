@@ -2,66 +2,59 @@
 //!
 //! `AppView` owns the results table, the preview section, the analysis, normalization,
 //! and plugin processing coordinators, the plugin chain, and the preview player.
-//! This module holds the view state, the analysis runs, and the selection.
+//! This module holds the view state and its construction.
+//! What it opens at startup is in `startup`, the analysis runs are in `analysis`,
+//! the selection is in `selection`, and the per-file gain is in `gain`.
 //! The menu and transport actions are in `actions`, normalization is in `normalize`,
 //! plugin processing is in `process`, the plugin chain and the plugin windows are in `plugins`,
 //! and the live preview through the chain is in `preview`.
-//! The tags of the selected file are read in `tags`, and the layout is in `render`.
-//! Coordinator events are drained from their channel by a foreground task in batches,
-//! so a large run updates the table at a steady rate instead of once per event.
+//! The tags of the selected file are read in `tags`, the preferences in `preferences`, and the layout is in `render`.
 
 mod actions;
+mod analysis;
+mod gain;
 mod normalize;
 mod plugins;
 mod preferences;
 mod preview;
 mod process;
 mod render;
+mod selection;
+mod startup;
 mod tags;
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
-use audiobatch_core::discovery::{has_supported_extension, normalize_path};
-use audiobatch_core::record::{custom_gain_from_decibels, decibels_to_gain};
-use audiobatch_core::{
-    AnalysisCache, AnalysisCoordinator, AnalysisEvent, AnalysisOptions, AnalysisRecord, FileTags, NormalizeCoordinator,
-};
+use audiobatch_core::{AnalysisCoordinator, FileTags, NormalizeCoordinator};
 use audiobatch_playback::Player;
-use audiobatch_plugins::{ProcessingCoordinator, default_worker_count};
-use crossbeam_channel::{Receiver, TryRecvError};
+use audiobatch_plugins::ProcessingCoordinator;
 use gpui_kit::base::ResizableState;
-use gpui_kit::component::slider::{SliderEvent, SliderScale, SliderState};
-use gpui_kit::component::table::{TableEvent, TableState};
-use gpui_kit::{
-    App, AppContext as _, Context, Entity, FocusHandle, Pixels, SharedString, Size, Subscription, Task, Window,
-};
-use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
+use gpui_kit::component::slider::SliderState;
+use gpui_kit::component::table::TableState;
+use gpui_kit::{AppContext as _, Context, Entity, FocusHandle, Pixels, SharedString, Size, Subscription, Task, Window};
+use raw_window_handle::HasWindowHandle as _;
 use vst3_host::UiDispatcher;
 
-use crate::menus::{ColumnChoice, MenuState, set_menus};
-use crate::normalization::{describe_target, target_range};
+use crate::menus::{MenuState, set_menus};
+use crate::normalization::describe_target;
 use crate::operation_run::OperationRun;
+use crate::plugins::PluginHost;
 use crate::plugins::chain_window::ChainView;
-use crate::plugins::labels::group_by_vendor;
 use crate::plugins::manager_window::ManagerView;
-use crate::plugins::{FALLBACK_SAMPLE_RATE, PluginHost};
-use crate::results::{ResultRow, ResultsDelegate, RowState};
-use crate::settings::{GuiSettings, NormalizeMode};
-use crate::waveform::{MAXIMUM_ZOOM, MINIMUM_ZOOM, NO_FILE_TEXT, PlayheadSource, WaveformEvent, WaveformView};
+use crate::results::ResultsDelegate;
+use crate::settings::GuiSettings;
+use crate::waveform::{PlayheadSource, WaveformView};
+use analysis::{RunKind, RunProgress, drain_events};
+use gain::DEFAULT_GAIN_DB;
 use plugins::PluginWindow;
-use preferences::{SettingsWindow, open_player};
+use preferences::SettingsWindow;
+use selection::column_choices;
+use startup::{Startup, new_results_table, new_sliders, open_startup};
 
 /// Window title, followed by the analysis progress while a run is in progress.
 pub const APP_TITLE: &str = "AudioBatchRs";
-
-/// How often the analysis and normalization events are applied to the table.
-const ANALYSIS_POLL_INTERVAL: Duration = Duration::from_millis(50);
-
-/// How often the paths of later launches are checked.
-const LAUNCH_POLL_INTERVAL: Duration = Duration::from_millis(200);
 
 /// Padding around the window content.
 const CONTENT_PADDING: f32 = 4.0;
@@ -80,33 +73,6 @@ const PREVIEW_MINIMUM_HEIGHT: f32 = 230.0;
 
 /// Initial share of the workspace height given to the preview.
 const PREVIEW_PROPORTION: f32 = 0.28;
-
-/// Lowest input gain in decibels.
-const MINIMUM_GAIN_DB: f32 = -12.0;
-
-/// Highest input gain in decibels.
-const MAXIMUM_GAIN_DB: f32 = 12.0;
-
-/// Input gain at startup and after a reset, in decibels.
-const DEFAULT_GAIN_DB: f32 = 0.0;
-
-/// Difference between the gain slider and the selected file's gain that moves the slider, in decibels.
-const GAIN_SLIDER_TOLERANCE_DB: f32 = 1e-3;
-
-/// Gain change of one wheel event over the waveform in decibels, the step of the gain slider.
-const GAIN_WHEEL_STEP_DB: f32 = 0.1;
-
-/// How long the mouse wheel has to rest before a gain it changed is written to the cache.
-const GAIN_STORE_DELAY: Duration = Duration::from_millis(500);
-
-/// What an analysis run covers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RunKind {
-    /// Every listed folder and file, replacing the rows with what is found.
-    Scan,
-    /// Some listed files again, keeping the other rows.
-    Reanalyze,
-}
 
 /// Startup options from the command line.
 #[derive(Debug, Default, Clone)]
@@ -198,41 +164,6 @@ pub struct AppView {
     /// Opens the paths that later launches of the app hand over, when this launch is the running app.
     launch_task: Option<Task<()>>,
     _plugin_tick_task: Task<()>,
-}
-
-/// Progress of the current analysis run.
-#[derive(Debug, Clone)]
-struct RunProgress {
-    run_id: u64,
-    kind: RunKind,
-    planned: bool,
-    total: usize,
-    finished: usize,
-    completed: bool,
-}
-
-/// The background coordinators, sharing one analysis cache, or none when the cache cannot be opened.
-#[derive(Default)]
-struct Coordinators {
-    analysis: Option<Arc<AnalysisCoordinator>>,
-    normalize: Option<Arc<NormalizeCoordinator>>,
-    process: Option<Arc<ProcessingCoordinator>>,
-}
-
-/// What the main view opens at startup, with the problem to show in the status line.
-struct Startup {
-    coordinators: Coordinators,
-    player: Option<Player>,
-    plugins: PluginHost,
-    status: SharedString,
-}
-
-/// The sliders of the controls column.
-struct Sliders {
-    zoom: Entity<SliderState>,
-    gain: Entity<SliderState>,
-    peak_target: Entity<SliderState>,
-    loudness_target: Entity<SliderState>,
 }
 
 impl AppView {
@@ -343,13 +274,6 @@ impl AppView {
         view
     }
 
-    /// Clears the custom gain of the selected files, in the table and in the cache.
-    pub(super) fn clear_selected_gain(&self, cx: &mut Context<Self>) {
-        self.change_selected_gain(DEFAULT_GAIN_DB, cx);
-        self.store_selected_gain(cx);
-        cx.notify();
-    }
-
     /// Points the waveform playhead at the current player.
     fn connect_playhead(&self, cx: &mut Context<Self>) {
         let playhead = self
@@ -359,137 +283,9 @@ impl AppView {
         self.waveform.update(cx, |view, cx| view.set_playhead(playhead, cx));
     }
 
-    /// Adds folders and files to the list and scans every listed root again.
-    /// Cached files come back immediately, so only new or changed files are decoded.
-    fn add_roots(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
-        if self.blocked_by_file_operation(cx) {
-            return;
-        }
-        let mut added = false;
-        for path in paths.iter().map(|path| normalize_path(path)) {
-            self.excluded.remove(&path);
-            if !self.roots.contains(&path) {
-                self.roots.push(path);
-                added = true;
-            }
-        }
-        if added {
-            self.start_run(RunKind::Scan, self.roots.clone(), false, cx);
-        } else {
-            self.status = SharedString::from("Folder is already included");
-            cx.notify();
-        }
-    }
-
-    /// Replaces the listed folders and files and scans them.
-    fn replace_roots(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
-        if self.blocked_by_file_operation(cx) {
-            return;
-        }
-        self.roots = paths.iter().map(|path| normalize_path(path)).collect();
-        self.excluded.clear();
-        self.start_run(RunKind::Scan, self.roots.clone(), false, cx);
-    }
-
-    /// Opens the paths that later launches of the app hand over, as if they were dropped onto the window,
-    /// and brings the window to the front, like the C++ application.
-    pub fn listen_for_launches(&mut self, launches: Receiver<Vec<PathBuf>>, window: &Window, cx: &Context<Self>) {
-        self.launch_task = Some(cx.spawn_in(window, async move |this, cx| {
-            loop {
-                cx.background_executor().timer(LAUNCH_POLL_INTERVAL).await;
-                let received: Vec<Vec<PathBuf>> = launches.try_iter().collect();
-                if received.is_empty() {
-                    continue;
-                }
-                let alive = this.update_in(cx, |view, window, cx| {
-                    window.activate_window();
-                    for paths in received.iter().filter(|paths| !paths.is_empty()) {
-                        view.handle_drop(paths, false, cx);
-                    }
-                });
-                if alive.is_err() {
-                    break;
-                }
-            }
-        }));
-    }
-
-    /// Adds dropped paths, or replaces the listed folders when folders are dropped without Shift held.
-    fn handle_drop(&mut self, paths: &[PathBuf], append: bool, cx: &mut Context<Self>) {
-        let supported: Vec<PathBuf> = paths
-            .iter()
-            .filter(|path| path.is_dir() || has_supported_extension(path))
-            .cloned()
-            .collect();
-        if supported.is_empty() {
-            self.status = SharedString::from("No supported dropped files");
-            cx.notify();
-            return;
-        }
-        if !append && supported.iter().any(|path| path.is_dir()) {
-            self.replace_roots(&supported, cx);
-        } else {
-            self.add_roots(&supported, cx);
-        }
-    }
-
-    /// Starts an analysis run, replacing any run in progress.
-    /// Rows the replaced run left waiting or analyzing keep their previous result,
-    /// because the events of the replaced run are ignored from now on.
-    fn start_run(&mut self, kind: RunKind, inputs: Vec<PathBuf>, refresh: bool, cx: &mut Context<Self>) {
-        let Some(coordinator) = self.coordinator.clone() else {
-            return;
-        };
-        if inputs.is_empty() || self.is_demo() || self.blocked_by_file_operation(cx) {
-            return;
-        }
-        if self.is_analyzing() {
-            self.table.update(cx, |state, cx| {
-                state.delegate_mut().finish_interrupted_rows();
-                cx.notify();
-            });
-        }
-        let (run_id, receiver) = coordinator.start(AnalysisOptions {
-            input_paths: inputs,
-            recursive: true,
-            refresh,
-        });
-        self.run = Some(RunProgress {
-            run_id,
-            kind,
-            planned: false,
-            total: 0,
-            finished: 0,
-            completed: false,
-        });
-        self.status = SharedString::from(match kind {
-            RunKind::Scan => "Scanning for audio files...",
-            RunKind::Reanalyze => "Analyzing...",
-        });
-        self.analysis_task = Some(spawn_event_drain(receiver, cx));
-        cx.notify();
-    }
-
-    /// Returns true while a run is in progress.
-    fn is_analyzing(&self) -> bool {
-        self.analysis_task.is_some() && self.run.as_ref().is_some_and(|run| !run.completed)
-    }
-
     /// Returns true when the table shows the synthetic stress test.
     const fn is_demo(&self) -> bool {
         self.demo_task.is_some()
-    }
-
-    /// Returns true when the selected file has a usable result, so its custom gain can be changed,
-    /// or while the stress test runs, where the gain only scales the drawn waveform.
-    fn can_adjust_gain(&self, cx: &App) -> bool {
-        self.is_demo() || self.selected_record(cx).is_some()
-    }
-
-    /// Returns the usable result of the selected file.
-    fn selected_record<'app>(&self, cx: &'app App) -> Option<&'app AnalysisRecord> {
-        let selected = self.selected.as_deref()?;
-        self.table.read(cx).delegate().row_for(selected)?.ready_record()
     }
 
     /// Returns the activity and the overall progress of the current run from 0 to 1,
@@ -513,518 +309,6 @@ impl AppView {
         let active = self.table.read(cx).delegate().active_progress();
         Some((activity, ((finished as f32 + active) / total as f32).clamp(0.0, 1.0)))
     }
-
-    /// Returns the target slider of a normalization mode.
-    const fn normalize_target_slider(&self, mode: NormalizeMode) -> &Entity<SliderState> {
-        match mode {
-            NormalizeMode::Peak => &self.peak_target_slider,
-            NormalizeMode::Loudness => &self.loudness_target_slider,
-        }
-    }
-
-    /// Stores the target while a target slider moves, and saves it when the slider is released.
-    fn on_target_slider_event(&mut self, mode: NormalizeMode, event: &SliderEvent, cx: &mut Context<Self>) {
-        match event {
-            SliderEvent::Change(value) => self.change_normalize_target(mode, value.start(), cx),
-            SliderEvent::Release(_) => self.store_normalize_target(cx),
-        }
-    }
-
-    /// Applies a batch of analysis events to the table and the selection.
-    fn apply_analysis_events(&mut self, events: Vec<AnalysisEvent>, cx: &mut Context<Self>) {
-        let Some((run_id, kind)) = self.run.as_ref().map(|run| (run.run_id, run.kind)) else {
-            return;
-        };
-        let mut planned_total = None;
-        let mut finished = 0;
-        let mut selected_finished = false;
-        let mut completed = false;
-        let mut carried_gains = Vec::new();
-        let excluded = &self.excluded;
-        let selected = self.selected.as_deref();
-        self.table.update(cx, |state, cx| {
-            let delegate = state.delegate_mut();
-            for event in events.into_iter().filter(|event| event.run_id() == run_id) {
-                match event {
-                    AnalysisEvent::Planned { files, .. } => {
-                        let files: Vec<PathBuf> = files.into_iter().filter(|path| !excluded.contains(path)).collect();
-                        planned_total = Some(files.len());
-                        match kind {
-                            RunKind::Scan => delegate.set_files(&files),
-                            RunKind::Reanalyze => files.iter().for_each(|path| delegate.mark_pending(path)),
-                        }
-                    }
-                    AnalysisEvent::Started { path, .. } => delegate.mark_started(&path),
-                    AnalysisEvent::Progress { path, fraction, .. } => delegate.mark_progress(&path, fraction),
-                    AnalysisEvent::Finished { record, .. } => {
-                        if excluded.contains(&record.path) {
-                            continue;
-                        }
-                        finished += 1;
-                        selected_finished |= selected == Some(record.path.as_path());
-                        let path = record.path.clone();
-                        if let Some(gain) = delegate.set_record(*record) {
-                            carried_gains.push((path, gain));
-                        }
-                    }
-                    AnalysisEvent::Completed { .. } => {
-                        delegate.sort_rows();
-                        completed = true;
-                    }
-                }
-            }
-            cx.notify();
-        });
-        // The coordinator stored each row before publishing it, so a carried over gain can be stored now.
-        for (path, gain) in carried_gains {
-            self.store_custom_gain(&path, Some(gain));
-        }
-
-        if let Some(run) = &mut self.run {
-            if let Some(total) = planned_total {
-                run.planned = true;
-                run.total = total;
-            }
-            run.finished += finished;
-            run.completed |= completed;
-        }
-        self.update_run_status(cx);
-        if planned_total.is_some() || completed {
-            self.restore_selection(cx);
-        }
-        if completed {
-            if crate::debug_enabled() {
-                tracing::info!("analysis: {}", self.status);
-            }
-            if std::mem::take(&mut self.autoplay_pending) {
-                let first_playable = {
-                    let delegate = self.table.read(cx).delegate();
-                    (0..delegate.len()).find_map(|index| {
-                        delegate
-                            .row(index)
-                            .filter(|row| row.ready_record().is_some())
-                            .map(|row| (index, row.path.clone()))
-                    })
-                };
-                if let Some((index, path)) = first_playable {
-                    self.table.update(cx, |state, cx| state.set_selected_row(index, cx));
-                    self.select_path(&path, true, cx);
-                }
-            }
-        }
-        if selected_finished {
-            self.refresh_selected_waveform(cx);
-            self.apply_preview_gain(cx);
-        }
-        cx.notify();
-    }
-
-    /// Sets the status text from the progress of the current run.
-    fn update_run_status(&mut self, cx: &Context<Self>) {
-        let Some(run) = &self.run else {
-            return;
-        };
-        let (listed, failed) = {
-            let delegate = self.table.read(cx).delegate();
-            (delegate.len(), delegate.failed_count())
-        };
-        if run.completed {
-            let failures = if failed > 0 {
-                format!(", {failed} failed")
-            } else {
-                String::new()
-            };
-            self.status = match run.kind {
-                RunKind::Scan if listed == 0 => String::from("No supported audio files found"),
-                RunKind::Scan => format!("Loaded {listed} files{failures}"),
-                RunKind::Reanalyze => format!("Analyzed {} files{failures}", run.total),
-            }
-            .into();
-        } else if run.planned {
-            self.status = format!("Analyzing {}/{}", run.finished, run.total).into();
-        }
-    }
-
-    /// Selects the row of the selected file again after the rows were sorted or replaced,
-    /// because the table keeps its selection by index.
-    /// Clears the selection when the file is no longer listed.
-    fn restore_selection(&mut self, cx: &mut Context<Self>) {
-        let Some(selected) = self.selected.clone() else {
-            return;
-        };
-        let index = self.table.read(cx).delegate().index_of(&selected);
-        match index {
-            Some(index) => self.table.update(cx, |state, cx| {
-                if state.selected_row() != Some(index) {
-                    state.set_selected_row(index, cx);
-                }
-            }),
-            None if !self.is_demo() => self.clear_selection(cx),
-            None => {}
-        }
-    }
-
-    /// Handles row selection and double clicks in the table,
-    /// and renders again after a column resize so the Status column fills the width again.
-    /// With playback continuation on, selecting another file while one plays starts the new one.
-    fn on_table_event(
-        &mut self,
-        table: &Entity<TableState<ResultsDelegate>>,
-        event: &TableEvent,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let continue_playback = self.settings.continue_playback && self.player.as_ref().is_some_and(Player::is_playing);
-        let (index, play) = match event {
-            // Events arrive after the update that sent them.
-            // A selection the rows have since moved away from would pick another file.
-            TableEvent::SelectRow(index) if table.read(cx).selected_row() != Some(*index) => return,
-            TableEvent::SelectRow(index) => (*index, continue_playback),
-            TableEvent::DoubleClickedRow(index) => (*index, true),
-            TableEvent::ColumnWidthsChanged(_) => {
-                cx.notify();
-                return;
-            }
-            _ => return,
-        };
-        let path = table.read(cx).delegate().row(index).map(|row| row.path.clone());
-        if let Some(path) = path {
-            // A plain click on another row selects only that file.
-            // The table also selects the row of the same file again after a sort, which keeps the other selected files.
-            if self.selected.as_deref() != Some(path.as_path()) {
-                table.update(cx, |state, _| state.delegate_mut().select_only(Some(path.clone())));
-            }
-            self.select_path(&path, play, cx);
-        }
-    }
-
-    /// Returns the selected files, the file the preview plays first.
-    pub(super) fn selected_paths(&self, cx: &App) -> Vec<PathBuf> {
-        self.table.read(cx).delegate().selected_paths()
-    }
-
-    /// Returns the analyzed records of the selected files, the file the preview plays first.
-    pub(super) fn selected_ready_records(&self, cx: &App) -> Vec<AnalysisRecord> {
-        let delegate = self.table.read(cx).delegate();
-        delegate
-            .selected_paths()
-            .iter()
-            .filter_map(|path| delegate.row_for(path).and_then(|row| row.ready_record()).cloned())
-            .collect()
-    }
-
-    /// Shows or hides a results table column from Options > Columns, and saves the choice.
-    pub(super) fn toggle_column(&mut self, id: &str, cx: &mut Context<Self>) {
-        let Some(key) = ResultsDelegate::column_from_id(id) else {
-            return;
-        };
-        let hidden = self.table.update(cx, |state, cx| {
-            let delegate = state.delegate_mut();
-            let visible = delegate.is_column_visible(key);
-            delegate.set_column_visible(key, !visible);
-            let hidden = delegate.hidden_columns();
-            state.refresh(cx);
-            cx.notify();
-            hidden
-        });
-        self.settings.hidden_columns = Some(
-            hidden
-                .into_iter()
-                .map(|key| ResultsDelegate::column_identifier(key).to_string())
-                .collect(),
-        );
-        self.settings.save();
-        self.menu_state.columns = column_choices(self.table.read(cx).delegate());
-        set_menus(cx, &self.menu_state);
-        cx.notify();
-    }
-
-    /// Selects every file in the list, keeping the file the preview plays, or the first file when none is selected.
-    pub(super) fn select_all(&mut self, cx: &mut Context<Self>) {
-        if self.selected.is_none() {
-            let first = self.table.read(cx).delegate().row(0).map(|row| row.path.clone());
-            let Some(first) = first else {
-                return;
-            };
-            self.table.update(cx, |state, cx| state.set_selected_row(0, cx));
-            self.select_path(&first, false, cx);
-        }
-        self.table.update(cx, |state, cx| {
-            state.delegate_mut().select_all();
-            cx.notify();
-        });
-        cx.notify();
-    }
-
-    /// Handles seeks, wheel zoom, and wheel gain from the waveform.
-    fn on_waveform_event(
-        &mut self,
-        _waveform: &Entity<WaveformView>,
-        event: &WaveformEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            WaveformEvent::ScrubStarted(seconds) => {
-                self.start_after_cues = None;
-                if let Some(player) = &mut self.player {
-                    player.pause();
-                    player.seek(*seconds);
-                }
-            }
-            WaveformEvent::SeekRequested(seconds) => {
-                if let Some(player) = &mut self.player {
-                    player.seek(*seconds);
-                }
-            }
-            WaveformEvent::ScrubEnded => {
-                if let Some(player) = &mut self.player {
-                    player.play();
-                }
-            }
-            WaveformEvent::RestartRequested => {
-                if let Some(player) = &mut self.player {
-                    player.seek(0.0);
-                    player.play();
-                }
-            }
-            WaveformEvent::ZoomBy(factor) => {
-                let current = f64::from(self.zoom_slider.read(cx).value().start());
-                let zoom = (current * factor).clamp(MINIMUM_ZOOM, MAXIMUM_ZOOM);
-                self.zoom_slider
-                    .update(cx, |slider, cx| slider.set_value(zoom as f32, window, cx));
-                self.waveform.update(cx, |waveform, cx| waveform.set_zoom(zoom, cx));
-            }
-            WaveformEvent::GainBy(decibels) if self.can_adjust_gain(cx) => {
-                // Like the C++ application, each wheel event moves the gain by one slider step.
-                let current = self.gain_slider.read(cx).value().start();
-                let gain = ((current + GAIN_WHEEL_STEP_DB.copysign(*decibels)) * 10.0).round() / 10.0;
-                let gain = gain.clamp(MINIMUM_GAIN_DB, MAXIMUM_GAIN_DB);
-                self.gain_slider
-                    .update(cx, |slider, cx| slider.set_value(gain, window, cx));
-                self.change_selected_gain(gain, cx);
-                self.schedule_gain_store(cx);
-            }
-            WaveformEvent::GainBy(_) => {}
-        }
-        cx.notify();
-    }
-
-    /// Sets the custom gain of the selected file while the slider or the mouse wheel moves,
-    /// and applies it to the preview and the drawn waveform.
-    /// The cache is written by `store_selected_gain` once the change is finished.
-    /// In the stress test the gain only scales the drawn waveform.
-    fn change_selected_gain(&self, decibels: f32, cx: &mut Context<Self>) {
-        if self.is_demo() {
-            let linear = decibels_to_gain(f64::from(decibels)) as f32;
-            self.waveform
-                .update(cx, |waveform, cx| waveform.set_display_gain(linear, cx));
-            return;
-        }
-        let selected = self.selected_paths(cx);
-        if selected.is_empty() {
-            return;
-        }
-        // Like the C++ application, the gain applies to every selected file.
-        let gain = custom_gain_from_decibels(decibels);
-        let changed = self.table.update(cx, |state, cx| {
-            let delegate = state.delegate_mut();
-            let mut changed = false;
-            for path in &selected {
-                changed |= delegate.set_custom_gain(path, gain);
-            }
-            if changed {
-                cx.notify();
-            }
-            changed
-        });
-        if changed {
-            self.apply_preview_gain(cx);
-        }
-    }
-
-    /// Stores the custom gain of the selected files in the cache.
-    fn store_selected_gain(&self, cx: &App) {
-        for record in self.selected_ready_records(cx) {
-            self.store_custom_gain(&record.path, record.custom_gain_db);
-        }
-    }
-
-    /// Writes the custom gain of the selected file to the cache once the mouse wheel rests,
-    /// so a wheel gesture does not write to the database on the UI thread for every step.
-    /// A pending gain of another file is written right away.
-    fn schedule_gain_store(&mut self, cx: &Context<Self>) {
-        let selected = self.selected_paths(cx);
-        if selected.is_empty() {
-            return;
-        }
-        if self.pending_gain_paths != selected {
-            self.flush_gain_store(cx);
-        }
-        self.pending_gain_paths = selected;
-        self.gain_store_task = Some(cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(GAIN_STORE_DELAY).await;
-            let _ = this.update(cx, |view, cx| view.flush_gain_store(cx));
-        }));
-    }
-
-    /// Writes the current custom gain of the files the mouse wheel changed, if any, to the cache.
-    fn flush_gain_store(&mut self, cx: &App) {
-        let paths = std::mem::take(&mut self.pending_gain_paths);
-        let delegate = self.table.read(cx).delegate();
-        for path in paths {
-            let gain = delegate
-                .row_for(&path)
-                .and_then(|row| row.ready_record())
-                .map(|record| record.custom_gain_db);
-            if let Some(gain) = gain {
-                self.store_custom_gain(&path, gain);
-            }
-        }
-    }
-
-    /// Writes the custom gain of a file to the cache.
-    /// A failure is only reported, because the table keeps the gain for this session either way.
-    fn store_custom_gain(&self, path: &Path, custom_gain_db: Option<f32>) {
-        if let Some(coordinator) = &self.coordinator
-            && let Err(error) = coordinator.cache().store_custom_gain(path, custom_gain_db)
-        {
-            tracing::warn!("Failed to store the custom gain of {}: {error:#}", path.display());
-        }
-    }
-
-    /// Applies the custom gain of the selected file to the preview and to the drawn waveform,
-    /// or unity gain when it has none.
-    /// The player applies it only in front of the plugin chain, so a plain preview plays the file as it is.
-    fn apply_preview_gain(&self, cx: &mut Context<Self>) {
-        let linear = self.selected_record(cx).map_or(1.0, AnalysisRecord::custom_gain_linear);
-        if let Some(player) = &self.player {
-            player.set_insert_gain(linear);
-        }
-        self.waveform
-            .update(cx, |waveform, cx| waveform.set_display_gain(linear, cx));
-    }
-
-    /// Moves the gain slider to the custom gain of the selected file, 0 dB without one.
-    /// The record is the source of truth.
-    /// A new selection, a cleared gain, and a gain loaded from the cache all show on the slider this way,
-    /// without each of them having to update it.
-    fn sync_gain_slider(&self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.is_demo() {
-            return;
-        }
-        let target = self
-            .selected_record(cx)
-            .and_then(|record| record.custom_gain_db)
-            .unwrap_or(DEFAULT_GAIN_DB);
-        let current = self.gain_slider.read(cx).value().start();
-        if (current - target).abs() >= GAIN_SLIDER_TOLERANCE_DB {
-            self.gain_slider
-                .update(cx, |slider, cx| slider.set_value(target, window, cx));
-        }
-    }
-
-    /// Selects a file: shows its waveform and loads it into the player, playing it when asked.
-    fn select_path(&mut self, path: &Path, play: bool, cx: &mut Context<Self>) {
-        let changed = self.selected.as_deref() != Some(path);
-        self.selected = Some(path.to_path_buf());
-        self.table.update(cx, |state, _| {
-            state.delegate_mut().set_selected_path(Some(path.to_path_buf()));
-        });
-        if self.is_demo() {
-            cx.notify();
-            return;
-        }
-        self.refresh_selected_waveform(cx);
-        self.apply_preview_gain(cx);
-        if changed {
-            self.selected_tags = None;
-            self.clear_tag_marks(cx);
-            self.tags_task = Some(self.spawn_tag_read(path.to_path_buf(), cx));
-            // Like the C++ application, each file starts at the whole-file zoom.
-            self.waveform
-                .update(cx, |waveform, cx| waveform.set_zoom(MINIMUM_ZOOM, cx));
-            self.zoom_reset_pending = true;
-        }
-        // With playing from the first cue on, a new file stays silent until its cue points are read,
-        // so it starts at the cue instead of jumping there, like in the C++ application.
-        let wait_for_cues = changed && play && self.settings.play_from_first_cue_point;
-        self.start_after_cues = wait_for_cues.then(|| path.to_path_buf());
-        if let Some(player) = &mut self.player {
-            if changed || player.loaded_path() != Some(path) {
-                player.load(path, 0.0, play && !wait_for_cues);
-            } else if play {
-                player.play();
-            }
-        }
-        cx.notify();
-    }
-
-    /// Clears the selection and the preview.
-    fn clear_selection(&mut self, cx: &mut Context<Self>) {
-        self.selected = None;
-        self.selected_tags = None;
-        self.tags_task = None;
-        self.table
-            .update(cx, |state, _| state.delegate_mut().set_selected_path(None));
-        if let Some(player) = &mut self.player {
-            player.unload();
-        }
-        self.table.update(cx, TableState::clear_selection);
-        self.clear_tag_marks(cx);
-        self.waveform
-            .update(cx, |waveform, cx| waveform.show_placeholder(NO_FILE_TEXT, cx));
-    }
-
-    /// Shows the waveform of the selected file, or a placeholder while it has no result.
-    fn refresh_selected_waveform(&self, cx: &mut Context<Self>) {
-        let Some(selected) = self.selected.clone() else {
-            return;
-        };
-        let row = self.table.read(cx).delegate().row_for(&selected).cloned();
-        self.waveform.update(cx, |view, cx| match row {
-            None => view.show_placeholder(NO_FILE_TEXT, cx),
-            Some(row) => {
-                if let Some(record) = row.ready_record() {
-                    view.show(record.waveform.clone(), record.short_term_loudness.clone(), cx);
-                } else {
-                    view.show_placeholder(placeholder_text(&row), cx);
-                }
-            }
-        });
-    }
-}
-
-/// Creates the results table for the content width, with multi-row selection kept by the delegate.
-/// It hides the columns the settings name, or the columns hidden by default when no choice is saved.
-fn new_results_table(
-    content_width: f32,
-    settings: &GuiSettings,
-    window: &mut Window,
-    cx: &mut Context<AppView>,
-) -> Entity<TableState<ResultsDelegate>> {
-    let mut delegate = ResultsDelegate::new(TABLE_FRAME_BORDER.mul_add(-2.0, content_width));
-    if let Some(hidden) = &settings.hidden_columns {
-        delegate.set_hidden_columns(hidden.iter().filter_map(|id| ResultsDelegate::column_from_id(id)));
-    }
-    cx.new(|cx| {
-        TableState::new(delegate, window, cx)
-            .sortable(true)
-            .col_resizable(true)
-            .row_selectable(true)
-            .select_on_modifier_click(false)
-    })
-}
-
-/// Returns the columns of the Columns submenu, checked while they show.
-fn column_choices(delegate: &ResultsDelegate) -> Vec<ColumnChoice> {
-    ResultsDelegate::column_choices()
-        .map(|(key, title)| ColumnChoice {
-            id: ResultsDelegate::column_identifier(key).into(),
-            title,
-            visible: delegate.is_column_visible(key),
-        })
-        .collect()
 }
 
 /// Returns the content width and the height left for the table and the preview in a window of the given size.
@@ -1032,183 +316,4 @@ fn content_size(viewport: Size<Pixels>) -> (f32, f32) {
     let width = CONTENT_PADDING.mul_add(-2.0, f32::from(viewport.width));
     let height = CONTENT_PADDING.mul_add(-2.0, f32::from(viewport.height)) - STATUS_BAR_HEIGHT;
     (width, height)
-}
-
-/// Creates the sliders of the controls column, and subscribes the view to them.
-fn new_sliders(settings: &GuiSettings, window: &Window, cx: &mut Context<AppView>) -> (Sliders, [Subscription; 4]) {
-    let (zoom, gain) = new_view_sliders(cx);
-    let peak_target = new_target_slider(NormalizeMode::Peak, settings.normalize_target_peak_dbfs, cx);
-    let loudness_target = new_target_slider(NormalizeMode::Loudness, settings.normalize_target_lufs, cx);
-    let subscriptions = [
-        cx.subscribe_in(&zoom, window, |view, _, event: &SliderEvent, _, cx| {
-            if let SliderEvent::Change(value) = event {
-                let zoom = f64::from(value.start());
-                view.waveform.update(cx, |waveform, cx| waveform.set_zoom(zoom, cx));
-                cx.notify();
-            }
-        }),
-        cx.subscribe_in(&gain, window, |view, _, event: &SliderEvent, _, cx| {
-            match event {
-                SliderEvent::Change(value) => view.change_selected_gain(value.start(), cx),
-                SliderEvent::Release(_) => view.store_selected_gain(cx),
-            }
-            cx.notify();
-        }),
-        cx.subscribe_in(&peak_target, window, |view, _, event: &SliderEvent, _, cx| {
-            view.on_target_slider_event(NormalizeMode::Peak, event, cx);
-        }),
-        cx.subscribe_in(&loudness_target, window, |view, _, event: &SliderEvent, _, cx| {
-            view.on_target_slider_event(NormalizeMode::Loudness, event, cx);
-        }),
-    ];
-    let sliders = Sliders {
-        zoom,
-        gain,
-        peak_target,
-        loudness_target,
-    };
-    (sliders, subscriptions)
-}
-
-/// Creates the zoom slider, logarithmic from 1 to 20 times, and the input gain slider in decibels.
-fn new_view_sliders(cx: &mut Context<AppView>) -> (Entity<SliderState>, Entity<SliderState>) {
-    let zoom = cx.new(|_| {
-        SliderState::new()
-            .min(MINIMUM_ZOOM as f32)
-            .max(MAXIMUM_ZOOM as f32)
-            .scale(SliderScale::Logarithmic)
-            .step(0.01)
-            .default_value(MINIMUM_ZOOM as f32)
-    });
-    let gain = cx.new(|_| {
-        SliderState::new()
-            .min(MINIMUM_GAIN_DB)
-            .max(MAXIMUM_GAIN_DB)
-            .step(0.1)
-            .default_value(DEFAULT_GAIN_DB)
-    });
-    (zoom, gain)
-}
-
-/// Creates the target slider of a normalization mode, starting at the saved target.
-fn new_target_slider(mode: NormalizeMode, target: f64, cx: &mut Context<AppView>) -> Entity<SliderState> {
-    let range = target_range(mode);
-    cx.new(|_| {
-        SliderState::new()
-            .min(range.minimum)
-            .max(range.maximum)
-            .step(range.step)
-            .default_value(target as f32)
-    })
-}
-
-/// Returns the waveform placeholder for a file without a usable result.
-fn placeholder_text(row: &ResultRow) -> String {
-    match row.state {
-        RowState::Pending => String::from("Waiting for analysis"),
-        RowState::Analyzing(fraction) => format!("Analyzing {:.0}%", fraction * 100.0),
-        RowState::Normalizing(fraction) => format!("Normalizing {:.0}%", fraction * 100.0),
-        RowState::Processing(fraction) => format!("Processing {:.0}%", fraction * 100.0),
-        RowState::Done if row.has_error() => String::from("Could not read this file"),
-        RowState::Done => String::from("No waveform for this file"),
-    }
-}
-
-/// Opens the default analysis cache, and the coordinators sharing it.
-/// Analysis and normalization get one worker per CPU.
-/// Plugin processing leaves one physical core free, because plugins are much heavier per file
-/// and the preview and the editors keep running on the UI thread.
-/// Falls back to a cache in the temporary directory when the default location cannot be opened.
-fn open_coordinators() -> anyhow::Result<Coordinators> {
-    let cache = AnalysisCache::open_default().or_else(|_| {
-        let cache = AnalysisCache::with_path(std::env::temp_dir().join("AudioBatch-rs").join("analysis.db"));
-        cache.open()?;
-        anyhow::Ok(Arc::new(cache))
-    })?;
-    let workers = std::thread::available_parallelism().map_or(1, std::num::NonZeroUsize::get);
-    Ok(Coordinators {
-        normalize: Some(Arc::new(NormalizeCoordinator::new(Arc::clone(&cache), workers)?)),
-        process: Some(Arc::new(ProcessingCoordinator::new(
-            Arc::clone(&cache),
-            default_worker_count(),
-        )?)),
-        analysis: Some(Arc::new(AnalysisCoordinator::new(cache, workers)?)),
-    })
-}
-
-/// Opens the coordinators, the audio device, and the plugin chain, and fills in their part of the menus.
-/// Plugin editors open as windows owned by `editor_owner`.
-/// A problem with playback replaces one with analysis in the status line,
-/// and plugin problems are shown only when neither failed.
-fn open_startup(
-    settings: &GuiSettings,
-    dispatcher: UiDispatcher,
-    editor_owner: Option<RawWindowHandle>,
-    menu_state: &mut MenuState,
-) -> Startup {
-    let mut status = SharedString::default();
-    let coordinators = open_coordinators().unwrap_or_else(|error| {
-        status = format!("Analysis unavailable: {error:#}").into();
-        Coordinators::default()
-    });
-    let player = match open_player(&settings.output_config()) {
-        Ok(player) => {
-            menu_state.output_device = Some(player.device_name().to_string());
-            Some(player)
-        }
-        Err(error) => {
-            status = format!("Playback unavailable: {error:#}").into();
-            None
-        }
-    };
-    let sample_rate = player.as_ref().map_or(FALLBACK_SAMPLE_RATE, Player::output_rate);
-    let (plugins, plugin_problems) = PluginHost::open(dispatcher, sample_rate, editor_owner);
-    for problem in plugin_problems {
-        tracing::warn!("{problem}");
-        if status.is_empty() {
-            status = problem.into();
-        }
-    }
-    menu_state.chain_summary = plugins.chain.summary();
-    menu_state.plugin_groups = group_by_vendor(&plugins.known.plugins);
-    menu_state.presets = plugins.preset_names();
-    Startup {
-        coordinators,
-        player,
-        plugins,
-        status,
-    }
-}
-
-/// Takes every event waiting in a coordinator channel.
-/// Returns the events and whether the channel is disconnected, which means the run has no more events.
-fn drain_events<T>(receiver: &Receiver<T>) -> (Vec<T>, bool) {
-    let mut batch = Vec::new();
-    loop {
-        match receiver.try_recv() {
-            Ok(event) => batch.push(event),
-            Err(TryRecvError::Empty) => return (batch, false),
-            Err(TryRecvError::Disconnected) => return (batch, true),
-        }
-    }
-}
-
-/// Drains the analysis events on a timer and applies them to the view in batches.
-fn spawn_event_drain(receiver: Receiver<AnalysisEvent>, cx: &Context<AppView>) -> Task<()> {
-    cx.spawn(async move |this, cx| {
-        loop {
-            let (batch, disconnected) = drain_events(&receiver);
-            if !batch.is_empty()
-                && this
-                    .update(cx, |view, cx| view.apply_analysis_events(batch, cx))
-                    .is_err()
-            {
-                break;
-            }
-            if disconnected {
-                break;
-            }
-            cx.background_executor().timer(ANALYSIS_POLL_INTERVAL).await;
-        }
-    })
 }

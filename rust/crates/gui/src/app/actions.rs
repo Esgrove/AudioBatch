@@ -9,13 +9,14 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use audiobatch_playback::{Player, PlayerEvent};
-use gpui_kit::{Context, PathPromptOptions, PromptLevel, SharedString, Task, Window};
+use gpui_kit::{Context, Entity, PathPromptOptions, PromptLevel, SharedString, Task, Window};
 
+use super::gain::{GAIN_WHEEL_STEP_DB, MAXIMUM_GAIN_DB, MINIMUM_GAIN_DB};
 use super::{APP_TITLE, AppView, DEFAULT_GAIN_DB, RunKind};
 use crate::controls::{ControlsEvent, SliderControl};
 use crate::demo::{DemoRandom, ROWS_PER_TICK, advance_row, demo_rows, demo_waveform};
 use crate::files::reveal_in_file_manager;
-use crate::waveform::{MINIMUM_ZOOM, PlayheadSource};
+use crate::waveform::{MAXIMUM_ZOOM, MINIMUM_ZOOM, PlayheadSource, WaveformEvent, WaveformView};
 
 /// How often player events are checked.
 const PLAYER_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -384,6 +385,60 @@ impl AppView {
                 }
             }
         })
+    }
+
+    /// Handles seeks, wheel zoom, and wheel gain from the waveform.
+    pub(super) fn on_waveform_event(
+        &mut self,
+        _waveform: &Entity<WaveformView>,
+        event: &WaveformEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            WaveformEvent::ScrubStarted(seconds) => {
+                self.start_after_cues = None;
+                if let Some(player) = &mut self.player {
+                    player.pause();
+                    player.seek(*seconds);
+                }
+            }
+            WaveformEvent::SeekRequested(seconds) => {
+                if let Some(player) = &mut self.player {
+                    player.seek(*seconds);
+                }
+            }
+            WaveformEvent::ScrubEnded => {
+                if let Some(player) = &mut self.player {
+                    player.play();
+                }
+            }
+            WaveformEvent::RestartRequested => {
+                if let Some(player) = &mut self.player {
+                    player.seek(0.0);
+                    player.play();
+                }
+            }
+            WaveformEvent::ZoomBy(factor) => {
+                let current = f64::from(self.zoom_slider.read(cx).value().start());
+                let zoom = (current * factor).clamp(MINIMUM_ZOOM, MAXIMUM_ZOOM);
+                self.zoom_slider
+                    .update(cx, |slider, cx| slider.set_value(zoom as f32, window, cx));
+                self.waveform.update(cx, |waveform, cx| waveform.set_zoom(zoom, cx));
+            }
+            WaveformEvent::GainBy(decibels) if self.can_adjust_gain(cx) => {
+                // Like the C++ application, each wheel event moves the gain by one slider step.
+                let current = self.gain_slider.read(cx).value().start();
+                let gain = ((current + GAIN_WHEEL_STEP_DB.copysign(*decibels)) * 10.0).round() / 10.0;
+                let gain = gain.clamp(MINIMUM_GAIN_DB, MAXIMUM_GAIN_DB);
+                self.gain_slider
+                    .update(cx, |slider, cx| slider.set_value(gain, window, cx));
+                self.change_selected_gain(gain, cx);
+                self.schedule_gain_store(cx);
+            }
+            WaveformEvent::GainBy(_) => {}
+        }
+        cx.notify();
     }
 
     /// Resets a slider of the controls column to its default:
