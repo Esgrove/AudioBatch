@@ -31,7 +31,7 @@ use crate::cache::data_directory;
 /// Target of the messages the caller already showed to the user, which only go to the log file.
 pub const FILE_ONLY_TARGET: &str = "audiobatch::file_only";
 
-/// Size the log file is trimmed to when it is opened, the same as in the C++ application.
+/// Size the log file is trimmed to when it is opened, so the log keeps only recent runs.
 const MAXIMUM_INITIAL_LOG_BYTES: u64 = 32_768;
 
 /// Target prefixes of the `AudioBatch` crates, whose messages are kept below the warning level.
