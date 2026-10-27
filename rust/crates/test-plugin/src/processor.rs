@@ -451,8 +451,8 @@ impl IConnectionPointTrait for TestProcessor {
 ///
 /// # Safety
 ///
-/// The bus must have more than `channel` channel pointers, each pointing to at least `frames` samples
-/// that nothing else accesses while the slice lives.
+/// The bus must have more than `channel` channel pointers,
+/// each pointing to at least `frames` samples that nothing else accesses while the slice lives.
 unsafe fn channel_samples<'a>(bus: &AudioBusBuffers, channel: usize, frames: usize) -> &'a mut [f32] {
     // SAFETY: the caller guarantees the channel pointer array and the channel buffer are valid.
     unsafe {
