@@ -357,14 +357,19 @@ public:
 
         beginTest("Processing keeps the start of the audio in place through plugin latency");
         {
-            for (const auto* fixtureName : {"click_mono_44100_16.wav", "click_mono_44100_320k.mp3"}) {
-                const auto source = directory.copyFixture(fixtureName);
-                TestPlugin plugin({.latencySamples = 1000});
-                const auto result = process(source, {&plugin});
+            // A latency of more than one processing block makes the host skip whole blocks before writing.
+            for (const int latencySamples : {1000, 2500}) {
+                for (const auto* fixtureName : {"click_mono_44100_16.wav", "click_mono_44100_320k.mp3"}) {
+                    const auto source = directory.copyFixture(
+                        fixtureName, utils::format("latency_{}_{}", latencySamples, fixtureName)
+                    );
+                    TestPlugin plugin({.latencySamples = latencySamples});
+                    const auto result = process(source, {&plugin});
 
-                expect(!result.hasError(), outcomeError(result.outcome));
-                expectEquals(outcomeRecord(result.outcome).lengthInSamples, clickFixtureLength);
-                expectEquals(peakSamplePosition(outcomeRecord(result.outcome).file), clickFixturePosition);
+                    expect(!result.hasError(), outcomeError(result.outcome));
+                    expectEquals(outcomeRecord(result.outcome).lengthInSamples, clickFixtureLength);
+                    expectEquals(peakSamplePosition(outcomeRecord(result.outcome).file), clickFixturePosition);
+                }
             }
         }
 
