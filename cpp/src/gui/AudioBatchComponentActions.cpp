@@ -75,23 +75,16 @@ bool AudioBatchComponent::keyPressed(const juce::KeyPress& key)
 }
 
 /// Removes every analyzed file from the table without touching the files on disk.
-/// Cancels a running analysis, and is refused while files are normalized or processed,
-/// since their results would add rows back.
+/// Stops any running analysis, normalization, or processing first, like the Rust version,
+/// since their results would add rows back. Files a run already committed stay on disk.
 void AudioBatchComponent::clearAllRecords()
 {
-    if (analysisResults.empty()) {
+    if (analysisResults.empty() && backgroundWork.isIdle()) {
         return;
     }
 
-    if (const auto blockedReason = getFileOperationBlockedReason(backgroundWork.getWork()); blockedReason.isNotEmpty())
-    {
-        statusBar.setStatusText(blockedReason);
-        return;
-    }
-
-    // Results of a run still in progress would add the rows back.
     // Ending the run here drops the results that were already queued too.
-    backgroundWork.cancelAnalysis();
+    backgroundWork.stopAllWork();
 
     analysisResults.clear();
     fileActivity.clearAllActive();
@@ -105,6 +98,39 @@ void AudioBatchComponent::clearAllRecords()
     resultsTable.repaint();
     statusBar.setStatusText("No files");
     updateProcessButtonState();
+}
+
+/// Cancels the running analysis, normalization, or processing pass, from the Cancel button or the menu.
+/// Files that a pass has not committed yet keep their rows as they were.
+void AudioBatchComponent::cancelCurrentWork()
+{
+    const bool wasAnalyzing = backgroundWork.isAnalysisInProgress();
+    if (!backgroundWork.cancelCurrentWork()) {
+        return;
+    }
+
+    if (wasAnalyzing) {
+        // A cancelled analysis ends at once without a completion, so its waiting rows are settled here.
+        utils::logInfo("Analysis cancelled");
+        reconcilePendingAnalysisResults();
+        updateStatusLabel();
+        statusBar.setStatusText("Analysis cancelled");
+        return;
+    }
+
+    updateStatusLabel();
+}
+
+/// Returns true while an analysis, normalization, or processing pass is running.
+bool AudioBatchComponent::isBackgroundWorkRunning() const noexcept
+{
+    return !backgroundWork.isIdle();
+}
+
+/// Returns the normalization target as display text, for the menu items that name it.
+juce::String AudioBatchComponent::describeNormalizationTarget() const
+{
+    return previewWorkspace.normalizationTargetControl.describeTarget();
 }
 
 /// Removes the currently selected files from the table without touching the files on disk.

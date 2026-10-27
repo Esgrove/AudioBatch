@@ -62,12 +62,18 @@ The differences below are in the GUIs and in plugin hosting.
 - Audio Unit plugins on macOS. The Rust version hosts VST3 plugins only, on macOS and Windows.
 - A context menu in the results table for normalizing, processing, re-analyzing, revealing, and removing files.
 - A collapsible controls row, and the number keys 1 to 8 for jumping to Serato hot cues.
+
 ### Features only in the Rust version
 
-- Processing all analyzed files through the plugin chain from the Plugins menu, after a confirmation.
-- Cancelling a plugin processing run, from the Cancel button that replaces Process or from the Plugins menu.
-  A normalization run has no cancel action in either version.
-  Clearing the list stops it in the Rust version, while the C++ version refuses to clear the list during a run.
+- File > Add Files… adds individual files to the list.
+
+### Runs
+
+- Both versions normalize or process every analyzed file from the menus after a confirmation.
+- Both versions cancel an analysis, normalization, or processing run
+  from the Cancel button that replaces Process during a run, or from File > Cancel Run (Command or Control and period).
+  Files a cancelled run has not committed keep their rows, and files it already committed show their new output.
+- Clear All Files stops any run in both versions.
 
 ### Plugin hosting
 
@@ -90,12 +96,6 @@ The differences below are in the GUIs and in plugin hosting.
   Offline processing refuses a stereo file through a mono-only plugin in both versions.
 - **Custom gain in the preview.** Both previews apply a file's custom gain only in front of the plugin chain,
   so a preview without plugins plays the file unchanged, and both draw the waveform with it.
-
-## Known issues in the C++ version
-
-- **Plugin processing cannot be cancelled from the GUI.**
-  Only analysis has a cancel action.
-  A processing run started on a large selection runs to the end unless the app quits.
 
 ## Future work
 

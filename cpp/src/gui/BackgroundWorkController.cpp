@@ -119,6 +119,44 @@ void BackgroundWorkController::cancelAnalysis()
     }
 }
 
+/// Cancels the running analysis, normalization, or processing pass from the Cancel action, without waiting.
+/// An analysis ends at once.
+/// A normalization or processing pass stops its files that are not committed yet, which keep their rows,
+/// and completes once the files already being committed have reported their results.
+/// Returns false when nothing was running.
+bool BackgroundWorkController::cancelCurrentWork()
+{
+    if (isAnalysisInProgress()) {
+        cancelAnalysis();
+        return true;
+    }
+
+    if (auto* normalizing = std::get_if<NormalizingWork>(&work)) {
+        normalizing->cancelling = true;
+        normalizeCoordinator.requestStop();
+        return true;
+    }
+
+    if (auto* processing = std::get_if<ProcessingWork>(&work)) {
+        processing->cancelling = true;
+        pluginCoordinator.requestStop();
+        return true;
+    }
+
+    return false;
+}
+
+/// Ends any running pass at once without waiting, and drops everything it would still report,
+/// for clearing the list. Files already committed stay on disk.
+void BackgroundWorkController::stopAllWork()
+{
+    analysisCoordinator.cancel();
+    normalizeCoordinator.cancel();
+    pluginCoordinator.cancel();
+    fileActivity.clearAllActive();
+    work = IdleWork {};
+}
+
 /// Stops every pass and waits for its workers to finish.
 void BackgroundWorkController::cancelAndWait()
 {
@@ -534,6 +572,18 @@ juce::String getProcessingBlockedReason(const BackgroundWork& work)
     );
 }
 
+/// Returns true while a cancelled normalization or processing pass waits for its files in progress.
+bool isBackgroundWorkCancelling(const BackgroundWork& work)
+{
+    if (const auto* normalizing = std::get_if<NormalizingWork>(&work)) {
+        return normalizing->cancelling;
+    }
+    if (const auto* processing = std::get_if<ProcessingWork>(&work)) {
+        return processing->cancelling;
+    }
+    return false;
+}
+
 /// Returns the progress text of the running pass for the status bar,
 /// or an empty string while idle or while a pass does not know its file count yet,
 /// in which case the status bar shows the summary of the list instead.
@@ -548,11 +598,17 @@ juce::String getProgressText(const BackgroundWork& work)
                     : juce::String("Scanning for audio files...");
             },
             [](const NormalizingWork& normalizing) {
+                if (normalizing.cancelling) {
+                    return juce::String("Cancelling normalization...");
+                }
                 return normalizing.expected > 0
                     ? utils::format("Normalizing {}/{}", normalizing.completed, normalizing.expected)
                     : juce::String();
             },
             [](const ProcessingWork& processing) {
+                if (processing.cancelling) {
+                    return juce::String("Cancelling plugin processing...");
+                }
                 return processing.expected > 0
                     ? utils::format("Processing {}/{}", processing.completed, processing.expected)
                     : juce::String();

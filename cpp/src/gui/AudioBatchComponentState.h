@@ -98,6 +98,9 @@ struct OperationProgress {
 
     /// Id of the coordinator run of the pass, which drops the queued messages of a pass that ended before it.
     int runId {-1};
+
+    /// True once the user cancelled the pass, which then waits for its files in progress before it completes.
+    bool cancelling {false};
 };
 
 /// A normalization pass, from its start until its completion arrives.

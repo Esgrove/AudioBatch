@@ -44,6 +44,7 @@ private:
     AudioBatchComponent& getAudioBatch() const;
     void appendPluginOptionsMenuItems(juce::PopupMenu& menu);
     void handlePluginChoiceMenuItem(int menuItemID) const;
+    [[nodiscard]] juce::String getNormalizeAllLabel() const;
 
     juce::ApplicationCommandManager commandManager;
     std::unique_ptr<CustomLookAndFeel> lookAndFeel {std::make_unique<CustomLookAndFeel>(true)};

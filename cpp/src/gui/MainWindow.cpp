@@ -32,6 +32,8 @@ enum class MenuItemId : std::uint8_t {
     editChain,
     clearChain,
     scanPlugins,
+    normalizeAll,
+    processAll,
 };
 
 /// Menu bar commands that the command manager runs through perform, so they can have keyboard shortcuts.
@@ -49,6 +51,7 @@ enum class CommandId : std::uint8_t {
     togglePreviewCompensation,
     toggleContinuePlayback,
     togglePlayFromFirstCuePoint,
+    cancelRun,
 };
 
 /// First id of the plugin chain presets submenu, which uses the ids from it upwards.
@@ -58,12 +61,12 @@ constexpr int presetsMenuFirstItemId {1000};
 /// First of the contiguous command ids.
 constexpr CommandId firstCommand {CommandId::rescan};
 /// Last of the contiguous command ids, which new commands replace.
-constexpr CommandId lastCommand {CommandId::togglePlayFromFirstCuePoint};
+constexpr CommandId lastCommand {CommandId::cancelRun};
 
 /// Returns the menu item for a menu bar result id, or nullopt for a command or an Add Plugin submenu id.
 constexpr std::optional<MenuItemId> menuItemFromId(const int menuItemID) noexcept
 {
-    return utils::enumFromId<MenuItemId, MenuItemId::chooseFolder, MenuItemId::scanPlugins>(menuItemID);
+    return utils::enumFromId<MenuItemId, MenuItemId::chooseFolder, MenuItemId::processAll>(menuItemID);
 }
 
 /// Returns the command for a JUCE command id, or nullopt for an id this window does not register.
@@ -222,9 +225,12 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::revealSelected, utils::revealInFileManagerLabel());
             addMenuItem(menu, MenuItemId::reanalyzeSelected, "Re-analyze Selected");
+            addMenuItem(menu, MenuItemId::normalizeAll, getNormalizeAllLabel());
             addCommandItem(menu, commandManager, CommandId::removeSelected, "Remove Selected from List");
             addCommandItem(menu, commandManager, CommandId::moveSelectedToTrash, "Move Selected to Trash");
             addMenuItem(menu, MenuItemId::clearFiles, "Clear All Files");
+            menu.addSeparator();
+            addCommandItem(menu, commandManager, CommandId::cancelRun);
             break;
         case 2:
             addCommandItem(menu, commandManager, CommandId::togglePreviewSection);
@@ -256,9 +262,12 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::revealSelected, utils::revealInFileManagerLabel());
             addMenuItem(menu, MenuItemId::reanalyzeSelected, "Re-analyze Selected");
+            addMenuItem(menu, MenuItemId::normalizeAll, getNormalizeAllLabel());
             addCommandItem(menu, commandManager, CommandId::removeSelected, "Remove Selected from List");
             addCommandItem(menu, commandManager, CommandId::moveSelectedToTrash, "Move Selected to Trash");
             addMenuItem(menu, MenuItemId::clearFiles, "Clear All Files");
+            menu.addSeparator();
+            addCommandItem(menu, commandManager, CommandId::cancelRun);
             menu.addSeparator();
             addCommandItem(menu, commandManager, CommandId::quit);
             break;
@@ -330,6 +339,12 @@ void MainWindow::menuItemSelected(const int menuItemID, int topLevelMenuIndex)
             break;
         case MenuItemId::scanPlugins:
             getAudioBatch().getLiveChain().showScanWindow();
+            break;
+        case MenuItemId::normalizeAll:
+            getAudioBatch().normalizeAllRecords();
+            break;
+        case MenuItemId::processAll:
+            getAudioBatch().processAllRecords();
             break;
     }
 }
@@ -451,6 +466,13 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
 #endif
             result.setActive(!blockedByDialog);
             break;
+        case CommandId::cancelRun:
+            result.setInfo(
+                "Cancel Run", "Cancels the running analysis, normalization, or plugin processing", fileCategory, 0
+            );
+            result.addDefaultKeypress('.', juce::ModifierKeys::commandModifier);
+            result.setActive(!blockedByDialog && audioBatch.isBackgroundWorkRunning());
+            break;
         case CommandId::rescan:
             result.setInfo("Rescan", "Re-runs analysis for all root folders", fileCategory, 0);
             result.addDefaultKeypress(juce::KeyPress::F5Key, juce::ModifierKeys::noModifiers);
@@ -543,6 +565,9 @@ bool MainWindow::perform(const InvocationInfo& info)
             );
             return true;
         }
+        case CommandId::cancelRun:
+            getAudioBatch().cancelCurrentWork();
+            return true;
         case CommandId::rescan:
             getAudioBatch().rescanCurrentRoot();
             return true;
@@ -580,6 +605,14 @@ void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu)
     menu.addSubMenu("Add Plugin", addSubmenu, !pluginMenuTypes.isEmpty());
     addMenuItem(menu, MenuItemId::clearChain, "Clear Chain", chain.getNumSlots() > 0);
     addMenuItem(menu, MenuItemId::scanPlugins, "Scan for Plugins...");
+    menu.addSeparator();
+    addMenuItem(menu, MenuItemId::processAll, "Process All Files...", chain.getNumEnabledValidSlots() > 0);
+}
+
+/// Returns the label of the Normalize All Files item, which names the current target like the Rust version.
+juce::String MainWindow::getNormalizeAllLabel() const
+{
+    return utils::format("Normalize All Files to {}...", getAudioBatch().describeNormalizationTarget());
 }
 
 /// Decodes a menu result against the plugin list the Add Plugin submenu was built from,

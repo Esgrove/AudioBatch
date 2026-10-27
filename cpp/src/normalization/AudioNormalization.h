@@ -85,7 +85,13 @@ struct AudioNormalizationResult {
     /// Creates a failure result for the given file and message.
     static AudioNormalizationResult failure(const juce::File& file, const juce::String& message)
     {
-        return forFile(file, OperationFailed {.error = message});
+        return forFile(file, OperationFailed {.error = message, .cancelled = false});
+    }
+
+    /// Creates the result of a file the user cancelled before it was changed.
+    static AudioNormalizationResult cancelled(const juce::File& file)
+    {
+        return forFile(file, OperationFailed {.error = "Normalization was cancelled", .cancelled = true});
     }
 
     /// The source file the operation ran on.

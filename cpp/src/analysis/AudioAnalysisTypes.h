@@ -187,6 +187,9 @@ struct AudioAnalysisRecord {
 struct OperationFailed {
     /// Why the run failed.
     juce::String error;
+    /// True when the run stopped because the user cancelled it, before changing the file,
+    /// so the file is shown as it was instead of as a failure.
+    bool cancelled {false};
 };
 
 /// A run that wrote its output, which then could not be analyzed.

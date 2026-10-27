@@ -169,7 +169,14 @@ void AudioBatchComponent::normalizeResultReceived(const AudioNormalizationResult
 
     std::visit(
         Overloaded {
-            [&](const OperationFailed& failed) { reportFailure(result.fileName, result.fullPath, failed.error); },
+            [&](const OperationFailed& failed) {
+                // A cancelled file was left unchanged, so its row stays as it was.
+                if (failed.cancelled) {
+                    resultsTable.repaint();
+                } else {
+                    reportFailure(result.fileName, result.fullPath, failed.error);
+                }
+            },
             [&](const CommittedButUnanalyzed& unanalyzed) {
                 // A committed output replaces its source even when its re-analysis failed,
                 // since a converted source is already in the trash.
@@ -195,10 +202,10 @@ void AudioBatchComponent::normalizeCompleted(const NormalizingWork& pass, const 
 {
     const auto& failures = pass.failures;
     utils::logInfo(
-        "Normalization complete: {:.2f} s, {} files ({} succeeded, {} failed)",
+        "Normalization {}: {:.2f} s, {} files ({} failed)",
+        pass.cancelling ? "cancelled" : "complete",
         utils::elapsedSecondsSince(pass.startedAtMilliseconds),
         totalFiles,
-        totalFiles - failures.size(),
         failures.size()
     );
 
@@ -209,6 +216,9 @@ void AudioBatchComponent::normalizeCompleted(const NormalizingWork& pass, const 
     }
 
     updateStatusLabel();
+    if (pass.cancelling) {
+        statusBar.setStatusText("Normalization cancelled");
+    }
 }
 
 /// Finalizes an analysis run on the message thread:
@@ -249,9 +259,47 @@ void AudioBatchComponent::analysisCompleted(const AnalyzingWork& run, const int 
     updateProcessButtonState();
 }
 
-/// Starts normalization to the selected peak or loudness target for the selected files
-/// after checking that no other pass is running and that every selected format is supported.
+/// Starts normalization to the selected peak or loudness target for the selected files.
 void AudioBatchComponent::normalizeSelectedRecords()
+{
+    normalizeRecords(getSelectedNormalizableRecords());
+}
+
+/// Asks for confirmation, then normalizes every analyzed file in the list whose format can be normalized,
+/// like Normalize All Files in the Rust version.
+void AudioBatchComponent::normalizeAllRecords()
+{
+    auto records = getAllReadyRecords();
+    std::erase_if(records, [](const AudioAnalysisRecord& record) { return !canNormalizeRecords({record}); });
+
+    if (records.empty()) {
+        statusBar.setStatusText("No analyzed files to normalize");
+        return;
+    }
+
+    const auto message = utils::format(
+        "Normalize {} {} to {}?\n\nEach file is written as AIFF next to its source, "
+        "and converted sources are moved to the system trash.",
+        records.size(),
+        records.size() == 1 ? "file" : "files",
+        previewWorkspace.normalizationTargetControl.describeTarget()
+    );
+    const SafePointer safeThis(this);
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions::makeOptionsOkCancel(
+            juce::MessageBoxIconType::WarningIcon, "Normalize All Files", message, "Normalize", "Cancel", this
+        ),
+        [safeThis, confirmedRecords = std::move(records)](const int result) {
+            if (safeThis != nullptr && result == 1) {
+                safeThis->normalizeRecords(confirmedRecords);
+            }
+        }
+    );
+}
+
+/// Starts normalization to the selected peak or loudness target for the given files
+/// after checking that no other pass is running and that every format is supported.
+void AudioBatchComponent::normalizeRecords(const std::vector<AudioAnalysisRecord>& recordsToNormalize)
 {
     if (const auto blockedReason = getNormalizationBlockedReason(backgroundWork.getWork()); blockedReason.isNotEmpty())
     {
@@ -259,8 +307,6 @@ void AudioBatchComponent::normalizeSelectedRecords()
         statusBar.setStatusText(blockedReason);
         return;
     }
-
-    const auto recordsToNormalize = getSelectedNormalizableRecords();
 
     if (recordsToNormalize.empty()) {
         return;
@@ -431,8 +477,56 @@ juce::Array<juce::File> AudioBatchComponent::releasePreviewBeforeProcessing(
     return filesToProcess;
 }
 
-/// Runs the configured plugin (if any) over the currently-selected files.
+/// Runs the plugin chain over the currently selected files.
 void AudioBatchComponent::processSelectedRecords()
+{
+    const auto records = getSelectedProcessableRecords();
+    if (records.empty()) {
+        statusBar.setStatusText("Select files that can be processed");
+        return;
+    }
+    processRecords(records);
+}
+
+/// Asks for confirmation, then runs the plugin chain over every analyzed file in the list that can be processed,
+/// like Process All Files in the Rust version.
+void AudioBatchComponent::processAllRecords()
+{
+    if (liveChain->getNumEnabledValidSlots() == 0) {
+        showPluginProcessingWarning("The plugin chain is empty. Use the Plugins button to add plugins.");
+        return;
+    }
+
+    auto records = getAllReadyRecords();
+    std::erase_if(records, [](const AudioAnalysisRecord& record) { return !canProcessFileWithPlugins(record.file); });
+
+    if (records.empty()) {
+        statusBar.setStatusText("No analyzed files to process");
+        return;
+    }
+
+    const auto message = utils::format(
+        "Process {} {} with the plugin chain ({})?\n\nEach file is written as 16-bit AIFF next to its source, "
+        "and converted sources are moved to the system trash.",
+        records.size(),
+        records.size() == 1 ? "file" : "files",
+        liveChain->getChainSummary()
+    );
+    const SafePointer safeThis(this);
+    juce::AlertWindow::showAsync(
+        juce::MessageBoxOptions::makeOptionsOkCancel(
+            juce::MessageBoxIconType::WarningIcon, "Process All Files", message, "Process", "Cancel", this
+        ),
+        [safeThis, confirmedRecords = std::move(records)](const int result) {
+            if (safeThis != nullptr && result == 1) {
+                safeThis->processRecords(confirmedRecords);
+            }
+        }
+    );
+}
+
+/// Runs the plugin chain over the given files.
+void AudioBatchComponent::processRecords(const std::vector<AudioAnalysisRecord>& records)
 {
     if (const auto blockedReason = getProcessingBlockedReason(backgroundWork.getWork()); blockedReason.isNotEmpty()) {
         statusBar.setStatusText(blockedReason);
@@ -446,9 +540,7 @@ void AudioBatchComponent::processSelectedRecords()
         return;
     }
 
-    const auto records = getSelectedProcessableRecords();
     if (records.empty()) {
-        statusBar.setStatusText("Select files that can be processed");
         return;
     }
 
@@ -526,7 +618,12 @@ void AudioBatchComponent::processingResultReceived(const PluginProcessingResult&
     std::visit(
         Overloaded {
             [&](const OperationFailed& failed) {
-                reportFailure(result.fileName, result.originalFullPath, failed.error);
+                // A cancelled file was left unchanged, so its row stays as it was.
+                if (failed.cancelled) {
+                    resultsTable.repaint();
+                } else {
+                    reportFailure(result.fileName, result.originalFullPath, failed.error);
+                }
             },
             [&](const CommittedButUnanalyzed& unanalyzed) {
                 replaceSource(unanalyzed.output);
@@ -550,10 +647,10 @@ void AudioBatchComponent::processingCompleted(const ProcessingWork& pass, const 
 {
     const auto& failures = pass.failures;
     utils::logInfo(
-        "Plugin processing complete: {:.2f} s, {} files ({} succeeded, {} failed)",
+        "Plugin processing {}: {:.2f} s, {} files ({} failed)",
+        pass.cancelling ? "cancelled" : "complete",
         utils::elapsedSecondsSince(pass.startedAtMilliseconds),
         totalFiles,
-        totalFiles - failures.size(),
         failures.size()
     );
 
@@ -566,6 +663,9 @@ void AudioBatchComponent::processingCompleted(const ProcessingWork& pass, const 
     }
 
     updateStatusLabel();
+    if (pass.cancelling) {
+        statusBar.setStatusText("Plugin processing cancelled");
+    }
 }
 
 /// Shows why a plugin processing pass could not start its workers.
