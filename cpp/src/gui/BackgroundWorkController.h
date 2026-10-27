@@ -166,6 +166,12 @@ private:
 
     /// The analysis run, normalization pass, or plugin processing pass that is running, if any.
     BackgroundWork work;
+    /// Run id of the last normalization pass that stopAllWork discarded, whose events are all dropped,
+    /// or -1 when none was discarded.
+    int discardedNormalizeRunId {-1};
+    /// Run id of the last processing pass that stopAllWork discarded, whose events are all dropped,
+    /// or -1 when none was discarded.
+    int discardedProcessingRunId {-1};
 
     /// Hands analysis results from the workers to the message thread, merging each burst into one batch.
     /// Declared before the analysis coordinator, whose workers post to it until the coordinator is destroyed.
