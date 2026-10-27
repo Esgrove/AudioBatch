@@ -24,7 +24,6 @@
 #include <id3v2header.h>
 #include <id3v2tag.h>
 #include <memory>
-#include <mpegfile.h>
 #include <tbytevector.h>
 #include <textidentificationframe.h>
 #include <tfile.h>
@@ -40,35 +39,14 @@ namespace audiobatch
 {
 namespace
 {
-constexpr std::array names {
-    std::pair {"SERATO_OVERVIEW", "Serato Overview"},
-    std::pair {"SERATO_ANALYSIS", "Serato Analysis"},
-    std::pair {"SERATO_AUTOGAIN", "Serato Autotags"},
-    std::pair {"SERATO_BEATGRID", "Serato BeatGrid"},
-    std::pair {"SERATO_MARKERS_V2", "Serato Markers2"},
-    std::pair {"SERATO_MARKERS", "Serato Markers_"},
-};
-
 /// ID3v2.3 frames that ID3v2.4 drops.
 /// TagLib folds TDAT and TIME into TDRC when reading and discards all of them when saving as ID3v2.4.
 constexpr std::array obsoleteId3v23Frames {"EQUA", "RVAD", "TDAT", "TIME", "TRDA", "TSIZ"};
 
-/// Finds an existing ID3v2 tag without creating one on an untagged source.
-TagLib::ID3v2::Tag* findId3Tag(TagLib::File& file, const bool create = false)
+/// Returns a Serato tag name as a JUCE string.
+juce::String toJuce(const std::string_view name)
 {
-    if (auto* mpeg = dynamic_cast<TagLib::MPEG::File*>(&file)) {
-        return mpeg->ID3v2Tag(create);
-    }
-    if (const auto* aiff = dynamic_cast<TagLib::RIFF::AIFF::File*>(&file)) {
-        return create || aiff->hasID3v2Tag() ? aiff->tag() : nullptr;
-    }
-    if (const auto* wav = dynamic_cast<TagLib::RIFF::WAV::File*>(&file)) {
-        return create || wav->hasID3v2Tag() ? wav->ID3v2Tag() : nullptr;
-    }
-    if (auto* flac = dynamic_cast<TagLib::FLAC::File*>(&file)) {
-        return flac->ID3v2Tag(create);
-    }
-    return nullptr;
+    return {name.data(), name.size()};
 }
 
 /// Recreates a serialized ID3v2.4 frame with ownership held by the caller until the destination takes it.
@@ -86,7 +64,7 @@ std::unique_ptr<TagLib::ID3v2::Frame> restoreId3Frame(const juce::MemoryBlock& b
 /// Unsupported known frames fail safely if serialization would reinterpret an opaque payload as decoded fields.
 std::vector<juce::MemoryBlock> readId3Frames(TagLib::File& file, bool& hasUnsupportedFrames)
 {
-    const auto* tag = findId3Tag(file);
+    const auto* tag = serato::findId3Tag(file);
     if (tag == nullptr) {
         return {};
     }
@@ -190,22 +168,25 @@ bool writeId3Frames(TagLib::ID3v2::Tag& tag, const std::vector<juce::MemoryBlock
 /// Other Serato fields and unrelated custom frames are retained even when their payloads are unrecognized.
 void removeSeratoOverview(AudioMetadata& metadata)
 {
-    std::erase_if(metadata.properties, [](const MetadataProperty& property) {
-        return property.key.equalsIgnoreCase("SERATO_OVERVIEW");
+    const auto property = toJuce(serato::overviewNames.property);
+    std::erase_if(metadata.properties, [&property](const MetadataProperty& metadataProperty) {
+        return metadataProperty.key.equalsIgnoreCase(property);
     });
-    std::erase_if(metadata.id3v2Frames, [](const juce::MemoryBlock& bytes) {
+    const TagLib::String frameDescription(std::string(serato::overviewNames.description));
+    const TagLib::String textDescription(std::string(serato::overviewNames.property));
+    std::erase_if(metadata.id3v2Frames, [&frameDescription, &textDescription](const juce::MemoryBlock& bytes) {
         const auto frame = restoreId3Frame(bytes);
         const auto* object = dynamic_cast<const TagLib::ID3v2::GeneralEncapsulatedObjectFrame*>(frame.get());
         const auto* text = dynamic_cast<const TagLib::ID3v2::UserTextIdentificationFrame*>(frame.get());
         return frame != nullptr
-            && ((object != nullptr && object->description() == "Serato Overview")
-                || (text != nullptr && text->description().upper() == "SERATO_OVERVIEW"));
+            && ((object != nullptr && object->description() == frameDescription)
+                || (text != nullptr && text->description().upper() == textDescription));
     });
 }
 
 /// Appends a GEOB frame for a valid native Serato value unless an equivalent frame is already present.
-/// Malformed values and unexpected wrapper fields are ignored without modifying the original property.
-void appendSeratoFrame(AudioMetadata& metadata, const juce::String& value, const char* expectedDescription)
+/// Malformed values, unexpected wrapper fields, and empty payloads are ignored without modifying the original property.
+void appendSeratoFrame(AudioMetadata& metadata, const juce::String& value, const std::string_view expectedDescription)
 {
     const auto encoded = value.toStdString();
     const std::vector<std::uint8_t> bytes(encoded.begin(), encoded.end());
@@ -213,20 +194,17 @@ void appendSeratoFrame(AudioMetadata& metadata, const juce::String& value, const
     if (!decoded) {
         return;
     }
-    juce::MemoryInputStream input(*decoded, false);
-    const auto mimeType = input.readString();
-    const auto fileName = input.readString();
-    const auto description = input.readString();
-    if (mimeType != "application/octet-stream" || fileName.isNotEmpty() || description != expectedDescription
-        || input.isExhausted())
-    {
+    const std::span decodedBytes {static_cast<const std::uint8_t*>(decoded->getData()), decoded->getSize()};
+    const auto wrappedPayload = serato::parseTagWrapper(decodedBytes, expectedDescription);
+    if (!wrappedPayload.has_value() || wrappedPayload->empty()) {
         return;
     }
     TagLib::ID3v2::GeneralEncapsulatedObjectFrame frame;
     frame.setMimeType("application/octet-stream");
-    frame.setDescription(expectedDescription);
-    const auto payload = std::span(static_cast<const char*>(decoded->getData()), decoded->getSize())
-                             .subspan(static_cast<std::size_t>(input.getPosition()));
+    frame.setDescription(TagLib::String(std::string(expectedDescription)));
+    const auto payloadOffset = static_cast<std::size_t>(wrappedPayload->data() - decodedBytes.data());
+    const auto payload
+        = std::span(static_cast<const char*>(decoded->getData()), decoded->getSize()).subspan(payloadOffset);
     frame.setObject(TagLib::ByteVector(payload.data(), static_cast<unsigned int>(payload.size())));
     const auto rendered = frame.render();
     const juce::MemoryBlock frameBytes(rendered.data(), rendered.size());
@@ -297,14 +275,15 @@ void appendSeratoFrames(AudioMetadata& metadata)
     for (const auto& property : metadata.properties) {
         // libc++ uses a pointer here, but MSVC uses an iterator class.
         // Convert to a pointer explicitly so auto* is portable and satisfies clang-tidy.
-        const auto* const name = std::to_address(std::ranges::find_if(names, [&property](const auto& entry) {
-            return property.key.equalsIgnoreCase(entry.first);
-        }));
-        if (name == std::to_address(names.end())) {
+        const auto* const names
+            = std::to_address(std::ranges::find_if(serato::allTagNames, [&property](const auto& entry) {
+                  return property.key.equalsIgnoreCase(toJuce(entry.property));
+              }));
+        if (names == std::to_address(serato::allTagNames.end())) {
             continue;
         }
         for (const auto& value : property.values) {
-            appendSeratoFrame(metadata, value, name->second);
+            appendSeratoFrame(metadata, value, names->description);
         }
     }
 }
@@ -460,7 +439,7 @@ bool applyMetadata(
     if (frames.empty()) {
         return true;
     }
-    auto* tag = findId3Tag(file, true);
+    auto* tag = serato::findId3Tag(file, true);
     return tag != nullptr && writeId3Frames(*tag, frames);
 }
 }  // namespace
@@ -487,7 +466,7 @@ bool readMetadata(const juce::File& file, AudioMetadata& outMetadata)
     outMetadata.properties = readProperties(taglibFile->properties());
     outMetadata.pictures = readPictures(*taglibFile);
     outMetadata.id3v2Frames = readId3Frames(*taglibFile, outMetadata.hasUnsupportedId3Frames);
-    outMetadata.hasId3Tag = findId3Tag(*taglibFile) != nullptr;
+    outMetadata.hasId3Tag = serato::findId3Tag(*taglibFile) != nullptr;
     if (dynamic_cast<TagLib::FLAC::File*>(taglibFile) != nullptr) {
         appendSeratoFrames(outMetadata);
     }

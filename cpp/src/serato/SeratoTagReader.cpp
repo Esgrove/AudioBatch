@@ -7,28 +7,22 @@
 #include "utils/Log.h"
 #include <string_view>
 
-#include <aifffile.h>
 #include <algorithm>
 #include <array>
 #include <fileref.h>
 #include <flacfile.h>
 #include <generalencapsulatedobjectframe.h>
 #include <id3v2tag.h>
-#include <mpegfile.h>
 #include <ranges>
 #include <string>
 #include <tpropertymap.h>
 #include <utility>
 #include <vector>
-#include <wavfile.h>
 
 namespace audiobatch::serato
 {
 namespace
 {
-constexpr std::size_t maxWrapperBytes {Overview::maxPayloadBytes + 1024};
-constexpr std::size_t maxBase64Bytes {((maxWrapperBytes + 2) / 3) * 4};
-constexpr std::size_t maxEncodedBytes {maxBase64Bytes + 4096};
 constexpr std::size_t containerCodeBytes {4};
 constexpr std::size_t containerTypeOffset {2 * containerCodeBytes};
 constexpr std::size_t containerHeaderBytes {containerTypeOffset + containerCodeBytes};
@@ -54,108 +48,11 @@ bool hasValidContainerHeader(const juce::File& file)
                                              : container == "FORM" && (type == "AIFF" || type == "AIFC");
 }
 
-/// Bounds the TagLib object before copying signed library bytes into the unsigned parser input.
-std::optional<Overview> parseGeobPayload(const TagLib::ByteVector& bytes)
-{
-    if (bytes.size() > Overview::maxPayloadBytes) {
-        return std::nullopt;
-    }
-    const std::vector<std::uint8_t> payload(bytes.begin(), bytes.end());
-    return Overview::parse(payload);
-}
-
-/// Normalizes bounded ASCII Base64, permitting whitespace and omitted trailing padding only.
-std::optional<Overview> decodeFlacOverview(const TagLib::String& value)
-{
-    if (value.size() > maxEncodedBytes) {
-        return std::nullopt;
-    }
-    const auto encoded = value.to8Bit(false);
-    std::string normalized;
-    normalized.reserve(encoded.size());
-    for (const char character : encoded) {
-        if (character == ' ' || character == '\t' || character == '\r' || character == '\n' || character == '\f'
-            || character == '\v')
-        {
-            continue;
-        }
-        const bool alphabet = (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z')
-            || (character >= '0' && character <= '9') || character == '+' || character == '/';
-        if (!alphabet && character != '=') {
-            return std::nullopt;
-        }
-        normalized.push_back(character);
-    }
-    if (normalized.empty() || normalized.size() > maxBase64Bytes || normalized.size() % 4 == 1) {
-        return std::nullopt;
-    }
-    const auto paddingStart = normalized.find('=');
-    if (paddingStart != std::string::npos
-        && (normalized.size() % 4 != 0 || normalized.size() - paddingStart > 2
-            || normalized.find_first_not_of('=', paddingStart) != std::string::npos))
-    {
-        return std::nullopt;
-    }
-    while (normalized.size() % 4 != 0) {
-        normalized.push_back('=');
-    }
-    juce::MemoryOutputStream decoded;
-    if (!juce::Base64::convertFromBase64(
-            decoded, juce::String::fromUTF8(normalized.data(), static_cast<int>(normalized.size()))
-        )
-        || decoded.getDataSize() > maxWrapperBytes)
-    {
-        return std::nullopt;
-    }
-    const std::span bytes {static_cast<const std::uint8_t*>(decoded.getData()), decoded.getDataSize()};
-    std::size_t offset = 0;
-    for (const auto expected :
-         {std::string_view("application/octet-stream"), std::string_view(), std::string_view("Serato Overview")})
-    {
-        const auto remaining = bytes.subspan(offset);
-        const auto terminator = std::ranges::find(remaining, std::uint8_t {0});
-        if (terminator == remaining.end()) {
-            return std::nullopt;
-        }
-        const auto length = static_cast<std::size_t>(terminator - remaining.begin());
-        if (!std::ranges::equal(remaining.first(length), expected)) {
-            return std::nullopt;
-        }
-        offset += length + 1;
-    }
-    return Overview::parse(bytes.subspan(offset));
-}
-
-/// Maps stable kinds to documented GEOB descriptions and native FLAC wrapper names.
-TagLib::String description(const TagKind kind)
-{
-    switch (kind) {
-        case TagKind::overview:
-            return "Serato Overview";
-        case TagKind::analysis:
-            return "Serato Analysis";
-        case TagKind::autotags:
-            return "Serato Autotags";
-        case TagKind::beatGrid:
-            return "Serato BeatGrid";
-        case TagKind::markers:
-            return "Serato Markers2";
-        case TagKind::trackInfo:
-            break;
-    }
-    return {};
-}
-
-/// Parses one bounded GEOB object, retaining the existing Overview payload decoder.
+/// Parses one bounded GEOB object, copying the signed TagLib bytes into the unsigned parser input.
 TagReadResult parseId3Payload(const TagKind kind, const TagLib::ByteVector& payload, const bool legacy)
 {
     if (payload.size() > maxTagPayloadBytes) {
         return TagReadResult::missing(kind, ReadStatus::invalid);
-    }
-    if (kind == TagKind::overview) {
-        auto overview = parseGeobPayload(payload);
-        return overview ? TagReadResult::present(std::move(*overview))
-                        : TagReadResult::missing(kind, ReadStatus::invalid);
     }
     const std::vector<std::uint8_t> bytes(payload.begin(), payload.end());
     return parseTagPayload(kind, bytes, legacy);
@@ -170,7 +67,11 @@ TagReadResult readId3Frames(
 )
 {
     auto result = TagReadResult::missing(kind, ReadStatus::absent);
-    const auto expected = legacy ? TagLib::String("Serato Markers_") : description(kind);
+    const auto names = getTagNames(kind, legacy);
+    if (!names.has_value()) {
+        return result;
+    }
+    const TagLib::String expected(std::string(names->description));
     std::size_t matchingRecords = 0;
     for (const auto* frame : tag.frameList("GEOB")) {
         if (utils::isCancellationRequested(isCancelled)) {
@@ -214,61 +115,19 @@ TagReadResult decodeFlacTag(const TagKind kind, const TagLib::String& value, con
     const auto invalid = [kind] { return TagReadResult::missing(kind, ReadStatus::invalid); };
     // Base64 is ASCII, and to8Bit keeps only the low byte of every other character,
     // so for example U+0141 would pass as the Base64 letter 'A'.
-    if (!value.isAscii()) {
+    if (!value.isAscii() || value.size() > maxEncodedTagBytes) {
         return invalid();
     }
-    if (kind == TagKind::overview) {
-        auto overview = decodeFlacOverview(value);
-        return overview ? TagReadResult::present(std::move(*overview)) : invalid();
-    }
-    if (value.size() > maxEncodedBytes) {
-        return invalid();
-    }
+    const auto names = getTagNames(kind, legacy);
     const auto text = value.to8Bit(false);
     const std::vector<std::uint8_t> encoded(text.begin(), text.end());
     const auto decoded = decodeTagBase64(encoded);
-    if (!decoded) {
+    if (!names.has_value() || !decoded.has_value()) {
         return invalid();
     }
     const std::span bytes {static_cast<const std::uint8_t*>(decoded->getData()), decoded->getSize()};
-    const auto name = (legacy ? TagLib::String("Serato Markers_") : description(kind)).to8Bit(false);
-    std::size_t offset = 0;
-    for (const auto expected :
-         {std::string_view("application/octet-stream"), std::string_view(), std::string_view(name)})
-    {
-        const auto remaining = bytes.subspan(offset);
-        const auto terminator = std::ranges::find(remaining, std::uint8_t {0});
-        if (terminator == remaining.end()) {
-            return invalid();
-        }
-        const auto length = static_cast<std::size_t>(terminator - remaining.begin());
-        if (!std::ranges::equal(remaining.first(length), expected)) {
-            return invalid();
-        }
-        offset += length + 1;
-    }
-    return parseTagPayload(kind, bytes.subspan(offset), legacy);
-}
-
-/// Maps each kind to its documented native property, independent of optional
-/// FLAC ID3 tags.
-TagLib::String propertyName(const TagKind kind)
-{
-    switch (kind) {
-        case TagKind::overview:
-            return "SERATO_OVERVIEW";
-        case TagKind::analysis:
-            return "SERATO_ANALYSIS";
-        case TagKind::autotags:
-            return "SERATO_AUTOGAIN";
-        case TagKind::beatGrid:
-            return "SERATO_BEATGRID";
-        case TagKind::markers:
-            return "SERATO_MARKERS_V2";
-        case TagKind::trackInfo:
-            break;
-    }
-    return {};
+    const auto payload = parseTagWrapper(bytes, names->description);
+    return payload.has_value() ? parseTagPayload(kind, *payload, legacy) : invalid();
 }
 
 /// Reads native FLAC values with independent duplicate recovery and optional legacy markers fallback.
@@ -283,7 +142,11 @@ TagReadResult readFlacTag(
         if (legacy && kind != TagKind::markers) {
             break;
         }
-        const auto entry = properties.find(legacy ? TagLib::String("SERATO_MARKERS") : propertyName(kind));
+        const auto names = getTagNames(kind, legacy);
+        if (!names.has_value()) {
+            break;
+        }
+        const auto entry = properties.find(TagLib::String(std::string(names->property)));
         if (entry == properties.end()) {
             continue;
         }
@@ -389,21 +252,6 @@ TagReadResult readTrackInfo(const TagLib::PropertyMap& properties, const utils::
         return TagReadResult::present(std::move(info));
     }
     return result;
-}
-
-/// Finds existing ID3 tags on supported non-FLAC containers without creating missing tags.
-const TagLib::ID3v2::Tag* findId3Tag(TagLib::File& file)
-{
-    if (auto* mpeg = dynamic_cast<TagLib::MPEG::File*>(&file)) {
-        return mpeg->ID3v2Tag(false);
-    }
-    if (const auto* aiff = dynamic_cast<TagLib::RIFF::AIFF::File*>(&file)) {
-        return aiff->hasID3v2Tag() ? aiff->tag() : nullptr;
-    }
-    if (const auto* wav = dynamic_cast<TagLib::RIFF::WAV::File*>(&file)) {
-        return wav->hasID3v2Tag() ? wav->ID3v2Tag() : nullptr;
-    }
-    return nullptr;
 }
 
 /// Dispatches one requested kind using properties and ID3 tags borrowed from an already open file.
