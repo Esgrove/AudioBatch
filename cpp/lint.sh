@@ -18,6 +18,15 @@ OPTIONS: All options are optional
         Exit with code 1 if clang-tidy reports any warnings or errors.
         Intended for CI.
 
+    -C | --changed
+        Lint only the sources changed since the last commit, staged or not, including untracked files.
+
+    -s | --staged
+        Lint only the sources with staged changes.
+
+    A changed header in --changed or --staged mode also lints the source file of the same name next to it.
+    The files are linted as they are in the working tree.
+
     -v | --verbose
         Display commands being executed.
 
@@ -31,6 +40,8 @@ source "$DIR/common.sh"
 init_options() {
     CHECK=false
     CLANG_TIDY_ARGS=()
+    # Which sources to lint: all, changed, or staged.
+    FILE_SELECTION="all"
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -39,6 +50,12 @@ init_options() {
                 ;;
             -c | --check)
                 CHECK=true
+                ;;
+            -C | --changed)
+                FILE_SELECTION="changed"
+                ;;
+            -s | --staged)
+                FILE_SELECTION="staged"
                 ;;
             -v | --verbose)
                 set -x
@@ -55,6 +72,43 @@ init_options() {
         esac
         shift
     done
+}
+
+# Prints the paths, relative to the C++ project, of the files with changes of the selected kind.
+# Deleted files are left out, and a renamed file is listed under its new name.
+list_changed_files() {
+    if [ "$FILE_SELECTION" = "staged" ]; then
+        git diff --cached --name-only --relative --diff-filter=ACMR
+    else
+        git diff HEAD --name-only --relative --diff-filter=ACMR
+        git ls-files --others --exclude-standard
+    fi
+}
+
+# Turns the changed file paths read from stdin into the absolute paths of the sources to lint.
+# A changed header maps to the source file of the same name next to it, when there is one.
+changed_sources() {
+    while IFS= read -r path; do
+        case "$path" in
+            src/*.cpp | tests/*.cpp)
+                echo "$REPO/$path"
+                ;;
+            src/*.h | tests/*.h)
+                if [ -f "$REPO/${path%.h}.cpp" ]; then
+                    echo "$REPO/${path%.h}.cpp"
+                fi
+                ;;
+        esac
+    done
+}
+
+# Prints the absolute paths of the sources to lint, one per line, sorted and without duplicates.
+collect_sources() {
+    if [ "$FILE_SELECTION" = "all" ]; then
+        find "$REPO/src" "$REPO/tests" -type f -name "*.cpp" | sort
+    else
+        list_changed_files | changed_sources | sort -u
+    fi
 }
 
 init_options "$@"
@@ -119,11 +173,16 @@ if [ "$BASH_PLATFORM" = "mac" ] && command -v xcrun > /dev/null 2>&1; then
     fi
 fi
 
-# Collect the C++ sources under src/ and tests/, including subdirectories.
+# Collect the C++ sources under src/ and tests/, including subdirectories, or only the changed ones.
 SOURCES=()
 while IFS= read -r source; do
     SOURCES+=("$source")
-done < <(find "$REPO/src" "$REPO/tests" -type f -name "*.cpp" | sort)
+done < <(collect_sources)
+
+if [ "${#SOURCES[@]}" -eq 0 ]; then
+    print_green "No $FILE_SELECTION C++ sources to lint"
+    exit 0
+fi
 
 # Do not let clang-tidy infer flags from an unrelated source when the database is stale.
 # The fuzz harnesses are only in the database of the macos-fuzz build, so they are skipped elsewhere.
@@ -137,6 +196,10 @@ for source in "${SOURCES[@]}"; do
         print_error_and_exit "Compile database has no entry for $source. Reconfigure and build CMake first, for example: cmake --preset macos-debug && cmake --build --preset macos-debug"
     fi
 done
+if [ "${#LINTED_SOURCES[@]}" -eq 0 ]; then
+    print_green "No C++ sources in this compile database to lint"
+    exit 0
+fi
 SOURCES=("${LINTED_SOURCES[@]}")
 
 print_magenta "Running clang-tidy on ${#SOURCES[@]} source files..."

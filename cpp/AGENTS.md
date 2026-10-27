@@ -419,7 +419,10 @@ The detailed rules are in `../.agents/rules/code-organization.md` at the reposit
 - After any C++ code change, run `./lint.sh` to check the project with `clang-tidy`.
   Fix any issues it reports before finishing.
   The script uses the active CMake debug build's `compile_commands.json`,
-  so configure a debug preset first if no build directory exists.
+  and configures and builds the debug preset itself when no build directory has one.
+- Linting the whole project takes a while, so `./lint.sh --changed` lints only the sources changed since the last commit,
+  including untracked ones, and `./lint.sh --staged` only the staged ones.
+  A changed header also lints the source file of the same name next to it.
 - `./lint.sh --check` exits with code 1 when clang-tidy reports any warning.
   CI runs it on macOS with the latest Homebrew LLVM, so the build must stay free of clang-tidy warnings.
 - If `clang-tidy` reports a check that is genuinely a poor fit for the project,

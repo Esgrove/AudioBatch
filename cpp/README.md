@@ -422,6 +422,7 @@ Pass `--reuse` to skip CMake generation and reuse the existing release build dir
 
 - `./format.sh` formats C++, CMake and shell scripts. `--check` verifies formatting without changes.
 - `./lint.sh` runs clang-tidy. `--check` fails on warnings.
+  `--changed` lints only the sources changed since the last commit, and `--staged` only the staged ones.
 
 Build and run tests with the script (Release by default):
 
