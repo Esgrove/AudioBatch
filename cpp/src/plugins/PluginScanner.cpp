@@ -635,6 +635,10 @@ void OutOfProcessPluginScanner::scanFinished()
 
 //==============================================================================
 
+/// Creates the lock without taking it.
+/// Every process that uses the same name shares the lock, and tests pass their own name to stay apart from the app.
+PluginScanLock::PluginScanLock(const juce::String& lockName) : lock(lockName) {}
+
 /// Releases the lock if it is held.
 PluginScanLock::~PluginScanLock()
 {

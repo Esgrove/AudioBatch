@@ -7,8 +7,10 @@
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
+#include <string_view>
 
 #include <aifffile.h>
+#include <algorithm>
 #include <array>
 #include <attachedpictureframe.h>
 #include <fileref.h>
@@ -93,6 +95,15 @@ public:
     }
 
 private:
+    /// Returns true when one of the opaque ID3v2 frames of the metadata starts with the given four character frame ID.
+    static bool hasFrameWithId(const AudioMetadata& metadata, const std::string_view frameId)
+    {
+        return std::ranges::any_of(metadata.id3v2Frames, [frameId](const juce::MemoryBlock& frame) {
+            return frame.getSize() >= frameId.size()
+                && std::string_view(static_cast<const char*>(frame.getData()), frameId.size()) == frameId;
+        });
+    }
+
     /// Returns the text of the only frame with the given ID, or an empty string when there is not exactly one.
     static juce::String onlyFrameText(const TagLib::ID3v2::Tag& tag, const char* frameId)
     {
@@ -191,10 +202,12 @@ private:
         AudioMetadata before;
         expect(readMetadata(source, before));
         expect(!before.hasUnsupportedId3Frames);
+        expect(hasFrameWithId(before, "XABC"), "the custom XABC frame must be read before normalization");
         const auto normalized = normalizeFile(analyzeFile(source), testNormalizationOptions());
         expect(!normalized.hasError(), outcomeError(normalized.outcome));
         AudioMetadata after;
         expect(readMetadata(source, after));
+        expect(hasFrameWithId(after, "XABC"), "the custom XABC frame must survive normalization");
         expect(after.id3v2Frames == before.id3v2Frames);
 
         beginTest("Encrypted known frames keep the original file intact rather than risk tag loss");

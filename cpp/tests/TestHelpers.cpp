@@ -1,19 +1,24 @@
 /// Implementation of the shared test helpers:
 /// the self-deleting temporary directory, the lookup of the committed audio fixtures and the test plugin,
-/// and the null test that compares a processed file against its expected output.
+/// the null test that compares a processed file against its expected output,
+/// and the helper modes that run the test executable again as a child process.
 
 #include "TestHelpers.h"
 
+#include "plugins/PluginScanner.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <optional>
 #include <span>
+#include <stdexcept>
+#include <string>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -22,6 +27,15 @@ namespace audiobatch::tests
 {
 namespace
 {
+/// Samples of a file as 16-bit values, one vector per channel.
+using IntegerChannels = std::vector<std::vector<int>>;
+
+/// The samples of a file read for a null test, with the format its reader reports.
+struct NullTestSamples {
+    NullTestFormat format;
+    IntegerChannels channels;
+};
+
 /// Simulates a driver that owns the device from open until close and renders only when a test requests it.
 class TestAudioDevice final : public juce::AudioIODevice
 {
@@ -223,12 +237,9 @@ constexpr int maximumNullTestLag {256};
 /// Scale from a float sample to a 16-bit sample value.
 constexpr float pcm16Scale {32'768.0f};
 
-/// Samples of a file as 16-bit values, one vector per channel.
-using IntegerChannels = std::vector<std::vector<int>>;
-
 /// Reads a file as 16-bit sample values, or returns nothing when it cannot be read.
 /// The float samples of a 16-bit file are exact multiples of one step, so rounding loses nothing.
-std::optional<IntegerChannels> readIntegerSamples(const juce::File& file)
+std::optional<NullTestSamples> readIntegerSamples(const juce::File& file)
 {
     const std::unique_ptr<juce::AudioFormatReader> reader(utils::threadLocalFormatManager().createReaderFor(file));
     if (reader == nullptr) {
@@ -241,15 +252,69 @@ std::optional<IntegerChannels> readIntegerSamples(const juce::File& file)
         return std::nullopt;
     }
 
-    IntegerChannels channels(static_cast<std::size_t>(buffer.getNumChannels()));
+    NullTestSamples samples {
+        .format = {
+            .sampleRate = reader->sampleRate,
+            .bitsPerSample = static_cast<int>(reader->bitsPerSample),
+            .floatingPoint = reader->usesFloatingPointData,
+        },
+        .channels = IntegerChannels(static_cast<std::size_t>(buffer.getNumChannels())),
+    };
     for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
-        auto& values = channels[static_cast<std::size_t>(channel)];
+        auto& values = samples.channels[static_cast<std::size_t>(channel)];
         values.reserve(static_cast<std::size_t>(length));
         for (int sample = 0; sample < length; ++sample) {
             values.push_back(static_cast<int>(std::lround(buffer.getSample(channel, sample) * pcm16Scale)));
         }
     }
-    return channels;
+    return samples;
+}
+
+/// Longest time a helper process waits for its parent before giving up, in milliseconds.
+constexpr juce::uint32 helperTimeoutMilliseconds {30'000};
+
+/// Posts a message that stops the message loop, runs the loop, and returns 0 once the message was dispatched.
+/// Stopping the loop ends it for the rest of the process, so this only runs in a helper process.
+/// The CLI plugin scan worker relies on this loop to receive its scan requests.
+int runMessageLoopHelper()
+{
+    // Shared, so a callback that is never dispatched does not refer to this stack frame.
+    const auto dispatched = std::make_shared<std::atomic<bool>>(false);
+    juce::MessageManager::callAsync([dispatched] {
+        *dispatched = true;
+        juce::MessageManager::getInstance()->stopDispatchLoop();
+    });
+
+    juce::MessageManager::getInstance()->runDispatchLoop();
+    return dispatched->load() ? 0 : 1;
+}
+
+/// Takes the plugin scan lock of the given name, prints scanLockHeldLine, and holds the lock
+/// until the release file exists, so the parent process can check that it cannot take the same lock meanwhile.
+/// Returns 1 without printing the line when the lock is already taken.
+int runScanLockHelper(const juce::String& lockName, const juce::File& releaseFile)
+{
+    PluginScanLock lock(lockName);
+    if (!lock.tryAcquire()) {
+        return 1;
+    }
+
+    fmt::print("{}\n", scanLockHeldLine);
+    std::fflush(stdout);
+
+    const auto deadline = juce::Time::getMillisecondCounter() + helperTimeoutMilliseconds;
+    while (!releaseFile.exists() && juce::Time::getMillisecondCounter() < deadline) {
+        juce::Thread::sleep(5);
+    }
+    return 0;
+}
+
+/// Describes a null test format as its sample rate, bit depth, and sample type.
+juce::String describeFormat(const NullTestFormat& format)
+{
+    return utils::format(
+        "{} Hz {}-bit {}", format.sampleRate, format.bitsPerSample, format.floatingPoint ? "float" : "integer"
+    );
 }
 
 /// Returns the lag of the actual signal against the expected one, within the checked range,
@@ -287,10 +352,12 @@ juce::String NullTestResult::describe() const
         ? utils::format("{:.1f} dBFS", juce::Decibels::gainToDecibels(static_cast<float>(peakDifference) / pcm16Scale))
         : juce::String("silent");
     return utils::format(
-        "{} channels and {} samples expected, {} channels and {} samples written, "
+        "{} with {} channels and {} samples expected, {} with {} channels and {} samples written, "
         "{} samples differ, residual peak {} ({} steps), best correlation at a lag of {} samples",
+        describeFormat(expectedFormat),
         expectedChannels,
         expectedLength,
+        describeFormat(actualFormat),
         actualChannels,
         actualLength,
         differingSamples,
@@ -309,16 +376,20 @@ NullTestResult nullTestFiles(const juce::File& expected, const juce::File& actua
         return result;
     }
 
+    const auto& expectedChannels = expectedSamples->channels;
+    const auto& actualChannels = actualSamples->channels;
     result.readable = true;
-    result.expectedChannels = static_cast<int>(expectedSamples->size());
-    result.actualChannels = static_cast<int>(actualSamples->size());
-    result.expectedLength = expectedSamples->empty() ? 0 : static_cast<juce::int64>(expectedSamples->front().size());
-    result.actualLength = actualSamples->empty() ? 0 : static_cast<juce::int64>(actualSamples->front().size());
+    result.expectedFormat = expectedSamples->format;
+    result.actualFormat = actualSamples->format;
+    result.expectedChannels = static_cast<int>(expectedChannels.size());
+    result.actualChannels = static_cast<int>(actualChannels.size());
+    result.expectedLength = expectedChannels.empty() ? 0 : static_cast<juce::int64>(expectedChannels.front().size());
+    result.actualLength = actualChannels.empty() ? 0 : static_cast<juce::int64>(actualChannels.front().size());
 
-    const auto channels = juce::jmin(expectedSamples->size(), actualSamples->size());
+    const auto channels = juce::jmin(expectedChannels.size(), actualChannels.size());
     for (std::size_t channel = 0; channel < channels; ++channel) {
-        const auto& expectedChannel = (*expectedSamples)[channel];
-        const auto& actualChannel = (*actualSamples)[channel];
+        const auto& expectedChannel = expectedChannels[channel];
+        const auto& actualChannel = actualChannels[channel];
         const auto length = juce::jmin(expectedChannel.size(), actualChannel.size());
         for (std::size_t sample = 0; sample < length; ++sample) {
             const auto difference = std::abs(actualChannel[sample] - expectedChannel[sample]);
@@ -331,7 +402,7 @@ NullTestResult nullTestFiles(const juce::File& expected, const juce::File& actua
 
     // The lag only explains a difference, so matching files skip the correlation.
     if (channels > 0 && !result.cancels()) {
-        result.bestLag = findBestLag(expectedSamples->front(), actualSamples->front());
+        result.bestLag = findBestLag(expectedChannels.front(), actualChannels.front());
     }
     return result;
 }
@@ -411,8 +482,15 @@ juce::File TemporaryDirectory::getChildFile(const juce::String& name) const
 
 juce::File TemporaryDirectory::copyFixture(const juce::String& fixtureName, const juce::String& copyName) const
 {
+    const auto source = fixtureFile(fixtureName);
     const auto copy = directory.getChildFile(copyName.isEmpty() ? fixtureName : copyName);
-    fixtureFile(fixtureName).copyFileTo(copy);
+    if (!source.copyFileTo(copy) || !copy.existsAsFile()) {
+        const auto message = utils::format(
+            "Could not copy the fixture {} to {}", source.getFullPathName().quoted(), copy.getFullPathName().quoted()
+        );
+        juce::Logger::writeToLog(message);
+        throw std::runtime_error(message.toStdString());
+    }
     return copy;
 }
 
@@ -488,6 +566,55 @@ juce::int64 peakSamplePosition(const juce::File& file)
     const std::span samples(buffer.getReadPointer(0), static_cast<std::size_t>(buffer.getNumSamples()));
     const auto peak = std::ranges::max_element(samples, {}, [](const float sample) { return std::abs(sample); });
     return std::distance(samples.begin(), peak);
+}
+
+/// Returns a cancellation check that counts its calls in `calls` and reports cancellation on every call
+/// after the first allowedChecks ones.
+/// Counting the checks of a complete run first, with a limit it never reaches,
+/// lets a test cancel the same operation at any later check, such as the last one before its output is committed.
+utils::CancellationCheck cancelAfterChecks(const int allowedChecks, std::shared_ptr<std::atomic<int>> calls)
+{
+    return [allowedChecks, counter = std::move(calls)] { return counter->fetch_add(1) + 1 > allowedChecks; };
+}
+
+/// Runs the helper mode that the first argument selects, and returns its exit code,
+/// or nothing when the arguments select no helper mode and the tests should run.
+/// The helper modes run in a child process started by startHelperProcess,
+/// for checks that would change the state of the test process for good or that need a second process.
+std::optional<int> runHelperProcess(const juce::StringArray& arguments)
+{
+    if (arguments.size() == 1 && arguments[0] == messageLoopHelperArgument) {
+        return runMessageLoopHelper();
+    }
+
+    if (arguments.size() == 3 && arguments[0] == scanLockHelperArgument) {
+        return runScanLockHelper(arguments[1], juce::File(arguments[2]));
+    }
+
+    return std::nullopt;
+}
+
+/// Starts the test executable again as a helper process with the given arguments, capturing its standard output.
+bool startHelperProcess(juce::ChildProcess& process, const juce::StringArray& helperArguments)
+{
+    juce::StringArray command(juce::File::getSpecialLocation(juce::File::currentExecutableFile).getFullPathName());
+    command.addArray(helperArguments);
+    return process.start(command, juce::ChildProcess::wantStdOut);
+}
+
+/// Reads one line of a helper's standard output without its line break, blocking until the line is complete.
+/// Returns what was read so far when the helper exits first.
+juce::String readHelperLine(juce::ChildProcess& process)
+{
+    constexpr int maximumLineLength {256};
+    std::string line;
+    char character {};
+    while (std::cmp_less(line.size(), maximumLineLength) && process.readProcessOutput(&character, 1) == 1
+           && character != '\n')
+    {
+        line.push_back(character);
+    }
+    return juce::String(line).trim();
 }
 
 /// FileDisposer for tests, which deletes the file so the user's system trash never fills up with test copies.

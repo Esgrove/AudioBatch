@@ -1,7 +1,8 @@
 /// Tests for processFileWithPlugins with small in-process test plugins.
 /// Covers mono files through stereo-only and mixed-width chains, undithered 16-bit output without a clip guard,
-/// latency compensation, rendering and trimming the tail, per-file state, cancellation, and the output length.
-/// Also covers leaving the Audio Units built into macOS out of the known-plugins list.
+/// latency compensation, rendering and trimming the tail, per-file state, cancellation, and the output length,
+/// and plugins that refuse the channel layout of a file.
+/// The coordinator of a processing run and the plugin scanning have their own suites.
 /// Replaced files are deleted instead of moved to the system trash, so the tests never touch the user's trash.
 
 #include "analysis/AudioAnalysis.h"
@@ -10,526 +11,25 @@
 #include "plugins/PluginChainPreparation.h"
 #include "plugins/PluginPreviewSource.h"
 #include "plugins/PluginProcessing.h"
-#include "plugins/PluginProcessingCoordinator.h"
-#include "plugins/PluginScanner.h"
+#include "ProcessingTestPlugins.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
-#include <condition_variable>
 
 #include <algorithm>
 #include <array>
-#include <chrono>
-#include <cstring>
+#include <atomic>
 #include <generalencapsulatedobjectframe.h>
 #include <limits>
 #include <memory>
-#include <mutex>
 #include <utility>
 #include <variant>
 #include <vector>
 
 namespace audiobatch::tests
 {
-/// Behaviour of a TestPlugin.
-struct TestPluginSettings {
-    /// Linear gain applied to every main channel.
-    float gain = 1.0f;
-    /// Extra linear gain applied to the right channel only, after the channel swap.
-    float rightGain = 1.0f;
-    /// Swaps the left and right channels before the gain.
-    bool swapChannels = false;
-    /// Accepts a mono main bus in addition to stereo.
-    bool acceptsMono = false;
-    /// Refuses a stereo main bus, which together with acceptsMono makes a mono-only plugin.
-    bool refusesStereo = false;
-    /// Replaces the first sample of every block with infinity, like an unstable filter.
-    bool producesInfinity = false;
-    /// Multiplies the gain by this factor after every block, like a plugin that adapts to its input.
-    /// The current gain is the plugin state, so restoring the state undoes the adaptation.
-    float adaptiveGainStep = 1.0f;
-    /// Delays the output by this many samples and reports the delay as the plugin latency.
-    int latencySamples = 0;
-    /// Adds an echo at half level this many samples after the input, and reports the echo as the tail.
-    int echoSamples = 0;
-    /// Tail length reported without producing any tail, in seconds, for a plugin without an echo.
-    double reportedTailSeconds = 0.0;
-    /// Emits a repeated pattern spanning 16-bit quantization boundaries and the PCM clipping limits.
-    bool producesQuantizationPattern {false};
-    /// Emits half a 16-bit step below full scale, which rounds down to the largest positive sample.
-    bool producesHalfStepBelowFullScale {false};
-};
-
-/// A test plugin that applies a fixed gain and can swap the left and right channels.
-/// It is stereo-only by default, like many effect plugins, and can also accept a mono layout.
-/// Swapping exposes whether a mono source reaches the right input of a stereo-only plugin.
-class TestPlugin : public juce::AudioPluginInstance
-{
-public:
-    /// Creates the plugin with the given behaviour.
-    explicit TestPlugin(const TestPluginSettings& pluginSettings) :
-        juce::AudioPluginInstance(
-            BusesProperties()
-                .withInput("Input", juce::AudioChannelSet::stereo())
-                .withOutput("Output", juce::AudioChannelSet::stereo())
-        ),
-        settings(pluginSettings),
-        currentGain(pluginSettings.gain)
-    {}
-
-    /// Applies the gain and the optional channel swap to the main bus channels only,
-    /// like a hosted plugin, which never touches buffer channels outside its own buses.
-    void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& /*midiMessages*/) override
-    {
-        widestBuffer = juce::jmax(widestBuffer, buffer.getNumChannels());
-        const auto channels = juce::jmin(buffer.getNumChannels(), getMainBusNumOutputChannels());
-        applyDelays(buffer, channels);
-
-        if (settings.swapChannels && channels >= 2) {
-            for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
-                const auto left = buffer.getSample(0, sample);
-                buffer.setSample(0, sample, buffer.getSample(1, sample));
-                buffer.setSample(1, sample, left);
-            }
-        }
-
-        for (int channel = 0; channel < channels; ++channel) {
-            buffer.applyGain(channel, 0, buffer.getNumSamples(), currentGain);
-        }
-
-        currentGain *= settings.adaptiveGainStep;
-
-        if (channels >= 2) {
-            buffer.applyGain(1, 0, buffer.getNumSamples(), settings.rightGain);
-        }
-
-        if (settings.producesInfinity && channels > 0) {
-            buffer.setSample(0, 0, std::numeric_limits<float>::infinity());
-        }
-
-        if (settings.producesQuantizationPattern) {
-            constexpr float leastSignificantBit {1.0f / 32'768.0f};
-            constexpr std::array pattern {
-                0.0f,
-                0.25f * leastSignificantBit,
-                -0.25f * leastSignificantBit,
-                1.25f * leastSignificantBit,
-                -1.25f * leastSignificantBit,
-                1.75f * leastSignificantBit,
-                -1.75f * leastSignificantBit,
-                0.25f,
-                -0.25f,
-                1.25f,
-                -1.25f,
-                1.0f - leastSignificantBit,
-            };
-            for (int channel = 0; channel < channels; ++channel) {
-                for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
-                    buffer.setSample(channel, sample, pattern[static_cast<std::size_t>(sample) % pattern.size()]);
-                }
-            }
-        }
-
-        if (settings.producesHalfStepBelowFullScale) {
-            for (int channel = 0; channel < channels; ++channel) {
-                juce::FloatVectorOperations::fill(
-                    buffer.getWritePointer(channel), 32'767.5f / 32'768.0f, buffer.getNumSamples()
-                );
-            }
-        }
-    }
-
-    /// Returns the largest channel count of any buffer passed to processBlock.
-    [[nodiscard]] int getWidestBufferChannels() const
-    {
-        return widestBuffer;
-    }
-
-    /// Describes the plugin for the host.
-    void fillInPluginDescription(juce::PluginDescription& description) const override
-    {
-        description.name = getName();
-        description.pluginFormatName = "Test";
-        description.numInputChannels = 2;
-        description.numOutputChannels = 2;
-    }
-
-    /// Returns the plugin name.
-    const juce::String getName() const override
-    {
-        return "Test Plugin";
-    }
-
-    /// Reports the latency and clears the delay history.
-    void prepareToPlay(const double sampleRate, int /*maximumExpectedSamplesPerBlock*/) override
-    {
-        preparedSampleRate = sampleRate;
-        setLatencySamples(settings.latencySamples);
-        const auto historyLength
-            = static_cast<std::size_t>(juce::jmax(settings.latencySamples, settings.echoSamples)) + 1;
-        history.assign(2, std::vector<float>(historyLength, 0.0f));
-        historyPosition = 0;
-    }
-
-    /// Clears the delay history, so no signal from an earlier file is left in it.
-    void reset() override
-    {
-        for (auto& channelHistory : history) {
-            std::ranges::fill(channelHistory, 0.0f);
-        }
-
-        historyPosition = 0;
-    }
-
-    /// Holds no resources.
-    void releaseResources() override {}
-
-    /// Returns the echo length, or the reported tail when there is no echo.
-    double getTailLengthSeconds() const override
-    {
-        return settings.echoSamples > 0 ? settings.echoSamples / preparedSampleRate : settings.reportedTailSeconds;
-    }
-
-    /// Takes no MIDI input.
-    bool acceptsMidi() const override
-    {
-        return false;
-    }
-
-    /// Produces no MIDI output.
-    bool producesMidi() const override
-    {
-        return false;
-    }
-
-    /// Has no editor.
-    bool hasEditor() const override
-    {
-        return false;
-    }
-
-    /// Has a single program.
-    int getNumPrograms() override
-    {
-        return 1;
-    }
-
-    /// Always uses the single program.
-    int getCurrentProgram() override
-    {
-        return 0;
-    }
-
-    /// Ignores program changes.
-    void setCurrentProgram(int /*index*/) override {}
-
-    /// Returns no program name.
-    const juce::String getProgramName(int /*index*/) override
-    {
-        return {};
-    }
-
-    /// Ignores program renames.
-    void changeProgramName(int /*index*/, const juce::String& /*newName*/) override {}
-
-    /// Saves the current gain as the plugin state.
-    void getStateInformation(juce::MemoryBlock& destData) override
-    {
-        destData.replaceAll(&currentGain, sizeof(currentGain));
-    }
-
-    /// Restores the current gain from a state saved by getStateInformation.
-    void setStateInformation(const void* data, const int sizeInBytes) override
-    {
-        if (std::cmp_equal(sizeInBytes, sizeof(currentGain))) {
-            std::memcpy(&currentGain, data, sizeof(currentGain));
-        }
-    }
-
-protected:
-    /// Accepts only a stereo main bus on both sides, like many effect plugins.
-    bool isBusesLayoutSupported(const BusesLayout& layouts) const override
-    {
-        const auto input = layouts.getMainInputChannelSet();
-        const auto output = layouts.getMainOutputChannelSet();
-
-        if (settings.acceptsMono && input == juce::AudioChannelSet::mono() && output == juce::AudioChannelSet::mono()) {
-            return true;
-        }
-
-        return !settings.refusesStereo && input == juce::AudioChannelSet::stereo()
-            && output == juce::AudioChannelSet::stereo();
-    }
-
-private:
-    /// Has no editor.
-    juce::AudioProcessorEditor* createEditor() override
-    {
-        return nullptr;
-    }
-
-    /// Delays the main channels by the latency and adds the echo, through a per-channel history of recent input.
-    void applyDelays(juce::AudioBuffer<float>& buffer, const int channels)
-    {
-        if ((settings.latencySamples == 0 && settings.echoSamples == 0) || history.empty()) {
-            return;
-        }
-
-        const auto historyLength = history.front().size();
-        const auto delayedPosition = [&](const int delay) {
-            return (historyPosition + historyLength - static_cast<std::size_t>(delay)) % historyLength;
-        };
-
-        for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
-            for (int channel = 0; channel < juce::jmin(channels, 2); ++channel) {
-                auto& channelHistory = history[static_cast<std::size_t>(channel)];
-                channelHistory[historyPosition] = buffer.getSample(channel, sample);
-
-                auto output = channelHistory[delayedPosition(settings.latencySamples)];
-                if (settings.echoSamples > 0) {
-                    output += 0.5f * channelHistory[delayedPosition(settings.echoSamples)];
-                }
-
-                buffer.setSample(channel, sample, output);
-            }
-
-            historyPosition = (historyPosition + 1) % historyLength;
-        }
-    }
-
-    TestPluginSettings settings;
-    float currentGain;
-    int widestBuffer = 0;
-    double preparedSampleRate = 44'100.0;
-    std::vector<std::vector<float>> history;
-    std::size_t historyPosition = 0;
-};
-
-/// Records preparation order and emulates an Audio Unit that needs initialization before state restoration.
-/// Its null native handle exercises the AU lifecycle without calling a real Audio Unit.
-class PreparationTestPlugin final : public TestPlugin, public juce::AudioPluginExtensions::AudioUnitClient
-{
-public:
-    /// Starts with a saved gain different from the unity gain reinstated by every AU preparation.
-    explicit PreparationTestPlugin(const bool emulateAudioUnit) :
-        TestPlugin({.gain = 0.25f}),
-        audioUnit(emulateAudioUnit)
-    {}
-
-    /// Advertises AU extensions only when testing the Audio Unit lifecycle.
-    juce::AudioPluginExtensions::AudioUnitClient* getAudioUnitClient() override
-    {
-        return audioUnit ? this : nullptr;
-    }
-
-    /// Exposes the same format identity to const host queries.
-    const juce::AudioPluginExtensions::AudioUnitClient* getAudioUnitClient() const override
-    {
-        return audioUnit ? this : nullptr;
-    }
-
-    /// Prevents native offline-render and latency queries from reaching the operating system.
-    AudioUnit getAudioUnitHandle() const noexcept override
-    {
-        return nullptr;
-    }
-
-    /// Emulates AU initialization resetting parameters, so a second preparation destroys restored state.
-    void prepareToPlay(const double sampleRate, const int samplesPerBlock) override
-    {
-        lifecycle.add("prepare");
-        preparedBlockSize = samplesPerBlock;
-        lastSampleRate = sampleRate;
-        TestPlugin::prepareToPlay(sampleRate, samplesPerBlock);
-        initialized = true;
-        if (audioUnit) {
-            constexpr float defaultGain = 1.0f;
-            TestPlugin::setStateInformation(&defaultGain, sizeof(defaultGain));
-        }
-    }
-
-    /// Rejects premature AU restoration and records whether other formats were restored before activation.
-    void setStateInformation(const void* data, const int sizeInBytes) override
-    {
-        lifecycle.add(initialized ? "restore-initialized" : "restore-inactive");
-        if (!audioUnit || initialized) {
-            TestPlugin::setStateInformation(data, sizeInBytes);
-        }
-    }
-
-    /// Records the chain reset without changing the restored gain.
-    void reset() override
-    {
-        lifecycle.add("reset");
-        TestPlugin::reset();
-    }
-
-    /// Requires the next file to initialize the plugin again before AU state can be restored.
-    void releaseResources() override
-    {
-        lifecycle.add("release");
-        initialized = false;
-        TestPlugin::releaseResources();
-    }
-
-    /// Returns the ordered host lifecycle calls without allowing tests to mutate the record.
-    [[nodiscard]] const juce::StringArray& getLifecycle() const
-    {
-        return lifecycle;
-    }
-
-    /// Returns the block size supplied by the most recent preparation.
-    [[nodiscard]] int getPreparedBlockSize() const
-    {
-        return preparedBlockSize;
-    }
-
-    /// Returns the sample rate supplied by the most recent preparation.
-    [[nodiscard]] double getLastSampleRate() const
-    {
-        return lastSampleRate;
-    }
-
-    /// Starts a fresh lifecycle record without changing the plugin's initialization state.
-    void clearLifecycle()
-    {
-        lifecycle.clear();
-    }
-
-private:
-    /// Ordered host lifecycle calls, excluding audio rendering.
-    juce::StringArray lifecycle;
-    /// Most recent preparation block size, including editor-specific sizes.
-    int preparedBlockSize = 0;
-    /// Most recent preparation sample rate.
-    double lastSampleRate = 0.0;
-
-    bool audioUnit;
-    bool initialized = false;
-};
-
-/// Records its resource release and its destruction in a log owned by the test, which outlives the plugin.
-class TeardownRecordingPlugin final : public TestPlugin
-{
-public:
-    /// Writes the teardown events to the given log.
-    explicit TeardownRecordingPlugin(juce::StringArray& eventLog) : TestPlugin(TestPluginSettings {}), events(eventLog)
-    {}
-
-    /// Records the destruction after any release.
-    ~TeardownRecordingPlugin() override
-    {
-        events.add("destroy");
-    }
-
-    TeardownRecordingPlugin(const TeardownRecordingPlugin&) = delete;
-    TeardownRecordingPlugin(TeardownRecordingPlugin&&) = delete;
-    TeardownRecordingPlugin& operator=(const TeardownRecordingPlugin&) = delete;
-    TeardownRecordingPlugin& operator=(TeardownRecordingPlugin&&) = delete;
-
-    /// Records the release of the prepared resources.
-    void releaseResources() override
-    {
-        events.add("release");
-        TestPlugin::releaseResources();
-    }
-
-private:
-    juce::StringArray& events;
-};
-
-/// Counts the change notifications of the processors it is registered on.
-class CountingProcessorListener final : public juce::AudioProcessorListener
-{
-public:
-    /// Ignores parameter changes, which the tests do not trigger.
-    void audioProcessorParameterChanged(juce::AudioProcessor* /*processor*/, int /*index*/, float /*value*/) override {}
-
-    /// Counts a change notification.
-    void audioProcessorChanged(juce::AudioProcessor* /*processor*/, const ChangeDetails& /*details*/) override
-    {
-        ++changeCount;
-    }
-
-    int changeCount {0};
-};
-
-/// The VST3 client of FailingProcessPlugin, which reports a fixed result for the last process call.
-class FailingVST3Client final : public juce::AudioPluginExtensions::VST3Client
-{
-public:
-    /// Has no component, since the plugin is not a real VST3.
-    [[nodiscard]] Steinberg::Vst::IComponent* getIComponentPtr() const noexcept override
-    {
-        return nullptr;
-    }
-
-    /// Has no preset.
-    [[nodiscard]] juce::MemoryBlock getPreset() const override
-    {
-        return {};
-    }
-
-    /// Accepts no preset.
-    bool setPreset(const juce::MemoryBlock& /*preset*/) override
-    {
-        return false;
-    }
-
-    /// Reports the result a VST3 plugin returns when its process call fails.
-    [[nodiscard]] int getLastProcessResult() const noexcept override
-    {
-        return failedResult;
-    }
-
-    /// The result code reported, kResultFalse of the VST3 SDK.
-    static constexpr int failedResult {1};
-};
-
-/// A test plugin that looks like a VST3 plugin whose process calls fail, while its audio passes through.
-class FailingProcessPlugin final : public TestPlugin
-{
-public:
-    /// Creates a gain-only plugin.
-    FailingProcessPlugin() : TestPlugin({}) {}
-
-    /// Returns the client that reports the failed process call.
-    juce::AudioPluginExtensions::VST3Client* getVST3Client() override
-    {
-        return &client;
-    }
-
-    /// Returns the client that reports the failed process call.
-    const juce::AudioPluginExtensions::VST3Client* getVST3Client() const override
-    {
-        return &client;
-    }
-
-private:
-    FailingVST3Client client;
-};
-
-/// A custom scanner that abandons its scan on the first plugin it gets, as the plugin scan does when the lock is busy.
-class AbandoningScanner final : public juce::KnownPluginList::CustomScanner
-{
-public:
-    /// Abandons the scan, counts the call, and reports the plugin as scanned without loading it.
-    bool findPluginTypesFor(
-        juce::AudioPluginFormat& /*format*/,
-        juce::OwnedArray<juce::PluginDescription>& /*result*/,
-        const juce::String& /*fileOrIdentifier*/
-    ) override
-    {
-        abandonScan();
-        ++calls;
-        return true;
-    }
-
-    int calls {0};
-};
-
 namespace
 {
 /// Renders the start of the audio through a live preview of one plugin, prepared like the GUI prepares it,
@@ -564,28 +64,6 @@ public:
     {
         const TemporaryDirectory directory;
 
-        beginTest("Plugin worker budgets reserve one physical core and handle unavailable counts");
-        {
-            expectEquals(getPluginProcessingWorkerCount(16, 32), 15);
-            expectEquals(getPluginProcessingWorkerCount(8, 16), 7);
-            expectEquals(getPluginProcessingWorkerCount(1, 2), 1);
-            expectEquals(getPluginProcessingWorkerCount(2, 4), 1);
-            expectEquals(getPluginProcessingWorkerCount(0, 32), 15);
-            expectEquals(getPluginProcessingWorkerCount(-1, 17), 7);
-            expectEquals(getPluginProcessingWorkerCount(0, 1), 1);
-            expectEquals(getPluginProcessingWorkerCount(0, -1), 1);
-            expectEquals(getPluginProcessingWorkerCount(16, 16), 15);
-        }
-
-        beginTest("Built-in Apple Audio Units are recognised by the manufacturer code of their identifier");
-        {
-            expect(isBuiltInApplePlugin("AudioUnit:Effects/aufx,lmtr,appl"));
-            expect(isBuiltInApplePlugin("AudioUnit:Synths/aumu,dls ,appl"));
-            expect(!isBuiltInApplePlugin("AudioUnit:Effects/aufx,567h,Vxng"));
-            expect(!isBuiltInApplePlugin("AudioUnit:Effects/aufx,appl,Vxng"));
-            expect(!isBuiltInApplePlugin("/Library/Audio/Plug-Ins/VST3/MSED.vst3"));
-        }
-
         beginTest("A plugin whose process call fails fails the file and leaves the source unchanged");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "process_failure.aif");
@@ -607,169 +85,6 @@ public:
             const std::array<juce::AudioPluginInstance*, 2> chain {&passing, &plugin};
             expectEquals(findFailedProcessCall(chain), 1);
             expectEquals(findFailedProcessCall(std::span(chain).first(1)), -1);
-        }
-
-        beginTest("A custom scanner that abandons its scan stops it without reporting failed files");
-        {
-            juce::KnownPluginList knownPluginList;
-            auto scanner = std::make_unique<AbandoningScanner>();
-            const auto& scannerCalls = scanner->calls;
-            knownPluginList.setCustomScanner(std::move(scanner));
-            juce::VST3PluginFormat format;
-            {
-                juce::PluginDirectoryScanner directoryScanner(knownPluginList, format, {}, false, juce::File(), false);
-                directoryScanner.setFilesOrIdentifiersToScan({"/Missing/First.vst3", "/Missing/Second.vst3"});
-                juce::String pluginBeingScanned;
-                expect(!directoryScanner.scanNextFile(true, pluginBeingScanned));
-                expectEquals(directoryScanner.getFailedFiles().size(), 0);
-                expect(knownPluginList.isCustomScanAbandoned());
-            }
-            expectEquals(scannerCalls, 1);
-            // The request ends with the scan, so the next scan runs again.
-            expect(!knownPluginList.isCustomScanAbandoned());
-        }
-
-        beginTest("VST3_PATH is split with the platform separator, so Windows drive letters stay intact");
-        {
-            // What JUCE makes of VST3_PATH=C:\Plugins;D:\More on Windows, followed by its standard folder.
-            const juce::FileSearchPath windowsJucePath(R"(C;\Plugins;D;\More;C:\Program Files\Common Files\VST3)");
-            expectEquals(
-                buildVst3SearchPath(windowsJucePath, R"(C:\Plugins;D:\More)", ";").toString(),
-                juce::String(R"(C:\Plugins;D:\More;C:\Program Files\Common Files\VST3)")
-            );
-
-            // On macOS and Linux JUCE already splits the variable correctly, and the path stays the same.
-            const juce::FileSearchPath macJucePath("/Users/me/VST3;/opt/vst3;/Library/Audio/Plug-Ins/VST3");
-            expectEquals(
-                buildVst3SearchPath(macJucePath, "/Users/me/VST3:/opt/vst3", ":").toString(), macJucePath.toString()
-            );
-
-            // A folder of the variable that is also a standard folder is listed once.
-            expectEquals(
-                buildVst3SearchPath(juce::FileSearchPath("/Library/VST3"), "/Library/VST3", ":").toString(),
-                juce::String("/Library/VST3")
-            );
-            expectEquals(
-                buildVst3SearchPath(juce::FileSearchPath("/Library/VST3"), {}, ":").toString(),
-                juce::String("/Library/VST3")
-            );
-        }
-
-        beginTest("Built-in Apple Audio Units are removed from a known plugins list, including blacklisted ones");
-        {
-            const auto makeDescription
-                = [](const juce::String& format, const juce::String& identifier, const int uniqueId) {
-                      juce::PluginDescription description;
-                      description.name = identifier;
-                      description.pluginFormatName = format;
-                      description.fileOrIdentifier = identifier;
-                      description.uniqueId = uniqueId;
-                      return description;
-                  };
-
-            juce::KnownPluginList knownPluginList;
-            knownPluginList.addType(makeDescription("AudioUnit", "AudioUnit:Effects/aufx,lmtr,appl", 1));
-            knownPluginList.addType(makeDescription("AudioUnit", "AudioUnit:Effects/aufx,567h,Vxng", 2));
-            knownPluginList.addType(makeDescription("VST3", "/Library/Audio/Plug-Ins/VST3/MSED.vst3", 3));
-            knownPluginList.addToBlacklist("AudioUnit:Effects/aufx,dely,appl");
-            knownPluginList.addToBlacklist("/Library/Audio/Plug-Ins/VST3/Broken.vst3");
-
-            removeBuiltInApplePlugins(knownPluginList);
-
-            const auto types = knownPluginList.getTypes();
-            expectEquals(types.size(), 2);
-            expect(std::ranges::none_of(types, [](const juce::PluginDescription& type) {
-                return isBuiltInApplePlugin(type.fileOrIdentifier);
-            }));
-            expect(
-                knownPluginList.getBlacklistedFiles() == juce::StringArray("/Library/Audio/Plug-Ins/VST3/Broken.vst3")
-            );
-        }
-
-        beginTest("Missing plugins are removed only from scanned folders that still exist");
-        {
-            const auto scanned = directory.getChildFile("ScannedVST3");
-            expect(scanned.createDirectory());
-            const auto present = scanned.getChildFile("Present.vst3");
-            expect(present.createDirectory());
-            const auto gone = scanned.getChildFile("Gone.vst3").getFullPathName();
-            const auto goneBlacklisted = scanned.getChildFile("Crashed.vst3").getFullPathName();
-            const auto unscanned = directory.getChildFile("OtherFolder/Elsewhere.vst3").getFullPathName();
-            const auto missingFolder = directory.getChildFile("UnpluggedDrive");
-            const auto onMissingFolder = missingFolder.getChildFile("Away.vst3").getFullPathName();
-
-            juce::AudioPluginFormatManager formatManager;
-            formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
-            juce::PropertiesFile::Options options;
-            options.applicationName = "AudioBatchTests";
-            juce::PropertiesFile settings(directory.getChildFile("settings.xml"), options);
-            juce::FileSearchPath searchPath;
-            searchPath.add(scanned);
-            searchPath.add(missingFolder);
-            juce::PluginListComponent::setLastSearchPath(settings, *formatManager.getFormat(0), searchPath);
-
-            const auto makeDescription = [](const juce::String& file, const int uniqueId) {
-                juce::PluginDescription description;
-                description.name = juce::File(file).getFileNameWithoutExtension();
-                description.pluginFormatName = "VST3";
-                description.fileOrIdentifier = file;
-                description.uniqueId = uniqueId;
-                return description;
-            };
-            juce::KnownPluginList knownPluginList;
-            knownPluginList.addType(makeDescription(present.getFullPathName(), 1));
-            knownPluginList.addType(makeDescription(gone, 2));
-            knownPluginList.addType(makeDescription(unscanned, 3));
-            knownPluginList.addType(makeDescription(onMissingFolder, 4));
-            knownPluginList.addToBlacklist(goneBlacklisted);
-            knownPluginList.addToBlacklist(unscanned);
-
-            expectEquals(removeMissingPlugins(knownPluginList, formatManager, settings), 1);
-
-            juce::StringArray remaining;
-            for (const auto& type : knownPluginList.getTypes()) {
-                remaining.add(type.fileOrIdentifier);
-            }
-            remaining.sort(false);
-            juce::StringArray expected {present.getFullPathName(), unscanned, onMissingFolder};
-            expected.sort(false);
-            expect(remaining == expected, remaining.joinIntoString(", "));
-            expect(knownPluginList.getBlacklistedFiles() == juce::StringArray(unscanned));
-        }
-
-        beginTest("A chain lease returns its chain to the pool when it is destroyed");
-        {
-            PluginRunChains runChains(std::vector<PluginChainInstances>(1), true);
-            expectEquals(runChains.getNumChains(), 1);
-            {
-                const auto lease = runChains.acquire([] { return true; });
-                expect(lease.has_value());
-                int checks = 0;
-                expect(!runChains.acquire([&checks] { return ++checks <= 1; }).has_value());
-            }
-            expect(runChains.acquire([] { return true; }).has_value());
-            expect(!PluginRunChains(std::vector<PluginChainInstances>(1), false).acquire([] { return false; }));
-        }
-
-        beginTest("Coordinator queues selected files in input order, skips duplicates, and fails missing files");
-        testCoordinator(directory, 1);
-
-        beginTest("Coordinator can start six independent files concurrently");
-        testCoordinator(directory, 6);
-
-        beginTest("An empty queue or invalid chain does not announce processing");
-        {
-            const ScopedLogCapture capture;
-            PluginProcessingCoordinator coordinator(1);
-            TestPlugin plugin(TestPluginSettings {});
-            const auto options = makeOptions({&plugin});
-            expectEquals(coordinator.start({}, options, {}), 0);
-            PluginChainInstances chain;
-            chain.push_back(std::make_unique<TestPlugin>(TestPluginSettings {}));
-            std::vector<PluginChainInstances> chains;
-            chains.push_back(std::move(chain));
-            expectEquals(coordinator.start({}, options, std::move(chains)), 0);
-            expect(capture.getMessages().isEmpty());
         }
 
         beginTest("A mono file feeds both inputs of a stereo-only plugin and stays mono");
@@ -1354,96 +669,105 @@ public:
                 );
             }));
         }
+
+        testChannelLayoutRefusal(directory);
+        testLateCancellation();
     }
 
 private:
-    /// Checks FIFO pickup with one worker and a bounded start barrier with six workers.
-    /// Existing outputs reject each job before plugin preparation, avoiding message-loop waits and file replacement.
-    void testCoordinator(const TemporaryDirectory& directory, const int workerCount)
+    /// Checks that a plugin that refuses the channel layout of a file fails it before any audio is processed,
+    /// and that the plugins prepared before it in the chain are released again.
+    void testChannelLayoutRefusal(const TemporaryDirectory& directory)
     {
-        const ScopedLogCapture capture;
-        const std::vector<juce::String> names {"zulu", "alpha", "mike", "bravo", "yankee", "charlie"};
-        std::vector<AudioAnalysisRecord> records;
-        std::vector<juce::String> expectedPaths;
-        for (const auto& fileStem : names) {
-            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", fileStem + ".wav");
-            const auto existingOutput = directory.copyFixture("sine_stereo_44100_16.aif", fileStem + ".aif");
-            expect(existingOutput.existsAsFile());
-            records.push_back(analyzeFile(source));
-            expectedPaths.push_back(source.getFullPathName());
-        }
-        records.push_back(records.front());
-        AudioAnalysisRecord missing;
-        missing.file = directory.getChildFile("missing.wav");
-        missing.fullPath = missing.file.getFullPathName();
-        records.push_back(missing);
-        expectedPaths.push_back(missing.fullPath);
-
-        std::mutex mutex;
-        std::condition_variable condition;
-        std::vector<juce::String> startedPaths;
-        int completedFiles = 0;
-        int resultCount = 0;
-        juce::String missingFileError;
-        bool released = workerCount == 1;
-        PluginProcessingCoordinator coordinator(workerCount);
-        coordinator.setStartingCallback([&](const juce::File& file, int /*runId*/) {
-            std::unique_lock lock(mutex);
-            utils::logInfo("Test file starting: {}", file.getFileName().quoted());
-            startedPaths.push_back(file.getFullPathName());
-            condition.notify_all();
-            condition.wait_for(lock, std::chrono::seconds(10), [&] { return released; });
-        });
-        coordinator.setResultCallback([&](const PluginProcessingResult& result, int /*runId*/) {
-            const std::scoped_lock lock(mutex);
-            ++resultCount;
-            if (result.originalFile == missing.file) {
-                missingFileError = outcomeError(result.outcome);
-            }
-        });
-        coordinator.setCompletionCallback([&](const int totalFiles, int /*runId*/) {
-            const std::scoped_lock lock(mutex);
-            completedFiles = totalFiles;
-            condition.notify_all();
-        });
-
-        std::vector<PluginChainInstances> chains;
-        for (int index = 0; index < workerCount; ++index) {
-            PluginChainInstances chain;
-            chain.push_back(std::make_unique<TestPlugin>(TestPluginSettings {}));
-            chains.push_back(std::move(chain));
-        }
-        const auto options = makeOptions({chains.front().front().get()});
-        expectEquals(coordinator.start(records, options, std::move(chains)), 7);
+        beginTest("A mono-only plugin refuses a stereo file, which is left unchanged without an output");
         {
-            std::unique_lock lock(mutex);
-            if (workerCount > 1) {
-                expect(condition.wait_for(lock, std::chrono::seconds(5), [&] { return startedPaths.size() >= 6; }));
-                released = true;
-                condition.notify_all();
-            }
-            expect(condition.wait_for(lock, std::chrono::seconds(10), [&] { return completedFiles == 7; }));
-        }
-        coordinator.cancelAndWait();
-        expectEquals(resultCount, 7);
-        expectEquals(missingFileError, juce::String("File does not exist"));
-        const auto messages = capture.getMessages();
-        expect(!messages.isEmpty());
-        if (!messages.isEmpty()) {
-            expect(
-                messages[0].endsWith(
-                    utils::format("[INFO]: Plugin processing started: 7 files, up to {} concurrent", workerCount)
+            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "mono_only.wav");
+            juce::MemoryBlock originalBytes;
+            expect(source.loadFileAsData(originalBytes));
+            TestPlugin monoOnly({.acceptsMono = true, .refusesStereo = true});
+            const auto result = process(source, {&monoOnly});
+
+            expect(result.hasError());
+            expectEquals(
+                outcomeError(result.outcome),
+                utils::format(
+                    "Plugin {} does not support the file's channel layout (2 channels)", monoOnly.getName().quoted()
                 )
             );
+            expectEquals(monoOnly.getWidestBufferChannels(), 0);
+            juce::MemoryBlock remainingBytes;
+            expect(source.loadFileAsData(remainingBytes));
+            expect(remainingBytes == originalBytes);
+            expect(!getProcessingOutputFile(source).exists());
         }
-        expectEquals(
-            static_cast<int>(std::ranges::count_if(
-                messages, [](const auto& message) { return message.contains("Plugin processing started:"); }
-            )),
-            1
-        );
-        if (workerCount == 1) {
-            expect(startedPaths == expectedPaths);
+
+        beginTest("A refusal later in the chain releases the plugins already prepared for the file");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "refused_later.aif");
+            const auto sourceSize = source.getSize();
+            PreparationTestPlugin prepared(false);
+            TestPlugin monoOnly({.acceptsMono = true, .refusesStereo = true});
+            const auto result = process(source, {&prepared, &monoOnly});
+
+            expect(result.hasError());
+            expect(outcomeError(result.outcome).contains("channel layout"), outcomeError(result.outcome));
+            expectEquals(prepared.getLifecycle().joinIntoString(","), juce::String("prepare,reset,release"));
+            expectEquals(prepared.getWidestBufferChannels(), 0);
+            expectEquals(source.getSize(), sourceSize);
+        }
+    }
+
+    /// Counts the cancellation checks of a complete run of a file through a plugin,
+    /// then cancels the same run at its first, a middle, and its last check.
+    /// The last check comes after the output was rendered and checked, just before it would replace the source,
+    /// so it covers the cleanup of a finished temporary output.
+    void testLateCancellation()
+    {
+        beginTest("Cancelling processing at any later check leaves the source unchanged and removes temporary files");
+        std::vector<int> allowedCheckCounts;
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "complete.aif");
+            TestPlugin plugin({.gain = 0.5f});
+            const auto checks = std::make_shared<std::atomic<int>>(0);
+            const auto result = processFileWithPlugins(
+                analyzeFile(source),
+                makeOptions({&plugin}),
+                chainOf(plugin),
+                cancelAfterChecks(std::numeric_limits<int>::max(), checks)
+            );
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expect(checks->load() > 1, "processing must check for cancellation more than once");
+            allowedCheckCounts = {0, checks->load() / 2, checks->load() - 1};
+        }
+
+        for (const auto allowedChecks : allowedCheckCounts) {
+            const TemporaryDirectory directory;
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "late_cancel.aif");
+            juce::MemoryBlock originalBytes;
+            expect(source.loadFileAsData(originalBytes));
+            TestPlugin plugin({.gain = 0.5f});
+            auto options = makeOptions({&plugin});
+            int disposedCount = 0;
+            options.disposeFile = [&disposedCount](const juce::File& file) {
+                ++disposedCount;
+                return file.deleteFile();
+            };
+
+            const auto checks = std::make_shared<std::atomic<int>>(0);
+            const auto result = processFileWithPlugins(
+                analyzeFile(source), options, chainOf(plugin), cancelAfterChecks(allowedChecks, checks)
+            );
+            const auto context = utils::format("cancelled after {} checks", allowedChecks);
+            expect(result.hasError(), context);
+            expect(outcomeError(result.outcome).contains("cancelled"), outcomeError(result.outcome));
+            // Releasing the chain may look at the check again, so only the first cancelling call is certain.
+            expect(checks->load() > allowedChecks, context);
+            expectEquals(disposedCount, 0, context);
+            juce::MemoryBlock remainingBytes;
+            expect(source.loadFileAsData(remainingBytes));
+            expect(remainingBytes == originalBytes, context);
+            expectEquals(source.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 1, context);
         }
     }
 
@@ -1502,13 +826,6 @@ private:
         return difference;
     }
 
-    /// Returns a chain holding only the given plugin.
-    /// The services take the chain as a std::span, which a braced list cannot convert to.
-    static std::vector<juce::AudioPluginInstance*> chainOf(juce::AudioPluginInstance& plugin)
-    {
-        return {&plugin};
-    }
-
     /// Builds options for the given chain that delete replaced files instead of moving them to the system trash.
     /// Each plugin gets the saved state at its index in `states`, or no saved state.
     static PluginProcessingOptions makeOptions(
@@ -1516,22 +833,7 @@ private:
         const std::vector<juce::MemoryBlock>& states = {}
     )
     {
-        PluginProcessingOptions options;
-        options.disposeFile = [](const juce::File& file) { return file.deleteFile(); };
-
-        for (std::size_t index = 0; index < chain.size(); ++index) {
-            PluginDescriptorRef descriptor;
-            descriptor.identifierString = "test-plugin";
-            descriptor.name = chain[index]->getName();
-
-            if (index < states.size()) {
-                descriptor.state = states[index];
-            }
-
-            options.plugins.push_back(descriptor);
-        }
-
-        return options;
+        return makeTestPluginOptions(chain, states);
     }
 };
 

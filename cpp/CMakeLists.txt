@@ -742,6 +742,7 @@ if(BUILD_TESTING)
             "src/serato/SeratoPreviewLoader.h"
             "src/serato/SeratoWaveformColouring.cpp"
             "src/serato/SeratoWaveformColouring.h"
+            "tests/AnalysisCoordinatorTests.cpp"
             "tests/AnalysisTests.cpp"
             "tests/BackgroundWorkTests.cpp"
             "tests/CacheTests.cpp"
@@ -751,10 +752,16 @@ if(BUILD_TESTING)
             "tests/GuiFontTests.cpp"
             "tests/MetadataTests.cpp"
             "tests/NormalizationTests.cpp"
+            "tests/NormalizeCoordinatorTests.cpp"
+            "tests/PluginCoordinatorTests.cpp"
             "tests/PluginPresetTests.cpp"
+            "tests/PluginScanTests.cpp"
+            "tests/ProcessingTestPlugins.cpp"
+            "tests/ProcessingTestPlugins.h"
             "tests/ProcessingTests.cpp"
             "tests/PreviewControllerTests.cpp"
             "tests/PreviewPlaybackTests.cpp"
+            "tests/PreviewPlayerTests.cpp"
             "tests/ResultsModelTests.cpp"
             "tests/SeratoOverviewTests.cpp"
             "tests/SeratoPreviewLoaderTests.cpp"
@@ -821,7 +828,13 @@ if(BUILD_TESTING)
     # Discovery runs the freshly linked executable as a post-build step.
     # The first launch of a new binary can take longer than the default five seconds,
     # for example while macOS scans it or a sanitizer runtime starts up.
-    gtest_discover_tests(AudioBatchTests DISCOVERY_TIMEOUT 60 PROPERTIES RUN_SERIAL TRUE)
+    # Each suite takes a few seconds in a debug build, so the timeout of each test only ends a suite that hangs,
+    # with room for the slower sanitizer builds.
+    gtest_discover_tests(
+        AudioBatchTests DISCOVERY_TIMEOUT 60
+        PROPERTIES RUN_SERIAL TRUE
+        TIMEOUT 300
+    )
     audiobatch_set_source_warnings(AudioBatchTests)
 endif()
 

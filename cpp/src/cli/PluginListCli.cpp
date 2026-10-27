@@ -363,18 +363,31 @@ void rescanPlugins(
 }
 }  // namespace
 
-/// Prints the known plugins, grouped as requested, and returns the process exit code.
+/// Prints the known plugins of the AudioBatch settings, grouped as requested, and returns the process exit code.
+int cli::runPluginList(const bool rescan, const PluginListGrouping grouping)
+{
+    return runPluginList(rescan, grouping, utils::createApplicationSettingsOptions(), pluginScanLockName);
+}
+
+/// Prints the known plugins stored next to the settings file of the given options, grouped as requested,
+/// and returns the process exit code: 0 on success, and 1 when the settings cannot be opened,
+/// another process holds the scan lock of the given name during a rescan, or the rescanned list cannot be saved.
 /// With rescan set, scans the plugin folders for new or changed plugins first
 /// and saves the updated list for the GUI too.
 /// Each plugin is loaded in a worker process launched from this executable,
 /// so a plugin that crashes is blacklisted instead of ending the scan.
-int cli::runPluginList(const bool rescan, const PluginListGrouping grouping)
+int cli::runPluginList(
+    const bool rescan,
+    const PluginListGrouping grouping,
+    const juce::PropertiesFile::Options& settingsOptions,
+    const juce::String& scanLockName
+)
 {
     // Plugin hosting needs a message thread, which this initialiser sets up on the calling thread.
     const juce::ScopedJuceInitialiser_GUI juceInitialiser;
 
     juce::ApplicationProperties properties;
-    properties.setStorageParameters(utils::createApplicationSettingsOptions());
+    properties.setStorageParameters(settingsOptions);
 
     auto* settings = properties.getUserSettings();
     if (settings == nullptr) {
@@ -384,7 +397,7 @@ int cli::runPluginList(const bool rescan, const PluginListGrouping grouping)
 
     // Hold the plugin scan lock from loading the list to saving it,
     // so a scan in the GUI cannot overwrite this rescan's results, or the other way around.
-    PluginScanLock pluginScanLock;
+    PluginScanLock pluginScanLock(scanLockName);
     if (rescan && !pluginScanLock.tryAcquire()) {
         console::printError(
             "Another plugin scan is running, for example in the AudioBatch plugin manager. "

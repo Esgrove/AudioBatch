@@ -416,9 +416,7 @@ private:
                     const auto before = fileChecksum(file);
                     const auto result = serato::readTag(file);
                     expectStatus(result, serato::ReadStatus::present);
-                    if (const auto overview = tagValue<serato::Overview>(result); overview && expected) {
-                        expect(overview->slices == expected->slices);
-                    }
+                    expectOverview(result, expected, fixture);
                     expect(before.has_value() && before == fileChecksum(file));
                 }
             }
@@ -457,9 +455,7 @@ private:
             const auto before = fileChecksum(flacFile);
             const auto result = serato::readTag(flacFile);
             expectStatus(result, serato::ReadStatus::present);
-            if (const auto overview = tagValue<serato::Overview>(result); overview && expected) {
-                expect(overview->slices == expected->slices);
-            }
+            expectOverview(result, expected, "FLAC comment");
             expect(before.has_value() && before == fileChecksum(flacFile));
         }
 
@@ -522,26 +518,19 @@ private:
             expect(writeSyntheticTags(file));
             const auto before = fileChecksum(file);
             const auto results = serato::readTags(file, serato::allTagKinds);
-            expectEquals(static_cast<int>(results.size()), 6);
+            expectEquals(static_cast<int>(results.size()), 6, extension);
             for (std::size_t index = 0; index < results.size(); ++index) {
                 expectEquals(static_cast<int>(results[index].kind), static_cast<int>(index + 1));
                 expectEquals(static_cast<int>(results[index].status()), static_cast<int>(serato::ReadStatus::present));
                 expect(serato::serializeTag(results[index]).getSize() > 0);
             }
             if (results.size() == 6) {
-                const auto info = tagValue<serato::TrackInfo>(results[5]);
-                if (info) {
-                    expectEquals(info->bpm.value_or(0), 129.5);
-                    expectEquals(info->key, juce::String("Gm"));
-                }
-                const auto markers = tagValue<serato::Markers>(results[4]);
-                if (markers && !markers->cues.empty()) {
-                    expectEquals(static_cast<int>(markers->cues.front().positionMilliseconds), 1234);
-                }
+                expectSyntheticValues(results, extension);
             }
             expect(before.has_value() && before == fileChecksum(file));
             expect(writeSyntheticTags(file, true));
             const auto mixed = serato::readTags(file, serato::allTagKinds);
+            expectEquals(static_cast<int>(mixed.size()), 6, extension);
             for (std::size_t index = 0; index < mixed.size(); ++index) {
                 expectEquals(
                     static_cast<int>(mixed[index].status()),
@@ -549,6 +538,7 @@ private:
                 );
             }
             const auto cancelled = serato::readTags(file, serato::allTagKinds, [] { return true; });
+            expectEquals(static_cast<int>(cancelled.size()), 6, extension);
             for (const auto& result : cancelled) {
                 expectEquals(static_cast<int>(result.status()), static_cast<int>(serato::ReadStatus::cancelled));
                 expect(serato::serializeTag(result).getSize() == 0);
@@ -565,7 +555,12 @@ private:
             expect(writeSyntheticTags(file, false, true, true));
             const auto markers = serato::readTag(file, serato::TagKind::markers);
             expectEquals(static_cast<int>(markers.status()), static_cast<int>(serato::ReadStatus::present));
-            if (const auto value = tagValue<serato::Markers>(markers); value && !value->cues.empty()) {
+            const auto value = tagValue<serato::Markers>(markers);
+            expect(value.has_value(), "the legacy fallback must supply markers");
+            if (value) {
+                expectEquals(static_cast<int>(value->cues.size()), 1, "the legacy fallback must have one cue");
+            }
+            if (value && !value->cues.empty()) {
                 expectEquals(static_cast<int>(value->cues.front().positionMilliseconds), 100);
             }
             expectStatus(serato::readTag(file), serato::ReadStatus::present);
@@ -602,7 +597,9 @@ private:
             }
             const auto keyOnly = serato::readTag(file, serato::TagKind::trackInfo);
             expectEquals(static_cast<int>(keyOnly.status()), static_cast<int>(serato::ReadStatus::present));
-            if (const auto info = tagValue<serato::TrackInfo>(keyOnly)) {
+            const auto info = tagValue<serato::TrackInfo>(keyOnly);
+            expect(info.has_value(), "the key alone must supply track information");
+            if (info) {
                 expect(!info->bpm);
                 expectEquals(info->key, juce::String("Gm"));
             }
@@ -657,6 +654,43 @@ private:
                 expectEquals(dated->year, juce::String("2024"));
                 expectEquals(dated->genre, juce::String("Techno"));
             }
+        }
+    }
+
+    /// Checks the track information and the Markers2 cue that writeSyntheticTags stores,
+    /// in the results of reading every tag kind, failing with the container instead of skipping a missing value.
+    void expectSyntheticValues(const std::vector<serato::TagReadResult>& results, const juce::String& extension)
+    {
+        const auto info = tagValue<serato::TrackInfo>(results[5]);
+        expect(info.has_value(), utils::format("{} must have track information", extension));
+        if (info) {
+            expectEquals(info->bpm.value_or(0), 129.5);
+            expectEquals(info->key, juce::String("Gm"));
+        }
+
+        const auto markers = tagValue<serato::Markers>(results[4]);
+        expect(markers.has_value(), utils::format("{} must have Markers2", extension));
+        if (markers) {
+            expectEquals(static_cast<int>(markers->cues.size()), 1, extension);
+        }
+        if (markers && !markers->cues.empty()) {
+            expectEquals(static_cast<int>(markers->cues.front().positionMilliseconds), 1234);
+        }
+    }
+
+    /// Requires a present result to hold an Overview with the same slices as the expected payload,
+    /// and fails with the context instead of skipping the comparison when either one is missing.
+    void expectOverview(
+        const serato::TagReadResult& result,
+        const std::optional<serato::Overview>& expected,
+        const juce::String& context
+    )
+    {
+        const auto overview = tagValue<serato::Overview>(result);
+        expect(expected.has_value(), utils::format("{}: the synthetic payload must parse", context));
+        expect(overview.has_value(), utils::format("{}: the result must hold an Overview", context));
+        if (overview && expected) {
+            expect(overview->slices == expected->slices, utils::format("{}: the overview slices differ", context));
         }
     }
 

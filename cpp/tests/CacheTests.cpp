@@ -1,6 +1,9 @@
-/// Tests for AnalysisCache against a temporary SQLite database, and for AnalysisCoordinator runs on top of it.
-/// Covers the round trip of a stored record and its waveform, invalidation when the file changes on disk,
-/// the migration of a database written by an older version, and the delivery of results of replaced runs.
+/// Tests for AnalysisCache against a temporary SQLite database.
+/// Covers the round trip of a stored record and its waveform,
+/// invalidation when the size or the modification time of the file changes on disk,
+/// the migration of a database written by an older version, the Serato tag rows,
+/// and the loudness history, including a cached graph that the coordinator serves.
+/// AnalysisCoordinatorTests.cpp covers the plans and the replaced runs of the coordinator.
 /// The cached files are copies of the committed fixtures.
 
 #include "analysis/AnalysisCache.h"
@@ -249,47 +252,6 @@ public:
             expectEquals(cache.pruneMissingFiles(), 0);
         }
 
-        beginTest("The coordinator publishes the plan before results and drops the gain of a changed file");
-        {
-            const auto plannedFile = directory.copyFixture("sine_stereo_44100_16.wav", "planned.wav");
-            expect(cache.storeAnalysis(analyzeFile(plannedFile)));
-            expect(cache.storeCustomGain(plannedFile, Decibels {2.0f}));
-            expect(fixtureFile("sine_stereo_48000_24.wav").copyFileTo(plannedFile));
-
-            AnalysisCoordinator coordinator(cache, 2);
-            int planFileCount = -1;
-            bool planCameFirst = false;
-            coordinator.setPlanCallback([&](const AnalysisPlan& plan) { planFileCount = plan.files.size(); });
-            coordinator.setStartingCallback([&](const juce::File&, int) { planCameFirst = planFileCount >= 0; });
-
-            AudioAnalysisOptions options;
-            options.inputPaths.add(plannedFile);
-            const auto results = coordinator.analyzeBlocking(options);
-
-            expectEquals(planFileCount, 1);
-            expect(planCameFirst);
-            expectEquals(static_cast<int>(results.size()), 1);
-            expect(!results.front().customGain);
-            expectEquals(results.front().sampleRate, 48'000);
-        }
-
-        beginTest("A refresh rescan keeps the custom gain of an unchanged file");
-        {
-            const auto unchangedFile = directory.copyFixture("sine_stereo_44100_16.wav", "unchanged.wav");
-            expect(cache.storeAnalysis(analyzeFile(unchangedFile)));
-            expect(cache.storeCustomGain(unchangedFile, Decibels {-2.5f}));
-
-            AnalysisCoordinator coordinator(cache, 2);
-            AudioAnalysisOptions options;
-            options.inputPaths.add(unchangedFile);
-            options.refresh = true;
-            const auto results = coordinator.analyzeBlocking(options);
-
-            expectEquals(static_cast<int>(results.size()), 1);
-            expect(!results.empty() && results.front().customGain.has_value());
-            expectEquals(results.empty() ? 0.0f : results.front().customGain.value_or(Decibels {}).value, -2.5f);
-        }
-
         beginTest("Waveform data round trips and is dropped when the analysis is stored again");
         {
             const auto waveformFile = directory.copyFixture("sine_stereo_44100_16.wav", "waveform.wav");
@@ -306,39 +268,25 @@ public:
             expect(!cache.getWaveformData(waveformFile).has_value());
         }
 
-        beginTest("Results of a replaced run are not delivered after the new run started");
+        beginTest("A cached record is dropped when only the modification time of the file changes");
         {
-            std::atomic<int> latestRunId {-1};
-            std::atomic<int> lastCompletedRunId {-1};
-            std::atomic<int> staleDeliveries {0};
-            // Declared after the counters its callbacks use, so it is destroyed first.
-            AnalysisCoordinator coordinator(cache, 2);
+            const auto touchedFile = directory.copyFixture("sine_stereo_44100_16.wav", "touched.wav");
+            const auto record = analyzeFile(touchedFile);
+            expect(cache.storeAnalysis(record));
+            expect(cache.storeCustomGain(touchedFile, Decibels {1.0f}));
+            expect(cache.getAnalysis(touchedFile).has_value());
 
-            coordinator.setResultCallback([&](const AudioAnalysisRecord&, const int runId) {
-                if (const auto latest = latestRunId.load(); latest >= 0 && runId != latest) {
-                    ++staleDeliveries;
-                }
-            });
-            coordinator.setCompletionCallback([&](int, const int runId) { lastCompletedRunId = runId; });
+            const auto sizeBefore = touchedFile.getSize();
+            expect(touchedFile.setLastModificationTime(juce::Time(record.modifiedTimeMs + 10'000)));
+            expectEquals(touchedFile.getSize(), sizeBefore);
+            expect(!cache.getAnalysis(touchedFile).has_value());
+            expect(!cache.getCustomGain(touchedFile, record.fileSize, record.modifiedTimeMs + 10'000).has_value());
 
-            AudioAnalysisOptions replacedRun;
-            replacedRun.inputPaths.add(fixtureFile("sine_stereo_44100_16.wav").getParentDirectory());
-            replacedRun.refresh = true;
-            const auto replacedRunId = coordinator.start(replacedRun);
-
-            AudioAnalysisOptions currentRun;
-            currentRun.inputPaths.add(file);
-            currentRun.refresh = true;
-            latestRunId = coordinator.start(currentRun);
-
-            constexpr int maximumWaitSteps = 300;
-            for (int step = 0; step < maximumWaitSteps && lastCompletedRunId.load() != latestRunId.load(); ++step) {
-                juce::Thread::sleep(100);
-            }
-
-            expect(replacedRunId != latestRunId.load());
-            expectEquals(lastCompletedRunId.load(), latestRunId.load());
-            expectEquals(staleDeliveries.load(), 0);
+            // Restoring the original time makes the stored row match the file again.
+            expect(touchedFile.setLastModificationTime(juce::Time(record.modifiedTimeMs)));
+            const auto restored = cache.getAnalysis(touchedFile);
+            expect(restored.has_value());
+            expect(restored.has_value() && restored->customGain.has_value());
         }
 
         beginTest("A removed record is no longer returned");

@@ -148,8 +148,18 @@ juce::StringArray cli::findSkippedInputs(
     return errors;
 }
 
-/// Executes the CLI analysis workflow and returns the process exit code.
+/// Executes the CLI analysis workflow with the analysis cache in the user's cache folder,
+/// and returns the process exit code.
 int cli::runAnalysis(const AnalyzeCommand& command)
+{
+    AnalysisCache cache;
+    return runAnalysis(command, cache);
+}
+
+/// Executes the CLI analysis workflow with the given analysis cache, opening it first,
+/// and returns the process exit code: 0 when every input was analyzed, and normalized when requested,
+/// and 2 when any input was missing or skipped, or failed to analyze or normalize.
+int cli::runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache)
 {
     auto inputPaths = command.inputPaths;
 
@@ -161,8 +171,6 @@ int cli::runAnalysis(const AnalyzeCommand& command)
             )
         );
     }
-
-    AnalysisCache cache;
 
     // The analysis still works without the cache, it only has to read every file again on the next run.
     if (!cache.open()) {

@@ -202,7 +202,10 @@ private:
         beginTest("BeatGrid count distinguishes terminal BPM and accepts negative lead-in");
         const auto grid = gridPayload();
         const auto parsedGrid = serato::parseBeatGrid(grid);
-        expect(parsedGrid.has_value());
+        expect(parsedGrid.has_value(), "the grid payload must parse");
+        if (parsedGrid) {
+            expectEquals(static_cast<int>(parsedGrid->markers.size()), 2, "the grid must have two anchors");
+        }
         if (parsedGrid && parsedGrid->markers.size() == 2) {
             expectEquals(parsedGrid->markers.front().positionSeconds, -0.25);
             expectEquals(static_cast<int>(parsedGrid->markers.front().beatsUntilNext), 4);
@@ -226,7 +229,11 @@ private:
         beginTest("Markers2 preserves cues, loops, track colour and lock while skipping unknown records");
         const auto markers = markerPayload();
         const auto parsedMarkers = serato::parseMarkers2(markers);
-        expect(parsedMarkers.has_value());
+        expect(parsedMarkers.has_value(), "the Markers2 payload must parse");
+        if (parsedMarkers) {
+            expectEquals(static_cast<int>(parsedMarkers->cues.size()), 1, "the Markers2 payload must have one cue");
+            expectEquals(static_cast<int>(parsedMarkers->loops.size()), 1, "the Markers2 payload must have one loop");
+        }
         if (parsedMarkers && parsedMarkers->cues.size() == 1 && parsedMarkers->loops.size() == 1) {
             const auto& cue = parsedMarkers->cues.front();
             expectEquals(static_cast<int>(cue.positionMilliseconds), 1234);
@@ -291,7 +298,10 @@ private:
         legacy[22] = 6;
         legacy[23] = 48;
         const auto parsedLegacy = serato::parseLegacyMarkers(legacy);
-        expect(parsedLegacy.has_value());
+        expect(parsedLegacy.has_value(), "the legacy markers must parse");
+        if (parsedLegacy) {
+            expectEquals(static_cast<int>(parsedLegacy->cues.size()), 1, "only the first legacy slot holds a cue");
+        }
         if (parsedLegacy && parsedLegacy->cues.size() == 1) {
             expectEquals(static_cast<int>(parsedLegacy->cues.front().positionMilliseconds), 100);
             expect(parsedLegacy->cues.front().colour == juce::Colour(204, 0, 0));
@@ -356,12 +366,15 @@ private:
         const auto trackInfoCache = serato::serializeTag(serato::TagReadResult::present(trackInfo));
         const auto decodedTrackInfo = serato::deserializeTag(serato::TagKind::trackInfo, trackInfoCache);
         expect(decodedTrackInfo.has_value() && decodedTrackInfo->value.has_value());
-        if (decodedTrackInfo && decodedTrackInfo->value) {
-            const auto& info = std::get<serato::TrackInfo>(*decodedTrackInfo->value);
-            expectEquals(info.album, trackInfo.album);
-            expectEquals(info.genre, trackInfo.genre);
-            expectEquals(info.year, trackInfo.year);
-            expectEquals(info.comment, trackInfo.comment);
+        const auto* info = decodedTrackInfo && decodedTrackInfo->value
+            ? std::get_if<serato::TrackInfo>(&*decodedTrackInfo->value)
+            : nullptr;
+        expect(info != nullptr, "the decoded track info cache must hold track information");
+        if (info != nullptr) {
+            expectEquals(info->album, trackInfo.album);
+            expectEquals(info->genre, trackInfo.genre);
+            expectEquals(info->year, trackInfo.year);
+            expectEquals(info->comment, trackInfo.comment);
         }
         trackInfo.bpm = std::numeric_limits<double>::infinity();
         expect(serato::serializeTag(serato::TagReadResult::present(trackInfo)).getSize() == 0);

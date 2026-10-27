@@ -122,8 +122,8 @@ public:
 
     void scanFinished() override;
 
-    /// Returns the plugin files that took longer than the timeout to scan and were skipped, since the scanner was
-    /// created.
+    /// Returns the plugin files that took longer than the timeout to scan and were skipped,
+    /// since the scanner was created.
     [[nodiscard]] const juce::StringArray& getTimedOutFiles() const noexcept
     {
         return timedOutFiles;
@@ -140,6 +140,9 @@ private:
     JUCE_LEAK_DETECTOR(OutOfProcessPluginScanner)
 };
 
+/// Name of the inter-process lock that the GUI and the CLI take around a plugin scan.
+constexpr auto pluginScanLockName {"AudioBatchPluginScan"};
+
 /// Inter-process lock that serializes plugin scans between the GUI and the CLI.
 /// Each scan loads the known-plugins list, adds to it, and saves it,
 /// so two overlapping scans would overwrite each other's results.
@@ -147,7 +150,7 @@ private:
 class PluginScanLock
 {
 public:
-    PluginScanLock() = default;
+    explicit PluginScanLock(const juce::String& lockName = pluginScanLockName);
 
     ~PluginScanLock();
 
@@ -161,7 +164,7 @@ public:
     void release();
 
 private:
-    juce::InterProcessLock lock {"AudioBatchPluginScan"};
+    juce::InterProcessLock lock;
     bool held {false};
 
     JUCE_LEAK_DETECTOR(PluginScanLock)

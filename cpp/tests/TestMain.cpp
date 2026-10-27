@@ -1,7 +1,9 @@
 /// Entry point for the AudioBatch test executable.
 /// Registers the JUCE suites with GoogleTest for automatic CTest discovery and filtering.
 /// Each discovered test runs its suite through juce::UnitTestRunner and reports any failures to GoogleTest.
+/// The tests also start the executable again in a helper mode, which runs one helper instead of the suites.
 
+#include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/StringFormat.h"
 
@@ -9,6 +11,7 @@
 
 #include <cstdio>
 #include <memory>
+#include <span>
 #include <vector>
 
 /// Logger that writes to standard output.
@@ -56,15 +59,25 @@ private:
 }  // namespace audiobatch::tests
 
 /// Registers all compiled suites and delegates discovery, selection and results to GoogleTest.
+/// A command line that selects a helper mode runs only that helper, for tests that start the executable again.
 int main(int argumentCount, char* arguments[])
 {
     const juce::ScopedJuceInitialiser_GUI juceInitialiser;
+
+    juce::StringArray helperArguments;
+    for (const auto* argument : std::span(arguments, static_cast<std::size_t>(argumentCount)).subspan(1)) {
+        helperArguments.add(juce::String::fromUTF8(argument));
+    }
+    if (const auto helperExitCode = audiobatch::tests::runHelperProcess(helperArguments)) {
+        return *helperExitCode;
+    }
 
     ConsoleLogger consoleLogger;
     juce::Logger::setCurrentLogger(&consoleLogger);
 
     std::vector<std::unique_ptr<juce::UnitTest>> suites;
     suites.push_back(audiobatch::tests::createAnalysisTests());
+    suites.push_back(audiobatch::tests::createAnalysisCoordinatorTests());
     suites.push_back(audiobatch::tests::createBackgroundWorkTests());
     suites.push_back(audiobatch::tests::createCacheTests());
     suites.push_back(audiobatch::tests::createCliTests());
@@ -73,10 +86,14 @@ int main(int argumentCount, char* arguments[])
     suites.push_back(audiobatch::tests::createGuiFontTests());
     suites.push_back(audiobatch::tests::createMetadataTests());
     suites.push_back(audiobatch::tests::createNormalizationTests());
+    suites.push_back(audiobatch::tests::createNormalizeCoordinatorTests());
+    suites.push_back(audiobatch::tests::createPluginCoordinatorTests());
     suites.push_back(audiobatch::tests::createPluginPresetTests());
+    suites.push_back(audiobatch::tests::createPluginScanTests());
     suites.push_back(audiobatch::tests::createProcessingTests());
     suites.push_back(audiobatch::tests::createPreviewControllerTests());
     suites.push_back(audiobatch::tests::createPreviewPlaybackTests());
+    suites.push_back(audiobatch::tests::createPreviewPlayerTests());
     suites.push_back(audiobatch::tests::createResultsModelTests());
     suites.push_back(audiobatch::tests::createSortingTests());
     suites.push_back(audiobatch::tests::createSeratoOverviewTests());
