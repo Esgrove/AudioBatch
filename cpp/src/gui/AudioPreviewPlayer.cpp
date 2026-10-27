@@ -206,15 +206,17 @@ void AudioPreviewPlayer::timerCallback()
 
 /// Loads a mono/stereo source without starting it or altering the file on disk.
 /// Optionally defers playback until the owner supplies the cue-derived initial position.
+/// The file is opened and its header read before the rendering lock is taken,
+/// since the new reader is not part of the preview until it replaces the released one.
 bool AudioPreviewPlayer::load(const juce::URL& audioUrl, const bool waitForInitialPosition)
 {
-    const juce::ScopedLock lock(renderingLock);
-    release();
     auto reader = audioUrl.isLocalFile()
         ? utils::createAudioReader(audioUrl.getLocalFile())
         : std::unique_ptr<juce::AudioFormatReader>(formatManager.createReaderFor(
               audioUrl.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress))
           ));
+    const juce::ScopedLock lock(renderingLock);
+    release();
     if (reader == nullptr) {
         reportError("Could not decode the selected audio file");
         return false;

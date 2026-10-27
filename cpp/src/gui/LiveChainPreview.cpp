@@ -25,6 +25,29 @@ bool LiveChain::hasOpenPreviewDevice() const
     return device != nullptr && device->isOpen();
 }
 
+/// Creates the processor of a slot that has none yet, and returns false when the plugin cannot be created.
+/// A new processor is not part of the live preview yet, so the caller does not need the rendering lock,
+/// and loading a large plugin does not silence the preview.
+bool LiveChain::instantiateLiveEntry(LiveSlot& entry)
+{
+    if (entry.instance != nullptr) {
+        return true;
+    }
+    entry.preparationError.clear();
+    auto instance = library.getFormatManager().createPluginInstance(
+        entry.description, previewSampleRate, previewBlockSize, entry.preparationError
+    );
+    if (instance == nullptr) {
+        if (entry.preparationError.isEmpty()) {
+            entry.preparationError = "Plugin instantiation failed";
+        }
+        utils::logError("Live plugin {}: {}", entry.description.name.quoted(), entry.preparationError);
+        return false;
+    }
+    entry.attachInstance(std::move(instance), *this);
+    return true;
+}
+
 /// Instantiates and prepares a slot once for the current real-time context.
 /// The caller holds the preview rendering lock, so editor and device access cannot race reconfiguration.
 bool LiveChain::prepareLiveEntry(LiveSlot& entry)
@@ -32,20 +55,10 @@ bool LiveChain::prepareLiveEntry(LiveSlot& entry)
     if (entry.prepared) {
         return true;
     }
-    entry.preparationError.clear();
-    if (entry.instance == nullptr) {
-        auto instance = library.getFormatManager().createPluginInstance(
-            entry.description, previewSampleRate, previewBlockSize, entry.preparationError
-        );
-        if (instance == nullptr) {
-            if (entry.preparationError.isEmpty()) {
-                entry.preparationError = "Plugin instantiation failed";
-            }
-            utils::logError("Live plugin {}: {}", entry.description.name.quoted(), entry.preparationError);
-            return false;
-        }
-        entry.attachInstance(std::move(instance), *this);
+    if (!instantiateLiveEntry(entry)) {
+        return false;
     }
+    entry.preparationError.clear();
     auto& plugin = *entry.instance;
     plugin.setNonRealtime(false);
     if (!plugin_processing::configurePreviewChannels(plugin)) {

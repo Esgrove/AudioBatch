@@ -230,9 +230,10 @@ bool LiveChain::isSlotEnabled(const PluginSlotId slotId) const
 
 /// Returns the enabled plugins in chain order.
 /// Captures every instantiated slot first, so a processing run always uses the latest live tweaks.
+/// Capturing runs without the rendering lock, like a host saving plugin state while it plays,
+/// so starting a run does not silence the preview for the time large plugin states take to save.
 std::vector<EnabledChainPlugin> LiveChain::getEnabledPlugins()
 {
-    const juce::ScopedLock lock(renderingLock);
     // Include closed-editor instances because they continue processing live preview.
     captureOpenEditorStates();
 
@@ -290,43 +291,31 @@ void LiveChain::changeListenerCallback(juce::ChangeBroadcaster* source)
 /// A window hidden by its close button counts as closed, because the dialog hides itself instead of deleting itself.
 /// The preview's display-synchronized VBlank callback drives this metadata and window housekeeping.
 /// Audio parameter changes use the shared processor directly and never wait for this update.
+/// Nothing here takes the rendering lock, so closing an editor during playback does not interrupt the preview:
+/// the slots are only changed on the message thread,
+/// and capturing the state, deleting the editor, and reading the latency do not reconfigure the processor.
 void LiveChain::updatePreviewStatus()
 {
-    // Runs on every display frame, so it only takes the rendering lock when an editor closed or a latency changed.
-    // The slots are only changed on the message thread, so checking them needs no lock.
-    const bool editorClosed = std::ranges::any_of(chain, [](const LiveSlot& entry) {
-        return entry.wasEditorOpen && isEditorWindowClosed(entry);
-    });
-
-    if (!editorClosed && !latencyDirty.load()) {
-        return;
-    }
-
     bool stateCaptured = false;
     bool latencyChanged = false;
 
-    {
-        const juce::ScopedLock lock(renderingLock);
-
-        // Watch for the user closing editor windows so we can capture plugin state.
-        for (auto& entry : chain) {
-            if (entry.wasEditorOpen && isEditorWindowClosed(entry) && reapClosedEditor(entry)) {
-                stateCaptured = true;
-            }
+    // Watch for the user closing editor windows so we can capture plugin state.
+    for (auto& entry : chain) {
+        if (entry.wasEditorOpen && isEditorWindowClosed(entry) && reapClosedEditor(entry)) {
+            stateCaptured = true;
         }
+    }
 
-        if (latencyDirty.exchange(false)) {
-            for (auto& entry : chain) {
-                if (entry.instance != nullptr && entry.prepared) {
-                    const auto latency = static_cast<juce::int64>(juce::jmax(0, entry.instance->getLatencySamples()));
-                    latencyChanged = latencyChanged || entry.latencySamples != latency;
-                    entry.latencySamples = latency;
-                }
+    if (latencyDirty.exchange(false)) {
+        for (auto& entry : chain) {
+            if (entry.instance != nullptr && entry.prepared) {
+                const auto latency = static_cast<juce::int64>(juce::jmax(0, entry.instance->getLatencySamples()));
+                latencyChanged = latencyChanged || entry.latencySamples != latency;
+                entry.latencySamples = latency;
             }
         }
     }
 
-    // Saving the settings and the listeners can take a while, so they run after the rendering lock is released.
     if (stateCaptured) {
         persistChain();
         sendChangeMessage();
@@ -397,6 +386,8 @@ PluginSlotId LiveChain::appendSlot(LiveSlot entry)
 }
 
 /// Removes the slot from the chain, closing its editor window if open.
+/// The slot leaves the chain under the rendering lock, but its processor is only destroyed
+/// after the live preview has dropped it, so the slow plugin teardown does not hold the lock.
 void LiveChain::removeSlot(const PluginSlotId slotId)
 {
     const auto index = getSlotIndex(slotId);
@@ -405,10 +396,13 @@ void LiveChain::removeSlot(const PluginSlotId slotId)
     }
 
     {
-        const juce::ScopedLock lock(renderingLock);
-        chain.erase(chain.begin() + *index);
+        LiveSlot removed;
+        {
+            const juce::ScopedLock lock(renderingLock);
+            removed = std::move(chain[static_cast<std::size_t>(*index)]);
+            chain.erase(chain.begin() + *index);
+        }
 
-        // The live preview drops the destroyed processor before the audio callback can take the lock again.
         notifyChainChanged();
     }
 
@@ -463,6 +457,7 @@ void LiveChain::setSlotEnabled(const PluginSlotId slotId, const bool enabled)
 }
 
 /// Removes all slots from the chain, closing any open editor windows.
+/// The processors are destroyed after the live preview has dropped them, without holding the rendering lock.
 void LiveChain::clearChain()
 {
     if (chain.empty()) {
@@ -470,10 +465,12 @@ void LiveChain::clearChain()
     }
 
     {
-        const juce::ScopedLock lock(renderingLock);
-        chain.clear();
+        std::vector<LiveSlot> removed;
+        {
+            const juce::ScopedLock lock(renderingLock);
+            removed.swap(chain);
+        }
 
-        // The live preview drops the destroyed processors before the audio callback can take the lock again.
         notifyChainChanged();
     }
 
@@ -496,14 +493,11 @@ void LiveChain::captureOpenEditorStates()
 }
 
 /// Captures the latest state of the instantiated slots and returns the stored form of the chain in chain order.
-/// Capturing calls into the live processors, which is serialized with the audio callback,
-/// while copying the slots only reads them on the message thread and runs without the lock.
+/// Capturing runs without the rendering lock, like a host saving plugin state while it plays,
+/// so saving the chain after every edit does not silence the preview for the time large states take.
 std::vector<SavedChainSlot> LiveChain::captureSavedSlots()
 {
-    {
-        const juce::ScopedLock lock(renderingLock);
-        captureOpenEditorStates();
-    }
+    captureOpenEditorStates();
 
     std::vector<SavedChainSlot> slots;
     slots.reserve(chain.size());
