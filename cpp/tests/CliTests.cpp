@@ -132,6 +132,11 @@ public:
             expectError({"-j", "4x"}, CliParseErrorKind::invalidValue);
             expectError({"-j", "2.5"}, CliParseErrorKind::invalidValue);
             expectError({"-j", "100000"}, CliParseErrorKind::valueOutOfRange);
+            expectEquals(expectCommand<AnalyzeCommand>({"-j", "0003"}).workerCount, 3);
+
+            // A number too long for 64 bits must not wrap around into zero or a negative count.
+            const auto message = expectError({"-j", "18446744073709551615"}, CliParseErrorKind::valueOutOfRange);
+            expect(message.contains("at most"), message);
         }
 
         beginTest("Sort modes and the loudness alias are recognised");

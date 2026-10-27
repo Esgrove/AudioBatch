@@ -134,17 +134,25 @@ std::expected<int, CliParseError> parseWorkerCount(const juce::String& value)
         return parseError(CliParseErrorKind::invalidValue, "Worker count must be a whole number greater than zero");
     }
 
-    // Parsed as a 64-bit value, so a very long number cannot overflow into a small one.
+    const auto tooLarge = [maximumWorkerCount] {
+        return parseError(
+            CliParseErrorKind::valueOutOfRange, utils::format("Worker count must be at most {}", maximumWorkerCount)
+        );
+    };
+
+    // The digit count is checked before parsing, since a longer number would wrap around while it is parsed.
+    if (workerCountText.trimCharactersAtStart("0").length() > maximumWorkerCountDigits) {
+        return tooLarge();
+    }
+
     const auto workerCount = workerCountText.getLargeIntValue();
 
     if (workerCount <= 0) {
         return parseError(CliParseErrorKind::valueOutOfRange, "Worker count must be greater than zero");
     }
 
-    if (workerCount > maximumWorkerCount || workerCountText.length() > maximumWorkerCountDigits) {
-        return parseError(
-            CliParseErrorKind::valueOutOfRange, utils::format("Worker count must be at most {}", maximumWorkerCount)
-        );
+    if (workerCount > maximumWorkerCount) {
+        return tooLarge();
     }
 
     return static_cast<int>(workerCount);
