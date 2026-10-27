@@ -582,11 +582,12 @@ impl PluginInstance {
             return;
         }
         let changes = ParameterChanges::create();
+        // Edits past the capacity of one call wait for the next flush or block instead of being lost.
+        // The controller only edits on this thread, so they go back in their order once the call is done.
+        let mut carried = Vec::new();
         while let Some(edit) = self.core.edits.pop() {
-            // Edits past the capacity of one call wait for the next flush or block instead of being lost.
             if !changes.set(edit.id, edit.value) {
-                let _ = self.core.edits.push(edit);
-                break;
+                carried.push(edit);
             }
         }
         let changes_pointer = changes
@@ -613,6 +614,9 @@ impl PluginInstance {
         // and `data` and the parameter changes live for the call.
         unsafe { self.core.parts.processor.process(&raw mut data) };
         self.core.end_processing();
+        for edit in carried {
+            let _ = self.core.edits.push(edit);
+        }
     }
 
     /// Returns and clears the restart requests the plugin made.
