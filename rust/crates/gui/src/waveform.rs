@@ -1,10 +1,9 @@
 //! Waveform overview of the selected file, with cue arrows, the playhead, and the optional loudness graph.
 //!
-//! Follows `ThumbnailComponent.cpp` of the C++ application:
-//! channel envelopes stacked on a rounded panel, Serato cue points as inward arrows at the top and bottom,
+//! It draws channel envelopes stacked on a rounded panel, Serato cue points as inward arrows at the top and bottom,
 //! a thin white playhead, and a short-term loudness curve with its axis when the graph is enabled.
 //! The envelopes are blue, or coloured column by column from the Serato Overview tag when the file has one,
-//! like `SeratoWaveformColouring.cpp` colours them, while their shape still comes from the decoded audio.
+//! while their shape still comes from the decoded audio.
 //! The view zooms around the playhead and follows it while playing,
 //! and it scales the envelope by the input gain.
 //! A click or drag seeks, the mouse wheel zooms, and Command or Control with the wheel changes the gain.
@@ -890,7 +889,7 @@ fn paint_cues(cues: &[CueMarker], duration: f64, viewport: &Viewport, window: &m
     }
 }
 
-/// Chooses a whole-LU tick interval that fits the plot height, like the C++ `loudnessTickInterval`.
+/// Chooses a whole-LU tick interval that fits the plot height.
 fn loudness_tick_interval(minimum: i32, maximum: i32, height: f32) -> i32 {
     const INTERVALS: [i32; 9] = [1, 2, 4, 6, 8, 10, 12, 16, 20];
     let target_count = ((height / LOUDNESS_TICK_SPACING) as i32).max(2);

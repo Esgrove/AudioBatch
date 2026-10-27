@@ -29,10 +29,10 @@ use gpui_kit::{App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, Wind
 
 use crate::app::{APP_TITLE, AppView, LaunchOptions};
 
-/// Default window width, the C++ default.
+/// Default window width.
 const DEFAULT_WINDOW_WIDTH: f32 = 1920.0;
 
-/// Default window height, the C++ default.
+/// Default window height.
 const DEFAULT_WINDOW_HEIGHT: f32 = 1080.0;
 
 /// Room for the title bar, which the platform adds above the window content.

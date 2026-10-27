@@ -5,8 +5,8 @@
 //! so unchanged files are not decoded again on later runs.
 //! Each row also keeps the custom gain the user set for that version of the file.
 //! A second table, in the `serato` module, keeps what reading each file's Serato Overview tag found.
-//! Ports the analysis part of the C++ `AnalysisCache`, with its own database file and schema,
-//! because the Rust and C++ versions must never write to each other's cache.
+//! The database file and its schema are separate from the C++ application's cache,
+//! because the two applications must never write to each other's cache.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
@@ -22,7 +22,7 @@ use crate::waveform::{self, WaveformOverview};
 
 mod serato;
 
-/// Directory name of the Rust port's data, kept apart from the C++ application's `AudioBatch` directory.
+/// Directory name of the application data, kept apart from the C++ application's `AudioBatch` directory.
 pub const DATA_DIRECTORY_NAME: &str = "AudioBatch-rs";
 
 /// Version of the analysis rules. Rows written with another version are re-analyzed.
@@ -35,7 +35,7 @@ const ADDED_ANALYSIS_COLUMNS: &[(&str, &str)] = &[("custom_gain_db", "REAL")];
 /// How long SQLite retries a locked database before failing a statement.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 
-/// Identifies a serialized loudness history blob, matching the C++ layout.
+/// Identifies a serialized loudness history blob.
 const HISTORY_MAGIC: i32 = 0x5346_554c;
 
 /// Version of the serialized loudness history layout.
@@ -452,7 +452,7 @@ fn path_key(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
 
-/// Returns the stored code of a status, the same values the C++ cache uses.
+/// Returns the stored code of a status.
 const fn status_code(status: AnalysisStatus) -> i64 {
     match status {
         AnalysisStatus::Pending => 0,
@@ -499,7 +499,7 @@ fn valid_history_value(value: f32) -> bool {
     value.is_finite() && f64::from(value) >= crate::record::NEGATIVE_INFINITY_LOUDNESS && value <= MAXIMUM_LOUDNESS
 }
 
-/// Writes the history with an explicit little-endian header, in the same layout as the C++ cache.
+/// Writes the history with an explicit little-endian header, so the blob reads the same on every platform.
 fn serialize_history(history: &ShortTermLoudnessHistory, record: &AnalysisRecord) -> Option<Vec<u8>> {
     if !valid_history_timing(history, record, history.values.len())
         || !history.values.iter().copied().all(valid_history_value)

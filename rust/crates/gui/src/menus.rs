@@ -1,7 +1,6 @@
 //! Application actions, keyboard shortcuts, and the native menu bar.
 //!
-//! The menus follow `MainWindow.cpp` of the C++ application:
-//! an application menu on macOS, then File, Options, and Help.
+//! The menu bar has an application menu on macOS, then File, Options, and Help.
 //! On other platforms the File menu ends with Quit instead.
 //! Shortcuts use Command on macOS and Control on Windows and Linux.
 //! The app view handles most actions, so they work from the menu bar and the shortcuts alike.

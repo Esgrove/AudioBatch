@@ -1,9 +1,9 @@
 //! The Audio Settings window: the output device and the preview preferences.
 //!
-//! Follows `AudioSettingsComponent` of the C++ application, a separate window with two groups.
+//! It is a separate window with two groups.
 //! "Audio interface and playback" chooses the output device, its sample rate, and its buffer size,
 //! and "Preview preferences" holds the playback options and the loudness graph with its axis range.
-//! The C++ plugin chain and Serato waveform colour options are left out, because this version has neither.
+//! The waveform is always coloured from the Serato Overview tag when a file has one, so there is no option for it.
 //! The main view stays the owner of the settings.
 //! This view sends every change as a complete `GuiSettings`,
 //! and the main view applies it and syncs the window back with what it actually opened.
@@ -25,7 +25,7 @@ use crate::menus::{CloseAudioSettings, SETTINGS_KEY_CONTEXT};
 use crate::settings::{GuiSettings, is_valid_loudness_range, parse_loudness_limit};
 use crate::theme::{TEXT_FONT, color, palette, tooltip, white};
 
-/// Title of the window, as in the C++ application.
+/// Title of the window.
 pub const SETTINGS_TITLE: &str = "Audio Settings";
 
 /// Initial width of the window.
@@ -296,7 +296,7 @@ impl SettingsView {
         self.send(settings, cx);
     }
 
-    /// Applies the typed loudness range when Enter is pressed or a field loses focus, like the C++ editors.
+    /// Applies the typed loudness range when Enter is pressed or a field loses focus.
     fn on_limit_input(
         &mut self,
         _input: &Entity<InputState>,
@@ -516,7 +516,7 @@ fn buffer_label(frames: Option<u32>, output_rate: Option<u32>) -> SharedString {
     )
 }
 
-/// Renders a titled group of rows on a rounded panel, like the C++ group components.
+/// Renders a titled group of rows on a rounded panel.
 fn group(title: &'static str) -> Div {
     div()
         .flex()

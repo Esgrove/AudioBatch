@@ -1,6 +1,5 @@
 //! Normalization of analyzed files to a sample peak or loudness target, written as AIFF.
 //!
-//! Ports `AudioNormalization.cpp` from the C++ project.
 //! The gain comes from the analyzed levels and is refused rather than capped when it would exceed 40 dB.
 //! Every file is written as a sibling `<name>.aif` at the source sample rate,
 //! with the source bit depth when AIFF supports it, so 32-bit float sources are written as 24-bit.
@@ -9,7 +8,7 @@
 //! A converted source is disposed of after the output is in place,
 //! and an `.aif` source rewritten in place has a copy of it disposed of first,
 //! both through the disposer in the options, which moves files to the system trash by default.
-//! No dither is applied, matching the C++ application.
+//! No dither is applied, so `scripts/compare_outputs.py` can expect the same samples as the C++ application writes.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -518,7 +517,7 @@ fn progress_range(on_progress: &mut dyn FnMut(f32), start: f32, end: f32) -> imp
     move |fraction| on_progress((end - start).mul_add(fraction.clamp(0.0, 1.0), start))
 }
 
-/// Returns true when two gains differ by no more than float rounding, like JUCE's `approximatelyEqual`.
+/// Returns true when two gains differ by no more than float rounding.
 fn approximately_equal(first: f32, second: f32) -> bool {
     let difference = (first - second).abs();
     difference <= f32::MIN_POSITIVE || difference <= f32::EPSILON * first.abs().max(second.abs())

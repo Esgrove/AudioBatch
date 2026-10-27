@@ -1,9 +1,9 @@
 //! Command line arguments of `audiobatch-rs`.
 //!
-//! The options, their short forms, and their validation follow the C++ `audiobatch` CLI.
-//! The normalization options are checked after parsing, so their errors read like the C++ ones.
-//! The plugin listing is not part of the Rust port.
-//! The `completion` subcommand is an addition that the C++ CLI does not have.
+//! The options, their short forms, and their validation messages are the same as those of the C++ `audiobatch` CLI,
+//! so `scripts/parity.sh` can run both with the same arguments.
+//! The normalization options are checked after parsing, so their errors can use those messages.
+//! The `completion` subcommand is the only addition.
 
 use std::path::PathBuf;
 use std::thread;
@@ -117,7 +117,7 @@ impl CliArgs {
     ///
     /// # Errors
     ///
-    /// Returns the C++ CLI message when `--force`, `--peak`, or `--lufs` is given without `--normalize`,
+    /// Returns an error message when `--force`, `--peak`, or `--lufs` is given without `--normalize`,
     /// when both targets are given, or when a target is not a number in its range.
     pub fn normalization(&self) -> Result<Option<NormalizationOptions>, String> {
         if self.force && !self.normalize {
@@ -152,7 +152,8 @@ impl CliArgs {
 
 /// Parses a target level for `--peak` or `--lufs` within the given range.
 ///
-/// Accepts an optional sign, digits, and at most one decimal point, like the C++ CLI.
+/// Accepts an optional sign, digits, and at most one decimal point.
+/// Exponents, infinities, and other forms Rust's float parser allows are rejected.
 fn parse_target_level(option: &str, value: &str, minimum: f64, maximum: f64) -> Result<f64, String> {
     let text = value.trim();
     let digits = text.strip_prefix(['-', '+']).unwrap_or(text);

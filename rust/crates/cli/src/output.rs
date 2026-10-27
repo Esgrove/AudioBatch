@@ -1,7 +1,7 @@
 //! Result output of `audiobatch-rs`: the aligned table, and the CSV and JSON records.
 //!
-//! The table columns and the CSV and JSON field names and values match `AudioAnalysisCliOutput.cpp` of the C++ CLI,
-//! with null for silent levels, so the two can be compared directly.
+//! The table columns and the CSV and JSON field names and values are the same as those of the C++ CLI,
+//! with null for silent levels, so `scripts/parity.sh` can compare the two directly.
 
 use std::fmt::Write as _;
 
@@ -184,7 +184,8 @@ fn optional_number(value: Option<f64>) -> String {
     value.map(csv_number).unwrap_or_default()
 }
 
-/// Formats a number for CSV the way the JSON output writes it, so a whole number keeps its ".0" like the C++ CLI.
+/// Formats a number for CSV the way the JSON output writes it,
+/// so a whole number keeps its ".0" and both formats show the same text.
 fn csv_number(value: f64) -> String {
     serde_json::Value::from(value).to_string()
 }

@@ -1,4 +1,4 @@
-//! Shared core of the `AudioBatch` Rust port, used by both the CLI and the GUI.
+//! Shared core of `AudioBatch`, used by both the CLI and the GUI.
 //!
 //! Decodes audio files with symphonia, measures sample peak, true peak, and EBU R128 loudness with ebur128,
 //! builds the waveform overview in the same decode pass, and caches the results in SQLite.

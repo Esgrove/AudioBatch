@@ -247,7 +247,7 @@ pub(super) fn open_player(output: &OutputConfig) -> anyhow::Result<Player> {
         .or_else(|_| Player::new(None))
 }
 
-/// Returns where to start a file with cue points, like the C++ `getPreviewStartPositionSeconds`:
+/// Returns where to start a file with cue points:
 /// the earliest cue point when it is after the start and at or before halfway through the file.
 fn first_cue_start(cues: &[CueMarker], duration: f64) -> Option<f64> {
     if !duration.is_finite() || duration <= 0.0 {

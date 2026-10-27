@@ -1,12 +1,11 @@
 # AudioBatchRs
 
-Rust port of AudioBatch, built next to the C++ application in `../cpp`.
+The Rust version of AudioBatch, developed next to the C++ application in `../cpp`.
 It analyzes audio files for sample peak, true peak, and integrated loudness (EBU R128),
 caches the results in SQLite, and lists them in a CLI and a GUI with a waveform overview and playback.
 Both also normalize files to a sample peak or loudness target, written as AIFF with their tags carried over.
-
-The C++ application remains the reference implementation and the full-featured version.
-Plugin processing is only available there.
+The CLI takes the same arguments and prints the same output as the C++ CLI, so the two can be compared directly.
+Plugin processing is only available in the C++ application.
 
 ## Crates
 
@@ -80,7 +79,7 @@ Bash completions go to `~/.bash_completion.d`.
 `audiobatch-rs` takes the analysis and normalization options of the C++ `audiobatch` CLI
 and prints the same table, CSV, and JSON output.
 It exits with code 2 when a file fails and with code 1 for invalid arguments.
-The `completion` subcommand is the only addition that the C++ CLI does not have.
+The `completion` subcommand is the only addition.
 
 `--normalize` writes every analyzed file as a sibling `<name>.aif` at the source sample rate,
 brought to a sample peak of 0 dBFS, or to the `--peak` or `--lufs` target.
@@ -127,8 +126,7 @@ Options:
 cargo run --release --bin AudioBatchRs -- [--autoplay] [paths...]
 ```
 
-The window follows the layout and colors of the C++ application:
-the results table with the same columns in the same order,
+The window shows the results table,
 and below it the controls, the information panel, and the waveform.
 A status bar along the bottom shows the listed folders, the analysis or normalization status and progress,
 and the output device with its sample rate and buffer size in samples.
@@ -160,11 +158,11 @@ and the output device with its sample rate and buffer size in samples.
 - Options > Show Loudness Graph, or the same option in the settings window,
   draws the short-term loudness over the waveform, and Options > Output Device switches the audio device.
 - The Audio Settings button, or Options > Audio Settings… (Command or Control and comma),
-  opens the settings window like the C++ application.
+  opens the settings window.
   It chooses the output device, sample rate, and buffer size,
   continuing playback when changing files, starting at the first cue point, and the loudness graph with its range.
   The settings are saved in `gui-settings.json` next to the analysis cache.
-- Hovering the controls, the information panel, and the status bar shows tooltips like the C++ application.
+- Hovering the controls, the information panel, and the status bar shows tooltips.
 - `--autoplay` selects and plays the first file that analyzed successfully once the startup analysis completes.
 
 The analysis cache lives in the `AudioBatch-rs` folder of the user data directory,

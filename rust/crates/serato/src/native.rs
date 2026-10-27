@@ -5,7 +5,6 @@
 //! wrapped in the MIME type, an empty file name, and the frame description, each null terminated.
 //! `decode_native_value` checks that wrapper and returns the frame payload,
 //! so the tag can be written as a `GEOB` frame when a file is converted to a format that uses `ID3v2`.
-//! Ported from `decodeTagBase64` and `appendSeratoFrame` in the C++ project.
 
 use base64::Engine as _;
 use base64::alphabet;

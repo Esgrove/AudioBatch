@@ -1,9 +1,8 @@
 //! The information panel of the selected file, beside the waveform.
 //!
-//! Follows `AudioInfoPanel.cpp` of the C++ application:
-//! the file name split into artist and title at the first " - ", a status line while the file has no result,
+//! It shows the file name split into artist and title at the first " - ", a status line while the file has no result,
 //! four metric cards for the levels, and a scrollable list of technical details and tags.
-//! The tooltips are the ones of the C++ panel: the full path on the name, and each value spelled out.
+//! The tooltips show the full path on the name, and each value spelled out.
 
 use audiobatch_core::format::{
     format_bitrate, format_bits_per_sample, format_loudness_compact, format_peak_compact, format_sample_rate,
@@ -56,7 +55,7 @@ const CAPTION_FONT_SIZE: f32 = 12.0;
 const VALUE_FONT_SIZE: f32 = 13.0;
 
 /// Font size of the metric values.
-/// The C++ panel's 20 is a JUCE font height, the ascent plus the descent, which is about this size in Roboto.
+/// It matches the C++ panel's JUCE font height of 20, the ascent plus the descent, so both applications look alike.
 const METRIC_FONT_SIZE: f32 = 17.0;
 
 /// Line height of the metric values.
@@ -152,7 +151,7 @@ pub fn render_info_panel(row: Option<&ResultRow>, tags: Option<&FileTags>) -> An
         .into_any_element()
 }
 
-/// Renders one line of the heading, with the full path of the file as its tooltip, like the C++ panel.
+/// Renders one line of the heading, with the full path of the file as its tooltip.
 fn heading_line(id: &'static str, text: String, path: Option<&str>) -> Stateful<Div> {
     let line = div()
         .id(id)
@@ -200,7 +199,7 @@ fn metric_grid(record: Option<&AnalysisRecord>) -> Div {
 }
 
 /// Renders a metric card: the caption and unit on top, the value large below.
-/// The tooltip spells out the measurement with its value and unit, like the C++ panel.
+/// The tooltip spells out the measurement with its value and unit.
 fn metric_card(name: &'static str, caption: &'static str, unit: &'static str, value: String) -> Stateful<Div> {
     let caption_color: Hsla = color(palette::GREY_MIDDLE_LIGHT);
     div()
@@ -267,7 +266,7 @@ fn detail_row(field: &'static str, value: String) -> Stateful<Div> {
         )
 }
 
-/// Returns the technical details of a ready record, in the order of the C++ panel.
+/// Returns the technical details of a ready record.
 fn record_rows(record: &AnalysisRecord) -> Vec<(&'static str, String)> {
     let channels = match record.channels {
         1 => String::from("Mono"),
@@ -301,7 +300,7 @@ fn record_rows(record: &AnalysisRecord) -> Vec<(&'static str, String)> {
 }
 
 /// Returns the musical details and tags that are set.
-/// The tempo prefers Serato's analyzed value over the tag and the beat grid, like the C++ panel.
+/// The tempo prefers Serato's analyzed value over the tag and the beat grid.
 fn tag_rows(tags: &FileTags) -> Vec<(&'static str, String)> {
     let serato_bpm = tags.serato.as_ref().and_then(|serato| {
         serato
@@ -330,7 +329,7 @@ fn tag_rows(tags: &FileTags) -> Vec<(&'static str, String)> {
     .collect()
 }
 
-/// Describes a duration like JUCE's `RelativeTime::getDescription`, which the C++ panel uses.
+/// Describes a duration in words.
 /// Shows the two largest nonzero units, for example "3 mins 25 secs" or "1 hr 2 mins",
 /// and milliseconds only for durations under one second.
 fn describe_duration(seconds: f64) -> String {

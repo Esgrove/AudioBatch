@@ -1,6 +1,5 @@
 //! Background analysis runs on a worker pool, with cancellation and progress events.
 //!
-//! Ports the C++ `AnalysisCoordinator`.
 //! Each run expands the input paths, publishes the plan and the cached records,
 //! and queues one pool job per stale file.
 //! Fresh results are stored back into the cache.

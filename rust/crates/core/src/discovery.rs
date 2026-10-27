@@ -1,7 +1,7 @@
 //! Expands input paths into the sorted list of supported audio files to analyze.
 //!
 //! Directories are walked one level deep or recursively, hidden and dot-prefixed entries are skipped,
-//! and the result is de-duplicated and sorted in natural order by full path, like the C++ `collectInputFiles`.
+//! and the result is de-duplicated and sorted in natural order by full path.
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
@@ -58,7 +58,7 @@ pub fn collect_input_files(input_paths: &[PathBuf], recursive: bool, is_cancelle
             break;
         }
         if input_path.is_dir() {
-            // Links are followed like the C++ noCycles walk, and walkdir reports a loop as an error entry.
+            // Links are followed, and walkdir reports a loop as an error entry instead of walking it again.
             let walker = WalkDir::new(input_path)
                 .follow_links(true)
                 .min_depth(1)
@@ -86,8 +86,7 @@ pub fn collect_input_files(input_paths: &[PathBuf], recursive: bool, is_cancelle
 
 /// Returns the absolute form of a path with `.` and `..` components resolved lexically.
 ///
-/// Symbolic links are kept as they are, so the path stays the one the user gave,
-/// like the full path names of the C++ application.
+/// Symbolic links are kept as they are, so the path stays the one the user gave.
 #[must_use]
 pub fn normalize_path(path: &Path) -> PathBuf {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());

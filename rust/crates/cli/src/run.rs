@@ -1,7 +1,6 @@
 //! The analysis workflow of `audiobatch-rs`: analyze the inputs, normalize them when asked,
 //! report failures, and print the results.
 //!
-//! Follows `cli::runAnalysis` of the C++ CLI.
 //! Log messages and failures go to stderr, so stdout only carries the results.
 
 use std::io::Write;
@@ -32,7 +31,7 @@ pub const EXIT_SUCCESS: u8 = 0;
 /// Exit code for invalid arguments or an output that could not be written.
 pub const EXIT_USAGE_ERROR: u8 = 1;
 
-/// Exit code when at least one file failed, matching the C++ CLI.
+/// Exit code when at least one file failed, the same as the C++ CLI, so `scripts/parity.sh` can compare the two.
 pub const EXIT_FAILURES: u8 = 2;
 
 /// Records to report after normalization, and how many files failed to normalize.
@@ -216,7 +215,6 @@ fn normalize_records(
 ///
 /// Inside a folder those files are skipped on purpose, but a file named on the command line was asked for,
 /// so skipping it silently would report success for work that was never done.
-/// Follows `cli::findSkippedInputs` of the C++ CLI.
 fn find_skipped_inputs(input_paths: &[PathBuf], records: &[AnalysisRecord]) -> Vec<String> {
     let mut errors = Vec::new();
     for input in input_paths {

@@ -1,7 +1,7 @@
-//! The look of the C++ `AudioBatch` application: its color palette and its bundled Roboto fonts.
+//! The look of the app: its color palette and its bundled Roboto fonts.
 //!
-//! The palette is the one in `CustomLookAndFeel.h`.
-//! It is applied as a gpui-kit theme configuration,
+//! The palette and the fonts are the same as in the C++ application, so both versions look alike.
+//! The palette is applied as a gpui-kit theme configuration,
 //! so the components and the results table pick it up through their theme colors,
 //! while the custom views read the palette constants directly.
 //! The fonts are embedded from the repository's shared `assets` directory.
@@ -14,7 +14,7 @@ use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{Theme, ThemeConfig, ThemeMode};
 use gpui_kit::{AnyView, App, Hsla, SharedString, Window, hsla, rgb};
 
-/// Proportional text font, the same face the C++ application uses.
+/// Proportional text font.
 pub const TEXT_FONT: &str = "Roboto";
 
 /// Monospaced font for tabular values.
@@ -26,7 +26,7 @@ const ROBOTO: &[u8] = include_bytes!("../../../../assets/Roboto-Regular.ttf");
 /// Roboto Mono Regular, from the repository's shared assets.
 const ROBOTO_MONO: &[u8] = include_bytes!("../../../../assets/RobotoMono-Regular.ttf");
 
-/// Palette colors of `CustomLookAndFeel.h` as `0xRRGGBB` values.
+/// Palette colors as `0xRRGGBB` values.
 pub mod palette {
     /// #76A8DA, the accent for the waveform, selection, and progress.
     pub const BLUE: u32 = 0x0076_A8DA;
@@ -48,11 +48,11 @@ pub mod palette {
     pub const GREY_SUPER_LIGHT: u32 = 0x00F3_F5F7;
     /// #D66565, errors.
     pub const RED: u32 = 0x00D6_6565;
-    /// #FF4500, JUCE's `Colours::orangered`, used for the loudness curve.
+    /// #FF4500, orange red, used for the loudness curve.
     pub const ORANGE_RED: u32 = 0x00FF_4500;
 }
 
-/// Theme configuration with the palette of the C++ application, in the gpui-kit theme file format.
+/// Theme configuration with the palette, in the gpui-kit theme file format.
 const THEME_CONFIG: &str = r##"{
     "name": "AudioBatch",
     "mode": "dark",
@@ -143,7 +143,7 @@ pub fn color(value: u32) -> Hsla {
     rgb(value).into()
 }
 
-/// Returns white with the given opacity, which the C++ table uses for its text and dividers.
+/// Returns white with the given opacity, which the results table uses for its text and dividers.
 #[must_use]
 pub const fn white(alpha: f32) -> Hsla {
     hsla(0.0, 0.0, 1.0, alpha)
@@ -162,7 +162,7 @@ pub fn tooltip(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) 
 }
 
 /// Embeds the fonts and applies the palette, for both light and dark system appearance,
-/// so the app keeps the dark look of the C++ version when the system appearance changes.
+/// so the app keeps its dark look when the system appearance changes.
 pub fn install(cx: &mut App) {
     if let Err(error) = cx
         .text_system()

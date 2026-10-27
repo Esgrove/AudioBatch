@@ -60,7 +60,7 @@ impl BeatGrid {
     /// Every marker is a big-endian `f32` position followed by four bytes:
     /// the BPM as an `f32` for the last, terminal marker,
     /// and the number of beats till the next marker as a `u32` for the others.
-    /// The checks match the C++ parser, so both apps reject the same damaged grids.
+    /// The checks are strict, so a damaged grid fails instead of yielding wrong beat positions.
     ///
     /// # Errors
     ///

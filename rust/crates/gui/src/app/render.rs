@@ -1,4 +1,4 @@
-//! Layout of the main window, following the C++ application.
+//! Layout of the main window.
 //!
 //! The results table, and below a draggable divider the preview with the controls, the information panel,
 //! and the waveform.
@@ -42,7 +42,7 @@ const PROGRESS_LINE_HEIGHT: f32 = 3.0;
 /// Widest output device text in the status bar before it is truncated.
 const OUTPUT_MAXIMUM_WIDTH: f32 = 360.0;
 
-/// Font size of the status bar text, the size of the C++ status bar font.
+/// Font size of the status bar text.
 const STATUS_FONT_SIZE: f32 = 12.0;
 
 /// Horizontal padding at both ends of the status bar.
@@ -57,7 +57,7 @@ const STATUS_SEPARATOR_INSET: f32 = 5.0;
 /// Share of the status bar width given to the listed folders, leaving the status text the larger part.
 const PATH_PROPORTION: f32 = 0.4;
 
-/// Tooltip of the status text, as in the C++ application.
+/// Tooltip of the status text.
 const STATUS_TOOLTIP: &str = "Background analysis and normalization status.";
 
 /// Smallest height of the results table.
@@ -88,7 +88,7 @@ const INFORMATION_MAXIMUM_WIDTH: f32 = 270.0;
 const INFORMATION_WIDTH_PROPORTION: f32 = 0.22;
 
 impl AppView {
-    /// Returns the status bar text for the audio output, like the C++ application:
+    /// Returns the status bar text for the audio output:
     /// the device name, its sample rate, and its buffer size, for example "Speakers, 48 kHz, 512 samples".
     /// The buffer size is left out until the first audio callback reports it.
     pub(super) fn output_label(&self) -> SharedString {
@@ -128,7 +128,7 @@ impl AppView {
         }
     }
 
-    /// Renders the status bar along the bottom edge of the window, like the C++ application:
+    /// Renders the status bar along the bottom edge of the window:
     /// the listed folders, the run status, and the output device, with the run progress along its top edge.
     fn render_status_bar(&self, progress: Option<f32>) -> Div {
         let roots = self
@@ -366,7 +366,7 @@ fn divider_appearance() -> ResizeHandleRenderer {
     })
 }
 
-/// Renders the overall progress of a run as a thin line along the top edge of the status bar, like the C++ one.
+/// Renders the overall progress of a run as a thin line along the top edge of the status bar.
 fn render_progress_line(fraction: f32) -> Div {
     div()
         .absolute()

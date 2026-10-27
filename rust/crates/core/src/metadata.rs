@@ -1,6 +1,5 @@
 //! Copies tags, album art, and Serato data from a source file onto processed AIFF output.
 //!
-//! Ports `copyMetadata` from the C++ `AudioMetadata.cpp`, built on lofty instead of `TagLib`.
 //! A source with its own `ID3v2` tag, such as an MP3, AIFF, or WAV file, has that tag copied frame by frame,
 //! so custom frames and Serato `GEOB` frames survive unchanged.
 //! Other sources go through lofty's format-independent tag.

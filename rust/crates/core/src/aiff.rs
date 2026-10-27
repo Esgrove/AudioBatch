@@ -1,10 +1,10 @@
 //! Minimal AIFF writer for normalized output.
 //!
 //! Writes uncompressed big-endian PCM in a `FORM` container with one `COMM` and one `SSND` chunk,
-//! at 8, 16, or 24 bits, the depths the JUCE AIFF writer of the C++ application supports.
-//! Samples convert to integers the way JUCE does it,
-//! rounding the float scaled to the 32-bit range and then keeping the high bits,
-//! so the Rust and C++ applications write the same sample values.
+//! at 8, 16, or 24 bits.
+//! Samples convert to integers by rounding the float scaled to the 32-bit range and then keeping the high bits.
+//! That is how JUCE converts them in the C++ application,
+//! and `scripts/compare_outputs.py` expects both applications to write the same sample values.
 //! The header is written with placeholder sizes first and patched in `finish`,
 //! once the number of frames is known.
 

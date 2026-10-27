@@ -1,9 +1,9 @@
 //! Preferences of the desktop app that persist between launches.
 //!
-//! They are the audio device and preview preferences of the C++ application's Audio Settings:
+//! They are the audio device and preview preferences of the Audio Settings window:
 //! the output device with its sample rate and buffer size, continuing playback when changing files,
 //! starting from the first cue point, and the loudness graph with its axis range.
-//! The normalization mode and its peak and loudness targets are kept here too, like the C++ target control does.
+//! The normalization mode and its peak and loudness targets are kept here too.
 //! They are stored as JSON next to the analysis cache in the `AudioBatch-rs` data directory.
 //! A missing or unreadable file gives the defaults, so a broken file never stops the app from starting.
 
