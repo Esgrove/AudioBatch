@@ -49,7 +49,9 @@ impl AppView {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let continue_playback = self.settings.continue_playback && self.player.as_ref().is_some_and(Player::is_playing);
+        // A file waiting for its cue points before it starts counts as playing, so moving on keeps playing.
+        let playing = self.player.as_ref().is_some_and(Player::is_playing) || self.start_after_cues.is_some();
+        let continue_playback = self.settings.continue_playback && playing;
         let (index, play) = match event {
             // Events arrive after the update that sent them.
             // A selection the rows have since moved away from would pick another file.
