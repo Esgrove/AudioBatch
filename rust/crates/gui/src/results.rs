@@ -614,6 +614,15 @@ impl ResultsDelegate {
         Some(index)
     }
 
+    /// Removes the rows of the files, in one pass however many there are, and returns how many it removed.
+    pub fn remove_many(&mut self, paths: &HashSet<PathBuf>) -> usize {
+        let count = self.rows.len();
+        self.rows.retain(|row| !paths.contains(&row.path));
+        self.extra_selected.retain(|path| !paths.contains(path));
+        self.rebuild_index();
+        count - self.rows.len()
+    }
+
     /// Updates a row in place by display index, for the synthetic stress test.
     pub fn update_row(&mut self, index: usize, update: impl FnOnce(&mut ResultRow)) {
         if let Some(row) = self.rows.get_mut(index) {
@@ -1404,6 +1413,18 @@ mod test_selection {
         assert_eq!(selected(&delegate), ["/c.wav", "/a.wav", "/b.wav"]);
         delegate.select_range_to(3);
         assert_eq!(selected(&delegate), ["/c.wav", "/d.wav"]);
+    }
+
+    #[test]
+    fn removing_many_rows_drops_them_from_the_rows_the_index_and_the_selection() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav", "/c.wav", "/d.wav"]);
+        delegate.select_only(Some(PathBuf::from("/a.wav")));
+        delegate.toggle_row(2);
+        let removed: HashSet<PathBuf> = ["/b.wav", "/c.wav", "/missing.wav"].iter().map(PathBuf::from).collect();
+        assert_eq!(delegate.remove_many(&removed), 2);
+        assert_eq!(delegate.len(), 2);
+        assert_eq!(delegate.index_of(Path::new("/d.wav")), Some(1));
+        assert_eq!(selected(&delegate), ["/a.wav"]);
     }
 
     #[test]
