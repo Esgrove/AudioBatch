@@ -1,7 +1,8 @@
 /// GUI content for the chain editor window.
 /// Declares PluginChainEditor, a component that shows the plugin chain
 /// as a scrolling list of slot rows with enable, edit, reorder, and remove controls,
-/// plus an add button below the rows for appending new plugins.
+/// plus an add button below the rows for appending new plugins,
+/// and a preset row above them for saving, loading, and deleting chain presets.
 
 #pragma once
 
@@ -95,6 +96,7 @@ private:
 /// Editor window content for the plugin chain.
 /// Shows one row per slot with enable, edit, reorder, and remove controls,
 /// plus an add button below the rows for appending new plugins.
+/// A preset row above them saves the chain as a preset, loads a saved preset, and deletes one.
 /// Rows can be reordered by dragging their background or with the arrow buttons.
 class PluginChainEditor : public juce::Component, public juce::ChangeListener, private juce::AsyncUpdater
 {
@@ -127,10 +129,22 @@ private:
 
     void showAddPluginMenu();
 
+    void loadSelectedPreset();
+    void deleteSelectedPreset();
+    void refreshPresets();
     void updateHintLabel();
     void updateLatencyLabels();
 
     LiveChain& liveChain;
+
+    /// The preset row above the slot rows.
+    /// Choosing a preset in the list replaces the chain with it.
+    juce::Label presetLabel {{}, "Preset"};
+    juce::ComboBox presetBox;
+    juce::TextButton savePresetButton {"Save As..."};
+    juce::TextButton deletePresetButton {"Delete"};
+    /// The presets in the order of the list, whose item ids are their index plus one.
+    std::vector<ChainPresetInfo> listedPresets;
 
     /// Appends a new plugin to the chain.
     /// Lives inside the row container below the last row, so it scrolls with the rows.

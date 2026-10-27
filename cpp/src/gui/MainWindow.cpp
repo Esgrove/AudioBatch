@@ -51,6 +51,10 @@ enum class CommandId : std::uint8_t {
     togglePlayFromFirstCuePoint,
 };
 
+/// First id of the plugin chain presets submenu, which uses the ids from it upwards.
+/// It sits above the command ids and far below the Add Plugin submenu ids of juce::KnownPluginList.
+constexpr int presetsMenuFirstItemId {1000};
+
 /// First of the contiguous command ids.
 constexpr CommandId firstCommand {CommandId::rescan};
 /// Last of the contiguous command ids, which new commands replace.
@@ -566,6 +570,7 @@ void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu) const
         summary.isEmpty() ? juce::String("No plugins in chain") : utils::format("Chain: {}", summary)
     );
     addMenuItem(menu, MenuItemId::editChain, "Edit Chain...");
+    menu.addSubMenu("Chain Presets", chain.createPresetsMenu(presetsMenuFirstItemId));
     menu.addSeparator();
 
     const auto types = chain.getLibrary().getKnownTypes();
@@ -577,12 +582,14 @@ void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu) const
 }
 
 /// Decodes a menu result against the known plugin list and appends the chosen plugin to the chain.
+/// Results that name no known plugin go to the chain presets submenu.
 void MainWindow::handlePluginChoiceMenuItem(const int menuItemID) const
 {
     auto& chain = getAudioBatch().getLiveChain();
     const auto types = chain.getLibrary().getKnownTypes();
     const auto index = juce::KnownPluginList::getIndexChosenByMenu(types, menuItemID);
     if (index < 0 || index >= types.size()) {
+        chain.handlePresetsMenuItem(menuItemID, presetsMenuFirstItemId);
         return;
     }
 

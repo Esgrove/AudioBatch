@@ -1,6 +1,7 @@
 /// The user's plugin chain in the GUI.
 /// Declares LiveChain, which holds the ordered list of plugin slots that files are processed through,
-/// keeps it in the application settings, and owns the plugin editor, chain editor, and plugin manager windows.
+/// keeps it in the application settings, saves and loads it as named presets,
+/// and owns the plugin editor, chain editor, and plugin manager windows.
 /// Each slot owns the processor that the live preview and its editor share.
 /// The plugins it can add and create come from the PluginLibrary.
 /// Callers interact with it through a single menu invoked from a button or menu item.
@@ -8,6 +9,7 @@
 #pragma once
 
 #include "plugins/PluginChainPreparation.h"
+#include "plugins/PluginChainPresets.h"
 #include "plugins/PluginLibrary.h"
 #include "utils/AudioFormatUtils.h"
 
@@ -15,6 +17,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <expected>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -126,6 +129,19 @@ public:
         return library;
     }
 
+    [[nodiscard]] juce::File getPresetDirectory() const;
+    [[nodiscard]] std::vector<ChainPresetInfo> getPresets() const;
+    [[nodiscard]] juce::String getCurrentPresetName() const;
+    [[nodiscard]] juce::PopupMenu createPresetsMenu(int firstItemId) const;
+    std::expected<juce::File, juce::String> saveAsPreset(const juce::String& name);
+    std::expected<void, juce::String> loadPreset(const juce::File& file);
+    bool deletePreset(const juce::File& file);
+    bool handlePresetsMenuItem(int itemId, int firstItemId);
+    void confirmDeletePreset(const ChainPresetInfo& preset);
+    void loadPresetAndReport(const juce::File& file);
+    void promptSavePreset();
+    void showPresetFolder() const;
+
     void addPlugin(const juce::PluginDescription& description);
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
     void clearChain();
@@ -142,9 +158,7 @@ public:
 
 private:
     [[nodiscard]] static bool isEditorWindowClosed(const LiveSlot& entry);
-    [[nodiscard]] static std::optional<LiveSlot> parseSlot(const juce::XmlElement& slotElement);
     static bool reapClosedEditor(LiveSlot& entry);
-    static void restoreState(LiveSlot& entry, const juce::String& stateBase64);
 
     [[nodiscard]] static std::optional<LiveSlot> parseLegacyEntry(
         const juce::String& pluginXml,
@@ -152,6 +166,11 @@ private:
     );
 
     PluginSlotId appendSlot(LiveSlot entry);
+
+    [[nodiscard]] std::vector<SavedChainSlot> captureSavedSlots();
+
+    void savePresetAndReport(const juce::String& name);
+    void savePresetConfirmingReplace(const juce::String& name);
 
     void audioProcessorChanged(juce::AudioProcessor* processor, const ChangeDetails& details) override;
     void audioProcessorParameterChanged(juce::AudioProcessor* processor, int parameterIndex, float value) override;
@@ -175,6 +194,10 @@ private:
     std::atomic<bool> latencyDirty {false};
     std::uint64_t revision {0};
     std::uint64_t lastSlotId {0};
+    /// Name of the preset the chain was last loaded from or saved as.
+    /// It only names the chain while the revision still equals presetRevision.
+    juce::String presetName;
+    std::uint64_t presetRevision {0};
     std::vector<LiveSlot> chain;
 
     double previewSampleRate {utils::defaultSampleRate};
