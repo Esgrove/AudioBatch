@@ -13,6 +13,10 @@ This repository holds two versions of it side by side, each with its own agent i
 - `common.sh` holds the shell helpers shared by the scripts of both projects,
   such as platform detection and colored output.
   `cpp/common.sh` and `rust/common.sh` source it and add their project specific parts.
+- `build.sh`, `install.sh`, and `format.sh` run the scripts of the same name in both projects,
+  or in the one named by their first argument, `cpp` or `rust`, through `run_project_scripts` in `common.sh`.
+  `format.sh` also formats the root shell scripts and the prose outside the projects,
+  and runs ruff on the Python scripts.
 - `fixtures/` holds the committed audio fixtures that both test suites read in place.
   `fixtures/generate.sh` regenerates them with ffmpeg,
   and calls `fixtures/serato_overview.py` to add the rainbow Serato Overview tag that ffmpeg cannot write.

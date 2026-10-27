@@ -37,6 +37,8 @@ On macOS, the GUI is packaged as `AudioBatchRs.app` with the bundle id `com.esgr
 and then installs the shell completions for it.
 On macOS, it installs the app bundle to `/Applications`, and elsewhere the GUI binary next to the CLI.
 Both scripts take `--cli-only` to skip the slower GUI build.
+`format.sh` formats the Rust code with rustfmt, the shell scripts with shfmt, and the prose with slb,
+and `format.sh --check` only verifies them.
 
 The app uses the same icons as the C++ application, from the root `assets` directory.
 The app bundle carries the layered Icon Composer icon, compiled for macOS 15 and later with `actool` from Xcode 26,

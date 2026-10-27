@@ -179,6 +179,9 @@ Other commands:
 ./build.sh
 ./install.sh
 
+# Format the Rust code, the shell scripts, and the prose, add --check to only verify them
+./format.sh
+
 # Run the tests with coverage and print the summary, add --open for the HTML report
 ./coverage.sh
 cargo llvm-cov nextest --workspace
