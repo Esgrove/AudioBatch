@@ -151,17 +151,36 @@ and sources `../common.sh` for the platform detection and print helpers shared w
 
 ## Code Organization
 
-- All enums before structs.
-- Put all struct definitions before any implementations.
-- Implementations only after the last struct definition, in the order of the struct definitions.
-- Functions after implementations.
-- In implementations, put constructors first:
-  `new` first, then other associated functions that return `Self` (`default`, `from_*`, and similar).
-- After constructors, order public methods before private methods.
-- Split a source file that passes about 1000 lines of non-test code along its concerns,
-  and give each new file its own `//!` documentation.
-- Keep an item's visibility as narrow as possible, for example `pub(crate)` instead of `pub`.
+Order the items of a source file like this:
+
+1. Constants and statics.
+2. Enums, public before private.
+3. Structs, public before private.
+4. Implementations, in the order the types are defined.
+   A type's trait implementations directly follow its inherent `impl` block.
+5. Functions, public before private.
+6. Root-level test modules.
+
+Within an `impl` block:
+
+- Constructors come first.
+  `new` comes first when there is one,
+  then the other associated functions that return `Self`, `Result<Self>`, or `Arc<Self>`, such as `from_*` and `open_*`.
+- After the constructors, public methods come before private ones.
+  Within each visibility, methods that take `self` come before associated functions.
+
+Module boundaries:
+
+- About 1000 lines of non-test code is the signal to look for separate concerns in a file, not a hard limit.
+  A long test section or one tightly coupled implementation does not need a split.
+  Give each new file its own `//!` documentation naming its concern.
+- Put a helper that is not specific to one front end in `crates/core`, never in the CLI or the GUI crate.
+- Keep an item's visibility as narrow as possible.
+  In the library crates, prefer `pub(crate)` or `pub(super)` over `pub`.
+  The binary crates use `pub` for items shared between their modules,
+  because the nursery lint `redundant_pub_crate` rejects `pub(crate)` there.
 - All `use` imports go at the top of the file, never inside functions.
+  Imports used only on some platforms go there too, behind the same `#[cfg]` as the code using them.
 
 ## Code Style and Conventions
 
@@ -171,11 +190,17 @@ and sources `../common.sh` for the platform detection and print helpers shared w
 - Use `clap` with derive macros. Every CLI argument has both a short and a long option,
   except where the C++ CLI has only a long one, which the port matches.
 - Use the `colored` crate for terminal colors.
-- Use descriptive names. No single character variables.
+- After changing CLI arguments, update the usage in `README.md` from the short help,
+  `cargo run --bin audiobatch-rs -- -h`.
+- Use descriptive names. No single character variables, except `x` and `y` for plot and screen coordinates.
 - Prefer full names over abbreviations, for example `directories` instead of `dirs`.
-  Established domain terms such as `lufs`, `db`, and `id` are fine.
+  Established domain terms such as `lufs`, `db`, and `id` are fine,
+  and so are the names the frameworks use throughout, such as gpui's `cx` and `window` and clap's `args`.
 - Give every struct, enum, and function a docstring that explains what it does and why,
   including threading constraints and non-obvious behaviour.
+  Methods implementing a trait need none, since the trait documents them.
+- Silence a lint with `#[expect(lint, reason = "...")]` rather than `#[allow]`,
+  so the attribute goes away when it is no longer needed.
 - Every Rust source file starts with module-level `//!` documentation describing its purpose.
 - Avoid trailing comments. Put comments on their own line above the code.
 - Compare floating point values for equality with a tolerance, not with `==`.
@@ -187,6 +212,8 @@ Use semantic line breaks for comments, docstrings, and documentation.
 Start a new line at sentence boundaries or natural clause boundaries.
 Target about 120 characters per line, but prefer a clean sentence break over a strict width.
 Avoid dashes and semicolons in prose. Use commas and periods to separate ideas.
+Quote literal user input values, for example "y" and "n".
+Do not wrap prose by splitting a sentence at an arbitrary point in the middle.
 Run `slb` in `rust/` to check the prose, and `slb --fix` to reformat it.
 
 ## Testing
@@ -198,3 +225,10 @@ Run `slb` in `rust/` to check the prose, and `slb --fix` to reformat it.
 - **NEVER use nested modules inside test modules.**
   All test modules are separate root-level `#[cfg(test)]` modules, never wrapped in a single parent `mod tests`.
 - Group related tests into modules of about three to five tests or more, named by area, such as `test_peaks`.
+  Avoid one-test modules by merging them into a related module,
+  but a file with only a few tests can keep them in a single module.
+  Split a module that grows past a few hundred lines by area.
+- Put test helpers used by several modules in a `#[cfg(test)]` module declared from the crate root,
+  such as `crates/core/src/test_helpers.rs`.
+  Helpers that only locate fixtures or list their properties belong in `test-fixtures`,
+  which cannot call into the core crate.
