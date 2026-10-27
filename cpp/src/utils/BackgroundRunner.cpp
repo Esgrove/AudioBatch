@@ -30,10 +30,30 @@ bool BackgroundRunner::isCurrent(const int runId) const noexcept
     return runId == currentRunId.load();
 }
 
-/// Returns a check that reports cancellation once the run is no longer current, for the services to poll.
+/// Returns true while the run is current and not asked to stop, so its jobs should keep working.
+bool BackgroundRunner::isActive(const int runId) const noexcept
+{
+    return isCurrent(runId) && !isStopRequested(runId);
+}
+
+/// Returns true once requestStop was called during the run.
+bool BackgroundRunner::isStopRequested(const int runId) const noexcept
+{
+    return runId == stoppedRunId.load();
+}
+
+/// Returns a check that reports cancellation once the run is no longer current or was asked to stop,
+/// for the services to poll.
 utils::CancellationCheck BackgroundRunner::makeCancellationCheck(const int runId) const
 {
-    return [this, runId] { return !isCurrent(runId); };
+    return [this, runId] { return !isActive(runId); };
+}
+
+/// Asks the jobs of the current run to stop at their next check, without waiting and without ending the run,
+/// so the results they still publish and the completion of the run arrive.
+void BackgroundRunner::requestStop()
+{
+    stoppedRunId.store(currentRunId.load());
 }
 
 /// Queues a job on the thread pool.

@@ -140,7 +140,13 @@ void AudioBatchComponent::configureProcessingControls()
     normalizationTargetControl.setEnabled(normalizeBeforePluginToggle.getToggleState());
 
     updateProcessButtonState();
-    previewWorkspace.processButton.onClick = [this] { processSelectedRecords(); };
+    previewWorkspace.processButton.onClick = [this] {
+        if (isBackgroundWorkRunning()) {
+            cancelCurrentWork();
+        } else {
+            processSelectedRecords();
+        }
+    };
     previewWorkspace.settingsButton.onClick = [this] { showAudioSettingsWindow(); };
 }
 
@@ -380,6 +386,18 @@ juce::Array<juce::File> AudioBatchComponent::getSelectedRecordFiles() const
     return selectedFiles;
 }
 
+/// Returns every analyzed row whose file still exists, in table order.
+std::vector<AudioAnalysisRecord> AudioBatchComponent::getAllReadyRecords() const
+{
+    std::vector<AudioAnalysisRecord> records;
+    for (const auto& record : analysisResults) {
+        if (record.isReady() && record.file.existsAsFile()) {
+            records.push_back(record);
+        }
+    }
+    return records;
+}
+
 /// Returns the selected records when every one of them exists on disk and is fully analyzed.
 /// Returns an empty list as soon as any selected record is missing or unfinished,
 /// so normalization is all-or-nothing.
@@ -461,17 +479,26 @@ void AudioBatchComponent::refreshTablePreservingSelection(const juce::StringArra
 /// records are loaded, and no processing or analysis is running.
 void AudioBatchComponent::updateProcessButtonState()
 {
+    // While a pass runs, the button cancels it, like the Process button of the Rust version.
+    if (!backgroundWork.isIdle()) {
+        previewWorkspace.processButton.setButtonText("Cancel");
+        previewWorkspace.processButton.setTooltip("Cancel the running analysis, normalization, or processing.");
+        previewWorkspace.processButton.setEnabled(!isBackgroundWorkCancelling(backgroundWork.getWork()));
+        return;
+    }
+
     const bool hasChain = liveChain->getNumEnabledValidSlots() > 0;
-    previewWorkspace.processButton.setEnabled(
-        hasChain && hasAnyRecords() && !backgroundWork.isProcessingInProgress()
-        && !backgroundWork.isAnalysisInProgress()
-    );
+    previewWorkspace.processButton.setButtonText("Process");
+    previewWorkspace.processButton.setTooltip("Process selected files through the plugin chain.");
+    previewWorkspace.processButton.setEnabled(hasChain && hasAnyRecords());
 }
 
 /// Shows the most relevant progress or summary text for the current background activity.
 void AudioBatchComponent::updateStatusLabel()
 {
     updateProgressIndicators();
+    // Every start, result, and completion of a pass updates the status, so the Process or Cancel button follows it.
+    updateProcessButtonState();
 
     // A pass whose file count is not known yet shows the summary of the list instead.
     const auto progressText = getProgressText(backgroundWork.getWork());

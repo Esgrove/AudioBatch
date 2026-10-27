@@ -56,9 +56,14 @@ public:
     void addRootFolder();
     void chooseRootFolder();
     void clearAllRecords();
+    void cancelCurrentWork();
+    [[nodiscard]] bool isBackgroundWorkRunning() const noexcept;
+    [[nodiscard]] juce::String describeNormalizationTarget() const;
     void moveSelectedRecordsToTrash(bool promptForConfirmation);
     void openPaths(const juce::StringArray& paths, bool appendToRoots);
     void processSelectedRecords();
+    void processAllRecords();
+    void normalizeAllRecords();
     void reanalyzeSelectedRecords();
     void removeSelectedRecords();
     void rescanCurrentRoot();
@@ -128,6 +133,7 @@ private:
     [[nodiscard]] bool hasAnyRecords() const;
     [[nodiscard]] bool isFileBeingRewritten(const juce::String& fullPath) const;
     [[nodiscard]] std::vector<AudioAnalysisRecord> getSelectedProcessableRecords() const;
+    [[nodiscard]] std::vector<AudioAnalysisRecord> getAllReadyRecords() const;
     int getSelectionDisplayRow(const juce::SparseSet<int>& selectedRows, int lastRowSelected) const;
     std::vector<AudioAnalysisRecord> getSelectedNormalizableRecords() const;
 
@@ -146,6 +152,8 @@ private:
     void handleThumbnailFullyLoaded();
     void launchFolderChooser(bool appendToRoots);
     void normalizeSelectedRecords();
+    void normalizeRecords(const std::vector<AudioAnalysisRecord>& recordsToNormalize);
+    void processRecords(const std::vector<AudioAnalysisRecord>& records);
     void reconcilePendingAnalysisResults();
     void refreshAnalysis(AnalysisRows rows);
     void refreshSortIndicators() const;

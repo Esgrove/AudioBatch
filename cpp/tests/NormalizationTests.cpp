@@ -183,6 +183,68 @@ private:
 
         beginTest("A cancelled run publishes nothing more and leaves its files unchanged");
         testCoordinatorCancellation(directory);
+
+        beginTest("A stopped run reports its unfinished files as cancelled, leaves them unchanged, and completes");
+        testCoordinatorStop(directory);
+    }
+
+    /// Holds the first file of a run in its starting callback, asks the run to stop,
+    /// and checks that every file is published as cancelled, the run completes, and no output is written.
+    void testCoordinatorStop(const TemporaryDirectory& directory)
+    {
+        std::vector<AudioAnalysisRecord> records;
+        std::vector<juce::MemoryBlock> originalBytes;
+        for (const auto* fileName : {"stop_held.aif", "stop_queued.aif"}) {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", fileName);
+            records.push_back(analyzeFile(source));
+            expect(source.loadFileAsData(originalBytes.emplace_back()));
+        }
+
+        std::mutex mutex;
+        std::condition_variable condition;
+        int startedFiles = 0;
+        std::vector<AudioNormalizationResult> results;
+        int completedFiles = -1;
+        bool released = false;
+        NormalizeCoordinator coordinator(1);
+        coordinator.setStartingCallback([&](const juce::File& /*file*/, int /*runId*/) {
+            std::unique_lock lock(mutex);
+            ++startedFiles;
+            condition.notify_all();
+            condition.wait_for(lock, coordinatorTimeout, [&] { return released; });
+        });
+        coordinator.setResultCallback([&](const AudioNormalizationResult& result, int /*runId*/) {
+            const std::scoped_lock lock(mutex);
+            results.push_back(result);
+        });
+        coordinator.setCompletionCallback([&](const int totalFiles, int /*runId*/) {
+            const std::scoped_lock lock(mutex);
+            completedFiles = totalFiles;
+            condition.notify_all();
+        });
+
+        auto options = testNormalizationOptions();
+        options.targetPeakDbfs = -1.0;
+        expectEquals(coordinator.start(records, options), 2);
+        std::unique_lock lock(mutex);
+        expect(condition.wait_for(lock, coordinatorTimeout, [&] { return startedFiles == 1; }));
+        coordinator.requestStop();
+        released = true;
+        condition.notify_all();
+        expect(condition.wait_for(lock, coordinatorTimeout, [&] { return completedFiles >= 0; }));
+
+        expectEquals(completedFiles, 2);
+        expectEquals(startedFiles, 1);
+        expectEquals(static_cast<int>(results.size()), 2);
+        for (const auto& result : results) {
+            const auto* failed = std::get_if<OperationFailed>(&result.outcome);
+            expect(failed != nullptr && failed->cancelled, result.fileName);
+        }
+        for (const auto& [record, original] : std::views::zip(records, originalBytes)) {
+            juce::MemoryBlock remaining;
+            expect(record.file.loadFileAsData(remaining));
+            expect(remaining == original, record.fileName);
+        }
     }
 
     /// Holds the first file of a run in its starting callback, cancels the run from another thread,

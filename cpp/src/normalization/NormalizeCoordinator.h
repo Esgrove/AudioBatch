@@ -46,7 +46,9 @@ public:
     [[nodiscard]] int getCurrentRunId() const noexcept;
     [[nodiscard]] int start(const std::vector<AudioAnalysisRecord>& records, const AudioNormalizationOptions& options);
 
+    void cancel();
     void cancelAndWait();
+    void requestStop();
     void setCompletionCallback(CompletionCallback callback);
     void setProgressCallback(ProgressCallback callback);
     void setResultCallback(ResultCallback callback);

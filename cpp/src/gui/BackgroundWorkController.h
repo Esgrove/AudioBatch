@@ -109,6 +109,8 @@ public:
 
     void cancelAnalysis();
     void cancelAndWait();
+    bool cancelCurrentWork();
+    void stopAllWork();
     void forgetRemovedPaths(const juce::StringArray& removedPaths, int removedPendingCount);
     void recordFailure(const juce::String& failure);
     void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
@@ -153,4 +155,5 @@ private:
 [[nodiscard]] juce::String getNormalizationBlockedReason(const BackgroundWork& work);
 [[nodiscard]] juce::String getProcessingBlockedReason(const BackgroundWork& work);
 [[nodiscard]] juce::String getProgressText(const BackgroundWork& work);
+[[nodiscard]] bool isBackgroundWorkCancelling(const BackgroundWork& work);
 }  // namespace audiobatch

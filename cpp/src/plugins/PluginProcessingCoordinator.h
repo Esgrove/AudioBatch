@@ -120,7 +120,11 @@ public:
 
     [[nodiscard]] int getCurrentRunId() const noexcept;
 
+    void cancel();
+
     void cancelAndWait();
+
+    void requestStop();
 
     void setCompletionCallback(CompletionCallback callback);
 
@@ -146,6 +150,13 @@ private:
         int totalFiles,
         PluginRunChains& runChains,
         std::atomic<int>& pendingFiles
+    ) const;
+
+    [[nodiscard]] PluginProcessingResult processLeasedFile(
+        const AudioAnalysisRecord& record,
+        const PluginProcessingOptions& options,
+        int runId,
+        std::span<juce::AudioPluginInstance* const> chainView
     ) const;
 
     RunCallback<int, int> completionCallback;

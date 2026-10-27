@@ -229,14 +229,31 @@ void PluginProcessingCoordinator::setStartingCallback(StartingCallback callback)
 /// and workers that are rendering stop at the next block.
 void PluginProcessingCoordinator::cancelAndWait()
 {
+    cancel();
+    runner.waitForRunningJobs();
+}
+
+/// Ends the run without waiting, and without publishing anything more from it.
+void PluginProcessingCoordinator::cancel()
+{
     runner.cancel();
 
     // Wake any workers blocked waiting for a chain.
     if (currentChains != nullptr) {
         currentChains->wakeWaitingWorkers();
     }
+}
 
-    runner.waitForRunningJobs();
+/// Asks the run to stop without waiting.
+/// Files that have not been committed are published as cancelled, files already committed with their result,
+/// and the completion of the run still arrives.
+void PluginProcessingCoordinator::requestStop()
+{
+    runner.requestStop();
+
+    if (currentChains != nullptr) {
+        currentChains->wakeWaitingWorkers();
+    }
 }
 
 /// Processes one queued file on a worker thread.
@@ -256,12 +273,34 @@ void PluginProcessingCoordinator::runFileJob(
         return;
     }
 
-    auto lease = runChains.acquire([this, runId] { return runner.isCurrent(runId); });
+    auto lease = runChains.acquire([this, runId] { return runner.isActive(runId); });
 
-    if (!lease || !runner.isCurrent(runId)) {
+    if (!runner.isCurrent(runId)) {
         return;
     }
 
+    const auto result = lease && !runner.isStopRequested(runId)
+        ? processLeasedFile(record, options, runId, lease->getChainView())
+        : PluginProcessingResult::cancelled(record.file);
+
+    // The chain goes back to the pool before the result is published, so a waiting worker can start right away.
+    lease.reset();
+    runner.publish(resultCallback, runId, result);
+
+    if (pendingFiles.fetch_sub(1) == 1) {
+        runner.publish(completionCallback, runId, totalFiles);
+    }
+}
+
+/// Runs one file through a leased chain on a worker thread and returns its result.
+/// A failure after a stop request counts as cancelled, since the file was left unchanged.
+PluginProcessingResult PluginProcessingCoordinator::processLeasedFile(
+    const AudioAnalysisRecord& record,
+    const PluginProcessingOptions& options,
+    const int runId,
+    const std::span<juce::AudioPluginInstance* const> chainView
+) const
+{
     runner.publish(startingCallback, runId, record.file);
     const auto onProgress = utils::makeThrottledProgress([this, &record, runId](const float progress) {
         runner.publish(progressCallback, runId, record.file, progress);
@@ -272,9 +311,7 @@ void PluginProcessingCoordinator::runFileJob(
     try {
         // Cancellation lets the worker stop waiting for the message thread,
         // which cancelAndWait blocks while it waits for the workers to finish.
-        result = processFileWithPlugins(
-            record, options, lease->getChainView(), runner.makeCancellationCheck(runId), onProgress
-        );
+        result = processFileWithPlugins(record, options, chainView, runner.makeCancellationCheck(runId), onProgress);
     } catch (...) {
         // Plugins are third-party code, so an exception from one fails only this file
         // and its chain still goes back to the pool.
@@ -283,13 +320,10 @@ void PluginProcessingCoordinator::runFileJob(
         result = PluginProcessingResult::failure(record.file, message);
     }
 
-    // The chain goes back to the pool before the result is published, so a waiting worker can start right away.
-    lease.reset();
-    runner.publish(resultCallback, runId, result);
-
-    if (pendingFiles.fetch_sub(1) == 1) {
-        runner.publish(completionCallback, runId, totalFiles);
+    if (runner.isStopRequested(runId) && std::holds_alternative<OperationFailed>(result.outcome)) {
+        return PluginProcessingResult::cancelled(record.file);
     }
+    return result;
 }
 
 /// Starts a background processing run.

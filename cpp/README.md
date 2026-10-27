@@ -22,6 +22,9 @@ Quit with `Ctrl+Q` on Windows or `Cmd+Q` on macOS.
 
 Sort results by level, loudness or file details, and show or hide columns from the table header menu.
 The results context menu lets you normalize, process, re-analyze, reveal or remove selected files.
+`File > Normalize All Files...` and `Plugins > Process All Files...` run every analyzed file after a confirmation.
+During a run the Process button becomes Cancel, and `File > Cancel Run` (`Cmd+.` or `Ctrl+.`) cancels it too.
+Files the run has not committed keep their rows, and `Clear All Files` stops any run.
 Removing a row does not delete the file. Moving a file to the trash is a separate action.
 
 ### Waveform Preview

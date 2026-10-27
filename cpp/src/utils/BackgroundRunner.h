@@ -51,6 +51,8 @@ private:
 /// Runs the jobs of one run at a time on a thread pool.
 /// Every cancellation starts a new run id, so the jobs of the old run stop at their next check
 /// and their callbacks are no longer published.
+/// A stop request instead keeps the run current: its jobs stop at their next check,
+/// but the results they still publish, such as a file committed just before, and the completion still arrive.
 /// The owner must call waitForAllJobs in its destructor before the state the jobs use is destroyed.
 class BackgroundRunner
 {
@@ -67,7 +69,9 @@ public:
     [[nodiscard]] int getCurrentRunId() const noexcept;
     [[nodiscard]] int getNumThreads() const noexcept;
     [[nodiscard]] bool hasJobs() const;
+    [[nodiscard]] bool isActive(int runId) const noexcept;
     [[nodiscard]] bool isCurrent(int runId) const noexcept;
+    [[nodiscard]] bool isStopRequested(int runId) const noexcept;
     [[nodiscard]] utils::CancellationCheck makeCancellationCheck(int runId) const;
 
     /// Invokes the callback with the run id appended to the values, while the run is still current.
@@ -82,12 +86,15 @@ public:
     void addJob(std::function<void()> job);
     void cancel();
     void cancelAndWait();
+    void requestStop();
     void waitForAllJobs();
     void waitForRunningJobs();
 
 private:
     juce::ThreadPool threadPool;
     std::atomic<int> currentRunId {0};
+    /// The run asked to stop, or -1 when none was.
+    std::atomic<int> stoppedRunId {-1};
     int shutdownTimeoutMilliseconds;
 };
 }  // namespace audiobatch

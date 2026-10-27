@@ -69,6 +69,20 @@ void NormalizeCoordinator::cancelAndWait()
     runner.cancelAndWait();
 }
 
+/// Ends the run without waiting, and without publishing anything more from it.
+void NormalizeCoordinator::cancel()
+{
+    runner.cancel();
+}
+
+/// Asks the run to stop without waiting.
+/// Files that have not been committed are published as cancelled, files already committed with their result,
+/// and the completion of the run still arrives.
+void NormalizeCoordinator::requestStop()
+{
+    runner.requestStop();
+}
+
 /// Starts a background normalize run and returns the number of queued files.
 /// Records that lose a batch output conflict are published as failures without being normalized.
 /// Jobs of a run poll the run id, so cancelAndWait or a new run stops them before they commit any output.
@@ -112,7 +126,9 @@ int NormalizeCoordinator::start(
                 return;
             }
 
-            if (hasConflict) {
+            if (runner.isStopRequested(runId)) {
+                runner.publish(resultCallback, runId, AudioNormalizationResult::cancelled(record.file));
+            } else if (hasConflict) {
                 runner.publish(
                     resultCallback,
                     runId,
@@ -132,6 +148,11 @@ int NormalizeCoordinator::start(
                     const auto message = utils::format("Normalization failed: {}", utils::describeCurrentException());
                     utils::logError("Normalization failed for {}: {}", record.fullPath.quoted(), message);
                     result = AudioNormalizationResult::failure(record.file, message);
+                }
+
+                // A failure is the file left unchanged, so after a stop request it counts as cancelled.
+                if (runner.isStopRequested(runId) && std::holds_alternative<OperationFailed>(result.outcome)) {
+                    result = AudioNormalizationResult::cancelled(record.file);
                 }
 
                 runner.publish(resultCallback, runId, result);
