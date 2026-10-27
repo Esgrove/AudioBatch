@@ -444,10 +444,10 @@ impl LiveChain {
         if !slot.load_attempted {
             slot.load(ui, &self.dispatcher, self.sample_rate);
         }
-        if let Some(error) = &slot.error {
-            anyhow::bail!("{error}");
-        }
-        let instance = slot.instance.as_ref().context("The plugin is not loaded")?;
+        // A plugin that loaded but could not be prepared for the preview still opens, so its settings can be changed.
+        let Some(instance) = slot.instance.as_ref() else {
+            anyhow::bail!("{}", slot.error.as_deref().unwrap_or("The plugin is not loaded"));
+        };
         slot.editor = Some(EditorWindow::open(ui, instance, &slot.slot.plugin.name, owner)?);
         // The user sees and edits the settings the plugin has, so they are captured from now on.
         slot.keep_saved_state = false;
