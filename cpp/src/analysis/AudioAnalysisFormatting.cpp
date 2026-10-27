@@ -134,7 +134,10 @@ juce::String formatCustomGainCompact(const AudioAnalysisRecord& record)
         return {};
     }
 
-    return utils::format("{}{:.1f}", record.customGain->value >= 0.0f ? "+" : "", record.customGain->value);
+    // Rounding to the shown precision first, and adding zero, turns a negative zero into a positive one,
+    // so a gain that rounds to zero reads "+0.0" instead of "-0.0" or "+-0.0".
+    const auto rounded = (std::round(record.customGain->value * 10.0f) / 10.0f) + 0.0f;
+    return utils::format("{:+.1f}", rounded);
 }
 
 /// Formats a duration rounded to whole seconds as "m:ss", or "h:mm:ss" from one hour on, such as "3:15".
