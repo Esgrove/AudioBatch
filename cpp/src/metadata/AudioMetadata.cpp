@@ -2,6 +2,7 @@
 /// Converts between JUCE and TagLib string and buffer types, maps tags through TagLib's unified PropertyMap
 /// and the generic PICTURE complex property, saves tags for AIFF and WAV output as ID3v2.4,
 /// retains opaque ID3v2 frames, and drops stale Serato overviews when copying processed audio.
+/// Vorbis track and disc totals and the encoder field are mapped onto the ID3v2 frames meant for them.
 
 #include "metadata/AudioMetadata.h"
 
@@ -9,6 +10,7 @@
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
+#include <initializer_list>
 
 #include <aifffile.h>
 #include <algorithm>
@@ -47,6 +49,10 @@ constexpr std::array names {
     std::pair {"SERATO_MARKERS", "Serato Markers_"},
 };
 
+/// ID3v2.3 frames that ID3v2.4 drops.
+/// TagLib folds TDAT and TIME into TDRC when reading and discards all of them when saving as ID3v2.4.
+constexpr std::array obsoleteId3v23Frames {"EQUA", "RVAD", "TDAT", "TIME", "TRDA", "TSIZ"};
+
 /// Finds an existing ID3v2 tag without creating one on an untagged source.
 TagLib::ID3v2::Tag* findId3Tag(TagLib::File& file, const bool create = false)
 {
@@ -84,9 +90,18 @@ std::vector<juce::MemoryBlock> readId3Frames(TagLib::File& file, bool& hasUnsupp
     if (tag == nullptr) {
         return {};
     }
+    const auto isObsolete = [tag](const TagLib::ID3v2::Frame& frame) {
+        return tag->header()->majorVersion() < 4
+            && std::ranges::any_of(
+                   obsoleteId3v23Frames, [&frame](const char* frameId) { return frame.frameID() == frameId; }
+            );
+    };
     std::vector<juce::MemoryBlock> frames;
     frames.reserve(tag->frameList().size());
     for (const auto* frame : tag->frameList()) {
+        if (isObsolete(*frame)) {
+            continue;
+        }
         // A frame read from an ID3v2.3 tag renders in the v2.3 layout until its header says otherwise,
         // and restoreId3Frame parses the bytes as ID3v2.4.
         frame->header()->setVersion(4);
@@ -102,10 +117,18 @@ std::vector<juce::MemoryBlock> readId3Frames(TagLib::File& file, bool& hasUnsupp
     return frames;
 }
 
+/// Returns true for text information frames, including TXXX, whose IDs start with T.
+bool isTextFrame(const TagLib::ID3v2::Frame& frame)
+{
+    return frame.frameID().startsWith("T");
+}
+
 /// Matches equivalent generated frames without replacing unrelated native FLAC custom fields or artwork.
+/// Text frames with different IDs match when they hold the same property,
+/// such as a copied TXXX:MOOD frame and the TMOO frame TagLib generates for its MOOD property.
 bool equivalentId3Frames(const TagLib::ID3v2::Frame& first, const TagLib::ID3v2::Frame& second)
 {
-    if (first.frameID() != second.frameID()) {
+    if (first.frameID() != second.frameID() && !(isTextFrame(first) && isTextFrame(second))) {
         return false;
     }
     const auto firstBytes = first.render();
@@ -147,7 +170,10 @@ bool writeId3Frames(TagLib::ID3v2::Tag& tag, const std::vector<juce::MemoryBlock
         frames.push_back(std::move(frame));
     }
     for (const auto& frame : frames) {
-        const auto candidates = tag.frameList(frame->frameID());
+        // A copy of the tag's own frame list would share its ownership and delete the frames when destroyed,
+        // so the candidates are collected as plain pointers.
+        const auto& list = isTextFrame(*frame) ? tag.frameList() : tag.frameList(frame->frameID());
+        const std::vector<TagLib::ID3v2::Frame*> candidates(list.begin(), list.end());
         for (auto* candidate : candidates) {
             if (equivalentId3Frames(*frame, *candidate)) {
                 tag.removeFrame(candidate);
@@ -212,6 +238,55 @@ void appendSeratoFrame(AudioMetadata& metadata, const juce::String& value, const
     });
     if (!alreadyPresent) {
         metadata.id3v2Frames.push_back(frameBytes);
+    }
+}
+
+/// Finds a property by its case-insensitive key.
+std::vector<MetadataProperty>::iterator findProperty(std::vector<MetadataProperty>& properties, const char* key)
+{
+    return std::ranges::find_if(properties, [key](const MetadataProperty& property) {
+        return property.key.equalsIgnoreCase(key);
+    });
+}
+
+/// Joins a number property with the first of its total properties into the "number/total" form
+/// that ID3v2 stores in a single frame, and drops the separate total.
+/// A total without a number stays as it is.
+void joinTotal(
+    std::vector<MetadataProperty>& properties,
+    const char* numberKey,
+    const std::initializer_list<const char*> totalKeys
+)
+{
+    for (const auto* totalKey : totalKeys) {
+        const auto total = findProperty(properties, totalKey);
+        const auto number = findProperty(properties, numberKey);
+        if (total == properties.end() || number == properties.end() || total->values.isEmpty()
+            || number->values.size() != 1 || number->values[0].contains("/"))
+        {
+            continue;
+        }
+        number->values.set(0, number->values[0] + "/" + total->values[0]);
+        properties.erase(total);
+        return;
+    }
+}
+
+/// Maps the Vorbis comment conventions of a non-ID3v2 source onto the frames ID3v2 has for them:
+/// the track and disc totals join their numbers in TRCK and TPOS,
+/// and the encoder becomes TSSE through TagLib's ENCODING property.
+void mapVorbisConventions(AudioMetadata& metadata)
+{
+    if (metadata.hasId3Tag) {
+        return;
+    }
+    auto& properties = metadata.properties;
+    joinTotal(properties, "TRACKNUMBER", {"TRACKTOTAL", "TOTALTRACKS"});
+    joinTotal(properties, "DISCNUMBER", {"DISCTOTAL", "TOTALDISCS"});
+    if (const auto encoder = findProperty(properties, "ENCODER");
+        encoder != properties.end() && findProperty(properties, "ENCODING") == properties.end())
+    {
+        encoder->key = "ENCODING";
     }
 }
 
@@ -412,6 +487,7 @@ bool readMetadata(const juce::File& file, AudioMetadata& outMetadata)
     outMetadata.properties = readProperties(taglibFile->properties());
     outMetadata.pictures = readPictures(*taglibFile);
     outMetadata.id3v2Frames = readId3Frames(*taglibFile, outMetadata.hasUnsupportedId3Frames);
+    outMetadata.hasId3Tag = findId3Tag(*taglibFile) != nullptr;
     if (dynamic_cast<TagLib::FLAC::File*>(taglibFile) != nullptr) {
         appendSeratoFrames(outMetadata);
     }
@@ -493,6 +569,7 @@ bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFil
     }
 
     removeSeratoOverview(metadata);
+    mapVorbisConventions(metadata);
     if (metadata.isEmpty()) {
         return true;
     }

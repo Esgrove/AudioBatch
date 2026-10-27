@@ -81,6 +81,8 @@ public:
         checkFlacFrames();
         checkMixedFlacFrames();
         checkUnsupportedFrames();
+        checkVorbisConventions();
+        checkMappedTextFrames();
 
         beginTest("An untagged file has no metadata");
         {
@@ -91,6 +93,87 @@ public:
     }
 
 private:
+    /// Returns the text of the only frame with the given ID, or an empty string when there is not exactly one.
+    static juce::String onlyFrameText(const TagLib::ID3v2::Tag& tag, const char* frameId)
+    {
+        const auto frames = tag.frameList(frameId);
+        return frames.size() == 1 ? juce::String::fromUTF8(frames.front()->toString().toCString(true)) : juce::String();
+    }
+
+    /// Checks Vorbis totals join their numbers and the encoder field becomes TSSE, as the Rust application writes them.
+    void checkVorbisConventions()
+    {
+        beginTest("Vorbis track and disc totals join their numbers, and the encoder becomes TSSE");
+        const TemporaryDirectory directory;
+        const auto source = directory.copyFixture("tagged_stereo_44100_16.flac");
+        const auto output = directory.copyFixture("sine_stereo_44100_16.aif");
+        {
+            const auto& path = source.getFullPathName();
+            TagLib::FLAC::File tagged(utils::tagLibFileName(path), false);
+            auto properties = tagged.properties();
+            properties.insert("TRACKNUMBER", TagLib::StringList("3"));
+            properties.insert("TRACKTOTAL", TagLib::StringList("12"));
+            properties.insert("DISCNUMBER", TagLib::StringList("1"));
+            properties.insert("TOTALDISCS", TagLib::StringList("2"));
+            properties.insert("ENCODER", TagLib::StringList("Lavc vorbis"));
+            // A native Serato field becomes a GEOB frame, which must not stop the Vorbis mapping.
+            juce::MemoryOutputStream wrapper;
+            wrapper.writeString("application/octet-stream");
+            wrapper.writeString("");
+            wrapper.writeString("Serato Autotags");
+            wrapper.write("\1\1", 2);
+            const auto encoded = juce::Base64::toBase64(wrapper.getData(), wrapper.getDataSize());
+            properties.insert(
+                "SERATO_AUTOGAIN", TagLib::StringList(TagLib::String(encoded.toRawUTF8(), TagLib::String::UTF8))
+            );
+            tagged.setProperties(properties);
+            expect(tagged.save());
+        }
+        expect(copyMetadata(source, output));
+        const auto& path = output.getFullPathName();
+        const TagLib::RIFF::AIFF::File tagged(utils::tagLibFileName(path), false);
+        const auto& tag = *tagged.tag();
+        expectEquals(static_cast<int>(tag.frameList("GEOB").size()), 1);
+        expectEquals(onlyFrameText(tag, "TRCK"), juce::String("3/12"));
+        expectEquals(onlyFrameText(tag, "TPOS"), juce::String("1/2"));
+        expectEquals(onlyFrameText(tag, "TSSE"), juce::String("Lavc vorbis"));
+        for (const auto* frame : tag.frameList("TXXX")) {
+            const auto* text = dynamic_cast<const TagLib::ID3v2::UserTextIdentificationFrame*>(frame);
+            expect(text != nullptr);
+            if (text != nullptr) {
+                for (const auto* key : {"TRACKTOTAL", "TOTALDISCS", "ENCODER"}) {
+                    expect(text->description().upper() != key, key);
+                }
+            }
+        }
+    }
+
+    /// Checks a copied TXXX frame is not duplicated by the standard frame TagLib maps its property to.
+    void checkMappedTextFrames()
+    {
+        beginTest("A copied TXXX frame replaces the standard frame generated for the same property");
+        const TemporaryDirectory directory;
+        const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "source.aif");
+        const auto output = directory.copyFixture("sine_stereo_44100_16.aif", "output.aif");
+        {
+            const auto& path = source.getFullPathName();
+            TagLib::RIFF::AIFF::File tagged(utils::tagLibFileName(path), false);
+            auto mood = std::make_unique<TagLib::ID3v2::UserTextIdentificationFrame>();
+            mood->setDescription("MOOD");
+            mood->setText("Energetic");
+            tagged.tag()->addFrame(mood.release());
+            tagged.tag()->setTitle("Mood Test");
+            expect(tagged.save(TagLib::ID3v2::v4));
+        }
+        expect(copyMetadata(source, output));
+        const auto& path = output.getFullPathName();
+        const TagLib::RIFF::AIFF::File tagged(utils::tagLibFileName(path), false);
+        const auto& tag = *tagged.tag();
+        expect(tag.frameList("TMOO").isEmpty());
+        expectEquals(static_cast<int>(tag.frameList("TXXX").size()), 1);
+        expectEquals(onlyFrameText(tag, "TIT2"), juce::String("Mood Test"));
+    }
+
     /// Checks unknown custom frame IDs survive and encrypted known frames stop processing before source replacement.
     void checkUnsupportedFrames()
     {
@@ -334,6 +417,31 @@ private:
                     expect(object->object() == payload);
                 }
             }
+        }
+
+        beginTest("An ID3v2.3 date split over TYER, TDAT and TIME survives as one TDRC frame");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.copyFixture("sine_stereo_44100_320k.mp3");
+            const auto output = directory.copyFixture("sine_stereo_44100_16.aif");
+            {
+                const auto& path = source.getFullPathName();
+                TagLib::MPEG::File mpeg(utils::tagLibFileName(path), false);
+                auto properties = mpeg.properties();
+                properties.replace("DATE", TagLib::StringList("2024-05-17T10:30"));
+                mpeg.setProperties(properties);
+                expect(mpeg.save(TagLib::MPEG::File::AllTags, TagLib::File::StripNone, TagLib::ID3v2::v3));
+            }
+            {
+                const auto& path = source.getFullPathName();
+                TagLib::MPEG::File mpeg(utils::tagLibFileName(path), false);
+                expect(!mpeg.ID3v2Tag()->frameList("TDAT").isEmpty());
+            }
+            expect(copyMetadata(source, output));
+            const auto& path = output.getFullPathName();
+            const TagLib::RIFF::AIFF::File tagged(utils::tagLibFileName(path), false);
+            expectEquals(onlyFrameText(*tagged.tag(), "TDRC"), juce::String("2024-05-17T10:30"));
+            expect(tagged.tag()->frameList("TDAT").isEmpty());
         }
     }
 
