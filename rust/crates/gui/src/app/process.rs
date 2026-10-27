@@ -19,6 +19,7 @@ use gpui_kit::{Context, PromptLevel, SharedString, Task, Window};
 use vst3_host::UiThread;
 
 use super::analysis::ANALYSIS_POLL_INTERVAL;
+use super::normalize::CANCELLED_RUN_FINISHING;
 use super::{AppView, drain_events};
 use crate::normalization::normalization_options;
 use crate::operation_run::{OperationKind, OperationRun};
@@ -122,6 +123,7 @@ impl AppView {
             run.cancelled = true;
             run.completed = true;
         }
+        self.process_winding_down = true;
         self.table.update(cx, |state, cx| {
             state.delegate_mut().finish_interrupted_rows();
             cx.notify();
@@ -137,6 +139,7 @@ impl AppView {
         }
         self.process_task = None;
         self.process_run = None;
+        self.process_winding_down = false;
     }
 
     /// Switches the normalization before the plugins on or off, for this session.
@@ -151,6 +154,8 @@ impl AppView {
             Some(ALREADY_PROCESSING)
         } else if self.is_normalizing() {
             Some(BLOCKED_BY_NORMALIZATION)
+        } else if self.is_winding_down() {
+            Some(CANCELLED_RUN_FINISHING)
         } else if self.is_analyzing() {
             Some(BLOCKED_BY_ANALYSIS)
         } else {
@@ -318,6 +323,10 @@ fn spawn_process_drain(receiver: Receiver<ProcessingEvent>, window: &Window, cx:
                 break;
             }
             if disconnected {
+                let _ = this.update(cx, |view, cx| {
+                    view.process_winding_down = false;
+                    cx.notify();
+                });
                 break;
             }
             cx.background_executor().timer(ANALYSIS_POLL_INTERVAL).await;

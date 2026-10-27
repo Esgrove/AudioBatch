@@ -103,12 +103,17 @@ pub struct AppView {
     normalize_run: Option<OperationRun>,
     /// Applies the events of the normalization run. Dropping it stops listening to the run.
     normalize_task: Option<Task<()>>,
+    /// True after a normalization run was cancelled, until its workers are done,
+    /// since a file past its last cancellation check may still commit.
+    normalize_winding_down: bool,
     /// Processes files with the plugin chain in the background, sharing the cache of the analysis coordinator.
     process_coordinator: Option<Arc<ProcessingCoordinator>>,
     /// Progress of the current or last plugin processing run.
     process_run: Option<OperationRun>,
     /// Applies the events of the processing run. Dropping it stops listening to the run.
     process_task: Option<Task<()>>,
+    /// True after a processing run was cancelled, until its workers are done.
+    process_winding_down: bool,
     /// Normalizes files before the plugin chain, for this session only.
     normalize_first: bool,
     /// Replaces an existing output file when normalizing or processing, for this session only.
@@ -228,9 +233,11 @@ impl AppView {
             normalize_coordinator: coordinators.normalize,
             normalize_run: None,
             normalize_task: None,
+            normalize_winding_down: false,
             process_coordinator: coordinators.process,
             process_run: None,
             process_task: None,
+            process_winding_down: false,
             normalize_first: false,
             overwrite_existing: false,
             plugins,

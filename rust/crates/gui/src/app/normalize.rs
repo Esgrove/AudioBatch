@@ -27,6 +27,9 @@ use crate::operation_run::{OperationKind, OperationRun};
 use crate::results::RowMessage;
 use crate::settings::NormalizeMode;
 
+/// Status text when the list is changed or a run is started while a cancelled run finishes its last files.
+pub(super) const CANCELLED_RUN_FINISHING: &str = "The cancelled run is finishing its last files";
+
 /// Status text when the list is changed while files are being processed with plugins.
 const PROCESSING_IN_PROGRESS: &str = "Plugin processing in progress";
 
@@ -52,6 +55,8 @@ impl AppView {
             NORMALIZATION_IN_PROGRESS
         } else if self.is_processing() {
             PROCESSING_IN_PROGRESS
+        } else if self.is_winding_down() {
+            CANCELLED_RUN_FINISHING
         } else {
             return false;
         };
@@ -182,6 +187,7 @@ impl AppView {
             run.cancelled = true;
             run.completed = true;
         }
+        self.normalize_winding_down = true;
         self.table.update(cx, |state, cx| {
             state.delegate_mut().finish_interrupted_rows();
             cx.notify();
@@ -197,6 +203,12 @@ impl AppView {
         }
         self.normalize_task = None;
         self.normalize_run = None;
+        self.normalize_winding_down = false;
+    }
+
+    /// Returns true while a cancelled normalization or processing run still has files that may commit.
+    pub(super) const fn is_winding_down(&self) -> bool {
+        self.normalize_winding_down || self.process_winding_down
     }
 
     /// Returns why normalization cannot start now, or none when it can.
@@ -205,6 +217,8 @@ impl AppView {
             Some(ALREADY_NORMALIZING)
         } else if self.is_processing() {
             Some(BLOCKED_BY_PROCESSING)
+        } else if self.is_winding_down() {
+            Some(CANCELLED_RUN_FINISHING)
         } else if self.is_analyzing() {
             Some(BLOCKED_BY_ANALYSIS)
         } else {
@@ -403,6 +417,10 @@ fn spawn_normalize_drain(receiver: Receiver<NormalizeEvent>, window: &Window, cx
                 break;
             }
             if disconnected {
+                let _ = this.update(cx, |view, cx| {
+                    view.normalize_winding_down = false;
+                    cx.notify();
+                });
                 break;
             }
             cx.background_executor().timer(ANALYSIS_POLL_INTERVAL).await;
