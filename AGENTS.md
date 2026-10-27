@@ -17,11 +17,19 @@ This repository holds two versions of it side by side, each with its own agent i
   `fixtures/generate.sh` regenerates them with ffmpeg,
   and calls `fixtures/serato_overview.py` to add the rainbow Serato Overview tag that ffmpeg cannot write.
   When a fixture changes, update the expected values in the C++ tests and in the Rust `test-fixtures` crate.
+- `fixtures/normalization/` holds a larger collection for comparing the normalized output of both applications.
+  It has music-like audio in every supported format, sample rate, and bit depth,
+  from a fifth of a second to 30 seconds long, with a wide range of tags and edge cases.
+  The audio is stored with Git LFS, so run `git lfs install` once per clone.
+  `uv run fixtures/normalization/generate.py` regenerates it with ffmpeg and mutagen.
+  The unit tests do not read it. Only `rust/scripts/parity.sh` and the parity workflow do.
 - `.agents/rules/` holds rules for the C++ sources, and `.claude/rules` is a symlink to it.
 - `.pre-commit-config.yaml` runs clang-format and cmake-format on `cpp/`, cargo fmt on `rust/`,
   and basic file checks through [prek](https://prek.j178.dev).
 - `.github/workflows/cpp.yml` builds and checks the C++ project, and `rust.yml` the Rust port.
   Each runs only when its own directory, the fixtures, or the assets change.
+  `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
+  and is the only workflow that downloads the LFS files.
 
 ## Working Rules
 

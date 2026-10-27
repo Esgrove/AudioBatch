@@ -169,9 +169,13 @@ Tests:
   a single click at a known sample in WAV and MP3 for checking that the start of the audio stays in place,
   a quarter sample rate tone whose sample peak, true peak, and loudness all differ,
   MP3, AIFF, and FLAC files with a synthetic rainbow Serato Overview of six colour bands in each Serato container,
+  an AAC tone whose priming and padding only the MP4 edit list records,
+  an MP3 tone without the Xing frame, so no header states its delay or its length,
   and a broken file.
   `../fixtures/generate.sh` regenerates them with ffmpeg,
   and `../fixtures/serato_overview.py` writes the Serato tag, which ffmpeg cannot.
+  `../fixtures/normalization/` holds a larger Git LFS collection that the tests do not read.
+  The Rust parity script normalizes it with both CLIs and compares the output files.
   The icons and fonts live in `../assets/` at the repository root for the same reason.
   Tests that modify files work on copies in a temporary directory.
 - `tests/fuzz/` holds the libFuzzer harnesses for the Serato tag parsers and the CLI argument parser,

@@ -202,12 +202,25 @@ cargo nextest run
 Build the C++ CLI first with the CMake debug preset or `build.sh` in `../cpp`.
 With `--normalize`, each CLI normalizes its own copy of the files in a temporary folder,
 and the re-analyzed outputs are compared.
+Every output must reach the target given with `--peak` or `--lufs`.
+`scripts/compare_outputs.py` then compares the output files themselves:
+the file names, the AIFF format, the samples within -72 dBFS, and the ID3v2 frames.
+It runs through [uv](https://docs.astral.sh/uv/), which installs the Python packages it needs.
 The originals are left alone, but the replaced copies go to the system trash.
+
+`../fixtures/normalization` is the collection made for this,
+with every supported format, sample rate, and bit depth, a wide range of tags, and edge cases.
+It is stored with Git LFS, so run `git lfs install` and `git lfs pull` first.
 
 ```shell
 ./scripts/parity.sh ../fixtures
-./scripts/parity.sh --normalize ../fixtures
+./scripts/parity.sh --normalize ../fixtures/normalization
+./scripts/parity.sh --normalize --lufs -14 ../fixtures/normalization
 ```
+
+Lossless sources give byte for byte identical outputs.
+Lossy sources differ by about one least significant bit, and AAC more,
+because the C++ application decodes AAC through the platform decoder.
 
 `cargo run -p audiobatch-playback --example play -- <file> [seconds] [sample rate] [buffer size]`
 plays a file through the default output device, optionally at a chosen sample rate and buffer size,
