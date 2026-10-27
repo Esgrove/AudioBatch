@@ -191,14 +191,21 @@ void AnalysisCoordinator::analyzeStaleFile(
 }
 
 /// Runs a full analysis synchronously and returns all collected results.
+/// Each result is also passed to onResult as it arrives, from a worker thread, when it is set.
 /// Replaces the result and completion callbacks for the run and clears them before returning.
-std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(const AudioAnalysisOptions& options)
+std::vector<AudioAnalysisRecord> AnalysisCoordinator::analyzeBlocking(
+    const AudioAnalysisOptions& options,
+    const ResultObserver& onResult
+)
 {
     std::vector<AudioAnalysisRecord> results;
     std::mutex resultsMutex;
     juce::WaitableEvent finishedEvent;
 
-    setResultCallback([&results, &resultsMutex](const AudioAnalysisRecord& result, int /*runId*/) {
+    setResultCallback([&results, &resultsMutex, &onResult](const AudioAnalysisRecord& result, int /*runId*/) {
+        if (onResult != nullptr) {
+            onResult(result);
+        }
         const std::scoped_lock lock(resultsMutex);
         results.push_back(result);
     });

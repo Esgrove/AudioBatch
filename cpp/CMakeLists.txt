@@ -400,6 +400,8 @@ set(AUDIOBATCH_CLI_SOURCES
     "src/cli/PluginListCli.h"
     "src/cli/ShellCompletion.cpp"
     "src/cli/ShellCompletion.h"
+    "src/utils/ConsoleProgress.cpp"
+    "src/utils/ConsoleProgress.h"
 )
 # cmake-format: on
 
