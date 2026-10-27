@@ -34,6 +34,8 @@ int processBlockThroughChain(
 );
 
 [[nodiscard]] bool isBlockFinite(const juce::AudioBuffer<float>& block, int numSamples);
+[[nodiscard]] int findFailedProcessCall(std::span<juce::AudioPluginInstance* const> chainInstances) noexcept;
+[[nodiscard]] juce::String describeFailedProcessCall(const juce::AudioPluginInstance& plugin);
 
 /// Lightweight reference describing which plugin to instantiate and its saved state.
 struct PluginDescriptorRef {

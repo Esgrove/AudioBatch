@@ -40,6 +40,7 @@ public:
     [[nodiscard]] bool isPlaying() const noexcept;
     [[nodiscard]] bool isStopping() const noexcept;
     [[nodiscard]] bool hasFailed() const noexcept;
+    [[nodiscard]] juce::String describeFailure() const;
     [[nodiscard]] double getCurrentPosition() const noexcept;
 
 private:
@@ -80,6 +81,8 @@ private:
 
     int blockSize {512};
     int fadeOutRemaining {0};
+    /// Index of the plugin whose process call failed in the last block, or -1 when none did.
+    int failedPluginIndex {-1};
     int processingChannels {2};
     int sourceChannels {2};
     int transitionSamples {0};

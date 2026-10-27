@@ -614,19 +614,23 @@ void AudioPreviewPlayer::updatePlaybackStatus()
     const bool decodeFailed = readFailed.exchange(false);
     const bool underrun = bufferUnderrun.exchange(false);
     if (decodeFailed || underrun || publishedFailed.load()) {
-        bool invalidOutput = false;
+        juce::String pluginFailure;
         {
             const juce::ScopedLock lock(renderingLock);
             startWhenInitialPositionReady = false;
             previewSource.stop();
-            invalidOutput = previewSource.hasFailed();
+            if (previewSource.hasFailed()) {
+                pluginFailure = previewSource.describeFailure();
+            }
             previewSource.setPosition(previewSource.getCurrentPosition());
             publishState();
         }
         reportError(
-            invalidOutput
-                ? "A live plugin produced non-finite audio. Preview was stopped."
-                : "Audio preview could not read the source fast enough or decoding failed. Preview was stopped."
+            pluginFailure.isNotEmpty()
+                ? utils::format("{}. Preview was stopped.", pluginFailure)
+                : juce::String(
+                      "Audio preview could not read the source fast enough or decoding failed. Preview was stopped."
+                  )
         );
     }
     if (lastReportedPlaying != isPlaying()) {

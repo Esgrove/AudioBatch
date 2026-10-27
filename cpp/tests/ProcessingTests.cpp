@@ -452,6 +452,61 @@ public:
     int changeCount {0};
 };
 
+/// The VST3 client of FailingProcessPlugin, which reports a fixed result for the last process call.
+class FailingVST3Client final : public juce::AudioPluginExtensions::VST3Client
+{
+public:
+    /// Has no component, since the plugin is not a real VST3.
+    [[nodiscard]] Steinberg::Vst::IComponent* getIComponentPtr() const noexcept override
+    {
+        return nullptr;
+    }
+
+    /// Has no preset.
+    [[nodiscard]] juce::MemoryBlock getPreset() const override
+    {
+        return {};
+    }
+
+    /// Accepts no preset.
+    bool setPreset(const juce::MemoryBlock& /*preset*/) override
+    {
+        return false;
+    }
+
+    /// Reports the result a VST3 plugin returns when its process call fails.
+    [[nodiscard]] int getLastProcessResult() const noexcept override
+    {
+        return failedResult;
+    }
+
+    /// The result code reported, kResultFalse of the VST3 SDK.
+    static constexpr int failedResult {1};
+};
+
+/// A test plugin that looks like a VST3 plugin whose process calls fail, while its audio passes through.
+class FailingProcessPlugin final : public TestPlugin
+{
+public:
+    /// Creates a gain-only plugin.
+    FailingProcessPlugin() : TestPlugin({}) {}
+
+    /// Returns the client that reports the failed process call.
+    juce::AudioPluginExtensions::VST3Client* getVST3Client() override
+    {
+        return &client;
+    }
+
+    /// Returns the client that reports the failed process call.
+    const juce::AudioPluginExtensions::VST3Client* getVST3Client() const override
+    {
+        return &client;
+    }
+
+private:
+    FailingVST3Client client;
+};
+
 /// A custom scanner that abandons its scan on the first plugin it gets, as the plugin scan does when the lock is busy.
 class AbandoningScanner final : public juce::KnownPluginList::CustomScanner
 {
@@ -502,6 +557,29 @@ public:
             expect(!isBuiltInApplePlugin("AudioUnit:Effects/aufx,567h,Vxng"));
             expect(!isBuiltInApplePlugin("AudioUnit:Effects/aufx,appl,Vxng"));
             expect(!isBuiltInApplePlugin("/Library/Audio/Plug-Ins/VST3/MSED.vst3"));
+        }
+
+        beginTest("A plugin whose process call fails fails the file and leaves the source unchanged");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "process_failure.aif");
+            const auto sourceSize = source.getSize();
+            FailingProcessPlugin plugin;
+            const auto result = process(source, {&plugin});
+            expect(result.hasError());
+            expectEquals(
+                outcomeError(result.outcome),
+                utils::format(
+                    "{}: The plugin failed to process audio (result {})",
+                    plugin.getName(),
+                    FailingVST3Client::failedResult
+                )
+            );
+            expectEquals(source.getSize(), sourceSize);
+
+            TestPlugin passing({});
+            const std::array<juce::AudioPluginInstance*, 2> chain {&passing, &plugin};
+            expectEquals(findFailedProcessCall(chain), 1);
+            expectEquals(findFailedProcessCall(std::span(chain).first(1)), -1);
         }
 
         beginTest("A custom scanner that abandons its scan stops it without reporting failed files");
