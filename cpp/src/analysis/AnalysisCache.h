@@ -77,7 +77,7 @@ private:
 
     static juce::String normalizedPath(const juce::File& file);
 
-    static constexpr int analysisVersion {10};
+    static constexpr int analysisVersion {11};
     /// Raised when the waveform detail changed, so cached waveforms of the coarser detail are generated again.
     static constexpr int waveformVersion {2};
 

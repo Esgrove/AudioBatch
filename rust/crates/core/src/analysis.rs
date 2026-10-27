@@ -307,9 +307,7 @@ mod test_fixture_levels {
             assert!(!record.has_error(), "{name}: {}", record.error_message);
             assert_eq!(record.channels, tone.channels, "{name}");
             assert_eq!(record.sample_rate, tone.sample_rate, "{name}");
-            if tone.bits_per_sample > 0 {
-                assert_eq!(record.bits_per_sample, tone.bits_per_sample, "{name}");
-            }
+            assert_eq!(record.bits_per_sample, tone.bits_per_sample, "{name}");
             let tolerance = tone.tolerance();
             let peak = decibels(f64::from(record.overall_peak));
             assert!((peak - FIXTURE_PEAK_DECIBELS).abs() < tolerance, "{name}: peak {peak}");

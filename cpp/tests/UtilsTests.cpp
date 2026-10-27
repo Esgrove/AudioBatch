@@ -534,7 +534,7 @@ private:
             const auto aac = utils::createAudioReader(fixtureFile("sine_stereo_44100_aac.m4a"));
             expect(aac != nullptr && aac->lengthInSamples == 44'100);
             if (aac != nullptr) {
-                expectEquals(analysis::resolveSourceBitsPerSample(*aac, fixtureFile("sine_stereo_44100_aac.m4a")), 0);
+                expectEquals(analysis::resolveSourceBitsPerSample(*aac, fixtureFile("sine_stereo_44100_aac.m4a")), 16);
             }
         }
 #endif

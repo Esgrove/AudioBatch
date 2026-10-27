@@ -40,7 +40,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       `AudioAnalysisTypes.h` holds the record and outcome types shared by the services,
       and the `LinearGain` and `Decibels` gain units that service boundaries take instead of a bare `float`.
       `AudioAnalysisFormatting.*` implement the display formatting,
-      and `BitDepthDetection.*` detects the source bit depth from the audio file, with a fixed default for MP3 files.
+      and `BitDepthDetection.*` detects the source bit depth from the audio file,
+      with a fixed default of 16 for MP3 and AAC files and the ALAC depth read through TagLib.
       `DecodeFailureTracker.h` holds the shared rules for read failures while decoding a file block by block.
     - `AnalysisCache.*` manage the SQLite result cache.
       Its implementation is split into `AnalysisCache.cpp` (analysis and waveform persistence)

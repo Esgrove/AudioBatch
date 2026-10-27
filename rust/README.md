@@ -85,8 +85,10 @@ The `completion` subcommand is the only addition that the C++ CLI does not have.
 `--normalize` writes every analyzed file as a sibling `<name>.aif` at the source sample rate,
 brought to a sample peak of 0 dBFS, or to the `--peak` or `--lufs` target.
 A loudness target is limited by a -0.3 dBTP true peak ceiling, and a gain above 40 dB is refused.
-The output keeps the source bit depth when AIFF supports it, so 32-bit float files become 24-bit,
-and the tags, album art, and Serato data are copied over without the Serato overview.
+The output keeps the source bit depth when AIFF supports it, so 32-bit float files become 24-bit.
+Lossy MP3, AAC, and Ogg Vorbis files store no bit depth and become 16-bit,
+while ALAC files keep the depth stored in the file.
+The tags, album art, and Serato data are copied over without the Serato overview.
 The converted original goes to the system trash, and an `.aif` file rewritten in place leaves a copy there.
 An existing output file is only replaced with `--force`,
 and when two selected files would write the same output, only one of them is normalized.

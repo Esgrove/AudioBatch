@@ -26,7 +26,7 @@ mod serato;
 pub const DATA_DIRECTORY_NAME: &str = "AudioBatch-rs";
 
 /// Version of the analysis rules. Rows written with another version are re-analyzed.
-const ANALYSIS_VERSION: i64 = 1;
+const ANALYSIS_VERSION: i64 = 2;
 
 /// How long SQLite retries a locked database before failing a statement.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
