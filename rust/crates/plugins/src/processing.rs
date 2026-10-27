@@ -268,6 +268,8 @@ fn try_process_file(
         is_cancelled,
         &mut progress_range(on_progress, render_start, RENDER_PROGRESS_END),
     )?;
+    // Closes the source before it may be replaced in place, since Windows cannot replace an open file.
+    drop(decoder);
     let final_frames = rendered.final_frames();
     let temporary = create_temporary_output(&output).map_err(|error| error.to_string())?;
     let clipped = write_final_output(
