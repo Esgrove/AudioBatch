@@ -54,7 +54,8 @@ flowchart TD
 
 Both apps link SQLite, libebur128, TagLib, and {fmt}.
 The CLI runs the analysis through `AnalysisCoordinator::analyzeBlocking`,
-and normalizes the analyzed files one at a time with `normalizeFile` on its own thread.
+and normalizes the analyzed files through `NormalizeCoordinator` on the workers `--jobs` sets,
+updating the cache with the results once the run completes.
 Plugin processing and the preview exist only in the GUI.
 
 ## GUI structure
