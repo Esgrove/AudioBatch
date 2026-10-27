@@ -72,6 +72,8 @@ ChainPreparation prepareChain(
 [[nodiscard]] juce::int64 getPluginTailSamples(const juce::AudioPluginInstance& plugin, double sampleRate);
 [[nodiscard]] juce::String formatPluginLatency(juce::int64 samples, double sampleRate);
 
+void addToPreparation(ChainPreparation& preparation, const juce::AudioPluginInstance& plugin, double sampleRate);
+
 bool configurePluginChannels(juce::AudioPluginInstance& plugin, int numChannels);
 bool configurePreviewChannels(juce::AudioPluginInstance& plugin);
 

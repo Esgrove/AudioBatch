@@ -124,6 +124,20 @@ juce::int64 getPluginTailSamples(const juce::AudioPluginInstance& plugin, const 
     return static_cast<juce::int64>(std::ceil(boundedSeconds * sampleRate));
 }
 
+/// Adds a prepared plugin to the totals of its chain: its reported latency, its bounded tail,
+/// and the channel count of its widest bus.
+/// Each stage's tail must ring through the remaining stages, and every stage delays the signal it passes on,
+/// so the chain tail and latency are the sums over its plugins.
+/// Offline processing and the live preview both measure their chains with it.
+void addToPreparation(ChainPreparation& preparation, const juce::AudioPluginInstance& plugin, const double sampleRate)
+{
+    preparation.latencySamples += juce::jmax(0, plugin.getLatencySamples());
+    preparation.processChannelCount = juce::jmax(
+        preparation.processChannelCount, plugin.getTotalNumInputChannels(), plugin.getTotalNumOutputChannels()
+    );
+    preparation.tailSamples += getPluginTailSamples(plugin, sampleRate);
+}
+
 /// Formats device-rate latency consistently for slot rows and the enabled-chain total.
 juce::String formatPluginLatency(const juce::int64 samples, const double sampleRate)
 {
@@ -186,9 +200,6 @@ ChainPreparation prepareChain(
     const double sampleRate
 )
 {
-    // Each stage's tail must ring through the remaining stages,
-    // so the total tail is the sum of the individually clamped per-plugin tails.
-    // Latencies add up the same way, since every stage delays the signal it passes on.
     ChainPreparation preparation;
     preparation.processChannelCount = numChannels;
 
@@ -210,13 +221,7 @@ ChainPreparation prepareChain(
         // Restore plugin state per-file so each file starts clean.
         restoreStateAndPrepare(*plugin, options.plugins[pluginIndex].state, sampleRate, processingBlockSize);
         plugin->reset();
-        preparation.latencySamples += juce::jmax(0, plugin->getLatencySamples());
-
-        preparation.processChannelCount = juce::jmax(
-            preparation.processChannelCount, plugin->getTotalNumInputChannels(), plugin->getTotalNumOutputChannels()
-        );
-
-        preparation.tailSamples += getPluginTailSamples(*plugin, sampleRate);
+        addToPreparation(preparation, *plugin, sampleRate);
     }
 
     return preparation;

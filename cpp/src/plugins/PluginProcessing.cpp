@@ -174,14 +174,6 @@ bool readInputBlock(
     return readSucceeded;
 }
 
-/// Replaces the first channel with the average of the first two channels over the given sample range,
-/// so a stereo signal derived from a mono source keeps both of its channels when it continues as mono.
-void foldStereoToMono(juce::AudioBuffer<float>& buffer, const int firstSample, const int numSamples)
-{
-    buffer.addFrom(0, firstSample, buffer, 1, firstSample, numSamples);
-    buffer.applyGain(0, firstSample, numSamples, 0.5f);
-}
-
 /// Folds the processed channels down to the file's channel count before they are written.
 /// A mono file whose signal ended up in stereo is written as the average of both main channels.
 /// Returns the buffer view to write, which aliases `buffer`.
@@ -509,6 +501,16 @@ bool canProcessFileWithPlugins(const juce::File& file)
 juce::File getProcessingOutputFile(const juce::File& input)
 {
     return getNormalizationOutputFile(input);
+}
+
+/// Replaces the first channel with the average of the first two channels over the given sample range,
+/// so a stereo signal derived from a mono source keeps both of its channels when it continues as mono.
+/// Offline processing and the preview both fold a mono file's stereo chain output with it,
+/// so the preview sounds like the processed file.
+void foldStereoToMono(juce::AudioBuffer<float>& buffer, const int firstSample, const int numSamples)
+{
+    buffer.addFrom(0, firstSample, buffer, 1, firstSample, numSamples);
+    buffer.applyGain(0, firstSample, numSamples, 0.5f);
 }
 
 /// Runs one block through every plugin in chain order on the same buffer,

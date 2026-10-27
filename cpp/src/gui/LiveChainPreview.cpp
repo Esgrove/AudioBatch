@@ -105,13 +105,7 @@ PreviewChain LiveChain::preparePreview(
         }
         if (entry.enabled) {
             result.instances.push_back(entry.instance.get());
-            result.preparation.latencySamples += juce::jmax(0, entry.instance->getLatencySamples());
-            result.preparation.tailSamples += plugin_processing::getPluginTailSamples(*entry.instance, sampleRate);
-            result.preparation.processChannelCount = juce::jmax(
-                result.preparation.processChannelCount,
-                entry.instance->getTotalNumInputChannels(),
-                entry.instance->getTotalNumOutputChannels()
-            );
+            plugin_processing::addToPreparation(result.preparation, *entry.instance, sampleRate);
         }
     }
     sendChangeMessage();
