@@ -34,8 +34,11 @@ pub struct OperationRun {
     pub finished: usize,
     /// One line per failed file, its name and the reason.
     pub failures: Vec<String>,
-    /// True once every file has a result.
+    /// True once every file has a result, or the run was cancelled.
     pub completed: bool,
+    /// True once the run was cancelled.
+    /// Outputs committed after that are still applied, since their sources were already replaced.
+    pub cancelled: bool,
     started: Instant,
 }
 
@@ -94,6 +97,7 @@ impl OperationRun {
             finished: 0,
             failures: Vec::new(),
             completed: false,
+            cancelled: false,
             started: Instant::now(),
         }
     }

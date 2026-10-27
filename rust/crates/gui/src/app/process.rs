@@ -108,11 +108,19 @@ impl AppView {
 
     /// Cancels the processing run.
     /// Files being rendered stop at their next block and keep their originals, and their rows show their records again.
+    /// The events of the run are still drained, since a file that was already past rendering may still commit,
+    /// and its row must then show the output that replaced the source.
     pub(super) fn cancel_processing(&mut self, cx: &mut Context<Self>) {
         if !self.is_processing() {
             return;
         }
-        self.stop_processing();
+        if let Some(coordinator) = &self.process_coordinator {
+            coordinator.cancel();
+        }
+        if let Some(run) = &mut self.process_run {
+            run.cancelled = true;
+            run.completed = true;
+        }
         self.table.update(cx, |state, cx| {
             state.delegate_mut().finish_interrupted_rows();
             cx.notify();
@@ -226,12 +234,16 @@ impl AppView {
 
     /// Applies a batch of processing events to the table, the selection, and the status bar.
     fn apply_process_events(&mut self, events: Vec<ProcessingEvent>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(run_id) = self.process_run.as_ref().map(|run| run.run_id) else {
+        let Some((run_id, cancelled)) = self.process_run.as_ref().map(|run| (run.run_id, run.cancelled)) else {
             return;
         };
         let mut completed = false;
         let mut replaced = false;
         for event in events.into_iter().filter(|event| event.run_id() == run_id) {
+            // After a cancel, only outputs that replaced their source are applied.
+            if cancelled && !matches!(&event, ProcessingEvent::Finished { result, .. } if result.output().is_some()) {
+                continue;
+            }
             match event {
                 ProcessingEvent::Started { path, .. } => self.mark_processing(&path, 0.0, cx),
                 ProcessingEvent::Progress { path, fraction, .. } => self.mark_processing(&path, fraction, cx),
@@ -252,7 +264,7 @@ impl AppView {
             });
             self.restore_selection(cx);
         }
-        if let Some(run) = &mut self.process_run {
+        if let Some(run) = self.process_run.as_mut().filter(|run| !run.cancelled) {
             run.completed |= completed;
             self.status = if run.completed {
                 run.summary()
