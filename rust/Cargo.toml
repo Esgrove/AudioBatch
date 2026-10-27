@@ -53,6 +53,7 @@ symphonia = { version = "0.6.1", features = ["all-codecs", "all-formats"] }
 symphonia-common = "0.6.1"
 tempfile = "3.27.0"
 trash = "5.2.9"
+unicode-width = "0.2.2"
 # The bindings of VST SDK 3.8.0, the SDK JUCE bundles for the C++ application.
 # Keep both applications on the same SDK version.
 vst3 = "=0.3.0"
