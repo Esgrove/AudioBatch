@@ -72,7 +72,7 @@ pub struct ManagerSnapshot {
     /// Bundles that crashed a scan.
     pub blacklist: Vec<PathBuf>,
     /// Bundles the last scan skipped, with the reason.
-    pub skipped: Vec<(PathBuf, &'static str)>,
+    pub skipped: Vec<(PathBuf, String)>,
     /// Share of the bundles handled and the bundle being scanned, while a scan runs.
     pub scanning: Option<(f32, String)>,
     /// Summary of the last scan of this session.
@@ -260,14 +260,17 @@ impl ManagerView {
                     .flex()
                     .flex_row()
                     .gap(px(ROW_SPACING))
-                    .tooltip(tooltip(bundle.display().to_string()))
+                    // A load error can be long, so the row truncates it and the tooltip shows it in full.
+                    .tooltip(tooltip(format!("{}\n{reason}", bundle.display())))
                     .child(div().flex_1().min_w_0().truncate().child(file_name(bundle)))
                     .child(
                         div()
-                            .flex_none()
+                            .flex_shrink(1.0)
+                            .min_w_0()
+                            .truncate()
                             .text_size(px(SMALL_FONT_SIZE))
                             .text_color(color(palette::GREY_MIDDLE_LIGHT))
-                            .child(*reason),
+                            .child(reason.clone()),
                     ),
             );
         }

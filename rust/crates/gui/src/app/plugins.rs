@@ -438,12 +438,19 @@ impl AppView {
             .last_report
             .iter()
             .flat_map(|report| {
-                let timed_out = report.timed_out.iter().map(|bundle| (bundle.clone(), "Timed out"));
+                let timed_out = report
+                    .timed_out
+                    .iter()
+                    .map(|bundle| (bundle.clone(), "Timed out".to_string()));
+                let failed = report
+                    .failed
+                    .iter()
+                    .map(|(bundle, error)| (bundle.clone(), format!("Could not be loaded: {error}")));
                 let no_plugins = report
                     .no_plugins
                     .iter()
-                    .map(|bundle| (bundle.clone(), "No audio effects"));
-                timed_out.chain(no_plugins)
+                    .map(|bundle| (bundle.clone(), "No audio effects".to_string()));
+                timed_out.chain(failed).chain(no_plugins)
             })
             .collect();
         ManagerSnapshot {

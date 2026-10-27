@@ -112,8 +112,11 @@ pub fn run_plugin_list(
     } else {
         None
     };
-    let mut known = KnownPlugins::load_from(&paths.known_plugins)
+    let (mut known, message) = KnownPlugins::load_recovering(&paths.known_plugins)
         .with_context(|| format!("Could not read the plugin list {}", paths.known_plugins.display()))?;
+    if let Some(message) = message {
+        write_warning!(log, "{message}")?;
+    }
 
     let mut exit_code = EXIT_SUCCESS;
     if let Some(lock) = &lock {
@@ -186,7 +189,7 @@ fn rescan(lock: &ScanLock, known: &mut KnownPlugins, context: &PluginListContext
     report_scan_problems(&report, log)
 }
 
-/// Prints a warning for each bundle that crashed, took too long, or contained no plugins.
+/// Prints a warning for each bundle that crashed, took too long, could not be loaded, or contained no plugins.
 fn report_scan_problems(report: &ScanReport, log: &mut dyn Write) -> Result<()> {
     let warnings = report
         .crashed
@@ -204,6 +207,12 @@ fn report_scan_problems(report: &ScanReport, log: &mut dyn Write) -> Result<()> 
                 bundle.display()
             )
         }))
+        .chain(
+            report
+                .failed
+                .iter()
+                .map(|(bundle, error)| format!("Plugin could not be loaded: {}: {error}", bundle.display())),
+        )
         .chain(
             report
                 .no_plugins
@@ -594,11 +603,16 @@ mod test_run_plugin_list {
     }
 
     #[test]
-    fn an_unreadable_list_is_an_error() {
+    fn a_list_that_cannot_be_parsed_is_moved_aside_with_a_warning() {
         let setup = Setup::new();
-        std::fs::write(&setup.context.data_paths.known_plugins, "not json").expect("written");
+        let path = setup.context.data_paths.known_plugins.clone();
+        std::fs::write(&path, "not json").expect("written");
         let listing = PluginListing::default();
-        let result = run_plugin_list(listing, &setup.context, &mut Vec::new(), &mut Vec::new());
-        assert!(result.is_err());
+        let mut log = Vec::new();
+        let code = run_plugin_list(listing, &setup.context, &mut Vec::new(), &mut log).expect("lists");
+        assert_eq!(code, EXIT_SUCCESS);
+        let log = String::from_utf8(log).expect("utf-8");
+        assert!(log.contains("could not be read and was moved to"), "{log}");
+        assert!(path.with_extension("invalid.json").is_file());
     }
 }
