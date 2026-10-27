@@ -49,6 +49,19 @@ const FALLBACK_SIZE: ViewSize = ViewSize {
     height: 480,
 };
 
+/// A native window showing the editor of a plugin.
+/// It is not `Send`, so it stays on the UI thread that opened it and is destroyed there.
+pub struct EditorWindow {
+    /// The native window. Dropping it destroys the window.
+    window: Rc<NativeWindow>,
+    /// The frame the view reports its size requests to.
+    frame: ComWrapper<PlugFrame>,
+    /// The view and its flags.
+    shared: Rc<EditorShared>,
+    /// Keeps the controller that created the view alive until the view is released.
+    _core: Arc<InstanceCore>,
+}
+
 /// The width and height of an editor view, in the units of the platform.
 /// These are points on macOS and physical pixels on Windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,98 +81,6 @@ struct EditorShared {
     /// Whether the window is being resized because the plugin asked for it,
     /// so the resize is not reported back to the plugin.
     resizing_for_plugin: Cell<bool>,
-}
-
-/// A native window showing the editor of a plugin.
-/// It is not `Send`, so it stays on the UI thread that opened it and is destroyed there.
-pub struct EditorWindow {
-    /// The native window. Dropping it destroys the window.
-    window: Rc<NativeWindow>,
-    /// The frame the view reports its size requests to.
-    frame: ComWrapper<PlugFrame>,
-    /// The view and its flags.
-    shared: Rc<EditorShared>,
-    /// Keeps the controller that created the view alive until the view is released.
-    _core: Arc<InstanceCore>,
-}
-
-impl ViewSize {
-    /// Returns the size of a view rectangle, treating a negative extent as 0.
-    const fn from_rect(rect: &ViewRect) -> Self {
-        let width = rect.right.saturating_sub(rect.left);
-        let height = rect.bottom.saturating_sub(rect.top);
-        Self {
-            width: if width > 0 { width } else { 0 },
-            height: if height > 0 { height } else { 0 },
-        }
-    }
-
-    /// Returns a view rectangle with this size at the origin.
-    const fn rect(self) -> ViewRect {
-        ViewRect {
-            left: 0,
-            top: 0,
-            right: self.width,
-            bottom: self.height,
-        }
-    }
-}
-
-impl EditorShared {
-    /// Returns the size the view asks for, or none when it does not report one.
-    fn size(&self) -> Option<ViewSize> {
-        let mut rect = ViewSize { width: 0, height: 0 }.rect();
-        // SAFETY: the view is valid, and the rectangle lives for the call.
-        let result = unsafe { self.view.getSize(&raw mut rect) };
-        let size = ViewSize::from_rect(&rect);
-        (result == kResultOk && size.width > 0 && size.height > 0).then_some(size)
-    }
-
-    /// Returns true when the view can be resized by the user.
-    fn can_resize(&self) -> bool {
-        // SAFETY: the view is valid.
-        unsafe { self.view.canResize() == kResultTrue }
-    }
-
-    /// Returns the nearest size to `size` that the view accepts, or `size` when the view does not say.
-    fn constrain(&self, size: ViewSize) -> ViewSize {
-        let mut rect = size.rect();
-        // SAFETY: the view is valid, and the rectangle lives for the call.
-        let result = unsafe { self.view.checkSizeConstraint(&raw mut rect) };
-        let constrained = ViewSize::from_rect(&rect);
-        if result == kResultTrue && constrained.width > 0 && constrained.height > 0 {
-            constrained
-        } else {
-            size
-        }
-    }
-
-    /// Tells the view that the user resized the window, unless the plugin asked for the resize itself.
-    fn user_resized(&self, size: ViewSize) {
-        if self.attached.get() && !self.resizing_for_plugin.get() {
-            self.tell_size(size);
-        }
-    }
-
-    /// Tells the view its new size.
-    fn tell_size(&self, size: ViewSize) {
-        let mut rect = size.rect();
-        // SAFETY: the view is valid, and the rectangle lives for the call.
-        unsafe { self.view.onSize(&raw mut rect) };
-    }
-
-    /// Tells a view that supports it how many physical pixels make one logical pixel.
-    fn set_content_scale(&self, factor: f32) {
-        if let Some(scale_support) = self.view.cast::<IPlugViewContentScaleSupport>() {
-            // SAFETY: the interface pointer is valid for the call.
-            unsafe { scale_support.setContentScaleFactor(factor) };
-        }
-    }
-
-    /// Marks the window closed after the user closed it.
-    fn close_requested(&self) {
-        self.closed.set(true);
-    }
 }
 
 impl EditorWindow {
@@ -269,6 +190,85 @@ impl std::fmt::Debug for EditorWindow {
             .debug_struct("EditorWindow")
             .field("closed", &self.shared.closed.get())
             .finish_non_exhaustive()
+    }
+}
+
+impl ViewSize {
+    /// Returns the size of a view rectangle, treating a negative extent as 0.
+    const fn from_rect(rect: &ViewRect) -> Self {
+        let width = rect.right.saturating_sub(rect.left);
+        let height = rect.bottom.saturating_sub(rect.top);
+        Self {
+            width: if width > 0 { width } else { 0 },
+            height: if height > 0 { height } else { 0 },
+        }
+    }
+
+    /// Returns a view rectangle with this size at the origin.
+    const fn rect(self) -> ViewRect {
+        ViewRect {
+            left: 0,
+            top: 0,
+            right: self.width,
+            bottom: self.height,
+        }
+    }
+}
+
+impl EditorShared {
+    /// Returns the size the view asks for, or none when it does not report one.
+    fn size(&self) -> Option<ViewSize> {
+        let mut rect = ViewSize { width: 0, height: 0 }.rect();
+        // SAFETY: the view is valid, and the rectangle lives for the call.
+        let result = unsafe { self.view.getSize(&raw mut rect) };
+        let size = ViewSize::from_rect(&rect);
+        (result == kResultOk && size.width > 0 && size.height > 0).then_some(size)
+    }
+
+    /// Returns true when the view can be resized by the user.
+    fn can_resize(&self) -> bool {
+        // SAFETY: the view is valid.
+        unsafe { self.view.canResize() == kResultTrue }
+    }
+
+    /// Returns the nearest size to `size` that the view accepts, or `size` when the view does not say.
+    fn constrain(&self, size: ViewSize) -> ViewSize {
+        let mut rect = size.rect();
+        // SAFETY: the view is valid, and the rectangle lives for the call.
+        let result = unsafe { self.view.checkSizeConstraint(&raw mut rect) };
+        let constrained = ViewSize::from_rect(&rect);
+        if result == kResultTrue && constrained.width > 0 && constrained.height > 0 {
+            constrained
+        } else {
+            size
+        }
+    }
+
+    /// Tells the view that the user resized the window, unless the plugin asked for the resize itself.
+    fn user_resized(&self, size: ViewSize) {
+        if self.attached.get() && !self.resizing_for_plugin.get() {
+            self.tell_size(size);
+        }
+    }
+
+    /// Tells the view its new size.
+    fn tell_size(&self, size: ViewSize) {
+        let mut rect = size.rect();
+        // SAFETY: the view is valid, and the rectangle lives for the call.
+        unsafe { self.view.onSize(&raw mut rect) };
+    }
+
+    /// Tells a view that supports it how many physical pixels make one logical pixel.
+    fn set_content_scale(&self, factor: f32) {
+        if let Some(scale_support) = self.view.cast::<IPlugViewContentScaleSupport>() {
+            // SAFETY: the interface pointer is valid for the call.
+            unsafe { scale_support.setContentScaleFactor(factor) };
+        }
+    }
+
+    /// Marks the window closed after the user closed it.
+    fn close_requested(&self) {
+        self.closed.set(true);
     }
 }
 

@@ -49,10 +49,6 @@ impl Class for ParamValueQueue {
     type Interfaces = (IParamValueQueue,);
 }
 
-impl Class for ParameterChanges {
-    type Interfaces = (IParameterChanges,);
-}
-
 impl ParamValueQueue {
     /// Creates an empty queue.
     fn new() -> Self {
@@ -133,6 +129,10 @@ impl IParamValueQueueTrait for ParamValueQueue {
         }
         kResultOk
     }
+}
+
+impl Class for ParameterChanges {
+    type Interfaces = (IParameterChanges,);
 }
 
 impl ParameterChanges {
