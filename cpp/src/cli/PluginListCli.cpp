@@ -415,10 +415,8 @@ int cli::runPluginList(const bool rescan, const PluginListGrouping grouping)
         addPluginFormats(formatManager);
         rescanPlugins(*settings, knownPluginList, formatManager);
 
-        if (!saveKnownPluginList(knownPluginList)) {
-            console::printError(
-                utils::format("Could not save the plugin list to {}", getKnownPluginListFile().getFullPathName())
-            );
+        if (const auto file = getKnownPluginListFile(*settings); !saveKnownPluginList(knownPluginList, file)) {
+            console::printError(utils::format("Could not save the plugin list to {}", file.getFullPathName()));
             exitCode = 1;
         }
     }

@@ -417,6 +417,7 @@ int PluginChainEditor::rowIndexForPosition(const int containerY) const
 /// Uses desktop space so long plugin lists are not constrained by the chain editor window.
 void PluginChainEditor::showAddPluginMenu()
 {
+    liveChain.getLibrary().reload();
     const auto types = liveChain.getLibrary().getKnownTypes();
 
     juce::PopupMenu menu;

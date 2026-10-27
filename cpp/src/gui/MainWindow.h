@@ -42,11 +42,13 @@ private:
     void menuItemSelected(int menuItemID, int topLevelMenuIndex) override;
 
     AudioBatchComponent& getAudioBatch() const;
-    void appendPluginOptionsMenuItems(juce::PopupMenu& menu) const;
+    void appendPluginOptionsMenuItems(juce::PopupMenu& menu);
     void handlePluginChoiceMenuItem(int menuItemID) const;
 
     juce::ApplicationCommandManager commandManager;
     std::unique_ptr<CustomLookAndFeel> lookAndFeel {std::make_unique<CustomLookAndFeel>(true)};
+    /// The plugins the Add Plugin submenu of the menu bar was last built from, in menu id order.
+    juce::Array<juce::PluginDescription> pluginMenuTypes;
 
     /// The window content, shown without transferring ownership to the window.
     /// Declared after the look-and-feel it paints with, and destroyed explicitly before it in the destructor.
