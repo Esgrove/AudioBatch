@@ -249,7 +249,7 @@ Instruments are listed by scans but cannot be added to the chain.
   The chain and the plugins' settings are saved after every change, when an editor closes, and on quit.
 - The Presets row of the Plugin Chain window saves the chain under a name,
   with the plugins, their order, which ones are enabled, and their settings,
-  and lists the saved presets to load or delete.
+  and lists the saved presets, which load as soon as one is picked, like in the C++ version, or can be deleted.
   Plugins > Chain Presets loads a preset from the menu too, with the loaded one checked.
   Each preset is a JSON file in the `chain-presets` folder of the data directory.
   Changing the chain afterwards keeps the preset file as it is, until it is saved again.
