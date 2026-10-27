@@ -69,6 +69,7 @@ public:
 
     [[nodiscard]] bool hasLoadedSource() const noexcept;
     [[nodiscard]] bool isPlaying() const;
+    [[nodiscard]] bool isStopping() const;
     [[nodiscard]] bool isPluginPreviewEnabled() const noexcept;
     [[nodiscard]] double getCurrentPosition() const;
     [[nodiscard]] std::optional<double> getLoadedDurationSeconds() const;
