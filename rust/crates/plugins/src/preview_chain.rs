@@ -146,10 +146,11 @@ impl PreviewChain {
         self.tail_frames
     }
 
-    /// Clears the plugins' internal buffers, such as delay lines and reverb tails.
-    pub fn reset(&mut self) {
+    /// Clears the plugins' internal buffers, such as delay lines and reverb tails,
+    /// and tells them that playback starts at `position_frames`, so tempo-synced plugins line up with the file.
+    pub fn reset(&mut self, position_frames: u64) {
         for processor in &mut self.processors {
-            processor.reset(0);
+            processor.reset(position_frames);
         }
     }
 
@@ -292,7 +293,7 @@ mod test_preview_chain {
     fn reset_clears_the_delay_lines() {
         let mut chain = preview_chain(&[(Kind::Delay, PluginState::default())]).expect("the chain builds");
         render(&mut chain, 200, 64, (1.0, 1.0));
-        chain.reset();
+        chain.reset(0);
         let (left, _) = render(&mut chain, DELAY_LATENCY as usize, 64, (0.0, 0.0));
         assert!(left.iter().all(|&sample| sample == 0.0));
     }

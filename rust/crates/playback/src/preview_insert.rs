@@ -35,7 +35,9 @@ pub trait PreviewInsert: Send {
     fn tail_frames(&self) -> usize;
 
     /// Clears the audio the insert holds, such as delay lines and decaying tails, without changing its settings.
-    fn reset(&mut self);
+    /// `position_frames` is where playback starts, in frames at the output rate,
+    /// which tempo-synced effects read as the project time.
+    fn reset(&mut self, position_frames: u64);
 
     /// Processes a block of frames in place.
     /// Returns false when the output is not finite, which stops playback.
