@@ -50,6 +50,9 @@ pub struct LiveSlot {
     /// True once loading the plugin was tried.
     /// The chain restored at startup loads its plugins only when they are first needed, so startup does not wait.
     load_attempted: bool,
+    /// True when the plugin refused its saved settings, for example before its license is ready.
+    /// The saved settings are kept instead of the plugin's defaults until the user opens its editor.
+    keep_saved_state: bool,
 }
 
 /// The plugin chain the user edits, saved to the chain file.
@@ -119,7 +122,14 @@ impl LiveSlot {
     fn load(&mut self, ui: &UiThread, dispatcher: &UiDispatcher, sample_rate: u32) {
         self.load_attempted = true;
         match load_instance(ui, dispatcher, &self.slot) {
-            Ok(instance) => {
+            Ok((instance, accepted)) => {
+                if !accepted {
+                    tracing::warn!(
+                        "Plugin \"{}\" did not accept its saved settings, which are kept until its editor opens",
+                        self.slot.plugin.name
+                    );
+                }
+                self.keep_saved_state = !accepted;
                 self.instance = Some(instance);
                 self.prepare(ui, sample_rate);
             }
@@ -146,6 +156,9 @@ impl LiveSlot {
 
     /// Captures the instance's current settings into the saved slot.
     fn capture_state(&mut self, ui: &UiThread) {
+        if self.keep_saved_state {
+            return;
+        }
         if let Some(instance) = &self.instance {
             instance.flush_parameter_edits(ui);
             if let Ok(state) = instance.state(ui) {
@@ -436,6 +449,8 @@ impl LiveChain {
         }
         let instance = slot.instance.as_ref().context("The plugin is not loaded")?;
         slot.editor = Some(EditorWindow::open(ui, instance, &slot.slot.plugin.name, owner)?);
+        // The user sees and edits the settings the plugin has, so they are captured from now on.
+        slot.keep_saved_state = false;
         Ok(())
     }
 
@@ -510,20 +525,20 @@ impl LiveChain {
             latency_samples: 0,
             error: None,
             load_attempted: false,
+            keep_saved_state: false,
         }
     }
 }
 
 /// Loads the plugin of a slot and creates an instance with the slot's saved settings.
-/// An instance that refuses the settings is not kept,
-/// because capturing its state later would replace the saved settings with its defaults.
-fn load_instance(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> Result<PluginInstance> {
+/// Returns the instance and whether the plugin accepted the settings.
+fn load_instance(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> Result<(PluginInstance, bool)> {
     let module = Module::load(ui, &slot.plugin.bundle)?;
     let mut instance = PluginInstance::create(ui, &module, slot.plugin.class_id, Some(dispatcher.clone()))?;
-    instance
+    let accepted = instance
         .set_state(ui, &slot.state())
         .context("Could not restore the saved settings")?;
-    Ok(instance)
+    Ok((instance, accepted))
 }
 
 /// Prepares an instance for the preview at the output rate, in blocks of up to `PREVIEW_BLOCK_FRAMES`.
@@ -560,6 +575,7 @@ mod test_slots {
             latency_samples: 100,
             error: Some(String::from("Missing")),
             load_attempted: true,
+            keep_saved_state: false,
         });
         id
     }
