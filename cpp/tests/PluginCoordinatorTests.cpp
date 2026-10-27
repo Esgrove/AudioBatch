@@ -1,7 +1,7 @@
 /// Tests for PluginProcessingCoordinator and the creation of the plugin chains of a run.
 /// Covers the worker budget, the chain pool, the order and concurrency of queued files,
 /// cancellation and stop requests while a file is in progress, the run id of a replaced run,
-/// and the failures of PluginLibrary::instantiateChains.
+/// the failures of PluginLibrary::instantiateChains, and the run that PluginLibrary::createProcessingRun assembles.
 /// Files whose output already exists fail before their plugins are prepared,
 /// so the runs need no message loop and never replace a file.
 
@@ -448,7 +448,8 @@ private:
     }
 
     /// Checks that a chain that cannot be created reports the plugin that failed and hands out no chains,
-    /// and that a chain of the repository's test VST3 is created once per worker with its initial state.
+    /// that a chain of the repository's test VST3 is created once per worker with its initial state,
+    /// and that a processing run assembled from it carries the initial state of a plugin without saved state.
     void testChainInstantiation()
     {
         beginTest("A plugin that cannot be created fails the chain instantiation and names the plugin");
@@ -497,6 +498,29 @@ private:
             }
             expectEquals(static_cast<int>(created.initialStates.size()), 2);
             expect(std::ranges::all_of(created.initialStates, [](const auto& state) { return state.getSize() > 0; }));
+        }
+
+        beginTest("A processing run keeps its settings, fills in missing states, and has no more chains than files");
+        {
+            auto savedPlugin = testPlugin;
+            savedPlugin.descriptorRef.state = juce::MemoryBlock("saved", 5);
+            PluginProcessingOptions settings;
+            settings.overwriteExisting = true;
+            const auto run = library.createProcessingRun({testPlugin, savedPlugin}, settings, 1);
+            expect(run.has_value(), run.has_value() ? juce::String() : run.error());
+            if (run.has_value()) {
+                expect(run->options.overwriteExisting);
+                expectEquals(static_cast<int>(run->chains.size()), 1);
+                expectEquals(static_cast<int>(run->options.plugins.size()), 2);
+                if (run->options.plugins.size() == 2) {
+                    expect(run->options.plugins.front().state.getSize() > 0);
+                    expect(run->options.plugins.back().state == savedPlugin.descriptorRef.state);
+                }
+            }
+
+            const auto failed = library.createProcessingRun({missingPlugin("Missing Effect")}, settings, 2);
+            expect(!failed.has_value());
+            expect(!failed.has_value() && failed.error().contains("Missing Effect"));
         }
     }
 

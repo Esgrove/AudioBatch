@@ -10,6 +10,7 @@
 
 #include <JuceHeader.h>
 
+#include <expected>
 #include <memory>
 #include <vector>
 
@@ -35,6 +36,14 @@ struct ChainInstantiation {
     juce::String failedPluginName;
 };
 
+/// The options and the plugin chains of one processing run, created together by PluginLibrary::createProcessingRun.
+struct ProcessingRunSetup {
+    /// Settings of the run, with the plugins and their states in chain order.
+    PluginProcessingOptions options;
+    /// One chain of plugin instances per worker, aligned index for index with options.plugins.
+    std::vector<std::vector<std::unique_ptr<juce::AudioPluginInstance>>> chains;
+};
+
 /// Owns the plugin format manager and the known-plugins list, and scans for installed plugins.
 /// Scans load each plugin in a worker process, so a plugin that crashes is blacklisted instead of taking down the app.
 /// The list is saved to its file whenever it changes.
@@ -53,6 +62,11 @@ public:
     [[nodiscard]] ChainInstantiation instantiateChains(
         const std::vector<EnabledChainPlugin>& enabledPlugins,
         int workerCount
+    ) const;
+    [[nodiscard]] std::expected<ProcessingRunSetup, juce::String> createProcessingRun(
+        const std::vector<EnabledChainPlugin>& enabledPlugins,
+        PluginProcessingOptions options,
+        int fileCount
     ) const;
 
     [[nodiscard]] juce::Array<juce::PluginDescription> getKnownTypes() const;
