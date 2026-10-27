@@ -31,7 +31,7 @@ repos:
         entry: clang-format -i --style=file
         types_or: [c, c++]
         language: system
-        files: ^cpp/(src|tests)/
+        files: ^(cpp/(src|tests)|test-plugin/src)/
         priority: 1
 
       - id: cmake-format
@@ -39,7 +39,7 @@ repos:
         description: Run cmake-format on CMake files included in the commit.
         entry: cmake-format -i
         language: system
-        files: ^cpp/(.+/)?(CMakeLists\.txt|[^/]+\.cmake)$
+        files: ^(cpp|test-plugin)/(.+/)?(CMakeLists\.txt|[^/]+\.cmake)$
         priority: 1
 
       - id: cargo-fmt

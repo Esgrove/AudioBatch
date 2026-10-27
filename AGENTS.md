@@ -21,6 +21,14 @@ This repository holds two versions of it side by side, each with its own agent i
   `fixtures/generate.sh` regenerates them with ffmpeg,
   and calls `fixtures/serato_overview.py` to add the rainbow Serato Overview tag that ffmpeg cannot write.
   When a fixture changes, update the expected values in the C++ tests and in the Rust `test-fixtures` crate.
+- `test-plugin/` holds `AudioBatch Test MS`, the JUCE VST3 effect that both test suites load,
+  with a gain and a mid/side width parameter.
+  The C++ build adds it with its tests,
+  and `test-plugin/build.sh` builds it into `test-plugin/build` for the Rust tests.
+  It builds with the JUCE submodule in `cpp/JUCE`, and `cpp/format.sh` formats it.
+  `uv run fixtures/plugin_expected.py` computes its expected outputs with numpy into `fixtures/plugin_expected/`.
+  When its processing changes, update the script, regenerate the files,
+  and update the expectation lists in `cpp/tests/PluginPresetTests.cpp` and the Rust `test-fixtures` crate.
 - `fixtures/normalization/` holds a larger collection for comparing the normalized output of both applications.
   It has music-like audio in every supported format, sample rate, and bit depth,
   from a fifth of a second to 30 seconds long, with a wide range of tags and edge cases.
@@ -34,10 +42,11 @@ This repository holds two versions of it side by side, each with its own agent i
   Each script declares its Python version and packages in an inline `# /// script` block
   and runs in its own environment with `uv run --script`, so add a script's packages there, not to `pyproject.toml`.
   Check the scripts with `uv run ruff format` and `uv run ruff check --fix` from the repository root.
-- `.pre-commit-config.yaml` runs clang-format and cmake-format on `cpp/`, cargo fmt on `rust/`,
+- `.pre-commit-config.yaml` runs clang-format and cmake-format on `cpp/` and `test-plugin/`, cargo fmt on `rust/`,
   ruff on the Python scripts, and basic file checks through [prek](https://prek.j178.dev).
 - `.github/workflows/cpp.yml` builds and checks the C++ project, and `rust.yml` the Rust port.
-  Each runs only when its own directory, the fixtures, or the assets change.
+  Each runs only when its own directory, the fixtures, the test plugin, or the assets change.
+  `rust.yml` checks out only the JUCE submodule, to build the test plugin.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
   and is the only workflow that downloads the LFS files.
 

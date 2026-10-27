@@ -7,15 +7,21 @@ on:
     paths:
       - ".github/workflows/rust.yml"
       - "assets/Roboto*.ttf"
+      - "common.sh"
+      - "cpp/JUCE"
       - "fixtures/**"
       - "rust/**"
+      - "test-plugin/**"
       - "!**/*.md"
   pull_request:
     paths:
       - ".github/workflows/rust.yml"
       - "assets/Roboto*.ttf"
+      - "common.sh"
+      - "cpp/JUCE"
       - "fixtures/**"
       - "rust/**"
+      - "test-plugin/**"
       - "!**/*.md"
 
 # Cancel previous runs for PRs but not pushes to main
@@ -36,15 +42,35 @@ defaults:
 
 jobs:
   build:
+    # The Windows image is the one the C++ workflow uses,
+    # since the test plugin needs CMake 4.2 and the Visual Studio generator that comes with it.
     strategy:
       matrix:
-        os: [macos-latest, windows-latest]
+        os: [macos-latest, windows-2025-vs2026]
       fail-fast: false
     runs-on: ${{ matrix.os }}
     steps:
-      # The Rust port does not use JUCE, so the submodule is not checked out.
+      # The Rust port does not use JUCE, but the test VST3 in test-plugin/ is built with it.
+      # The JUCE submodule is the only one, and checkout fetches it at depth 1.
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Get JUCE commit
+        id: juce
+        run: echo "commit=$(git rev-parse HEAD:cpp/JUCE)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache test plugin build
+        uses: actions/cache@v5
+        with:
+          path: test-plugin/build
+          key: ${{ runner.os }}-test-plugin-${{ steps.juce.outputs.commit }}-${{ hashFiles('test-plugin/CMakeLists.txt', 'test-plugin/src/**') }}
+          restore-keys: ${{ runner.os }}-test-plugin-${{ steps.juce.outputs.commit }}-
+
+      # The tests find the bundle in test-plugin/build, and fail instead of skipping when CI is set and it is missing.
+      - name: Build test plugin
+        run: ../test-plugin/build.sh
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -105,8 +131,26 @@ jobs:
   coverage:
     runs-on: macos-latest
     steps:
+      # Checks out JUCE and builds the test VST3 like the build job.
       - name: Check out repository
         uses: actions/checkout@v6
+        with:
+          submodules: true
+
+      - name: Get JUCE commit
+        id: juce
+        run: echo "commit=$(git rev-parse HEAD:cpp/JUCE)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache test plugin build
+        uses: actions/cache@v5
+        with:
+          path: test-plugin/build
+          key: ${{ runner.os }}-test-plugin-${{ steps.juce.outputs.commit }}-${{ hashFiles('test-plugin/CMakeLists.txt', 'test-plugin/src/**') }}
+          restore-keys: ${{ runner.os }}-test-plugin-${{ steps.juce.outputs.commit }}-
+
+      # The tests find the bundle in test-plugin/build, and fail instead of skipping when CI is set and it is missing.
+      - name: Build test plugin
+        run: ../test-plugin/build.sh
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable

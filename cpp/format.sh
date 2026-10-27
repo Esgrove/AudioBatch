@@ -52,11 +52,12 @@ cd "$REPO"
 
 require_command clang-format
 
-# Collect the C++ sources and headers under src/ and tests/, including subdirectories.
+# Collect the C++ sources and headers under src/ and tests/, including subdirectories,
+# and those of the test plugin that the tests load.
 CPP_FILES=()
 while IFS= read -r file; do
     CPP_FILES+=("$file")
-done < <(find "$REPO/src" "$REPO/tests" -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
+done < <(find "$REPO/src" "$REPO/tests" "$REPO/../test-plugin/src" -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
 
 if [ "$CHECK" = true ]; then
     print_magenta "Checking C++ formatting..."
@@ -81,20 +82,20 @@ fi
 if [ ${#CMAKE_FORMAT[@]} -gt 0 ]; then
     if [ "$CHECK" = true ]; then
         print_magenta "Checking CMake formatting..."
-        "${CMAKE_FORMAT[@]}" --check CMakeLists.txt cmake/*.cmake
+        "${CMAKE_FORMAT[@]}" --check CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt
     else
         print_magenta "Formatting CMake files..."
-        "${CMAKE_FORMAT[@]}" --in-place CMakeLists.txt cmake/*.cmake
+        "${CMAKE_FORMAT[@]}" --in-place CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt
     fi
 fi
 
 if [ -n "$(command -v shfmt)" ]; then
     if [ "$CHECK" = true ]; then
         print_magenta "Checking shell script formatting..."
-        shfmt --diff ./*.sh ../common.sh ../fixtures/*.sh
+        shfmt --diff ./*.sh ../common.sh ../fixtures/*.sh ../test-plugin/*.sh
     else
         print_magenta "Formatting shell scripts..."
-        shfmt --list --write ./*.sh ../common.sh ../fixtures/*.sh
+        shfmt --list --write ./*.sh ../common.sh ../fixtures/*.sh ../test-plugin/*.sh
     fi
 fi
 

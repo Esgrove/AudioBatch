@@ -104,6 +104,16 @@ serato_swell -c:a flac -sample_fmt s16 serato_rainbow_stereo_44100_16.flac
 ffmpeg -hide_banner -loglevel error -y -f lavfi -i "anullsrc=r=44100:cl=stereo:d=1" \
     -map_metadata -1 -fflags +bitexact -flags:a +bitexact -c:a pcm_s16le silence_stereo_44100_16.wav
 
+# A 1 kHz tone at half scale on the left and a 440 Hz tone at quarter scale on the right,
+# so the mid and the side of the signal both carry audio for the plugin processing tests.
+ffmpeg -hide_banner -loglevel error -y \
+    -f lavfi -i "aevalsrc=0.5*sin(2*PI*1000*t)|0.25*sin(2*PI*440*t):s=44100:d=1" \
+    -map_metadata -1 -fflags +bitexact -flags:a +bitexact -c:a pcm_s16le stereo_split_44100_16.wav
+
+# The outputs the AudioBatch Test MS plugin in test-plugin/ must produce from the 16-bit tones,
+# computed outside any plugin host.
+uv run --quiet --script plugin_expected.py
+
 # A file with an audio extension that does not contain audio.
 printf 'not audio\n' > broken.wav
 
