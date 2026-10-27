@@ -19,6 +19,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::args::{PluginGrouping, PluginListing};
 use crate::run::{EXIT_SUCCESS, EXIT_USAGE_ERROR};
+use crate::{write_bold, write_dimmed, write_error, write_warning};
 
 /// Label for a plugin without a manufacturer, and the group sorted last.
 const UNKNOWN_LABEL: &str = "Unknown";
@@ -104,7 +105,7 @@ pub fn run_plugin_list(
     let paths = &context.data_paths;
     let lock = if listing.rescan {
         let Some(lock) = ScanLock::try_acquire(&paths.scan_lock)? else {
-            writeln!(log, "{}", format!("Error: {SCAN_BUSY_MESSAGE}").red())?;
+            write_error!(log, "{SCAN_BUSY_MESSAGE}")?;
             return Ok(EXIT_USAGE_ERROR);
         };
         Some(lock)
@@ -117,27 +118,26 @@ pub fn run_plugin_list(
     let mut exit_code = EXIT_SUCCESS;
     if let Some(lock) = &lock {
         rescan(lock, &mut known, context, log)?;
-        if known.save_to(&paths.known_plugins).is_err() {
-            let message = format!(
-                "Error: Could not save the plugin list to {}",
-                paths.known_plugins.display()
-            );
-            writeln!(log, "{}", message.red())?;
+        if let Err(error) = known.save_to(&paths.known_plugins) {
+            let path = paths.known_plugins.display();
+            write_error!(log, "Could not save the plugin list to {path}: {error:#}")?;
             exit_code = EXIT_USAGE_ERROR;
         }
     }
     drop(lock);
 
     if known.plugins.is_empty() {
-        let message = "Warning: No plugins found. Run with --rescan, or scan for plugins in the GUI.";
-        writeln!(log, "{}", message.yellow())?;
+        write_warning!(
+            log,
+            "No plugins found. Run with --rescan, or scan for plugins in the GUI."
+        )?;
         return Ok(exit_code);
     }
     let mut plugins = known.plugins;
     sort_plugins(&mut plugins);
     output.write_all(format_plugin_list(&plugins, listing.grouping).as_bytes())?;
     output.flush()?;
-    writeln!(log, "{}", format!("{} plugins", plugins.len()).dimmed())?;
+    write_dimmed!(log, "{} plugins", plugins.len())?;
     Ok(exit_code)
 }
 
@@ -165,11 +165,7 @@ fn rescan(lock: &ScanLock, known: &mut KnownPlugins, context: &PluginListContext
         .map(|folder| folder.display().to_string())
         .collect::<Vec<_>>()
         .join(";");
-    writeln!(
-        log,
-        "{}",
-        format!("Scanning {FORMAT_NAME} plugins in {folder_list}").bold()
-    )?;
+    write_bold!(log, "Scanning {FORMAT_NAME} plugins in {folder_list}")?;
     let options = ScanOptions {
         folders,
         worker: context.worker.clone(),
@@ -215,7 +211,7 @@ fn report_scan_problems(report: &ScanReport, log: &mut dyn Write) -> Result<()> 
                 .map(|bundle| format!("No plugins found in {}", bundle.display())),
         );
     for warning in warnings {
-        writeln!(log, "{}", format!("Warning: {warning}").yellow())?;
+        write_warning!(log, "{warning}")?;
     }
     Ok(())
 }

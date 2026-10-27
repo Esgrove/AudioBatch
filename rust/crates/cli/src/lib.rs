@@ -7,6 +7,7 @@
 
 pub mod args;
 pub mod completion;
+pub mod messages;
 pub mod output;
 pub mod plugin_list;
 pub mod run;
