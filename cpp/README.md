@@ -73,7 +73,7 @@ Turn **Compensate Preview Plugin Latency** off to hear the plugins' natural unco
 Changing a latency-affecting plugin setting updates the readouts and may re-prime playback.
 
 At the end of a file, preview drains the delayed final audio and the reported effect tails,
-with each plugin's tail limited to 30 seconds.
+with each plugin's tail limited to 20 seconds.
 The position marker stays at the file end while the tail plays.
 Stopping, seeking, switching files, or disabling the chain discards the old tail.
 Neither live preview nor offline plugin processing applies post-chain anti-clipping gain adjustment.
@@ -135,7 +135,7 @@ Plugins can be reordered, enabled or disabled, and the chain is saved between se
 Scanning isolates plugin crashes so they do not take down the app.
 
 Processing uses offline rendering, compensates plugin latency and preserves reverb and delay tails.
-Output is reduced in level when needed to avoid clipping.
+Output is 16-bit PCM AIFF. Samples beyond full scale saturate and are reported, without gain reduction.
 You can normalize before the chain or set a custom input gain for each file.
 
 ### Output And Originals

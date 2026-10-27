@@ -25,8 +25,8 @@ constexpr auto legacyKnownPluginListPropertyKey {"knownPluginList"};
 constexpr auto crashLogFileName {"audiobatch_plugin_scan_crash_log.txt"};
 constexpr auto responsePollInterval {std::chrono::milliseconds(50)};
 /// Longest wait for the worker to scan one plugin.
-/// The GUI scan waits on the message thread, where the scan cannot be cancelled,
-/// so a plugin that hangs in the worker would otherwise freeze the app for good.
+/// Without it, a plugin that hangs in the worker would block the scan for good:
+/// the CLI rescan cannot be cancelled, and the GUI scan would wait until the user cancels it.
 /// Generous, because a copy-protected plugin can show a licensing prompt in the worker while it is scanned.
 constexpr auto pluginScanTimeout {std::chrono::minutes(3)};
 
