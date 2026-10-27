@@ -49,10 +49,9 @@ fn probe_recycle_bin(folder: &Path) -> bool {
     let Ok(items) = trash::os_limited::list() else {
         return false;
     };
-    let probes: Vec<_> = items
-        .into_iter()
-        .filter(|item| item.name == probe_name && item.original_parent == folder)
-        .collect();
+    // The probe name is unique, while the recycle bin may spell the original folder differently,
+    // such as in another case or with a verbatim prefix.
+    let probes: Vec<_> = items.into_iter().filter(|item| item.name == probe_name).collect();
     if probes.is_empty() {
         return false;
     }
