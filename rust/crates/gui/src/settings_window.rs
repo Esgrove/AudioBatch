@@ -4,7 +4,7 @@
 //! "Audio interface and playback" chooses the output device, its sample rate, and its buffer size,
 //! and "Preview preferences" holds the plugin chain preview, the playback options,
 //! and the loudness graph with its axis range.
-//! The waveform is always coloured from the Serato Overview tag when a file has one, so there is no option for it.
+//! Colouring the waveform from the Serato Overview tag is turned on and off in the Options menu, not in this window.
 //! The main view stays the owner of the settings.
 //! This view sends every change as a complete `GuiSettings`,
 //! and the main view applies it and syncs the window back with what it actually opened.

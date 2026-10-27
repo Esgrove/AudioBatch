@@ -313,6 +313,7 @@ Options:
 The GUI and the CLI are two thin front ends over one shared core.
 The core reads, analyzes, normalizes and processes audio,
 and keeps the results in an SQLite cache so unchanged files are not read again.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) explains the parts in more depth, with the threads, the pipelines, and the preview.
 Each source directory under `src/` holds one domain, and the domains only depend downwards:
 
 ```mermaid
@@ -404,7 +405,10 @@ For release builds, use the build script:
 ./build.sh
 ```
 
-On macOS, pass `--xcode` to generate and build with Xcode instead of Ninja.
+On macOS, the script builds with Ninja, or with Xcode when given `--xcode`.
+On Windows, it builds with Visual Studio, or with Ninja and MSVC when given `--ninja`,
+which needs a Visual Studio developer command prompt environment, like the `windows-ninja` presets.
+`--cli-only` builds only the CLI.
 To generate a project and open it in the IDE without building, use `--open`:
 
 ```shell
@@ -435,7 +439,20 @@ Pass `--reuse` to skip CMake generation and reuse the existing release build dir
 - `./lint.sh` runs clang-tidy. `--check` fails on warnings.
   `--changed` lints only the sources changed since the last commit, and `--staged` only the staged ones.
 
-Build and run tests with the script (Release by default):
+The debug presets build the tests too, so the usual loop is a preset build followed by ctest:
+
+```shell
+cmake --preset macos-debug
+cmake --build --preset macos-debug
+ctest --test-dir cmake-build-mac-debug --output-on-failure
+```
+
+On Windows, use the `windows-debug` or `windows-ninja-debug` preset and its build directory,
+and pass `--build-config Debug` to ctest for the Visual Studio build.
+ctest runs each JUCE unit test suite as its own test, with a time limit per suite.
+Pass `-R <name>` to run the suites whose names match.
+
+The build script can build and run the tests too, in Release by default:
 
 ```shell
 ./build.sh --test
@@ -444,6 +461,22 @@ Build and run tests with the script (Release by default):
 
 The tests build the `AudioBatch Test MS` VST3 in `../test-plugin/` as part of the project,
 and check its output against the expected files in `../fixtures/plugin_expected/`.
+
+`./sanitize.sh` builds and runs the tests with the `macos-asan` or `windows-asan` preset,
+under AddressSanitizer and UndefinedBehaviorSanitizer.
+`./sanitize.sh --thread` runs them under ThreadSanitizer on macOS.
+Each sanitizer build has its own build directory, so the debug build is not affected.
+
+The libFuzzer harnesses in `tests/fuzz/` need the Homebrew LLVM, since Apple Clang does not ship libFuzzer.
+The `macos-fuzz` preset builds them, ctest replays their committed corpus,
+and `./lint.sh --fuzz` lints them with that preset's compile database:
+
+```shell
+cmake --preset macos-fuzz
+cmake --build --preset macos-fuzz
+ctest --test-dir cmake-build-mac-fuzz --output-on-failure
+cmake-build-mac-fuzz/SeratoTagFuzzer_artefacts/RelWithDebInfo/SeratoTagFuzzer -max_total_time=60 tests/fuzz/corpus/SeratoTagFuzzer
+```
 
 ## TODO
 

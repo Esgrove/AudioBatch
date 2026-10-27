@@ -7,6 +7,9 @@ This repository holds two versions of it side by side, each with its own agent i
   Read [`cpp/AGENTS.md`](cpp/AGENTS.md) before changing anything under `cpp/`.
 - `rust/`: the Rust port. Read [`rust/AGENTS.md`](rust/AGENTS.md) before changing anything under `rust/`.
 
+Each version also has an `ARCHITECTURE.md`, [`cpp/ARCHITECTURE.md`](cpp/ARCHITECTURE.md) and [`rust/ARCHITECTURE.md`](rust/ARCHITECTURE.md),
+which explains how its parts work together.
+
 ## Shared Files
 
 - `assets/` holds the icons and fonts that both applications bundle.

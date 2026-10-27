@@ -7,7 +7,8 @@ Run the build, format, lint, and test commands below from `cpp/`.
 
 It builds two deliverables from a shared core:
 
-- GUI target: `AudioBatch` producing `AudioBatch.app` / `AudioBatchApp.exe`. This is the primary deliverable.
+- GUI target: `AudioBatch` producing `AudioBatch.app` on macOS and `AudioBatch.exe` on Windows,
+  which `build.sh` copies to the project folder as `AudioBatchApp.exe`. This is the primary deliverable.
 - CLI target: `AudioBatchCli` producing `audiobatch`.
 
 The GUI is the primary interface and the main focus of development.
@@ -54,7 +55,6 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
 - `src/normalization/` holds `AudioNormalization.*` for normalization and AIFF conversion,
   `NormalizationFormatSupport.cpp`, which reports which formats this build can normalize,
   and `NormalizeCoordinator.*`, which orchestrates background normalization.
-
 - `src/serato/` holds the Serato tag parsing (`SeratoTags.*`, `SeratoTagReader.*`, `SeratoTagTypes.h`,
   and the fixed-width field readers in `SeratoBytes.h`),
   the overview waveform (`SeratoOverview.*`, `SeratoWaveformColouring.*`),
@@ -62,10 +62,6 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
   and the background preview loading in `SeratoPreviewLoader.*`.
 - `src/metadata/` holds `AudioMetadata.*`, which reads and writes tags and embedded art through TagLib.
   It rewrites Serato values as ID3 frames and drops the overview from processed copies, so it depends on `serato/`.
-
-The domains depend on each other in one direction only.
-`analysis/` uses only `utils/`, `serato/` adds `analysis/`, and `metadata/` adds `serato/`.
-`normalization/` and `plugins/` sit above them, and `cli/` and `gui/` on top.
 - `src/plugins/` holds VST3 / Audio Unit plugin hosting.
     - `PluginScanner.*` implement out-of-process plugin scanning and the known-plugins list persistence.
       `addPluginFormats` registers the plugin formats, and leaves the Audio Units built into macOS out of every scan.
@@ -79,6 +75,8 @@ The domains depend on each other in one direction only.
     - `PluginChainPresets.*` turn a chain into XML and back, for the chain in the settings and for the presets.
       Each preset is one `.xml` file in the `Chain Presets` folder next to the settings file,
       named after the preset, with the plugins, their order, their enabled flags, and their state.
+    - `PluginPreviewSource.*` is the audio source that plays the preview through the live chain,
+      with the latency pre-roll, the tail drain, the fades, and the mono fold.
 - `src/utils/` holds the shared helpers, split by area, all in the `utils` namespace unless noted:
     - `Log.*` holds the leveled logging functions.
     - `AppInfo.*` holds startup flag and path argument queries, the version line, the About text, system information,
@@ -103,6 +101,7 @@ The domains depend on each other in one direction only.
       The runner owns the thread pool and the current run id, and publishes a callback only while its run is current.
     - `StringFormat.h` holds `utils::format` and the fmt formatters for JUCE types.
     - `ConsolePrint.*` holds the styled console output helpers in the `console` namespace.
+      `ConsoleProgress.*` draws the CLI progress line, and only the CLI builds it.
     - `version.h.in` is the template for the build version constants.
       CMake generates `utils/version.h` from it in the build directory.
       Put new generic helpers in the matching file instead of a file-local helper function,
@@ -120,7 +119,8 @@ The domains depend on each other in one direction only.
       so add or change an option there instead of in any one of them.
     - `ShellCompletion.{h,cpp}` generate the zsh, bash, fish, and PowerShell completion scripts from those tables,
       and install them to the same per-user directories as the Rust CLI.
-      `completions.sh` installs them for the shells of the platform, and `install.sh` runs it after installing the CLI.
+      `completions.sh` installs them for the shells of the platform,
+      and `install.sh` installs them too after installing the CLI, through the shared `install_shell_completions`.
     - `PluginListCli.{h,cpp}` implement the CLI plugin listing and rescan.
 - `src/gui/` holds the GUI application shell and its main screen.
     - `Main.cpp` is the GUI application entry point, and `MainWindow.*` is its top-level window and menu bar.
@@ -160,6 +160,12 @@ The domains depend on each other in one direction only.
   `PreviewWorkspace.*` holds the waveform, the metrics, and the controls below the results table,
   and lays them out as an expanded section or a compact row.
 
+The domains include each other in one direction only.
+`analysis/` uses only `utils/`, `serato/` adds `analysis/`, `metadata/` adds `serato/`,
+and `normalization/` adds `metadata/`.
+`plugins/` builds on those and on `normalization/`, and `cli/` and `gui/` use any domain below them.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) charts these dependencies and explains how the parts work together.
+
 Put a new file in the directory of its domain, and add a directory only for a new domain with several files.
 Include project headers by their path relative to `src/`, for example `#include "analysis/AudioAnalysis.h"`,
 also from within the same directory, and never with `../`.
@@ -167,7 +173,8 @@ also from within the same directory, and never with `../`.
 The source lists are defined in `CMakeLists.txt`.
 `AUDIOBATCH_CORE_SOURCES` holds the shared core and `AUDIOBATCH_CLI_SOURCES` the CLI front end,
 and each target adds its own entry point and target-specific files.
-The shared core is everything in `analysis/`, `metadata/`, `normalization/`, and `utils/`,
+The shared core is everything in `analysis/`, `metadata/`, `normalization/`,
+and `utils/` except `ConsoleProgress`,
 plus `plugins/PluginScanner.*` and the Serato tag, tag cache, and overview files.
 Add new shared files to the core list, not to each target,
 and remember that a shared file must compile cleanly for both the GUI and the CLI.
@@ -176,8 +183,12 @@ because the strict warning set is applied by matching that pattern.
 
 Tests:
 
-- `tests/` holds the `AudioBatchTests` executable, which links the shared core and the CLI front end.
+- `tests/` holds the `AudioBatchTests` executable, which links the shared core, the CLI front end,
+  and the GUI sources that need no window of their own,
+  such as `BackgroundWorkController`, `AudioPreviewPlayer`, `LiveChain`, and `ResultsModel`.
   Suites are `juce::UnitTest` classes, one per file, created through the factories in `tests/TestSuites.h`.
+  `TestMain.cpp` registers each suite as a GoogleTest test, so CTest discovers and filters them by name,
+  and each suite has a five minute time limit.
 - `../fixtures/` at the repository root holds small committed audio files, shared with the Rust port:
   one second 1 kHz tones at -6.02 dBFS in WAV, AIFF, FLAC, MP3, and Ogg, mono and stereo,
   at several sample rates and bit depths, plus a tagged FLAC file, digital silence, a short three channel AIFF,
@@ -190,7 +201,8 @@ Tests:
   and a broken file.
   `../fixtures/generate.sh` regenerates them with ffmpeg,
   and `../fixtures/serato_overview.py` writes the Serato tag, which ffmpeg cannot.
-- `../test-plugin/` holds `AudioBatch Test MS`, a JUCE VST3 effect with a gain, a mid/side width, and a latency parameter,
+- `../test-plugin/` holds `AudioBatch Test MS`, a JUCE VST3 effect with a gain, a mid/side width,
+  and a latency parameter, described in `../test-plugin/README.md`,
   which the C++ and the Rust tests both load.
   With `BUILD_TESTING`, `CMakeLists.txt` adds it as a subdirectory
   and passes the bundle path to the tests as `AUDIOBATCH_TEST_VST3_PATH`.
