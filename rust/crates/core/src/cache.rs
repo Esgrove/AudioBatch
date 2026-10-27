@@ -705,6 +705,7 @@ mod test_analysis_cache {
 mod test_custom_gain {
     use tempfile::TempDir;
 
+    use crate::record::same_custom_gain;
     use crate::test_helpers::{analyze_fixture_copy, temporary_cache};
 
     #[test]
@@ -720,16 +721,12 @@ mod test_custom_gain {
             None
         );
         assert!(cache.store_custom_gain(&record.path, Some(-2.5)).expect("stores gain"));
-        assert_eq!(
-            cache
-                .get_analysis(&record.path)
-                .and_then(|cached| cached.custom_gain_db),
-            Some(-2.5)
-        );
-        assert_eq!(
-            cache.get_custom_gain(&record.path, record.file_size, record.modified_time_ms),
-            Some(-2.5)
-        );
+        let cached = cache
+            .get_analysis(&record.path)
+            .and_then(|cached| cached.custom_gain_db);
+        assert!(same_custom_gain(cached, Some(-2.5)), "{cached:?}");
+        let stored = cache.get_custom_gain(&record.path, record.file_size, record.modified_time_ms);
+        assert!(same_custom_gain(stored, Some(-2.5)), "{stored:?}");
         assert!(cache.store_custom_gain(&record.path, None).expect("clears gain"));
         assert_eq!(
             cache
@@ -756,12 +753,10 @@ mod test_custom_gain {
         cache.store_analysis(&record).expect("stores");
         cache.store_custom_gain(&record.path, Some(3.0)).expect("stores gain");
         cache.store_analysis(&record).expect("stores again");
-        assert_eq!(
-            cache
-                .get_analysis(&record.path)
-                .and_then(|cached| cached.custom_gain_db),
-            Some(3.0)
-        );
+        let cached = cache
+            .get_analysis(&record.path)
+            .and_then(|cached| cached.custom_gain_db);
+        assert!(same_custom_gain(cached, Some(3.0)), "{cached:?}");
     }
 
     #[test]

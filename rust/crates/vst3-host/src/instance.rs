@@ -840,10 +840,13 @@ mod test_lifecycle {
     use audiobatch_test_plugin::{Kind, take_recorded_calls};
 
     use super::*;
-    use crate::test_helpers::{MAX_BLOCK, active_instance, class_id, dispatcher, on_ui, test_module};
+    use crate::test_helpers::{
+        MAX_BLOCK, active_instance, class_id, dispatcher, lock_recorder_log, on_ui, test_module,
+    };
 
     #[test]
     fn lifecycle_calls_run_on_the_ui_thread_in_order() {
+        let _log = lock_recorder_log();
         let (instance, ui_thread) = on_ui(|ui| {
             drop(take_recorded_calls());
             (active_instance(ui, Kind::Recorder, 2), std::thread::current().id())
@@ -943,10 +946,35 @@ mod test_lifecycle {
 
     #[test]
     fn dropping_off_the_ui_thread_tears_down_on_the_ui_thread() {
-        let instance = on_ui(|ui| active_instance(ui, Kind::Gain, 1)).expect("gain instance");
+        let _log = lock_recorder_log();
+        let (instance, ui_thread) = on_ui(|ui| {
+            let instance = active_instance(ui, Kind::Recorder, 1);
+            drop(take_recorded_calls());
+            (instance, std::thread::current().id())
+        });
+        let instance = instance.expect("recorder instance");
         assert!(instance.is_active());
         drop(instance);
+        // The dispatcher runs jobs in order, so the posted teardown has run once this call returns.
         on_ui(|_| ());
+        let calls = take_recorded_calls();
+        let names: Vec<&str> = calls.iter().map(|call| call.name).collect();
+        assert_eq!(
+            names,
+            [
+                "processor.setProcessing(false)",
+                "component.setActive(false)",
+                "component.disconnect",
+                "controller.disconnect",
+                "controller.setComponentHandler",
+                "controller.terminate",
+                "component.terminate",
+            ]
+        );
+        assert_ne!(ui_thread, std::thread::current().id());
+        for call in calls {
+            assert_eq!(call.thread, ui_thread, "{} ran on the wrong thread", call.name);
+        }
         assert!(dispatcher().post(|_| ()));
     }
 
@@ -956,6 +984,82 @@ mod test_lifecycle {
         let layout = instance.layout.clone().unwrap_or_default();
         let setup = instance.setup.expect("instance is set up");
         on_ui(move |_| ProcessorHandle::new(core, &layout, setup))
+    }
+}
+
+#[cfg(test)]
+mod test_plugin_failures {
+    use audiobatch_test_plugin::{FAILING_STATE_BYTES, INITIAL_CONTROLLER_STATE, Kind};
+    use vst3::Steinberg::kResultFalse;
+
+    use super::*;
+    use crate::processor::ProcessError;
+    use crate::test_helpers::{MAX_BLOCK, active_instance, on_ui};
+
+    #[test]
+    fn a_failing_process_call_returns_the_result_of_the_plugin() {
+        let (_instance, mut processor) = on_ui(|ui| {
+            let instance = active_instance(ui, Kind::Failing, 2).map_err(|error| error.to_string())?;
+            let processor = instance.processor(ui).map_err(|error| error.to_string())?;
+            Ok::<_, String>((instance, processor))
+        })
+        .expect("failing instance with a processor");
+        let error = processor.process(MAX_BLOCK).expect_err("process fails");
+        assert_eq!(error, ProcessError(kResultFalse));
+        assert_eq!(
+            error.to_string(),
+            format!("The plugin failed to process audio (result {kResultFalse})")
+        );
+        assert_eq!(processor.process(0), Ok(()));
+    }
+
+    #[test]
+    fn a_failing_get_state_keeps_what_the_plugin_wrote() {
+        let state = on_ui(|ui| {
+            let instance = active_instance(ui, Kind::Failing, 2).map_err(|error| error.to_string())?;
+            instance.state(ui).map_err(|error| error.to_string())
+        })
+        .expect("state of the failing plugin");
+        assert_eq!(
+            state.component,
+            1.0_f64.to_le_bytes().get(..FAILING_STATE_BYTES).expect("prefix")
+        );
+        assert_eq!(state.controller, INITIAL_CONTROLLER_STATE);
+    }
+
+    #[test]
+    fn a_refused_state_keeps_the_current_settings() {
+        let results = on_ui(|ui| {
+            let mut gain = active_instance(ui, Kind::Gain, 2).map_err(|error| error.to_string())?;
+            gain.deactivate(ui).map_err(|error| error.to_string())?;
+            let short = PluginState {
+                component: vec![0; 3],
+                controller: Vec::new(),
+            };
+            let gain_result = gain.set_state(ui, &short).map_err(|error| error.to_string());
+            let gain_state = gain.state(ui).map_err(|error| error.to_string())?;
+            gain.activate(ui).map_err(|error| error.to_string())?;
+
+            let mut failing = active_instance(ui, Kind::Failing, 2).map_err(|error| error.to_string())?;
+            failing.deactivate(ui).map_err(|error| error.to_string())?;
+            let full = PluginState {
+                component: 0.5_f64.to_le_bytes().to_vec(),
+                controller: Vec::new(),
+            };
+            let failing_result = failing.set_state(ui, &full).map_err(|error| error.to_string());
+            let failing_state = failing.state(ui).map_err(|error| error.to_string())?;
+            failing.activate(ui).map_err(|error| error.to_string())?;
+            Ok::<_, String>((gain_result, gain_state, failing_result, failing_state))
+        })
+        .expect("instances that refuse a state");
+        let (gain_result, gain_state, failing_result, failing_state) = results;
+        assert_eq!(gain_result, Ok(()));
+        assert_eq!(gain_state.component, 1.0_f64.to_le_bytes());
+        assert_eq!(failing_result, Ok(()));
+        assert_eq!(
+            failing_state.component,
+            1.0_f64.to_le_bytes().get(..FAILING_STATE_BYTES).expect("prefix")
+        );
     }
 }
 
@@ -1049,6 +1153,19 @@ mod test_processing {
             .collect()
     }
 
+    /// Asserts that every channel holds the expected samples, within a rounding error.
+    fn assert_channels(actual: &[Vec<f32>], expected: &[Vec<f32>]) {
+        let matches = actual.len() == expected.len()
+            && actual.iter().zip(expected).all(|(channel, wanted)| {
+                channel.len() == wanted.len()
+                    && channel
+                        .iter()
+                        .zip(wanted)
+                        .all(|(sample, wanted_sample)| (sample - wanted_sample).abs() < 1e-6)
+            });
+        assert!(matches, "{actual:?} is not {expected:?}");
+    }
+
     /// Creates an active instance and a processor handle for it.
     fn instance_and_processor(kind: Kind, channels: usize) -> (PluginInstance, ProcessorHandle) {
         on_ui(move |ui| {
@@ -1081,7 +1198,7 @@ mod test_processing {
         assert_eq!(default_state.controller, INITIAL_CONTROLLER_STATE);
         assert_eq!(restored, expected);
         let output = process_impulse(&mut processor, 4);
-        assert_eq!(output, vec![vec![0.5, 0.0, 0.0, 0.0]; 2]);
+        assert_channels(&output, &[vec![0.5, 0.0, 0.0, 0.0], vec![0.5, 0.0, 0.0, 0.0]]);
     }
 
     #[test]
@@ -1106,8 +1223,11 @@ mod test_processing {
         let frames = ECHO_DELAY as usize + 1;
         let output = process_impulse(&mut processor, frames);
         for channel in output {
-            assert_eq!(channel.first().copied(), Some(1.0));
-            assert_eq!(channel.last().copied(), Some(ECHO_LEVEL));
+            let ends = channel.first().copied().zip(channel.last().copied());
+            assert!(
+                ends.is_some_and(|(first, last)| (first - 1.0).abs() < 1e-6 && (last - ECHO_LEVEL).abs() < 1e-6),
+                "{ends:?}"
+            );
         }
     }
 
@@ -1123,7 +1243,7 @@ mod test_processing {
             (instance, dirty)
         });
         assert!(dirty);
-        assert_eq!(process_impulse(&mut processor, 2), vec![vec![0.25, 0.0]]);
+        assert_channels(&process_impulse(&mut processor, 2), &[vec![0.25, 0.0]]);
         drop(processor);
         drop(instance);
     }
@@ -1168,7 +1288,7 @@ mod test_processing {
             (instance, result)
         });
         assert_eq!(result, Ok(()));
-        assert_eq!(process_impulse(&mut processor, 2), vec![vec![0.0, 0.0]]);
+        assert_channels(&process_impulse(&mut processor, 2), &[vec![0.0, 0.0]]);
         drop(processor);
         drop(instance);
     }

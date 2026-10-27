@@ -481,6 +481,50 @@ mod test_commit_temporary_output {
     }
 
     #[test]
+    fn failed_move_into_place_restores_the_replaced_output() {
+        let directory = tempfile::tempdir().expect("creates directory");
+        let source = directory.path().join("song.wav");
+        let output = directory.path().join("song.aif");
+        fs::write(&source, b"source").expect("writes");
+        fs::write(&output, b"previous").expect("writes");
+        let disposed = Arc::new(Mutex::new(Vec::new()));
+        let dispose = recording_disposer(Arc::clone(&disposed), &[]);
+        let temporary = temporary_with(&output, b"new");
+        // Removing the temporary file makes the rename onto the output fail after the backup was made.
+        fs::remove_file(temporary.path()).expect("removes the temporary file");
+
+        let error = commit_temporary_output(temporary, &source, &output, true, &dispose).expect_err("commit fails");
+
+        assert_eq!(error, "Could not move the new audio file into place");
+        assert_eq!(fs::read(&output).expect("reads"), b"previous");
+        assert_eq!(fs::read(&source).expect("reads"), b"source");
+        assert!(disposed.lock().expect("lock").is_empty());
+        let mut names: Vec<String> = fs::read_dir(directory.path())
+            .expect("lists")
+            .filter_map(|entry| entry.ok().map(|entry| entry.file_name().to_string_lossy().into_owned()))
+            .collect();
+        names.sort();
+        assert_eq!(names, ["song.aif", "song.wav"]);
+    }
+
+    #[test]
+    fn failed_in_place_replace_keeps_the_original() {
+        let directory = tempfile::tempdir().expect("creates directory");
+        let source = directory.path().join("song.aif");
+        fs::write(&source, b"original").expect("writes");
+        let disposed = Arc::new(Mutex::new(Vec::new()));
+        let dispose = recording_disposer(Arc::clone(&disposed), &[]);
+        let temporary = temporary_with(&source, b"new");
+        fs::remove_file(temporary.path()).expect("removes the temporary file");
+
+        let error = commit_temporary_output(temporary, &source, &source, false, &dispose).expect_err("commit fails");
+
+        assert_eq!(error, "Could not replace the original file with the new audio");
+        assert_eq!(fs::read(&source).expect("reads"), b"original");
+        assert!(disposed.lock().expect("lock").is_empty());
+    }
+
+    #[test]
     fn existing_output_without_overwrite_fails() {
         let directory = tempfile::tempdir().expect("creates directory");
         let source = directory.path().join("song.wav");

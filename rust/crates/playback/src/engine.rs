@@ -245,3 +245,228 @@ fn seek_pipeline(
         }
     }
 }
+
+#[cfg(test)]
+mod test_decode_thread {
+    use std::path::Path;
+    use std::thread::JoinHandle;
+    use std::time::Instant;
+
+    use crossbeam_channel::unbounded;
+    use rtrb::{Consumer, RingBuffer};
+
+    use super::*;
+
+    /// Longest time a test waits for the decode thread.
+    const TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// Output rate of the decode thread, the rate of the fixtures, so no resampling takes place.
+    const OUTPUT_RATE: u32 = 44_100;
+
+    /// Frames the ring buffer holds, far fewer than a fixture has, so the decode thread fills it and waits.
+    const RING_CAPACITY: usize = 4096;
+
+    /// A decode thread with its command channel, its events, the consumer of its ring buffer, and the shared state.
+    struct DecodeThread {
+        commands: Sender<Command>,
+        events: Receiver<PlayerEvent>,
+        consumer: Consumer<Frame>,
+        shared: Arc<SharedState>,
+        thread: JoinHandle<()>,
+    }
+
+    impl DecodeThread {
+        /// Starts a decode thread.
+        fn start() -> Self {
+            let (producer, consumer) = RingBuffer::new(RING_CAPACITY);
+            let (commands, command_receiver) = unbounded();
+            let (event_sender, events) = unbounded();
+            let shared = Arc::new(SharedState::new());
+            let thread_shared = Arc::clone(&shared);
+            let thread = std::thread::spawn(move || {
+                run_decode_thread(producer, &command_receiver, &event_sender, &thread_shared, OUTPUT_RATE);
+            });
+            Self {
+                commands,
+                events,
+                consumer,
+                shared,
+                thread,
+            }
+        }
+
+        /// Loads a file as the given generation, setting the shared state the way the player does.
+        fn load(&self, path: &Path, generation: u32, start_seconds: f64) {
+            self.shared.load_generation.store(generation, Ordering::Release);
+            self.shared.generation.store(generation, Ordering::Release);
+            self.send(Command::Load {
+                path: path.to_path_buf(),
+                generation,
+                start_seconds,
+            });
+        }
+
+        /// Sends a command to the decode thread.
+        fn send(&self, command: Command) {
+            self.commands.send(command).expect("the decode thread runs");
+        }
+
+        /// Reads frames until the decode thread has finished the generation and the ring buffer is empty.
+        fn drain_until_finished(&mut self, generation: u32) -> Vec<Frame> {
+            let deadline = Instant::now() + TIMEOUT;
+            let mut frames = Vec::new();
+            loop {
+                // The end is published after the last frame is in the ring buffer, so it is read before draining.
+                let finished = self.shared.finished_generation.load(Ordering::Acquire) == generation;
+                while let Ok(frame) = self.consumer.pop() {
+                    frames.push(frame);
+                }
+                if finished {
+                    return frames;
+                }
+                assert!(Instant::now() < deadline, "generation {generation} did not finish");
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+
+        /// Returns the next event, failing the test when none arrives in time.
+        fn next_event(&self) -> PlayerEvent {
+            self.events.recv_timeout(TIMEOUT).expect("an event arrives")
+        }
+    }
+
+    /// Waits until the thread has ended, and returns false when it is still running after the timeout.
+    fn wait_for_exit(thread: JoinHandle<()>) -> bool {
+        let deadline = Instant::now() + TIMEOUT;
+        while !thread.is_finished() {
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        thread.join().is_ok()
+    }
+
+    /// Returns true when the frames have consecutive source positions from `first` on.
+    fn consecutive_from(frames: &[Frame], first: u64) -> bool {
+        frames.first().is_some_and(|frame| frame.position == first)
+            && frames.windows(2).all(|pair| pair[1].position == pair[0].position + 1)
+    }
+
+    #[test]
+    fn decodes_a_file_into_the_ring_buffer_and_shuts_down() {
+        let mut decode = DecodeThread::start();
+        let path = test_fixtures::fixture("sine_stereo_44100_16.wav");
+        decode.load(&path, 1, 0.0);
+        let frames = decode.drain_until_finished(1);
+
+        let PlayerEvent::Loaded {
+            path: loaded,
+            sample_rate,
+            duration_seconds,
+        } = decode.next_event()
+        else {
+            panic!("the file did not load");
+        };
+        assert_eq!((loaded, sample_rate), (path, 44_100));
+        assert!(duration_seconds.is_some_and(|duration| (duration - 1.0).abs() < 1e-9));
+        assert_eq!(decode.shared.source_rate.load(Ordering::Relaxed), 44_100);
+        assert!(!decode.shared.source_mono.load(Ordering::Relaxed));
+
+        assert_eq!(frames.len(), 44_100);
+        assert!(frames.iter().all(|frame| frame.generation == 1));
+        assert!(consecutive_from(&frames, 0));
+        let peak = frames.iter().map(|frame| frame.left.abs()).fold(0.0_f32, f32::max);
+        assert!((peak - 0.5).abs() < 0.01, "peak {peak}");
+        assert!(decode.events.try_recv().is_err());
+
+        decode.send(Command::Shutdown);
+        assert!(wait_for_exit(decode.thread));
+    }
+
+    #[test]
+    fn a_load_starts_at_the_requested_time() {
+        let mut decode = DecodeThread::start();
+        decode.load(&test_fixtures::fixture("sine_mono_44100_16.wav"), 3, 0.5);
+        let frames = decode.drain_until_finished(3);
+        assert!(matches!(decode.next_event(), PlayerEvent::Loaded { .. }));
+        assert!(decode.shared.source_mono.load(Ordering::Relaxed));
+        assert_eq!(frames.len(), 22_050);
+        assert!(consecutive_from(&frames, 22_050));
+        assert!(
+            frames
+                .iter()
+                .all(|frame| (frame.left - frame.right).abs() < f32::EPSILON)
+        );
+    }
+
+    #[test]
+    fn a_new_load_replaces_the_current_file() {
+        let mut decode = DecodeThread::start();
+        decode.load(&test_fixtures::fixture("sine_mono_44100_16.wav"), 1, 0.0);
+        let stereo = test_fixtures::fixture("sine_stereo_44100_16.wav");
+        decode.load(&stereo, 2, 0.0);
+        let frames = decode.drain_until_finished(2);
+        let current: Vec<Frame> = frames.into_iter().filter(|frame| frame.generation == 2).collect();
+        assert_eq!(current.len(), 44_100);
+        assert!(consecutive_from(&current, 0));
+        let loaded: Vec<PathBuf> = decode
+            .events
+            .try_iter()
+            .filter_map(|event| match event {
+                PlayerEvent::Loaded { path, .. } => Some(path),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(loaded.last(), Some(&stereo));
+        assert!(!decode.shared.source_mono.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_opened_reports_an_error_and_the_thread_goes_on() {
+        let mut decode = DecodeThread::start();
+        let broken = test_fixtures::fixture("broken.wav");
+        decode.shared.playing.store(true, Ordering::Relaxed);
+        decode.load(&broken, 1, 0.0);
+        let PlayerEvent::Error { path, message } = decode.next_event() else {
+            panic!("the broken file did not fail");
+        };
+        assert_eq!(path, Some(broken));
+        assert_ne!(message, "");
+        assert_eq!(decode.shared.finished_generation.load(Ordering::Acquire), 1);
+        assert!(!decode.shared.playing.load(Ordering::Relaxed));
+
+        decode.send(Command::Seek {
+            seconds: 0.5,
+            generation: 2,
+        });
+        assert_eq!(decode.drain_until_finished(2).len(), 0);
+
+        decode.load(&test_fixtures::fixture("sine_stereo_44100_16.wav"), 3, 0.0);
+        assert_eq!(decode.drain_until_finished(3).len(), 44_100);
+    }
+
+    #[test]
+    fn dropping_the_commands_ends_the_thread_while_idle_and_while_decoding() {
+        let DecodeThread { commands, thread, .. } = DecodeThread::start();
+        drop(commands);
+        assert!(wait_for_exit(thread));
+
+        let decoding = DecodeThread::start();
+        decoding.load(&test_fixtures::fixture("sine_stereo_44100_16.wav"), 1, 0.0);
+        let deadline = Instant::now() + TIMEOUT;
+        while decoding.consumer.slots() < RING_CAPACITY {
+            assert!(Instant::now() < deadline, "the ring buffer did not fill");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_ne!(decoding.shared.finished_generation.load(Ordering::Acquire), 1);
+        let DecodeThread {
+            commands,
+            thread,
+            consumer: _consumer,
+            ..
+        } = decoding;
+        drop(commands);
+        assert!(wait_for_exit(thread));
+    }
+}

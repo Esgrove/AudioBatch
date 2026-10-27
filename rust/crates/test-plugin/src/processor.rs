@@ -23,7 +23,7 @@ use vst3::Steinberg::{
 use vst3::{Class, ComPtr, ComRef, Interface};
 
 use crate::text::copy_utf16;
-use crate::{DELAY_LATENCY, ECHO_DELAY, ECHO_LEVEL, GAIN_PARAMETER, Kind, record};
+use crate::{DELAY_LATENCY, ECHO_DELAY, ECHO_LEVEL, FAILING_STATE_BYTES, GAIN_PARAMETER, Kind, record};
 
 /// Id of the message the processor sends to its controller when they are connected.
 pub const CONNECTED_MESSAGE: &std::ffi::CStr = c"TestProcessorConnected";
@@ -81,7 +81,7 @@ impl TestProcessor {
         match self.kind {
             Kind::MonoOnly => input == SpeakerArr::kMono && output == SpeakerArr::kMono,
             Kind::StereoOnly => input == SpeakerArr::kStereo && output == SpeakerArr::kStereo,
-            Kind::Gain | Kind::Delay | Kind::Echo | Kind::NotFinite | Kind::Recorder => {
+            Kind::Gain | Kind::Delay | Kind::Echo | Kind::NotFinite | Kind::Recorder | Kind::Failing => {
                 input == output && (input == SpeakerArr::kMono || input == SpeakerArr::kStereo)
             }
         }
@@ -140,7 +140,7 @@ impl TestProcessor {
             })
         };
         match self.kind {
-            Kind::Gain | Kind::MonoOnly | Kind::StereoOnly | Kind::Recorder => input * gain,
+            Kind::Gain | Kind::MonoOnly | Kind::StereoOnly | Kind::Recorder | Kind::Failing => input * gain,
             Kind::Delay => delayed(delay_lines) * gain,
             Kind::Echo => ECHO_LEVEL.mul_add(delayed(delay_lines), input) * gain,
             Kind::NotFinite => f32::NAN,
@@ -281,6 +281,9 @@ impl IComponentTrait for TestProcessor {
         let Some(stream) = (unsafe { ComRef::from_raw(state) }) else {
             return kInvalidArgument;
         };
+        if self.kind == Kind::Failing {
+            return kResultFalse;
+        }
         let mut bytes = [0_u8; 8];
         let mut read = 0;
         // SAFETY: the stream is valid and the buffer holds the eight bytes requested.
@@ -299,6 +302,12 @@ impl IComponentTrait for TestProcessor {
             return kInvalidArgument;
         };
         let mut bytes = f64::from_bits(self.gain.load(Ordering::Relaxed)).to_le_bytes();
+        if self.kind == Kind::Failing {
+            let length = i32::try_from(FAILING_STATE_BYTES).unwrap_or_default();
+            // SAFETY: the stream is valid and the buffer holds more than the bytes written.
+            unsafe { stream.write(bytes.as_mut_ptr().cast(), length, std::ptr::null_mut()) };
+            return kResultFalse;
+        }
         // SAFETY: the stream is valid and the buffer holds the eight bytes written.
         unsafe { stream.write(bytes.as_mut_ptr().cast(), 8, std::ptr::null_mut()) }
     }
@@ -384,6 +393,9 @@ impl IAudioProcessorTrait for TestProcessor {
         });
         self.apply_parameter_changes(data.inputParameterChanges);
         let frames = usize::try_from(data.numSamples).unwrap_or_default();
+        if frames > 0 && self.kind == Kind::Failing {
+            return kResultFalse;
+        }
         if frames == 0 || data.numOutputs < 1 || data.outputs.is_null() {
             return kResultOk;
         }

@@ -235,13 +235,22 @@ mod test_record_output {
         }
     }
 
+    /// Asserts that a rounded value is the expected one, within far less than the rounding step.
+    fn assert_rounded(actual: Option<f64>, expected: f64) {
+        assert!(
+            actual.is_some_and(|actual| (actual - expected).abs() < 1e-9),
+            "{actual:?} is not {expected}"
+        );
+    }
+
     #[test]
     fn row_rounds_levels_and_duration() {
         let row = RecordRow::from_record(&tone_record());
-        assert_eq!(row.peak_dbfs, Some(-6.02));
-        assert_eq!(row.true_peak_dbtp, Some(-6.02));
-        assert_eq!(row.integrated_lufs, Some(-6.02));
-        assert_eq!(row.duration_seconds, 1.0);
+        assert_rounded(row.peak_dbfs, -6.02);
+        assert_rounded(row.true_peak_dbtp, -6.02);
+        assert_rounded(row.integrated_lufs, -6.02);
+        assert_rounded(row.max_short_term_lufs, -6.01);
+        assert_rounded(Some(row.duration_seconds), 1.0);
         assert_eq!(row.status, "analyzed");
     }
 

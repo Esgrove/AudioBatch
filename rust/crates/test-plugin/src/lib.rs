@@ -3,7 +3,8 @@
 //! Every kind of plugin has a gain parameter and a separate controller connected through connection points.
 //! The kinds differ in what they do to the audio and which bus arrangements they accept:
 //! a plain gain, a delay that reports its latency, an echo with a tail and a sidechain input,
-//! a plugin that outputs NaN, mono-only and stereo-only plugins, and a recorder that logs every call it gets.
+//! a plugin that outputs NaN, mono-only and stereo-only plugins, a recorder that logs every call it gets,
+//! and a plugin whose processing and component state calls fail.
 //!
 //! `factory()` returns the plugin factory for use inside the test process.
 //! The `module` example builds the same factory into a library with the VST3 entry points,
@@ -44,6 +45,9 @@ pub const ECHO_LEVEL: f32 = 0.5;
 /// The controller state every controller starts with.
 pub const INITIAL_CONTROLLER_STATE: [u8; 4] = *b"ctrl";
 
+/// Bytes of its gain state that the failing plugin writes before its `getState` reports a failure.
+pub const FAILING_STATE_BYTES: usize = 4;
+
 /// Vendor reported by the factory.
 pub const VENDOR: &str = "AudioBatch Tests";
 
@@ -74,6 +78,10 @@ pub enum Kind {
     StereoOnly,
     /// A gain that logs every call to its component, processor and controller.
     Recorder,
+    /// A gain whose `process` fails for every block with samples,
+    /// whose component `setState` refuses every state without reading it,
+    /// and whose component `getState` fails after writing the first `FAILING_STATE_BYTES` bytes of the gain.
+    Failing,
 }
 
 /// One call logged by a recorder plugin.
@@ -87,7 +95,7 @@ pub struct RecordedCall {
 
 impl Kind {
     /// Every kind, in the order the factory lists them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Gain,
         Self::Delay,
         Self::Echo,
@@ -95,6 +103,7 @@ impl Kind {
         Self::MonoOnly,
         Self::StereoOnly,
         Self::Recorder,
+        Self::Failing,
     ];
 
     /// Returns the class id of the plugin's component.
@@ -108,6 +117,7 @@ impl Kind {
             Self::MonoOnly => 5,
             Self::StereoOnly => 6,
             Self::Recorder => 7,
+            Self::Failing => 8,
         };
         uid(0x5A1C_0000, 0x0000_4000, 0x8000_0000, index)
     }
@@ -123,6 +133,7 @@ impl Kind {
             Self::MonoOnly => "Test Mono Only",
             Self::StereoOnly => "Test Stereo Only",
             Self::Recorder => "Test Recorder",
+            Self::Failing => "Test Failing",
         }
     }
 
@@ -131,7 +142,9 @@ impl Kind {
     pub const fn subcategories(self) -> &'static str {
         match self {
             Self::Delay | Self::Echo => "Fx|Delay",
-            Self::Gain | Self::NotFinite | Self::MonoOnly | Self::StereoOnly | Self::Recorder => "Fx|Dynamics",
+            Self::Gain | Self::NotFinite | Self::MonoOnly | Self::StereoOnly | Self::Recorder | Self::Failing => {
+                "Fx|Dynamics"
+            }
         }
     }
 

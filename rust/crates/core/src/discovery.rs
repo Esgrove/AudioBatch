@@ -138,6 +138,28 @@ mod test_collect_input_files {
     }
 
     #[test]
+    fn extensions_match_without_case() {
+        let directory = TempDir::new().expect("temp dir");
+        for name in ["upper.WAV", "mixed.Flac", "song.AiFf", "track.Mp3", "notes.TXT"] {
+            create(directory.path(), name);
+        }
+        let files = collect_input_files(&[directory.path().to_path_buf()], false, &|| false);
+        let names: Vec<String> = files
+            .iter()
+            .filter_map(|file| file.file_name().map(|name| name.to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(names, ["mixed.Flac", "song.AiFf", "track.Mp3", "upper.WAV"]);
+        let explicit = create(directory.path(), "explicit.OGG");
+        assert_eq!(
+            collect_input_files(std::slice::from_ref(&explicit), false, &|| false),
+            vec![normalize_path(&explicit)]
+        );
+        assert!(has_supported_extension(Path::new("a.M4A")));
+        assert!(!has_supported_extension(Path::new("a.WAVX")));
+        assert!(!has_supported_extension(Path::new("WAV")));
+    }
+
+    #[test]
     fn explicit_hidden_file_is_skipped() {
         let directory = TempDir::new().expect("temp dir");
         let hidden = create(directory.path(), ".hidden.wav");

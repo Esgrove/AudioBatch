@@ -462,6 +462,102 @@ mod test_failures {
 }
 
 #[cfg(test)]
+mod test_damaged_files {
+    use super::*;
+
+    use tempfile::TempDir;
+
+    use crate::test_helpers::{half_fixture_copy, scrambled_fixture_copy, truncated_fixture_copy};
+
+    /// Fixtures of the formats whose decoders read a file up to where it ends.
+    const STREAMING_FIXTURES: [&str; 3] = [
+        "sine_stereo_44100_16.wav",
+        "sine_stereo_44100_16.flac",
+        "sine_stereo_44100_320k.mp3",
+    ];
+
+    fn analyze(path: &Path) -> AnalysisRecord {
+        analyze_file(path, &|| false, &mut |_| {})
+    }
+
+    #[test]
+    fn a_truncated_file_is_measured_up_to_where_it_ends() {
+        let directory = TempDir::new().expect("temp dir");
+        for fixture in STREAMING_FIXTURES {
+            let record = analyze(&half_fixture_copy(&directory, fixture, &format!("half_{fixture}")));
+            assert!(record.is_ready(), "{fixture}: {}", record.error_message);
+            assert!(
+                record.length_in_samples > 0 && record.length_in_samples < 44_100,
+                "{fixture}: {}",
+                record.length_in_samples
+            );
+            let peak = 20.0 * f64::from(record.overall_peak.abs()).log10();
+            assert!(
+                (peak - test_fixtures::FIXTURE_PEAK_DECIBELS).abs() < test_fixtures::LOSSY_TOLERANCE,
+                "{fixture}: peak {peak}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_cut_inside_its_header_is_unsupported() {
+        let directory = TempDir::new().expect("temp dir");
+        for tone in test_fixtures::TONE_FIXTURES {
+            let name = format!("header_{}", tone.file_name);
+            let record = analyze(&truncated_fixture_copy(&directory, tone.file_name, &name, 30));
+            assert_eq!(record.error, Some(AnalysisError::Unsupported), "{}", tone.file_name);
+            assert_eq!(record.error_message, "Unsupported or unreadable audio file");
+            assert!(record.short_term_loudness.is_none() && record.waveform.is_none());
+        }
+    }
+
+    #[test]
+    fn an_mp4_file_cut_before_its_index_is_unsupported() {
+        let directory = TempDir::new().expect("temp dir");
+        let path = half_fixture_copy(&directory, test_fixtures::AAC_FIXTURE, "half.m4a");
+        let record = analyze(&path);
+        assert_eq!(record.error, Some(AnalysisError::Unsupported));
+    }
+
+    #[test]
+    fn damaged_packets_end_the_measurement_early() {
+        let directory = TempDir::new().expect("temp dir");
+        for fixture in ["sine_stereo_44100_16.flac", "sine_stereo_44100_320k.mp3"] {
+            let record = analyze(&scrambled_fixture_copy(
+                &directory,
+                fixture,
+                &format!("scrambled_{fixture}"),
+            ));
+            assert!(record.is_ready(), "{fixture}: {}", record.error_message);
+            assert!(
+                record.length_in_samples > 0 && record.length_in_samples < 44_100,
+                "{fixture}: {}",
+                record.length_in_samples
+            );
+        }
+    }
+
+    #[test]
+    fn an_unreadable_codec_packet_fails_the_analysis_without_a_repeatable_error() {
+        let directory = TempDir::new().expect("temp dir");
+        let path = scrambled_fixture_copy(&directory, test_fixtures::AAC_FIXTURE, "scrambled.m4a");
+        let record = analyze(&path);
+        assert!(record.has_error());
+        assert!(
+            record.error_message.starts_with("Audio decoding failed at sample"),
+            "{}",
+            record.error_message
+        );
+        assert!(
+            !record.error.is_some_and(AnalysisError::is_repeatable),
+            "{:?}",
+            record.error
+        );
+        assert!(record.short_term_loudness.is_none());
+    }
+}
+
+#[cfg(test)]
 mod test_peaks {
     use super::*;
 
