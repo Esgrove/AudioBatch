@@ -814,18 +814,21 @@ juce::PopupMenu LiveChain::createPresetsMenu(const int firstItemId) const
     }
 
     const auto currentName = getCurrentPresetName();
+    presetMenuFiles.clear();
     for (std::size_t index = 0; index < presets.size(); ++index) {
         const auto& preset = presets[index];
         menu.addItem(
             firstItemId + firstPresetMenuOffset + static_cast<int>(index), preset.name, true, preset.name == currentName
         );
+        presetMenuFiles.push_back(preset.file);
     }
 
     return menu;
 }
 
 /// Runs the presets submenu item with the given id, and returns false for an id outside the submenu.
-/// The presets are listed again, so a preset removed since the menu was built is not loaded.
+/// A preset item loads the file the menu was built with, so presets added or removed since then cannot shift it,
+/// and a preset removed since then is not loaded.
 bool LiveChain::handlePresetsMenuItem(const int itemId, const int firstItemId)
 {
     const auto offset = itemId - firstItemId;
@@ -843,13 +846,14 @@ bool LiveChain::handlePresetsMenuItem(const int itemId, const int firstItemId)
         return true;
     }
 
-    const auto presets = getPresets();
     const auto presetIndex = static_cast<std::size_t>(offset - firstPresetMenuOffset);
-    if (presetIndex >= presets.size()) {
+    if (presetIndex >= presetMenuFiles.size()) {
         return false;
     }
 
-    loadPresetAndReport(presets[presetIndex].file);
+    if (const auto file = presetMenuFiles[presetIndex]; file.existsAsFile()) {
+        loadPresetAndReport(file);
+    }
     return true;
 }
 
