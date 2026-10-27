@@ -12,6 +12,10 @@
 #include "utils/StringFormat.h"
 
 #include <array>
+#include <atomic>
+#include <limits>
+#include <memory>
+#include <optional>
 
 #if !JUCE_WINDOWS
 #include <sys/stat.h>
@@ -29,6 +33,9 @@ struct ToneFixture {
     int bitsPerSample;
     /// True for lossy formats, which get a wider level tolerance.
     bool lossy;
+    /// Exact decoded length in samples, or nothing for one second at the sample rate.
+    /// Lossy files decode to an exact length too, since their encoder delay and padding are removed.
+    std::optional<juce::int64> lengthInSamples {std::nullopt};
 };
 
 /// The tone fixtures and what analysis should report for them.
@@ -137,6 +144,7 @@ constexpr std::array toneFixtures {
         .sampleRate = 44'100,
         .bitsPerSample = 16,
         .lossy = true,
+        .lengthInSamples = noXingFixtureLength,
     },
     ToneFixture {
         .fileName = "sine_stereo_48000.ogg",
@@ -145,6 +153,16 @@ constexpr std::array toneFixtures {
         .bitsPerSample = 16,
         .lossy = true,
     },
+#if JUCE_MAC
+    // Only Core Audio decodes AAC, and it removes the priming and padding that the MP4 edit list records.
+    ToneFixture {
+        .fileName = "sine_stereo_44100_aac.m4a",
+        .channels = 2,
+        .sampleRate = 44'100,
+        .bitsPerSample = 16,
+        .lossy = true,
+    },
+#endif
 };
 
 /// Allowed level difference for lossless fixtures, in dB or LU.
@@ -316,6 +334,23 @@ public:
             expect(record.shortTermLoudness == nullptr);
         }
 
+        beginTest("Cancellation at the last check of an analysis fails it without any measurement");
+        {
+            const auto file = fixtureFile("sine_stereo_44100_16.wav");
+            const auto completeChecks = std::make_shared<std::atomic<int>>(0);
+            const auto complete = analyzeFile(file, cancelAfterChecks(std::numeric_limits<int>::max(), completeChecks));
+            expect(!complete.hasError(), complete.errorMessage);
+            expect(completeChecks->load() > 1, "the analysis must check for cancellation more than once");
+
+            for (const auto allowedChecks : {completeChecks->load() / 2, completeChecks->load() - 1}) {
+                const auto checks = std::make_shared<std::atomic<int>>(0);
+                const auto record = analyzeFile(file, cancelAfterChecks(allowedChecks, checks));
+                expect(record.error == AnalysisError::cancelled, utils::format("after {} checks", allowedChecks));
+                expect(record.shortTermLoudness == nullptr);
+                expectEquals(checks->load(), allowedChecks + 1);
+            }
+        }
+
         beginTest("An MP3 bit depth is never read from its tags");
         {
             const TemporaryDirectory directory;
@@ -449,7 +484,11 @@ private:
             juce::Decibels::gainToDecibels(record.overallTruePeak), fixturePeakDecibels, tolerance
         );
         expectWithinAbsoluteError(record.integratedLufs, fixtureLoudness, tolerance);
-        expectWithinAbsoluteError(record.durationSeconds, 1.0, 0.1);
+        const auto expectedLength = fixture.lengthInSamples.value_or(juce::int64 {fixture.sampleRate});
+        expectEquals(record.lengthInSamples, static_cast<std::int64_t>(expectedLength), "decoded length in samples");
+        expectWithinAbsoluteError(
+            record.durationSeconds, static_cast<double>(expectedLength) / fixture.sampleRate, 0.000001
+        );
         expect(record.shortTermLoudness != nullptr);
         if (record.shortTermLoudness && !record.shortTermLoudness->values.empty()) {
             const auto& history = *record.shortTermLoudness;

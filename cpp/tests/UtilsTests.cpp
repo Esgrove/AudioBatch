@@ -1,5 +1,6 @@
 /// Tests for the shared helpers in AppInfo, FileUtils, AudioFormatUtils, ThreadUtils, ConsolePrint,
-/// and DecodeFailureTracker.
+/// and DecodeFailureTracker, and for the format checks of the null test that the plugin tests rely on.
+/// The message loop check runs in a helper process, since stopping the loop ends it for the whole process.
 
 #include "analysis/BitDepthDetection.h"
 #include "analysis/DecodeFailureTracker.h"
@@ -152,27 +153,7 @@ public:
             expectEquals(utils::peakMagnitude(-0.5f), 0.5f);
         }
 
-        beginTest("Written audio is validated against the expected layout and length");
-        {
-            auto& formatManager = utils::threadLocalFormatManager();
-            const auto fixture = fixtureFile("sine_stereo_44100_16.wav");
-            const std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(fixture));
-            expect(reader != nullptr);
-            const auto length = reader->lengthInSamples;
-
-            const auto validationError =
-                [&formatManager](
-                    const juce::File& file, const int channels, const double sampleRate, const juce::int64 samples
-                ) {
-                    return utils::validateWrittenAudio(formatManager, file, channels, sampleRate, samples).error_or({});
-                };
-
-            expect(utils::validateWrittenAudio(formatManager, fixture, 2, 44'100.0, length).has_value());
-            expect(validationError(fixture, 1, 44'100.0, length).contains("channels"));
-            expect(validationError(fixture, 2, 48'000.0, length).contains("sample rate"));
-            expect(validationError(fixture, 2, 44'100.0, length + 1).contains("samples"));
-            expect(validationError(root.getChildFile("missing.aif"), 2, 44'100.0, length).contains("cannot be read"));
-        }
+        runWrittenAudioValidationTests(root);
 
         beginTest("A temporary output replaces its source in place");
         {
@@ -502,24 +483,116 @@ public:
             expect(tracker.getErrorMessage().contains("5120"), tracker.getErrorMessage());
         }
 
-        // The other checks rely on queued messages staying queued,
-        // and stopping the loop ends it for good, so this check runs last.
-        // The CLI plugin scan worker relies on this loop to receive its scan requests.
-        beginTest("The message loop of a console app dispatches messages until it is stopped");
-        {
-            // Shared, so a callback that is never dispatched does not refer to this stack frame.
-            const auto dispatched = std::make_shared<std::atomic<bool>>(false);
-            juce::MessageManager::callAsync([dispatched] {
-                *dispatched = true;
-                juce::MessageManager::getInstance()->stopDispatchLoop();
-            });
-
-            juce::MessageManager::getInstance()->runDispatchLoop();
-            expect(dispatched->load());
-        }
+        runMessageLoopTest();
+        runNullTestFormatTests();
     }
 
 private:
+    /// Checks that written audio is validated against the expected channel count, sample rate, and length.
+    void runWrittenAudioValidationTests(const juce::File& root)
+    {
+        beginTest("Written audio is validated against the expected layout and length");
+        auto& formatManager = utils::threadLocalFormatManager();
+        const auto fixture = fixtureFile("sine_stereo_44100_16.wav");
+        const std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(fixture));
+        expect(reader != nullptr, "the WAV fixture must be readable");
+        if (reader == nullptr) {
+            return;
+        }
+        const auto length = reader->lengthInSamples;
+
+        const auto validationError =
+            [&formatManager](
+                const juce::File& file, const int channels, const double sampleRate, const juce::int64 samples
+            ) { return utils::validateWrittenAudio(formatManager, file, channels, sampleRate, samples).error_or({}); };
+
+        expect(utils::validateWrittenAudio(formatManager, fixture, 2, 44'100.0, length).has_value());
+        expect(validationError(fixture, 1, 44'100.0, length).contains("channels"));
+        expect(validationError(fixture, 2, 48'000.0, length).contains("sample rate"));
+        expect(validationError(fixture, 2, 44'100.0, length + 1).contains("samples"));
+        expect(validationError(root.getChildFile("missing.aif"), 2, 44'100.0, length).contains("cannot be read"));
+    }
+
+    /// Checks in a helper process that the message loop of a console app dispatches messages until it is stopped.
+    /// Stopping the loop ends it for good, and running it dispatches every queued message,
+    /// so the check leaves the loop of the tests alone, whatever runs before or after it.
+    /// The CLI plugin scan worker relies on this loop to receive its scan requests.
+    void runMessageLoopTest()
+    {
+        beginTest("The message loop of a console app dispatches messages until it is stopped");
+        juce::ChildProcess helper;
+        expect(startHelperProcess(helper, juce::StringArray(messageLoopHelperArgument)));
+        const auto finished = helper.waitForProcessToFinish(30'000);
+        expect(finished, "the message loop helper did not finish");
+        if (!finished) {
+            helper.kill();
+        }
+        expectEquals(static_cast<int>(helper.getExitCode()), 0);
+    }
+
+    /// Checks that the null test also compares the sample rate, the bit depth, and the sample type,
+    /// using WAV copies of a 16-bit tone that hold exactly the same 16-bit sample values.
+    void runNullTestFormatTests()
+    {
+        beginTest("The null test requires the same sample rate, bit depth, and sample type to cancel");
+        const TemporaryDirectory directory;
+        const auto source = fixtureFile("sine_stereo_44100_16.wav");
+        const auto sameFormat = directory.getChildFile("same.wav");
+        const auto deeper = directory.getChildFile("deeper.wav");
+        const auto floating = directory.getChildFile("floating.wav");
+        const auto relabelled = directory.getChildFile("relabelled.wav");
+        using SampleFormat = juce::AudioFormatWriterOptions::SampleFormat;
+        expect(writeWavCopy(source, sameFormat, 44'100.0, 16, SampleFormat::integral));
+        expect(writeWavCopy(source, deeper, 44'100.0, 24, SampleFormat::integral));
+        expect(writeWavCopy(source, floating, 44'100.0, 32, SampleFormat::floatingPoint));
+        expect(writeWavCopy(source, relabelled, 48'000.0, 16, SampleFormat::integral));
+
+        const auto same = nullTestFiles(source, sameFormat);
+        expect(same.cancels(), same.describe());
+
+        for (const auto& copy : {deeper, floating, relabelled}) {
+            const auto result = nullTestFiles(source, copy);
+            expect(result.readable, copy.getFileName());
+            expectEquals(result.differingSamples, juce::int64 {0}, copy.getFileName());
+            expect(!result.expectedFormat.matches(result.actualFormat), copy.getFileName());
+            expect(!result.cancels(), copy.getFileName());
+        }
+
+        const auto floatingResult = nullTestFiles(source, floating);
+        expect(floatingResult.actualFormat.floatingPoint);
+        expect(floatingResult.describe().contains("32-bit float"), floatingResult.describe());
+        expectEquals(nullTestFiles(source, deeper).actualFormat.bitsPerSample, 24);
+        expectWithinAbsoluteError(nullTestFiles(source, relabelled).actualFormat.sampleRate, 48'000.0, 0.001);
+    }
+
+    /// Writes every sample of the source to a WAV file with the given sample rate, bit depth, and sample type.
+    /// Returns false when the source cannot be read or the copy cannot be written.
+    static bool writeWavCopy(
+        const juce::File& source,
+        const juce::File& destination,
+        const double sampleRate,
+        const int bitsPerSample,
+        const juce::AudioFormatWriterOptions::SampleFormat sampleFormat
+    )
+    {
+        const auto reader = utils::createAudioReader(source);
+        if (reader == nullptr) {
+            return false;
+        }
+
+        std::unique_ptr<juce::OutputStream> stream = destination.createOutputStream();
+        juce::WavAudioFormat format;
+        auto writer = format.createWriterFor(
+            stream,
+            juce::AudioFormatWriterOptions()
+                .withSampleRate(sampleRate)
+                .withNumChannels(static_cast<int>(reader->numChannels))
+                .withBitsPerSample(bitsPerSample)
+                .withSampleFormat(sampleFormat)
+        );
+        return writer != nullptr && writer->writeFromAudioReader(*reader, 0, reader->lengthInSamples);
+    }
+
     /// Checks that MP3 files decode with the timing and length of the audio that was encoded.
     void runMp3TimingTests()
     {

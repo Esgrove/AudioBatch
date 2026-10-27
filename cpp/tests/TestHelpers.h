@@ -1,15 +1,20 @@
 /// Shared helpers for the AudioBatch tests.
 /// Declares TemporaryDirectory, which owns a scratch folder that is deleted with it,
 /// the functions that locate the committed audio fixtures in the root fixtures directory, and level helpers.
+/// Also declares the counting cancellation check,
+/// and the helper modes that run the test executable again as a child process.
 
 #pragma once
 
 #include "analysis/AudioAnalysisTypes.h"
 #include "normalization/AudioNormalization.h"
 #include "serato/SeratoTagTypes.h"
+#include "utils/ThreadUtils.h"
 
 #include <JuceHeader.h>
 
+#include <atomic>
+#include <memory>
 #include <optional>
 #include <variant>
 
@@ -35,6 +40,14 @@ constexpr juce::int64 clickFixtureLength {22'050};
 /// Decoded length of the MP3 tone without the Xing frame:
 /// its 40 frames of 1152 samples without the 529 samples of decoder delay.
 constexpr juce::int64 noXingFixtureLength {(40 * 1152) - 529};
+
+/// First argument that makes the test executable run the message loop check of runHelperProcess and exit.
+constexpr auto messageLoopHelperArgument {"--message-loop-helper"};
+/// First argument that makes the test executable hold a plugin scan lock for runHelperProcess.
+/// It is followed by the lock name and the file whose creation releases the lock.
+constexpr auto scanLockHelperArgument {"--scan-lock-helper"};
+/// Line a scan lock helper prints once it holds the lock.
+constexpr auto scanLockHeldLine {"held"};
 
 /// Observes simulated driver ownership without touching hardware. Must outlive the installed device manager.
 struct TestAudioDeviceState {
@@ -91,14 +104,33 @@ public:
 
     /// Copies a fixture into the folder, optionally under a new name, and returns the copy.
     /// Tests that modify files work on copies so the committed fixtures never change.
+    /// Logs which fixture could not be copied and throws when the copy fails,
+    /// since every later check on the missing copy would fail with a misleading message.
+    /// The JUCE runner reports the exception as a failure of the suite.
     [[nodiscard]] juce::File copyFixture(const juce::String& fixtureName, const juce::String& copyName = {}) const;
 
 private:
     juce::File directory;
 };
 
+/// Sample format of one file in a null test, as its reader reports it.
+struct NullTestFormat {
+    /// Returns true when both formats have the same sample rate, bit depth, and sample type.
+    [[nodiscard]] bool matches(const NullTestFormat& other) const noexcept
+    {
+        return juce::approximatelyEqual(sampleRate, other.sampleRate) && bitsPerSample == other.bitsPerSample
+            && floatingPoint == other.floatingPoint;
+    }
+
+    double sampleRate {0.0};
+    int bitsPerSample {0};
+    /// True for a file that stores floating point samples instead of integers.
+    bool floatingPoint {false};
+};
+
 /// Result of a null test that subtracts an expected file from an actual file, sample by sample in 16-bit steps.
 /// Both files are read as integer sample values, so any difference of a single step counts.
+/// The files must also have the same sample rate, bit depth, and integer or floating point samples to cancel.
 struct NullTestResult {
     /// False when either file could not be read, which leaves every other field empty.
     bool readable {false};
@@ -106,6 +138,8 @@ struct NullTestResult {
     int actualChannels {0};
     juce::int64 expectedLength {0};
     juce::int64 actualLength {0};
+    NullTestFormat expectedFormat;
+    NullTestFormat actualFormat;
     /// Number of samples over all channels that differ within the common length.
     juce::int64 differingSamples {0};
     /// Largest absolute difference within the common length, in 16-bit steps.
@@ -115,15 +149,15 @@ struct NullTestResult {
     /// Only computed when the files do not cancel.
     int bestLag {0};
 
-    /// Returns true when both files have the same layout and length and every sample cancels out.
+    /// Returns true when both files have the same format, layout, and length, and every sample cancels out.
     [[nodiscard]] bool cancels() const noexcept
     {
-        return readable && expectedChannels == actualChannels && expectedLength == actualLength
-            && differingSamples == 0;
+        return readable && expectedFormat.matches(actualFormat) && expectedChannels == actualChannels
+            && expectedLength == actualLength && differingSamples == 0;
     }
 
     /// Describes the result for a failed expectation:
-    /// the layouts and lengths, the differing sample count, the residual peak in dBFS, and the best lag.
+    /// the formats, layouts and lengths, the differing sample count, the residual peak in dBFS, and the best lag.
     [[nodiscard]] juce::String describe() const;
 };
 
@@ -158,4 +192,10 @@ std::optional<Value> tagValue(const serato::TagReadResult& result)
 
 void installTestAudioDevice(juce::AudioDeviceManager& manager, TestAudioDeviceState& state);
 void renderTestAudioDevice(const TestAudioDeviceState& state, int sampleCount = 512);
+
+utils::CancellationCheck cancelAfterChecks(int allowedChecks, std::shared_ptr<std::atomic<int>> calls);
+
+std::optional<int> runHelperProcess(const juce::StringArray& arguments);
+bool startHelperProcess(juce::ChildProcess& process, const juce::StringArray& helperArguments);
+juce::String readHelperLine(juce::ChildProcess& process);
 }  // namespace audiobatch::tests

@@ -141,5 +141,6 @@ juce::StringArray findSkippedInputs(
 [[nodiscard]] std::expected<CliCommand, CliParseError> parseArguments(const juce::ArgumentList& commandLine);
 
 [[nodiscard]] int runAnalysis(const AnalyzeCommand& command);
+[[nodiscard]] int runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache);
 }  // namespace cli
 }  // namespace audiobatch

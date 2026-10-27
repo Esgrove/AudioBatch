@@ -3,7 +3,10 @@
 /// Covers option values, aliases, subcommands, the combinations the CLI rejects, and the machine-readable record
 /// fields, the option matching and UTF-8 decoding of process arguments fixed in the JUCE fork, and the errors for
 /// inputs that produced no result.
+/// Also runs the analysis workflow with a cache in a temporary folder and checks its exit codes.
 
+#include "analysis/AnalysisCache.h"
+#include "analysis/AudioAnalysis.h"
 #include "cli/AudioAnalysisCli.h"
 #include "cli/AudioAnalysisCliOutput.h"
 #include "cli/CliOptions.h"
@@ -344,6 +347,7 @@ public:
 
         runInputTests();
         runOutputTests();
+        runAnalysisExitCodeTests();
         runCompletionTests();
     }
 
@@ -542,6 +546,75 @@ private:
             expect(parsed[1]["integratedLufs"].isVoid());
             expectEquals(parsed[2]["status"].toString(), juce::String("failed"));
             expectEquals(parsed[2]["error"].toString(), failed.errorMessage);
+        }
+    }
+
+    /// Runs the analysis workflow of the CLI with a cache in a temporary folder and checks its exit codes:
+    /// 0 when every input was analyzed and normalized, and 2 when any input was skipped or failed.
+    void runAnalysisExitCodeTests()
+    {
+        const TemporaryDirectory directory;
+        AnalysisCache cache(directory.getChildFile("cli_cache.db"));
+        const auto makeCommand = [](const juce::Array<juce::File>& inputs) {
+            AnalyzeCommand command;
+            command.inputPaths = inputs;
+            command.workerCount = 2;
+            command.outputFormat = AudioAnalysisOutputFormat::json;
+            return command;
+        };
+
+        beginTest("The analysis exits with 0 when every input is analyzed, and stores the results in the given cache");
+        {
+            const auto first = directory.copyFixture("sine_stereo_44100_16.wav", "first.wav");
+            const auto second = directory.copyFixture("sine_mono_44100_16.wav", "second.wav");
+            expectEquals(cli::runAnalysis(makeCommand({first, second}), cache), 0);
+            expect(cache.getAnalysis(first).has_value());
+            expect(cache.getAnalysis(second).has_value());
+
+            // The second run reads both results from the cache and still succeeds.
+            expectEquals(cli::runAnalysis(makeCommand({first, second}), cache), 0);
+        }
+
+        beginTest("The analysis exits with 2 for a missing, unsupported, or broken input among good ones");
+        {
+            const auto good = directory.copyFixture("sine_stereo_44100_16.wav", "good.wav");
+            const auto text = directory.getChildFile("notes.txt");
+            expect(text.replaceWithText("not audio"));
+            const auto broken = directory.copyFixture("broken.wav");
+            for (const auto& bad : {directory.getChildFile("missing.wav"), text, broken}) {
+                expectEquals(cli::runAnalysis(makeCommand({good, bad}), cache), 2, bad.getFileName());
+            }
+        }
+
+        beginTest("Normalizing in place exits with 0, and a refused or conflicting file exits with 2");
+        {
+            const auto inPlace = directory.copyFixture("sine_stereo_44100_16.aif", "normalized.aif");
+            auto command = makeCommand({inPlace});
+            command.normalization = testNormalizationOptions();
+            command.normalization->targetPeakDbfs = -1.0;
+            expectEquals(cli::runAnalysis(command, cache), 0);
+            expectWithinAbsoluteError(peakDecibels(analyzeFile(inPlace)), -1.0, 0.01);
+
+            const auto silent = directory.copyFixture("silence_stereo_44100_16.wav", "silent.wav");
+            command.inputPaths = {silent};
+            expectEquals(cli::runAnalysis(command, cache), 2);
+            expect(silent.existsAsFile());
+
+            const auto winner = directory.copyFixture("sine_stereo_44100_16.aif", "conflict.aif");
+            const auto loser = directory.copyFixture("sine_stereo_44100_16.wav", "conflict.wav");
+            command.inputPaths = {winner, loser};
+            expectEquals(cli::runAnalysis(command, cache), 2);
+            expect(loser.existsAsFile());
+        }
+
+        beginTest("The analysis still succeeds when the cache cannot be opened");
+        {
+            const auto notDatabase = directory.getChildFile("not_a_database.db");
+            expect(notDatabase.replaceWithText("This text is not an SQLite database."));
+            AnalysisCache brokenCache(notDatabase);
+            const auto file = directory.copyFixture("sine_stereo_44100_16.wav", "uncached.wav");
+            expectEquals(cli::runAnalysis(makeCommand({file}), brokenCache), 0);
+            expect(!brokenCache.getAnalysis(file).has_value());
         }
     }
 };

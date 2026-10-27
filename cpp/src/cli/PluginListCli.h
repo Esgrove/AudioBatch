@@ -26,5 +26,11 @@ enum class PluginListGrouping : std::uint8_t {
 namespace cli
 {
 [[nodiscard]] int runPluginList(bool rescan, PluginListGrouping grouping);
+[[nodiscard]] int runPluginList(
+    bool rescan,
+    PluginListGrouping grouping,
+    const juce::PropertiesFile::Options& settingsOptions,
+    const juce::String& scanLockName
+);
 }  // namespace cli
 }  // namespace audiobatch

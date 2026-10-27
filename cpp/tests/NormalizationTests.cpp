@@ -1,28 +1,25 @@
-/// Tests for the normalization functions and NormalizeCoordinator.
-/// Covers output path resolution, batch output conflicts, refusal to overwrite unrelated files, cancellation, the level
-/// and sample rate of the written output, and the tags and art carried over to it.
-/// The coordinator tests check which files a run queues, what it publishes, and that a cancelled run goes quiet.
-/// Only in-place `.aif` sources are normalized successfully here,
-/// because converting other formats moves the original to the system trash.
+/// Tests for the normalization functions.
+/// Covers output path resolution, batch output conflicts, refusal to overwrite unrelated files,
+/// cancellation at every check, the level, sample rate, and bit depth of the written output,
+/// the largest gain normalization applies,
+/// and the tags and art carried over to the output, in place and when converting to AIFF.
+/// A converted source is deleted instead of moved to the system trash, so the tests never touch the user's trash.
+/// NormalizeCoordinatorTests.cpp covers the coordinator of a normalization run.
 
 #include "analysis/AudioAnalysis.h"
 #include "metadata/AudioMetadata.h"
 #include "normalization/AudioNormalization.h"
-#include "normalization/NormalizeCoordinator.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/AudioFormatUtils.h"
 #include "utils/StringFormat.h"
-#include <condition_variable>
 #include <type_traits>
 
 #include <algorithm>
-#include <chrono>
-#include <mutex>
-#include <optional>
-#include <ranges>
-#include <set>
-#include <span>
-#include <thread>
+#include <atomic>
+#include <limits>
+#include <memory>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -33,34 +30,10 @@ namespace
 /// Allowed difference between the normalized peak and 0 dBFS, in dB.
 constexpr double peakTolerance = 0.01;
 
-/// How long a coordinator test waits for a run to reach the expected state before it fails.
-constexpr auto coordinatorTimeout {std::chrono::seconds(10)};
-
-/// What a coordinator published during one run, collected from its callbacks.
-struct CoordinatorRun {
-    /// Number of files the run queued, as returned by start.
-    int queuedFiles {0};
-    /// Total the completion callback reported, or -1 when the run never completed.
-    int completedFiles {-1};
-    /// Files in the order their normalization started.
-    std::vector<juce::File> startedFiles;
-    /// Results in the order they were published.
-    std::vector<AudioNormalizationResult> results;
-    /// Every run id the callbacks carried.
-    std::set<int> runIds;
-};
-
 /// Builds an analysis record for a file path without analyzing it.
 AudioAnalysisRecord recordForPath(const juce::String& path)
 {
     return AudioAnalysisRecord::fromFile(juce::File(path));
-}
-
-/// Returns the published result for the given source file, or nothing when the run published none.
-std::optional<AudioNormalizationResult> findResult(const CoordinatorRun& run, const juce::File& file)
-{
-    const auto result = std::ranges::find(run.results, file, &AudioNormalizationResult::file);
-    return result != run.results.end() ? std::optional(*result) : std::nullopt;
 }
 }  // namespace
 
@@ -76,242 +49,226 @@ public:
         runOutputPathTests();
         runConflictTests();
         runFileTests();
-        runCoordinatorTests();
+        runGainLimitTests();
+        runConversionTests();
+        runLateCancellationTests();
     }
 
 private:
-    /// Runs a batch through a new coordinator and collects its callbacks until the completion callback.
-    CoordinatorRun runToCompletion(
-        const std::vector<AudioAnalysisRecord>& records,
-        const AudioNormalizationOptions& options,
-        const int workerCount
-    )
+    /// Checks both sides of the largest gain normalization applies, and loudness mode on digital silence.
+    void runGainLimitTests()
     {
-        CoordinatorRun run;
-        std::mutex mutex;
-        std::condition_variable condition;
-        NormalizeCoordinator coordinator(workerCount);
-        coordinator.setStartingCallback([&](const juce::File& file, const int runId) {
-            const std::scoped_lock lock(mutex);
-            run.startedFiles.push_back(file);
-            run.runIds.insert(runId);
-        });
-        coordinator.setResultCallback([&](const AudioNormalizationResult& result, const int runId) {
-            const std::scoped_lock lock(mutex);
-            run.results.push_back(result);
-            run.runIds.insert(runId);
-        });
-        coordinator.setCompletionCallback([&](const int totalFiles, const int runId) {
-            const std::scoped_lock lock(mutex);
-            run.completedFiles = totalFiles;
-            run.runIds.insert(runId);
-            condition.notify_all();
-        });
+        beginTest("A gain of exactly 40 dB is applied and anything above it is refused");
+        {
+            auto record = analyzeFile(fixtureFile("sine_stereo_44100_16.aif"));
+            // -46 dBFS, low enough that the true peak ceiling never limits the gain below.
+            record.overallPeak = 0.005f;
+            record.overallTruePeak = 0.005;
+            auto options = testNormalizationOptions();
+            options.mode = AudioNormalizationMode::loudness;
+            options.targetLufs = -14.0;
 
-        run.queuedFiles = coordinator.start(records, options);
-        std::unique_lock lock(mutex);
-        expect(condition.wait_for(lock, coordinatorTimeout, [&] { return run.completedFiles >= 0; }));
-        return run;
+            // Both values are whole numbers, so the gain is exactly the limit.
+            record.integratedLufs = options.targetLufs - AudioNormalizationOptions::maximumGainDb;
+            const auto atLimit = getNormalizationGain(record, options);
+            expect(atLimit.has_value(), atLimit.error_or({}));
+            expectWithinAbsoluteError(
+                static_cast<double>(juce::Decibels::gainToDecibels(atLimit.value_or(LinearGain {0.0f}).value)),
+                AudioNormalizationOptions::maximumGainDb,
+                0.001
+            );
+
+            record.integratedLufs -= 0.01;
+            const auto aboveLimit = getNormalizationGain(record, options);
+            expect(!aboveLimit.has_value());
+            expect(aboveLimit.error_or({}).contains("more than 40 dB"), aboveLimit.error_or({}));
+
+            options.mode = AudioNormalizationMode::peak;
+            options.targetPeakDbfs = 0.0;
+            record.overallPeak = juce::Decibels::decibelsToGain(-39.99f);
+            expect(getNormalizationGain(record, options).has_value());
+            record.overallPeak = juce::Decibels::decibelsToGain(-40.01f);
+            expect(!getNormalizationGain(record, options).has_value());
+        }
+
+        beginTest("Loudness mode refuses digital silence and a file without measurable loudness");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.copyFixture("silence_stereo_44100_16.wav");
+            const auto record = analyzeFile(source);
+            auto options = testNormalizationOptions();
+            options.mode = AudioNormalizationMode::loudness;
+
+            const auto gain = getNormalizationGain(record, options);
+            expect(!gain.has_value());
+            expectEquals(gain.error_or({}), juce::String("File contains no signal that can be normalized"));
+
+            const auto result = normalizeFile(record, options);
+            expect(result.hasError());
+            expectEquals(outcomeError(result.outcome), gain.error_or({}));
+            expect(source.existsAsFile());
+            expect(!getNormalizationOutputFile(source).exists());
+
+            // A single click has a peak, but the gate leaves no loudness to measure.
+            auto click = analyzeFile(fixtureFile("click_mono_44100_16.wav"));
+            click.integratedLufs = AudioAnalysisRecord::negativeInfinityLoudness;
+            const auto clickGain = getNormalizationGain(click, options);
+            expectEquals(clickGain.error_or({}), juce::String("File has no measurable loudness to normalize"));
+            options.mode = AudioNormalizationMode::peak;
+            expect(getNormalizationGain(click, options).has_value());
+        }
     }
 
-    /// Checks the files a coordinator run queues, what it publishes for them, and cancellation.
-    void runCoordinatorTests()
+    /// Converts sources of other formats to AIFF, checking the tags and art carried over and the output bit depth.
+    void runConversionTests()
     {
-        const TemporaryDirectory directory;
+        beginTest("Converting a FLAC or MP3 file to AIFF keeps its tags and cover art");
+        for (const auto* fixtureName : {"tagged_stereo_44100_16.flac", "sine_stereo_44100_320k.mp3"}) {
+            const TemporaryDirectory directory;
+            const auto source = directory.copyFixture(fixtureName);
+            AudioMetadata metadata;
+            expect(readMetadata(source, metadata) || metadata.isEmpty());
+            std::erase_if(metadata.properties, [](const MetadataProperty& property) {
+                return property.key == "TITLE";
+            });
+            metadata.properties.push_back({.key = "TITLE", .values = {"Converted tone"}});
+            metadata.properties.push_back({.key = "CUSTOM_FIELD", .values = {"custom value"}});
+            const juce::String pictureText("cover art bytes");
+            metadata.pictures.push_back({
+                .data = juce::MemoryBlock(pictureText.toRawUTF8(), pictureText.getNumBytesAsUTF8()),
+                .mimeType = "image/png",
+                .description = "cover",
+                .pictureType = "Front Cover",
+            });
+            expect(writeMetadata(source, metadata), fixtureName);
 
-        beginTest("The coordinator normalizes each file once, fails a missing file, and then reports completion");
-        {
-            std::vector<AudioAnalysisRecord> records;
-            for (const auto* fileName : {"first.aif", "second.aif", "third.aif"}) {
-                records.push_back(analyzeFile(directory.copyFixture("sine_stereo_44100_16.aif", fileName)));
+            const auto result = normalizeFile(analyzeFile(source), testNormalizationOptions());
+            expect(!result.hasError(), outcomeError(result.outcome));
+            const auto output = getNormalizationOutputFile(source);
+            expect(output.existsAsFile(), fixtureName);
+            expect(!source.exists(), "a converted source is disposed of");
+
+            AudioMetadata written;
+            expect(readMetadata(output, written), fixtureName);
+            const auto valueOf = [&written](const juce::String& key) {
+                const auto property = std::ranges::find(written.properties, key, &MetadataProperty::key);
+                return property != written.properties.end() && !property->values.isEmpty() ? property->values[0]
+                                                                                           : juce::String();
+            };
+            expectEquals(valueOf("TITLE"), juce::String("Converted tone"), fixtureName);
+            expectEquals(valueOf("CUSTOM_FIELD"), juce::String("custom value"), fixtureName);
+            expectEquals(static_cast<int>(written.pictures.size()), 1, fixtureName);
+            if (!written.pictures.empty()) {
+                expect(written.pictures.front().data == metadata.pictures.back().data, fixtureName);
+                expectEquals(written.pictures.front().mimeType, juce::String("image/png"), fixtureName);
             }
-            records.push_back(records.front());
-            const auto missingFile = directory.getChildFile("missing.aif");
-            records.push_back(recordForPath(missingFile.getFullPathName()));
+        }
+
+        beginTest(
+            "Converted output keeps a supported source bit depth, writes lossy sources as 16-bit, and float as 24"
+        );
+        for (const auto& [fixtureName, expectedBits] :
+             {
+                 std::pair {"sine_stereo_44100_16.wav", 16},
+                 std::pair {"sine_stereo_48000_24.flac", 24},
+                 std::pair {"sine_stereo_44100_32f.wav", 24},
+                 std::pair {"sine_stereo_44100_320k.mp3", 16},
+                 std::pair {"sine_stereo_48000.ogg", 16},
+             })
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.copyFixture(fixtureName);
+            const auto record = analyzeFile(source);
+            const auto sourceReader = utils::createAudioReader(source);
+            expect(sourceReader != nullptr, fixtureName);
+            if (sourceReader != nullptr) {
+                expectEquals(getNormalizationOutputBitDepth(record, *sourceReader), expectedBits, fixtureName);
+            }
+
             auto options = testNormalizationOptions();
             options.targetPeakDbfs = -1.0;
-
-            const auto run = runToCompletion(records, options, 2);
-            expectEquals(run.queuedFiles, 4);
-            expectEquals(run.completedFiles, 4);
-            expectEquals(static_cast<int>(run.startedFiles.size()), 4);
-            expectEquals(static_cast<int>(run.results.size()), 4);
-            expectEquals(static_cast<int>(run.runIds.size()), 1);
-            const auto missingResult = findResult(run, missingFile);
-            expect(missingResult.has_value());
-            if (missingResult) {
-                expectEquals(outcomeError(missingResult->outcome), juce::String("File does not exist"));
+            const auto result = normalizeFile(record, options);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            const auto outputReader = utils::createAudioReader(getNormalizationOutputFile(source));
+            expect(outputReader != nullptr, fixtureName);
+            if (outputReader != nullptr) {
+                expectEquals(static_cast<int>(outputReader->bitsPerSample), expectedBits, fixtureName);
+                expect(!outputReader->usesFloatingPointData, fixtureName);
+                expectEquals(static_cast<int>(outputReader->sampleRate), record.sampleRate, fixtureName);
+                expectEquals(outputReader->lengthInSamples, static_cast<juce::int64>(record.lengthInSamples));
             }
-            for (const auto& record : std::span(records).first(3)) {
-                const auto result = findResult(run, record.file);
-                expect(result.has_value(), record.fileName);
-                if (result) {
-                    expect(!result->hasError(), outcomeError(result->outcome));
-                    if (!result->hasError()) {
-                        expectWithinAbsoluteError(peakDecibels(outcomeRecord(result->outcome)), -1.0, peakTolerance);
-                    }
+        }
+
+        beginTest("A record without a bit depth uses 16 bits for MP3 and the reader's depth otherwise");
+        {
+            for (const auto& [fixtureName, expectedBits] :
+                 {
+                     std::pair {"sine_stereo_44100_320k.mp3", 16},
+                     std::pair {"sine_stereo_48000_24.wav", 24},
+                 })
+            {
+                auto record = analyzeFile(fixtureFile(fixtureName));
+                record.bitsPerSample = 0;
+                const auto reader = utils::createAudioReader(fixtureFile(fixtureName));
+                expect(reader != nullptr, fixtureName);
+                if (reader != nullptr) {
+                    expectEquals(getNormalizationOutputBitDepth(record, *reader), expectedBits, fixtureName);
                 }
             }
         }
-
-        beginTest("A source that loses its output path fails without being normalized");
-        {
-            const auto converted = directory.copyFixture("sine_stereo_44100_16.wav", "song.wav");
-            const auto inPlace = directory.copyFixture("sine_stereo_44100_16.aif", "song.aif");
-
-            const auto run
-                = runToCompletion({analyzeFile(converted), analyzeFile(inPlace)}, testNormalizationOptions(), 1);
-            expectEquals(run.queuedFiles, 2);
-            expectEquals(run.completedFiles, 2);
-            expect(run.startedFiles == std::vector {inPlace});
-            const auto result = findResult(run, converted);
-            expect(result.has_value());
-            if (result) {
-                expect(result->hasError());
-                expectEquals(outcomeError(result->outcome), batchOutputConflictMessage(converted));
-            }
-            expect(converted.existsAsFile());
-        }
-
-        beginTest("A run without files completes at once with no files");
-        {
-            const auto run = runToCompletion({}, testNormalizationOptions(), 1);
-            expectEquals(run.queuedFiles, 0);
-            expectEquals(run.completedFiles, 0);
-            expect(run.results.empty());
-        }
-
-        beginTest("A cancelled run publishes nothing more and leaves its files unchanged");
-        testCoordinatorCancellation(directory);
-
-        beginTest("A stopped run reports its unfinished files as cancelled, leaves them unchanged, and completes");
-        testCoordinatorStop(directory);
     }
 
-    /// Holds the first file of a run in its starting callback, asks the run to stop,
-    /// and checks that every file is published as cancelled, the run completes, and no output is written.
-    void testCoordinatorStop(const TemporaryDirectory& directory)
+    /// Counts the cancellation checks of a complete in-place normalization,
+    /// then cancels the same normalization at its first, a middle, and its last check.
+    /// The last check comes after the output was written and validated, just before it would replace the source,
+    /// so it covers the cleanup of a finished temporary output.
+    void runLateCancellationTests()
     {
-        std::vector<AudioAnalysisRecord> records;
-        std::vector<juce::MemoryBlock> originalBytes;
-        for (const auto* fileName : {"stop_held.aif", "stop_queued.aif"}) {
-            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", fileName);
-            records.push_back(analyzeFile(source));
-            expect(source.loadFileAsData(originalBytes.emplace_back()));
-        }
-
-        std::mutex mutex;
-        std::condition_variable condition;
-        int startedFiles = 0;
-        std::vector<AudioNormalizationResult> results;
-        int completedFiles = -1;
-        bool released = false;
-        NormalizeCoordinator coordinator(1);
-        coordinator.setStartingCallback([&](const juce::File& /*file*/, int /*runId*/) {
-            std::unique_lock lock(mutex);
-            ++startedFiles;
-            condition.notify_all();
-            condition.wait_for(lock, coordinatorTimeout, [&] { return released; });
-        });
-        coordinator.setResultCallback([&](const AudioNormalizationResult& result, int /*runId*/) {
-            const std::scoped_lock lock(mutex);
-            results.push_back(result);
-        });
-        coordinator.setCompletionCallback([&](const int totalFiles, int /*runId*/) {
-            const std::scoped_lock lock(mutex);
-            completedFiles = totalFiles;
-            condition.notify_all();
-        });
-
-        auto options = testNormalizationOptions();
-        options.targetPeakDbfs = -1.0;
-        expectEquals(coordinator.start(records, options), 2);
-        std::unique_lock lock(mutex);
-        expect(condition.wait_for(lock, coordinatorTimeout, [&] { return startedFiles == 1; }));
-        coordinator.requestStop();
-        released = true;
-        condition.notify_all();
-        expect(condition.wait_for(lock, coordinatorTimeout, [&] { return completedFiles >= 0; }));
-
-        expectEquals(completedFiles, 2);
-        expectEquals(startedFiles, 1);
-        expectEquals(static_cast<int>(results.size()), 2);
-        for (const auto& result : results) {
-            const auto* failed = std::get_if<OperationFailed>(&result.outcome);
-            expect(failed != nullptr && failed->cancelled, result.fileName);
-        }
-        for (const auto& [record, original] : std::views::zip(records, originalBytes)) {
-            juce::MemoryBlock remaining;
-            expect(record.file.loadFileAsData(remaining));
-            expect(remaining == original, record.fileName);
-        }
-    }
-
-    /// Holds the first file of a run in its starting callback, cancels the run from another thread,
-    /// and checks that the run publishes no result or completion and writes no output.
-    void testCoordinatorCancellation(const TemporaryDirectory& directory)
-    {
-        std::vector<AudioAnalysisRecord> records;
-        std::vector<juce::MemoryBlock> originalBytes;
-        for (const auto* fileName : {"held.aif", "queued.aif"}) {
-            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", fileName);
-            records.push_back(analyzeFile(source));
-            expect(source.loadFileAsData(originalBytes.emplace_back()));
-        }
-
-        std::mutex mutex;
-        std::condition_variable condition;
-        int startedFiles = 0;
-        int publishedResults = 0;
-        bool completed = false;
-        bool released = false;
-        NormalizeCoordinator coordinator(1);
-        coordinator.setStartingCallback([&](const juce::File& /*file*/, int /*runId*/) {
-            std::unique_lock lock(mutex);
-            ++startedFiles;
-            condition.notify_all();
-            condition.wait_for(lock, coordinatorTimeout, [&] { return released; });
-        });
-        coordinator.setResultCallback([&](const AudioNormalizationResult& /*result*/, int /*runId*/) {
-            const std::scoped_lock lock(mutex);
-            ++publishedResults;
-        });
-        coordinator.setCompletionCallback([&](int /*totalFiles*/, int /*runId*/) {
-            const std::scoped_lock lock(mutex);
-            completed = true;
-        });
-
-        auto options = testNormalizationOptions();
-        options.targetPeakDbfs = -1.0;
-        expectEquals(coordinator.start(records, options), 2);
-        const auto runId = coordinator.getCurrentRunId();
+        beginTest("Cancelling at any later check leaves the source unchanged and removes the temporary output");
+        std::vector<int> allowedCheckCounts;
         {
-            std::unique_lock lock(mutex);
-            expect(condition.wait_for(lock, coordinatorTimeout, [&] { return startedFiles == 1; }));
+            const TemporaryDirectory directory;
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "complete.aif");
+            auto options = testNormalizationOptions();
+            options.targetPeakDbfs = -1.0;
+            const auto checks = std::make_shared<std::atomic<int>>(0);
+            const auto result = normalizeFile(
+                analyzeFile(source), options, cancelAfterChecks(std::numeric_limits<int>::max(), checks)
+            );
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expect(checks->load() > 1, "normalization must check for cancellation more than once");
+            allowedCheckCounts = {0, checks->load() / 2, checks->load() - 1};
         }
 
-        {
-            // The run id changes before cancelAndWait starts waiting for the held job,
-            // so the job sees the cancellation as soon as it is released.
-            const std::jthread canceller([&coordinator] { coordinator.cancelAndWait(); });
-            const auto deadline = std::chrono::steady_clock::now() + coordinatorTimeout;
-            while (coordinator.getCurrentRunId() == runId && std::chrono::steady_clock::now() < deadline) {
-                std::this_thread::yield();
-            }
-            expect(coordinator.getCurrentRunId() != runId);
-            const std::scoped_lock lock(mutex);
-            released = true;
-            condition.notify_all();
-        }
+        for (const auto allowedChecks : allowedCheckCounts) {
+            const TemporaryDirectory directory;
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "late_cancel.aif");
+            juce::MemoryBlock originalBytes;
+            expect(source.loadFileAsData(originalBytes));
+            auto options = testNormalizationOptions();
+            options.targetPeakDbfs = -1.0;
+            int disposedCount = 0;
+            options.disposeFile = [&disposedCount](const juce::File& file) {
+                ++disposedCount;
+                return file.deleteFile();
+            };
 
-        const std::scoped_lock lock(mutex);
-        expectEquals(startedFiles, 1);
-        expectEquals(publishedResults, 0);
-        expect(!completed);
-        for (const auto& [record, original] : std::views::zip(records, originalBytes)) {
-            juce::MemoryBlock remaining;
-            expect(record.file.loadFileAsData(remaining));
-            expect(remaining == original, record.fileName);
+            const auto checks = std::make_shared<std::atomic<int>>(0);
+            const auto result = normalizeFile(analyzeFile(source), options, cancelAfterChecks(allowedChecks, checks));
+            const auto context = utils::format("cancelled after {} checks", allowedChecks);
+            expect(result.hasError(), context);
+            expect(outcomeError(result.outcome).containsIgnoreCase("cancel"), outcomeError(result.outcome));
+            expectEquals(checks->load(), allowedChecks + 1, context);
+            expectEquals(disposedCount, 0, context);
+            juce::MemoryBlock remainingBytes;
+            expect(source.loadFileAsData(remainingBytes));
+            expect(remainingBytes == originalBytes, context);
+            const auto leftovers = source.getParentDirectory().findChildFiles(
+                juce::File::findFiles | juce::File::ignoreHiddenFiles, false
+            );
+            const auto hiddenLeftovers = source.getParentDirectory().findChildFiles(juce::File::findFiles, false);
+            expectEquals(leftovers.size(), 1, context);
+            expectEquals(hiddenLeftovers.size(), 1, context);
         }
     }
 

@@ -13,6 +13,9 @@ namespace audiobatch::tests
 /// Creates the suite that analyzes the committed audio fixtures and checks the measured levels.
 std::unique_ptr<juce::UnitTest> createAnalysisTests();
 
+/// Creates the suite that checks the plans, results, and replaced runs of the analysis coordinator.
+std::unique_ptr<juce::UnitTest> createAnalysisCoordinatorTests();
+
 /// Creates the suite that checks the blocked reasons and progress of the background work of the main view.
 std::unique_ptr<juce::UnitTest> createBackgroundWorkTests();
 
@@ -37,12 +40,27 @@ std::unique_ptr<juce::UnitTest> createMetadataTests();
 /// and null tests the output of the repository's test VST3 against the committed expected files.
 std::unique_ptr<juce::UnitTest> createPluginPresetTests();
 
+/// Creates the suite that checks the queuing, cancellation, and stop requests of plugin processing runs,
+/// and the creation of their plugin chains.
+std::unique_ptr<juce::UnitTest> createPluginCoordinatorTests();
+
+/// Creates the suite that checks the plugin scan lock, the known-plugins list file, and the CLI plugin listing.
+std::unique_ptr<juce::UnitTest> createPluginScanTests();
+
 /// Creates the suite that runs files through in-process test plugins.
 std::unique_ptr<juce::UnitTest> createProcessingTests();
+
+/// Creates the suite that checks the live preview renderer and the latency of the preview chain.
 std::unique_ptr<juce::UnitTest> createPreviewPlaybackTests();
+
+/// Creates the suite that checks the preview player, its simulated output device, and the preview preferences.
+std::unique_ptr<juce::UnitTest> createPreviewPlayerTests();
 
 /// Creates the suite that checks normalization output paths, collisions, and the written audio.
 std::unique_ptr<juce::UnitTest> createNormalizationTests();
+
+/// Creates the suite that checks the files a normalization run queues, what it publishes, and its cancellation.
+std::unique_ptr<juce::UnitTest> createNormalizeCoordinatorTests();
 
 /// Creates the suite that checks the transitions between an empty, released, and loaded preview.
 std::unique_ptr<juce::UnitTest> createPreviewControllerTests();
