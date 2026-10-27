@@ -138,7 +138,7 @@ impl InsertRenderer {
         let channels = device.channels.max(1);
         let total = output.len() / channels;
         let block_limit = insert.max_block_frames().clamp(1, SCRATCH_FRAMES);
-        let gain = shared.gain();
+        let gain = shared.insert_gain();
         let mut offset = 0;
         let mut underrun = false;
         while offset < total && playback.active {

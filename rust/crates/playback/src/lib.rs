@@ -293,15 +293,18 @@ impl Player {
         let _ = self.commands.send(Command::Seek { seconds, generation });
     }
 
-    /// Sets the linear output gain.
-    pub fn set_gain(&self, gain: f32) {
-        self.shared.gain_bits.store(gain.max(0.0).to_bits(), Ordering::Relaxed);
+    /// Sets the linear gain applied before the preview insert, such as a file's custom gain.
+    /// Playback without an insert plays the file unchanged.
+    pub fn set_insert_gain(&self, gain: f32) {
+        self.shared
+            .insert_gain_bits
+            .store(gain.max(0.0).to_bits(), Ordering::Relaxed);
     }
 
-    /// Returns the linear output gain.
+    /// Returns the linear gain applied before the preview insert.
     #[must_use]
-    pub fn gain(&self) -> f32 {
-        self.shared.gain()
+    pub fn insert_gain(&self) -> f32 {
+        self.shared.insert_gain()
     }
 
     /// Returns a handle for reading the playhead from other views or threads.

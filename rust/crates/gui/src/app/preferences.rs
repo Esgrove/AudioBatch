@@ -225,7 +225,7 @@ impl AppView {
                 .loaded_path()
                 .map(|path| (path.to_path_buf(), player.position_seconds()))
         });
-        let gain = self.player.as_ref().map_or(1.0, Player::gain);
+        let gain = self.player.as_ref().map_or(1.0, Player::insert_gain);
         self.player = None;
         self.plugins.preview.player_replaced();
         let result = match Player::with_config(output) {
@@ -247,7 +247,7 @@ impl AppView {
 
     /// Makes a newly opened player current, restoring the gain and the loaded file at its position.
     fn install_player(&mut self, mut player: Player, resume: Option<(PathBuf, f64)>, gain: f32) {
-        player.set_gain(gain);
+        player.set_insert_gain(gain);
         if let Some((path, position)) = resume {
             player.load(&path, position, false);
         }

@@ -92,8 +92,8 @@ The differences below are in the GUIs and in plugin hosting.
   The Rust preview runs in stereo, and prepares a plugin that refuses stereo for mono,
   folding the signal into it and copying its output to both channels.
   Offline processing refuses a stereo file through a mono-only plugin in both versions.
-- **Custom gain in the preview.** The C++ preview applies a file's custom gain only when plugin preview is on.
-  The Rust preview applies it in both cases, and also draws the waveform with it.
+- **Custom gain in the preview.** Both previews apply a file's custom gain only in front of the plugin chain,
+  so a preview without plugins plays the file unchanged, and both draw the waveform with it.
 
 ## Known issues in the C++ version
 

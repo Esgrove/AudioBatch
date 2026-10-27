@@ -769,10 +769,11 @@ impl AppView {
 
     /// Applies the custom gain of the selected file to the preview and to the drawn waveform,
     /// or unity gain when it has none.
+    /// The player applies it only in front of the plugin chain, so a plain preview plays the file as it is.
     fn apply_preview_gain(&self, cx: &mut Context<Self>) {
         let linear = self.selected_record(cx).map_or(1.0, AnalysisRecord::custom_gain_linear);
         if let Some(player) = &self.player {
-            player.set_gain(linear);
+            player.set_insert_gain(linear);
         }
         self.waveform
             .update(cx, |waveform, cx| waveform.set_display_gain(linear, cx));
