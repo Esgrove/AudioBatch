@@ -6,7 +6,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use audiobatch_core::discovery::normalize_path;
@@ -20,6 +20,7 @@ use audiobatch_core::{
     AnalysisCache, AnalysisCoordinator, AnalysisEvent, AnalysisOptions, AnalysisRecord, AnalysisStatus,
 };
 use colored::Colorize;
+use crossbeam_channel::RecvTimeoutError;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 
 use crate::args::{CliArgs, OutputFormat};
@@ -35,6 +36,12 @@ pub const EXIT_USAGE_ERROR: u8 = 1;
 /// Exit code when at least one file failed, the same as the C++ CLI, so `scripts/parity.sh` can compare the two.
 pub const EXIT_FAILURES: u8 = 2;
 
+/// Exit code after Ctrl-C, the shell convention of 128 plus the signal number of SIGINT.
+pub const EXIT_INTERRUPTED: u8 = 130;
+
+/// How often the analysis wait checks for Ctrl-C.
+const INTERRUPT_POLL_INTERVAL: Duration = Duration::from_millis(100);
+
 /// Records to report after normalization, and how many files failed to normalize.
 struct NormalizedRecords {
     records: Vec<AnalysisRecord>,
@@ -46,6 +53,8 @@ struct NormalizedRecords {
 /// Files replaced by normalization go to `dispose`, which moves them to the trash for the CLI.
 /// The progress bars are drawn to the targets `progress_target` creates,
 /// which are stderr for the CLI and hidden in tests so the bars do not mix into the test output.
+/// Once `is_interrupted` returns true, the file being normalized stops before its output is committed,
+/// so its temporary output is removed, no further file is normalized, and the run returns `EXIT_INTERRUPTED`.
 ///
 /// # Errors
 ///
@@ -57,6 +66,7 @@ pub fn run_analysis(
     output: &mut dyn Write,
     log: &mut dyn Write,
     progress_target: fn() -> ProgressDrawTarget,
+    is_interrupted: &dyn Fn() -> bool,
 ) -> Result<u8> {
     let normalization = match args.normalization() {
         Ok(normalization) => normalization.map(|options| NormalizationOptions { dispose, ..options }),
@@ -86,7 +96,10 @@ pub fn run_analysis(
     };
 
     let started = Instant::now();
-    let mut records = analyze_with_progress(&coordinator, options, progress_target());
+    let mut records = analyze_with_progress(&coordinator, options, progress_target(), is_interrupted);
+    if is_interrupted() {
+        return Ok(EXIT_INTERRUPTED);
+    }
     let failures: Vec<&AnalysisRecord> = records.iter().filter(|record| record.has_error()).collect();
     writeln!(
         log,
@@ -116,12 +129,22 @@ pub fn run_analysis(
     }
     failure_count += skipped_inputs.len();
     let (mut reported, show_full_paths) = if let Some(options) = &normalization {
-        let normalized = normalize_records(&records, options, &normalization_cache, log, progress_target())?;
+        let normalized = normalize_records(
+            &records,
+            options,
+            &normalization_cache,
+            log,
+            progress_target(),
+            is_interrupted,
+        )?;
         failure_count += normalized.failure_count;
         (normalized.records, true)
     } else {
         (records, false)
     };
+    if is_interrupted() {
+        return Ok(EXIT_INTERRUPTED);
+    }
     sort_records(&mut reported, args.sort, !args.reverse);
 
     let text = match args.output {
@@ -143,12 +166,14 @@ pub fn run_analysis(
 /// Files that failed analysis are reported as they are, and were already counted as failures.
 /// A file that loses a batch output conflict fails without being touched.
 /// A converted source leaves the cache, and the analysis of each output is stored.
+/// Normalization stops once `is_interrupted` returns true.
 fn normalize_records(
     records: &[AnalysisRecord],
     options: &NormalizationOptions,
     cache: &AnalysisCache,
     log: &mut dyn Write,
     progress_target: ProgressDrawTarget,
+    is_interrupted: &dyn Fn() -> bool,
 ) -> Result<NormalizedRecords> {
     let analyzed: Vec<AnalysisRecord> = records.iter().filter(|record| !record.has_error()).cloned().collect();
     let conflicts = find_batch_output_conflicts(&analyzed);
@@ -159,6 +184,9 @@ fn normalize_records(
     };
 
     for record in records {
+        if is_interrupted() {
+            break;
+        }
         if record.has_error() {
             normalized.records.push(record.clone());
             continue;
@@ -173,7 +201,7 @@ fn normalize_records(
         }
 
         progress.set_message(record.file_name.clone());
-        let result = normalize_file(record, options, &|| false, &mut |_| {});
+        let result = normalize_file(record, options, is_interrupted, &mut |_| {});
         progress.inc(1);
         if let Some(output) = result.output()
             && output.path != record.path
@@ -255,6 +283,7 @@ fn log_error(log: &mut dyn Write, label: &str, record: &AnalysisRecord, error: &
 
 /// Runs the analysis and collects every record, showing a progress bar on the given target.
 /// The stderr target only draws when stderr is a terminal.
+/// Once `is_interrupted` returns true, the run is cancelled and the records collected so far are returned.
 #[expect(
     clippy::literal_string_with_formatting_args,
     reason = "the progress template uses indicatif placeholders, not format arguments"
@@ -263,6 +292,7 @@ fn analyze_with_progress(
     coordinator: &AnalysisCoordinator,
     options: AnalysisOptions,
     progress_target: ProgressDrawTarget,
+    is_interrupted: &dyn Fn() -> bool,
 ) -> Vec<AnalysisRecord> {
     let progress = ProgressBar::with_draw_target(None, progress_target);
     progress.set_style(
@@ -272,7 +302,16 @@ fn analyze_with_progress(
 
     let (_, receiver) = coordinator.start(options);
     let mut records = Vec::new();
-    for event in receiver {
+    loop {
+        if is_interrupted() {
+            coordinator.cancel();
+            break;
+        }
+        let event = match receiver.recv_timeout(INTERRUPT_POLL_INTERVAL) {
+            Ok(event) => event,
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => break,
+        };
         match event {
             AnalysisEvent::Planned { stale_count, .. } => progress.set_length(stale_count as u64),
             AnalysisEvent::Started { path, .. } => {
@@ -310,8 +349,16 @@ mod test_run_analysis {
         let dispose: FileDisposer = Arc::new(|path: &std::path::Path| std::fs::remove_file(path).is_ok());
         let mut output = Vec::new();
         let mut log = Vec::new();
-        let code = run_analysis(&args, cache, dispose, &mut output, &mut log, ProgressDrawTarget::hidden)
-            .expect("run succeeds");
+        let code = run_analysis(
+            &args,
+            cache,
+            dispose,
+            &mut output,
+            &mut log,
+            ProgressDrawTarget::hidden,
+            &|| false,
+        )
+        .expect("run succeeds");
         (
             code,
             String::from_utf8(output).expect("utf-8"),
@@ -330,6 +377,34 @@ mod test_run_analysis {
         let path = folder.join(name);
         std::fs::copy(test_fixtures::fixture(fixture_name), &path).expect("copies fixture");
         path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn an_interrupted_normalization_leaves_the_source_and_no_temporary_files() {
+        let directory = TempDir::new().expect("temp dir");
+        let tone = copy_fixture(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let args = CliArgs::try_parse_from(["audiobatch-rs", "--normalize", &tone]).expect("arguments parse");
+        let cache = Arc::new(AnalysisCache::with_path(directory.path().join("analysis.db")));
+        let dispose: FileDisposer = Arc::new(|path: &std::path::Path| std::fs::remove_file(path).is_ok());
+        let (mut output, mut log) = (Vec::new(), Vec::new());
+
+        let code = run_analysis(
+            &args,
+            cache,
+            dispose,
+            &mut output,
+            &mut log,
+            ProgressDrawTarget::hidden,
+            &|| true,
+        )
+        .expect("run succeeds");
+
+        assert_eq!(code, EXIT_INTERRUPTED);
+        let names: Vec<String> = std::fs::read_dir(directory.path().join("music"))
+            .expect("lists")
+            .filter_map(|entry| entry.ok().map(|entry| entry.file_name().to_string_lossy().into_owned()))
+            .collect();
+        assert_eq!(names, vec!["song.wav".to_string()]);
     }
 
     #[test]

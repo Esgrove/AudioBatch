@@ -7,12 +7,13 @@
 use std::io::{self, IsTerminal as _, Write};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::Result;
 use audiobatch_cli::args::{CliArgs, CliCommand, PluginListing};
 use audiobatch_cli::completion::generate_shell_completion;
 use audiobatch_cli::plugin_list::{PluginListContext, run_plugin_list};
-use audiobatch_cli::run::{EXIT_USAGE_ERROR, run_analysis};
+use audiobatch_cli::run::{EXIT_INTERRUPTED, EXIT_USAGE_ERROR, run_analysis};
 use audiobatch_cli::{write_error, write_warning};
 use audiobatch_core::AnalysisCache;
 use audiobatch_core::output_file::trash_disposer;
@@ -20,6 +21,9 @@ use audiobatch_plugins::{PluginDataPaths, WorkerCommand, is_scan_worker_invocati
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use indicatif::ProgressDrawTarget;
+
+/// Set by the first Ctrl-C, which the analysis and normalization poll to stop cleanly.
+static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 
 /// Parses the arguments, then prints shell completions, lists plugins, or analyzes and normalizes the given paths.
 /// The exit code tells usage errors and failed files apart.
@@ -87,6 +91,17 @@ fn main() -> ExitCode {
         Arc::new(AnalysisCache::in_memory())
     });
 
+    // The first Ctrl-C lets the run stop at a point where no temporary output is left behind,
+    // and a second one ends the process at once.
+    let handler = ctrlc::set_handler(|| {
+        if INTERRUPTED.swap(true, Ordering::SeqCst) {
+            std::process::exit(i32::from(EXIT_INTERRUPTED));
+        }
+    });
+    if let Err(error) = handler {
+        let _ = write_warning!(&mut log, "Ctrl-C may leave temporary files behind: {error}");
+    }
+
     match run_analysis(
         &args,
         cache,
@@ -94,6 +109,7 @@ fn main() -> ExitCode {
         &mut output,
         &mut log,
         ProgressDrawTarget::stderr,
+        &|| INTERRUPTED.load(Ordering::SeqCst),
     ) {
         Ok(code) => ExitCode::from(code),
         Err(error) => {
