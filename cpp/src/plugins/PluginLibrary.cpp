@@ -29,7 +29,7 @@ PluginLibrary::PluginLibrary(juce::ApplicationProperties& applicationProperties)
     knownPluginList.setCustomScanner(
         std::make_unique<OutOfProcessPluginScanner>(
             [this](const utils::CancellationCheck& shouldStop) { return beginPluginScan(shouldStop); },
-            [this] { finishPluginScan(); }
+            [this](const bool completed) { finishPluginScan(completed); }
         )
     );
 
@@ -223,8 +223,9 @@ bool PluginLibrary::beginPluginScan(const utils::CancellationCheck& shouldStop)
 }
 
 /// Saves the list a scan from the plugin manager added to, and releases the plugin scan lock.
+/// A scan that ran to its end also removes the plugins whose files are gone from a scanned folder.
 /// The plugin manager ends its scans on the message thread.
-void PluginLibrary::finishPluginScan()
+void PluginLibrary::finishPluginScan(const bool completed)
 {
     JUCE_ASSERT_MESSAGE_THREAD
 
@@ -233,6 +234,9 @@ void PluginLibrary::finishPluginScan()
     }
 
     scanning = false;
+    if (auto* settings = appProperties.getUserSettings(); completed && settings != nullptr) {
+        removeMissingPlugins(knownPluginList, formatManager, *settings);
+    }
     saveList();
     pluginScanLock.release();
 }

@@ -659,6 +659,57 @@ public:
             );
         }
 
+        beginTest("Missing plugins are removed only from scanned folders that still exist");
+        {
+            const auto scanned = directory.getChildFile("ScannedVST3");
+            expect(scanned.createDirectory());
+            const auto present = scanned.getChildFile("Present.vst3");
+            expect(present.createDirectory());
+            const auto gone = scanned.getChildFile("Gone.vst3").getFullPathName();
+            const auto goneBlacklisted = scanned.getChildFile("Crashed.vst3").getFullPathName();
+            const auto unscanned = directory.getChildFile("OtherFolder/Elsewhere.vst3").getFullPathName();
+            const auto missingFolder = directory.getChildFile("UnpluggedDrive");
+            const auto onMissingFolder = missingFolder.getChildFile("Away.vst3").getFullPathName();
+
+            juce::AudioPluginFormatManager formatManager;
+            formatManager.addFormat(std::make_unique<juce::VST3PluginFormat>());
+            juce::PropertiesFile::Options options;
+            options.applicationName = "AudioBatchTests";
+            juce::PropertiesFile settings(directory.getChildFile("settings.xml"), options);
+            juce::FileSearchPath searchPath;
+            searchPath.add(scanned);
+            searchPath.add(missingFolder);
+            juce::PluginListComponent::setLastSearchPath(settings, *formatManager.getFormat(0), searchPath);
+
+            const auto makeDescription = [](const juce::String& file, const int uniqueId) {
+                juce::PluginDescription description;
+                description.name = juce::File(file).getFileNameWithoutExtension();
+                description.pluginFormatName = "VST3";
+                description.fileOrIdentifier = file;
+                description.uniqueId = uniqueId;
+                return description;
+            };
+            juce::KnownPluginList knownPluginList;
+            knownPluginList.addType(makeDescription(present.getFullPathName(), 1));
+            knownPluginList.addType(makeDescription(gone, 2));
+            knownPluginList.addType(makeDescription(unscanned, 3));
+            knownPluginList.addType(makeDescription(onMissingFolder, 4));
+            knownPluginList.addToBlacklist(goneBlacklisted);
+            knownPluginList.addToBlacklist(unscanned);
+
+            expectEquals(removeMissingPlugins(knownPluginList, formatManager, settings), 1);
+
+            juce::StringArray remaining;
+            for (const auto& type : knownPluginList.getTypes()) {
+                remaining.add(type.fileOrIdentifier);
+            }
+            remaining.sort(false);
+            juce::StringArray expected {present.getFullPathName(), unscanned, onMissingFolder};
+            expected.sort(false);
+            expect(remaining == expected, remaining.joinIntoString(", "));
+            expect(knownPluginList.getBlacklistedFiles() == juce::StringArray(unscanned));
+        }
+
         beginTest("A chain lease returns its chain to the pool when it is destroyed");
         {
             PluginRunChains runChains(std::vector<PluginChainInstances>(1), true);

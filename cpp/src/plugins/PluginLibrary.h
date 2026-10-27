@@ -71,7 +71,7 @@ private:
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
     bool beginPluginScan(const utils::CancellationCheck& shouldStop);
-    void finishPluginScan();
+    void finishPluginScan(bool completed);
     void saveList();
 
     /// Taken and released on the message thread only.

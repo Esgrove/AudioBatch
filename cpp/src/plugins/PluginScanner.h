@@ -36,6 +36,11 @@ void addPluginFormats(juce::AudioPluginFormatManager& formatManager);
 void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList);
 void migrateKnownPluginList(juce::PropertiesFile& settings);
 void removeBuiltInApplePlugins(juce::KnownPluginList& knownPluginList);
+int removeMissingPlugins(
+    juce::KnownPluginList& knownPluginList,
+    const juce::AudioPluginFormatManager& formatManager,
+    juce::PropertiesFile& settings
+);
 
 /// Child side of out-of-process plugin scanning.
 /// Receives scan requests from the main process, loads the plugin file on the message thread,
@@ -86,8 +91,9 @@ public:
     /// Returning false skips every plugin of that scan without blacklisting any of them.
     using ScanStartingCallback = std::function<bool(const utils::CancellationCheck& shouldStop)>;
 
-    /// Called once a scan has finished, including scans that were skipped or cancelled.
-    using ScanFinishedCallback = std::function<void()>;
+    /// Called once a scan has finished, including scans that were skipped or cancelled,
+    /// with true only for a scan that ran to its end.
+    using ScanFinishedCallback = std::function<void(bool completed)>;
 
     explicit OutOfProcessPluginScanner(
         ScanStartingCallback scanStartingCallback = nullptr,

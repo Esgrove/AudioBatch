@@ -276,20 +276,8 @@ void printGroups(const std::vector<juce::PluginDescription>& plugins, const Plug
     }
 }
 
-/// Returns the registered format with the given name, or nullptr.
-juce::AudioPluginFormat* findFormat(const juce::AudioPluginFormatManager& formatManager, const juce::String& name)
-{
-    for (auto* format : formatManager.getFormats()) {
-        if (format->getName() == name) {
-            return format;
-        }
-    }
-
-    return nullptr;
-}
-
 /// Scans the plugin folders for new or changed plugins, one plugin at a time in a worker process,
-/// and removes plugins whose files no longer exist.
+/// and removes the plugins whose files are gone from a scanned folder that still exists.
 /// Each format uses the same search folders as the last GUI scan, or its default folders.
 /// Progress goes to stderr, and only to an interactive terminal.
 void rescanPlugins(
@@ -347,20 +335,7 @@ void rescanPlugins(
     }
 
     knownPluginList.scanFinished();
-
-    int removedCount = 0;
-    for (const auto& type : knownPluginList.getTypes()) {
-        if (auto* format = findFormat(formatManager, type.pluginFormatName);
-            format != nullptr && !format->doesPluginStillExist(type))
-        {
-            knownPluginList.removeType(type);
-            ++removedCount;
-        }
-    }
-
-    if (removedCount > 0) {
-        utils::logInfo("Removed {} plugins that no longer exist", removedCount);
-    }
+    removeMissingPlugins(knownPluginList, formatManager, settings);
 
     for (const auto& file : knownPluginList.getBlacklistedFiles()) {
         if (!blacklistedBefore.contains(file)) {

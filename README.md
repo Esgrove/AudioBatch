@@ -76,17 +76,17 @@ The differences below are in the GUIs and in plugin hosting.
 
 - **Data files.** The Rust version keeps its plugin list and chain in its own `AudioBatch-rs` folder.
   The chain state that JUCE saves is specific to JUCE, and its plugin ids are hashes, so the two cannot share them.
-- **Scan lock.** When a CLI rescan holds the scan lock, the Rust GUI does not start its scan and shows one message.
-  The C++ GUI shows a message too, but its scan summary also lists files as failed, see the known issues below.
-- **Missing plugins.** Both Rust front ends remove the plugins whose bundles are gone after every scan,
+- **Scan lock.** When a CLI rescan holds the scan lock, both GUIs skip their scan and show one message.
+- **Missing plugins.** Both CLIs and both GUIs remove the plugins and blacklist entries whose files are gone
+  after every scan that runs to its end,
   but only inside scanned folders that exist, so plugins on an unmounted drive stay listed.
-- **`VST3_PATH`** is split with the platform path separator, which keeps Windows drive letters intact.
+  A cancelled scan removes nothing.
+- **`VST3_PATH`** is split with the platform path separator in both versions, which keeps Windows drive letters intact.
 - **Refused pre-normalization gain.** When Normalize is on and a file cannot reach the target,
   because it is silent or would need more than 40 dB of gain,
   both versions process it at unity gain, but the Rust result has a notice that names the reason.
-- **Processing failures.** JUCE ignores the result of the VST3 `process` call.
-  The Rust version fails the file when a plugin reports a processing error,
-  and turns the preview off with the plugin's name and error.
+- **Processing failures.** Both versions fail the file when a VST3 plugin reports a processing error,
+  and turn the preview off with the plugin's name and error.
 - **Mono-only plugins in the preview.** The C++ preview prepares the chain for the loaded file's channel count,
   so a plugin that only supports mono turns the preview off for every stereo file.
   The Rust preview runs in stereo, and prepares a plugin that refuses stereo for mono,
@@ -97,30 +97,13 @@ The differences below are in the GUIs and in plugin hosting.
 
 ## Known issues in the C++ version
 
-- **A busy scan lock fills the scan summary with failures.**
-  `PluginLibrary::beginPluginScan` refuses to scan while a CLI rescan holds the lock, and shows "Plugin Scan Skipped".
-  `OutOfProcessPluginScanner::findPluginTypesFor` then reports each file as scanned without plugins,
-  and JUCE's `PluginDirectoryScanner` adds every such file to its failed files,
-  so the plugin manager lists every new or changed plugin as "failed to load correctly".
 - **A refused pre-normalization gain is silent.**
   `getInputGain` in `PluginProcessing.cpp` falls back to unity gain when `getNormalizationGain` refuses a file,
   and the result does not say so.
   Its documentation mentions files without a measurable level, but not the 40 dB gain limit.
-- **Progress events are not filtered by run.**
-  For normalization and plugin processing,
-  `BackgroundWorkController::connectOperationCallbacks` filters the start, result, and completion events by run id,
-  but not the progress events.
-  A late progress event can then update the progress of the same file in the next run.
 - **Plugin processing cannot be cancelled from the GUI.**
   Only analysis has a cancel action.
   A processing run started on a large selection runs to the end unless the app quits.
-- **The CLI and the GUI remove missing plugins differently.**
-  `audiobatch list --rescan` removes every plugin whose file is gone,
-  including plugins on a drive that is not mounted.
-  The GUI scan removes none, and only the plugin manager's menu item removes them.
-- **`VST3_PATH` breaks on Windows.**
-  JUCE's `VST3PluginFormat::getDefaultLocationsToSearch` replaces every ":" in the variable with ";",
-  which splits a path such as `C:\Plugins` into `C` and `\Plugins`.
 
 ## Future work
 
