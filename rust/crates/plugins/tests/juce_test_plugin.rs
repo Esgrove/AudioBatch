@@ -1,6 +1,6 @@
 //! Null tests of the `AudioBatch Test MS` VST3 that `test-plugin/` builds with JUCE, the plugin the C++ tests load too.
 //!
-//! Each test loads the real bundle, sets the gain and width parameters the way a host automates them,
+//! Each test loads the real bundle, sets the gain, width, and latency parameters the way a host automates them,
 //! captures the plugin state, saves it in a chain preset, and loads the preset back.
 //! The loaded chain then processes a committed fixture,
 //! and the output must cancel to the last 16-bit step against the expected file
@@ -29,6 +29,12 @@ const GAIN_PARAMETER: u32 = 0;
 /// Id of the width parameter of the test plugin.
 const WIDTH_PARAMETER: u32 = 1;
 
+/// Id of the latency parameter of the test plugin.
+const LATENCY_PARAMETER: u32 = 2;
+
+/// Largest latency of the test plugin in samples, which maps linearly from zero.
+const LATENCY_MAXIMUM: u32 = 1024;
+
 /// Largest plain value of both parameters, which map linearly from zero.
 const PARAMETER_MAXIMUM: f32 = 2.0;
 
@@ -37,6 +43,27 @@ const SETUP_SAMPLE_RATE: f64 = 44_100.0;
 
 /// Block size the plugin is set up for while its parameters are set.
 const SETUP_BLOCK_FRAMES: usize = 512;
+
+/// Parameter values set on the test plugin the way a host automates them.
+#[derive(Debug, Clone, Copy)]
+struct Parameters {
+    /// Linear gain, from 0 to 2.
+    gain: f32,
+    /// Stereo width, from 0 to 2.
+    width: f32,
+    /// Latency in samples.
+    latency: u32,
+}
+
+impl From<&PluginExpectation> for Parameters {
+    fn from(expectation: &PluginExpectation) -> Self {
+        Self {
+            gain: expectation.gain,
+            width: expectation.width,
+            latency: expectation.latency,
+        }
+    }
+}
 
 /// The dispatcher of the one UI thread these tests share, since a process can have only one.
 static DISPATCHER: OnceLock<UiDispatcher> = OnceLock::new();
@@ -67,7 +94,7 @@ fn bundle() -> Option<PathBuf> {
 /// Loads the plugin from the bundle and returns its chain slot.
 /// With parameter values, an instance is created, set to them through the controller as a host does,
 /// and the slot gets the state the plugin saves after the change.
-fn plugin_slot(bundle: &Path, parameters: Option<(f32, f32)>) -> ChainSlot {
+fn plugin_slot(bundle: &Path, parameters: Option<Parameters>) -> ChainSlot {
     let bundle = bundle.to_path_buf();
     dispatcher()
         .call(
@@ -83,9 +110,9 @@ fn plugin_slot(bundle: &Path, parameters: Option<(f32, f32)>) -> ChainSlot {
                     &bundle,
                     bundle_modified_ms(&bundle),
                 ));
-                if let Some((gain, width)) = parameters {
+                if let Some(parameters) = parameters {
                     let state =
-                        configured_state(ui, &module, class.id, gain, width).map_err(|error| format!("{error:#}"))?;
+                        configured_state(ui, &module, class.id, parameters).map_err(|error| format!("{error:#}"))?;
                     slot.set_state(state);
                 }
                 Ok::<_, String>(slot)
@@ -96,23 +123,35 @@ fn plugin_slot(bundle: &Path, parameters: Option<(f32, f32)>) -> ChainSlot {
         .expect("the test plugin loads")
 }
 
-/// Creates an instance, sets its gain and width, and returns the state it saves after the change.
+/// Creates an instance, sets its gain, width, and latency, and returns the state it saves after the change.
 fn configured_state(
     ui: &UiThread,
     module: &Arc<Module>,
     class_id: vst3_host::ClassId,
-    gain: f32,
-    width: f32,
+    parameters: Parameters,
 ) -> anyhow::Result<vst3_host::PluginState> {
     let mut instance = PluginInstance::create(ui, module, class_id, None)?;
     instance.configure_main_buses(ui, 2)?;
     instance.setup(ui, ProcessMode::Offline, SETUP_SAMPLE_RATE, SETUP_BLOCK_FRAMES)?;
     instance.activate(ui)?;
-    instance.set_parameter(ui, GAIN_PARAMETER, f64::from(gain / PARAMETER_MAXIMUM))?;
-    instance.set_parameter(ui, WIDTH_PARAMETER, f64::from(width / PARAMETER_MAXIMUM))?;
+    instance.set_parameter(ui, GAIN_PARAMETER, f64::from(parameters.gain / PARAMETER_MAXIMUM))?;
+    instance.set_parameter(ui, WIDTH_PARAMETER, f64::from(parameters.width / PARAMETER_MAXIMUM))?;
+    instance.set_parameter(
+        ui,
+        LATENCY_PARAMETER,
+        f64::from(parameters.latency) / f64::from(LATENCY_MAXIMUM),
+    )?;
     instance.flush_parameter_edits(ui);
     let state = instance.state(ui)?;
     instance.deactivate(ui)?;
+    instance.activate(ui)?;
+    let reported_latency = instance.latency_samples(ui);
+    instance.deactivate(ui)?;
+    anyhow::ensure!(
+        reported_latency == parameters.latency,
+        "the plugin reports {reported_latency} samples of latency instead of {}",
+        parameters.latency
+    );
     Ok(state)
 }
 
@@ -164,7 +203,7 @@ fn decode(path: &Path) -> Vec<Vec<f32>> {
 /// processes the source, and null tests the output against the expected file.
 fn check_expectation(bundle: &Path, expectation: &PluginExpectation) {
     let directory = TempDir::new().expect("temp dir");
-    let slot = plugin_slot(bundle, Some((expectation.gain, expectation.width)));
+    let slot = plugin_slot(bundle, Some(Parameters::from(expectation)));
     let chain = through_preset(&directory, &PluginChain { slots: vec![slot] });
     let output = process(
         &directory,
@@ -176,9 +215,10 @@ fn check_expectation(bundle: &Path, expectation: &PluginExpectation) {
     let result = null_test(&expected, &output);
     assert!(
         result.cancels(),
-        "gain {} and width {} on {} against {}: {result}",
+        "gain {}, width {}, and latency {} on {} against {}: {result}",
         expectation.gain,
         expectation.width,
+        expectation.latency,
         expectation.source,
         expectation.expected
     );
@@ -233,9 +273,23 @@ fn a_changed_parameter_is_saved_in_the_plugin_state() {
         return;
     };
     let default_slot = plugin_slot(&bundle, None);
-    let changed = plugin_slot(&bundle, Some((0.5, 0.5)));
-    let unchanged = plugin_slot(&bundle, Some((1.0, 1.0)));
+    let changed = plugin_slot(&bundle, Some(Parameters::from(&PLUGIN_EXPECTATIONS[0])));
+    let unchanged = plugin_slot(
+        &bundle,
+        Some(Parameters {
+            gain: 1.0,
+            width: 1.0,
+            latency: 0,
+        }),
+    );
     assert_eq!(default_slot.component_state, [] as [u8; 0]);
     assert_ne!(changed.component_state, [] as [u8; 0]);
     assert_ne!(changed.component_state, unchanged.component_state);
+}
+
+#[test]
+fn a_latency_is_compensated_and_its_tail_rendered_against_the_expected_output() {
+    if let Some(bundle) = bundle() {
+        check_expectation(&bundle, &PLUGIN_EXPECTATIONS[4]);
+    }
 }
