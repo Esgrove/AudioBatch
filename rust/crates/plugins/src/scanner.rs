@@ -103,8 +103,10 @@ pub struct ScanReport {
     pub crashed: Vec<PathBuf>,
     /// Bundles that took too long and were skipped.
     pub timed_out: Vec<PathBuf>,
-    /// Bundles that could not be loaded or contain no audio effects.
+    /// Bundles that contain no audio effects.
     pub no_plugins: Vec<PathBuf>,
+    /// Bundles the worker could not load, with the reason it gave.
+    pub failed: Vec<(PathBuf, String)>,
     /// Whether the scan was cancelled before it finished.
     pub cancelled: bool,
 }
@@ -197,6 +199,7 @@ impl ScanReport {
             (self.crashed.len(), "blacklisted after a crash"),
             (self.timed_out.len(), "timed out"),
             (self.no_plugins.len(), "without audio effects"),
+            (self.failed.len(), "could not be loaded"),
         ];
         let parts: Vec<String> = counts
             .iter()
@@ -217,12 +220,13 @@ impl ScanReport {
 }
 
 impl WorkerProcess {
-    /// Starts a worker, sending its stderr to `log` when given.
+    /// Starts a worker, sending its stderr, and the lines of its stdout that are not replies, to `log` when given.
     fn start(command: &WorkerCommand, log: Option<&File>) -> Result<Self> {
         let stderr = match log {
             Some(file) => Stdio::from(file.try_clone()?),
             None => Stdio::null(),
         };
+        let mut stdout_log = log.map(File::try_clone).transpose()?;
         let mut child = Command::new(&command.program)
             .args(&command.arguments)
             .envs(command.environment.iter().map(|(name, value)| (name, value)))
@@ -237,14 +241,24 @@ impl WorkerProcess {
         };
         let (sender, events) = crossbeam_channel::unbounded();
         std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines() {
+            // Plugins may print anything to stdout while they load, including bytes that are not UTF-8,
+            // so lines are read as bytes and only a read error of the pipe ends the loop.
+            for line in BufReader::new(stdout).split(b'\n') {
                 let Ok(line) = line else {
                     break;
                 };
-                if let Some(reply) = ScanReply::from_line(&line)
-                    && sender.send(WorkerEvent::Reply(reply)).is_err()
-                {
-                    return;
+                let line = String::from_utf8_lossy(&line);
+                match ScanReply::from_line(&line) {
+                    Some(reply) => {
+                        if sender.send(WorkerEvent::Reply(reply)).is_err() {
+                            return;
+                        }
+                    }
+                    None => {
+                        if let Some(file) = stdout_log.as_mut() {
+                            let _ = writeln!(file, "{}", line.trim_end_matches('\r'));
+                        }
+                    }
                 }
             }
             let _ = sender.send(WorkerEvent::Exited);
@@ -331,18 +345,21 @@ pub fn scan_plugins(
             continue;
         }
         if let Some(classes) = read_module_info(bundle) {
-            let plugins = classes
+            let plugins: Vec<PluginDescription> = classes
                 .iter()
                 .filter(|class| class.is_audio_effect())
                 .map(|class| PluginDescription::from_class(class, bundle, modified))
                 .collect();
+            if plugins.is_empty() {
+                report.no_plugins.push(bundle.clone());
+            }
             apply_results(known, &mut report, bundle, plugins);
             continue;
         }
         let outcome = scan_in_worker(&mut worker, options, log.as_ref(), bundle, is_cancelled)?;
         match outcome {
             WorkerOutcome::Reply(reply) => {
-                let plugins = reply
+                let plugins: Vec<PluginDescription> = reply
                     .plugins
                     .into_iter()
                     .map(|mut plugin| {
@@ -351,6 +368,12 @@ pub fn scan_plugins(
                         plugin
                     })
                     .collect();
+                if plugins.is_empty() {
+                    match reply.error {
+                        Some(error) => report.failed.push((bundle.clone(), error)),
+                        None => report.no_plugins.push(bundle.clone()),
+                    }
+                }
                 apply_results(known, &mut report, bundle, plugins);
             }
             WorkerOutcome::Crashed => {
@@ -422,9 +445,6 @@ fn apply_results(known: &mut KnownPlugins, report: &mut ScanReport, bundle: &Pat
         .into_iter()
         .partition(|plugin| plugin.bundle == bundle);
     known.plugins = kept;
-    if plugins.is_empty() {
-        report.no_plugins.push(bundle.to_path_buf());
-    }
     for plugin in &previous {
         if !plugins.iter().any(|found| found.class_id == plugin.class_id) {
             report.removed.push(plugin.clone());
