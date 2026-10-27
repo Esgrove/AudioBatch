@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
-use rusqlite::{Connection, OptionalExtension, Row, params};
+use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::record::{
     AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory, custom_gain_from_decibels, file_identity,
@@ -27,6 +27,10 @@ pub const DATA_DIRECTORY_NAME: &str = "AudioBatch-rs";
 
 /// Version of the analysis rules. Rows written with another version are re-analyzed.
 const ANALYSIS_VERSION: i64 = 2;
+
+/// Columns added to `file_analysis` after its first version, with their definitions,
+/// which databases created before them gain when they are opened.
+const ADDED_ANALYSIS_COLUMNS: &[(&str, &str)] = &[("custom_gain_db", "REAL")];
 
 /// How long SQLite retries a locked database before failing a statement.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
@@ -189,7 +193,8 @@ impl AnalysisCache {
         };
         let file_size = i64::try_from(record.file_size).unwrap_or(i64::MAX);
         self.with_connection(|connection| {
-            let transaction = connection.transaction()?;
+            // Taking the write lock up front keeps a concurrent writer from failing the upgrade from the read.
+            let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
             let custom_gain = stored_custom_gain(&transaction, &record.path, file_size, record.modified_time_ms)?
                 .map_or(record.custom_gain_db, |stored| stored.custom_gain_db);
             transaction
@@ -284,29 +289,6 @@ impl AnalysisCache {
         })
     }
 
-    /// Removes the rows of files that no longer exist, and returns how many files had rows.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the database cannot be read or written.
-    pub fn prune_missing_files(&self) -> Result<usize> {
-        let paths: Vec<String> = self.with_connection(|connection| {
-            let mut statement = connection
-                .prepare("SELECT file_path FROM file_analysis UNION SELECT file_path FROM serato_tag_cache")?;
-            let paths = statement
-                .query_map([], |row| row.get(0))?
-                .collect::<rusqlite::Result<_>>()?;
-            Ok(paths)
-        })?;
-        let mut removed = 0;
-        for path in paths.iter().map(PathBuf::from).filter(|path| !path.is_file()) {
-            if self.remove_analysis(&path)? {
-                removed += 1;
-            }
-        }
-        Ok(removed)
-    }
-
     /// Opens a connection and ensures the schema is current.
     fn connect(&self) -> Result<Connection> {
         if let Some(parent) = self.database_path.parent() {
@@ -348,6 +330,7 @@ impl AnalysisCache {
                 custom_gain_db REAL
             );",
         )?;
+        add_missing_columns(&connection, "file_analysis", ADDED_ANALYSIS_COLUMNS)?;
         connection.execute_batch(serato::SCHEMA)?;
         Ok(connection)
     }
@@ -439,6 +422,22 @@ fn stored_custom_gain(
                 custom_gain_db: gain.and_then(stored_gain_to_decibels),
             })
         })
+}
+
+/// Adds the listed columns a table is missing, so a database created by an earlier version keeps working.
+fn add_missing_columns(connection: &Connection, table: &str, columns: &[(&str, &str)]) -> Result<()> {
+    let existing: Vec<String> = connection
+        .prepare(&format!("PRAGMA table_info({table})"))?
+        .query_map([], |row| row.get(1))?
+        .collect::<rusqlite::Result<_>>()?;
+    for (name, definition) in columns {
+        if !existing.iter().any(|column| column == name) {
+            connection
+                .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {name} {definition};"))
+                .with_context(|| format!("SQLite could not add the {name} column to {table}"))?;
+        }
+    }
+    Ok(())
 }
 
 /// Returns the cache key of a file.
@@ -574,6 +573,24 @@ mod test_analysis_cache {
     }
 
     #[test]
+    fn database_without_the_custom_gain_column_gains_it() {
+        let directory = TempDir::new().expect("temp dir");
+        let database_path = directory.path().join("analysis.db");
+        AnalysisCache::with_path(database_path.clone())
+            .open()
+            .expect("creates the schema");
+        Connection::open(&database_path)
+            .and_then(|connection| connection.execute_batch("ALTER TABLE file_analysis DROP COLUMN custom_gain_db;"))
+            .expect("drops the column");
+
+        let cache = AnalysisCache::with_path(database_path);
+        let record = analyze_fixture_copy(&directory, "sine_stereo_44100_16.wav");
+        cache.store_analysis(&record).expect("stores");
+        assert!(cache.store_custom_gain(&record.path, Some(-3.0)).expect("stores gain"));
+        assert!(cache.get_analysis(&record.path).is_some());
+    }
+
+    #[test]
     fn changed_file_misses() {
         let directory = TempDir::new().expect("temp dir");
         let cache = temporary_cache(&directory);
@@ -605,7 +622,7 @@ mod test_analysis_cache {
     }
 
     #[test]
-    fn remove_and_prune_delete_rows() {
+    fn remove_deletes_only_the_given_row() {
         let directory = TempDir::new().expect("temp dir");
         let cache = temporary_cache(&directory);
         let first = analyze_fixture_copy(&directory, "sine_stereo_44100_16.wav");
@@ -614,8 +631,7 @@ mod test_analysis_cache {
         cache.store_analysis(&second).expect("stores");
         assert!(cache.remove_analysis(&first.path).expect("removes"));
         assert!(!cache.remove_analysis(&first.path).expect("second remove"));
-        std::fs::remove_file(&second.path).expect("delete file");
-        assert_eq!(cache.prune_missing_files().expect("prunes"), 1);
+        assert!(cache.get_analysis(&second.path).is_some());
     }
 }
 

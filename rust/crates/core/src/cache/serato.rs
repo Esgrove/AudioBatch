@@ -232,7 +232,7 @@ mod test_serato_cache {
     }
 
     #[test]
-    fn remove_and_prune_delete_serato_rows() {
+    fn remove_deletes_only_the_serato_row_of_the_file() {
         let setup = setup();
         let other = setup.directory.path().join("other.aiff");
         std::fs::write(&other, b"audio").expect("writes file");
@@ -246,9 +246,10 @@ mod test_serato_cache {
             .expect("stores");
         assert!(setup.cache.remove_analysis(&setup.path).expect("removes"));
         assert!(!setup.cache.remove_analysis(&setup.path).expect("second remove"));
-        std::fs::remove_file(&other).expect("deletes file");
-        assert_eq!(setup.cache.prune_missing_files().expect("prunes"), 1);
-        std::fs::write(&other, b"audio").expect("writes file again");
-        assert_eq!(setup.cache.get_serato_overview(&other), None);
+        assert_eq!(setup.cache.get_serato_overview(&setup.path), None);
+        assert_eq!(
+            setup.cache.get_serato_overview(&other),
+            Some(SeratoOverviewState::Absent)
+        );
     }
 }
