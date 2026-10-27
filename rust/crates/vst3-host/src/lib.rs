@@ -4,13 +4,17 @@
 //! and runs their audio processing on preallocated buffers.
 //! It wraps the raw `vst3` bindings in a safe interface, so the crates above it never touch COM pointers.
 //!
-//! VST3 requires that modules are loaded, and instances created, set up, and destroyed, on the thread
-//! that runs the application's event loop.
+//! VST3 requires that modules are loaded, and instances created, set up,
+//! and destroyed, on the thread that runs the application's event loop.
 //! The `UiThread` token proves that a call happens on that thread,
 //! and `UiDispatcher` runs work there from other threads.
 //! Audio processing itself runs on any thread through a `ProcessorHandle`.
+//! The `editor` feature adds native windows for plugin editors,
+//! and is a feature so that hosts without a GUI do not link the platform's window libraries.
 
 pub mod discovery;
+#[cfg(feature = "editor")]
+pub mod editor;
 mod enums;
 pub mod factory;
 mod host_objects;
@@ -27,6 +31,8 @@ pub mod ui_bound;
 mod test_helpers;
 
 pub use discovery::{default_search_folders, find_bundles, is_bundle_path};
+#[cfg(feature = "editor")]
+pub use editor::EditorWindow;
 pub use factory::{ClassId, ClassInfo, FactoryInfo};
 pub use host_objects::{ParameterEdit, RestartFlags};
 pub use instance::{BusLayout, PluginInstance, PluginState, ProcessMode};

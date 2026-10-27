@@ -35,6 +35,7 @@ use gpui_kit::component::table::{TableEvent, TableState};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, FocusHandle, Pixels, SharedString, Size, Subscription, Task, Window,
 };
+use raw_window_handle::{HasWindowHandle as _, RawWindowHandle};
 use vst3_host::UiDispatcher;
 
 use crate::menus::{MenuState, set_menus};
@@ -251,12 +252,13 @@ impl AppView {
             normalize_target: describe_target(&settings),
             ..MenuState::default()
         };
+        let editor_owner = window.window_handle().ok().map(|handle| handle.as_raw());
         let Startup {
             coordinators,
             player,
             plugins,
             status,
-        } = open_startup(&settings, dispatcher, &mut menu_state);
+        } = open_startup(&settings, dispatcher, editor_owner, &mut menu_state);
         set_menus(cx, &menu_state);
         waveform.update(cx, |waveform, cx| {
             waveform.set_show_loudness(settings.show_loudness_graph, cx);
@@ -963,9 +965,15 @@ fn open_coordinators() -> anyhow::Result<Coordinators> {
 }
 
 /// Opens the coordinators, the audio device, and the plugin chain, and fills in their part of the menus.
+/// Plugin editors open as windows owned by `editor_owner`.
 /// A problem with playback replaces one with analysis in the status line,
 /// and plugin problems are shown only when neither failed.
-fn open_startup(settings: &GuiSettings, dispatcher: UiDispatcher, menu_state: &mut MenuState) -> Startup {
+fn open_startup(
+    settings: &GuiSettings,
+    dispatcher: UiDispatcher,
+    editor_owner: Option<RawWindowHandle>,
+    menu_state: &mut MenuState,
+) -> Startup {
     let mut status = SharedString::default();
     let coordinators = open_coordinators().unwrap_or_else(|error| {
         status = format!("Analysis unavailable: {error:#}").into();
@@ -982,7 +990,7 @@ fn open_startup(settings: &GuiSettings, dispatcher: UiDispatcher, menu_state: &m
         }
     };
     let sample_rate = player.as_ref().map_or(FALLBACK_SAMPLE_RATE, Player::output_rate);
-    let (plugins, plugin_problems) = PluginHost::open(dispatcher, sample_rate);
+    let (plugins, plugin_problems) = PluginHost::open(dispatcher, sample_rate, editor_owner);
     for problem in plugin_problems {
         eprintln!("{problem}");
         if status.is_empty() {

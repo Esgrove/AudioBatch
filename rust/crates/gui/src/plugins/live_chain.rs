@@ -1,19 +1,24 @@
 //! The plugin chain the user edits, with a live instance for each slot.
 //!
-//! Each slot gets an instance as soon as it is added or loaded, prepared for stereo realtime processing
-//! at the preview rate, so the chain window can show its latency and the editor and the preview can use it.
+//! Each slot gets an instance as soon as it is added or loaded,
+//! prepared for stereo realtime processing at the preview rate,
+//! so the chain window can show its latency and the editor and the preview can use it.
 //! Slots are referred to by a `SlotId` that is never reused,
 //! so an id held by a window or an event cannot point at another slot after the chain changed.
 //! A slot whose plugin cannot be loaded keeps its saved settings and shows its error,
 //! so a plugin that is missing for now does not lose its settings.
 //! The caller saves the chain after every structural change.
 //! The settings of the instances are captured when processing starts, an editor closes, and the app quits.
+//! Each slot can show its plugin's editor in a native window.
+//! The window only hides when the user closes it,
+//! and the next housekeeping tick captures the settings so they can be saved, then destroys the window.
 
 use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
 use audiobatch_plugins::{ChainSlot, PluginChain, PluginDescription};
-use vst3_host::{Module, PluginInstance, ProcessMode, UiDispatcher, UiThread};
+use raw_window_handle::RawWindowHandle;
+use vst3_host::{EditorWindow, Module, PluginInstance, ProcessMode, UiDispatcher, UiThread};
 
 /// Channels the live instances are prepared for, since the preview always plays stereo.
 const PREVIEW_CHANNELS: usize = 2;
@@ -31,6 +36,9 @@ pub struct LiveSlot {
     id: SlotId,
     /// The saved slot: the plugin, whether it is enabled, and its last captured settings.
     slot: ChainSlot,
+    /// The window showing the plugin's editor.
+    /// It comes before the instance, so it is destroyed first when the slot is dropped.
+    editor: Option<EditorWindow>,
     /// The live instance, missing when the plugin could not be loaded.
     instance: Option<PluginInstance>,
     /// Latency of the prepared instance, in samples.
@@ -88,6 +96,12 @@ impl LiveSlot {
     #[must_use]
     pub const fn is_ready(&self) -> bool {
         self.instance.is_some() && self.error.is_none()
+    }
+
+    /// Returns true when the instance is loaded, so its editor can be opened.
+    #[must_use]
+    pub const fn has_instance(&self) -> bool {
+        self.instance.is_some()
     }
 
     /// Prepares the instance for stereo realtime processing at a rate, and reads its latency.
@@ -273,6 +287,41 @@ impl LiveChain {
         }
     }
 
+    /// Shows the editor of a slot, opening a window titled with the plugin's name when it has none.
+    /// On Windows, the window is owned by `owner`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when there is no such slot, its plugin is not loaded, or its editor cannot be opened.
+    pub fn open_editor(&mut self, ui: &UiThread, id: SlotId, owner: Option<RawWindowHandle>) -> Result<()> {
+        let slot = self
+            .slots
+            .iter_mut()
+            .find(|slot| slot.id == id)
+            .context("The plugin is no longer in the chain")?;
+        if let Some(editor) = &slot.editor {
+            editor.show(ui);
+            return Ok(());
+        }
+        let instance = slot.instance.as_ref().context("The plugin is not loaded")?;
+        slot.editor = Some(EditorWindow::open(ui, instance, &slot.slot.plugin.name, owner)?);
+        Ok(())
+    }
+
+    /// Captures the settings of the slots whose editors the user closed, and destroys those windows.
+    /// Returns true when any editor was closed, so the chain should be saved.
+    pub fn reap_closed_editors(&mut self, ui: &UiThread) -> bool {
+        let mut reaped = false;
+        for slot in &mut self.slots {
+            if slot.editor.as_ref().is_some_and(EditorWindow::is_closed) {
+                slot.capture_state(ui);
+                slot.editor = None;
+                reaped = true;
+            }
+        }
+        reaped
+    }
+
     /// Returns the chain as it is saved, with the settings captured last.
     #[must_use]
     pub fn chain(&self) -> PluginChain {
@@ -304,6 +353,7 @@ impl LiveChain {
         let mut live = LiveSlot {
             id,
             slot,
+            editor: None,
             instance: None,
             latency_samples: 0,
             error: None,
@@ -363,6 +413,7 @@ mod test_slots {
         chain.slots.push(LiveSlot {
             id,
             slot: ChainSlot::new(effect("Acme", name)),
+            editor: None,
             instance: None,
             latency_samples: 100,
             error: Some(String::from("Missing")),
