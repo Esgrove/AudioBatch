@@ -718,9 +718,26 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         match event {
+            WaveformEvent::ScrubStarted(seconds) => {
+                if let Some(player) = &mut self.player {
+                    player.pause();
+                    player.seek(*seconds);
+                }
+            }
             WaveformEvent::SeekRequested(seconds) => {
                 if let Some(player) = &mut self.player {
                     player.seek(*seconds);
+                }
+            }
+            WaveformEvent::ScrubEnded => {
+                if let Some(player) = &mut self.player {
+                    player.play();
+                }
+            }
+            WaveformEvent::RestartRequested => {
+                if let Some(player) = &mut self.player {
+                    player.seek(0.0);
+                    player.play();
                 }
             }
             WaveformEvent::ZoomBy(factor) => {
