@@ -191,9 +191,11 @@ impl Display for SeratoData {
 /// Formats a position in milliseconds as `MM:SS.T`, the way Serato shows it.
 #[must_use]
 pub fn format_position_timestamp(position_in_ms: u32) -> String {
-    let minutes = position_in_ms / 60_000;
-    let seconds = (position_in_ms % 60_000) / 1000;
-    let tenths = (f64::from(position_in_ms % 1000) / 100.0).round();
+    // Rounding to whole tenths first carries into the seconds and minutes, so 59 999 ms reads "01:00.0".
+    let total_tenths = (u64::from(position_in_ms) + 50) / 100;
+    let minutes = total_tenths / 600;
+    let seconds = (total_tenths % 600) / 10;
+    let tenths = total_tenths % 10;
     format!("{minutes:02}:{seconds:02}.{tenths}")
 }
 
@@ -300,5 +302,9 @@ mod test_serato_data {
         assert_eq!(format_position_timestamp(0), "00:00.0");
         assert_eq!(format_position_timestamp(61_500), "01:01.5");
         assert_eq!(format_position_timestamp(600_000), "10:00.0");
+        assert_eq!(format_position_timestamp(59_999), "01:00.0");
+        assert_eq!(format_position_timestamp(950), "00:01.0");
+        assert_eq!(format_position_timestamp(949), "00:00.9");
+        assert_eq!(format_position_timestamp(u32::MAX), "71582:47.3");
     }
 }
