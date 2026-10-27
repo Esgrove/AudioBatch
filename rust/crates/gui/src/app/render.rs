@@ -4,7 +4,8 @@
 //! and the waveform.
 //! A status bar along the bottom edge shows the listed folders, the run status with its progress,
 //! and the output device with its sample rate and buffer size.
-//! The window title shows the analysis or normalization progress, and files dropped anywhere on the window are added.
+//! The window title shows the progress of analysis, normalization, or plugin processing,
+//! and files dropped anywhere on the window are added.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -25,12 +26,13 @@ use super::{
     APP_TITLE, AppView, CONTENT_PADDING, PREVIEW_MINIMUM_HEIGHT, SECTION_SPACING, STATUS_BAR_HEIGHT,
     TABLE_FRAME_BORDER, content_size,
 };
-use crate::controls::{ControlsEvent, ControlsState, NormalizeControls, render_controls};
+use crate::controls::{ControlsEvent, ControlsState, NormalizeControls, PluginControls, render_controls};
 use crate::info_panel::render_info_panel;
 use crate::menus::{
-    About, AddFiles, AddFolder, ChooseFolder, ClearCustomGain, ClearList, KEY_CONTEXT, NormalizeAll, NormalizeSelected,
-    OpenAudioSettings, ReanalyzeSelected, RemoveSelected, Rescan, RevealSelected, SelectOutputDevice, StopPlayback,
-    ToggleLoudnessGraph, TogglePlayback, TrashSelected,
+    About, AddFiles, AddFolder, AddPluginToChain, CancelProcessing, ChooseFolder, ClearCustomGain, ClearList,
+    ClearPluginChain, KEY_CONTEXT, NormalizeAll, NormalizeSelected, OpenAudioSettings, OpenPluginChain,
+    OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected, RemoveSelected, Rescan, RevealSelected,
+    SelectOutputDevice, StopPlayback, ToggleLoudnessGraph, TogglePlayback, TrashSelected,
 };
 use crate::normalization::target_value_text;
 use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, fill_status_column};
@@ -58,7 +60,7 @@ const STATUS_SEPARATOR_INSET: f32 = 5.0;
 const PATH_PROPORTION: f32 = 0.4;
 
 /// Tooltip of the status text.
-const STATUS_TOOLTIP: &str = "Background analysis and normalization status.";
+const STATUS_TOOLTIP: &str = "Background analysis, normalization, and plugin processing status.";
 
 /// Smallest height of the results table.
 const TABLE_MINIMUM_HEIGHT: f32 = 240.0;
@@ -241,6 +243,12 @@ impl AppView {
                 overwrite: self.overwrite_existing,
                 can_normalize: self.can_normalize_selected(cx),
             },
+            plugins: PluginControls {
+                summary: self.chain_summary(),
+                normalize_first: self.normalize_first,
+                can_process: self.can_process_selected(cx),
+                processing: self.is_processing(),
+            },
         };
         let on_event = cx.listener(|view, event: &ControlsEvent, window, cx| {
             view.handle_controls_event(*event, window, cx);
@@ -312,6 +320,13 @@ impl Render for AppView {
             .on_action(cx.listener(|view, action: &SelectOutputDevice, _, cx| {
                 view.select_output_device(&action.name, cx);
             }))
+            .on_action(cx.listener(|view, _: &OpenPluginChain, _, cx| view.open_chain_window(cx)))
+            .on_action(cx.listener(|view, _: &OpenPluginManager, _, cx| view.open_manager_window(cx)))
+            .on_action(cx.listener(|view, _: &ClearPluginChain, _, cx| view.clear_plugin_chain(cx)))
+            .on_action(cx.listener(|view, action: &AddPluginToChain, _, cx| view.add_plugin_from_menu(action, cx)))
+            .on_action(cx.listener(|view, _: &ProcessSelected, window, cx| view.process_selected(window, cx)))
+            .on_action(cx.listener(|view, _: &ProcessAll, window, cx| view.process_all(window, cx)))
+            .on_action(cx.listener(|view, _: &CancelProcessing, _, cx| view.cancel_processing(cx)))
             .on_action(cx.listener(|_, _: &About, window, cx| Self::show_about(window, cx)))
             .on_drop(cx.listener(|view, paths: &ExternalPaths, window, cx| {
                 view.handle_drop(paths.paths(), window.modifiers().shift, cx);

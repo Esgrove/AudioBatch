@@ -16,6 +16,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 audiobatch-core.workspace = true
 audiobatch-playback.workspace = true
+audiobatch-plugins.workspace = true
 crossbeam-channel.workspace = true
 # Pinned exactly, because each release can carry breaking changes from its GPUI snapshot.
 gpui-kit = "=0.8.1"
@@ -26,6 +27,7 @@ gpui-pre-platform = { version = "=0.3.10", optional = true, features = ["test-su
 serde.workspace = true
 serde_json.workspace = true
 trash.workspace = true
+vst3-host.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

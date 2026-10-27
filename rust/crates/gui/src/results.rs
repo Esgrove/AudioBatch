@@ -3,8 +3,9 @@
 //! The titles are short, and their tooltips describe each column with its unit, so the cells hold only numbers.
 //! Columns can be reordered by dragging their headers, and the Status column fills the width left over.
 //! Failed files have white text with reduced opacity, cells have a faint divider between them,
-//! and the Status column shows a progress ring while a file is analyzed or normalized.
-//! A normalization failure or notice replaces the status text of its row, with the full text as the tooltip.
+//! and the Status column shows a progress ring while a file is analyzed, normalized, or processed with plugins.
+//! A failure or notice of a normalization or plugin processing replaces the status text of its row,
+//! with the full text as the tooltip.
 //! `ResultsDelegate` implements the gpui-kit `TableDelegate`, which renders only the visible rows,
 //! so lists of many thousands of files stay smooth.
 
@@ -77,6 +78,8 @@ pub enum RowState {
     Analyzing(f32),
     /// Being normalized, with the normalized fraction.
     Normalizing(f32),
+    /// Being processed with the plugin chain, with the processed fraction.
+    Processing(f32),
     /// Has a cached or fresh record, which may be a failure.
     Done,
 }
@@ -110,7 +113,7 @@ pub struct ResultRow {
     pub state: RowState,
     /// The result, once the file has been analyzed.
     pub record: Option<AnalysisRecord>,
-    /// Message of the last normalization of the file, shown instead of the status.
+    /// Message of the last normalization or plugin processing of the file, shown instead of the status.
     pub message: Option<RowMessage>,
 }
 
@@ -236,27 +239,29 @@ impl ResultRow {
     }
 
     /// Returns the status text, with an activity label while the file is busy,
-    /// and the message of the last normalization once it is done.
+    /// and the message of the last normalization or plugin processing once it is done.
     #[must_use]
     pub fn status_text(&self) -> String {
         match (&self.state, &self.record, &self.message) {
             (RowState::Pending, _, _) => String::from("Waiting"),
             (RowState::Analyzing(_), _, _) => String::from("Analyzing"),
             (RowState::Normalizing(_), _, _) => String::from("Normalizing"),
+            (RowState::Processing(_), _, _) => String::from("Processing"),
             (RowState::Done, _, Some(message)) => message.text.clone(),
             (RowState::Done, Some(record), None) => format_status(record.status).to_string(),
             (RowState::Done, None, None) => String::new(),
         }
     }
 
-    /// Returns true when the Status column shows a failure: a failed analysis or a failed normalization.
+    /// Returns true when the Status column shows a failure:
+    /// a failed analysis, or a failed normalization or plugin processing.
     #[must_use]
     pub fn shows_error(&self) -> bool {
         self.has_error()
             || (self.state == RowState::Done && self.message.as_ref().is_some_and(|message| message.is_error))
     }
 
-    /// Returns the tooltip of the Status column: the normalization message, or the reason a file failed.
+    /// Returns the tooltip of the Status column: the message of the last operation, or the reason a file failed.
     #[must_use]
     pub fn status_tooltip(&self) -> Option<String> {
         if self.state != RowState::Done {
@@ -342,13 +347,15 @@ impl ResultsDelegate {
         self.rows.iter().filter(|row| row.has_error()).count()
     }
 
-    /// Returns the summed fraction of the rows being analyzed or normalized, for the overall progress.
+    /// Returns the summed fraction of the rows being worked on, for the overall progress.
     #[must_use]
     pub fn active_progress(&self) -> f32 {
         self.rows
             .iter()
             .map(|row| match row.state {
-                RowState::Analyzing(fraction) | RowState::Normalizing(fraction) => fraction,
+                RowState::Analyzing(fraction) | RowState::Normalizing(fraction) | RowState::Processing(fraction) => {
+                    fraction
+                }
                 RowState::Pending | RowState::Done => 0.0,
             })
             .sum()
@@ -375,7 +382,7 @@ impl ResultsDelegate {
         self.sort_rows();
     }
 
-    /// Marks a listed file as waiting, for a run that analyzes or normalizes only some of the files.
+    /// Marks a listed file as waiting, for a run that works on only some of the files.
     pub fn mark_pending(&mut self, path: &Path) {
         if let Some(row) = self.row_mut(path) {
             row.state = RowState::Pending;
@@ -406,8 +413,16 @@ impl ResultsDelegate {
         }
     }
 
-    /// Ends the normalization of a file that was left unchanged, keeping its record and showing the reason.
-    pub fn fail_normalization(&mut self, path: &Path, error: &str) {
+    /// Marks a file as being processed with the plugin chain, with the processed fraction.
+    pub fn mark_processing(&mut self, path: &Path, fraction: f32) {
+        if let Some(row) = self.row_mut(path) {
+            row.state = RowState::Processing(fraction);
+        }
+    }
+
+    /// Ends the normalization or plugin processing of a file that was left unchanged,
+    /// keeping its record and showing the reason.
+    pub fn fail_operation(&mut self, path: &Path, error: &str) {
         if let Some(row) = self.row_mut(path) {
             row.state = RowState::Done;
             row.message = Some(RowMessage {
@@ -417,11 +432,11 @@ impl ResultsDelegate {
         }
     }
 
-    /// Replaces the row of a normalized source with the output record and an optional message.
+    /// Replaces the row of a normalized or processed source with the output record and an optional message.
     /// A converted source leaves the list, since the output is a new file next to it.
     /// The output may belong elsewhere in the order,
     /// so the caller sorts the rows once after applying a batch of results.
-    pub fn replace_after_normalization(&mut self, source: &Path, output: AnalysisRecord, message: Option<RowMessage>) {
+    pub fn replace_after_operation(&mut self, source: &Path, output: AnalysisRecord, message: Option<RowMessage>) {
         let output_path = output.path.clone();
         if output_path != source {
             self.remove(source);
@@ -707,9 +722,10 @@ impl TableDelegate for ResultsDelegate {
         };
         let cell = match (key, state) {
             (ColumnKey::Status, RowState::Pending) => cell.child(activity_ring(0.0)),
-            (ColumnKey::Status, RowState::Analyzing(fraction) | RowState::Normalizing(fraction)) => {
-                cell.child(activity_ring(fraction))
-            }
+            (
+                ColumnKey::Status,
+                RowState::Analyzing(fraction) | RowState::Normalizing(fraction) | RowState::Processing(fraction),
+            ) => cell.child(activity_ring(fraction)),
             _ => cell,
         };
         let cell = cell.id(("cell", column_index));
@@ -1001,7 +1017,7 @@ mod test_custom_gain {
 }
 
 #[cfg(test)]
-mod test_normalization_rows {
+mod test_operation_rows {
     use super::*;
 
     use audiobatch_core::AnalysisStatus;
@@ -1025,7 +1041,7 @@ mod test_normalization_rows {
         let mut delegate = delegate_with(&["/a.wav", "/b.wav"]);
         delegate.mark_normalizing(Path::new("/a.wav"), 0.5);
         assert!((delegate.active_progress() - 0.5).abs() < f32::EPSILON);
-        delegate.replace_after_normalization(Path::new("/a.wav"), record("/a.aif"), None);
+        delegate.replace_after_operation(Path::new("/a.wav"), record("/a.aif"), None);
         assert_eq!(delegate.len(), 2);
         assert!(delegate.row_for(Path::new("/a.wav")).is_none());
         let output = delegate.row_for(Path::new("/a.aif")).expect("output row");
@@ -1059,7 +1075,7 @@ mod test_normalization_rows {
             text: String::from("Some packets were silent"),
             is_error: false,
         };
-        delegate.replace_after_normalization(Path::new("/a.wav"), record("/a.aif"), Some(notice));
+        delegate.replace_after_operation(Path::new("/a.wav"), record("/a.aif"), Some(notice));
         assert_eq!(delegate.len(), 1);
         let row = delegate.row_for(Path::new("/a.aif")).expect("output row");
         assert_eq!(row.status_text(), "Some packets were silent");
@@ -1078,7 +1094,7 @@ mod test_normalization_rows {
                 .as_deref(),
             Some("Normalizing")
         );
-        delegate.fail_normalization(Path::new("/a.wav"), "Output exists");
+        delegate.fail_operation(Path::new("/a.wav"), "Output exists");
         let row = delegate.row_for(Path::new("/a.wav")).expect("row");
         assert!(row.ready_record().is_some());
         assert!(row.shows_error());
@@ -1087,9 +1103,20 @@ mod test_normalization_rows {
     }
 
     #[test]
+    fn processing_rows_show_their_activity_and_progress() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav"]);
+        delegate.mark_processing(Path::new("/a.wav"), 0.25);
+        delegate.mark_normalizing(Path::new("/b.wav"), 0.5);
+        assert!((delegate.active_progress() - 0.75).abs() < f32::EPSILON);
+        let row = delegate.row_for(Path::new("/a.wav")).expect("row");
+        assert_eq!(row.status_text(), "Processing");
+        assert_eq!(row.status_tooltip(), None);
+    }
+
+    #[test]
     fn new_analysis_clears_the_message() {
         let mut delegate = delegate_with(&["/a.wav"]);
-        delegate.fail_normalization(Path::new("/a.wav"), "Output exists");
+        delegate.fail_operation(Path::new("/a.wav"), "Output exists");
         delegate.set_record(record("/a.wav"));
         let row = delegate.row_for(Path::new("/a.wav")).expect("row");
         assert_eq!(row.message, None);

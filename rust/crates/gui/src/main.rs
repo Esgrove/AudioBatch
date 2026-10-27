@@ -4,6 +4,11 @@
 //! and `--autoplay` then selects and plays the first file that analyzed successfully.
 //! `AudioBatchRs --demo-rows <count>` runs the table and waveform stress test with synthetic data instead.
 //! Setting `AUDIOBATCH_GUI_DEBUG` prints diagnostics to stderr.
+//!
+//! The executable also serves as the plugin scan worker,
+//! so a plugin that crashes while it is scanned takes down only the worker process.
+//! The worker flag is checked before anything else starts.
+//! The main thread is the VST3 UI thread, and a foreground task runs the plugin jobs other threads send to it.
 
 // The Action derive generates `gpui::` paths, which resolve through the kit under this name.
 extern crate gpui_kit as gpui;
@@ -15,17 +20,23 @@ mod files;
 mod info_panel;
 mod menus;
 mod normalization;
+mod operation_run;
+mod plugins;
 mod results;
 mod settings;
 mod settings_window;
 #[cfg(feature = "snapshot")]
 mod snapshot;
+#[cfg(test)]
+mod test_helpers;
 mod theme;
 mod waveform;
 
 use std::path::PathBuf;
 
+use audiobatch_plugins::{is_scan_worker_invocation, run_scan_worker};
 use gpui_kit::{App, AppContext as _, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
+use vst3_host::{UiDispatcher, UiThread, ui_channel};
 
 use crate::app::{APP_TITLE, AppView, LaunchOptions};
 
@@ -51,8 +62,12 @@ pub fn debug_enabled() -> bool {
     std::env::var_os("AUDIOBATCH_GUI_DEBUG").is_some()
 }
 
-/// Parses the launch options and opens the main window, quitting when it closes.
+/// Runs the plugin scan worker when started as one.
+/// Otherwise parses the launch options and opens the main window, quitting when it closes.
 fn main() {
+    if is_scan_worker_invocation(std::env::args_os()) {
+        std::process::exit(run_scan_worker());
+    }
     let options = match parse_arguments(std::env::args().skip(1)) {
         Ok(options) => options,
         Err(message) => {
@@ -68,6 +83,14 @@ fn main() {
             gpui_kit::init(cx);
             theme::install(cx);
             menus::install(cx);
+            let dispatcher = match start_plugin_jobs(cx) {
+                Ok(dispatcher) => dispatcher,
+                Err(error) => {
+                    eprintln!("Failed to start the plugin host: {error:#}");
+                    cx.quit();
+                    return;
+                }
+            };
             let window_options = WindowOptions {
                 window_bounds: Some(initial_window_bounds(cx)),
                 window_min_size: Some(size(px(MINIMUM_WINDOW_SIZE.0), px(MINIMUM_WINDOW_SIZE.1))),
@@ -79,7 +102,7 @@ fn main() {
                 ..Default::default()
             };
             let window = match gpui_kit::open_window(window_options, cx, |window, cx| {
-                cx.new(|cx| AppView::new(&options, window, cx))
+                cx.new(|cx| AppView::new(&options, dispatcher, window, cx))
             }) {
                 Ok((window, _)) => window,
                 Err(error) => {
@@ -100,6 +123,25 @@ fn main() {
             .detach();
             cx.activate(true);
         });
+}
+
+/// Registers the main thread as the VST3 UI thread,
+/// and runs the plugin jobs that other threads send to it on the foreground executor for the life of the app.
+/// Returns the dispatcher that sends those jobs.
+///
+/// # Errors
+///
+/// Returns an error when another thread is already registered as the UI thread.
+fn start_plugin_jobs(cx: &App) -> anyhow::Result<UiDispatcher> {
+    let ui = UiThread::register_current()?;
+    let (dispatcher, jobs) = ui_channel();
+    cx.spawn(async move |_| {
+        while let Some(job) = jobs.recv().await {
+            job.run(&ui);
+        }
+    })
+    .detach();
+    Ok(dispatcher)
 }
 
 /// Returns where the main window opens on the main display.

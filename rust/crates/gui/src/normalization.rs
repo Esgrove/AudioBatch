@@ -1,32 +1,27 @@
-//! Normalization from the desktop app: the target, the options of a run, and the progress of a run.
+//! Normalization from the desktop app: the target, the options of a run, and the status texts of a blocked run.
 //!
 //! The target is a sample peak in dBFS or an integrated loudness in LUFS,
 //! limited to the ranges of the core library, in steps of 0.1 dB for peaks and 0.5 LU for loudness.
-//! A run counts its finished files and collects the failures,
-//! so the status bar can show the progress and the end of the run can list what went wrong.
-
-use std::path::Path;
-use std::time::Instant;
+//! The progress of a run is tracked by `OperationRun`, which plugin processing shares.
 
 use audiobatch_core::normalize::{
     DEFAULT_TARGET_LUFS, DEFAULT_TARGET_PEAK_DBFS, MAXIMUM_TARGET_LUFS, MAXIMUM_TARGET_PEAK_DBFS, MINIMUM_TARGET_LUFS,
     MINIMUM_TARGET_PEAK_DBFS, NormalizationOptions,
 };
-use audiobatch_core::operation::OperationResult;
 
 use crate::settings::{GuiSettings, NormalizeMode};
 
 /// Status text when normalization is asked for while files are being analyzed.
 pub const BLOCKED_BY_ANALYSIS: &str = "Wait for analysis to finish before normalizing";
 
+/// Status text when normalization is asked for while files are being processed with plugins.
+pub const BLOCKED_BY_PROCESSING: &str = "Wait for plugin processing to finish before normalizing";
+
 /// Status text when normalization is asked for while a run is already in progress.
 pub const ALREADY_NORMALIZING: &str = "Normalization already in progress";
 
 /// Status text when the list is changed while files are being normalized.
 pub const NORMALIZATION_IN_PROGRESS: &str = "Normalization in progress";
-
-/// Most failures listed by name at the end of a run, so the summary dialog stays a readable size.
-const MAXIMUM_LISTED_FAILURES: usize = 8;
 
 /// Range and step of the target slider for one normalization mode.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -39,94 +34,6 @@ pub struct TargetRange {
     pub step: f32,
     /// Target at startup and after a reset.
     pub default: f32,
-}
-
-/// Progress of one normalization run.
-#[derive(Debug, Clone)]
-pub struct NormalizeRun {
-    /// Coordinator run the events belong to.
-    pub run_id: u64,
-    /// Number of files in the run.
-    pub total: usize,
-    /// Number of files with a result.
-    pub finished: usize,
-    /// One line per failed file, its name and the reason.
-    pub failures: Vec<String>,
-    /// True once every file has a result.
-    pub completed: bool,
-    started: Instant,
-}
-
-impl NormalizeRun {
-    /// Starts tracking a run of the given number of files.
-    #[must_use]
-    pub fn new(run_id: u64, total: usize) -> Self {
-        Self {
-            run_id,
-            total,
-            finished: 0,
-            failures: Vec::new(),
-            completed: false,
-            started: Instant::now(),
-        }
-    }
-
-    /// Counts the result of one file and remembers its failure.
-    pub fn record(&mut self, result: &OperationResult) {
-        self.finished += 1;
-        if let Some(error) = result.error() {
-            self.failures.push(format!("{}: {error}", file_name(&result.source)));
-        }
-    }
-
-    /// Returns the status bar text while the run is in progress.
-    #[must_use]
-    pub fn progress_text(&self) -> String {
-        format!("Normalizing {}/{}", self.finished, self.total)
-    }
-
-    /// Returns the status bar text once the run is complete.
-    #[must_use]
-    pub fn summary(&self) -> String {
-        let files = if self.total == 1 { "file" } else { "files" };
-        match self.failures.len() {
-            0 => format!("Normalized {} {files}", self.total),
-            failed => format!("Normalized {} {files}, {failed} failed", self.total),
-        }
-    }
-
-    /// Returns the log line of a completed run, with its duration and counts.
-    #[must_use]
-    pub fn log_line(&self) -> String {
-        format!(
-            "Normalization complete: {:.2} s, {} files ({} succeeded, {} failed)",
-            self.started.elapsed().as_secs_f64(),
-            self.total,
-            self.total.saturating_sub(self.failures.len()),
-            self.failures.len()
-        )
-    }
-
-    /// Returns the text of the failure dialog, or none when every file succeeded.
-    /// A single failure is shown on its own, and a longer list names the first few files.
-    #[must_use]
-    pub fn failure_message(&self) -> Option<String> {
-        match self.failures.as_slice() {
-            [] => None,
-            [single] => Some(single.clone()),
-            failures => {
-                let mut lines: Vec<String> = failures
-                    .iter()
-                    .take(MAXIMUM_LISTED_FAILURES)
-                    .map(|failure| format!("- {failure}"))
-                    .collect();
-                if failures.len() > MAXIMUM_LISTED_FAILURES {
-                    lines.push(format!("- ...and {} more", failures.len() - MAXIMUM_LISTED_FAILURES));
-                }
-                Some(format!("Some files could not be normalized:\n\n{}", lines.join("\n")))
-            }
-        }
-    }
 }
 
 /// Returns the slider range of a normalization mode.
@@ -194,14 +101,6 @@ pub fn normalization_options(settings: &GuiSettings, overwrite_existing: bool) -
     }
 }
 
-/// Returns the file name of a path for messages.
-fn file_name(path: &Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    )
-}
-
 #[cfg(test)]
 mod test_target {
     use audiobatch_core::normalize::NormalizationMode;
@@ -253,52 +152,5 @@ mod test_target {
         let loudness = target_range(NormalizeMode::Loudness);
         assert!((loudness.minimum + 24.0).abs() < f32::EPSILON && (loudness.maximum + 6.0).abs() < f32::EPSILON);
         assert!((loudness.step - 0.5).abs() < f32::EPSILON);
-    }
-}
-
-#[cfg(test)]
-mod test_run {
-    use std::path::PathBuf;
-
-    use super::*;
-
-    fn failure(name: &str) -> OperationResult {
-        OperationResult::failure(&PathBuf::from("/music").join(name), "Could not read")
-    }
-
-    #[test]
-    fn progress_and_summary_count_the_results() {
-        let mut run = NormalizeRun::new(1, 3);
-        assert_eq!(run.progress_text(), "Normalizing 0/3");
-        run.record(&failure("a.wav"));
-        assert_eq!(run.progress_text(), "Normalizing 1/3");
-        assert_eq!(run.summary(), "Normalized 3 files, 1 failed");
-        assert!(run.log_line().contains("3 files (2 succeeded, 1 failed)"));
-    }
-
-    #[test]
-    fn summary_of_a_clean_run_has_no_failures() {
-        let run = NormalizeRun::new(1, 1);
-        assert_eq!(run.summary(), "Normalized 1 file");
-        assert_eq!(run.failure_message(), None);
-    }
-
-    #[test]
-    fn single_failure_is_shown_on_its_own() {
-        let mut run = NormalizeRun::new(1, 2);
-        run.record(&failure("a.wav"));
-        assert_eq!(run.failure_message().as_deref(), Some("a.wav: Could not read"));
-    }
-
-    #[test]
-    fn long_failure_list_is_shortened() {
-        let mut run = NormalizeRun::new(1, 10);
-        for index in 0..10 {
-            run.record(&failure(&format!("{index}.wav")));
-        }
-        let message = run.failure_message().expect("has failures");
-        assert!(message.starts_with("Some files could not be normalized:\n\n- 0.wav: Could not read"));
-        assert!(message.ends_with("- ...and 2 more"));
-        assert_eq!(message.lines().filter(|line| line.starts_with("- ")).count(), 9);
     }
 }
