@@ -138,6 +138,7 @@ std::optional<juce::File> getPresetFile(const juce::File& directory, const juce:
 
 /// Lists the preset files in the folder, sorted by name, ignoring case.
 /// Returns an empty list when the folder does not exist yet.
+/// Hidden files are left out, such as the temporary file of a save that was interrupted.
 /// The files are not parsed, so a damaged preset is listed and reports its problem when it is loaded.
 std::vector<ChainPresetInfo> listPresets(const juce::File& directory)
 {
@@ -147,9 +148,15 @@ std::vector<ChainPresetInfo> listPresets(const juce::File& directory)
     }
 
     for (const auto& entry : juce::RangedDirectoryIterator(
-             directory, false, utils::format("*{}", presetFileExtension), juce::File::findFiles
+             directory,
+             false,
+             utils::format("*{}", presetFileExtension),
+             juce::File::findFiles | juce::File::ignoreHiddenFiles
          ))
     {
+        if (entry.getFile().getFileName().startsWithChar('.')) {
+            continue;
+        }
         const auto& file = entry.getFile();
         presets.push_back(
             {.name = file.getFileNameWithoutExtension(), .file = file, .modified = entry.getModificationTime()}
@@ -191,9 +198,19 @@ std::expected<juce::File, juce::String> savePreset(
     presetElement.setAttribute(presetVersionAttribute, presetFormatVersion);
     presetElement.addChildElement(createChainXml(slots).release());
 
-    const juce::TemporaryFile temporaryFile(*file);
-    if (!presetElement.writeTo(temporaryFile.getFile())) {
-        return std::unexpected(utils::format("Could not write the preset {}", file->getFullPathName().quoted()));
+    // The hidden temporary file keeps an interrupted save out of the preset list,
+    // which a visible file with the preset extension would join.
+    const juce::TemporaryFile temporaryFile(*file, juce::TemporaryFile::useHiddenFile);
+    {
+        juce::FileOutputStream output(temporaryFile.getFile());
+        if (!output.openedOk()) {
+            return std::unexpected(utils::format("Could not write the preset {}", file->getFullPathName().quoted()));
+        }
+        presetElement.writeTo(output);
+        output.flush();
+        if (output.getStatus().failed()) {
+            return std::unexpected(utils::format("Could not write the preset {}", file->getFullPathName().quoted()));
+        }
     }
     if (!temporaryFile.overwriteTargetFileWithTemporary()) {
         return std::unexpected(utils::format("Could not replace the preset {}", file->getFullPathName().quoted()));
