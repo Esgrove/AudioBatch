@@ -55,6 +55,8 @@ struct TestPluginSettings {
     double reportedTailSeconds = 0.0;
     /// Emits a repeated pattern spanning 16-bit quantization boundaries and the PCM clipping limits.
     bool producesQuantizationPattern {false};
+    /// Emits half a 16-bit step below full scale, which rounds down to the largest positive sample.
+    bool producesHalfStepBelowFullScale {false};
 };
 
 /// A test plugin that applies a fixed gain and can swap the left and right channels.
@@ -124,6 +126,14 @@ public:
                 for (int sample = 0; sample < buffer.getNumSamples(); ++sample) {
                     buffer.setSample(channel, sample, pattern[static_cast<std::size_t>(sample) % pattern.size()]);
                 }
+            }
+        }
+
+        if (settings.producesHalfStepBelowFullScale) {
+            for (int channel = 0; channel < channels; ++channel) {
+                juce::FloatVectorOperations::fill(
+                    buffer.getWritePointer(channel), 32'767.5f / 32'768.0f, buffer.getNumSamples()
+                );
             }
         }
     }
@@ -1017,6 +1027,18 @@ public:
                     expectEquals(right[sample], expectedSample);
                 }
             }
+        }
+
+        beginTest("Output between the largest step and full scale rounds down without reporting clipping");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "half_step.aif");
+            TestPlugin plugin({.producesHalfStepBelowFullScale = true});
+            const auto result = process(source, {&plugin});
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expect(outcomeNotice(result.outcome).isEmpty(), outcomeNotice(result.outcome));
+            expectWithinAbsoluteError(
+                utils::peakMagnitude(outcomeRecord(result.outcome).overallPeak), 32'767.0f / 32'768.0f, 0.0f
+            );
         }
 
         beginTest("Float overs between plugins do not report clipping when the final output is in range");
