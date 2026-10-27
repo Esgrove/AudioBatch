@@ -96,36 +96,44 @@ consteval std::array<const char*, count> namesOf(const std::array<OptionName<Enu
 }
 
 /// Names accepted by --sort, with "loudness" as an alias for "lufs".
-inline constexpr auto sortModeNames {std::to_array<OptionName<AudioAnalysisSortMode>>({
-    {.name = "peak", .value = AudioAnalysisSortMode::peak},
-    {.name = "lufs", .value = AudioAnalysisSortMode::loudness},
-    {.name = "loudness", .value = AudioAnalysisSortMode::loudness},
-    {.name = "name", .value = AudioAnalysisSortMode::name},
-    {.name = "path", .value = AudioAnalysisSortMode::path},
-})};
+inline constexpr auto sortModeNames {
+    std::to_array<OptionName<AudioAnalysisSortMode>>({
+        {.name = "peak", .value = AudioAnalysisSortMode::peak},
+        {.name = "lufs", .value = AudioAnalysisSortMode::loudness},
+        {.name = "loudness", .value = AudioAnalysisSortMode::loudness},
+        {.name = "name", .value = AudioAnalysisSortMode::name},
+        {.name = "path", .value = AudioAnalysisSortMode::path},
+    }),
+};
 
 /// Names accepted by --output.
-inline constexpr auto outputFormatNames {std::to_array<OptionName<AudioAnalysisOutputFormat>>({
-    {.name = "table", .value = AudioAnalysisOutputFormat::table},
-    {.name = "csv", .value = AudioAnalysisOutputFormat::csv},
-    {.name = "json", .value = AudioAnalysisOutputFormat::json},
-})};
+inline constexpr auto outputFormatNames {
+    std::to_array<OptionName<AudioAnalysisOutputFormat>>({
+        {.name = "table", .value = AudioAnalysisOutputFormat::table},
+        {.name = "csv", .value = AudioAnalysisOutputFormat::csv},
+        {.name = "json", .value = AudioAnalysisOutputFormat::json},
+    }),
+};
 
 /// Names accepted by --group-by.
-inline constexpr auto pluginGroupingNames {std::to_array<OptionName<PluginListGrouping>>({
-    {.name = "name", .value = PluginListGrouping::name},
-    {.name = "manufacturer", .value = PluginListGrouping::manufacturer},
-    {.name = "type", .value = PluginListGrouping::type},
-    {.name = "format", .value = PluginListGrouping::format},
-})};
+inline constexpr auto pluginGroupingNames {
+    std::to_array<OptionName<PluginListGrouping>>({
+        {.name = "name", .value = PluginListGrouping::name},
+        {.name = "manufacturer", .value = PluginListGrouping::manufacturer},
+        {.name = "type", .value = PluginListGrouping::type},
+        {.name = "format", .value = PluginListGrouping::format},
+    }),
+};
 
 /// Shell names accepted by the completion subcommand.
-inline constexpr auto completionShellNames {std::to_array<OptionName<CompletionShell>>({
-    {.name = "zsh", .value = CompletionShell::zsh},
-    {.name = "bash", .value = CompletionShell::bash},
-    {.name = "fish", .value = CompletionShell::fish},
-    {.name = "powershell", .value = CompletionShell::powershell},
-})};
+inline constexpr auto completionShellNames {
+    std::to_array<OptionName<CompletionShell>>({
+        {.name = "zsh", .value = CompletionShell::zsh},
+        {.name = "bash", .value = CompletionShell::bash},
+        {.name = "fish", .value = CompletionShell::fish},
+        {.name = "powershell", .value = CompletionShell::powershell},
+    }),
+};
 
 /// The names of the enum option tables, which the options below offer as completions.
 inline constexpr auto sortModeValues {namesOf(sortModeNames)};
@@ -273,37 +281,39 @@ inline constexpr std::array completionOptions {std::cref(installOption), std::cr
 inline constexpr auto helpCommandValues {std::to_array<const char*>({"list", "completion", "help"})};
 
 /// The subcommands, in the order the usage text and the shell completions list them.
-inline constexpr auto subcommands {std::to_array<CliSubcommandInfo>({
-    {
-        .subcommand = CliSubcommand::list,
-        .name = "list",
-        .description = "List the available audio plugins",
-        .options = listOptions,
-        .argumentName = "",
-        .argumentDescription = "",
-        .argumentRequired = false,
-        .argumentValues = {},
-    },
-    {
-        .subcommand = CliSubcommand::completion,
-        .name = "completion",
-        .description = "Print or install a shell completion script",
-        .options = completionOptions,
-        .argumentName = "shell",
-        .argumentDescription = "Shell to generate the script for",
-        .argumentRequired = true,
-        .argumentValues = completionShellValues,
-    },
-    {
-        .subcommand = CliSubcommand::help,
-        .name = "help",
-        .description = "Print this message or the help of the given command",
-        .options = {},
-        .argumentName = "command",
-        .argumentDescription = "Command to print the help of",
-        .argumentRequired = false,
-        .argumentValues = helpCommandValues,
-    },
-})};
+inline constexpr auto subcommands {
+    std::to_array<CliSubcommandInfo>({
+        {
+            .subcommand = CliSubcommand::list,
+            .name = "list",
+            .description = "List the available audio plugins",
+            .options = listOptions,
+            .argumentName = "",
+            .argumentDescription = "",
+            .argumentRequired = false,
+            .argumentValues = {},
+        },
+        {
+            .subcommand = CliSubcommand::completion,
+            .name = "completion",
+            .description = "Print or install a shell completion script",
+            .options = completionOptions,
+            .argumentName = "shell",
+            .argumentDescription = "Shell to generate the script for",
+            .argumentRequired = true,
+            .argumentValues = completionShellValues,
+        },
+        {
+            .subcommand = CliSubcommand::help,
+            .name = "help",
+            .description = "Print this message or the help of the given command",
+            .options = {},
+            .argumentName = "command",
+            .argumentDescription = "Command to print the help of",
+            .argumentRequired = false,
+            .argumentValues = helpCommandValues,
+        },
+    }),
+};
 }  // namespace cli
 }  // namespace audiobatch
