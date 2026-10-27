@@ -10,11 +10,13 @@
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponentState.h"
 #include "serato/SeratoTagTypes.h"
+#include "serato/SeratoWaveformColouring.h"
 
 #include <JuceHeader.h>
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace audiobatch
@@ -36,6 +38,19 @@ struct CueArrows {
     float top {0.0f};
     /// Bottom edge of the waveform, where the base of the lower arrow lies.
     float bottom {0.0f};
+};
+
+/// The coloured waveform last painted, with the geometry and gain it was rendered for.
+/// The waveform paints it again without rendering while none of them, the waveform, or the overview changed.
+struct ColouredWaveformCache {
+    /// The rendered waveform, which also records the pixel scale and renderer it was rendered for.
+    serato::ColouredThumbnailImage rendered;
+    /// Waveform bounds in component coordinates.
+    juce::Rectangle<int> bounds;
+    /// Visible time range in seconds.
+    juce::Range<double> visibleRange;
+    /// Linear display gain of the waveform.
+    float displayGain {1.0f};
 };
 
 /// Waveform preview component with a playback cursor, scrubbing, zooming, and drag-and-drop.
@@ -91,6 +106,7 @@ public:
     void setZoom(double zoomLevel);
 
 private:
+    bool drawColouredWaveform(juce::Graphics& graphics, juce::Rectangle<int> bounds);
     [[nodiscard]] double xToTime(float xPosition) const;
     [[nodiscard]] float timeToX(double time) const;
     [[nodiscard]] float loudnessToY(double value, juce::Rectangle<int> bounds) const;
@@ -124,6 +140,8 @@ private:
     std::shared_ptr<const serato::Markers> seratoMarkers;
     std::shared_ptr<const serato::Overview> seratoOverview;
     std::shared_ptr<const ShortTermLoudnessHistory> loudnessHistory;
+    /// The coloured waveform of the last paint, cleared when the waveform, the overview, or the colouring changes.
+    std::optional<ColouredWaveformCache> colouredWaveform;
 
     bool hasNotifiedFullyLoaded {false};
     bool loudnessGraphEnabled {false};

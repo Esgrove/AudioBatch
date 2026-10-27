@@ -189,12 +189,22 @@ std::optional<juce::ColourGradient> makeOverviewGradient(
     return gradient;
 }
 
+/// Returns true when the image was rendered for the pixel scale and the renderer of the graphics context,
+/// so drawing it there gives the same pixels as rendering it again.
+bool isRenderedFor(const ColouredThumbnailImage& rendered, const juce::Graphics& graphics)
+{
+    auto& context = graphics.getInternalContext();
+    return juce::exactlyEqual(rendered.scale, context.getPhysicalPixelScaleFactor())
+        && rendered.software == (dynamic_cast<juce::LowLevelGraphicsSoftwareRenderer*>(&context) != nullptr);
+}
+
 /// Draws JUCE's solid waveform once at physical resolution and changes only its RGB channels.
 /// Direct gradient fills use different raster paths from solid fills on both software and Direct2D backends.
 /// Preserving the solid mask avoids their changed edge coverage, including disappearing low-alpha pixels.
-/// The temporary image uses the current renderer's backend and is rebuilt as PCM, range, gain or scale changes.
-void drawColouredThumbnail(
-    juce::Graphics& graphics,
+/// The image uses the backend of the renderer of the graphics context,
+/// and stays valid for drawing there until the PCM, range, gain, bounds, or scale change.
+ColouredThumbnailImage renderColouredThumbnail(
+    const juce::Graphics& graphics,
     juce::AudioThumbnail& thumbnail,
     const juce::Rectangle<int> waveformBounds,
     const juce::Range<double> visibleRange,
@@ -202,15 +212,15 @@ void drawColouredThumbnail(
     const juce::ColourGradient& gradient
 )
 {
-    if (waveformBounds.isEmpty()) {
-        return;
-    }
-
     const auto scale = graphics.getInternalContext().getPhysicalPixelScaleFactor();
-    const auto physicalBounds
-        = waveformBounds.toFloat().transformedBy(juce::AffineTransform::scale(scale)).getSmallestIntegerContainer();
     const auto software
         = dynamic_cast<juce::LowLevelGraphicsSoftwareRenderer*>(&graphics.getInternalContext()) != nullptr;
+    if (waveformBounds.isEmpty()) {
+        return {.image = {}, .physicalBounds = {}, .scale = scale, .software = software};
+    }
+
+    const auto physicalBounds
+        = waveformBounds.toFloat().transformedBy(juce::AffineTransform::scale(scale)).getSmallestIntegerContainer();
     const juce::SoftwareImageType softwareImageType;
     const juce::NativeImageType nativeImageType;
     const auto& imageType = software ? static_cast<const juce::ImageType&>(softwareImageType)
@@ -245,14 +255,24 @@ void drawColouredThumbnail(
         }
     }
 
+    return {.image = image, .physicalBounds = physicalBounds, .scale = scale, .software = software};
+}
+
+/// Draws a rendered coloured waveform at its physical pixel bounds without resampling it.
+void drawColouredThumbnail(juce::Graphics& graphics, const ColouredThumbnailImage& rendered)
+{
+    if (!rendered.image.isValid()) {
+        return;
+    }
+
     const juce::Graphics::ScopedSaveState savedState(graphics);
     graphics.setImageResamplingQuality(juce::Graphics::lowResamplingQuality);
     graphics.drawImageTransformed(
-        image,
+        rendered.image,
         juce::AffineTransform::translation(
-            static_cast<float>(physicalBounds.getX()), static_cast<float>(physicalBounds.getY())
+            static_cast<float>(rendered.physicalBounds.getX()), static_cast<float>(rendered.physicalBounds.getY())
         )
-            .scaled(1.0f / scale)
+            .scaled(1.0f / rendered.scale)
     );
 }
 }  // namespace audiobatch::serato

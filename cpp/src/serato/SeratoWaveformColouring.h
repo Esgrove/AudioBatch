@@ -18,6 +18,18 @@ class AudioThumbnail;
 
 namespace audiobatch::serato
 {
+/// A coloured waveform rendered at the physical resolution of the graphics context it is drawn in.
+struct ColouredThumbnailImage {
+    /// The waveform pixels in the colours of the overview, or an invalid image for empty bounds.
+    juce::Image image;
+    /// Bounds of the image in the physical pixels of the context.
+    juce::Rectangle<int> physicalBounds;
+    /// Physical pixels per logical pixel of the context the image was rendered for.
+    float scale {1.0f};
+    /// True when the image was rendered for the software renderer, whose image type differs from the native one.
+    bool software {false};
+};
+
 /// Bounds gradient storage independently of tag size and offscreen slice count.
 inline constexpr int maxWaveformGradientStops {4096};
 
@@ -34,12 +46,15 @@ inline constexpr int maxWaveformGradientStops {4096};
     juce::Colour fallback
 );
 
-void drawColouredThumbnail(
-    juce::Graphics& graphics,
+[[nodiscard]] ColouredThumbnailImage renderColouredThumbnail(
+    const juce::Graphics& graphics,
     juce::AudioThumbnail& thumbnail,
     juce::Rectangle<int> waveformBounds,
     juce::Range<double> visibleRange,
     float displayGain,
     const juce::ColourGradient& gradient
 );
+[[nodiscard]] bool isRenderedFor(const ColouredThumbnailImage& rendered, const juce::Graphics& graphics);
+
+void drawColouredThumbnail(juce::Graphics& graphics, const ColouredThumbnailImage& rendered);
 }  // namespace audiobatch::serato
