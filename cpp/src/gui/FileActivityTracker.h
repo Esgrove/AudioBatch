@@ -51,12 +51,23 @@ public:
     [[nodiscard]] static float getAnimationPhase();
 
 private:
+    std::map<juce::String, FileActivityState>::iterator eraseState(
+        std::map<juce::String, FileActivityState>::iterator iterator
+    );
     void activityChanged();
+    void storeState(const juce::String& fullPath, FileActivityState state);
 
+    /// Component whose display drives the animation, owned by the caller, which outlives the tracker.
     juce::Component& animationComponent;
+    /// Repaints the view that shows the activities, and runs on every animation frame while files are busy.
     std::function<void()> repaint;
+    /// Outcome message of the last operation of each file, by full path.
     std::map<juce::String, OperationMessage> messages;
+    /// Activity and progress of each busy file, by full path.
     std::map<juce::String, FileActivityState> activeStates;
+    /// Sum of the progress of the busy files, updated with every change of activeStates.
+    double progressTotal {0.0};
+    /// Display callback that animates the indicators, attached only while a file is busy.
     juce::VBlankAttachment animationAttachment;
 };
 

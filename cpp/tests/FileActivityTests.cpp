@@ -80,7 +80,13 @@ public:
             tracker.setProgress(first.getFullPathName(), 0.75f);
             expect(!tracker.getActivityState(first.getFullPathName()).has_value());
             expectWithinAbsoluteError(tracker.getProgressTotal(), 1.0f, 1.0e-6f);
+
+            tracker.setActive(first.getFullPathName(), FileActivity::analyzing);
+            tracker.setProgress(first.getFullPathName(), 0.5f);
+            tracker.clearActiveWithActivities({FileActivity::processing});
+            expectWithinAbsoluteError(tracker.getProgressTotal(), 0.5f, 1.0e-6f);
             tracker.clearAllActive();
+            expectEquals(tracker.getProgressTotal(), 0.0f);
         }
 
         beginTest("Each new activity starts empty before its first repaint");
