@@ -51,3 +51,20 @@ repos:
         files: ^rust/
         pass_filenames: false
         priority: 1
+
+      - id: ruff-format
+        name: Python Format
+        description: Run ruff format on Python files included in the commit, with the pyproject.toml settings.
+        entry: uv run --frozen ruff format --force-exclude
+        types: [python]
+        language: system
+        priority: 1
+
+      # After ruff format, because both rewrite the same Python files.
+      - id: ruff-check
+        name: Python Lint
+        description: Run ruff check with fixes on Python files included in the commit.
+        entry: uv run --frozen ruff check --fix --force-exclude
+        types: [python]
+        language: system
+        priority: 2

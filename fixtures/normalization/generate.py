@@ -63,6 +63,11 @@ from mutagen.wave import WAVE
 
 DIRECTORY = Path(__file__).resolve().parent
 
+# Writes the tags of a fixture onto the rendered file.
+Tagger = Callable[[Path], None]
+
+ID3V2_3 = 3
+
 UNICODE_TITLE = "Äänekoski — Tëst 日本語 ✓"
 
 # Chord partials of the left channel as frequency and amplitude pairs. The right channel is detuned by 0.5%.
@@ -80,7 +85,7 @@ class Fixture:
     codec: list[str]
     gain_db: float = -3.0
     signal: str = "music"
-    tags: Callable[[Path], None] | None = None
+    tags: Tagger | None = None
     metadata: dict[str, str] = field(default_factory=dict)
 
 
@@ -275,7 +280,7 @@ def id3_frames(tag: ID3, title: str, serato: bool, pictures: bool) -> None:
             tag.add(GEOB(encoding=0, mime="application/octet-stream", filename="", desc=description, data=payload))
 
 
-def id3_tagger(version: int, title: str, serato: bool = False, pictures: bool = True, v1: int = 0):
+def id3_tagger(version: int, title: str, serato: bool = False, pictures: bool = True, v1: int = 0) -> Tagger:
     """Returns a tagger that writes an ID3v2 tag of the given version onto an MP3, AIFF, or WAV file."""
 
     def tag_file(path: Path) -> None:
@@ -287,7 +292,7 @@ def id3_tagger(version: int, title: str, serato: bool = False, pictures: bool = 
             tag = audio.tags
         id3_frames(tag, title, serato, pictures)
         # Saving as ID3v2.3 does not convert the frames, so the date moves from TDRC to TYER and TDAT here.
-        if version == 3:
+        if version == ID3V2_3:
             tag.update_to_v23()
         if path.suffix == ".mp3":
             tag.save(path, v2_version=version, v1=v1)
@@ -334,7 +339,7 @@ def flac_picture(data: bytes, mime: str, picture_type: int, description: str, si
     return picture
 
 
-def flac_tagger(title: str, serato: bool = False, pictures: bool = True):
+def flac_tagger(title: str, serato: bool = False, pictures: bool = True) -> Tagger:
     """Returns a tagger that writes Vorbis comments, picture blocks, and optionally native Serato fields."""
 
     def tag_file(path: Path) -> None:
@@ -352,7 +357,7 @@ def flac_tagger(title: str, serato: bool = False, pictures: bool = True):
     return tag_file
 
 
-def ogg_tagger(title: str):
+def ogg_tagger(title: str) -> Tagger:
     """Returns a tagger that writes Vorbis comments with a front cover in METADATA_BLOCK_PICTURE."""
 
     def tag_file(path: Path) -> None:
@@ -366,7 +371,7 @@ def ogg_tagger(title: str):
     return tag_file
 
 
-def mp4_tagger(title: str):
+def mp4_tagger(title: str) -> Tagger:
     """Returns a tagger that writes iTunes atoms, a cover, and freeform fields onto an M4A file."""
 
     def tag_file(path: Path) -> None:
@@ -570,6 +575,7 @@ FIXTURES = [
 
 
 def main() -> None:
+    """Renders and tags every fixture, then prints the file sizes."""
     for fixture in FIXTURES:
         output = DIRECTORY / fixture.name
         render(fixture, output)

@@ -24,8 +24,14 @@ This repository holds two versions of it side by side, each with its own agent i
   `uv run fixtures/normalization/generate.py` regenerates it with ffmpeg and mutagen.
   The unit tests do not read it. Only `rust/scripts/parity.sh` and the parity workflow do.
 - `.agents/rules/` holds rules for the C++ sources, and `.claude/rules` is a symlink to it.
+- `pyproject.toml` configures ruff for the Python scripts in `fixtures/` and `rust/scripts/`,
+  and pins it in `uv.lock`.
+  Run Python only through [uv](https://docs.astral.sh/uv/), never a bare `python3`.
+  Each script declares its Python version and packages in an inline `# /// script` block
+  and runs in its own environment with `uv run --script`, so add a script's packages there, not to `pyproject.toml`.
+  Check the scripts with `uv run ruff format` and `uv run ruff check --fix` from the repository root.
 - `.pre-commit-config.yaml` runs clang-format and cmake-format on `cpp/`, cargo fmt on `rust/`,
-  and basic file checks through [prek](https://prek.j178.dev).
+  ruff on the Python scripts, and basic file checks through [prek](https://prek.j178.dev).
 - `.github/workflows/cpp.yml` builds and checks the C++ project, and `rust.yml` the Rust port.
   Each runs only when its own directory, the fixtures, or the assets change.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,

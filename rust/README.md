@@ -198,14 +198,15 @@ AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png AUDIOBATCH_GUI_SNAPSHOT_ACTIONS=audiobatch:
 cargo nextest run
 ```
 
-`scripts/parity.sh` runs the Rust and the C++ CLI on the same files and compares their JSON output.
+`scripts/parity.sh` runs the Rust and the C++ CLI on the same files,
+and `scripts/compare_levels.py` compares their JSON output.
 Build the C++ CLI first with the CMake debug preset or `build.sh` in `../cpp`.
 With `--normalize`, each CLI normalizes its own copy of the files in a temporary folder,
 and the re-analyzed outputs are compared.
 Every output must reach the target given with `--peak` or `--lufs`.
 `scripts/compare_outputs.py` then compares the output files themselves:
 the file names, the AIFF format, the samples within -72 dBFS, and the ID3v2 frames.
-It runs through [uv](https://docs.astral.sh/uv/), which installs the Python packages it needs.
+Both scripts run through [uv](https://docs.astral.sh/uv/), which installs the Python packages they need.
 The originals are left alone, but the replaced copies go to the system trash.
 
 `../fixtures/normalization` is the collection made for this,
