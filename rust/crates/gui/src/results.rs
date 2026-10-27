@@ -1299,6 +1299,7 @@ mod test_custom_gain {
 
     use audiobatch_core::AnalysisStatus;
 
+    /// Returns an analyzed record of the path with the custom gain.
     fn record(path: &str, custom_gain_db: Option<f32>) -> AnalysisRecord {
         AnalysisRecord {
             path: PathBuf::from(path),
@@ -1310,12 +1311,14 @@ mod test_custom_gain {
         }
     }
 
+    /// Returns a delegate whose rows are the records.
     fn delegate_with(records: Vec<AnalysisRecord>) -> ResultsDelegate {
         let mut delegate = ResultsDelegate::new(1600.0);
         delegate.set_rows(records.into_iter().map(ResultRow::from_record).collect());
         delegate
     }
 
+    /// Returns the custom gain of the row of the path.
     fn gain_of(delegate: &ResultsDelegate, path: &str) -> Option<f32> {
         delegate
             .row_for(Path::new(path))
@@ -1372,6 +1375,7 @@ mod test_selection {
         delegate
     }
 
+    /// Returns the selected paths as text, the file the preview plays first.
     fn selected(delegate: &ResultsDelegate) -> Vec<String> {
         delegate
             .selected_paths()
@@ -1434,6 +1438,7 @@ mod test_operation_rows {
 
     use audiobatch_core::AnalysisStatus;
 
+    /// Returns an analyzed record of the path.
     fn record(path: &str) -> AnalysisRecord {
         AnalysisRecord {
             path: PathBuf::from(path),
@@ -1619,10 +1624,12 @@ mod test_column_visibility_and_sort {
 
     use audiobatch_core::AnalysisStatus;
 
+    /// Returns the column identifiers of the delegate in display order.
     fn column_keys(delegate: &ResultsDelegate) -> Vec<String> {
         delegate.columns.iter().map(|column| column.key.to_string()).collect()
     }
 
+    /// Returns an analyzed record with the name, sample peak, and integrated loudness.
     fn record(name: &str, peak: f32, integrated_lufs: f64) -> AnalysisRecord {
         AnalysisRecord {
             path: PathBuf::from(format!("/{name}")),
@@ -1634,6 +1641,7 @@ mod test_column_visibility_and_sort {
         }
     }
 
+    /// Returns the file names of the rows, in order.
     fn names(delegate: &ResultsDelegate) -> Vec<String> {
         (0..delegate.len())
             .filter_map(|index| delegate.row(index))

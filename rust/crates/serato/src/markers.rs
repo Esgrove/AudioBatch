@@ -385,6 +385,7 @@ mod test_color {
 mod test_cue_and_loop {
     use super::*;
 
+    /// Returns the bytes of a CUE entry of the Markers2 tag.
     fn cue_bytes(index: u8, position: u32, color: [u8; 3], name: &[u8]) -> Vec<u8> {
         [
             &[0x00, index][..],
@@ -397,6 +398,7 @@ mod test_cue_and_loop {
         .concat()
     }
 
+    /// Returns the bytes of a LOOP entry of the Markers2 tag, locked or not.
     fn loop_bytes(locked: bool) -> Vec<u8> {
         [
             &[0x00, 0x00][..],
@@ -452,6 +454,7 @@ mod test_cue_and_loop {
 mod test_markers_parse {
     use super::*;
 
+    /// Returns a Markers2 tag body: the version bytes, the base64 payload, and a null.
     fn encode(payload: &[u8]) -> Vec<u8> {
         let mut data = vec![0x01, 0x01];
         data.extend(general_purpose::STANDARD.encode(payload).bytes());

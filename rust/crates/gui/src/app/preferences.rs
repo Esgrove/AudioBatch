@@ -316,6 +316,7 @@ fn first_cue_start(cues: &[CueMarker], duration: f64) -> Option<f64> {
 mod test_first_cue_start {
     use super::*;
 
+    /// Returns cue markers at the times in seconds.
     fn cues(seconds: &[f64]) -> Vec<CueMarker> {
         seconds
             .iter()

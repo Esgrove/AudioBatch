@@ -254,6 +254,7 @@ mod test_parse_arguments {
     use super::*;
     use clap::CommandFactory;
 
+    /// Parses the arguments after the program name.
     fn parse(arguments: &[&str]) -> Result<CliArgs, clap::Error> {
         CliArgs::try_parse_from(std::iter::once("audiobatch-rs").chain(arguments.iter().copied()))
     }

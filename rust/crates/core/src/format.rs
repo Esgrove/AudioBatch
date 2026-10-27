@@ -214,6 +214,7 @@ mod test_level_formatting {
 mod test_property_formatting {
     use super::*;
 
+    /// Returns an analyzed record of the file at the path.
     fn record(path: &str) -> AnalysisRecord {
         AnalysisRecord {
             path: path.into(),

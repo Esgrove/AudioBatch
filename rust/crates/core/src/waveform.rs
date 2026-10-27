@@ -416,6 +416,7 @@ fn merge_bucket_pairs(peaks: &[QuantizedPeak], channels: usize) -> Vec<Quantized
 mod test_waveform {
     use super::*;
 
+    /// Returns a sine of the length and amplitude that advances 0.05 radians per frame.
     fn sine(frames: usize, amplitude: f32) -> Vec<f32> {
         (0..frames)
             .map(|index| amplitude * (index as f32 * 0.05).sin())

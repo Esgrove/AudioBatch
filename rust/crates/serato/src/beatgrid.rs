@@ -161,6 +161,7 @@ mod test_beatgrid {
     /// Single footer byte after the markers.
     const FOOTER: u8 = 0x00;
 
+    /// Returns the payload of a `BeatGrid` tag with the markers, each a position and its four trailing bytes.
     fn beatgrid_bytes(markers: &[(f32, [u8; 4])]) -> Vec<u8> {
         let count = u32::try_from(markers.len()).expect("fits");
         let mut data = [HEADER, &count.to_be_bytes()].concat();
