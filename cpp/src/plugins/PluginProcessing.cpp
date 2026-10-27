@@ -49,6 +49,7 @@ constexpr int outputBitsPerSample {16};
 constexpr int outputPcmScale {32'768};
 /// JUCE's integer writer takes PCM values aligned to the most significant bits of a 32-bit integer.
 constexpr int outputPcmAlignment {65'536};
+/// Error message of a file whose processing was cancelled before it was committed.
 constexpr auto cancelledMessage {"Processing was cancelled"};
 
 /// Share of a file's progress taken by analyzing a source that changed since its last analysis.
@@ -57,6 +58,11 @@ constexpr float sourceAnalysisProgressShare {0.1f};
 constexpr float renderProgressEnd {0.7f};
 /// Progress at which writing the final output ends and analyzing the output begins.
 constexpr float writeProgressEnd {0.85f};
+
+/// Most channels a source can have, since processing, like analysis, targets mono and stereo files.
+/// A file with more channels is refused, because the output would drop the extra channels
+/// before the original is replaced.
+constexpr unsigned int maximumProcessingChannels {2};
 
 /// Length measurements of the rendered chain output, used to finalize the output file.
 struct RenderSummary {
@@ -74,16 +80,19 @@ struct WriteSummary {
     bool clipped {false};
 };
 
+/// The gain applied before the first plugin, and why the requested normalization was skipped, if it was.
+struct InputGain {
+    /// Linear gain applied to the source before the first plugin.
+    LinearGain gain;
+    /// Empty unless the normalization refused the file.
+    juce::String notice;
+};
+
 /// Shorthand for building a failure result, keeping the early-return error paths compact.
 PluginProcessingResult fail(const juce::File& file, const juce::String& message)
 {
     return PluginProcessingResult::failure(file, message);
 }
-
-/// Most channels a source can have, since processing, like analysis, targets mono and stereo files.
-/// A file with more channels is refused, because the output would drop the extra channels
-/// before the original is replaced.
-constexpr unsigned int maximumProcessingChannels {2};
 
 /// Returns an error message when the record or the plugin chain cannot be processed.
 std::expected<void, juce::String> validateProcessingInputs(
@@ -109,13 +118,6 @@ std::expected<void, juce::String> validateProcessingInputs(
 
     return {};
 }
-
-/// The gain applied before the first plugin, and why the requested normalization was skipped, if it was.
-struct InputGain {
-    LinearGain gain;
-    /// Empty unless the normalization refused the file.
-    juce::String notice;
-};
 
 /// Returns the linear gain applied before the first plugin.
 /// A custom gain wins, otherwise the file is normalized to the requested peak or loudness target,

@@ -21,6 +21,7 @@ namespace audiobatch
 {
 namespace
 {
+/// Keys of the preview preferences in the application settings.
 constexpr auto pluginPreviewKey {"previewPluginChain"};
 constexpr auto compensationKey {"previewLatencyCompensation"};
 constexpr auto continuationKey {"previewContinuePlayback"};
@@ -29,6 +30,7 @@ constexpr auto waveformColoursKey {"seratoWaveformColours"};
 constexpr auto loudnessGraphKey {"loudnessGraphEnabled"};
 constexpr auto loudnessMinimumKey {"loudnessGraphMinimum"};
 constexpr auto loudnessMaximumKey {"loudnessGraphMaximum"};
+/// Most digits a loudness axis limit can have, enough for the whole LUFS values from -60 to +6.
 constexpr int maximumLoudnessLimitDigits {2};
 
 /// Captions identify JUCE-owned device controls through their public label attachments.
@@ -42,6 +44,31 @@ constexpr std::array deviceTooltipDescriptions {
         "Audio buffer size:",
         "Smaller buffers reduce preview latency. Larger buffers give plugins more time and can prevent dropouts."
     },
+};
+
+/// Supplies missing device descriptions on demand so backend-created controls keep their tooltips.
+class AudioSettingsTooltipWindow final : public juce::TooltipWindow
+{
+public:
+    /// Keeps tooltip rendering in the settings dialog's own native window.
+    explicit AudioSettingsTooltipWindow(juce::Component& parent) :
+        juce::TooltipWindow(&parent, layout::tooltipDelayMilliseconds)
+    {}
+
+    juce::String getTipFor(juce::Component& component) override;
+};
+
+/// Allows at most two integer digits and an optional leading minus, including incomplete edits.
+class LoudnessLimitInputFilter final : public juce::TextEditor::InputFilter
+{
+public:
+    /// Rejects invalid input as a whole, so pasting a decimal never silently changes its value.
+    juce::String filterNewText(juce::TextEditor& editor, const juce::String& newInput) override
+    {
+        const auto selection = editor.getHighlightedRegion();
+        const auto candidate = editor.getText().replaceSection(selection.getStart(), selection.getLength(), newInput);
+        return isValidLoudnessGraphLimitInput(candidate) ? newInput : juce::String();
+    }
 };
 
 /// Resolves device controls and their captions without depending on JUCE's private selector implementation.
@@ -68,47 +95,24 @@ juce::String getDeviceControlTooltip(const juce::Component& component)
     return {};
 }
 
-/// Supplies missing device descriptions on demand so backend-created controls keep their tooltips.
-class AudioSettingsTooltipWindow final : public juce::TooltipWindow
+/// Preserves explicit tooltips and resolves nested device controls through their labeled ancestors.
+juce::String AudioSettingsTooltipWindow::getTipFor(juce::Component& component)
 {
-public:
-    /// Keeps tooltip rendering in the settings dialog's own native window.
-    explicit AudioSettingsTooltipWindow(juce::Component& parent) :
-        juce::TooltipWindow(&parent, layout::tooltipDelayMilliseconds)
-    {}
-
-    /// Preserves explicit tooltips and resolves nested device controls through their labeled ancestors.
-    juce::String getTipFor(juce::Component& component) override
+    if (auto* client = dynamic_cast<juce::SettableTooltipClient*>(&component);
+        client != nullptr && client->getTooltip().isEmpty())
     {
-        if (auto* client = dynamic_cast<juce::SettableTooltipClient*>(&component);
-            client != nullptr && client->getTooltip().isEmpty())
+        for (const auto* control = &component; control != nullptr && control != getParentComponent();
+             control = control->getParentComponent())
         {
-            for (const auto* control = &component; control != nullptr && control != getParentComponent();
-                 control = control->getParentComponent())
-            {
-                const auto description = getDeviceControlTooltip(*control);
-                if (description.isNotEmpty()) {
-                    client->setTooltip(description);
-                    break;
-                }
+            const auto description = getDeviceControlTooltip(*control);
+            if (description.isNotEmpty()) {
+                client->setTooltip(description);
+                break;
             }
         }
-        return juce::TooltipWindow::getTipFor(component);
     }
-};
-
-/// Allows at most two integer digits and an optional leading minus, including incomplete edits.
-class LoudnessLimitInputFilter final : public juce::TextEditor::InputFilter
-{
-public:
-    /// Rejects invalid input as a whole, so pasting a decimal never silently changes its value.
-    juce::String filterNewText(juce::TextEditor& editor, const juce::String& newInput) override
-    {
-        const auto selection = editor.getHighlightedRegion();
-        const auto candidate = editor.getText().replaceSection(selection.getStart(), selection.getLength(), newInput);
-        return isValidLoudnessGraphLimitInput(candidate) ? newInput : juce::String();
-    }
-};
+    return juce::TooltipWindow::getTipFor(component);
+}
 
 /// Parses the complete saved or edited text, or returns an empty optional for partially numeric and non-finite values.
 std::optional<double> readLoudnessLimit(const juce::String& input)
