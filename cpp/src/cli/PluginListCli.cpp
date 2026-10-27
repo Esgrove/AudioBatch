@@ -320,10 +320,13 @@ void rescanPlugins(
         }
 
         // Plugins that are already listed and unchanged are not loaded again.
+        // No crash log file is given, because the worker process already reports plugins that crash.
+        // The crash log would only catch this process ending mid-scan,
+        // for example from Ctrl-C, and would blacklist the plugin being scanned on the next rescan.
         constexpr bool recursive = true;
         constexpr bool allowAsynchronousInstantiation = false;
         juce::PluginDirectoryScanner scanner(
-            knownPluginList, *format, searchPath, recursive, getPluginScanCrashLogFile(), allowAsynchronousInstantiation
+            knownPluginList, *format, searchPath, recursive, juce::File(), allowAsynchronousInstantiation
         );
 
         juce::String pluginName;

@@ -24,7 +24,6 @@ namespace
 constexpr auto resultsXmlTag {"PLUGINS"};
 constexpr auto knownPluginListFileName {"KnownPlugins.xml"};
 constexpr auto legacyKnownPluginListPropertyKey {"knownPluginList"};
-constexpr auto crashLogFileName {"audiobatch_plugin_scan_crash_log.txt"};
 constexpr auto audioUnitIdentifierPrefix {"AudioUnit:"};
 constexpr auto appleManufacturerCode {"appl"};
 constexpr auto responsePollInterval {std::chrono::milliseconds(50)};
@@ -220,13 +219,6 @@ void migrateKnownPluginList(juce::PropertiesFile& settings)
 
     settings.removeValue(legacyKnownPluginListPropertyKey);
     settings.saveIfNeeded();
-}
-
-/// Returns the dead man's pedal file that records the plugin being scanned,
-/// so a plugin that crashed a scan is blacklisted on the next one.
-juce::File getPluginScanCrashLogFile()
-{
-    return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile(crashLogFileName);
 }
 
 //==============================================================================
