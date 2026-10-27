@@ -16,9 +16,7 @@ use std::time::Duration;
 use anyhow::Context as _;
 use audiobatch_core::format::format_kilohertz;
 use audiobatch_playback::Player;
-use audiobatch_plugins::{
-    KnownPlugins, PluginDescription, SCAN_BUSY_MESSAGE, ScanLock, ScanOptions, ScanReport, scan_plugins,
-};
+use audiobatch_plugins::{KnownPlugins, PluginDescription, ScanLock, ScanOptions, ScanReport, scan_plugins};
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Bounds, Context, Entity, PathPromptOptions, Subscription, Task,
     TitlebarOptions, WeakEntity, WindowBounds, WindowOptions, px, size,
@@ -45,6 +43,10 @@ const PLUGIN_WINDOW_MINIMUM_SIZE: (f32, f32) = (480.0, 300.0);
 
 /// Status text when the scan folders or the blacklist are changed during a scan.
 const WAIT_FOR_SCAN: &str = "Wait for the plugin scan to finish";
+
+/// Status message when another process holds the scan lock, worded like the C++ application's dialog,
+/// since the most likely other scan is a CLI rescan, not the plugin manager this window opens.
+const SCAN_BUSY_MESSAGE: &str = "Another plugin scan is running, for example audiobatch-rs list --rescan in a terminal. Scan again once it has finished.";
 
 /// An open plugin window and the subscription to its events.
 pub(super) struct PluginWindow<V: 'static> {
