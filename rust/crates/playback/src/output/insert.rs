@@ -139,6 +139,7 @@ impl InsertRenderer {
         let total = output.len() / channels;
         let block_limit = insert.max_block_frames().clamp(1, SCRATCH_FRAMES);
         let gain = shared.insert_gain();
+        let source_mono = shared.source_mono.load(Ordering::Relaxed);
         let mut offset = 0;
         let mut underrun = false;
         while offset < total && playback.active {
@@ -181,6 +182,9 @@ impl InsertRenderer {
                     *sample = convert(0.0);
                 }
                 return;
+            }
+            if source_mono {
+                fold_to_mono(left, right);
             }
             if playback.pre_roll > 0 {
                 playback.pre_roll -= length;
@@ -339,6 +343,15 @@ fn device_position(shared: &SharedState, device_rate: u32) -> u64 {
     (position as f64 * f64::from(device_rate) / f64::from(source_rate)).round() as u64
 }
 
+/// Replaces both channels with their average, the way processing writes the output of a mono file.
+fn fold_to_mono(left: &mut [f32], right: &mut [f32]) {
+    for (left, right) in left.iter_mut().zip(right.iter_mut()) {
+        let average = f32::midpoint(*left, *right);
+        *left = average;
+        *right = average;
+    }
+}
+
 #[cfg(test)]
 mod test_insert_playback {
     use std::sync::Arc;
@@ -364,11 +377,12 @@ mod test_insert_playback {
         dropped: Arc<AtomicBool>,
     }
 
-    /// An insert that delays its input by its latency, and can output NaN instead.
+    /// An insert that delays its input by its latency, and can output NaN or silence the right channel instead.
     struct FakeInsert {
         latency: usize,
         tail: usize,
         non_finite: bool,
+        mutes_right: bool,
         delay_left: Vec<f32>,
         delay_right: Vec<f32>,
         index: usize,
@@ -390,6 +404,7 @@ mod test_insert_playback {
                 latency,
                 tail,
                 non_finite: false,
+                mutes_right: false,
                 delay_left: vec![0.0; latency],
                 delay_right: vec![0.0; latency],
                 index: 0,
@@ -434,6 +449,9 @@ mod test_insert_playback {
                     *right = std::mem::replace(delayed_right, *right);
                     self.index = (self.index + 1) % self.latency;
                 }
+            }
+            if self.mutes_right {
+                right.fill(0.0);
             }
             true
         }
@@ -531,6 +549,23 @@ mod test_insert_playback {
                 assert_close(sample, expected, &format!("latency {latency}, frame {index}"));
             }
             assert_eq!(harness.position(), 200, "latency {latency}");
+        }
+    }
+
+    #[test]
+    fn the_output_of_a_mono_file_is_folded_to_mono() {
+        for source_mono in [false, true] {
+            let (mut insert, _probe) = FakeInsert::new(0, 0);
+            insert.mutes_right = true;
+            let mut harness = Harness::with_insert(insert);
+            harness.shared.source_mono.store(source_mono, Ordering::Relaxed);
+            harness.push(0, 200, ramp);
+            let output = harness.render(100);
+            let scale = if source_mono { 0.5 } else { 1.0 };
+            for (index, &sample) in output.iter().enumerate() {
+                let expected = ramp(index as u64) * fade_in(index) * scale;
+                assert_close(sample, expected, &format!("mono {source_mono}, frame {index}"));
+            }
         }
     }
 

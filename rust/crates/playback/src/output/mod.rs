@@ -41,6 +41,9 @@ pub struct SharedState {
     pub source_rate: AtomicU32,
     /// Length of the loaded file in source frames, 0 when unknown.
     pub source_frames: AtomicU64,
+    /// True when the loaded file has one channel,
+    /// so the output of the preview insert is folded back to mono, the way processing writes the file.
+    pub source_mono: AtomicBool,
     /// Generation whose decoding has reached the end of the file.
     pub finished_generation: AtomicU32,
     /// Set by the callback when playback ran to the end, cleared when read.
@@ -81,6 +84,7 @@ impl SharedState {
             position: AtomicU64::new(0),
             source_rate: AtomicU32::new(0),
             source_frames: AtomicU64::new(0),
+            source_mono: AtomicBool::new(false),
             finished_generation: AtomicU32::new(NO_GENERATION),
             ended: AtomicBool::new(false),
             ended_generation: AtomicU32::new(NO_GENERATION),
