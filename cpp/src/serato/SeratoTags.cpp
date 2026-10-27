@@ -1,26 +1,29 @@
 /// Parses documented Serato payloads and validates portable per-kind cache blocks.
 /// Bounds apply to encoded input, decoded data, record counts and owned UTF-8 text.
+/// Also decodes the Base64 and the wrapper of native FLAC values, and finds the ID3v2 tag of an open TagLib file.
 
 #include "serato/SeratoTags.h"
 
 #include "serato/SeratoBytes.h"
 
+#include <aifffile.h>
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
+#include <flacfile.h>
+#include <id3v2tag.h>
 #include <locale>
+#include <mpegfile.h>
 #include <sstream>
 #include <string>
 #include <variant>
+#include <wavfile.h>
 
 namespace audiobatch::serato
 {
 namespace
 {
-constexpr std::size_t wrapperAllowance {1024};
-constexpr std::size_t maxDecodedBytes {maxTagPayloadBytes + wrapperAllowance};
-constexpr std::size_t maxEncodedBytes {((maxDecodedBytes + 2) / 3) * 4 + 4096};
 constexpr std::size_t cacheHeaderBytes {16};
 constexpr std::size_t bpmOffset {2};
 constexpr std::size_t autoGainOffset {9};
@@ -593,7 +596,7 @@ std::optional<juce::MemoryBlock> decodeTagBase64(
     const bool markersWorkaround
 )
 {
-    if (bytes.size() > maxEncodedBytes) {
+    if (bytes.size() > maxEncodedTagBytes) {
         return std::nullopt;
     }
     std::string text;
@@ -630,11 +633,78 @@ std::optional<juce::MemoryBlock> decodeTagBase64(
     }
     juce::MemoryOutputStream output;
     if (!juce::Base64::convertFromBase64(output, juce::String::fromUTF8(text.data(), static_cast<int>(text.size())))
-        || output.getDataSize() > maxDecodedBytes)
+        || output.getDataSize() > maxDecodedTagBytes)
     {
         return std::nullopt;
     }
     return output.getMemoryBlock();
+}
+
+/// Returns the payload of a decoded native FLAC value after its wrapper,
+/// which holds the MIME type "application/octet-stream", an empty file name, and the given description,
+/// each terminated by a null byte, or nothing when any of them differs or lacks its terminator.
+/// The payload is a view into the decoded bytes.
+std::optional<std::span<const std::uint8_t>> parseTagWrapper(
+    const std::span<const std::uint8_t> decoded,
+    const std::string_view description
+)
+{
+    std::size_t offset = 0;
+    for (const auto expected : {std::string_view("application/octet-stream"), std::string_view(), description}) {
+        const auto remaining = decoded.subspan(offset);
+        const auto terminator = std::ranges::find(remaining, std::uint8_t {0});
+        if (terminator == remaining.end()) {
+            return std::nullopt;
+        }
+        const auto length = static_cast<std::size_t>(terminator - remaining.begin());
+        if (!std::ranges::equal(remaining.first(length), expected)) {
+            return std::nullopt;
+        }
+        offset += length + 1;
+    }
+    return decoded.subspan(offset);
+}
+
+/// Returns the FLAC comment name and the GEOB description of a tag kind, or of the legacy markers,
+/// or nothing for the track information, which is read from the standard properties instead.
+std::optional<TagNames> getTagNames(const TagKind kind, const bool legacyMarkers)
+{
+    switch (kind) {
+        case TagKind::overview:
+            return overviewNames;
+        case TagKind::analysis:
+            return analysisNames;
+        case TagKind::autotags:
+            return autotagsNames;
+        case TagKind::beatGrid:
+            return beatGridNames;
+        case TagKind::markers:
+            return legacyMarkers ? legacyMarkersNames : markersNames;
+        case TagKind::trackInfo:
+            break;
+    }
+    return std::nullopt;
+}
+
+/// Finds the ID3v2 tag of an MPEG, AIFF, WAV, or FLAC file that TagLib has opened.
+/// Without create, a file without an ID3v2 tag returns null instead of getting an empty tag,
+/// so reading a file never adds one.
+/// The tag belongs to the file and stays valid while the file is open.
+TagLib::ID3v2::Tag* findId3Tag(TagLib::File& file, const bool create)
+{
+    if (auto* mpeg = dynamic_cast<TagLib::MPEG::File*>(&file)) {
+        return mpeg->ID3v2Tag(create);
+    }
+    if (const auto* aiff = dynamic_cast<TagLib::RIFF::AIFF::File*>(&file)) {
+        return create || aiff->hasID3v2Tag() ? aiff->tag() : nullptr;
+    }
+    if (const auto* wav = dynamic_cast<TagLib::RIFF::WAV::File*>(&file)) {
+        return create || wav->hasID3v2Tag() ? wav->ID3v2Tag() : nullptr;
+    }
+    if (auto* flac = dynamic_cast<TagLib::FLAC::File*>(&file)) {
+        return flac->ID3v2Tag(create);
+    }
+    return nullptr;
 }
 
 /// Parses the two-byte Serato analysis version, rejecting truncated or extended payloads.
