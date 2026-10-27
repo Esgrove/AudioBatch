@@ -53,14 +53,14 @@ impl AppView {
 
     /// Processes the selected file with the plugin chain.
     pub(super) fn process_selected(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let records: Vec<AnalysisRecord> = self.selected_record(cx).cloned().into_iter().collect();
+        let records = self.selected_ready_records(cx);
         if records.is_empty() {
             self.status = SharedString::from("Select an analyzed file to process");
             cx.notify();
             return;
         }
         if records.iter().any(|record| !record.path.is_file()) {
-            self.status = SharedString::from("The selected file no longer exists");
+            self.status = SharedString::from("A selected file no longer exists");
             cx.notify();
             return;
         }

@@ -71,6 +71,11 @@ pub struct ClearCustomGain;
 #[action(namespace = audiobatch)]
 pub struct RemoveSelected;
 
+/// Selects every file in the list.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct SelectAll;
+
 /// Moves the selected file to the system trash after a confirmation.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
@@ -247,6 +252,7 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("f5", Rescan, None),
         KeyBinding::new(primary!("."), CancelRun, context),
         KeyBinding::new(primary!("r"), RevealSelected, context),
+        KeyBinding::new(primary!("a"), SelectAll, context),
         KeyBinding::new("delete", RemoveSelected, context),
         KeyBinding::new("backspace", RemoveSelected, context),
         KeyBinding::new(primary!("backspace"), TrashSelected, context),
@@ -290,6 +296,7 @@ pub fn set_menus(cx: &App, state: &MenuState) {
             NormalizeAll,
         ),
         MenuItem::action("Clear Per-file Gain", ClearCustomGain),
+        MenuItem::action("Select All Files", SelectAll),
         MenuItem::action("Remove Selected from List", RemoveSelected),
         MenuItem::action("Move Selected to Trash", TrashSelected),
         MenuItem::action("Clear All Files", ClearList),

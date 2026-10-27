@@ -29,12 +29,13 @@ impl AppView {
         self.start_run(RunKind::Scan, self.roots.clone(), false, cx);
     }
 
-    /// Analyzes the selected file again, ignoring its cached result.
+    /// Analyzes the selected files again, ignoring their cached results.
     /// Waits for a scan in progress, whose files would otherwise be left waiting.
     pub(super) fn reanalyze_selected(&mut self, cx: &mut Context<Self>) {
-        let Some(selected) = self.selected.clone() else {
+        let selected = self.selected_paths(cx);
+        if selected.is_empty() {
             return;
-        };
+        }
         if self
             .run
             .as_ref()
@@ -44,26 +45,39 @@ impl AppView {
             cx.notify();
             return;
         }
-        self.start_run(RunKind::Reanalyze, vec![selected], true, cx);
+        self.start_run(RunKind::Reanalyze, selected, true, cx);
     }
 
     /// Removes the selected file from the list and selects the file that took its place.
     pub(super) fn remove_selected(&mut self, cx: &mut Context<Self>) {
-        let Some(selected) = self.selected.clone() else {
-            return;
-        };
-        if self.blocked_by_file_operation(cx) {
+        let selected = self.selected_paths(cx);
+        if selected.is_empty() || self.blocked_by_file_operation(cx) {
             return;
         }
-        self.excluded.insert(selected.clone());
-        self.roots.retain(|root| root != &selected);
-        let removed_index = self.table.update(cx, |state, cx| {
-            let index = state.delegate_mut().remove(&selected);
+        self.remove_paths(&selected, cx);
+        self.status = describe_files("Removed", "from the list", &selected).into();
+        cx.notify();
+    }
+
+    /// Removes the rows of files from the list, keeps them out of later scans,
+    /// and selects the file that took the place of the first removed row.
+    fn remove_paths(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        let first_index = {
+            let delegate = self.table.read(cx).delegate();
+            paths.iter().filter_map(|path| delegate.index_of(path)).min()
+        };
+        for path in paths {
+            self.excluded.insert(path.clone());
+            self.roots.retain(|root| root != path);
+        }
+        self.table.update(cx, |state, cx| {
+            for path in paths {
+                state.delegate_mut().remove(path);
+            }
             cx.notify();
-            index
         });
         self.clear_selection(cx);
-        let next = removed_index.and_then(|index| {
+        let next = first_index.and_then(|index| {
             let delegate = self.table.read(cx).delegate();
             let index = index.min(delegate.len().checked_sub(1)?);
             delegate.row(index).map(|row| (index, row.path.clone()))
@@ -72,24 +86,23 @@ impl AppView {
             self.table.update(cx, |state, cx| state.set_selected_row(index, cx));
             self.select_path(&path, false, cx);
         }
-        self.status = format!("Removed {} from the list", display_name(&selected)).into();
-        cx.notify();
     }
 
     /// Moves the selected file to the system trash, forgets its cached result, and removes it from the list.
     /// Asks first unless `confirm` is false, like the C++ application, where Shift with the shortcut skips the prompt.
     pub(super) fn trash_selected(&mut self, confirm: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(selected) = self.selected.clone() else {
-            return;
-        };
-        if self.blocked_by_file_operation(cx) {
+        let selected = self.selected_paths(cx);
+        if selected.is_empty() || self.blocked_by_file_operation(cx) {
             return;
         }
         if !confirm {
             self.move_to_trash(&selected, cx);
             return;
         }
-        let detail = format!("Move\n\n{}\n\nto the system trash?", selected.display());
+        let detail = match selected.as_slice() {
+            [single] => format!("Move\n\n{}\n\nto the system trash?", single.display()),
+            _ => format!("Move {} selected files to the system trash?", selected.len()),
+        };
         let answer = window.prompt(
             PromptLevel::Warning,
             "Move to Trash",
@@ -105,33 +118,42 @@ impl AppView {
         .detach();
     }
 
-    /// Moves a file to the system trash and removes its row, while it is still the selected file.
-    fn move_to_trash(&mut self, selected: &Path, cx: &mut Context<Self>) {
-        if self.selected.as_deref() != Some(selected) || self.blocked_by_file_operation(cx) {
+    /// Moves files to the system trash and removes their rows.
+    /// A file that cannot be moved keeps its row, and the status names the first failure.
+    fn move_to_trash(&mut self, paths: &[PathBuf], cx: &mut Context<Self>) {
+        if self.blocked_by_file_operation(cx) {
             return;
         }
-        if let Some(player) = &mut self.player
-            && player.loaded_path() == Some(selected)
-        {
-            player.unload();
-        }
-        match trash::delete(selected) {
-            Ok(()) => {
-                if let Some(coordinator) = &self.coordinator
-                    && let Err(error) = coordinator.cache().remove_analysis(selected)
-                {
-                    tracing::warn!(
-                        "Failed to remove the cached result of {}: {error:#}",
-                        selected.display()
-                    );
+        let mut trashed = Vec::new();
+        let mut first_failure = None;
+        for path in paths {
+            if let Some(player) = &mut self.player
+                && player.loaded_path() == Some(path.as_path())
+            {
+                player.unload();
+            }
+            match trash::delete(path) {
+                Ok(()) => {
+                    if let Some(coordinator) = &self.coordinator
+                        && let Err(error) = coordinator.cache().remove_analysis(path)
+                    {
+                        tracing::warn!("Failed to remove the cached result of {}: {error:#}", path.display());
+                    }
+                    trashed.push(path.clone());
                 }
-                self.remove_selected(cx);
-                self.status = format!("Moved {} to the trash", display_name(selected)).into();
-            }
-            Err(error) => {
-                self.status = format!("Could not move {} to the trash: {error}", display_name(selected)).into();
+                Err(error) => {
+                    tracing::warn!("Could not move {} to the trash: {error}", path.display());
+                    first_failure
+                        .get_or_insert_with(|| format!("Could not move {} to the trash: {error}", display_name(path)));
+                }
             }
         }
+        if !trashed.is_empty() {
+            self.remove_paths(&trashed, cx);
+        }
+        self.status = first_failure
+            .unwrap_or_else(|| describe_files("Moved", "to the trash", &trashed))
+            .into();
         cx.notify();
     }
 
@@ -388,4 +410,13 @@ fn display_name(path: &Path) -> String {
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     )
+}
+
+/// Describes what an action did to files, naming a single file and counting several,
+/// such as "Removed song.wav from the list" or "Removed 3 files from the list".
+fn describe_files(action: &str, rest: &str, paths: &[PathBuf]) -> String {
+    match paths {
+        [single] => format!("{action} {} {rest}", display_name(single)),
+        _ => format!("{action} {} files {rest}", paths.len()),
+    }
 }

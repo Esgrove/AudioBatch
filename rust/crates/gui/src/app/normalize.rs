@@ -60,14 +60,14 @@ impl AppView {
 
     /// Normalizes the selected file to the target.
     pub(super) fn normalize_selected(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let records: Vec<AnalysisRecord> = self.selected_record(cx).cloned().into_iter().collect();
+        let records = self.selected_ready_records(cx);
         if records.is_empty() {
             self.status = SharedString::from("Select an analyzed file to normalize");
             cx.notify();
             return;
         }
         if records.iter().any(|record| !record.path.is_file()) {
-            self.status = SharedString::from("The selected file no longer exists");
+            self.status = SharedString::from("A selected file no longer exists");
             cx.notify();
             return;
         }
