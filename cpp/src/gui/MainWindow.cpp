@@ -562,7 +562,7 @@ bool MainWindow::perform(const InvocationInfo& info)
 }
 
 /// Appends the plugin chain section into a menu, mirroring the popup attached to the Plugin toolbar button.
-void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu) const
+void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu)
 {
     const auto& chain = getAudioBatch().getLiveChain();
     const auto summary = chain.getChainSummary();
@@ -573,27 +573,29 @@ void MainWindow::appendPluginOptionsMenuItems(juce::PopupMenu& menu) const
     menu.addSubMenu("Chain Presets", chain.createPresetsMenu(presetsMenuFirstItemId));
     menu.addSeparator();
 
-    const auto types = chain.getLibrary().getKnownTypes();
+    chain.getLibrary().reload();
+    pluginMenuTypes = chain.getLibrary().getKnownTypes();
     juce::PopupMenu addSubmenu;
-    juce::KnownPluginList::addToMenu(addSubmenu, types, juce::KnownPluginList::sortByManufacturer);
-    menu.addSubMenu("Add Plugin", addSubmenu, !types.isEmpty());
+    juce::KnownPluginList::addToMenu(addSubmenu, pluginMenuTypes, juce::KnownPluginList::sortByManufacturer);
+    menu.addSubMenu("Add Plugin", addSubmenu, !pluginMenuTypes.isEmpty());
     addMenuItem(menu, MenuItemId::clearChain, "Clear Chain", chain.getNumSlots() > 0);
     addMenuItem(menu, MenuItemId::scanPlugins, "Scan for Plugins...");
 }
 
-/// Decodes a menu result against the known plugin list and appends the chosen plugin to the chain.
+/// Decodes a menu result against the plugin list the Add Plugin submenu was built from,
+/// and appends the chosen plugin to the chain.
+/// The menu ids are indices into that list, so a scan that adds a plugin while the menu is open cannot shift them.
 /// Results that name no known plugin go to the chain presets submenu.
 void MainWindow::handlePluginChoiceMenuItem(const int menuItemID) const
 {
     auto& chain = getAudioBatch().getLiveChain();
-    const auto types = chain.getLibrary().getKnownTypes();
-    const auto index = juce::KnownPluginList::getIndexChosenByMenu(types, menuItemID);
-    if (index < 0 || index >= types.size()) {
+    const auto index = juce::KnownPluginList::getIndexChosenByMenu(pluginMenuTypes, menuItemID);
+    if (index < 0 || index >= pluginMenuTypes.size()) {
         chain.handlePresetsMenuItem(menuItemID, presetsMenuFirstItemId);
         return;
     }
 
-    chain.addPlugin(types.getReference(index));
+    chain.addPlugin(pluginMenuTypes.getReference(index));
 }
 
 /// Returns the content component.

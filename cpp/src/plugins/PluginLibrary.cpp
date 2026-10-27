@@ -28,7 +28,8 @@ PluginLibrary::PluginLibrary(juce::ApplicationProperties& applicationProperties)
     // The plugin scan lock is held for the whole scan, so a CLI rescan cannot overwrite its results.
     knownPluginList.setCustomScanner(
         std::make_unique<OutOfProcessPluginScanner>(
-            [this] { return beginPluginScan(); }, [this] { pluginScanLock.release(); }
+            [this](const utils::CancellationCheck& shouldStop) { return beginPluginScan(shouldStop); },
+            [this] { finishPluginScan(); }
         )
     );
 
@@ -77,17 +78,32 @@ std::unique_ptr<juce::PluginListComponent> PluginLibrary::createScanComponent()
     return component;
 }
 
-/// Restores the known-plugins list from its KnownPlugins.xml file,
+/// Restores the known-plugins list from the KnownPlugins.xml file next to the settings file,
 /// first moving a list stored in the settings by older versions into that file.
+/// Skips a file that has not changed since this library last loaded or saved it,
+/// and does nothing while a scan from the plugin manager adds to the list.
+/// Must run on the message thread, which is also the thread that saves the list.
 void PluginLibrary::reload()
 {
+    JUCE_ASSERT_MESSAGE_THREAD
+
     auto* settings = appProperties.getUserSettings();
-    if (settings == nullptr) {
+    if (settings == nullptr || scanning) {
         return;
     }
 
     migrateKnownPluginList(*settings);
+    const auto modificationTime = getKnownPluginListFile(*settings).getLastModificationTime();
+    if (listLoaded && modificationTime == loadedModificationTime) {
+        return;
+    }
+
+    const juce::ScopedValueSetter reloadingSetter(reloading, true);
     loadKnownPluginList(*settings, knownPluginList);
+    // The list now matches its file, so its change messages are delivered while saving is off.
+    knownPluginList.dispatchPendingMessages();
+    loadedModificationTime = modificationTime;
+    listLoaded = true;
 }
 
 /// Creates one chain of instances of the enabled plugins per worker, for a processing run.
@@ -133,40 +149,91 @@ ChainInstantiation PluginLibrary::instantiateChains(
     return instantiation;
 }
 
-/// Saves the known-plugins list to its KnownPlugins.xml file after every change.
+/// Saves the known-plugins list to its KnownPlugins.xml file after a change on the message thread.
+/// Changes during a scan from the plugin manager are saved once when the scan finishes,
+/// since the scan thread changes the list while it runs.
+/// Outside a scan the plugin scan lock is taken for the save, so it cannot overwrite the result of a CLI rescan.
 void PluginLibrary::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
-    if (source == &knownPluginList) {
-        // Failures are logged by saveKnownPluginList, and the in-memory list stays usable.
-        [[maybe_unused]] const auto saved = saveKnownPluginList(knownPluginList);
+    if (source != &knownPluginList || reloading || scanning) {
+        return;
+    }
+
+    if (!pluginScanLock.tryAcquire()) {
+        utils::logWarn("Did not save the known plugins list, because another plugin scan is running");
+        return;
+    }
+
+    saveList();
+    pluginScanLock.release();
+}
+
+/// Writes the list to its file and remembers the file's new modification time, so reload skips it.
+/// Failures are logged by saveKnownPluginList, and the in-memory list stays usable.
+void PluginLibrary::saveList()
+{
+    const auto* settings = appProperties.getUserSettings();
+    if (settings == nullptr) {
+        return;
+    }
+
+    if (const auto file = getKnownPluginListFile(*settings); saveKnownPluginList(knownPluginList, file)) {
+        loadedModificationTime = file.getLastModificationTime();
     }
 }
 
 /// Prepares a scan from the plugin manager before its first plugin is loaded.
-/// Runs on the scan thread of the plugin manager.
+/// Called on the scan thread of the plugin manager, and does its work on the message thread,
+/// where the lock, the reload, and the saves all happen, so the list is never reloaded while it is saved.
 /// Takes the plugin scan lock and reloads the known-plugins list, so the scan builds on the latest saved list.
-/// Returns false, and tells the user, when another process such as a CLI rescan is scanning.
-bool PluginLibrary::beginPluginScan()
+/// Returns false, and tells the user, when another process such as a CLI rescan is scanning,
+/// or when the scan stops before the message thread got to it.
+bool PluginLibrary::beginPluginScan(const utils::CancellationCheck& shouldStop)
 {
-    if (!pluginScanLock.tryAcquire()) {
+    bool acquired {false};
+    const bool ran = utils::callOnMessageThread(
+        [this, &acquired] {
+            acquired = pluginScanLock.tryAcquire();
+            if (acquired) {
+                // Another process may have saved a newer list since this one was loaded.
+                reload();
+                scanning = true;
+            }
+        },
+        shouldStop
+    );
+
+    if (ran && !acquired) {
         utils::logWarn("Skipped a plugin scan because another plugin scan is running");
         juce::MessageManager::callAsync([] {
             juce::AlertWindow::showAsync(
                 juce::MessageBoxOptions::makeOptionsOk(
                     juce::MessageBoxIconType::InfoIcon,
                     "Plugin Scan Skipped",
-                    "Another plugin scan is running, for example audiobatch --rescan in a terminal.\n\n"
+                    "Another plugin scan is running, for example audiobatch list --rescan in a terminal.\n\n"
                     "Scan again once it has finished.",
                     "OK"
                 ),
                 nullptr
             );
         });
-        return false;
     }
 
-    // Another process may have saved a newer list since this one was loaded.
-    reload();
-    return true;
+    return ran && acquired;
+}
+
+/// Saves the list a scan from the plugin manager added to, and releases the plugin scan lock.
+/// The plugin manager ends its scans on the message thread.
+void PluginLibrary::finishPluginScan()
+{
+    JUCE_ASSERT_MESSAGE_THREAD
+
+    if (!scanning) {
+        return;
+    }
+
+    scanning = false;
+    saveList();
+    pluginScanLock.release();
 }
 }  // namespace audiobatch

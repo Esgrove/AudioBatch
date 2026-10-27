@@ -147,21 +147,21 @@ bool isPluginScanWorkerCommandLine(const juce::String& commandLine)
     return commandLine.trim().startsWith(utils::format("--{}:", pluginScanWorkerProcessUid));
 }
 
-/// Returns the KnownPlugins.xml file next to the AudioBatch settings file.
+/// Returns the KnownPlugins.xml file next to the given settings file.
 /// The known-plugins list lives in its own file instead of the settings,
 /// so the GUI and the CLI can each update it without overwriting the other one's settings.
-juce::File getKnownPluginListFile()
+juce::File getKnownPluginListFile(const juce::PropertiesFile& settings)
 {
-    return utils::createApplicationSettingsOptions().getDefaultFile().getSiblingFile(knownPluginListFileName);
+    return settings.getFile().getSiblingFile(knownPluginListFileName);
 }
 
-/// Restores the known-plugins list from KnownPlugins.xml.
+/// Restores the known-plugins list from the KnownPlugins.xml file next to the settings file.
 /// When that file does not exist yet, reads the list stored in the settings by older versions instead.
 /// Leaves the list unchanged when nothing has been stored.
 /// Drops the Audio Units built into macOS, which older versions scanned.
 void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList)
 {
-    if (const auto file = getKnownPluginListFile(); file.existsAsFile()) {
+    if (const auto file = getKnownPluginListFile(settings); file.existsAsFile()) {
         if (const auto element = juce::parseXML(file); element != nullptr) {
             knownPluginList.recreateFromXml(*element);
             removeBuiltInApplePlugins(knownPluginList);
@@ -180,13 +180,12 @@ void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPlugin
     }
 }
 
-/// Writes the known-plugins list, including blacklisted plugins, to KnownPlugins.xml.
+/// Writes the known-plugins list, including blacklisted plugins, to the given file.
 /// The file is replaced atomically, so a concurrent reader never sees a partial list.
 /// Returns false and logs an error when the file could not be written.
-bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList)
+bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList, const juce::File& file)
 {
     const auto xml = knownPluginList.createXml();
-    const auto file = getKnownPluginListFile();
 
     // writeTo writes a temporary file and then replaces the target,
     // so a concurrent reader never sees a partially written list.
@@ -207,16 +206,16 @@ void migrateKnownPluginList(juce::PropertiesFile& settings)
         return;
     }
 
-    if (!getKnownPluginListFile().existsAsFile()) {
+    if (const auto file = getKnownPluginListFile(settings); !file.existsAsFile()) {
         juce::KnownPluginList legacyList;
         loadKnownPluginList(settings, legacyList);
 
-        if (!saveKnownPluginList(legacyList)) {
+        if (!saveKnownPluginList(legacyList, file)) {
             // Keep the legacy value so nothing is lost, and try again on the next start.
             return;
         }
 
-        utils::logInfo("Moved the known plugins list to {}", getKnownPluginListFile().getFullPathName().quoted());
+        utils::logInfo("Moved the known plugins list to {}", file.getFullPathName().quoted());
     }
 
     settings.removeValue(legacyKnownPluginListPropertyKey);
@@ -440,7 +439,7 @@ bool OutOfProcessPluginScanner::findPluginTypesFor(
 {
     if (!scanStarted) {
         scanStarted = true;
-        scanSkipped = onScanStarting != nullptr && !onScanStarting();
+        scanSkipped = onScanStarting != nullptr && !onScanStarting([this] { return shouldExit(); });
     }
 
     if (scanSkipped) {

@@ -8,6 +8,8 @@
 
 #pragma once
 
+#include "utils/ThreadUtils.h"
+
 #include <JuceHeader.h>
 
 #include <functional>
@@ -22,8 +24,8 @@ constexpr auto pluginScanWorkerProcessUid {"audiobatch-plugin-scan-worker"};
 
 [[nodiscard]] bool isBuiltInApplePlugin(const juce::String& fileOrIdentifier);
 [[nodiscard]] bool isPluginScanWorkerCommandLine(const juce::String& commandLine);
-[[nodiscard]] bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList);
-[[nodiscard]] juce::File getKnownPluginListFile();
+[[nodiscard]] bool saveKnownPluginList(const juce::KnownPluginList& knownPluginList, const juce::File& file);
+[[nodiscard]] juce::File getKnownPluginListFile(const juce::PropertiesFile& settings);
 
 void addPluginFormats(juce::AudioPluginFormatManager& formatManager);
 void loadKnownPluginList(const juce::PropertiesFile& settings, juce::KnownPluginList& knownPluginList);
@@ -75,9 +77,9 @@ class PluginScanWorkerProcess;
 class OutOfProcessPluginScanner final : public juce::KnownPluginList::CustomScanner
 {
 public:
-    /// Called before the first plugin of a scan is loaded.
+    /// Called before the first plugin of a scan is loaded, with a check that turns true once the scan is abandoned.
     /// Returning false skips every plugin of that scan without blacklisting any of them.
-    using ScanStartingCallback = std::function<bool()>;
+    using ScanStartingCallback = std::function<bool(const utils::CancellationCheck& shouldStop)>;
 
     /// Called once a scan has finished, including scans that were skipped or cancelled.
     using ScanFinishedCallback = std::function<void()>;

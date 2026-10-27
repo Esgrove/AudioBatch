@@ -70,14 +70,25 @@ public:
 private:
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
 
-    bool beginPluginScan();
+    bool beginPluginScan(const utils::CancellationCheck& shouldStop);
+    void finishPluginScan();
+    void saveList();
 
-    // Declared before the list, so it outlives the scanner that the list owns.
+    /// Taken and released on the message thread only.
+    /// Declared before the list, so it outlives the scanner that the list owns.
     PluginScanLock pluginScanLock;
 
     juce::ApplicationProperties& appProperties;
     juce::AudioPluginFormatManager formatManager;
     juce::KnownPluginList knownPluginList;
+    /// Modification time of the list file when this library last loaded or saved it.
+    juce::Time loadedModificationTime;
+    /// True once the list has been loaded, even from a file that did not exist yet.
+    bool listLoaded {false};
+    /// True while reload replaces the list, so its change messages do not save it back.
+    bool reloading {false};
+    /// True from the start of a scan from the plugin manager until it finishes, set on the message thread.
+    bool scanning {false};
 
     JUCE_LEAK_DETECTOR(PluginLibrary)
 };

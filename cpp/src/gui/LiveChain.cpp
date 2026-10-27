@@ -433,6 +433,7 @@ void LiveChain::showMenu(juce::Component& anchor)
     menu.addSeparator();
 
     juce::PopupMenu addSubmenu;
+    library.reload();
     const auto types = library.getKnownTypes();
     juce::KnownPluginList::addToMenu(addSubmenu, types, juce::KnownPluginList::sortByManufacturer);
     menu.addSubMenu("Add Plugin", addSubmenu, !types.isEmpty());
@@ -700,7 +701,9 @@ void LiveChain::showChainEditor()
 void LiveChain::showScanWindow()
 {
     if (scanWindow != nullptr) {
-        // The window hides itself when closed, so reopening only needs to make it visible again.
+        // The window hides itself when closed, so reopening only needs to make it visible again,
+        // after picking up any list a CLI rescan saved while it was hidden.
+        library.reload();
         scanWindow->setVisible(true);
         scanWindow->toFront(true);
         return;
