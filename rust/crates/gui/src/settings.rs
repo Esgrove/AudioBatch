@@ -13,6 +13,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use audiobatch_core::atomic_write::write_atomically;
 use audiobatch_core::cache::data_directory;
 use audiobatch_core::normalize::{
     DEFAULT_TARGET_LUFS, DEFAULT_TARGET_PEAK_DBFS, MAXIMUM_TARGET_LUFS, MAXIMUM_TARGET_PEAK_DBFS, MINIMUM_TARGET_LUFS,
@@ -159,16 +160,12 @@ impl GuiSettings {
         }
     }
 
-    /// Writes the settings to a file, creating its directory when needed.
+    /// Writes the settings to a file, replacing it atomically and creating its directory when needed.
     ///
     /// # Errors
     /// Returns an error when the directory or the file cannot be written.
     pub fn save_to(&self, path: &Path) -> Result<()> {
-        if let Some(directory) = path.parent() {
-            fs::create_dir_all(directory)?;
-        }
-        fs::write(path, serde_json::to_string_pretty(self)?)?;
-        Ok(())
+        write_atomically(path, serde_json::to_string_pretty(self)?.as_bytes())
     }
 
     /// Returns the output device configuration to open.

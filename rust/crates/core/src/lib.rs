@@ -7,6 +7,7 @@
 
 pub mod aiff;
 pub mod analysis;
+pub mod atomic_write;
 pub mod cache;
 pub mod coordinator;
 pub mod decode;

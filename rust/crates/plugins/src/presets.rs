@@ -11,11 +11,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
+use audiobatch_core::atomic_write::write_atomically;
 use audiobatch_core::sorting::compare_natural;
 use serde::{Deserialize, Serialize};
 
 use crate::chain::{ChainSlot, PluginChain, deserialize_slots_skipping_damaged};
-use crate::library::write_json_atomically;
 
 /// Version of the preset file format, raised when a change would make older versions misread a file.
 pub const PRESET_FORMAT_VERSION: u32 = 1;
@@ -141,7 +141,7 @@ impl PresetStore {
             bail!("Enter a preset name");
         };
         let preset = ChainPreset::new(sanitize_preset_name(name), chain);
-        write_json_atomically(&path, &preset)
+        write_atomically(&path, serde_json::to_string_pretty(&preset)?.as_bytes())
             .with_context(|| format!("Could not save the preset {}", path.display()))?;
         Ok(path)
     }
