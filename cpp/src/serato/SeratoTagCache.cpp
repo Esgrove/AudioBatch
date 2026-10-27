@@ -18,10 +18,9 @@ namespace audiobatch::serato
 {
 namespace
 {
-/// Maximum numeric tag cache size, including the explicit serializer header fields.
-constexpr std::size_t maximumOverviewBytes {
-    4 * sizeof(std::uint32_t) + Overview::maxSlices * Overview::bandCount,
-};
+/// Largest serialized tag of any kind that the cache stores: a header of four 32-bit fields and the largest payload.
+/// The overview serializer writes the same header with a payload two bytes smaller than the largest one.
+constexpr std::size_t maximumCachedTagBytes {4 * sizeof(std::uint32_t) + maxTagPayloadBytes};
 
 /// Zero-based columns for independent tag lookup, including the key's stored SQLite types.
 namespace tag_column
@@ -102,7 +101,7 @@ std::optional<CachedTagRow> readTagRow(sqlite3& database, const utils::FileIdent
     if (valid && stateIs(ReadStatus::present)) {
         const auto bytes = sqlite3_column_bytes(row, tag_column::decodedData);
         valid = sqlite3_column_type(row, tag_column::decodedData) == SQLITE_BLOB && bytes > 0
-            && std::cmp_less_equal(bytes, maximumOverviewBytes);
+            && std::cmp_less_equal(bytes, maximumCachedTagBytes);
         if (valid) {
             cached.data = sqlite::columnBlob(*row, tag_column::decodedData);
         }
@@ -192,7 +191,7 @@ bool storeCachedTag(AnalysisCache& cache, const utils::FileIdentity& identity, c
     switch (status) {
         case ReadStatus::present:
             data = serializeTag(result);
-            if (data.isEmpty() || data.getSize() > maximumOverviewBytes) {
+            if (data.isEmpty() || data.getSize() > maximumCachedTagBytes) {
                 return false;
             }
             break;
