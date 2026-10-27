@@ -185,7 +185,9 @@ and the output device with its sample rate and buffer size in samples.
   The wheel zooms around the playhead, and Command or Control with the wheel changes the input gain.
   Double-click the Zoom or Input gain slider to reset it to 100% or 0 dB.
 - The Input gain slider sets a per-file gain for the selected file, shown in the Gain column.
-  It applies to the preview and the waveform, and is saved in the analysis cache until the file changes.
+  It scales the waveform, and the preview while it plays through the plugin chain, as it does in processing.
+  A preview without the plugin chain plays the file unchanged, like in the C++ version.
+  The gain is saved in the analysis cache until the file changes.
   File > Clear Per-file Gain removes it.
 - The Normalize group chooses a sample peak target from -12 to 0 dBFS,
   or a loudness target from -24 to -6 LUFS limited to a -0.3 dBTP true peak.

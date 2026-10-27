@@ -3,9 +3,10 @@
 //! `SharedState` holds the atomics the GUI, the decode thread, and the audio callback communicate through.
 //! `OutputRenderer` runs inside the cpal callback.
 //! It never allocates, locks, or blocks:
-//! it drops frames from older generations, applies the gain, writes the device channels,
+//! it drops frames from older generations, writes the device channels,
 //! and publishes the source position of the last played frame for the playhead.
-//! While a preview insert is attached, playback goes through it instead, see `insert`.
+//! While a preview insert is attached, playback goes through it instead, see `insert`,
+//! and only then is the insert gain applied, before the insert, like in the C++ application.
 
 pub mod insert;
 
@@ -32,8 +33,8 @@ pub struct SharedState {
     pub load_generation: AtomicU32,
     /// True while the user wants audio to play.
     pub playing: AtomicBool,
-    /// Linear output gain, stored as `f32` bits.
-    pub gain_bits: AtomicU32,
+    /// Linear gain applied before the preview insert, stored as `f32` bits.
+    pub insert_gain_bits: AtomicU32,
     /// Source position of the last played frame, or of the seek target until playback catches up.
     pub position: AtomicU64,
     /// Sample rate of the loaded file, 0 when nothing is loaded.
@@ -76,7 +77,7 @@ impl SharedState {
             generation: AtomicU32::new(NO_GENERATION),
             load_generation: AtomicU32::new(NO_GENERATION),
             playing: AtomicBool::new(false),
-            gain_bits: AtomicU32::new(UNITY_GAIN_BITS),
+            insert_gain_bits: AtomicU32::new(UNITY_GAIN_BITS),
             position: AtomicU64::new(0),
             source_rate: AtomicU32::new(0),
             source_frames: AtomicU64::new(0),
@@ -92,10 +93,10 @@ impl SharedState {
         }
     }
 
-    /// Returns the linear output gain.
+    /// Returns the linear gain applied before the preview insert.
     #[must_use]
-    pub fn gain(&self) -> f32 {
-        f32::from_bits(self.gain_bits.load(Ordering::Relaxed))
+    pub fn insert_gain(&self) -> f32 {
+        f32::from_bits(self.insert_gain_bits.load(Ordering::Relaxed))
     }
 }
 
@@ -140,7 +141,6 @@ impl OutputRenderer {
 
         let generation = self.shared.generation.load(Ordering::Acquire);
         let playing = self.shared.playing.load(Ordering::Relaxed);
-        let gain = self.shared.gain();
         let mut last_position = None;
         let mut ran_out = false;
         if !playing {
@@ -157,7 +157,7 @@ impl OutputRenderer {
             }
             let (left, right) = frame.map_or((0.0, 0.0), |frame| {
                 last_position = Some(frame.position + 1);
-                (frame.left * gain, frame.right * gain)
+                (frame.left, frame.right)
             });
             write_frame(device_frame, left, right, &convert);
         }
@@ -251,14 +251,14 @@ mod test_output_renderer {
     }
 
     #[test]
-    fn stale_frames_are_skipped_and_gain_applied() {
+    fn stale_frames_are_skipped_and_the_insert_gain_is_left_to_the_insert() {
         let (mut renderer, shared) = renderer(&[frame(1, 0, 0.9), frame(2, 100, 0.5), frame(2, 101, 0.25)], 2);
         shared.generation.store(2, Ordering::Relaxed);
         shared.playing.store(true, Ordering::Relaxed);
-        shared.gain_bits.store(0.5_f32.to_bits(), Ordering::Relaxed);
+        shared.insert_gain_bits.store(0.5_f32.to_bits(), Ordering::Relaxed);
         let mut output = [0.0_f32; 4];
         renderer.render(&mut output, |sample| sample);
-        assert_eq!(output, [0.25, -0.25, 0.125, -0.125]);
+        assert_eq!(output, [0.5, -0.5, 0.25, -0.25]);
         assert_eq!(shared.position.load(Ordering::Relaxed), 102);
     }
 
@@ -302,7 +302,7 @@ mod test_output_renderer {
     #[test]
     fn new_state_has_unity_gain() {
         assert_eq!(UNITY_GAIN_BITS, 1.0_f32.to_bits());
-        assert!((SharedState::new().gain() - 1.0).abs() < f32::EPSILON);
+        assert!((SharedState::new().insert_gain() - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]

@@ -37,7 +37,7 @@ The Rust version covers the key features of the C++ application:
   coloured from the Serato Overview tag when the file has one.
 - Cache the Serato Overview of each file in a `serato_tag_cache` table with the same schema as the C++ cache.
 - Play the selected file in the GUI.
-- Keep a per-file custom gain in the GUI and the cache, applied to the preview and the waveform.
+- Keep a per-file custom gain in the GUI and the cache, applied to the waveform and to the plugin chain preview.
 - Accept files and folders dropped onto the GUI.
 - Normalize files from the CLI and the GUI to a sample peak or loudness target,
   written as AIFF with tags and Serato data.
