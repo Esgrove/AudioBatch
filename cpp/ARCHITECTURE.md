@@ -124,8 +124,8 @@ flowchart LR
     serato["SeratoPreviewLoader worker"]
     table["AudioFileTableModel"]
 
-    jobs -->|"analysis results"| batcher
-    jobs -->|"plans, starts, progress, results, completions"| async
+    jobs -->|"analysis results, and normalization and processing starts, progress, and results"| batcher
+    jobs -->|"analysis plans, starts, and progress, and every completion"| async
     batcher --> controller
     async --> controller
     controller -->|"BackgroundWorkListener, current run only"| component
@@ -140,8 +140,10 @@ The coordinators publish through `RunCallback`, which copies the callback under 
 `BackgroundWorkController` posts each event to the message thread,
 drops events whose run id is not the current one,
 and calls the `BackgroundWorkListener` that `AudioBatchComponent` implements.
-Analysis results go through `MessageThreadBatcher`, so a burst of cached results costs one table refresh.
-`handleAnalysisComplete` calls `deliverPending` first, so the last results arrive before the completion.
+Analysis results go through one `MessageThreadBatcher`, so a burst of cached results costs one table refresh.
+Each normalization or processing pass has its own batcher for the starts, progress reports, and results of its files,
+so a burst of results costs one sort and one table refresh, and a start never overtakes the result of its file.
+Every completion delivers what its batcher still holds first.
 A normalization or processing result is still passed on after its pass ended, because its file was already written.
 
 ## Threads
