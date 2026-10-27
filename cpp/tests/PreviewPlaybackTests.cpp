@@ -757,6 +757,17 @@ private:
             device.openError.clear();
             player.setErrorCallback({});
 
+            beginTest("Selecting another file while playing keeps the device open");
+            player.start();
+            expect(player.isPlaying());
+            const auto opensWhilePlaying = device.opens;
+            const auto closesWhilePlaying = device.closes;
+            expect(player.load(audioUrl));
+            player.start();
+            expect(player.isPlaying());
+            expectEquals(device.opens, opensWhilePlaying);
+            expectEquals(device.closes, closesWhilePlaying);
+
             beginTest("Shutdown balances all device opens even if playback is still active");
             player.start();
             expect(player.isPlaying());

@@ -245,10 +245,13 @@ void AudioPreviewPlayer::prepareInput()
 }
 
 /// Closes the file after callbacks have stopped referencing its resampler and buffered reader.
+/// The output device stays open, so selecting the next file while playing does not reopen it,
+/// and the status timer closes it once nothing plays.
 void AudioPreviewPlayer::release()
 {
     const juce::ScopedLock lock(renderingLock);
-    suspend();
+    startWhenInitialPositionReady = false;
+    previewSource.stop();
     previewSource.releaseResources();
     previewSource.setInput(nullptr, 0.0, 2);
     resamplingSource.reset();
