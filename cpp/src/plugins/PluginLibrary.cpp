@@ -1,11 +1,14 @@
 /// Implementation of PluginLibrary.
 /// Covers loading and saving the known-plugins list, the plugin manager component that scans on one background thread,
-/// the plugin scan lock shared with CLI rescans, and creating one chain of plugin instances per worker.
+/// the plugin scan lock shared with CLI rescans, creating one chain of plugin instances per worker,
+/// and assembling the options and chains of a processing run.
 
 #include "plugins/PluginLibrary.h"
 
+#include "plugins/PluginProcessingCoordinator.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/Log.h"
+#include "utils/StringFormat.h"
 
 namespace audiobatch
 {
@@ -156,6 +159,46 @@ ChainInstantiation PluginLibrary::instantiateChains(
     }
 
     return instantiation;
+}
+
+/// Assembles a processing run of the given number of files through the enabled plugins of the chain:
+/// the options with the plugins in chain order, and one chain of instances per worker,
+/// with no more workers than files.
+/// The given options supply the settings of the run, and their plugin list is replaced.
+/// A plugin without saved state gets the state it had right after it was created,
+/// which is restored before every file, so adaptive state from one file does not carry over to the next.
+/// Returns the message to show when a plugin cannot be created, since a chain missing any plugin must not run.
+/// Must run on the message thread.
+std::expected<ProcessingRunSetup, juce::String> PluginLibrary::createProcessingRun(
+    const std::vector<EnabledChainPlugin>& enabledPlugins,
+    PluginProcessingOptions options,
+    const int fileCount
+) const
+{
+    const auto workerCount = juce::jmin(fileCount, getPluginProcessingWorkerCount());
+    auto [chains, initialStates, errorMessage, failedPluginName] = instantiateChains(enabledPlugins, workerCount);
+
+    if (chains.empty() || errorMessage.isNotEmpty()) {
+        return std::unexpected(
+            utils::format(
+                "Could not load plugin {}:\n\n{}",
+                failedPluginName.quoted(),
+                errorMessage.isNotEmpty() ? errorMessage : juce::String("Unknown error")
+            )
+        );
+    }
+
+    options.plugins.clear();
+    options.plugins.reserve(enabledPlugins.size());
+    for (std::size_t index = 0; index < enabledPlugins.size(); ++index) {
+        auto descriptor = enabledPlugins[index].descriptorRef;
+        if (descriptor.state.isEmpty()) {
+            descriptor.state = initialStates[index];
+        }
+        options.plugins.push_back(std::move(descriptor));
+    }
+
+    return ProcessingRunSetup {.options = std::move(options), .chains = std::move(chains)};
 }
 
 /// Saves the known-plugins list to its KnownPlugins.xml file after a change on the message thread.

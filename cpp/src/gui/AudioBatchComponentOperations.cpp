@@ -13,7 +13,6 @@
 #include "utils/StringFormat.h"
 
 #include <algorithm>
-#include <ranges>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -542,46 +541,27 @@ void AudioBatchComponent::processRecords(const std::vector<AudioAnalysisRecord>&
         return;
     }
 
-    PluginProcessingOptions options;
-    options.plugins
-        = enabledPlugins | std::views::transform(&EnabledChainPlugin::descriptorRef) | std::ranges::to<std::vector>();
+    PluginProcessingOptions settings;
     if (previewWorkspace.normalizeBeforePluginToggle.getToggleState()) {
-        options.normalizeBeforePlugin = previewWorkspace.normalizationTargetControl.getOptions();
+        settings.normalizeBeforePlugin = previewWorkspace.normalizationTargetControl.getOptions();
     }
-    options.overwriteExisting = previewWorkspace.forceOverwriteToggle.getToggleState();
-
-    // Pre-instantiate one chain of plugin instances per worker on the message thread.
-    const auto workerCount = juce::jmin(static_cast<int>(records.size()), getPluginProcessingWorkerCount());
+    settings.overwriteExisting = previewWorkspace.forceOverwriteToggle.getToggleState();
 
     const auto startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     statusBar.setStatusText("Loading plugins...");
 
-    auto [chains, initialStates, errorMessage, failedPluginName]
-        = pluginLibrary->instantiateChains(enabledPlugins, workerCount);
-
-    if (chains.empty() || errorMessage.isNotEmpty()) {
-        // All-or-nothing: a chain missing any plugin must not run at all.
-        showPluginProcessingWarning(
-            utils::format(
-                "Could not load plugin {}:\n\n{}",
-                failedPluginName.quoted(),
-                errorMessage.isNotEmpty() ? errorMessage : juce::String("Unknown error")
-            )
-        );
+    auto run
+        = pluginLibrary->createProcessingRun(enabledPlugins, std::move(settings), static_cast<int>(records.size()));
+    if (!run.has_value()) {
+        showPluginProcessingWarning(run.error());
         statusBar.setStatusText("Plugin load failed");
         return;
     }
 
-    // A plugin without saved state is reset to its initial state before every file instead.
-    for (std::size_t index = 0; index < options.plugins.size(); ++index) {
-        if (auto& state = options.plugins[index].state; state.isEmpty()) {
-            state = initialStates[index];
-        }
-    }
-
     const auto filesToProcess = releasePreviewBeforeProcessing(records);
 
-    const auto expected = backgroundWork.startProcessing(records, options, std::move(chains), startedAtMilliseconds);
+    const auto expected
+        = backgroundWork.startProcessing(records, run->options, std::move(run->chains), startedAtMilliseconds);
     updateProcessButtonState();
 
     if (expected <= 0) {

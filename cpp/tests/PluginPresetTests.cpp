@@ -114,26 +114,6 @@ void storeChain(juce::PropertiesFile& settings, const std::vector<SavedChainSlot
     settings.setValue("pluginChain", plugin_presets::createChainXml(slots)->toString());
 }
 
-/// Returns the plugin options for an instantiated chain, restoring each plugin from its preset state
-/// and from its state right after creation when the preset has none, the way a processing run does.
-PluginProcessingOptions makeOptions(
-    const std::vector<EnabledChainPlugin>& enabledPlugins,
-    const std::vector<juce::MemoryBlock>& initialStates
-)
-{
-    PluginProcessingOptions options;
-    options.disposeFile = [](const juce::File& file) { return file.deleteFile(); };
-
-    for (std::size_t index = 0; index < enabledPlugins.size(); ++index) {
-        auto descriptor = enabledPlugins[index].descriptorRef;
-        if (descriptor.state.getSize() == 0 && index < initialStates.size()) {
-            descriptor.state = initialStates[index];
-        }
-        options.plugins.push_back(std::move(descriptor));
-    }
-    return options;
-}
-
 class PluginPresetTests final : public juce::UnitTest
 {
 public:
@@ -526,9 +506,10 @@ private:
         return saved.value_or(juce::File {});
     }
 
-    /// Instantiates the plugins as a processing run does, processes the source through them,
+    /// Assembles the plugins and their options as a processing run does, processes the source through them,
     /// checks that the first plugin reported the expected latency, which processing compensated,
     /// and returns the output file, which does not exist when processing failed.
+    /// Each plugin is restored from its preset state, or from its state right after creation when the preset has none.
     juce::File processWithChain(
         const PluginLibrary& library,
         const std::vector<EnabledChainPlugin>& enabledPlugins,
@@ -536,20 +517,20 @@ private:
         const int expectedLatencySamples
     )
     {
-        auto instantiation = library.instantiateChains(enabledPlugins, 1);
-        expect(instantiation.errorMessage.isEmpty(), instantiation.errorMessage);
-        if (instantiation.chains.empty()) {
+        PluginProcessingOptions settings;
+        settings.disposeFile = [](const juce::File& file) { return file.deleteFile(); };
+        auto run = library.createProcessingRun(enabledPlugins, std::move(settings), 1);
+        expect(run.has_value(), run.has_value() ? juce::String() : run.error());
+        if (!run.has_value() || run->chains.empty()) {
             return {};
         }
 
         std::vector<juce::AudioPluginInstance*> chain;
-        for (const auto& instance : instantiation.chains.front()) {
+        for (const auto& instance : run->chains.front()) {
             chain.push_back(instance.get());
         }
 
-        const auto result = processFileWithPlugins(
-            analyzeFile(source), makeOptions(enabledPlugins, instantiation.initialStates), chain
-        );
+        const auto result = processFileWithPlugins(analyzeFile(source), run->options, chain);
         expect(!result.hasError(), utils::format("Processing {} failed", source.getFileName()));
         expectEquals(chain.front()->getLatencySamples(), expectedLatencySamples);
         return getProcessingOutputFile(source);
