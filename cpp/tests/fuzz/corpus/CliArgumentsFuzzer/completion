@@ -1,0 +1,4 @@
+completion
+zsh
+--install
+--verbose

@@ -3,10 +3,12 @@
 /// before any logging starts, so those flags only print to the console.
 /// Every other invocation sets up file logging and runs the analysis workflow or the plugin listing,
 /// translating the outcome into a process exit code.
+/// The completion subcommand runs without a log file, since it only prints or installs a script.
 /// When launched as a plugin scan worker by a plugin rescan, it runs the worker instead.
 
 #include "cli/AudioAnalysisCli.h"
 #include "cli/PluginListCli.h"
+#include "cli/ShellCompletion.h"
 #include "plugins/PluginScanner.h"
 #include "utils/AppInfo.h"
 #include "utils/ConsolePrint.h"
@@ -69,21 +71,26 @@ int runCliMain(const std::span<char*> argv)
         return 0;
     }
 
+    // A subcommand has its own usage text, so "list --help" describes the options of the listing.
+    const auto subcommand = cli::findSubcommand(arguments);
+
     if (arguments.containsOption("--help|-h")) {
-        fmt::print("{}\n", cli::buildUsage(executableName));
+        fmt::print("{}\n", cli::buildUsage(executableName, subcommand));
         return 0;
     }
 
     const auto command = cli::parseArguments(arguments);
 
-    const auto logger = utils::createDefaultLogger(executableName);
+    // The completion script only prints or writes one file, so like help and version it leaves no log file.
+    const bool writesLog = !command.has_value() || !std::holds_alternative<CompletionCommand>(*command);
+    const auto logger = writesLog ? utils::createDefaultLogger(executableName) : nullptr;
     juce::Logger::setCurrentLogger(logger.get());
     utils::installCrashLogging();
 
     if (!command) {
         utils::logError(command.error().message);
         console::printError(command.error().message);
-        fmt::print("\n{}\n", cli::buildUsage(executableName));
+        fmt::print("\n{}\n", cli::buildUsage(executableName, subcommand));
         return exitCli(1);
     }
 
@@ -92,6 +99,9 @@ int runCliMain(const std::span<char*> argv)
         exitCode = std::visit(
             Overloaded {
                 [](const ListPluginsCommand& listing) { return cli::runPluginList(listing.rescan, listing.grouping); },
+                [&executableName](const CompletionCommand& completion) {
+                    return cli::runCompletion(completion, executableName);
+                },
                 [](const AnalyzeCommand& analysis) { return cli::runAnalysis(analysis); },
             },
             *command

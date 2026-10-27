@@ -395,8 +395,11 @@ set(AUDIOBATCH_CLI_SOURCES
     "src/cli/AudioAnalysisCliOutput.cpp"
     "src/cli/AudioAnalysisCliOutput.h"
     "src/cli/AudioAnalysisCliParse.cpp"
+    "src/cli/CliOptions.h"
     "src/cli/PluginListCli.cpp"
     "src/cli/PluginListCli.h"
+    "src/cli/ShellCompletion.cpp"
+    "src/cli/ShellCompletion.h"
 )
 # cmake-format: on
 

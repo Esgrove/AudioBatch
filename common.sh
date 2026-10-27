@@ -71,6 +71,92 @@ require_command() {
     fi
 }
 
+# Install the shell completions of a CLI binary that has the completion subcommand,
+# for the shells of this platform: bash and PowerShell on Windows, zsh on macOS, and zsh and bash on Linux.
+# The first argument is the binary, a name in path or a path to it.
+# The second argument is "true" to only print the result summary, without the setup notes for each shell.
+install_shell_completions() {
+    local binary="$1"
+    local silent="${2:-false}"
+    local command_name
+    command_name=$(basename "$binary" .exe)
+
+    local shells
+    case "$BASH_PLATFORM" in
+        "windows")
+            shells=(bash powershell)
+            ;;
+        "mac")
+            shells=(zsh)
+            ;;
+        *)
+            shells=(zsh bash)
+            ;;
+    esac
+
+    print_magenta "Installing $command_name shell completions for: ${shells[*]}"
+
+    local completion_args=(--install)
+    if [ "$silent" = false ]; then
+        completion_args+=(--verbose)
+    fi
+
+    local failed_shells=()
+    local installed_count=0
+    local shell
+    for shell in "${shells[@]}"; do
+        if "$binary" completion "$shell" "${completion_args[@]}"; then
+            installed_count=$((installed_count + 1))
+        else
+            print_red "Failed to install $shell completion for $command_name"
+            failed_shells+=("$shell")
+        fi
+    done
+
+    if [ ${#failed_shells[@]} -gt 0 ]; then
+        print_error_and_exit "Failed completions: ${failed_shells[*]}"
+    fi
+
+    print_green "Successfully installed $installed_count completion(s)"
+
+    if [ "$silent" = true ]; then
+        return
+    fi
+
+    # The single quoted lines are printed literally for the user to copy.
+    # shellcheck disable=SC2016
+    for shell in "${shells[@]}"; do
+        case "$shell" in
+            bash)
+                echo ""
+                print_yellow "Note: For bash completions, ensure your .bashrc sources files from ~/.bash_completion.d/"
+                echo "Add to your .bashrc if not already present:"
+                echo '  for file in ~/.bash_completion.d/*; do'
+                echo '      [ -f "$file" ] && source "$file"'
+                echo '  done'
+                ;;
+            zsh)
+                echo ""
+                if [ -d "$HOME/.oh-my-zsh/custom/plugins" ]; then
+                    print_yellow "Note: oh-my-zsh detected. Add the plugin to your .zshrc plugins list:"
+                    echo "  plugins=(... $command_name)"
+                else
+                    print_yellow "Note: For zsh completions, ensure your .zshrc includes the completions directory in fpath:"
+                    echo '  fpath=(~/.zsh/completions $fpath)'
+                    echo '  autoload -Uz compinit && compinit'
+                fi
+                ;;
+            powershell)
+                echo ""
+                print_yellow "Note: PowerShell completions are installed to ~/Documents/PowerShell/completions/"
+                echo "Ensure your PowerShell profile loads completions from that directory."
+                echo 'Add to your $PROFILE if not already present:'
+                echo '  Get-ChildItem "$HOME\Documents\PowerShell\completions\*.ps1" | ForEach-Object { . $_ }'
+                ;;
+        esac
+    done
+}
+
 # Enable calling functions directly as arguments:
 # ./common.sh print_green "hello"
 # shellcheck disable=SC2128

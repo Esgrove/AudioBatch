@@ -1,4 +1,4 @@
---list-plugins
+list
 --rescan
 --group-by
 manufacturer
