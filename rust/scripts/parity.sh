@@ -8,11 +8,15 @@ Runs both on the same paths with --refresh and JSON output,
 then compares the levels of every file within a tolerance.
 With --normalize, both normalize their own copy of the paths in a temporary folder,
 and the re-analyzed outputs are compared instead.
+Every normalized output must also reach the target, or the true peak ceiling in loudness mode.
+compare_outputs.py then compares the files both CLIs left behind:
+the file names, the AIFF format, the samples, and the ID3v2 frames.
+It runs with uv, which installs the Python packages it needs.
 The originals are left alone, but both CLIs move the replaced copies to the system trash.
 Exits with code 1 when any file differs.
 
 The C++ CLI is taken from AUDIOBATCH_CPP_CLI when set,
-otherwise from the cpp directory or its CMake debug build directory.
+otherwise the newest build in the cpp directory or its CMake debug build directory.
 
 OPTIONS: All options are optional
     -h | --help
@@ -27,6 +31,12 @@ OPTIONS: All options are optional
     -n | --normalize
         Normalize copies of the paths with both CLIs and compare the outputs.
 
+    -p | --peak <dBFS>
+        Normalize to this sample peak. Default: 0
+
+    -l | --lufs <LUFS>
+        Normalize to this integrated loudness instead of a peak.
+
     --release
         Build and run the Rust CLI in release mode, which is faster on large folders.
 "
@@ -37,6 +47,9 @@ CPP_DIR=$(cd "$RUST_DIR/../cpp" && pwd)
 TOLERANCE="0.05"
 RECURSE=()
 NORMALIZE=()
+TARGET=()
+TARGET_MODE="peak"
+TARGET_VALUE="0"
 PROFILE="debug"
 PATHS=()
 
@@ -55,6 +68,18 @@ while [ $# -gt 0 ]; do
             ;;
         -n | --normalize)
             NORMALIZE=(--normalize)
+            ;;
+        -p | --peak)
+            TARGET=(--peak "$2")
+            TARGET_MODE="peak"
+            TARGET_VALUE="$2"
+            shift
+            ;;
+        -l | --lufs)
+            TARGET=(--lufs "$2")
+            TARGET_MODE="lufs"
+            TARGET_VALUE="$2"
+            shift
             ;;
         --release)
             PROFILE="release"
@@ -81,17 +106,22 @@ find_cpp_cli() {
         echo "$AUDIOBATCH_CPP_CLI"
         return
     fi
+    # The CMake presets put the CLI straight in the artefacts folder and build.sh in a folder per build type,
+    # so the most recently built one is used.
     local candidate
+    local newest=""
     for candidate in \
         "$CPP_DIR/audiobatch" \
         "$CPP_DIR/audiobatch.exe" \
+        "$CPP_DIR/cmake-build-mac-debug/AudioBatchCli_artefacts/audiobatch" \
         "$CPP_DIR/cmake-build-mac-debug/AudioBatchCli_artefacts/Debug/audiobatch" \
+        "$CPP_DIR/cmake-build-windows-debug/AudioBatchCli_artefacts/audiobatch.exe" \
         "$CPP_DIR/cmake-build-windows-debug/AudioBatchCli_artefacts/Debug/audiobatch.exe"; do
-        if [ -x "$candidate" ]; then
-            echo "$candidate"
-            return
+        if [ -x "$candidate" ] && { [ -z "$newest" ] || [ "$candidate" -nt "$newest" ]; }; then
+            newest="$candidate"
         fi
     done
+    echo "$newest"
 }
 
 CPP_CLI=$(find_cpp_cli)
@@ -132,18 +162,48 @@ if [ ${#NORMALIZE[@]} -gt 0 ]; then
 fi
 
 # Both CLIs exit with code 2 when a file fails, which the comparison reports per file instead.
-"$CPP_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" --output json "${CPP_PATHS[@]}" \
+TARGET_OPTIONS=()
+if [ ${#NORMALIZE[@]} -gt 0 ]; then
+    TARGET_OPTIONS=("${TARGET[@]}")
+else
+    TARGET_MODE=""
+fi
+
+"$CPP_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" "${TARGET_OPTIONS[@]}" --output json "${CPP_PATHS[@]}" \
     > "$WORK_DIR/cpp.json" 2> "$WORK_DIR/cpp.log" || true
-"$RUST_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" --output json "${RUST_PATHS[@]}" \
+"$RUST_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" "${TARGET_OPTIONS[@]}" --output json "${RUST_PATHS[@]}" \
     > "$WORK_DIR/rust.json" 2> "$WORK_DIR/rust.log" || true
 
-python3 - "$WORK_DIR/cpp.json" "$WORK_DIR/rust.json" "$TOLERANCE" "$CPP_BASE" "$RUST_BASE" << 'EOF'
+STATUS=0
+python3 - "$WORK_DIR/cpp.json" "$WORK_DIR/rust.json" "$TOLERANCE" "$CPP_BASE" "$RUST_BASE" \
+    "$TARGET_MODE" "$TARGET_VALUE" << 'EOF' || STATUS=1
 import json
 import os
 import sys
 
-cpp_path, rust_path, tolerance_text, cpp_base, rust_base = sys.argv[1:6]
+cpp_path, rust_path, tolerance_text, cpp_base, rust_base, target_mode, target_text = sys.argv[1:8]
 tolerance = float(tolerance_text)
+target = float(target_text)
+
+# A normalized peak lands on the target within the quantization of the output samples.
+PEAK_TARGET_TOLERANCE = 0.01
+# Loudness lands within the gating of the loudness measurement, or stops at the true peak ceiling.
+LOUDNESS_TARGET_TOLERANCE = 0.1
+TRUE_PEAK_CEILING = -0.3
+TRUE_PEAK_CEILING_TOLERANCE = 0.1
+
+def missed_target(row):
+    """Returns why a normalized output missed the target, or None when it reached it."""
+    if target_mode == "peak":
+        if row["peakDbfs"] is None or abs(row["peakDbfs"] - target) > PEAK_TARGET_TOLERANCE:
+            return f"peak {row['peakDbfs']} dBFS instead of {target}"
+    elif target_mode == "lufs" and row["integratedLufs"] is not None:
+        loudness = row["integratedLufs"]
+        true_peak = row["truePeakDbtp"]
+        at_ceiling = true_peak is not None and abs(true_peak - TRUE_PEAK_CEILING) <= TRUE_PEAK_CEILING_TOLERANCE
+        if abs(loudness - target) > LOUDNESS_TARGET_TOLERANCE and not (at_ceiling and loudness < target):
+            return f"loudness {loudness} LUFS and true peak {true_peak} dBTP for a {target} LUFS target"
+    return None
 
 def load(path, base):
     with open(path, encoding="utf-8") as file:
@@ -169,6 +229,10 @@ for path in sorted(set(cpp_rows) | set(rust_rows)):
         continue
     if cpp["status"] == "failed" and rust["status"] == "failed":
         continue
+    if target_mode and cpp["status"] != "failed":
+        for label, row in (("C++", cpp), ("Rust", rust)):
+            if (reason := missed_target(row)) is not None:
+                differences.append(f"{name}: {label} output missed the target, {reason}")
     for field in exact_fields:
         if cpp[field] != rust[field]:
             differences.append(f"{name}: {field} C++ {cpp[field]} Rust {rust[field]}")
@@ -189,3 +253,8 @@ if differences:
     sys.exit(1)
 print("No differences")
 EOF
+
+if [ ${#NORMALIZE[@]} -gt 0 ]; then
+    uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$CPP_BASE" "$RUST_BASE" || STATUS=1
+fi
+exit $STATUS

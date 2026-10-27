@@ -1,0 +1,9 @@
+# The normalization collection is too large for regular git objects, so it is stored with Git LFS.
+# Only the audio is tracked, so generate.py stays a regular file.
+fixtures/normalization/*.aif filter=lfs diff=lfs merge=lfs -text
+fixtures/normalization/*.aifc filter=lfs diff=lfs merge=lfs -text
+fixtures/normalization/*.flac filter=lfs diff=lfs merge=lfs -text
+fixtures/normalization/*.m4a filter=lfs diff=lfs merge=lfs -text
+fixtures/normalization/*.mp3 filter=lfs diff=lfs merge=lfs -text
+fixtures/normalization/*.ogg filter=lfs diff=lfs merge=lfs -text
+fixtures/normalization/*.wav filter=lfs diff=lfs merge=lfs -text

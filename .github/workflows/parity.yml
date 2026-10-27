@@ -35,13 +35,31 @@ defaults:
 
 jobs:
   parity:
-    # Runs the C++ and the Rust CLI on the committed fixtures and compares the levels they report.
+    # Runs the C++ and the Rust CLI on the committed fixtures and compares the levels they report,
+    # then normalizes the LFS collection with both and compares the output files.
     runs-on: macos-latest
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
         with:
           submodules: recursive
+
+      # The checkout leaves the LFS files as pointers.
+      # Caching the objects by their IDs downloads the collection only when it changes, saving LFS bandwidth.
+      - name: List LFS objects
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-objects
+
+      - name: Restore LFS objects
+        uses: actions/cache@v5
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-objects') }}
+
+      - name: Pull LFS files
+        run: git lfs pull
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10
 
       - name: Install Ninja and ccache
         env:
@@ -84,3 +102,13 @@ jobs:
         run: |
           export AUDIOBATCH_CPP_CLI="$PWD/../cpp/cmake-build-mac-release/AudioBatchCli_artefacts/Release/audiobatch"
           ./scripts/parity.sh --release ../fixtures
+          ./scripts/parity.sh --release ../fixtures/normalization
+
+      - name: Compare normalized outputs
+        working-directory: rust
+        run: |
+          export AUDIOBATCH_CPP_CLI="$PWD/../cpp/cmake-build-mac-release/AudioBatchCli_artefacts/Release/audiobatch"
+          ./scripts/parity.sh --release --normalize --peak 0 ../fixtures/normalization
+          ./scripts/parity.sh --release --normalize --peak -1 ../fixtures/normalization
+          ./scripts/parity.sh --release --normalize --lufs -14 ../fixtures/normalization
+          ./scripts/parity.sh --release --normalize --lufs -23 ../fixtures/normalization
