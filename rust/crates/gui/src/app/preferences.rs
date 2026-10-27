@@ -177,9 +177,17 @@ impl AppView {
     }
 
     /// Applies the settings the user changed in the settings window.
+    /// The window does not edit the normalization settings,
+    /// and its copy of them is stale once the main window changes the mode or a target.
     fn on_settings_event(&mut self, _view: Entity<SettingsView>, event: &SettingsEvent, cx: &mut Context<Self>) {
-        let SettingsEvent::Changed(settings) = event;
-        self.apply_settings(settings.clone(), cx);
+        let SettingsEvent::Changed(changed) = event;
+        let settings = GuiSettings {
+            normalize_mode: self.settings.normalize_mode,
+            normalize_target_peak_dbfs: self.settings.normalize_target_peak_dbfs,
+            normalize_target_lufs: self.settings.normalize_target_lufs,
+            ..changed.clone()
+        };
+        self.apply_settings(settings, cx);
     }
 
     /// Opens the player with another output configuration, keeping the loaded file, its position, and the gain.
