@@ -497,6 +497,35 @@ private:
         expect(!serato::getCachedTag(cache, identity));
         expectSqlScalar(databaseFile, "SELECT count(*) FROM serato_tag_cache;", 0);
 
+        beginTest("Several kinds are looked up together in their order, and unknown kinds among them miss");
+        {
+            expect(serato::storeCachedTag(cache, identity, positive));
+            expect(
+                serato::storeCachedTag(
+                    cache,
+                    identity,
+                    serato::TagReadResult::missing(serato::TagKind::markers, serato::ReadStatus::absent)
+                )
+            );
+            const std::array kinds {
+                serato::TagKind::markers,
+                std::bit_cast<serato::TagKind>(std::uint8_t {99}),
+                serato::TagKind::beatGrid,
+                serato::TagKind::overview,
+            };
+            const auto results = serato::getCachedTags(cache, identity, kinds);
+            expectEquals(static_cast<int>(results.size()), 4);
+            if (results.size() == 4) {
+                const auto& markers = results[0];
+                const auto& overviewResult = results[3];
+                expect(markers.has_value() && markers->status() == serato::ReadStatus::absent);
+                expect(!results[1]);
+                expect(!results[2]);
+                expect(overviewResult.has_value() && overviewResult->status() == serato::ReadStatus::present);
+            }
+            expect(cache.removeAnalysis(file));
+        }
+
         beginTest("Unknown tag kinds miss and cannot be stored");
         const auto unknownKind = std::bit_cast<serato::TagKind>(std::uint8_t {99});
         expect(!serato::getCachedTag(cache, identity, unknownKind));

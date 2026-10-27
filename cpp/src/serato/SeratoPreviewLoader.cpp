@@ -116,6 +116,7 @@ void SeratoPreviewLoader::run(const std::stop_token& stopToken)
 }
 
 /// Performs cache lookup, reading and stable persistence, checking cancellation at each boundary.
+/// The cached kinds are looked up together, so the file is checked against its identity once for all of them.
 /// Identity rejection before reading, after reading or at delivery completes with null data if still current.
 /// Generation cancellation remains silent.
 void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std::stop_token& stopToken) const
@@ -131,11 +132,12 @@ void SeratoPreviewLoader::process(const SeratoPreviewRequest& active, const std:
         if (active.identity.matches(active.file)) {
             Results results;
             std::vector<TagKind> misses;
+            auto cached = getCachedTags(cache, active.identity, allTagKinds);
+            if (isCancelled()) {
+                return;
+            }
             for (std::size_t index = 0; index < allTagKinds.size(); ++index) {
-                if (isCancelled()) {
-                    return;
-                }
-                results[index] = getCachedTag(cache, active.identity, allTagKinds[index]);
+                results[index] = std::move(cached[index]);
                 if (!results[index]) {
                     misses.push_back(allTagKinds[index]);
                 }

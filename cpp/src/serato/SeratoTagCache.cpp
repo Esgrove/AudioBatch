@@ -8,6 +8,7 @@
 #include "analysis/Sqlite.h"
 #include "serato/SeratoTags.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -56,15 +57,20 @@ struct CachedTagRow {
 
 /// Reads the row of the tag kind and validates every column against the identity and the parser version.
 /// Returns an empty optional for a missing, stale or corrupt row.
-std::optional<CachedTagRow> readTagRow(sqlite3& database, const utils::FileIdentity& identity, const TagKind kind)
+std::optional<CachedTagRow> readTagRow(
+    sqlite3& database,
+    sqlite::StatementCache& statements,
+    const utils::FileIdentity& identity,
+    const TagKind kind
+)
 {
     constexpr auto sql = R"SQL(
              SELECT file_size, modified_time_ms, parser_version, result_state, decoded_data, updated_at_ms,
                  file_path, tag_kind
         FROM serato_tag_cache WHERE file_path = ? AND tag_kind = ?;
     )SQL";
-    const auto statement = sqlite::prepare(database, sql);
-    if (statement == nullptr || !sqlite::bindText(*statement, 1, identity.path)
+    const auto statement = statements.borrow(database, sql);
+    if (!statement.isValid() || !sqlite::bindText(*statement, 1, identity.path)
         || !sqlite::bindInt64(*statement, 2, std::to_underlying(kind)))
     {
         return std::nullopt;
@@ -120,6 +126,7 @@ std::optional<CachedTagRow> readTagRow(sqlite3& database, const utils::FileIdent
 /// Inserts or replaces the row of the tag kind with the serialized data, or with no data for a stable negative.
 bool writeTagRow(
     sqlite3& database,
+    sqlite::StatementCache& statements,
     const utils::FileIdentity& identity,
     const TagKind kind,
     const ReadStatus status,
@@ -135,8 +142,8 @@ bool writeTagRow(
             parser_version = excluded.parser_version, result_state = excluded.result_state,
             decoded_data = excluded.decoded_data, updated_at_ms = excluded.updated_at_ms;
     )SQL";
-    const auto statement = sqlite::prepare(database, sql);
-    if (statement == nullptr) {
+    const auto statement = statements.borrow(database, sql);
+    if (!statement.isValid()) {
         return false;
     }
     const bool dataBound = status == ReadStatus::present
@@ -157,23 +164,51 @@ bool writeTagRow(
 /// Validates file identity after the read. Unknown kinds and transient outcomes are never returned.
 std::optional<TagReadResult> getCachedTag(AnalysisCache& cache, const utils::FileIdentity& identity, const TagKind kind)
 {
-    if (!supportsTagKind(kind) || !juce::File::isAbsolutePath(identity.path)) {
-        return std::nullopt;
+    const std::array kinds {kind};
+    return getCachedTags(cache, identity, kinds).front();
+}
+
+/// Returns the cached results of the tag kinds in their order, with a miss for each stale, corrupt, or unknown kind.
+/// The file identity is checked once before and once after reading all of them,
+/// and the rows are read under one hold of the cache lock,
+/// so the preview checks the file a few times per load instead of a few times per kind.
+/// A file that no longer matches its identity misses every kind.
+std::vector<std::optional<TagReadResult>> getCachedTags(
+    AnalysisCache& cache,
+    const utils::FileIdentity& identity,
+    const std::span<const TagKind> kinds
+)
+{
+    std::vector<std::optional<TagReadResult>> results(kinds.size());
+    if (!juce::File::isAbsolutePath(identity.path) || std::ranges::none_of(kinds, supportsTagKind)) {
+        return results;
     }
     const juce::File file(identity.path);
     if (!identity.matches(file)) {
-        return std::nullopt;
+        return results;
     }
-    std::optional<CachedTagRow> cached;
-    cache.withDatabase([&cached, &identity, kind](sqlite3& database) {
-        cached = readTagRow(database, identity, kind);
+
+    std::vector<std::optional<CachedTagRow>> rows(kinds.size());
+    cache.withDatabase([&rows, &identity, kinds](sqlite3& database, sqlite::StatementCache& statements) {
+        for (std::size_t index = 0; index < kinds.size(); ++index) {
+            if (supportsTagKind(kinds[index])) {
+                rows[index] = readTagRow(database, statements, identity, kinds[index]);
+            }
+        }
     });
-    if (!cached.has_value()) {
-        return std::nullopt;
+
+    for (std::size_t index = 0; index < kinds.size(); ++index) {
+        if (const auto& cached = rows[index]; cached.has_value()) {
+            results[index] = cached->status == ReadStatus::present
+                ? deserializeTag(kinds[index], cached->data)
+                : TagReadResult::missing(kinds[index], cached->status);
+        }
     }
-    const auto result = cached->status == ReadStatus::present ? deserializeTag(kind, cached->data)
-                                                              : TagReadResult::missing(kind, cached->status);
-    return result && identity.matches(file) ? result : std::nullopt;
+
+    if (!identity.matches(file)) {
+        std::ranges::fill(results, std::nullopt);
+    }
+    return results;
 }
 
 /// Stores independently serialized tag data or a stable negative without requiring an analysis row.
@@ -207,9 +242,9 @@ bool storeCachedTag(AnalysisCache& cache, const utils::FileIdentity& identity, c
         return false;
     }
     bool stored = false;
-    cache.withDatabase([&stored, &identity, &result, status, &data](sqlite3& database) {
-        stored = writeTagRow(database, identity, result.kind, status, data);
-    });
+    cache.withDatabase([&stored, &identity, &result, status, &data](
+                           sqlite3& database, sqlite::StatementCache& statements
+                       ) { stored = writeTagRow(database, statements, identity, result.kind, status, data); });
     return stored;
 }
 }  // namespace audiobatch::serato

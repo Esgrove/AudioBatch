@@ -1,4 +1,4 @@
-/// Implementation of the SQLite helpers.
+/// Implementation of the SQLite helpers and the prepared statement cache.
 /// Every helper that can fail logs the SQLite error message of the connection, so callers only check the result.
 /// Text and blobs are bound with SQLITE_TRANSIENT, which makes SQLite copy them,
 /// so the values do not need to outlive the statement.
@@ -36,6 +36,64 @@ void DatabaseCloser::operator()(sqlite3* database) const noexcept
 void StatementFinalizer::operator()(sqlite3_stmt* statement) const noexcept
 {
     sqlite3_finalize(statement);
+}
+
+/// Borrows a statement of a StatementCache, which may be null when it could not be prepared.
+BorrowedStatement::BorrowedStatement(sqlite3_stmt* borrowed) noexcept : statement(borrowed) {}
+
+/// Resets the statement and clears its bindings, so it holds no read transaction open until its next use.
+BorrowedStatement::~BorrowedStatement()
+{
+    if (statement != nullptr) {
+        sqlite3_reset(statement);
+        sqlite3_clear_bindings(statement);
+    }
+}
+
+/// Returns true when the statement was prepared.
+bool BorrowedStatement::isValid() const noexcept
+{
+    return statement != nullptr;
+}
+
+/// Returns the borrowed statement, or null when it could not be prepared.
+sqlite3_stmt* BorrowedStatement::get() const noexcept
+{
+    return statement;
+}
+
+/// Returns the borrowed statement, which must have been prepared.
+sqlite3_stmt& BorrowedStatement::operator*() const noexcept
+{
+    jassert(statement != nullptr);
+    return *statement;
+}
+
+/// Lends the statement of the SQL, preparing it on first use.
+/// The SQL must be a string literal, because its address identifies the statement.
+/// A statement that cannot be prepared is not cached, so the next use tries again, and the borrow is null.
+BorrowedStatement StatementCache::borrow(sqlite3& database, const char* sql)
+{
+    if (const auto found = statements.find(sql); found != statements.end()) {
+        return BorrowedStatement(found->second.get());
+    }
+
+    sqlite3_stmt* prepared = nullptr;
+    if (sqlite3_prepare_v3(&database, sql, -1, SQLITE_PREPARE_PERSISTENT, &prepared, nullptr) != SQLITE_OK) {
+        utils::logError(
+            "SQLite could not prepare an analysis cache query: {}", juce::String::fromUTF8(sqlite3_errmsg(&database))
+        );
+        return BorrowedStatement(nullptr);
+    }
+
+    statements.insert_or_assign(sql, Statement(prepared));
+    return BorrowedStatement(prepared);
+}
+
+/// Finalizes every cached statement, as SQLite needs before the connection closes.
+void StatementCache::clear() noexcept
+{
+    statements.clear();
 }
 
 /// Runs SQL that returns no rows, such as a pragma, a schema change, or a transaction statement.
