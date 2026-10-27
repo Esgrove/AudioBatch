@@ -19,10 +19,10 @@ use crate::chain::{ChainSlot, PluginChain};
 
 /// Frames per block the chain renders.
 /// Every block has this length, a short final block is padded with silence, because many plugins expect that.
-pub const PROCESSING_BLOCK_FRAMES: usize = 1024;
+pub(crate) const PROCESSING_BLOCK_FRAMES: usize = 1024;
 
 /// Longest tail rendered per plugin, so an infinite or very long tail cannot keep a render going.
-pub const MAXIMUM_TAIL_SECONDS: f64 = 20.0;
+pub(crate) const MAXIMUM_TAIL_SECONDS: f64 = 20.0;
 
 /// User-facing message of a cancelled processing call.
 pub const CANCELLED_MESSAGE: &str = "Processing was cancelled";
@@ -72,7 +72,7 @@ impl ChainPlugin {
     /// # Errors
     ///
     /// Returns an error when the bundle cannot be loaded or the instance cannot be created.
-    pub fn from_slot(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> Result<Self> {
+    pub(crate) fn from_slot(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> Result<Self> {
         let module = Module::load(ui, &slot.plugin.bundle)?;
         let instance = PluginInstance::create(ui, &module, slot.plugin.class_id, Some(dispatcher.clone()))?;
         let saved = slot.state();

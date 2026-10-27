@@ -47,7 +47,7 @@ pub const MAXIMUM_TARGET_LUFS: f64 = -6.0;
 pub const DEFAULT_TARGET_LUFS: f64 = -14.0;
 
 /// True peak ceiling that limits the gain of loudness normalization, in dBTP.
-pub const DEFAULT_TRUE_PEAK_CEILING_DBTP: f64 = -0.3;
+pub(crate) const DEFAULT_TRUE_PEAK_CEILING_DBTP: f64 = -0.3;
 
 /// Largest gain normalization applies, in dB.
 pub const MAXIMUM_GAIN_DB: f64 = 40.0;
@@ -239,7 +239,7 @@ pub fn normalization_gain(record: &AnalysisRecord, options: &NormalizationOption
 /// Keeps the source depth when AIFF supports it, uses 16 bits for MP3 sources,
 /// and otherwise falls back to the highest supported depth so no precision is lost.
 #[must_use]
-pub fn output_bit_depth(record: &AnalysisRecord) -> u32 {
+pub(crate) fn output_bit_depth(record: &AnalysisRecord) -> u32 {
     let preferred = if record.bits_per_sample > 0 {
         record.bits_per_sample
     } else if is_mp3_path(&record.path) {
@@ -263,7 +263,7 @@ pub fn output_bit_depth(record: &AnalysisRecord) -> u32 {
 /// Source packets that fail to decode in isolation are written as silence and reported in the notice.
 /// Progress of the whole file, through any source analysis, the render, and the output analysis,
 /// is reported to `on_progress`.
-pub fn normalize_file(
+pub(crate) fn normalize_file(
     source_record: &AnalysisRecord,
     options: &NormalizationOptions,
     is_cancelled: &dyn Fn() -> bool,

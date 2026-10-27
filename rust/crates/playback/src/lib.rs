@@ -42,7 +42,7 @@ use output::{NO_GENERATION, OutputRenderer, SharedState};
 use preview_insert::{InsertControl, insert_channel};
 
 /// What the player reports when the preview insert produced output that is not finite.
-pub const NON_FINITE_INSERT_MESSAGE: &str = "A live plugin produced non-finite audio. Preview was stopped.";
+pub(crate) const NON_FINITE_INSERT_MESSAGE: &str = "A live plugin produced non-finite audio. Preview was stopped.";
 
 /// Ring buffer length in seconds of output audio.
 /// Long enough to ride out a slow disk, short enough that a seek drops little decoded audio.
@@ -282,12 +282,6 @@ impl Player {
         self.ensure_stream();
     }
 
-    /// Returns true while the output stream is open.
-    #[must_use]
-    pub const fn is_stream_open(&self) -> bool {
-        self.stream.is_some()
-    }
-
     /// Closes the output stream once playback has been stopped for a moment,
     /// so the device is free for other applications. Call it regularly from the owner's thread.
     /// A stream that stopped because its device went away is closed this way too, and the next play opens it again.
@@ -307,15 +301,6 @@ impl Player {
     /// Pauses playback at the current position.
     pub fn pause(&self) {
         self.shared.playing.store(false, Ordering::Relaxed);
-    }
-
-    /// Toggles between playing and paused.
-    pub fn toggle(&mut self) {
-        if self.is_playing() {
-            self.pause();
-        } else {
-            self.play();
-        }
     }
 
     /// Stops playback and moves back to the start.

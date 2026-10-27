@@ -190,7 +190,7 @@ impl<'a> SourceBlocks<'a> {
 
 /// Returns the output path for the source, the same `<name>.aif` that normalization writes.
 #[must_use]
-pub fn processing_output_path(source: &Path) -> std::path::PathBuf {
+pub(crate) fn processing_output_path(source: &Path) -> std::path::PathBuf {
     normalization_output_path(source)
 }
 

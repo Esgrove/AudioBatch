@@ -139,7 +139,7 @@ pub struct AnalysisRecord {
 
 /// A failed analysis step with the kind of failure, so callers can tell which failures repeat.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AnalysisFailure {
+pub(crate) struct AnalysisFailure {
     /// Kind of the failure.
     pub kind: AnalysisError,
     /// User-facing description of the failure.
@@ -149,18 +149,18 @@ pub struct AnalysisFailure {
 impl AnalysisError {
     /// Returns true for an error that reading the same bytes again would repeat, so a cached failure stays valid.
     #[must_use]
-    pub const fn is_repeatable(self) -> bool {
+    pub(crate) const fn is_repeatable(self) -> bool {
         matches!(self, Self::Unsupported)
     }
 }
 
 impl ShortTermLoudnessHistory {
     /// EBU-mode meter update rate in hertz, independent of the three-second measurement window.
-    pub const UPDATE_RATE_HZ: f64 = 10.0;
+    pub(crate) const UPDATE_RATE_HZ: f64 = 10.0;
 
     /// Returns the number of frames per reading for a sample rate, one reading per meter update.
     #[must_use]
-    pub fn samples_per_point_for_rate(sample_rate: u32) -> u32 {
+    pub(crate) fn samples_per_point_for_rate(sample_rate: u32) -> u32 {
         (f64::from(sample_rate) / Self::UPDATE_RATE_HZ).round().max(1.0) as u32
     }
 
@@ -181,7 +181,7 @@ impl ShortTermLoudnessHistory {
 impl AnalysisRecord {
     /// Builds a baseline record from file system metadata before analysis begins.
     #[must_use]
-    pub fn from_path(path: &Path) -> Self {
+    pub(crate) fn from_path(path: &Path) -> Self {
         let (file_size, modified_time_ms) = file_identity(path).unwrap_or_default();
         Self {
             path: path.to_path_buf(),
@@ -291,7 +291,7 @@ pub fn file_identity(path: &Path) -> Option<(u64, i64)> {
 
 /// Clamps non-finite or silent loudness readings to the shared negative infinity sentinel.
 #[must_use]
-pub fn normalize_loudness(loudness: f64) -> f64 {
+pub(crate) fn normalize_loudness(loudness: f64) -> f64 {
     if !loudness.is_finite() || loudness <= NEGATIVE_INFINITY_LOUDNESS {
         NEGATIVE_INFINITY_LOUDNESS
     } else {

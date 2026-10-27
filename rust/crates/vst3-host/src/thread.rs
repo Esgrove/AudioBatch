@@ -205,32 +205,8 @@ impl UiJobs {
         self.receiver.recv().await.ok()
     }
 
-    /// Runs the jobs that are already queued and returns how many ran.
-    #[must_use = "the count tells whether any job ran"]
-    pub fn run_pending(&self, ui: &UiThread) -> usize {
-        let mut count = 0;
-        while let Ok(job) = self.receiver.try_recv() {
-            job.run(ui);
-            count += 1;
-        }
-        count
-    }
-
-    /// Waits up to `timeout` for a job, then runs it and the other queued jobs, and returns how many ran.
-    #[must_use = "the count tells whether any job ran"]
-    pub fn run_for(&self, ui: &UiThread, timeout: Duration) -> usize {
-        let deadline = std::time::Instant::now() + timeout;
-        loop {
-            let ran = self.run_pending(ui);
-            if ran > 0 || std::time::Instant::now() >= deadline || self.receiver.is_closed() {
-                return ran;
-            }
-            thread::sleep(Duration::from_millis(1).min(timeout));
-        }
-    }
-
     /// Runs jobs until every dispatcher is dropped.
-    pub fn run_until_closed(&self, ui: &UiThread) {
+    pub(crate) fn run_until_closed(&self, ui: &UiThread) {
         while let Ok(job) = self.receiver.recv_blocking() {
             job.run(ui);
         }

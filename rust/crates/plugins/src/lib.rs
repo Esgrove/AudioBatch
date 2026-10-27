@@ -20,12 +20,10 @@ mod test_helpers;
 
 pub use chain::{ChainSlot, PluginChain};
 pub use library::{FORMAT_NAME, KnownPlugins, PluginDataPaths, PluginDescription};
-pub use presets::{
-    ChainPreset, PRESET_FORMAT_VERSION, PresetInfo, PresetStore, load_preset_file, sanitize_preset_name,
-};
-pub use preview_chain::{PREVIEW_CHANNELS, PreviewChain, PreviewFailure, chain_tail_frames, prepare_for_preview};
-pub use processing::{ProcessingOptions, process_file, processing_output_path};
-pub use processing_chain::{ChainPlugin, MAXIMUM_TAIL_SECONDS, PROCESSING_BLOCK_FRAMES, ProcessingChain};
+pub use presets::{ChainPreset, PresetInfo, PresetStore, sanitize_preset_name};
+pub use preview_chain::{PreviewChain, PreviewFailure, chain_tail_frames, prepare_for_preview};
+pub use processing::{ProcessingOptions, process_file};
+pub use processing_chain::{ChainPlugin, ProcessingChain};
 pub use processing_coordinator::{ProcessingCoordinator, ProcessingEvent, default_worker_count};
 pub use scan_protocol::WORKER_FLAG;
 pub use scan_worker::{is_scan_worker_invocation, run_scan_worker};

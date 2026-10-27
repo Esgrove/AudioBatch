@@ -197,7 +197,7 @@ pub fn analyze_file(path: &Path, is_cancelled: &dyn Fn() -> bool, on_progress: &
 
 /// Picks the sample extreme with the larger magnitude, preserving its sign.
 #[must_use]
-pub fn signed_peak_from_extrema(minimum: f32, maximum: f32) -> f32 {
+pub(crate) fn signed_peak_from_extrema(minimum: f32, maximum: f32) -> f32 {
     if minimum.abs() > maximum.abs() {
         minimum
     } else {

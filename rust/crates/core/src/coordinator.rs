@@ -154,8 +154,9 @@ impl AnalysisCoordinator {
     }
 
     /// Runs a full analysis and returns every cached and fresh record, blocking until the run completes.
+    #[cfg(test)]
     #[must_use]
-    pub fn analyze_blocking(&self, options: AnalysisOptions) -> Vec<AnalysisRecord> {
+    pub(crate) fn analyze_blocking(&self, options: AnalysisOptions) -> Vec<AnalysisRecord> {
         let (_, receiver) = self.start(options);
         let mut records = Vec::new();
         for event in receiver {

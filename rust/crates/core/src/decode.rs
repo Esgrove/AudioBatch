@@ -37,7 +37,7 @@ mod gapless;
 
 /// Bit depth assumed for lossy files, whose formats store no source bit depth.
 /// It is also the depth their normalized output is written in.
-pub const DEFAULT_LOSSY_BITS_PER_SAMPLE: u32 = 16;
+pub(crate) const DEFAULT_LOSSY_BITS_PER_SAMPLE: u32 = 16;
 
 /// Samples of layer III synthesis delay at the start of a decoded MP3 stream.
 /// A LAME tag includes them in the delay it records.
@@ -113,7 +113,7 @@ pub struct AudioFileDecoder {
 
 impl DecodeFailureTracker {
     /// Number of consecutive failed packets after which decoding stops.
-    pub const MAXIMUM_CONSECUTIVE_FAILURES: u32 = 3;
+    pub(crate) const MAXIMUM_CONSECUTIVE_FAILURES: u32 = 3;
 
     /// Creates a tracker for a stream with the given length in frames, when the container states it.
     #[must_use]
@@ -129,13 +129,13 @@ impl DecodeFailureTracker {
     }
 
     /// Records a packet that decoded.
-    pub const fn record_success(&mut self) {
+    pub(crate) const fn record_success(&mut self) {
         self.consecutive_failures = 0;
     }
 
     /// Records a packet of the given length that failed to decode at the given frame position.
     /// Returns false when decoding must stop, after which `error_message` describes the failure.
-    pub fn record_failure(&mut self, position: u64, frames: u64) -> bool {
+    pub(crate) fn record_failure(&mut self, position: u64, frames: u64) -> bool {
         if self
             .total_frames
             .is_some_and(|total| position.saturating_add(frames) >= total)
@@ -153,26 +153,29 @@ impl DecodeFailureTracker {
     }
 
     /// Records that the stream ended at the given frame position, well short of its stated length.
-    pub const fn record_truncation(&mut self, position: u64) {
+    pub(crate) const fn record_truncation(&mut self, position: u64) {
         self.truncated_at = Some(position);
     }
 
     /// Returns the number of failed packets that were counted,
     /// which leaves out failures at the stated end of the stream.
+    #[cfg(test)]
     #[must_use]
-    pub const fn failed_packet_count(&self) -> u32 {
+    pub(crate) const fn failed_packet_count(&self) -> u32 {
         self.failed_packets
     }
 
     /// Returns the frame position of the first failed packet, if any failed.
+    #[cfg(test)]
     #[must_use]
-    pub const fn first_failure_position(&self) -> Option<u64> {
+    pub(crate) const fn first_failure_position(&self) -> Option<u64> {
         self.first_failure_position
     }
 
     /// Returns the frame position where a truncated stream ended, if it ended short of its stated length.
+    #[cfg(test)]
     #[must_use]
-    pub const fn truncated_at(&self) -> Option<u64> {
+    pub(crate) const fn truncated_at(&self) -> Option<u64> {
         self.truncated_at
     }
 
@@ -507,7 +510,7 @@ impl AudioFileDecoder {
 
 /// Returns true when the path has the extension of an MPEG audio file.
 #[must_use]
-pub fn is_mp3_path(path: &Path) -> bool {
+pub(crate) fn is_mp3_path(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| extension.eq_ignore_ascii_case("mp3"))

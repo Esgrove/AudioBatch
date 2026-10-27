@@ -22,14 +22,14 @@ const QUANTIZATION_SCALE: f32 = 127.0;
 const SERIALIZATION_MAGIC: u32 = 0x5746_5641;
 
 /// Version of the serialized layout, stored in the blob and in the cache row.
-pub const SERIALIZATION_VERSION: u32 = 1;
+pub(crate) const SERIALIZATION_VERSION: u32 = 1;
 
 /// Size of the serialized header in bytes.
 const HEADER_BYTES: usize = 32;
 
 /// Min and max of one channel over one bucket, quantized to 8 bits.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct QuantizedPeak {
+pub(crate) struct QuantizedPeak {
     /// Smallest sample, rounded down.
     pub min: i8,
     /// Largest sample, rounded up.
@@ -74,7 +74,7 @@ struct ByteReader<'a> {
 impl QuantizedPeak {
     /// Quantizes a sample range, rounding outwards so the overview never hides a peak.
     #[must_use]
-    pub fn from_range(min: f32, max: f32) -> Self {
+    pub(crate) fn from_range(min: f32, max: f32) -> Self {
         Self {
             min: quantize(min, f32::floor),
             max: quantize(max, f32::ceil),
@@ -83,19 +83,19 @@ impl QuantizedPeak {
 
     /// Returns the smallest sample as a value from -1 to 1.
     #[must_use]
-    pub fn min_value(self) -> f32 {
+    pub(crate) fn min_value(self) -> f32 {
         f32::from(self.min) / QUANTIZATION_SCALE
     }
 
     /// Returns the largest sample as a value from -1 to 1.
     #[must_use]
-    pub fn max_value(self) -> f32 {
+    pub(crate) fn max_value(self) -> f32 {
         f32::from(self.max) / QUANTIZATION_SCALE
     }
 
     /// Returns the peak covering both ranges.
     #[must_use]
-    pub fn merge(self, other: Self) -> Self {
+    pub(crate) fn merge(self, other: Self) -> Self {
         Self {
             min: self.min.min(other.min),
             max: self.max.max(other.max),
@@ -130,7 +130,7 @@ impl WaveformOverview {
     /// Restores an overview from a blob written by `to_bytes`.
     /// Returns `None` when the blob is truncated, from another version, or inconsistent.
     #[must_use]
-    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
         let mut reader = ByteReader::new(bytes);
         if reader.u32()? != SERIALIZATION_MAGIC || reader.u32()? != SERIALIZATION_VERSION {
             return None;
@@ -173,7 +173,7 @@ impl WaveformOverview {
 
     /// Serializes the finest level into an explicit little-endian blob for the cache.
     #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
         let base = self.base_level();
         let mut bytes = Vec::with_capacity(HEADER_BYTES + base.peaks.len() * 2);
         bytes.extend_from_slice(&SERIALIZATION_MAGIC.to_le_bytes());
@@ -203,8 +203,9 @@ impl WaveformOverview {
     }
 
     /// Returns the source length in frames.
+    #[cfg(test)]
     #[must_use]
-    pub const fn length_in_frames(&self) -> u64 {
+    pub(crate) const fn length_in_frames(&self) -> u64 {
         self.length_in_frames
     }
 
@@ -220,14 +221,8 @@ impl WaveformOverview {
 
     /// Returns the number of buckets per channel at the finest level.
     #[must_use]
-    pub fn bucket_count(&self) -> usize {
+    pub(crate) fn bucket_count(&self) -> usize {
         self.base_level().peaks.len() / self.channels.max(1) as usize
-    }
-
-    /// Returns the number of frames per bucket at the finest level.
-    #[must_use]
-    pub fn frames_per_bucket(&self) -> u64 {
-        self.base_level().frames_per_bucket
     }
 
     /// Returns the min and max of one channel for each of `columns` equal slices of the frame range,

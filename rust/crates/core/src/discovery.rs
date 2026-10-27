@@ -11,7 +11,7 @@ use walkdir::WalkDir;
 use crate::sorting::compare_natural;
 
 /// File extensions the decoder handles, in lowercase.
-pub const SUPPORTED_EXTENSIONS: [&str; 13] = [
+pub(crate) const SUPPORTED_EXTENSIONS: [&str; 13] = [
     "aac", "aif", "aifc", "aiff", "bwf", "caf", "flac", "m4a", "mp3", "oga", "ogg", "wav", "wave",
 ];
 
@@ -29,7 +29,7 @@ pub fn has_supported_extension(path: &Path) -> bool {
 
 /// Returns true when the path is an existing file with a supported audio extension.
 #[must_use]
-pub fn is_supported_audio_file(path: &Path) -> bool {
+pub(crate) fn is_supported_audio_file(path: &Path) -> bool {
     path.is_file() && has_supported_extension(path)
 }
 
@@ -37,7 +37,11 @@ pub fn is_supported_audio_file(path: &Path) -> bool {
 ///
 /// The directory walk checks `is_cancelled` between entries and returns the files found so far when it is set,
 /// so a scan of a large or slow folder can be abandoned quickly.
-pub fn collect_input_files(input_paths: &[PathBuf], recursive: bool, is_cancelled: &dyn Fn() -> bool) -> Vec<PathBuf> {
+pub(crate) fn collect_input_files(
+    input_paths: &[PathBuf],
+    recursive: bool,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Vec<PathBuf> {
     let mut files = Vec::new();
     let mut seen = HashSet::new();
     let mut add_file = |path: &Path| {

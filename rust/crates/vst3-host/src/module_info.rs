@@ -68,7 +68,7 @@ pub fn read_module_info(bundle: &Path) -> Option<Vec<ClassInfo>> {
 
 /// Parses the text of a `moduleinfo.json` file.
 #[must_use]
-pub fn parse_module_info(text: &str) -> Option<Vec<ClassInfo>> {
+pub(crate) fn parse_module_info(text: &str) -> Option<Vec<ClassInfo>> {
     let file: ModuleInfoFile = serde_json::from_str(text).ok()?;
     let factory_vendor = file.factory_info.vendor;
     file.classes

@@ -113,13 +113,14 @@ impl PluginChain {
     }
 
     /// Returns the slots that process files, in order.
-    pub fn enabled_slots(&self) -> impl Iterator<Item = &ChainSlot> {
+    pub(crate) fn enabled_slots(&self) -> impl Iterator<Item = &ChainSlot> {
         self.slots.iter().filter(|slot| slot.enabled)
     }
 
     /// Returns true when at least one slot processes files.
+    #[cfg(test)]
     #[must_use]
-    pub fn has_enabled_slots(&self) -> bool {
+    pub(crate) fn has_enabled_slots(&self) -> bool {
         self.slots.iter().any(|slot| slot.enabled)
     }
 }

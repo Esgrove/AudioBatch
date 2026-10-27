@@ -292,14 +292,8 @@ impl PluginInstance {
 
     /// Returns true while the plugin is active.
     #[must_use]
-    pub fn is_active(&self) -> bool {
+    pub(crate) fn is_active(&self) -> bool {
         self.core.active.load(Ordering::Acquire)
-    }
-
-    /// Returns the bus layout set by `configure_main_buses`, if it ran.
-    #[must_use]
-    pub const fn bus_layout(&self) -> Option<&BusLayout> {
-        self.layout.as_ref()
     }
 
     /// Reads the current channel count of every audio bus.
@@ -626,8 +620,9 @@ impl PluginInstance {
     }
 
     /// Returns and clears whether the plugin reported a change to its parameters or state.
+    #[cfg(test)]
     #[must_use]
-    pub fn take_dirty(&self) -> bool {
+    pub(crate) fn take_dirty(&self) -> bool {
         self.core.parts.handler.take_dirty()
     }
 
