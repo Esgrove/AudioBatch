@@ -455,6 +455,17 @@ void AudioBatchComponent::restoreSelectionByPaths(const juce::StringArray& selec
     resultsTable.setSelectedRows(selectedRows, juce::dontSendNotification);
 }
 
+/// Repaints the status column of the results table, the only column that shows the activities and messages,
+/// so the activity animation does not repaint every other cell on each display frame.
+/// A hidden status column has nothing to repaint.
+void AudioBatchComponent::repaintStatusColumn()
+{
+    const auto column = resultsTable.getCellPosition(std::to_underlying(AudioFileTableColumn::status), 0, true);
+    if (column.getWidth() > 0) {
+        resultsTable.repaint(column.getX(), 0, column.getWidth(), resultsTable.getHeight());
+    }
+}
+
 /// Re-sorts the results, refreshes the table, and selects the given paths again.
 /// The old selection is cleared without a notification first,
 /// because updateContent synchronously reports a selection it trimmed to a shorter table,

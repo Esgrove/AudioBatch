@@ -160,6 +160,7 @@ private:
     void refreshTablePreservingSelection(const juce::StringArray& selectedPaths);
     void releasePreviewPlayback();
     void removeRecordsByPath(const juce::StringArray& removedPaths, int fallbackRow);
+    void repaintStatusColumn();
     void replaceRecordAfterOperation(const juce::File& originalFile, const AudioAnalysisRecord& newRecord);
     void requestSeratoPreview();
     void restoreSelectionByPaths(const juce::StringArray& selectedPaths);
@@ -259,7 +260,7 @@ private:
     /// Activity, progress, and last operation messages per file, shown in the status column.
     /// Its callback also runs on every animation tick while files are busy, which keeps the overall progress current.
     FileActivityTracker fileActivity {resultsTable, [this] {
-                                          resultsTable.repaint();
+                                          repaintStatusColumn();
                                           updateProgressIndicators();
                                       }};
 
