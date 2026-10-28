@@ -205,7 +205,7 @@ CustomLookAndFeel::CustomLookAndFeel(const bool darkModeEnabled) : darkTheme(dar
     setColour(juce::PopupMenu::textColourId, greyLight());
     setColour(juce::ResizableWindow::backgroundColourId, greyDark());
     setColour(juce::TextButton::buttonColourId, greyMedium());
-    setColour(juce::TextButton::buttonOnColourId, green());
+    setColour(juce::TextButton::buttonOnColourId, blue());
     setColour(juce::TextButton::textColourOffId, greySuperLight().withAlpha(textButtonOffTextAlpha));
     setColour(juce::TextButton::textColourOnId, greySuperLight());
     setColour(juce::Slider::backgroundColourId, greyMedium());

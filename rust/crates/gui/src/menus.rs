@@ -15,6 +15,10 @@ use crate::plugins::labels::VendorGroup;
 /// Key context of the main view, which scopes the shortcuts that act on the results table.
 pub const KEY_CONTEXT: &str = "AudioBatch";
 
+/// Context of the shortcuts whose keys also edit text, such as the digits, Space, and Backspace.
+/// They are left out while a text input of the main view has focus, so those keys edit its text instead.
+const OUTSIDE_TEXT_KEY_CONTEXT: &str = "AudioBatch && !Input";
+
 /// Key context of the Audio Settings window.
 pub const SETTINGS_KEY_CONTEXT: &str = "AudioSettings";
 
@@ -287,6 +291,7 @@ macro_rules! primary {
 pub fn install(cx: &mut App) {
     cx.on_action(|_: &Quit, cx: &mut App| cx.quit());
     let context = Some(KEY_CONTEXT);
+    let outside_text = Some(OUTSIDE_TEXT_KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new(primary!("q"), Quit, None),
         KeyBinding::new(primary!("i"), About, None),
@@ -298,20 +303,20 @@ pub fn install(cx: &mut App) {
         KeyBinding::new(primary!("a"), SelectAll, context),
         KeyBinding::new(primary!("shift-s"), ToggleSeratoColours, context),
         KeyBinding::new(primary!("shift-space"), TogglePreviewSection, context),
-        KeyBinding::new("1", JumpToHotCue { slot: 0 }, context),
-        KeyBinding::new("2", JumpToHotCue { slot: 1 }, context),
-        KeyBinding::new("3", JumpToHotCue { slot: 2 }, context),
-        KeyBinding::new("4", JumpToHotCue { slot: 3 }, context),
-        KeyBinding::new("5", JumpToHotCue { slot: 4 }, context),
-        KeyBinding::new("6", JumpToHotCue { slot: 5 }, context),
-        KeyBinding::new("7", JumpToHotCue { slot: 6 }, context),
-        KeyBinding::new("8", JumpToHotCue { slot: 7 }, context),
-        KeyBinding::new("delete", RemoveSelected, context),
-        KeyBinding::new("backspace", RemoveSelected, context),
-        KeyBinding::new(primary!("backspace"), TrashSelected, context),
-        KeyBinding::new(primary!("shift-backspace"), TrashSelectedNow, context),
-        KeyBinding::new("space", TogglePlayback, context),
-        KeyBinding::new("escape", StopPlayback, context),
+        KeyBinding::new("1", JumpToHotCue { slot: 0 }, outside_text),
+        KeyBinding::new("2", JumpToHotCue { slot: 1 }, outside_text),
+        KeyBinding::new("3", JumpToHotCue { slot: 2 }, outside_text),
+        KeyBinding::new("4", JumpToHotCue { slot: 3 }, outside_text),
+        KeyBinding::new("5", JumpToHotCue { slot: 4 }, outside_text),
+        KeyBinding::new("6", JumpToHotCue { slot: 5 }, outside_text),
+        KeyBinding::new("7", JumpToHotCue { slot: 6 }, outside_text),
+        KeyBinding::new("8", JumpToHotCue { slot: 7 }, outside_text),
+        KeyBinding::new("delete", RemoveSelected, outside_text),
+        KeyBinding::new("backspace", RemoveSelected, outside_text),
+        KeyBinding::new(primary!("backspace"), TrashSelected, outside_text),
+        KeyBinding::new(primary!("shift-backspace"), TrashSelectedNow, outside_text),
+        KeyBinding::new("space", TogglePlayback, outside_text),
+        KeyBinding::new("escape", StopPlayback, outside_text),
         KeyBinding::new(primary!(","), OpenAudioSettings, context),
         KeyBinding::new("escape", CloseAudioSettings, Some(SETTINGS_KEY_CONTEXT)),
         KeyBinding::new(primary!("w"), CloseAudioSettings, Some(SETTINGS_KEY_CONTEXT)),

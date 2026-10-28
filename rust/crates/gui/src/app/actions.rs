@@ -441,8 +441,8 @@ impl AppView {
     }
 
     /// Resets a slider of the controls column to its default:
-    /// the whole file for the zoom, and no custom gain for the selected file.
-    fn reset_slider(&self, control: SliderControl, window: &mut Window, cx: &mut Context<Self>) {
+    /// the whole file for the zoom, no custom gain for the selected file, and the default normalization target.
+    fn reset_slider(&mut self, control: SliderControl, window: &mut Window, cx: &mut Context<Self>) {
         match control {
             SliderControl::Zoom => {
                 self.zoom_slider
@@ -455,6 +455,7 @@ impl AppView {
                     .update(cx, |slider, cx| slider.set_value(DEFAULT_GAIN_DB, window, cx));
                 self.clear_selected_gain(cx);
             }
+            SliderControl::NormalizeTarget => self.reset_normalize_target(window, cx),
         }
         cx.notify();
     }
