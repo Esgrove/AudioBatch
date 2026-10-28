@@ -285,7 +285,9 @@ mod test_coordinator {
 
     use tempfile::TempDir;
 
-    use crate::record::{AnalysisError, AnalysisStatus, same_custom_gain};
+    #[cfg(unix)]
+    use crate::record::AnalysisError;
+    use crate::record::{AnalysisStatus, same_custom_gain};
     use crate::test_helpers::block_pool;
 
     /// Creates a coordinator with four workers and a cache in the directory.
