@@ -14,6 +14,8 @@
 //! The worker flag is checked before anything else starts.
 //! The main thread is the VST3 UI thread, and a foreground task runs the plugin jobs other threads send to it.
 
+#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+
 // The Action derive generates `gpui::` paths, which resolve through the kit under this name.
 extern crate gpui_kit as gpui;
 
@@ -89,7 +91,7 @@ fn main() {
             return;
         }
     };
-    // The GUI prints every message it logs to stderr as well, so a terminal launch shows them.
+    // Logging also writes each message to stderr when it is available.
     if let Err(error) = log_file::install(env!("CARGO_BIN_NAME"), LevelFilter::TRACE) {
         eprintln!("{error:#}");
     }
