@@ -38,7 +38,9 @@ Run the commands from this directory.
 On macOS, the GUI is packaged as `AudioBatchRs.app` with the bundle id `com.esgrove.audiobatch-rs`.
 `install.sh` installs the CLI with `cargo install` into the Cargo bin directory,
 and then installs the shell completions for it.
-On macOS, it installs the app bundle to `/Applications`, and elsewhere the GUI binary next to the CLI.
+On macOS, it installs the app bundle to `/Applications`.
+On Windows, it installs the GUI to `%LOCALAPPDATA%/Programs/AudioBatchRs` with a Start Menu shortcut.
+On other platforms, it installs the GUI binary next to the CLI.
 Both scripts take `--cli-only` to skip the slower GUI build.
 `format.sh` formats the Rust code with rustfmt, the shell scripts with shfmt, and the prose with slb,
 and `format.sh --check` only verifies them.
