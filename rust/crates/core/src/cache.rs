@@ -585,6 +585,7 @@ mod test_analysis_cache {
 
     use tempfile::TempDir;
 
+    #[cfg(unix)]
     use crate::analysis::analyze_file;
     use crate::test_helpers::{analyze_fixture_copy, temporary_cache};
 

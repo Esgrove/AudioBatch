@@ -531,9 +531,9 @@ private:
     )
     {
         std::vector<AudioAnalysisRecord> records;
-        for (const auto& name : names) {
-            records.push_back(analyzeFile(directory.copyFixture("sine_stereo_44100_16.wav", name)));
-            expect(!getProcessingOutputFile(records.back().file).exists(), name);
+        for (const auto& copyName : names) {
+            records.push_back(analyzeFile(directory.copyFixture("sine_stereo_44100_16.wav", copyName)));
+            expect(!getProcessingOutputFile(records.back().file).exists(), copyName);
         }
         return records;
     }
