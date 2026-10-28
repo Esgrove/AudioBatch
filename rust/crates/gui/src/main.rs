@@ -1,6 +1,7 @@
 //! Entry point of the `AudioBatch` RS desktop app.
 //!
 //! Usage: `AudioBatchRs [paths...]` analyzes the given files and folders at startup,
+//! `--version` prints the version, build time, branch, and commit and quits,
 //! and `--autoplay` then selects and plays the first file that analyzed successfully.
 //! `AudioBatchRs --demo-rows <count>` runs the table and waveform stress test with synthetic data instead.
 //! Messages go to the `AudioBatchRs.log` log file and to stderr.
@@ -17,6 +18,7 @@
 extern crate gpui_kit as gpui;
 
 mod app;
+mod build_info;
 mod controls;
 mod demo;
 mod files;
@@ -74,11 +76,16 @@ fn main() {
     if is_scan_worker_invocation(std::env::args_os()) {
         std::process::exit(run_scan_worker());
     }
+    // Checked before logging and the single instance handoff, so it never reaches a running app.
+    if is_version_request(std::env::args().skip(1)) {
+        println!("{}", build_info::VERSION_STRING);
+        return;
+    }
     let options = match parse_arguments(std::env::args().skip(1)) {
         Ok(options) => options,
         Err(message) => {
             eprintln!("{message}");
-            eprintln!("Usage: AudioBatchRs [--autoplay] [--demo-rows <count>] [paths...]");
+            eprintln!("Usage: AudioBatchRs [--version] [--autoplay] [--demo-rows <count>] [paths...]");
             return;
         }
     };
@@ -86,6 +93,7 @@ fn main() {
     if let Err(error) = log_file::install(env!("CARGO_BIN_NAME"), LevelFilter::TRACE) {
         eprintln!("{error:#}");
     }
+    tracing::info!("{}", build_info::VERSION_STRING);
     // A snapshot run always opens its own window instead of handing its paths to a running app.
     let launches = if cfg!(feature = "snapshot") {
         None
@@ -191,6 +199,11 @@ fn initial_window_bounds(cx: &App) -> WindowBounds {
     WindowBounds::Maximized(Bounds::centered(None, default_size.min(&shrunk), cx))
 }
 
+/// Returns true when the arguments after the program name ask for the version with "--version" or "-V".
+fn is_version_request(mut arguments: impl Iterator<Item = String>) -> bool {
+    arguments.any(|argument| argument == "--version" || argument == "-V")
+}
+
 /// Parses the command line into launch options.
 ///
 /// The process serial number argument that macOS can pass to an app launched from the Finder is skipped.
@@ -245,6 +258,14 @@ mod test_parse_arguments {
     fn skips_finder_process_serial_number() {
         let options = parse(&["-psn_0_123456", "track.aif"]).expect("valid arguments");
         assert_eq!(options.paths, [PathBuf::from("track.aif")]);
+    }
+
+    #[test]
+    fn recognizes_version_request() {
+        let arguments = |list: &[&str]| list.iter().map(ToString::to_string).collect::<Vec<_>>().into_iter();
+        assert!(is_version_request(arguments(&["--version"])));
+        assert!(is_version_request(arguments(&["track.aif", "-V"])));
+        assert!(!is_version_request(arguments(&["--autoplay", "track.aif"])));
     }
 
     #[test]

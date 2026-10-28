@@ -155,6 +155,9 @@ and every crate inherits them with `.workspace = true`.
   `demo.rs` holds the data of the `--demo-rows` stress test, and `snapshot.rs` the `snapshot` feature.
   Its `build.rs` embeds the app icon from the root `assets` directory into the Windows executable.
   On macOS, `build.sh` and `install.sh` package it as `AudioBatchRs.app` through `create_mac_app_bundle` in `common.sh`.
+- `crates/build-info` (`build-info`): the build script helper of the CLI and the GUI.
+  Its `emit` records the version, build time, git branch and commit, and compiler version as environment variables.
+  The binaries read them at compile time, and `--version` and the About dialog show them.
 - `crates/test-fixtures`: a dev-only helper that locates the shared fixtures and lists their expected properties.
   It also locates the JUCE test VST3, lists the outputs that plugin must produce,
   and holds `null_test` in `null_test.rs`, which compares two decoded signals in 16-bit steps

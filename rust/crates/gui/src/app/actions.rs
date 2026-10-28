@@ -14,6 +14,7 @@ use gpui_kit::{Context, Entity, PathPromptOptions, PromptLevel, SharedString, Ta
 
 use super::gain::{GAIN_WHEEL_STEP_DB, MAXIMUM_GAIN_DB, MINIMUM_GAIN_DB};
 use super::{APP_TITLE, AppView, DEFAULT_GAIN_DB, RunKind};
+use crate::build_info::about_message;
 use crate::controls::{ControlsEvent, SliderControl};
 use crate::demo::{DemoRandom, ROWS_PER_TICK, advance_row, demo_rows, demo_waveform};
 use crate::files::reveal_in_file_manager;
@@ -343,12 +344,9 @@ impl AppView {
         .detach();
     }
 
-    /// Shows the version in a native dialog.
+    /// Shows the version, build, and system information in a native dialog.
     pub(super) fn show_about(window: &mut Window, cx: &mut Context<Self>) {
-        let detail = format!(
-            "Version {}\n\nAnalyzes the peak, true peak, and EBU R128 loudness of audio files.\nRust version of AudioBatch.",
-            env!("CARGO_PKG_VERSION")
-        );
+        let detail = about_message();
         let answer = window.prompt(PromptLevel::Info, APP_TITLE, Some(&detail), &["OK"], cx);
         cx.spawn(async move |_, _| {
             let _ = answer.await;

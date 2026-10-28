@@ -582,6 +582,7 @@ dependencies = [
  "audiobatch-core",
  "audiobatch-plugins",
  "audiobatch-test-plugin",
+ "build-info",
  "clap",
  "clap_complete",
  "colored",
@@ -631,6 +632,7 @@ dependencies = [
  "audiobatch-core",
  "audiobatch-playback",
  "audiobatch-plugins",
+ "build-info",
  "crossbeam-channel",
  "gpui-kit",
  "gpui-pre",
@@ -927,6 +929,13 @@ dependencies = [
  "memchr",
  "regex-automata",
  "serde_core",
+]
+
+[[package]]
+name = "build-info"
+version = "1.0.0"
+dependencies = [
+ "jiff",
 ]
 
 [[package]]

@@ -61,15 +61,16 @@ for executable in $executables; do
     if [ "$executable" = "$GUI_BINARY_NAME" ] && [ "$BASH_PLATFORM" = "mac" ]; then
         print_green "$GUI_APP_BUNDLE"
         create_mac_app_bundle ./target/release/"$executable" "$REPO/$GUI_APP_BUNDLE"
+        "$REPO/$GUI_APP_BUNDLE/Contents/MacOS/$GUI_BINARY_NAME" --version
         echo "$REPO/$GUI_APP_BUNDLE"
         echo ""
         continue
     fi
     print_green "${executable%.exe}"
     mv ./target/release/"$executable" "$executable"
-    # The GUI has no version option, and its help only prints the usage line.
+    ./"$executable" --version
+    # The help of the GUI only prints the usage line.
     if [ "${executable%.exe}" = "$CLI_BINARY_NAME" ]; then
-        ./"$executable" --version
         ./"$executable" -h || :
     else
         echo "$REPO/$executable"
