@@ -28,11 +28,14 @@ constexpr auto targetLufsSettingKey {"normalizeTargetLufs"};
 
 /// Creates the controls. The settings are read later by loadSettings,
 /// so the properties can be configured after this control is constructed.
+/// The mode buttons do not toggle themselves on click.
+/// A self-toggling radio button sends a click to the button it turns off,
+/// whose handler would turn that button back on and leave both buttons on.
+/// selectMode sets the toggle state instead, without notifying the other button.
 NormalizationTargetControl::NormalizationTargetControl(juce::ApplicationProperties& applicationProperties) :
     properties(applicationProperties)
 {
     for (auto* button : {&peakButton, &loudnessButton}) {
-        button->setClickingTogglesState(true);
         button->setRadioGroupId(normalize_target::modeRadioGroupId);
         addAndMakeVisible(*button);
     }
