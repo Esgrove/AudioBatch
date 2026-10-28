@@ -58,3 +58,6 @@
 /.claude/settings.local.json
 
 .zed/
+
+# Local test files
+/files/
