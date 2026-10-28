@@ -27,7 +27,7 @@ bool AudioBatchComponent::isPreviewSectionExpanded() const noexcept
 /// Reverses from the currently displayed height without interrupting preview playback or changing settings.
 void AudioBatchComponent::togglePreviewSection()
 {
-    animationStartProportion = static_cast<double>(currentPreviewHeight) / juce::jmax(1, workspaceAvailableHeight);
+    animationStartHeight = currentPreviewHeight;
     previewSectionExpanded = !previewSectionExpanded;
     animationStartedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     if (!previewSectionExpanded
@@ -64,6 +64,7 @@ void AudioBatchComponent::updatePreviewAnimation()
 
 /// Puts the status bar along the full width of the bottom edge,
 /// and allocates one shared workspace height above it so the results table and live preview move together.
+/// The expanded workspace keeps its height when the window is resized, and the results table takes the rest.
 /// Secondary controls appear only in the settled expanded layout.
 void AudioBatchComponent::resized()
 {
@@ -71,22 +72,16 @@ void AudioBatchComponent::resized()
     statusBar.setBounds(bounds.removeFromBottom(layout::statusBar::height));
     bounds.reduce(layout::mainContentPadding, layout::mainContentPadding);
     workspaceAvailableHeight = juce::jmax(1, bounds.getHeight());
+    if (expandedPreviewHeight == 0 && bounds.getHeight() > 0) {
+        expandedPreviewHeight = juce::roundToInt(-layout::previewPreferredProportion * workspaceAvailableHeight);
+    }
 
     const bool compact = !previewSectionExpanded || !previewAnimationAttachment.isEmpty();
     waveformResizeBar.setVisible(!compact);
     previewWorkspace.setCompact(compact);
 
     if (compact) {
-        const auto maximumExpandedHeight = juce::jmax(
-            static_cast<int>(layout::previewMinimumHeight),
-            bounds.getHeight() - static_cast<int>(layout::resultsTableMinimumHeight + layout::resizeBarHeight)
-        );
-        const auto expandedHeight = juce::jlimit(
-            static_cast<int>(layout::previewMinimumHeight),
-            maximumExpandedHeight,
-            juce::roundToInt(expandedPreviewProportion * workspaceAvailableHeight)
-        );
-        const auto targetHeight = previewSectionExpanded ? expandedHeight : layout::compactPreview::height;
+        const auto targetHeight = previewSectionExpanded ? getExpandedPreviewHeight() : layout::compactPreview::height;
         double progress = 1.0;
         if (!previewAnimationAttachment.isEmpty()) {
             progress = juce::jlimit(
@@ -97,7 +92,7 @@ void AudioBatchComponent::resized()
             );
         }
         const auto easedProgress = progress * progress * (3.0 - 2.0 * progress);
-        const auto startHeight = animationStartProportion * workspaceAvailableHeight;
+        const auto startHeight = static_cast<double>(animationStartHeight);
         currentPreviewHeight = juce::jlimit(
             layout::compactPreview::height,
             juce::jmax(layout::compactPreview::height, bounds.getHeight()),
@@ -107,25 +102,54 @@ void AudioBatchComponent::resized()
         bounds.removeFromBottom(static_cast<int>(layout::resizeBarHeight));
         resultsTable.setBounds(bounds);
     } else {
-        if (restoreExpandedLayout) {
-            mainVerticalLayout.setItemLayout(
-                0,
-                layout::resultsTableMinimumHeight,
-                layout::resultsTableMaximumProportion,
-                -(1.0 - expandedPreviewProportion - layout::resizeBarHeight / workspaceAvailableHeight)
-            );
-            mainVerticalLayout.setItemLayout(
-                2, layout::previewMinimumHeight, layout::previewMaximumProportion, -expandedPreviewProportion
-            );
+        // A layout at an unchanged height after the divider was dragged keeps the dragged height.
+        const auto previewHeight = getExpandedPreviewHeight();
+        const bool setsLayout = restoreExpandedLayout || workspaceAvailableHeight != expandedLayoutHeight;
+        if (setsLayout) {
+            setExpandedLayout(previewHeight);
             restoreExpandedLayout = false;
+            expandedLayoutHeight = workspaceAvailableHeight;
         }
         std::array<juce::Component*, 3> verticalSections {&resultsTable, &waveformResizeBar, &previewWorkspace};
         mainVerticalLayout.layOutComponents(
             verticalSections.data(), 3, bounds.getX(), bounds.getY(), bounds.getWidth(), bounds.getHeight(), true, true
         );
         currentPreviewHeight = previewWorkspace.getHeight();
-        expandedPreviewProportion = static_cast<double>(currentPreviewHeight) / workspaceAvailableHeight;
+        if (!setsLayout && currentPreviewHeight != previewHeight) {
+            expandedPreviewHeight = currentPreviewHeight;
+        }
     }
     updateResultsTableColumnWidths();
+}
+
+/// Returns the expanded workspace height fitted into the current window,
+/// within the workspace limits and leaving the results table at least its minimum height.
+int AudioBatchComponent::getExpandedPreviewHeight() const
+{
+    const auto minimum = static_cast<int>(layout::previewMinimumHeight);
+    const auto maximum = juce::jmax(
+        minimum,
+        juce::jmin(
+            juce::roundToInt(-layout::previewMaximumProportion * workspaceAvailableHeight),
+            workspaceAvailableHeight - static_cast<int>(layout::resultsTableMinimumHeight + layout::resizeBarHeight)
+        )
+    );
+    return juce::jlimit(minimum, maximum, expandedPreviewHeight);
+}
+
+/// Sets the preferred proportions of the table and the workspace
+/// that give the expanded workspace the given height at the current shared height.
+void AudioBatchComponent::setExpandedLayout(const int previewHeight)
+{
+    const auto height = static_cast<double>(workspaceAvailableHeight);
+    mainVerticalLayout.setItemLayout(
+        0,
+        layout::resultsTableMinimumHeight,
+        layout::resultsTableMaximumProportion,
+        -(height - previewHeight - layout::resizeBarHeight) / height
+    );
+    mainVerticalLayout.setItemLayout(
+        2, layout::previewMinimumHeight, layout::previewMaximumProportion, -previewHeight / height
+    );
 }
 }  // namespace audiobatch

@@ -41,12 +41,14 @@ constexpr int sectionSpacing {10};
 constexpr int resultsTableRowHeight {24};
 
 /// JUCE's negative sizes express proportions of the available vertical space.
+/// The table has no upper limit, so a tall window gives it the height the preview keeps out of.
 constexpr double resultsTableMinimumHeight {240.0};
-constexpr double resultsTableMaximumProportion {-0.75};
-constexpr double resultsTablePreferredProportion {-0.5};
+constexpr double resultsTableMaximumProportion {-1.0};
+constexpr double resultsTablePreferredProportion {-0.72};
 constexpr double resizeBarHeight {6.0};
 constexpr double previewMinimumHeight {230.0};
 constexpr double previewMaximumProportion {-0.7};
+/// Share of the first window height the expanded preview starts at, a fixed height from then on.
 constexpr double previewPreferredProportion {-0.28};
 
 constexpr int controlButtonHeight {28};
