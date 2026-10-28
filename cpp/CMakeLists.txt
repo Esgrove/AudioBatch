@@ -29,28 +29,66 @@ message(STATUS "CMake source dir: ${CMAKE_SOURCE_DIR}")
 
 # Git hash
 execute_process(
-    COMMAND bash -c "git rev-parse --short HEAD"
+    COMMAND git rev-parse --short HEAD
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE GIT_HASH
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 # Git branch
 execute_process(
-    COMMAND bash -c "git branch --show-current"
+    COMMAND git branch --show-current
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE GIT_BRANCH
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
-# Git tag
+# Latest version tag, such as v1.0.0, annotated or not
 execute_process(
-    COMMAND bash -c "git describe --abbrev=0"
+    COMMAND git describe --tags --abbrev=0 --match "v[0-9]*"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE GIT_TAG
-    OUTPUT_STRIP_TRAILING_WHITESPACE
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET
 )
-# Build number
+# Build number: the commits since the latest version tag, or all commits when there is no tag yet
+if(GIT_TAG)
+    set(BUILD_NUMBER_RANGE "${GIT_TAG}..HEAD")
+else()
+    set(BUILD_NUMBER_RANGE "HEAD")
+endif()
 execute_process(
-    COMMAND bash -c "git rev-list ${GIT_TAG}..HEAD --count"
+    COMMAND git rev-list --count ${BUILD_NUMBER_RANGE}
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
     OUTPUT_VARIABLE BUILD_NUMBER
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
+if(NOT BUILD_NUMBER)
+    set(BUILD_NUMBER 0)
+endif()
+
+# The git values above are only read when CMake configures,
+# so reconfigure when HEAD moves, the current branch gets a new commit, or a tag is added or moved.
+# Without this, an existing build directory keeps the commit and build number it was first configured with.
+# The paths come from git, so they also resolve in a worktree, where .git is a file.
+execute_process(
+    COMMAND git symbolic-ref -q HEAD
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    OUTPUT_VARIABLE GIT_HEAD_REF
+    OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET
+)
+foreach(git_path HEAD packed-refs refs/tags ${GIT_HEAD_REF})
+    execute_process(
+        COMMAND git rev-parse --path-format=absolute --git-path ${git_path}
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+        OUTPUT_VARIABLE git_file
+        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET
+    )
+    if(git_file AND EXISTS "${git_file}")
+        set_property(
+            DIRECTORY
+            APPEND
+            PROPERTY CMAKE_CONFIGURE_DEPENDS "${git_file}"
+        )
+    endif()
+endforeach()
 
 # Date and time
 string(TIMESTAMP DATE "%Y-%m-%d" UTC)

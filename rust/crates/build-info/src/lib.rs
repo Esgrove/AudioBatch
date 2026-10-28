@@ -7,13 +7,16 @@
 //! - `GIT_BRANCH`: the checked out branch, "HEAD" on a detached checkout.
 //! - `GIT_COMMIT`: the short hash of the checked out commit.
 //! - `RUST_VERSION`: the version line of the compiler.
-//! - `VERSION_INFO`: `<version> <build time> <git branch> <git commit>`, what `--version` prints after the binary name.
+//! - `VERSION_NUMBER`: the package version followed by the build number, such as "1.0.0.5".
+//!   The build number counts the commits since the latest version tag, such as "v1.0.0".
+//! - `VERSION_INFO`: `<version number> <build time> <git branch> <git commit>`,
+//!   what `--version` prints after the binary name.
 //!
 //! Cargo does not tell a build script the names of the binaries,
 //! so a binary prepends its own name from `CARGO_BIN_NAME`, which Cargo sets when it compiles the binary.
 //!
 //! Values that cannot be read, such as the commit when git is not installed, are "unknown".
-//! The build script reruns when the checked out commit or the sources of its crate change,
+//! The build script reruns when the checked out commit, the tags, or the sources of its crate change,
 //! so the build time is when the sources or the commit last changed, not when the binary was linked.
 
 use std::process::Command;
@@ -31,28 +34,49 @@ const UNKNOWN: &str = "unknown";
 /// Panics when called outside a build script, where Cargo does not set `CARGO_PKG_VERSION`.
 pub fn emit() {
     let version = std::env::var("CARGO_PKG_VERSION").expect("CARGO_PKG_VERSION not set");
+    let build_number = build_number();
     let git_commit = command_output("git", &["rev-parse", "--short", "HEAD"]);
     let git_branch = command_output("git", &["rev-parse", "--abbrev-ref", "HEAD"]);
     let rustc = std::env::var("RUSTC").unwrap_or_else(|_| String::from("rustc"));
     let rust_version = command_output(&rustc, &["--version"]);
-    // jiff instead of the `date` command, which Windows does not have.
     let build_time = Timestamp::now().strftime("%Y-%m-%d_%H:%M:%S").to_string();
-    let version_info = format!("{version} {build_time} {git_branch} {git_commit}");
+    let version_number = format!("{version}.{build_number}");
+    let version_info = format!("{version_number} {build_time} {git_branch} {git_commit}");
 
     println!("cargo::rustc-env=BUILD_TIME={build_time}");
     println!("cargo::rustc-env=GIT_BRANCH={git_branch}");
     println!("cargo::rustc-env=GIT_COMMIT={git_commit}");
     println!("cargo::rustc-env=RUST_VERSION={rust_version}");
+    println!("cargo::rustc-env=VERSION_NUMBER={version_number}");
     println!("cargo::rustc-env=VERSION_INFO={version_info}");
 
     println!("cargo::rerun-if-changed=src");
     rerun_when_commit_changes();
 }
 
-/// Reruns the build script when HEAD moves, by watching HEAD, the branch it points to, and the packed refs.
+/// Returns the number of commits since the latest version tag, annotated or not,
+/// or of all commits when there is no version tag yet, and 0 when git cannot tell.
+fn build_number() -> String {
+    let range = match command_output("git", &["describe", "--tags", "--abbrev=0", "--match", "v[0-9]*"]) {
+        tag if tag == UNKNOWN => String::from("HEAD"),
+        tag => format!("{tag}..HEAD"),
+    };
+    match command_output("git", &["rev-list", "--count", &range]) {
+        count if count == UNKNOWN => String::from("0"),
+        count => count,
+    }
+}
+
+/// Reruns the build script when HEAD moves or a tag changes,
+/// by watching HEAD, the branch it points to, the packed refs, and the tags directory.
+/// Cargo scans a watched directory recursively, so adding a tag is noticed too.
 /// The paths come from git, so they also resolve inside a worktree, where `.git` is a file.
 fn rerun_when_commit_changes() {
-    let mut watched = vec![String::from("HEAD"), String::from("packed-refs")];
+    let mut watched = vec![
+        String::from("HEAD"),
+        String::from("packed-refs"),
+        String::from("refs/tags"),
+    ];
     let symbolic_ref = command_output("git", &["symbolic-ref", "-q", "HEAD"]);
     if symbolic_ref != UNKNOWN {
         watched.push(symbolic_ref);
