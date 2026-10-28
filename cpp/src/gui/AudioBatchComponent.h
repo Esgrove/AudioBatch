@@ -131,6 +131,8 @@ private:
     void processingCompleted(const ProcessingWork& pass, int totalFiles) override;
     void processingStartFailed(const juce::String& errorMessage) override;
     void updatePreviewAnimation();
+    [[nodiscard]] int getExpandedPreviewHeight() const;
+    void setExpandedLayout(int previewHeight);
 
     juce::Array<juce::File> getSelectedRecordFiles() const;
     juce::StringArray getSelectedRecordPaths() const;
@@ -299,16 +301,20 @@ private:
 
     /// Expanded divider allocation is independent of the animated or compact workspace.
     bool previewSectionExpanded {true};
-    /// True once an expanding animation ended, so the next layout gives the divider back its expanded proportions.
+    /// True once an expanding animation ended, so the next layout gives the divider back its expanded height.
     bool restoreExpandedLayout {false};
-    /// Share of the workspace height the expanded workspace takes.
-    double expandedPreviewProportion {-layout::previewPreferredProportion};
-    /// Share of the workspace height the workspace had when the running animation started.
-    double animationStartProportion {-layout::previewPreferredProportion};
+    /// Height of the expanded workspace, which stays the same when the window is resized,
+    /// so a taller window gives its extra height to the results table.
+    /// The first layout sets it from the window height, and dragging the divider changes it.
+    int expandedPreviewHeight {0};
+    /// Height of the workspace when the running animation started.
+    int animationStartHeight {0};
     /// When the running collapse or expand animation started.
     double animationStartedAtMilliseconds {0.0};
     /// Height above the status bar that the table and the workspace share.
     int workspaceAvailableHeight {0};
+    /// Shared height of the last expanded layout, which tells a resized window from a dragged divider.
+    int expandedLayoutHeight {0};
     /// Height of the workspace in the last layout.
     int currentPreviewHeight {0};
     /// Lays the view out on every display frame while the workspace collapses or expands.
