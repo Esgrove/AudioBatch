@@ -70,9 +70,9 @@ require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found. Is the Cargo ins
 echo "$("$CLI_BINARY_NAME" --version) from $(command -v "$CLI_BINARY_NAME")"
 if [ "$CLI_ONLY" = false ]; then
     if [ "$BASH_PLATFORM" = "mac" ]; then
-        echo "$GUI_BINARY_NAME in $APP_DESTINATION"
+        echo "$("$APP_DESTINATION/Contents/MacOS/$GUI_BINARY_NAME" --version) in $APP_DESTINATION"
     else
-        echo "$GUI_BINARY_NAME from $(command -v "$GUI_BINARY_NAME")"
+        echo "$("$GUI_BINARY_NAME" --version) from $(command -v "$GUI_BINARY_NAME")"
     fi
 fi
 echo ""

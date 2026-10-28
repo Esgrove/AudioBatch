@@ -15,6 +15,7 @@ audiobatch-core = { path = "crates/core" }
 audiobatch-playback = { path = "crates/playback" }
 audiobatch-plugins = { path = "crates/plugins" }
 audiobatch-test-plugin = { path = "crates/test-plugin" }
+build-info = { path = "crates/build-info" }
 serato-tags = { path = "crates/serato" }
 test-fixtures = { path = "crates/test-fixtures" }
 vst3-host = { path = "crates/vst3-host" }

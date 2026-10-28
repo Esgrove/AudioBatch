@@ -1,0 +1,16 @@
+[package]
+name = "build-info"
+description = "Build script helper that records the version, build time, and git commit of a binary"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license-file.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+jiff.workspace = true
+
+[lints]
+workspace = true

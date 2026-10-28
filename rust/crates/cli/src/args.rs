@@ -75,7 +75,12 @@ pub enum CliCommand {
 
 /// Analyze audio files for sample peak, true peak, and integrated loudness (EBU R128).
 #[derive(Parser, Debug, Clone)]
-#[command(name = "audiobatch-rs", author, version, args_conflicts_with_subcommands = true)]
+#[command(
+    name = "audiobatch-rs",
+    author,
+    version = env!("VERSION_INFO"),
+    args_conflicts_with_subcommands = true
+)]
 pub struct CliArgs {
     /// Subcommand to run instead of the analysis
     #[command(subcommand)]

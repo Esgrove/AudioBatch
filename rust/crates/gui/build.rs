@@ -1,5 +1,8 @@
 //! Build script of the `AudioBatchRs` app.
 //!
+//! It records the version, build time, and git commit that the About dialog and the `--version` flag show,
+//! see the `build-info` crate.
+//!
 //! On Windows it embeds the app icon from the root `assets` directory as icon resource 1,
 //! which GPUI loads for the window and the taskbar, and which Explorer shows for the executable.
 //! It also fills in the version information that Explorer and Task Manager show.
@@ -12,12 +15,13 @@ use std::path::PathBuf;
 /// The multi-size Windows icon, generated from `assets/icon_win.png`, relative to the crate directory.
 const WINDOWS_ICON: &str = "../../../assets/icon_win.ico";
 
-/// Embeds the Windows resources, and reruns when the icon changes.
+/// Records the build metadata, and embeds the Windows resources, rerunning when the icon changes.
 #[cfg_attr(
     not(windows),
     expect(clippy::unnecessary_wraps, reason = "only Windows embeds resources")
 )]
 fn main() -> std::io::Result<()> {
+    build_info::emit();
     let manifest_directory = std::env::var_os("CARGO_MANIFEST_DIR").map_or_else(PathBuf::new, PathBuf::from);
     let icon = manifest_directory.join(WINDOWS_ICON);
     println!("cargo::rerun-if-changed={}", icon.display());
