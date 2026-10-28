@@ -13,6 +13,7 @@
 #include <expected>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace audiobatch
@@ -56,6 +57,7 @@ std::optional<juce::String> takeOptionValue(juce::ArgumentList& arguments, const
 /// Returns the value whose name matches the text, ignoring case and surrounding space,
 /// or nothing for an unknown name.
 template<typename Enum, std::size_t count>
+    requires std::is_enum_v<Enum>
 std::optional<Enum> parseName(const std::array<OptionName<Enum>, count>& names, const juce::String& text)
 {
     const auto token = utils::normalizedToken(text);
@@ -67,6 +69,7 @@ std::optional<Enum> parseName(const std::array<OptionName<Enum>, count>& names, 
 
 /// Joins the accepted names for an error message, such as "table, csv, json".
 template<typename Enum, std::size_t count>
+    requires std::is_enum_v<Enum>
 juce::String joinNames(const std::array<OptionName<Enum>, count>& names)
 {
     juce::StringArray texts;
@@ -81,6 +84,7 @@ juce::String joinNames(const std::array<OptionName<Enum>, count>& names)
 /// Removes an option that takes one of the given names, and returns the value for it.
 /// Returns nothing when the option is absent, and an error naming the accepted values for an unknown name.
 template<typename Enum, std::size_t count>
+    requires std::is_enum_v<Enum>
 std::expected<std::optional<Enum>, CliParseError> takeNamedOption(
     juce::ArgumentList& arguments,
     const CliOption& option,

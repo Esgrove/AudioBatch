@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include "utils/StringFormat.h"
 #include <fmt/color.h>
 #include <string_view>
 
@@ -133,7 +134,7 @@ inline void printWarn(const char* message)
 /// Formats a value with a colour for building composite lines,
 /// for example a coloured column inside an otherwise plain row printed to stdout.
 /// Returns the plain text when stdout does not support colour.
-template<typename T>
+template<utils::Formattable T>
 [[nodiscard]] std::string colored(const T& value, const fmt::terminal_color color)
 {
     if (isColorEnabled(stdout)) {

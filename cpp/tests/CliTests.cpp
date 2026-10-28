@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <concepts>
 #include <expected>
 #include <variant>
 #include <vector>
@@ -41,7 +42,7 @@ public:
     /// Parses arguments that are expected to be a valid command of the given type,
     /// recording a failure with the parse error, or for another command type, when they are not.
     /// Returns a default command on failure so the caller can keep checking fields.
-    template<typename Command>
+    template<std::default_initializable Command>
     Command expectCommand(const juce::StringArray& arguments)
     {
         const auto command = parseArguments(arguments);

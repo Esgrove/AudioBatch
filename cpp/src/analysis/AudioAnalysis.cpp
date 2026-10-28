@@ -21,6 +21,7 @@ extern "C" {
 
 #include <algorithm>
 #include <compare>
+#include <concepts>
 #include <memory>
 #include <optional>
 #include <ranges>
@@ -46,7 +47,7 @@ constexpr int minimumLoudnessSampleRate {16};
 constexpr int maximumLoudnessSampleRate {2'822'400};
 
 /// Left, right, and overall peak reduced from per-channel peaks.
-template<typename Value>
+template<std::floating_point Value>
 struct PeakSummary {
     /// Peak of the left channel.
     Value left {};
@@ -182,7 +183,7 @@ std::weak_ordering firstDifference(const std::initializer_list<std::weak_orderin
 /// Orders two floating point values exactly.
 /// An approximate comparison would not be transitive, which std::sort requires,
 /// and the other sort keys already break ties between equal values.
-template<typename Value>
+template<std::floating_point Value>
 std::weak_ordering compareValues(const Value lhs, const Value rhs)
 {
     return std::weak_order(lhs, rhs);
@@ -219,7 +220,7 @@ std::weak_ordering compareBySortMode(
 
 /// Reduces per-channel peaks to the left, right, and overall peak.
 /// A mono source reports its only channel as both left and right.
-template<typename Value>
+template<std::floating_point Value>
 PeakSummary<Value> summarizePeaks(const std::vector<Value>& channelPeaks)
 {
     const auto left = channelPeaks.front();

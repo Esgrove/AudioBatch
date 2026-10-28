@@ -13,11 +13,13 @@
 #include <cstddef>
 #include <functional>
 #include <span>
+#include <type_traits>
 
 namespace audiobatch
 {
 /// One name an enum option accepts on the command line, such as "csv" for --output.
 template<typename Enum>
+    requires std::is_enum_v<Enum>
 struct OptionName {
     /// The name as it is typed on the command line.
     const char* name {nullptr};
@@ -84,6 +86,7 @@ namespace cli
 {
 /// Returns the names of an enum option table, for the shell completions to offer.
 template<typename Enum, std::size_t count>
+    requires std::is_enum_v<Enum>
 consteval std::array<const char*, count> namesOf(const std::array<OptionName<Enum>, count>& names)
 {
     std::array<const char*, count> result {};
