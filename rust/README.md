@@ -42,6 +42,13 @@ On macOS, it installs the app bundle to `/Applications`.
 On Windows, it installs the GUI to `%LOCALAPPDATA%/Programs/AudioBatchRs` with a Start Menu shortcut.
 On other platforms, it installs the GUI binary next to the CLI.
 Both scripts take `--cli-only` to skip the slower GUI build.
+
+Windows GUI builds require the Visual Studio C++ Build Tools, a Windows SDK, and LLVM with `libclang.dll`.
+If LLVM is not found automatically, set `LIBCLANG_PATH` to its `bin` directory.
+CPAL's ASIO dependency downloads the SDK on the first build and caches it in the temporary directory.
+No CMake step is needed for the Rust application.
+For an existing or offline SDK, set `CPAL_ASIO_DIR` to its directory containing `common/` and `host/`.
+
 `format.sh` formats the Rust code with rustfmt, the shell scripts with shfmt, and the prose with slb,
 and `format.sh --check` only verifies them.
 
@@ -237,6 +244,11 @@ and the output device with its sample rate and buffer size in samples.
   Moving a file to the trash asks first, and Command or Control with Shift and Backspace skips the question.
 - Options > Show Loudness Graph, or the same option in the settings window,
   draws the short-term loudness over the waveform, and Options > Output Device switches the audio device.
+- Windows preview uses ASIO and requires an installed ASIO driver for the audio interface, with no WASAPI fallback.
+  The default output is the first available ASIO device, not the Windows default speakers.
+  Select the interface in Audio Settings if a saved device name no longer matches.
+  ASIO device discovery is cached during the session, so restart the app after installing or connecting an interface.
+  Other platforms use their default audio host.
 - Like the C++ version, the audio device is open only while playing.
   Playing opens it, selecting another file while playing keeps it open,
   and it closes shortly after playback stops, so other applications can use it.

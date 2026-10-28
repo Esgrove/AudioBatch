@@ -26,7 +26,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{BufferSize, Device, ErrorKind, FromSample, SampleFormat, SizedSample, Stream, StreamConfig};
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use rtrb::RingBuffer;
@@ -35,7 +35,7 @@ pub use device::{DeviceCapabilities, OutputConfig, device_capabilities};
 pub use engine::PlayerEvent;
 pub use preview_insert::PreviewInsert;
 
-use device::{device_display_name, find_device, stream_config};
+use device::{device_display_name, find_device, output_devices, stream_config};
 use engine::{Command, run_decode_thread};
 use output::insert::DeviceFormat;
 use output::{NO_GENERATION, OutputRenderer, SharedState};
@@ -443,12 +443,11 @@ impl Player {
         events
     }
 
-    /// Returns the names of the available output devices.
+    /// Returns the names of the available output devices, using ASIO on Windows.
     #[must_use]
     pub fn output_device_names() -> Vec<String> {
-        cpal::default_host()
-            .output_devices()
-            .map(|devices| devices.map(|device| device_display_name(&device)).collect())
+        output_devices()
+            .map(|devices| devices.iter().map(device_display_name).collect())
             .unwrap_or_default()
     }
 
@@ -532,6 +531,7 @@ fn build_stream(
         SampleFormat::F32 => build_typed_stream::<f32>(device, config, renderer, errors),
         SampleFormat::F64 => build_typed_stream::<f64>(device, config, renderer, errors),
         SampleFormat::I16 => build_typed_stream::<i16>(device, config, renderer, errors),
+        SampleFormat::I24 => build_typed_stream::<cpal::I24>(device, config, renderer, errors),
         SampleFormat::I32 => build_typed_stream::<i32>(device, config, renderer, errors),
         SampleFormat::U16 => build_typed_stream::<u16>(device, config, renderer, errors),
         other => bail!("Unsupported output sample format {other}"),
