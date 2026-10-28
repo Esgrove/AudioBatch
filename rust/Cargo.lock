@@ -576,7 +576,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-cli"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "audiobatch-core",
@@ -602,7 +602,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-core"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -626,7 +626,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-gui"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "audiobatch-core",
@@ -648,7 +648,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-playback"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "audioadapter-buffers",
@@ -663,7 +663,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-plugins"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "audiobatch-core",
@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "audiobatch-test-plugin"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "vst3",
  "vst3-host",
@@ -6655,7 +6655,7 @@ dependencies = [
 
 [[package]]
 name = "serato-tags"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "base64 0.23.1",
@@ -7499,7 +7499,7 @@ dependencies = [
 
 [[package]]
 name = "test-fixtures"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "tempfile",
 ]
@@ -8178,7 +8178,7 @@ dependencies = [
 
 [[package]]
 name = "vst3-host"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-channel",
