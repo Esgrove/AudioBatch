@@ -11,6 +11,7 @@
 #include <JuceHeader.h>
 
 #include <cmath>
+#include <concepts>
 #include <expected>
 #include <memory>
 #include <span>
@@ -21,7 +22,7 @@ namespace audiobatch::utils
 /// Fallback sample rate for preview and plugin preparation before an audio device is available.
 constexpr double defaultSampleRate {48'000.0};
 /// Returns the magnitude of a peak value, since analysis records store signed peaks.
-template<typename Value>
+template<std::floating_point Value>
 [[nodiscard]] Value peakMagnitude(const Value peak)
 {
     return std::abs(peak);
