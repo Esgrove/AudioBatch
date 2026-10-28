@@ -13,21 +13,21 @@ pub const GIT_BRANCH: &str = env!("GIT_BRANCH");
 /// Short git commit hash the app was built from.
 pub const GIT_COMMIT: &str = env!("GIT_COMMIT");
 
-/// Package version from the workspace manifest.
-pub const PACKAGE_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// Package version from the workspace manifest with the number of commits since the latest version tag appended.
+pub const VERSION_NUMBER: &str = env!("VERSION_NUMBER");
 
 /// Version of the Rust compiler that built the app.
 pub const RUST_VERSION: &str = env!("RUST_VERSION");
 
 /// One line identity of the build that `--version` prints:
-/// `AudioBatchRs <version> <build time> <git branch> <git commit>`.
+/// `AudioBatchRs <version number> <build time> <git branch> <git commit>`.
 pub const VERSION_STRING: &str = concat!(env!("CARGO_BIN_NAME"), " ", env!("VERSION_INFO"));
 
 /// Returns the multi-line message of the About dialog with the version, build, and system information.
 pub fn about_message() -> String {
     let threads = std::thread::available_parallelism().map_or_else(|_| String::from("?"), |count| count.to_string());
     format!(
-        "Version {PACKAGE_VERSION}\n{RUST_VERSION}\n\n\
+        "Version {VERSION_NUMBER}\n{RUST_VERSION}\n\n\
          Batch audio analysis, normalization, and processing.\n\n\
          Date: {BUILD_TIME}\nCommit: {GIT_COMMIT}\nBranch: {GIT_BRANCH}\n\n\
          OS: {} ({})\nThreads: {threads}",
