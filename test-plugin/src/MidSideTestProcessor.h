@@ -33,25 +33,22 @@ class MidSideTestProcessor final : public juce::AudioProcessor
 public:
     MidSideTestProcessor();
 
-    [[nodiscard]] const juce::String getName() const override;
     [[nodiscard]] bool acceptsMidi() const override;
-    [[nodiscard]] bool producesMidi() const override;
-    [[nodiscard]] bool isMidiEffect() const override;
-    [[nodiscard]] double getTailLengthSeconds() const override;
-
-    [[nodiscard]] int getNumPrograms() override;
-    [[nodiscard]] int getCurrentProgram() override;
-    void setCurrentProgram(int index) override;
-    [[nodiscard]] const juce::String getProgramName(int index) override;
-    void changeProgramName(int index, const juce::String& newName) override;
-
     [[nodiscard]] bool hasEditor() const override;
+    [[nodiscard]] bool isMidiEffect() const override;
+    [[nodiscard]] bool producesMidi() const override;
+    [[nodiscard]] const juce::String getName() const override;
+    [[nodiscard]] const juce::String getProgramName(int index) override;
+    [[nodiscard]] double getTailLengthSeconds() const override;
+    [[nodiscard]] int getCurrentProgram() override;
+    [[nodiscard]] int getNumPrograms() override;
 
-    void prepareToPlay(double sampleRate, int maximumBlockSize) override;
-    void releaseResources() override;
-    void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages) override;
-
+    void changeProgramName(int index, const juce::String& newName) override;
     void getStateInformation(juce::MemoryBlock& destinationData) override;
+    void prepareToPlay(double sampleRate, int maximumBlockSize) override;
+    void processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages) override;
+    void releaseResources() override;
+    void setCurrentProgram(int index) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
 protected:
@@ -66,8 +63,10 @@ private:
     std::atomic<float>& gain;
     std::atomic<float>& width;
     std::atomic<float>& latency;
+
     /// One ring buffer per channel holding the last latency samples, allocated when the plugin is prepared.
     juce::AudioBuffer<float> delayLine;
+
     /// Latency in samples the plugin reported when it was prepared.
     int delaySamples {0};
     /// Position in the ring buffers of the oldest delayed sample.
