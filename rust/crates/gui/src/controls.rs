@@ -10,6 +10,7 @@
 //! The target has the Peak and Loudness modes, with the chosen one in the primary color,
 //! the target slider of the chosen mode, a bar showing the target inside it,
 //! and the button that normalizes the selected files.
+//! The modes and the target slider are disabled while the option that normalizes before the plugins is off.
 //! Everything above the playback row scrolls when the preview is short, so the buttons always stay visible.
 //! Double-clicking a slider resets it to its default value.
 
@@ -22,8 +23,9 @@ use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::slider::{Slider, SliderState};
 use gpui_kit::component::{Disableable as _, IconName, Sizable as _};
 use gpui_kit::{
-    AnyElement, App, Div, ElementId, Entity, InteractiveElement as _, IntoElement as _, MouseButton, MouseUpEvent,
-    ParentElement as _, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, px, relative,
+    AnyElement, App, CursorStyle, Div, ElementId, Entity, InteractiveElement as _, IntoElement as _, MouseButton,
+    MouseUpEvent, ParentElement as _, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    relative,
 };
 
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
@@ -100,6 +102,9 @@ const TARGET_TOOLTIP: &str = "Target level for normalization. Drag to adjust, do
 
 /// Opacity of the filled part of the target slider.
 const TARGET_FILL_ALPHA: f32 = 0.7;
+
+/// Opacity of the mode buttons while they are disabled, which keeps the chosen mode recognizable.
+const DISABLED_MODES_OPACITY: f32 = 0.4;
 
 /// Tooltip of the overwrite option.
 const OVERWRITE_TOOLTIP: &str = "When enabled, normalizing or processing replaces an existing output file \
@@ -405,6 +410,8 @@ fn option_row(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
 
 /// Renders the normalization target: the mode buttons, with the chosen mode in the primary color,
 /// and the target slider with the Normalize button on its right.
+/// The mode buttons and the slider are disabled while the option that normalizes before the plugins is off,
+/// and the Normalize button only depends on the selection.
 fn target_group(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &App) -> Div {
     let mode_button = |id: &'static str, label: &'static str, mode: NormalizeMode| {
         let selected = state.mode == mode;
@@ -412,7 +419,8 @@ fn target_group(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &Ap
             .label(label)
             .tooltip(MODE_TOOLTIP)
             .flex_1()
-            .selected(selected);
+            .selected(selected)
+            .disabled(!state.normalize_first);
         if selected { button.primary() } else { button }
     };
     let modes = {
@@ -442,6 +450,14 @@ fn target_group(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &Ap
             .flex_none()
             .on_click(move |_, window, cx| on_event(&ControlsEvent::NormalizeSelected, window, cx))
     };
+    let modes = div()
+        .w_full()
+        .opacity(if state.normalize_first {
+            1.0
+        } else {
+            DISABLED_MODES_OPACITY
+        })
+        .child(modes);
     div().flex().flex_col().gap(px(ITEM_SPACING)).child(modes).child(
         div()
             .flex()
@@ -456,8 +472,11 @@ fn target_group(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &Ap
 /// Renders the target slider as a bar that fills up to the target and shows the target text inside it,
 /// so the value needs no caption row of its own.
 /// Clicking or dragging along the bar sets the target, and double-clicking resets it.
+/// A disabled bar dims its fill and text and ignores the mouse.
 fn target_slider(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &App) -> Stateful<Div> {
+    let enabled = state.normalize_first;
     let filled = state.target.read(cx).percentage().end;
+    let reset = send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::NormalizeTarget));
     let bar = SliderIndicator::new(state.target)
         .relative()
         .size_full()
@@ -473,7 +492,11 @@ fn target_slider(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &A
                 .bottom_0()
                 .left_0()
                 .w(relative(filled))
-                .bg(color(palette::BLUE).opacity(TARGET_FILL_ALPHA)),
+                .bg(if enabled {
+                    color(palette::BLUE).opacity(TARGET_FILL_ALPHA)
+                } else {
+                    color(palette::GREY_MEDIUM)
+                }),
         )
         .child(
             div()
@@ -484,7 +507,11 @@ fn target_slider(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &A
                 .justify_center()
                 .font_family(MONO_FONT)
                 .text_size(px(CAPTION_FONT_SIZE))
-                .text_color(color(palette::GREY_SUPER_LIGHT))
+                .text_color(color(if enabled {
+                    palette::GREY_SUPER_LIGHT
+                } else {
+                    palette::GREY_MIDDLE
+                }))
                 .child(state.target_text.clone()),
         );
     div()
@@ -493,15 +520,27 @@ fn target_slider(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &A
         .min_w_0()
         .h(px(BUTTON_HEIGHT))
         .tooltip(tooltip(TARGET_TOOLTIP))
-        .capture_any_mouse_up(send_on_double_click(
-            on_event,
-            ControlsEvent::ResetSlider(SliderControl::NormalizeTarget),
-        ))
+        .capture_any_mouse_up(move |mouse_event, window, cx| {
+            if enabled {
+                reset(mouse_event, window, cx);
+            }
+        })
         .child(
             BaseSlider::new(state.target)
                 .accessibility_label("Normalization target")
+                .disabled(!enabled)
                 .size_full()
-                .child(SliderTrack::new(state.target).size_full().cursor_pointer().child(bar)),
+                .child(
+                    SliderTrack::new(state.target)
+                        .disabled(!enabled)
+                        .size_full()
+                        .cursor(if enabled {
+                            CursorStyle::PointingHand
+                        } else {
+                            CursorStyle::Arrow
+                        })
+                        .child(bar),
+                ),
         )
 }
 

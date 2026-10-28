@@ -130,6 +130,13 @@ void NormalizationTargetControl::setNormalizeEnabled(const bool enabled)
     normalizeButton.setEnabled(enabled);
 }
 
+void NormalizationTargetControl::setTargetEnabled(const bool enabled)
+{
+    peakButton.setEnabled(enabled);
+    loudnessButton.setEnabled(enabled);
+    targetSlider.setEnabled(enabled);
+}
+
 void NormalizationTargetControl::setNormalizeCallback(std::function<void()> callback)
 {
     normalizeButton.onClick = std::move(callback);

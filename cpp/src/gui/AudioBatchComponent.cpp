@@ -129,8 +129,16 @@ void AudioBatchComponent::configureProcessingControls()
         );
     };
 
-    previewWorkspace.normalizationTargetControl.loadSettings();
-    previewWorkspace.normalizationTargetControl.setNormalizeCallback([this] { normalizeSelectedRecords(); });
+    auto& normalizationTargetControl = previewWorkspace.normalizationTargetControl;
+    auto& normalizeBeforePluginToggle = previewWorkspace.normalizeBeforePluginToggle;
+    normalizationTargetControl.loadSettings();
+    normalizationTargetControl.setNormalizeCallback([this] { normalizeSelectedRecords(); });
+    normalizationTargetControl.setTargetEnabled(normalizeBeforePluginToggle.getToggleState());
+    normalizeBeforePluginToggle.onClick = [this] {
+        previewWorkspace.normalizationTargetControl.setTargetEnabled(
+            previewWorkspace.normalizeBeforePluginToggle.getToggleState()
+        );
+    };
 
     updateProcessButtonState();
     previewWorkspace.processButton.onClick = [this] {
