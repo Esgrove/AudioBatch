@@ -48,7 +48,7 @@ raw-window-handle = "0.6.2"
 rayon = "1.12.0"
 rtrb = "0.4.1"
 rubato = "5.0.1"
-rusqlite = { version = "0.41.0", features = ["bundled"] }
+rusqlite = { version = "0.41.1", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0"
 symphonia = { version = "0.6.1", features = ["all-codecs", "all-formats"] }
@@ -71,6 +71,10 @@ incremental = true
 # Decoding in debug builds is slow enough to make the tests and manual runs tedious.
 [profile.dev.package."*"]
 opt-level = 2
+
+# Rust 1.99.1 can emit invalid Windows unwind metadata for libm at opt-level 2.
+[profile.dev.package.libm]
+opt-level = 3
 
 [profile.release]
 lto = true
