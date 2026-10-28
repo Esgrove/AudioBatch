@@ -1,6 +1,8 @@
 /// Selected-file inspector beside the waveform preview.
 /// Keeps the filename, optionally split into artist and title, and four analysis metrics above scrolling file details.
 /// Pending and failed records also show their status.
+/// The wide layout puts the metrics in one row, and the details with short values two to a line,
+/// above the tags that can be long, such as the album and the comment, which keep the full width.
 
 #pragma once
 
@@ -15,12 +17,15 @@
 
 namespace audiobatch
 {
-/// One full-width read-only detail with a field caption and value.
+/// One read-only detail with a field caption and value.
 struct AudioInfoRow {
     /// Caption of the detail, such as "Format".
     juce::String field;
     /// The value shown next to the caption.
     juce::String value;
+    /// True for a value that always stays short, such as the format or the tempo,
+    /// which the wide layout shows beside another one on the same line.
+    bool isShort {false};
 };
 
 /// A labelled analysis value with an explicit unit and a restrained card background.
@@ -55,6 +60,7 @@ public:
 
     void clear();
     void setCompact(bool compact);
+    void setWide(bool wide);
     void showRecord(
         const AudioAnalysisRecord& record,
         const juce::String& activeStatusLabel,
@@ -68,6 +74,8 @@ public:
 
 private:
     [[nodiscard]] int getErrorHeight(int width) const;
+
+    [[nodiscard]] int getDetailLineCount() const;
 
     void ensureLabelCount(std::size_t requiredCount);
     void setRows(std::vector<AudioInfoRow> newRows);
@@ -101,6 +109,8 @@ private:
     std::vector<std::unique_ptr<juce::Label>> valueLabels;
     /// True in the compact row, which shows only the metric cards.
     bool compactMode {false};
+    /// True in the wide layout, which shows the metrics in one row and the short details two to a line.
+    bool wideMode {false};
     /// True when the file name was split into a name and a title.
     bool hasTitle {false};
     /// True when the status label is shown.

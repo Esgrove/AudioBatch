@@ -109,7 +109,6 @@ impl ComponentHandler {
     }
 
     /// Returns and clears whether the plugin reported a change.
-    #[cfg(test)]
     pub fn take_dirty(&self) -> bool {
         self.dirty.swap(false, Ordering::AcqRel)
     }

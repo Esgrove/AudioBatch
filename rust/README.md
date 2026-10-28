@@ -208,10 +208,14 @@ and the output device with its sample rate and buffer size in samples.
   File > Clear Per-file Gain removes it.
 - The controls follow the C++ layout: Zoom, Input gain, the Normalize and Overwrite options,
   the Peak and Loudness target with its Normalize button, Plugin Chain, Audio Settings,
-  and Play/Stop and Process side by side at the bottom.
-  The chevron at the right end of the Zoom row, Options > Collapse Bottom Section,
+  and Play and Process side by side at the bottom, with Play turning into Stop while the file plays.
+  On a wide window the controls and the information panel share half of the width, and the waveform gets the rest.
+  The controls below the sliders then sit in two columns with a Preview chain option,
+  and the panel shows the four metrics in one row and the short details two to a line,
+  while long tags such as the album and the comment keep the full width.
+  The chevron in the top left corner of the controls, Options > Collapse Bottom Section,
   or Command or Control with Shift and Space collapses the preview into one row with the chevron,
-  Play/Stop and Process, the four level metrics, and the waveform.
+  Play and Process, the four level metrics, and the waveform.
   The same chevron or shortcut expands it again, with the divider where it was.
 - The Peak and Loudness buttons choose a sample peak target from -12 to 0 dBFS,
   or a loudness target from -24 to -6 LUFS limited to a -0.3 dBTP true peak.
@@ -268,7 +272,9 @@ Instruments are listed by scans but cannot be added to the chain.
   and lists the saved presets, which load as soon as one is picked, like in the C++ version, or can be deleted.
   Plugins > Chain Presets loads a preset from the menu too, with the loaded one checked.
   Each preset is a JSON file in the `chain-presets` folder of the data directory.
-  Changing the chain afterwards keeps the preset file as it is, until it is saved again.
+  Changing the chain or a plugin's settings afterwards keeps the preset file as it is, until it is saved again.
+  The Presets title then marks the loaded preset modified, and its Save button becomes Update,
+  which saves over the loaded preset without asking.
 - Process, or Plugins > Process Selected With Plugin Chain, renders the selected file through the enabled plugins,
   and Plugins > Process All Files With Plugin Chain… renders every analyzed file after a confirmation.
   Before the first plugin each file gets its custom gain,

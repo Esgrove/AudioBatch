@@ -10,7 +10,9 @@
 
 namespace audiobatch
 {
-/// Peak and Loudness mode buttons on one row, and the target slider with the Normalize button below them.
+/// Peak and Loudness mode buttons on one row,
+/// and the target slider and the Normalize button in equal halves below them.
+/// The slider fills in a neutral grey, so it does not compete with the blue of the chosen mode.
 /// Each mode remembers its own target, and the mode and both targets are saved in the user settings.
 class NormalizationTargetControl final : public juce::Component
 {

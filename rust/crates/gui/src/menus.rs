@@ -257,6 +257,7 @@ pub struct MenuState {
     /// Names of the saved chain presets, for the Chain Presets submenu.
     pub presets: Vec<String>,
     /// Name of the preset the chain matches, which the submenu checks.
+    /// It is `None` once the chain was modified since the preset was loaded or saved.
     pub current_preset: Option<String>,
     /// The results table columns the user can show or hide, for the Columns submenu.
     pub columns: Vec<ColumnChoice>,

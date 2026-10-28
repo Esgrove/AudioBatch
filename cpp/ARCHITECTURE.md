@@ -98,7 +98,7 @@ Solid lines own, and dashed lines only refer to the other object.
   It loads the selected file into `AudioPreviewPlayer` and asks `SeratoPreviewLoader` for its Serato tags.
 - `PreviewWorkspace` holds the waveform `ThumbnailComponent`, the metric cards of `AudioInfoPanel`,
   and the playback, gain, normalization, plugin, and settings controls,
-  laid out as an expanded section or a compact row.
+  laid out as an expanded section, a wide section whose controls and metrics share half of the width, or a compact row.
 - `LiveChain` holds the plugin slots of the chain, its persistence and presets, and the editor and manager windows.
 
 `AudioBatchComponent` is split into topic files that share `AudioBatchComponentConstants.h`:

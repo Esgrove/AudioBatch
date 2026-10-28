@@ -295,6 +295,7 @@ void LiveChain::changeListenerCallback(juce::ChangeBroadcaster* source)
 }
 
 /// Captures closed editor state without destroying the live processors, and defers plugin latency notifications.
+/// Also marks the preset modified once a plugin reported a change to its settings.
 /// A window hidden by its close button counts as closed, because the dialog hides itself instead of deleting itself.
 /// The preview's display-synchronized VBlank callback drives this metadata and window housekeeping.
 /// Audio parameter changes use the shared processor directly and never wait for this update.
@@ -323,8 +324,14 @@ void LiveChain::updatePreviewStatus()
         }
     }
 
+    // A modified preset is marked once, not on every change of a parameter that is being dragged.
+    const bool settingsChangedNow = pendingSettingsChange.exchange(false) && !settingsChanged;
+    settingsChanged = settingsChanged || settingsChangedNow;
+
     if (stateCaptured) {
         persistChain();
+        sendChangeMessage();
+    } else if (settingsChangedNow) {
         sendChangeMessage();
     }
 
@@ -463,10 +470,11 @@ void LiveChain::setSlotEnabled(const PluginSlotId slotId, const bool enabled)
     notifyChainChanged();
 }
 
-/// Removes all slots from the chain, closing any open editor windows.
+/// Removes all slots from the chain, closing any open editor windows, and forgets the current preset.
 /// The processors are destroyed after the live preview has dropped them, without holding the rendering lock.
 void LiveChain::clearChain()
 {
+    presetName.clear();
     if (chain.empty()) {
         return;
     }

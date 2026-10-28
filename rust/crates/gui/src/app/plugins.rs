@@ -211,7 +211,8 @@ impl AppView {
         let summary = self.chain_summary();
         let groups = group_by_vendor(&self.plugins.known.plugins);
         let presets = self.plugins.preset_names();
-        let current_preset = self.plugins.chain.preset_name().map(str::to_owned);
+        let chain = &self.plugins.chain;
+        let current_preset = chain.preset_name().filter(|_| !chain.is_modified()).map(str::to_owned);
         if self.menu_state.chain_summary != summary
             || self.menu_state.plugin_groups != groups
             || self.menu_state.presets != presets
@@ -230,6 +231,7 @@ impl AppView {
 
     /// Prepares the live instances again after a change of the output rate or a restart request,
     /// keeps the preview in step, forgets closed windows, saves the settings of closed editors,
+    /// marks the preset modified once a plugin reports a change to its settings,
     /// and shows the progress of a scan.
     fn plugin_tick(&mut self, cx: &mut Context<Self>) {
         if self.chain_window.as_ref().is_some_and(PluginWindow::is_closed) {
@@ -242,8 +244,12 @@ impl AppView {
             return;
         };
         let prepared = self.sync_plugin_preview(&ui, cx);
+        let was_modified = self.plugins.chain.is_modified();
+        let newly_modified = self.plugins.chain.take_settings_changes() && !was_modified;
         if self.plugins.chain.reap_closed_editors(&ui) {
             self.save_chain_settings(cx);
+        } else if newly_modified {
+            self.refresh_plugin_views(cx);
         } else if prepared {
             self.sync_chain_window(cx);
         }
@@ -432,6 +438,7 @@ impl AppView {
             plugin_groups: group_by_vendor(&self.plugins.known.plugins),
             presets: self.plugins.preset_names(),
             current_preset: chain.preset_name().map(str::to_owned),
+            modified: chain.is_modified(),
         }
     }
 

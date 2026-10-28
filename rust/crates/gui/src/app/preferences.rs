@@ -101,7 +101,8 @@ impl AppView {
         self.apply_settings(settings, cx);
     }
 
-    /// Turns playing the preview through the plugin chain on or off, from the Options menu.
+    /// Turns playing the preview through the plugin chain on or off,
+    /// from the Options menu or the Preview chain option of the wide controls.
     pub(super) fn toggle_plugin_preview(&mut self, cx: &mut Context<Self>) {
         let mut settings = self.settings.clone();
         settings.preview_plugin_chain = !settings.preview_plugin_chain;

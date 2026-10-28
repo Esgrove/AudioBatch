@@ -1,6 +1,6 @@
 /// Implementation of PreviewWorkspace:
 /// the look of the preview controls, the chevron images of the section toggle,
-/// and the expanded and compact layouts that reuse the same controls.
+/// and the expanded, wide, and compact layouts that reuse the same controls.
 
 #include "gui/components/PreviewWorkspace.h"
 
@@ -28,9 +28,7 @@ PreviewWorkspace::PreviewWorkspace(AudioPreviewPlayer& previewPlayer, juce::Appl
 
     addAndMakeVisible(thumbnail);
 
-    startStopButton.setEnabled(false);
-    startStopButton.setColour(juce::TextButton::buttonColourId, CustomLookAndFeel::greyMedium());
-    startStopButton.setColour(juce::TextButton::buttonOnColourId, CustomLookAndFeel::green());
+    setPlaybackState(false, false);
     startStopButton.setTooltip("Start or stop preview playback for the selected file.");
     addAndMakeVisible(startStopButton);
 
@@ -51,7 +49,7 @@ bool PreviewWorkspace::isCompact() const noexcept
 }
 
 /// Switches between the expanded section and the compact row, hiding the secondary controls in the compact row.
-/// The section toggle sits in the Zoom row of the controls while expanded, and leads the compact row.
+/// The section toggle sits in the top left corner of the controls while expanded, and leads the compact row.
 void PreviewWorkspace::setCompact(const bool shouldBeCompact)
 {
     if (shouldBeCompact == isCompact()) {
@@ -67,14 +65,29 @@ void PreviewWorkspace::setCompact(const bool shouldBeCompact)
     resized();
 }
 
+/// Shows the playback state on the play button:
+/// a red "Stop" while playing, a green "Play" while stopped, and a grey "Play" while no file is loaded.
+void PreviewWorkspace::setPlaybackState(const bool enabled, const bool playing)
+{
+    const bool showStop = enabled && playing;
+    startStopButton.setEnabled(enabled);
+    startStopButton.setButtonText(showStop ? "Stop" : "Play");
+    auto colour = CustomLookAndFeel::greyMedium();
+    if (enabled) {
+        colour = playing ? CustomLookAndFeel::red() : CustomLookAndFeel::green();
+    }
+    startStopButton.setColour(juce::TextButton::buttonColourId, colour);
+}
+
 /// Lays out the metrics, the waveform, and the controls in columns,
 /// or in one row with the toggle, the playback buttons, the metrics, and the waveform when compact.
+/// A wide workspace gives the controls and the metrics their wide layouts, which share half the width.
 /// The controls and the pinned playback row share the same margins, so the column is centred,
 /// and the scroll bar takes width only while the controls overflow the column.
 void PreviewWorkspace::resized()
 {
     const auto workspace = getLocalBounds().reduced(layout::compactPreview::padding);
-    const auto columns = layout::previewColumns(workspace);
+    const auto columns = layout::previewColumns(workspace, !isCompact());
     if (isCompact()) {
         layoutCompact(
             workspace, columns.controls.getWidth() - layout::previewToggle::size - layout::compactPreview::spacing
@@ -82,6 +95,7 @@ void PreviewWorkspace::resized()
         return;
     }
 
+    audioInfo.setWide(columns.wide);
     audioInfo.setBounds(columns.information);
     thumbnail.setBounds(columns.waveform);
     auto controls
@@ -89,15 +103,28 @@ void PreviewWorkspace::resized()
     layoutPlaybackButtons(controls.removeFromBottom(layout::processButtonHeight));
     controls.removeFromBottom(layout::controlsSectionSpacing);
     controlsViewport.setBounds(controls);
-    const bool overflows = layout::controlsContentHeight > controls.getHeight();
+    const auto contentHeight = columns.wide ? layout::wideControlsContentHeight : layout::controlsContentHeight;
+    const bool overflows = contentHeight > controls.getHeight();
     controlsContent.setSize(
         juce::jmax(0, controls.getWidth() - (overflows ? layout::scrollBarThickness : 0)),
-        juce::jmax(controls.getHeight(), layout::controlsContentHeight)
+        juce::jmax(controls.getHeight(), contentHeight)
     );
-    auto content = controlsContent.getLocalBounds();
+    previewChainToggle.setVisible(columns.wide);
+    if (columns.wide) {
+        layoutWideControls(controlsContent.getLocalBounds());
+    } else {
+        layoutNarrowControls(controlsContent.getLocalBounds());
+    }
+}
+
+/// Lays out the zoom and gain sliders across the given width, each below its caption,
+/// with the section toggle in the top left corner, before the Zoom caption.
+/// Returns the area below them.
+juce::Rectangle<int> PreviewWorkspace::layoutSliders(juce::Rectangle<int> content)
+{
     auto zoomRow = content.removeFromTop(layout::sliderRowHeight);
     previewSectionButton.setBounds(
-        zoomRow.removeFromRight(layout::previewToggle::size)
+        zoomRow.removeFromLeft(layout::previewToggle::size)
             .withSizeKeepingCentre(layout::previewToggle::size, layout::previewToggle::size)
     );
     zoomLabel.setBounds(zoomRow);
@@ -106,6 +133,13 @@ void PreviewWorkspace::resized()
     gainLabel.setBounds(content.removeFromTop(layout::sliderRowHeight));
     gainSlider.setBounds(content.removeFromTop(layout::sliderRowHeight));
     content.removeFromTop(layout::controlsSectionSpacing);
+    return content;
+}
+
+/// Lays out the controls in one column below the sliders.
+void PreviewWorkspace::layoutNarrowControls(juce::Rectangle<int> content)
+{
+    content = layoutSliders(content);
     auto normalizeRow = content.removeFromTop(layout::normalizeToggleHeight);
     normalizeBeforePluginToggle.setBounds(
         normalizeRow.removeFromLeft((normalizeRow.getWidth() - layout::sectionSpacing) / 2)
@@ -118,6 +152,33 @@ void PreviewWorkspace::resized()
     pluginButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
     content.removeFromTop(layout::controlsSectionSpacing);
     settingsButton.setBounds(content.removeFromTop(layout::controlButtonHeight));
+}
+
+/// Lays out the sliders across the full width, and below them two columns of three rows as tall as a button.
+/// The left column has the toggle that plays the preview through the plugin chain,
+/// in line with the normalization toggles of the right column, and the plugin chain and settings buttons.
+/// The right column has the normalization toggles and the normalization target over two rows.
+void PreviewWorkspace::layoutWideControls(juce::Rectangle<int> content)
+{
+    content = layoutSliders(content);
+    auto left = content.removeFromLeft((content.getWidth() - layout::widePreview::columnSpacing) / 2);
+    content.removeFromLeft(layout::widePreview::columnSpacing);
+    auto right = content;
+
+    previewChainToggle.setBounds(left.removeFromTop(layout::controlButtonHeight));
+    left.removeFromTop(layout::controlsSectionSpacing);
+    pluginButton.setBounds(left.removeFromTop(layout::controlButtonHeight));
+    left.removeFromTop(layout::controlsSectionSpacing);
+    settingsButton.setBounds(left.removeFromTop(layout::controlButtonHeight));
+
+    auto normalizeRow = right.removeFromTop(layout::controlButtonHeight);
+    normalizeBeforePluginToggle.setBounds(
+        normalizeRow.removeFromLeft((normalizeRow.getWidth() - layout::sectionSpacing) / 2)
+    );
+    normalizeRow.removeFromLeft(layout::sectionSpacing);
+    forceOverwriteToggle.setBounds(normalizeRow);
+    right.removeFromTop(layout::controlsSectionSpacing);
+    normalizationTargetControl.setBounds(right.removeFromTop(layout::normalizationTargetHeight));
 }
 
 /// Draws the toggle as a chevron that points down while the section is expanded and up while it is collapsed.
@@ -152,7 +213,8 @@ void PreviewWorkspace::configurePreviewSectionButton()
 }
 
 /// Sets up the scrolling controls column:
-/// the zoom and gain sliders, the processing toggles, and the plugin chain and settings buttons.
+/// the zoom and gain sliders, the processing toggles, the preview chain toggle of the wide layout,
+/// and the plugin chain and settings buttons.
 void PreviewWorkspace::configureSecondaryControls()
 {
     zoomSlider.setRange(zoom_range::minimumPercent, zoom_range::maximumPercent, 1);
@@ -201,6 +263,9 @@ void PreviewWorkspace::configureSecondaryControls()
         "The replaced file is moved to the system trash."
     );
     controlsContent.addAndMakeVisible(forceOverwriteToggle);
+
+    previewChainToggle.setTooltip("When enabled, the preview plays through the plugin chain.");
+    controlsContent.addChildComponent(previewChainToggle);
 
     controlsContent.addAndMakeVisible(normalizationTargetControl);
 

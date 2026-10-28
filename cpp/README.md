@@ -33,6 +33,11 @@ View and play tracks with a zoomable waveform.
 Playback status and the waveform cursor follow the current display's refresh rate, including high-refresh displays.
 The resizable preview workspace has separate columns for controls, selected-file information, and the waveform.
 Sample peak, true peak, integrated loudness, and maximum short-term loudness appear in dedicated metric cards.
+On a wide window the controls and the information share half of the width, and the waveform gets the rest.
+The controls below the sliders then sit in two columns with a Preview chain option,
+and the metric cards fit in one row above the short details, two to a line,
+while long tags such as the album and the comment keep the full width.
+The Play button turns into Stop while the file plays.
 
 An optional orange-red short-term loudness line overlays the waveform, with a compact numeric axis on the left.
 It measures the trailing three seconds and follows waveform zoom and scrolling.
@@ -50,9 +55,10 @@ The Up and Down arrow keys navigate the song list even while the waveform has ke
 Number keys `1` to `8` jump to the corresponding Serato hot cue and start playback from either the song list
 or waveform, without clicking or moving keyboard focus first.
 
-Use the small outlined arrow at the right end of the Zoom row, or the collapse/expand command in the Options menu.
+Use the small outlined arrow in the top left corner of the controls,
+or the collapse/expand command in the Options menu.
 The shortcut is `Ctrl+Shift+Space` on Windows and `Cmd+Shift+Space` on macOS.
-The compact row keeps Play/Stop, Process, all four metrics, and a smaller waveform visible.
+The compact row keeps Play, Process, all four metrics, and a smaller waveform visible.
 Other controls are hidden but retain their settings.
 
 ### Live Plugin Preview
@@ -148,6 +154,9 @@ and loads or deletes the saved presets.
 The Chain Presets submenu of the plugin menu and the Presets submenu of the chain menu list them too,
 and Show Presets Folder opens the `Chain Presets` folder next to the settings file,
 which holds one XML file per preset.
+Changing the chain or a plugin's settings after loading a preset marks it modified in the preset list,
+and Update saves the changes over it.
+Clear Chain removes every plugin from the chain.
 
 Processing uses offline rendering, compensates plugin latency and preserves reverb and delay tails.
 Output is 16-bit PCM AIFF. Samples beyond full scale saturate and are reported, without gain reduction.

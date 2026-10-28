@@ -4,6 +4,7 @@
 
 #include "gui/components/NormalizationTargetControl.h"
 
+#include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
 #include "utils/StringFormat.h"
 
@@ -19,8 +20,9 @@ constexpr double peakStepDecibels {0.1};
 constexpr double loudnessStepDecibels {0.5};
 /// Radio group of the Peak and Loudness buttons, which must be non-zero.
 constexpr int modeRadioGroupId {1};
-/// Share of the slider row the Normalize button takes.
-constexpr float normalizeButtonProportion {0.4f};
+/// Opacity of the grey filled part of the target slider.
+/// The fill is neutral, so it does not compete with the blue of the chosen mode right above it.
+constexpr float targetFillAlpha {0.7f};
 constexpr auto modeSettingKey {"normalizeMode"};
 constexpr auto targetPeakSettingKey {"normalizeTargetPeakDbfs"};
 constexpr auto targetLufsSettingKey {"normalizeTargetLufs"};
@@ -51,6 +53,9 @@ NormalizationTargetControl::NormalizationTargetControl(juce::ApplicationProperti
     addAndMakeVisible(normalizeButton);
 
     targetSlider.setSliderStyle(juce::Slider::LinearBar);
+    targetSlider.setColour(
+        juce::Slider::trackColourId, CustomLookAndFeel::greyMiddle().withAlpha(normalize_target::targetFillAlpha)
+    );
     targetSlider.setNumDecimalPlacesToDisplay(1);
     targetSlider.setTooltip("Target level for normalization.");
     targetSlider.onValueChange = [this] {
@@ -109,7 +114,8 @@ juce::String NormalizationTargetControl::describeTarget() const
 }
 
 /// Lays out the mode buttons in two equal halves of the top row,
-/// and the target slider with the Normalize button on its right in the bottom row.
+/// and the target slider and the Normalize button in two equal halves of the bottom row,
+/// with the gap between them centred under the seam of the mode buttons.
 void NormalizationTargetControl::resized()
 {
     auto bounds = getLocalBounds();
@@ -118,11 +124,9 @@ void NormalizationTargetControl::resized()
     loudnessButton.setBounds(modeRow);
     bounds.removeFromTop(layout::normalizeTargetSpacing);
     auto sliderRow = bounds.removeFromTop(layout::controlButtonHeight);
-    normalizeButton.setBounds(sliderRow.removeFromRight(
-        juce::roundToInt(static_cast<float>(sliderRow.getWidth()) * normalize_target::normalizeButtonProportion)
-    ));
-    sliderRow.removeFromRight(layout::sectionSpacing);
-    targetSlider.setBounds(sliderRow);
+    targetSlider.setBounds(sliderRow.removeFromLeft((sliderRow.getWidth() - layout::sectionSpacing) / 2));
+    sliderRow.removeFromLeft(layout::sectionSpacing);
+    normalizeButton.setBounds(sliderRow);
 }
 
 void NormalizationTargetControl::setNormalizeEnabled(const bool enabled)

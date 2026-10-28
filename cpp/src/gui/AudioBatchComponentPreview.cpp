@@ -5,7 +5,6 @@
 #include "gui/AudioBatchComponent.h"
 #include "gui/AudioBatchComponentConstants.h"
 #include "gui/components/AudioInfoPanel.h"
-#include "gui/components/CustomLookAndFeel.h"
 #include "utils/Log.h"
 
 #include <variant>
@@ -130,6 +129,9 @@ void AudioBatchComponent::setPreviewPreferences(const AudioPreviewPreferences& p
 void AudioBatchComponent::synchronizePreviewPreferences()
 {
     audioSettingsComponent.setPreferences(previewPreferences);
+    previewWorkspace.previewChainToggle.setToggleState(
+        previewPreferences.pluginChainEnabled, juce::dontSendNotification
+    );
     const auto saved = saveAudioPreviewPreferences(*pluginAppProperties.getUserSettings(), previewPreferences);
     juce::ignoreUnused(saved);
     if (onViewOptionsChanged) {
@@ -182,8 +184,7 @@ void AudioBatchComponent::showAudioFile(const juce::File& file)
     }
 
     updatePreviewInputGain(true);
-    previewWorkspace.startStopButton.setEnabled(true);
-    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, CustomLookAndFeel::green());
+    previewWorkspace.setPlaybackState(true, previewPlayer.isPlaying());
     previewWorkspace.zoomSlider.setValue(100.0, juce::dontSendNotification);
 
     const auto waveformData = file.existsAsFile() ? analysisCache.getWaveformData(file) : std::nullopt;
@@ -255,15 +256,14 @@ void AudioBatchComponent::handleThumbnailFullyLoaded()
     preview.setWaveformLoadedFromCache(analysisCache.storeWaveformData(loaded->file, waveformData));
 }
 
-/// Recolours the play button to match whether the transport is playing.
+/// Relabels and recolours the play button to match whether the transport is playing.
 void AudioBatchComponent::updatePlaybackButtonForTransportState()
 {
     if (!previewWorkspace.startStopButton.isEnabled()) {
         return;
     }
 
-    const auto colour = previewPlayer.isPlaying() ? CustomLookAndFeel::red() : CustomLookAndFeel::green();
-    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, colour);
+    previewWorkspace.setPlaybackState(true, previewPlayer.isPlaying());
 }
 
 /// Reacts to transport and output device changes, and to files dropped onto the waveform preview.
@@ -318,8 +318,7 @@ void AudioBatchComponent::clearPreviewDisplay()
     previewWorkspace.thumbnail.setSeratoMarkers({});
     previewWorkspace.audioInfo.clear();
     previewWorkspace.thumbnail.setURL(juce::URL());
-    previewWorkspace.startStopButton.setEnabled(false);
-    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, CustomLookAndFeel::greyMedium());
+    previewWorkspace.setPlaybackState(false, false);
 }
 
 /// Maps pinch-zoom gestures onto the waveform zoom slider.

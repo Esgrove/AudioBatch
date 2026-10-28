@@ -22,6 +22,8 @@ struct PreviewColumns {
     juce::Rectangle<int> information;
     /// The waveform, which takes the rest of the width.
     juce::Rectangle<int> waveform;
+    /// True when the controls and the information use their wide layouts, which share half the width.
+    bool wide {false};
 };
 
 /// Logical-pixel dimensions and proportions used by the application shell and reusable components.
@@ -71,6 +73,33 @@ constexpr int controlsContentHeight {
     sliderRowHeight * 4 + normalizeToggleHeight + normalizeTargetSpacing + normalizationTargetHeight
         + controlButtonHeight * 2 + controlsSectionSpacing * 4,
 };
+
+/// The wide preview, in which the controls and the information share half the workspace width
+/// and the waveform gets the other half.
+namespace widePreview
+{
+/// Narrowest half of the workspace width that turns on the wide layouts.
+constexpr int minimumHalfWidth {790};
+/// Share of the shared half given to the controls, the rest going to the information.
+constexpr double controlsProportion {0.48};
+/// Widest controls and information, so on very wide windows the waveform grows instead.
+constexpr int controlsMaximumWidth {500};
+constexpr int informationMaximumWidth {540};
+/// Space between the two columns of the controls below the sliders.
+constexpr int columnSpacing {10};
+/// Each column below the sliders has three rows as tall as a button,
+/// the normalization target taking two of them on the right.
+constexpr int rowCount {3};
+}  // namespace widePreview
+
+constexpr int wideControlsContentHeight {
+    sliderRowHeight * 4 + controlsSectionSpacing * 2 + controlButtonHeight * widePreview::rowCount
+        + controlsSectionSpacing * (widePreview::rowCount - 1),
+};
+static_assert(
+    normalizationTargetHeight == controlButtonHeight * 2 + controlsSectionSpacing,
+    "The normalization target must line up with two rows of the left column in the wide controls"
+);
 constexpr int dialogContentWidth {500};
 constexpr int dialogContentHeight {250};
 constexpr int dialogMaximumWindowSize {4096};
@@ -164,12 +193,17 @@ constexpr int rowPadding {4};
 constexpr int addButtonSize {28};
 constexpr int margin {8};
 constexpr int rowIconButtonWidth {24};
+/// The arrow and remove buttons are square, as tall as the row inside its padding.
+constexpr int rowSquareButtonSize {rowHeight - 2 * rowPadding};
 constexpr int rowEditButtonWidth {48};
+/// The Clear Chain button, right-aligned on the line of the add button.
+constexpr int clearChainButtonWidth {96};
 constexpr float rowCornerRadius {4.0f};
-/// The preset row above the slot rows, with its label, preset list, and save and delete buttons.
+/// The preset row above the slot rows, with its label, preset list, and update, save, and delete buttons.
 constexpr int presetRowHeight {28};
 constexpr int presetLabelWidth {52};
 constexpr int presetButtonWidth {84};
+constexpr int updatePresetButtonWidth {64};
 /// Initial size of the generic parameter editor shown for plugins without a custom editor.
 constexpr int genericEditorWidth {450};
 constexpr int genericEditorHeight {600};
@@ -396,22 +430,32 @@ consteval int minimumColumnWidth(const AudioFileTableColumn column)
 }  // namespace table
 
 /// Allocates stable sidebar widths and gives the waveform the remaining horizontal space.
+/// When wide layouts are allowed and half the width is at least widePreview::minimumHalfWidth,
+/// the controls and the information share that half, each up to its maximum, so the waveform gets the other half.
 /// Widths are bounded even during transient zero-sized construction layouts.
-inline PreviewColumns previewColumns(juce::Rectangle<int> bounds)
+inline PreviewColumns previewColumns(juce::Rectangle<int> bounds, const bool allowWide = true)
 {
-    const auto controlsWidth = juce::jlimit(
+    const auto half = bounds.getWidth() / 2;
+    const bool wide = allowWide && half >= widePreview::minimumHalfWidth;
+    auto controlsWidth = juce::jlimit(
         controlsMinimumWidth, controlsMaximumWidth, static_cast<int>(bounds.getWidth() * controlsWidthProportion)
     );
-    const auto informationWidth = juce::jlimit(
+    auto informationWidth = juce::jlimit(
         informationMinimumWidth,
         informationMaximumWidth,
         static_cast<int>(bounds.getWidth() * informationWidthProportion)
     );
+    if (wide) {
+        const auto shared = half - sectionSpacing;
+        controlsWidth
+            = juce::jmin(widePreview::controlsMaximumWidth, static_cast<int>(shared * widePreview::controlsProportion));
+        informationWidth = juce::jmin(widePreview::informationMaximumWidth, shared - controlsWidth);
+    }
     const auto controls = bounds.removeFromLeft(juce::jmin(bounds.getWidth(), controlsWidth));
     bounds.removeFromLeft(juce::jmin(bounds.getWidth(), sectionSpacing));
     const auto information = bounds.removeFromLeft(juce::jmin(bounds.getWidth(), informationWidth));
     bounds.removeFromLeft(juce::jmin(bounds.getWidth(), sectionSpacing));
-    return {.controls = controls, .information = information, .waveform = bounds};
+    return {.controls = controls, .information = information, .waveform = bounds, .wide = wide};
 }
 
 /// Centres the initial window within the display's usable area, reducing it on smaller screens.
