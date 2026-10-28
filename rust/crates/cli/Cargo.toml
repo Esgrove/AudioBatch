@@ -20,7 +20,6 @@ audiobatch-plugins.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 colored.workspace = true
-comfy-table.workspace = true
 crossbeam-channel.workspace = true
 csv.workspace = true
 ctrlc.workspace = true
