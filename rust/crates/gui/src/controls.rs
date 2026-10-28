@@ -7,17 +7,18 @@
 //! Play/Stop is green while stopped and red while playing,
 //! and Process turns into Cancel during an analysis, normalization, or processing run.
 //! The Normalize option normalizes files before the plugins, and the Overwrite option applies to both.
-//! The target has the Peak and Loudness modes, the target input of the chosen mode with buttons that step it,
+//! The target has the Peak and Loudness modes, with the chosen one in the primary color,
+//! the target slider of the chosen mode, a bar showing the target inside it,
 //! and the button that normalizes the selected files.
 //! Everything above the playback row scrolls when the preview is short, so the buttons always stay visible.
-//! Double-clicking the zoom or gain slider resets it to its default value.
+//! Double-clicking a slider resets it to its default value.
 
 use std::rc::Rc;
 
 use gpui_kit::base::Selectable as _;
+use gpui_kit::base::slider::{Slider as BaseSlider, SliderIndicator, SliderTrack};
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
-use gpui_kit::component::input::{InputState, NumberInput};
 use gpui_kit::component::slider::{Slider, SliderState};
 use gpui_kit::component::{Disableable as _, IconName, Sizable as _};
 use gpui_kit::{
@@ -26,7 +27,6 @@ use gpui_kit::{
 };
 
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
-use crate::normalization::target_unit;
 use crate::settings::NormalizeMode;
 use crate::theme::{MONO_FONT, color, palette, tooltip, white};
 
@@ -95,8 +95,11 @@ const GAIN_TOOLTIP: &str = if cfg!(target_os = "macos") {
 const MODE_TOOLTIP: &str =
     "Normalize to a sample peak level, or to an integrated loudness limited to a -0.3 dBTP true peak.";
 
-/// Tooltip of the normalization target input.
-const TARGET_TOOLTIP: &str = "Target level for normalization.";
+/// Tooltip of the normalization target slider.
+const TARGET_TOOLTIP: &str = "Target level for normalization. Drag to adjust, double-click to reset.";
+
+/// Opacity of the filled part of the target slider.
+const TARGET_FILL_ALPHA: f32 = 0.7;
 
 /// Tooltip of the overwrite option.
 const OVERWRITE_TOOLTIP: &str = "When enabled, normalizing or processing replaces an existing output file \
@@ -131,6 +134,8 @@ pub enum SliderControl {
     Zoom,
     /// The input gain.
     Gain,
+    /// The normalization target of the current mode.
+    NormalizeTarget,
 }
 
 /// Something the user did in the controls column or the compact row.
@@ -177,8 +182,10 @@ pub struct PlaybackControls {
 pub struct NormalizeControls<'a> {
     /// The chosen mode.
     pub mode: NormalizeMode,
-    /// Target input of the chosen mode.
-    pub target: &'a Entity<InputState>,
+    /// Target slider of the chosen mode.
+    pub target: &'a Entity<SliderState>,
+    /// Target text inside the slider, for example "-14.0 LUFS".
+    pub target_text: String,
     /// True when an existing output is replaced.
     pub overwrite: bool,
     /// True when files are normalized before the plugins.
@@ -248,7 +255,7 @@ pub fn render_controls(state: &ControlsState<'_>, on_event: &EventCallback, cx: 
             )),
         )
         .child(option_row(&state.normalize, on_event))
-        .child(target_group(&state.normalize, on_event))
+        .child(target_group(&state.normalize, on_event, cx))
         .child(column_button(
             "plugin-chain",
             "Plugin Chain",
@@ -396,28 +403,25 @@ fn option_row(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
         .child(div().flex_1().min_w_0().child(overwrite))
 }
 
-/// Renders the normalization target: the mode buttons, the caption with the unit of the target,
-/// and the target input with the Normalize button on its right.
-fn target_group(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
+/// Renders the normalization target: the mode buttons, with the chosen mode in the primary color,
+/// and the target slider with the Normalize button on its right.
+fn target_group(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &App) -> Div {
+    let mode_button = |id: &'static str, label: &'static str, mode: NormalizeMode| {
+        let selected = state.mode == mode;
+        let button = Button::new(id)
+            .label(label)
+            .tooltip(MODE_TOOLTIP)
+            .flex_1()
+            .selected(selected);
+        if selected { button.primary() } else { button }
+    };
     let modes = {
         let on_event = Rc::clone(on_event);
         ButtonGroup::new("normalize-mode")
             .small()
             .w_full()
-            .child(
-                Button::new("normalize-peak")
-                    .label("Peak")
-                    .tooltip(MODE_TOOLTIP)
-                    .flex_1()
-                    .selected(state.mode == NormalizeMode::Peak),
-            )
-            .child(
-                Button::new("normalize-loudness")
-                    .label("Loudness")
-                    .tooltip(MODE_TOOLTIP)
-                    .flex_1()
-                    .selected(state.mode == NormalizeMode::Loudness),
-            )
+            .child(mode_button("normalize-peak", "Peak", NormalizeMode::Peak))
+            .child(mode_button("normalize-loudness", "Loudness", NormalizeMode::Loudness))
             .on_click(move |clicked: &Vec<usize>, window, cx| {
                 let mode = if clicked.contains(&1) {
                     NormalizeMode::Loudness
@@ -439,30 +443,66 @@ fn target_group(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div 
             .on_click(move |_, window, cx| on_event(&ControlsEvent::NormalizeSelected, window, cx))
     };
     div().flex().flex_col().gap(px(ITEM_SPACING)).child(modes).child(
-        slider_group(
-            "Target",
-            target_unit(state.mode).to_string(),
-            TARGET_TOOLTIP,
-            true,
-            None,
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(ITEM_SPACING))
+            .child(target_slider(state, on_event, cx))
+            .child(normalize),
+    )
+}
+
+/// Renders the target slider as a bar that fills up to the target and shows the target text inside it,
+/// so the value needs no caption row of its own.
+/// Clicking or dragging along the bar sets the target, and double-clicking resets it.
+fn target_slider(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &App) -> Stateful<Div> {
+    let filled = state.target.read(cx).percentage().end;
+    let bar = SliderIndicator::new(state.target)
+        .relative()
+        .size_full()
+        .overflow_hidden()
+        .rounded(px(CORNER_RADIUS))
+        .bg(color(palette::GREY_MEDIUM_DARK))
+        .border_1()
+        .border_color(color(palette::GREY_MEDIUM))
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .left_0()
+                .w(relative(filled))
+                .bg(color(palette::BLUE).opacity(TARGET_FILL_ALPHA)),
         )
         .child(
             div()
+                .absolute()
+                .size_full()
                 .flex()
-                .flex_row()
                 .items_center()
-                .gap(px(ITEM_SPACING))
-                .child(
-                    NumberInput::new(state.target)
-                        .small()
-                        .accessibility_label("Normalization target")
-                        .flex_1()
-                        .min_w_0()
-                        .h(px(BUTTON_HEIGHT)),
-                )
-                .child(normalize),
-        ),
-    )
+                .justify_center()
+                .font_family(MONO_FONT)
+                .text_size(px(CAPTION_FONT_SIZE))
+                .text_color(color(palette::GREY_SUPER_LIGHT))
+                .child(state.target_text.clone()),
+        );
+    div()
+        .id("normalize-target")
+        .flex_1()
+        .min_w_0()
+        .h(px(BUTTON_HEIGHT))
+        .tooltip(tooltip(TARGET_TOOLTIP))
+        .capture_any_mouse_up(send_on_double_click(
+            on_event,
+            ControlsEvent::ResetSlider(SliderControl::NormalizeTarget),
+        ))
+        .child(
+            BaseSlider::new(state.target)
+                .accessibility_label("Normalization target")
+                .size_full()
+                .child(SliderTrack::new(state.target).size_full().cursor_pointer().child(bar)),
+        )
 }
 
 /// Returns a mouse up listener that sends an event on the second click of a double click.
@@ -481,7 +521,7 @@ fn send_on_double_click(
 }
 
 /// Renders a slider group: a caption with its value and an optional accessory on the right.
-/// The caller adds the slider or input below.
+/// The caller adds the slider below.
 /// A disabled group dims its value.
 fn slider_group(
     title: &'static str,

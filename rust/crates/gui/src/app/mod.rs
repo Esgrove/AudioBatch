@@ -31,7 +31,6 @@ use audiobatch_core::{AnalysisCoordinator, FileTags, NormalizeCoordinator};
 use audiobatch_playback::Player;
 use audiobatch_plugins::ProcessingCoordinator;
 use gpui_kit::base::ResizableState;
-use gpui_kit::component::input::InputState;
 use gpui_kit::component::slider::SliderState;
 use gpui_kit::component::table::TableState;
 use gpui_kit::{AppContext as _, Context, Entity, FocusHandle, Pixels, SharedString, Size, Subscription, Task, Window};
@@ -52,7 +51,7 @@ use gain::DEFAULT_GAIN_DB;
 use plugins::PluginWindow;
 use preferences::SettingsWindow;
 use selection::column_choices;
-use startup::{Startup, new_control_inputs, new_results_table, open_startup};
+use startup::{Startup, new_results_table, new_sliders, open_startup};
 
 /// Window title, followed by the analysis progress while a run is in progress.
 pub const APP_TITLE: &str = "AudioBatchRs";
@@ -93,10 +92,10 @@ pub struct AppView {
     waveform: Entity<WaveformView>,
     zoom_slider: Entity<SliderState>,
     gain_slider: Entity<SliderState>,
-    /// Target input of peak normalization in dBFS.
-    peak_target_input: Entity<InputState>,
-    /// Target input of loudness normalization in LUFS.
-    loudness_target_input: Entity<InputState>,
+    /// Target slider of peak normalization in dBFS.
+    peak_target_slider: Entity<SliderState>,
+    /// Target slider of loudness normalization in LUFS.
+    loudness_target_slider: Entity<SliderState>,
     coordinator: Option<Arc<AnalysisCoordinator>>,
     /// Normalizes files in the background, sharing the cache of the analysis coordinator.
     normalize_coordinator: Option<Arc<NormalizeCoordinator>>,
@@ -181,12 +180,12 @@ impl AppView {
         let settings = GuiSettings::load();
         let table = new_results_table(content_width, &settings, window, cx);
         let waveform = cx.new(|_| WaveformView::new());
-        let (inputs, input_subscriptions) = new_control_inputs(&settings, window, cx);
+        let (sliders, slider_subscriptions) = new_sliders(&settings, window, cx);
         let mut subscriptions = vec![
             cx.subscribe_in(&table, window, Self::on_table_event),
             cx.subscribe_in(&waveform, window, Self::on_waveform_event),
         ];
-        subscriptions.extend(input_subscriptions);
+        subscriptions.extend(slider_subscriptions);
         subscriptions.push(cx.on_app_quit(|view, cx| {
             view.flush_gain_store(cx);
             view.save_plugin_chain();
@@ -226,10 +225,10 @@ impl AppView {
             focus_handle,
             table,
             waveform,
-            zoom_slider: inputs.zoom,
-            gain_slider: inputs.gain,
-            peak_target_input: inputs.peak_target,
-            loudness_target_input: inputs.loudness_target,
+            zoom_slider: sliders.zoom,
+            gain_slider: sliders.gain,
+            peak_target_slider: sliders.peak_target,
+            loudness_target_slider: sliders.loudness_target,
             coordinator: coordinators.analysis,
             normalize_coordinator: coordinators.normalize,
             normalize_run: None,

@@ -39,6 +39,7 @@ use crate::menus::{
     TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, TogglePreviewSection, ToggleSeratoColours,
     TrashSelected, TrashSelectedNow,
 };
+use crate::normalization::target_value_text;
 use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, ResultRow, fill_status_column};
 use crate::theme::{TEXT_FONT, color, palette, tooltip};
 use crate::waveform::MINIMUM_ZOOM;
@@ -274,7 +275,8 @@ impl AppView {
             can_adjust_gain: self.can_adjust_gain(cx),
             normalize: NormalizeControls {
                 mode: self.settings.normalize_mode,
-                target: self.normalize_target_input(self.settings.normalize_mode),
+                target: self.normalize_target_slider(self.settings.normalize_mode),
+                target_text: target_value_text(&self.settings),
                 overwrite: self.overwrite_existing,
                 normalize_first: self.normalize_first,
                 can_normalize: self.can_normalize_selected(cx),
