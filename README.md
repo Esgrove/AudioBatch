@@ -155,9 +155,7 @@ The differences below are in the GUIs and in plugin hosting.
   Offline processing refuses a stereo file through a mono-only plugin in both versions.
 - **Custom gain in the preview.** Both previews apply a file's custom gain only in front of the plugin chain,
   and both draw the waveform with it.
-  With plugin preview off, both play the file unchanged.
-  With it on, the C++ version applies the gain even when the chain is empty or every plugin is bypassed,
-  while the Rust version plays the file unchanged until a plugin is enabled.
+  With plugin preview off, or with no enabled plugin in the chain, both play the file unchanged.
 
 ## Future work
 

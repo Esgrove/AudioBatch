@@ -350,7 +350,8 @@ flowchart LR
   prepares them in real-time mode at the device rate, and prefers a stereo layout with a mono fallback.
   The chain always runs in stereo.
   A mono file is copied into a stereo plugin, and its output is averaged back to mono, like the processed file.
-  The custom gain of the file is applied in front of the chain with a 5 ms ramp, and only while the chain is on.
+  The custom gain of the file is applied in front of the chain with a 5 ms ramp,
+  and only while the chain is on and has at least one enabled plugin.
 - **Latency pre-roll.** With compensation on, `PluginPreviewSource` runs the chain silently for the chain latency
   after every start and seek, so the audio lines up with the waveform position.
 - **Tail drain.** Rendering continues past the end of the file for the latency and the tails,

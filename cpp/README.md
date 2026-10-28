@@ -59,7 +59,7 @@ Other controls are hidden but retain their settings.
 
 Enable **Preview plugin chain** to listen through the enabled effects in chain order.
 Plugin editor adjustments affect the preview in real time, and closing an editor does not stop its effect.
-The current file's custom input gain is applied before the live chain, including when no plugins are enabled.
+The current file's custom input gain is applied before the live chain, and only while at least one plugin is enabled.
 Disabling plugin preview returns to unchanged dry playback.
 Preview never applies automatic normalization or writes audio files.
 The chain runs in stereo, and a plugin that only supports mono gets both channels folded into one,

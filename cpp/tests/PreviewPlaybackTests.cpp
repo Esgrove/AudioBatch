@@ -319,10 +319,11 @@ private:
         }
     }
 
-    /// Checks wet-only input gain, serial ordering, and direct mutable processor edits without a restart.
+    /// Checks that input gain applies only in front of enabled plugins, serial ordering,
+    /// and direct mutable processor edits without a restart.
     void testGainAndEdits()
     {
-        beginTest("Dry bypass ignores custom gain and live parameter edits affect the next rendered block");
+        beginTest("Dry bypass and an empty chain ignore custom gain, and live parameter edits affect the next block");
         juce::AudioBuffer<float> audio(1, 1024);
         juce::FloatVectorOperations::fill(audio.getWritePointer(0), 0.5f, audio.getNumSamples());
         juce::MemoryAudioSource input(audio, false);
@@ -361,7 +362,7 @@ private:
         source.setPosition(0.0);
         source.start();
         source.getNextAudioBlock({&output, 0, 128});
-        expectWithinAbsoluteError(output.getSample(0, 127), 1.0f, 0.00001f);
+        expectWithinAbsoluteError(output.getSample(0, 127), 0.5f, 0.00001f);
     }
 
     /// Drains the delayed final sample and echo, then clears effect history on a seek/restart.
@@ -427,9 +428,11 @@ private:
         juce::FloatVectorOperations::fill(audio.getWritePointer(0), 0.5f, 256);
         juce::FloatVectorOperations::fill(audio.getWritePointer(1), 0.5f, 256);
         juce::MemoryAudioSource input(audio, false);
+        PreviewTestPlugin plugin;
+        plugin.prepareToPlay(previewTestRate, 64);
         PluginPreviewSource source;
         source.setInput(&input, 256.0 / previewTestRate, 2);
-        source.setChain({}, plugin_processing::ChainPreparation(), true, true);
+        source.setChain({&plugin}, previewPreparation({&plugin}), true, true);
         source.prepareToPlay(64, previewTestRate);
         source.start();
         juce::AudioBuffer<float> output(2, 64);

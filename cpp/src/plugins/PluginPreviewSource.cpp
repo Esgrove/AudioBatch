@@ -52,6 +52,7 @@ void PluginPreviewSource::setInput(juce::AudioSource* source, const double durat
 }
 
 /// Publishes a prepared chain while rendering is stopped or locked out by the host.
+/// A chain without processors plays dry, so the custom gain only applies in front of at least one enabled plugin.
 void PluginPreviewSource::setChain(
     std::vector<juce::AudioPluginInstance*> processors,
     const plugin_processing::ChainPreparation& preparation,
@@ -60,7 +61,7 @@ void PluginPreviewSource::setChain(
 )
 {
     plugins = std::move(processors);
-    wet = enabled;
+    wet = enabled && !plugins.empty();
     compensation = compensate;
     latencySamples = wet ? preparation.latencySamples : 0;
     tailSamples = wet ? preparation.tailSamples : 0;
