@@ -6,8 +6,8 @@
 //! Each row has an enable checkbox, the slot label with its position, the latency,
 //! and buttons that open the editor, move the slot, and remove it.
 //! A slot whose plugin could not be loaded shows its error instead of the latency.
-//! Below the rows a choice adds a known effect at the end, and the footer shows the total latency
-//! and the rate the live instances run at.
+//! Below the rows the Add Plugin menu adds a known effect at the end, from one submenu per vendor,
+//! and the footer shows the total latency and the rate the live instances run at.
 //! The main view owns the chain: this view sends every change as a `ChainEvent`,
 //! and the main view applies it and shows the window a new snapshot.
 
@@ -15,14 +15,16 @@ use audiobatch_plugins::{PluginDescription, sanitize_preset_name};
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
-use gpui_kit::component::{Disableable as _, IndexPath, Sizable as _};
+use gpui_kit::component::{Disableable as _, IconName, Sizable as _};
 use gpui_kit::{
     AppContext as _, Context, Div, Entity, EventEmitter, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
     ParentElement as _, PromptLevel, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    Window, div, px,
+    WeakEntity, Window, div, px,
 };
 
+use super::labels::VendorGroup;
 use super::live_chain::SlotId;
 use super::{ROW_SPACING, SMALL_FONT_SIZE, WINDOW_FONT_SIZE, WINDOW_PADDING, hint, panel};
 use crate::menus::{ClosePluginWindow, PLUGIN_WINDOW_KEY_CONTEXT};
@@ -32,13 +34,16 @@ use crate::theme::{MONO_FONT, TEXT_FONT, color, palette, tooltip};
 pub const CHAIN_TITLE: &str = "Plugin Chain";
 
 /// Initial width of the window.
-pub const CHAIN_WIDTH: f32 = 640.0;
+pub const CHAIN_WIDTH: f32 = 720.0;
 
 /// Initial height of the window.
 pub const CHAIN_HEIGHT: f32 = 540.0;
 
-/// Width of the latency column.
-const LATENCY_WIDTH: f32 = 150.0;
+/// Width of the latency column, enough for "Latency: 1024 samples (21.33 ms)".
+const LATENCY_WIDTH: f32 = 230.0;
+
+/// Tooltip of the Add Plugin button.
+const ADD_PLUGIN_TOOLTIP: &str = "Add a known effect at the end of the chain.";
 
 /// Tooltip of the enable checkbox.
 const ENABLE_TOOLTIP: &str = "Bypass the plugin without losing its settings.";
@@ -98,8 +103,8 @@ pub struct ChainSnapshot {
     pub total_latency: String,
     /// Rate the live instances run at.
     pub sample_rate: String,
-    /// The effects that can be added, with their labels.
-    pub available: Vec<(String, PluginDescription)>,
+    /// The effects that can be added, grouped by vendor.
+    pub plugin_groups: Vec<VendorGroup>,
     /// Names of the saved presets, in the order they are listed.
     pub presets: Vec<String>,
     /// Name of the preset the chain matches, when it was loaded from or saved as one and has not changed since.
@@ -110,7 +115,6 @@ pub struct ChainSnapshot {
 pub struct ChainView {
     focus_handle: FocusHandle,
     snapshot: ChainSnapshot,
-    add_select: Entity<SelectState<Vec<SharedString>>>,
     preset_select: Entity<SelectState<Vec<SharedString>>>,
     preset_name: Entity<InputState>,
     _subscriptions: Vec<Subscription>,
@@ -119,11 +123,9 @@ pub struct ChainView {
 impl ChainView {
     /// Creates the window content showing a snapshot.
     pub fn new(snapshot: ChainSnapshot, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let add_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let preset_select = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let preset_name = cx.new(|cx| InputState::new(window, cx).placeholder("Preset name"));
         let subscriptions = vec![
-            cx.subscribe_in(&add_select, window, Self::on_add_selected),
             cx.subscribe_in(&preset_select, window, Self::on_preset_selected),
             cx.subscribe_in(&preset_name, window, Self::on_preset_name_input),
         ];
@@ -132,7 +134,6 @@ impl ChainView {
         let mut view = Self {
             focus_handle,
             snapshot: ChainSnapshot::default(),
-            add_select,
             preset_select,
             preset_name,
             _subscriptions: subscriptions,
@@ -143,17 +144,6 @@ impl ChainView {
 
     /// Shows a new snapshot.
     pub fn sync(&mut self, snapshot: ChainSnapshot, window: &mut Window, cx: &mut Context<Self>) {
-        if snapshot.available != self.snapshot.available {
-            let labels = snapshot
-                .available
-                .iter()
-                .map(|(label, _)| SharedString::from(label.clone()))
-                .collect();
-            self.add_select.update(cx, |state, cx| {
-                state.set_items(labels, window, cx);
-                state.set_selected_index(None, window, cx);
-            });
-        }
         if snapshot.presets != self.snapshot.presets {
             let names = snapshot.presets.iter().cloned().map(SharedString::from).collect();
             self.preset_select
@@ -314,27 +304,26 @@ impl ChainView {
         presets
     }
 
-    /// Adds the chosen effect and clears the choice, so the same effect can be added again.
-    fn on_add_selected(
-        &mut self,
-        select: &Entity<SelectState<Vec<SharedString>>>,
-        event: &SelectEvent<Vec<SharedString>>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let SelectEvent::Confirm(Some(label)) = event else {
-            return;
-        };
-        let plugin = self
-            .snapshot
-            .available
-            .iter()
-            .find(|(candidate, _)| candidate.as_str() == label.as_ref())
-            .map(|(_, plugin)| plugin.clone());
-        select.update(cx, |state, cx| state.set_selected_index(None::<IndexPath>, window, cx));
-        if let Some(plugin) = plugin {
-            cx.emit(ChainEvent::Add(plugin));
-        }
+    /// Renders the Add Plugin button, whose menu has a submenu of effects for each vendor.
+    /// Picking an effect adds it at the end of the chain.
+    fn render_add_plugin(&self, cx: &Context<Self>) -> impl IntoElement {
+        let groups = self.snapshot.plugin_groups.clone();
+        let view = cx.entity().downgrade();
+        Button::new("chain-add-plugin")
+            .label("Add Plugin")
+            .icon(IconName::ChevronDown)
+            .small()
+            .tooltip(ADD_PLUGIN_TOOLTIP)
+            .disabled(groups.is_empty())
+            .dropdown_menu(move |menu, window, cx| {
+                groups.iter().fold(menu.scrollable(true), |menu, group| {
+                    let plugins = group.plugins.clone();
+                    let view = view.clone();
+                    menu.submenu(group.vendor.clone(), window, cx, move |submenu, _, _| {
+                        vendor_submenu(submenu, &plugins, &view)
+                    })
+                })
+            })
     }
 
     /// Renders one slot row.
@@ -434,14 +423,9 @@ impl Render for ChainView {
             .flex()
             .flex_row()
             .items_center()
+            .justify_between()
             .gap(px(ROW_SPACING))
-            .child(div().flex_none().child("Add effect"))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(Select::new(&self.add_select).small().placeholder("Choose a plugin…")),
-            )
+            .child(self.render_add_plugin(cx))
             .child(
                 Button::new("chain-clear")
                     .label("Clear Chain")
@@ -451,7 +435,7 @@ impl Render for ChainView {
             );
         let available_hint = self
             .snapshot
-            .available
+            .plugin_groups
             .is_empty()
             .then(|| hint("No effects are known yet. Scan for plugins in the Plugin Manager."));
         let footer = div()
@@ -483,4 +467,15 @@ impl Render for ChainView {
             .children(available_hint)
             .child(footer)
     }
+}
+
+/// Fills the submenu of one vendor with its effects, each adding itself to the chain of the view when picked.
+fn vendor_submenu(submenu: PopupMenu, plugins: &[PluginDescription], view: &WeakEntity<ChainView>) -> PopupMenu {
+    plugins.iter().fold(submenu.scrollable(true), |submenu, plugin| {
+        let plugin = plugin.clone();
+        let view = view.clone();
+        submenu.item(PopupMenuItem::new(plugin.name.clone()).on_click(move |_, _, cx| {
+            let _ = view.update(cx, |_, cx| cx.emit(ChainEvent::Add(plugin.clone())));
+        }))
+    })
 }
