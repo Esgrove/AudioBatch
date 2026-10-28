@@ -625,10 +625,10 @@ impl PluginInstance {
         self.core.parts.handler.take_restart_flags()
     }
 
-    /// Returns and clears whether the plugin reported a change to its parameters or state.
-    #[cfg(test)]
+    /// Returns and clears whether the plugin reported a change to its parameters or state,
+    /// through a parameter edit, a dirty flag, or a restart request for changed parameter values.
     #[must_use]
-    pub(crate) fn take_dirty(&self) -> bool {
+    pub fn take_dirty(&self) -> bool {
         self.core.parts.handler.take_dirty()
     }
 

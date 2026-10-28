@@ -10,7 +10,8 @@
 //! A slot whose plugin cannot be loaded keeps its saved settings and shows its error,
 //! so a plugin that is missing for now does not lose its settings.
 //! The caller saves the chain after every structural change.
-//! Loading a preset replaces every slot, and the chain remembers the preset's name until its slots change.
+//! Loading a preset replaces every slot, and the chain remembers the preset's name until it is cleared.
+//! Changing a slot or a plugin's settings marks the chain modified, until it is saved as a preset again.
 //! The settings of the instances are captured when processing starts, an editor closes, and the app quits.
 //! Each slot can show its plugin's editor in a native window.
 //! The window only hides when the user closes it,
@@ -67,9 +68,11 @@ pub struct LiveChain {
     dispatcher: UiDispatcher,
     /// Rate the instances are prepared at, the preview's output rate.
     sample_rate: u32,
-    /// Name of the preset the chain was loaded from or saved as,
-    /// until a slot is added, removed, moved, enabled, or bypassed.
+    /// Name of the preset the chain was loaded from or saved as, until the chain is cleared or the preset deleted.
     preset_name: Option<String>,
+    /// True when the chain differs from the preset it was loaded from or saved as,
+    /// because a slot was added, removed, moved, enabled, or bypassed, or a plugin's settings changed.
+    modified: bool,
     /// True when the chain file exists but could not be read, such as one saved by a newer version.
     /// Saving leaves it alone while the chain is empty, and moves it aside before writing a new chain over it.
     unread_file: bool,
@@ -132,6 +135,8 @@ impl LiveSlot {
                 self.keep_saved_state = !accepted;
                 self.instance = Some(instance);
                 self.prepare(ui, sample_rate);
+                // Restoring the saved settings is not a change the user made.
+                self.take_settings_change();
             }
             Err(error) => self.error = Some(format!("{error:#}")),
         }
@@ -152,6 +157,11 @@ impl LiveSlot {
                 self.error = Some(format!("Could not be prepared: {error:#}"));
             }
         }
+    }
+
+    /// Returns and clears whether the plugin reported a change to its settings since this was last called.
+    fn take_settings_change(&self) -> bool {
+        self.instance.as_ref().is_some_and(PluginInstance::take_dirty)
     }
 
     /// Captures the instance's current settings into the saved slot.
@@ -179,6 +189,7 @@ impl LiveChain {
             dispatcher,
             sample_rate,
             preset_name: None,
+            modified: false,
             unread_file: false,
         }
     }
@@ -257,16 +268,41 @@ impl LiveChain {
         self.sample_rate
     }
 
-    /// Returns the name of the preset the chain matches, when it was loaded from or saved as one
-    /// and its slots have not changed since.
+    /// Returns the name of the preset the chain was loaded from or saved as,
+    /// even when it was modified since, see `is_modified`.
     #[must_use]
     pub fn preset_name(&self) -> Option<&str> {
         self.preset_name.as_deref()
     }
 
-    /// Records the preset the chain now matches, after it was saved as one.
+    /// Returns true when the chain was modified since it was loaded from or saved as its preset.
+    #[must_use]
+    pub const fn is_modified(&self) -> bool {
+        self.modified
+    }
+
+    /// Records the preset the chain now matches, after it was saved as one, or forgets it, after it was deleted.
+    /// The changes the plugins reported until now belong to the saved preset, so they are cleared.
     pub fn set_preset_name(&mut self, name: Option<String>) {
         self.preset_name = name;
+        self.modified = false;
+        for slot in &self.slots {
+            slot.take_settings_change();
+        }
+    }
+
+    /// Returns true when a plugin reported a change to its settings since this was last called,
+    /// and marks the chain modified then.
+    /// The changes the plugins report are cleared, so each is counted once.
+    pub fn take_settings_changes(&mut self) -> bool {
+        let mut changed = false;
+        for slot in &self.slots {
+            changed |= slot.take_settings_change();
+        }
+        if changed {
+            self.modified = true;
+        }
+        changed
     }
 
     /// Returns the summed latency of the enabled slots whose instances are ready, in samples.
@@ -284,7 +320,7 @@ impl LiveChain {
         let live = self.create_slot(ui, ChainSlot::new(plugin));
         let id = live.id;
         self.slots.push(live);
-        self.preset_name = None;
+        self.modified = true;
         id
     }
 
@@ -298,6 +334,7 @@ impl LiveChain {
             self.slots.push(live);
         }
         self.preset_name = preset_name;
+        self.modified = false;
     }
 
     /// Removes a slot. Returns false when there is no such slot.
@@ -306,7 +343,7 @@ impl LiveChain {
         self.slots.retain(|slot| slot.id != id);
         let removed = self.slots.len() != count;
         if removed {
-            self.preset_name = None;
+            self.modified = true;
         }
         removed
     }
@@ -324,7 +361,7 @@ impl LiveChain {
             Some(target) if target != index => {
                 let slot = self.slots.remove(index);
                 self.slots.insert(target, slot);
-                self.preset_name = None;
+                self.modified = true;
                 true
             }
             _ => false,
@@ -336,17 +373,18 @@ impl LiveChain {
         match self.slots.iter_mut().find(|slot| slot.id == id) {
             Some(slot) if slot.slot.enabled != enabled => {
                 slot.slot.enabled = enabled;
-                self.preset_name = None;
+                self.modified = true;
                 true
             }
             _ => false,
         }
     }
 
-    /// Removes every slot.
+    /// Removes every slot, and forgets the preset the chain was loaded from or saved as.
     pub fn clear(&mut self) {
         self.slots.clear();
         self.preset_name = None;
+        self.modified = false;
     }
 
     /// Prepares every instance again at another rate.
@@ -625,28 +663,33 @@ mod test_slots {
     }
 
     #[test]
-    fn structural_changes_forget_the_preset_name() {
+    fn structural_changes_mark_the_preset_modified() {
         let mut chain = chain_of(&["A", "B"]);
         let first = chain.slots().first().map(LiveSlot::id).expect("first slot");
         let preset = || Some(String::from("Mastering"));
 
         chain.set_preset_name(preset());
         assert_eq!(chain.preset_name(), Some("Mastering"));
+        assert!(!chain.is_modified());
         assert!(!chain.move_slot(first, -1));
         assert!(!chain.set_enabled(first, true));
-        assert_eq!(chain.preset_name(), Some("Mastering"));
+        assert!(!chain.take_settings_changes());
+        assert!(!chain.is_modified());
 
         assert!(chain.move_slot(first, 1));
-        assert_eq!(chain.preset_name(), None);
+        assert!(chain.is_modified());
+        assert_eq!(chain.preset_name(), Some("Mastering"));
         chain.set_preset_name(preset());
         assert!(chain.set_enabled(first, false));
-        assert_eq!(chain.preset_name(), None);
+        assert!(chain.is_modified());
         chain.set_preset_name(preset());
         assert!(chain.remove(first));
-        assert_eq!(chain.preset_name(), None);
-        chain.set_preset_name(preset());
+        assert!(chain.is_modified());
+        assert_eq!(chain.preset_name(), Some("Mastering"));
+
         chain.clear();
         assert_eq!(chain.preset_name(), None);
+        assert!(!chain.is_modified());
     }
 
     #[test]

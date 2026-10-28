@@ -71,6 +71,8 @@ bool LiveChain::prepareLiveEntry(LiveSlot& entry)
         return false;
     }
     plugin_processing::restoreStateAndPrepare(plugin, entry.state, previewSampleRate, previewBlockSize);
+    // Restoring the saved settings reports parameter changes that the user did not make.
+    pendingSettingsChange.store(false);
     plugin.reset();
     entry.prepared = true;
     entry.latencySamples = juce::jmax(0, plugin.getLatencySamples());
@@ -138,18 +140,24 @@ PreviewChain LiveChain::preparePreview(
 }
 
 /// Ordinary parameter edits affect the shared processor directly, without copying state or restarting playback.
+/// Only records that the settings changed, for the display update to mark the preset modified.
 void LiveChain::audioProcessorParameterChanged(
     juce::AudioProcessor* /*processor*/,
     int /*parameterIndex*/,
     float /*value*/
 )
-{}
+{
+    pendingSettingsChange.store(true);
+}
 
-/// Defers latency queries and playback re-priming to the message-thread display update.
+/// Defers latency queries, playback re-priming, and marking the preset modified to the message-thread display update.
 void LiveChain::audioProcessorChanged(juce::AudioProcessor* /*processor*/, const ChangeDetails& details)
 {
     if (details.latencyChanged) {
         latencyDirty.store(true);
+    }
+    if (details.nonParameterStateChanged) {
+        pendingSettingsChange.store(true);
     }
 }
 

@@ -2,8 +2,14 @@
 //! zoom, input gain, the Normalize and Overwrite options, the normalization target,
 //! the Plugin Chain and Audio Settings buttons, and Play/Stop and Process side by side at the bottom.
 //!
-//! The chevron at the right end of the Zoom row collapses the preview into its compact row,
-//! which shows the same chevron and the same Play/Stop and Process buttons.
+//! A wide window keeps the zoom and input gain sliders across the full width,
+//! and splits the rest into two columns of three rows, so the controls take less height.
+//! The left column has a Preview chain option that plays the preview through the plugin chain,
+//! and the Plugin Chain and Audio Settings buttons.
+//! The right column has the Normalize and Overwrite options and the normalization target.
+//!
+//! The chevron in the top left corner, before the Zoom caption, collapses the preview into its compact row,
+//! which starts with the same chevron, followed by the same Play/Stop and Process buttons.
 //! Play/Stop is green while stopped and red while playing,
 //! and Process turns into Cancel during an analysis, normalization, or processing run.
 //! The Normalize option normalizes files before the plugins, and the Overwrite option applies to both.
@@ -56,9 +62,6 @@ const VERTICAL_PADDING: f32 = 8.0;
 /// Font size of the captions and their values.
 const CAPTION_FONT_SIZE: f32 = 12.0;
 
-/// Share of the target row given to the Normalize button, wide enough for its label in the narrowest column.
-const NORMALIZE_BUTTON_PROPORTION: f32 = 0.5;
-
 /// Horizontal inset of a slider track: the thumb radius plus the width of its hover ring.
 /// The thumb is centred on the track ends, so a smaller inset lets the scroll area clip it at either end.
 const SLIDER_INSET: f32 = 11.0;
@@ -100,7 +103,8 @@ const MODE_TOOLTIP: &str =
 /// Tooltip of the normalization target slider.
 const TARGET_TOOLTIP: &str = "Target level for normalization. Drag to adjust, double-click to reset.";
 
-/// Opacity of the filled part of the target slider.
+/// Opacity of the grey filled part of the target slider.
+/// The fill is neutral, so it does not compete with the blue of the chosen mode right above it.
 const TARGET_FILL_ALPHA: f32 = 0.7;
 
 /// Opacity of the mode buttons while they are disabled, which keeps the chosen mode recognizable.
@@ -131,6 +135,9 @@ const CHAIN_TOOLTIP: &str = "Open the plugin chain, where plugins are added, ord
 
 /// Tooltip of the Audio Settings button.
 const SETTINGS_TOOLTIP: &str = "Open audio device and preview settings.";
+
+/// Tooltip of the Preview chain option.
+const PREVIEW_CHAIN_TOOLTIP: &str = "When enabled, the preview plays through the plugin chain.";
 
 /// A slider of the controls column.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,6 +175,8 @@ pub enum ControlsEvent {
     CancelRun,
     /// The Plugin Chain button was clicked.
     OpenPluginChain,
+    /// The Preview chain option was switched on or off.
+    SetPreviewChain(bool),
 }
 
 /// Values the Play/Stop and Process buttons show, in the controls column and in the compact row.
@@ -211,6 +220,8 @@ pub struct ControlsState<'a> {
     pub normalize: NormalizeControls<'a>,
     /// Summary of the plugin chain, for example "Pro-Q 4 > (Limiter)", shown in the Plugin Chain tooltip.
     pub chain_summary: String,
+    /// True when the preview plays through the plugin chain, shown by the Preview chain option of the wide layout.
+    pub preview_chain: bool,
     /// The Play/Stop and Process buttons.
     pub playback: PlaybackControls,
 }
@@ -219,10 +230,8 @@ pub struct ControlsState<'a> {
 pub type EventCallback = Rc<dyn Fn(&ControlsEvent, &mut Window, &mut App)>;
 
 /// Renders the controls column, sending what the user does to `on_event`.
-pub fn render_controls(state: &ControlsState<'_>, on_event: &EventCallback, cx: &App) -> Div {
-    let zoom = f64::from(state.zoom.read(cx).value().start());
-    let gain = state.gain.read(cx).value().start();
-
+/// The wide layout puts the controls below the sliders in two columns, see the module documentation.
+pub fn render_controls(state: &ControlsState<'_>, wide: bool, on_event: &EventCallback, cx: &App) -> Div {
     let settings = div()
         .id("controls-settings")
         .flex_1()
@@ -231,50 +240,24 @@ pub fn render_controls(state: &ControlsState<'_>, on_event: &EventCallback, cx: 
         .flex()
         .flex_col()
         .gap(px(GROUP_SPACING))
-        .child(
-            slider_group(
-                "Zoom",
-                format!("{:.0}%", zoom * 100.0),
-                ZOOM_TOOLTIP,
-                true,
-                Some(render_section_toggle(false, on_event).into_any_element()),
-            )
-            .child(slider_track(
-                Slider::new(state.zoom),
-                true,
-                send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::Zoom)),
-            )),
+        .child(zoom_group(state, on_event, cx))
+        .child(gain_group(state, on_event, cx));
+    let settings = if wide {
+        settings.child(
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(GROUP_SPACING))
+                .child(wide_left_column(state, on_event))
+                .child(wide_right_column(state, on_event, cx)),
         )
-        .child(
-            slider_group(
-                "Input gain",
-                format!("{gain:+.1} dB"),
-                GAIN_TOOLTIP,
-                state.can_adjust_gain,
-                None,
-            )
-            .child(slider_track(
-                Slider::new(state.gain),
-                state.can_adjust_gain,
-                send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::Gain)),
-            )),
-        )
-        .child(option_row(&state.normalize, on_event))
-        .child(target_group(&state.normalize, on_event, cx))
-        .child(column_button(
-            "plugin-chain",
-            "Plugin Chain",
-            format!("{CHAIN_TOOLTIP}\nChain: {}", state.chain_summary),
-            ControlsEvent::OpenPluginChain,
-            on_event,
-        ))
-        .child(column_button(
-            "audio-settings",
-            "Audio Settings",
-            String::from(SETTINGS_TOOLTIP),
-            ControlsEvent::OpenSettings,
-            on_event,
-        ));
+    } else {
+        settings
+            .child(option_row(&state.normalize, on_event))
+            .child(target_group(&state.normalize, false, on_event, cx))
+            .child(plugin_chain_button(state, on_event))
+            .child(audio_settings_button(on_event))
+    };
 
     div()
         .size_full()
@@ -359,6 +342,119 @@ pub fn render_section_toggle(compact: bool, on_event: &EventCallback) -> Button 
         .on_click(move |_, window, cx| on_event(&ControlsEvent::TogglePreviewSection, window, cx))
 }
 
+/// Renders the zoom slider below its caption, with the chevron that collapses the preview before the caption.
+fn zoom_group(state: &ControlsState<'_>, on_event: &EventCallback, cx: &App) -> Stateful<Div> {
+    slider_group(
+        "Zoom",
+        zoom_text(state, cx),
+        ZOOM_TOOLTIP,
+        true,
+        Some(render_section_toggle(false, on_event).into_any_element()),
+    )
+    .child(zoom_track(state, on_event))
+}
+
+/// Renders the input gain slider below its caption.
+fn gain_group(state: &ControlsState<'_>, on_event: &EventCallback, cx: &App) -> Stateful<Div> {
+    slider_group(
+        "Input gain",
+        gain_text(state, cx),
+        GAIN_TOOLTIP,
+        state.can_adjust_gain,
+        None,
+    )
+    .child(gain_track(state, on_event))
+}
+
+/// Renders the left column of the wide layout: the Preview chain option,
+/// in line with the Normalize and Overwrite options of the right column,
+/// and the Plugin Chain and Audio Settings buttons.
+fn wide_left_column(state: &ControlsState<'_>, on_event: &EventCallback) -> Div {
+    let preview_chain = {
+        let on_event = Rc::clone(on_event);
+        Checkbox::new("preview-chain")
+            .label("Preview chain")
+            .small()
+            .tooltip(PREVIEW_CHAIN_TOOLTIP)
+            .checked(state.preview_chain)
+            .on_change(move |checked: &bool, window, cx| {
+                on_event(&ControlsEvent::SetPreviewChain(*checked), window, cx);
+            })
+    };
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(px(ITEM_SPACING))
+        .child(div().h(px(BUTTON_HEIGHT)).flex().items_center().child(preview_chain))
+        .child(plugin_chain_button(state, on_event))
+        .child(audio_settings_button(on_event))
+}
+
+/// Renders the right column of the wide layout: the Normalize and Overwrite options and the normalization target,
+/// each row as tall as a row of the left column.
+fn wide_right_column(state: &ControlsState<'_>, on_event: &EventCallback, cx: &App) -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap(px(ITEM_SPACING))
+        .child(option_row(&state.normalize, on_event).h(px(BUTTON_HEIGHT)))
+        .child(target_group(&state.normalize, true, on_event, cx))
+}
+
+/// Returns the zoom as the slider value shows it, for example "100%".
+fn zoom_text(state: &ControlsState<'_>, cx: &App) -> String {
+    format!("{:.0}%", f64::from(state.zoom.read(cx).value().start()) * 100.0)
+}
+
+/// Returns the input gain as the slider value shows it, for example "+0.0 dB".
+fn gain_text(state: &ControlsState<'_>, cx: &App) -> String {
+    format!("{:+.1} dB", state.gain.read(cx).value().start())
+}
+
+/// Renders the zoom slider, which resets on a double click.
+fn zoom_track(state: &ControlsState<'_>, on_event: &EventCallback) -> Div {
+    slider_track(
+        Slider::new(state.zoom),
+        true,
+        send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::Zoom)),
+    )
+}
+
+/// Renders the input gain slider, which resets on a double click while the gain can be adjusted.
+fn gain_track(state: &ControlsState<'_>, on_event: &EventCallback) -> Div {
+    slider_track(
+        Slider::new(state.gain),
+        state.can_adjust_gain,
+        send_on_double_click(on_event, ControlsEvent::ResetSlider(SliderControl::Gain)),
+    )
+}
+
+/// Renders the Plugin Chain button, with the chain summary in its tooltip.
+fn plugin_chain_button(state: &ControlsState<'_>, on_event: &EventCallback) -> Button {
+    column_button(
+        "plugin-chain",
+        "Plugin Chain",
+        format!("{CHAIN_TOOLTIP}\nChain: {}", state.chain_summary),
+        ControlsEvent::OpenPluginChain,
+        on_event,
+    )
+}
+
+/// Renders the Audio Settings button.
+fn audio_settings_button(on_event: &EventCallback) -> Button {
+    column_button(
+        "audio-settings",
+        "Audio Settings",
+        String::from(SETTINGS_TOOLTIP),
+        ControlsEvent::OpenSettings,
+        on_event,
+    )
+}
+
 /// Renders a full-width button of the controls column that sends `event` when clicked.
 fn column_button(
     id: &'static str,
@@ -383,6 +479,7 @@ fn option_row(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
         let on_event = Rc::clone(on_event);
         Checkbox::new("process-normalize-first")
             .label("Normalize")
+            .small()
             .tooltip(NORMALIZE_FIRST_TOOLTIP)
             .checked(state.normalize_first)
             .on_change(move |checked: &bool, window, cx| {
@@ -393,6 +490,7 @@ fn option_row(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
         let on_event = Rc::clone(on_event);
         Checkbox::new("normalize-overwrite")
             .label("Overwrite")
+            .small()
             .tooltip(OVERWRITE_TOOLTIP)
             .checked(state.overwrite)
             .on_change(move |checked: &bool, window, cx| {
@@ -409,10 +507,11 @@ fn option_row(state: &NormalizeControls<'_>, on_event: &EventCallback) -> Div {
 }
 
 /// Renders the normalization target: the mode buttons, with the chosen mode in the primary color,
-/// and the target slider with the Normalize button on its right.
+/// and the target slider and the Normalize button in two equal halves below them.
 /// The mode buttons and the slider are disabled while the option that normalizes before the plugins is off,
 /// and the Normalize button only depends on the selection.
-fn target_group(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &App) -> Div {
+/// The wide layout centres the mode buttons in a row as tall as the other rows, so the two columns line up.
+fn target_group(state: &NormalizeControls<'_>, wide: bool, on_event: &EventCallback, cx: &App) -> Div {
     let mode_button = |id: &'static str, label: &'static str, mode: NormalizeMode| {
         let selected = state.mode == mode;
         let button = Button::new(id)
@@ -445,12 +544,18 @@ fn target_group(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &Ap
             .label("Normalize")
             .tooltip(NORMALIZE_TOOLTIP)
             .disabled(!state.can_normalize)
-            .w(relative(NORMALIZE_BUTTON_PROPORTION))
+            .w_full()
             .h(px(BUTTON_HEIGHT))
-            .flex_none()
             .on_click(move |_, window, cx| on_event(&ControlsEvent::NormalizeSelected, window, cx))
     };
-    let modes = div()
+    // The button's padding would be added to its share of the row, so a plain cell takes the share instead.
+    let normalize = div().flex_1().min_w_0().child(normalize);
+    let modes_row = if wide {
+        div().h(px(BUTTON_HEIGHT)).flex().items_center()
+    } else {
+        div()
+    };
+    let modes = modes_row
         .w_full()
         .opacity(if state.normalize_first {
             1.0
@@ -493,7 +598,7 @@ fn target_slider(state: &NormalizeControls<'_>, on_event: &EventCallback, cx: &A
                 .left_0()
                 .w(relative(filled))
                 .bg(if enabled {
-                    color(palette::BLUE).opacity(TARGET_FILL_ALPHA)
+                    color(palette::GREY_MIDDLE).opacity(TARGET_FILL_ALPHA)
                 } else {
                     color(palette::GREY_MEDIUM)
                 }),
@@ -559,7 +664,7 @@ fn send_on_double_click(
     }
 }
 
-/// Renders a slider group: a caption with its value and an optional accessory on the right.
+/// Renders a slider group: an optional accessory on the left, and a caption with its value.
 /// The caller adds the slider below.
 /// A disabled group dims its value.
 fn slider_group(
@@ -581,6 +686,7 @@ fn slider_group(
                 .flex_row()
                 .items_center()
                 .gap(px(ITEM_SPACING))
+                .children(accessory)
                 .child(
                     div()
                         .flex_1()
@@ -598,8 +704,7 @@ fn slider_group(
                             palette::GREY_MIDDLE
                         }))
                         .child(value),
-                )
-                .children(accessory),
+                ),
         )
 }
 

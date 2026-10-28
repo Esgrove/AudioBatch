@@ -156,6 +156,7 @@ public:
     [[nodiscard]] juce::File getPresetDirectory() const;
     [[nodiscard]] std::vector<ChainPresetInfo> getPresets() const;
     [[nodiscard]] juce::String getCurrentPresetName() const;
+    [[nodiscard]] bool isPresetModified() const noexcept;
     [[nodiscard]] juce::PopupMenu createPresetsMenu(int firstItemId) const;
     std::expected<juce::File, juce::String> saveAsPreset(const juce::String& name);
 
@@ -167,6 +168,7 @@ public:
     void loadPresetAndReport(const juce::File& file);
     void promptSavePreset();
     void showPresetFolder() const;
+    void updateCurrentPreset();
 
     void addPlugin(const juce::PluginDescription& description);
     void changeListenerCallback(juce::ChangeBroadcaster* source) override;
@@ -232,10 +234,15 @@ private:
     std::uint64_t revision {0};
     /// The id given to the last slot added, so every slot gets a new one.
     std::uint64_t lastSlotId {0};
-    /// Name of the preset the chain was last loaded from or saved as.
-    /// It only names the chain while the revision still equals presetRevision.
+    /// Set by a processor that reported a change to its settings, from any thread,
+    /// until the next display update moves it into settingsChanged.
+    std::atomic<bool> pendingSettingsChange {false};
+    /// True when a plugin's settings changed since the chain was last loaded from or saved as a preset.
+    bool settingsChanged {false};
+    /// Name of the preset the chain was last loaded from or saved as, until the chain is cleared or the preset deleted.
     juce::String presetName;
     /// The revision of the chain when it was last loaded from or saved as a preset.
+    /// A later revision means the chain was modified since.
     std::uint64_t presetRevision {0};
     /// Preset files of the presets submenu last built by createPresetsMenu, in menu id order.
     /// Mutable, because building a menu does not change the chain.

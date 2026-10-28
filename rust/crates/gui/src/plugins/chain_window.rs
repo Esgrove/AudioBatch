@@ -2,9 +2,11 @@
 //!
 //! The presets panel at the top loads a saved preset as soon as it is picked, deletes one,
 //! and saves the chain under a name.
-//! Deleting a preset and replacing one with the same name ask for confirmation first.
-//! Each row has an enable checkbox, the slot label with its position, the latency,
-//! and buttons that open the editor, move the slot, and remove it.
+//! Deleting a preset and replacing another one with the same name ask for confirmation first.
+//! The panel says when the chain was modified since its preset was loaded or saved,
+//! and saving under that preset's name updates it without asking.
+//! Each row has an enable checkbox, the slot label with its position above its latency,
+//! and buttons that open the editor, move the slot with two arrows, and remove it.
 //! A slot whose plugin could not be loaded shows its error instead of the latency.
 //! Below the rows the Add Plugin menu adds a known effect at the end, from one submenu per vendor,
 //! and the footer shows the total latency and the rate the live instances run at.
@@ -27,6 +29,7 @@ use gpui_kit::{
 use super::labels::VendorGroup;
 use super::live_chain::SlotId;
 use super::{ROW_SPACING, SMALL_FONT_SIZE, WINDOW_FONT_SIZE, WINDOW_PADDING, hint, panel};
+use crate::info_panel::CORNER_RADIUS;
 use crate::menus::{ClosePluginWindow, PLUGIN_WINDOW_KEY_CONTEXT};
 use crate::theme::{MONO_FONT, TEXT_FONT, color, palette, tooltip};
 
@@ -39,8 +42,17 @@ pub const CHAIN_WIDTH: f32 = 720.0;
 /// Initial height of the window.
 pub const CHAIN_HEIGHT: f32 = 540.0;
 
-/// Width of the latency column, enough for "Latency: 1024 samples (21.33 ms)".
-const LATENCY_WIDTH: f32 = 230.0;
+/// Height of the buttons of a slot row, and the width of its square arrow buttons.
+const ROW_BUTTON_HEIGHT: f32 = 32.0;
+
+/// Padding inside a slot row.
+const ROW_PADDING: f32 = 8.0;
+
+/// Space between the two arrow buttons of a slot row.
+const ARROW_SPACING: f32 = 4.0;
+
+/// Font size of the latency line under the slot label.
+const LATENCY_FONT_SIZE: f32 = 11.0;
 
 /// Tooltip of the Add Plugin button.
 const ADD_PLUGIN_TOOLTIP: &str = "Add a known effect at the end of the chain.";
@@ -50,6 +62,15 @@ const ENABLE_TOOLTIP: &str = "Bypass the plugin without losing its settings.";
 
 /// Tooltip of the Edit button.
 const EDIT_TOOLTIP: &str = "Open the plugin's editor window.";
+
+/// Tooltip of the up arrow button.
+const MOVE_UP_TOOLTIP: &str = "Move earlier";
+
+/// Tooltip of the down arrow button.
+const MOVE_DOWN_TOOLTIP: &str = "Move later";
+
+/// Tooltip of the Remove button.
+const REMOVE_TOOLTIP: &str = "Remove the plugin from the chain.";
 
 /// Tooltip of the preset Save button.
 const SAVE_PRESET_TOOLTIP: &str = "Save the plugins, their order, and their settings under this name.";
@@ -107,8 +128,10 @@ pub struct ChainSnapshot {
     pub plugin_groups: Vec<VendorGroup>,
     /// Names of the saved presets, in the order they are listed.
     pub presets: Vec<String>,
-    /// Name of the preset the chain matches, when it was loaded from or saved as one and has not changed since.
+    /// Name of the preset the chain was loaded from or saved as.
     pub current_preset: Option<String>,
+    /// True when the chain was modified since it was loaded from or saved as `current_preset`.
+    pub modified: bool,
 }
 
 /// The content of the Plugin Chain window.
@@ -200,7 +223,17 @@ impl ChainView {
         }
     }
 
-    /// Saves the chain under the typed name, asking first when a preset of that name exists.
+    /// Returns true when the typed name is the preset the chain was loaded from or saved as,
+    /// so saving updates that preset.
+    fn updates_current_preset(&self, name: &str) -> bool {
+        self.snapshot
+            .current_preset
+            .as_ref()
+            .is_some_and(|current| current.to_lowercase() == name.to_lowercase())
+    }
+
+    /// Saves the chain under the typed name, asking first when another preset of that name exists.
+    /// Updating the preset the chain was loaded from or saved as does not ask.
     fn save_preset(&self, window: &mut Window, cx: &mut Context<Self>) {
         let name = sanitize_preset_name(&self.preset_name.read(cx).value());
         if name.is_empty() || self.snapshot.rows.is_empty() {
@@ -211,7 +244,7 @@ impl ChainView {
             .presets
             .iter()
             .any(|preset| preset.to_lowercase() == name.to_lowercase());
-        if !exists {
+        if !exists || self.updates_current_preset(&name) {
             cx.emit(ChainEvent::SavePreset(name));
             return;
         }
@@ -253,14 +286,22 @@ impl ChainView {
     }
 
     /// Renders the presets panel: the preset choice, which loads the picked preset, with Delete,
-    /// and the name field with Save.
+    /// and the name field with Save, which reads Update for the name of the loaded preset.
+    /// The title names the loaded preset, and says when the chain was modified since.
     fn render_presets(&self, cx: &Context<Self>) -> Div {
         let selected = self.selected_preset(cx);
-        let has_name = !sanitize_preset_name(&self.preset_name.read(cx).value()).is_empty();
-        let title = self.snapshot.current_preset.as_ref().map_or_else(
-            || String::from("Presets"),
-            |current| format!("Presets (loaded: {current})"),
-        );
+        let typed_name = sanitize_preset_name(&self.preset_name.read(cx).value());
+        let has_name = !typed_name.is_empty();
+        let title = match (&self.snapshot.current_preset, self.snapshot.modified) {
+            (None, _) => String::from("Presets"),
+            (Some(current), false) => format!("Presets (loaded: {current})"),
+            (Some(current), true) => format!("Presets (loaded: {current}, modified)"),
+        };
+        let save_label = if has_name && self.updates_current_preset(&typed_name) {
+            "Update"
+        } else {
+            "Save"
+        };
         let choose_row = div()
             .flex()
             .flex_row()
@@ -291,7 +332,7 @@ impl ChainView {
             .child(div().flex_1().min_w_0().child(Input::new(&self.preset_name).small()))
             .child(
                 Button::new("preset-save")
-                    .label("Save")
+                    .label(save_label)
                     .small()
                     .tooltip(SAVE_PRESET_TOOLTIP)
                     .disabled(!has_name || self.snapshot.rows.is_empty())
@@ -326,7 +367,8 @@ impl ChainView {
             })
     }
 
-    /// Renders one slot row.
+    /// Renders one slot row on a rounded background,
+    /// with the slot label above its latency or error, so the text leaves room for the buttons.
     fn render_row(row: &ChainRow, index: usize, count: usize, cx: &Context<Self>) -> Div {
         let id = row.id;
         let enable = Checkbox::new(("chain-enabled", index))
@@ -335,8 +377,6 @@ impl ChainView {
             .on_change(cx.listener(move |_, checked: &bool, _, cx| cx.emit(ChainEvent::SetEnabled(id, *checked))));
         let label = div()
             .id(("chain-label", index))
-            .flex_1()
-            .min_w_0()
             .truncate()
             .text_color(color(if row.enabled {
                 palette::GREY_LIGHT
@@ -347,11 +387,9 @@ impl ChainView {
             .child(row.label.clone());
         let detail = div()
             .id(("chain-detail", index))
-            .w(px(LATENCY_WIDTH))
-            .flex_none()
             .truncate()
             .font_family(MONO_FONT)
-            .text_size(px(SMALL_FONT_SIZE))
+            .text_size(px(LATENCY_FONT_SIZE))
             .text_color(color(if row.failed {
                 palette::RED
             } else {
@@ -359,40 +397,62 @@ impl ChainView {
             }))
             .tooltip(tooltip(row.detail.clone()))
             .child(row.detail.clone());
-        div()
+        let arrows = div()
             .flex()
             .flex_row()
-            .items_center()
-            .gap(px(ROW_SPACING))
-            .child(enable)
-            .child(label)
-            .child(detail)
-            .child(
-                Button::new(("chain-edit", index))
-                    .label("Edit")
-                    .small()
-                    .tooltip(EDIT_TOOLTIP)
-                    .disabled(!row.can_edit)
-                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(ChainEvent::Edit(id)))),
-            )
+            .flex_none()
+            .gap(px(ARROW_SPACING))
             .child(
                 Button::new(("chain-up", index))
-                    .label("Up")
-                    .small()
+                    .icon(IconName::ArrowUp)
+                    .w(px(ROW_BUTTON_HEIGHT))
+                    .h(px(ROW_BUTTON_HEIGHT))
+                    .tooltip(MOVE_UP_TOOLTIP)
                     .disabled(index == 0)
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(ChainEvent::Move(id, -1)))),
             )
             .child(
                 Button::new(("chain-down", index))
-                    .label("Down")
-                    .small()
+                    .icon(IconName::ArrowDown)
+                    .w(px(ROW_BUTTON_HEIGHT))
+                    .h(px(ROW_BUTTON_HEIGHT))
+                    .tooltip(MOVE_DOWN_TOOLTIP)
                     .disabled(index + 1 >= count)
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(ChainEvent::Move(id, 1)))),
+            );
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(ROW_SPACING))
+            .p(px(ROW_PADDING))
+            .rounded(px(CORNER_RADIUS))
+            .bg(color(palette::GREY_MEDIUM_DARK))
+            .child(enable)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(2.0))
+                    .child(label)
+                    .child(detail),
             )
+            .child(
+                Button::new(("chain-edit", index))
+                    .label("Edit")
+                    .h(px(ROW_BUTTON_HEIGHT))
+                    .tooltip(EDIT_TOOLTIP)
+                    .disabled(!row.can_edit)
+                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(ChainEvent::Edit(id)))),
+            )
+            .child(arrows)
             .child(
                 Button::new(("chain-remove", index))
                     .label("Remove")
-                    .small()
+                    .h(px(ROW_BUTTON_HEIGHT))
+                    .tooltip(REMOVE_TOOLTIP)
                     .danger()
                     .on_click(cx.listener(move |_, _, _, cx| cx.emit(ChainEvent::Remove(id)))),
             )
@@ -410,7 +470,7 @@ impl Focusable for ChainView {
 impl Render for ChainView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let count = self.snapshot.rows.len();
-        let mut slots = panel(format!("Slots in processing order ({count})"));
+        let mut slots = panel(format!("Plugins in processing order ({count})"));
         if count == 0 {
             slots = slots.child(hint(
                 "The chain is empty. Add an effect below or from the Plugins menu.",
@@ -444,7 +504,12 @@ impl Render for ChainView {
             .gap(px(2.0))
             .text_size(px(SMALL_FONT_SIZE))
             .text_color(color(palette::GREY_MIDDLE_LIGHT))
-            .child(format!("Total latency: {}", self.snapshot.total_latency))
+            .child(
+                div()
+                    .text_size(px(WINDOW_FONT_SIZE))
+                    .text_color(color(palette::GREY_SUPER_LIGHT))
+                    .child(format!("Total latency: {}", self.snapshot.total_latency)),
+            )
             .child(format!("Live instances run at {}", self.snapshot.sample_rate));
         div()
             .id("plugin-chain")

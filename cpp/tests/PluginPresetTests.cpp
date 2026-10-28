@@ -327,7 +327,8 @@ private:
         }
     }
 
-    /// Checks that a live chain saves its slots as a preset, tracks the loaded preset name, and loads presets back.
+    /// Checks that a live chain saves its slots as a preset, tracks the loaded preset name and whether it was modified,
+    /// updates the loaded preset, and loads presets back.
     void testLiveChainPresets()
     {
         beginTest("A live chain saves and loads presets next to its settings");
@@ -353,6 +354,7 @@ private:
         const auto saved = chain.saveAsPreset(" Two Slots ");
         expect(saved.has_value());
         expectEquals(chain.getCurrentPresetName(), juce::String("Two Slots"));
+        expect(!chain.isPresetModified());
         const auto presets = chain.getPresets();
         expectEquals(static_cast<int>(presets.size()), 1);
         expectEquals(presets.empty() ? juce::String() : presets.front().name, juce::String("Two Slots"));
@@ -365,6 +367,7 @@ private:
         expect(loaded.has_value());
         expectEquals(chain.getNumSlots(), 2);
         expectEquals(chain.getCurrentPresetName(), juce::String("Two Slots"));
+        expect(!chain.isPresetModified());
         const auto slotIds = chain.getSlotIds();
         if (slotIds.size() == 2) {
             expectEquals(chain.getSlotDescription(slotIds[0]).name, juce::String("First"));
@@ -387,10 +390,18 @@ private:
         if (!slotIds.empty()) {
             chain.removeSlot(slotIds.front());
         }
-        expect(chain.getCurrentPresetName().isEmpty());
+        expectEquals(chain.getCurrentPresetName(), juce::String("Two Slots"));
+        expect(chain.isPresetModified());
+
+        chain.updateCurrentPreset();
+        expect(!chain.isPresetModified());
+        const auto updated = chain.loadPreset(saved.value_or(juce::File {}));
+        expect(updated.has_value());
+        expectEquals(chain.getNumSlots(), 1);
 
         expect(chain.deletePreset(saved.value_or(juce::File {})));
         expect(chain.getPresets().empty());
+        expect(chain.getCurrentPresetName().isEmpty());
     }
 
     /// Loads the test VST3, checks that its default settings leave audio untouched,

@@ -1,8 +1,8 @@
 /// GUI content for the chain editor window.
 /// Declares PluginChainEditor, a component that shows the plugin chain
 /// as a scrolling list of slot rows with enable, edit, reorder, and remove controls,
-/// plus an add button below the rows for appending new plugins,
-/// and a preset row above them for saving, loading, and deleting chain presets.
+/// plus an add button and a Clear Chain button below the rows,
+/// and a preset row above them for saving, updating, loading, and deleting chain presets.
 
 #pragma once
 
@@ -105,8 +105,9 @@ private:
 
 /// Editor window content for the plugin chain.
 /// Shows one row per slot with enable, edit, reorder, and remove controls,
-/// plus an add button below the rows for appending new plugins.
-/// A preset row above them saves the chain as a preset, loads a saved preset, and deletes one.
+/// plus an add button below the rows for appending new plugins and a button that clears the chain.
+/// A preset row above them saves the chain as a preset, updates the loaded preset once the chain was modified,
+/// loads a saved preset, and deletes one.
 /// Rows can be reordered by dragging their background or with the arrow buttons.
 class PluginChainEditor : public juce::Component, public juce::ChangeListener, private juce::AsyncUpdater
 {
@@ -152,6 +153,8 @@ private:
     /// Choosing a preset in the list replaces the chain with it.
     juce::Label presetLabel {{}, "Preset"};
     juce::ComboBox presetBox;
+    /// Saves the modified chain over the loaded preset without asking.
+    juce::TextButton updatePresetButton {"Update"};
     juce::TextButton savePresetButton {"Save As..."};
     juce::TextButton deletePresetButton {"Delete"};
     /// The presets in the order of the list, whose item ids are their index plus one.
@@ -160,6 +163,8 @@ private:
     /// Appends a new plugin to the chain.
     /// Lives inside the row container below the last row, so it scrolls with the rows.
     juce::TextButton addButton {"+"};
+    /// Removes every slot from the chain, on the line of the add button at the right edge.
+    juce::TextButton clearChainButton {"Clear Chain"};
     /// Explains how to add a plugin, or how to scan for plugins, while the chain is empty.
     juce::Label hintLabel;
     /// The summed latency of the enabled slots.

@@ -1,6 +1,7 @@
 /// The chain presets of LiveChain.
-/// Covers saving the chain as a named preset, replacing the chain with a preset, and deleting presets,
-/// with the dialogs that ask for a name, confirm a replace or a delete, and report failures,
+/// Covers saving the chain as a named preset, updating the loaded preset, replacing the chain with a preset,
+/// and deleting presets, with the dialogs that ask for a name, confirm a replace or a delete, and report failures,
+/// whether the chain was modified since its preset was loaded or saved,
 /// and the presets submenu that the chain menu and the main menu bar share.
 
 #include "gui/LiveChain.h"
@@ -68,16 +69,25 @@ std::expected<juce::File, juce::String> LiveChain::saveAsPreset(const juce::Stri
     if (result.has_value()) {
         presetName = result->getFileNameWithoutExtension();
         presetRevision = revision;
+        pendingSettingsChange.store(false);
+        settingsChanged = false;
         sendChangeMessage();
     }
     return result;
 }
 
 /// Returns the name of the preset the chain was last loaded from or saved as,
-/// or an empty string once a slot was added, removed, moved, enabled, or disabled since then.
+/// even when it was modified since, or an empty string after the chain was cleared or the preset deleted.
 juce::String LiveChain::getCurrentPresetName() const
 {
-    return revision == presetRevision ? presetName : juce::String();
+    return presetName;
+}
+
+/// Returns true when a slot was added, removed, moved, enabled, or disabled,
+/// or a plugin's settings changed, since the chain was last loaded from or saved as a preset.
+bool LiveChain::isPresetModified() const noexcept
+{
+    return revision != presetRevision || settingsChanged;
 }
 
 /// Builds the presets submenu with ids counted from the given first id:
@@ -95,12 +105,16 @@ juce::PopupMenu LiveChain::createPresetsMenu(const int firstItemId) const
         menu.addSectionHeader("Load Preset");
     }
 
-    const auto currentName = getCurrentPresetName();
+    // A modified chain no longer matches its preset, so no item is ticked.
+    const auto currentName = isPresetModified() ? juce::String() : getCurrentPresetName();
     presetMenuFiles.clear();
     for (std::size_t index = 0; index < presets.size(); ++index) {
         const auto& preset = presets[index];
         menu.addItem(
-            firstItemId + firstPresetMenuOffset + static_cast<int>(index), preset.name, true, preset.name == currentName
+            firstItemId + firstPresetMenuOffset + static_cast<int>(index),
+            preset.name,
+            true,
+            currentName.isNotEmpty() && preset.name == currentName
         );
         presetMenuFiles.push_back(preset.file);
     }
@@ -168,7 +182,16 @@ void LiveChain::promptSavePreset()
     );
 }
 
-/// Saves the chain as the named preset, first asking whether to replace a preset that already has the name.
+/// Saves the modified chain over the preset it was loaded from or saved as, without asking.
+void LiveChain::updateCurrentPreset()
+{
+    if (presetName.isNotEmpty()) {
+        savePresetAndReport(presetName);
+    }
+}
+
+/// Saves the chain as the named preset, first asking whether to replace another preset that already has the name.
+/// Updating the preset the chain was loaded from or saved as does not ask.
 void LiveChain::savePresetConfirmingReplace(const juce::String& name)
 {
     const auto file = plugin_presets::getPresetFile(getPresetDirectory(), name);
@@ -177,7 +200,7 @@ void LiveChain::savePresetConfirmingReplace(const juce::String& name)
         return;
     }
 
-    if (!file->existsAsFile()) {
+    if (!file->existsAsFile() || file->getFileNameWithoutExtension().equalsIgnoreCase(presetName)) {
         savePresetAndReport(name);
         return;
     }
@@ -281,6 +304,8 @@ std::expected<void, juce::String> LiveChain::loadPreset(const juce::File& file)
         notifyChainChanged();
         presetName = file.getFileNameWithoutExtension();
         presetRevision = revision;
+        pendingSettingsChange.store(false);
+        settingsChanged = false;
     }
 
     persistChain();
@@ -289,11 +314,15 @@ std::expected<void, juce::String> LiveChain::loadPreset(const juce::File& file)
 }
 
 /// Deletes a preset file, returning whether it is gone.
+/// Deleting the preset the chain was loaded from or saved as forgets its name.
 bool LiveChain::deletePreset(const juce::File& file)
 {
     const bool deleted = plugin_presets::deletePreset(file);
     presetList.reset();
     if (deleted) {
+        if (file.getFileNameWithoutExtension() == presetName) {
+            presetName.clear();
+        }
         sendChangeMessage();
     }
     return deleted;

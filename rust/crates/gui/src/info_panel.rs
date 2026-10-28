@@ -3,6 +3,8 @@
 //! It shows the file name split into artist and title at the first " - ", a status line while the file has no result,
 //! four metric cards for the levels, and a scrollable list of technical details and tags.
 //! The tooltips show the full path on the name, and each value spelled out.
+//! The wide variant puts the metric cards in one row, and the details with short values two to a line,
+//! above the tags that can be long, such as the album and the comment, which keep the full width.
 //! The compact variant for the collapsed preview shows only the four metric cards, in one row.
 
 use audiobatch_core::format::{
@@ -47,17 +49,23 @@ const DETAIL_ROW_HEIGHT: f32 = 20.0;
 const DETAIL_FIELD_WIDTH: f32 = 64.0;
 
 /// Font size of the artist and title.
-const HEADING_FONT_SIZE: f32 = 13.0;
+/// The sizes of the panel match the JUCE font heights of the C++ panel, so both applications look alike.
+/// A JUCE height is the ascent plus the descent, 1.17 em for Roboto and 1.32 em for Roboto Mono,
+/// so this is its height of 13 in Roboto.
+const HEADING_FONT_SIZE: f32 = 11.0;
 
-/// Font size of captions, units, and field names.
-const CAPTION_FONT_SIZE: f32 = 12.0;
+/// Font size of captions, units, and field names, the JUCE height of 12 in Roboto.
+const CAPTION_FONT_SIZE: f32 = 10.25;
 
-/// Font size of detail values and errors.
-const VALUE_FONT_SIZE: f32 = 13.0;
+/// Font size of detail values and errors, the JUCE height of 13 in Roboto.
+const VALUE_FONT_SIZE: f32 = 11.0;
 
-/// Font size of the metric values.
-/// It matches the C++ panel's JUCE font height of 20, the ascent plus the descent, so both applications look alike.
-const METRIC_FONT_SIZE: f32 = 17.0;
+/// Font size of the metric values, the JUCE height of 20 in Roboto Mono.
+const METRIC_FONT_SIZE: f32 = 15.0;
+
+/// Font size of the metric values in the compact row,
+/// small enough that a value such as "-17.16" fits beside its caption in the narrowest card.
+const COMPACT_METRIC_FONT_SIZE: f32 = 13.0;
 
 /// Line height of the metric values.
 const METRIC_LINE_HEIGHT: f32 = 20.0;
@@ -72,6 +80,9 @@ const TITLE_SEPARATOR: &str = " - ";
 /// Space between the cards of the compact panel, and between a card's labels and its value.
 pub const COMPACT_METRIC_SPACING: f32 = 5.0;
 
+/// Space between the metric cards of the wide panel, which share one row.
+const WIDE_METRIC_SPACING: f32 = 6.0;
+
 /// One level measurement shown on a metric card.
 struct Metric {
     /// Full name of the measurement, used in the tooltip and as the element id.
@@ -84,8 +95,22 @@ struct Metric {
     value: String,
 }
 
+/// One row of the details below the metric cards.
+struct Detail {
+    /// Field name shown on the left, also used as the element id.
+    field: &'static str,
+    /// Value shown aligned to the right.
+    value: String,
+    /// True for a value that always stays short, such as the format or the tempo,
+    /// which the wide panel shows beside another one on the same line.
+    short: bool,
+}
+
 /// Renders the panel for the selected row and its tags, or the empty state when nothing is selected.
-pub fn render_info_panel(row: Option<&ResultRow>, tags: Option<&FileTags>) -> AnyElement {
+/// The wide panel puts the four metric cards in one row,
+/// and the details with short values two to a line, above the long ones at the full width.
+pub fn render_info_panel(row: Option<&ResultRow>, tags: Option<&FileTags>, wide: bool) -> AnyElement {
+    let metric_cards = if wide { metric_row } else { metric_grid };
     let panel = div()
         .id("info-panel")
         .size_full()
@@ -102,7 +127,7 @@ pub fn render_info_panel(row: Option<&ResultRow>, tags: Option<&FileTags>) -> An
         return panel
             .child(heading_line("artist", String::from("No file selected"), None))
             .child(div().h(px(SECTION_SPACING)))
-            .child(metric_grid(None))
+            .child(metric_cards(None))
             .into_any_element();
     };
 
@@ -151,17 +176,37 @@ pub fn render_info_panel(row: Option<&ResultRow>, tags: Option<&FileTags>) -> An
                 .child(record.error_message.clone()),
         );
     }
-    let mut rows = ready.map(record_rows).unwrap_or_default();
-    if let Some(tags) = tags {
-        rows.extend(tag_rows(tags));
-    }
-    for (field, value) in rows {
-        details = details.child(detail_row(field, value));
+    let all_details = ready
+        .map(record_rows)
+        .unwrap_or_default()
+        .into_iter()
+        .chain(tags.map(tag_rows).unwrap_or_default());
+    if wide {
+        let (short, long): (Vec<Detail>, Vec<Detail>) = all_details.partition(|detail| detail.short);
+        let mut short = short.into_iter();
+        while let Some(first) = short.next() {
+            let second = short.next().map_or_else(
+                || div().flex_1().into_any_element(),
+                |detail| detail_row(detail).flex_1().min_w_0().into_any_element(),
+            );
+            details = details.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_none()
+                    .gap(px(SECTION_SPACING))
+                    .child(detail_row(first).flex_1().min_w_0())
+                    .child(second),
+            );
+        }
+        details = details.children(long.into_iter().map(detail_row));
+    } else {
+        details = details.children(all_details.map(detail_row));
     }
 
     panel
         .child(div().h(px(SECTION_SPACING)))
-        .child(metric_grid(ready))
+        .child(metric_cards(ready))
         .child(div().h(px(SECTION_SPACING)))
         .child(details)
         .into_any_element()
@@ -186,6 +231,7 @@ fn heading_line(id: &'static str, text: String, path: Option<&str>) -> Stateful<
 
 /// Renders the compact variant for the collapsed preview: the four level cards in one row,
 /// each with its caption above its unit on the left and the value on the right, and dashes when there is no result.
+/// The value never shrinks, so in the narrowest cards the caption and unit are cut off instead.
 /// The file name and the details are left out, so the metrics fit next to the waveform.
 pub fn render_compact_info_panel(row: Option<&ResultRow>) -> Div {
     let metrics = metrics(row.and_then(ResultRow::ready_record));
@@ -203,16 +249,21 @@ pub fn render_compact_info_panel(row: Option<&ResultRow>) -> Div {
                 .px(px(6.0))
                 .child(
                     div()
+                        .flex_1()
+                        .min_w_0()
                         .flex()
                         .flex_col()
-                        .flex_none()
                         .text_size(px(CAPTION_FONT_SIZE))
                         .line_height(px(METRIC_CAPTION_LINE_HEIGHT))
                         .text_color(color(palette::GREY_MIDDLE_LIGHT))
-                        .child(metric.caption)
-                        .child(metric.unit),
+                        .child(div().truncate().child(metric.caption))
+                        .child(div().truncate().child(metric.unit)),
                 )
-                .child(metric_value(metric.value).flex_1().text_right())
+                .child(
+                    metric_value(metric.value)
+                        .flex_none()
+                        .text_size(px(COMPACT_METRIC_FONT_SIZE)),
+                )
         }))
 }
 
@@ -273,7 +324,18 @@ fn metric_grid(record: Option<&AnalysisRecord>) -> Div {
         )
 }
 
+/// Renders the four level cards in one row, for the wide panel.
+fn metric_row(record: Option<&AnalysisRecord>) -> Div {
+    div()
+        .flex()
+        .flex_row()
+        .flex_none()
+        .gap(px(WIDE_METRIC_SPACING))
+        .children(metrics(record).into_iter().map(metric_card))
+}
+
 /// Renders a metric card: the caption and unit on top, the value large below.
+/// A card too narrow for both cuts off the caption, never the unit.
 fn metric_card(metric: Metric) -> Stateful<Div> {
     let caption_color: Hsla = color(palette::GREY_MIDDLE_LIGHT);
     metric_card_frame(&metric)
@@ -286,11 +348,12 @@ fn metric_card(metric: Metric) -> Stateful<Div> {
                 .flex()
                 .flex_row()
                 .justify_between()
+                .gap(px(4.0))
                 .text_size(px(CAPTION_FONT_SIZE))
                 .line_height(px(METRIC_CAPTION_LINE_HEIGHT))
                 .text_color(caption_color)
-                .child(metric.caption)
-                .child(metric.unit),
+                .child(div().min_w_0().truncate().child(metric.caption))
+                .child(div().flex_none().child(metric.unit)),
         )
         .child(metric_value(metric.value))
 }
@@ -322,7 +385,8 @@ fn metric_value(value: String) -> Div {
 }
 
 /// Renders a field name and its value aligned to the right edge, with both in the tooltip for a value too long to show.
-fn detail_row(field: &'static str, value: String) -> Stateful<Div> {
+fn detail_row(detail: Detail) -> Stateful<Div> {
+    let Detail { field, value, .. } = detail;
     div()
         .id(field)
         .tooltip(tooltip(format!("{field}: {value}")))
@@ -351,14 +415,14 @@ fn detail_row(field: &'static str, value: String) -> Stateful<Div> {
         )
 }
 
-/// Returns the technical details of a ready record.
-fn record_rows(record: &AnalysisRecord) -> Vec<(&'static str, String)> {
+/// Returns the technical details of a ready record, all of them short.
+fn record_rows(record: &AnalysisRecord) -> Vec<Detail> {
     let channels = match record.channels {
         1 => String::from("Mono"),
         2 => String::from("Stereo"),
         count => count.to_string(),
     };
-    vec![
+    [
         (
             "Format",
             format!(
@@ -373,20 +437,20 @@ fn record_rows(record: &AnalysisRecord) -> Vec<(&'static str, String)> {
         ),
         ("Duration", describe_duration(record.duration_seconds)),
         ("Samples", record.length_in_samples.to_string()),
-        (
-            "Peak L / R",
-            format!(
-                "{} / {} dBFS",
-                format_peak_compact(f64::from(record.peak_left)),
-                format_peak_compact(f64::from(record.peak_right))
-            ),
-        ),
     ]
+    .into_iter()
+    .map(|(field, value)| Detail {
+        field,
+        value,
+        short: true,
+    })
+    .collect()
 }
 
 /// Returns the musical details and tags that are set.
 /// The tempo prefers Serato's analyzed value over the tag and the beat grid.
-fn tag_rows(tags: &FileTags) -> Vec<(&'static str, String)> {
+/// The tempo, the key, and the year are short, and the album, the genre, and the comment can be long.
+fn tag_rows(tags: &FileTags) -> Vec<Detail> {
     let serato_bpm = tags.serato.as_ref().and_then(|serato| {
         serato
             .bpm()
@@ -398,18 +462,18 @@ fn tag_rows(tags: &FileTags) -> Vec<(&'static str, String)> {
         .filter(|bpm| bpm.is_finite() && *bpm > 0.0)
         .map(|bpm| format!("{bpm:.2}"));
     [
-        ("BPM", bpm),
-        ("Key", tags.key.clone()),
-        ("Album", tags.album.clone()),
-        ("Genre", tags.genre.clone()),
-        ("Year", tags.year.map(|year| year.to_string())),
-        ("Comment", tags.comment.clone()),
+        ("BPM", bpm, true),
+        ("Key", tags.key.clone(), true),
+        ("Album", tags.album.clone(), false),
+        ("Genre", tags.genre.clone(), false),
+        ("Year", tags.year.map(|year| year.to_string()), true),
+        ("Comment", tags.comment.clone(), false),
     ]
     .into_iter()
-    .filter_map(|(field, value)| {
+    .filter_map(|(field, value, short)| {
         value
             .filter(|value| !value.trim().is_empty())
-            .map(|value| (field, value))
+            .map(|value| Detail { field, value, short })
     })
     .collect()
 }

@@ -7,7 +7,6 @@
 #include "gui/AudioBatchComponent.h"
 #include "gui/AudioBatchComponentConstants.h"
 #include "gui/components/AudioInfoPanel.h"
-#include "gui/components/CustomLookAndFeel.h"
 #include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
@@ -481,7 +480,7 @@ juce::Array<juce::File> AudioBatchComponent::releasePreviewBeforeProcessing(
 {
     // Always stop playback before processing, since files may be replaced on disk.
     previewPlayer.stop();
-    previewWorkspace.startStopButton.setColour(juce::TextButton::buttonColourId, CustomLookAndFeel::green());
+    updatePlaybackButtonForTransportState();
 
     juce::Array<juce::File> filesToProcess;
     for (const auto& record : records) {

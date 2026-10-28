@@ -66,7 +66,7 @@ const STATUS_BAR_HEIGHT: f32 = 24.0;
 const TABLE_FRAME_BORDER: f32 = 1.0;
 
 /// Space between the preview columns.
-const SECTION_SPACING: f32 = 10.0;
+const SECTION_SPACING: f32 = 6.0;
 
 /// Smallest height of the preview.
 const PREVIEW_MINIMUM_HEIGHT: f32 = 230.0;

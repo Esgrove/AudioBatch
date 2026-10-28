@@ -453,6 +453,7 @@ impl SettingsView {
     ) -> Checkbox {
         Checkbox::new(id)
             .label(label)
+            .small()
             .checked(checked)
             .tooltip(tooltip_text)
             .text_size(px(FONT_SIZE))

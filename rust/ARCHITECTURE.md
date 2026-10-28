@@ -170,8 +170,10 @@ the `WaveformView`, and the four `SliderState` sliders.
 The controls column and the information panel are not entities.
 `render_controls` and `render_info_panel` draw them from the view's state on every render,
 and the controls send a `ControlsEvent` back through a listener.
+`preview_widths` switches both to their wide layouts once half of the preview is wide enough for them to share,
+and leaves the other half to the waveform.
 The preview collapses into one row through the chevron, the Options menu, or the `TogglePreviewSection` shortcut.
-`render_compact_preview` then shows the chevron, Play/Stop and Process, the four metrics, and the waveform,
+`render_compact_preview` then shows the chevron, Play and Process, the four metrics, and the waveform,
 and the `ResizableState` keeps the divider where it was for when the preview expands again.
 
 The Audio Settings, Plugin Chain, and Plugin Manager windows are gpui windows,

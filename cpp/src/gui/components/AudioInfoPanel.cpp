@@ -1,5 +1,6 @@
 /// Implementation of the selected-file inspector.
-/// Splits artist/title filenames above fixed analysis cards and full-width, scrollable technical and musical details.
+/// Splits artist/title filenames above fixed analysis cards and full-width, scrollable technical and musical details,
+/// or, in the wide layout, one row of cards above the short details paired on lines and the long ones below them.
 
 #include "gui/components/AudioInfoPanel.h"
 
@@ -9,7 +10,9 @@
 #include "utils/GuiUtils.h"
 #include "utils/StringFormat.h"
 
+#include <algorithm>
 #include <cmath>
+#include <tuple>
 #include <utility>
 
 namespace audiobatch
@@ -18,6 +21,7 @@ namespace
 {
 /// Appends musical metadata, preferring Serato's analyzed tempo over standard BPM and grid fallback,
 /// followed by the key, album, genre, year, and comment tags that are set.
+/// The tempo, the key, and the year are short, and the album, the genre, and the comment can be long.
 void appendTrackInfo(std::vector<AudioInfoRow>& rows, const serato::SeratoData* data)
 {
     if (data == nullptr) {
@@ -33,23 +37,23 @@ void appendTrackInfo(std::vector<AudioInfoRow>& rows, const serato::SeratoData* 
         bpm = data->beatGrid->markers.back().bpm;
     }
     if (bpm && std::isfinite(*bpm) && *bpm > 0.0) {
-        rows.push_back({.field = "BPM", .value = utils::format("{:.2f}", *bpm)});
+        rows.push_back({.field = "BPM", .value = utils::format("{:.2f}", *bpm), .isShort = true});
     }
     if (!data->trackInfo) {
         return;
     }
     const auto& info = *data->trackInfo;
-    for (const auto& [field, value] :
+    for (const auto& [field, value, isShort] :
          {
-             std::pair {"Key", &info.key},
-             std::pair {"Album", &info.album},
-             std::pair {"Genre", &info.genre},
-             std::pair {"Year", &info.year},
-             std::pair {"Comment", &info.comment},
+             std::tuple {"Key", &info.key, true},
+             std::tuple {"Album", &info.album, false},
+             std::tuple {"Genre", &info.genre, false},
+             std::tuple {"Year", &info.year, true},
+             std::tuple {"Comment", &info.comment, false},
          })
     {
         if (value->isNotEmpty()) {
-            rows.push_back({.field = field, .value = *value});
+            rows.push_back({.field = field, .value = *value, .isShort = isShort});
         }
     }
 }
@@ -199,9 +203,19 @@ void AudioInfoPanel::setCompact(const bool compact)
     repaint();
 }
 
+/// Switches between the expanded layout and the wide one, without changing the data or the scroll position.
+void AudioInfoPanel::setWide(const bool wide)
+{
+    if (wideMode == wide) {
+        return;
+    }
+    wideMode = wide;
+    resized();
+}
+
 /// Format detailed audio info rows.
 ///
-/// Channels, bit depth, sample rate, bit rate, duration, number of samples, channel peaks.
+/// Channels, bit depth, sample rate, bit rate, duration, and number of samples, all of them short.
 std::vector<AudioInfoRow> AudioInfoPanel::formatRows(const AudioAnalysisRecord& record)
 {
     std::vector<AudioInfoRow> newRows;
@@ -216,21 +230,19 @@ std::vector<AudioInfoRow> AudioInfoPanel::formatRows(const AudioAnalysisRecord& 
     newRows.push_back({
         .field = "Format",
         .value = utils::format("{} / {} / {} bit", formatTypeLabel(record), channels, bitDepth),
+        .isShort = true,
     });
     newRows.push_back({
         .field = "Audio",
         .value = utils::format("{} / {}", formatSampleRateDisplay(record), formatBitrateDisplay(record)),
+        .isShort = true,
     });
-    newRows.push_back({.field = "Duration", .value = formatDurationClockTenths(record.durationSeconds)});
-    newRows.push_back({.field = "Samples", .value = juce::String(record.lengthInSamples)});
     newRows.push_back({
-        .field = "Peak L / R",
-        .value = utils::format(
-            "{} / {} dBFS",
-            formatPeakCompact(static_cast<double>(record.peakLeft)),
-            formatPeakCompact(static_cast<double>(record.peakRight))
-        ),
+        .field = "Duration",
+        .value = formatDurationClockTenths(record.durationSeconds),
+        .isShort = true,
     });
+    newRows.push_back({.field = "Samples", .value = juce::String(record.lengthInSamples), .isShort = true});
 
     return newRows;
 }
@@ -304,12 +316,27 @@ int AudioInfoPanel::getErrorHeight(const int width) const
 }
 
 /// Returns the height that shows the complete summary and details without scrolling.
+/// The wide layout has one row of metrics fewer, and pairs the short details on lines.
 int AudioInfoPanel::getPreferredHeight() const
 {
-    return layout::information::verticalPadding * 2 + layout::information::summaryHeight
+    const auto summaryHeight = wideMode
+        ? layout::information::summaryHeight - layout::information::metricHeight - layout::sectionSpacing
+        : layout::information::summaryHeight;
+    return layout::information::verticalPadding * 2 + summaryHeight
         + (hasTitle ? layout::information::filenameHeight : 0) + (hasStatus ? layout::information::statusHeight : 0)
-        + static_cast<int>(rows.size()) * layout::information::rowHeight
+        + getDetailLineCount() * layout::information::rowHeight
         + getErrorHeight(getWidth() - layout::information::horizontalPadding * 2 - layout::scrollBarThickness);
+}
+
+/// Returns how many lines the details take: one per row,
+/// or in the wide layout one per pair of short rows and one per long row.
+int AudioInfoPanel::getDetailLineCount() const
+{
+    if (!wideMode) {
+        return static_cast<int>(rows.size());
+    }
+    const auto shortCount = static_cast<int>(std::ranges::count_if(rows, &AudioInfoRow::isShort));
+    return (shortCount + 1) / 2 + static_cast<int>(rows.size()) - shortCount;
 }
 
 /// Reuses detail labels without triggering a parent resize or resetting the table/preview split.
@@ -322,11 +349,11 @@ void AudioInfoPanel::setRows(std::vector<AudioInfoRow> newRows)
         fieldLabels[index]->setVisible(visible);
         valueLabels[index]->setVisible(visible);
         if (visible) {
-            const auto& [field, value] = rows[index];
-            fieldLabels[index]->setText(field, juce::dontSendNotification);
-            valueLabels[index]->setName(field);
-            valueLabels[index]->setText(value, juce::dontSendNotification);
-            valueLabels[index]->setTooltip(utils::format("{}: {}", field, value));
+            const auto& row = rows[index];
+            fieldLabels[index]->setText(row.field, juce::dontSendNotification);
+            valueLabels[index]->setName(row.field);
+            valueLabels[index]->setText(row.value, juce::dontSendNotification);
+            valueLabels[index]->setTooltip(utils::format("{}: {}", row.field, row.value));
         }
     }
     resized();
@@ -371,26 +398,56 @@ void AudioInfoPanel::resized()
     titleLabel.setBounds(bounds.removeFromTop(titleLabel.isVisible() ? layout::information::filenameHeight : 0));
     statusLabel.setBounds(bounds.removeFromTop(statusLabel.isVisible() ? layout::information::statusHeight : 0));
     bounds.removeFromTop(layout::sectionSpacing);
-    for (std::size_t row = 0; row < 2; ++row) {
+    if (wideMode) {
         auto metricRow = bounds.removeFromTop(layout::information::metricHeight);
-        metrics[row * 2].setBounds(metricRow.removeFromLeft((metricRow.getWidth() - layout::sectionSpacing) / 2));
-        metricRow.removeFromLeft(layout::sectionSpacing);
-        metrics[row * 2 + 1].setBounds(metricRow);
+        for (std::size_t index = 0; index < metrics.size(); ++index) {
+            const auto remainingMetrics = static_cast<int>(metrics.size() - index);
+            const auto metricWidth
+                = (metricRow.getWidth() - layout::sectionSpacing * (remainingMetrics - 1)) / remainingMetrics;
+            metrics[index].setBounds(metricRow.removeFromLeft(juce::jmax(0, metricWidth)));
+            metricRow.removeFromLeft(layout::sectionSpacing);
+        }
         bounds.removeFromTop(layout::sectionSpacing);
+    } else {
+        for (std::size_t row = 0; row < 2; ++row) {
+            auto metricRow = bounds.removeFromTop(layout::information::metricHeight);
+            metrics[row * 2].setBounds(metricRow.removeFromLeft((metricRow.getWidth() - layout::sectionSpacing) / 2));
+            metricRow.removeFromLeft(layout::sectionSpacing);
+            metrics[row * 2 + 1].setBounds(metricRow);
+            bounds.removeFromTop(layout::sectionSpacing);
+        }
     }
     detailsViewport.setBounds(bounds);
     const auto contentWidth = juce::jmax(0, bounds.getWidth() - layout::scrollBarThickness);
     const auto errorHeight = getErrorHeight(contentWidth);
     errorLabel.setBounds(0, 0, contentWidth, errorHeight);
     errorLabel.setVisible(errorHeight > 0);
-    int nextY = errorHeight;
+    const auto halfWidth = (contentWidth - layout::sectionSpacing) / 2;
+    const auto shortCount = static_cast<int>(std::ranges::count_if(rows, &AudioInfoRow::isShort));
+    int shortIndex = 0;
+    int longLine = (shortCount + 1) / 2;
     for (std::size_t index = 0; index < rows.size(); ++index) {
-        auto rowBounds = juce::Rectangle(0, nextY, contentWidth, layout::information::rowHeight);
+        auto rowBounds = juce::Rectangle(
+            0,
+            errorHeight + static_cast<int>(index) * layout::information::rowHeight,
+            contentWidth,
+            layout::information::rowHeight
+        );
+        if (wideMode && rows[index].isShort) {
+            const bool rightHalf = shortIndex % 2 == 1;
+            rowBounds = rowBounds.withX(rightHalf ? contentWidth - halfWidth : 0)
+                            .withY(errorHeight + shortIndex / 2 * layout::information::rowHeight)
+                            .withWidth(halfWidth);
+            ++shortIndex;
+        } else if (wideMode) {
+            rowBounds = rowBounds.withY(errorHeight + longLine * layout::information::rowHeight);
+            ++longLine;
+        }
         fieldLabels[index]->setBounds(rowBounds.removeFromLeft(layout::information::detailFieldWidth));
         valueLabels[index]->setBounds(rowBounds);
-        nextY += layout::information::rowHeight;
     }
-    detailsContent.setSize(contentWidth, juce::jmax(bounds.getHeight(), nextY));
+    const auto detailsHeight = errorHeight + getDetailLineCount() * layout::information::rowHeight;
+    detailsContent.setSize(contentWidth, juce::jmax(bounds.getHeight(), detailsHeight));
 }
 
 /// Creates accessible field/value labels only when the existing pool cannot hold the current details.

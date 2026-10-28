@@ -1,6 +1,6 @@
 /// Implementation of PluginChainEditor and its PluginChainSlotRow component.
 /// Covers building the rows and wiring their controls to the slots of the owning LiveChain,
-/// laying out the preset row, the hint label, and the scrolling row list with its add button,
+/// laying out the preset row, the hint label, and the scrolling row list with its add and clear buttons,
 /// loading and deleting the presets chosen in the preset list,
 /// drag-to-reorder gestures with a live drop-position preview,
 /// and deferred row rebuilds when the chain changes.
@@ -72,16 +72,18 @@ PluginChainSlotRow::PluginChainSlotRow(
     addAndMakeVisible(removeButton);
 }
 
-/// Lays out the toggle, name label, and action buttons within the row.
+/// Lays out the toggle, name label, and action buttons within the row,
+/// with the arrow and remove buttons square and a small gap between the arrows.
 void PluginChainSlotRow::resized()
 {
     auto area = getLocalBounds().reduced(layout::pluginEditor::rowPadding);
 
     enabledToggle.setBounds(area.removeFromLeft(layout::pluginEditor::rowIconButtonWidth));
-    removeButton.setBounds(area.removeFromRight(layout::pluginEditor::rowIconButtonWidth));
+    removeButton.setBounds(area.removeFromRight(layout::pluginEditor::rowSquareButtonSize));
     area.removeFromRight(layout::pluginEditor::rowPadding);
-    downButton.setBounds(area.removeFromRight(layout::pluginEditor::rowIconButtonWidth));
-    upButton.setBounds(area.removeFromRight(layout::pluginEditor::rowIconButtonWidth));
+    downButton.setBounds(area.removeFromRight(layout::pluginEditor::rowSquareButtonSize));
+    area.removeFromRight(layout::pluginEditor::rowPadding);
+    upButton.setBounds(area.removeFromRight(layout::pluginEditor::rowSquareButtonSize));
     area.removeFromRight(layout::pluginEditor::rowPadding);
     editButton.setBounds(area.removeFromRight(layout::pluginEditor::rowEditButtonWidth));
     area.removeFromRight(layout::pluginEditor::rowPadding);
@@ -176,6 +178,9 @@ PluginChainEditor::PluginChainEditor(LiveChain& chain) : liveChain(chain)
     presetBox.setTooltip("Replace the chain with a saved preset.");
     presetBox.onChange = [this] { loadSelectedPreset(); };
     addAndMakeVisible(presetBox);
+    updatePresetButton.setTooltip("Save the modified chain over the loaded preset.");
+    updatePresetButton.onClick = [this] { liveChain.updateCurrentPreset(); };
+    addAndMakeVisible(updatePresetButton);
     savePresetButton.setTooltip("Save the plugins of the chain, their order, and their settings as a preset.");
     savePresetButton.onClick = [this] { liveChain.promptSavePreset(); };
     addAndMakeVisible(savePresetButton);
@@ -186,6 +191,9 @@ PluginChainEditor::PluginChainEditor(LiveChain& chain) : liveChain(chain)
     addButton.setTooltip("Add a plugin to the end of the chain.");
     addButton.onClick = [this] { showAddPluginMenu(); };
     rowContainer.addAndMakeVisible(addButton);
+    clearChainButton.setTooltip("Remove every plugin from the chain.");
+    clearChainButton.onClick = [this] { liveChain.clearChain(); };
+    rowContainer.addAndMakeVisible(clearChainButton);
 
     hintLabel.setJustificationType(juce::Justification::centred);
     hintLabel.setColour(juce::Label::textColourId, CustomLookAndFeel::greyMiddle());
@@ -210,7 +218,7 @@ PluginChainEditor::~PluginChainEditor()
     liveChain.removeChangeListener(this);
 }
 
-/// Lays out the preset row, the hint label, and the scrolling row list with its add button.
+/// Lays out the preset row, the hint label, and the scrolling row list with its add and clear buttons.
 void PluginChainEditor::resized()
 {
     auto area = getLocalBounds().reduced(layout::pluginEditor::margin);
@@ -221,6 +229,8 @@ void PluginChainEditor::resized()
     deletePresetButton.setBounds(presetRow.removeFromRight(layout::pluginEditor::presetButtonWidth));
     presetRow.removeFromRight(layout::pluginEditor::rowPadding);
     savePresetButton.setBounds(presetRow.removeFromRight(layout::pluginEditor::presetButtonWidth));
+    presetRow.removeFromRight(layout::pluginEditor::rowPadding);
+    updatePresetButton.setBounds(presetRow.removeFromRight(layout::pluginEditor::updatePresetButtonWidth));
     presetRow.removeFromRight(layout::pluginEditor::rowPadding);
     presetBox.setBounds(presetRow);
 
@@ -267,20 +277,28 @@ void PluginChainEditor::handleAsyncUpdate()
 }
 
 /// Lists the saved presets and selects the one the chain was loaded from or saved as, without loading it again.
+/// The selected preset reads "(modified)" after its name once the chain was modified,
+/// and only then can Update save the chain over it.
 void PluginChainEditor::refreshPresets()
 {
     listedPresets = liveChain.getPresets();
     const auto currentName = liveChain.getCurrentPresetName();
+    const bool modified = currentName.isNotEmpty() && liveChain.isPresetModified();
 
     presetBox.clear(juce::dontSendNotification);
+    bool currentListed = false;
     for (std::size_t index = 0; index < listedPresets.size(); ++index) {
         const auto itemId = static_cast<int>(index) + 1;
-        presetBox.addItem(listedPresets[index].name, itemId);
-        if (listedPresets[index].name == currentName) {
+        const auto& name = listedPresets[index].name;
+        const bool current = currentName.isNotEmpty() && name == currentName;
+        presetBox.addItem(current && modified ? utils::format("{} (modified)", name) : name, itemId);
+        if (current) {
             presetBox.setSelectedId(itemId, juce::dontSendNotification);
+            currentListed = true;
         }
     }
 
+    updatePresetButton.setEnabled(currentListed && modified && liveChain.getNumSlots() > 0);
     savePresetButton.setEnabled(liveChain.getNumSlots() > 0);
     deletePresetButton.setEnabled(presetBox.getSelectedId() != 0);
 }
@@ -332,6 +350,7 @@ void PluginChainEditor::rebuildRows()
         rowContainer.addAndMakeVisible(row.get());
         rows.push_back(std::move(row));
     }
+    clearChainButton.setEnabled(numSlots > 0);
 
     updateHintLabel();
     updateLatencyLabels();
@@ -383,6 +402,12 @@ void PluginChainEditor::layoutRows(const PluginChainSlotRow* draggedRow, const i
         layout::pluginEditor::rowPadding,
         rowsHeight + layout::pluginEditor::rowPadding,
         layout::pluginEditor::addButtonSize,
+        layout::pluginEditor::addButtonSize
+    );
+    clearChainButton.setBounds(
+        rowContainer.getWidth() - layout::pluginEditor::rowPadding - layout::pluginEditor::clearChainButtonWidth,
+        rowsHeight + layout::pluginEditor::rowPadding,
+        layout::pluginEditor::clearChainButtonWidth,
         layout::pluginEditor::addButtonSize
     );
 }

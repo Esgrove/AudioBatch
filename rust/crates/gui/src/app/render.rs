@@ -2,6 +2,8 @@
 //!
 //! The results table, and below a draggable divider the preview with the controls, the information panel,
 //! and the waveform.
+//! In a wide window the controls and the information panel switch to their wide layouts and share half the width,
+//! so they take less height and the waveform keeps at least the other half.
 //! A status bar along the bottom edge shows the listed folders, the run status with its progress,
 //! and the output device with its sample rate and buffer size.
 //! The window title shows the progress of analysis, normalization, or plugin processing,
@@ -94,6 +96,19 @@ const INFORMATION_MAXIMUM_WIDTH: f32 = 270.0;
 
 /// Share of the window width given to the information panel.
 const INFORMATION_WIDTH_PROPORTION: f32 = 0.22;
+
+/// Narrowest half of the content width that turns on the wide preview,
+/// in which the controls and the information panel share half the width and the waveform gets the other half.
+const WIDE_MINIMUM_HALF_WIDTH: f32 = 790.0;
+
+/// Share of the wide half given to the controls, the rest going to the information panel.
+const WIDE_CONTROLS_PROPORTION: f32 = 0.48;
+
+/// Widest width of the controls in the wide preview, so on very wide windows the waveform grows instead.
+const WIDE_CONTROLS_MAXIMUM_WIDTH: f32 = 500.0;
+
+/// Widest width of the information panel in the wide preview.
+const WIDE_INFORMATION_MAXIMUM_WIDTH: f32 = 540.0;
 
 /// Height of the collapsed preview, including the space below the table.
 const COMPACT_PREVIEW_HEIGHT: f32 = 52.0;
@@ -261,9 +276,9 @@ impl AppView {
     }
 
     /// Renders the preview: the controls, the information panel, and the waveform side by side.
+    /// A wide window gives the controls and the information panel their wide layouts, see `preview_widths`.
     fn render_preview(&self, content_width: f32, cx: &Context<Self>) -> Div {
-        let information_width =
-            (content_width * INFORMATION_WIDTH_PROPORTION).clamp(INFORMATION_MINIMUM_WIDTH, INFORMATION_MAXIMUM_WIDTH);
+        let (controls_width, information_width, wide) = preview_widths(content_width);
         let selected_tags = self
             .selected_tags
             .as_ref()
@@ -282,6 +297,7 @@ impl AppView {
                 can_normalize: self.can_normalize_selected(cx),
             },
             chain_summary: self.chain_summary(),
+            preview_chain: self.settings.preview_plugin_chain,
             playback: self.playback_controls(cx),
         };
 
@@ -291,13 +307,12 @@ impl AppView {
             .flex()
             .flex_row()
             .gap(px(SECTION_SPACING))
-            .child(
-                div()
-                    .w(px(controls_width(content_width)))
-                    .h_full()
-                    .flex_none()
-                    .child(render_controls(&controls, &Self::controls_listener(cx), cx)),
-            )
+            .child(div().w(px(controls_width)).h_full().flex_none().child(render_controls(
+                &controls,
+                wide,
+                &Self::controls_listener(cx),
+                cx,
+            )))
             .child(
                 div()
                     .w(px(information_width))
@@ -306,6 +321,7 @@ impl AppView {
                     .child(render_info_panel(
                         self.selected_row(cx).as_ref(),
                         selected_tags.as_deref(),
+                        wide,
                     )),
             )
             .child(div().flex_1().min_w_0().h_full().child(self.waveform.clone()))
@@ -496,6 +512,26 @@ fn divider_appearance() -> ResizeHandleRenderer {
 /// Returns the width of the controls column, which the compact row also uses for its chevron and playback buttons.
 fn controls_width(content_width: f32) -> f32 {
     (content_width * CONTROLS_WIDTH_PROPORTION).clamp(CONTROLS_MINIMUM_WIDTH, CONTROLS_MAXIMUM_WIDTH)
+}
+
+/// Returns the widths of the controls and the information panel of the expanded preview,
+/// and whether they use their wide layouts.
+/// The wide layouts apply once half the content width is at least `WIDE_MINIMUM_HALF_WIDTH`.
+/// The controls and the panel then share that half, each up to its maximum,
+/// so the waveform gets at least the other half.
+fn preview_widths(content_width: f32) -> (f32, f32, bool) {
+    let half = content_width / 2.0;
+    if half < WIDE_MINIMUM_HALF_WIDTH {
+        let information_width =
+            (content_width * INFORMATION_WIDTH_PROPORTION).clamp(INFORMATION_MINIMUM_WIDTH, INFORMATION_MAXIMUM_WIDTH);
+        return (controls_width(content_width), information_width, false);
+    }
+    let shared = half - SECTION_SPACING;
+    (
+        (shared * WIDE_CONTROLS_PROPORTION).min(WIDE_CONTROLS_MAXIMUM_WIDTH),
+        (shared * (1.0 - WIDE_CONTROLS_PROPORTION)).min(WIDE_INFORMATION_MAXIMUM_WIDTH),
+        true,
+    )
 }
 
 /// Renders the overall progress of a run as a thin line along the top edge of the status bar.

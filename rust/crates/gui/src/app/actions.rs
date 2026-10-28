@@ -273,6 +273,11 @@ impl AppView {
             ControlsEvent::ProcessSelected => self.process_selected(window, cx),
             ControlsEvent::CancelRun => self.cancel_run(cx),
             ControlsEvent::OpenPluginChain => self.open_chain_window(cx),
+            ControlsEvent::SetPreviewChain(enabled) => {
+                if enabled != self.settings.preview_plugin_chain {
+                    self.toggle_plugin_preview(cx);
+                }
+            }
         }
     }
 

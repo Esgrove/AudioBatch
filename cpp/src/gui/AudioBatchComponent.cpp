@@ -49,7 +49,7 @@ void AudioBatchComponent::configureResultsTable()
 }
 
 /// Sets up the split between the results table and the preview workspace,
-/// and connects the waveform, the section toggle, and the playback and zoom controls.
+/// and connects the waveform, the section toggle, the playback, preview chain, and zoom controls.
 void AudioBatchComponent::configurePreviewControls()
 {
     mainVerticalLayout.setItemLayout(
@@ -88,6 +88,11 @@ void AudioBatchComponent::configurePreviewControls()
     thumbnail.setThumbnailFullyLoadedCallback([this] { handleThumbnailFullyLoaded(); });
 
     previewWorkspace.startStopButton.onClick = [this] { previewPlayer.togglePlayback(); };
+    previewWorkspace.previewChainToggle.onClick = [this] {
+        if (previewWorkspace.previewChainToggle.getToggleState() != isPluginPreviewEnabled()) {
+            togglePluginPreview();
+        }
+    };
     previewWorkspace.zoomSlider.onValueChange
         = [this] { zoomLevelChanged(previewWorkspace.zoomSlider.getValue() * zoom_range::percentToScaleFactor); };
 }
