@@ -4,10 +4,17 @@
 //! each falling back to what the device prefers when unset.
 //! `DeviceCapabilities` lists the common sample rates and buffer sizes a device supports,
 //! for the settings window to offer.
+//! Windows uses ASIO, and other platforms use their default audio host.
+
+#[cfg(windows)]
+use std::cell::OnceCell;
 
 use anyhow::{Context, Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait};
-use cpal::{BufferSize, Device, SampleFormat, StreamConfig, SupportedBufferSize, SupportedStreamConfigRange};
+use cpal::{
+    BufferSize, Device, SampleFormat, StreamConfig, SupportedBufferSize, SupportedStreamConfig,
+    SupportedStreamConfigRange,
+};
 
 /// Sample rates offered when the device supports them.
 const COMMON_SAMPLE_RATES: [u32; 6] = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000];
@@ -15,10 +22,17 @@ const COMMON_SAMPLE_RATES: [u32; 6] = [44_100, 48_000, 88_200, 96_000, 176_400, 
 /// Buffer sizes in frames offered when the device supports them.
 const COMMON_BUFFER_SIZES: [u32; 7] = [64, 128, 256, 512, 1024, 2048, 4096];
 
+#[cfg(windows)]
+thread_local! {
+    /// ASIO discovery loads each driver, which fails while a different driver has an open stream.
+    /// Keep the discovered device metadata on the player thread, without keeping any driver open.
+    static ASIO_OUTPUT_DEVICES: OnceCell<Vec<Device>> = const { OnceCell::new() };
+}
+
 /// The output device, sample rate, and buffer size to open, with `None` for what the device prefers.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct OutputConfig {
-    /// Device name as reported by the audio host, or the system default device.
+    /// Device name as reported by the audio host, or its default output device.
     pub device: Option<String>,
     /// Sample rate in hertz, or the device default.
     pub sample_rate: Option<u32>,
@@ -43,9 +57,7 @@ pub struct DeviceCapabilities {
 /// Returns an error when the device cannot be found or does not report its configuration.
 pub fn device_capabilities(device_name: Option<&str>) -> Result<DeviceCapabilities> {
     let device = find_device(device_name)?;
-    let default = device
-        .default_output_config()
-        .context("Could not read the output device configuration")?;
+    let default = default_output_config(&device)?;
     let ranges: Vec<SupportedStreamConfigRange> = device
         .supported_output_configs()
         .context("Could not read the supported output configurations")?
@@ -66,18 +78,52 @@ pub fn device_capabilities(device_name: Option<&str>) -> Result<DeviceCapabiliti
     })
 }
 
-/// Finds the named output device, or the default one.
+/// Finds the named output device, or the host default, which is the first ASIO output on Windows.
 pub fn find_device(device_name: Option<&str>) -> Result<Device> {
-    let host = cpal::default_host();
-    match device_name {
-        Some(name) => host
-            .output_devices()?
+    if let Some(name) = device_name {
+        output_devices()?
+            .into_iter()
             .find(|device| device_display_name(device) == name)
-            .ok_or_else(|| anyhow!("Output device \"{name}\" not found")),
-        None => host
-            .default_output_device()
-            .ok_or_else(|| anyhow!("No audio output device available")),
+            .ok_or_else(|| anyhow!("Output device \"{name}\" not found"))
+    } else {
+        #[cfg(windows)]
+        let device = output_devices()?.into_iter().next();
+        #[cfg(not(windows))]
+        let device = cpal::default_host().default_output_device();
+
+        #[cfg(windows)]
+        let message = "No ASIO audio output device available. Install an ASIO driver for your audio interface.";
+        #[cfg(not(windows))]
+        let message = "No audio output device available";
+        device.ok_or_else(|| anyhow!(message))
     }
+}
+
+/// Lists outputs from the playback host.
+/// ASIO discovery is cached after the first nonempty result, so menus can query it during playback.
+pub fn output_devices() -> Result<Vec<Device>> {
+    #[cfg(windows)]
+    {
+        ASIO_OUTPUT_DEVICES.with(|cached| {
+            if let Some(devices) = cached.get() {
+                return Ok(devices.clone());
+            }
+            let host = cpal::host_from_id(cpal::HostId::Asio).context("Could not initialize the ASIO audio host")?;
+            let devices: Vec<Device> = host
+                .output_devices()
+                .context("Could not list ASIO output devices")?
+                .collect();
+            if !devices.is_empty() {
+                let _ = cached.set(devices.clone());
+            }
+            Ok(devices)
+        })
+    }
+    #[cfg(not(windows))]
+    cpal::default_host()
+        .output_devices()
+        .context("Could not list output devices")
+        .map(Iterator::collect)
 }
 
 /// Returns the name of a device for menus and settings.
@@ -95,9 +141,7 @@ pub fn device_display_name(device: &Device) -> String {
 /// # Errors
 /// Returns an error when the device has no configuration or does not support the requested sample rate.
 pub fn stream_config(device: &Device, config: &OutputConfig) -> Result<(StreamConfig, SampleFormat)> {
-    let default = device
-        .default_output_config()
-        .context("Could not read the output device configuration")?;
+    let default = default_output_config(device)?;
     let supported = match config.sample_rate {
         Some(rate) if rate != default.sample_rate() => device
             .supported_output_configs()
@@ -115,6 +159,34 @@ pub fn stream_config(device: &Device, config: &OutputConfig) -> Result<(StreamCo
         stream_config.buffer_size = BufferSize::Fixed(frames);
     }
     Ok((stream_config, supported.sample_format()))
+}
+
+/// Reads the preferred output configuration, choosing a supported rate if the driver reports an unknown rate.
+fn default_output_config(device: &Device) -> Result<SupportedStreamConfig> {
+    let default = device
+        .default_output_config()
+        .context("Could not read the output device configuration")?;
+    if default.sample_rate() != 0 {
+        return Ok(default);
+    }
+    fallback_output_config(
+        device
+            .supported_output_configs()
+            .context("Could not read the supported output configurations")?
+            .filter(|range| range.channels() == default.channels() && range.sample_format() == default.sample_format()),
+    )
+}
+
+/// Chooses a supported nonzero sample rate, preferring 48 kHz, then 44.1 kHz, then the highest supported rate.
+/// Some ASIO drivers cannot report their current rate before a stream starts.
+fn fallback_output_config(ranges: impl Iterator<Item = SupportedStreamConfigRange>) -> Result<SupportedStreamConfig> {
+    let range = ranges
+        .filter(|range| range.max_sample_rate() > 0)
+        .max_by(SupportedStreamConfigRange::cmp_default_heuristics)
+        .context("The output device does not report a supported sample rate")?;
+    Ok(range
+        .try_with_standard_sample_rate()
+        .unwrap_or_else(|| range.with_max_sample_rate()))
 }
 
 /// Returns the common sample rates inside any of the supported ranges, with the default rate included.
@@ -136,6 +208,52 @@ fn supported_buffer_sizes(min: u32, max: u32) -> Vec<u32> {
         .into_iter()
         .filter(|frames| (min..=max).contains(frames))
         .collect()
+}
+
+#[cfg(test)]
+mod test_output_config {
+    use super::*;
+
+    /// Builds a stereo float configuration range for a driver whose current rate is unknown.
+    fn range(minimum_rate: u32, maximum_rate: u32) -> SupportedStreamConfigRange {
+        SupportedStreamConfigRange::new(
+            2,
+            minimum_rate,
+            maximum_rate,
+            SupportedBufferSize::Range { min: 64, max: 1024 },
+            SampleFormat::F32,
+        )
+    }
+
+    #[test]
+    fn unknown_rate_prefers_standard_rates() {
+        let selected = fallback_output_config([range(44_100, 44_100), range(48_000, 48_000)].into_iter())
+            .expect("a supported default rate");
+        assert_eq!(selected.sample_rate(), 48_000);
+        assert_eq!(selected.channels(), 2);
+        assert_eq!(selected.sample_format(), SampleFormat::F32);
+        assert_eq!(
+            *selected.buffer_size(),
+            SupportedBufferSize::Range { min: 64, max: 1024 }
+        );
+
+        let selected = fallback_output_config([range(44_100, 44_100), range(96_000, 96_000)].into_iter())
+            .expect("the CD rate is supported");
+        assert_eq!(selected.sample_rate(), 44_100);
+    }
+
+    #[test]
+    fn unknown_rate_uses_the_highest_rate_without_a_standard_rate() {
+        let selected = fallback_output_config([range(0, 0), range(88_200, 96_000)].into_iter())
+            .expect("an unusual rate is supported");
+        assert_eq!(selected.sample_rate(), 96_000);
+    }
+
+    #[test]
+    fn unknown_rate_requires_a_nonzero_supported_rate() {
+        assert!(fallback_output_config(std::iter::empty()).is_err());
+        assert!(fallback_output_config([range(0, 0)].into_iter()).is_err());
+    }
 }
 
 #[cfg(test)]

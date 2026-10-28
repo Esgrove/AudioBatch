@@ -17,6 +17,9 @@ crossbeam-channel.workspace = true
 rtrb.workspace = true
 rubato.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+cpal = { workspace = true, features = ["asio"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 test-fixtures.workspace = true

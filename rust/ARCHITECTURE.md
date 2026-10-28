@@ -349,6 +349,10 @@ flowchart LR
 
 `Player` in `playback/src/lib.rs` stays on the thread that created it, the UI thread in the GUI,
 because the cpal stream is not `Send` on every platform.
+Windows uses CPAL's ASIO host, and other platforms use their default host.
+ASIO device metadata is cached on the player thread before streaming,
+because enumerating another driver while a stream is open can interrupt discovery.
+The ASIO driver owns the callback thread and its scheduling, which CPAL's `realtime` feature does not change.
 On the decode thread, `FramePipeline` decodes the file, copies mono to both channels,
 resamples with `rubato` when the file rate differs from the device rate,
 and tags every stereo `Frame` with the playback generation and its source position.
