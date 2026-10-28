@@ -35,24 +35,19 @@ pub fn slot_label(position: usize, plugin: &PluginDescription) -> String {
     format!("{position}. {}", plugin_label(plugin))
 }
 
-/// Returns a latency in samples with its duration at a sample rate, for example "512 samples (10.7 ms)".
-/// No latency is shown without a duration.
+/// Returns a latency in samples with its duration at a sample rate, for example "512 samples (10.67 ms)",
+/// or only the samples when the rate is unknown.
 #[must_use]
 pub fn latency_text(samples: u64, sample_rate: u32) -> String {
-    if samples == 0 {
-        return String::from("No latency");
+    if sample_rate == 0 {
+        return format!("{samples} samples");
     }
-    let unit = if samples == 1 { "sample" } else { "samples" };
-    if sample_rate > 0 {
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "a latency is far below the f64 precision limit"
-        )]
-        let milliseconds = samples as f64 * 1000.0 / f64::from(sample_rate);
-        format!("{samples} {unit} ({milliseconds:.1} ms)")
-    } else {
-        format!("{samples} {unit}")
-    }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a latency is far below the f64 precision limit"
+    )]
+    let milliseconds = samples as f64 * 1000.0 / f64::from(sample_rate);
+    format!("{samples} samples ({milliseconds:.2} ms)")
 }
 
 /// Returns the summary of a chain from the names of its slots and whether each is enabled,
@@ -122,9 +117,10 @@ mod test_labels {
 
     #[test]
     fn latencies_show_their_duration() {
-        assert_eq!(latency_text(0, 48_000), "No latency");
-        assert_eq!(latency_text(1, 48_000), "1 sample (0.0 ms)");
-        assert_eq!(latency_text(480, 48_000), "480 samples (10.0 ms)");
+        assert_eq!(latency_text(0, 48_000), "0 samples (0.00 ms)");
+        assert_eq!(latency_text(1, 48_000), "1 samples (0.02 ms)");
+        assert_eq!(latency_text(480, 48_000), "480 samples (10.00 ms)");
+        assert_eq!(latency_text(512, 48_000), "512 samples (10.67 ms)");
         assert_eq!(latency_text(480, 0), "480 samples");
     }
 

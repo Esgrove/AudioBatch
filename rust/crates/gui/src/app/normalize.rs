@@ -13,7 +13,7 @@ use std::path::Path;
 use audiobatch_core::operation::{OperationOutcome, OperationResult};
 use audiobatch_core::{AnalysisRecord, NormalizeEvent};
 use crossbeam_channel::Receiver;
-use gpui_kit::component::slider::{SliderEvent, SliderState};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::{Context, Entity, PromptLevel, SharedString, Task, Window};
 
 use super::analysis::ANALYSIS_POLL_INTERVAL;
@@ -21,7 +21,7 @@ use super::{AppView, drain_events};
 use crate::menus::set_menus;
 use crate::normalization::{
     ALREADY_NORMALIZING, BLOCKED_BY_ANALYSIS, BLOCKED_BY_PROCESSING, NORMALIZATION_IN_PROGRESS, describe_target,
-    normalization_options, set_target, target_range,
+    format_target, normalization_options, set_target, target,
 };
 use crate::operation_run::{OperationKind, OperationRun};
 use crate::results::RowMessage;
@@ -130,45 +130,45 @@ impl AppView {
         cx.notify();
     }
 
-    /// Returns the target slider of a normalization mode.
-    pub(super) const fn normalize_target_slider(&self, mode: NormalizeMode) -> &Entity<SliderState> {
+    /// Returns the target input of a normalization mode.
+    pub(super) const fn normalize_target_input(&self, mode: NormalizeMode) -> &Entity<InputState> {
         match mode {
-            NormalizeMode::Peak => &self.peak_target_slider,
-            NormalizeMode::Loudness => &self.loudness_target_slider,
+            NormalizeMode::Peak => &self.peak_target_input,
+            NormalizeMode::Loudness => &self.loudness_target_input,
         }
     }
 
-    /// Stores the target while a target slider moves, and saves it when the slider is released.
-    pub(super) fn on_target_slider_event(&mut self, mode: NormalizeMode, event: &SliderEvent, cx: &mut Context<Self>) {
+    /// Stores and saves the target as it is typed or stepped,
+    /// and shows the stored target in the input once editing ends,
+    /// so a partly typed or out of range number snaps to the target it was stored as.
+    pub(super) fn on_target_input_event(
+        &mut self,
+        mode: NormalizeMode,
+        event: &InputEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match event {
-            SliderEvent::Change(value) => self.change_normalize_target(mode, value.start(), cx),
-            SliderEvent::Release(_) => self.store_normalize_target(cx),
+            InputEvent::Change => {
+                let text = self.normalize_target_input(mode).read(cx).value();
+                if let Ok(value) = text.trim().parse::<f64>()
+                    && set_target(&mut self.settings, mode, value)
+                {
+                    self.settings.save();
+                    self.refresh_normalize_menus(cx);
+                    cx.notify();
+                }
+            }
+            InputEvent::Blur | InputEvent::PressEnter { .. } => {
+                let stored = format_target(target(&self.settings, mode));
+                self.normalize_target_input(mode).clone().update(cx, |input, cx| {
+                    if input.value() != stored {
+                        input.set_value(stored, window, cx);
+                    }
+                });
+            }
+            InputEvent::Focus => {}
         }
-    }
-
-    /// Stores the target of a mode while its slider moves.
-    fn change_normalize_target(&mut self, mode: NormalizeMode, value: f32, cx: &mut Context<Self>) {
-        if set_target(&mut self.settings, mode, value) {
-            cx.notify();
-        }
-    }
-
-    /// Saves the target once the slider is released, and shows it in the menus.
-    fn store_normalize_target(&mut self, cx: &Context<Self>) {
-        self.settings.save();
-        self.refresh_normalize_menus(cx);
-    }
-
-    /// Resets the target of the current mode to its default.
-    pub(super) fn reset_normalize_target(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let mode = self.settings.normalize_mode;
-        let default = target_range(mode).default;
-        self.normalize_target_slider(mode)
-            .clone()
-            .update(cx, |slider, cx| slider.set_value(default, window, cx));
-        set_target(&mut self.settings, mode, default);
-        self.store_normalize_target(cx);
-        cx.notify();
     }
 
     /// Cancels the normalization run from the Cancel action.

@@ -321,7 +321,7 @@ fn metric_value(value: String) -> Div {
         .child(value)
 }
 
-/// Renders a field name and its value, with both in the tooltip for a value too long to show.
+/// Renders a field name and its value aligned to the right edge, with both in the tooltip for a value too long to show.
 fn detail_row(field: &'static str, value: String) -> Stateful<Div> {
     div()
         .id(field)
@@ -341,7 +341,9 @@ fn detail_row(field: &'static str, value: String) -> Stateful<Div> {
         )
         .child(
             div()
+                .flex_1()
                 .min_w_0()
+                .text_right()
                 .truncate()
                 .text_size(px(VALUE_FONT_SIZE))
                 .text_color(color(palette::GREY_LIGHT))

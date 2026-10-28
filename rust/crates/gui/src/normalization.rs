@@ -2,11 +2,11 @@
 //!
 //! The target is a sample peak in dBFS or an integrated loudness in LUFS,
 //! limited to the ranges of the core library, in steps of 0.1 dB for peaks and 0.5 LU for loudness.
+//! The controls column edits it in a number input, which accepts partly typed numbers such as "-" and "-1.".
 //! The progress of a run is tracked by `OperationRun`, which plugin processing shares.
 
 use audiobatch_core::normalize::{
-    DEFAULT_TARGET_LUFS, DEFAULT_TARGET_PEAK_DBFS, MAXIMUM_TARGET_LUFS, MAXIMUM_TARGET_PEAK_DBFS, MINIMUM_TARGET_LUFS,
-    MINIMUM_TARGET_PEAK_DBFS, NormalizationOptions,
+    MAXIMUM_TARGET_LUFS, MAXIMUM_TARGET_PEAK_DBFS, MINIMUM_TARGET_LUFS, MINIMUM_TARGET_PEAK_DBFS, NormalizationOptions,
 };
 
 use crate::settings::{GuiSettings, NormalizeMode};
@@ -23,34 +23,33 @@ pub const ALREADY_NORMALIZING: &str = "Normalization already in progress";
 /// Status text when the list is changed while files are being normalized.
 pub const NORMALIZATION_IN_PROGRESS: &str = "Normalization in progress";
 
-/// Range and step of the target slider for one normalization mode.
+/// Longest integer part of a typed target, enough for every target in the ranges.
+const MAXIMUM_INTEGER_DIGITS: usize = 3;
+
+/// Range and step of the target input for one normalization mode.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TargetRange {
     /// Lowest target.
-    pub minimum: f32,
+    pub minimum: f64,
     /// Highest target.
-    pub maximum: f32,
-    /// Slider step, 0.1 dB for peaks and 0.5 LU for loudness.
-    pub step: f32,
-    /// Target at startup and after a reset.
-    pub default: f32,
+    pub maximum: f64,
+    /// Step of the input's buttons and arrow keys, 0.1 dB for peaks and 0.5 LU for loudness.
+    pub step: f64,
 }
 
-/// Returns the slider range of a normalization mode.
+/// Returns the target range of a normalization mode.
 #[must_use]
 pub const fn target_range(mode: NormalizeMode) -> TargetRange {
     match mode {
         NormalizeMode::Peak => TargetRange {
-            minimum: MINIMUM_TARGET_PEAK_DBFS as f32,
-            maximum: MAXIMUM_TARGET_PEAK_DBFS as f32,
+            minimum: MINIMUM_TARGET_PEAK_DBFS,
+            maximum: MAXIMUM_TARGET_PEAK_DBFS,
             step: 0.1,
-            default: DEFAULT_TARGET_PEAK_DBFS as f32,
         },
         NormalizeMode::Loudness => TargetRange {
-            minimum: MINIMUM_TARGET_LUFS as f32,
-            maximum: MAXIMUM_TARGET_LUFS as f32,
+            minimum: MINIMUM_TARGET_LUFS,
+            maximum: MAXIMUM_TARGET_LUFS,
             step: 0.5,
-            default: DEFAULT_TARGET_LUFS as f32,
         },
     }
 }
@@ -64,21 +63,51 @@ pub fn describe_target(settings: &GuiSettings) -> String {
     }
 }
 
-/// Returns the short target text next to the slider caption, for example "-14.0 LUFS" or "-1.0 dBFS".
+/// Returns the unit of a mode's target, shown next to the target caption.
 #[must_use]
-pub fn target_value_text(settings: &GuiSettings) -> String {
-    match settings.normalize_mode {
-        NormalizeMode::Peak => format!("{:.1} dBFS", settings.normalize_target_peak_dbfs),
-        NormalizeMode::Loudness => format!("{:.1} LUFS", settings.normalize_target_lufs),
+pub const fn target_unit(mode: NormalizeMode) -> &'static str {
+    match mode {
+        NormalizeMode::Peak => "dBFS",
+        NormalizeMode::Loudness => "LUFS",
     }
 }
 
-/// Stores a target from the slider of a mode, rounded to the slider step and clamped into the range.
+/// Returns the stored target of a mode.
+#[must_use]
+pub const fn target(settings: &GuiSettings, mode: NormalizeMode) -> f64 {
+    match mode {
+        NormalizeMode::Peak => settings.normalize_target_peak_dbfs,
+        NormalizeMode::Loudness => settings.normalize_target_lufs,
+    }
+}
+
+/// Returns a target as the target input shows it, with one decimal, for example "-14.0".
+#[must_use]
+pub fn format_target(value: f64) -> String {
+    format!("{value:.1}")
+}
+
+/// Returns true when the text is a target being typed:
+/// an optional minus sign, up to three digits, and an optional point followed by at most one digit.
+/// Partial numbers such as "-" and "-1." are accepted, so they can be typed one character at a time.
+#[must_use]
+pub fn is_partial_target(text: &str) -> bool {
+    let unsigned = text.strip_prefix('-').unwrap_or(text);
+    let (integer, fraction) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    integer.len() <= MAXIMUM_INTEGER_DIGITS
+        && fraction.len() <= 1
+        && integer
+            .chars()
+            .chain(fraction.chars())
+            .all(|character| character.is_ascii_digit())
+}
+
+/// Stores a target typed for a mode, rounded to the step of the mode and clamped into its range.
 /// Returns true when the stored target changed.
-pub fn set_target(settings: &mut GuiSettings, mode: NormalizeMode, value: f32) -> bool {
+pub fn set_target(settings: &mut GuiSettings, mode: NormalizeMode, value: f64) -> bool {
     let range = target_range(mode);
     let stepped = ((value / range.step).round() * range.step).clamp(range.minimum, range.maximum);
-    let stepped = f64::from((stepped * 10.0).round()) / 10.0;
+    let stepped = (stepped * 10.0).round() / 10.0;
     let target = match mode {
         NormalizeMode::Peak => &mut settings.normalize_target_peak_dbfs,
         NormalizeMode::Loudness => &mut settings.normalize_target_lufs,
@@ -111,14 +140,26 @@ mod test_target {
     fn describes_the_target_of_the_current_mode() {
         let mut settings = GuiSettings::default();
         assert_eq!(describe_target(&settings), "0.0 dBFS peak");
-        assert_eq!(target_value_text(&settings), "0.0 dBFS");
+        assert_eq!(target_unit(settings.normalize_mode), "dBFS");
+        assert_eq!(format_target(target(&settings, NormalizeMode::Peak)), "0.0");
         settings.normalize_mode = NormalizeMode::Loudness;
         assert_eq!(describe_target(&settings), "-14.0 LUFS");
-        assert_eq!(target_value_text(&settings), "-14.0 LUFS");
+        assert_eq!(target_unit(settings.normalize_mode), "LUFS");
+        assert_eq!(format_target(target(&settings, NormalizeMode::Loudness)), "-14.0");
     }
 
     #[test]
-    fn slider_values_are_stepped_and_clamped() {
+    fn partly_typed_targets_are_accepted() {
+        for text in ["", "-", "-1", "-1.", "-1.5", ".5", "-12.0", "0"] {
+            assert!(is_partial_target(text), "{text:?} should be accepted");
+        }
+        for text in ["--1", "1-", "-1.25", "1.2.3", "abc", "-1e3", "1000", " 1"] {
+            assert!(!is_partial_target(text), "{text:?} should be rejected");
+        }
+    }
+
+    #[test]
+    fn typed_values_are_stepped_and_clamped() {
         let mut settings = GuiSettings::default();
         assert!(set_target(&mut settings, NormalizeMode::Peak, -1.04));
         assert!((settings.normalize_target_peak_dbfs + 1.0).abs() < 1e-9);
@@ -148,9 +189,9 @@ mod test_target {
     #[test]
     fn ranges_follow_the_core_limits() {
         let peak = target_range(NormalizeMode::Peak);
-        assert!((peak.minimum + 12.0).abs() < f32::EPSILON && peak.maximum.abs() < f32::EPSILON);
+        assert!((peak.minimum + 12.0).abs() < f64::EPSILON && peak.maximum.abs() < f64::EPSILON);
         let loudness = target_range(NormalizeMode::Loudness);
-        assert!((loudness.minimum + 24.0).abs() < f32::EPSILON && (loudness.maximum + 6.0).abs() < f32::EPSILON);
-        assert!((loudness.step - 0.5).abs() < f32::EPSILON);
+        assert!((loudness.minimum + 24.0).abs() < f64::EPSILON && (loudness.maximum + 6.0).abs() < f64::EPSILON);
+        assert!((loudness.step - 0.5).abs() < f64::EPSILON);
     }
 }

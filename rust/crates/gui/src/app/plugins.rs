@@ -413,23 +413,23 @@ impl AppView {
                 label: slot_label(index + 1, slot.plugin()),
                 enabled: slot.is_enabled(),
                 detail: slot.error().map_or_else(
-                    || latency_text(u64::from(slot.latency_samples()), sample_rate),
+                    || {
+                        format!(
+                            "Latency: {}",
+                            latency_text(u64::from(slot.latency_samples()), sample_rate)
+                        )
+                    },
                     ToString::to_string,
                 ),
                 failed: slot.error().is_some(),
                 can_edit: slot.has_instance(),
             })
             .collect();
-        let available = group_by_vendor(&self.plugins.known.plugins)
-            .into_iter()
-            .flat_map(|group| group.plugins)
-            .map(|plugin| (plugin_label(&plugin), plugin))
-            .collect();
         ChainSnapshot {
             rows,
             total_latency: latency_text(chain.total_latency_samples(), sample_rate),
             sample_rate: format!("{} kHz", format_kilohertz(sample_rate)),
-            available,
+            plugin_groups: group_by_vendor(&self.plugins.known.plugins),
             presets: self.plugins.preset_names(),
             current_preset: chain.preset_name().map(str::to_owned),
         }

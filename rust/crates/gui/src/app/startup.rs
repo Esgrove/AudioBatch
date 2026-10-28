@@ -1,4 +1,4 @@
-//! What the main window opens at startup: the results table, the sliders of the controls column,
+//! What the main window opens at startup: the results table, the sliders and target inputs of the controls column,
 //! the analysis cache with the coordinators sharing it, the audio device, and the plugin chain.
 
 use std::sync::Arc;
@@ -6,6 +6,7 @@ use std::sync::Arc;
 use audiobatch_core::{AnalysisCache, AnalysisCoordinator, NormalizeCoordinator};
 use audiobatch_playback::Player;
 use audiobatch_plugins::{ProcessingCoordinator, default_worker_count};
+use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::slider::{SliderEvent, SliderScale, SliderState};
 use gpui_kit::component::table::TableState;
 use gpui_kit::{AppContext as _, Context, Entity, SharedString, Subscription, Window};
@@ -16,7 +17,7 @@ use super::gain::{DEFAULT_GAIN_DB, MAXIMUM_GAIN_DB, MINIMUM_GAIN_DB};
 use super::preferences::open_player;
 use super::{AppView, TABLE_FRAME_BORDER};
 use crate::menus::MenuState;
-use crate::normalization::target_range;
+use crate::normalization::{format_target, is_partial_target, target, target_range};
 use crate::plugins::labels::group_by_vendor;
 use crate::plugins::{FALLBACK_SAMPLE_RATE, PluginHost};
 use crate::results::ResultsDelegate;
@@ -46,16 +47,16 @@ pub(super) struct Startup {
     pub(super) status: SharedString,
 }
 
-/// The sliders of the controls column.
-pub(super) struct Sliders {
+/// The sliders and the normalization target inputs of the controls column.
+pub(super) struct ControlInputs {
     /// The waveform zoom.
     pub(super) zoom: Entity<SliderState>,
     /// The input gain of the selected files in decibels.
     pub(super) gain: Entity<SliderState>,
     /// The peak normalization target in dBFS.
-    pub(super) peak_target: Entity<SliderState>,
+    pub(super) peak_target: Entity<InputState>,
     /// The loudness normalization target in LUFS.
-    pub(super) loudness_target: Entity<SliderState>,
+    pub(super) loudness_target: Entity<InputState>,
 }
 
 /// Creates the results table for the content width, with multi-row selection kept by the delegate.
@@ -79,15 +80,16 @@ pub(super) fn new_results_table(
     })
 }
 
-/// Creates the sliders of the controls column, and subscribes the view to them.
-pub(super) fn new_sliders(
+/// Creates the sliders and the target inputs of the controls column, and subscribes the view to them.
+/// The target inputs start at the saved targets.
+pub(super) fn new_control_inputs(
     settings: &GuiSettings,
-    window: &Window,
+    window: &mut Window,
     cx: &mut Context<AppView>,
-) -> (Sliders, [Subscription; 4]) {
+) -> (ControlInputs, [Subscription; 4]) {
     let (zoom, gain) = new_view_sliders(cx);
-    let peak_target = new_target_slider(NormalizeMode::Peak, settings.normalize_target_peak_dbfs, cx);
-    let loudness_target = new_target_slider(NormalizeMode::Loudness, settings.normalize_target_lufs, cx);
+    let peak_target = new_target_input(NormalizeMode::Peak, settings, window, cx);
+    let loudness_target = new_target_input(NormalizeMode::Loudness, settings, window, cx);
     let subscriptions = [
         cx.subscribe_in(&zoom, window, |view, _, event: &SliderEvent, _, cx| {
             if let SliderEvent::Change(value) = event {
@@ -103,20 +105,20 @@ pub(super) fn new_sliders(
             }
             cx.notify();
         }),
-        cx.subscribe_in(&peak_target, window, |view, _, event: &SliderEvent, _, cx| {
-            view.on_target_slider_event(NormalizeMode::Peak, event, cx);
+        cx.subscribe_in(&peak_target, window, |view, _, event: &InputEvent, window, cx| {
+            view.on_target_input_event(NormalizeMode::Peak, event, window, cx);
         }),
-        cx.subscribe_in(&loudness_target, window, |view, _, event: &SliderEvent, _, cx| {
-            view.on_target_slider_event(NormalizeMode::Loudness, event, cx);
+        cx.subscribe_in(&loudness_target, window, |view, _, event: &InputEvent, window, cx| {
+            view.on_target_input_event(NormalizeMode::Loudness, event, window, cx);
         }),
     ];
-    let sliders = Sliders {
+    let inputs = ControlInputs {
         zoom,
         gain,
         peak_target,
         loudness_target,
     };
-    (sliders, subscriptions)
+    (inputs, subscriptions)
 }
 
 /// Opens the coordinators, the audio device, and the plugin chain, and fills in their part of the menus.
@@ -183,15 +185,24 @@ fn new_view_sliders(cx: &mut Context<AppView>) -> (Entity<SliderState>, Entity<S
     (zoom, gain)
 }
 
-/// Creates the target slider of a normalization mode, starting at the saved target.
-fn new_target_slider(mode: NormalizeMode, target: f64, cx: &mut Context<AppView>) -> Entity<SliderState> {
+/// Creates the target input of a normalization mode, starting at the saved target.
+/// Its buttons and arrow keys step by the step of the mode within its range,
+/// and it accepts only text that is a target being typed.
+fn new_target_input(
+    mode: NormalizeMode,
+    settings: &GuiSettings,
+    window: &mut Window,
+    cx: &mut Context<AppView>,
+) -> Entity<InputState> {
     let range = target_range(mode);
-    cx.new(|_| {
-        SliderState::new()
+    let value = format_target(target(settings, mode));
+    cx.new(|cx| {
+        InputState::new(window, cx)
+            .step(range.step)
             .min(range.minimum)
             .max(range.maximum)
-            .step(range.step)
-            .default_value(target as f32)
+            .validate(|text, _| is_partial_target(text))
+            .default_value(value)
     })
 }
 
