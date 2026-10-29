@@ -9,7 +9,7 @@
 //! Messages up to a chosen level are also printed to stderr, except those the caller already showed to the user.
 //! Each line names the spans it was logged in, such as the file a worker thread is analyzing.
 //! The file also names each message's source module, including third-party tag readers and decoders.
-//! Levels are right-aligned inside brackets.
+//! Bracketed levels are right-aligned, with padding outside the brackets.
 //! Warnings and errors include their source file and line without absolute build-machine paths.
 //! Panics are logged with a backtrace before the default panic message is printed.
 
@@ -95,7 +95,12 @@ where
         let normalized = event.normalized_metadata();
         let metadata = normalized.as_ref().unwrap_or_else(|| event.metadata());
         LocalTime.format_time(&mut writer)?;
-        write!(writer, " [{:>5}]: ", metadata.level().as_str())?;
+        let padding = if matches!(*metadata.level(), Level::INFO | Level::WARN) {
+            " "
+        } else {
+            ""
+        };
+        write!(writer, " {padding}[{}]: ", metadata.level())?;
 
         let unit = Some(metadata.target())
             .filter(|target| !target.is_empty())
@@ -441,8 +446,9 @@ mod test_log_file {
         for (line, level) in lines.iter().zip(["INFO", "WARN", "ERROR"]) {
             let (time, message) = line.split_once(' ').expect("timestamp");
             assert_eq!(time.len(), 8, "{line}");
+            let label = format!("[{level}]");
             assert!(
-                message.starts_with(&format!("[{level:>5}]: audiobatch_core::analysis: ")),
+                message.starts_with(&format!("{label:>7}: audiobatch_core::analysis: ")),
                 "{line}"
             );
             assert_eq!(line.find("audiobatch_core::analysis:"), Some(18), "{line}");

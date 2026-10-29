@@ -319,7 +319,7 @@ The GUI log records opened files and directories, discovered file counts,
 and analysis duration with analyzed, cached, and failed file counts.
 It also records analysis failures, cancellations, and quitting.
 Tag reader and decoder warnings include the file path and source module, including during preview playback.
-Log levels use right-aligned labels such as `[ INFO]:`, `[ WARN]:`, and `[ERROR]:`.
+Log levels use right-aligned labels with padding outside the brackets, such as ` [INFO]:`, ` [WARN]:`, and `[ERROR]:`.
 Warnings and errors include the source file and line when available,
 including framework errors that do not name a module.
 Source locations retain the crate and source-relative path without absolute build-machine directories.

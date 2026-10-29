@@ -124,7 +124,7 @@ Tag reads and metadata copies also enter file spans.
 Each decoder retains its file span and enters it while opening, decoding, and seeking,
 so preview warnings keep their file context even without an analysis span.
 Log file lines include the source module, including third-party crates.
-Levels are right-aligned as `[ INFO]:`, `[ WARN]:`, and `[ERROR]:`, so message columns line up.
+Levels are right-aligned as ` [INFO]:`, ` [WARN]:`, and `[ERROR]:`, so message columns line up.
 Warnings and errors also include the source file and line when available,
 even when a framework error has an empty module target.
 The formatter shortens compile-time source locations to their crate and source-relative path,
@@ -152,6 +152,11 @@ Typed errors preserve their sources until that boundary.
 User-facing messages and the serialized formats do not depend on the internal error representation.
 
 ## GUI structure
+
+On Windows, the main window's native close request quits through GPUI without letting Win32 destroy the handle first.
+GPUI then owns native resource teardown, so application shutdown does not destroy the same window twice.
+Auxiliary windows use GPUI's normal close path.
+Any framework teardown errors remain visible in the log.
 
 `AppView` in `gui/src/app/` is the root view of the main window.
 `mod.rs` holds its state, and each other module adds one concern in an `impl AppView` block:
