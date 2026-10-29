@@ -1,7 +1,7 @@
 //! Minimal AIFF writer for normalized and plugin-processed output.
 //!
 //! Writes uncompressed big-endian PCM in a `FORM` container with one `COMM` and one `SSND` chunk,
-//! at 8, 16, or 24 bits.
+//! at 16 or 24 bits.
 //! Float samples convert to integers by rounding the float scaled to the 32-bit range and then keeping the high bits.
 //! That is how JUCE converts them in the C++ application,
 //! and `scripts/compare_outputs.py` expects both applications to write the same sample values.
@@ -11,7 +11,7 @@
 use std::io::{Seek, SeekFrom, Write};
 
 /// Bit depths the writer supports.
-pub(crate) const SUPPORTED_BIT_DEPTHS: [u32; 3] = [8, 16, 24];
+pub(crate) const SUPPORTED_BIT_DEPTHS: [u32; 2] = [16, 24];
 
 /// Size of the header before the sample data: `FORM`, `COMM`, and the `SSND` chunk header.
 const HEADER_BYTES: u64 = 54;
@@ -310,6 +310,12 @@ mod test_aiff_writer {
 
     #[test]
     fn rejects_unsupported_bit_depths() {
+        for bits in 0..16 {
+            assert!(matches!(
+                AiffWriter::new(Cursor::new(Vec::new()), 2, 44_100, bits),
+                Err(AiffError::UnsupportedBitDepth(depth)) if depth == bits
+            ));
+        }
         assert!(matches!(
             AiffWriter::new(Cursor::new(Vec::new()), 2, 44_100, 32),
             Err(AiffError::UnsupportedBitDepth(32))
@@ -386,12 +392,12 @@ mod test_aiff_writer {
     #[test]
     fn pads_odd_sample_data() {
         let samples = [0.5_f32];
-        let mut writer = AiffWriter::new(Cursor::new(Vec::new()), 1, 44_100, 8).expect("starts writer");
+        let mut writer = AiffWriter::new(Cursor::new(Vec::new()), 1, 44_100, 24).expect("starts writer");
         writer.write_planar(&[&samples]).expect("writes");
         let bytes = writer.finish().expect("finishes").into_inner();
-        assert_eq!(bytes.len(), 54 + 2);
-        assert_eq!(bytes.get(54..), Some([0x40, 0x00].as_slice()));
-        assert_eq!(bytes.get(4..8), Some((54_u32 + 2 - 8).to_be_bytes().as_slice()));
+        assert_eq!(bytes.len(), 54 + 4);
+        assert_eq!(bytes.get(54..), Some([0x40, 0x00, 0x00, 0x00].as_slice()));
+        assert_eq!(bytes.get(4..8), Some((54_u32 + 4 - 8).to_be_bytes().as_slice()));
     }
 
     #[test]
