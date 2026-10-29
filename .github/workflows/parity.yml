@@ -95,6 +95,16 @@ jobs:
         with:
           workspaces: rust
 
+      # Requires every normalization fixture represented by the golden snapshots, not an empty or partial LFS checkout.
+      - name: Check exact full normalization corpus
+        working-directory: rust
+        env:
+          AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES: "1"
+        run: >-
+          cargo test --release -p audiobatch-core
+          golden_tests::test_golden_files::every_normalization_fixture_when_downloaded
+          -- --exact --nocapture
+
       # Configures with the same arguments as build.sh, so a restored build directory is reused as it is.
       - name: Build C++ CLI
         working-directory: cpp

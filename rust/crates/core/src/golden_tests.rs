@@ -155,7 +155,10 @@ mod test_golden_signals {
 
 #[cfg(test)]
 mod test_golden_files {
-    use std::path::Path;
+    use std::collections::BTreeSet;
+    use std::ffi::OsString;
+    use std::fs;
+    use std::path::{Path, PathBuf};
 
     use crate::golden::{GoldenText, assert_no_differences};
     use crate::test_helpers::analyze;
@@ -167,7 +170,7 @@ mod test_golden_files {
     }
 
     /// Analyzes every file and compares its record against its golden file.
-    fn check_files(collection: &str, files: &[std::path::PathBuf]) -> Vec<String> {
+    fn check_files(collection: &str, files: &[PathBuf]) -> Vec<String> {
         files
             .iter()
             .filter_map(|path| {
@@ -176,6 +179,28 @@ mod test_golden_files {
                 text.check(&golden_name(collection, path))
             })
             .collect()
+    }
+
+    /// Returns the corpus names represented by committed golden snapshots, including their audio extensions.
+    fn normalization_fixture_names() -> BTreeSet<OsString> {
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/normalization");
+        let names: BTreeSet<_> = fs::read_dir(directory)
+            .expect("reads the normalization golden directory")
+            .map(|entry| entry.expect("reads a normalization golden entry").path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "txt"))
+            .filter_map(|path| path.file_stem().map(OsString::from))
+            .collect();
+        assert!(!names.is_empty(), "the normalization golden corpus must not be empty");
+        names
+    }
+
+    /// Finds expected corpus members absent from the downloaded audio list, including unresolved LFS pointers.
+    fn missing_fixture_names(expected: &BTreeSet<OsString>, files: &[PathBuf]) -> BTreeSet<OsString> {
+        let available: BTreeSet<_> = files
+            .iter()
+            .filter_map(|path| path.file_name().map(OsString::from))
+            .collect();
+        expected.difference(&available).cloned().collect()
     }
 
     #[test]
@@ -188,11 +213,52 @@ mod test_golden_files {
     #[test]
     fn every_normalization_fixture_when_downloaded() {
         let files = test_fixtures::normalization_files();
+        if std::env::var("AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES").is_ok_and(|value| value == "1") {
+            let missing = missing_fixture_names(&normalization_fixture_names(), &files);
+            assert!(
+                missing.is_empty(),
+                "AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES=1 requires the full normalization corpus. \
+                 Missing audio or unresolved LFS pointers: {missing:?}. Run git lfs pull."
+            );
+        }
         if files.is_empty() {
             eprintln!("Skipping, fixtures/normalization needs git lfs pull");
             return;
         }
         assert_no_differences(&check_files("normalization", &files));
+    }
+
+    #[test]
+    fn required_corpus_detects_an_empty_checkout() {
+        let expected = BTreeSet::from([OsString::from("first.wav"), OsString::from("second.flac")]);
+        assert_eq!(missing_fixture_names(&expected, &[]), expected);
+    }
+
+    #[test]
+    fn required_corpus_detects_a_partial_lfs_checkout() {
+        let directory = tempfile::tempdir().expect("creates the fixture directory");
+        fs::write(directory.path().join("first.wav"), b"RIFF downloaded audio").expect("writes audio");
+        fs::write(
+            directory.path().join("second.flac"),
+            b"version https://git-lfs.github.com/spec/v1\noid sha256:1234\nsize 1024\n",
+        )
+        .expect("writes an LFS pointer");
+        let files = test_fixtures::audio_files_in(directory.path());
+        let expected = BTreeSet::from([OsString::from("first.wav"), OsString::from("second.flac")]);
+        assert_eq!(
+            missing_fixture_names(&expected, &files),
+            BTreeSet::from([OsString::from("second.flac")]),
+        );
+    }
+
+    #[test]
+    fn required_corpus_accepts_every_expected_audio_file() {
+        let expected = BTreeSet::from([OsString::from("first.wav"), OsString::from("second.flac")]);
+        let files = [
+            PathBuf::from("fixtures/first.wav"),
+            PathBuf::from("fixtures/second.flac"),
+        ];
+        assert!(missing_fixture_names(&expected, &files).is_empty());
     }
 }
 
