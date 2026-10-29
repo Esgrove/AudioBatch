@@ -13,13 +13,23 @@ pub mod coordinator;
 pub mod decode;
 pub mod discovery;
 pub mod format;
+#[cfg(test)]
+mod golden;
+#[cfg(test)]
+mod golden_tests;
 pub mod log_file;
+#[doc(hidden)]
+pub mod loudness;
 pub mod metadata;
+#[doc(hidden)]
+pub mod meter;
 pub mod normalize;
 pub mod normalize_coordinator;
 pub mod operation;
 pub mod output_file;
 pub mod record;
+#[doc(hidden)]
+pub mod signals;
 pub mod sorting;
 pub mod tags;
 #[cfg(test)]

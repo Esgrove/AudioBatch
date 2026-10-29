@@ -1,0 +1,17 @@
+status = Failed
+error = Some(Unsupported)
+error_message = "Unsupported or unreadable audio file"
+format_name = ""
+sample_rate = 0
+channels = 0
+bits_per_sample = 0
+length_in_samples = 0
+duration_seconds = 0.0 [0000000000000000]
+peak_left = 0.0 [00000000]
+peak_right = 0.0 [00000000]
+overall_peak = 0.0 [00000000]
+true_peak_left = 0.0 [0000000000000000]
+true_peak_right = 0.0 [0000000000000000]
+overall_true_peak = 0.0 [0000000000000000]
+integrated_lufs = -1000.0 [c08f400000000000]
+max_short_term_lufs = -1000.0 [c08f400000000000]

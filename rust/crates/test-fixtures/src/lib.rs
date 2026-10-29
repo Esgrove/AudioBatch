@@ -10,6 +10,7 @@
 
 mod null_test;
 
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
@@ -219,6 +220,68 @@ pub fn fixtures_directory() -> PathBuf {
 #[must_use]
 pub fn fixture(name: &str) -> PathBuf {
     fixtures_directory().join(name)
+}
+
+/// Returns the audio files of a fixture directory, sorted by name, skipping Git LFS pointers.
+///
+/// A clone without `git lfs pull` holds small text pointers instead of the audio,
+/// so those files are left out and the caller can treat the collection as missing.
+#[must_use]
+pub fn audio_files_in(directory: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    let mut files: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .filter(|path| path.is_file() && is_audio_file(path) && !is_lfs_pointer(path))
+        .collect();
+    files.sort();
+    files
+}
+
+/// Returns the committed audio fixtures in the root of the fixtures directory, sorted by name.
+#[must_use]
+pub fn fixture_files() -> Vec<PathBuf> {
+    audio_files_in(&fixtures_directory())
+}
+
+/// Returns the audio files of `fixtures/normalization`, or an empty list when Git LFS has not downloaded them.
+#[must_use]
+pub fn normalization_files() -> Vec<PathBuf> {
+    audio_files_in(&fixtures_directory().join("normalization"))
+}
+
+/// Returns the directory that `fixtures/benchmark/generate.py` writes the benchmark files into.
+#[must_use]
+pub fn benchmark_directory() -> PathBuf {
+    fixtures_directory().join("benchmark/output")
+}
+
+/// Returns the generated benchmark file with the given name, or `None` when it has not been generated.
+#[must_use]
+pub fn benchmark_file(name: &str) -> Option<PathBuf> {
+    let path = benchmark_directory().join(name);
+    path.is_file().then_some(path)
+}
+
+/// Returns true for a file extension the applications read as audio.
+fn is_audio_file(path: &Path) -> bool {
+    const EXTENSIONS: [&str; 9] = ["aif", "aifc", "aiff", "flac", "m4a", "mp3", "ogg", "wav", "mp4"];
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()))
+}
+
+/// Returns true when the file is a Git LFS pointer instead of the audio it stands for.
+fn is_lfs_pointer(path: &Path) -> bool {
+    const POINTER_PREFIX: &[u8] = b"version https://git-lfs";
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut start = Vec::with_capacity(POINTER_PREFIX.len());
+    file.take(POINTER_PREFIX.len() as u64)
+        .read_to_end(&mut start)
+        .is_ok_and(|_| start == POINTER_PREFIX)
 }
 
 /// Returns the `AudioBatch Test MS` VST3 bundle that `test-plugin/build.sh` builds, or `None` when it is missing.

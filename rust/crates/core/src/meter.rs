@@ -1,0 +1,365 @@
+//! The block meter that turns decoded planar audio into the measurements of one file.
+//!
+//! `BlockMeter` regroups the decoded chunks into fixed blocks of one tenth of a second,
+//! one block per short-term loudness update as EBU Tech 3341 asks for,
+//! and feeds each block to the loudness meter, the per-channel sample extremes, and the waveform overview.
+//! A mono source is measured as dual mono, so it reads the same loudness as the same content in stereo.
+//! The meter takes samples from memory, so the tests and benchmarks measure signals without decoding a file.
+//! It is public only for the benchmarks, which is why it is hidden from the documentation.
+
+use std::sync::Arc;
+
+use ebur128::{Channel, EbuR128, Mode};
+
+use crate::record::{NEGATIVE_INFINITY_LOUDNESS, ShortTermLoudnessHistory, normalize_loudness};
+use crate::waveform::{WaveformBuilder, WaveformOverview};
+
+/// A loudness measurement failure.
+#[doc(hidden)]
+#[derive(Debug, thiserror::Error)]
+pub enum MeterError {
+    /// The loudness meter could not be configured.
+    #[error("Could not initialize loudness analyzer")]
+    Initialize(#[source] ebur128::Error),
+    /// The meter could not accept an audio block.
+    #[error("Loudness analysis failed while processing audio")]
+    Frames(#[source] ebur128::Error),
+    /// The short-term loudness could not be measured.
+    #[error("Short-term loudness analysis failed")]
+    ShortTerm(#[source] ebur128::Error),
+    /// A true peak could not be measured.
+    #[error("True peak analysis failed")]
+    TruePeak(#[source] ebur128::Error),
+    /// The integrated loudness could not be measured.
+    #[error("Integrated loudness analysis failed")]
+    Integrated(#[source] ebur128::Error),
+}
+
+/// Accumulates decoded audio into fixed-size analysis blocks and measures each completed block.
+#[doc(hidden)]
+pub struct BlockMeter {
+    meter: EbuR128,
+    sample_rate: u32,
+    block_size: usize,
+    block: Vec<Vec<f32>>,
+    min_samples: Vec<f32>,
+    max_samples: Vec<f32>,
+    max_short_term_lufs: f64,
+    history: Vec<f32>,
+    waveform: WaveformBuilder,
+}
+
+/// Everything the meter measured over a whole stream.
+#[doc(hidden)]
+#[derive(Debug, Clone)]
+pub struct MeterOutput {
+    /// Smallest sample of each channel, zero or below.
+    pub min_samples: Vec<f32>,
+    /// Largest sample of each channel, zero or above.
+    pub max_samples: Vec<f32>,
+    /// True peak of each channel as a linear amplitude.
+    pub true_peaks: Vec<f64>,
+    /// Gated integrated loudness in LUFS, or the silence sentinel.
+    pub integrated_lufs: f64,
+    /// Largest short-term loudness in LUFS, or the silence sentinel.
+    pub max_short_term_lufs: f64,
+    /// Short-term loudness after each block, in LUFS.
+    pub history: Vec<f32>,
+    /// Frames per block, and so per history value.
+    pub samples_per_point: u32,
+    /// Waveform overview of the stream.
+    pub waveform: Arc<WaveformOverview>,
+}
+
+impl BlockMeter {
+    /// Creates a meter for the stream, with integrated, short-term, and true peak measurement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the meter does not support the channel count or the sample rate.
+    pub fn new(channels: u32, sample_rate: u32, expected_frames: Option<u64>) -> Result<Self, MeterError> {
+        let mut meter =
+            EbuR128::new(channels, sample_rate, Mode::I | Mode::S | Mode::TRUE_PEAK).map_err(MeterError::Initialize)?;
+        if channels == 1 {
+            meter
+                .set_channel(0, Channel::DualMono)
+                .map_err(MeterError::Initialize)?;
+        }
+        let channel_count = channels as usize;
+        let block_size = ShortTermLoudnessHistory::samples_per_point_for_rate(sample_rate) as usize;
+        Ok(Self {
+            meter,
+            sample_rate,
+            block_size,
+            block: vec![Vec::with_capacity(block_size); channel_count],
+            min_samples: vec![0.0; channel_count],
+            max_samples: vec![0.0; channel_count],
+            max_short_term_lufs: NEGATIVE_INFINITY_LOUDNESS,
+            history: Vec::new(),
+            waveform: WaveformBuilder::new(channel_count, expected_frames),
+        })
+    }
+
+    /// Appends decoded planar samples, one slice per channel, measuring every block that fills up.
+    /// A channel shorter than the first one is padded with silence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the loudness meter rejects a block.
+    pub fn push<P: AsRef<[f32]>>(&mut self, chunk: &[P]) -> Result<(), MeterError> {
+        let frame_count = chunk.first().map_or(0, |plane| plane.as_ref().len());
+        let mut offset = 0;
+        while offset < frame_count {
+            let filled = self.block.first().map_or(0, Vec::len);
+            let take = (self.block_size - filled).min(frame_count - offset);
+            for (block_channel, samples) in self.block.iter_mut().zip(chunk) {
+                if let Some(segment) = samples.as_ref().get(offset..offset + take) {
+                    block_channel.extend_from_slice(segment);
+                } else {
+                    block_channel.resize(block_channel.len() + take, 0.0);
+                }
+            }
+            offset += take;
+            if filled + take == self.block_size {
+                self.measure_block()?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Measures a final partial block and returns the measurements of the stream of `length_in_samples` frames.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the loudness meter rejects the last block or cannot report a value.
+    pub fn finish(mut self, length_in_samples: u64) -> Result<MeterOutput, MeterError> {
+        if self.block.first().is_some_and(|samples| !samples.is_empty()) {
+            self.measure_block()?;
+        }
+        let channels = self.block.len() as u32;
+        let true_peaks = (0..channels)
+            .map(|channel| self.meter.true_peak(channel))
+            .collect::<Result<Vec<f64>, _>>()
+            .map_err(MeterError::TruePeak)?;
+        let integrated_lufs = normalize_loudness(self.meter.loudness_global().map_err(MeterError::Integrated)?);
+        Ok(MeterOutput {
+            min_samples: self.min_samples,
+            max_samples: self.max_samples,
+            true_peaks,
+            integrated_lufs,
+            max_short_term_lufs: self.max_short_term_lufs,
+            history: self.history,
+            samples_per_point: self.block_size as u32,
+            waveform: self.waveform.finish(self.sample_rate, length_in_samples),
+        })
+    }
+
+    /// Feeds the buffered block to the meter, the sample extremes, and the waveform, then empties it.
+    fn measure_block(&mut self) -> Result<(), MeterError> {
+        for ((samples, minimum), maximum) in self.block.iter().zip(&mut self.min_samples).zip(&mut self.max_samples) {
+            for &sample in samples {
+                *minimum = minimum.min(sample);
+                *maximum = maximum.max(sample);
+            }
+        }
+        let planes: Vec<&[f32]> = self.block.iter().map(Vec::as_slice).collect();
+        self.waveform.push(&planes);
+        self.meter.add_frames_planar_f32(&planes).map_err(MeterError::Frames)?;
+        let short_term = normalize_loudness(self.meter.loudness_shortterm().map_err(MeterError::ShortTerm)?);
+        self.max_short_term_lufs = self.max_short_term_lufs.max(short_term);
+        self.history.push(short_term as f32);
+        for samples in &mut self.block {
+            samples.clear();
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test_chunk_size_invariance {
+    use crate::golden::{GoldenText, measure_signal};
+    use crate::signals::{SignalKind, Xorshift, generate};
+
+    /// Returns every measured value as text with its exact bits, so two outputs compare bit for bit.
+    fn exact(output: &super::MeterOutput) -> String {
+        let mut text = GoldenText::default();
+        text.meter(output);
+        text.text().to_string()
+    }
+
+    /// Measures the signal in a whole buffer and in every listed chunk size, and requires identical results.
+    fn assert_invariant(kind: SignalKind, sample_rate: u32, channels: usize, seconds: f64) {
+        let frames = (f64::from(sample_rate) * seconds) as usize;
+        let planes = generate(kind, sample_rate, channels, frames);
+        let block = super::ShortTermLoudnessHistory::samples_per_point_for_rate(sample_rate) as usize;
+        let reference = exact(&measure_signal(&planes, sample_rate, frames));
+        for chunk_frames in [1, 7, 64, 4096, block - 1, block, block + 1] {
+            let output = exact(&measure_signal(&planes, sample_rate, chunk_frames));
+            assert_eq!(
+                output, reference,
+                "{kind:?} at {sample_rate} Hz in chunks of {chunk_frames}"
+            );
+        }
+    }
+
+    #[test]
+    fn stereo_music_at_44100() {
+        assert_invariant(SignalKind::MusicLike, 44_100, 2, 0.75);
+    }
+
+    #[test]
+    fn mono_noise_at_48000() {
+        assert_invariant(SignalKind::Noise, 48_000, 1, 0.75);
+    }
+
+    #[test]
+    fn surround_intersample_at_96000() {
+        assert_invariant(SignalKind::Intersample, 96_000, 6, 0.5);
+    }
+
+    #[test]
+    fn stereo_fade_at_192000() {
+        assert_invariant(SignalKind::FadeToSubnormal, 192_000, 2, 0.5);
+    }
+
+    #[test]
+    fn random_chunk_sizes() {
+        let sample_rate = 44_100;
+        let planes = generate(SignalKind::MusicLike, sample_rate, 2, 40_000);
+        let reference = exact(&measure_signal(&planes, sample_rate, 40_000));
+        let mut random = Xorshift::new(7);
+        let mut meter = super::BlockMeter::new(2, sample_rate, Some(40_000)).expect("meter");
+        let mut offset = 0;
+        while offset < 40_000 {
+            let end = (offset + 1 + random.next_below(9_000) as usize).min(40_000);
+            let chunk: Vec<&[f32]> = planes.iter().map(|plane| &plane[offset..end]).collect();
+            meter.push(&chunk).expect("push");
+            offset = end;
+        }
+        assert_eq!(exact(&meter.finish(40_000).expect("finish")), reference);
+    }
+}
+
+#[cfg(test)]
+mod test_channel_handling {
+    use super::BlockMeter;
+    use crate::golden::measure_signal;
+    use crate::signals::{SignalKind, generate};
+
+    #[test]
+    fn mono_reads_like_the_same_content_on_both_stereo_channels() {
+        let mono = generate(SignalKind::MusicLike, 48_000, 1, 48_000);
+        let stereo = vec![mono[0].clone(), mono[0].clone()];
+        let mono_output = measure_signal(&mono, 48_000, 1_000);
+        let stereo_output = measure_signal(&stereo, 48_000, 1_000);
+        assert_eq!(
+            mono_output.integrated_lufs.to_bits(),
+            stereo_output.integrated_lufs.to_bits()
+        );
+        assert_eq!(mono_output.history, stereo_output.history);
+        assert_eq!(
+            mono_output.true_peaks[0].to_bits(),
+            stereo_output.true_peaks[1].to_bits()
+        );
+    }
+
+    #[test]
+    fn identical_channels_measure_identical_peaks() {
+        let mono = generate(SignalKind::Intersample, 44_100, 1, 20_000);
+        let stereo = vec![mono[0].clone(), mono[0].clone()];
+        let output = measure_signal(&stereo, 44_100, 1_000);
+        assert_eq!(output.true_peaks[0].to_bits(), output.true_peaks[1].to_bits());
+        assert_eq!(output.min_samples[0].to_bits(), output.min_samples[1].to_bits());
+        assert_eq!(output.max_samples[0].to_bits(), output.max_samples[1].to_bits());
+    }
+
+    #[test]
+    fn a_short_channel_is_padded_with_silence() {
+        let left = generate(SignalKind::Sine, 44_100, 1, 10_000).remove(0);
+        let mut padded = BlockMeter::new(2, 44_100, None).expect("meter");
+        padded.push(&[left.as_slice(), &[]]).expect("push");
+        let padded = padded.finish(10_000).expect("finish");
+        let silent = measure_signal(&[left, vec![0.0; 10_000]], 44_100, 10_000);
+        assert_eq!(padded.true_peaks, silent.true_peaks);
+        assert_eq!(padded.history, silent.history);
+        assert_eq!(padded.max_samples, silent.max_samples);
+        assert_eq!(padded.waveform, silent.waveform);
+    }
+
+    #[test]
+    fn unsupported_streams_fail_to_initialize() {
+        assert!(BlockMeter::new(0, 44_100, None).is_err());
+        assert!(BlockMeter::new(2, 0, None).is_err());
+        assert!(BlockMeter::new(65, 44_100, None).is_err());
+    }
+}
+
+#[cfg(test)]
+mod test_edge_signals {
+    use super::BlockMeter;
+    use crate::golden::measure_signal;
+    use crate::record::NEGATIVE_INFINITY_LOUDNESS;
+    use crate::signals::{SignalKind, generate};
+
+    #[test]
+    fn empty_input_has_no_history_and_no_loudness() {
+        let output = BlockMeter::new(2, 44_100, None)
+            .expect("meter")
+            .finish(0)
+            .expect("finish");
+        assert_eq!(output.history, Vec::<f32>::new());
+        assert_eq!(output.integrated_lufs.to_bits(), NEGATIVE_INFINITY_LOUDNESS.to_bits());
+        assert_eq!(
+            output.max_short_term_lufs.to_bits(),
+            NEGATIVE_INFINITY_LOUDNESS.to_bits()
+        );
+        assert_eq!(output.true_peaks, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_partial_block_adds_one_reading() {
+        for frames in [1, 4_409, 4_410, 4_411, 8_820] {
+            let output = measure_signal(&generate(SignalKind::Sine, 44_100, 2, frames), 44_100, 512);
+            assert_eq!(output.history.len(), frames.div_ceil(4_410), "{frames} frames");
+        }
+    }
+
+    #[test]
+    fn silence_reads_the_sentinel_everywhere() {
+        let output = measure_signal(&generate(SignalKind::Silence, 48_000, 2, 96_000), 48_000, 1_000);
+        assert_eq!(output.integrated_lufs.to_bits(), NEGATIVE_INFINITY_LOUDNESS.to_bits());
+        assert!(
+            output
+                .history
+                .iter()
+                .all(|&value| f64::from(value) == NEGATIVE_INFINITY_LOUDNESS)
+        );
+        assert_eq!(output.true_peaks, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn dc_is_removed_by_the_k_weighting() {
+        let output = measure_signal(&generate(SignalKind::Dc, 48_000, 2, 96_000), 48_000, 1_000);
+        // An unfiltered 0.25 offset would read about -12 LUFS, only the transient of its onset remains.
+        assert!(output.integrated_lufs < -30.0, "{}", output.integrated_lufs);
+        // The step from the silence before the first sample rings in the interpolator, so the true peak overshoots.
+        assert!(output.true_peaks[0] >= 0.25, "{}", output.true_peaks[0]);
+    }
+
+    #[test]
+    fn non_finite_samples_do_not_panic() {
+        let mut planes = generate(SignalKind::Sine, 44_100, 2, 44_100);
+        planes[0][100] = f32::NAN;
+        planes[1][200] = f32::NEG_INFINITY;
+        let output = measure_signal(&planes, 44_100, 1_000);
+        assert_eq!(output.history.len(), 10);
+        assert_eq!(output.min_samples[1], f32::NEG_INFINITY);
+    }
+
+    #[test]
+    fn a_full_scale_square_has_a_true_peak_above_its_sample_peak() {
+        let output = measure_signal(&generate(SignalKind::Square, 44_100, 2, 44_100), 44_100, 1_000);
+        assert_eq!(output.max_samples[0], 1.0);
+        assert!(output.true_peaks[0] > 1.0, "{}", output.true_peaks[0]);
+    }
+}

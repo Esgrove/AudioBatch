@@ -12,6 +12,8 @@ rust-version.workspace = true
 crossbeam-channel.workspace = true
 dirs.workspace = true
 ebur128.workspace = true
+fearless_simd.workspace = true
+fearless_simd_macros.workspace = true
 jiff.workspace = true
 lofty.workspace = true
 rayon.workspace = true
@@ -29,8 +31,29 @@ walkdir.workspace = true
 
 [dev-dependencies]
 base64.workspace = true
+criterion.workspace = true
 log.workspace = true
 test-fixtures.workspace = true
+
+[[bench]]
+name = "analysis"
+harness = false
+
+[[bench]]
+name = "decode"
+harness = false
+
+[[bench]]
+name = "normalize"
+harness = false
+
+[[bench]]
+name = "waveform"
+harness = false
+
+[[bench]]
+name = "misc"
+harness = false
 
 [lints]
 workspace = true
