@@ -58,7 +58,7 @@ jobs:
       # The Rust port does not use JUCE, but the test VST3 in test-plugin/ is built with it.
       # The JUCE submodule is the only one, and checkout fetches it at depth 1.
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: true
 
@@ -119,7 +119,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -149,7 +149,7 @@ jobs:
     steps:
       # Checks out JUCE and builds the test VST3 like the build job.
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           submodules: true
 
