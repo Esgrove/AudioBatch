@@ -71,9 +71,6 @@ const SECTION_SPACING: f32 = 6.0;
 /// Smallest height of the preview.
 const PREVIEW_MINIMUM_HEIGHT: f32 = 230.0;
 
-/// Initial share of the workspace height given to the preview.
-const PREVIEW_PROPORTION: f32 = 0.28;
-
 /// Startup options from the command line.
 #[derive(Debug, Default, Clone)]
 pub struct LaunchOptions {
@@ -144,8 +141,12 @@ pub struct AppView {
     /// The Audio Settings window while it is open.
     settings_window: Option<SettingsWindow>,
     window_title: String,
-    /// Initial height of the preview, from the window size at startup.
+    /// Height the expanded preview starts at, the height that fits its controls in the opening window.
     preview_height: f32,
+    /// True while the expanded preview follows the height that fits its controls when the window changes size,
+    /// so a window the platform maximizes after opening still starts with the fitted preview.
+    /// Dragging the divider ends it, and the split then stays where the user left it.
+    preview_auto_fit: bool,
     /// Sizes of the table and the expanded preview, kept while the preview is collapsed.
     workspace_split: Entity<ResizableState>,
     /// True while the preview is collapsed into its compact row.
@@ -192,16 +193,7 @@ impl AppView {
             async {}
         }));
 
-        let mut menu_state = MenuState {
-            output_device: None,
-            show_loudness_graph: settings.show_loudness_graph,
-            serato_colours: settings.serato_waveform_colours,
-            preview_plugin_chain: settings.preview_plugin_chain,
-            compensate_preview_latency: settings.compensate_preview_latency,
-            normalize_target: describe_target(&settings),
-            columns: column_choices(table.read(cx).delegate()),
-            ..MenuState::default()
-        };
+        let mut menu_state = initial_menu_state(&settings, &table, cx);
         let editor_owner = window.window_handle().ok().map(|handle| handle.as_raw());
         let Startup {
             coordinators,
@@ -256,7 +248,8 @@ impl AppView {
             settings,
             settings_window: None,
             window_title: String::from(APP_TITLE),
-            preview_height: (workspace_height * PREVIEW_PROPORTION).max(PREVIEW_MINIMUM_HEIGHT),
+            preview_height: render::preview_fit_height(content_width, workspace_height),
+            preview_auto_fit: true,
             workspace_split: cx.new(|_| ResizableState::default()),
             preview_compact: false,
             autoplay_pending: options.autoplay,
@@ -315,6 +308,24 @@ impl AppView {
         }
         let active = self.table.read(cx).delegate().active_progress();
         Some((activity, ((finished as f32 + active) / total as f32).clamp(0.0, 1.0)))
+    }
+}
+
+/// Returns the menu state of the saved settings and the table columns, before the output device is opened.
+fn initial_menu_state(
+    settings: &GuiSettings,
+    table: &Entity<TableState<ResultsDelegate>>,
+    cx: &Context<AppView>,
+) -> MenuState {
+    MenuState {
+        output_device: None,
+        show_loudness_graph: settings.show_loudness_graph,
+        serato_colours: settings.serato_waveform_colours,
+        preview_plugin_chain: settings.preview_plugin_chain,
+        compensate_preview_latency: settings.compensate_preview_latency,
+        normalize_target: describe_target(settings),
+        columns: column_choices(table.read(cx).delegate()),
+        ..MenuState::default()
     }
 }
 

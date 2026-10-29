@@ -14,14 +14,14 @@ use std::sync::Arc;
 
 use audiobatch_core::format::format_kilohertz;
 use audiobatch_playback::Player;
-use gpui_kit::base::{ResizeHandleContext, ResizeHandleRenderer, ResizeHandleState};
+use gpui_kit::base::{ResizableState, ResizeHandleContext, ResizeHandleRenderer, ResizeHandleState};
 use gpui_kit::component::resizable::{resizable_panel, v_resizable};
 use gpui_kit::component::table::DataTable;
 use gpui_kit::component::{Sizable as _, Size};
 use gpui_kit::{
-    App, Axis, Context, Div, ExternalPaths, FocusHandle, Focusable, InteractiveElement as _, IntoElement,
-    ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div, px,
-    relative, transparent_black,
+    App, AppContext as _, Axis, Context, Div, ExternalPaths, FocusHandle, Focusable, InteractiveElement as _,
+    IntoElement, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Window, div, px, relative, transparent_black,
 };
 
 use super::{
@@ -30,7 +30,7 @@ use super::{
 };
 use crate::controls::{
     ControlsEvent, ControlsState, EventCallback, NormalizeControls, PlaybackControls, SECTION_TOGGLE_SIZE,
-    render_controls, render_playback_row, render_section_toggle,
+    fit_height as controls_fit_height, render_controls, render_playback_row, render_section_toggle,
 };
 use crate::info_panel::{COMPACT_METRIC_SPACING, render_compact_info_panel, render_info_panel};
 use crate::menus::{
@@ -369,6 +369,24 @@ impl AppView {
             )
     }
 
+    /// Fits the expanded preview to its controls again when the content area changed size,
+    /// until the user drags the divider.
+    /// The fit height only changes when the width crosses the wide layout breakpoint,
+    /// or when a short window clamps it, since the preview panel keeps its size while it fits.
+    /// This also covers the platform maximizing the window after its first frame.
+    /// A new split state lays out with the initial panel size, which the existing one only uses once.
+    fn fit_preview_to_content(&mut self, content_width: f32, workspace_height: f32, cx: &mut Context<Self>) {
+        if !self.preview_auto_fit || self.preview_compact {
+            return;
+        }
+        let height = preview_fit_height(content_width, workspace_height);
+        if (height - self.preview_height).abs() < f32::EPSILON {
+            return;
+        }
+        self.preview_height = height;
+        self.workspace_split = cx.new(|_| ResizableState::default());
+    }
+
     /// Renders the results table above the preview:
     /// split by a draggable divider while expanded, and above the compact row while collapsed.
     fn render_workspace(&self, content_width: f32, workspace_height: f32, cx: &Context<Self>) -> Div {
@@ -380,22 +398,27 @@ impl AppView {
                 .child(div().flex_1().min_h_0().child(self.render_table()))
                 .child(self.render_compact_preview(content_width, cx));
         }
-        let preview_maximum = (workspace_height * PREVIEW_MAXIMUM_PROPORTION).max(PREVIEW_MINIMUM_HEIGHT + 1.0);
+        let preview_maximum = preview_maximum_height(workspace_height);
+        let preview = resizable_panel()
+            .size(px(self.preview_height))
+            .size_range(px(PREVIEW_MINIMUM_HEIGHT)..px(preview_maximum))
+            .child(self.render_preview(content_width, cx));
+        let preview = if self.preview_auto_fit {
+            preview.fixed()
+        } else {
+            preview
+        };
         div().size_full().child(
             v_resizable("workspace")
                 .with_state(&self.workspace_split)
                 .with_handle_appearance(divider_appearance())
+                .on_resize(cx.listener(|view, _, _, _| view.preview_auto_fit = false))
                 .child(
                     resizable_panel()
                         .size_range(px(TABLE_MINIMUM_HEIGHT)..Pixels::MAX)
                         .child(self.render_table()),
                 )
-                .child(
-                    resizable_panel()
-                        .size(px(self.preview_height))
-                        .size_range(px(PREVIEW_MINIMUM_HEIGHT)..px(preview_maximum))
-                        .child(self.render_preview(content_width, cx)),
-                ),
+                .child(preview),
         )
     }
 }
@@ -417,6 +440,7 @@ impl Render for AppView {
             fill_status_column(state, table_width, window, cx);
         });
         self.sync_gain_slider(window, cx);
+        self.fit_preview_to_content(content_width, workspace_height, cx);
         if std::mem::take(&mut self.zoom_reset_pending) {
             self.zoom_slider
                 .update(cx, |slider, cx| slider.set_value(MINIMUM_ZOOM as f32, window, cx));
@@ -507,6 +531,22 @@ fn divider_appearance() -> ResizeHandleRenderer {
         };
         Some(line.into_any_element())
     })
+}
+
+/// Returns the height the expanded preview starts at in a content area of the given size:
+/// the height that shows all controls of the layout the width picks without scrolling,
+/// with the space below the divider.
+/// It stays within the range the divider allows, so a short window keeps the table usable
+/// and the controls scroll instead.
+pub(super) fn preview_fit_height(content_width: f32, workspace_height: f32) -> f32 {
+    let (_, _, wide) = preview_widths(content_width);
+    (DIVIDER_SPACING + controls_fit_height(wide))
+        .clamp(PREVIEW_MINIMUM_HEIGHT, preview_maximum_height(workspace_height))
+}
+
+/// Returns the tallest height the divider allows the expanded preview in a workspace of the given height.
+fn preview_maximum_height(workspace_height: f32) -> f32 {
+    (workspace_height * PREVIEW_MAXIMUM_PROPORTION).max(PREVIEW_MINIMUM_HEIGHT + 1.0)
 }
 
 /// Returns the width of the controls column, which the compact row also uses for its chevron and playback buttons.
