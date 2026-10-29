@@ -20,11 +20,28 @@ use vst3::Steinberg::{FIDString, kPlatformTypeNSView};
 use super::{EditorError, EditorShared, ViewSize};
 use crate::thread::UiThread;
 
+/// Objective-C class name of the editor window delegate.
+/// Unit tests use a separate name because the test binary also links the library copy through `audiobatch-test-plugin`.
+#[cfg(not(test))]
+macro_rules! delegate_class_name {
+    () => {
+        "AudioBatchPluginEditorDelegate"
+    };
+}
+
+/// Objective-C class name of the editor window delegate in the unit test binary.
+#[cfg(test)]
+macro_rules! delegate_class_name {
+    () => {
+        "AudioBatchPluginEditorTestDelegate"
+    };
+}
+
 define_class!(
     // SAFETY: `NSObject` has no subclassing requirements, and the delegate does not implement `Drop`.
     #[unsafe(super(NSObject))]
     #[thread_kind = MainThreadOnly]
-    #[name = "AudioBatchPluginEditorDelegate"]
+    #[name = delegate_class_name!()]
     #[ivars = Weak<EditorShared>]
     struct WindowDelegate;
 
