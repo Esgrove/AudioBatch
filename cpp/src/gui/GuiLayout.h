@@ -249,6 +249,15 @@ constexpr int loudnessAxisGap {6};
 constexpr int loudnessAxisWidth {16};
 constexpr int loudnessTickSpacing {32};
 
+/// Height of the amber overload caps at the outer edges of a channel lane.
+constexpr float overloadCapHeight {4.0f};
+/// Narrowest overload mark, so a single-column overload stays visible when zoomed out.
+constexpr float overloadMinimumWidth {3.0f};
+/// Outline width of the hollow true peak caps.
+constexpr float overloadOutlineWidth {1.0f};
+/// Opacity of the amber tint over a channel lane with sample overloads.
+constexpr float overloadTintAlpha {0.18f};
+
 /// Chooses a uniform whole-LU interval for valid integer loudness limits.
 /// Even steps keep labels anchored to even values, except when a narrow range needs one-LU detail.
 constexpr int loudnessTickInterval(const int minimum, const int maximum, const int height)

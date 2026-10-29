@@ -2,6 +2,7 @@
 /// Declares ThumbnailComponent, a JUCE component that draws the audio thumbnail,
 /// shows the playback position of the shared transport source and scrubs it,
 /// overlays optional cached short-term loudness with an adjustable LUFS-S axis,
+/// marks source sample and true peak overloads in amber,
 /// supports zoom and gain mouse-wheel gestures, Serato hot cue jumps with the number keys, file drag-and-drop,
 /// and caching of the rendered waveform data.
 
@@ -53,12 +54,25 @@ struct ColouredWaveformCache {
     float displayGain {1.0f};
 };
 
+/// One horizontal run of an overload mark in a channel lane, in component coordinates.
+struct OverloadMark {
+    /// Horizontal extent of the run, at least the minimum mark width.
+    juce::Range<float> horizontal;
+    /// Top of the channel lane the run marks.
+    float laneTop {0.0f};
+    /// Bottom of the channel lane the run marks.
+    float laneBottom {0.0f};
+    /// True for a sample over, drawn solid, and false for a true peak over alone, drawn as an outline.
+    bool sampleOver {false};
+};
+
 /// Waveform preview component with a playback cursor, scrubbing, zooming, and drag-and-drop.
 class ThumbnailComponent :
     public juce::Component,
     public juce::ChangeListener,
     public juce::FileDragAndDropTarget,
-    public juce::ChangeBroadcaster
+    public juce::ChangeBroadcaster,
+    public juce::TooltipClient
 {
 public:
     ThumbnailComponent(juce::AudioFormatManager& formatManager, AudioPreviewPlayer& source);
@@ -84,10 +98,13 @@ public:
     void paint(juce::Graphics& graphics) override;
     void resized() override;
 
+    juce::String getTooltip() override;
+
     juce::MemoryBlock saveToCacheData() const;
     juce::StringArray getLastDroppedFiles() const;
     juce::URL getLastDroppedFile() const noexcept;
     [[nodiscard]] std::vector<CueArrows> getCueArrows() const;
+    [[nodiscard]] std::vector<OverloadMark> getOverloadMarks() const;
 
     bool loadFromCacheData(const juce::MemoryBlock& waveformData);
     [[nodiscard]] bool isSeratoWaveformColouringEnabled() const noexcept;
@@ -95,6 +112,7 @@ public:
     void setDisplayGain(float linearGain);
     void setLoudnessHistory(std::shared_ptr<const ShortTermLoudnessHistory> history);
     void setLoudnessGraphSettings(bool enabled, double minimum, double maximum);
+    void setOverloadHistory(std::shared_ptr<const OverloadHistory> history);
     void setMouseWheelGainCallback(std::function<void(float)> callback);
     void setMouseWheelZoomCallback(std::function<void(double)> callback);
     void setRange(juce::Range<double> newRange);
@@ -116,6 +134,7 @@ private:
     void drawLoudnessGraph(juce::Graphics& graphics) const;
     void drawLoudnessAxis(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
     void drawLoudnessCurve(juce::Graphics& graphics, juce::Rectangle<int> bounds) const;
+    void drawOverloads(juce::Graphics& graphics) const;
     void jumpToHotCue(int slot);
     void replaceThumbnail(int samplesPerPoint);
     void updatePlaybackPosition();
@@ -154,6 +173,8 @@ private:
     std::shared_ptr<const serato::Overview> seratoOverview;
     /// The short-term loudness of the file, or null until its analysis has it.
     std::shared_ptr<const ShortTermLoudnessHistory> loudnessHistory;
+    /// The source overloads of the file, or null until its analysis has them.
+    std::shared_ptr<const OverloadHistory> overloadHistory;
     /// The coloured waveform of the last paint, cleared when the waveform, the overview, or the colouring changes.
     std::optional<ColouredWaveformCache> colouredWaveform;
 

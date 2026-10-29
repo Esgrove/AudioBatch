@@ -7,6 +7,7 @@
 #include "gui/components/ThumbnailComponent.h"
 
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/OverloadHistory.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
@@ -126,6 +127,7 @@ void ThumbnailComponent::paint(juce::Graphics& graphics)
         if (!drawColouredWaveform(graphics, reduced)) {
             thumbnail->drawChannels(graphics, reduced, visibleRange.getStart(), visibleRange.getEnd(), displayGain);
         }
+        drawOverloads(graphics);
         drawLoudnessGraph(graphics);
         drawCueMarkers(graphics);
     } else {
@@ -191,6 +193,7 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
 {
     colouredWaveform.reset();
     loudnessHistory.reset();
+    overloadHistory.reset();
     seratoOverview.reset();
     seratoMarkers.reset();
     thumbnail->clear();
@@ -264,6 +267,7 @@ void ThumbnailComponent::setURL(const juce::URL& url, const juce::int64 lengthIn
 {
     colouredWaveform.reset();
     loudnessHistory.reset();
+    overloadHistory.reset();
     seratoOverview.reset();
     seratoMarkers.reset();
     hasNotifiedFullyLoaded = false;
@@ -510,6 +514,114 @@ void ThumbnailComponent::setLoudnessHistory(std::shared_ptr<const ShortTermLoudn
     if (loudnessHistory != history) {
         loudnessHistory = std::move(history);
         repaint();
+    }
+}
+
+/// Attaches the source overloads on the message thread without changing playback, gain, or the viewport.
+/// The marks describe the decoded source, so they stay unchanged when the gain or the plugin preview changes.
+void ThumbnailComponent::setOverloadHistory(std::shared_ptr<const OverloadHistory> history)
+{
+    if (overloadHistory != history) {
+        overloadHistory = std::move(history);
+        repaint();
+    }
+}
+
+/// Explains the amber marks while the file has source overloads, and shows no tooltip otherwise.
+juce::String ThumbnailComponent::getTooltip()
+{
+    if (!overloadHistory || !overloadHistory->hasOverloads() || thumbnail->getTotalLength() <= 0.0) {
+        return {};
+    }
+    return "Source overs: solid = sample > 0 dBFS, outlined = true peak > 0 dBTP.";
+}
+
+/// Returns the runs of overload marks inside the visible range, per channel lane in the waveform's lane layout.
+/// Neighbouring columns with the same kind of mark merge into one run,
+/// and a sample over hides a true peak over in the same column, since it is the stronger warning.
+/// Returns nothing while the history and the waveform disagree on the channel count.
+std::vector<OverloadMark> ThumbnailComponent::getOverloadMarks() const
+{
+    const auto bounds = waveformBounds();
+    if (!overloadHistory || !overloadHistory->hasOverloads() || bounds.isEmpty() || visibleRange.getLength() <= 0.0
+        || overloadHistory->channelCount != thumbnail->getNumChannels())
+    {
+        return {};
+    }
+    const auto channels = overloadHistory->channelCount;
+    std::vector<OverloadMark> marks;
+    for (int channel = 0; channel < channels; ++channel) {
+        const auto columns = projectOverloadColumns(*overloadHistory, channel, visibleRange, bounds.getWidth());
+        // The same integer lane split as AudioThumbnail::drawChannels.
+        const int laneTopPixel = bounds.getY() + channel * bounds.getHeight() / channels;
+        const int laneBottomPixel = bounds.getY() + (channel + 1) * bounds.getHeight() / channels;
+        const auto laneTop = static_cast<float>(laneTopPixel);
+        const auto laneBottom = static_cast<float>(laneBottomPixel);
+        std::size_t column = 0;
+        while (column < columns.size()) {
+            const auto flags = columns[column];
+            if (flags == 0) {
+                ++column;
+                continue;
+            }
+            const auto sampleOver = (flags & OverloadHistory::sampleOver) != 0;
+            auto end = column + 1;
+            while (end < columns.size() && columns[end] != 0
+                   && ((columns[end] & OverloadHistory::sampleOver) != 0) == sampleOver)
+            {
+                ++end;
+            }
+            auto start = static_cast<float>(bounds.getX()) + static_cast<float>(column);
+            auto finish = static_cast<float>(bounds.getX()) + static_cast<float>(end);
+            if (finish - start < layout::waveform::overloadMinimumWidth) {
+                const auto centre = (start + finish) / 2.0f;
+                start = centre - layout::waveform::overloadMinimumWidth / 2.0f;
+                finish = centre + layout::waveform::overloadMinimumWidth / 2.0f;
+            }
+            marks.push_back({
+                .horizontal = {start, finish},
+                .laneTop = laneTop,
+                .laneBottom = laneBottom,
+                .sampleOver = sampleOver,
+            });
+            column = end;
+        }
+    }
+    return marks;
+}
+
+/// Draws the source overloads in amber, distinct from the orange-red loudness curve.
+/// A sample over gets a light tint over its lane and solid caps at both lane edges,
+/// and a true peak over alone gets outlined caps, so the kinds differ in shape as well as colour,
+/// also over Serato colours.
+void ThumbnailComponent::drawOverloads(juce::Graphics& graphics) const
+{
+    const auto marks = getOverloadMarks();
+    if (marks.empty()) {
+        return;
+    }
+    const juce::Graphics::ScopedSaveState savedState(graphics);
+    graphics.reduceClipRegion(waveformBounds());
+    const auto amber = CustomLookAndFeel::yellow();
+    const auto capHeight = layout::waveform::overloadCapHeight;
+    const auto outline = layout::waveform::overloadOutlineWidth;
+    for (const auto& mark : marks) {
+        const auto width = mark.horizontal.getLength();
+        const auto laneHeight = mark.laneBottom - mark.laneTop;
+        const auto height = std::min(capHeight, laneHeight / 4.0f);
+        const juce::Rectangle<float> topCap(mark.horizontal.getStart(), mark.laneTop, width, height);
+        const juce::Rectangle<float> bottomCap(mark.horizontal.getStart(), mark.laneBottom - height, width, height);
+        if (mark.sampleOver) {
+            graphics.setColour(amber.withAlpha(layout::waveform::overloadTintAlpha));
+            graphics.fillRect(juce::Rectangle<float>(mark.horizontal.getStart(), mark.laneTop, width, laneHeight));
+            graphics.setColour(amber);
+            graphics.fillRect(topCap);
+            graphics.fillRect(bottomCap);
+        } else {
+            graphics.setColour(amber);
+            graphics.drawRect(topCap.reduced(outline / 2.0f), outline);
+            graphics.drawRect(bottomCap.reduced(outline / 2.0f), outline);
+        }
     }
 }
 
