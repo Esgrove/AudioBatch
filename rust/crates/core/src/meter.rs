@@ -101,6 +101,7 @@ impl BlockMeter {
 
     /// Appends decoded planar samples, one slice per channel, measuring every block that fills up.
     /// A channel shorter than the first one, including an omitted plane, is padded with silence.
+    /// Complete blocks borrow the decoder's planes directly, while partial blocks retain reusable sample storage.
     ///
     /// # Errors
     ///
@@ -111,6 +112,31 @@ impl BlockMeter {
         while offset < frame_count {
             let filled = self.block.first().map_or(0, Vec::len);
             let take = (self.block_size - filled).min(frame_count - offset);
+            if filled == 0 && take == self.block_size {
+                let mut planes = [&[][..]; 64];
+                let channels = self.block.len();
+                let mut complete = true;
+                for (channel, plane) in planes.iter_mut().take(channels).enumerate() {
+                    if let Some(segment) = chunk
+                        .get(channel)
+                        .and_then(|samples| samples.as_ref().get(offset..offset + take))
+                    {
+                        *plane = segment;
+                    } else {
+                        complete = false;
+                        break;
+                    }
+                }
+                if complete {
+                    self.measure_planes(
+                        planes
+                            .get(..channels)
+                            .expect("validated channel count fits fixed storage"),
+                    )?;
+                    offset += take;
+                    continue;
+                }
+            }
             for (channel, block_channel) in self.block.iter_mut().enumerate() {
                 let samples = chunk.get(channel).map_or(&[][..], AsRef::as_ref);
                 let available = samples.len().saturating_sub(offset).min(take);
@@ -160,26 +186,44 @@ impl BlockMeter {
         })
     }
 
-    /// Feeds the buffered block to the meter, the sample extremes, and the waveform, then empties it.
+    /// Feeds a buffered block without allocating plane references and retains its sample storage for reuse.
     fn measure_block(&mut self) -> Result<(), MeterError> {
-        for ((samples, minimum), maximum) in self.block.iter().zip(&mut self.min_samples).zip(&mut self.max_samples) {
-            for &sample in samples {
-                *minimum = minimum.min(sample);
-                *maximum = maximum.max(sample);
+        let mut block = std::mem::take(&mut self.block);
+        let mut planes = [&[][..]; 64];
+        for (plane, samples) in planes.iter_mut().zip(&block) {
+            *plane = samples;
+        }
+        let result = self.measure_planes(
+            planes
+                .get(..block.len())
+                .expect("validated channel count fits fixed storage"),
+        );
+        for samples in &mut block {
+            samples.clear();
+        }
+        self.block = block;
+        result
+    }
+
+    /// Measures one fixed analysis block, whether borrowed directly or assembled from decoder packets.
+    fn measure_planes(&mut self, planes: &[&[f32]]) -> Result<(), MeterError> {
+        for ((samples, minimum), maximum) in planes.iter().zip(&mut self.min_samples).zip(&mut self.max_samples) {
+            let (mut block_minimum, mut block_maximum) = (0.0_f32, 0.0_f32);
+            for &sample in *samples {
+                block_minimum = block_minimum.min(sample);
+                block_maximum = block_maximum.max(sample);
             }
+            *minimum = minimum.min(block_minimum);
+            *maximum = maximum.max(block_maximum);
         }
-        let planes: Vec<&[f32]> = self.block.iter().map(Vec::as_slice).collect();
-        self.waveform.push(&planes);
+        self.waveform.push(planes);
         if let Some(true_peak) = &mut self.true_peak {
-            true_peak.push(&planes);
+            true_peak.push(planes);
         }
-        self.meter.add_frames_planar_f32(&planes).map_err(MeterError::Frames)?;
+        self.meter.add_frames_planar_f32(planes).map_err(MeterError::Frames)?;
         let short_term = normalize_loudness(self.meter.loudness_shortterm().map_err(MeterError::ShortTerm)?);
         self.max_short_term_lufs = self.max_short_term_lufs.max(short_term);
         self.history.push(short_term as f32);
-        for samples in &mut self.block {
-            samples.clear();
-        }
         Ok(())
     }
 }
@@ -412,6 +456,48 @@ mod test_edge_signals {
                 let expected = reference.true_peak(channel as u32).expect("reference peak");
                 assert_eq!(peak.to_bits(), expected.to_bits(), "rate {rate}, channel {channel}");
             }
+        }
+    }
+
+    #[test]
+    fn block_extrema_preserve_scalar_bits_across_boundaries() {
+        let samples = [
+            f32::NAN,
+            -0.0,
+            0.0,
+            -f32::from_bits(1),
+            f32::from_bits(1),
+            -1.0,
+            1.0,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+        ];
+        for frames in [1, 7, 4_799, 4_800, 4_801, 9_603] {
+            let plane: Vec<_> = (0..frames).map(|index| samples[index % samples.len()]).collect();
+            let (minimum, maximum) = plane.iter().fold((0.0_f32, 0.0_f32), |(minimum, maximum), &sample| {
+                (minimum.min(sample), maximum.max(sample))
+            });
+            let output = measure_signal(&[plane], 48_000, frames);
+            assert_eq!(output.min_samples[0].to_bits(), minimum.to_bits());
+            assert_eq!(output.max_samples[0].to_bits(), maximum.to_bits());
+        }
+        let mut negative_zero_then_nan = vec![-0.0; 4_800];
+        negative_zero_then_nan.resize(9_603, f32::NAN);
+        let mut alternating_zero_blocks = vec![-0.0; 4_800];
+        alternating_zero_blocks.resize(9_600, 0.0);
+        alternating_zero_blocks.resize(9_603, -0.0);
+        for samples in [
+            vec![-0.0; 9_603],
+            vec![f32::NAN; 9_603],
+            negative_zero_then_nan,
+            alternating_zero_blocks,
+        ] {
+            let (minimum, maximum) = samples.iter().fold((0.0_f32, 0.0_f32), |(minimum, maximum), &sample| {
+                (minimum.min(sample), maximum.max(sample))
+            });
+            let output = measure_signal(&[samples], 48_000, 4_801);
+            assert_eq!(output.min_samples[0].to_bits(), minimum.to_bits());
+            assert_eq!(output.max_samples[0].to_bits(), maximum.to_bits());
         }
     }
 
