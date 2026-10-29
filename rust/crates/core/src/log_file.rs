@@ -8,6 +8,7 @@
 //! and messages of other crates only from the warning level.
 //! Messages up to a chosen level are also printed to stderr, except those the caller already showed to the user.
 //! Each line names the spans it was logged in, such as the file a worker thread is analyzing.
+//! The file also names each message's source module, including third-party tag readers and decoders.
 //! Panics are logged with a backtrace before the default panic message is printed.
 
 use std::backtrace::Backtrace;
@@ -100,7 +101,7 @@ pub fn install(log_name: &str, stderr_level: LevelFilter) -> Result<PathBuf, Log
         .with_writer(Mutex::new(file))
         .with_ansi(false)
         .with_timer(LocalTime)
-        .with_target(false)
+        .with_target(true)
         .with_filter(kept_levels(LevelFilter::TRACE));
     let stderr_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
@@ -298,5 +299,53 @@ mod test_log_file {
         assert!(printed.contains("analyze{file=\"song.wav\"}"), "{printed}");
         assert!(printed.contains("decoder warning"), "{printed}");
         assert!(!printed.contains("not printed"), "{printed}");
+    }
+
+    #[test]
+    fn tag_reader_warnings_name_the_file_and_source_without_an_analysis_span() {
+        let output = CapturedOutput::default();
+        let writer = output.clone();
+        let layer = tracing_subscriber::fmt::layer()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_target(true)
+            .with_filter(kept_levels(LevelFilter::TRACE));
+        let _subscriber = tracing_subscriber::registry().with(layer).set_default();
+        let path = test_fixtures::fixture("sine_stereo_44100_192k_no_xing.mp3");
+        crate::tags::read_tags(&path).expect("tags");
+
+        let printed = String::from_utf8(output.0.lock().expect("output lock").clone()).expect("utf-8");
+        let warning = printed
+            .lines()
+            .find(|line| line.contains("Using bitrate to estimate duration"))
+            .unwrap_or_else(|| panic!("MP3 duration warning missing: {printed}"));
+        assert!(warning.contains("sine_stereo_44100_192k_no_xing.mp3"), "{warning}");
+        assert!(warning.contains("lofty::mpeg"), "{warning}");
+    }
+
+    #[test]
+    fn decoder_warnings_after_seek_name_the_file_and_source() {
+        let output = CapturedOutput::default();
+        let writer = output.clone();
+        let layer = tracing_subscriber::fmt::layer()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .without_time()
+            .with_target(true)
+            .with_filter(kept_levels(LevelFilter::TRACE));
+        let _subscriber = tracing_subscriber::registry().with(layer).set_default();
+        let path = test_fixtures::fixture("sine_stereo_44100_192k_no_xing.mp3");
+        let mut decoder = crate::decode::AudioFileDecoder::open(&path).expect("decoder");
+        decoder.seek(0.5).expect("seek");
+        while decoder.next_chunk().expect("decoded").is_some() {}
+
+        let printed = String::from_utf8(output.0.lock().expect("output lock").clone()).expect("utf-8");
+        let warning = printed
+            .lines()
+            .find(|line| line.contains("invalid main_data_begin"))
+            .unwrap_or_else(|| panic!("MP3 reservoir warning missing: {printed}"));
+        assert!(warning.contains("sine_stereo_44100_192k_no_xing.mp3"), "{warning}");
+        assert!(warning.contains("symphonia"), "{warning}");
     }
 }

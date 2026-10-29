@@ -120,7 +120,13 @@ One worker serves a whole scan, and it is started again after a crash or a timeo
 prints to stderr up to a chosen level, and forwards the records of crates that use the `log` facade.
 `analyze_file`, `normalize_file`, and `process_file` each enter a span with the file path,
 so a message from a worker thread names its file.
+Tag reads and metadata copies also enter file spans.
+Each decoder retains its file span and enters it while opening, decoding, and seeking,
+so preview warnings keep their file context even without an analysis span.
+Log file lines include the source module, including third-party crates.
 The CLI logs what it already printed with the `FILE_ONLY_TARGET` target, so it is not printed twice.
+The GUI logs opened input paths, discovered file counts, and analysis duration and result counts at the info level,
+without requiring `AUDIOBATCH_GUI_DEBUG`.
 Nothing logs from the audio callback.
 
 ## Errors and reporting

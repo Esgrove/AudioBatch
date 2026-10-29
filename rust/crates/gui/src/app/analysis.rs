@@ -4,10 +4,10 @@
 //! so a large run updates the table at a steady rate instead of once per event.
 
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use audiobatch_core::discovery::{has_supported_extension, normalize_path};
-use audiobatch_core::{AnalysisEvent, AnalysisOptions};
+use audiobatch_core::{AnalysisEvent, AnalysisOptions, AnalysisRecord, AnalysisStatus};
 use crossbeam_channel::{Receiver, TryRecvError};
 use gpui_kit::{Context, SharedString, Task, Window};
 
@@ -43,6 +43,51 @@ pub(super) struct RunProgress {
     pub(super) finished: usize,
     /// True once the run has completed.
     pub(super) completed: bool,
+    started: Instant,
+    analyzed: usize,
+    cached: usize,
+    failed: usize,
+}
+
+impl RunProgress {
+    /// Starts tracking an analysis run and its elapsed time.
+    fn new(run_id: u64, kind: RunKind) -> Self {
+        Self {
+            run_id,
+            kind,
+            planned: false,
+            total: 0,
+            finished: 0,
+            completed: false,
+            started: Instant::now(),
+            analyzed: 0,
+            cached: 0,
+            failed: 0,
+        }
+    }
+
+    /// Counts every result, including files hidden from the table during the run.
+    fn record(&mut self, record: &AnalysisRecord) {
+        if record.status == AnalysisStatus::Failed {
+            self.failed += 1;
+        } else if record.from_cache {
+            self.cached += 1;
+        } else {
+            self.analyzed += 1;
+        }
+    }
+
+    /// Returns the completed run's duration and mutually exclusive result counts.
+    fn log_line(&self) -> String {
+        format!(
+            "Analysis complete: {:.2} s, {} files ({} analyzed, {} from cache, {} failed)",
+            self.started.elapsed().as_secs_f64(),
+            self.analyzed + self.cached + self.failed,
+            self.analyzed,
+            self.cached,
+            self.failed
+        )
+    }
 }
 
 impl AppView {
@@ -56,6 +101,7 @@ impl AppView {
         for path in paths.iter().map(|path| normalize_path(path)) {
             self.excluded.remove(&path);
             if !self.roots.contains(&path) {
+                log_open_path(&path);
                 self.roots.push(path);
                 added = true;
             }
@@ -74,6 +120,9 @@ impl AppView {
             return;
         }
         self.roots = paths.iter().map(|path| normalize_path(path)).collect();
+        for path in &self.roots {
+            log_open_path(path);
+        }
         self.excluded.clear();
         self.start_run(RunKind::Scan, self.roots.clone(), false, cx);
     }
@@ -131,6 +180,7 @@ impl AppView {
             return;
         }
         if self.is_analyzing() {
+            tracing::info!("Analysis cancelled: replaced by a new run");
             self.table.update(cx, |state, cx| {
                 state.delegate_mut().finish_interrupted_rows();
                 cx.notify();
@@ -141,14 +191,7 @@ impl AppView {
             recursive: true,
             refresh,
         });
-        self.run = Some(RunProgress {
-            run_id,
-            kind,
-            planned: false,
-            total: 0,
-            finished: 0,
-            completed: false,
-        });
+        self.run = Some(RunProgress::new(run_id, kind));
         self.status = SharedString::from(match kind {
             RunKind::Scan => "Scanning for audio files...",
             RunKind::Reanalyze => "Analyzing...",
@@ -174,11 +217,13 @@ impl AppView {
         let mut carried_gains = Vec::new();
         let excluded = &self.excluded;
         let selected = self.selected.as_deref();
+        let run = &mut self.run;
         self.table.update(cx, |state, cx| {
             let delegate = state.delegate_mut();
             for event in events.into_iter().filter(|event| event.run_id() == run_id) {
                 match event {
                     AnalysisEvent::Planned { files, .. } => {
+                        tracing::info!("Found {} audio files", files.len());
                         let files: Vec<PathBuf> = files.into_iter().filter(|path| !excluded.contains(path)).collect();
                         planned_total = Some(files.len());
                         match kind {
@@ -189,6 +234,16 @@ impl AppView {
                     AnalysisEvent::Started { path, .. } => delegate.mark_started(&path),
                     AnalysisEvent::Progress { path, fraction, .. } => delegate.mark_progress(&path, fraction),
                     AnalysisEvent::Finished { record, .. } => {
+                        if let Some(run) = run {
+                            run.record(&record);
+                        }
+                        if record.status == AnalysisStatus::Failed {
+                            tracing::warn!(
+                                "Analysis failed for \"{}\": {}",
+                                record.path.display(),
+                                record.error_message
+                            );
+                        }
                         if excluded.contains(&record.path) {
                             continue;
                         }
@@ -219,29 +274,27 @@ impl AppView {
             }
             run.finished += finished;
             run.completed |= completed;
+            if completed {
+                tracing::info!("{}", run.log_line());
+            }
         }
         self.update_run_status(cx);
         if planned_total.is_some() || completed {
             self.restore_selection(cx);
         }
-        if completed {
-            if crate::debug_enabled() {
-                tracing::info!("analysis: {}", self.status);
-            }
-            if std::mem::take(&mut self.autoplay_pending) {
-                let first_playable = {
-                    let delegate = self.table.read(cx).delegate();
-                    (0..delegate.len()).find_map(|index| {
-                        delegate
-                            .row(index)
-                            .filter(|row| row.ready_record().is_some())
-                            .map(|row| (index, row.path.clone()))
-                    })
-                };
-                if let Some((index, path)) = first_playable {
-                    self.table.update(cx, |state, cx| state.set_selected_row(index, cx));
-                    self.select_path(&path, true, cx);
-                }
+        if completed && std::mem::take(&mut self.autoplay_pending) {
+            let first_playable = {
+                let delegate = self.table.read(cx).delegate();
+                (0..delegate.len()).find_map(|index| {
+                    delegate
+                        .row(index)
+                        .filter(|row| row.ready_record().is_some())
+                        .map(|row| (index, row.path.clone()))
+                })
+            };
+            if let Some((index, path)) = first_playable {
+                self.table.update(cx, |state, cx| state.set_selected_row(index, cx));
+                self.select_path(&path, true, cx);
             }
         }
         if selected_finished {
@@ -291,6 +344,12 @@ pub(super) fn drain_events<T>(receiver: &Receiver<T>) -> (Vec<T>, bool) {
     }
 }
 
+/// Logs an opened input without listing every file discovered inside a directory.
+fn log_open_path(path: &std::path::Path) {
+    let kind = if path.is_dir() { "directory" } else { "file" };
+    tracing::info!("Opening {kind}: \"{}\"", path.display());
+}
+
 /// Drains the analysis events on a timer and applies them to the view in batches.
 fn spawn_event_drain(receiver: Receiver<AnalysisEvent>, cx: &Context<AppView>) -> Task<()> {
     cx.spawn(async move |this, cx| {
@@ -309,4 +368,51 @@ fn spawn_event_drain(receiver: Receiver<AnalysisEvent>, cx: &Context<AppView>) -
             cx.background_executor().timer(ANALYSIS_POLL_INTERVAL).await;
         }
     })
+}
+
+#[cfg(test)]
+mod test_run_progress {
+    use super::*;
+
+    #[test]
+    fn summary_counts_fresh_cached_and_failed_results() {
+        let mut run = RunProgress::new(1, RunKind::Scan);
+        for (status, from_cache) in [
+            (AnalysisStatus::Analyzed, false),
+            (AnalysisStatus::Cached, true),
+            (AnalysisStatus::Failed, false),
+            (AnalysisStatus::Failed, true),
+        ] {
+            run.record(&AnalysisRecord {
+                status,
+                from_cache,
+                ..AnalysisRecord::default()
+            });
+        }
+        assert!(run.log_line().ends_with("4 files (1 analyzed, 1 from cache, 2 failed)"));
+    }
+
+    #[test]
+    fn empty_run_has_a_complete_summary() {
+        let run = RunProgress::new(1, RunKind::Scan);
+        assert!(run.log_line().ends_with("0 files (0 analyzed, 0 from cache, 0 failed)"));
+    }
+
+    #[test]
+    fn summary_includes_elapsed_seconds() {
+        let mut run = RunProgress::new(1, RunKind::Reanalyze);
+        run.started = Instant::now()
+            .checked_sub(Duration::from_secs(2))
+            .expect("earlier instant");
+        let line = run.log_line();
+        let seconds = line
+            .strip_prefix("Analysis complete: ")
+            .expect("summary prefix")
+            .split_once(" s,")
+            .expect("duration suffix")
+            .0
+            .parse::<f64>()
+            .expect("numeric duration");
+        assert!(seconds >= 2.0);
+    }
 }

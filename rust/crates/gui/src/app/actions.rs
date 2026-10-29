@@ -211,6 +211,7 @@ impl AppView {
 
     /// Cancels the analysis run, settling the rows it left waiting or analyzing.
     fn cancel_analysis(&mut self, cx: &mut Context<Self>) {
+        tracing::info!("Analysis cancelled");
         if let Some(coordinator) = &self.coordinator {
             coordinator.cancel();
         }

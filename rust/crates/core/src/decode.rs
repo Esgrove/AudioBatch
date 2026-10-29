@@ -144,6 +144,7 @@ pub struct DecodeFailureTracker {
 
 /// Decodes one audio file into planar `f32` samples, packet by packet.
 pub struct AudioFileDecoder {
+    log_span: tracing::Span,
     format: Box<dyn FormatReader>,
     decoder: Box<dyn AudioDecoder>,
     track_id: u32,
@@ -273,6 +274,8 @@ impl AudioFileDecoder {
     /// Returns an error when the file cannot be opened, has no supported audio track,
     /// or has stream parameters the analysis cannot use.
     pub fn open(path: &Path) -> Result<Self, DecodeError> {
+        let log_span = tracing::info_span!("decode", file = %path.display());
+        let _span = log_span.clone().entered();
         let file = File::open(path).map_err(DecodeError::Open)?;
         let source = MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
         let mut hint = Hint::new();
@@ -335,6 +338,7 @@ impl AudioFileDecoder {
         };
 
         let mut decoder = Self {
+            log_span,
             format,
             decoder,
             track_id,
@@ -380,6 +384,7 @@ impl AudioFileDecoder {
     /// Returns an error when the container cannot be read further,
     /// or when too many packets in a row fail to decode.
     pub fn next_chunk(&mut self) -> Result<Option<&[Vec<f32>]>, DecodeError> {
+        let _span = self.log_span.clone().entered();
         loop {
             if self.frame_limit.is_some_and(|limit| self.position >= limit) {
                 return Ok(None);
@@ -489,6 +494,7 @@ impl AudioFileDecoder {
     ///
     /// Returns an error when the container cannot seek.
     pub fn seek(&mut self, seconds: f64) -> Result<u64, DecodeError> {
+        let _span = self.log_span.clone().entered();
         let stream_seconds = seconds.max(0.0) + self.leading_frames as f64 / f64::from(self.info.sample_rate);
         let time = Time::try_from_secs_f64(stream_seconds).ok_or(DecodeError::InvalidSeek(seconds))?;
         let seeked = self
