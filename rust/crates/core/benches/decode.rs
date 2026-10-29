@@ -35,6 +35,7 @@ fn drain(path: &Path) -> u64 {
     let mut frames = 0;
     while let Some(chunk) = decoder.next_chunk().expect("decodes") {
         frames += chunk.first().map_or(0, Vec::len) as u64;
+        black_box(chunk);
     }
     frames
 }

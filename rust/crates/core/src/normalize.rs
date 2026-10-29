@@ -269,6 +269,16 @@ pub fn normalization_gain(
     Ok(gain as f32)
 }
 
+/// Applies a scalar single precision gain, replacing the output while reusing its allocation.
+///
+/// Each sample uses exactly one `f32` multiplication, without clipping or sanitizing nonfinite values.
+/// Public only so benchmarks exercise the production gain kernel.
+#[doc(hidden)]
+pub fn apply_gain(samples: &[f32], gain: f32, output: &mut Vec<f32>) {
+    output.clear();
+    output.extend(samples.iter().map(|sample| sample * gain));
+}
+
 /// Returns the AIFF bit depth for output written from the analyzed source.
 ///
 /// Keeps the source depth when AIFF supports it, raises lower depths to 16 bits, uses 16 bits for MP3 sources,
@@ -439,8 +449,7 @@ fn render_normalized_audio(
             break;
         };
         for (target, samples) in scaled.iter_mut().zip(chunk) {
-            target.clear();
-            target.extend(samples.iter().map(|sample| sample * gain));
+            apply_gain(samples, gain, target);
         }
         let planes: Vec<&[f32]> = scaled.iter().map(Vec::as_slice).collect();
         writer.write_planar(&planes).map_err(NormalizationRenderError::Write)?;
@@ -486,6 +495,80 @@ fn path_key(path: &Path) -> String {
         text.to_lowercase()
     } else {
         text.into_owned()
+    }
+}
+
+#[cfg(test)]
+mod test_apply_gain {
+    use super::apply_gain;
+
+    #[test]
+    fn every_gain_preserves_the_scalar_single_precision_product() {
+        let samples = [-1.25, -0.75, -0.0, 0.0, 0.1, 0.5, 1.0, f32::MAX];
+        let mut output = Vec::new();
+        for gain in [0.0, -0.0, 0.25, 0.707, 1.0, 2.0, -2.0, f32::MAX] {
+            apply_gain(&samples, gain, &mut output);
+            let expected: Vec<_> = samples.iter().map(|sample| (sample * gain).to_bits()).collect();
+            let actual: Vec<_> = output.iter().map(|sample| sample.to_bits()).collect();
+            assert_eq!(actual, expected, "gain {gain}");
+        }
+    }
+
+    #[test]
+    fn underflow_and_nonfinite_samples_keep_scalar_semantics() {
+        let samples = [
+            f32::from_bits(1),
+            -f32::from_bits(1),
+            f32::MIN_POSITIVE,
+            -f32::MIN_POSITIVE,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::from_bits(0x7FC0_1234),
+        ];
+        let mut output = Vec::new();
+        for gain in [0.0, 0.5, 1.0, -2.0, f32::INFINITY, f32::NAN] {
+            apply_gain(&samples, gain, &mut output);
+            for (&sample, &actual) in samples.iter().zip(&output) {
+                let expected = sample * gain;
+                if expected.is_nan() {
+                    assert!(actual.is_nan(), "sample {sample}, gain {gain}");
+                } else {
+                    assert_eq!(actual.to_bits(), expected.to_bits(), "sample {sample}, gain {gain}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn shorter_and_empty_chunks_reuse_capacity_without_stale_samples() {
+        let mut output = Vec::with_capacity(16);
+        let allocation = output.as_ptr();
+        let capacity = output.capacity();
+        apply_gain(&[1.0; 12], 0.5, &mut output);
+        apply_gain(&[0.25, -0.25], 2.0, &mut output);
+        assert_eq!(
+            output.iter().map(|sample| sample.to_bits()).collect::<Vec<_>>(),
+            [0.5_f32.to_bits(), (-0.5_f32).to_bits()],
+        );
+        assert_eq!(output.as_ptr(), allocation);
+        assert_eq!(output.capacity(), capacity);
+        apply_gain(&[], 1.0, &mut output);
+        assert_eq!(output, [] as [f32; 0]);
+        assert_eq!(output.as_ptr(), allocation);
+        assert_eq!(output.capacity(), capacity);
+    }
+
+    #[test]
+    fn longer_chunks_grow_once_and_replace_the_previous_output() {
+        let mut output = vec![99.0];
+        let samples = [0.125; 33];
+        apply_gain(&samples, 2.0, &mut output);
+        let allocation = output.as_ptr();
+        assert_eq!(output.len(), samples.len());
+        assert!(output.iter().all(|sample| sample.to_bits() == 0.25_f32.to_bits()));
+        apply_gain(&samples, -2.0, &mut output);
+        assert_eq!(output.as_ptr(), allocation);
+        assert!(output.iter().all(|sample| sample.to_bits() == (-0.25_f32).to_bits()));
     }
 }
 
