@@ -4,12 +4,13 @@
 
 #include "utils/GuiUtils.h"
 
-#include "utils/Log.h"
 #include "utils/StringFormat.h"
 
 #include <cstddef>
 
 #if JUCE_WINDOWS
+#include "utils/Log.h"
+
 #include <array>
 #include <bit>
 #include <memory>

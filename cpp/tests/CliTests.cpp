@@ -25,6 +25,10 @@
 #include <variant>
 #include <vector>
 
+#if !JUCE_WINDOWS
+#include <array>
+#endif
+
 namespace audiobatch::tests
 {
 namespace

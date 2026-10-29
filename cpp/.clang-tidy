@@ -59,7 +59,7 @@ FormatStyle: file
 CheckOptions:
     cppcoreguidelines-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: "true"
     misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: "true"
-    misc-include-cleaner.IgnoreHeaders: "juce_.*/.*;juce_.*\\.h;JuceHeader\\.h;.*/JUCE/.*;.*Windows Kits.*;windows\\.h;shobjidl\\.h;io\\.h;stdio\\.h;.*[/\\\\]taglib.*"
+    misc-include-cleaner.IgnoreHeaders: "juce_.*/.*;juce_.*\\.h;JuceHeader\\.h;.*/JUCE/.*;.*Windows Kits.*;windows\\.h;shobjidl\\.h;io\\.h;stdio\\.h;signal\\.h;.*\\.framework/.*;MacTypes\\.h;sys/.*;utils/StringFormat\\.h;.*[/\\\\]taglib.*"
     misc-include-cleaner.DeduplicateFindings: "true"
     modernize-avoid-bind.PermissiveParameterList: "false"
     modernize-deprecated-headers.CheckHeaderFile: "false"

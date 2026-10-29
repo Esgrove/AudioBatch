@@ -15,13 +15,13 @@
 #include <fmt/ranges.h>
 #include <string_view>
 
-#include <cstdio>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
 #if JUCE_WINDOWS
+#include <cstdio>
 #include <fcntl.h>
 #include <io.h>
 #endif

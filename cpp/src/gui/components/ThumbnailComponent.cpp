@@ -11,6 +11,7 @@
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
 #include "serato/SeratoOverview.h"
+#include "serato/SeratoTagTypes.h"
 #include "serato/SeratoWaveformColouring.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
