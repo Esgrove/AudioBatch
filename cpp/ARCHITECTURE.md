@@ -367,6 +367,11 @@ flowchart LR
   `updatePlaybackStatus` closes the device once nothing plays and no stop fade is left,
   unless the Audio Settings window holds it while the app is active.
   On Windows, losing the foreground suspends playback and closes the device.
+  Windows playback uses ASIO only.
+  An unconfigured ASIO host tries other registered outputs when its default driver has no connected device.
+  A saved or current selection is retained instead of switching interfaces when it fails to open.
+  A failed device open blocks focus-driven retries until the user explicitly reopens settings or starts playback,
+  so dismissing the error does not create another device-error dialog.
 
 ## Plugin hosting
 

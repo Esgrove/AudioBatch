@@ -109,6 +109,11 @@ Returning to AudioBatch does not automatically resume playback or reopen the dev
 The selected interface, sample rate, and buffer size are reused on the next explicit play.
 An open Audio Settings window temporarily holds the device for sample-rate, buffer-size, and driver configuration.
 Closing that window releases an idle device. Switching applications releases it even while Audio Settings is open.
+Windows playback uses ASIO only.
+Without a saved device choice, unavailable registered ASIO drivers are skipped until a working output is found.
+An explicitly selected device is not replaced when it fails to open.
+If opening a settings device fails, focus changes do not retry it or reopen the error dialog.
+Reopen Audio Settings or explicitly start playback to retry after fixing the device.
 Playback is output-only on macOS as well and does not require microphone access.
 
 **Audio Settings** separates audio interface/playback configuration from preview preferences.
