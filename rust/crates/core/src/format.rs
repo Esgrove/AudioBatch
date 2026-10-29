@@ -3,11 +3,25 @@
 //! Formats peak, true peak, and loudness levels, bitrate, sample rate, bit depth, file type, duration, and status.
 //! The CLI table uses the same text as the C++ CLI, so `scripts/parity.sh` can compare the two.
 
+use std::error::Error;
+
 use crate::decode::is_mp3_path;
 use crate::record::{AnalysisRecord, AnalysisStatus, is_silent_loudness};
 
 /// Lowest level shown in decibels, used for amplitudes just above silence.
 const MINIMUM_DISPLAY_DECIBELS: f64 = -100.0;
+
+/// Formats a contextual error and its causes at a diagnostic reporting boundary.
+/// The contextual error's display text must not already include its source.
+pub(crate) fn format_error_chain(mut error: &dyn Error) -> String {
+    let mut message = error.to_string();
+    while let Some(source) = error.source() {
+        message.push_str(": ");
+        message.push_str(&source.to_string());
+        error = source;
+    }
+    message
+}
 
 /// Converts a linear amplitude to decibels, clamped to the given floor.
 /// Silence returns the floor instead of negative infinity.
@@ -172,6 +186,37 @@ fn format_loudness(loudness: f64, unit: &str) -> String {
         return format!("-INF{unit}");
     }
     format!("{loudness:.2}{unit}")
+}
+
+#[cfg(test)]
+mod test_error_formatting {
+    use super::*;
+    use crate::decode::DecodeError;
+    use crate::output_file::OutputValidationError;
+
+    #[test]
+    fn a_leaf_error_is_not_repeated() {
+        let error = std::io::Error::other("disk unavailable");
+        assert_eq!(format_error_chain(&error), "disk unavailable");
+    }
+
+    #[test]
+    fn context_is_followed_by_its_cause() {
+        let error = DecodeError::Open(std::io::Error::other("disk unavailable"));
+        assert_eq!(
+            format_error_chain(&error),
+            "File could not be opened for reading: disk unavailable"
+        );
+    }
+
+    #[test]
+    fn nested_causes_are_reported_in_order() {
+        let error = OutputValidationError::Unreadable(DecodeError::Open(std::io::Error::other("disk unavailable")));
+        assert_eq!(
+            format_error_chain(&error),
+            "the output file cannot be read: File could not be opened for reading: disk unavailable"
+        );
+    }
 }
 
 #[cfg(test)]

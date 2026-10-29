@@ -12,18 +12,101 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
 use tempfile::NamedTempFile;
 #[cfg(target_os = "macos")]
 use trash::macos::{DeleteMethod, TrashContextExtMacos};
 
-use crate::decode::AudioFileDecoder;
+use crate::decode::{AudioFileDecoder, DecodeError};
 
 #[cfg(windows)]
 mod windows_recycle_bin;
 
 /// Highest number tried for a backup name when earlier backups are still around.
 const MAXIMUM_BACKUP_INDEX: u32 = 1000;
+
+/// An output destination that cannot be replaced.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum OutputPathError {
+    /// The destination is a directory or another non-file.
+    #[error("Output path {} is not a file and cannot be replaced.", file_name(.0))]
+    NotFile(PathBuf),
+    /// Replacing a different file requires explicit permission.
+    #[error("Output file {} already exists. Use force overwrite to replace it.", file_name(.0))]
+    Exists(PathBuf),
+}
+
+/// Written audio that cannot be read back with its expected properties.
+#[derive(Debug, thiserror::Error)]
+pub enum OutputValidationError {
+    /// The new file could not be decoded.
+    #[error("the output file cannot be read")]
+    Unreadable(#[source] DecodeError),
+    /// The channel count differs from the rendered audio.
+    #[error("the output has {actual} channels instead of {expected}")]
+    Channels {
+        /// Channel count read back.
+        actual: u32,
+        /// Channel count rendered.
+        expected: u32,
+    },
+    /// The sample rate differs from the rendered audio.
+    #[error("the output sample rate is {actual} Hz instead of {expected} Hz")]
+    SampleRate {
+        /// Sample rate read back.
+        actual: u32,
+        /// Sample rate rendered.
+        expected: u32,
+    },
+    /// The frame count differs from the rendered audio.
+    #[error("the output has {actual} samples instead of {expected}")]
+    Frames {
+        /// Frame count read back.
+        actual: u64,
+        /// Frame count rendered.
+        expected: u64,
+    },
+}
+
+/// A failure to create or commit a rendered output safely.
+#[derive(Debug, thiserror::Error)]
+pub enum OutputError {
+    /// The destination cannot be replaced.
+    #[error(transparent)]
+    Path(#[from] OutputPathError),
+    /// A temporary file could not be created.
+    #[error("Could not create temporary output file")]
+    Temporary(#[source] std::io::Error),
+    /// No unused backup name is available.
+    #[error("Could not move the existing output file aside")]
+    BackupNamesExhausted,
+    /// The previous output could not be renamed to its backup.
+    #[error("Could not move the existing output file aside")]
+    Backup(#[source] std::io::Error),
+    /// The rendered data could not be synchronized to disk.
+    #[error("Could not write the new audio to the disk")]
+    Sync(#[source] std::io::Error),
+    /// Replacing the source failed without losing the source.
+    #[error("Could not replace the original file with the new audio")]
+    Replace(#[source] std::io::Error),
+    /// Moving a converted file into place failed.
+    #[error("Could not move the new audio file into place")]
+    Persist(#[source] std::io::Error),
+    /// The converted source could not be disposed of.
+    #[error("Could not move the original audio file to the system trash")]
+    DisposeSource,
+    /// The original was lost during replacement, but the rendered file was recovered.
+    #[error("Could not replace the original file. The new audio was kept as {}", file_name(.path))]
+    Recovered {
+        /// Location of the recovered audio.
+        path: PathBuf,
+        /// The replacement failure that required recovery.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The original was lost and the rendered file could not be recovered.
+    #[error("Could not replace the original file, and the new audio could not be kept")]
+    RecoveryFailed(#[source] std::io::Error),
+}
 
 /// Disposes of a file, returning true when the file is gone afterwards, including when it did not exist.
 pub type FileDisposer = Arc<dyn Fn(&Path) -> bool + Send + Sync>;
@@ -81,21 +164,15 @@ pub(crate) fn trash_file(path: &Path) -> bool {
 /// # Errors
 ///
 /// Returns the user-facing message when the output path is taken.
-pub fn check_output_path(source: &Path, output: &Path, overwrite_existing: bool) -> Result<(), String> {
+pub fn check_output_path(source: &Path, output: &Path, overwrite_existing: bool) -> Result<(), OutputPathError> {
     if output == source || !output.exists() {
         return Ok(());
     }
     if !output.is_file() {
-        return Err(format!(
-            "Output path {} is not a file and cannot be replaced.",
-            file_name(output)
-        ));
+        return Err(OutputPathError::NotFile(output.to_path_buf()));
     }
     if !overwrite_existing {
-        return Err(format!(
-            "Output file {} already exists. Use force overwrite to replace it.",
-            file_name(output)
-        ));
+        return Err(OutputPathError::Exists(output.to_path_buf()));
     }
     Ok(())
 }
@@ -107,7 +184,7 @@ pub fn check_output_path(source: &Path, output: &Path, overwrite_existing: bool)
 /// # Errors
 ///
 /// Returns an error when the file cannot be created.
-pub fn create_temporary_output(output: &Path) -> Result<NamedTempFile> {
+pub fn create_temporary_output(output: &Path) -> Result<NamedTempFile, OutputError> {
     let directory = output.parent().filter(|parent| !parent.as_os_str().is_empty());
     let stem = output.file_stem().and_then(|stem| stem.to_str()).unwrap_or("output");
     let extension = output
@@ -123,7 +200,7 @@ pub fn create_temporary_output(output: &Path) -> Result<NamedTempFile> {
     builder.permissions(fs::Permissions::from_mode(0o666));
     builder
         .tempfile_in(directory.unwrap_or_else(|| Path::new(".")))
-        .context("Could not create temporary output file")
+        .map_err(OutputError::Temporary)
 }
 
 /// Checks that a written file reads back with the channels, sample rate, and length that were rendered.
@@ -131,24 +208,32 @@ pub fn create_temporary_output(output: &Path) -> Result<NamedTempFile> {
 /// # Errors
 ///
 /// Returns the user-facing reason when the file does not match.
-pub fn validate_written_audio(path: &Path, channels: u32, sample_rate: u32, frames: u64) -> Result<(), String> {
-    let decoder = AudioFileDecoder::open(path).map_err(|_| "the output file cannot be read".to_string())?;
+pub fn validate_written_audio(
+    path: &Path,
+    channels: u32,
+    sample_rate: u32,
+    frames: u64,
+) -> Result<(), OutputValidationError> {
+    let decoder = AudioFileDecoder::open(path).map_err(OutputValidationError::Unreadable)?;
     let info = decoder.info();
     if info.channels != channels {
-        return Err(format!(
-            "the output has {} channels instead of {channels}",
-            info.channels
-        ));
+        return Err(OutputValidationError::Channels {
+            actual: info.channels,
+            expected: channels,
+        });
     }
     if info.sample_rate != sample_rate {
-        return Err(format!(
-            "the output sample rate is {} Hz instead of {sample_rate} Hz",
-            info.sample_rate
-        ));
+        return Err(OutputValidationError::SampleRate {
+            actual: info.sample_rate,
+            expected: sample_rate,
+        });
     }
     let written_frames = info.expected_frames.unwrap_or_default();
     if written_frames != frames {
-        return Err(format!("the output has {written_frames} samples instead of {frames}"));
+        return Err(OutputValidationError::Frames {
+            actual: written_frames,
+            expected: frames,
+        });
     }
     Ok(())
 }
@@ -196,38 +281,36 @@ pub fn commit_temporary_output(
     output: &Path,
     overwrite_existing: bool,
     dispose: &FileDisposer,
-) -> Result<(), String> {
+) -> Result<(), OutputError> {
     let replacing_source = output == source;
     check_output_path(source, output, overwrite_existing)?;
 
     let backup = if !replacing_source && output.exists() {
         // Renaming onto a taken backup name would overwrite an earlier backup, so a full set of backups fails.
         let Some(path) = backup_path(output) else {
-            return Err("Could not move the existing output file aside".to_string());
+            return Err(OutputError::BackupNamesExhausted);
         };
-        if fs::rename(output, &path).is_err() {
-            return Err("Could not move the existing output file aside".to_string());
-        }
+        fs::rename(output, &path).map_err(OutputError::Backup)?;
         Some(path)
     } else {
         None
     };
 
     // The data reaches the disk before the rename, so a power loss cannot leave an empty file in place.
-    if temporary.as_file().sync_all().is_err() {
+    if let Err(error) = temporary.as_file().sync_all() {
         restore_backup(backup.as_deref(), output);
-        return Err("Could not write the new audio to the disk".to_string());
+        return Err(OutputError::Sync(error));
     }
 
     if let Err(error) = temporary.persist(output) {
         restore_backup(backup.as_deref(), output);
         if replacing_source && !source.exists() && error.file.path().is_file() {
-            return Err(keep_new_audio_after_lost_original(error.file, output));
+            return Err(keep_new_audio_after_lost_original(error.file, output, error.error));
         }
         return Err(if replacing_source {
-            "Could not replace the original file with the new audio".to_string()
+            OutputError::Replace(error.error)
         } else {
-            "Could not move the new audio file into place".to_string()
+            OutputError::Persist(error.error)
         });
     }
 
@@ -236,7 +319,7 @@ pub fn commit_temporary_output(
             tracing::error!("Failed to delete file {}: {error}", output.display());
         }
         restore_backup(backup.as_deref(), output);
-        return Err("Could not move the original audio file to the system trash".to_string());
+        return Err(OutputError::DisposeSource);
     }
 
     if let Some(backup) = backup.filter(|backup| backup.is_file())
@@ -264,7 +347,7 @@ fn temporary_root() -> PathBuf {
 /// On Windows, replacing a file can remove the original and then fail to move the replacement into place.
 /// The audio is kept next to the original as "<name> (recovered).<extension>", the name the C++ application uses.
 /// Returns the user-facing error that says where the new audio was kept.
-fn keep_new_audio_after_lost_original(temporary: NamedTempFile, output: &Path) -> String {
+fn keep_new_audio_after_lost_original(temporary: NamedTempFile, output: &Path, source: std::io::Error) -> OutputError {
     let stem = output
         .file_stem()
         .map(|stem| stem.to_string_lossy().into_owned())
@@ -285,16 +368,13 @@ fn keep_new_audio_after_lost_original(temporary: NamedTempFile, output: &Path) -
             output.display(),
             kept.display()
         );
-        return format!(
-            "Could not replace the original file. The new audio was kept as {}",
-            file_name(&kept)
-        );
+        return OutputError::Recovered { path: kept, source };
     }
     tracing::error!(
         "The original file {} was removed while being replaced",
         output.display()
     );
-    "Could not replace the original file, and the new audio could not be kept".to_string()
+    OutputError::RecoveryFailed(source)
 }
 
 /// Returns an unused hidden backup path next to the output,
@@ -330,7 +410,33 @@ fn file_name(path: &Path) -> String {
 
 #[cfg(test)]
 mod test_check_output_path {
+    use std::error::Error as _;
+
     use super::*;
+
+    #[test]
+    fn validation_preserves_the_decoder_cause() {
+        let error = OutputValidationError::Unreadable(DecodeError::Open(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "permission denied",
+        )));
+        assert_eq!(error.to_string(), "the output file cannot be read");
+        let decoder = error.source().expect("decoder cause");
+        assert_eq!(decoder.to_string(), "File could not be opened for reading");
+        assert_eq!(decoder.source().expect("I/O cause").to_string(), "permission denied");
+    }
+
+    #[test]
+    fn output_path_errors_keep_the_existing_messages() {
+        assert_eq!(
+            OutputPathError::Exists(PathBuf::from("a.aif")).to_string(),
+            "Output file a.aif already exists. Use force overwrite to replace it."
+        );
+        assert_eq!(
+            OutputPathError::NotFile(PathBuf::from("a.aif")).to_string(),
+            "Output path a.aif is not a file and cannot be replaced."
+        );
+    }
 
     #[test]
     fn source_and_missing_paths_are_free() {
@@ -351,7 +457,7 @@ mod test_check_output_path {
         fs::write(&output, b"x").expect("writes");
         assert_eq!(
             check_output_path(&source, &output, false),
-            Err("Output file a.aif already exists. Use force overwrite to replace it.".to_string())
+            Err(OutputPathError::Exists(output.clone()))
         );
         assert_eq!(check_output_path(&source, &output, true), Ok(()));
     }
@@ -364,7 +470,7 @@ mod test_check_output_path {
         fs::create_dir(&output).expect("creates folder");
         assert_eq!(
             check_output_path(&source, &output, true),
-            Err("Output path a.aif is not a file and cannot be replaced.".to_string())
+            Err(OutputPathError::NotFile(output.clone()))
         );
     }
 }
@@ -470,7 +576,11 @@ mod test_commit_temporary_output {
         let error = commit_temporary_output(temporary_with(&output, b"new"), &source, &output, true, &dispose)
             .expect_err("commit fails");
 
-        assert_eq!(error, "Could not move the original audio file to the system trash");
+        assert!(matches!(error, OutputError::DisposeSource));
+        assert_eq!(
+            error.to_string(),
+            "Could not move the original audio file to the system trash"
+        );
         assert_eq!(fs::read(&source).expect("reads"), b"source");
         assert_eq!(fs::read(&output).expect("reads"), b"previous");
         let names: Vec<String> = fs::read_dir(directory.path())
@@ -495,7 +605,8 @@ mod test_commit_temporary_output {
 
         let error = commit_temporary_output(temporary, &source, &output, true, &dispose).expect_err("commit fails");
 
-        assert_eq!(error, "Could not move the new audio file into place");
+        assert!(matches!(error, OutputError::Persist(_)));
+        assert_eq!(error.to_string(), "Could not move the new audio file into place");
         assert_eq!(fs::read(&output).expect("reads"), b"previous");
         assert_eq!(fs::read(&source).expect("reads"), b"source");
         assert!(disposed.lock().expect("lock").is_empty());
@@ -519,7 +630,11 @@ mod test_commit_temporary_output {
 
         let error = commit_temporary_output(temporary, &source, &source, false, &dispose).expect_err("commit fails");
 
-        assert_eq!(error, "Could not replace the original file with the new audio");
+        assert!(matches!(error, OutputError::Replace(_)));
+        assert_eq!(
+            error.to_string(),
+            "Could not replace the original file with the new audio"
+        );
         assert_eq!(fs::read(&source).expect("reads"), b"original");
         assert!(disposed.lock().expect("lock").is_empty());
     }
@@ -556,10 +671,14 @@ mod test_commit_temporary_output {
         let output = directory.path().join("song.aif");
         fs::write(directory.path().join("song (recovered).aif"), b"earlier").expect("writes");
 
-        let error = keep_new_audio_after_lost_original(temporary_with(&output, b"new"), &output);
+        let error = keep_new_audio_after_lost_original(
+            temporary_with(&output, b"new"),
+            &output,
+            std::io::Error::other("replacement failed"),
+        );
 
         assert_eq!(
-            error,
+            error.to_string(),
             "Could not replace the original file. The new audio was kept as song (recovered)2.aif"
         );
         assert_eq!(
@@ -588,7 +707,8 @@ mod test_commit_temporary_output {
         let error = commit_temporary_output(temporary_with(&output, b"new"), &source, &output, true, &dispose)
             .expect_err("commit fails");
 
-        assert_eq!(error, "Could not move the existing output file aside");
+        assert!(matches!(error, OutputError::BackupNamesExhausted));
+        assert_eq!(error.to_string(), "Could not move the existing output file aside");
         assert_eq!(fs::read(&output).expect("reads"), b"previous");
         assert_eq!(
             fs::read(directory.path().join(".song.aif.backup")).expect("reads"),

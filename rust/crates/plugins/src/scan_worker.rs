@@ -14,7 +14,7 @@ use std::time::Duration;
 use crossbeam_channel::TryRecvError;
 use vst3_host::{Module, PluginInstance, UiThread, pump_platform_events};
 
-use crate::library::{PluginDescription, bundle_modified_ms};
+use crate::library::{PluginDescription, bundle_modified_ms, error_chain};
 use crate::scan_protocol::{ScanReply, ScanRequest, WORKER_FLAG};
 
 /// How long the worker runs the event loop between checks for a request.
@@ -35,7 +35,7 @@ pub fn run_scan_worker() -> i32 {
     let ui = match UiThread::register_current() {
         Ok(ui) => ui,
         Err(error) => {
-            eprintln!("The plugin scan worker could not start: {error:#}");
+            eprintln!("The plugin scan worker could not start: {}", error_chain(&error));
             return 1;
         }
     };
@@ -80,10 +80,10 @@ fn scan_bundle(ui: &UiThread, bundle: &Path) -> ScanReply {
     let module = match Module::load(ui, bundle) {
         Ok(module) => module,
         Err(error) => {
-            eprintln!("Could not load {}: {error:#}", bundle.display());
+            eprintln!("Could not load {}: {}", bundle.display(), error_chain(&error));
             return ScanReply {
                 plugins: Vec::new(),
-                error: Some(format!("{error:#}")),
+                error: Some(error_chain(&error)),
             };
         }
     };
@@ -102,7 +102,7 @@ fn scan_bundle(ui: &UiThread, bundle: &Path) -> ScanReply {
                     description.main_output_channels =
                         layout.outputs.first().and_then(|count| u32::try_from(*count).ok());
                 }
-                Err(error) => eprintln!("Could not create {}: {error:#}", class.name),
+                Err(error) => eprintln!("Could not create {}: {}", class.name, error_chain(&error)),
             }
             description
         })

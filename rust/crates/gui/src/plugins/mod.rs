@@ -94,6 +94,7 @@ impl PluginHost {
                 known
             }
             Err(error) => {
+                let error = anyhow::Error::from(error);
                 problems.push(format!("{error:#}"));
                 KnownPlugins::default()
             }

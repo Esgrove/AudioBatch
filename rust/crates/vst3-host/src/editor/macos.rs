@@ -9,7 +9,6 @@
 use std::ffi::c_void;
 use std::rc::{Rc, Weak};
 
-use anyhow::{Context as _, Result};
 use objc2::rc::Retained;
 use objc2::runtime::ProtocolObject;
 use objc2::{DefinedClass as _, MainThreadMarker, MainThreadOnly, define_class, msg_send};
@@ -18,7 +17,7 @@ use objc2_foundation::{NSNotification, NSObject, NSObjectProtocol, NSPoint, NSRe
 use raw_window_handle::RawWindowHandle;
 use vst3::Steinberg::{FIDString, kPlatformTypeNSView};
 
-use super::{EditorShared, ViewSize};
+use super::{EditorError, EditorShared, ViewSize};
 use crate::thread::UiThread;
 
 define_class!(
@@ -93,8 +92,8 @@ impl NativeWindow {
         size: ViewSize,
         resizable: bool,
         _owner: Option<RawWindowHandle>,
-    ) -> Result<Self> {
-        let marker = MainThreadMarker::new().context("Plugin editors can only be opened on the main thread")?;
+    ) -> Result<Self, EditorError> {
+        let marker = MainThreadMarker::new().ok_or(EditorError::MainThreadRequired)?;
         let mut style = NSWindowStyleMask::Titled | NSWindowStyleMask::Closable | NSWindowStyleMask::Miniaturizable;
         if resizable {
             style |= NSWindowStyleMask::Resizable;

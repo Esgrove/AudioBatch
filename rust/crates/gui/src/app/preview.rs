@@ -65,7 +65,7 @@ impl AppView {
                 }
                 self.plugins.preview.detached();
             }
-            Err(message) => self.turn_plugin_preview_off(message, cx),
+            Err(error) => self.turn_plugin_preview_off(error.to_string(), cx),
         }
     }
 

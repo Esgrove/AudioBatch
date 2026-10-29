@@ -18,13 +18,13 @@ use std::fmt;
 use std::fmt::Display;
 use std::str::FromStr;
 
-use anyhow::anyhow;
-
-pub use analysis::AnalysisVersion;
-pub use autotags::AutoTags;
-pub use beatgrid::{BeatGrid, BeatGridMarker};
-pub use markers::{BpmLock, Color, Cue, Loop, Markers};
-pub use overview::{BAND_COUNT, MAXIMUM_SLICES, OVERVIEW_PARSER_VERSION, OVERVIEW_TAG_KIND, Overview, Slice};
+pub use analysis::{AnalysisVersion, AnalysisVersionError};
+pub use autotags::{AutoTags, AutoTagsError, AutoTagsField, AutoTagsNumberError};
+pub use beatgrid::{BeatGrid, BeatGridError, BeatGridMarker};
+pub use markers::{BpmLock, Color, Cue, Loop, Markers, MarkersError};
+pub use overview::{
+    BAND_COUNT, MAXIMUM_SLICES, OVERVIEW_PARSER_VERSION, OVERVIEW_TAG_KIND, Overview, OverviewError, Slice,
+};
 
 /// Serato tag types, identified by the GEOB frame description.
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -39,6 +39,14 @@ pub enum SeratoTag {
     Markers,
     /// Waveform overview data.
     Overview,
+}
+
+/// An unrecognized GEOB frame description.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("Unknown tag description: {description}")]
+pub struct UnknownTagError {
+    /// The unrecognized description.
+    pub description: String,
 }
 
 /// All Serato tag data of a file.
@@ -73,7 +81,7 @@ impl SeratoTag {
 }
 
 impl FromStr for SeratoTag {
-    type Err = anyhow::Error;
+    type Err = UnknownTagError;
 
     fn from_str(description: &str) -> Result<Self, Self::Err> {
         match description {
@@ -82,7 +90,9 @@ impl FromStr for SeratoTag {
             "Serato BeatGrid" => Ok(Self::BeatGrid),
             "Serato Markers2" => Ok(Self::Markers),
             "Serato Overview" => Ok(Self::Overview),
-            _ => Err(anyhow!("Unknown tag description: {description}")),
+            _ => Err(UnknownTagError {
+                description: description.to_owned(),
+            }),
         }
     }
 }
@@ -118,11 +128,21 @@ impl SeratoData {
             };
             found_any = true;
             let result = match tag {
-                SeratoTag::Analysis => AnalysisVersion::parse(bytes).map(|value| data.analysis = Some(value)),
-                SeratoTag::Autotags => AutoTags::parse(bytes).map(|value| data.autotags = Some(value)),
-                SeratoTag::BeatGrid => BeatGrid::parse(bytes).map(|value| data.beatgrid = Some(value)),
-                SeratoTag::Markers => Markers::parse(bytes).map(|value| data.markers = value),
-                SeratoTag::Overview => Overview::parse(bytes).map(|value| data.overview = Some(value)),
+                SeratoTag::Analysis => AnalysisVersion::parse(bytes)
+                    .map(|value| data.analysis = Some(value))
+                    .map_err(|error| error.to_string()),
+                SeratoTag::Autotags => AutoTags::parse(bytes)
+                    .map(|value| data.autotags = Some(value))
+                    .map_err(|error| error.to_string()),
+                SeratoTag::BeatGrid => BeatGrid::parse(bytes)
+                    .map(|value| data.beatgrid = Some(value))
+                    .map_err(|error| error.to_string()),
+                SeratoTag::Markers => Markers::parse(bytes)
+                    .map(|value| data.markers = value)
+                    .map_err(|error| error.to_string()),
+                SeratoTag::Overview => Overview::parse(bytes)
+                    .map(|value| data.overview = Some(value))
+                    .map_err(|error| error.to_string()),
             };
             if let Err(error) = result {
                 data.errors.push(format!("{tag}: {error}"));
@@ -226,7 +246,9 @@ mod test_serato_tag {
 
     #[test]
     fn rejects_unknown_descriptions() {
-        assert!(SeratoTag::from_str("Unknown Tag").is_err());
+        let error = SeratoTag::from_str("Unknown Tag").expect_err("unknown description");
+        assert_eq!(error.description, "Unknown Tag");
+        assert_eq!(error.to_string(), "Unknown tag description: Unknown Tag");
         assert!(SeratoTag::from_str("").is_err());
     }
 
@@ -271,7 +293,10 @@ mod test_serato_data {
     fn collects_errors_instead_of_printing() {
         let data = SeratoData::parse([("Serato Analysis", &[2_u8][..])]).expect("found serato tags");
         assert_eq!(data.analysis, None);
-        assert_eq!(data.errors.len(), 1);
+        assert_eq!(
+            data.errors,
+            ["SeratoAnalysis: Data is too short to contain version information"]
+        );
         assert!(data.to_string().contains("Error: SeratoAnalysis"));
         assert!(data.failed_to_parse(SeratoTag::Analysis));
         assert!(!data.failed_to_parse(SeratoTag::Overview));
@@ -282,6 +307,22 @@ mod test_serato_data {
         let data = SeratoData::parse([("Serato Overview", &[1_u8, 5, 0][..])]).expect("found serato tags");
         assert_eq!(data.overview, None);
         assert!(data.failed_to_parse(SeratoTag::Overview));
+    }
+
+    #[test]
+    fn parser_messages_are_flattened_only_at_the_reporting_boundary() {
+        let data = SeratoData::parse([
+            ("Serato Autotags", b"\x01\x0112x.00\0-3.257\0".as_slice()),
+            ("Serato Markers2", b"\x01\x01!\0".as_slice()),
+        ])
+        .expect("found serato tags");
+        assert_eq!(
+            data.errors,
+            [
+                "SeratoAutotags: Failed to parse BPM: not a number \"12x.00\"",
+                "SeratoMarkers: Failed to decode base64 data",
+            ]
+        );
     }
 
     #[test]

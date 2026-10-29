@@ -93,6 +93,7 @@ fn main() {
     };
     // Logging also writes each message to stderr when it is available.
     if let Err(error) = log_file::install(env!("CARGO_BIN_NAME"), LevelFilter::TRACE) {
+        let error = anyhow::Error::from(error);
         eprintln!("{error:#}");
     }
     tracing::info!("{}", build_info::VERSION_STRING);

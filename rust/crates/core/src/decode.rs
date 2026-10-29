@@ -15,7 +15,6 @@ use std::fs::File;
 use std::io::ErrorKind;
 use std::path::Path;
 
-use anyhow::{Result, anyhow, bail};
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::codecs::audio::well_known::{
     CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_MP1, CODEC_ID_MP2, CODEC_ID_MP3, CODEC_ID_PCM_F32BE,
@@ -31,7 +30,7 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::units::{Duration, Time, TimeBase};
 use symphonia_common::apple::audio::alac::MagicCookie;
 
-use crate::record::{AnalysisError, AnalysisFailure};
+use crate::record::AnalysisError;
 
 mod gapless;
 
@@ -44,9 +43,6 @@ pub(crate) const DEFAULT_LOSSY_BITS_PER_SAMPLE: u32 = 16;
 /// Without one, JUCE's MP3 reader and Core Audio leave them out, so this decoder does too.
 const MP3_DECODER_DELAY_FRAMES: u64 = 529;
 
-/// Error message of a file that no decoder reads, shared with the C++ application.
-const UNSUPPORTED_MESSAGE: &str = "Unsupported or unreadable audio file";
-
 /// A stream that ends more than this fraction of a second short of its stated length counts as truncated.
 /// The allowance covers the priming and padding that lossy decoders account for differently.
 const TRUNCATION_TOLERANCE_DIVISOR: u64 = 10;
@@ -54,6 +50,65 @@ const TRUNCATION_TOLERANCE_DIVISOR: u64 = 10;
 /// Longest run of silence inserted for one failed packet, in seconds.
 /// Guards against a corrupt packet duration turning into a huge allocation.
 const MAXIMUM_FAILED_PACKET_SECONDS: u64 = 1;
+
+/// A failure to open, decode, or seek an audio stream.
+#[derive(Debug, thiserror::Error)]
+pub enum DecodeError {
+    /// The source file could not be opened.
+    #[error("File could not be opened for reading")]
+    Open(#[source] std::io::Error),
+    /// The container could not be identified.
+    #[error("Unsupported or unreadable audio file")]
+    Probe(#[source] SymphoniaError),
+    /// The container has no supported audio track.
+    #[error("Unsupported or unreadable audio file")]
+    MissingTrack,
+    /// The stream has no usable channel count or sample rate.
+    #[error("Unsupported audio stream parameters")]
+    Parameters,
+    /// No decoder supports the audio codec.
+    #[error("Unsupported audio codec")]
+    Codec(#[source] SymphoniaError),
+    /// Too many consecutive packets failed to decode.
+    #[error("Audio decoding failed at sample {position}{}", total.map(|total| format!(" of {total}")).unwrap_or_default())]
+    PacketLimit {
+        /// Frame position where decoding stopped.
+        position: u64,
+        /// Length stated by the container, if reliable.
+        total: Option<u64>,
+        /// The last packet or container failure.
+        #[source]
+        source: SymphoniaError,
+    },
+    /// The decoder returned a fatal error.
+    #[error("Audio decoding failed at sample {position}: {source}")]
+    Decode {
+        /// Frame position where decoding failed.
+        position: u64,
+        /// Underlying decoder failure.
+        #[source]
+        source: SymphoniaError,
+    },
+    /// The requested seek time cannot be represented.
+    #[error("Invalid seek time {0}")]
+    InvalidSeek(f64),
+    /// The container rejected the seek.
+    #[error("Seek failed: {0}")]
+    Seek(#[source] SymphoniaError),
+}
+
+impl DecodeError {
+    /// Returns the analysis classification used by the cache.
+    #[must_use]
+    pub const fn analysis_kind(&self) -> AnalysisError {
+        match self {
+            Self::Open(_) => AnalysisError::Unreadable,
+            Self::Probe(_) | Self::MissingTrack | Self::Parameters | Self::Codec(_) => AnalysisError::Unsupported,
+            Self::PacketLimit { .. } => AnalysisError::DecodeFailed,
+            Self::Decode { .. } | Self::InvalidSeek(_) | Self::Seek(_) => AnalysisError::MeasurementFailed,
+        }
+    }
+}
 
 /// Stream properties of an opened audio file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -217,10 +272,8 @@ impl AudioFileDecoder {
     ///
     /// Returns an error when the file cannot be opened, has no supported audio track,
     /// or has stream parameters the analysis cannot use.
-    pub fn open(path: &Path) -> Result<Self> {
-        let unsupported = |message: &str| AnalysisFailure::new(AnalysisError::Unsupported, message);
-        let file = File::open(path)
-            .map_err(|_| AnalysisFailure::new(AnalysisError::Unreadable, "File could not be opened for reading"))?;
+    pub fn open(path: &Path) -> Result<Self, DecodeError> {
+        let file = File::open(path).map_err(DecodeError::Open)?;
         let source = MediaSourceStream::new(Box::new(file), MediaSourceStreamOptions::default());
         let mut hint = Hint::new();
         if let Some(extension) = path.extension().and_then(|extension| extension.to_str()) {
@@ -228,18 +281,18 @@ impl AudioFileDecoder {
         }
         let format = symphonia::default::get_probe()
             .probe(&hint, source, FormatOptions::default(), MetadataOptions::default())
-            .map_err(|_| unsupported(UNSUPPORTED_MESSAGE))?;
+            .map_err(DecodeError::Probe)?;
 
         let track = format
             .default_track(TrackType::Audio)
-            .ok_or_else(|| unsupported(UNSUPPORTED_MESSAGE))?;
+            .ok_or(DecodeError::MissingTrack)?;
         let track_id = track.id;
         let time_base = track.time_base;
         let mut expected_frames = track.num_frames;
         let has_recorded_delay = track.delay.is_some();
         let parameters = match &track.codec_params {
             Some(CodecParameters::Audio(parameters)) => parameters.clone(),
-            _ => return Err(unsupported(UNSUPPORTED_MESSAGE).into()),
+            _ => return Err(DecodeError::MissingTrack),
         };
 
         let sample_rate = parameters.sample_rate.unwrap_or(0);
@@ -248,14 +301,14 @@ impl AudioFileDecoder {
             .as_ref()
             .map_or(0, |channels| u32::try_from(channels.count()).unwrap_or(0));
         if sample_rate == 0 || channels == 0 {
-            return Err(unsupported("Unsupported audio stream parameters").into());
+            return Err(DecodeError::Parameters);
         }
 
         let bits_per_sample = source_bits_per_sample(&parameters);
 
         let decoder = symphonia::default::get_codecs()
             .make_audio_decoder(&parameters, &AudioDecoderOptions::default())
-            .map_err(|_| unsupported("Unsupported audio codec"))?;
+            .map_err(DecodeError::Codec)?;
 
         let mp3_without_delay = parameters.codec == CODEC_ID_MP3 && !has_recorded_delay;
         let mp4_gapless = (format.format_info().short_name == "isomp4")
@@ -326,7 +379,7 @@ impl AudioFileDecoder {
     ///
     /// Returns an error when the container cannot be read further,
     /// or when too many packets in a row fail to decode.
-    pub fn next_chunk(&mut self) -> Result<Option<&[Vec<f32>]>> {
+    pub fn next_chunk(&mut self) -> Result<Option<&[Vec<f32>]>, DecodeError> {
         loop {
             if self.frame_limit.is_some_and(|limit| self.position >= limit) {
                 return Ok(None);
@@ -346,18 +399,25 @@ impl AudioFileDecoder {
                 // so one bad read on a network drive does not fail the whole file,
                 // while repeated errors still stop decoding.
                 // Past the stated length it ends the track, like a failed final packet.
-                Err(SymphoniaError::IoError(_) | SymphoniaError::DecodeError(_)) => {
+                Err(source @ (SymphoniaError::IoError(_) | SymphoniaError::DecodeError(_))) => {
                     if self.stated_frames().is_some_and(|total| self.position >= total) {
                         return Ok(None);
                     }
                     if !self.failures.record_failure(self.position, 0) {
-                        return Err(
-                            AnalysisFailure::new(AnalysisError::DecodeFailed, self.failures.error_message()).into(),
-                        );
+                        return Err(DecodeError::PacketLimit {
+                            position: self.position,
+                            total: self.failures.total_frames,
+                            source,
+                        });
                     }
                     continue;
                 }
-                Err(error) => bail!("Audio decoding failed at sample {}: {error}", self.position),
+                Err(source) => {
+                    return Err(DecodeError::Decode {
+                        position: self.position,
+                        source,
+                    });
+                }
             };
             if packet.track_id != self.track_id {
                 continue;
@@ -382,12 +442,14 @@ impl AudioFileDecoder {
                     self.position += frames;
                     return Ok(Some(&self.planar));
                 }
-                Err(SymphoniaError::DecodeError(_) | SymphoniaError::IoError(_)) => {
+                Err(source @ (SymphoniaError::DecodeError(_) | SymphoniaError::IoError(_))) => {
                     let packet_frames = self.frames_of(i64::try_from(packet.dur.get()).unwrap_or(i64::MAX));
                     if !self.failures.record_failure(self.position, packet_frames) {
-                        return Err(
-                            AnalysisFailure::new(AnalysisError::DecodeFailed, self.failures.error_message()).into(),
-                        );
+                        return Err(DecodeError::PacketLimit {
+                            position: self.position,
+                            total: self.failures.total_frames,
+                            source,
+                        });
                     }
                     // Silence for a failed final packet stops at the stated length, so the file keeps its length.
                     let remaining = self
@@ -410,7 +472,12 @@ impl AudioFileDecoder {
                     self.position += frames;
                     return Ok(Some(&self.planar));
                 }
-                Err(error) => bail!("Audio decoding failed at sample {}: {error}", self.position),
+                Err(source) => {
+                    return Err(DecodeError::Decode {
+                        position: self.position,
+                        source,
+                    });
+                }
             }
         }
     }
@@ -421,9 +488,9 @@ impl AudioFileDecoder {
     /// # Errors
     ///
     /// Returns an error when the container cannot seek.
-    pub fn seek(&mut self, seconds: f64) -> Result<u64> {
+    pub fn seek(&mut self, seconds: f64) -> Result<u64, DecodeError> {
         let stream_seconds = seconds.max(0.0) + self.leading_frames as f64 / f64::from(self.info.sample_rate);
-        let time = Time::try_from_secs_f64(stream_seconds).ok_or_else(|| anyhow!("Invalid seek time {seconds}"))?;
+        let time = Time::try_from_secs_f64(stream_seconds).ok_or(DecodeError::InvalidSeek(seconds))?;
         let seeked = self
             .format
             .seek(
@@ -433,7 +500,7 @@ impl AudioFileDecoder {
                     track_id: Some(self.track_id),
                 },
             )
-            .map_err(|error| anyhow!("Seek failed: {error}"))?;
+            .map_err(DecodeError::Seek)?;
         self.decoder.reset();
         self.failures = DecodeFailureTracker::new(self.stated_frames());
         let stream_position = self.frames_of(seeked.actual_ts.get());
@@ -656,10 +723,28 @@ mod test_decode_failure_tracker {
 
 #[cfg(test)]
 mod test_audio_file_decoder {
+    use std::error::Error as _;
     use std::num::NonZero;
 
     use super::*;
     use crate::test_helpers::scrambled_fixture_copy;
+
+    #[test]
+    fn decoder_errors_preserve_sources_and_cache_classification() {
+        let error = DecodeError::Open(std::io::Error::new(ErrorKind::PermissionDenied, "permission denied"));
+        assert_eq!(error.analysis_kind(), AnalysisError::Unreadable);
+        assert_eq!(error.to_string(), "File could not be opened for reading");
+        assert_eq!(error.source().expect("I/O cause").to_string(), "permission denied");
+        assert_eq!(DecodeError::MissingTrack.analysis_kind(), AnalysisError::Unsupported);
+        let error = DecodeError::PacketLimit {
+            position: 30,
+            total: Some(1000),
+            source: SymphoniaError::DecodeError("bad packet"),
+        };
+        assert_eq!(error.analysis_kind(), AnalysisError::DecodeFailed);
+        assert_eq!(error.to_string(), "Audio decoding failed at sample 30 of 1000");
+        assert!(error.source().is_some());
+    }
 
     #[test]
     fn opens_every_tone_fixture() {

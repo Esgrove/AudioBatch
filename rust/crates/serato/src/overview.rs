@@ -9,9 +9,6 @@
 use std::fmt;
 use std::fmt::Display;
 
-use anyhow::Result;
-use anyhow::anyhow;
-
 /// Number of vertical cells in each overview slice.
 pub const BAND_COUNT: usize = 16;
 
@@ -38,6 +35,29 @@ const CACHE_HEADER_BYTES: usize = 16;
 
 /// Palette indices of one time slice, top to bottom.
 pub type Slice = [u8; BAND_COUNT];
+
+/// A malformed Serato Overview payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum OverviewError {
+    /// The payload exceeds the supported slice limit.
+    #[error("Overview has more than {MAXIMUM_SLICES} slices")]
+    TooManySlices {
+        /// Payload length in bytes, including the header.
+        length: usize,
+    },
+    /// The payload does not start with the supported header.
+    #[error("Unsupported overview header")]
+    UnsupportedHeader,
+    /// The header is not followed by any slices.
+    #[error("Overview has no slices")]
+    NoSlices,
+    /// The last slice has fewer than sixteen cells.
+    #[error("Overview ends with a partial slice")]
+    PartialSlice {
+        /// Number of cells in the incomplete slice.
+        remaining: usize,
+    },
+}
 
 /// Palette index slices of an embedded Serato Overview raster.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -66,19 +86,21 @@ impl Overview {
     /// # Errors
     ///
     /// Returns an error for another header, no slices, more than `MAXIMUM_SLICES` slices, or a partial slice.
-    pub fn parse(data: &[u8]) -> Result<Self> {
+    pub fn parse(data: &[u8]) -> Result<Self, OverviewError> {
         if data.len() > MAXIMUM_PAYLOAD_BYTES {
-            return Err(anyhow!("Overview has more than {MAXIMUM_SLICES} slices"));
+            return Err(OverviewError::TooManySlices { length: data.len() });
         }
         let Some(payload) = data.strip_prefix(&PAYLOAD_HEADER) else {
-            return Err(anyhow!("Unsupported overview header"));
+            return Err(OverviewError::UnsupportedHeader);
         };
         if payload.is_empty() {
-            return Err(anyhow!("Overview has no slices"));
+            return Err(OverviewError::NoSlices);
         }
         let (slices, remainder) = payload.as_chunks::<BAND_COUNT>();
         if !remainder.is_empty() {
-            return Err(anyhow!("Overview ends with a partial slice"));
+            return Err(OverviewError::PartialSlice {
+                remaining: remainder.len(),
+            });
         }
         Ok(Self {
             slices: slices.to_vec(),
@@ -177,6 +199,16 @@ mod test_parse {
             bytes[position] = 0xFF;
             assert!(Overview::parse(&bytes).is_err());
         }
+    }
+
+    #[test]
+    fn errors_identify_incomplete_slices_and_keep_display_text() {
+        let error = Overview::parse(&[1, 5]).expect_err("no slices");
+        assert_eq!(error, OverviewError::NoSlices);
+        assert_eq!(error.to_string(), "Overview has no slices");
+        let error = Overview::parse(&[1, 5, 0]).expect_err("partial slice");
+        assert_eq!(error, OverviewError::PartialSlice { remaining: 1 });
+        assert_eq!(error.to_string(), "Overview ends with a partial slice");
     }
 
     #[test]

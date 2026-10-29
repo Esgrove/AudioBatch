@@ -19,7 +19,7 @@ use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
-use anyhow::{Context as _, Result, anyhow, bail};
+use thiserror::Error;
 use vst3::Steinberg::{
     FIDString, FUnknown, IPluginFactory, IPluginFactory3, IPluginFactory3Trait as _, IPluginFactoryTrait as _,
     kResultOk,
@@ -35,6 +35,90 @@ type GetFactoryFunction = unsafe extern "system" fn() -> *mut IPluginFactory;
 
 /// Every module loaded from disk, by bundle path, kept loaded until the process exits.
 static LOADED_MODULES: OnceLock<Mutex<HashMap<PathBuf, Arc<Module>>>> = OnceLock::new();
+
+/// Why a plugin module could not be loaded.
+#[derive(Debug, Error)]
+pub enum ModuleError {
+    /// The bundle path cannot identify a Windows library.
+    #[error("Invalid plugin bundle path")]
+    InvalidBundlePath,
+    /// The bundle path cannot be represented as a directory URL.
+    #[error("Invalid plugin bundle path: {}", path.display())]
+    InvalidDirectoryPath {
+        /// The requested bundle.
+        path: PathBuf,
+    },
+    /// Core Foundation could not open the bundle.
+    #[error("Could not open the plugin bundle {}", path.display())]
+    OpenBundle {
+        /// The requested bundle.
+        path: PathBuf,
+    },
+    /// Core Foundation could not load the bundle's executable.
+    #[error("Could not load the plugin library of {}", path.display())]
+    LoadBundle {
+        /// The requested bundle.
+        path: PathBuf,
+    },
+    /// Loading the Windows library failed.
+    #[cfg(windows)]
+    #[error("Could not load the plugin library {}", path.display())]
+    LoadLibrary {
+        /// The executable inside the bundle.
+        path: PathBuf,
+        /// The dynamic loader failure.
+        #[source]
+        source: libloading::Error,
+    },
+    /// The bundle has no entry point.
+    #[error("The plugin does not export bundleEntry")]
+    MissingBundleEntry,
+    /// The macOS factory export is absent.
+    #[error("The plugin does not export GetPluginFactory")]
+    MissingFactoryExport,
+    /// Resolving the Windows factory export failed.
+    #[cfg(windows)]
+    #[error("The plugin does not export GetPluginFactory")]
+    FactoryExport {
+        /// The symbol lookup failure.
+        #[source]
+        source: libloading::Error,
+    },
+    /// The macOS entry point refused initialization.
+    #[error("The plugin's bundleEntry failed")]
+    BundleEntry,
+    /// The Windows entry point refused initialization.
+    #[error("The plugin's InitDll failed")]
+    InitDll,
+    /// The factory export returned a null pointer.
+    #[error("The plugin library returned no factory")]
+    MissingFactory,
+    /// The bundle has no executable for this process's architecture.
+    #[error("The plugin bundle has no library for this platform: {}", path.display())]
+    MissingLibrary {
+        /// The requested bundle.
+        path: PathBuf,
+    },
+    /// This platform has no plugin loader.
+    #[error("VST3 plugins are not supported on this platform")]
+    UnsupportedPlatform,
+}
+
+/// Why a factory could not create an object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum FactoryError {
+    /// The factory refused the class or returned a null object.
+    #[error("The plugin factory could not create the class {id}")]
+    CreateClass {
+        /// The class requested from the factory.
+        id: ClassId,
+        /// The result returned by `createInstance`.
+        result: i32,
+    },
+    /// The factory returned no usable object.
+    #[error("The plugin returned no object")]
+    MissingObject,
+}
 
 /// A loaded VST3 module and its plugin factory.
 pub struct Module {
@@ -56,7 +140,7 @@ impl Module {
     /// # Errors
     ///
     /// Returns an error when the bundle cannot be loaded or has no plugin factory.
-    pub fn load(ui: &UiThread, path: &Path) -> Result<Arc<Self>> {
+    pub fn load(ui: &UiThread, path: &Path) -> Result<Arc<Self>, ModuleError> {
         let modules = LOADED_MODULES.get_or_init(Mutex::default);
         if let Some(module) = modules.lock().unwrap_or_else(PoisonError::into_inner).get(path) {
             return Ok(Arc::clone(module));
@@ -105,7 +189,7 @@ impl Module {
     /// # Errors
     ///
     /// Returns an error when the factory cannot create the class or the object lacks the interface.
-    pub(crate) fn create<I: Interface>(&self, _ui: &UiThread, id: ClassId) -> Result<ComPtr<I>> {
+    pub(crate) fn create<I: Interface>(&self, _ui: &UiThread, id: ClassId) -> Result<ComPtr<I>, FactoryError> {
         let class_id = id.to_tuid();
         let interface_id: FIDString = I::IID.as_ptr().cast();
         let mut object: *mut c_void = std::ptr::null_mut();
@@ -116,10 +200,10 @@ impl Module {
                 .createInstance(class_id.as_ptr(), interface_id, &raw mut object)
         };
         if result != kResultOk || object.is_null() {
-            bail!("The plugin factory could not create the class {id}");
+            return Err(FactoryError::CreateClass { id, result });
         }
         // SAFETY: on success the factory returned an owned reference to an object implementing `I`.
-        unsafe { ComPtr::from_raw(object.cast::<I>()) }.ok_or_else(|| anyhow!("The plugin returned no object"))
+        unsafe { ComPtr::from_raw(object.cast::<I>()) }.ok_or(FactoryError::MissingObject)
     }
 
     /// Builds the module around its factory, giving the factory the host context and reading its classes.
@@ -163,12 +247,12 @@ impl std::fmt::Debug for Module {
 /// # Safety
 ///
 /// `function` must be the `GetPluginFactory` export of a loaded VST3 library.
-unsafe fn take_factory(function: GetFactoryFunction) -> Result<ComPtr<IPluginFactory>> {
+unsafe fn take_factory(function: GetFactoryFunction) -> Result<ComPtr<IPluginFactory>, ModuleError> {
     // SAFETY: the caller guarantees that the function is the library's factory export,
     // which returns an owned reference or null.
     let pointer = unsafe { function() };
     // SAFETY: a non-null result is a valid IPluginFactory whose reference the caller now owns.
-    unsafe { ComPtr::from_raw(pointer) }.context("The plugin library returned no factory")
+    unsafe { ComPtr::from_raw(pointer) }.ok_or(ModuleError::MissingFactory)
 }
 
 #[cfg(target_os = "macos")]
@@ -176,12 +260,11 @@ mod platform {
     use std::ffi::c_void;
     use std::path::Path;
 
-    use anyhow::{Result, bail};
     use objc2_core_foundation::{CFBundle, CFRetained, CFString, CFURL};
     use vst3::ComPtr;
     use vst3::Steinberg::IPluginFactory;
 
-    use super::{GetFactoryFunction, take_factory};
+    use super::{GetFactoryFunction, ModuleError, take_factory};
 
     /// Signature of `bundleEntry`.
     type BundleEntryFunction = unsafe extern "system" fn(*mut c_void) -> bool;
@@ -200,30 +283,36 @@ mod platform {
     unsafe impl Sync for Library {}
 
     /// Loads a bundle and returns it with its factory.
-    pub(super) fn load(path: &Path) -> Result<(Library, ComPtr<IPluginFactory>)> {
+    pub(super) fn load(path: &Path) -> Result<(Library, ComPtr<IPluginFactory>), ModuleError> {
         let Some(url) = CFURL::from_directory_path(path) else {
-            bail!("Invalid plugin bundle path: {}", path.display());
+            return Err(ModuleError::InvalidDirectoryPath {
+                path: path.to_path_buf(),
+            });
         };
         let Some(bundle) = CFBundle::new(None, Some(&url)) else {
-            bail!("Could not open the plugin bundle {}", path.display());
+            return Err(ModuleError::OpenBundle {
+                path: path.to_path_buf(),
+            });
         };
         // SAFETY: loading the executable of a valid bundle has no preconditions besides a valid bundle.
         if !unsafe { bundle.load_executable_and_return_error(std::ptr::null_mut()) } {
-            bail!("Could not load the plugin library of {}", path.display());
+            return Err(ModuleError::LoadBundle {
+                path: path.to_path_buf(),
+            });
         }
         let entry = function(&bundle, "bundleEntry").or_else(|| function(&bundle, "BundleEntry"));
         let Some(entry) = entry else {
-            bail!("The plugin does not export bundleEntry");
+            return Err(ModuleError::MissingBundleEntry);
         };
         let Some(get_factory) = function(&bundle, "GetPluginFactory") else {
-            bail!("The plugin does not export GetPluginFactory");
+            return Err(ModuleError::MissingFactoryExport);
         };
         // SAFETY: `bundleEntry` has the documented signature and takes the bundle reference it was loaded from.
         let entry = unsafe { std::mem::transmute::<*mut c_void, BundleEntryFunction>(entry) };
         let bundle_reference = CFRetained::as_ptr(&bundle).as_ptr().cast::<c_void>();
         // SAFETY: the bundle is loaded and retained, as `bundleEntry` expects.
         if !unsafe { entry(bundle_reference) } {
-            bail!("The plugin's bundleEntry failed");
+            return Err(ModuleError::BundleEntry);
         }
         // SAFETY: `GetPluginFactory` has the documented signature.
         let get_factory = unsafe { std::mem::transmute::<*mut c_void, GetFactoryFunction>(get_factory) };
@@ -244,11 +333,10 @@ mod platform {
 mod platform {
     use std::path::{Path, PathBuf};
 
-    use anyhow::{Context as _, Result, bail};
     use vst3::ComPtr;
     use vst3::Steinberg::IPluginFactory;
 
-    use super::{GetFactoryFunction, take_factory};
+    use super::{GetFactoryFunction, ModuleError, take_factory};
 
     /// Signature of `InitDll`.
     type InitFunction = unsafe extern "system" fn() -> bool;
@@ -272,39 +360,44 @@ mod platform {
     }
 
     /// Loads the library of a bundle and returns it with its factory.
-    pub(super) fn load(path: &Path) -> Result<(Library, ComPtr<IPluginFactory>)> {
+    pub(super) fn load(path: &Path) -> Result<(Library, ComPtr<IPluginFactory>), ModuleError> {
         let library_path = library_path(path)?;
         // SAFETY: loading a plugin library runs its initializers, which is what hosting a plugin means.
-        let library = unsafe { libloading::Library::new(&library_path) }
-            .with_context(|| format!("Could not load the plugin library {}", library_path.display()))?;
+        let library =
+            unsafe { libloading::Library::new(&library_path) }.map_err(|source| ModuleError::LoadLibrary {
+                path: library_path,
+                source,
+            })?;
         // SAFETY: `InitDll` has the documented signature when present.
         if let Ok(init) = unsafe { library.get::<InitFunction>(b"InitDll\0") } {
             // SAFETY: the library is loaded, and `InitDll` takes no arguments.
             if !unsafe { init() } {
-                bail!("The plugin's InitDll failed");
+                return Err(ModuleError::InitDll);
             }
         }
         // SAFETY: `GetPluginFactory` has the documented signature.
         let get_factory = unsafe { library.get::<GetFactoryFunction>(b"GetPluginFactory\0") }
-            .context("The plugin does not export GetPluginFactory")?;
+            .map_err(|source| ModuleError::FactoryExport { source })?;
         // SAFETY: the function is the factory export of the loaded library.
         let factory = unsafe { take_factory(*get_factory) }?;
         Ok((Library { _library: library }, factory))
     }
 
     /// Returns the library inside a bundle folder, or the path itself for a single-file plugin.
-    fn library_path(path: &Path) -> Result<PathBuf> {
+    fn library_path(path: &Path) -> Result<PathBuf, ModuleError> {
         if path.is_file() {
             return Ok(path.to_path_buf());
         }
-        let name = path.file_name().context("Invalid plugin bundle path")?;
+        let name = path.file_name().ok_or(ModuleError::InvalidBundlePath)?;
         for folder in ARCHITECTURE_FOLDERS {
             let candidate = path.join("Contents").join(folder).join(name);
             if candidate.is_file() {
                 return Ok(candidate);
             }
         }
-        bail!("The plugin bundle has no library for this platform: {}", path.display())
+        Err(ModuleError::MissingLibrary {
+            path: path.to_path_buf(),
+        })
     }
 }
 
@@ -312,16 +405,17 @@ mod platform {
 mod platform {
     use std::path::Path;
 
-    use anyhow::{Result, bail};
     use vst3::ComPtr;
     use vst3::Steinberg::IPluginFactory;
+
+    use super::ModuleError;
 
     /// Placeholder for platforms without plugin loading.
     pub(super) struct Library;
 
     /// Plugin loading is only supported on macOS and Windows.
-    pub(super) fn load(_path: &Path) -> Result<(Library, ComPtr<IPluginFactory>)> {
-        bail!("VST3 plugins are not supported on this platform")
+    pub(super) fn load(_path: &Path) -> Result<(Library, ComPtr<IPluginFactory>), ModuleError> {
+        Err(ModuleError::UnsupportedPlatform)
     }
 }
 

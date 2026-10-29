@@ -12,6 +12,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use thiserror::Error;
 use vst3::Steinberg::Vst::{
     AudioBusBuffers, AudioBusBuffers__type0, IAudioProcessor, IAudioProcessorTrait as _, IParameterChanges,
     ProcessContext, ProcessContext_::StatesAndFlags_, ProcessData, SymbolicSampleSizes_,
@@ -27,7 +28,8 @@ use crate::instance::{BusLayout, InstanceCore, ProcessingSetup, process_mode_val
 const TEMPO: f64 = 120.0;
 
 /// A failed `process` call, with the result code the plugin returned.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+#[error("The plugin failed to process audio (result {0})")]
 pub struct ProcessError(pub i32);
 
 /// Runs a plugin's audio processing on one thread at a time.
@@ -73,14 +75,6 @@ impl ProcessError {
     /// The error of a call made while another handle of the same instance was processing.
     pub(crate) const BUSY: Self = Self(kResultFalse);
 }
-
-impl fmt::Display for ProcessError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "The plugin failed to process audio (result {})", self.0)
-    }
-}
-
-impl std::error::Error for ProcessError {}
 
 impl ProcessorHandle {
     /// Creates a handle with buffers for every bus of the layout.

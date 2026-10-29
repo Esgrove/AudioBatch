@@ -122,6 +122,7 @@ pub fn run_plugin_list(
     if let Some(lock) = &lock {
         rescan(lock, &mut known, context, log)?;
         if let Err(error) = known.save_to(&paths.known_plugins) {
+            let error = anyhow::Error::from(error);
             let path = paths.known_plugins.display();
             write_error!(log, "Could not save the plugin list to {path}: {error:#}")?;
             exit_code = EXIT_USAGE_ERROR;

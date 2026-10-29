@@ -165,7 +165,7 @@ impl GuiSettings {
     /// # Errors
     /// Returns an error when the directory or the file cannot be written.
     pub fn save_to(&self, path: &Path) -> Result<()> {
-        write_atomically(path, serde_json::to_string_pretty(self)?.as_bytes())
+        Ok(write_atomically(path, serde_json::to_string_pretty(self)?.as_bytes())?)
     }
 
     /// Returns the output device configuration to open.

@@ -10,8 +10,6 @@
 
 use std::io::{Seek, SeekFrom, Write};
 
-use anyhow::{Context, Result, ensure};
-
 /// Bit depths the writer supports.
 pub(crate) const SUPPORTED_BIT_DEPTHS: [u32; 3] = [8, 16, 24];
 
@@ -20,6 +18,46 @@ const HEADER_BYTES: u64 = 54;
 
 /// Size of the `COMM` chunk body.
 const COMM_BYTES: u32 = 18;
+
+/// Invalid audio layout, AIFF size limits, or an output stream failure.
+#[derive(Debug, thiserror::Error)]
+pub enum AiffError {
+    /// The requested PCM bit depth is unsupported.
+    #[error("AIFF output does not support {0}-bit audio")]
+    UnsupportedBitDepth(u32),
+    /// A sample rate of zero cannot describe AIFF audio.
+    #[error("AIFF output needs a sample rate")]
+    MissingSampleRate,
+    /// The channel count cannot fit the AIFF header.
+    #[error("AIFF output needs between 1 and 65535 channels")]
+    InvalidChannels,
+    /// A block does not match the output's channel count.
+    #[error("Expected {expected} channels of audio, got {actual}")]
+    ChannelCount {
+        /// Channel count in the output header.
+        expected: u16,
+        /// Channel count in the block.
+        actual: usize,
+    },
+    /// A block's planes have different frame counts.
+    #[error("Channels of one block differ in length")]
+    ChannelLengths,
+    /// The audio would exceed the format's size limit.
+    #[error("The normalized audio is too long for an AIFF file")]
+    TooLong,
+    /// Sample data could not be written.
+    #[error("Failed while writing normalized audio data")]
+    WriteData(#[source] std::io::Error),
+    /// Seeking to update the header failed.
+    #[error("Failed to finish the AIFF header")]
+    FinishHeader(#[source] std::io::Error),
+    /// Flushing the completed output failed.
+    #[error("Failed to finish the AIFF file")]
+    FinishFile(#[source] std::io::Error),
+    /// The initial or updated header could not be written.
+    #[error("Failed to write the AIFF header")]
+    WriteHeader(#[source] std::io::Error),
+}
 
 /// Streams planar float samples into an AIFF file.
 pub struct AiffWriter<W: Write + Seek> {
@@ -39,17 +77,19 @@ impl<W: Write + Seek> AiffWriter<W> {
     ///
     /// Returns an error for an unsupported bit depth, no channels, a zero sample rate,
     /// or when the header cannot be written.
-    pub fn new(mut writer: W, channels: u32, sample_rate: u32, bits_per_sample: u32) -> Result<Self> {
-        ensure!(
-            SUPPORTED_BIT_DEPTHS.contains(&bits_per_sample),
-            "AIFF output does not support {bits_per_sample}-bit audio"
-        );
-        ensure!(sample_rate > 0, "AIFF output needs a sample rate");
+    pub fn new(mut writer: W, channels: u32, sample_rate: u32, bits_per_sample: u32) -> Result<Self, AiffError> {
+        if !SUPPORTED_BIT_DEPTHS.contains(&bits_per_sample) {
+            return Err(AiffError::UnsupportedBitDepth(bits_per_sample));
+        }
+        if sample_rate == 0 {
+            return Err(AiffError::MissingSampleRate);
+        }
         let channels = u16::try_from(channels)
             .ok()
             .filter(|&channels| channels > 0)
-            .context("AIFF output needs between 1 and 65535 channels")?;
-        let bits_per_sample = u16::try_from(bits_per_sample).context("Unsupported bit depth")?;
+            .ok_or(AiffError::InvalidChannels)?;
+        let bits_per_sample =
+            u16::try_from(bits_per_sample).map_err(|_| AiffError::UnsupportedBitDepth(bits_per_sample))?;
         write_header(&mut writer, channels, sample_rate, bits_per_sample, 0)?;
         Ok(Self {
             writer,
@@ -67,7 +107,7 @@ impl<W: Write + Seek> AiffWriter<W> {
     ///
     /// Returns an error when the channel count or lengths do not match,
     /// when the file would outgrow the AIFF size fields, or when writing fails.
-    pub(crate) fn write_planar(&mut self, planes: &[&[f32]]) -> Result<()> {
+    pub(crate) fn write_planar(&mut self, planes: &[&[f32]]) -> Result<(), AiffError> {
         self.write_frames(planes, float_to_int32)
     }
 
@@ -79,7 +119,7 @@ impl<W: Write + Seek> AiffWriter<W> {
     ///
     /// Returns an error when the channel count or lengths do not match,
     /// when the file would outgrow the AIFF size fields, or when writing fails.
-    pub fn write_planar_pcm(&mut self, planes: &[&[i32]]) -> Result<()> {
+    pub fn write_planar_pcm(&mut self, planes: &[&[i32]]) -> Result<(), AiffError> {
         let bits = u32::from(self.bits_per_sample);
         let maximum = (1_i32 << (bits - 1)) - 1;
         let minimum = -maximum - 1;
@@ -88,18 +128,21 @@ impl<W: Write + Seek> AiffWriter<W> {
     }
 
     /// Appends one block of planar samples, converting each to a 32-bit integer whose high bits are written.
-    fn write_frames<T: Copy + Default>(&mut self, planes: &[&[T]], to_int32: impl Fn(T) -> i32) -> Result<()> {
-        ensure!(
-            planes.len() == usize::from(self.channels),
-            "Expected {} channels of audio, got {}",
-            self.channels,
-            planes.len()
-        );
+    fn write_frames<T: Copy + Default>(
+        &mut self,
+        planes: &[&[T]],
+        to_int32: impl Fn(T) -> i32,
+    ) -> Result<(), AiffError> {
+        if planes.len() != usize::from(self.channels) {
+            return Err(AiffError::ChannelCount {
+                expected: self.channels,
+                actual: planes.len(),
+            });
+        }
         let frames = planes.first().map_or(0, |plane| plane.len());
-        ensure!(
-            planes.iter().all(|plane| plane.len() == frames),
-            "Channels of one block differ in length"
-        );
+        if !planes.iter().all(|plane| plane.len() == frames) {
+            return Err(AiffError::ChannelLengths);
+        }
         let total_frames = self.frames_written + frames as u64;
         data_bytes(total_frames, self.channels, self.bits_per_sample)?;
 
@@ -114,9 +157,7 @@ impl<W: Write + Seek> AiffWriter<W> {
                 self.scratch.extend(bytes.iter().take(bytes_per_sample));
             }
         }
-        self.writer
-            .write_all(&self.scratch)
-            .context("Failed while writing normalized audio data")?;
+        self.writer.write_all(&self.scratch).map_err(AiffError::WriteData)?;
         self.frames_written = total_frames;
         Ok(())
     }
@@ -132,16 +173,12 @@ impl<W: Write + Seek> AiffWriter<W> {
     /// # Errors
     ///
     /// Returns an error when writing or seeking fails.
-    pub fn finish(mut self) -> Result<W> {
+    pub fn finish(mut self) -> Result<W, AiffError> {
         let data = data_bytes(self.frames_written, self.channels, self.bits_per_sample)?;
         if data % 2 == 1 {
-            self.writer
-                .write_all(&[0])
-                .context("Failed while writing normalized audio data")?;
+            self.writer.write_all(&[0]).map_err(AiffError::WriteData)?;
         }
-        self.writer
-            .seek(SeekFrom::Start(0))
-            .context("Failed to finish the AIFF header")?;
+        self.writer.seek(SeekFrom::Start(0)).map_err(AiffError::FinishHeader)?;
         write_header(
             &mut self.writer,
             self.channels,
@@ -149,10 +186,8 @@ impl<W: Write + Seek> AiffWriter<W> {
             self.bits_per_sample,
             self.frames_written,
         )?;
-        self.writer
-            .seek(SeekFrom::End(0))
-            .context("Failed to finish the AIFF header")?;
-        self.writer.flush().context("Failed to finish the AIFF file")?;
+        self.writer.seek(SeekFrom::End(0)).map_err(AiffError::FinishHeader)?;
+        self.writer.flush().map_err(AiffError::FinishFile)?;
         Ok(self.writer)
     }
 }
@@ -173,13 +208,13 @@ pub(crate) fn float_to_int32(sample: f32) -> i32 {
 
 /// Returns the number of sample data bytes for the frame count,
 /// or an error when it does not fit the 32-bit AIFF size fields.
-fn data_bytes(frames: u64, channels: u16, bits_per_sample: u16) -> Result<u32> {
+fn data_bytes(frames: u64, channels: u16, bits_per_sample: u16) -> Result<u32, AiffError> {
     u32::try_from(frames)
         .ok()
         .and_then(|_| frames.checked_mul(u64::from(channels) * u64::from(bits_per_sample / 8)))
         .filter(|&bytes| bytes + HEADER_BYTES < u64::from(u32::MAX))
         .and_then(|bytes| u32::try_from(bytes).ok())
-        .context("The normalized audio is too long for an AIFF file")
+        .ok_or(AiffError::TooLong)
 }
 
 /// Writes the `FORM`, `COMM`, and `SSND` headers for the given number of frames.
@@ -189,9 +224,9 @@ fn write_header(
     sample_rate: u32,
     bits_per_sample: u16,
     frames: u64,
-) -> Result<()> {
+) -> Result<(), AiffError> {
     let data = data_bytes(frames, channels, bits_per_sample)?;
-    let frames = u32::try_from(frames).context("The normalized audio is too long for an AIFF file")?;
+    let frames = u32::try_from(frames).map_err(|_| AiffError::TooLong)?;
     let padding = data % 2;
     let form_size = 4 + (8 + COMM_BYTES) + (8 + 8 + data + padding);
     let ssnd_size = 8 + data;
@@ -210,7 +245,7 @@ fn write_header(
     header.extend_from_slice(&ssnd_size.to_be_bytes());
     header.extend_from_slice(&0_u32.to_be_bytes());
     header.extend_from_slice(&0_u32.to_be_bytes());
-    writer.write_all(&header).context("Failed to write the AIFF header")
+    writer.write_all(&header).map_err(AiffError::WriteHeader)
 }
 
 /// Encodes a positive integer as the 80-bit IEEE extended float AIFF stores the sample rate in.
@@ -274,8 +309,41 @@ mod test_aiff_writer {
 
     #[test]
     fn rejects_unsupported_bit_depths() {
-        assert!(AiffWriter::new(Cursor::new(Vec::new()), 2, 44_100, 32).is_err());
-        assert!(AiffWriter::new(Cursor::new(Vec::new()), 0, 44_100, 16).is_err());
+        assert!(matches!(
+            AiffWriter::new(Cursor::new(Vec::new()), 2, 44_100, 32),
+            Err(AiffError::UnsupportedBitDepth(32))
+        ));
+        assert!(matches!(
+            AiffWriter::new(Cursor::new(Vec::new()), 0, 44_100, 16),
+            Err(AiffError::InvalidChannels)
+        ));
+        assert!(matches!(
+            AiffWriter::new(Cursor::new(Vec::new()), 2, 0, 16),
+            Err(AiffError::MissingSampleRate)
+        ));
+    }
+
+    #[test]
+    fn write_errors_keep_context_and_the_io_source() {
+        let error = AiffError::WriteData(std::io::Error::new(std::io::ErrorKind::WriteZero, "disk full"));
+        assert_eq!(error.to_string(), "Failed while writing normalized audio data");
+        assert_eq!(
+            std::error::Error::source(&error).expect("I/O cause").to_string(),
+            "disk full"
+        );
+    }
+
+    #[test]
+    fn rejects_mismatched_blocks_with_typed_errors() {
+        let mut writer = AiffWriter::new(Cursor::new(Vec::new()), 2, 44_100, 16).expect("starts writer");
+        assert!(matches!(
+            writer.write_planar(&[&[0.0]]),
+            Err(AiffError::ChannelCount { expected: 2, actual: 1 })
+        ));
+        assert!(matches!(
+            writer.write_planar(&[&[0.0], &[]]),
+            Err(AiffError::ChannelLengths)
+        ));
     }
 
     #[test]

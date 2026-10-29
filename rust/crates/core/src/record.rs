@@ -4,7 +4,6 @@
 //! short-term loudness history, and waveform overview,
 //! along with the `AnalysisStatus` lifecycle and the `AnalysisOptions` input parameters.
 
-use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
@@ -138,7 +137,8 @@ pub struct AnalysisRecord {
 }
 
 /// A failed analysis step with the kind of failure, so callers can tell which failures repeat.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{message}")]
 pub(crate) struct AnalysisFailure {
     /// Kind of the failure.
     pub kind: AnalysisError,
@@ -240,14 +240,6 @@ impl AnalysisFailure {
         }
     }
 }
-
-impl fmt::Display for AnalysisFailure {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.message)
-    }
-}
-
-impl std::error::Error for AnalysisFailure {}
 
 /// Converts decibels to a linear amplitude factor.
 #[must_use]

@@ -32,13 +32,13 @@ mod test_helpers;
 
 pub use discovery::{default_search_folders, find_bundles, is_bundle_path};
 #[cfg(feature = "editor")]
-pub use editor::EditorWindow;
-pub use factory::{ClassId, ClassInfo, FactoryInfo};
+pub use editor::{EditorError, EditorWindow};
+pub use factory::{ClassId, ClassIdError, ClassInfo, FactoryInfo};
 pub use host_objects::{ParameterEdit, RestartFlags};
-pub use instance::{BusLayout, PluginInstance, PluginState, ProcessMode};
-pub use module::Module;
+pub use instance::{BusLayout, InstanceError, PluginInstance, PluginState, ProcessMode};
+pub use module::{FactoryError, Module, ModuleError};
 pub use module_info::read_module_info;
 pub use platform_events::pump_platform_events;
 pub use processor::{ProcessError, ProcessorHandle};
-pub use thread::{CallError, UiDispatcher, UiJob, UiJobs, UiThread, ui_channel};
+pub use thread::{CallError, UiDispatcher, UiJob, UiJobs, UiThread, UiThreadError, ui_channel};
 pub use ui_bound::UiBound;

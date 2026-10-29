@@ -203,7 +203,11 @@ impl LiveChain {
     pub fn load(path: PathBuf, dispatcher: UiDispatcher, sample_rate: u32) -> (Self, Option<String>) {
         let (saved, error, unread_file) = match PluginChain::load_recovering(&path) {
             Ok((saved, message)) => (saved, message, false),
-            Err(error) => (PluginChain::default(), Some(format!("{error:#}")), true),
+            Err(error) => (
+                PluginChain::default(),
+                Some(format!("{:#}", anyhow::Error::from(error))),
+                true,
+            ),
         };
         let mut chain = Self::new(path, dispatcher, sample_rate);
         chain.unread_file = unread_file;
@@ -427,20 +431,20 @@ impl LiveChain {
     ///
     /// Returns "<name>: <error>" for the first enabled slot whose plugin is not loaded or not prepared,
     /// because previewing without it would not be what the chain sounds like.
-    pub fn preview_chain(&self, ui: &UiThread) -> Result<Option<PreviewChain>, String> {
+    pub fn preview_chain(&self, ui: &UiThread) -> Result<Option<PreviewChain>> {
         let mut plugins = Vec::new();
         for slot in self.slots.iter().filter(|slot| slot.is_enabled()) {
             let name = slot.slot.plugin.name.as_str();
             match (&slot.instance, &slot.error) {
-                (_, Some(error)) => return Err(format!("{name}: {error}")),
+                (_, Some(error)) => anyhow::bail!("{name}: {error}"),
                 (Some(instance), None) => plugins.push((name, instance)),
-                (None, None) => return Err(format!("{name}: The plugin is not loaded")),
+                (None, None) => anyhow::bail!("{name}: The plugin is not loaded"),
             }
         }
         if plugins.is_empty() {
             return Ok(None);
         }
-        PreviewChain::new(ui, &plugins).map(Some)
+        Ok(Some(PreviewChain::new(ui, &plugins)?))
     }
 
     /// Returns the sum of the tails the enabled, prepared instances report now, each limited, in frames.
@@ -581,7 +585,12 @@ fn load_instance(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> 
 
 /// Prepares an instance for the preview at the output rate, in blocks of up to `PREVIEW_BLOCK_FRAMES`.
 fn prepare_instance(ui: &UiThread, instance: &mut PluginInstance, sample_rate: u32) -> Result<()> {
-    prepare_for_preview(ui, instance, f64::from(sample_rate), PREVIEW_BLOCK_FRAMES)
+    Ok(prepare_for_preview(
+        ui,
+        instance,
+        f64::from(sample_rate),
+        PREVIEW_BLOCK_FRAMES,
+    )?)
 }
 
 #[cfg(test)]

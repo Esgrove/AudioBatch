@@ -9,10 +9,9 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
 use ebur128::{Channel, EbuR128, Mode};
 
-use crate::decode::AudioFileDecoder;
+use crate::decode::{AudioFileDecoder, DecodeError};
 use crate::record::{
     AnalysisError, AnalysisFailure, AnalysisRecord, AnalysisStatus, NEGATIVE_INFINITY_LOUDNESS,
     ShortTermLoudnessHistory, normalize_loudness,
@@ -21,6 +20,43 @@ use crate::waveform::{WaveformBuilder, WaveformOverview};
 
 /// Error message of a cancelled analysis, which callers must not cache.
 pub const CANCELLED_MESSAGE: &str = "Analysis was cancelled";
+
+/// A decoding, cancellation, or loudness measurement failure.
+#[derive(Debug, thiserror::Error)]
+enum MeasurementError {
+    /// The audio stream could not be decoded.
+    #[error(transparent)]
+    Decode(#[from] DecodeError),
+    /// The analysis was cancelled.
+    #[error(transparent)]
+    Analysis(#[from] AnalysisFailure),
+    /// The loudness meter could not be configured.
+    #[error("Could not initialize loudness analyzer")]
+    Initialize(#[source] ebur128::Error),
+    /// The meter could not accept an audio block.
+    #[error("Loudness analysis failed while processing audio")]
+    Frames(#[source] ebur128::Error),
+    /// The short-term loudness could not be measured.
+    #[error("Short-term loudness analysis failed")]
+    ShortTerm(#[source] ebur128::Error),
+    /// A true peak could not be measured.
+    #[error("True peak analysis failed")]
+    TruePeak(#[source] ebur128::Error),
+    /// The integrated loudness could not be measured.
+    #[error("Integrated loudness analysis failed")]
+    Integrated(#[source] ebur128::Error),
+}
+
+impl MeasurementError {
+    /// Returns the classification that determines whether a failed analysis can be cached.
+    const fn kind(&self) -> AnalysisError {
+        match self {
+            Self::Decode(error) => error.analysis_kind(),
+            Self::Analysis(failure) => failure.kind,
+            _ => AnalysisError::MeasurementFailed,
+        }
+    }
+}
 
 /// Left, right, and overall values reduced from per-channel values.
 #[derive(Debug, Clone, Copy)]
@@ -60,13 +96,13 @@ struct BlockMeter {
 
 impl BlockMeter {
     /// Creates a meter for the stream, with integrated, short-term, and true peak measurement.
-    fn new(channels: u32, sample_rate: u32, expected_frames: Option<u64>) -> Result<Self> {
+    fn new(channels: u32, sample_rate: u32, expected_frames: Option<u64>) -> Result<Self, MeasurementError> {
         let mut meter = EbuR128::new(channels, sample_rate, Mode::I | Mode::S | Mode::TRUE_PEAK)
-            .context("Could not initialize loudness analyzer")?;
+            .map_err(MeasurementError::Initialize)?;
         if channels == 1 {
             meter
                 .set_channel(0, Channel::DualMono)
-                .context("Could not initialize loudness analyzer")?;
+                .map_err(MeasurementError::Initialize)?;
         }
         let channel_count = channels as usize;
         let block_size = ShortTermLoudnessHistory::samples_per_point_for_rate(sample_rate) as usize;
@@ -83,7 +119,7 @@ impl BlockMeter {
     }
 
     /// Appends decoded samples, measuring every block that fills up.
-    fn push(&mut self, chunk: &[Vec<f32>]) -> Result<()> {
+    fn push(&mut self, chunk: &[Vec<f32>]) -> Result<(), MeasurementError> {
         let frame_count = chunk.first().map_or(0, Vec::len);
         let mut offset = 0;
         while offset < frame_count {
@@ -105,7 +141,7 @@ impl BlockMeter {
     }
 
     /// Measures a final partial block and returns the history.
-    fn finish(mut self) -> Result<Self> {
+    fn finish(mut self) -> Result<Self, MeasurementError> {
         if self.block.first().is_some_and(|samples| !samples.is_empty()) {
             self.measure_block()?;
         }
@@ -113,7 +149,7 @@ impl BlockMeter {
     }
 
     /// Feeds the buffered block to the meter, the sample extremes, and the waveform, then empties it.
-    fn measure_block(&mut self) -> Result<()> {
+    fn measure_block(&mut self) -> Result<(), MeasurementError> {
         for ((samples, minimum), maximum) in self.block.iter().zip(&mut self.min_samples).zip(&mut self.max_samples) {
             for &sample in samples {
                 *minimum = minimum.min(sample);
@@ -124,12 +160,8 @@ impl BlockMeter {
         self.waveform.push(&planes);
         self.meter
             .add_frames_planar_f32(&planes)
-            .context("Loudness analysis failed while processing audio")?;
-        let short_term = normalize_loudness(
-            self.meter
-                .loudness_shortterm()
-                .context("Short-term loudness analysis failed")?,
-        );
+            .map_err(MeasurementError::Frames)?;
+        let short_term = normalize_loudness(self.meter.loudness_shortterm().map_err(MeasurementError::ShortTerm)?);
         self.max_short_term_lufs = self.max_short_term_lufs.max(short_term);
         self.history.push(short_term as f32);
         for samples in &mut self.block {
@@ -186,13 +218,7 @@ pub fn analyze_file(path: &Path, is_cancelled: &dyn Fn() -> bool, on_progress: &
             record.from_cache = false;
             record
         }
-        Err(error) => {
-            // Failures without a kind come from the measurement, which a later run may get past.
-            let kind = error
-                .downcast_ref::<AnalysisFailure>()
-                .map_or(AnalysisError::MeasurementFailed, |failure| failure.kind);
-            fail(record, kind, &error.to_string())
-        }
+        Err(error) => fail(record, error.kind(), &error.to_string()),
     }
 }
 
@@ -231,7 +257,7 @@ fn measure_file(
     path: &Path,
     is_cancelled: &dyn Fn() -> bool,
     on_progress: &mut dyn FnMut(f32),
-) -> Result<DecodeMeasurements> {
+) -> Result<DecodeMeasurements, MeasurementError> {
     let mut decoder = AudioFileDecoder::open(path)?;
     let info = decoder.info().clone();
     let mut meter = BlockMeter::new(info.channels, info.sample_rate, info.expected_frames)?;
@@ -255,13 +281,8 @@ fn measure_file(
     let true_peaks = (0..info.channels)
         .map(|channel| meter.meter.true_peak(channel))
         .collect::<Result<Vec<f64>, _>>()
-        .context("True peak analysis failed")?;
-    let integrated_lufs = normalize_loudness(
-        meter
-            .meter
-            .loudness_global()
-            .context("Integrated loudness analysis failed")?,
-    );
+        .map_err(MeasurementError::TruePeak)?;
+    let integrated_lufs = normalize_loudness(meter.meter.loudness_global().map_err(MeasurementError::Integrated)?);
 
     let short_term_loudness = Arc::new(ShortTermLoudnessHistory {
         values: meter.history,

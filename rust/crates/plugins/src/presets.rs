@@ -10,8 +10,7 @@ use std::cmp::Ordering;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, Result, bail};
-use audiobatch_core::atomic_write::write_atomically;
+use audiobatch_core::atomic_write::{AtomicWriteError, write_atomically};
 use audiobatch_core::sorting::compare_natural;
 use serde::{Deserialize, Serialize};
 
@@ -28,6 +27,79 @@ const ILLEGAL_NAME_CHARACTERS: &[char] = &['"', '#', '@', ',', ';', ':', '<', '>
 
 /// Longest preset name in characters, which keeps the file name within every platform's limit.
 const MAXIMUM_NAME_CHARACTERS: usize = 128;
+
+/// Failures while naming, finding, or persisting a chain preset.
+#[derive(Debug, thiserror::Error)]
+pub enum PresetError {
+    /// No usable name was supplied.
+    #[error("Enter a preset name")]
+    EmptyName,
+    /// The preset folder could not be enumerated.
+    #[error("Could not read the preset folder {}", path.display())]
+    List {
+        /// Folder containing the preset files.
+        path: PathBuf,
+        /// The file system failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The requested preset does not exist.
+    #[error("The preset {} does not exist", path.display())]
+    Missing {
+        /// Location of the requested preset.
+        path: PathBuf,
+        /// The missing-file failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A preset could not be read.
+    #[error("Could not read the preset {}", path.display())]
+    Read {
+        /// Location of the requested preset.
+        path: PathBuf,
+        /// The file system failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The preset's contents could not be decoded.
+    #[error("{} is not a plugin chain preset", path.display())]
+    Invalid {
+        /// Location of the malformed preset.
+        path: PathBuf,
+        /// The JSON decoding failure.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// The preset requires a newer reader.
+    #[error("{} was saved by a newer version of AudioBatch", path.display())]
+    NewerVersion {
+        /// Location of the newer preset.
+        path: PathBuf,
+        /// Format version found in the preset.
+        version: u32,
+    },
+    /// The chain could not be serialized.
+    #[error(transparent)]
+    Serialize(#[from] serde_json::Error),
+    /// The preset could not be atomically replaced.
+    #[error("Could not save the preset {}", path.display())]
+    Save {
+        /// Location of the preset being saved.
+        path: PathBuf,
+        /// The atomic replacement failure.
+        #[source]
+        source: AtomicWriteError,
+    },
+    /// The preset could not be removed.
+    #[error("Could not delete the preset {}", path.display())]
+    Delete {
+        /// Location of the preset being deleted.
+        path: PathBuf,
+        /// The file system failure.
+        #[source]
+        source: std::io::Error,
+    },
+}
 
 /// A saved plugin chain with its name.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,13 +181,15 @@ impl PresetStore {
     /// # Errors
     ///
     /// Returns an error when the folder exists but cannot be read. A missing folder gives an empty list.
-    pub fn list(&self) -> Result<Vec<PresetInfo>> {
+    pub fn list(&self) -> Result<Vec<PresetInfo>, PresetError> {
         let entries = match fs::read_dir(&self.folder) {
             Ok(entries) => entries,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => {
-                return Err(error)
-                    .with_context(|| format!("Could not read the preset folder {}", self.folder.display()));
+                return Err(PresetError::List {
+                    path: self.folder.clone(),
+                    source: error,
+                });
             }
         };
         let mut presets: Vec<PresetInfo> = entries
@@ -136,13 +210,17 @@ impl PresetStore {
     /// # Errors
     ///
     /// Returns an error when the name has no usable characters, or the folder or the file cannot be written.
-    pub fn save(&self, name: &str, chain: &PluginChain) -> Result<PathBuf> {
+    pub fn save(&self, name: &str, chain: &PluginChain) -> Result<PathBuf, PresetError> {
         let Some(path) = self.path_for(name) else {
-            bail!("Enter a preset name");
+            return Err(PresetError::EmptyName);
         };
         let preset = ChainPreset::new(sanitize_preset_name(name), chain);
-        write_atomically(&path, serde_json::to_string_pretty(&preset)?.as_bytes())
-            .with_context(|| format!("Could not save the preset {}", path.display()))?;
+        write_atomically(&path, serde_json::to_string_pretty(&preset)?.as_bytes()).map_err(|source| {
+            PresetError::Save {
+                path: path.clone(),
+                source,
+            }
+        })?;
         Ok(path)
     }
 
@@ -151,9 +229,9 @@ impl PresetStore {
     /// # Errors
     ///
     /// Returns an error when the preset does not exist, cannot be parsed, or was saved by a newer version.
-    pub fn load(&self, name: &str) -> Result<ChainPreset> {
+    pub fn load(&self, name: &str) -> Result<ChainPreset, PresetError> {
         let Some(path) = self.path_for(name) else {
-            bail!("Enter a preset name");
+            return Err(PresetError::EmptyName);
         };
         load_preset_file(&path)
     }
@@ -163,14 +241,14 @@ impl PresetStore {
     /// # Errors
     ///
     /// Returns an error when the preset exists but cannot be deleted.
-    pub fn delete(&self, name: &str) -> Result<bool> {
+    pub fn delete(&self, name: &str) -> Result<bool, PresetError> {
         let Some(path) = self.path_for(name) else {
             return Ok(false);
         };
         match fs::remove_file(&path) {
             Ok(()) => Ok(true),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(error) => Err(error).with_context(|| format!("Could not delete the preset {}", path.display())),
+            Err(source) => Err(PresetError::Delete { path, source }),
         }
     }
 }
@@ -197,18 +275,31 @@ pub fn sanitize_preset_name(name: &str) -> String {
 /// # Errors
 ///
 /// Returns an error when the file does not exist, cannot be parsed, or was saved by a newer version.
-pub(crate) fn load_preset_file(path: &Path) -> Result<ChainPreset> {
+pub(crate) fn load_preset_file(path: &Path) -> Result<ChainPreset, PresetError> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            bail!("The preset {} does not exist", path.display());
+            return Err(PresetError::Missing {
+                path: path.to_path_buf(),
+                source: error,
+            });
         }
-        Err(error) => return Err(error).with_context(|| format!("Could not read the preset {}", path.display())),
+        Err(source) => {
+            return Err(PresetError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
     };
-    let preset: ChainPreset =
-        serde_json::from_str(&text).with_context(|| format!("{} is not a plugin chain preset", path.display()))?;
+    let preset: ChainPreset = serde_json::from_str(&text).map_err(|source| PresetError::Invalid {
+        path: path.to_path_buf(),
+        source,
+    })?;
     if preset.version > PRESET_FORMAT_VERSION {
-        bail!("{} was saved by a newer version of AudioBatch", path.display());
+        return Err(PresetError::NewerVersion {
+            path: path.to_path_buf(),
+            version: preset.version,
+        });
     }
     Ok(preset)
 }
@@ -220,6 +311,8 @@ fn compare_names(first: &str, second: &str) -> Ordering {
 
 #[cfg(test)]
 mod test_presets {
+    use std::error::Error as _;
+
     use tempfile::TempDir;
     use vst3_host::{ClassId, PluginState};
 
@@ -335,17 +428,33 @@ mod test_presets {
             .save(" / ", &PluginChain::default())
             .expect_err("no usable name");
         assert_eq!(error.to_string(), "Enter a preset name");
+        assert!(matches!(error, PresetError::EmptyName));
         let missing = presets.load("Missing").expect_err("missing");
         assert!(missing.to_string().contains("does not exist"), "{missing}");
+        assert!(matches!(&missing, PresetError::Missing { .. }));
+        assert!(
+            missing
+                .source()
+                .and_then(|source| source.downcast_ref::<std::io::Error>())
+                .is_some()
+        );
 
         fs::create_dir_all(presets.folder()).expect("folder");
         fs::write(presets.folder().join("Broken.json"), "not json").expect("written");
         let broken = presets.load("Broken").expect_err("broken");
         assert!(broken.to_string().contains("is not a plugin chain preset"), "{broken}");
+        assert!(matches!(&broken, PresetError::Invalid { .. }));
+        assert!(
+            broken
+                .source()
+                .and_then(|source| source.downcast_ref::<serde_json::Error>())
+                .is_some()
+        );
 
         let newer = serde_json::json!({"name": "Newer", "version": PRESET_FORMAT_VERSION + 1, "slots": []});
         fs::write(presets.folder().join("Newer.json"), newer.to_string()).expect("written");
         let newer = presets.load("Newer").expect_err("newer");
         assert!(newer.to_string().contains("newer version"), "{newer}");
+        assert!(matches!(newer, PresetError::NewerVersion { version, .. } if version == PRESET_FORMAT_VERSION + 1));
     }
 }

@@ -12,9 +12,10 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
-use vst3_host::{PluginInstance, ProcessError, ProcessMode, ProcessorHandle, UiThread};
+use vst3_host::{InstanceError, PluginInstance, ProcessError, ProcessMode, ProcessorHandle, UiThread};
 
 use crate::chain_signal::{ChainSignal, StageFailure};
+use crate::library::error_chain;
 use crate::processing_chain::{PROCESSING_BLOCK_FRAMES, limited_tail};
 
 /// Channels the preview plays, since the playback engine maps every file to stereo.
@@ -22,6 +23,17 @@ pub(crate) const PREVIEW_CHANNELS: usize = 2;
 
 /// Stage index meaning that no plugin has failed.
 const NO_FAILURE: usize = usize::MAX;
+
+/// A live plugin could not provide its realtime processor handle.
+#[derive(Debug, thiserror::Error)]
+#[error("{name}: {}", error_chain(.source))]
+pub struct PreviewChainError {
+    /// Name of the plugin whose processor could not be obtained.
+    pub name: String,
+    /// The concrete host failure.
+    #[source]
+    pub source: InstanceError,
+}
 
 /// The first plugin of a preview chain whose `process` call failed,
 /// recorded on the audio thread and read on the UI thread.
@@ -95,11 +107,14 @@ impl PreviewChain {
     /// # Errors
     ///
     /// Returns "<name>: <error>" for the first plugin that cannot process audio.
-    pub fn new(ui: &UiThread, plugins: &[(&str, &PluginInstance)]) -> Result<Self, String> {
+    pub fn new(ui: &UiThread, plugins: &[(&str, &PluginInstance)]) -> Result<Self, PreviewChainError> {
         let mut processors = Vec::with_capacity(plugins.len());
         let mut latency_frames = 0;
         for (name, instance) in plugins {
-            let processor = instance.processor(ui).map_err(|error| format!("{name}: {error:#}"))?;
+            let processor = instance.processor(ui).map_err(|source| PreviewChainError {
+                name: (*name).to_owned(),
+                source,
+            })?;
             latency_frames += instance.latency_samples(ui) as usize;
             processors.push(processor);
         }
@@ -224,7 +239,7 @@ pub fn prepare_for_preview(
     instance: &mut PluginInstance,
     sample_rate: f64,
     block_frames: usize,
-) -> anyhow::Result<()> {
+) -> Result<(), InstanceError> {
     instance.deactivate(ui)?;
     instance
         .configure_main_buses(ui, PREVIEW_CHANNELS)
@@ -235,6 +250,8 @@ pub fn prepare_for_preview(
 
 #[cfg(test)]
 mod test_preview_chain {
+    use std::error::Error as _;
+
     use audiobatch_test_plugin::{DELAY_LATENCY, Kind};
     use vst3_host::{ClassId, Module, PluginState};
 
@@ -266,7 +283,7 @@ mod test_preview_chain {
                     }
                     let named: Vec<(&str, &PluginInstance)> =
                         instances.iter().map(|(name, instance)| (*name, instance)).collect();
-                    PreviewChain::new(ui, &named)
+                    PreviewChain::new(ui, &named).map_err(|error| error.to_string())
                 },
                 &|| false,
             )
@@ -360,5 +377,21 @@ mod test_preview_chain {
             failure.message().as_deref(),
             Some("Second: The plugin failed to process audio (result 1)")
         );
+    }
+
+    #[test]
+    fn setup_failures_keep_the_plugin_name_and_concrete_host_cause() {
+        let error = PreviewChainError {
+            name: "Effect".to_owned(),
+            source: InstanceError::ActivationBeforeProcessing,
+        };
+        assert_eq!(
+            error.to_string(),
+            "Effect: The plugin must be active before it can process audio"
+        );
+        assert!(matches!(
+            error.source().and_then(|source| source.downcast_ref::<InstanceError>()),
+            Some(InstanceError::ActivationBeforeProcessing)
+        ));
     }
 }

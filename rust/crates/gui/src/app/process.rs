@@ -202,7 +202,7 @@ impl AppView {
                 Ok(instances) => chains.push(instances),
                 Err(error) => {
                     self.status = SharedString::from("Plugin load failed");
-                    show_warning(&error, window, cx);
+                    show_warning(&error.to_string(), window, cx);
                     cx.notify();
                     return;
                 }

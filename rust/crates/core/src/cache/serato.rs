@@ -11,11 +11,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, params};
 use serato_tags::{OVERVIEW_PARSER_VERSION, OVERVIEW_TAG_KIND, Overview};
 
-use super::{AnalysisCache, now_ms, path_key};
+use super::{AnalysisCache, CacheError, Result, now_ms, path_key};
 use crate::record::file_identity;
 use crate::tags::SeratoOverviewState;
 
@@ -93,13 +92,16 @@ impl AnalysisCache {
     /// Returns an error when the file cannot be read, the overview has no cache representation,
     /// or the database write fails.
     pub fn store_serato_overview(&self, path: &Path, state: &SeratoOverviewState) -> Result<()> {
-        let (file_size, modified_time_ms) = file_identity(path)
-            .ok_or_else(|| anyhow!("Cannot cache Serato tags of missing file {}", path.display()))?;
+        let (file_size, modified_time_ms) = file_identity(path).ok_or_else(|| CacheError::MissingSeratoFile {
+            path: path.to_path_buf(),
+        })?;
         let (code, data) = match state {
             SeratoOverviewState::Present(overview) => {
                 let data = overview.serialize();
                 if data.is_empty() {
-                    return Err(anyhow!("Cannot cache a Serato overview with {overview}"));
+                    return Err(CacheError::InvalidSeratoOverview {
+                        overview: Arc::clone(overview),
+                    });
                 }
                 (STATE_PRESENT, Some(data))
             }
@@ -132,7 +134,7 @@ impl AnalysisCache {
                         now_ms(),
                     ],
                 )
-                .context("SQLite could not store the Serato tags")?;
+                .map_err(CacheError::StoreSerato)?;
             Ok(())
         })
     }

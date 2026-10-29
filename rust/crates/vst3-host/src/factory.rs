@@ -14,6 +14,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 use vst3::ComPtr;
 use vst3::Steinberg::{
     IPluginFactory, IPluginFactory2, IPluginFactory2Trait as _, IPluginFactory3, IPluginFactory3Trait as _,
@@ -27,6 +28,26 @@ pub const AUDIO_EFFECT_CATEGORY: &str = "Audio Module Class";
 
 /// Category of edit controller classes.
 pub const CONTROLLER_CATEGORY: &str = "Component Controller Class";
+
+/// Why a class identifier could not be parsed.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum ClassIdError {
+    /// The identifier does not contain exactly 32 ASCII digits.
+    #[error("Invalid class id: \"{text}\"")]
+    InvalidFormat {
+        /// The unmodified input.
+        text: String,
+    },
+    /// A pair of digits is not hexadecimal.
+    #[error("Invalid class id: \"{text}\"")]
+    InvalidHex {
+        /// The unmodified input.
+        text: String,
+        /// The hexadecimal parsing failure.
+        #[source]
+        source: std::num::ParseIntError,
+    },
+}
 
 /// Identifier of a plugin class, a 16-byte VST3 TUID.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -107,19 +128,22 @@ impl fmt::Debug for ClassId {
 }
 
 impl FromStr for ClassId {
-    type Err = String;
+    type Err = ClassIdError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         let digits = text.trim();
         if digits.len() != 32 || !digits.is_ascii() {
-            return Err(format!("Invalid class id: \"{text}\""));
+            return Err(ClassIdError::InvalidFormat { text: text.to_owned() });
         }
         let mut displayed = [0_u8; 16];
         for (index, slot) in displayed.iter_mut().enumerate() {
             let pair = digits
                 .get(index * 2..index * 2 + 2)
-                .ok_or_else(|| format!("Invalid class id: \"{text}\""))?;
-            *slot = u8::from_str_radix(pair, 16).map_err(|_| format!("Invalid class id: \"{text}\""))?;
+                .ok_or_else(|| ClassIdError::InvalidFormat { text: text.to_owned() })?;
+            *slot = u8::from_str_radix(pair, 16).map_err(|source| ClassIdError::InvalidHex {
+                text: text.to_owned(),
+                source,
+            })?;
         }
         // The display reordering swaps bytes within groups, so applying it again restores the stored order.
         Ok(Self(Self(displayed).display_order()))
@@ -133,7 +157,7 @@ impl From<ClassId> for String {
 }
 
 impl TryFrom<String> for ClassId {
-    type Error = String;
+    type Error = ClassIdError;
 
     fn try_from(text: String) -> Result<Self, Self::Error> {
         text.parse()
@@ -245,6 +269,8 @@ fn read_class(factory: &ComPtr<IPluginFactory>, index: i32) -> Option<ClassInfo>
 
 #[cfg(test)]
 mod test_class_id {
+    use std::error::Error as _;
+
     use super::*;
 
     #[test]
@@ -266,6 +292,22 @@ mod test_class_id {
         assert!("1234".parse::<ClassId>().is_err());
         assert!("ZZ332252542244A00AA69301AF31879".parse::<ClassId>().is_err());
         assert!(format!("{}é", "0".repeat(30)).parse::<ClassId>().is_err());
+    }
+
+    #[test]
+    fn malformed_ids_keep_the_input_and_hexadecimal_source() {
+        let short = "1234".parse::<ClassId>().expect_err("short id");
+        assert!(matches!(short, ClassIdError::InvalidFormat { .. }));
+        assert_eq!(short.to_string(), "Invalid class id: \"1234\"");
+        let text = "ZZ33225254224A00AA69301AF318797D";
+        let hex = text.parse::<ClassId>().expect_err("invalid hexadecimal");
+        assert!(matches!(hex, ClassIdError::InvalidHex { .. }));
+        assert_eq!(hex.to_string(), format!("Invalid class id: \"{text}\""));
+        assert!(
+            hex.source()
+                .expect("hexadecimal source")
+                .is::<std::num::ParseIntError>()
+        );
     }
 
     #[test]

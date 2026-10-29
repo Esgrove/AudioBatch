@@ -9,18 +9,19 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 audioadapter-buffers.workspace = true
 audiobatch-core.workspace = true
 cpal.workspace = true
 crossbeam-channel.workspace = true
 rtrb.workspace = true
 rubato.workspace = true
+thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 cpal = { workspace = true, features = ["asio"] }
 
 [dev-dependencies]
+anyhow.workspace = true
 tempfile.workspace = true
 test-fixtures.workspace = true
 

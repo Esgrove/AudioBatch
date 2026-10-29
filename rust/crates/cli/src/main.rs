@@ -96,6 +96,7 @@ fn main() -> ExitCode {
 
     // The analysis still works without the cache, it only has to read every file again on the next run.
     let cache = AnalysisCache::open_default().unwrap_or_else(|error| {
+        let error = anyhow::Error::from(error);
         let _ = write_warning!(
             &mut log,
             "Could not open the analysis cache, results are not cached: {error:#}"
@@ -137,6 +138,7 @@ fn main() -> ExitCode {
 /// Without a log file the CLI still works, so a failure is only reported.
 fn open_log_file() {
     if let Err(error) = log_file::install(env!("CARGO_BIN_NAME"), LevelFilter::WARN) {
+        let error = anyhow::Error::from(error);
         let _ = write_warning!(&mut io::stderr(), "{error:#}");
     }
 }

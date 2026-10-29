@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use anyhow::{Context, Result, anyhow};
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
 use crate::record::{
@@ -46,6 +45,76 @@ const HISTORY_HEADER_BYTES: usize = 32;
 
 /// Highest plausible short-term loudness, deliberately above what finite float PCM can reach.
 const MAXIMUM_LOUDNESS: f32 = 1000.0;
+
+/// Cache validation, filesystem, or database failures.
+#[derive(Debug, thiserror::Error)]
+pub enum CacheError {
+    /// The cache directory could not be created.
+    #[error("Failed to create cache directory {}", path.display())]
+    CreateDirectory {
+        /// Directory to create.
+        path: PathBuf,
+        /// Filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The cache database could not be opened.
+    #[error("Failed to open analysis cache {}", path.display())]
+    Open {
+        /// Database file to open.
+        path: PathBuf,
+        /// SQLite failure.
+        #[source]
+        source: rusqlite::Error,
+    },
+    /// A database statement or transaction failed.
+    #[error(transparent)]
+    Sqlite(#[from] rusqlite::Error),
+    /// Writing an analysis row failed.
+    #[error("SQLite could not store the analysis")]
+    StoreAnalysis(#[source] rusqlite::Error),
+    /// Updating a custom gain failed.
+    #[error("SQLite could not store the custom gain")]
+    StoreCustomGain(#[source] rusqlite::Error),
+    /// Writing a Serato tag row failed.
+    #[error("SQLite could not store the Serato tags")]
+    StoreSerato(#[source] rusqlite::Error),
+    /// Adding a column to an older schema failed.
+    #[error("SQLite could not add the {column} column to {table}")]
+    AddColumn {
+        /// Table being updated.
+        table: String,
+        /// Missing column.
+        column: String,
+        /// SQLite failure.
+        #[source]
+        source: rusqlite::Error,
+    },
+    /// A successful analysis has no valid loudness history.
+    #[error("Cannot cache analysis without valid loudness history")]
+    InvalidHistory,
+    /// A successful analysis has no waveform.
+    #[error("Cannot cache analysis without a waveform overview")]
+    MissingWaveform,
+    /// The file identity needed for caching is unavailable.
+    #[error("Cannot cache Serato tags of missing file {}", path.display())]
+    MissingSeratoFile {
+        /// File whose identity could not be read.
+        path: PathBuf,
+    },
+    /// An overview has no valid cache representation.
+    #[error("Cannot cache a Serato overview with {overview}")]
+    InvalidSeratoOverview {
+        /// Overview that could not be serialized.
+        overview: Arc<serato_tags::Overview>,
+    },
+    /// No connection is available after opening the cache.
+    #[error("Analysis cache is not open")]
+    NotOpen,
+}
+
+/// Result of a cache operation, retaining its database or filesystem cause.
+type Result<T> = std::result::Result<T, CacheError>;
 
 /// Persistent SQLite cache of analysis results.
 ///
@@ -191,12 +260,12 @@ impl AnalysisCache {
                 .short_term_loudness
                 .as_deref()
                 .and_then(|history| serialize_history(history, record))
-                .ok_or_else(|| anyhow!("Cannot cache analysis without valid loudness history"))?;
+                .ok_or(CacheError::InvalidHistory)?;
             let waveform_data = record
                 .waveform
                 .as_deref()
                 .map(WaveformOverview::to_bytes)
-                .ok_or_else(|| anyhow!("Cannot cache analysis without a waveform overview"))?;
+                .ok_or(CacheError::MissingWaveform)?;
             (Some(history), Some(waveform_data))
         };
         let file_size = i64::try_from(record.file_size).unwrap_or(i64::MAX);
@@ -244,7 +313,7 @@ impl AnalysisCache {
                         custom_gain.map(f64::from),
                     ],
                 )
-                .context("SQLite could not store the analysis")?;
+                .map_err(CacheError::StoreAnalysis)?;
             transaction.commit()?;
             Ok(())
         })
@@ -275,7 +344,7 @@ impl AnalysisCache {
                     "UPDATE file_analysis SET custom_gain_db = ?1, updated_at_ms = ?2 WHERE file_path = ?3",
                     params![custom_gain_db.map(f64::from), now_ms(), path_key(path)],
                 )
-                .context("SQLite could not store the custom gain")?;
+                .map_err(CacheError::StoreCustomGain)?;
             Ok(updated > 0)
         })
     }
@@ -320,11 +389,15 @@ impl AnalysisCache {
     /// Opens a connection and ensures the schema is current.
     fn connect(&self) -> Result<Connection> {
         if let Some(parent) = self.database_path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create cache directory {}", parent.display()))?;
+            std::fs::create_dir_all(parent).map_err(|source| CacheError::CreateDirectory {
+                path: parent.to_path_buf(),
+                source,
+            })?;
         }
-        let connection = Connection::open(&self.database_path)
-            .with_context(|| format!("Failed to open analysis cache {}", self.database_path.display()))?;
+        let connection = Connection::open(&self.database_path).map_err(|source| CacheError::Open {
+            path: self.database_path.clone(),
+            source,
+        })?;
         connection.busy_timeout(BUSY_TIMEOUT)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "NORMAL")?;
@@ -372,9 +445,7 @@ impl AnalysisCache {
         if guard.is_none() {
             *guard = Some(self.connect()?);
         }
-        let result = guard
-            .as_mut()
-            .map_or_else(|| Err(anyhow!("Analysis cache is not open")), operation);
+        let result = guard.as_mut().map_or_else(|| Err(CacheError::NotOpen), operation);
         drop(guard);
         result
     }
@@ -462,7 +533,11 @@ fn add_missing_columns(connection: &Connection, table: &str, columns: &[(&str, &
         if !existing.iter().any(|column| column == name) {
             connection
                 .execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {name} {definition};"))
-                .with_context(|| format!("SQLite could not add the {name} column to {table}"))?;
+                .map_err(|source| CacheError::AddColumn {
+                    table: table.to_owned(),
+                    column: (*name).to_owned(),
+                    source,
+                })?;
         }
     }
     Ok(())

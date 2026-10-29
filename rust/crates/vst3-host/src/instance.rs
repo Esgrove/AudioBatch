@@ -18,8 +18,8 @@ use std::mem::ManuallyDrop;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use anyhow::{Result, bail};
 use crossbeam_queue::ArrayQueue;
+use thiserror::Error;
 use vst3::Steinberg::Vst::{
     BusDirections_, IAudioProcessor, IAudioProcessorTrait as _, IComponent, IComponentHandler, IComponentTrait as _,
     IConnectionPoint, IConnectionPointTrait as _, IEditController, IEditControllerTrait as _, IParameterChanges,
@@ -33,9 +33,93 @@ use crate::factory::ClassId;
 use crate::host_objects::{
     ComponentHandler, EDIT_QUEUE_CAPACITY, HostApplication, MemoryStream, ParameterChanges, ParameterEdit, RestartFlags,
 };
-use crate::module::Module;
+use crate::module::{FactoryError, Module};
 use crate::processor::ProcessorHandle;
 use crate::thread::{UiDispatcher, UiThread};
+
+/// Why an instance could not be created, configured, or controlled.
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+pub enum InstanceError {
+    /// The module's factory could not create the component.
+    #[error(transparent)]
+    Factory(#[from] FactoryError),
+    /// The component refused initialization.
+    #[error("The plugin could not be initialized")]
+    Initialize {
+        /// The result returned by `initialize`.
+        result: i32,
+    },
+    /// The component does not implement the audio processor interface.
+    #[error("The plugin has no audio processor")]
+    MissingProcessor,
+    /// The plugin has no output bus.
+    #[error("The plugin has no audio output")]
+    MissingOutput,
+    /// No supported arrangement can carry the signal.
+    #[error("The plugin does not support {channels} channel audio")]
+    UnsupportedChannels {
+        /// The requested number of channels.
+        channels: usize,
+        /// The last arrangement result, when an arrangement was tried.
+        result: Option<i32>,
+    },
+    /// The processor does not support the host's sample format.
+    #[error("The plugin cannot process 32-bit samples")]
+    UnsupportedSampleSize {
+        /// The result returned by `canProcessSampleSize`.
+        result: i32,
+    },
+    /// The processor refused the processing setup.
+    #[error("The plugin does not support processing at {sample_rate} Hz")]
+    Setup {
+        /// The requested sample rate.
+        sample_rate: f64,
+        /// The result returned by `setupProcessing`.
+        result: i32,
+    },
+    /// Activation requires a processing setup.
+    #[error("The plugin must be set up before it is activated")]
+    SetupBeforeActivation,
+    /// The component refused activation.
+    #[error("The plugin could not be activated")]
+    Activate {
+        /// The result returned by `setActive`.
+        result: i32,
+    },
+    /// A parameter cannot be changed without a controller.
+    #[error("The plugin has no edit controller")]
+    MissingController,
+    /// A parameter value is not finite.
+    #[error("The value {normalized} for parameter {id} is not a finite number")]
+    NonFiniteParameter {
+        /// The parameter being changed.
+        id: u32,
+        /// The unmodified requested value.
+        normalized: f64,
+    },
+    /// The controller refused a parameter change.
+    #[error("The plugin refused the value {value} for parameter {id}")]
+    SetParameter {
+        /// The parameter being changed.
+        id: u32,
+        /// The clamped value passed to the controller.
+        value: f64,
+        /// The result returned by `setParamNormalized`.
+        result: i32,
+    },
+    /// Processing requires a setup.
+    #[error("The plugin must be set up before it can process audio")]
+    SetupBeforeProcessing,
+    /// Processing requires an active component.
+    #[error("The plugin must be active before it can process audio")]
+    ActivationBeforeProcessing,
+    /// An active component cannot be reconfigured.
+    #[error("The plugin must be inactive to change its setup")]
+    Active,
+    /// Live processor handles prevent reconfiguration.
+    #[error("The plugin is in use by an audio processor")]
+    InUse,
+}
 
 /// How a plugin is told it will be run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -223,19 +307,20 @@ impl PluginInstance {
         module: &Arc<Module>,
         class_id: ClassId,
         dispatcher: Option<UiDispatcher>,
-    ) -> Result<Self> {
+    ) -> Result<Self, InstanceError> {
         let component = module.create::<IComponent>(ui, class_id)?;
         let host = HostApplication::create();
         let context = host.to_com_ptr::<FUnknown>();
         let context_pointer = context.as_ref().map_or(std::ptr::null_mut(), ComPtr::as_ptr);
         // SAFETY: the component is a fresh object and the context pointer is valid for the call.
-        if unsafe { component.initialize(context_pointer) } != kResultOk {
-            bail!("The plugin could not be initialized");
+        let result = unsafe { component.initialize(context_pointer) };
+        if result != kResultOk {
+            return Err(InstanceError::Initialize { result });
         }
         let Some(processor) = component.cast::<IAudioProcessor>() else {
             // SAFETY: the component was initialized above.
             unsafe { component.terminate() };
-            bail!("The plugin has no audio processor");
+            return Err(InstanceError::MissingProcessor);
         };
         let (controller, separate_controller) = component.cast::<IEditController>().map_or_else(
             || (create_controller(ui, module, &component, context_pointer), true),
@@ -323,12 +408,12 @@ impl PluginInstance {
     /// # Errors
     ///
     /// Returns an error when the plugin is active, has no audio output, or accepts none of the arrangements.
-    pub fn configure_main_buses(&mut self, ui: &UiThread, channels: usize) -> Result<BusLayout> {
+    pub fn configure_main_buses(&mut self, ui: &UiThread, channels: usize) -> Result<BusLayout, InstanceError> {
         self.ensure_reconfigurable()?;
         let mut inputs = self.arrangements(ui, BusDirection::Input);
         let mut outputs = self.arrangements(ui, BusDirection::Output);
         if outputs.is_empty() {
-            bail!("The plugin has no audio output");
+            return Err(InstanceError::MissingOutput);
         }
         let default_input = inputs.first().copied();
         let default_output = outputs.first().copied().unwrap_or_default();
@@ -340,6 +425,7 @@ impl PluginInstance {
             candidates.push(SpeakerArr::kStereo);
         }
         let mut accepted = false;
+        let mut last_result = None;
         for candidate in candidates {
             if let Some(main) = inputs.first_mut() {
                 *main = candidate;
@@ -356,6 +442,7 @@ impl PluginInstance {
                     bus_count(outputs.len()),
                 )
             };
+            last_result = Some(result);
             if result == kResultTrue && self.main_arrangements_are(ui, candidate) {
                 accepted = true;
                 break;
@@ -364,7 +451,10 @@ impl PluginInstance {
         if !accepted {
             let input_channels = default_input.map_or(channels, channel_count);
             if input_channels < channels || channel_count(default_output) < channels {
-                bail!("The plugin does not support {channels} channel audio");
+                return Err(InstanceError::UnsupportedChannels {
+                    channels,
+                    result: last_result,
+                });
             }
             if let Some(main) = inputs.first_mut() {
                 *main = default_input.unwrap_or_default();
@@ -399,12 +489,13 @@ impl PluginInstance {
         mode: ProcessMode,
         sample_rate: f64,
         max_block_frames: usize,
-    ) -> Result<()> {
+    ) -> Result<(), InstanceError> {
         self.ensure_reconfigurable()?;
         let processor = &self.core.parts.processor;
         // SAFETY: the processor is valid.
-        if unsafe { processor.canProcessSampleSize(to_i32(SymbolicSampleSizes_::kSample32)) } != kResultTrue {
-            bail!("The plugin cannot process 32-bit samples");
+        let result = unsafe { processor.canProcessSampleSize(to_i32(SymbolicSampleSizes_::kSample32)) };
+        if result != kResultTrue {
+            return Err(InstanceError::UnsupportedSampleSize { result });
         }
         let mut setup = ProcessSetup {
             processMode: process_mode_value(mode),
@@ -413,8 +504,9 @@ impl PluginInstance {
             sampleRate: sample_rate,
         };
         // SAFETY: the processor is valid and the setup lives for the call.
-        if unsafe { processor.setupProcessing(&raw mut setup) } != kResultOk {
-            bail!("The plugin does not support processing at {sample_rate} Hz");
+        let result = unsafe { processor.setupProcessing(&raw mut setup) };
+        if result != kResultOk {
+            return Err(InstanceError::Setup { sample_rate, result });
         }
         self.setup = Some(ProcessingSetup {
             mode,
@@ -429,17 +521,18 @@ impl PluginInstance {
     /// # Errors
     ///
     /// Returns an error when the plugin has not been set up or refuses to activate.
-    pub fn activate(&mut self, _ui: &UiThread) -> Result<()> {
+    pub fn activate(&mut self, _ui: &UiThread) -> Result<(), InstanceError> {
         if self.is_active() {
             return Ok(());
         }
         if self.setup.is_none() {
-            bail!("The plugin must be set up before it is activated");
+            return Err(InstanceError::SetupBeforeActivation);
         }
         let parts = &self.core.parts;
         // SAFETY: the component is valid and set up.
-        if unsafe { parts.component.setActive(1) } != kResultOk {
-            bail!("The plugin could not be activated");
+        let result = unsafe { parts.component.setActive(1) };
+        if result != kResultOk {
+            return Err(InstanceError::Activate { result });
         }
         // SAFETY: the processor is valid and its component is active.
         unsafe { parts.processor.setProcessing(1) };
@@ -452,7 +545,7 @@ impl PluginInstance {
     /// # Errors
     ///
     /// Returns an error while processor handles exist.
-    pub fn deactivate(&mut self, _ui: &UiThread) -> Result<()> {
+    pub fn deactivate(&mut self, _ui: &UiThread) -> Result<(), InstanceError> {
         if !self.is_active() {
             return Ok(());
         }
@@ -490,7 +583,7 @@ impl PluginInstance {
     /// # Errors
     ///
     /// Never fails at the moment, and keeps the `Result` so callers handle a future failure.
-    pub fn state(&self, ui: &UiThread) -> Result<PluginState> {
+    pub fn state(&self, ui: &UiThread) -> Result<PluginState, InstanceError> {
         let component = self.component_state(ui);
         let controller = self.core.parts.controller.as_ref().map_or_else(Vec::new, |controller| {
             let stream = MemoryStream::create();
@@ -516,7 +609,7 @@ impl PluginInstance {
     /// # Errors
     ///
     /// Returns an error when the plugin is active.
-    pub fn set_state(&mut self, ui: &UiThread, state: &PluginState) -> Result<bool> {
+    pub fn set_state(&mut self, ui: &UiThread, state: &PluginState) -> Result<bool, InstanceError> {
         self.ensure_reconfigurable()?;
         let mut accepted = true;
         if !state.component.is_empty() {
@@ -552,18 +645,19 @@ impl PluginInstance {
     ///
     /// Returns an error when the value is not a finite number,
     /// or when the plugin has no edit controller or the controller refuses the value.
-    pub fn set_parameter(&self, _ui: &UiThread, id: u32, normalized: f64) -> Result<()> {
+    pub fn set_parameter(&self, _ui: &UiThread, id: u32, normalized: f64) -> Result<(), InstanceError> {
         let Some(controller) = &self.core.parts.controller else {
-            bail!("The plugin has no edit controller");
+            return Err(InstanceError::MissingController);
         };
         // Clamping keeps NaN as it is, so a value that is not a number would reach the plugin.
         if !normalized.is_finite() {
-            bail!("The value {normalized} for parameter {id} is not a finite number");
+            return Err(InstanceError::NonFiniteParameter { id, normalized });
         }
         let value = normalized.clamp(0.0, 1.0);
         // SAFETY: the controller is valid for the call.
-        if unsafe { controller.setParamNormalized(id, value) } != kResultOk {
-            bail!("The plugin refused the value {value} for parameter {id}");
+        let result = unsafe { controller.setParamNormalized(id, value) };
+        if result != kResultOk {
+            return Err(InstanceError::SetParameter { id, value, result });
         }
         self.core.edits.force_push(ParameterEdit { id, value });
         Ok(())
@@ -637,12 +731,12 @@ impl PluginInstance {
     /// # Errors
     ///
     /// Returns an error when the plugin is not active.
-    pub fn processor(&self, ui: &UiThread) -> Result<ProcessorHandle> {
+    pub fn processor(&self, ui: &UiThread) -> Result<ProcessorHandle, InstanceError> {
         let Some(setup) = self.setup else {
-            bail!("The plugin must be set up before it can process audio");
+            return Err(InstanceError::SetupBeforeProcessing);
         };
         if !self.is_active() {
-            bail!("The plugin must be active before it can process audio");
+            return Err(InstanceError::ActivationBeforeProcessing);
         }
         let layout = self.layout.clone().unwrap_or_else(|| self.current_bus_layout(ui));
         Ok(ProcessorHandle::new(Arc::clone(&self.core), &layout, setup))
@@ -658,18 +752,18 @@ impl PluginInstance {
     }
 
     /// Returns an error while the plugin is active or processor handles exist.
-    fn ensure_reconfigurable(&self) -> Result<()> {
+    fn ensure_reconfigurable(&self) -> Result<(), InstanceError> {
         self.ensure_no_processors()?;
         if self.is_active() {
-            bail!("The plugin must be inactive to change its setup");
+            return Err(InstanceError::Active);
         }
         Ok(())
     }
 
     /// Returns an error while processor handles exist.
-    fn ensure_no_processors(&self) -> Result<()> {
+    fn ensure_no_processors(&self) -> Result<(), InstanceError> {
         if self.core.live_processors.load(Ordering::Acquire) > 0 {
-            bail!("The plugin is in use by an audio processor");
+            return Err(InstanceError::InUse);
         }
         Ok(())
     }
@@ -992,7 +1086,7 @@ mod test_lifecycle {
 #[cfg(test)]
 mod test_plugin_failures {
     use audiobatch_test_plugin::{FAILING_STATE_BYTES, INITIAL_CONTROLLER_STATE, Kind};
-    use vst3::Steinberg::kResultFalse;
+    use vst3::Steinberg::{kInvalidArgument, kResultFalse};
 
     use super::*;
     use crate::processor::ProcessError;
@@ -1000,6 +1094,7 @@ mod test_plugin_failures {
 
     #[test]
     fn a_failing_process_call_returns_the_result_of_the_plugin() {
+        assert_eq!(size_of::<ProcessError>(), size_of::<i32>());
         let (_instance, mut processor) = on_ui(|ui| {
             let instance = active_instance(ui, Kind::Failing, 2).map_err(|error| error.to_string())?;
             let processor = instance.processor(ui).map_err(|error| error.to_string())?;
@@ -1013,6 +1108,43 @@ mod test_plugin_failures {
             format!("The plugin failed to process audio (result {kResultFalse})")
         );
         assert_eq!(processor.process(0), Ok(()));
+    }
+
+    #[test]
+    fn parameter_failures_keep_the_result_code_and_requested_value() {
+        let (refused, non_finite) = on_ui(|ui| {
+            let instance = active_instance(ui, Kind::Gain, 2)?;
+            Ok::<_, anyhow::Error>((
+                instance.set_parameter(ui, u32::MAX, 0.5),
+                instance.set_parameter(ui, 0, f64::INFINITY),
+            ))
+        })
+        .expect("gain instance");
+        let refused = refused.expect_err("unknown parameter");
+        let non_finite = non_finite.expect_err("infinite value");
+        assert!(matches!(
+            refused,
+            InstanceError::SetParameter {
+                id: u32::MAX,
+                result,
+                ..
+            } if result == kInvalidArgument
+        ));
+        assert_eq!(
+            refused.to_string(),
+            format!("The plugin refused the value 0.5 for parameter {}", u32::MAX)
+        );
+        assert!(matches!(
+            non_finite,
+            InstanceError::NonFiniteParameter {
+                id: 0,
+                normalized: f64::INFINITY
+            }
+        ));
+        assert_eq!(
+            non_finite.to_string(),
+            "The value inf for parameter 0 is not a finite number"
+        );
     }
 
     #[test]

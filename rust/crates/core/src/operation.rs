@@ -6,6 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::cache::AnalysisCache;
+use crate::format::format_error_chain;
 use crate::record::AnalysisRecord;
 
 /// What an operation on one file produced.
@@ -92,12 +93,12 @@ pub fn update_cache(cache: &AnalysisCache, source: &AnalysisRecord, result: &Ope
     if output.path != source.path
         && let Err(error) = cache.remove_analysis(&source.path)
     {
-        tracing::warn!("Could not update the cache: {error:#}");
+        tracing::warn!("Could not update the cache: {}", format_error_chain(&error));
     }
     if matches!(result.outcome, OperationOutcome::Succeeded { .. })
         && let Err(error) = cache.store_analysis(output)
     {
-        tracing::warn!("Could not update the cache: {error:#}");
+        tracing::warn!("Could not update the cache: {}", format_error_chain(&error));
     }
 }
 

@@ -311,7 +311,13 @@ Module boundaries:
 
 - Rust 2024 edition, with clippy pedantic and nursery lints denied.
 - Do not use plain `unwrap`. Use proper error handling, or `.expect()` in constants and tests.
-- Use `anyhow` with `Result<T>` for errors in application code.
+- Use domain-specific errors derived with `thiserror` in library and internal crates.
+  Preserve concrete source errors and structured context, and match variants instead of parsing messages.
+  Keep appropriate standard error types, such as `std::io::Error`, when a custom type adds no useful distinction.
+- Use `anyhow` with `Result<T>` in the CLI and GUI for application context and reporting.
+  Convert errors to strings only at presentation, persistence, or protocol boundaries.
+  Keep existing user-facing messages and use `tracing` for logging.
+  Audio callback errors must remain allocation-free.
 - Use `clap` with derive macros. Every CLI argument has both a short and a long option,
   except where the C++ CLI has only a long one, because both CLIs take the same arguments.
 - Use the `colored` crate for terminal colors.

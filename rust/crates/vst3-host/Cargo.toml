@@ -14,12 +14,12 @@ default = []
 editor = ["dep:raw-window-handle", "dep:objc2-app-kit", "dep:objc2-foundation"]
 
 [dependencies]
-anyhow.workspace = true
 async-channel.workspace = true
 crossbeam-queue.workspace = true
 raw-window-handle = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 vst3.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -39,6 +39,7 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [dev-dependencies]
+anyhow.workspace = true
 audiobatch-test-plugin.workspace = true
 tempfile.workspace = true
 

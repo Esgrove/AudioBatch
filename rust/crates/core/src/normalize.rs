@@ -16,15 +16,15 @@ use std::fs::File;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
-use crate::aiff::{AiffWriter, SUPPORTED_BIT_DEPTHS};
+use crate::aiff::{AiffError, AiffWriter, SUPPORTED_BIT_DEPTHS};
 use crate::analysis::{analyze_file, analyze_file_catching_panics};
-use crate::decode::{AudioFileDecoder, DEFAULT_LOSSY_BITS_PER_SAMPLE, is_mp3_path};
-use crate::format::gain_to_decibels;
+use crate::decode::{AudioFileDecoder, DEFAULT_LOSSY_BITS_PER_SAMPLE, DecodeError, is_mp3_path};
+use crate::format::{format_error_chain, gain_to_decibels};
 use crate::metadata::copy_metadata;
 use crate::operation::{OperationOutcome, OperationResult, progress_range};
 use crate::output_file::{
-    FileDisposer, check_output_path, commit_temporary_output, create_temporary_output, dispose_of_copy, trash_disposer,
-    validate_written_audio,
+    FileDisposer, OutputValidationError, check_output_path, commit_temporary_output, create_temporary_output,
+    dispose_of_copy, trash_disposer, validate_written_audio,
 };
 use crate::record::{AnalysisRecord, NEGATIVE_INFINITY_LOUDNESS};
 
@@ -72,6 +72,40 @@ const RENDER_PROGRESS_END: f32 = 0.8;
 /// needs a gain one step above unity to reach 0 dBFS, and rewriting it would produce the same samples again.
 /// The C++ application uses the same tolerance.
 const AT_TARGET_TOLERANCE_STEPS: f64 = 1.5;
+
+/// A file whose measured levels cannot safely reach the normalization target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum NormalizationGainError {
+    /// There is no finite, nonzero signal.
+    #[error("File contains no signal that can be normalized")]
+    NoSignal,
+    /// The file has no measurable integrated loudness.
+    #[error("File has no measurable loudness to normalize")]
+    NoLoudness,
+    /// Reaching the target would require an unsafe or nonfinite gain.
+    #[error("Reaching the target would need more than {MAXIMUM_GAIN_DB:.0} dB of gain")]
+    ExcessiveGain,
+}
+
+/// A failure while streaming the normalized audio into a temporary file.
+#[derive(Debug, thiserror::Error)]
+enum NormalizationRenderError {
+    /// The source could not be opened.
+    #[error("Unsupported or unreadable audio file")]
+    Open(#[source] DecodeError),
+    /// The source could not be decoded.
+    #[error(transparent)]
+    Decode(#[from] DecodeError),
+    /// The AIFF writer could not be initialized.
+    #[error(transparent)]
+    Initialize(#[from] AiffError),
+    /// Writing or finishing the normalized audio failed.
+    #[error("Failed while writing normalized audio data")]
+    Write(#[source] AiffError),
+    /// The operation was cancelled before it committed any output.
+    #[error("{CANCELLED_MESSAGE}")]
+    Cancelled,
+}
 
 /// The level normalization brings a file to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -136,7 +170,7 @@ impl fmt::Debug for NormalizationOptions {
 
 impl RenderedAudio {
     /// Checks that the written file reads back as what was rendered.
-    fn validate(&self, path: &Path) -> Result<(), String> {
+    fn validate(&self, path: &Path) -> Result<(), OutputValidationError> {
         validate_written_audio(path, self.channels, self.sample_rate, self.frames)
     }
 }
@@ -200,16 +234,19 @@ pub fn batch_output_conflict_message(source: &Path) -> String {
 /// # Errors
 ///
 /// Returns the user-facing reason when the file cannot be normalized.
-pub fn normalization_gain(record: &AnalysisRecord, options: &NormalizationOptions) -> Result<f32, String> {
+pub fn normalization_gain(
+    record: &AnalysisRecord,
+    options: &NormalizationOptions,
+) -> Result<f32, NormalizationGainError> {
     let peak = f64::from(record.overall_peak.abs());
     if !peak.is_finite() || peak <= 0.0 {
-        return Err("File contains no signal that can be normalized".to_string());
+        return Err(NormalizationGainError::NoSignal);
     }
     let gain_decibels = match options.mode {
         NormalizationMode::Peak => options.target_peak_dbfs - gain_to_decibels(peak, DECIBEL_FLOOR),
         NormalizationMode::Loudness => {
             if record.integrated_lufs <= NEGATIVE_INFINITY_LOUDNESS {
-                return Err("File has no measurable loudness to normalize".to_string());
+                return Err(NormalizationGainError::NoLoudness);
             }
             let gain = options.target_lufs - record.integrated_lufs;
             // The true peak scales with the gain, so the ceiling caps how far the file can be raised.
@@ -222,9 +259,7 @@ pub fn normalization_gain(record: &AnalysisRecord, options: &NormalizationOption
         }
     };
     if !gain_decibels.is_finite() || gain_decibels > MAXIMUM_GAIN_DB {
-        return Err(format!(
-            "Reaching the target would need more than {MAXIMUM_GAIN_DB:.0} dB of gain"
-        ));
+        return Err(NormalizationGainError::ExcessiveGain);
     }
     let gain = if gain_decibels > DECIBEL_FLOOR {
         10_f64.powf(gain_decibels * 0.05)
@@ -333,7 +368,7 @@ pub(crate) fn normalize_file(
     };
 
     if let Err(error) = copy_metadata(source, temporary.path()) {
-        tracing::error!("{error:#}");
+        tracing::error!("{}", format_error_chain(&error));
         return fail(source, "Could not preserve metadata while writing normalized audio");
     }
     if let Err(error) = rendered.validate(temporary.path()) {
@@ -386,20 +421,18 @@ fn render_normalized_audio(
     gain: f32,
     is_cancelled: &dyn Fn() -> bool,
     on_progress: &mut dyn FnMut(f32),
-) -> Result<RenderedAudio, String> {
-    let mut decoder =
-        AudioFileDecoder::open(&record.path).map_err(|_| "Unsupported or unreadable audio file".to_string())?;
+) -> Result<RenderedAudio, NormalizationRenderError> {
+    let mut decoder = AudioFileDecoder::open(&record.path).map_err(NormalizationRenderError::Open)?;
     let channels = decoder.info().channels;
     let sample_rate = decoder.info().sample_rate;
-    let mut writer = AiffWriter::new(BufWriter::new(file), channels, sample_rate, output_bit_depth(record))
-        .map_err(|error| error.to_string())?;
+    let mut writer = AiffWriter::new(BufWriter::new(file), channels, sample_rate, output_bit_depth(record))?;
     let total_frames = record.length_in_samples.max(1);
     let mut scaled: Vec<Vec<f32>> = vec![Vec::new(); channels as usize];
     loop {
         if is_cancelled() {
-            return Err(CANCELLED_MESSAGE.to_string());
+            return Err(NormalizationRenderError::Cancelled);
         }
-        let Some(chunk) = decoder.next_chunk().map_err(|error| error.to_string())? else {
+        let Some(chunk) = decoder.next_chunk()? else {
             break;
         };
         for (target, samples) in scaled.iter_mut().zip(chunk) {
@@ -407,15 +440,11 @@ fn render_normalized_audio(
             target.extend(samples.iter().map(|sample| sample * gain));
         }
         let planes: Vec<&[f32]> = scaled.iter().map(Vec::as_slice).collect();
-        writer
-            .write_planar(&planes)
-            .map_err(|_| "Failed while writing normalized audio data".to_string())?;
+        writer.write_planar(&planes).map_err(NormalizationRenderError::Write)?;
         on_progress((writer.frames_written() as f64 / total_frames as f64).min(1.0) as f32);
     }
     let frames = writer.frames_written();
-    writer
-        .finish()
-        .map_err(|_| "Failed while writing normalized audio data".to_string())?;
+    writer.finish().map_err(NormalizationRenderError::Write)?;
     Ok(RenderedAudio {
         channels,
         sample_rate,
@@ -425,8 +454,8 @@ fn render_normalized_audio(
 }
 
 /// Builds a failed result, which the caller reports.
-fn fail(source: &Path, error: impl Into<String>) -> OperationResult {
-    OperationResult::failure(source, error)
+fn fail(source: &Path, error: impl fmt::Display) -> OperationResult {
+    OperationResult::failure(source, error.to_string())
 }
 
 /// Builds a successful result.
@@ -461,6 +490,22 @@ fn path_key(path: &Path) -> String {
 mod test_normalization_gain {
     use super::*;
     use crate::record::AnalysisStatus;
+
+    #[test]
+    fn typed_gain_errors_keep_the_existing_messages() {
+        assert_eq!(
+            NormalizationGainError::NoSignal.to_string(),
+            "File contains no signal that can be normalized"
+        );
+        assert_eq!(
+            NormalizationGainError::NoLoudness.to_string(),
+            "File has no measurable loudness to normalize"
+        );
+        assert_eq!(
+            NormalizationGainError::ExcessiveGain.to_string(),
+            "Reaching the target would need more than 40 dB of gain"
+        );
+    }
 
     /// Builds an analyzed record with the given peak, true peak, and loudness in decibels.
     fn record(peak_decibels: f64, true_peak_decibels: f64, loudness: f64) -> AnalysisRecord {
@@ -520,7 +565,7 @@ mod test_normalization_gain {
         };
         assert_eq!(
             normalization_gain(&silent, &NormalizationOptions::default()),
-            Err("File contains no signal that can be normalized".to_string())
+            Err(NormalizationGainError::NoSignal)
         );
         let options = NormalizationOptions {
             mode: NormalizationMode::Loudness,
@@ -528,7 +573,7 @@ mod test_normalization_gain {
         };
         assert_eq!(
             normalization_gain(&record(-60.0, -60.0, NEGATIVE_INFINITY_LOUDNESS), &options),
-            Err("File has no measurable loudness to normalize".to_string())
+            Err(NormalizationGainError::NoLoudness)
         );
     }
 
@@ -536,7 +581,7 @@ mod test_normalization_gain {
     fn gain_above_the_maximum_is_refused() {
         assert_eq!(
             normalization_gain(&record(-41.0, -41.0, -50.0), &NormalizationOptions::default()),
-            Err("Reaching the target would need more than 40 dB of gain".to_string())
+            Err(NormalizationGainError::ExcessiveGain)
         );
     }
 }

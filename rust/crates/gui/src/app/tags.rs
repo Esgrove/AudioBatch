@@ -61,6 +61,7 @@ impl AppView {
                         && file_identity(&read_path) == identity
                         && let Err(error) = cache.store_serato_overview(&read_path, state)
                     {
+                        let error = anyhow::Error::from(error);
                         tracing::warn!("Failed to cache the Serato tags of {}: {error:#}", read_path.display());
                     }
                     (tags, state)

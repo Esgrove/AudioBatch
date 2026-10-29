@@ -5,11 +5,10 @@
 use std::ffi::c_void;
 use std::rc::Rc;
 
-use anyhow::{Result, bail};
 use raw_window_handle::RawWindowHandle;
 use vst3::Steinberg::{FIDString, kPlatformTypeX11EmbedWindowID};
 
-use super::{EditorShared, ViewSize};
+use super::{EditorError, EditorShared, ViewSize};
 use crate::thread::UiThread;
 
 /// A window that cannot be created.
@@ -27,8 +26,8 @@ impl NativeWindow {
         _size: ViewSize,
         _resizable: bool,
         _owner: Option<RawWindowHandle>,
-    ) -> Result<Self> {
-        bail!("Plugin editors are only supported on macOS and Windows")
+    ) -> Result<Self, EditorError> {
+        Err(EditorError::UnsupportedPlatform)
     }
 
     /// Never called, because the window cannot exist.

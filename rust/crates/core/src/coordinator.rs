@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
@@ -23,6 +22,11 @@ use crate::record::{AnalysisOptions, AnalysisRecord};
 
 /// Smallest progress step that is published, so the receiver is not flooded with events.
 const PROGRESS_STEP: f32 = 0.02;
+
+/// A failure to create the analysis worker threads.
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to create the analysis worker pool")]
+pub struct AnalysisCoordinatorError(#[source] pub rayon::ThreadPoolBuildError);
 
 /// Events of one analysis run, in the order they are published.
 #[derive(Debug, Clone)]
@@ -103,12 +107,12 @@ impl AnalysisCoordinator {
     /// # Errors
     ///
     /// Returns an error when the worker threads cannot be created.
-    pub fn new(cache: Arc<AnalysisCache>, worker_count: usize) -> Result<Self> {
+    pub fn new(cache: Arc<AnalysisCache>, worker_count: usize) -> Result<Self, AnalysisCoordinatorError> {
         let pool = ThreadPoolBuilder::new()
             .num_threads(worker_count.max(1))
             .thread_name(|index| format!("analysis-{index}"))
             .build()
-            .context("Failed to create the analysis worker pool")?;
+            .map_err(AnalysisCoordinatorError)?;
         Ok(Self {
             cache,
             pool: Arc::new(pool),

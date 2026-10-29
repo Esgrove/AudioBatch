@@ -8,10 +8,9 @@
 
 use std::borrow::Cow;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
 use lofty::config::ParseOptions;
 use lofty::file::AudioFile;
 use lofty::flac::FlacFile;
@@ -22,6 +21,17 @@ use lofty::mpeg::MpegFile;
 use lofty::prelude::{Accessor, ItemKey, TaggedFileExt};
 use serato_tags::native::{decode_native_value, native_field_description};
 use serato_tags::{Overview, SeratoData, SeratoTag};
+
+/// A failure to open or parse the display tags of an audio file.
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to read tags of {}", path.display())]
+pub struct TagsError {
+    /// File whose tags could not be read.
+    pub path: PathBuf,
+    /// Tag reader's concrete parse or I/O failure.
+    #[source]
+    pub source: lofty::error::FileParseError,
+}
 
 /// What reading the Serato Overview tag of a file found, the read results the tag cache keeps.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,8 +114,11 @@ impl FileTags {
 /// # Errors
 ///
 /// Returns an error when the file cannot be opened or parsed.
-pub fn read_tags(path: &Path) -> Result<FileTags> {
-    let tagged = lofty::read_from_path(path).with_context(|| format!("Failed to read tags of {}", path.display()))?;
+pub fn read_tags(path: &Path) -> Result<FileTags, TagsError> {
+    let tagged = lofty::read_from_path(path).map_err(|source| TagsError {
+        path: path.to_path_buf(),
+        source,
+    })?;
     let mut tags = FileTags::default();
     if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
         tags.title = tag.title().map(Cow::into_owned);
@@ -203,6 +216,16 @@ fn serato_data(tag: &Id3v2Tag) -> Option<SeratoData> {
 #[cfg(test)]
 mod test_read_tags {
     use super::*;
+
+    #[test]
+    fn read_failure_keeps_the_path_and_parse_source() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("missing.wav");
+        let error = read_tags(&path).expect_err("missing file");
+        assert_eq!(error.path, path);
+        assert_eq!(error.to_string(), format!("Failed to read tags of {}", path.display()));
+        assert!(std::error::Error::source(&error).is_some());
+    }
 
     #[test]
     fn reads_tags_from_tagged_flac() {
