@@ -122,6 +122,7 @@ bool AnalysisCache::addMissingColumns() const
         ColumnMigration {.name = "custom_gain_db", .definition = "REAL NOT NULL DEFAULT 0"},
         ColumnMigration {.name = "has_custom_gain", .definition = "INTEGER NOT NULL DEFAULT 0"},
         ColumnMigration {.name = "short_term_loudness", .definition = "BLOB"},
+        ColumnMigration {.name = "overload_history", .definition = "BLOB"},
     };
 
     return std::ranges::all_of(migrations, [this](const ColumnMigration& migration) {
@@ -215,6 +216,7 @@ bool AnalysisCache::openUnlocked()
             max_short_term_lufs REAL NOT NULL DEFAULT -1000,
             integrated_lufs REAL NOT NULL DEFAULT -1000,
             short_term_loudness BLOB,
+            overload_history BLOB,
             sample_rate INTEGER NOT NULL,
             channels INTEGER NOT NULL,
             bits_per_sample INTEGER NOT NULL,

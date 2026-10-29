@@ -36,6 +36,7 @@ constexpr int analysisVersion {19};
 constexpr int customGainDb {20};
 constexpr int hasCustomGain {21};
 constexpr int shortTermLoudness {22};
+constexpr int overloadHistory {23};
 }  // namespace analysis_column
 
 /// One-based bind parameter indices for the analysis record upsert in AnalysisCache::storeAnalysis.
@@ -69,6 +70,7 @@ constexpr int updatedAtMs {24};
 constexpr int customGainDb {25};
 constexpr int hasCustomGain {26};
 constexpr int shortTermLoudness {27};
+constexpr int overloadHistory {28};
 }  // namespace analysis_parameter
 
 /// One-based bind parameter indices for the waveform UPDATE in AnalysisCache::storeWaveformData.
