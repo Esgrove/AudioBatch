@@ -6,7 +6,7 @@ cmake_minimum_required(VERSION 4.2)
 
 project(
     "AudioBatchTestPlugin"
-    VERSION 1.0.0
+    VERSION 1.1.0
     DESCRIPTION "Mid/side and gain test plugin for the AudioBatch tests"
     LANGUAGES CXX C
 )
