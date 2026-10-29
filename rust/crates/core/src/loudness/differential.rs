@@ -3,7 +3,8 @@
 //! The reference feeds ebur128 the way the analysis always has, in 100 ms blocks with mono as dual mono.
 //! The inputs cover every signal kind, the rates where the true peak oversampling changes,
 //! one to eight channels, and random chunk sizes from a seeded generator.
-//! Every value is compared exactly, except the short-term loudness, whose summation order differs on purpose.
+//! Integrated loudness, true peaks, and the stored short-term history are compared exactly.
+//! The f64 short-term maximum is compared before readings are rounded to the f32 history representation.
 
 use ebur128::{Channel, EbuR128, Mode};
 
@@ -158,6 +159,17 @@ mod test_harness {
                 &[reference.integrated_lufs],
                 &[output.integrated_lufs],
             );
+            let maximum = reference
+                .short_term
+                .iter()
+                .copied()
+                .fold(crate::record::NEGATIVE_INFINITY_LOUDNESS, f64::max);
+            assert_bits_equal(
+                &case.label,
+                "maximum short-term",
+                &[maximum],
+                &[output.max_short_term_lufs],
+            );
             let history: Vec<f64> = reference
                 .short_term
                 .iter()
@@ -166,6 +178,44 @@ mod test_harness {
             let measured: Vec<f64> = output.history.iter().copied().map(f64::from).collect();
             assert_bits_equal(&case.label, "short-term", &history, &measured);
         }
+    }
+
+    #[test]
+    fn repeated_windows_and_gate_changes_preserve_exact_loudness() {
+        let mut case = Case::new(SignalKind::MusicLike, 8_000, 2, 7.1);
+        for plane in &mut case.planes {
+            for (frame, sample) in plane.iter_mut().enumerate() {
+                *sample *= if frame < 8_000 {
+                    0.000_3
+                } else if frame < 32_000 {
+                    0.3
+                } else {
+                    0.003
+                };
+            }
+        }
+        let reference = reference(&case);
+        let measured = measure_signal(&case.planes, case.sample_rate, 713);
+        assert_bits_equal(
+            &case.label,
+            "integrated",
+            &[reference.integrated_lufs],
+            &[measured.integrated_lufs],
+        );
+        let maximum = reference
+            .short_term
+            .iter()
+            .copied()
+            .fold(crate::record::NEGATIVE_INFINITY_LOUDNESS, f64::max);
+        assert_bits_equal(&case.label, "maximum", &[maximum], &[measured.max_short_term_lufs]);
+        assert_eq!(
+            measured.history,
+            reference
+                .short_term
+                .iter()
+                .map(|&value| value as f32)
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
