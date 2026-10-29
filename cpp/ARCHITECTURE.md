@@ -231,6 +231,12 @@ sequenceDiagram
 - `measureDecodedAudio` reads blocks of a tenth of a second, which keeps the short-term loudness history at 10 Hz.
   `DecodeFailureTracker` tolerates a failed final block and isolated failed blocks,
   and fails the file after three failed blocks in a row.
+- Each block also sets per-channel source overload flags in `OverloadHistoryBuilder`:
+  a sample over for a decoded sample whose magnitude exceeds 1.0,
+  and a true peak over when `ebur128_prev_true_peak` reports more than 1.0 for that block's meter call.
+  The history keeps at most 8192 buckets by merging neighbours with a bitwise or,
+  and the cache stores it as a versioned blob beside the short-term loudness.
+  A missing or malformed blob on a successful row makes the file analyze again.
 - The sample peaks keep their sign, and the overall values take the channel with the largest magnitude.
 - `storeAnalysis` keeps only failures that would repeat for the same bytes, so the next run retries the others.
 - The waveform is not part of the analysis.

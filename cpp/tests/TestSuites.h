@@ -62,6 +62,9 @@ std::unique_ptr<juce::UnitTest> createNormalizationTests();
 /// Creates the suite that checks the files a normalization run queues, what it publishes, and its cancellation.
 std::unique_ptr<juce::UnitTest> createNormalizeCoordinatorTests();
 
+/// Creates the suite that checks the source overload history, its blob and cache storage, and its projection.
+std::unique_ptr<juce::UnitTest> createOverloadHistoryTests();
+
 /// Creates the suite that checks the transitions between an empty, released, and loaded preview.
 std::unique_ptr<juce::UnitTest> createPreviewControllerTests();
 

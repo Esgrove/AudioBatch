@@ -115,6 +115,81 @@ inline double ShortTermLoudnessHistory::timeAt(const std::size_t index) const no
     return position / sampleRate;
 }
 
+/// Per-channel source overload flags over the length of a file, one byte per bucket and channel.
+/// A bucket covers samplesPerBucket source frames, the final one possibly fewer.
+/// Bit sampleOver marks a decoded sample whose magnitude exceeds full scale,
+/// and bit truePeakOver marks a true peak above 0 dBTP that the loudness meter reported for the bucket.
+/// The true peak flags are block-local maxima without a precise time,
+/// so they mark the analysis blocks the meter measured them in.
+/// A history with no flags set describes a file without overloads, unlike a missing history.
+struct OverloadHistory {
+    [[nodiscard]] std::uint8_t flagsAt(std::size_t bucket, int channel) const noexcept;
+    [[nodiscard]] std::size_t bucketCount() const noexcept;
+    [[nodiscard]] double bucketStartTime(std::size_t bucket) const noexcept;
+    [[nodiscard]] double bucketEndTime(std::size_t bucket) const noexcept;
+    [[nodiscard]] bool hasOverloads() const noexcept;
+
+    /// Flag bit of a decoded sample whose magnitude exceeds 1.0.
+    static constexpr std::uint8_t sampleOver {0x01};
+    /// Flag bit of a true peak above 1.0.
+    static constexpr std::uint8_t truePeakOver {0x02};
+    /// Every legal flag bit.
+    static constexpr std::uint8_t allFlags {sampleOver | truePeakOver};
+    /// Largest number of buckets, reached by merging neighbouring buckets of longer files.
+    static constexpr std::size_t maximumBuckets {8192};
+
+    /// Bucket flags in time order, channelCount bytes per bucket.
+    std::vector<std::uint8_t> flags;
+    /// Sample rate of the analyzed file.
+    double sampleRate {0.0};
+    /// Length of the analyzed file in samples.
+    std::int64_t lengthInSamples {0};
+    /// Source frames per bucket, the analysis block size times a power of two.
+    std::int64_t samplesPerBucket {0};
+    /// Number of channels the flags describe.
+    int channelCount {0};
+};
+
+/// Returns the flags of one bucket and channel, or zero outside the history.
+inline std::uint8_t OverloadHistory::flagsAt(const std::size_t bucket, const int channel) const noexcept
+{
+    if (channelCount <= 0 || channel < 0 || channel >= channelCount) {
+        return 0;
+    }
+    const auto index = bucket * static_cast<std::size_t>(channelCount) + static_cast<std::size_t>(channel);
+    return index < flags.size() ? flags[index] : std::uint8_t {0};
+}
+
+/// Returns the number of time buckets.
+inline std::size_t OverloadHistory::bucketCount() const noexcept
+{
+    return channelCount > 0 ? flags.size() / static_cast<std::size_t>(channelCount) : 0;
+}
+
+/// Returns the start of a bucket in seconds.
+inline double OverloadHistory::bucketStartTime(const std::size_t bucket) const noexcept
+{
+    if (sampleRate <= 0.0 || samplesPerBucket <= 0) {
+        return 0.0;
+    }
+    const auto position = std::min(
+        static_cast<double>(bucket) * static_cast<double>(samplesPerBucket), static_cast<double>(lengthInSamples)
+    );
+    return position / sampleRate;
+}
+
+/// Returns the end of a bucket in seconds, with the final partial bucket clamped to the source length.
+inline double OverloadHistory::bucketEndTime(const std::size_t bucket) const noexcept
+{
+    return bucketStartTime(bucket + 1);
+}
+
+/// Returns true when any bucket of any channel has a flag set.
+inline bool OverloadHistory::hasOverloads() const noexcept
+{
+    return std::ranges::any_of(flags, [](const auto value) { return value != 0; });
+}
+
 /// Analysis metadata and derived peak information for a single audio file.
 struct AudioAnalysisRecord {
     /// Loudness that stands for silence, where no finite LUFS value exists.
@@ -132,6 +207,8 @@ struct AudioAnalysisRecord {
     juce::String errorMessage;
     /// Short-term loudness over the length of the file, shared between copies of the record.
     std::shared_ptr<const ShortTermLoudnessHistory> shortTermLoudness;
+    /// Source sample and true peak overloads over the length of the file, shared between copies of the record.
+    std::shared_ptr<const OverloadHistory> overloads;
     /// Size of the file in bytes when it was analyzed.
     std::int64_t fileSize {0};
     /// Modification time of the file when it was analyzed, in milliseconds since the epoch.

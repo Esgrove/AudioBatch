@@ -8,6 +8,7 @@
 
 #include "analysis/AnalysisCacheSql.h"
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/OverloadHistory.h"
 #include "analysis/Sqlite.h"
 #include "analysis/SqliteTransaction.h"
 #include "utils/Log.h"
@@ -188,7 +189,7 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
                duration_seconds, peak_left, peak_right, overall_peak, true_peak_left,
                true_peak_right, overall_true_peak, max_short_term_lufs, integrated_lufs,
                sample_rate, channels, bits_per_sample, status, error_message, analysis_version,
-               custom_gain_db, has_custom_gain, short_term_loudness
+               custom_gain_db, has_custom_gain, short_term_loudness, overload_history
         FROM file_analysis
         WHERE file_path = ?;
     )SQL";
@@ -258,6 +259,16 @@ std::optional<AudioAnalysisRecord> AnalysisCache::getAnalysis(const juce::File& 
             );
             return std::nullopt;
         }
+        if (sqlite3_column_type(statement, analysis_column::overloadHistory) == SQLITE_BLOB) {
+            record.overloads = deserializeOverloadHistory(
+                sqlite3_column_blob(statement, analysis_column::overloadHistory),
+                static_cast<std::size_t>(sqlite3_column_bytes(statement, analysis_column::overloadHistory))
+            );
+        }
+        if (!record.overloads || !overloadHistoryMatches(*record.overloads, record)) {
+            utils::logWarn("Invalid cached overload history for {}, reanalysis required", record.fullPath.quoted());
+            return std::nullopt;
+        }
     }
     record.fromCache = true;
 
@@ -285,6 +296,13 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
         utils::logError("Cannot cache analysis without valid loudness history for {}", record.fullPath.quoted());
         return false;
     }
+    const auto overloadData = record.overloads && overloadHistoryMatches(*record.overloads, record)
+        ? serializeOverloadHistory(*record.overloads)
+        : juce::MemoryBlock {};
+    if (!record.hasError() && overloadData.isEmpty()) {
+        utils::logError("Cannot cache analysis without valid overload history for {}", record.fullPath.quoted());
+        return false;
+    }
     const juce::ScopedLock lock(mutex);
 
     if (database == nullptr && !openUnlocked()) {
@@ -298,8 +316,8 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             true_peak_right, overall_true_peak, max_short_term_lufs, integrated_lufs,
             sample_rate, channels, bits_per_sample, status, error_message,
             waveform_data, waveform_version, analysis_version, updated_at_ms,
-            custom_gain_db, has_custom_gain, short_term_loudness
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            custom_gain_db, has_custom_gain, short_term_loudness, overload_history
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(file_path) DO UPDATE SET
             file_name = excluded.file_name,
             format_name = excluded.format_name,
@@ -316,6 +334,7 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
             max_short_term_lufs = excluded.max_short_term_lufs,
             integrated_lufs = excluded.integrated_lufs,
             short_term_loudness = excluded.short_term_loudness,
+            overload_history = excluded.overload_history,
             sample_rate = excluded.sample_rate,
             channels = excluded.channels,
             bits_per_sample = excluded.bits_per_sample,
@@ -374,7 +393,9 @@ bool AnalysisCache::storeAnalysis(const AudioAnalysisRecord& record)
                               static_cast<double>(record.customGain.value_or(Decibels {}).value));
     const bool blobsBound = sqlite::bindNull(statement, analysis_parameter::waveformData)
         && (record.hasError() ? sqlite::bindNull(statement, analysis_parameter::shortTermLoudness)
-                              : sqlite::bindBlob(statement, analysis_parameter::shortTermLoudness, loudnessData));
+                              : sqlite::bindBlob(statement, analysis_parameter::shortTermLoudness, loudnessData))
+        && (record.hasError() ? sqlite::bindNull(statement, analysis_parameter::overloadHistory)
+                              : sqlite::bindBlob(statement, analysis_parameter::overloadHistory, overloadData));
 
     return textBound && integersBound && numbersBound && blobsBound && sqlite::stepToCompletion(statement);
 }

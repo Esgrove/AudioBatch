@@ -44,6 +44,7 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       and `BitDepthDetection.*` detects the source bit depth from the audio file,
       with a fixed default of 16 for MP3 and AAC files and the ALAC depth read through TagLib.
       `DecodeFailureTracker.h` holds the shared rules for read failures while decoding a file block by block.
+      `OverloadHistory.*` build, validate, project, and serialize the bounded per-channel source overload flags.
     - `AnalysisCache.*` manage the SQLite result cache.
       Its implementation is split into `AnalysisCache.cpp` (analysis and waveform persistence)
       and `AnalysisCacheSchema.cpp` (database lifecycle and schema),

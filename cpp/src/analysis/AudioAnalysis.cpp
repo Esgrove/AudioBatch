@@ -9,6 +9,7 @@
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/BitDepthDetection.h"
 #include "analysis/DecodeFailureTracker.h"
+#include "analysis/OverloadHistory.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
@@ -39,10 +40,6 @@ namespace audiobatch
 {
 namespace
 {
-/// How often the short-term loudness is sampled while decoding, in hertz.
-/// EBU Tech 3341 specifies at least ten meter updates per second.
-/// libebur128 supplies the trailing three-second value whenever the application queries it.
-constexpr double shortTermUpdateRateHz {ShortTermLoudnessHistory::updateRateHz};
 constexpr auto cancelledMessage {"Analysis was cancelled"};
 
 /// Largest channel count the libebur128 loudness meter accepts.
@@ -81,6 +78,8 @@ struct DecodeMeasurements {
     double maxShortTermLoudness {AudioAnalysisRecord::negativeInfinityLoudness};
     /// Short-term loudness of every block, which the record of the file shares.
     std::shared_ptr<ShortTermLoudnessHistory> shortTermLoudness;
+    /// Source sample and true peak overloads of every block, which the record of the file shares.
+    std::shared_ptr<const OverloadHistory> overloads;
     /// Set when decoding or measuring failed, with the reason.
     std::optional<MeasurementFailure> failure;
 };
@@ -241,23 +240,55 @@ PeakSummary<Value> summarizePeaks(const std::vector<Value>& channelPeaks)
 }
 
 /// Interleaves one decoded block for the loudness meter and folds its samples into the per-channel extremes.
+/// Sets the sample-over flag of each channel with a sample whose magnitude exceeds full scale,
+/// so samples exactly at full scale are not overloads.
 void interleaveBlock(
     const juce::AudioBuffer<float>& readBuffer,
     const int framesThisBlock,
     const std::span<float> interleaved,
+    const std::span<std::uint8_t> blockFlags,
     DecodeMeasurements& measurements
 )
 {
     const auto channelCount = static_cast<size_t>(readBuffer.getNumChannels());
 
-    for (int frame = 0; frame < framesThisBlock; ++frame) {
-        for (size_t channel = 0; channel < channelCount; ++channel) {
-            const auto sample = readBuffer.getSample(static_cast<int>(channel), frame);
-            measurements.minSamples[channel] = std::min(measurements.minSamples[channel], sample);
-            measurements.maxSamples[channel] = std::max(measurements.maxSamples[channel], sample);
-            interleaved[static_cast<size_t>(frame) * channelCount + channel] = sample;
+    for (size_t channel = 0; channel < channelCount; ++channel) {
+        const std::span samples(
+            readBuffer.getReadPointer(static_cast<int>(channel)), static_cast<size_t>(framesThisBlock)
+        );
+        auto minimum = measurements.minSamples[channel];
+        auto maximum = measurements.maxSamples[channel];
+        auto blockMinimum = 0.0f;
+        auto blockMaximum = 0.0f;
+        for (size_t frame = 0; frame < samples.size(); ++frame) {
+            const auto sample = samples[frame];
+            blockMinimum = std::min(blockMinimum, sample);
+            blockMaximum = std::max(blockMaximum, sample);
+            interleaved[frame * channelCount + channel] = sample;
+        }
+        minimum = std::min(minimum, blockMinimum);
+        maximum = std::max(maximum, blockMaximum);
+        measurements.minSamples[channel] = minimum;
+        measurements.maxSamples[channel] = maximum;
+        blockFlags[channel] = blockMinimum < -1.0f || blockMaximum > 1.0f ? OverloadHistory::sampleOver : 0;
+    }
+}
+
+/// Sets the true-peak-over flag of each channel whose true peak in the last meter add call exceeded 0 dBTP.
+/// libebur128 reports the larger of the true and sample peaks of that call, measured on one continuous meter,
+/// so the interpolation state carries across block boundaries.
+bool flagTruePeakOvers(ebur128_state* loudnessState, const std::span<std::uint8_t> blockFlags)
+{
+    for (size_t channel = 0; channel < blockFlags.size(); ++channel) {
+        double truePeak = 0.0;
+        if (ebur128_prev_true_peak(loudnessState, static_cast<unsigned int>(channel), &truePeak) != EBUR128_SUCCESS) {
+            return false;
+        }
+        if (truePeak > 1.0) {
+            blockFlags[channel] |= OverloadHistory::truePeakOver;
         }
     }
+    return true;
 }
 
 /// Decodes the whole file block by block, feeding the loudness meter and collecting the sample extremes.
@@ -280,8 +311,10 @@ DecodeMeasurements measureDecodedAudio(
     measurements.minSamples.assign(static_cast<size_t>(channelCount), 0.0f);
     measurements.maxSamples.assign(static_cast<size_t>(channelCount), 0.0f);
 
-    // One block per short-term loudness update.
-    const auto analysisBlockSize = juce::jmax(1, juce::roundToInt(reader.sampleRate / shortTermUpdateRateHz));
+    // One block per short-term loudness update, which is also one overload bucket before merging.
+    const auto analysisBlockSize = overloadBlockSize(reader.sampleRate);
+    OverloadHistoryBuilder overloads(channelCount, reader.sampleRate, reader.lengthInSamples, analysisBlockSize);
+    std::vector<std::uint8_t> blockFlags(static_cast<size_t>(channelCount), 0);
     measurements.shortTermLoudness = std::make_shared<ShortTermLoudnessHistory>();
     auto& history = *measurements.shortTermLoudness;
     history.sampleRate = reader.sampleRate;
@@ -325,7 +358,7 @@ DecodeMeasurements measureDecodedAudio(
             reportedPartialDecode = true;
         }
 
-        interleaveBlock(readBuffer, framesThisBlock, interleaved, measurements);
+        interleaveBlock(readBuffer, framesThisBlock, interleaved, blockFlags, measurements);
 
         if (ebur128_add_frames_float(loudnessState, interleaved.data(), static_cast<size_t>(framesThisBlock))
             != EBUR128_SUCCESS)
@@ -336,6 +369,15 @@ DecodeMeasurements measureDecodedAudio(
             };
             return measurements;
         }
+
+        if (!flagTruePeakOvers(loudnessState, blockFlags)) {
+            measurements.failure = MeasurementFailure {
+                .error = AnalysisError::measurementFailed,
+                .message = "True peak analysis failed while processing audio",
+            };
+            return measurements;
+        }
+        overloads.addBlock(blockFlags);
 
         double shortTermLoudness = AudioAnalysisRecord::negativeInfinityLoudness;
 
@@ -355,6 +397,7 @@ DecodeMeasurements measureDecodedAudio(
         );
     }
 
+    measurements.overloads = overloads.finish();
     return measurements;
 }
 }  // namespace
@@ -476,7 +519,7 @@ AudioAnalysisRecord analyzeFile(
         );
     }
 
-    const auto [minSamples, maxSamples, maxShortTermLoudness, shortTermLoudness, failure]
+    const auto [minSamples, maxSamples, maxShortTermLoudness, shortTermLoudness, overloads, failure]
         = measureDecodedAudio(*reader, loudnessState.get(), record.fullPath, isCancelled, onProgress);
 
     if (failure) {
@@ -527,6 +570,7 @@ AudioAnalysisRecord analyzeFile(
     record.overallTruePeak = truePeakOverall;
     record.maxShortTermLufs = maxShortTermLoudness;
     record.shortTermLoudness = shortTermLoudness;
+    record.overloads = overloads;
     record.integratedLufs = normalizeLoudness(integratedLoudness);
     record.status = AudioAnalysisStatus::analyzed;
     record.fromCache = false;

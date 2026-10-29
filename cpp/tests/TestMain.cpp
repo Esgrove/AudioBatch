@@ -88,6 +88,7 @@ int main(int argumentCount, char* arguments[])
     suites.push_back(audiobatch::tests::createMetadataTests());
     suites.push_back(audiobatch::tests::createNormalizationTests());
     suites.push_back(audiobatch::tests::createNormalizeCoordinatorTests());
+    suites.push_back(audiobatch::tests::createOverloadHistoryTests());
     suites.push_back(audiobatch::tests::createPluginCoordinatorTests());
     suites.push_back(audiobatch::tests::createPluginPresetTests());
     suites.push_back(audiobatch::tests::createPluginScanTests());
