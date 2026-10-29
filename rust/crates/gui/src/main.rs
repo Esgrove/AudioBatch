@@ -132,6 +132,13 @@ fn main() {
                 ..Default::default()
             };
             let window = match gpui_kit::open_window(window_options, cx, |window, cx| {
+                if cfg!(target_os = "windows") {
+                    // Quit before Win32 destroys the HWND, so GPUI tears down its resources once.
+                    window.on_window_should_close(cx, |_, cx| {
+                        cx.quit();
+                        false
+                    });
+                }
                 cx.new(|cx| {
                     let mut view = AppView::new(&options, dispatcher, window, cx);
                     if let Some(launches) = launches.clone() {
