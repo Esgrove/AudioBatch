@@ -53,7 +53,7 @@ jobs:
         run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-objects
 
       - name: Restore LFS objects
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: .git/lfs
           key: lfs-${{ hashFiles('.lfs-objects') }}
@@ -77,7 +77,7 @@ jobs:
       # The path list must match the build job's for the cache to restore.
       # Restore-only, since the build job owns saving it.
       - name: Restore C++ build directory
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@v6
         with:
           path: |
             cpp/cmake-build-mac-debug
