@@ -152,6 +152,7 @@ impl AppView {
             self.selected_tags = None;
             self.clear_tag_marks(cx);
             self.tags_task = Some(self.spawn_tag_read(path.to_path_buf(), cx));
+            self.request_artwork(Some(path), cx);
             // Each file starts at the whole-file zoom.
             self.waveform
                 .update(cx, |waveform, cx| waveform.set_zoom(MINIMUM_ZOOM, cx));
@@ -176,6 +177,7 @@ impl AppView {
         self.selected = None;
         self.selected_tags = None;
         self.tags_task = None;
+        self.request_artwork(None, cx);
         self.table
             .update(cx, |state, _| state.delegate_mut().set_selected_path(None));
         if let Some(player) = &mut self.player {

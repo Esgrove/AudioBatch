@@ -5,6 +5,7 @@
 //! previewing through the plugin chain with or without latency compensation,
 //! continuing playback when changing files, starting from the first cue point,
 //! and the loudness graph with its axis range.
+//! The Options menu choices for the Serato waveform colours and the album artwork are kept here too.
 //! The normalization mode and its peak and loudness targets are kept here too.
 //! They are stored as JSON next to the analysis cache in the `AudioBatch-rs` data directory.
 //! A missing or unreadable file gives the defaults, so a broken file never stops the app from starting.
@@ -82,6 +83,8 @@ pub struct GuiSettings {
     pub hidden_columns: Option<Vec<String>>,
     /// Colour the waveform from the Serato Overview tag of a file that has one.
     pub serato_waveform_colours: bool,
+    /// Shows the embedded album artwork of the selected file beside its name in the information panel.
+    pub show_album_artwork: bool,
 }
 
 impl NormalizeMode {
@@ -113,6 +116,7 @@ impl Default for GuiSettings {
             normalize_target_lufs: DEFAULT_TARGET_LUFS,
             hidden_columns: None,
             serato_waveform_colours: true,
+            show_album_artwork: true,
         }
     }
 }
@@ -233,6 +237,7 @@ mod test_settings_file {
             normalize_target_lufs: -9.5,
             hidden_columns: Some(vec![String::from("path"), String::from("peak_left")]),
             serato_waveform_colours: false,
+            show_album_artwork: false,
         };
         settings.save_to(&path).expect("saves the settings");
         assert_eq!(GuiSettings::load_from(&path), settings);
@@ -258,6 +263,7 @@ mod test_settings_file {
         assert_eq!(settings.loudness_minimum, DEFAULT_LOUDNESS_MINIMUM);
         assert!(!settings.preview_plugin_chain);
         assert!(settings.compensate_preview_latency);
+        assert!(settings.show_album_artwork);
     }
 
     #[test]

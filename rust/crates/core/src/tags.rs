@@ -18,9 +18,17 @@ use lofty::id3::v2::{Frame, GeneralEncapsulatedObject, Id3v2Tag};
 use lofty::iff::aiff::AiffFile;
 use lofty::iff::wav::WavFile;
 use lofty::mpeg::MpegFile;
+use lofty::picture::{Picture, PictureType};
 use lofty::prelude::{Accessor, ItemKey, TaggedFileExt};
+use lofty::tag::Tag;
 use serato_tags::native::{decode_native_value, native_field_description};
 use serato_tags::{Overview, SeratoData, SeratoTag};
+
+/// Largest encoded embedded picture that is read as album artwork, 16 MiB.
+pub const ARTWORK_MAXIMUM_BYTES: usize = 16 * 1024 * 1024;
+
+/// Most embedded pictures read as album artwork candidates.
+pub const ARTWORK_MAXIMUM_COUNT: usize = 4;
 
 /// A failure to open or parse the display tags of an audio file.
 #[derive(Debug, thiserror::Error)]
@@ -147,6 +155,26 @@ pub fn read_tags(path: &Path) -> Result<FileTags, TagsError> {
     Ok(tags)
 }
 
+/// Reads the encoded embedded pictures of a file that are worth decoding as album artwork.
+///
+/// Front covers come first, in tag order, followed by the other pictures.
+/// Pictures larger than `ARTWORK_MAXIMUM_BYTES` are skipped,
+/// and at most `ARTWORK_MAXIMUM_COUNT` are returned, so a file with many or huge pictures stays cheap to show.
+/// A file that cannot be read or has no pictures returns none, since missing artwork is never an error.
+#[must_use]
+pub fn read_artwork_candidates(path: &Path) -> Vec<Vec<u8>> {
+    let _span = tracing::info_span!("read_artwork_candidates", file = %path.display()).entered();
+    let Ok(tagged) = lofty::read_from_path(path) else {
+        return Vec::new();
+    };
+    let primary = tagged.primary_tag().map(lofty::tag::Tag::tag_type);
+    let tags = primary
+        .and_then(|tag_type| tagged.tag(tag_type))
+        .into_iter()
+        .chain(tagged.tags().iter().filter(|tag| Some(tag.tag_type()) != primary));
+    select_artwork_candidates(tags.flat_map(Tag::pictures))
+}
+
 /// Reads the concrete `ID3v2` tag of an MP3, AIFF, or WAV file.
 pub(crate) fn read_id3v2(path: &Path) -> Option<Id3v2Tag> {
     let _span = tracing::info_span!("read_id3v2", file = %path.display()).entered();
@@ -190,6 +218,20 @@ fn read_flac_serato_data(path: &Path) -> Option<SeratoData> {
             .iter()
             .map(|(description, data)| (*description, data.as_slice())),
     )
+}
+
+/// Returns the encoded data of the pictures worth decoding as album artwork, front covers first.
+/// Empty pictures and those above `ARTWORK_MAXIMUM_BYTES` are skipped, and at most `ARTWORK_MAXIMUM_COUNT` are kept.
+fn select_artwork_candidates<'a>(pictures: impl Iterator<Item = &'a Picture>) -> Vec<Vec<u8>> {
+    let (mut front, other): (Vec<&Picture>, Vec<&Picture>) = pictures
+        .filter(|picture| !picture.data().is_empty() && picture.data().len() <= ARTWORK_MAXIMUM_BYTES)
+        .partition(|picture| picture.pic_type() == PictureType::CoverFront);
+    front.extend(other);
+    front
+        .into_iter()
+        .take(ARTWORK_MAXIMUM_COUNT)
+        .map(|picture| picture.data().to_vec())
+        .collect()
 }
 
 /// Returns the lowercase extension of a path.
@@ -254,6 +296,82 @@ mod test_read_tags {
     #[test]
     fn broken_file_is_an_error() {
         assert!(read_tags(&test_fixtures::fixture("broken.wav")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod test_artwork_candidates {
+    use lofty::config::WriteOptions;
+    use lofty::picture::MimeType;
+    use lofty::prelude::TagExt as _;
+    use lofty::tag::TagType;
+
+    use super::*;
+
+    /// Returns a picture of a type with placeholder data, which candidate selection never decodes.
+    fn picture(pic_type: PictureType, data: Vec<u8>) -> Picture {
+        Picture::unchecked(data)
+            .pic_type(pic_type)
+            .mime_type(MimeType::Png)
+            .build()
+    }
+
+    #[test]
+    fn front_covers_come_first_in_tag_order() {
+        let pictures = [
+            picture(PictureType::CoverBack, vec![1]),
+            picture(PictureType::CoverFront, vec![2]),
+            picture(PictureType::Artist, vec![3]),
+            picture(PictureType::CoverFront, vec![4]),
+        ];
+        assert_eq!(
+            select_artwork_candidates(pictures.iter()),
+            vec![vec![2], vec![4], vec![1], vec![3]]
+        );
+    }
+
+    #[test]
+    fn empty_and_oversized_pictures_are_skipped() {
+        let pictures = [
+            picture(PictureType::CoverFront, Vec::new()),
+            picture(PictureType::CoverFront, vec![0; ARTWORK_MAXIMUM_BYTES + 1]),
+            picture(PictureType::CoverBack, vec![5]),
+        ];
+        assert_eq!(select_artwork_candidates(pictures.iter()), vec![vec![5]]);
+    }
+
+    #[test]
+    fn at_most_the_maximum_count_is_kept() {
+        let pictures: Vec<Picture> = (0..=ARTWORK_MAXIMUM_COUNT)
+            .map(|index| picture(PictureType::Other, vec![u8::try_from(index).expect("small index")]))
+            .collect();
+        assert_eq!(select_artwork_candidates(pictures.iter()).len(), ARTWORK_MAXIMUM_COUNT);
+    }
+
+    #[test]
+    fn reads_the_pictures_of_a_flac_file() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("artwork.flac");
+        std::fs::copy(test_fixtures::fixture("sine_stereo_44100_16.flac"), &path).expect("copies the fixture");
+        assert_eq!(read_artwork_candidates(&path), Vec::<Vec<u8>>::new());
+
+        let mut tag = Tag::new(TagType::VorbisComments);
+        tag.push_picture(picture(PictureType::CoverBack, vec![7, 7]));
+        tag.push_picture(picture(PictureType::CoverFront, vec![9, 9, 9]));
+        tag.save_to_path(&path, WriteOptions::default())
+            .expect("writes the pictures");
+        assert_eq!(read_artwork_candidates(&path), vec![vec![9, 9, 9], vec![7, 7]]);
+    }
+
+    #[test]
+    fn missing_or_broken_files_have_no_candidates() {
+        for name in ["missing.flac", "broken.wav"] {
+            assert_eq!(
+                read_artwork_candidates(&test_fixtures::fixture(name)),
+                Vec::<Vec<u8>>::new(),
+                "{name}"
+            );
+        }
     }
 }
 

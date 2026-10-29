@@ -163,7 +163,8 @@ Any framework teardown errors remain visible in the log.
 `startup.rs` opens the cache, the coordinators, the player, and the plugin host,
 `analysis.rs`, `normalize.rs`, and `process.rs` the runs, `selection.rs` the selection, `gain.rs` the per-file gain,
 `actions.rs` the menu and transport actions, `plugins.rs` the chain and its windows, `preview.rs` the live preview,
-`preferences.rs` the settings, `tags.rs` the tags of the selected file, and `render.rs` the layout.
+`preferences.rs` the settings, `tags.rs` the tags of the selected file, `artwork.rs` its album artwork,
+and `render.rs` the layout.
 
 ```mermaid
 flowchart TB
@@ -210,6 +211,16 @@ The preview collapses into one row through the chevron, the Options menu, or the
 and the `ResizableState` keeps the divider where it was for when the preview expands again.
 The expanded preview starts at the height that fits its controls, from `fit_height` in `controls.rs`,
 and follows that height as the window changes size until the user drags the divider.
+
+The information panel shows the embedded album artwork of the selected file beside its name,
+unless the Show Album Artwork option is off.
+`app/artwork.rs` reads it on a background task, separate from the tag read,
+so a slow picture never delays the cue points or the Serato colours.
+`read_artwork_candidates` in `core/src/tags.rs` returns at most four pictures of up to 16 MiB, front covers first,
+and `gui/src/artwork.rs` checks each header before decoding,
+skipping anything that is not a PNG or a JPEG of at most 4096 pixels on either side.
+The first that decodes becomes a BGRA thumbnail of at most 96 pixels, drawn at 48.
+A result is shown only while its file is still selected and unchanged since the read started.
 
 The Audio Settings, Plugin Chain, and Plugin Manager windows are gpui windows,
 held in `SettingsWindow` and `PluginWindow`.

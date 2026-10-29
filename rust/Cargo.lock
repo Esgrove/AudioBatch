@@ -670,6 +670,7 @@ dependencies = [
  "gpui-kit",
  "gpui-pre",
  "gpui-pre-platform",
+ "image",
  "raw-window-handle",
  "serde",
  "serde_json",

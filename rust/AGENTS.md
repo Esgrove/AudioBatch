@@ -146,6 +146,7 @@ and every crate inherits them with `.workspace = true`.
   `app/actions.rs` the menu and transport actions, `app/normalize.rs` normalization, and `app/render.rs` the layout.
   `app/preferences.rs` holds the Audio Settings window and the preview options,
   and `app/tags.rs` the tags of the selected file with its Serato cue points and Overview.
+  `app/artwork.rs` reads the album artwork of the selected file, which `artwork.rs` decodes into a bounded thumbnail.
   `plugins/` holds the live chain in `live_chain.rs`,
   the Plugin Chain and Plugin Manager windows in `chain_window.rs` and `manager_window.rs`,
   the preview insert in `preview.rs`, and their texts in `labels.rs`,
