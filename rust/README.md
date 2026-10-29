@@ -315,11 +315,17 @@ and the chain is saved in `plugin-chain.json`, both in the `AudioBatch-rs` folde
 A plugin that crashes while processing, previewing, or showing its editor ends the app,
 because only scans run plugins in a separate process.
 
+The GUI log records opened files and directories, discovered file counts,
+and analysis duration with analyzed, cached, and failed file counts.
+It also records analysis failures, cancellations, and quitting.
+Tag reader and decoder warnings include the file path and source module, including during preview playback.
+Startup logs only the version and build identification, not a full system information report.
+
 ### Stress test
 
 `--demo-rows <count>` fills the table with synthetic rows and updates 64 random rows thirty times per second,
 with a generated waveform and a looping playhead.
-Setting `AUDIOBATCH_GUI_DEBUG=1` adds the waveform frame rate, analysis summaries, and player events to the log.
+Setting `AUDIOBATCH_GUI_DEBUG=1` adds the waveform frame rate and player events to the log.
 
 ```shell
 AUDIOBATCH_GUI_DEBUG=1 cargo run --release --bin AudioBatchRs -- --demo-rows 10000

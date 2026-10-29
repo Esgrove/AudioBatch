@@ -115,6 +115,7 @@ impl FileTags {
 ///
 /// Returns an error when the file cannot be opened or parsed.
 pub fn read_tags(path: &Path) -> Result<FileTags, TagsError> {
+    let _span = tracing::info_span!("read_tags", file = %path.display()).entered();
     let tagged = lofty::read_from_path(path).map_err(|source| TagsError {
         path: path.to_path_buf(),
         source,
@@ -148,6 +149,7 @@ pub fn read_tags(path: &Path) -> Result<FileTags, TagsError> {
 
 /// Reads the concrete `ID3v2` tag of an MP3, AIFF, or WAV file.
 pub(crate) fn read_id3v2(path: &Path) -> Option<Id3v2Tag> {
+    let _span = tracing::info_span!("read_id3v2", file = %path.display()).entered();
     let extension = lowercase_extension(path)?;
     let mut file = File::open(path).ok()?;
     let options = ParseOptions::new();

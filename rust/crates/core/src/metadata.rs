@@ -62,6 +62,8 @@ pub struct MetadataError {
 /// Returns an error only when metadata was read but could not be written,
 /// so the caller can keep the original and its tags.
 pub fn copy_metadata(source: &Path, destination: &Path) -> Result<(), MetadataError> {
+    let _span = tracing::info_span!("copy_metadata", source = %source.display(), destination = %destination.display())
+        .entered();
     let Some(mut tag) = read_source_tag(source) else {
         return Ok(());
     };

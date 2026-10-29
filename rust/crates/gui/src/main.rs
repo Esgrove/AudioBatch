@@ -66,7 +66,7 @@ const DISPLAY_MARGIN: f32 = 40.0;
 const MINIMUM_WINDOW_SIZE: (f32, f32) = (800.0, 600.0);
 
 /// Returns true when `AUDIOBATCH_GUI_DEBUG` is set.
-/// The app then adds the waveform frame rate, analysis summaries, and player events to the log.
+/// The app then adds the waveform frame rate and player events to the log.
 #[must_use]
 pub fn debug_enabled() -> bool {
     std::env::var_os("AUDIOBATCH_GUI_DEBUG").is_some()
@@ -159,6 +159,7 @@ fn main() {
             .detach();
             cx.activate(true);
         });
+    tracing::info!("Quit");
 }
 
 /// Registers the main thread as the VST3 UI thread,
