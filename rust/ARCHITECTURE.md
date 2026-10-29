@@ -208,6 +208,8 @@ and leaves the other half to the waveform.
 The preview collapses into one row through the chevron, the Options menu, or the `TogglePreviewSection` shortcut.
 `render_compact_preview` then shows the chevron, Play and Process, the four metrics, and the waveform,
 and the `ResizableState` keeps the divider where it was for when the preview expands again.
+The expanded preview starts at the height that fits its controls, from `fit_height` in `controls.rs`,
+and follows that height as the window changes size until the user drags the divider.
 
 The Audio Settings, Plugin Chain, and Plugin Manager windows are gpui windows,
 held in `SettingsWindow` and `PluginWindow`.

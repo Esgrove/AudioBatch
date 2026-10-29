@@ -47,6 +47,21 @@ pub const SECTION_TOGGLE_SIZE: f32 = 18.0;
 /// Height of the Plugin Chain, Audio Settings, and Normalize buttons.
 const BUTTON_HEIGHT: f32 = 28.0;
 
+/// Height of the caption row above a slider, tall enough for the chevron and the caption text.
+const CAPTION_ROW_HEIGHT: f32 = 20.0;
+
+/// Height of the zoom and input gain slider rows, the slider track with room for its thumb.
+const SLIDER_ROW_HEIGHT: f32 = 24.0;
+
+/// Height of the row with the Normalize and Overwrite options in the one-column layout.
+const OPTION_ROW_HEIGHT: f32 = 18.0;
+
+/// Height of the row with the normalization mode buttons in the one-column layout.
+const MODE_ROW_HEIGHT: f32 = 24.0;
+
+/// Width of the outline around the controls column.
+const BORDER_WIDTH: f32 = 1.0;
+
 /// Space between the control groups.
 const GROUP_SPACING: f32 = 10.0;
 
@@ -229,6 +244,38 @@ pub struct ControlsState<'a> {
 /// Callback that receives the events of the controls column.
 pub type EventCallback = Rc<dyn Fn(&ControlsEvent, &mut Window, &mut App)>;
 
+/// Returns the height of the controls column that shows all of its controls without scrolling,
+/// in the wide or the one-column layout.
+/// It adds the scrolling controls, the playback row pinned below them, the padding, and the outline,
+/// from the same row heights the column is drawn with.
+pub const fn fit_height(wide: bool) -> f32 {
+    let settings = if wide {
+        wide_settings_height()
+    } else {
+        narrow_settings_height()
+    };
+    settings + GROUP_SPACING + PLAYBACK_BUTTON_HEIGHT + VERTICAL_PADDING * 2.0 + BORDER_WIDTH * 2.0
+}
+
+/// Returns the height of the zoom and input gain groups with the spacing between them.
+const fn slider_groups_height() -> f32 {
+    let group = CAPTION_ROW_HEIGHT + ITEM_SPACING + SLIDER_ROW_HEIGHT;
+    group * 2.0 + GROUP_SPACING
+}
+
+/// Returns the height of the scrolling controls of the one-column layout:
+/// the sliders, the options, the normalization target, and the two buttons, one group below the other.
+const fn narrow_settings_height() -> f32 {
+    let target = MODE_ROW_HEIGHT + ITEM_SPACING + BUTTON_HEIGHT;
+    slider_groups_height() + OPTION_ROW_HEIGHT + target + BUTTON_HEIGHT * 2.0 + GROUP_SPACING * 4.0
+}
+
+/// Returns the height of the scrolling controls of the wide layout:
+/// the sliders above two columns of three button-high rows.
+const fn wide_settings_height() -> f32 {
+    slider_groups_height() + GROUP_SPACING + BUTTON_HEIGHT * 3.0 + ITEM_SPACING * 2.0
+}
+
 /// Renders the controls column, sending what the user does to `on_event`.
 /// The wide layout puts the controls below the sliders in two columns, see the module documentation.
 pub fn render_controls(state: &ControlsState<'_>, wide: bool, on_event: &EventCallback, cx: &App) -> Div {
@@ -253,7 +300,7 @@ pub fn render_controls(state: &ControlsState<'_>, wide: bool, on_event: &EventCa
         )
     } else {
         settings
-            .child(option_row(&state.normalize, on_event))
+            .child(option_row(&state.normalize, on_event).h(px(OPTION_ROW_HEIGHT)))
             .child(target_group(&state.normalize, false, on_event, cx))
             .child(plugin_chain_button(state, on_event))
             .child(audio_settings_button(on_event))
@@ -550,11 +597,10 @@ fn target_group(state: &NormalizeControls<'_>, wide: bool, on_event: &EventCallb
     };
     // The button's padding would be added to its share of the row, so a plain cell takes the share instead.
     let normalize = div().flex_1().min_w_0().child(normalize);
-    let modes_row = if wide {
-        div().h(px(BUTTON_HEIGHT)).flex().items_center()
-    } else {
-        div()
-    };
+    let modes_row = div()
+        .h(px(if wide { BUTTON_HEIGHT } else { MODE_ROW_HEIGHT }))
+        .flex()
+        .items_center();
     let modes = modes_row
         .w_full()
         .opacity(if state.normalize_first {
@@ -682,6 +728,7 @@ fn slider_group(
         .tooltip(tooltip(tooltip_text))
         .child(
             div()
+                .h(px(CAPTION_ROW_HEIGHT))
                 .flex()
                 .flex_row()
                 .items_center()
@@ -716,6 +763,9 @@ fn slider_track(
     on_mouse_up: impl Fn(&MouseUpEvent, &mut Window, &mut App) + 'static,
 ) -> Div {
     div()
+        .h(px(SLIDER_ROW_HEIGHT))
+        .flex()
+        .items_center()
         .px(px(SLIDER_INSET))
         .capture_any_mouse_up(move |mouse_event, window, cx| {
             if enabled {
