@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use audiobatch_core::aiff::AiffWriter;
 use audiobatch_core::analyze_file;
-use audiobatch_core::normalize::{NormalizationMode, NormalizationOptions, normalize_file};
+use audiobatch_core::normalize::{NormalizationMode, NormalizationOptions, apply_gain, normalize_file};
 use audiobatch_core::record::file_identity;
 use audiobatch_core::signals::{SignalKind, generate};
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
@@ -51,8 +51,7 @@ fn render(planes: &[Vec<f32>], bits_per_sample: u32) -> usize {
     while start < frames {
         let end = (start + CHUNK_FRAMES).min(frames);
         for (target, plane) in scaled.iter_mut().zip(planes) {
-            target.clear();
-            target.extend(plane[start..end].iter().map(|sample| sample * GAIN));
+            apply_gain(&plane[start..end], GAIN, target);
         }
         let chunk: Vec<&[f32]> = scaled.iter().map(Vec::as_slice).collect();
         writer.write_planar(&chunk).expect("writes");
@@ -68,6 +67,13 @@ fn bench_render(criterion: &mut Criterion) {
     let frames = 44_100 * SECONDS;
     let planes = generate(SignalKind::MusicLike, 44_100, 2, frames);
     group.throughput(Throughput::Elements(frames as u64));
+    let mut scaled = Vec::with_capacity(frames);
+    group.bench_function("gain_only", |bencher| {
+        bencher.iter(|| {
+            apply_gain(black_box(&planes[0]), black_box(GAIN), &mut scaled);
+            black_box(scaled.as_slice());
+        });
+    });
     for bits in [16, 24] {
         group.bench_with_input(BenchmarkId::new("gain_and_aiff", bits), &planes, |bencher, planes| {
             bencher.iter(|| render(black_box(planes), bits));
