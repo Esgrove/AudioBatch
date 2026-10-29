@@ -187,9 +187,93 @@ The initial baseline includes the measurement caveats above,
 so these file comparisons are directional evidence rather than isolated kernel speedups.
 The unusually large 48 kHz in-memory comparison also should not be generalized to every workload.
 
+## Block pipeline and source overload history
+
+The block meter measures complete aligned decoder blocks directly from borrowed planes.
+Partial blocks and missing or short channels reuse sample buffers, retaining every supplied prefix before silence padding.
+Plane references use fixed stack storage instead of allocating a vector for every block.
+Block-local extrema feed the global extrema and strict sample-over flags.
+At 192 kHz and above they also supply true-peak-over flags without another sample scan.
+At lower rates, `TruePeak::previous_peaks` exposes the last nonempty push's maxima without allocation or filter resets.
+
+Source overload history is independent of waveform quantization, gain, preview inserts, and display formatting.
+It retains separate sample and true peak bits per actual channel, OR-merging adjacent buckets at a limit of 8192.
+The final partial bucket preserves the decoded length, and an all-clear history is valid present data.
+Cache analysis version 4 requires a validated independent overload blob for successful rows.
+Missing, malformed, or older data triggers a refill without removing custom gains or independent Serato data.
+Normalization and plugin outputs receive their own histories from output reanalysis.
+Warning projection is separate GUI work.
+Sample flags cover their bucket directly.
+Interpolated flags need conservative coverage of retained filter history, rather than claiming an exact peak position.
+
+The analysis benchmark harness borrows mono and stereo planes in fixed storage,
+so isolated kernels no longer include a temporary plane-vector allocation for every push.
+`true_peak_underflow` generates ordinary, tiny normal, and genuine decoded-f32 subnormal inputs in memory.
+The histories start empty for each iteration, so a previous normal peak cannot hide the underflow workload.
+`overload_history` measures the production collector separately, including repeated stride doubling.
+The normalization benchmark calls the production `apply_gain` helper, which retains the original scalar f32 product.
+These changes do not introduce extrema, gain, conversion, or K-weighting SIMD kernels.
+
+### Controlled follow-up measurements
+
+A fresh `core-followups-before` baseline measures the meter before the block changes,
+separately from the earlier exploratory `before` figures.
+The baseline stereo timings are 30.765 ms at 44.1 kHz, 33.614 ms at 48 kHz,
+61.243 ms at 88.2 kHz, 72.836 ms at 96 kHz, and 120.45 ms at 192 kHz.
+Mono at 44.1 kHz takes 14.749 ms.
+The input is 10 seconds of generated music, with 4096-frame pushes.
+Each case uses 10 samples, a one-second warmup, and a four-second group measurement target.
+These runs use the same M3 Max, Rust 1.99.1, native CPU flags, and release LTO as above.
+
+The final meter including source overload history, saved as `core-followups-history`,
+takes 27.582, 29.883, 54.793, 66.248, and 112.08 ms for those stereo rates.
+Mono takes 13.738 ms.
+The baseline includes temporary plane-vector allocations in the benchmark harness,
+while the revised harness uses fixed references, so this is not a pure production-only kernel comparison.
+The optimized pipeline without history, saved as `core-followups-pipeline`,
+takes 27.832, 29.923, 55.970, 66.766, and 112.21 ms for those stereo rates, and 13.873 ms for mono.
+It is measured from the optimization-only revision in an isolated worktree with the same revised benchmark harness.
+The pipeline-only run passes all 19 meter tests before timing.
+These independent runs establish that the history overhead is small compared with run-to-run variation,
+not that adding history makes the meter faster.
+A subsequent Criterion comparison against the pipeline-only baseline finds no change at 44.1, 88.2, and 192 kHz or mono.
+At 48 and 96 kHz the reported time changes are +1.33 and -1.31 percent, both within the configured noise threshold.
+The final comparison times are 28.023, 30.410, 55.008, 66.006, and 110.63 ms for stereo, and 13.754 ms for mono.
+These measurements do not resolve sub-percent collection overhead in the complete meter.
+The old baseline to final timings decrease by roughly 7 to 11 percent across these inputs,
+including the noted harness-allocation change.
+
+The isolated stereo collector takes 0.486 microseconds for 100 blocks including construction and finish,
+42.910 microseconds for 8193 blocks, and 119.16 microseconds for 32771 blocks.
+The latter cases include bounded bucket merging rather than an unbounded append-only history.
+These timings exclude peak detection, waveform building, serialization, and SQLite work.
+The production scalar gain benchmark takes 21.958 microseconds for 441000 mono samples,
+with the reusable output allocation outside the iteration.
+Neither measurement is a claim about an explicit SIMD gain or history kernel.
+For fresh 4800-frame interpolation, SIMD takes 11.323 microseconds at ordinary amplitude,
+11.272 at tiny normal amplitude, and 11.247 for subnormal input.
+The corresponding ebur128 timings are 27.080, 27.231, and 27.112 microseconds.
+These local NEON timings do not resolve the x86 flush-to-zero numerical exception.
+
+### Core follow-up verification
+
+The macOS workspace passes all 684 tests with none skipped.
+The optimized core run passes all 299 tests with `AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES=1`,
+requiring the entire normalization corpus rather than accepting missing LFS members.
+The unchanged CLI snapshot matches analysis, peak, and loudness JSON,
+and all 56 peak and 55 loudness output pairs have identical samples and tags.
+C++ analysis parity passes for 32 corpus files,
+and normalization parity passes for 29 peak and 28 loudness outputs with only accepted lossy-decoder differences.
+Existing measurement goldens and the saved pre-optimization snapshot are unchanged.
+Full workspace Clippy, including `--all-targets -- -D warnings`, and the Rust, shell, and prose checks pass.
+The dependency `block` still emits its existing future-compatibility notice.
+
 ## Remaining validation
 
-Windows measurements and execution of the new kernels on x86 SIMD levels require a Windows machine or CI.
+Windows execution and timings for the x86 SIMD kernels are deferred to the user's PC after the macOS commits.
+They do not block the local macOS work, and cross-target checks do not count as execution evidence.
+The Windows pass must run debug and optimized core tests with the full normalization corpus.
+It also needs CLI snapshots, parity where available, and controlled benchmarks with backend diagnostics.
 The production core library passes `cargo clippy --lib --target x86_64-pc-windows-msvc -- -D warnings`
 with the SIMD path enabled and portable `RUSTFLAGS`.
 This local type-check uses `LIBSQLITE3_SYS_USE_PKG_CONFIG=1 PKG_CONFIG_ALLOW_CROSS=1` to avoid compiling bundled SQLite.
@@ -201,3 +285,21 @@ Its arithmetic underflow difference remains explicit and must not be hidden by r
 The larger K-weighting and gating replacement, rolling short-term sums,
 and normalization SIMD work must each pass the same safety net
 and get their own controlled benchmark comparison.
+
+## Separate implementation follow-ups
+
+- Keep K-weighting, integrated gating, and any rolling short-term sums in a separate numerical change.
+  The strengthened differential harness now checks f64 maximum loudness and repeated window wraps.
+  A different summation order still cannot satisfy the frozen blob contract merely by staying within a tolerance.
+- Keep explicit extrema, gain, and AIFF conversion SIMD as independently measured work.
+  Preserve scalar exceptional values, signed zero, f64 promotion, clipping, and ties-to-even output rounding.
+  The shared scalar gain helper is benchmark coverage, not an optimization claim.
+- Keep artwork loading independent of analysis and overload cache records.
+  Request identity, coalescing, negative-result caching, parse options, and refresh lifecycle need their own review.
+  Shared metadata-copy reads must continue to preserve embedded pictures.
+- Keep Clear All operation exclusion and worker-drain safety in GUI run orchestration.
+  Clearing visible rows must not permit conflicting output operations or resurrect rows from late events.
+- Keep gain-clear authority, cue-start races, and selection or sorting state fixes as separate GUI changes.
+- Add warning rendering afterward using source-identity-matched history.
+  Preview gain and plugins must not rewrite source overload bits,
+  and interpolation coverage must not be presented as an exact decoded sample position.
