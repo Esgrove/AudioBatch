@@ -184,6 +184,13 @@ fn process(directory: &TempDir, chain: &PluginChain, fixture: &str, copy_name: &
     let result = process_file(&record, &options, &processing, &|| false, &mut |_| {});
     assert_eq!(result.error(), None);
     let output = result.output().expect("the output is committed");
+    assert!(
+        output
+            .overloads
+            .as_ref()
+            .expect("reanalyzed output overloads")
+            .matches_stream(output.sample_rate, output.length_in_samples, output.channels,)
+    );
     decode(&output.path)
 }
 

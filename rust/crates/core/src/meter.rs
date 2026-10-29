@@ -2,7 +2,7 @@
 //!
 //! `BlockMeter` regroups the decoded chunks into fixed blocks of one tenth of a second,
 //! one block per short-term loudness update as EBU Tech 3341 asks for,
-//! and feeds each block to the loudness meter, the per-channel sample extremes, and the waveform overview.
+//! and feeds each block to the loudness meter, the per-channel sample extremes, the waveform, and overload history.
 //! A mono source is measured as dual mono, so it reads the same loudness as the same content in stereo.
 //! The meter takes samples from memory, so the tests and benchmarks measure signals without decoding a file.
 //! It is public only for the benchmarks, which is why it is hidden from the documentation.
@@ -12,6 +12,7 @@ use std::sync::Arc;
 use ebur128::{Channel, EbuR128, Mode};
 
 use crate::loudness::true_peak::TruePeak;
+use crate::overload::{OverloadHistory, OverloadHistoryBuilder, SAMPLE_OVER, TRUE_PEAK_OVER};
 use crate::record::{NEGATIVE_INFINITY_LOUDNESS, ShortTermLoudnessHistory, normalize_loudness};
 use crate::waveform::{WaveformBuilder, WaveformOverview};
 
@@ -46,6 +47,7 @@ pub struct BlockMeter {
     max_short_term_lufs: f64,
     history: Vec<f32>,
     waveform: WaveformBuilder,
+    overloads: OverloadHistoryBuilder,
 }
 
 /// Everything the meter measured over a whole stream.
@@ -68,6 +70,8 @@ pub struct MeterOutput {
     pub samples_per_point: u32,
     /// Waveform overview of the stream.
     pub waveform: Arc<WaveformOverview>,
+    /// Bounded source overload flags measured at the same fixed block boundaries.
+    pub overloads: Arc<OverloadHistory>,
 }
 
 impl BlockMeter {
@@ -96,6 +100,7 @@ impl BlockMeter {
             max_short_term_lufs: NEGATIVE_INFINITY_LOUDNESS,
             history: Vec::new(),
             waveform: WaveformBuilder::new(channel_count, expected_frames),
+            overloads: OverloadHistoryBuilder::new(channels, sample_rate),
         })
     }
 
@@ -183,6 +188,7 @@ impl BlockMeter {
             history: self.history,
             samples_per_point: self.block_size as u32,
             waveform: self.waveform.finish(self.sample_rate, length_in_samples),
+            overloads: Arc::new(self.overloads.finish(length_in_samples)),
         })
     }
 
@@ -207,7 +213,13 @@ impl BlockMeter {
 
     /// Measures one fixed analysis block, whether borrowed directly or assembled from decoder packets.
     fn measure_planes(&mut self, planes: &[&[f32]]) -> Result<(), MeterError> {
-        for ((samples, minimum), maximum) in planes.iter().zip(&mut self.min_samples).zip(&mut self.max_samples) {
+        let mut flags = [0_u8; 64];
+        for (channel, ((samples, minimum), maximum)) in planes
+            .iter()
+            .zip(&mut self.min_samples)
+            .zip(&mut self.max_samples)
+            .enumerate()
+        {
             let (mut block_minimum, mut block_maximum) = (0.0_f32, 0.0_f32);
             for &sample in *samples {
                 block_minimum = block_minimum.min(sample);
@@ -215,15 +227,33 @@ impl BlockMeter {
             }
             *minimum = minimum.min(block_minimum);
             *maximum = maximum.max(block_maximum);
+            if (block_minimum < -1.0 || block_maximum > 1.0)
+                && let Some(flag) = flags.get_mut(channel)
+            {
+                *flag = SAMPLE_OVER;
+                if self.true_peak.is_none() {
+                    *flag |= TRUE_PEAK_OVER;
+                }
+            }
         }
         self.waveform.push(planes);
         if let Some(true_peak) = &mut self.true_peak {
             true_peak.push(planes);
+            for (flag, &peak) in flags.iter_mut().zip(true_peak.previous_peaks()) {
+                if peak > 1.0 {
+                    *flag |= TRUE_PEAK_OVER;
+                }
+            }
         }
         self.meter.add_frames_planar_f32(planes).map_err(MeterError::Frames)?;
         let short_term = normalize_loudness(self.meter.loudness_shortterm().map_err(MeterError::ShortTerm)?);
         self.max_short_term_lufs = self.max_short_term_lufs.max(short_term);
         self.history.push(short_term as f32);
+        self.overloads.push(
+            flags
+                .get(..planes.len())
+                .expect("validated channel count fits fixed storage"),
+        );
         Ok(())
     }
 }
@@ -237,6 +267,10 @@ mod test_chunk_size_invariance {
     fn exact(output: &super::MeterOutput) -> String {
         let mut text = GoldenText::default();
         text.meter(output);
+        text.blob(
+            "overloads.blob",
+            &output.overloads.to_bytes().expect("valid overload history"),
+        );
         text.text().to_string()
     }
 

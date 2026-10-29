@@ -1,6 +1,6 @@
 //! SQLite-backed cache for analysis results.
 //!
-//! Stores one row per file with the measured levels, the short-term loudness history, and the waveform overview,
+//! Stores one row per file with the measured levels, loudness and overload histories, and the waveform overview,
 //! keyed by path and validated against the file size and modification time,
 //! so unchanged files are not decoded again on later runs.
 //! Each row also keeps the custom gain the user set for that version of the file.
@@ -14,6 +14,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use rusqlite::{Connection, OptionalExtension, Row, TransactionBehavior, params};
 
+use crate::overload::OverloadHistory;
 use crate::record::{
     AnalysisError, AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory, custom_gain_from_decibels, file_identity,
 };
@@ -21,15 +22,18 @@ use crate::waveform::{self, WaveformOverview};
 
 mod serato;
 
+#[cfg(test)]
+mod test_overload;
+
 /// Directory name of the application data, kept apart from the C++ application's `AudioBatch` directory.
 pub(crate) const DATA_DIRECTORY_NAME: &str = "AudioBatch-rs";
 
 /// Version of the analysis rules. Rows written with another version are re-analyzed.
-const ANALYSIS_VERSION: i64 = 3;
+const ANALYSIS_VERSION: i64 = 4;
 
 /// Columns added to `file_analysis` after its first version, with their definitions,
 /// which databases created before them gain when they are opened.
-const ADDED_ANALYSIS_COLUMNS: &[(&str, &str)] = &[("custom_gain_db", "REAL")];
+const ADDED_ANALYSIS_COLUMNS: &[(&str, &str)] = &[("custom_gain_db", "REAL"), ("overload_history", "BLOB")];
 
 /// How long SQLite retries a locked database before failing a statement.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
@@ -93,6 +97,9 @@ pub enum CacheError {
     /// A successful analysis has no valid loudness history.
     #[error("Cannot cache analysis without valid loudness history")]
     InvalidHistory,
+    /// A successful analysis has no valid overload history matching its stream and duration.
+    #[error("Cannot cache analysis without valid overload history")]
+    InvalidOverloadHistory,
     /// A successful analysis has no waveform.
     #[error("Cannot cache analysis without a waveform overview")]
     MissingWaveform,
@@ -181,7 +188,7 @@ impl AnalysisCache {
     }
 
     /// Returns the cached record for a file, or `None` when the file changed, the row is from another version,
-    /// or the stored history or waveform is invalid.
+    /// or a stored loudness history, overload history, or waveform is invalid.
     /// A cached successful record has the `Cached` status, and a cached failure keeps the `Failed` status.
     #[must_use]
     pub fn get_analysis(&self, path: &Path) -> Option<AnalysisRecord> {
@@ -195,7 +202,7 @@ impl AnalysisCache {
                         duration_seconds, peak_left, peak_right, overall_peak, true_peak_left, true_peak_right,
                         overall_true_peak, max_short_term_lufs, integrated_lufs, sample_rate, channels,
                         bits_per_sample, status, error_message, custom_gain_db, short_term_loudness, waveform_data,
-                        waveform_version
+                        waveform_version, overload_history
                  FROM file_analysis WHERE file_path = ?1",
                 params![path_key(path)],
                 |row| {
@@ -208,14 +215,15 @@ impl AnalysisCache {
                     let history: Option<Vec<u8>> = row.get(21)?;
                     let waveform: Option<Vec<u8>> = row.get(22)?;
                     let waveform_version: i64 = row.get(23)?;
-                    Ok((identity, history, waveform, waveform_version))
+                    let overload_history: Option<Vec<u8>> = row.get(24)?;
+                    Ok((identity, history, waveform, waveform_version, overload_history))
                 },
                     )
                     .optional()?)
             })
             .ok()??;
 
-        let (identity, history, waveform_data, waveform_version) = row;
+        let (identity, history, waveform_data, waveform_version, overload_history) = row;
         if identity.file_size != i64::try_from(file_size).ok()?
             || identity.modified_time_ms != modified_time_ms
             || identity.analysis_version != ANALYSIS_VERSION
@@ -228,6 +236,11 @@ impl AnalysisCache {
             record.error = Some(AnalysisError::Unsupported);
             return Some(record);
         }
+        let overloads = OverloadHistory::from_bytes(&overload_history?)?;
+        if !valid_overload_timing(&overloads, &record) {
+            return None;
+        }
+        record.overloads = Some(Arc::new(overloads));
         record.short_term_loudness = Some(Arc::new(deserialize_history(&history?, &record)?));
         if waveform_version != i64::from(waveform::SERIALIZATION_VERSION) {
             return None;
@@ -247,15 +260,21 @@ impl AnalysisCache {
     ///
     /// # Errors
     ///
-    /// Returns an error when the record is a successful one without a valid history or waveform,
+    /// Returns an error when a successful record has no valid loudness history, overload history, or waveform,
     /// or when the database write fails.
     pub fn store_analysis(&self, record: &AnalysisRecord) -> Result<()> {
         if record.has_error() && !record.error.is_some_and(AnalysisError::is_repeatable) {
             return Ok(());
         }
-        let (history, waveform_data) = if record.has_error() {
-            (None, None)
+        let (history, waveform_data, overload_history) = if record.has_error() {
+            (None, None, None)
         } else {
+            let overload_history = record
+                .overloads
+                .as_deref()
+                .filter(|history| valid_overload_timing(history, record))
+                .and_then(OverloadHistory::to_bytes)
+                .ok_or(CacheError::InvalidOverloadHistory)?;
             let history = record
                 .short_term_loudness
                 .as_deref()
@@ -266,7 +285,7 @@ impl AnalysisCache {
                 .as_deref()
                 .map(WaveformOverview::to_bytes)
                 .ok_or(CacheError::MissingWaveform)?;
-            (Some(history), Some(waveform_data))
+            (Some(history), Some(waveform_data), Some(overload_history))
         };
         let file_size = i64::try_from(record.file_size).unwrap_or(i64::MAX);
         self.with_connection(|connection| {
@@ -281,9 +300,9 @@ impl AnalysisCache {
                     duration_seconds, peak_left, peak_right, overall_peak, true_peak_left, true_peak_right,
                     overall_true_peak, max_short_term_lufs, integrated_lufs, sample_rate, channels, bits_per_sample,
                     status, error_message, short_term_loudness, waveform_data, waveform_version, analysis_version,
-                    updated_at_ms, custom_gain_db
+                    updated_at_ms, custom_gain_db, overload_history
                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
-                          ?20, ?21, ?22, ?23, ?24, ?25, ?26)",
+                          ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27)",
                     params![
                         path_key(&record.path),
                         record.file_name,
@@ -311,6 +330,7 @@ impl AnalysisCache {
                         ANALYSIS_VERSION,
                         now_ms(),
                         custom_gain.map(f64::from),
+                        overload_history,
                     ],
                 )
                 .map_err(CacheError::StoreAnalysis)?;
@@ -428,7 +448,8 @@ impl AnalysisCache {
                 waveform_version INTEGER NOT NULL DEFAULT 0,
                 analysis_version INTEGER NOT NULL,
                 updated_at_ms INTEGER NOT NULL,
-                custom_gain_db REAL
+                custom_gain_db REAL,
+                overload_history BLOB
             );",
         )?;
         add_missing_columns(&connection, "file_analysis", ADDED_ANALYSIS_COLUMNS)?;
@@ -577,6 +598,13 @@ fn now_ms() -> i64 {
         .unwrap_or_default()
 }
 
+/// Checks overload metadata and the record's decoded duration before storing or accepting a cache hit.
+fn valid_overload_timing(history: &OverloadHistory, record: &AnalysisRecord) -> bool {
+    history.matches_stream(record.sample_rate, record.length_in_samples, record.channels)
+        && record.duration_seconds.is_finite()
+        && (record.duration_seconds - record.length_in_samples as f64 / f64::from(record.sample_rate)).abs() <= 1e-9
+}
+
 /// Checks the history timing against its record before serializing or after deserializing.
 fn valid_history_timing(history: &ShortTermLoudnessHistory, record: &AnalysisRecord, count: usize) -> bool {
     if !history.sample_rate.is_finite()
@@ -676,6 +704,7 @@ mod test_analysis_cache {
         assert!((cached.integrated_lufs - record.integrated_lufs).abs() < 1e-9);
         assert!((cached.overall_peak - record.overall_peak).abs() < f32::EPSILON);
         assert_eq!(cached.short_term_loudness, record.short_term_loudness);
+        assert_eq!(cached.overloads, record.overloads);
         assert_eq!(cached.waveform, record.waveform);
         assert_eq!(cached.format_name, record.format_name);
     }
