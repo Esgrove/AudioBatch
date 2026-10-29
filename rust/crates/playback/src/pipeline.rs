@@ -8,13 +8,40 @@
 
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use audioadapter_buffers::SizeError;
 use audioadapter_buffers::direct::SequentialSliceOfVecs;
-use audiobatch_core::decode::{AudioFileDecoder, StreamInfo};
-use rubato::{Fft, FixedSync, Resampler};
+use audiobatch_core::decode::{AudioFileDecoder, DecodeError, StreamInfo};
+use rubato::{Fft, FixedSync, ResampleError, Resampler, ResamplerConstructionError};
+use thiserror::Error;
 
 /// Input chunk size of the resampler in frames.
 const RESAMPLER_CHUNK_FRAMES: usize = 1024;
+
+/// Failures while decoding a file into stereo output frames on the decode thread.
+#[derive(Debug, Error)]
+pub enum PipelineError {
+    /// The shared decoder could not open, seek, or decode the source.
+    #[error(transparent)]
+    Decode(#[from] DecodeError),
+    /// Preview only supports mono and stereo input.
+    #[error("Audio preview requires a mono or stereo file")]
+    UnsupportedChannels {
+        /// Number of source channels.
+        channels: u32,
+    },
+    /// The requested rate conversion could not be initialized.
+    #[error("Could not create the resampler")]
+    CreateResampler(#[source] ResamplerConstructionError),
+    /// The resampler input adapter rejected the buffer dimensions.
+    #[error("Invalid resampler input buffer: {0:?}")]
+    InputBuffer(#[source] SizeError),
+    /// The resampler output adapter rejected the buffer dimensions.
+    #[error("Invalid resampler output buffer: {0:?}")]
+    OutputBuffer(#[source] SizeError),
+    /// Processing a resampler chunk failed.
+    #[error("Resampling failed")]
+    Resample(#[source] ResampleError),
+}
 
 /// One stereo output frame with the bookkeeping the audio callback needs.
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
@@ -57,6 +84,18 @@ struct ResamplerStage {
     skip_output: usize,
 }
 
+impl PipelineError {
+    /// Formats the event text without repeating diagnostics already included in the display.
+    pub(crate) fn message(&self) -> String {
+        match self {
+            Self::InputBuffer(_)
+            | Self::OutputBuffer(_)
+            | Self::Decode(DecodeError::Decode { .. } | DecodeError::Seek(_)) => self.to_string(),
+            _ => crate::error_message(self),
+        }
+    }
+}
+
 impl FramePipeline {
     /// Opens a file for playback at the given output rate, starting at `start_seconds`.
     ///
@@ -64,10 +103,12 @@ impl FramePipeline {
     ///
     /// Returns an error when the file cannot be decoded, seeked, or resampled,
     /// or has more than two channels, which the preview refuses.
-    pub fn open(path: &Path, output_rate: u32, generation: u32, start_seconds: f64) -> Result<Self> {
+    pub fn open(path: &Path, output_rate: u32, generation: u32, start_seconds: f64) -> Result<Self, PipelineError> {
         let decoder = AudioFileDecoder::open(path)?;
         if !(1..=2).contains(&decoder.info().channels) {
-            bail!("Audio preview requires a mono or stereo file");
+            return Err(PipelineError::UnsupportedChannels {
+                channels: decoder.info().channels,
+            });
         }
         let source_rate = decoder.info().sample_rate;
         let resampler = (source_rate != output_rate)
@@ -110,7 +151,7 @@ impl FramePipeline {
     /// # Errors
     ///
     /// Returns an error when the container cannot seek.
-    pub fn seek(&mut self, seconds: f64, generation: u32) -> Result<()> {
+    pub fn seek(&mut self, seconds: f64, generation: u32) -> Result<(), PipelineError> {
         let target = (seconds.max(0.0) * f64::from(self.info().sample_rate)).round() as u64;
         let actual = self.decoder.seek(seconds)?;
         self.position = actual.min(target);
@@ -129,7 +170,7 @@ impl FramePipeline {
     /// # Errors
     ///
     /// Returns an error when decoding fails.
-    pub fn produce(&mut self, output: &mut Vec<Frame>) -> Result<bool> {
+    pub fn produce(&mut self, output: &mut Vec<Frame>) -> Result<bool, PipelineError> {
         if self.finished {
             return Ok(false);
         }
@@ -173,7 +214,7 @@ impl FramePipeline {
 
 impl ResamplerStage {
     /// Creates a stereo resampler between the given rates.
-    fn new(source_rate: u32, output_rate: u32) -> Result<Self> {
+    fn new(source_rate: u32, output_rate: u32) -> Result<Self, PipelineError> {
         let resampler = Fft::<f32>::new(
             source_rate as usize,
             output_rate as usize,
@@ -181,7 +222,7 @@ impl ResamplerStage {
             2,
             FixedSync::Input,
         )
-        .context("Could not create the resampler")?;
+        .map_err(PipelineError::CreateResampler)?;
         let output_capacity = resampler.output_frames_max();
         let skip_output = resampler.output_delay();
         Ok(Self {
@@ -211,7 +252,13 @@ impl ResamplerStage {
     }
 
     /// Buffers decoded samples and resamples every complete input chunk.
-    fn push(&mut self, left: &[f32], right: &[f32], generation: u32, output: &mut Vec<Frame>) -> Result<()> {
+    fn push(
+        &mut self,
+        left: &[f32],
+        right: &[f32],
+        generation: u32,
+        output: &mut Vec<Frame>,
+    ) -> Result<(), PipelineError> {
         let mut offset = 0;
         while offset < left.len() {
             let take = (RESAMPLER_CHUNK_FRAMES - self.filled).min(left.len() - offset);
@@ -234,7 +281,7 @@ impl ResamplerStage {
 
     /// Resamples the remaining partial chunk and the resampler delay at the end of the file.
     /// Frames past the end of the source are dropped.
-    fn flush(&mut self, end_position: u64, generation: u32, output: &mut Vec<Frame>) -> Result<()> {
+    fn flush(&mut self, end_position: u64, generation: u32, output: &mut Vec<Frame>) -> Result<(), PipelineError> {
         let mut remaining_chunks = 1 + self.skip_output.div_ceil(RESAMPLER_CHUNK_FRAMES) + 1;
         while remaining_chunks > 0 && self.next_position() < end_position {
             for channel in &mut self.input {
@@ -250,16 +297,21 @@ impl ResamplerStage {
     }
 
     /// Resamples one full input chunk and appends the output frames.
-    fn process_chunk(&mut self, generation: u32, end_position: Option<u64>, output: &mut Vec<Frame>) -> Result<()> {
+    fn process_chunk(
+        &mut self,
+        generation: u32,
+        end_position: Option<u64>,
+        output: &mut Vec<Frame>,
+    ) -> Result<(), PipelineError> {
         let output_capacity = self.output.first().map_or(0, Vec::len);
-        let input = SequentialSliceOfVecs::new(&self.input, 2, RESAMPLER_CHUNK_FRAMES)
-            .map_err(|error| anyhow::anyhow!("Invalid resampler input buffer: {error:?}"))?;
+        let input =
+            SequentialSliceOfVecs::new(&self.input, 2, RESAMPLER_CHUNK_FRAMES).map_err(PipelineError::InputBuffer)?;
         let mut resampled = SequentialSliceOfVecs::new_mut(&mut self.output, 2, output_capacity)
-            .map_err(|error| anyhow::anyhow!("Invalid resampler output buffer: {error:?}"))?;
+            .map_err(PipelineError::OutputBuffer)?;
         let (_, written) = self
             .resampler
             .process_into_buffer(&input, &mut resampled, None)
-            .context("Resampling failed")?;
+            .map_err(PipelineError::Resample)?;
 
         let skipped = self.skip_output.min(written);
         self.skip_output -= skipped;
@@ -346,6 +398,7 @@ mod test_frame_pipeline {
             .err()
             .expect("three channels are refused");
         assert_eq!(error.to_string(), "Audio preview requires a mono or stereo file");
+        assert!(matches!(error, PipelineError::UnsupportedChannels { channels: 3 }));
     }
 
     #[test]
@@ -374,5 +427,51 @@ mod test_frame_pipeline {
             frames.first().map(|frame| (frame.position, frame.generation)),
             Some((12_000, 2))
         );
+    }
+
+    #[test]
+    fn decoder_failures_keep_their_concrete_source_chain() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let error = FramePipeline::open(&directory.path().join("missing.wav"), 44_100, 1, 0.0)
+            .err()
+            .expect("missing file is refused");
+        let PipelineError::Decode(source) = &error else {
+            panic!("expected a decoder error");
+        };
+        assert_eq!(error.to_string(), source.to_string());
+        assert!(std::error::Error::source(&error).is_some());
+        assert!(error.message().starts_with(&source.to_string()));
+    }
+
+    #[test]
+    fn invalid_buffer_dimensions_retain_sources_without_repeating_event_text() {
+        let error = PipelineError::InputBuffer(SizeError::ChannelsContainer { actual: 1, required: 2 });
+        assert!(std::error::Error::source(&error).is_some());
+        assert_eq!(
+            error.message(),
+            "Invalid resampler input buffer: ChannelsContainer { actual: 1, required: 2 }"
+        );
+        let error = PipelineError::OutputBuffer(SizeError::ChannelsContainer { actual: 1, required: 2 });
+        assert!(std::error::Error::source(&error).is_some());
+        assert_eq!(
+            error.message(),
+            "Invalid resampler output buffer: ChannelsContainer { actual: 1, required: 2 }"
+        );
+    }
+
+    #[test]
+    fn decoder_messages_with_embedded_sources_are_not_repeated_in_events() {
+        for error in [
+            DecodeError::Seek(std::io::Error::other("seek unavailable").into()),
+            DecodeError::Decode {
+                position: 42,
+                source: std::io::Error::other("invalid packet").into(),
+            },
+        ] {
+            let expected = error.to_string();
+            let error = PipelineError::from(error);
+            assert!(std::error::Error::source(&error).is_some());
+            assert_eq!(error.message(), expected);
+        }
     }
 }

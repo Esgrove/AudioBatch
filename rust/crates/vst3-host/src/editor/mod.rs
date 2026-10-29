@@ -25,8 +25,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use anyhow::{Context as _, Result, bail};
 use raw_window_handle::RawWindowHandle;
+use thiserror::Error;
 use vst3::Steinberg::Vst::IEditControllerTrait as _;
 use vst3::Steinberg::Vst::ViewType::kEditor;
 use vst3::Steinberg::{IPlugFrame, IPlugView, IPlugViewContentScaleSupport, IPlugViewTrait as _, ViewRect};
@@ -48,6 +48,49 @@ const FALLBACK_SIZE: ViewSize = ViewSize {
     width: 640,
     height: 480,
 };
+
+/// Why a plugin editor could not be opened.
+#[derive(Debug, Error)]
+pub enum EditorError {
+    /// The controller or its editor view is absent.
+    #[error("The plugin has no editor")]
+    MissingEditor,
+    /// The view does not support the native window type.
+    #[error("The plugin's editor does not support the windows of this platform")]
+    UnsupportedWindowType {
+        /// The result returned by `isPlatformTypeSupported`.
+        result: i32,
+    },
+    /// The host frame lacks its required interface.
+    #[error("The plug frame does not implement IPlugFrame")]
+    MissingPlugFrame,
+    /// The view refused to attach.
+    #[error("The plugin's editor could not be attached to its window")]
+    Attach {
+        /// The result returned by `attached`.
+        result: i32,
+    },
+    /// `AppKit` windows must be opened on the main thread.
+    #[error("Plugin editors can only be opened on the main thread")]
+    MainThreadRequired,
+    /// The operating system could not create the window.
+    #[error("The editor window could not be created: {source}")]
+    CreateWindow {
+        /// The native window creation failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The operating system could not register the window class.
+    #[error("The editor window class could not be registered: {source}")]
+    RegisterWindowClass {
+        /// The native registration failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// This platform has no native editor implementation.
+    #[error("Plugin editors are only supported on macOS and Windows")]
+    UnsupportedPlatform,
+}
 
 /// A native window showing the editor of a plugin.
 /// It is not `Send`, so it stays on the UI thread that opened it and is destroyed there.
@@ -92,14 +135,20 @@ impl EditorWindow {
     ///
     /// Returns an error when the plugin has no editor, the editor does not support the platform's windows,
     /// the window cannot be created, or the editor refuses to attach to it.
-    pub fn open(ui: &UiThread, instance: &PluginInstance, title: &str, owner: Option<RawWindowHandle>) -> Result<Self> {
+    pub fn open(
+        ui: &UiThread,
+        instance: &PluginInstance,
+        title: &str,
+        owner: Option<RawWindowHandle>,
+    ) -> Result<Self, EditorError> {
         let core = Arc::clone(instance.core());
-        let controller = core.controller().context("The plugin has no editor")?;
+        let controller = core.controller().ok_or(EditorError::MissingEditor)?;
         // SAFETY: the controller is valid, and the view type is a null-terminated constant.
-        let view = unsafe { ComPtr::from_raw(controller.createView(kEditor)) }.context("The plugin has no editor")?;
+        let view = unsafe { ComPtr::from_raw(controller.createView(kEditor)) }.ok_or(EditorError::MissingEditor)?;
         // SAFETY: the view is valid, and the platform type is a null-terminated constant.
-        if unsafe { view.isPlatformTypeSupported(NativeWindow::PLATFORM_TYPE) } != kResultTrue {
-            bail!("The plugin's editor does not support the windows of this platform");
+        let result = unsafe { view.isPlatformTypeSupported(NativeWindow::PLATFORM_TYPE) };
+        if result != kResultTrue {
+            return Err(EditorError::UnsupportedWindowType { result });
         }
         let shared = Rc::new(EditorShared {
             view,
@@ -140,11 +189,11 @@ impl EditorWindow {
     }
 
     /// Gives the view its frame and window, sizes the window to the view, and shows it.
-    fn attach(&self) -> Result<()> {
+    fn attach(&self) -> Result<(), EditorError> {
         let frame = self
             .frame
             .to_com_ptr::<IPlugFrame>()
-            .context("The plug frame does not implement IPlugFrame")?;
+            .ok_or(EditorError::MissingPlugFrame)?;
         // SAFETY: the view and the frame are valid, and the view takes its own reference to the frame.
         unsafe { self.shared.view.setFrame(frame.as_ptr()) };
         if let Some(scale) = self.window.content_scale() {
@@ -152,13 +201,13 @@ impl EditorWindow {
         }
         // SAFETY: the view is valid, the parent stays valid until the view is removed,
         // and the platform type is a null-terminated constant.
-        if unsafe {
+        let result = unsafe {
             self.shared
                 .view
                 .attached(self.window.parent(), NativeWindow::PLATFORM_TYPE)
-        } != kResultOk
-        {
-            bail!("The plugin's editor could not be attached to its window");
+        };
+        if result != kResultOk {
+            return Err(EditorError::Attach { result });
         }
         self.shared.attached.set(true);
         if let Some(size) = self.shared.size() {

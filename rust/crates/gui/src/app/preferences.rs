@@ -265,7 +265,7 @@ impl AppView {
                 if let Ok(player) = open_player(&self.settings.output_config()) {
                     self.install_player(player, resume, gain);
                 }
-                Err(error)
+                Err(error.into())
             }
         };
         self.menu_state.output_device = self.player.as_ref().map(|player| player.device_name().to_string());
@@ -290,14 +290,14 @@ impl AppView {
 /// # Errors
 /// Returns an error when no output device can be opened at all.
 pub(super) fn open_player(output: &OutputConfig) -> anyhow::Result<Player> {
-    Player::with_config(output)
+    Ok(Player::with_config(output)
         .or_else(|_| {
             Player::with_config(&OutputConfig {
                 device: output.device.clone(),
                 ..OutputConfig::default()
             })
         })
-        .or_else(|_| Player::new(None))
+        .or_else(|_| Player::new(None))?)
 }
 
 /// Returns where to start a file with cue points:

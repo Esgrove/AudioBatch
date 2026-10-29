@@ -9,14 +9,22 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use anyhow::{Result, bail};
 use rtrb::{Consumer, Producer, RingBuffer};
+use thiserror::Error;
 
 use crate::output::SharedState;
 use crate::output::insert::InsertRenderer;
 
 /// How many insert changes can wait for the audio callback.
 const COMMAND_CAPACITY: usize = 8;
+
+/// A control-thread insert change could not be queued for the audio callback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum InsertError {
+    /// Earlier changes fill the queue while the callback is not taking them.
+    #[error("The audio output is not taking plugin changes, because its stream is not running")]
+    QueueFull,
+}
 
 /// An effect the preview runs on its stereo output inside the audio callback.
 ///
@@ -63,10 +71,10 @@ impl InsertControl {
     ///
     /// Returns an error when earlier changes are still waiting, because the audio callback is not running.
     /// The insert is dropped on this thread then.
-    pub fn set(&mut self, insert: Option<Box<dyn PreviewInsert>>) -> Result<()> {
+    pub fn set(&mut self, insert: Option<Box<dyn PreviewInsert>>) -> Result<(), InsertError> {
         let tail = insert.as_ref().map_or(0, |insert| insert.tail_frames());
         if self.commands.push(insert).is_err() {
-            bail!("The audio output is not taking plugin changes, because its stream is not running");
+            return Err(InsertError::QueueFull);
         }
         self.sent += 1;
         self.set_tail(tail);
@@ -103,4 +111,26 @@ pub fn insert_channel(shared: Arc<SharedState>) -> (InsertControl, InsertRendere
         shared,
     };
     (control, InsertRenderer::new(command_consumer, retired_producer))
+}
+
+#[cfg(test)]
+mod test_insert_control {
+    use super::*;
+
+    #[test]
+    fn full_queue_returns_a_typed_error_without_applying_the_change() {
+        let shared = Arc::new(SharedState::new());
+        let (mut control, _renderer) = insert_channel(Arc::clone(&shared));
+        for _ in 0..COMMAND_CAPACITY {
+            control.set(None).expect("queue has space");
+        }
+        control.set_tail(42);
+        assert_eq!(control.set(None), Err(InsertError::QueueFull));
+        assert_eq!(control.sent, COMMAND_CAPACITY as u64);
+        assert_eq!(shared.insert_tail_frames.load(Ordering::Relaxed), 42);
+        assert_eq!(
+            InsertError::QueueFull.to_string(),
+            "The audio output is not taking plugin changes, because its stream is not running"
+        );
+    }
 }

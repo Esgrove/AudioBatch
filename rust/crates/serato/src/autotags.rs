@@ -3,8 +3,6 @@
 use std::fmt;
 use std::fmt::Display;
 
-use anyhow::anyhow;
-
 /// Offset of the BPM field after the two version bytes.
 const BPM_OFFSET: usize = 2;
 
@@ -17,6 +15,86 @@ const GAIN_OFFSET: usize = 16;
 /// Size of a tag with all three fields.
 const FULL_BYTES: usize = 22;
 
+/// An ASCII number field in an Autotags payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutoTagsField {
+    /// Beats per minute.
+    Bpm,
+    /// Calculated gain.
+    AutoGain,
+    /// Manual gain.
+    Gain,
+}
+
+/// A malformed Autotags header or numeric field.
+#[derive(Debug, thiserror::Error)]
+pub enum AutoTagsError {
+    /// The required fields are incomplete.
+    #[error("Data is too short to contain all necessary information")]
+    TooShort {
+        /// Payload length in bytes.
+        length: usize,
+    },
+    /// The size or version does not match the known layouts.
+    #[error("Unexpected autotags size or version")]
+    SizeOrVersion {
+        /// Payload length in bytes.
+        length: usize,
+        /// Version bytes in the header.
+        version: [u8; 2],
+    },
+    /// An ASCII field could not be decoded.
+    #[error("Failed to parse {field}: {source}")]
+    InvalidField {
+        /// Field that could not be decoded.
+        field: AutoTagsField,
+        /// Concrete numeric decoding failure.
+        #[source]
+        source: AutoTagsNumberError,
+    },
+    /// The BPM is negative.
+    #[error("Negative BPM: {bpm}")]
+    NegativeBpm {
+        /// Rejected BPM.
+        bpm: f32,
+    },
+}
+
+/// A malformed fixed-width ASCII number in an Autotags field.
+#[derive(Debug, thiserror::Error)]
+pub enum AutoTagsNumberError {
+    /// The field has no zero padding.
+    #[error("missing zero terminator")]
+    MissingTerminator,
+    /// Nonzero bytes follow the first zero.
+    #[error("data after the zero terminator")]
+    DataAfterTerminator,
+    /// The field is not valid UTF-8.
+    #[error("not UTF-8")]
+    Utf8(#[source] std::str::Utf8Error),
+    /// The field does not use the accepted numeric syntax.
+    #[error("not a number {text:?}")]
+    InvalidSyntax {
+        /// Original field text, including whitespace.
+        text: String,
+    },
+    /// The floating-point parser rejected the field.
+    #[error("{source} {text:?}")]
+    Parse {
+        /// Original field text, including whitespace.
+        text: String,
+        /// Floating-point parser failure.
+        #[source]
+        source: std::num::ParseFloatError,
+    },
+    /// The field overflowed or underflowed.
+    #[error("out of range {text:?}")]
+    OutOfRange {
+        /// Original field text, including whitespace.
+        text: String,
+    },
+}
+
 /// Serato autotags with BPM and gain values.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AutoTags {
@@ -26,6 +104,16 @@ pub struct AutoTags {
     pub auto_gain: f32,
     /// Manually adjusted gain in dB.
     pub gain: f32,
+}
+
+impl Display for AutoTagsField {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Bpm => "BPM",
+            Self::AutoGain => "Auto Gain",
+            Self::Gain => "Gain dB",
+        })
+    }
 }
 
 impl AutoTags {
@@ -44,25 +132,37 @@ impl AutoTags {
     ///
     /// Returns an error when the size or version is unexpected, a number cannot be parsed,
     /// or the BPM is negative.
-    pub fn parse(data: &[u8]) -> anyhow::Result<Self> {
+    pub fn parse(data: &[u8]) -> Result<Self, AutoTagsError> {
         let (Some(bpm_bytes), Some(auto_gain_bytes)) = (
             data.get(BPM_OFFSET..AUTO_GAIN_OFFSET),
             data.get(AUTO_GAIN_OFFSET..GAIN_OFFSET),
         ) else {
-            return Err(anyhow!("Data is too short to contain all necessary information"));
+            return Err(AutoTagsError::TooShort { length: data.len() });
         };
         if !matches!(data.len(), GAIN_OFFSET | FULL_BYTES) || !data.starts_with(&[0x01, 0x01]) {
-            return Err(anyhow!("Unexpected autotags size or version"));
+            return Err(AutoTagsError::SizeOrVersion {
+                length: data.len(),
+                version: data.first_chunk::<2>().copied().unwrap_or_default(),
+            });
         }
-        let bpm = fixed_number(bpm_bytes).map_err(|error| anyhow!("Failed to parse BPM: {error}"))?;
+        let bpm = fixed_number(bpm_bytes).map_err(|source| AutoTagsError::InvalidField {
+            field: AutoTagsField::Bpm,
+            source,
+        })?;
         if bpm < 0.0 {
-            return Err(anyhow!("Negative BPM: {bpm}"));
+            return Err(AutoTagsError::NegativeBpm { bpm });
         }
-        let auto_gain = fixed_number(auto_gain_bytes).map_err(|error| anyhow!("Failed to parse Auto Gain: {error}"))?;
+        let auto_gain = fixed_number(auto_gain_bytes).map_err(|source| AutoTagsError::InvalidField {
+            field: AutoTagsField::AutoGain,
+            source,
+        })?;
         // The manual gain field is missing in older files.
         let gain = match data.get(GAIN_OFFSET..) {
             Some(gain_bytes) if !gain_bytes.is_empty() => {
-                fixed_number(gain_bytes).map_err(|error| anyhow!("Failed to parse Gain dB: {error}"))?
+                fixed_number(gain_bytes).map_err(|source| AutoTagsError::InvalidField {
+                    field: AutoTagsField::Gain,
+                    source,
+                })?
             }
             _ => 0.0,
         };
@@ -85,33 +185,36 @@ impl Display for AutoTags {
     clippy::cast_possible_truncation,
     reason = "the fields are stored as f32 and Serato writes at most three decimals"
 )]
-fn fixed_number(bytes: &[u8]) -> anyhow::Result<f32> {
+fn fixed_number(bytes: &[u8]) -> Result<f32, AutoTagsNumberError> {
     let length = bytes
         .iter()
         .position(|&byte| byte == 0)
-        .ok_or_else(|| anyhow!("missing zero terminator"))?;
+        .ok_or(AutoTagsNumberError::MissingTerminator)?;
     let (digits, padding) = bytes.split_at(length);
     if padding.iter().any(|&byte| byte != 0) {
-        return Err(anyhow!("data after the zero terminator"));
+        return Err(AutoTagsNumberError::DataAfterTerminator);
     }
-    let text = std::str::from_utf8(digits).map_err(|_| anyhow!("not UTF-8"))?;
+    let text = std::str::from_utf8(digits).map_err(AutoTagsNumberError::Utf8)?;
     parse_tag_number(text).map(|value| value as f32)
 }
 
 /// Strictly parses a finite ASCII number with no ignored text.
-fn parse_tag_number(text: &str) -> anyhow::Result<f64> {
+fn parse_tag_number(text: &str) -> Result<f64, AutoTagsNumberError> {
     let trimmed = text.trim_matches([' ', '\t']);
     if trimmed.is_empty()
         || trimmed.starts_with('+')
         || !trimmed.chars().all(|character| "0123456789.eE+-".contains(character))
     {
-        return Err(anyhow!("not a number {text:?}"));
+        return Err(AutoTagsNumberError::InvalidSyntax { text: text.to_owned() });
     }
-    let value: f64 = trimmed.parse().map_err(|error| anyhow!("{error} {text:?}"))?;
+    let value: f64 = trimmed.parse().map_err(|source| AutoTagsNumberError::Parse {
+        text: text.to_owned(),
+        source,
+    })?;
     let significand = trimmed.split(['e', 'E']).next().unwrap_or_default();
     let underflowed = value == 0.0 && significand.contains(|character: char| ('1'..='9').contains(&character));
     if !value.is_finite() || underflowed {
-        return Err(anyhow!("out of range {text:?}"));
+        return Err(AutoTagsNumberError::OutOfRange { text: text.to_owned() });
     }
     Ok(value)
 }
@@ -151,8 +254,34 @@ mod test_autotags {
 
     #[test]
     fn fails_on_short_data() {
-        assert!(AutoTags::parse(&[0x01, 0x01, 0x31, 0x32, 0x38]).is_err());
+        let error = AutoTags::parse(&[0x01, 0x01, 0x31, 0x32, 0x38]).expect_err("short payload");
+        assert!(matches!(error, AutoTagsError::TooShort { length: 5 }));
+        assert_eq!(
+            error.to_string(),
+            "Data is too short to contain all necessary information"
+        );
         assert!(AutoTags::parse(&[]).is_err());
+    }
+
+    #[test]
+    fn invalid_fields_preserve_the_field_and_source() {
+        let data = [HEADER, b"\xff28.00\0", b"-3.257\0"].concat();
+        let error = AutoTags::parse(&data).expect_err("invalid UTF-8");
+        assert_eq!(error.to_string(), "Failed to parse BPM: not UTF-8");
+        assert!(std::error::Error::source(&error).is_some());
+        let AutoTagsError::InvalidField {
+            field: AutoTagsField::Bpm,
+            source,
+        } = error
+        else {
+            panic!("expected the BPM field");
+        };
+        assert!(matches!(source, AutoTagsNumberError::Utf8(_)));
+        assert!(std::error::Error::source(&source).is_some());
+        let error = parse_tag_number("1e").expect_err("incomplete exponent");
+        assert!(matches!(error, AutoTagsNumberError::Parse { .. }));
+        assert!(std::error::Error::source(&error).is_some());
+        assert_eq!(error.to_string(), "invalid float literal \"1e\"");
     }
 
     #[test]

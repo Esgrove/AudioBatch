@@ -3,8 +3,13 @@
 use std::fmt;
 use std::fmt::Display;
 
-use anyhow::Result;
-use anyhow::anyhow;
+/// A malformed Serato analysis version payload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("Data is too short to contain version information")]
+pub struct AnalysisVersionError {
+    /// Number of bytes in the payload.
+    pub length: usize,
+}
 
 /// Serato analysis version number.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -26,9 +31,9 @@ impl AnalysisVersion {
     /// # Errors
     ///
     /// Returns an error when the data has fewer than two bytes.
-    pub fn parse(data: &[u8]) -> Result<Self> {
+    pub const fn parse(data: &[u8]) -> Result<Self, AnalysisVersionError> {
         let [major_version, minor_version, ..] = data else {
-            return Err(anyhow!("Data is too short to contain version information"));
+            return Err(AnalysisVersionError { length: data.len() });
         };
         Ok(Self {
             major_version: *major_version,
@@ -63,7 +68,9 @@ mod test_analysis_version {
 
     #[test]
     fn fails_on_short_data() {
-        assert!(AnalysisVersion::parse(&[1]).is_err());
+        let error = AnalysisVersion::parse(&[1]).expect_err("short version");
+        assert_eq!(error, AnalysisVersionError { length: 1 });
+        assert_eq!(error.to_string(), "Data is too short to contain version information");
         assert!(AnalysisVersion::parse(&[]).is_err());
     }
 

@@ -30,7 +30,7 @@ fn main() -> Result<()> {
                     );
                 }
             }
-            Err(error) => println!("  error: {error:#}"),
+            Err(error) => println!("  error: {:#}", anyhow::Error::new(error)),
         }
     }
     Ok(())

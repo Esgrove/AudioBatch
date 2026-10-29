@@ -9,7 +9,6 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 audiobatch-core.workspace = true
 base64.workspace = true
 crossbeam-channel.workspace = true
@@ -18,10 +17,12 @@ rayon.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+thiserror.workspace = true
 tracing.workspace = true
 vst3-host.workspace = true
 
 [dev-dependencies]
+anyhow.workspace = true
 audiobatch-test-plugin.workspace = true
 test-fixtures.workspace = true
 

@@ -8,8 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-use anyhow::{Context as _, Result, bail};
-use audiobatch_core::atomic_write::write_atomically;
+use audiobatch_core::atomic_write::{AtomicWriteError, write_atomically};
 use audiobatch_core::cache::data_directory;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -38,6 +37,68 @@ const VERSION_FIELD: &str = "version";
 
 /// Format name shown for every plugin, since VST3 is the only supported format.
 pub const FORMAT_NAME: &str = "VST3";
+
+/// Failures while reading or writing saved plugin data.
+#[derive(Debug, thiserror::Error)]
+pub enum PluginDataError {
+    /// The data file could not be read.
+    #[error("Could not read the {description} {}", path.display())]
+    Read {
+        /// The saved data being read.
+        description: &'static str,
+        /// Location of the saved data.
+        path: PathBuf,
+        /// The file system failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The contents are invalid or use an unsupported format.
+    #[error("Invalid {description} {}", path.display())]
+    Invalid {
+        /// The saved data being decoded.
+        description: &'static str,
+        /// Location of the saved data.
+        path: PathBuf,
+        /// The malformed contents or unsupported version.
+        #[source]
+        source: VersionedJsonError,
+    },
+    /// An invalid file could not be preserved during recovery.
+    #[error("The {description} {} could not be read or moved aside", path.display())]
+    Recovery {
+        /// The saved data being recovered.
+        description: &'static str,
+        /// Location of the invalid file.
+        path: PathBuf,
+        /// The failure to move the invalid file aside.
+        #[source]
+        source: std::io::Error,
+    },
+    /// Serialization failed before writing.
+    #[error(transparent)]
+    Serialize(#[from] serde_json::Error),
+    /// Atomic replacement failed.
+    #[error(transparent)]
+    Write(#[from] AtomicWriteError),
+}
+
+/// Invalid JSON or a saved plugin data format newer than the reader supports.
+#[derive(Debug, thiserror::Error)]
+pub enum VersionedJsonError {
+    /// JSON syntax or fields could not be decoded.
+    #[error(transparent)]
+    Json(#[from] serde_json::Error),
+    /// The format is newer than the application supports.
+    #[error("{} was saved by a newer version of AudioBatch, format {version} instead of {supported_version}", path.display())]
+    NewerVersion {
+        /// Location of the newer saved data.
+        path: PathBuf,
+        /// Format version found in the file.
+        version: u64,
+        /// Highest format version this reader supports.
+        supported_version: u32,
+    },
+}
 
 /// One plugin class found in a bundle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -139,12 +200,21 @@ impl KnownPlugins {
     /// # Errors
     ///
     /// Returns an error when the file exists but cannot be read or parsed.
-    pub fn load_from(path: &Path) -> Result<Self> {
+    pub fn load_from(path: &Path) -> Result<Self, PluginDataError> {
         match fs::read_to_string(path) {
-            Ok(text) => read_versioned_json(&text, KNOWN_PLUGINS_FORMAT_VERSION, path)
-                .with_context(|| format!("Invalid plugin list {}", path.display())),
+            Ok(text) => read_versioned_json(&text, KNOWN_PLUGINS_FORMAT_VERSION, path).map_err(|source| {
+                PluginDataError::Invalid {
+                    description: "plugin list",
+                    path: path.to_path_buf(),
+                    source,
+                }
+            }),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(error) => Err(error).with_context(|| format!("Could not read the plugin list {}", path.display())),
+            Err(source) => Err(PluginDataError::Read {
+                description: "plugin list",
+                path: path.to_path_buf(),
+                source,
+            }),
         }
     }
 
@@ -155,7 +225,7 @@ impl KnownPlugins {
     /// # Errors
     ///
     /// Returns an error when the file exists but cannot be read.
-    pub fn load_recovering(path: &Path) -> Result<(Self, Option<String>)> {
+    pub fn load_recovering(path: &Path) -> Result<(Self, Option<String>), PluginDataError> {
         load_recovering(path, Self::load_from, "plugin list")
     }
 
@@ -164,7 +234,7 @@ impl KnownPlugins {
     /// # Errors
     ///
     /// Returns an error when the directory or the file cannot be written.
-    pub fn save_to(&self, path: &Path) -> Result<()> {
+    pub fn save_to(&self, path: &Path) -> Result<(), PluginDataError> {
         write_versioned_json(path, KNOWN_PLUGINS_FORMAT_VERSION, self)
     }
 
@@ -247,22 +317,30 @@ pub fn bundle_modified_ms(bundle: &Path) -> i64 {
 /// A file that cannot be read at all is still an error, since moving it would not help.
 pub(crate) fn load_recovering<T: Default>(
     path: &Path,
-    load: impl Fn(&Path) -> Result<T>,
-    description: &str,
-) -> Result<(T, Option<String>)> {
+    load: impl Fn(&Path) -> Result<T, PluginDataError>,
+    description: &'static str,
+) -> Result<(T, Option<String>), PluginDataError> {
     match load(path) {
         Ok(value) => Ok((value, None)),
-        Err(error) if error.chain().any(<dyn std::error::Error>::is::<serde_json::Error>) => {
+        Err(
+            error @ PluginDataError::Invalid {
+                source: VersionedJsonError::Json(_),
+                ..
+            },
+        ) => {
             let moved = unused_backup_path(path);
             let message = match fs::rename(path, &moved) {
                 Ok(()) => format!(
-                    "The {description} {} could not be read and was moved to {}: {error:#}",
+                    "The {description} {} could not be read and was moved to {}: {}",
                     path.display(),
-                    moved.display()
+                    moved.display(),
+                    error_chain(&error)
                 ),
                 Err(rename_error) => {
-                    return Err(rename_error).with_context(|| {
-                        format!("The {description} {} could not be read or moved aside", path.display())
+                    return Err(PluginDataError::Recovery {
+                        description,
+                        path: path.to_path_buf(),
+                        source: rename_error,
                     });
                 }
             };
@@ -291,9 +369,12 @@ fn unused_backup_path(path: &Path) -> PathBuf {
 /// # Errors
 ///
 /// Returns an error when the directory or the file cannot be written.
-pub(crate) fn write_versioned_json(path: &Path, version: u32, value: &impl Serialize) -> Result<()> {
+pub(crate) fn write_versioned_json(path: &Path, version: u32, value: &impl Serialize) -> Result<(), PluginDataError> {
     let versioned = Versioned { version, value };
-    write_atomically(path, serde_json::to_string_pretty(&versioned)?.as_bytes())
+    Ok(write_atomically(
+        path,
+        serde_json::to_string_pretty(&versioned)?.as_bytes(),
+    )?)
 }
 
 /// Reads a value from JSON written by `write_versioned_json`.
@@ -302,20 +383,39 @@ pub(crate) fn write_versioned_json(path: &Path, version: u32, value: &impl Seria
 /// # Errors
 ///
 /// Returns an error when the text cannot be parsed, or the file was written by a newer version of `AudioBatch`.
-pub(crate) fn read_versioned_json<T: DeserializeOwned>(text: &str, supported_version: u32, path: &Path) -> Result<T> {
+pub(crate) fn read_versioned_json<T: DeserializeOwned>(
+    text: &str,
+    supported_version: u32,
+    path: &Path,
+) -> Result<T, VersionedJsonError> {
     let json: serde_json::Value = serde_json::from_str(text)?;
     let version = json.get(VERSION_FIELD).and_then(serde_json::Value::as_u64).unwrap_or(1);
     if version > u64::from(supported_version) {
-        bail!(
-            "{} was saved by a newer version of AudioBatch, format {version} instead of {supported_version}",
-            path.display()
-        );
+        return Err(VersionedJsonError::NewerVersion {
+            path: path.to_path_buf(),
+            version,
+            supported_version,
+        });
     }
     Ok(serde_json::from_value(json)?)
 }
 
+/// Formats a complete cause chain only at a warning or protocol boundary.
+pub(crate) fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut message = error.to_string();
+    let mut cause = error.source();
+    while let Some(error) = cause {
+        message.push_str(": ");
+        message.push_str(&error.to_string());
+        cause = error.source();
+    }
+    message
+}
+
 #[cfg(test)]
 mod test_known_plugins {
+    use std::error::Error as _;
+
     use super::*;
 
     /// Returns a description of a plugin in a bundle.
@@ -357,10 +457,24 @@ mod test_known_plugins {
             KnownPlugins::default()
         );
         fs::write(&path, "{ not json").expect("invalid file");
-        assert!(KnownPlugins::load_from(&path).is_err());
+        let error = KnownPlugins::load_from(&path).expect_err("invalid JSON");
+        assert!(matches!(
+            &error,
+            PluginDataError::Invalid {
+                source: VersionedJsonError::Json(_),
+                ..
+            }
+        ));
+        assert_eq!(error.to_string(), format!("Invalid plugin list {}", path.display()));
+        assert!(
+            error
+                .source()
+                .is_some_and(|source| source.downcast_ref::<VersionedJsonError>().is_some())
+        );
         let (recovered, message) = KnownPlugins::load_recovering(&path).expect("recovers");
         assert_eq!(recovered, KnownPlugins::default());
-        assert!(message.is_some());
+        let message = message.expect("recovery warning");
+        assert!(message.contains(&error_chain(&error)), "{message}");
         assert!(path.with_extension("invalid.json").is_file());
         assert!(!path.exists());
     }

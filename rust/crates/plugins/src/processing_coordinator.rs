@@ -16,7 +16,6 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
-use anyhow::{Context as _, Result};
 use audiobatch_core::cache::AnalysisCache;
 use audiobatch_core::normalize::{batch_output_conflict_message, find_batch_output_conflicts};
 use audiobatch_core::operation::{OperationResult, update_cache};
@@ -32,6 +31,11 @@ const PROGRESS_STEP: f32 = 0.02;
 
 /// How often a job waiting for a free chain checks for cancellation.
 const CHAIN_WAIT_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Failure to create the worker pool for plugin processing.
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to create the plugin processing worker pool")]
+pub struct ProcessingCoordinatorError(#[source] pub rayon::ThreadPoolBuildError);
 
 /// Events of one processing run, in the order they are published for each file.
 #[derive(Debug, Clone)]
@@ -136,13 +140,13 @@ impl ProcessingCoordinator {
     /// # Errors
     ///
     /// Returns an error when the worker threads cannot be created.
-    pub fn new(cache: Arc<AnalysisCache>, worker_count: usize) -> Result<Self> {
+    pub fn new(cache: Arc<AnalysisCache>, worker_count: usize) -> Result<Self, ProcessingCoordinatorError> {
         let worker_count = worker_count.max(1);
         let pool = ThreadPoolBuilder::new()
             .num_threads(worker_count)
             .thread_name(|index| format!("plugin-processing-{index}"))
             .build()
-            .context("Failed to create the plugin processing worker pool")?;
+            .map_err(ProcessingCoordinatorError)?;
         Ok(Self {
             cache,
             pool,

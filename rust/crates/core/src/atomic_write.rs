@@ -6,25 +6,65 @@
 
 use std::fs;
 use std::io::Write as _;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context as _, Result};
+/// A failure to prepare, write, or commit an atomic file replacement.
+#[derive(Debug, thiserror::Error)]
+pub enum AtomicWriteError {
+    /// The destination directory could not be created.
+    #[error("Could not create {}", path.display())]
+    CreateDirectory {
+        /// Directory to create.
+        path: PathBuf,
+        /// Filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// A temporary file could not be created beside the destination.
+    #[error("Could not create a temporary file in {}", directory.display())]
+    CreateTemporary {
+        /// Directory for the temporary file.
+        directory: PathBuf,
+        /// Filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// Writing or flushing the temporary file failed.
+    #[error(transparent)]
+    Write(#[from] std::io::Error),
+    /// Committing the replacement failed.
+    #[error("Could not replace {}", path.display())]
+    Replace {
+        /// Destination to replace.
+        path: PathBuf,
+        /// Persistence failure, retaining the temporary file.
+        #[source]
+        source: tempfile::PersistError,
+    },
+}
 
 /// Writes the contents to a file, replacing it atomically and creating its directory when needed.
 ///
 /// # Errors
 ///
 /// Returns an error when the directory, the temporary file, or the replacement cannot be written.
-pub fn write_atomically(path: &Path, contents: &[u8]) -> Result<()> {
+pub fn write_atomically(path: &Path, contents: &[u8]) -> Result<(), AtomicWriteError> {
     let directory = path.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(directory).with_context(|| format!("Could not create {}", directory.display()))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(directory)
-        .with_context(|| format!("Could not create a temporary file in {}", directory.display()))?;
+    fs::create_dir_all(directory).map_err(|source| AtomicWriteError::CreateDirectory {
+        path: directory.to_path_buf(),
+        source,
+    })?;
+    let mut temporary =
+        tempfile::NamedTempFile::new_in(directory).map_err(|source| AtomicWriteError::CreateTemporary {
+            directory: directory.to_path_buf(),
+            source,
+        })?;
     temporary.write_all(contents)?;
     temporary.as_file().sync_all()?;
-    temporary
-        .persist(path)
-        .with_context(|| format!("Could not replace {}", path.display()))?;
+    temporary.persist(path).map_err(|source| AtomicWriteError::Replace {
+        path: path.to_path_buf(),
+        source,
+    })?;
     Ok(())
 }
 
@@ -57,7 +97,10 @@ mod test_write_atomically {
         let target = directory.path().join("occupied");
         fs::create_dir(&target).expect("created");
         fs::write(target.join("child"), b"keep").expect("written");
-        assert!(write_atomically(&target, b"contents").is_err());
+        let error = write_atomically(&target, b"contents").expect_err("directory cannot be replaced");
+        assert!(matches!(error, AtomicWriteError::Replace { .. }));
+        assert_eq!(error.to_string(), format!("Could not replace {}", target.display()));
+        assert!(std::error::Error::source(&error).is_some());
         assert_eq!(fs::read(target.join("child")).expect("read"), b"keep");
     }
 }

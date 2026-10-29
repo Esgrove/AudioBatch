@@ -16,7 +16,6 @@ use std::io::{IsTerminal as _, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use anyhow::{Context as _, Result};
 use jiff::Zoned;
 use tracing::Metadata;
 use tracing::level_filters::LevelFilter;
@@ -38,6 +37,32 @@ const MAXIMUM_INITIAL_LOG_BYTES: u64 = 32_768;
 /// Target prefixes of the `AudioBatch` crates, whose messages are kept below the warning level.
 const OWN_TARGET_PREFIXES: [&str; 4] = ["audiobatch", "AudioBatchRs", "serato_tags", "vst3_host"];
 
+/// A failure to open the log, write its banner, or install the global subscriber.
+#[derive(Debug, thiserror::Error)]
+pub enum LogFileError {
+    /// Opening or trimming the log failed.
+    #[error("Could not open the log file {}", path.display())]
+    Open {
+        /// Log file to open.
+        path: PathBuf,
+        /// Filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// Writing the run banner failed.
+    #[error("Could not write the log file {}", path.display())]
+    Write {
+        /// Log file to write.
+        path: PathBuf,
+        /// Filesystem failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The global tracing subscriber could not be installed.
+    #[error("A logger is already installed")]
+    Install(#[source] tracing_subscriber::util::TryInitError),
+}
+
 /// Formats the local time of day at the start of each line.
 struct LocalTime;
 
@@ -55,15 +80,21 @@ impl FormatTime for LocalTime {
 /// # Errors
 ///
 /// Returns an error when the log file cannot be opened or written, or when a subscriber is already installed.
-pub fn install(log_name: &str, stderr_level: LevelFilter) -> Result<PathBuf> {
+pub fn install(log_name: &str, stderr_level: LevelFilter) -> Result<PathBuf, LogFileError> {
     let path = log_directory().join(format!("{log_name}.log"));
-    let mut file = open_trimmed(&path).with_context(|| format!("Could not open the log file {}", path.display()))?;
+    let mut file = open_trimmed(&path).map_err(|source| LogFileError::Open {
+        path: path.clone(),
+        source,
+    })?;
     writeln!(
         file,
         "\n**********************************************************\n{log_name}\nLog started: {}\n",
         Zoned::now().strftime("%d %b %Y %H:%M:%S %Z (%:z)")
     )
-    .with_context(|| format!("Could not write the log file {}", path.display()))?;
+    .map_err(|source| LogFileError::Write {
+        path: path.clone(),
+        source,
+    })?;
 
     let file_layer = tracing_subscriber::fmt::layer()
         .with_writer(Mutex::new(file))
@@ -81,7 +112,7 @@ pub fn install(log_name: &str, stderr_level: LevelFilter) -> Result<PathBuf> {
         .with(file_layer)
         .with(stderr_layer)
         .try_init()
-        .context("A logger is already installed")?;
+        .map_err(LogFileError::Install)?;
     install_panic_hook();
     Ok(path)
 }

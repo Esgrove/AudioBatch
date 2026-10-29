@@ -9,11 +9,88 @@ use std::fmt::Display;
 use std::io::{self, BufRead, Cursor, Read};
 use std::str;
 
-use anyhow::{Context, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose};
 use byteorder::{BigEndian, ReadBytesExt};
 
 use crate::format_position_timestamp;
+
+/// A malformed Markers2 wrapper, payload, or known entry.
+#[derive(Debug, thiserror::Error)]
+pub enum MarkersError {
+    /// The base64 wrapper has no terminator.
+    #[error("No null terminator found")]
+    MissingTerminator,
+    /// The terminator occurs before the wrapper header ends.
+    #[error("Invalid Markers2 base64 data range")]
+    InvalidBase64Range {
+        /// Byte offset of the terminator.
+        end: usize,
+    },
+    /// The payload is not valid base64.
+    #[error("Failed to decode base64 data")]
+    Base64(#[source] base64::DecodeError),
+    /// The payload version is not supported.
+    #[error("Invalid payload version: {version:?}")]
+    InvalidVersion {
+        /// Version bytes in the decoded payload.
+        version: (u8, u8),
+    },
+    /// Nonzero bytes follow the final entry.
+    #[error("Unexpected data after the final Markers2 entry")]
+    TrailingData,
+    /// The stated entry length overflows.
+    #[error("Marker entry length overflows")]
+    EntryLengthOverflow {
+        /// Byte offset of the entry data.
+        start: usize,
+        /// Entry length stated in the payload.
+        length: usize,
+    },
+    /// The stated entry extends beyond the payload.
+    #[error("Marker entry exceeds payload")]
+    EntryExceedsPayload {
+        /// Byte offset of the entry data.
+        start: usize,
+        /// Entry length stated in the payload.
+        length: usize,
+    },
+    /// The BPM lock entry has the wrong length.
+    #[error("Invalid data length for BpmLock")]
+    BpmLockLength {
+        /// Entry length in bytes.
+        length: usize,
+    },
+    /// The track color entry has the wrong length.
+    #[error("Invalid data length for Color")]
+    ColorLength {
+        /// Entry length in bytes.
+        length: usize,
+        /// Fixed-size conversion failure.
+        #[source]
+        source: std::array::TryFromSliceError,
+    },
+    /// A cue entry is too short.
+    #[error("Invalid data length for CueEntry")]
+    CueLength {
+        /// Entry length in bytes.
+        length: usize,
+    },
+    /// A loop entry is too short.
+    #[error("Invalid data length for Loop")]
+    LoopLength {
+        /// Entry length in bytes.
+        length: usize,
+    },
+    /// A binary payload read failed.
+    #[error("{0}")]
+    Read(#[from] io::Error),
+    /// An entry name is not valid UTF-8.
+    #[error("{0}")]
+    EntryName(#[from] std::string::FromUtf8Error),
+    /// A cue or loop name is not valid UTF-8.
+    #[error("{0}")]
+    Name(#[from] str::Utf8Error),
+}
 
 /// One entry of the Markers2 tag.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,12 +165,14 @@ impl Markers {
     ///
     /// Returns an error when the base64 payload or one of its known entries is malformed,
     /// or when anything but zero bytes follows the terminating name.
-    pub fn parse(data: &[u8]) -> Result<Vec<Self>> {
+    pub fn parse(data: &[u8]) -> Result<Vec<Self>, MarkersError> {
         let base64_end = data
             .iter()
             .position(|&byte| byte == b'\x00')
-            .ok_or_else(|| anyhow!("No null terminator found"))?;
-        let base64_data = data.get(2..base64_end).context("Invalid Markers2 base64 data range")?;
+            .ok_or(MarkersError::MissingTerminator)?;
+        let base64_data = data
+            .get(2..base64_end)
+            .ok_or(MarkersError::InvalidBase64Range { end: base64_end })?;
 
         // Serato wraps the base64 text with line feeds and leaves out the padding.
         let mut cleaned: Vec<u8> = base64_data.iter().copied().filter(|&byte| byte != b'\n').collect();
@@ -105,12 +184,12 @@ impl Markers {
         }
         let payload = general_purpose::STANDARD
             .decode(&cleaned)
-            .context("Failed to decode base64 data")?;
+            .map_err(MarkersError::Base64)?;
 
         let mut cursor = Cursor::new(payload);
         let version = (cursor.read_u8()?, cursor.read_u8()?);
         if version != (0x01, 0x01) {
-            return Err(anyhow!("Invalid payload version: {version:?}"));
+            return Err(MarkersError::InvalidVersion { version });
         }
 
         let mut entries = Vec::new();
@@ -119,7 +198,7 @@ impl Markers {
             if name_bytes.is_empty() {
                 let rest = cursor.get_ref().get(cursor.position() as usize..).unwrap_or_default();
                 if rest.iter().any(|&byte| byte != 0) {
-                    return Err(anyhow!("Unexpected data after the final Markers2 entry"));
+                    return Err(MarkersError::TrailingData);
                 }
                 break;
             }
@@ -128,11 +207,17 @@ impl Markers {
             let start = cursor.position() as usize;
             let end = start
                 .checked_add(entry_length)
-                .context("Marker entry length overflows")?;
+                .ok_or(MarkersError::EntryLengthOverflow {
+                    start,
+                    length: entry_length,
+                })?;
             let entry_data = cursor
                 .get_ref()
                 .get(start..end)
-                .context("Marker entry exceeds payload")?;
+                .ok_or(MarkersError::EntryExceedsPayload {
+                    start,
+                    length: entry_length,
+                })?;
             entries.extend(Self::load(&entry_name, entry_data)?);
             cursor.set_position(end as u64);
         }
@@ -140,7 +225,7 @@ impl Markers {
     }
 
     /// Parses a single entry based on its name, or returns `None` for an entry type this parser does not know.
-    fn load(entry_name: &str, data: &[u8]) -> Result<Option<Self>> {
+    fn load(entry_name: &str, data: &[u8]) -> Result<Option<Self>, MarkersError> {
         Ok(Some(match entry_name {
             "BPMLOCK" => Self::BpmLock(BpmLock::load(data)?),
             "COLOR" => Self::Color(Color::load(data)?),
@@ -164,10 +249,10 @@ impl Display for Markers {
 
 impl BpmLock {
     /// Parses a BPM lock entry, a single boolean byte.
-    fn load(data: &[u8]) -> Result<Self> {
+    const fn load(data: &[u8]) -> Result<Self, MarkersError> {
         match data {
             [value] => Ok(Self { enabled: *value != 0 }),
-            _ => Err(anyhow!("Invalid data length for BpmLock")),
+            _ => Err(MarkersError::BpmLockLength { length: data.len() }),
         }
     }
 }
@@ -194,8 +279,11 @@ impl Color {
     }
 
     /// Parses a track color entry of four bytes, where the first byte is ignored.
-    fn load(data: &[u8]) -> Result<Self> {
-        let bytes: [u8; 4] = data.try_into().context("Invalid data length for Color")?;
+    fn load(data: &[u8]) -> Result<Self, MarkersError> {
+        let bytes: [u8; 4] = data.try_into().map_err(|source| MarkersError::ColorLength {
+            length: data.len(),
+            source,
+        })?;
         Ok(Self::new_argb(bytes))
     }
 
@@ -225,9 +313,9 @@ impl Cue {
     /// | `0a`   |              `02` | `00 00`       |           |                         |
     /// | `0c`   | `01` <= X <= `33` | `00`          | ``        | UTF-8 (null-terminated) | Name
     ///
-    fn load(data: &[u8]) -> Result<Self> {
+    fn load(data: &[u8]) -> Result<Self, MarkersError> {
         if data.len() < 13 {
-            return Err(anyhow!("Invalid data length for CueEntry"));
+            return Err(MarkersError::CueLength { length: data.len() });
         }
         let mut cursor = Cursor::new(data);
         cursor.set_position(1);
@@ -280,9 +368,9 @@ impl Loop {
     /// | `13`     |                `01` | `00`          | False     | `uint8_t` (boolean)     | Locked
     /// | `14`     | `01` <= X <= `7fec` | `00`          | ``        | UTF-8 (null-terminated) | Name
     ///
-    fn load(data: &[u8]) -> Result<Self> {
+    fn load(data: &[u8]) -> Result<Self, MarkersError> {
         if data.len() < 15 {
-            return Err(anyhow!("Invalid data length for Loop"));
+            return Err(MarkersError::LoopLength { length: data.len() });
         }
         let mut cursor = Cursor::new(data);
         cursor.set_position(1);
@@ -339,6 +427,22 @@ fn read_until_null<R: BufRead>(reader: &mut R) -> io::Result<Vec<u8>> {
 #[cfg(test)]
 mod test_color {
     use super::*;
+
+    #[test]
+    fn errors_preserve_decoding_sources_and_display_text() {
+        let error = Markers::parse(b"\x01\x01!\0").expect_err("invalid base64");
+        assert!(matches!(error, MarkersError::Base64(_)));
+        assert_eq!(error.to_string(), "Failed to decode base64 data");
+        assert!(std::error::Error::source(&error).is_some());
+        let error = Color::load(&[0; 3]).expect_err("short color");
+        assert!(matches!(error, MarkersError::ColorLength { length: 3, .. }));
+        assert_eq!(error.to_string(), "Invalid data length for Color");
+        assert!(std::error::Error::source(&error).is_some());
+        let error = Markers::parse(b"\x01\x01AQ==\0").expect_err("short version");
+        assert!(matches!(error, MarkersError::Read(_)));
+        assert_eq!(error.to_string(), "failed to fill whole buffer");
+        assert!(std::error::Error::source(&error).is_some());
+    }
 
     #[test]
     fn creates_colors_from_rgb_and_argb() {

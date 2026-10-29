@@ -15,8 +15,8 @@ use std::sync::{Arc, OnceLock};
 use std::thread::{self, ThreadId};
 use std::time::Duration;
 
-use anyhow::{Result, bail};
 use crossbeam_queue::ArrayQueue;
+use thiserror::Error;
 
 /// How often a blocked `UiDispatcher::call` checks whether its caller was cancelled.
 const CANCELLATION_POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -34,12 +34,28 @@ const CALL_ABANDONED: u8 = 2;
 static UI_THREAD: OnceLock<ThreadId> = OnceLock::new();
 
 /// Why `UiDispatcher::call` returned without a result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum CallError {
     /// The caller was cancelled before the UI thread started the job, so the job will not run.
+    #[error("The call was cancelled before it started")]
     Cancelled,
     /// The UI thread no longer receives jobs.
+    #[error("The UI thread no longer runs plugin jobs")]
     Closed,
+}
+
+/// Why the UI thread could not be registered or started.
+#[derive(Debug, Error)]
+pub enum UiThreadError {
+    /// A different thread already owns the UI thread token.
+    #[error("Another thread is already registered as the VST3 UI thread")]
+    AlreadyRegistered,
+    /// The operating system could not start the thread.
+    #[error(transparent)]
+    Spawn(#[from] std::io::Error),
+    /// The thread exited before reporting whether registration succeeded.
+    #[error(transparent)]
+    Startup(#[from] std::sync::mpsc::RecvError),
 }
 
 /// Proof that the current thread is the UI thread.
@@ -81,11 +97,11 @@ impl UiThread {
     /// # Errors
     ///
     /// Returns an error when another thread is already registered.
-    pub fn register_current() -> Result<Self> {
+    pub fn register_current() -> Result<Self, UiThreadError> {
         let current = thread::current().id();
         let registered = *UI_THREAD.get_or_init(|| current);
         if registered != current {
-            bail!("Another thread is already registered as the VST3 UI thread");
+            return Err(UiThreadError::AlreadyRegistered);
         }
         Ok(Self { not_send: PhantomData })
     }
@@ -112,7 +128,7 @@ impl UiThread {
     /// # Errors
     ///
     /// Returns an error when another thread is already registered or the thread cannot be started.
-    pub fn spawn_dedicated() -> Result<UiDispatcher> {
+    pub fn spawn_dedicated() -> Result<UiDispatcher, UiThreadError> {
         let (dispatcher, jobs) = ui_channel();
         let (started_sender, started_receiver) = std::sync::mpsc::channel();
         thread::Builder::new()
@@ -226,17 +242,6 @@ impl std::fmt::Debug for UiJob {
     }
 }
 
-impl std::fmt::Display for CallError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Cancelled => formatter.write_str("The call was cancelled before it started"),
-            Self::Closed => formatter.write_str("The UI thread no longer runs plugin jobs"),
-        }
-    }
-}
-
-impl std::error::Error for CallError {}
-
 /// Creates a connected dispatcher and job queue.
 #[must_use]
 pub fn ui_channel() -> (UiDispatcher, UiJobs) {
@@ -246,6 +251,7 @@ pub fn ui_channel() -> (UiDispatcher, UiJobs) {
 
 #[cfg(test)]
 mod test_dispatcher {
+    use std::error::Error as _;
     use std::sync::atomic::AtomicBool;
 
     use super::*;
@@ -290,5 +296,30 @@ mod test_dispatcher {
         }
         let order: Vec<i32> = (0..3).map(|_| receiver.recv().expect("job ran")).collect();
         assert_eq!(order, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn dispatcher_errors_stay_small_and_keep_their_messages() {
+        assert_eq!(size_of::<CallError>(), size_of::<u8>());
+        assert_eq!(
+            CallError::Cancelled.to_string(),
+            "The call was cancelled before it started"
+        );
+        assert_eq!(
+            CallError::Closed.to_string(),
+            "The UI thread no longer runs plugin jobs"
+        );
+        assert!(CallError::Closed.source().is_none());
+    }
+
+    #[test]
+    fn another_thread_cannot_register_as_the_ui_thread() {
+        let _dispatcher = dispatcher();
+        let error = UiThread::register_current().expect_err("the dedicated thread is registered");
+        assert!(matches!(error, UiThreadError::AlreadyRegistered));
+        assert_eq!(
+            error.to_string(),
+            "Another thread is already registered as the VST3 UI thread"
+        );
     }
 }

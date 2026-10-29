@@ -14,7 +14,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender, unbounded};
 use rayon::{ThreadPool, ThreadPoolBuilder};
 
@@ -27,6 +26,11 @@ use crate::record::AnalysisRecord;
 
 /// Smallest progress step that is published, so the receiver is not flooded with events.
 const PROGRESS_STEP: f32 = 0.02;
+
+/// A failure to create the normalization worker threads.
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to create the normalization worker pool")]
+pub struct NormalizeCoordinatorError(#[source] pub rayon::ThreadPoolBuildError);
 
 /// Events of one normalization run, in the order they are published for each file.
 #[derive(Debug, Clone)]
@@ -101,12 +105,12 @@ impl NormalizeCoordinator {
     /// # Errors
     ///
     /// Returns an error when the worker threads cannot be created.
-    pub fn new(cache: Arc<AnalysisCache>, worker_count: usize) -> Result<Self> {
+    pub fn new(cache: Arc<AnalysisCache>, worker_count: usize) -> Result<Self, NormalizeCoordinatorError> {
         let pool = ThreadPoolBuilder::new()
             .num_threads(worker_count.max(1))
             .thread_name(|index| format!("normalize-{index}"))
             .build()
-            .context("Failed to create the normalization worker pool")?;
+            .map_err(NormalizeCoordinatorError)?;
         Ok(Self {
             cache,
             pool,

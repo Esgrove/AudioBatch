@@ -3,15 +3,65 @@
 use std::fmt;
 use std::fmt::Display;
 
-use anyhow::Context;
-use anyhow::Result;
-use anyhow::anyhow;
-
 /// Size of the version and marker count header.
 const HEADER_BYTES: usize = 6;
 
 /// Size of one marker, a position and a BPM or beat count.
 const MARKER_BYTES: usize = 8;
+
+/// A malformed beatgrid header or marker.
+#[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
+pub enum BeatGridError {
+    /// The header is incomplete.
+    #[error("Data is too short to contain valid beatgrid information")]
+    TooShort {
+        /// Payload length in bytes.
+        length: usize,
+    },
+    /// The version is not supported.
+    #[error("Unsupported beatgrid version")]
+    UnsupportedVersion {
+        /// Version bytes in the header.
+        version: [u8; 2],
+    },
+    /// The stated marker count cannot fit in memory.
+    #[error("Beatgrid marker count overflows")]
+    MarkerCountOverflow {
+        /// Marker count stated in the header.
+        marker_count: u32,
+    },
+    /// The payload length disagrees with the marker count.
+    #[error("Beatgrid size {length} does not match {marker_count} markers")]
+    SizeMismatch {
+        /// Payload length in bytes.
+        length: usize,
+        /// Marker count stated in the header.
+        marker_count: u32,
+    },
+    /// The marker range is outside the payload.
+    #[error("Beatgrid markers exceed the data")]
+    MarkersExceedData,
+    /// A marker position is non-finite or decreases.
+    #[error("Invalid beatgrid marker position: {position}")]
+    InvalidPosition {
+        /// Zero-based marker index.
+        index: usize,
+        /// Rejected position in seconds.
+        position: f32,
+    },
+    /// The terminal BPM is not positive and finite.
+    #[error("Invalid beatgrid BPM: {bpm}")]
+    InvalidBpm {
+        /// Rejected BPM.
+        bpm: f32,
+    },
+    /// An intermediate marker states zero beats.
+    #[error("Beatgrid marker has zero beats till the next one")]
+    ZeroBeats {
+        /// Zero-based marker index.
+        index: usize,
+    },
+}
 
 /// A single beatgrid marker.
 #[derive(Debug, Clone, PartialEq)]
@@ -66,48 +116,49 @@ impl BeatGrid {
     ///
     /// Returns an error when the version is unknown, the size does not match the stated markers,
     /// the positions decrease, a beat count is zero, or the final BPM is not a positive finite number.
-    pub fn parse(data: &[u8]) -> Result<Self> {
-        let count_bytes = read_four_bytes(data, 2)
-            .ok_or_else(|| anyhow!("Data is too short to contain valid beatgrid information"))?;
+    pub fn parse(data: &[u8]) -> Result<Self, BeatGridError> {
+        let count_bytes = read_four_bytes(data, 2).ok_or(BeatGridError::TooShort { length: data.len() })?;
         if !data.starts_with(&[0x01, 0x00]) {
-            return Err(anyhow!("Unsupported beatgrid version"));
+            return Err(BeatGridError::UnsupportedVersion {
+                version: data.first_chunk::<2>().copied().unwrap_or_default(),
+            });
         }
         let marker_count = u32::from_be_bytes(count_bytes);
         let markers_end = (marker_count as usize)
             .checked_mul(MARKER_BYTES)
             .and_then(|bytes| bytes.checked_add(HEADER_BYTES))
-            .ok_or_else(|| anyhow!("Beatgrid marker count overflows"))?;
+            .ok_or(BeatGridError::MarkerCountOverflow { marker_count })?;
         let empty_without_footer = marker_count == 0 && data.len() == HEADER_BYTES;
         if data.len() != markers_end + 1 && !empty_without_footer {
-            return Err(anyhow!(
-                "Beatgrid size {} does not match {marker_count} markers",
-                data.len()
-            ));
+            return Err(BeatGridError::SizeMismatch {
+                length: data.len(),
+                marker_count,
+            });
         }
 
         let mut markers = Vec::with_capacity(marker_count as usize);
         let mut previous_position = f32::NEG_INFINITY;
         let (records, _) = data
             .get(HEADER_BYTES..markers_end)
-            .context("Beatgrid markers exceed the data")?
+            .ok_or(BeatGridError::MarkersExceedData)?
             .as_chunks::<MARKER_BYTES>();
         for (index, &[p0, p1, p2, p3, v0, v1, v2, v3]) in records.iter().enumerate() {
             let position = f32::from_be_bytes([p0, p1, p2, p3]);
             let value = [v0, v1, v2, v3];
             if !position.is_finite() || position < previous_position {
-                return Err(anyhow!("Invalid beatgrid marker position: {position}"));
+                return Err(BeatGridError::InvalidPosition { index, position });
             }
             previous_position = position;
             let marker = if index + 1 == marker_count as usize {
                 let bpm = f32::from_be_bytes(value);
                 if !bpm.is_finite() || bpm <= 0.0 {
-                    return Err(anyhow!("Invalid beatgrid BPM: {bpm}"));
+                    return Err(BeatGridError::InvalidBpm { bpm });
                 }
                 BeatGridMarker::Terminal { position, bpm }
             } else {
                 let beats_till_next = u32::from_be_bytes(value);
                 if beats_till_next == 0 {
-                    return Err(anyhow!("Beatgrid marker has zero beats till the next one"));
+                    return Err(BeatGridError::ZeroBeats { index });
                 }
                 BeatGridMarker::NonTerminal {
                     position,
@@ -178,6 +229,26 @@ mod test_beatgrid {
         assert!(BeatGrid::parse(&[0x01, 0x00, 0x00, 0x00, 0x00]).is_err());
         assert!(BeatGrid::parse(&[]).is_err());
         assert!(BeatGrid::parse(&[HEADER, &1_u32.to_be_bytes(), &[0x00, 0x00]].concat()).is_err());
+    }
+
+    #[test]
+    fn errors_identify_the_marker_and_keep_display_text() {
+        let error = BeatGrid::parse(&beatgrid_bytes(&[
+            (0.0, 0_u32.to_be_bytes()),
+            (1.0, 120.0_f32.to_be_bytes()),
+        ]))
+        .expect_err("zero beats");
+        assert!(matches!(error, BeatGridError::ZeroBeats { index: 0 }));
+        assert_eq!(error.to_string(), "Beatgrid marker has zero beats till the next one");
+        let error = BeatGrid::parse(&[HEADER, &2_u32.to_be_bytes()].concat()).expect_err("missing markers");
+        assert!(matches!(
+            error,
+            BeatGridError::SizeMismatch {
+                length: 6,
+                marker_count: 2
+            }
+        ));
+        assert_eq!(error.to_string(), "Beatgrid size 6 does not match 2 markers");
     }
 
     #[test]

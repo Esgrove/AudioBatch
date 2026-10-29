@@ -123,6 +123,23 @@ so a message from a worker thread names its file.
 The CLI logs what it already printed with the `FILE_ONLY_TARGET` target, so it is not printed twice.
 Nothing logs from the audio callback.
 
+## Errors and reporting
+
+The library crates use domain-specific error types derived with `thiserror`.
+Their variants distinguish failures without parsing messages and retain concrete underlying causes,
+such as I/O, decoder, database, or plugin host errors.
+Existing standard error types remain in use where they already describe the operation.
+The analysis classification in `AnalysisError` still determines which failed records the cache can retain.
+VST3 processing and dispatcher errors stay lightweight,
+and error handling does not allocate or log inside the audio callback.
+
+The CLI and GUI use `anyhow` to combine library failures with application context.
+They render messages at their reporting boundaries, while `tracing` writes the logs.
+Analysis records, operation outcomes, recovery warnings, and scan worker replies retain their text fields,
+so errors become strings when those records or protocol messages are constructed.
+Typed errors preserve their sources until that boundary.
+User-facing messages and the serialized formats do not depend on the internal error representation.
+
 ## GUI structure
 
 `AppView` in `gui/src/app/` is the root view of the main window.

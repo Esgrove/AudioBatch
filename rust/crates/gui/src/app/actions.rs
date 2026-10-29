@@ -144,6 +144,7 @@ impl AppView {
         if let Some(coordinator) = &self.coordinator
             && let Err(error) = coordinator.cache().remove_analyses(&trashed)
         {
+            let error = anyhow::Error::from(error);
             tracing::warn!("Failed to remove the cached results of the trashed files: {error:#}");
         }
         if !trashed.is_empty() {

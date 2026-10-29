@@ -12,6 +12,11 @@
 //! The output device is open only while playing, so other applications can use it the rest of the time:
 //! playing opens the stream, and `close_idle_stream` closes it once playback has stopped for a moment.
 //! Changing the file while playing keeps it open.
+//!
+//! Player preparation returns `PlayerError`, device queries return `DeviceError`,
+//! and control-thread insert changes return `InsertError`.
+//! Native causes remain available through their source chains.
+//! Asynchronous failures become user-facing text only when constructing a `PlayerEvent`.
 
 mod device;
 mod engine;
@@ -25,15 +30,15 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{BufferSize, Device, ErrorKind, FromSample, SampleFormat, SizedSample, Stream, StreamConfig};
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use rtrb::RingBuffer;
+use thiserror::Error;
 
-pub use device::{DeviceCapabilities, OutputConfig, device_capabilities};
+pub use device::{DeviceCapabilities, DeviceError, OutputConfig, device_capabilities};
 pub use engine::PlayerEvent;
-pub use preview_insert::PreviewInsert;
+pub use preview_insert::{InsertError, PreviewInsert};
 
 use device::{device_display_name, find_device, output_devices, stream_config};
 use engine::{Command, run_decode_thread};
@@ -54,6 +59,31 @@ const STREAM_ERROR_CAPACITY: usize = 8;
 /// How long playback stays stopped before `close_idle_stream` closes the output stream,
 /// long enough for the fade of a pause to finish playing.
 const STREAM_IDLE_TIMEOUT: Duration = Duration::from_millis(300);
+
+/// Failures while preparing a player on its owning thread.
+#[derive(Debug, Error)]
+pub enum PlayerError {
+    /// The output device or requested configuration is unavailable.
+    #[error(transparent)]
+    Device(#[from] DeviceError),
+    /// The operating system could not start the decode worker.
+    #[error("Could not start the decode thread")]
+    DecodeThread(#[source] std::io::Error),
+}
+
+/// Failures while opening and starting the output stream on the player's thread.
+#[derive(Debug, Error)]
+enum OutputStreamError {
+    /// The device's sample format has no renderer.
+    #[error("Unsupported output sample format {0}")]
+    UnsupportedSampleFormat(SampleFormat),
+    /// The device could not open the configured output stream.
+    #[error("Could not open the output stream")]
+    Open(#[source] cpal::Error),
+    /// The opened stream could not start playing.
+    #[error("Could not start the output stream")]
+    Start(#[source] cpal::Error),
+}
 
 /// Read-only view of the playback position, cheap to clone and safe to read from any thread.
 ///
@@ -134,8 +164,8 @@ impl Player {
     ///
     /// # Errors
     ///
-    /// Returns an error when no output device is available.
-    pub fn new(device_name: Option<&str>) -> Result<Self> {
+    /// Returns `PlayerError` when the output device cannot be configured or the decode thread cannot start.
+    pub fn new(device_name: Option<&str>) -> Result<Self, PlayerError> {
         Self::with_config(&OutputConfig {
             device: device_name.map(str::to_string),
             ..OutputConfig::default()
@@ -147,8 +177,9 @@ impl Player {
     ///
     /// # Errors
     ///
-    /// Returns an error when the device is not available or does not support the sample rate.
-    pub fn with_config(output: &OutputConfig) -> Result<Self> {
+    /// Returns `PlayerError` when the device is unavailable, the sample rate is unsupported,
+    /// or the decode thread cannot start.
+    pub fn with_config(output: &OutputConfig) -> Result<Self, PlayerError> {
         let device = find_device(output.device.as_deref())?;
         let (config, sample_format) = stream_config(&device, output)?;
         let output_rate = config.sample_rate;
@@ -182,7 +213,7 @@ impl Player {
             .spawn(move || {
                 run_decode_thread(producer, &command_receiver, &thread_events, &thread_shared, output_rate);
             })
-            .context("Could not start the decode thread")?;
+            .map_err(PlayerError::DecodeThread)?;
 
         Ok(Self {
             shared,
@@ -388,8 +419,9 @@ impl Player {
     ///
     /// # Errors
     ///
-    /// Returns an error when the audio callback is not taking changes, because the stream is not running.
-    pub fn set_insert(&mut self, insert: Option<Box<dyn PreviewInsert>>) -> Result<()> {
+    /// Returns `InsertError::QueueFull` when the audio callback is not taking changes,
+    /// because the stream is not running.
+    pub fn set_insert(&mut self, insert: Option<Box<dyn PreviewInsert>>) -> Result<(), InsertError> {
         self.insert.set(insert)?;
         self.apply_insert_changes_without_stream();
         Ok(())
@@ -474,7 +506,7 @@ impl Player {
             errors,
         )
         .and_then(|stream| {
-            stream.play().context("Could not start the output stream")?;
+            stream.play().map_err(OutputStreamError::Start)?;
             Ok(stream)
         });
         match opened {
@@ -483,7 +515,7 @@ impl Player {
                 self.shared.playing.store(false, Ordering::Relaxed);
                 let _ = self.event_sender.send(PlayerEvent::Error {
                     path: None,
-                    message: format!("{error:#}"),
+                    message: error_message(&error),
                 });
             }
         }
@@ -526,7 +558,7 @@ fn build_stream(
     sample_format: SampleFormat,
     renderer: Arc<Mutex<OutputRenderer>>,
     errors: StreamErrors,
-) -> Result<Stream> {
+) -> Result<Stream, OutputStreamError> {
     match sample_format {
         SampleFormat::F32 => build_typed_stream::<f32>(device, config, renderer, errors),
         SampleFormat::F64 => build_typed_stream::<f64>(device, config, renderer, errors),
@@ -534,7 +566,7 @@ fn build_stream(
         SampleFormat::I24 => build_typed_stream::<cpal::I24>(device, config, renderer, errors),
         SampleFormat::I32 => build_typed_stream::<i32>(device, config, renderer, errors),
         SampleFormat::U16 => build_typed_stream::<u16>(device, config, renderer, errors),
-        other => bail!("Unsupported output sample format {other}"),
+        other => Err(OutputStreamError::UnsupportedSampleFormat(other)),
     }
 }
 
@@ -544,7 +576,7 @@ fn build_typed_stream<T>(
     config: &StreamConfig,
     renderer: Arc<Mutex<OutputRenderer>>,
     errors: StreamErrors,
-) -> Result<Stream>
+) -> Result<Stream, OutputStreamError>
 where
     T: SizedSample + FromSample<f32>,
 {
@@ -574,7 +606,7 @@ where
             },
             None,
         )
-        .context("Could not open the output stream")
+        .map_err(OutputStreamError::Open)
 }
 
 /// Returns true for the errors after which the stream no longer plays, such as a disconnected device.
@@ -583,4 +615,78 @@ const fn is_stream_lost(kind: ErrorKind) -> bool {
         kind,
         ErrorKind::DeviceNotAvailable | ErrorKind::StreamInvalidated | ErrorKind::HostUnavailable
     )
+}
+
+/// Formats the source chain only at the user-facing event boundary, never inside the audio callback.
+fn error_message(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(error) = source {
+        message.push_str(": ");
+        message.push_str(&error.to_string());
+        source = error.source();
+    }
+    message
+}
+
+#[cfg(test)]
+mod test_errors {
+    use super::*;
+
+    /// Checks the bounds required by application error reporting and decode-thread transport.
+    const fn assert_error_bounds<T: std::error::Error + Send + Sync + 'static>() {}
+
+    #[test]
+    fn errors_support_cross_thread_reporting() {
+        assert_error_bounds::<PlayerError>();
+        assert_error_bounds::<DeviceError>();
+        assert_error_bounds::<InsertError>();
+        assert_error_bounds::<OutputStreamError>();
+        assert_error_bounds::<pipeline::PipelineError>();
+    }
+
+    #[test]
+    fn thread_failure_retains_the_io_error_and_event_context() {
+        let error = PlayerError::DecodeThread(std::io::Error::other("worker unavailable"));
+        assert_eq!(error.to_string(), "Could not start the decode thread");
+        assert!(
+            std::error::Error::source(&error)
+                .expect("thread source")
+                .is::<std::io::Error>()
+        );
+        assert_eq!(
+            error_message(&error),
+            "Could not start the decode thread: worker unavailable"
+        );
+    }
+
+    #[test]
+    fn stream_errors_keep_their_native_sources_and_context() {
+        for (error, message) in [
+            (
+                OutputStreamError::Open(cpal::Error::new(ErrorKind::DeviceNotAvailable)),
+                "Could not open the output stream",
+            ),
+            (
+                OutputStreamError::Start(cpal::Error::new(ErrorKind::DeviceNotAvailable)),
+                "Could not start the output stream",
+            ),
+        ] {
+            let source = std::error::Error::source(&error).expect("native stream source");
+            assert!(source.is::<cpal::Error>());
+            assert_eq!(error.to_string(), message);
+            assert_eq!(error_message(&error), format!("{message}: {source}"));
+        }
+    }
+
+    #[test]
+    fn transparent_device_errors_do_not_repeat_context() {
+        let native = cpal::Error::new(ErrorKind::DeviceNotAvailable);
+        let expected = format!("Could not read the output device configuration: {native}");
+        let error = PlayerError::from(DeviceError::DefaultConfiguration(native));
+        assert_eq!(error_message(&error), expected);
+        let error = OutputStreamError::UnsupportedSampleFormat(SampleFormat::I8);
+        assert_eq!(error.to_string(), "Unsupported output sample format i8");
+        assert!(std::error::Error::source(&error).is_none());
+    }
 }

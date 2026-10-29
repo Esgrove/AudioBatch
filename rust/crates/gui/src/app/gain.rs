@@ -121,6 +121,7 @@ impl AppView {
         if let Some(coordinator) = &self.coordinator
             && let Err(error) = coordinator.cache().store_custom_gain(path, custom_gain_db)
         {
+            let error = anyhow::Error::from(error);
             tracing::warn!("Failed to store the custom gain of {}: {error:#}", path.display());
         }
     }

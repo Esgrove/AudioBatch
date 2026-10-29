@@ -20,7 +20,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::time::{Duration, Instant};
 
-use anyhow::{Context as _, Result, bail};
 use crossbeam_channel::{Receiver, RecvTimeoutError};
 use vst3_host::{find_bundles, read_module_info};
 
@@ -37,6 +36,68 @@ pub const SCAN_BUSY_MESSAGE: &str =
 
 /// How often a scan checks for cancellation while it waits for the worker.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
+
+/// Failures while acquiring the scan lock or starting its worker process.
+#[derive(Debug, thiserror::Error)]
+pub enum ScanError {
+    /// A scan data directory could not be created.
+    #[error("{source}")]
+    CreateDirectory {
+        /// The directory needed by the scan.
+        path: PathBuf,
+        /// The file system failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The lock file could not be opened.
+    #[error("Could not open the plugin scan lock {}", path.display())]
+    OpenLock {
+        /// Location of the scan lock file.
+        path: PathBuf,
+        /// The file system failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// Locking failed for a reason other than contention.
+    #[error("Could not lock {}", path.display())]
+    Lock {
+        /// Location of the scan lock file.
+        path: PathBuf,
+        /// The locking failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The worker executable could not be located.
+    #[error("Could not find the AudioBatch executable")]
+    Executable(#[source] std::io::Error),
+    /// A worker log handle could not be duplicated.
+    #[error("{0}")]
+    CloneLog(#[source] std::io::Error),
+    /// The worker process could not be started.
+    #[error("Could not start the plugin scan worker {}", program.display())]
+    StartWorker {
+        /// Executable that could not be started.
+        program: PathBuf,
+        /// The process creation failure.
+        #[source]
+        source: std::io::Error,
+    },
+    /// The child's standard streams were unavailable.
+    #[error("Could not connect to the plugin scan worker")]
+    ConnectWorker,
+    /// The worker would not accept a request, even after restarting.
+    #[error("The plugin scan worker stopped accepting requests")]
+    WorkerClosed,
+    /// The worker's log file could not be created.
+    #[error("Could not create {}", path.display())]
+    CreateLog {
+        /// Location of the worker log.
+        path: PathBuf,
+        /// The file system failure.
+        #[source]
+        source: std::io::Error,
+    },
+}
 
 /// What waiting for a worker reply ended with.
 enum WorkerOutcome {
@@ -136,22 +197,29 @@ impl ScanLock {
     /// # Errors
     ///
     /// Returns an error when the lock file cannot be created.
-    pub fn try_acquire(path: &Path) -> Result<Option<Self>> {
+    pub fn try_acquire(path: &Path) -> Result<Option<Self>, ScanError> {
         if let Some(directory) = path.parent() {
-            std::fs::create_dir_all(directory)?;
+            std::fs::create_dir_all(directory).map_err(|source| ScanError::CreateDirectory {
+                path: directory.to_path_buf(),
+                source,
+            })?;
         }
         let file = File::options()
             .create(true)
             .truncate(false)
             .write(true)
             .open(path)
-            .with_context(|| format!("Could not open the plugin scan lock {}", path.display()))?;
+            .map_err(|source| ScanError::OpenLock {
+                path: path.to_path_buf(),
+                source,
+            })?;
         match file.try_lock() {
             Ok(()) => Ok(Some(Self { _file: file })),
             Err(std::fs::TryLockError::WouldBlock) => Ok(None),
-            Err(std::fs::TryLockError::Error(error)) => {
-                Err(error).with_context(|| format!("Could not lock {}", path.display()))
-            }
+            Err(std::fs::TryLockError::Error(error)) => Err(ScanError::Lock {
+                path: path.to_path_buf(),
+                source: error,
+            }),
         }
     }
 }
@@ -162,9 +230,9 @@ impl WorkerCommand {
     /// # Errors
     ///
     /// Returns an error when the path of this executable is unknown.
-    pub fn current_executable() -> Result<Self> {
+    pub fn current_executable() -> Result<Self, ScanError> {
         Ok(Self {
-            program: std::env::current_exe().context("Could not find the AudioBatch executable")?,
+            program: std::env::current_exe().map_err(ScanError::Executable)?,
             arguments: vec![OsString::from(WORKER_FLAG)],
             environment: Vec::new(),
         })
@@ -177,7 +245,7 @@ impl ScanOptions {
     /// # Errors
     ///
     /// Returns an error when the path of this executable is unknown.
-    pub fn new(folders: Vec<PathBuf>, worker_log: Option<PathBuf>) -> Result<Self> {
+    pub fn new(folders: Vec<PathBuf>, worker_log: Option<PathBuf>) -> Result<Self, ScanError> {
         Ok(Self {
             folders,
             worker: WorkerCommand::current_executable()?,
@@ -221,12 +289,12 @@ impl ScanReport {
 
 impl WorkerProcess {
     /// Starts a worker, sending its stderr, and the lines of its stdout that are not replies, to `log` when given.
-    fn start(command: &WorkerCommand, log: Option<&File>) -> Result<Self> {
+    fn start(command: &WorkerCommand, log: Option<&File>) -> Result<Self, ScanError> {
         let stderr = match log {
-            Some(file) => Stdio::from(file.try_clone()?),
+            Some(file) => Stdio::from(file.try_clone().map_err(ScanError::CloneLog)?),
             None => Stdio::null(),
         };
-        let mut stdout_log = log.map(File::try_clone).transpose()?;
+        let mut stdout_log = log.map(File::try_clone).transpose().map_err(ScanError::CloneLog)?;
         let mut child = Command::new(&command.program)
             .args(&command.arguments)
             .envs(command.environment.iter().map(|(name, value)| (name, value)))
@@ -234,10 +302,13 @@ impl WorkerProcess {
             .stdout(Stdio::piped())
             .stderr(stderr)
             .spawn()
-            .with_context(|| format!("Could not start the plugin scan worker {}", command.program.display()))?;
+            .map_err(|source| ScanError::StartWorker {
+                program: command.program.clone(),
+                source,
+            })?;
         let (Some(stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             let _ = child.kill();
-            bail!("Could not connect to the plugin scan worker");
+            return Err(ScanError::ConnectWorker);
         };
         let (sender, events) = crossbeam_channel::unbounded();
         std::thread::spawn(move || {
@@ -316,14 +387,20 @@ pub fn scan_plugins(
     options: &ScanOptions,
     is_cancelled: &dyn Fn() -> bool,
     progress: &mut dyn FnMut(ScanProgress<'_>),
-) -> Result<ScanReport> {
+) -> Result<ScanReport, ScanError> {
     let mut report = ScanReport::default();
     let log = match &options.worker_log {
         Some(path) => {
             if let Some(directory) = path.parent() {
-                std::fs::create_dir_all(directory)?;
+                std::fs::create_dir_all(directory).map_err(|source| ScanError::CreateDirectory {
+                    path: directory.to_path_buf(),
+                    source,
+                })?;
             }
-            Some(File::create(path).with_context(|| format!("Could not create {}", path.display()))?)
+            Some(File::create(path).map_err(|source| ScanError::CreateLog {
+                path: path.clone(),
+                source,
+            })?)
         }
         None => None,
     };
@@ -413,7 +490,7 @@ fn scan_in_worker(
     log: Option<&File>,
     bundle: &Path,
     is_cancelled: &dyn Fn() -> bool,
-) -> Result<WorkerOutcome> {
+) -> Result<WorkerOutcome, ScanError> {
     let mut sent = false;
     for _ in 0..2 {
         let process = match worker {
@@ -427,10 +504,10 @@ fn scan_in_worker(
         *worker = None;
     }
     if !sent {
-        bail!("The plugin scan worker stopped accepting requests");
+        return Err(ScanError::WorkerClosed);
     }
     let Some(process) = worker.as_ref() else {
-        bail!("The plugin scan worker stopped accepting requests");
+        return Err(ScanError::WorkerClosed);
     };
     let outcome = process.wait(options.timeout, is_cancelled);
     if matches!(outcome, WorkerOutcome::Cancelled | WorkerOutcome::TimedOut) {
@@ -476,6 +553,7 @@ fn remove_missing(known: &mut KnownPlugins, report: &mut ScanReport, folders: &[
 #[cfg(test)]
 mod test_scanner {
     use audiobatch_test_plugin::{Kind, create_bundle};
+    use std::error::Error as _;
     use tempfile::TempDir;
 
     use super::*;
@@ -579,6 +657,28 @@ mod test_scanner {
         profile_folder
             .join("examples")
             .join(format!("scan_worker{}", std::env::consts::EXE_SUFFIX))
+    }
+
+    #[test]
+    fn a_missing_worker_preserves_its_program_and_io_cause() {
+        let directory = tempfile::tempdir().expect("temporary folder");
+        let command = WorkerCommand {
+            program: directory.path().join("missing-worker"),
+            arguments: Vec::new(),
+            environment: Vec::new(),
+        };
+        let error = WorkerProcess::start(&command, None).err().expect("worker is missing");
+        assert_eq!(
+            error.to_string(),
+            format!("Could not start the plugin scan worker {}", command.program.display())
+        );
+        assert!(matches!(&error, ScanError::StartWorker { program, .. } if program == &command.program));
+        assert!(
+            error
+                .source()
+                .and_then(|source| source.downcast_ref::<std::io::Error>())
+                .is_some()
+        );
     }
 
     #[test]

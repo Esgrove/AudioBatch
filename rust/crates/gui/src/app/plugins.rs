@@ -156,7 +156,10 @@ impl AppView {
         };
         let preset = match self.plugins.presets.load(name) {
             Ok(preset) => preset,
-            Err(error) => return self.report_status(format!("Could not load the preset: {error:#}"), cx),
+            Err(error) => {
+                let error = anyhow::Error::from(error);
+                return self.report_status(format!("Could not load the preset: {error:#}"), cx);
+            }
         };
         self.detach_plugin_preview();
         let preset_name = preset.name.clone();
@@ -387,7 +390,7 @@ impl AppView {
                 self.status = format!("Saved the plugin chain as the preset {saved}").into();
                 self.plugins.chain.set_preset_name(Some(saved));
             }
-            Err(error) => self.status = format!("{error:#}").into(),
+            Err(error) => self.status = format!("{:#}", anyhow::Error::from(error)).into(),
         }
         self.save_chain_settings(cx);
     }
@@ -401,7 +404,7 @@ impl AppView {
                 }
                 self.status = format!("Deleted the preset {name}").into();
             }
-            Err(error) => self.status = format!("{error:#}").into(),
+            Err(error) => self.status = format!("{:#}", anyhow::Error::from(error)).into(),
         }
         self.refresh_plugin_views(cx);
     }
@@ -510,14 +513,16 @@ impl AppView {
             return;
         }
         let paths = self.plugins.paths.clone();
-        let prepared = ScanLock::try_acquire(&paths.scan_lock).and_then(|lock| {
-            let Some(lock) = lock else {
-                return Ok(None);
-            };
-            let (known, recovered) = KnownPlugins::load_recovering(&paths.known_plugins)?;
-            let options = ScanOptions::new(known.search_folders(), Some(paths.worker_log.clone()))?;
-            Ok(Some((lock, known, options, recovered)))
-        });
+        let prepared = ScanLock::try_acquire(&paths.scan_lock)
+            .map_err(anyhow::Error::from)
+            .and_then(|lock| {
+                let Some(lock) = lock else {
+                    return Ok(None);
+                };
+                let (known, recovered) = KnownPlugins::load_recovering(&paths.known_plugins)?;
+                let options = ScanOptions::new(known.search_folders(), Some(paths.worker_log.clone()))?;
+                Ok(Some((lock, known, options, recovered)))
+            });
         let (lock, mut known, options, recovered) = match prepared {
             Ok(Some(prepared)) => prepared,
             Ok(None) => return self.report_status(String::from(SCAN_BUSY_MESSAGE), cx),
@@ -582,18 +587,20 @@ impl AppView {
             return self.report_status(String::from(WAIT_FOR_SCAN), cx);
         }
         let path = self.plugins.paths.known_plugins.clone();
-        let result = ScanLock::try_acquire(&self.plugins.paths.scan_lock).and_then(|lock| {
-            let Some(lock) = lock else {
-                return Ok(None);
-            };
-            // A file that cannot be parsed is moved aside, so the edit starts a new list instead of failing every time.
-            let (mut known, _) = KnownPlugins::load_recovering(&path)?;
-            edit(&mut known);
-            known.sort();
-            known.save_to(&path)?;
-            drop(lock);
-            Ok(Some(known))
-        });
+        let result = ScanLock::try_acquire(&self.plugins.paths.scan_lock)
+            .map_err(anyhow::Error::from)
+            .and_then(|lock| {
+                let Some(lock) = lock else {
+                    return Ok(None);
+                };
+                // A file that cannot be parsed is moved aside, so the edit starts a new list instead of failing every time.
+                let (mut known, _) = KnownPlugins::load_recovering(&path)?;
+                edit(&mut known);
+                known.sort();
+                known.save_to(&path)?;
+                drop(lock);
+                Ok(Some(known))
+            });
         match result {
             Ok(Some(known)) => {
                 self.plugins.known = known;

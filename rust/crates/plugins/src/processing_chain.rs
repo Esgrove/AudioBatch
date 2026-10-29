@@ -10,9 +10,9 @@
 use std::cell::RefCell;
 use std::sync::Arc;
 
-use anyhow::Result;
 use vst3_host::{
-    CallError, Module, PluginInstance, PluginState, ProcessMode, ProcessorHandle, UiBound, UiDispatcher, UiThread,
+    CallError, InstanceError, Module, ModuleError, PluginInstance, PluginState, ProcessMode, ProcessorHandle, UiBound,
+    UiDispatcher, UiThread,
 };
 
 use crate::chain::{ChainSlot, PluginChain};
@@ -26,6 +26,76 @@ pub(crate) const MAXIMUM_TAIL_SECONDS: f64 = 20.0;
 
 /// User-facing message of a cancelled processing call.
 pub const CANCELLED_MESSAGE: &str = "Processing was cancelled";
+
+/// Failures while loading or preparing a worker's plugin chain.
+#[derive(Debug, thiserror::Error)]
+pub enum ProcessingChainError {
+    /// The bundle could not be loaded.
+    #[error("Could not load plugin \"{name}\": {source}")]
+    LoadModule {
+        /// Display name of the requested plugin.
+        name: String,
+        /// The module loading failure.
+        #[source]
+        source: ModuleError,
+    },
+    /// The plugin instance could not be created.
+    #[error("Could not load plugin \"{name}\": {source}")]
+    CreateInstance {
+        /// Display name of the requested plugin.
+        name: String,
+        /// The instance creation failure.
+        #[source]
+        source: InstanceError,
+    },
+    /// The plugin could not be deactivated before preparing it.
+    #[error("Plugin \"{name}\" could not be stopped: {source}")]
+    Stop {
+        /// Display name of the plugin.
+        name: String,
+        /// The deactivation failure.
+        #[source]
+        source: InstanceError,
+    },
+    /// The saved state could not be restored.
+    #[error("Plugin \"{name}\" could not restore its settings: {source}")]
+    Restore {
+        /// Display name of the plugin.
+        name: String,
+        /// The state restoration failure.
+        #[source]
+        source: InstanceError,
+    },
+    /// The plugin rejected the file's channel arrangement.
+    #[error("Plugin \"{name}\" does not support the file's channel layout ({channels} channels)")]
+    ChannelLayout {
+        /// Display name of the plugin.
+        name: String,
+        /// Number of source channels requested.
+        channels: usize,
+        /// The host's layout negotiation failure.
+        #[source]
+        source: InstanceError,
+    },
+    /// Processing setup, activation, or obtaining the processor failed.
+    #[error("Plugin \"{name}\" could not be prepared: {source}")]
+    Prepare {
+        /// Display name of the plugin.
+        name: String,
+        /// The setup, activation, or processor acquisition failure.
+        #[source]
+        source: InstanceError,
+    },
+    /// Another caller already borrowed the chain.
+    #[error("The plugin chain is already in use")]
+    InUse,
+    /// The UI dispatch was cancelled.
+    #[error("Processing was cancelled")]
+    Cancelled(#[source] CallError),
+    /// The UI dispatcher is no longer available.
+    #[error("The application is shutting down")]
+    Closed(#[source] CallError),
+}
 
 /// One plugin of a processing chain, with the settings it is restored to for every file.
 pub struct ChainPlugin {
@@ -74,9 +144,22 @@ impl ChainPlugin {
     /// # Errors
     ///
     /// Returns an error when the bundle cannot be loaded or the instance cannot be created.
-    pub(crate) fn from_slot(ui: &UiThread, dispatcher: &UiDispatcher, slot: &ChainSlot) -> Result<Self> {
-        let module = Module::load(ui, &slot.plugin.bundle)?;
-        let instance = PluginInstance::create(ui, &module, slot.plugin.class_id, Some(dispatcher.clone()))?;
+    pub(crate) fn from_slot(
+        ui: &UiThread,
+        dispatcher: &UiDispatcher,
+        slot: &ChainSlot,
+    ) -> Result<Self, ProcessingChainError> {
+        let module = Module::load(ui, &slot.plugin.bundle).map_err(|source| ProcessingChainError::LoadModule {
+            name: slot.plugin.name.clone(),
+            source,
+        })?;
+        let instance =
+            PluginInstance::create(ui, &module, slot.plugin.class_id, Some(dispatcher.clone())).map_err(|source| {
+                ProcessingChainError::CreateInstance {
+                    name: slot.plugin.name.clone(),
+                    source,
+                }
+            })?;
         let saved = slot.state();
         let state = if saved == PluginState::default() {
             instance.state(ui).unwrap_or(saved)
@@ -94,24 +177,40 @@ impl ChainPlugin {
 
     /// Restores the settings, configures the buses for the file, sets up offline processing, and activates.
     /// Returns false when the plugin refused its saved settings, so it processes with its current ones.
-    fn prepare(&mut self, ui: &UiThread, channels: usize, sample_rate: f64) -> Result<bool, String> {
+    fn prepare(&mut self, ui: &UiThread, channels: usize, sample_rate: f64) -> Result<bool, ProcessingChainError> {
         let name = &self.name;
         self.instance
             .deactivate(ui)
-            .map_err(|error| format!("Plugin \"{name}\" could not be stopped: {error}"))?;
+            .map_err(|source| ProcessingChainError::Stop {
+                name: name.clone(),
+                source,
+            })?;
         let accepted = self
             .instance
             .set_state(ui, &self.state)
-            .map_err(|error| format!("Plugin \"{name}\" could not restore its settings: {error}"))?;
-        self.instance.configure_main_buses(ui, channels).map_err(|_| {
-            format!("Plugin \"{name}\" does not support the file's channel layout ({channels} channels)")
-        })?;
+            .map_err(|source| ProcessingChainError::Restore {
+                name: name.clone(),
+                source,
+            })?;
+        self.instance
+            .configure_main_buses(ui, channels)
+            .map_err(|source| ProcessingChainError::ChannelLayout {
+                name: name.clone(),
+                channels,
+                source,
+            })?;
         self.instance
             .setup(ui, ProcessMode::Offline, sample_rate, PROCESSING_BLOCK_FRAMES)
-            .map_err(|error| format!("Plugin \"{name}\" could not be prepared: {error}"))?;
+            .map_err(|source| ProcessingChainError::Prepare {
+                name: name.clone(),
+                source,
+            })?;
         self.instance
             .activate(ui)
-            .map_err(|error| format!("Plugin \"{name}\" could not be prepared: {error}"))?;
+            .map_err(|source| ProcessingChainError::Prepare {
+                name: name.clone(),
+                source,
+            })?;
         Ok(accepted)
     }
 }
@@ -132,13 +231,14 @@ impl ProcessingChain {
     /// # Errors
     ///
     /// Returns the user-facing error of the first plugin that cannot be loaded.
-    pub fn instantiate(ui: &UiThread, dispatcher: &UiDispatcher, chain: &PluginChain) -> Result<Self, String> {
+    pub fn instantiate(
+        ui: &UiThread,
+        dispatcher: &UiDispatcher,
+        chain: &PluginChain,
+    ) -> Result<Self, ProcessingChainError> {
         let plugins = chain
             .enabled_slots()
-            .map(|slot| {
-                ChainPlugin::from_slot(ui, dispatcher, slot)
-                    .map_err(|error| format!("Could not load plugin \"{}\": {error}", slot.plugin.name))
-            })
+            .map(|slot| ChainPlugin::from_slot(ui, dispatcher, slot))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(Self::new(ui, dispatcher.clone(), plugins))
     }
@@ -163,12 +263,12 @@ impl ProcessingChain {
         channels: usize,
         sample_rate: f64,
         is_cancelled: &dyn Fn() -> bool,
-    ) -> Result<PreparedChain, String> {
+    ) -> Result<PreparedChain, ProcessingChainError> {
         let plugins = Arc::clone(&self.plugins);
         self.call_on_ui(
             move |ui| {
                 let Ok(mut plugins) = plugins.get(ui).try_borrow_mut() else {
-                    return Err("The plugin chain is already in use".to_string());
+                    return Err(ProcessingChainError::InUse);
                 };
                 prepare_plugins(ui, &mut plugins, channels, sample_rate)
             },
@@ -195,7 +295,7 @@ impl ProcessingChain {
         &self,
         work: impl FnOnce(&UiThread) -> R + Send + 'static,
         is_cancelled: &dyn Fn() -> bool,
-    ) -> Result<R, String> {
+    ) -> Result<R, ProcessingChainError> {
         if let Some(ui) = UiThread::current() {
             return Ok(work(&ui));
         }
@@ -203,8 +303,8 @@ impl ProcessingChain {
             .dispatcher()
             .call(work, is_cancelled)
             .map_err(|error| match error {
-                CallError::Cancelled => CANCELLED_MESSAGE.to_string(),
-                CallError::Closed => "The application is shutting down".to_string(),
+                CallError::Cancelled => ProcessingChainError::Cancelled(error),
+                CallError::Closed => ProcessingChainError::Closed(error),
             })
     }
 }
@@ -215,7 +315,7 @@ fn prepare_plugins(
     plugins: &mut [ChainPlugin],
     channels: usize,
     sample_rate: f64,
-) -> Result<PreparedChain, String> {
+) -> Result<PreparedChain, ProcessingChainError> {
     let mut prepared = PreparedChain {
         processors: Vec::with_capacity(plugins.len()),
         latency_samples: 0,
@@ -236,7 +336,10 @@ fn prepare_plugins(
         match plugin.instance.processor(ui) {
             Ok(processor) => prepared.processors.push(processor),
             Err(error) => {
-                failure = Some(format!("Plugin \"{}\" could not be prepared: {error}", plugin.name));
+                failure = Some(ProcessingChainError::Prepare {
+                    name: plugin.name.clone(),
+                    source: error,
+                });
                 break;
             }
         }
@@ -268,6 +371,8 @@ pub(crate) fn limited_tail(tail_samples: u32, sample_rate: f64) -> u64 {
 
 #[cfg(test)]
 mod test_limited_tail {
+    use std::error::Error as _;
+
     use super::*;
 
     #[test]
@@ -276,5 +381,21 @@ mod test_limited_tail {
         assert_eq!(limited_tail(100, 48_000.0), 100);
         assert_eq!(limited_tail(u32::MAX, 48_000.0), 960_000);
         assert_eq!(limited_tail(u32::MAX, 44_100.5), 882_010);
+    }
+
+    #[test]
+    fn dispatch_failures_keep_typed_causes_and_existing_messages() {
+        let cancelled = ProcessingChainError::Cancelled(CallError::Cancelled);
+        assert_eq!(cancelled.to_string(), CANCELLED_MESSAGE);
+        assert!(matches!(
+            cancelled.source().and_then(|source| source.downcast_ref::<CallError>()),
+            Some(CallError::Cancelled)
+        ));
+        let closed = ProcessingChainError::Closed(CallError::Closed);
+        assert_eq!(closed.to_string(), "The application is shutting down");
+        assert!(matches!(
+            closed.source().and_then(|source| source.downcast_ref::<CallError>()),
+            Some(CallError::Closed)
+        ));
     }
 }

@@ -142,7 +142,7 @@ pub fn run_decode_thread(
                     Err(error) => {
                         let _ = events.send(PlayerEvent::Error {
                             path: Some(path.clone()),
-                            message: format!("{error:#}"),
+                            message: error.message(),
                         });
                         finish_after_pending = Some(current.generation());
                         pipeline = None;
@@ -205,7 +205,7 @@ fn open_pipeline(
             shared.finished_generation.store(generation, Ordering::Release);
             let _ = events.send(PlayerEvent::Error {
                 path: Some(path),
-                message: format!("{error:#}"),
+                message: error.message(),
             });
             None
         }
@@ -239,7 +239,7 @@ fn seek_pipeline(
             shared.finished_generation.store(generation, Ordering::Release);
             let _ = events.send(PlayerEvent::Error {
                 path: Some(path),
-                message: format!("{error:#}"),
+                message: error.message(),
             });
             None
         }

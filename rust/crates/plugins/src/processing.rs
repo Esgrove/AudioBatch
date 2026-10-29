@@ -15,20 +15,24 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read as _, Seek as _, SeekFrom, Write as _};
 use std::path::Path;
 
-use audiobatch_core::aiff::AiffWriter;
+use audiobatch_core::aiff::{AiffError, AiffWriter};
 use audiobatch_core::analysis::{analyze_file, analyze_file_catching_panics};
-use audiobatch_core::decode::AudioFileDecoder;
-use audiobatch_core::metadata::copy_metadata;
+use audiobatch_core::decode::{AudioFileDecoder, DecodeError};
+use audiobatch_core::metadata::{MetadataError, copy_metadata};
 use audiobatch_core::normalize::{NormalizationOptions, normalization_gain, normalization_output_path};
 use audiobatch_core::operation::{OperationOutcome, OperationResult, progress_range};
 use audiobatch_core::output_file::{
-    FileDisposer, check_output_path, commit_temporary_output, create_temporary_output, dispose_of_copy, trash_disposer,
-    validate_written_audio,
+    FileDisposer, OutputError, OutputPathError, OutputValidationError, check_output_path, commit_temporary_output,
+    create_temporary_output, dispose_of_copy, trash_disposer, validate_written_audio,
 };
-use audiobatch_core::record::AnalysisRecord;
+use audiobatch_core::record::{AnalysisError, AnalysisRecord};
+use vst3_host::ProcessError;
 
 use crate::chain_signal::{ChainSignal, StageFailure};
-use crate::processing_chain::{CANCELLED_MESSAGE, PROCESSING_BLOCK_FRAMES, PreparedChain, ProcessingChain};
+use crate::library::error_chain;
+#[cfg(test)]
+use crate::processing_chain::CANCELLED_MESSAGE;
+use crate::processing_chain::{PROCESSING_BLOCK_FRAMES, PreparedChain, ProcessingChain, ProcessingChainError};
 
 /// Level below which rendered tail samples count as silence and are trimmed from the end of the output.
 /// The value is -96 dB, the noise floor of 16-bit audio.
@@ -58,6 +62,82 @@ const WRITE_PROGRESS_END: f32 = 0.85;
 
 /// Bytes per rendered sample in the temporary file.
 const SAMPLE_BYTES: usize = size_of::<f32>();
+
+/// Failures before a processed output is committed.
+#[derive(Debug, thiserror::Error)]
+enum ProcessingError {
+    /// The source no longer exists.
+    #[error("File does not exist")]
+    MissingFile,
+    /// An unanalyzed record cannot supply the source levels.
+    #[error("File analysis must finish before processing")]
+    AnalysisPending,
+    /// No enabled effects were supplied.
+    #[error("The plugin chain has no enabled plugins")]
+    EmptyChain,
+    /// Refreshing an outdated record failed at the analysis status boundary.
+    #[error("{message}")]
+    SourceAnalysis {
+        kind: Option<AnalysisError>,
+        message: String,
+    },
+    /// The source could not be opened.
+    #[error("Unsupported or unreadable audio file")]
+    OpenSource(#[source] DecodeError),
+    /// Decoding the source failed.
+    #[error(transparent)]
+    Decode(#[from] DecodeError),
+    /// The file would lose channels if processed.
+    #[error("Only mono and stereo files can be processed, this file has {channels} channels")]
+    Channels { channels: u32 },
+    /// Output-path checking or committing failed.
+    #[error(transparent)]
+    Output(#[from] OutputError),
+    /// The output path would overwrite a file without permission.
+    #[error(transparent)]
+    OutputPath(#[from] OutputPathError),
+    /// A temporary render file could not be created.
+    #[error("Could not create the temporary render file")]
+    CreateRender(#[source] std::io::Error),
+    /// A temporary output file could not be created.
+    #[error("{0}")]
+    CreateOutput(#[source] OutputError),
+    /// The chain could not be prepared.
+    #[error(transparent)]
+    Chain(#[from] ProcessingChainError),
+    /// A plugin's process call failed.
+    #[error("{name}: {source}")]
+    Process {
+        name: String,
+        stage: usize,
+        #[source]
+        source: ProcessError,
+    },
+    /// A plugin returned a nonfinite sample.
+    #[error("The plugin chain produced invalid samples (infinity or NaN)")]
+    InvalidSamples,
+    /// The intermediate render could not be written.
+    #[error("Failed while writing processed audio data")]
+    WriteRender(#[source] std::io::Error),
+    /// The rendered data could not be read back.
+    #[error("Failed while reading the rendered audio")]
+    ReadRender(#[source] std::io::Error),
+    /// The final AIFF could not be written.
+    #[error("Failed while writing processed audio data")]
+    WriteOutput(#[source] AiffError),
+    /// Source metadata could not be copied.
+    #[error("Could not copy metadata onto the processed output")]
+    Metadata(#[source] MetadataError),
+    /// The completed output did not match the rendered audio.
+    #[error("Processed output failed validation: {0}")]
+    Validation(#[source] OutputValidationError),
+    /// The user cancelled before committing the output.
+    #[error("Processing was cancelled")]
+    Cancelled,
+    /// The original could not be preserved in the trash.
+    #[error("Could not move a copy of the original file to the system trash")]
+    DisposeOriginal,
+}
 
 /// Settings for processing files through a plugin chain.
 #[derive(Clone)]
@@ -148,7 +228,7 @@ impl<'a> SourceBlocks<'a> {
 
     /// Fills the start of the signal's channels with up to `frames` frames, and returns the number filled.
     /// Fewer frames than requested means the source has ended.
-    fn read_into(&mut self, signal: &mut ChainSignal, frames: usize) -> Result<usize, String> {
+    fn read_into(&mut self, signal: &mut ChainSignal, frames: usize) -> Result<usize, ProcessingError> {
         let mut filled = 0;
         while filled < frames {
             let available = self.pending.first().map_or(0, Vec::len).saturating_sub(self.offset);
@@ -175,8 +255,8 @@ impl<'a> SourceBlocks<'a> {
     }
 
     /// Decodes the next chunk into `pending`. Returns false when the source has ended.
-    fn decode_next(&mut self) -> Result<bool, String> {
-        let Some(chunk) = self.decoder.next_chunk().map_err(|error| error.to_string())? else {
+    fn decode_next(&mut self) -> Result<bool, ProcessingError> {
+        let Some(chunk) = self.decoder.next_chunk()? else {
             self.exhausted = true;
             return Ok(false);
         };
@@ -216,7 +296,7 @@ pub fn process_file(
     let _span = tracing::info_span!("process", file = %source.display()).entered();
     match try_process_file(source_record, options, chain, is_cancelled, on_progress) {
         Ok(result) => result,
-        Err(error) => OperationResult::failure(source, error),
+        Err(error) => OperationResult::failure(source, error.to_string()),
     }
 }
 
@@ -227,16 +307,16 @@ fn try_process_file(
     chain: &ProcessingChain,
     is_cancelled: &dyn Fn() -> bool,
     on_progress: &mut dyn FnMut(f32),
-) -> Result<OperationResult, String> {
+) -> Result<OperationResult, ProcessingError> {
     let source = source_record.path.as_path();
     if !source.is_file() {
-        return Err("File does not exist".to_string());
+        return Err(ProcessingError::MissingFile);
     }
     if !source_record.is_ready() {
-        return Err("File analysis must finish before processing".to_string());
+        return Err(ProcessingError::AnalysisPending);
     }
     if chain.is_empty() {
-        return Err("The plugin chain has no enabled plugins".to_string());
+        return Err(ProcessingError::EmptyChain);
     }
     let output = processing_output_path(source);
     check_output_path(source, &output, options.overwrite_existing)?;
@@ -252,15 +332,16 @@ fn try_process_file(
         &mut progress_range(on_progress, 0.0, render_start),
     );
     if record.has_error() {
-        return Err(record.error_message);
+        return Err(ProcessingError::SourceAnalysis {
+            kind: record.error,
+            message: record.error_message,
+        });
     }
     let (gain, gain_notice) = input_gain(&record, options);
-    let mut decoder = AudioFileDecoder::open(source).map_err(|_| "Unsupported or unreadable audio file".to_string())?;
+    let mut decoder = AudioFileDecoder::open(source).map_err(ProcessingError::OpenSource)?;
     let channels = decoder.info().channels;
     if !(1..=MAXIMUM_CHANNELS).contains(&channels) {
-        return Err(format!(
-            "Only mono and stereo files can be processed, this file has {channels} channels"
-        ));
+        return Err(ProcessingError::Channels { channels });
     }
 
     let mut rendered = render_chain_to_file(
@@ -274,7 +355,7 @@ fn try_process_file(
     // Closes the source before it may be replaced in place, since Windows cannot replace an open file.
     drop(decoder);
     let final_frames = rendered.final_frames();
-    let temporary = create_temporary_output(&output).map_err(|error| error.to_string())?;
+    let temporary = create_temporary_output(&output).map_err(ProcessingError::CreateOutput)?;
     let clipped = write_final_output(
         &mut rendered,
         temporary.as_file(),
@@ -283,18 +364,18 @@ fn try_process_file(
         &mut progress_range(on_progress, RENDER_PROGRESS_END, WRITE_PROGRESS_END),
     )?;
     if let Err(error) = copy_metadata(source, temporary.path()) {
-        tracing::error!("{error:#}");
-        return Err("Could not copy metadata onto the processed output".to_string());
+        tracing::error!("{}", error_chain(&error));
+        return Err(ProcessingError::Metadata(error));
     }
     validate_written_audio(temporary.path(), rendered.channels, rendered.sample_rate, final_frames)
-        .map_err(|error| format!("Processed output failed validation: {error}"))?;
+        .map_err(ProcessingError::Validation)?;
 
     // Checked again before touching the original, since cancellation may arrive during the last block.
     if is_cancelled() {
-        return Err(CANCELLED_MESSAGE.to_string());
+        return Err(ProcessingError::Cancelled);
     }
     if output == source && !dispose_of_copy(source, &options.dispose) {
-        return Err("Could not move a copy of the original file to the system trash".to_string());
+        return Err(ProcessingError::DisposeOriginal);
     }
     commit_temporary_output(temporary, source, &output, options.overwrite_existing, &options.dispose)?;
 
@@ -368,10 +449,10 @@ fn render_chain_to_file(
     expected_frames: u64,
     is_cancelled: &dyn Fn() -> bool,
     on_progress: &mut dyn FnMut(f32),
-) -> Result<RenderedAudio, String> {
+) -> Result<RenderedAudio, ProcessingError> {
     let channels = decoder.info().channels;
     let sample_rate = decoder.info().sample_rate;
-    let file = tempfile::tempfile().map_err(|_| "Could not create the temporary render file".to_string())?;
+    let file = tempfile::tempfile().map_err(ProcessingError::CreateRender)?;
     let mut prepared = chain.prepare(channels as usize, f64::from(sample_rate), is_cancelled)?;
     let settings_notice = (!prepared.refused_settings.is_empty()).then(|| {
         format!(
@@ -407,7 +488,7 @@ fn render_blocks(
     expected_frames: u64,
     is_cancelled: &dyn Fn() -> bool,
     on_progress: &mut dyn FnMut(f32),
-) -> Result<RenderedAudio, String> {
+) -> Result<RenderedAudio, ProcessingError> {
     let channels = decoder.info().channels;
     let sample_rate = decoder.info().sample_rate;
     let latency = prepared.latency_samples;
@@ -428,7 +509,7 @@ fn render_blocks(
     };
     loop {
         if is_cancelled() {
-            return Err(CANCELLED_MESSAGE.to_string());
+            return Err(ProcessingError::Cancelled);
         }
         signal.reset(channels as usize);
         if total_frames.is_none() {
@@ -458,14 +539,23 @@ fn render_blocks(
 }
 
 /// Describes the failed process call of a plugin for the user, with the plugin's name and its result code.
-fn describe_failed_stage(names: &[String], failure: StageFailure) -> String {
+fn describe_failed_stage(names: &[String], failure: StageFailure) -> ProcessingError {
     let name = names.get(failure.index).map_or("A plugin", String::as_str);
-    format!("{name}: {}", failure.error)
+    ProcessingError::Process {
+        name: name.to_owned(),
+        stage: failure.index,
+        source: failure.error,
+    }
 }
 
 /// Appends frames `first..end` of the signal to the render file, interleaved,
 /// after checking that they are finite, and tracks the last audible frame.
-fn write_block(signal: &ChainSignal, first: usize, end: usize, rendered: &mut RenderedAudio) -> Result<(), String> {
+fn write_block(
+    signal: &ChainSignal,
+    first: usize,
+    end: usize,
+    rendered: &mut RenderedAudio,
+) -> Result<(), ProcessingError> {
     let channels: Vec<&[f32]> = (0..rendered.channels as usize)
         .filter_map(|channel| signal.channel(channel))
         .collect();
@@ -474,13 +564,13 @@ fn write_block(signal: &ChainSignal, first: usize, end: usize, rendered: &mut Re
         for samples in &channels {
             let sample = samples.get(frame).copied().unwrap_or_default();
             if !sample.is_finite() {
-                return Err("The plugin chain produced invalid samples (infinity or NaN)".to_string());
+                return Err(ProcessingError::InvalidSamples);
             }
             audible |= sample.abs() > SILENCE_THRESHOLD;
             rendered
                 .file
                 .write_all(&sample.to_ne_bytes())
-                .map_err(|_| "Failed while writing processed audio data".to_string())?;
+                .map_err(ProcessingError::WriteRender)?;
         }
         if audible {
             rendered.last_audible_frame = Some(rendered.frames_written);
@@ -499,9 +589,9 @@ fn write_final_output(
     final_frames: u64,
     is_cancelled: &dyn Fn() -> bool,
     on_progress: &mut dyn FnMut(f32),
-) -> Result<bool, String> {
-    let write_error = |_| "Failed while writing processed audio data".to_string();
-    let read_error = |_| "Failed while reading the rendered audio".to_string();
+) -> Result<bool, ProcessingError> {
+    let write_error = ProcessingError::WriteOutput;
+    let read_error = ProcessingError::ReadRender;
     let channels = rendered.channels as usize;
     rendered.file.seek(SeekFrom::Start(0)).map_err(read_error)?;
     let mut reader = BufReader::new(rendered.file.get_ref());
@@ -518,7 +608,7 @@ fn write_final_output(
     let mut position: u64 = 0;
     while position < final_frames {
         if is_cancelled() {
-            return Err(CANCELLED_MESSAGE.to_string());
+            return Err(ProcessingError::Cancelled);
         }
         let block_frames = (FINALIZE_BLOCK_FRAMES as u64).min(final_frames - position) as usize;
         let block = bytes
@@ -558,6 +648,8 @@ fn quantize(sample: f32) -> (i32, bool) {
 
 #[cfg(test)]
 mod test_quantize {
+    use std::error::Error as _;
+
     use super::*;
 
     #[test]
@@ -571,6 +663,43 @@ mod test_quantize {
         assert_eq!(quantize(32_767.5 / 32_768.0), (32_767, false));
         assert_eq!(quantize(1.0), (32_767, true));
         assert_eq!(quantize(-1.5), (-32_768, true));
+    }
+
+    #[test]
+    fn cancellation_and_plugin_failures_remain_typed_until_reporting() {
+        assert_eq!(ProcessingError::Cancelled.to_string(), CANCELLED_MESSAGE);
+        let error = describe_failed_stage(
+            &["Effect".to_owned()],
+            StageFailure {
+                index: 0,
+                error: ProcessError(1),
+            },
+        );
+        assert_eq!(
+            error.to_string(),
+            "Effect: The plugin failed to process audio (result 1)"
+        );
+        assert!(matches!(&error, ProcessingError::Process { stage: 0, .. }));
+        assert_eq!(
+            error.source().and_then(|source| source.downcast_ref::<ProcessError>()),
+            Some(&ProcessError(1))
+        );
+    }
+
+    #[test]
+    fn source_analysis_status_keeps_its_classification_and_message() {
+        let error = ProcessingError::SourceAnalysis {
+            kind: Some(AnalysisError::Unreadable),
+            message: "File could not be opened for reading".to_owned(),
+        };
+        assert_eq!(error.to_string(), "File could not be opened for reading");
+        assert!(matches!(
+            error,
+            ProcessingError::SourceAnalysis {
+                kind: Some(AnalysisError::Unreadable),
+                ..
+            }
+        ));
     }
 }
 
@@ -863,8 +992,13 @@ mod test_process_file_failures {
         let chain = test_chain(&[(Kind::Gain, gain_state(1.0))]);
         let checks = AtomicUsize::new(0);
         let is_cancelled = || checks.fetch_add(1, Ordering::SeqCst) >= 3;
-        let result = process_file(&record, &deleting_options(), &chain, &is_cancelled, &mut |_| {});
-        assert_eq!(result.error(), Some(CANCELLED_MESSAGE));
+        let error = try_process_file(&record, &deleting_options(), &chain, &is_cancelled, &mut |_| {})
+            .expect_err("render cancelled");
+        assert_eq!(error.to_string(), CANCELLED_MESSAGE);
+        assert!(matches!(
+            error,
+            ProcessingError::Cancelled | ProcessingError::Chain(ProcessingChainError::Cancelled(_))
+        ));
         assert_eq!(file_names(&directory), ["song.wav"]);
     }
 

@@ -7,13 +7,12 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context as _, Result};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use vst3_host::PluginState;
 
-use crate::library::{PluginDescription, load_recovering, read_versioned_json, write_versioned_json};
+use crate::library::{PluginDataError, PluginDescription, load_recovering, read_versioned_json, write_versioned_json};
 
 /// Format version of `plugin-chain.json`, raised when a change cannot be read by older versions.
 const CHAIN_FORMAT_VERSION: u32 = 1;
@@ -83,12 +82,21 @@ impl PluginChain {
     /// # Errors
     ///
     /// Returns an error when the file exists but cannot be read or parsed.
-    pub fn load_from(path: &Path) -> Result<Self> {
+    pub fn load_from(path: &Path) -> Result<Self, PluginDataError> {
         match fs::read_to_string(path) {
-            Ok(text) => read_versioned_json(&text, CHAIN_FORMAT_VERSION, path)
-                .with_context(|| format!("Invalid plugin chain {}", path.display())),
+            Ok(text) => {
+                read_versioned_json(&text, CHAIN_FORMAT_VERSION, path).map_err(|source| PluginDataError::Invalid {
+                    description: "plugin chain",
+                    path: path.to_path_buf(),
+                    source,
+                })
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(error) => Err(error).with_context(|| format!("Could not read the plugin chain {}", path.display())),
+            Err(source) => Err(PluginDataError::Read {
+                description: "plugin chain",
+                path: path.to_path_buf(),
+                source,
+            }),
         }
     }
 
@@ -99,7 +107,7 @@ impl PluginChain {
     /// # Errors
     ///
     /// Returns an error when the file exists but cannot be read.
-    pub fn load_recovering(path: &Path) -> Result<(Self, Option<String>)> {
+    pub fn load_recovering(path: &Path) -> Result<(Self, Option<String>), PluginDataError> {
         load_recovering(path, Self::load_from, "plugin chain")
     }
 
@@ -108,7 +116,7 @@ impl PluginChain {
     /// # Errors
     ///
     /// Returns an error when the directory or the file cannot be written.
-    pub fn save_to(&self, path: &Path) -> Result<()> {
+    pub fn save_to(&self, path: &Path) -> Result<(), PluginDataError> {
         write_versioned_json(path, CHAIN_FORMAT_VERSION, self)
     }
 
@@ -293,7 +301,13 @@ mod test_plugin_chain {
         let newer = serde_json::json!({"version": CHAIN_FORMAT_VERSION + 1, "slots": []});
         fs::write(&path, newer.to_string()).expect("written");
         let error = PluginChain::load_recovering(&path).expect_err("newer");
-        assert!(format!("{error:#}").contains("newer version"), "{error:#}");
+        assert!(matches!(
+            error,
+            PluginDataError::Invalid {
+                source: crate::library::VersionedJsonError::NewerVersion { version, .. },
+                ..
+            } if version == u64::from(CHAIN_FORMAT_VERSION + 1)
+        ));
         assert!(path.exists());
     }
 }

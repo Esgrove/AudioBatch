@@ -9,12 +9,12 @@
 #[cfg(windows)]
 use std::cell::OnceCell;
 
-use anyhow::{Context, Result, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait};
 use cpal::{
     BufferSize, Device, SampleFormat, StreamConfig, SupportedBufferSize, SupportedStreamConfig,
     SupportedStreamConfigRange,
 };
+use thiserror::Error;
 
 /// Sample rates offered when the device supports them.
 const COMMON_SAMPLE_RATES: [u32; 6] = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000];
@@ -27,6 +27,52 @@ thread_local! {
     /// ASIO discovery loads each driver, which fails while a different driver has an open stream.
     /// Keep the discovered device metadata on the player thread, without keeping any driver open.
     static ASIO_OUTPUT_DEVICES: OnceCell<Vec<Device>> = const { OnceCell::new() };
+}
+
+/// Failures while selecting an output device or reading its stream configuration.
+#[derive(Debug, Error)]
+pub enum DeviceError {
+    /// The named device is not among the host's outputs.
+    #[error("Output device \"{name}\" not found")]
+    NotFound {
+        /// Requested device name.
+        name: String,
+    },
+    /// The host has no default output.
+    #[cfg(windows)]
+    #[error("No ASIO audio output device available. Install an ASIO driver for your audio interface.")]
+    NoOutput,
+    /// The host has no default output.
+    #[cfg(not(windows))]
+    #[error("No audio output device available")]
+    NoOutput,
+    /// The ASIO host could not be initialized.
+    #[cfg(windows)]
+    #[error("Could not initialize the ASIO audio host")]
+    InitializeHost(#[source] cpal::Error),
+    /// The host could not enumerate outputs.
+    #[cfg(windows)]
+    #[error("Could not list ASIO output devices")]
+    ListOutputs(#[source] cpal::Error),
+    /// The host could not enumerate outputs.
+    #[cfg(not(windows))]
+    #[error("Could not list output devices")]
+    ListOutputs(#[source] cpal::Error),
+    /// The device did not provide its default stream configuration.
+    #[error("Could not read the output device configuration")]
+    DefaultConfiguration(#[source] cpal::Error),
+    /// The device did not provide its supported configurations.
+    #[error("Could not read the supported output configurations")]
+    SupportedConfigurations(#[source] cpal::Error),
+    /// The requested rate is not supported.
+    #[error("The output device does not support {rate} Hz")]
+    UnsupportedSampleRate {
+        /// Requested sample rate in hertz.
+        rate: u32,
+    },
+    /// No configuration has a usable sample rate.
+    #[error("The output device does not report a supported sample rate")]
+    NoSupportedSampleRate,
 }
 
 /// The output device, sample rate, and buffer size to open, with `None` for what the device prefers.
@@ -55,12 +101,12 @@ pub struct DeviceCapabilities {
 ///
 /// # Errors
 /// Returns an error when the device cannot be found or does not report its configuration.
-pub fn device_capabilities(device_name: Option<&str>) -> Result<DeviceCapabilities> {
+pub fn device_capabilities(device_name: Option<&str>) -> Result<DeviceCapabilities, DeviceError> {
     let device = find_device(device_name)?;
     let default = default_output_config(&device)?;
     let ranges: Vec<SupportedStreamConfigRange> = device
         .supported_output_configs()
-        .context("Could not read the supported output configurations")?
+        .map_err(DeviceError::SupportedConfigurations)?
         .filter(|range| range.channels() == default.channels() && range.sample_format() == default.sample_format())
         .collect();
     let rate_ranges: Vec<(u32, u32)> = ranges
@@ -79,40 +125,33 @@ pub fn device_capabilities(device_name: Option<&str>) -> Result<DeviceCapabiliti
 }
 
 /// Finds the named output device, or the host default, which is the first ASIO output on Windows.
-pub fn find_device(device_name: Option<&str>) -> Result<Device> {
+pub fn find_device(device_name: Option<&str>) -> Result<Device, DeviceError> {
     if let Some(name) = device_name {
         output_devices()?
             .into_iter()
             .find(|device| device_display_name(device) == name)
-            .ok_or_else(|| anyhow!("Output device \"{name}\" not found"))
+            .ok_or_else(|| DeviceError::NotFound { name: name.to_string() })
     } else {
         #[cfg(windows)]
         let device = output_devices()?.into_iter().next();
         #[cfg(not(windows))]
         let device = cpal::default_host().default_output_device();
 
-        #[cfg(windows)]
-        let message = "No ASIO audio output device available. Install an ASIO driver for your audio interface.";
-        #[cfg(not(windows))]
-        let message = "No audio output device available";
-        device.ok_or_else(|| anyhow!(message))
+        device.ok_or(DeviceError::NoOutput)
     }
 }
 
 /// Lists outputs from the playback host.
 /// ASIO discovery is cached after the first nonempty result, so menus can query it during playback.
-pub fn output_devices() -> Result<Vec<Device>> {
+pub fn output_devices() -> Result<Vec<Device>, DeviceError> {
     #[cfg(windows)]
     {
         ASIO_OUTPUT_DEVICES.with(|cached| {
             if let Some(devices) = cached.get() {
                 return Ok(devices.clone());
             }
-            let host = cpal::host_from_id(cpal::HostId::Asio).context("Could not initialize the ASIO audio host")?;
-            let devices: Vec<Device> = host
-                .output_devices()
-                .context("Could not list ASIO output devices")?
-                .collect();
+            let host = cpal::host_from_id(cpal::HostId::Asio).map_err(DeviceError::InitializeHost)?;
+            let devices: Vec<Device> = host.output_devices().map_err(DeviceError::ListOutputs)?.collect();
             if !devices.is_empty() {
                 let _ = cached.set(devices.clone());
             }
@@ -122,7 +161,7 @@ pub fn output_devices() -> Result<Vec<Device>> {
     #[cfg(not(windows))]
     cpal::default_host()
         .output_devices()
-        .context("Could not list output devices")
+        .map_err(DeviceError::ListOutputs)
         .map(Iterator::collect)
 }
 
@@ -140,15 +179,15 @@ pub fn device_display_name(device: &Device) -> String {
 ///
 /// # Errors
 /// Returns an error when the device has no configuration or does not support the requested sample rate.
-pub fn stream_config(device: &Device, config: &OutputConfig) -> Result<(StreamConfig, SampleFormat)> {
+pub fn stream_config(device: &Device, config: &OutputConfig) -> Result<(StreamConfig, SampleFormat), DeviceError> {
     let default = default_output_config(device)?;
     let supported = match config.sample_rate {
         Some(rate) if rate != default.sample_rate() => device
             .supported_output_configs()
-            .context("Could not read the supported output configurations")?
+            .map_err(DeviceError::SupportedConfigurations)?
             .filter(|range| range.channels() == default.channels() && range.sample_format() == default.sample_format())
             .find_map(|range| range.try_with_sample_rate(rate))
-            .ok_or_else(|| anyhow!("The output device does not support {rate} Hz"))?,
+            .ok_or(DeviceError::UnsupportedSampleRate { rate })?,
         _ => default,
     };
     let mut stream_config = supported.config();
@@ -162,28 +201,30 @@ pub fn stream_config(device: &Device, config: &OutputConfig) -> Result<(StreamCo
 }
 
 /// Reads the preferred output configuration, choosing a supported rate if the driver reports an unknown rate.
-fn default_output_config(device: &Device) -> Result<SupportedStreamConfig> {
+fn default_output_config(device: &Device) -> Result<SupportedStreamConfig, DeviceError> {
     let default = device
         .default_output_config()
-        .context("Could not read the output device configuration")?;
+        .map_err(DeviceError::DefaultConfiguration)?;
     if default.sample_rate() != 0 {
         return Ok(default);
     }
     fallback_output_config(
         device
             .supported_output_configs()
-            .context("Could not read the supported output configurations")?
+            .map_err(DeviceError::SupportedConfigurations)?
             .filter(|range| range.channels() == default.channels() && range.sample_format() == default.sample_format()),
     )
 }
 
 /// Chooses a supported nonzero sample rate, preferring 48 kHz, then 44.1 kHz, then the highest supported rate.
 /// Some ASIO drivers cannot report their current rate before a stream starts.
-fn fallback_output_config(ranges: impl Iterator<Item = SupportedStreamConfigRange>) -> Result<SupportedStreamConfig> {
+fn fallback_output_config(
+    ranges: impl Iterator<Item = SupportedStreamConfigRange>,
+) -> Result<SupportedStreamConfig, DeviceError> {
     let range = ranges
         .filter(|range| range.max_sample_rate() > 0)
         .max_by(SupportedStreamConfigRange::cmp_default_heuristics)
-        .context("The output device does not report a supported sample rate")?;
+        .ok_or(DeviceError::NoSupportedSampleRate)?;
     Ok(range
         .try_with_standard_sample_rate()
         .unwrap_or_else(|| range.with_max_sample_rate()))
@@ -251,8 +292,37 @@ mod test_output_config {
 
     #[test]
     fn unknown_rate_requires_a_nonzero_supported_rate() {
-        assert!(fallback_output_config(std::iter::empty()).is_err());
-        assert!(fallback_output_config([range(0, 0)].into_iter()).is_err());
+        for error in [
+            fallback_output_config(std::iter::empty()),
+            fallback_output_config([range(0, 0)].into_iter()),
+        ] {
+            let error = error.expect_err("a nonzero sample rate is required");
+            assert!(matches!(error, DeviceError::NoSupportedSampleRate));
+            assert_eq!(
+                error.to_string(),
+                "The output device does not report a supported sample rate"
+            );
+        }
+    }
+
+    #[test]
+    fn device_selection_errors_preserve_the_requested_values() {
+        let error = DeviceError::NotFound {
+            name: String::from("Studio"),
+        };
+        assert_eq!(error.to_string(), "Output device \"Studio\" not found");
+        let error = DeviceError::UnsupportedSampleRate { rate: 32_000 };
+        assert_eq!(error.to_string(), "The output device does not support 32000 Hz");
+    }
+
+    #[test]
+    fn configuration_errors_preserve_the_native_source() {
+        let error = DeviceError::DefaultConfiguration(cpal::Error::new(cpal::ErrorKind::DeviceNotAvailable));
+        assert_eq!(error.to_string(), "Could not read the output device configuration");
+        let source = std::error::Error::source(&error)
+            .and_then(|source| source.downcast_ref::<cpal::Error>())
+            .expect("native device source");
+        assert_eq!(source.kind(), cpal::ErrorKind::DeviceNotAvailable);
     }
 }
 

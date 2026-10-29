@@ -13,7 +13,6 @@ use std::ffi::c_void;
 use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
 
-use anyhow::{Result, bail};
 use raw_window_handle::RawWindowHandle;
 use vst3::Steinberg::{FIDString, kPlatformTypeHWND};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -29,7 +28,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     WS_OVERLAPPED, WS_SYSMENU, WS_THICKFRAME,
 };
 
-use super::{EditorShared, ViewSize};
+use super::{EditorError, EditorShared, ViewSize};
 use crate::thread::UiThread;
 
 /// Name of the window class of editor windows.
@@ -56,7 +55,7 @@ impl NativeWindow {
         size: ViewSize,
         resizable: bool,
         owner: Option<RawWindowHandle>,
-    ) -> Result<Self> {
+    ) -> Result<Self, EditorError> {
         let class = window_class()?;
         let mut style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN;
         if resizable {
@@ -88,10 +87,9 @@ impl NativeWindow {
             )
         };
         if hwnd.is_null() {
-            bail!(
-                "The editor window could not be created: {}",
-                std::io::Error::last_os_error()
-            );
+            return Err(EditorError::CreateWindow {
+                source: std::io::Error::last_os_error(),
+            });
         }
         let state = Box::into_raw(Box::new(Rc::downgrade(shared)));
         // SAFETY: the window is valid, and the window procedure frees the state when the window is destroyed.
@@ -151,7 +149,7 @@ impl Drop for NativeWindow {
 }
 
 /// Returns the class of editor windows, registering it the first time.
-fn window_class() -> Result<*const u16> {
+fn window_class() -> Result<*const u16, EditorError> {
     static ATOM: OnceLock<u16> = OnceLock::new();
     if let Some(&atom) = ATOM.get() {
         return Ok(class_pointer(atom));
@@ -177,10 +175,9 @@ fn window_class() -> Result<*const u16> {
     // SAFETY: the class description and its name are valid for the call.
     let atom = unsafe { RegisterClassExW(&raw const class) };
     if atom == 0 {
-        bail!(
-            "The editor window class could not be registered: {}",
-            std::io::Error::last_os_error()
-        );
+        return Err(EditorError::RegisterWindowClass {
+            source: std::io::Error::last_os_error(),
+        });
     }
     Ok(class_pointer(*ATOM.get_or_init(|| atom)))
 }

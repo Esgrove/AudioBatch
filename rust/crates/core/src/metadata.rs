@@ -11,9 +11,8 @@
 
 use std::borrow::Cow;
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
 use lofty::TextEncoding;
 use lofty::config::{ParseOptions, WriteOptions};
 use lofty::file::AudioFile;
@@ -42,6 +41,17 @@ const MULTI_VALUE_SEPARATOR: char = '\0';
 /// Description of the `USLT` frame `TagLib` writes for the lyrics of a non-`ID3v2` source.
 const LYRICS_DESCRIPTION: &str = "LYRICS";
 
+/// A failure to write copied metadata onto an output file.
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to write metadata to {}", destination.display())]
+pub struct MetadataError {
+    /// Output file whose metadata could not be written.
+    pub destination: PathBuf,
+    /// Tag writer's concrete encoding or I/O failure.
+    #[source]
+    pub source: lofty::error::FileEncodingError,
+}
+
 /// Copies the tags, embedded pictures, and Serato data of the source onto the destination,
 /// leaving out the Serato overview.
 ///
@@ -51,7 +61,7 @@ const LYRICS_DESCRIPTION: &str = "LYRICS";
 ///
 /// Returns an error only when metadata was read but could not be written,
 /// so the caller can keep the original and its tags.
-pub fn copy_metadata(source: &Path, destination: &Path) -> Result<()> {
+pub fn copy_metadata(source: &Path, destination: &Path) -> Result<(), MetadataError> {
     let Some(mut tag) = read_source_tag(source) else {
         return Ok(());
     };
@@ -61,7 +71,10 @@ pub fn copy_metadata(source: &Path, destination: &Path) -> Result<()> {
     }
     keep_urls_single_byte(&mut tag);
     tag.save_to_path(destination, WriteOptions::default())
-        .with_context(|| format!("Failed to write metadata to {}", destination.display()))
+        .map_err(|source| MetadataError {
+            destination: destination.to_path_buf(),
+            source,
+        })
 }
 
 /// Reads the metadata of the source as an `ID3v2` tag, or `None` when it has none that lofty can read.
