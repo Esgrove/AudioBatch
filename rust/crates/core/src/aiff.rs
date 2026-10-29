@@ -107,7 +107,8 @@ impl<W: Write + Seek> AiffWriter<W> {
     ///
     /// Returns an error when the channel count or lengths do not match,
     /// when the file would outgrow the AIFF size fields, or when writing fails.
-    pub(crate) fn write_planar(&mut self, planes: &[&[f32]]) -> Result<(), AiffError> {
+    #[doc(hidden)]
+    pub fn write_planar(&mut self, planes: &[&[f32]]) -> Result<(), AiffError> {
         self.write_frames(planes, float_to_int32)
     }
 

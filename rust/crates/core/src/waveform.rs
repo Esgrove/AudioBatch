@@ -129,8 +129,9 @@ impl WaveformOverview {
 
     /// Restores an overview from a blob written by `to_bytes`.
     /// Returns `None` when the blob is truncated, from another version, or inconsistent.
+    #[doc(hidden)]
     #[must_use]
-    pub(crate) fn from_bytes(bytes: &[u8]) -> Option<Self> {
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         let mut reader = ByteReader::new(bytes);
         if reader.u32()? != SERIALIZATION_MAGIC || reader.u32()? != SERIALIZATION_VERSION {
             return None;
@@ -172,8 +173,9 @@ impl WaveformOverview {
     }
 
     /// Serializes the finest level into an explicit little-endian blob for the cache.
+    #[doc(hidden)]
     #[must_use]
-    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Vec<u8> {
         let base = self.base_level();
         let mut bytes = Vec::with_capacity(HEADER_BYTES + base.peaks.len() * 2);
         bytes.extend_from_slice(&SERIALIZATION_MAGIC.to_le_bytes());

@@ -61,3 +61,6 @@
 
 # Local test files
 /files/
+
+# Generated benchmark audio
+/fixtures/benchmark/output/
