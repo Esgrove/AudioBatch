@@ -79,6 +79,7 @@ public:
     void showAudioSettingsWindow();
     void showSupportedNormalizationFormats();
     void setViewOptionsChangedCallback(std::function<void()> callback);
+    void fitPreviewToControls();
     void togglePreviewSection();
     void toggleSeratoWaveformColouring();
     void toggleLoudnessGraph();
@@ -305,7 +306,8 @@ private:
     bool restoreExpandedLayout {false};
     /// Height of the expanded workspace, which stays the same when the window is resized,
     /// so a taller window gives its extra height to the results table.
-    /// The first layout sets it from the window height, and dragging the divider changes it.
+    /// It starts at the height that fits the controls, set again once the window has its startup bounds,
+    /// and dragging the divider changes it.
     int expandedPreviewHeight {0};
     /// Height of the workspace when the running animation started.
     int animationStartHeight {0};

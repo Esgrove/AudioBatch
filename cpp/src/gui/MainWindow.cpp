@@ -150,6 +150,7 @@ MainWindow::MainWindow(const juce::String& name) :
     } else {
         centreWithSize(layout::defaultWindowWidth, layout::defaultWindowHeight);
     }
+    content->fitPreviewToControls();
     logStartupCheckpoint("constructor complete");
 }
 

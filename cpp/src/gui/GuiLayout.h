@@ -44,14 +44,12 @@ constexpr int resultsTableRowHeight {24};
 
 /// JUCE's negative sizes express proportions of the available vertical space.
 /// The table has no upper limit, so a tall window gives it the height the preview keeps out of.
+/// The expanded preview starts at the height that fits its controls, a fixed height from then on.
 constexpr double resultsTableMinimumHeight {240.0};
 constexpr double resultsTableMaximumProportion {-1.0};
-constexpr double resultsTablePreferredProportion {-0.72};
 constexpr double resizeBarHeight {6.0};
 constexpr double previewMinimumHeight {230.0};
 constexpr double previewMaximumProportion {-0.7};
-/// Share of the first window height the expanded preview starts at, a fixed height from then on.
-constexpr double previewPreferredProportion {-0.28};
 
 constexpr int controlButtonHeight {28};
 constexpr int processButtonHeight {38};
@@ -456,6 +454,32 @@ inline PreviewColumns previewColumns(juce::Rectangle<int> bounds, const bool all
     const auto information = bounds.removeFromLeft(juce::jmin(bounds.getWidth(), informationWidth));
     bounds.removeFromLeft(juce::jmin(bounds.getWidth(), sectionSpacing));
     return {.controls = controls, .information = information, .waveform = bounds, .wide = wide};
+}
+
+/// Returns the expanded workspace height that shows controls of the given content height without scrolling.
+/// It adds the pinned playback row below the controls, the gap above that row,
+/// and the vertical padding of the controls column and of the workspace.
+constexpr int previewHeightForControls(const int contentHeight)
+{
+    return contentHeight + controlsSectionSpacing + processButtonHeight + information::verticalPadding * 2
+        + compactPreview::padding * 2;
+}
+
+/// Expanded workspace heights that fit the one-column and the wide controls without scrolling.
+constexpr int narrowPreviewFitHeight {previewHeightForControls(controlsContentHeight)};
+constexpr int widePreviewFitHeight {previewHeightForControls(wideControlsContentHeight)};
+static_assert(
+    widePreviewFitHeight >= previewMinimumHeight && narrowPreviewFitHeight >= previewMinimumHeight,
+    "The controls-fit preview heights must not be below the preview minimum height"
+);
+
+/// Returns the height the expanded workspace starts at for a workspace of the given width,
+/// so all of its controls fit without scrolling and without extra space below them.
+/// The width decides the layout through the same breakpoint as previewColumns.
+inline int expandedPreviewFitHeight(const int workspaceWidth)
+{
+    const auto workspace = juce::Rectangle<int> {juce::jmax(0, workspaceWidth), 0}.reduced(compactPreview::padding, 0);
+    return previewColumns(workspace).wide ? widePreviewFitHeight : narrowPreviewFitHeight;
 }
 
 /// Centres the initial window within the display's usable area, reducing it on smaller screens.
