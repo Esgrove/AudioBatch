@@ -237,6 +237,8 @@ sequenceDiagram
   The history keeps at most 8192 buckets by merging neighbours with a bitwise or,
   and the cache stores it as a versioned blob beside the short-term loudness.
   A missing or malformed blob on a successful row makes the file analyze again.
+  `ThumbnailComponent` draws the flags in amber, solid for sample overs and outlined for true peak overs alone,
+  and they describe the source, so the gain and the plugin preview leave them unchanged.
 - The sample peaks keep their sign, and the overall values take the channel with the largest magnitude.
 - `storeAnalysis` keeps only failures that would repeat for the same bytes, so the next run retries the others.
 - The waveform is not part of the analysis.

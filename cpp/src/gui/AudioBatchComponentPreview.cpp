@@ -162,11 +162,13 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
     previewWorkspace.audioInfo.showRecord(record, fileActivity.getActiveLabel(record.fullPath), seratoData.get());
 }
 
-/// Adopts only complete analysis of the unchanged file backing the loaded preview.
+/// Adopts only complete analysis of the unchanged file backing the loaded preview,
+/// both its short-term loudness and its source overloads.
 /// Selection, result, reconciliation, and output-replacement paths all pass through this check.
 void AudioBatchComponent::updatePreviewLoudnessHistory()
 {
     std::shared_ptr<const ShortTermLoudnessHistory> history;
+    std::shared_ptr<const OverloadHistory> overloads;
     const auto* loaded = std::get_if<LoadedPreview>(&preview.getState());
     if (loaded != nullptr && previewPlayer.hasLoadedSource() && loaded->identity.matches(loaded->file)) {
         if (const auto row = analysisResults.findRow(loaded->file.getFullPathName())) {
@@ -177,10 +179,12 @@ void AudioBatchComponent::updatePreviewLoudnessHistory()
                 && activity != FileActivity::analyzing)
             {
                 history = record.shortTermLoudness;
+                overloads = record.overloads;
             }
         }
     }
     previewWorkspace.thumbnail.setLoudnessHistory(std::move(history));
+    previewWorkspace.thumbnail.setOverloadHistory(std::move(overloads));
 }
 
 /// Loads a file into the preview player and waveform, preferring cached waveform data over decoding the file again.
@@ -189,6 +193,7 @@ void AudioBatchComponent::showAudioFile(const juce::File& file)
 {
     previewWorkspace.audioInfo.clear();
     previewWorkspace.thumbnail.setLoudnessHistory({});
+    previewWorkspace.thumbnail.setOverloadHistory({});
 
     if (!preview.load(file, previewPreferences.playFromFirstCuePoint)) {
         clearPreviewDisplay();

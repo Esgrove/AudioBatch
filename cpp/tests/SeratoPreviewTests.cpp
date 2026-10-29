@@ -1,7 +1,8 @@
-/// Cue arrow geometry and musical info tests using generated PCM peaks and synthetic metadata.
+/// Cue arrow and overload mark geometry and musical info tests using generated PCM peaks and synthetic metadata.
 /// Exercises the actual preview components without devices, local music, painting or redistributed Serato payloads.
 
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/OverloadHistory.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/components/ThumbnailComponent.h"
@@ -108,6 +109,7 @@ public:
     {
         testCueArrows();
         testCueReset();
+        testOverloadMarks();
         testHotCueKeys();
         testTrackInfo();
     }
@@ -200,6 +202,99 @@ private:
         thumbnail.setSeratoOverview({});
         thumbnail.setRange({});
         expect(thumbnail.getCueArrows().empty());
+    }
+
+    /// Checks overload mark lanes, kinds, minimum width, gain independence, and reset with the waveform.
+    void testOverloadMarks()
+    {
+        beginTest("Overload marks follow the channel lanes and their kind, independent of gain");
+        juce::AudioFormatManager formats;
+        AudioPreviewPlayer transport;
+        ThumbnailComponent thumbnail(formats, transport);
+        thumbnail.setSize(previewWidth, previewHeight);
+        // One second at 8192 Hz in ten blocks of 819 frames and a final partial one, like the generated peaks.
+        constexpr double sampleRate {8192.0};
+        const auto blockSize = overloadBlockSize(sampleRate);
+        OverloadHistoryBuilder builder(2, sampleRate, 8192, blockSize);
+        for (int block = 0; block < 11; ++block) {
+            std::array<std::uint8_t, 2> flags {};
+            if (block == 2) {
+                flags[0] = OverloadHistory::sampleOver | OverloadHistory::truePeakOver;
+            }
+            if (block == 6) {
+                flags[1] = OverloadHistory::truePeakOver;
+            }
+            builder.addBlock(flags);
+        }
+        const auto history = builder.finish();
+
+        expect(thumbnail.loadFromCacheData(previewPeaks(formats, 2)));
+        expect(thumbnail.getOverloadMarks().empty());
+        thumbnail.setOverloadHistory(history);
+        const auto marks = thumbnail.getOverloadMarks();
+        constexpr auto laneHeight = (previewHeight - 2.0f * waveformInset) / 2.0f;
+        const auto inLane
+            = [](const OverloadMark& mark, const float top) { return juce::approximatelyEqual(mark.laneTop, top); };
+        const auto solid = std::ranges::find_if(marks, [&](const auto& mark) {
+            return mark.sampleOver && inLane(mark, waveformInset);
+        });
+        expect(solid != marks.end());
+        if (solid != marks.end()) {
+            expectWithinAbsoluteError(solid->laneBottom, waveformInset + laneHeight, 0.001f);
+            const auto blockSeconds = static_cast<double>(blockSize) / sampleRate;
+            expectWithinAbsoluteError(
+                solid->horizontal.getStart(), expectedCuePosition(2 * blockSeconds, {0.0, 1.0}), 1.0f
+            );
+        }
+        expect(std::ranges::none_of(marks, [&](const auto& mark) {
+            return mark.sampleOver && inLane(mark, waveformInset + laneHeight);
+        }));
+        expect(std::ranges::any_of(marks, [&](const auto& mark) {
+            return !mark.sampleOver && inLane(mark, waveformInset + laneHeight);
+        }));
+        // The true peak coverage of the filter delay reaches at most a column before the solid run.
+        expect(std::ranges::all_of(marks, [&](const auto& mark) {
+            return mark.sampleOver || !inLane(mark, waveformInset) || solid == marks.end()
+                || mark.horizontal.getEnd() <= solid->horizontal.getEnd();
+        }));
+        thumbnail.setDisplayGain(4.0f);
+        expectEquals(thumbnail.getOverloadMarks().size(), marks.size());
+
+        beginTest("A short overload keeps the minimum mark width when zoomed out");
+        {
+            OverloadHistoryBuilder shortBuilder(2, sampleRate, 8192, blockSize);
+            for (int block = 0; block < 11; ++block) {
+                shortBuilder.addBlock(
+                    std::array<std::uint8_t, 2> {
+                        static_cast<std::uint8_t>(block == 10 ? OverloadHistory::sampleOver : 0),
+                        0,
+                    }
+                );
+            }
+            thumbnail.setOverloadHistory(shortBuilder.finish());
+            const auto shortMarks = thumbnail.getOverloadMarks();
+            expectEquals(static_cast<int>(shortMarks.size()), 1);
+            if (!shortMarks.empty()) {
+                expect(shortMarks.front().horizontal.getLength() >= layout::waveform::overloadMinimumWidth);
+            }
+        }
+
+        beginTest("An all-clear history, a mismatched channel count, and a new waveform show no marks");
+        {
+            OverloadHistoryBuilder clearBuilder(2, sampleRate, 8192, blockSize);
+            for (int block = 0; block < 11; ++block) {
+                clearBuilder.addBlock(std::array<std::uint8_t, 2> {});
+            }
+            thumbnail.setOverloadHistory(clearBuilder.finish());
+            expect(thumbnail.getOverloadMarks().empty());
+            expect(thumbnail.getTooltip().isEmpty());
+            thumbnail.setOverloadHistory(history);
+            expect(thumbnail.getTooltip().isNotEmpty());
+            expect(thumbnail.loadFromCacheData(previewPeaks(formats, 1)));
+            expect(thumbnail.getOverloadMarks().empty());
+            thumbnail.setOverloadHistory(history);
+            expect(thumbnail.getOverloadMarks().empty());
+        }
     }
 
     /// Ensures neither a new cached source nor a failed or cleared source retains the previous file's cues.
