@@ -17,6 +17,11 @@ OPTIONS: All options are optional
 
     -n | --minor
         Bump the minor version.
+
+    -c | --commit
+        Stage the four version files and commit with the message \"Version X.X.X\".
+        Create an annotated tag vX.X.X on that commit with the same message.
+        Leave unrelated staged files out of the commit.
 "
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -25,10 +30,15 @@ source "$DIR/common.sh"
 
 BUMP="patch"
 BUMP_SELECTED=false
+COMMIT=false
 for argument in "$@"; do
     case "$argument" in
         -h | --help)
             print_usage_and_exit 0
+            ;;
+        -c | --commit)
+            COMMIT=true
+            continue
             ;;
         -m | --major)
             NEXT_BUMP=major
@@ -49,6 +59,11 @@ done
 
 require_command perl
 require_command cargo
+if [ "$COMMIT" = true ]; then
+    require_command git
+fi
+
+VERSION_FILES=(cpp/CMakeLists.txt rust/Cargo.toml rust/Cargo.lock test-plugin/CMakeLists.txt)
 
 # Validate every declaration before changing any file.
 # Match only project metadata, leaving dependency versions, examples, and fake plugin data untouched.
@@ -101,3 +116,11 @@ if ! cargo update --workspace; then
     print_error_and_exit "Versions were changed, but Cargo.lock could not be refreshed. Run cargo update --workspace in rust/."
 fi
 print_green "Project versions and Rust lockfile updated."
+
+if [ "$COMMIT" = true ]; then
+    VERSION=$(perl -ne 'print $1 if /^version = "([0-9]+\.[0-9]+\.[0-9]+)"/' "$DIR/rust/Cargo.toml")
+    cd "$DIR"
+    git add -- "${VERSION_FILES[@]}"
+    git commit --only -m "Version $VERSION" -- "${VERSION_FILES[@]}"
+    git tag -a "v$VERSION" -m "Version $VERSION" HEAD
+fi
