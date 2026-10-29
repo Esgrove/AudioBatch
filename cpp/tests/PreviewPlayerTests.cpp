@@ -32,6 +32,8 @@ public:
         testCueStartPosition();
         testInitialPosition();
         testDeviceOwnership();
+        testAsioDeviceSelection();
+        testSettingsDeviceFailure();
         testOutputStatusFormatting();
         testPreferences();
         testLoudnessAxisIntervals();
@@ -363,6 +365,147 @@ private:
             }
         }
         expectEquals(device.opens, device.closes);
+    }
+
+    /// Finds connected ASIO hardware without treating the registry default as the only usable interface.
+    void testAsioDeviceSelection()
+    {
+        TestAudioDeviceState device;
+        device.typeName = "ASIO";
+        device.outputDeviceNames = {"Disconnected default", "Connected output", "Other output"};
+        device.unavailableDeviceNames = {"Disconnected default"};
+        AudioPreviewPlayer player;
+        installTestAudioDevice(player.getDeviceManager(), device);
+        juce::String error;
+        player.setErrorCallback([&error](const juce::String& message) { error = message; });
+
+        beginTest("An unconfigured ASIO host skips disconnected registered drivers");
+        const ScopedLogCapture logs;
+        player.setDeviceSettingsActive(true);
+        expect(error.isEmpty());
+        expectEquals(player.getOutputStatus().deviceName, juce::String("Connected output"));
+        expectEquals(
+            device.attemptedDevices.joinIntoString(", "), juce::String("Disconnected default, Connected output")
+        );
+        expectEquals(device.inputChannels, 0);
+        expectEquals(device.outputChannels, 2);
+        expect(logs.getMessages().joinIntoString("\n").contains("ASIO output \"Disconnected default\""));
+        expect(player.createDeviceState() == nullptr);
+
+        beginTest("A subsequent open retains the working device rather than probing the default again");
+        player.setApplicationActive(false);
+        device.attemptedDevices.clear();
+        player.setApplicationActive(true);
+        expectEquals(device.attemptedDevices.joinIntoString(", "), juce::String("Connected output"));
+
+        beginTest("A selected device that becomes unavailable does not switch to another ASIO output");
+        player.setDeviceSettingsActive(false);
+        device.unavailableDeviceNames.add("Connected output");
+        device.attemptedDevices.clear();
+        player.setDeviceSettingsActive(true);
+        expect(error.isNotEmpty());
+        expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+        expectEquals(device.attemptedDevices.joinIntoString(", "), juce::String("Connected output"));
+        player.setErrorCallback({});
+
+        beginTest("A saved selection is retained across failed explicit retries");
+        TestAudioDeviceState savedDevice;
+        savedDevice.typeName = "ASIO";
+        savedDevice.outputDeviceNames = {"Connected default", "Saved output"};
+        savedDevice.unavailableDeviceNames = {"Saved output"};
+        AudioPreviewPlayer restored;
+        installTestAudioDevice(restored.getDeviceManager(), savedDevice);
+        auto saved = std::make_unique<juce::XmlElement>("DEVICESETUP");
+        saved->setAttribute("deviceType", "ASIO");
+        saved->setAttribute("audioOutputDeviceName", "Saved output");
+        saved->setAttribute("audioDeviceInChans", "0");
+        restored.setSavedDeviceState(std::move(saved));
+        int failures = 0;
+        restored.setErrorCallback([&failures](const juce::String&) { ++failures; });
+        restored.setDeviceSettingsActive(true);
+        restored.setDeviceSettingsActive(false);
+        restored.setDeviceSettingsActive(true);
+        expectEquals(failures, 2);
+        expectEquals(savedDevice.attemptedDevices.joinIntoString(", "), juce::String("Saved output, Saved output"));
+        savedDevice.unavailableDeviceNames.clear();
+        restored.setDeviceSettingsActive(false);
+        restored.setDeviceSettingsActive(true);
+        expectEquals(restored.getOutputStatus().deviceName, juce::String("Saved output"));
+        restored.setErrorCallback({});
+
+        beginTest("Exhausting unavailable ASIO outputs reports a contextual error once");
+        TestAudioDeviceState unavailable;
+        unavailable.typeName = "ASIO";
+        unavailable.outputDeviceNames = {"First disconnected", "Second disconnected"};
+        unavailable.unavailableDeviceNames = unavailable.outputDeviceNames;
+        AudioPreviewPlayer failed;
+        installTestAudioDevice(failed.getDeviceManager(), unavailable);
+        int failedAttempts = 0;
+        failed.setErrorCallback([&](const juce::String& message) {
+            error = message;
+            ++failedAttempts;
+        });
+        failed.setDeviceSettingsActive(true);
+        expectEquals(unavailable.attemptedDevices.size(), 2);
+        expect(error.contains("Second disconnected"));
+        expect(error.contains("No ASIO output could be opened"));
+        failed.setApplicationActive(false);
+        failed.setApplicationActive(true);
+        expectEquals(failedAttempts, 1);
+        failed.setErrorCallback({});
+    }
+
+    /// Keeps a failed settings lease from reopening the device every time its error dialog returns focus.
+    void testSettingsDeviceFailure()
+    {
+        TestAudioDeviceState device;
+        AudioPreviewPlayer player;
+        installTestAudioDevice(player.getDeviceManager(), device);
+        device.openError = "No device is connected to the PC.";
+        int errors = 0;
+        player.setErrorCallback([&errors](const juce::String&) { ++errors; });
+
+        beginTest("An unavailable settings device is reported once across focus changes");
+        player.setDeviceSettingsActive(true);
+        expectEquals(errors, 1);
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            player.setApplicationActive(false);
+            player.setApplicationActive(true);
+            player.setDeviceSettingsActive(true);
+            expectEquals(errors, 1);
+            expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+        }
+
+        beginTest("Explicitly reopening settings retries the device and reports a new failure");
+        player.setDeviceSettingsActive(false);
+        player.setDeviceSettingsActive(true);
+        expectEquals(errors, 2);
+
+        beginTest("An explicit retry can recover and restores normal focus-driven device ownership");
+        device.openError.clear();
+        player.setDeviceSettingsActive(false);
+        player.setDeviceSettingsActive(true);
+        expect(player.getDeviceManager().getCurrentAudioDevice() != nullptr);
+        player.setApplicationActive(false);
+        expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+        player.setApplicationActive(true);
+        expect(player.getDeviceManager().getCurrentAudioDevice() != nullptr);
+        expectEquals(errors, 2);
+
+        beginTest("Choosing a working device in the selector also restores focus-driven ownership");
+        player.setDeviceSettingsActive(false);
+        device.openError = "No device is connected to the PC.";
+        player.setDeviceSettingsActive(true);
+        expectEquals(errors, 3);
+        device.openError.clear();
+        expect(player.getDeviceManager().initialise(0, 2, nullptr, true).isEmpty());
+        expect(player.getDeviceManager().getCurrentAudioDevice() != nullptr);
+        player.setApplicationActive(false);
+        expect(player.getDeviceManager().getCurrentAudioDevice() == nullptr);
+        player.setApplicationActive(true);
+        expect(player.getDeviceManager().getCurrentAudioDevice() != nullptr);
+        expectEquals(errors, 3);
+        player.setErrorCallback({});
     }
 
     /// Checks the status bar text of the output device for fractional rates and values that are not known yet.

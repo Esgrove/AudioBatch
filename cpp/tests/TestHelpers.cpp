@@ -47,10 +47,12 @@ class TestAudioDevice final : public juce::AudioIODevice
 {
 public:
     /// Retains the test-owned counters and callback state.
-    explicit TestAudioDevice(TestAudioDeviceState& deviceState) :
-        juce::AudioIODevice("Test output", "Test audio"),
+    TestAudioDevice(TestAudioDeviceState& deviceState, const juce::String& name) :
+        juce::AudioIODevice(name, deviceState.typeName),
         state(deviceState)
-    {}
+    {
+        state.attemptedDevices.add(name);
+    }
 
     /// Mirrors native drivers that release their resources on destruction.
     ~TestAudioDevice() override
@@ -126,7 +128,8 @@ public:
     /// Exposes explicit failures injected by the test.
     juce::String getLastError() override
     {
-        return state.openError;
+        return state.unavailableDeviceNames.contains(getName()) ? juce::String("No device is connected to the PC.")
+                                                                : state.openError;
     }
     /// Reports simulated ownership of the interface.
     bool isOpen() override
@@ -147,8 +150,8 @@ public:
         int /*bufferSizeSamples*/
     ) override
     {
-        if (state.openError.isNotEmpty()) {
-            return state.openError;
+        if (const auto error = getLastError(); error.isNotEmpty()) {
+            return error;
         }
         inputs = inputChannels;
         outputs = outputChannels;
@@ -199,7 +202,7 @@ class TestAudioDeviceType final : public juce::AudioIODeviceType
 public:
     /// Retains test state for every reopened driver instance.
     explicit TestAudioDeviceType(TestAudioDeviceState& deviceState) :
-        juce::AudioIODeviceType("Test audio"),
+        juce::AudioIODeviceType(deviceState.typeName),
         state(deviceState)
     {}
     /// Needs no native device enumeration.
@@ -207,7 +210,7 @@ public:
     /// Offers the same interface for input and output.
     juce::StringArray getDeviceNames(bool /*wantInputNames*/) const override
     {
-        return {"Test output"};
+        return state.outputDeviceNames;
     }
     /// Always selects the only interface.
     int getDefaultDeviceIndex(bool /*forInput*/) const override
@@ -215,9 +218,9 @@ public:
         return 0;
     }
     /// All created devices belong to the single advertised interface.
-    int getIndexOfDevice(juce::AudioIODevice* /*device*/, bool /*asInput*/) const override
+    int getIndexOfDevice(juce::AudioIODevice* device, bool /*asInput*/) const override
     {
-        return 0;
+        return device != nullptr ? state.outputDeviceNames.indexOf(device->getName()) : -1;
     }
     /// Allows output-only operation without an input device name.
     bool hasSeparateInputsAndOutputs() const override
@@ -226,11 +229,11 @@ public:
     }
     /// Creates a fresh driver whose lifetime is controlled by the real device manager.
     juce::AudioIODevice* createDevice(
-        const juce::String& /*outputDeviceName*/,
+        const juce::String& outputDeviceName,
         const juce::String& /*inputDeviceName*/
     ) override
     {
-        return new TestAudioDevice(state);
+        return new TestAudioDevice(state, outputDeviceName);
     }
 
 private:

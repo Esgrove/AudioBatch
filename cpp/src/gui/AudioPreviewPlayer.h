@@ -182,6 +182,8 @@ private:
     bool applicationActive {true};
     /// True while the audio settings dialog is shown, which keeps the device open.
     bool deviceSettingsActive {false};
+    /// Blocks focus-driven retries after a failed open until the user retries or selects a working device.
+    bool deviceOpenFailed {false};
 
     /// Holds a new file silent until its asynchronous cue metadata determines the initial position.
     /// Explicit seeks cancel the wait, and start/stop retain the user's latest playback intent.

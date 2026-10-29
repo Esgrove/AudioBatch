@@ -51,6 +51,10 @@ constexpr auto scanLockHeldLine {"held"};
 
 /// Observes simulated driver ownership without touching hardware. Must outlive the installed device manager.
 struct TestAudioDeviceState {
+    juce::String typeName {"Test audio"};
+    juce::StringArray outputDeviceNames {"Test output"};
+    juce::StringArray unavailableDeviceNames;
+    juce::StringArray attemptedDevices;
     int opens {0};
     int closes {0};
     int inputChannels {0};

@@ -10,6 +10,7 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -90,6 +91,37 @@ private:
     /// Set when a block finds no buffered input, owned by the player, which outlives the source.
     std::atomic<bool>& underrunFlag;
 };
+
+/// Tries other ASIO outputs after an unconfigured default fails, logging each unavailable driver.
+juce::String openAlternativeAsioOutput(
+    juce::AudioDeviceManager& manager,
+    juce::AudioDeviceManager::AudioDeviceSetup setup,
+    juce::String error
+)
+{
+    const auto* type = manager.getCurrentDeviceTypeObject();
+    if (type == nullptr || type->getTypeName() != "ASIO") {
+        return error;
+    }
+    const auto names = type->getDeviceNames(false);
+    const auto& defaultOutput = names[type->getDefaultDeviceIndex(false)];
+    auto attempted = defaultOutput;
+    utils::logWarn("Audio preview: ASIO output \"{}\": {}", attempted, error);
+    for (const auto& name : names) {
+        if (name == defaultOutput) {
+            continue;
+        }
+        setup.outputDeviceName = name;
+        error = manager.setAudioDeviceSetup(setup, false);
+        attempted = name;
+        if (error.isEmpty()) {
+            utils::logInfo("Audio preview: Using ASIO output \"{}\"", name);
+            return {};
+        }
+        utils::logWarn("Audio preview: ASIO output \"{}\": {}", name, error);
+    }
+    return utils::format("No ASIO output could be opened. Last attempt \"{}\": {}", attempted, error);
+}
 }  // namespace
 
 /// Creates a device-free player. The output device opens only when playback starts.
@@ -113,10 +145,11 @@ AudioPreviewPlayer::~AudioPreviewPlayer()
     readAheadThread.stopThread(readAheadThreadStopTimeoutMilliseconds);
 }
 
-/// Opens only output channels, restoring the last selection without silently falling back to another device.
+/// Opens only output channels, retaining a selection or finding a connected ASIO output when none was chosen.
 /// Initial startup alone never opens hardware or requests recording permission.
 bool AudioPreviewPlayer::openAudioDevice()
 {
+    deviceOpenFailed = false;
     if (deviceManager.getCurrentAudioDevice() != nullptr) {
         return true;
     }
@@ -125,12 +158,27 @@ bool AudioPreviewPlayer::openAudioDevice()
     setup.inputChannels.clear();
     setup.useDefaultInputChannels = false;
     // The first open restores the device saved by the last session, or the default device when it is gone.
-    const auto savedState = std::exchange(savedDeviceState, nullptr);
-    const auto error = setup.outputDeviceName.isEmpty()
-        ? deviceManager.initialise(0, 2, savedState.get(), true, {}, &setup)
+    auto savedState = std::exchange(savedDeviceState, nullptr);
+    const bool restoringSelection = savedState != nullptr
+        && std::ranges::any_of(deviceManager.getAvailableDeviceTypes(), [&savedState](const auto* type) {
+                                        const auto name = savedState->getStringAttribute(
+                                            "audioOutputDeviceName", savedState->getStringAttribute("audioDeviceName")
+                                        );
+                                        return type->getTypeName() == savedState->getStringAttribute("deviceType")
+                                            && type->getDeviceNames(false).contains(name);
+                                    });
+    auto error = setup.outputDeviceName.isEmpty()
+        ? deviceManager.initialise(0, 2, savedState.get(), !restoringSelection, {}, &setup)
         : deviceManager.setAudioDeviceSetup(setup, false);
+    if (error.isNotEmpty() && !restoringSelection && setup.outputDeviceName.isEmpty()) {
+        error = openAlternativeAsioOutput(deviceManager, setup, std::move(error));
+    }
     if (error.isNotEmpty() || deviceManager.getCurrentAudioDevice() == nullptr) {
+        if (restoringSelection) {
+            savedDeviceState = std::move(savedState);
+        }
         closeAudioDevice();
+        deviceOpenFailed = true;
         reportError(error.isNotEmpty() ? error : juce::String("No audio output device is available"));
         return false;
     }
@@ -187,8 +235,11 @@ void AudioPreviewPlayer::setApplicationActive(const bool active)
     }
     applicationActive = active;
     if (!active) {
+        if (deviceManager.getCurrentAudioDevice() != nullptr) {
+            deviceOpenFailed = false;
+        }
         suspend();
-    } else if (deviceSettingsActive) {
+    } else if (deviceSettingsActive && !deviceOpenFailed) {
         const auto opened = openAudioDevice();
         juce::ignoreUnused(opened);
     }
@@ -197,6 +248,9 @@ void AudioPreviewPlayer::setApplicationActive(const bool active)
 /// Temporarily leases the interface for its native settings UI, but only while this application is active.
 void AudioPreviewPlayer::setDeviceSettingsActive(const bool active)
 {
+    if (deviceSettingsActive == active) {
+        return;
+    }
     deviceSettingsActive = active;
     if (active && applicationActive) {
         const auto opened = openAudioDevice();
@@ -579,6 +633,7 @@ void AudioPreviewPlayer::handleAsyncUpdate()
         reportError("The audio device reported an invalid playback configuration");
         return;
     }
+    deviceOpenFailed = false;
     sampleRate = newRate;
     blockSize = newBlockSize;
     prepareInput();
