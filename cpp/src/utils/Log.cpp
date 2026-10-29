@@ -6,7 +6,7 @@
 #include "utils/Log.h"
 
 #include "utils/AppInfo.h"
-#include "utils/ConsolePrint.h" // IWYU pragma: keep, only the release build echo uses it
+#include "utils/ConsolePrint.h"  // IWYU pragma: keep, only the release build echo uses it
 #include "utils/StringFormat.h"
 #include "utils/version.h"
 
@@ -16,6 +16,11 @@
 #include <memory>
 
 #if !JUCE_WINDOWS
+#include <string_view>
+
+#include <bit>
+#include <csignal>
+#include <cstdint>
 #include <pthread.h>
 #endif
 
@@ -80,7 +85,7 @@ void handleCrash(void* crashInfo)
     logCrash("unhandled exception");
 #else
     const auto signalNumber = static_cast<int>(std::bit_cast<std::intptr_t>(crashInfo));
-    logCrash(format("{} (signal {})", signalName(signalNumber), signalNumber));
+    logCrash(utils::format("{} (signal {})", signalName(signalNumber), signalNumber));
 
     std::signal(signalNumber, SIG_DFL);
     sigset_t signalSet {};

@@ -249,7 +249,7 @@ SOURCES=("${LINTED_SOURCES[@]}")
 print_magenta "Running clang-tidy on ${#SOURCES[@]} source files..."
 
 if [ "$CHECK" = false ]; then
-    "$CLANG_TIDY" -p "$BUILD_DIR" --config-file="$REPO/.clang-tidy" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}"
+    "$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}"
     exit
 fi
 
@@ -257,7 +257,7 @@ OUTPUT_FILE=$(mktemp)
 trap 'rm -f "$OUTPUT_FILE"' EXIT
 
 set +e
-"$CLANG_TIDY" -p "$BUILD_DIR" --config-file="$REPO/.clang-tidy" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}" 2>&1 | tee "$OUTPUT_FILE"
+"$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}" 2>&1 | tee "$OUTPUT_FILE"
 CLANG_TIDY_STATUS=${PIPESTATUS[0]}
 set -e
 

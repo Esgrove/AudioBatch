@@ -3,6 +3,7 @@
 /// A payload that parses must serialize, deserialize, and serialize again to the same cache bytes.
 
 #include "serato/SeratoTags.h"
+#include "serato/SeratoTagTypes.h"
 
 #include <cstddef>
 #include <cstdint>

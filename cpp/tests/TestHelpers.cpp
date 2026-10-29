@@ -47,11 +47,11 @@ class TestAudioDevice final : public juce::AudioIODevice
 {
 public:
     /// Retains the test-owned counters and callback state.
-    TestAudioDevice(TestAudioDeviceState& deviceState, const juce::String& name) :
-        juce::AudioIODevice(name, deviceState.typeName),
+    TestAudioDevice(TestAudioDeviceState& deviceState, const juce::String& deviceName) :
+        juce::AudioIODevice(deviceName, deviceState.typeName),
         state(deviceState)
     {
-        state.attemptedDevices.add(name);
+        state.attemptedDevices.add(deviceName);
     }
 
     /// Mirrors native drivers that release their resources on destruction.

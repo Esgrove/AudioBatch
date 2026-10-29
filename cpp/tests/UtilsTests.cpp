@@ -27,6 +27,10 @@
 #include <utility>
 #include <vector>
 
+#if JUCE_MAC
+#include "analysis/BitDepthDetection.h"
+#endif
+
 namespace audiobatch::tests
 {
 /// A fixed-point reader whose reads write integer samples and then report a failure,
