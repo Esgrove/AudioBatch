@@ -6,7 +6,9 @@
 /// so the runs need no message loop and never replace a file.
 
 #include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "plugins/PluginLibrary.h"
+#include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"
 #include "ProcessingTestPlugins.h"
 #include "TestHelpers.h"
@@ -17,6 +19,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <ranges>

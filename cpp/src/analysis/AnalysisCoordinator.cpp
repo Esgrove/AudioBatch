@@ -7,11 +7,19 @@
 
 #include "analysis/AnalysisCoordinator.h"
 
+#include "analysis/AnalysisCache.h"
+#include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
 
+#include <atomic>
+#include <memory>
 #include <mutex>
+#include <optional>
+#include <utility>
+#include <vector>
 
 namespace audiobatch
 {

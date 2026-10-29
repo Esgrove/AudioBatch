@@ -4,13 +4,22 @@
 
 #include "gui/AudioPreviewPlayer.h"
 
+#include "analysis/AudioAnalysisTypes.h"
 #include "gui/LiveChain.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/Log.h"
+#include "utils/StringFormat.h"
 
 #include <array>
+#include <atomic>
+#include <cmath>
+#include <cstddef>
+#include <functional>
+#include <memory>
+#include <optional>
 #include <span>
 #include <utility>
+#include <vector>
 
 namespace audiobatch
 {

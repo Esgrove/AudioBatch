@@ -6,12 +6,18 @@
 
 #include "analysis/AudioAnalysis.h"
 
+#include "analysis/AudioAnalysisTypes.h"
 #include "analysis/BitDepthDetection.h"
 #include "analysis/DecodeFailureTracker.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
-#include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
+
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <span>
 
 extern "C" {
 #include <ebur128.h>

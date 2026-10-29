@@ -4,10 +4,12 @@
 #include "utils/ConsoleProgress.h"
 
 #include "utils/ConsolePrint.h"
-#include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
+#include <fmt/base.h>
 
-#include <cmath>
+#include <cstddef>
+#include <cstdio>
+#include <mutex>
 #include <string>
 
 namespace audiobatch::console

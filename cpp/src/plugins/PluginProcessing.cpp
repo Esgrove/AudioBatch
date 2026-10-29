@@ -17,6 +17,8 @@
 
 #include "plugins/PluginProcessing.h"
 
+#include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "analysis/DecodeFailureTracker.h"
 #include "metadata/AudioMetadata.h"
 #include "normalization/AudioNormalization.h"
@@ -29,10 +31,12 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <expected>
-#include <functional>
 #include <memory>
 #include <span>
+#include <utility>
+#include <vector>
 
 namespace audiobatch
 {

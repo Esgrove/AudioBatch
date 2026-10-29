@@ -7,13 +7,19 @@
 #include "analysis/AnalysisCache.h"
 
 #include "analysis/AnalysisCacheSql.h"
+#include "analysis/AudioAnalysisTypes.h"
+#include "analysis/Sqlite.h"
 #include "analysis/SqliteTransaction.h"
 #include "utils/Log.h"
-#include "utils/StringFormat.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <functional>
 #include <limits>
+#include <memory>
+#include <optional>
 #include <sqlite3.h>
 #include <utility>
 #include <vector>

@@ -8,10 +8,18 @@
 
 #include "gui/LiveChain.h"
 
+#include "plugins/PluginChainPresets.h"
+#include "plugins/PluginLibrary.h"
+#include "plugins/PluginProcessing.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <memory>
+#include <optional>
+#include <utility>
+#include <vector>
 
 namespace audiobatch
 {

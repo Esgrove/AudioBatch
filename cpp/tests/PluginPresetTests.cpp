@@ -16,6 +16,7 @@
 #include "utils/StringFormat.h"
 
 #include <array>
+#include <cstddef>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -220,7 +221,7 @@ private:
                 makeUnavailableSlot("Kept", "kept", true),
                 makeUnavailableSlot("Also kept", "also kept", true),
             };
-            auto element = plugin_presets::createChainXml(slots);
+            auto const element = plugin_presets::createChainXml(slots);
             element->getFirstChildElement()->deleteAllChildElements();
             element->getChildElement(1)->setAttribute("state", "not base64 at all!");
 

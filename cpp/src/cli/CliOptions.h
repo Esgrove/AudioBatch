@@ -8,12 +8,12 @@
 #include "cli/AudioAnalysisCli.h"
 #include "utils/StringFormat.h"
 #include <string_view>
+#include <type_traits>
 
 #include <array>
 #include <cstddef>
 #include <functional>
 #include <span>
-#include <type_traits>
 
 namespace audiobatch
 {

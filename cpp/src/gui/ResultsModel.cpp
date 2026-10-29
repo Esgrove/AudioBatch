@@ -4,10 +4,14 @@
 
 #include "gui/ResultsModel.h"
 
+#include "analysis/AudioAnalysisTypes.h"
+#include "gui/ResultsSorting.h"
 #include <unordered_set>
 
-#include <algorithm>
+#include <cstddef>
+#include <optional>
 #include <utility>
+#include <vector>
 
 namespace audiobatch
 {

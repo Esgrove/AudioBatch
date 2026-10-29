@@ -1,7 +1,10 @@
 /// Portable Serato container tests write synthetic tags only to temporary fixture copies.
 /// Reader coverage depends only on committed fixtures and generated payloads.
 
+#include "serato/SeratoOverview.h"
 #include "serato/SeratoTagReader.h"
+#include "serato/SeratoTags.h"
+#include "serato/SeratoTagTypes.h"
 #include "serato/SeratoWaveformColouring.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
@@ -10,13 +13,20 @@
 
 #include <aifffile.h>
 #include <algorithm>
+#include <array>
 #include <bit>
+#include <cstddef>
+#include <cstdint>
 #include <fileref.h>
 #include <flacfile.h>
 #include <generalencapsulatedobjectframe.h>
 #include <id3v2tag.h>
+#include <memory>
 #include <mpegfile.h>
+#include <optional>
+#include <span>
 #include <tpropertymap.h>
+#include <vector>
 #include <wavfile.h>
 
 namespace audiobatch::tests

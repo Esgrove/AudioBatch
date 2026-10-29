@@ -6,15 +6,19 @@
 
 #include "cli/ShellCompletion.h"
 
+#include "cli/AudioAnalysisCli.h"
 #include "cli/CliOptions.h"
 #include "utils/ConsolePrint.h"
 #include "utils/StringFormat.h"
+#include <fmt/base.h>
+#include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <string_view>
 
 #include <cstdio>
 #include <span>
 #include <string>
+#include <utility>
 #include <vector>
 
 #if JUCE_WINDOWS

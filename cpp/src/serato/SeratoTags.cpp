@@ -5,19 +5,29 @@
 #include "serato/SeratoTags.h"
 
 #include "serato/SeratoBytes.h"
+#include "serato/SeratoOverview.h"
+#include "serato/SeratoTagTypes.h"
+#include <string_view>
 
 #include <aifffile.h>
 #include <algorithm>
 #include <array>
 #include <bit>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
 #include <flacfile.h>
 #include <id3v2tag.h>
+#include <ios>
 #include <locale>
 #include <mpegfile.h>
+#include <optional>
+#include <span>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <variant>
+#include <vector>
 #include <wavfile.h>
 
 namespace audiobatch::serato

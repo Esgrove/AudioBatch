@@ -81,7 +81,8 @@ foreach(git_path HEAD packed-refs refs/tags ${GIT_HEAD_REF})
         OUTPUT_VARIABLE git_file
         OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET
     )
-    if(git_file AND EXISTS "${git_file}")
+    # The Visual Studio generators only accept files as custom build dependencies and warn (MSB8064) about a directory.
+    if(git_file AND EXISTS "${git_file}" AND NOT (IS_DIRECTORY "${git_file}" AND CMAKE_GENERATOR MATCHES "Visual Studio"))
         set_property(
             DIRECTORY
             APPEND

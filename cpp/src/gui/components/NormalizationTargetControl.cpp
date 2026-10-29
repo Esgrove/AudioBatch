@@ -6,7 +6,11 @@
 
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
+#include "normalization/AudioNormalization.h"
 #include "utils/StringFormat.h"
+
+#include <functional>
+#include <utility>
 
 namespace audiobatch
 {

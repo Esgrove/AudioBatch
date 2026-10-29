@@ -1,16 +1,22 @@
 /// Cue arrow geometry and musical info tests using generated PCM peaks and synthetic metadata.
 /// Exercises the actual preview components without devices, local music, painting or redistributed Serato payloads.
 
+#include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/AudioInfoPanel.h"
 #include "gui/components/ThumbnailComponent.h"
 #include "gui/GuiLayout.h"
+#include "serato/SeratoOverview.h"
+#include "serato/SeratoTagTypes.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
+#include <memory>
 #include <vector>
 
 namespace audiobatch::tests

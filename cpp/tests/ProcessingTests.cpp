@@ -6,8 +6,10 @@
 /// Replaced files are deleted instead of moved to the system trash, so the tests never touch the user's trash.
 
 #include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "gui/LiveChain.h"
 #include "metadata/AudioMetadata.h"
+#include "normalization/AudioNormalization.h"
 #include "plugins/PluginChainPreparation.h"
 #include "plugins/PluginPreviewSource.h"
 #include "plugins/PluginProcessing.h"
@@ -15,12 +17,14 @@
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
-#include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
 
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cstddef>
+#include <cstdlib>
 #include <generalencapsulatedobjectframe.h>
 #include <limits>
 #include <memory>

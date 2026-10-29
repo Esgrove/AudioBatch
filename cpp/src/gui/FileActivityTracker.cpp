@@ -3,7 +3,14 @@
 
 #include "gui/FileActivityTracker.h"
 
+#include "gui/AudioFileTableModel.h"
+#include <initializer_list>
+
 #include <algorithm>
+#include <cmath>
+#include <functional>
+#include <map>
+#include <optional>
 #include <utility>
 
 namespace audiobatch
@@ -144,7 +151,7 @@ void FileActivityTracker::storeState(const juce::String& fullPath, const FileAct
 /// and returns the iterator to the state after it.
 /// The total starts again from zero once no file is busy, so rounding errors do not build up across runs.
 std::map<juce::String, FileActivityState>::iterator FileActivityTracker::eraseState(
-    const std::map<juce::String, FileActivityState>::iterator iterator
+    const std::map<juce::String, FileActivityState>::iterator& iterator
 )
 {
     progressTotal -= static_cast<double>(iterator->second.progress.value_or(0.0f));

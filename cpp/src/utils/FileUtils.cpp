@@ -8,6 +8,8 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <expected>
+
 #if JUCE_WINDOWS
 #include <juce_core/native/juce_BasicNativeHeaders.h>
 

@@ -7,18 +7,21 @@
 
 #include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "cli/AudioAnalysisCli.h"
 #include "cli/AudioAnalysisCliOutput.h"
 #include "cli/CliOptions.h"
+#include "cli/PluginListCli.h"
 #include "cli/ShellCompletion.h"
+#include "normalization/AudioNormalization.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
-#include <array>
 #include <concepts>
 #include <expected>
+#include <memory>
 #include <variant>
 #include <vector>
 

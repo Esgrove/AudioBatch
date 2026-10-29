@@ -315,7 +315,9 @@ export_cmake_project() {
         fi
     elif [ "$BASH_PLATFORM" = "windows" ]; then
         if [ "$USE_NINJA" = true ]; then
-            # Like the windows-ninja presets, Ninja uses MSVC, which needs a developer command prompt environment.
+            # Like the windows-ninja presets, Ninja uses MSVC, which needs a developer command prompt environment,
+            # so load it when the script was not started from one.
+            load_msvc_environment
             print_magenta "Generating Ninja project..."
             local ninja_options=(
                 -G Ninja

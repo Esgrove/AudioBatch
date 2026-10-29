@@ -10,6 +10,9 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <cstddef>
+#include <memory>
+
 namespace audiobatch
 {
 namespace

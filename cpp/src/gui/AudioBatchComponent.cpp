@@ -4,21 +4,33 @@
 
 #include "gui/AudioBatchComponent.h"
 
-#include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisFormatting.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponentConstants.h"
-#include "gui/components/AudioInfoPanel.h"
+#include "gui/AudioFileTableModel.h"
+#include "gui/BackgroundWorkController.h"
+#include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
+#include "gui/ResultsSorting.h"
+#include "normalization/AudioNormalization.h"
+#include "plugins/PluginLibrary.h"
 #include "plugins/PluginProcessing.h"
+#include "serato/SeratoPreviewLoader.h"
+#include "serato/SeratoTagTypes.h"
 #include "utils/AppInfo.h"
+#include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include <stop_token>
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <utility>
-#include <variant>
+#include <vector>
 
 namespace audiobatch
 {

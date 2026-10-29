@@ -13,17 +13,20 @@
 #include <algorithm>
 #include <array>
 #include <attachedpictureframe.h>
+#include <cstddef>
 #include <fileref.h>
 #include <flacfile.h>
 #include <flacpicture.h>
 #include <generalencapsulatedobjectframe.h>
 #include <id3v2tag.h>
+#include <memory>
 #include <mpegfile.h>
 #include <privateframe.h>
 #include <span>
 #include <textidentificationframe.h>
 #include <tpropertymap.h>
 #include <unknownframe.h>
+#include <utility>
 #include <wavfile.h>
 
 namespace audiobatch::tests

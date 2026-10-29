@@ -7,6 +7,8 @@
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <cstddef>
+
 #if JUCE_WINDOWS
 #include <array>
 #include <bit>

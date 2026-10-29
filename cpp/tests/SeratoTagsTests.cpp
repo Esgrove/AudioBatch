@@ -3,12 +3,20 @@
 
 #include "serato/SeratoBytes.h"
 #include "serato/SeratoTags.h"
+#include "serato/SeratoTagTypes.h"
 #include "TestSuites.h"
 
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cstddef>
+#include <cstdint>
 #include <limits>
+#include <memory>
+#include <span>
+#include <string>
+#include <variant>
+#include <vector>
 
 namespace audiobatch::tests
 {

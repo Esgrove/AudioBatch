@@ -7,6 +7,8 @@
 
 #include "utils/Log.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <sqlite3.h>
 
 namespace audiobatch::sqlite

@@ -5,11 +5,16 @@
 #include "gui/AudioFileTableModel.h"
 
 #include "analysis/AudioAnalysisFormatting.h"
+#include "analysis/AudioAnalysisTypes.h"
+#include "gui/AudioBatchComponentConstants.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/FileActivityTracker.h"
-#include "utils/StringFormat.h"
+#include "gui/GuiLayout.h"
+#include "gui/ResultsModel.h"
 
 #include <array>
+#include <functional>
+#include <optional>
 #include <utility>
 
 namespace audiobatch

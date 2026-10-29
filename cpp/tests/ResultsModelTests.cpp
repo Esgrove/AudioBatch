@@ -2,9 +2,13 @@
 /// Covers merging analysis and operation results, the custom gain carried over for unchanged files,
 /// and the path index after removing and sorting rows.
 
+#include "analysis/AudioAnalysisTypes.h"
+#include "gui/AudioBatchComponentConstants.h"
 #include "gui/ResultsModel.h"
 #include "TestSuites.h"
 
+#include <cstdint>
+#include <memory>
 #include <optional>
 
 namespace audiobatch::tests

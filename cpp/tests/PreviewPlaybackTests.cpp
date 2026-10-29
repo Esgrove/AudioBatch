@@ -3,16 +3,17 @@
 /// and chains of plugins that are not installed check the slot latency totals and the slot ids.
 /// The preview player, its output device, and its preferences have their own suite in PreviewPlayerTests.cpp.
 
+#include "analysis/AudioAnalysisTypes.h"
 #include "gui/LiveChain.h"
+#include "plugins/PluginChainPreparation.h"
 #include "plugins/PluginLibrary.h"
 #include "plugins/PluginPreviewSource.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 
-#include <algorithm>
-#include <cmath>
 #include <cstring>
 #include <limits>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>

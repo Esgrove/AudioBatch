@@ -3,17 +3,23 @@
 
 #include "serato/SeratoTagReader.h"
 
+#include "serato/SeratoTags.h"
+#include "serato/SeratoTagTypes.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/Log.h"
+#include "utils/ThreadUtils.h"
 #include <string_view>
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
+#include <cstdint>
 #include <fileref.h>
 #include <flacfile.h>
 #include <generalencapsulatedobjectframe.h>
 #include <id3v2tag.h>
 #include <ranges>
+#include <span>
 #include <string>
 #include <tpropertymap.h>
 #include <utility>

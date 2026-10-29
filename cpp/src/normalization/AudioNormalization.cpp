@@ -5,15 +5,20 @@
 
 #include "normalization/AudioNormalization.h"
 
+#include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "analysis/DecodeFailureTracker.h"
 #include "metadata/AudioMetadata.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <expected>
 #include <memory>
 #include <ranges>
 #include <utility>

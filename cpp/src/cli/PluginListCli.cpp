@@ -8,13 +8,22 @@
 #include "plugins/PluginScanner.h"
 #include "utils/AppInfo.h"
 #include "utils/ConsolePrint.h"
-#include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include <fmt/base.h>
+#include <fmt/color.h>
+#include <fmt/format.h>
+#include <string_view>
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
 #include <map>
+#include <memory>
+#include <optional>
 #include <ranges>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace audiobatch

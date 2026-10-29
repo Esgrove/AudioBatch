@@ -5,10 +5,16 @@
 
 #include "serato/SeratoWaveformColouring.h"
 
+#include "serato/SeratoOverview.h"
+
 #include <juce_audio_utils/juce_audio_utils.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <ranges>
 
 namespace audiobatch::serato

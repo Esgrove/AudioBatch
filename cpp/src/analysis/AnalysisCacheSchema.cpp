@@ -4,8 +4,10 @@
 
 #include "analysis/AnalysisCache.h"
 #include "analysis/AnalysisCacheSql.h"
+#include "analysis/Sqlite.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
 #include "utils/version.h"
 
 #include <algorithm>

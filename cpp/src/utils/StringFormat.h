@@ -45,8 +45,7 @@ struct fmt::formatter<juce::File> : fmt::formatter<juce::String> {
 namespace audiobatch::utils
 {
 /// Requires that `T` is formattable by fmt.
-template<typename T>
-concept Formattable = fmt::is_formattable<T>::value;
+template<typename T> concept Formattable = fmt::is_formattable<T>::value;
 
 /// Formats the arguments with fmt using a compile-time checked format string
 /// and returns the result as a juce::String decoded from UTF-8.

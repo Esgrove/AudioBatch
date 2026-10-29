@@ -6,8 +6,14 @@
 
 #include "plugins/PluginPreviewSource.h"
 
-#include <algorithm>
+#include "analysis/AudioAnalysisTypes.h"
+#include "plugins/PluginChainPreparation.h"
+#include "plugins/PluginProcessing.h"
+
+#include <cmath>
+#include <cstddef>
 #include <utility>
+#include <vector>
 
 namespace audiobatch
 {

@@ -11,6 +11,8 @@
 
 #include <JuceHeader.h>
 
+#include <memory>
+
 namespace audiobatch
 {
 namespace

@@ -4,14 +4,28 @@
 
 #include "serato/SeratoPreviewLoader.h"
 
+#include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysisTypes.h"
+#include "serato/SeratoOverview.h"
 #include "serato/SeratoTagCache.h"
+#include "serato/SeratoTagTypes.h"
+#include "utils/FileUtils.h"
 #include "utils/Log.h"
+#include "utils/ThreadUtils.h"
+#include <stop_token>
 
 #include <algorithm>
-#include <exception>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <iterator>
+#include <memory>
+#include <mutex>
+#include <optional>
+#include <span>
 #include <utility>
 #include <variant>
+#include <vector>
 
 namespace audiobatch::serato
 {

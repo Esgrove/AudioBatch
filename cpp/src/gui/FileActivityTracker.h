@@ -52,7 +52,7 @@ public:
 
 private:
     std::map<juce::String, FileActivityState>::iterator eraseState(
-        std::map<juce::String, FileActivityState>::iterator iterator
+        const std::map<juce::String, FileActivityState>::iterator& iterator
     );
     void activityChanged();
     void storeState(const juce::String& fullPath, FileActivityState state);
