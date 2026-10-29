@@ -88,6 +88,11 @@ pub struct JumpToHotCue {
 #[action(namespace = audiobatch)]
 pub struct ToggleSeratoColours;
 
+/// Shows or hides the embedded album artwork beside the file name.
+#[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
+#[action(namespace = audiobatch)]
+pub struct ToggleAlbumArtwork;
+
 /// Collapses the preview into its compact row, or expands it again.
 #[derive(Clone, Default, PartialEq, Eq, Debug, gpui_kit::Action)]
 #[action(namespace = audiobatch)]
@@ -242,6 +247,8 @@ pub struct MenuState {
     pub show_loudness_graph: bool,
     /// True when the Serato Overview colours the waveform.
     pub serato_colours: bool,
+    /// True when the album artwork shows beside the file name.
+    pub show_album_artwork: bool,
     /// True while the preview is collapsed into its compact row.
     pub preview_compact: bool,
     /// True when the preview plays through the plugin chain.
@@ -383,6 +390,7 @@ pub fn set_menus(cx: &App, state: &MenuState) {
         Menu::new("Options").items([
             MenuItem::action("Show Loudness Graph", ToggleLoudnessGraph).checked(state.show_loudness_graph),
             MenuItem::action("Serato Waveform Colours", ToggleSeratoColours).checked(state.serato_colours),
+            MenuItem::action("Show Album Artwork", ToggleAlbumArtwork).checked(state.show_album_artwork),
             MenuItem::submenu(Menu::new("Columns").items(state.columns.iter().map(|column| {
                 MenuItem::action(column.title, ToggleColumn { id: column.id.clone() }).checked(column.visible)
             }))),

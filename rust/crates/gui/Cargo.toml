@@ -24,6 +24,7 @@ gpui-kit = "=0.8.1"
 # The kit's own `test-support` feature is not used, because it pulls in conflicting `proptest` requirements.
 gpui-pre = { version = "=0.3.10", optional = true, features = ["test-support"] }
 gpui-pre-platform = { version = "=0.3.10", optional = true, features = ["test-support"] }
+image.workspace = true
 raw-window-handle.workspace = true
 serde.workspace = true
 serde_json.workspace = true

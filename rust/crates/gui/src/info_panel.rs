@@ -1,11 +1,14 @@
 //! The information panel of the selected file, beside the waveform.
 //!
-//! It shows the file name split into artist and title at the first " - ", a status line while the file has no result,
+//! It shows the file name split into artist and title at the first " - ", beside the embedded album artwork,
+//! a status line while the file has no result,
 //! four metric cards for the levels, and a scrollable list of technical details and tags.
 //! The tooltips show the full path on the name, and each value spelled out.
 //! The wide variant puts the metric cards in one row, and the details with short values two to a line,
 //! above the tags that can be long, such as the album and the comment, which keep the full width.
 //! The compact variant for the collapsed preview shows only the four metric cards, in one row.
+
+use std::sync::Arc;
 
 use audiobatch_core::format::{
     format_bitrate, format_bits_per_sample, format_loudness_compact, format_peak_compact, format_sample_rate,
@@ -14,8 +17,8 @@ use audiobatch_core::format::{
 use audiobatch_core::serato_tags::BeatGrid;
 use audiobatch_core::{AnalysisRecord, FileTags};
 use gpui_kit::{
-    AnyElement, Div, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Stateful,
-    StatefulInteractiveElement as _, Styled as _, div, px,
+    AnyElement, Div, Hsla, InteractiveElement as _, IntoElement, ObjectFit, ParentElement as _, RenderImage, Stateful,
+    StatefulInteractiveElement as _, Styled as _, StyledImage as _, div, img, px,
 };
 
 use crate::results::{ResultRow, RowState};
@@ -41,6 +44,12 @@ const METRIC_HEIGHT: f32 = 52.0;
 
 /// Height of the artist and title lines.
 const HEADING_HEIGHT: f32 = 22.0;
+
+/// Side of the square album artwork beside the artist and title.
+const ARTWORK_SIZE: f32 = 48.0;
+
+/// Space between the album artwork and the artist and title.
+const ARTWORK_SPACING: f32 = 8.0;
 
 /// Height of a detail row.
 const DETAIL_ROW_HEIGHT: f32 = 20.0;
@@ -109,7 +118,14 @@ struct Detail {
 /// Renders the panel for the selected row and its tags, or the empty state when nothing is selected.
 /// The wide panel puts the four metric cards in one row,
 /// and the details with short values two to a line, above the long ones at the full width.
-pub fn render_info_panel(row: Option<&ResultRow>, tags: Option<&FileTags>, wide: bool) -> AnyElement {
+/// The album artwork, when there is one, shows beside the artist and title,
+/// and the heading grows to its height.
+pub fn render_info_panel(
+    row: Option<&ResultRow>,
+    tags: Option<&FileTags>,
+    artwork: Option<Arc<RenderImage>>,
+    wide: bool,
+) -> AnyElement {
     let metric_cards = if wide { metric_row } else { metric_grid };
     let panel = div()
         .id("info-panel")
@@ -137,10 +153,7 @@ pub fn render_info_panel(row: Option<&ResultRow>, tags: Option<&FileTags>, wide:
         .map_or((file_name, None), |(artist, title)| (artist, Some(title)));
     let path = row.path.display().to_string();
     let ready = row.ready_record();
-    let mut panel = panel.child(heading_line("artist", artist.to_string(), Some(&path)));
-    if let Some(title) = title {
-        panel = panel.child(heading_line("title", title.to_string(), Some(&path)));
-    }
+    let mut panel = panel.child(heading(artist, title, &path, artwork));
     if ready.is_none() {
         let status_color = if row.has_error() {
             color(palette::RED)
@@ -210,6 +223,39 @@ pub fn render_info_panel(row: Option<&ResultRow>, tags: Option<&FileTags>, wide:
         .child(div().h(px(SECTION_SPACING)))
         .child(details)
         .into_any_element()
+}
+
+/// Renders the artist and title lines, beside the album artwork when there is one.
+/// The artwork is centred against the lines, and the heading grows to its height.
+fn heading(artist: &str, title: Option<&str>, path: &str, artwork: Option<Arc<RenderImage>>) -> Div {
+    let mut lines =
+        div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .child(heading_line("artist", artist.to_string(), Some(path)));
+    if let Some(title) = title {
+        lines = lines.child(heading_line("title", title.to_string(), Some(path)));
+    }
+    let Some(artwork) = artwork else {
+        return lines.flex_none();
+    };
+    div()
+        .flex()
+        .flex_row()
+        .flex_none()
+        .items_center()
+        .min_h(px(ARTWORK_SIZE))
+        .gap(px(ARTWORK_SPACING))
+        .child(
+            img(artwork)
+                .id("artwork")
+                .size(px(ARTWORK_SIZE))
+                .flex_none()
+                .object_fit(ObjectFit::Contain),
+        )
+        .child(lines)
 }
 
 /// Renders one line of the heading, with the full path of the file as its tooltip.

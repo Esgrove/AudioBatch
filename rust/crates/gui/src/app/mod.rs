@@ -8,10 +8,12 @@
 //! The menu and transport actions are in `actions`, normalization is in `normalize`,
 //! plugin processing is in `process`, the plugin chain and the plugin windows are in `plugins`,
 //! and the live preview through the chain is in `preview`.
-//! The tags of the selected file are read in `tags`, the preferences in `preferences`, and the layout is in `render`.
+//! The tags of the selected file are read in `tags` and its album artwork in `artwork`,
+//! the preferences are in `preferences`, and the layout is in `render`.
 
 mod actions;
 mod analysis;
+mod artwork;
 mod gain;
 mod normalize;
 mod plugins;
@@ -33,7 +35,9 @@ use audiobatch_plugins::ProcessingCoordinator;
 use gpui_kit::base::ResizableState;
 use gpui_kit::component::slider::SliderState;
 use gpui_kit::component::table::TableState;
-use gpui_kit::{AppContext as _, Context, Entity, FocusHandle, Pixels, SharedString, Size, Subscription, Task, Window};
+use gpui_kit::{
+    AppContext as _, Context, Entity, FocusHandle, Pixels, RenderImage, SharedString, Size, Subscription, Task, Window,
+};
 use raw_window_handle::HasWindowHandle as _;
 use vst3_host::UiDispatcher;
 
@@ -132,6 +136,10 @@ pub struct AppView {
     selected_tags: Option<(PathBuf, Arc<FileTags>)>,
     /// Reads the tags of the selected file. Replacing it drops a read that is no longer wanted.
     tags_task: Option<Task<()>>,
+    /// Album artwork thumbnail of the selected file, read in the background after selection.
+    selected_artwork: Option<(PathBuf, Arc<RenderImage>)>,
+    /// Reads the artwork of the selected file. Replacing it drops a read that is no longer wanted.
+    artwork_task: Option<Task<()>>,
     status: SharedString,
     /// Output text of the status bar at the last check, so a change in the buffer size renders again.
     shown_output: SharedString,
@@ -242,6 +250,8 @@ impl AppView {
             selected: None,
             selected_tags: None,
             tags_task: None,
+            selected_artwork: None,
+            artwork_task: None,
             status,
             shown_output: SharedString::default(),
             menu_state,
@@ -321,6 +331,7 @@ fn initial_menu_state(
         output_device: None,
         show_loudness_graph: settings.show_loudness_graph,
         serato_colours: settings.serato_waveform_colours,
+        show_album_artwork: settings.show_album_artwork,
         preview_plugin_chain: settings.preview_plugin_chain,
         compensate_preview_latency: settings.compensate_preview_latency,
         normalize_target: describe_target(settings),

@@ -85,6 +85,13 @@ impl AppView {
         self.apply_settings(settings, cx);
     }
 
+    /// Shows or hides the album artwork beside the file name, from the Options menu.
+    pub(super) fn toggle_album_artwork(&mut self, cx: &mut Context<Self>) {
+        let mut settings = self.settings.clone();
+        settings.show_album_artwork = !settings.show_album_artwork;
+        self.apply_settings(settings, cx);
+    }
+
     /// Collapses the preview into its compact row, or expands it again with the divider where it was.
     /// The choice lasts for this session only.
     pub(super) fn toggle_preview_section(&mut self, cx: &mut Context<Self>) {
@@ -189,13 +196,18 @@ impl AppView {
         });
         self.menu_state.show_loudness_graph = show;
         self.menu_state.serato_colours = serato_colours;
+        self.menu_state.show_album_artwork = settings.show_album_artwork;
         self.menu_state.preview_plugin_chain = settings.preview_plugin_chain;
         self.menu_state.compensate_preview_latency = settings.compensate_preview_latency;
         set_menus(cx, &self.menu_state);
+        let artwork_changed = settings.show_album_artwork != self.settings.show_album_artwork;
         self.settings = settings;
         self.settings.save();
         if preview_changed {
             self.refresh_plugin_preview(cx);
+        }
+        if artwork_changed {
+            self.refresh_artwork(cx);
         }
         self.sync_settings_window(cx);
         cx.notify();
@@ -229,14 +241,15 @@ impl AppView {
     }
 
     /// Applies the settings the user changed in the settings window.
-    /// The window does not edit the normalization settings,
-    /// and its copy of them is stale once the main window changes the mode or a target.
+    /// The window does not edit the normalization settings or the album artwork option,
+    /// and its copy of them is stale once the main window changes the mode, a target, or the option.
     fn on_settings_event(&mut self, _view: Entity<SettingsView>, event: &SettingsEvent, cx: &mut Context<Self>) {
         let SettingsEvent::Changed(changed) = event;
         let settings = GuiSettings {
             normalize_mode: self.settings.normalize_mode,
             normalize_target_peak_dbfs: self.settings.normalize_target_peak_dbfs,
             normalize_target_lufs: self.settings.normalize_target_lufs,
+            show_album_artwork: self.settings.show_album_artwork,
             ..changed.clone()
         };
         self.apply_settings(settings, cx);

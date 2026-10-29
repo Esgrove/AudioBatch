@@ -37,9 +37,9 @@ use crate::menus::{
     About, AddFiles, AddFolder, AddPluginToChain, CancelRun, ChooseFolder, ClearCustomGain, ClearList,
     ClearPluginChain, JumpToHotCue, KEY_CONTEXT, LoadChainPreset, NormalizeAll, NormalizeSelected, OpenAudioSettings,
     OpenPluginChain, OpenPluginManager, ProcessAll, ProcessSelected, ReanalyzeSelected, RemoveSelected, Rescan,
-    RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice, StopPlayback, ToggleColumn, ToggleLoudnessGraph,
-    TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, TogglePreviewSection, ToggleSeratoColours,
-    TrashSelected, TrashSelectedNow,
+    RevealSelected, SaveChainPreset, SelectAll, SelectOutputDevice, StopPlayback, ToggleAlbumArtwork, ToggleColumn,
+    ToggleLoudnessGraph, TogglePlayback, TogglePluginPreview, TogglePreviewLatencyCompensation, TogglePreviewSection,
+    ToggleSeratoColours, TrashSelected, TrashSelectedNow,
 };
 use crate::normalization::target_value_text;
 use crate::results::{HEADER_HEIGHT, ROW_HEIGHT, ResultRow, fill_status_column};
@@ -321,6 +321,7 @@ impl AppView {
                     .child(render_info_panel(
                         self.selected_row(cx).as_ref(),
                         selected_tags.as_deref(),
+                        self.selected_artwork(),
                         wide,
                     )),
             )
@@ -467,6 +468,7 @@ impl Render for AppView {
             .on_action(cx.listener(|view, _: &ClearList, _, cx| view.clear_list(cx)))
             .on_action(cx.listener(|view, _: &ToggleLoudnessGraph, _, cx| view.toggle_loudness_graph(cx)))
             .on_action(cx.listener(|view, _: &ToggleSeratoColours, _, cx| view.toggle_serato_colours(cx)))
+            .on_action(cx.listener(|view, _: &ToggleAlbumArtwork, _, cx| view.toggle_album_artwork(cx)))
             .on_action(cx.listener(|view, _: &TogglePreviewSection, _, cx| view.toggle_preview_section(cx)))
             .on_action(cx.listener(|view, action: &JumpToHotCue, _, cx| view.jump_to_hot_cue(action.slot, cx)))
             .on_action(cx.listener(|view, _: &TogglePluginPreview, _, cx| view.toggle_plugin_preview(cx)))
