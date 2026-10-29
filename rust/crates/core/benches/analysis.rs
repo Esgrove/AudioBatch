@@ -4,6 +4,7 @@
 //! so the time splits into true peak, K-weighting, short-term loudness, and our own block handling.
 //! The `ebur128` groups feed the reference meter the way the analysis did before our own meter,
 //! so the old and the new path compare side by side in one report.
+//! The underflow group measures fresh interpolation histories at ordinary, tiny normal, and subnormal amplitudes.
 //! The end to end group runs `analyze_file` on the files of `fixtures/benchmark/generate.py`,
 //! and skips with a note when they have not been generated.
 //! Throughput is reported in frames, so the results read as frames per second.
@@ -45,8 +46,17 @@ const FILES: [&str; 11] = [
     "noise_stereo_44100_24.flac",
 ];
 
-/// Feeds the planes to ebur128 in 100 ms blocks with the mode, reading the short-term loudness after each block when asked.
-fn run_ebur128(planes: &[Vec<f32>], sample_rate: u32, mode: Mode, read_short_term: bool) -> f64 {
+/// Borrows a mono or stereo chunk in fixed storage, without a harness allocation in the measured loop.
+fn chunk_planes(planes: &[Vec<f32>], start: usize, end: usize) -> [&[f32]; 2] {
+    assert!((1..=2).contains(&planes.len()), "benchmark signals are mono or stereo");
+    [
+        &planes[0][start..end],
+        planes.get(1).map_or(&[][..], |plane| &plane[start..end]),
+    ]
+}
+
+/// Feeds the planes to ebur128 in 100 ms blocks, returning every requested measurement.
+fn run_ebur128(planes: &[Vec<f32>], sample_rate: u32, mode: Mode, read_short_term: bool) -> [f64; 4] {
     let mut meter = EbuR128::new(planes.len() as u32, sample_rate, mode).expect("meter");
     if planes.len() == 1 {
         meter.set_channel(0, Channel::DualMono).expect("dual mono");
@@ -57,14 +67,26 @@ fn run_ebur128(planes: &[Vec<f32>], sample_rate: u32, mode: Mode, read_short_ter
     let mut start = 0;
     while start < frames {
         let end = (start + block).min(frames);
-        let chunk: Vec<&[f32]> = planes.iter().map(|plane| &plane[start..end]).collect();
-        meter.add_frames_planar_f32(&chunk).expect("frames");
+        let chunk = chunk_planes(planes, start, end);
+        let chunk = &chunk[..planes.len()];
+        meter.add_frames_planar_f32(chunk).expect("frames");
         if read_short_term {
-            total += meter.loudness_shortterm().expect("short-term");
+            total += black_box(meter.loudness_shortterm().expect("short-term"));
         }
         start = end;
     }
-    total
+    let integrated = if mode.contains(Mode::I) {
+        meter.loudness_global().expect("integrated")
+    } else {
+        0.0
+    };
+    let mut peaks = [0.0; 2];
+    if mode.contains(Mode::TRUE_PEAK) {
+        for (channel, peak) in peaks.iter_mut().take(planes.len()).enumerate() {
+            *peak = meter.true_peak(channel as u32).expect("true peak");
+        }
+    }
+    [integrated, total, peaks[0], peaks[1]]
 }
 
 /// Measures the planes with the full block meter, as the analysis does after decoding.
@@ -74,11 +96,12 @@ fn run_block_meter(planes: &[Vec<f32>], sample_rate: u32) -> f64 {
     let mut start = 0;
     while start < frames {
         let end = (start + CHUNK_FRAMES).min(frames);
-        let chunk: Vec<&[f32]> = planes.iter().map(|plane| &plane[start..end]).collect();
-        meter.push(&chunk).expect("push");
+        let chunk = chunk_planes(planes, start, end);
+        let chunk = &chunk[..planes.len()];
+        meter.push(chunk).expect("push");
         start = end;
     }
-    meter.finish(frames as u64).expect("finish").integrated_lufs
+    black_box(meter.finish(frames as u64).expect("finish")).integrated_lufs
 }
 
 /// Measures independent interpolation phases in SIMD lanes without decoding or other loudness work.
@@ -88,8 +111,9 @@ fn run_true_peak(planes: &[Vec<f32>], sample_rate: u32) -> f64 {
     let mut start = 0;
     while start < frames {
         let end = (start + CHUNK_FRAMES).min(frames);
-        let chunk: Vec<&[f32]> = planes.iter().map(|plane| &plane[start..end]).collect();
-        meter.push(&chunk);
+        let chunk = chunk_planes(planes, start, end);
+        let chunk = &chunk[..planes.len()];
+        meter.push(chunk);
         start = end;
     }
     meter.peaks().iter().sum()
@@ -113,14 +137,14 @@ fn bench_in_memory(criterion: &mut Criterion) {
                 BenchmarkId::new("block_meter", &parameter),
                 &planes,
                 |bencher, planes| {
-                    bencher.iter(|| run_block_meter(black_box(planes), rate));
+                    bencher.iter(|| black_box(run_block_meter(black_box(planes), rate)));
                 },
             );
             group.bench_with_input(
                 BenchmarkId::new("simd_true_peak", &parameter),
                 &planes,
                 |bencher, planes| {
-                    bencher.iter(|| run_true_peak(black_box(planes), rate));
+                    bencher.iter(|| black_box(run_true_peak(black_box(planes), rate)));
                 },
             );
             let parts = [
@@ -131,10 +155,38 @@ fn bench_in_memory(criterion: &mut Criterion) {
             ];
             for (name, mode, read_short_term) in parts {
                 group.bench_with_input(BenchmarkId::new(name, &parameter), &planes, |bencher, planes| {
-                    bencher.iter(|| run_ebur128(black_box(planes), rate, mode, read_short_term));
+                    bencher.iter(|| black_box(run_ebur128(black_box(planes), rate, mode, read_short_term)));
                 });
             }
         }
+    }
+    group.finish();
+}
+
+/// Measures underflowing interpolation from an empty history, without an earlier loud peak masking the result.
+fn bench_true_peak_underflow(criterion: &mut Criterion) {
+    let mut group = criterion.benchmark_group("true_peak_underflow");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(3));
+    let rate = 48_000;
+    let frames = 4_800;
+    group.throughput(Throughput::Elements(frames as u64));
+    for (name, amplitude) in [
+        ("ordinary", 0.5),
+        ("small_normal", f32::MIN_POSITIVE * 4.0),
+        ("subnormal", f32::MIN_POSITIVE * 0.5),
+    ] {
+        let planes = vec![
+            (0..frames)
+                .map(|frame| if frame % 4 < 2 { amplitude } else { -amplitude })
+                .collect(),
+        ];
+        group.bench_with_input(BenchmarkId::new("simd", name), &planes, |bencher, planes| {
+            bencher.iter(|| black_box(run_true_peak(black_box(planes), rate)));
+        });
+        group.bench_with_input(BenchmarkId::new("ebur128", name), &planes, |bencher, planes| {
+            bencher.iter(|| black_box(run_ebur128(black_box(planes), rate, Mode::TRUE_PEAK, false)));
+        });
     }
     group.finish();
 }
@@ -159,5 +211,5 @@ fn bench_end_to_end(criterion: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_in_memory, bench_end_to_end);
+criterion_group!(benches, bench_in_memory, bench_true_peak_underflow, bench_end_to_end);
 criterion_main!(benches);
