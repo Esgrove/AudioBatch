@@ -39,7 +39,10 @@ which explains how its parts work together.
   from a fifth of a second to 30 seconds long, with a wide range of tags and edge cases.
   The audio is stored with Git LFS, so run `git lfs install` once per clone.
   `uv run fixtures/normalization/generate.py` regenerates it with ffmpeg and mutagen.
-  The unit tests do not read it. Only `rust/scripts/parity.sh` and the parity workflow do.
+  `rust/scripts/parity.sh` and the parity workflow read it, and the Rust golden tests do when the LFS files are present.
+- `fixtures/benchmark/generate.py` generates the long audio inputs for the Rust Criterion benchmarks.
+  Its `output/` directory is ignored by git, and the benchmarks skip files that are absent.
+  Run it through uv before measuring decoding or file analysis throughput.
 - `.agents/rules/` holds rules for the C++ sources, and `.claude/rules` is a symlink to it.
 - `pyproject.toml` configures ruff for the Python scripts in `fixtures/` and `rust/scripts/`,
   and pins it in `uv.lock`.

@@ -278,9 +278,29 @@ while three failures in a row stop the pass, so no pass works on truncated audio
 
 **Measurements.**
 `BlockMeter` regroups the chunks into blocks of a tenth of a second, one per short-term loudness point.
-Each block goes into an `ebur128` meter with integrated, short-term, and true peak modes,
-into the per-channel sample extremes, and into the `WaveformBuilder`.
+Each block goes into an `ebur128` meter with integrated and short-term modes,
+into the true peak meter, the per-channel sample extremes, and the `WaveformBuilder`.
 A mono file is measured as dual mono, so it reads the same loudness as the same content in stereo.
+
+`loudness/true_peak.rs` measures true peak on every architecture with `fearless_simd`.
+Below 96 kHz its four interpolation phases occupy separate `f32x4` lanes,
+and from 96 kHz to below 192 kHz the two phases are duplicated into those lanes.
+At 192 kHz and above `BlockMeter` reuses the signed sample extremes instead of scanning samples again.
+The coefficients, tap order, separate multiply and add, and undrained history match ebur128.
+Ordered comparisons ignore NaNs without relying on backend-specific SIMD maximum semantics.
+Hardware dispatch detects NEON on Apple Silicon or AVX2 on x86 once per process.
+AVX-512 capable AMD CPUs also use the AVX2 backend, with no SSE compatibility paths.
+Tests compare the selected hardware backend and a forced scalar fallback with the reference.
+The same SIMD path runs on x86 without an opt-in or reference fallback.
+The safe SIMD kernel leaves the caller's floating point environment unchanged.
+Ebur128 temporarily enables flush to zero on x86 with SSE2,
+so exact reference equality for arithmetic underflows is a known validation gap.
+
+Integrated and short-term loudness keep the reference's sample summation order.
+A rolling sum of block energies would change the exact short-term history, maximum, and cache blobs,
+so it cannot replace the reference under the frozen golden contract.
+The benchmark commands, profiling breakdown, and validation limits are in [Analysis performance](docs/performance.md).
+
 `WaveformBuilder` merges neighbouring buckets whenever their count passes 8192,
 and `WaveformOverview` keeps them quantized to 8 bits with coarser levels for drawing.
 The Serato Overview tag only colours the waveform, while its shape comes from the decoded audio.
