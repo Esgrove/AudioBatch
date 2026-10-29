@@ -94,6 +94,27 @@ jobs:
       - name: Run tests
         run: cargo nextest run --workspace --no-fail-fast
 
+      # Optimized SIMD kernels must preserve the exact golden output on both hardware backends.
+      - name: Log release test hardware and compiler
+        run: |
+          rustc --version --verbose
+          rustc --print cfg
+          echo "Portable RUSTFLAGS: '$RUSTFLAGS'"
+          echo "Runner: $RUNNER_OS $RUNNER_ARCH"
+          case "$RUNNER_ARCH" in
+            ARM64) echo "True peak backend: NEON" ;;
+            X64) echo "True peak backend: AVX2 (runtime checked)" ;;
+          esac
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            sysctl -n machdep.cpu.brand_string
+            sysctl -n hw.optional.neon || true
+          else
+            powershell.exe -NoProfile -Command 'Get-CimInstance Win32_Processor | Select-Object Name, Architecture, NumberOfCores | Format-List'
+          fi
+
+      - name: Run optimized core tests
+        run: cargo nextest run --release -p audiobatch-core --no-fail-fast
+
       # Runs the CLI on the committed fixtures and checks the reported level and the exit codes,
       # like the CLI smoke test of the C++ build.
       - name: CLI smoke test
