@@ -60,6 +60,11 @@ and every crate inherits them with `.workspace = true`.
 
 - `crates/core` (`audiobatch-core`): the shared library used by the CLI and the GUI.
   - `analysis.rs` decodes a file and measures peaks and loudness, and builds the waveform overview in the same pass.
+    `meter.rs` groups the decoded chunks into the blocks that feed the measurements.
+    `loudness/` holds the loudness kernels and their differential tests against ebur128.
+  - `benches/` measures analysis, decoding, normalization, waveform construction,
+    cache reads, and sorting with Criterion.
+    The longer inputs come from `../fixtures/benchmark/generate.py` and are generated locally, not committed.
   - `decode.rs` wraps symphonia: probing, the decode loop, and the read failure rules.
     It trims the gapless padding the way the decoders of the C++ application do, so both measure the same samples,
     reading the MP4 edit list in `decode/gapless.rs`, which symphonia parses but never applies,
@@ -246,6 +251,24 @@ Other commands:
 # Run the tests with coverage and print the summary, add --open for the HTML report
 ./coverage.sh
 cargo llvm-cov nextest --workspace
+
+# Generate the long benchmark inputs, which the file benchmarks skip when absent
+uv run ../fixtures/benchmark/generate.py
+
+# Save a Criterion reference and compare a later measurement without replacing it
+cargo bench -p audiobatch-core --bench analysis -- --save-baseline before
+cargo bench -p audiobatch-core --bench analysis -- --baseline before
+
+# Run just the in-memory measurement benchmarks
+cargo bench -p audiobatch-core --bench analysis -- meter/
+
+# Build and capture a sampling profile without opening a browser
+cargo build --profile profiling --bin audiobatch-rs
+samply record --save-only -o target/profile.json.gz -- ./target/profiling/audiobatch-rs --refresh --jobs 1 ../fixtures/benchmark/output/music_stereo_44100_16.wav
+
+# Save the CLI reference before an optimization, then compare without updating the reference
+./scripts/snapshot.sh save target/snapshot-before
+./scripts/snapshot.sh compare target/snapshot-before
 
 # Run the CLI
 cargo run --bin audiobatch-rs -- [args]

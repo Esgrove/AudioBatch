@@ -80,6 +80,28 @@ The audio is stored with Git LFS, so run `git lfs install` once per clone before
 uv run fixtures/normalization/generate.py
 ```
 
-The unit tests do not read it.
-Only `../rust/scripts/parity.sh` and the parity workflow do,
-comparing the levels both CLIs report and the files they write when normalizing.
+`../rust/scripts/parity.sh` and the parity workflow compare the levels both CLIs report
+and the files they write when normalizing.
+The Rust golden tests also read the collection when the LFS files have been downloaded.
+
+## Benchmark Collection
+
+`benchmark/generate.py` generates 60 second inputs for the Rust Criterion benchmarks into `benchmark/output/`.
+The output directory is ignored by git.
+Run it from the repository root with:
+
+```shell
+uv run fixtures/benchmark/generate.py
+```
+
+It needs ffmpeg and uv, keeps existing files, and accepts `--force` to regenerate them.
+Music-like stereo signals cover 44.1, 48, 88.2, 96, and 192 kHz as WAV and FLAC at 16 and 24 bits.
+The 44.1 and 48 kHz sets also include MP3 at 320 kbps, AAC at 256 kbps, and Ogg Vorbis at quality 5.
+Mono sets at 44.1 and 48 kHz cover dual mono measurement, without Ogg because the chosen encoder requires stereo.
+White noise covers the FLAC decoding worst case, and a fading signal covers a quiet tail.
+The fade is stored as 24 bit PCM, so it reaches digital silence rather than retaining floating-point subnormals.
+The in-memory signal tests cover actual subnormal samples.
+File benchmarks skip missing inputs with a message, while the in-memory benchmarks always run.
+
+Run the benchmarks from `../rust/` with `cargo bench -p audiobatch-core`.
+See `../rust/docs/performance.md` for the measurement procedure and results.
