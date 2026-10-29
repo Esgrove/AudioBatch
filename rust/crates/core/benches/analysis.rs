@@ -15,6 +15,7 @@ use std::hint::black_box;
 use std::time::Duration;
 
 use audiobatch_core::analyze_file;
+use audiobatch_core::loudness::true_peak::TruePeak;
 use audiobatch_core::meter::BlockMeter;
 use audiobatch_core::signals::{SignalKind, generate};
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
@@ -80,6 +81,20 @@ fn run_block_meter(planes: &[Vec<f32>], sample_rate: u32) -> f64 {
     meter.finish(frames as u64).expect("finish").integrated_lufs
 }
 
+/// Measures independent interpolation phases in SIMD lanes without decoding or other loudness work.
+fn run_true_peak(planes: &[Vec<f32>], sample_rate: u32) -> f64 {
+    let mut meter = TruePeak::new(planes.len(), sample_rate);
+    let frames = planes[0].len();
+    let mut start = 0;
+    while start < frames {
+        let end = (start + CHUNK_FRAMES).min(frames);
+        let chunk: Vec<&[f32]> = planes.iter().map(|plane| &plane[start..end]).collect();
+        meter.push(&chunk);
+        start = end;
+    }
+    meter.peaks().iter().sum()
+}
+
 /// Benchmarks every part of the measurement on in-memory stereo and mono music at every rate.
 fn bench_in_memory(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("meter");
@@ -99,6 +114,13 @@ fn bench_in_memory(criterion: &mut Criterion) {
                 &planes,
                 |bencher, planes| {
                     bencher.iter(|| run_block_meter(black_box(planes), rate));
+                },
+            );
+            group.bench_with_input(
+                BenchmarkId::new("simd_true_peak", &parameter),
+                &planes,
+                |bencher, planes| {
+                    bencher.iter(|| run_true_peak(black_box(planes), rate));
                 },
             );
             let parts = [
@@ -128,6 +150,7 @@ fn bench_end_to_end(criterion: &mut Criterion) {
             continue;
         };
         let record = analyze_file(&path, &|| false, &mut |_| {});
+        assert!(record.is_ready(), "{name}: {}", record.error_message);
         group.throughput(Throughput::Elements(record.length_in_samples));
         group.bench_with_input(BenchmarkId::from_parameter(name), &path, |bencher, path| {
             bencher.iter(|| analyze_file(black_box(path), &|| false, &mut |_| {}));

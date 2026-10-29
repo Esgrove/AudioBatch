@@ -1,11 +1,12 @@
-//! Our own EBU R128 loudness and true peak meter, replacing the `ebur128` crate piece by piece.
+//! Loudness kernels and differential tests against the `ebur128` reference.
 //!
-//! Each part ports the ebur128 algorithm with the same coefficients and the same order of operations,
-//! so the measured values stay bit-identical to what the analysis produced before,
-//! which the golden tests and the differential tests in `differential.rs` enforce.
-//! The short-term loudness is the only exception, summed from 100 ms block energies instead of all samples,
-//! and compared within a stated tolerance.
-//! The SIMD kernels run through `fearless_simd`, at the best level detected once per process.
+//! The true peak interpolator places independent phases in SIMD lanes without changing their tap order.
+//! `BlockMeter` uses the same SIMD true peak path on every architecture, including x86.
+//! Integrated and short-term loudness still use ebur128, preserving the exact golden history and cache blobs.
+//! The SIMD kernels use `fearless_simd` with NEON on Apple Silicon and AVX2 on x86, detected once per process.
+
+#[doc(hidden)]
+pub mod true_peak;
 
 #[cfg(test)]
 mod differential;

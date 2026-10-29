@@ -87,6 +87,7 @@ fn bench_end_to_end(criterion: &mut Criterion) {
             continue;
         };
         let source_record = analyze_file(&path, &|| false, &mut |_| {});
+        assert!(source_record.is_ready(), "{name}: {}", source_record.error_message);
         group.throughput(Throughput::Elements(source_record.length_in_samples));
         for (label, mode) in [("peak", NormalizationMode::Peak), ("lufs", NormalizationMode::Loudness)] {
             let options = NormalizationOptions {

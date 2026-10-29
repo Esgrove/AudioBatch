@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use ebur128::{Channel, EbuR128, Mode};
 
+use crate::loudness::true_peak::TruePeak;
 use crate::record::{NEGATIVE_INFINITY_LOUDNESS, ShortTermLoudnessHistory, normalize_loudness};
 use crate::waveform::{WaveformBuilder, WaveformOverview};
 
@@ -27,9 +28,6 @@ pub enum MeterError {
     /// The short-term loudness could not be measured.
     #[error("Short-term loudness analysis failed")]
     ShortTerm(#[source] ebur128::Error),
-    /// A true peak could not be measured.
-    #[error("True peak analysis failed")]
-    TruePeak(#[source] ebur128::Error),
     /// The integrated loudness could not be measured.
     #[error("Integrated loudness analysis failed")]
     Integrated(#[source] ebur128::Error),
@@ -39,6 +37,7 @@ pub enum MeterError {
 #[doc(hidden)]
 pub struct BlockMeter {
     meter: EbuR128,
+    true_peak: Option<TruePeak>,
     sample_rate: u32,
     block_size: usize,
     block: Vec<Vec<f32>>,
@@ -78,8 +77,7 @@ impl BlockMeter {
     ///
     /// Returns an error when the meter does not support the channel count or the sample rate.
     pub fn new(channels: u32, sample_rate: u32, expected_frames: Option<u64>) -> Result<Self, MeterError> {
-        let mut meter =
-            EbuR128::new(channels, sample_rate, Mode::I | Mode::S | Mode::TRUE_PEAK).map_err(MeterError::Initialize)?;
+        let mut meter = EbuR128::new(channels, sample_rate, Mode::I | Mode::S).map_err(MeterError::Initialize)?;
         if channels == 1 {
             meter
                 .set_channel(0, Channel::DualMono)
@@ -89,6 +87,7 @@ impl BlockMeter {
         let block_size = ShortTermLoudnessHistory::samples_per_point_for_rate(sample_rate) as usize;
         Ok(Self {
             meter,
+            true_peak: (sample_rate < 192_000).then(|| TruePeak::new(channel_count, sample_rate)),
             sample_rate,
             block_size,
             block: vec![Vec::with_capacity(block_size); channel_count],
@@ -136,11 +135,17 @@ impl BlockMeter {
         if self.block.first().is_some_and(|samples| !samples.is_empty()) {
             self.measure_block()?;
         }
-        let channels = self.block.len() as u32;
-        let true_peaks = (0..channels)
-            .map(|channel| self.meter.true_peak(channel))
-            .collect::<Result<Vec<f64>, _>>()
-            .map_err(MeterError::TruePeak)?;
+        let true_peaks = self.true_peak.as_ref().map_or_else(
+            || {
+                // No interpolation is needed at these rates, reuse the signed sample extremes.
+                self.min_samples
+                    .iter()
+                    .zip(&self.max_samples)
+                    .map(|(&minimum, &maximum)| f64::from(minimum).abs().max(f64::from(maximum).abs()))
+                    .collect()
+            },
+            |meter| meter.peaks().to_vec(),
+        );
         let integrated_lufs = normalize_loudness(self.meter.loudness_global().map_err(MeterError::Integrated)?);
         Ok(MeterOutput {
             min_samples: self.min_samples,
@@ -164,6 +169,9 @@ impl BlockMeter {
         }
         let planes: Vec<&[f32]> = self.block.iter().map(Vec::as_slice).collect();
         self.waveform.push(&planes);
+        if let Some(true_peak) = &mut self.true_peak {
+            true_peak.push(&planes);
+        }
         self.meter.add_frames_planar_f32(&planes).map_err(MeterError::Frames)?;
         let short_term = normalize_loudness(self.meter.loudness_shortterm().map_err(MeterError::ShortTerm)?);
         self.max_short_term_lufs = self.max_short_term_lufs.max(short_term);
@@ -296,6 +304,8 @@ mod test_channel_handling {
 
 #[cfg(test)]
 mod test_edge_signals {
+    use ebur128::{EbuR128, Mode};
+
     use super::BlockMeter;
     use crate::golden::measure_signal;
     use crate::record::NEGATIVE_INFINITY_LOUDNESS;
@@ -354,6 +364,25 @@ mod test_edge_signals {
         let output = measure_signal(&planes, 44_100, 1_000);
         assert_eq!(output.history.len(), 10);
         assert_eq!(output.min_samples[1], f32::NEG_INFINITY);
+    }
+
+    #[test]
+    fn sample_only_true_peaks_reuse_extremes_with_non_finite_samples() {
+        let planes = vec![
+            vec![f32::NAN, -0.0, f32::from_bits(1), -f32::from_bits(7)],
+            vec![f32::INFINITY, f32::NEG_INFINITY, f32::NAN, 0.0],
+            vec![f32::NAN; 4],
+        ];
+        let plane_refs: Vec<_> = planes.iter().map(Vec::as_slice).collect();
+        for rate in [192_000, 384_000] {
+            let output = measure_signal(&planes, rate, 1);
+            let mut reference = EbuR128::new(3, rate, Mode::TRUE_PEAK).expect("reference meter");
+            reference.add_frames_planar_f32(&plane_refs).expect("reference samples");
+            for (channel, &peak) in output.true_peaks.iter().enumerate() {
+                let expected = reference.true_peak(channel as u32).expect("reference peak");
+                assert_eq!(peak.to_bits(), expected.to_bits(), "rate {rate}, channel {channel}");
+            }
+        }
     }
 
     #[test]

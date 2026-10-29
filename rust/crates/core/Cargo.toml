@@ -32,6 +32,7 @@ walkdir.workspace = true
 [dev-dependencies]
 base64.workspace = true
 criterion.workspace = true
+fearless_simd = { workspace = true, features = ["force_support_fallback"] }
 log.workspace = true
 test-fixtures.workspace = true
 
