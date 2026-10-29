@@ -2,6 +2,7 @@
 //!
 //! The interpolator uses the coefficients and tap order of ebur128 0.1.11 without fused multiplication and addition.
 //! It retains its history between calls and includes decoded sample peaks without flushing an interpolation tail.
+//! Both cumulative peaks and the peaks produced by the last nonempty push are available without allocation.
 //! NaNs do not replace a peak, and infinite decoded samples produce infinite peaks.
 //! Hardware execution targets Apple Silicon NEON and x86 AVX2, including AVX-512 capable AMD CPUs.
 //! The x86 path selects AVX2 even when wider instructions are available, without SSE compatibility backends.
@@ -48,7 +49,7 @@ enum Interpolation {
 /// Streaming per-channel true peaks in linear amplitude units.
 ///
 /// Input is planar, with equally sized planes in the channel order passed to [`Self::new`].
-/// Construction allocates channel histories, but processing and reading peaks do not allocate.
+/// Construction allocates channel histories and peak storage, but processing and reading peaks do not allocate.
 /// See the module documentation for the x86 subnormal arithmetic caveat.
 #[doc(hidden)]
 #[derive(Debug, Clone)]
@@ -57,6 +58,8 @@ pub struct TruePeak {
     interpolation: Interpolation,
     /// Running maxima including both decoded samples and interpolated samples.
     peaks: Vec<f64>,
+    /// Maxima from the most recent nonempty push, including interpolation of retained history.
+    previous_peaks: Vec<f64>,
 }
 
 /// Doubled circular buffer exposing the most recent samples as a fixed size array.
@@ -95,6 +98,7 @@ impl TruePeak {
         Self {
             interpolation,
             peaks: vec![0.0; channels],
+            previous_peaks: vec![0.0; channels],
         }
     }
 
@@ -116,6 +120,16 @@ impl TruePeak {
         self.peaks.as_slice()
     }
 
+    /// Returns each channel's true peak from the most recent nonempty push in linear amplitude units.
+    ///
+    /// Peaks start at positive zero and empty pushes leave them unchanged.
+    /// Interpolated output includes retained history, without draining a tail at the end of a push.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn previous_peaks(&self) -> &[f64] {
+        self.previous_peaks.as_slice()
+    }
+
     /// Rejects malformed planar input before any state is changed.
     fn validate_planes<P: AsRef<[f32]>>(&self, planes: &[P]) {
         assert_eq!(planes.len(), self.peaks.len(), "true peak channel count changed");
@@ -129,22 +143,44 @@ impl TruePeak {
     /// Processes one block with an explicit token, also allowing exact backend coverage in tests.
     #[simd]
     fn push_simd<S: Simd, P: AsRef<[f32]>>(&mut self, simd: S, planes: &[P]) {
+        if planes.first().is_none_or(|plane| plane.as_ref().is_empty()) {
+            return;
+        }
         match &mut self.interpolation {
             Interpolation::Four {
                 coefficients,
                 histories,
-            } => push_interpolated(simd, planes, &mut self.peaks, coefficients, histories),
+            } => push_interpolated(
+                simd,
+                planes,
+                &mut self.peaks,
+                &mut self.previous_peaks,
+                coefficients,
+                histories,
+            ),
             Interpolation::Two {
                 coefficients,
                 histories,
-            } => push_interpolated(simd, planes, &mut self.peaks, coefficients, histories),
+            } => push_interpolated(
+                simd,
+                planes,
+                &mut self.peaks,
+                &mut self.previous_peaks,
+                coefficients,
+                histories,
+            ),
             Interpolation::Samples => {
-                for (plane, peak) in planes.iter().zip(&mut self.peaks) {
+                for ((plane, peak), previous_peak) in planes.iter().zip(&mut self.peaks).zip(&mut self.previous_peaks) {
+                    let mut block_peak = 0.0;
                     for &sample in plane.as_ref() {
                         let magnitude = f64::from(sample).abs();
-                        if magnitude > *peak {
-                            *peak = magnitude;
+                        if magnitude > block_peak {
+                            block_peak = magnitude;
                         }
+                    }
+                    *previous_peak = block_peak;
+                    if block_peak > *peak {
+                        *peak = block_peak;
                     }
                 }
             }
@@ -226,25 +262,27 @@ fn hardware_level() -> Level {
     }
 }
 
-/// Processes all planes with tap accumulation in reference order and independent phase maxima.
+/// Processes all planes with reference tap order, updating previous and cumulative peaks from independent phase maxima.
 #[simd]
 fn push_interpolated<S: Simd, P: AsRef<[f32]>, const TAPS: usize>(
     simd: S,
     planes: &[P],
     peaks: &mut [f64],
+    previous_peaks: &mut [f64],
     coefficients: &[[f32; 4]; TAPS],
     histories: &mut [History<TAPS>],
 ) {
     let coefficients = coefficients.map(|row| f32x4::simd_from(simd, row));
     let zero = f32x4::splat(simd, 0.0);
-    for ((plane, peak), history) in planes.iter().zip(peaks).zip(histories) {
+    for (((plane, peak), previous_peak), history) in planes.iter().zip(peaks).zip(previous_peaks).zip(histories) {
+        let mut block_peak = 0.0;
         let mut phase_peaks = zero;
         for &sample in plane.as_ref() {
             // Convert before comparing, as the reference sample peak scanner does.
             // This also keeps decoded subnormals representable when single precision comparisons flush inputs.
             let magnitude = f64::from(sample).abs();
-            if magnitude > *peak {
-                *peak = magnitude;
+            if magnitude > block_peak {
+                block_peak = magnitude;
             }
             let recent = history.push_front(sample);
             let mut output = zero;
@@ -261,9 +299,13 @@ fn push_interpolated<S: Simd, P: AsRef<[f32]>, const TAPS: usize>(
         // A scalar comparison still makes the required NaN policy explicit during reduction.
         for magnitude in <[f32; 4]>::from(phase_peaks) {
             let magnitude = f64::from(magnitude);
-            if magnitude > *peak {
-                *peak = magnitude;
+            if magnitude > block_peak {
+                block_peak = magnitude;
             }
+        }
+        *previous_peak = block_peak;
+        if block_peak > *peak {
+            *peak = block_peak;
         }
     }
 }
@@ -335,7 +377,7 @@ mod test_true_peak {
         chunks
     }
 
-    /// Compares every streaming snapshot bit for bit against one reference shared by all available levels.
+    /// Compares cumulative and previous peaks bit for bit, including an empty push after every chunk.
     fn assert_reference(planes: &[Vec<f32>], sample_rate: u32, chunk_sizes: &[usize]) {
         let channels = planes.len();
         let frames = planes.first().map_or(0, Vec::len);
@@ -349,18 +391,31 @@ mod test_true_peak {
         loop {
             let count = chunk_sizes[chunk_index % chunk_sizes.len()];
             let end = (start + count).min(frames);
-            let chunk: Vec<_> = planes.iter().map(|plane| &plane[start..end]).collect();
-            reference.add_frames_planar_f32(&chunk).expect("reference block");
-            for (level, candidate) in &mut candidates {
-                candidate.push_at_level(&chunk, *level);
-                for (channel, &actual) in candidate.peaks().iter().enumerate() {
-                    let expected = reference.true_peak(channel as u32).expect("reference true peak");
-                    assert_eq!(
-                        actual.to_bits(),
-                        expected.to_bits(),
-                        "rate {sample_rate}, channels {channels}, channel {channel}, frames {start}..{end}, \
-                         level {level:?}, actual {actual:?}, expected {expected:?}"
-                    );
+            for empty in [false, true] {
+                let chunk_start = if empty { end } else { start };
+                let chunk: Vec<_> = planes.iter().map(|plane| &plane[chunk_start..end]).collect();
+                reference.add_frames_planar_f32(&chunk).expect("reference block");
+                for (level, candidate) in &mut candidates {
+                    candidate.push_at_level(&chunk, *level);
+                    for (channel, (&cumulative, &previous)) in
+                        candidate.peaks().iter().zip(candidate.previous_peaks()).enumerate()
+                    {
+                        let expected_cumulative = reference.true_peak(channel as u32).expect("reference true peak");
+                        let expected_previous = reference
+                            .prev_true_peak(channel as u32)
+                            .expect("reference previous true peak");
+                        for (kind, actual, expected) in [
+                            ("cumulative", cumulative, expected_cumulative),
+                            ("previous", previous, expected_previous),
+                        ] {
+                            assert_eq!(
+                                actual.to_bits(),
+                                expected.to_bits(),
+                                "{kind} peak, rate {sample_rate}, channels {channels}, channel {channel}, \
+                                 frames {chunk_start}..{end}, level {level:?}, actual {actual:?}, expected {expected:?}"
+                            );
+                        }
+                    }
                 }
             }
             start = end;
@@ -406,6 +461,102 @@ mod test_true_peak {
     }
 
     #[test]
+    fn previous_peaks_drop_after_silence_drains_history() {
+        let mut planes = vec![vec![0.0; 74]];
+        planes[0][0] = 1.0;
+        planes[0][49] = -0.25;
+        for rate in [48_000, 96_000, 192_000] {
+            assert_reference(&planes, rate, &[1, 24, 24, 1, 24]);
+            for level in supported_levels() {
+                let mut candidate = TruePeak::new(1, rate);
+                let previous_storage = candidate.previous_peaks().as_ptr();
+                candidate.push_at_level(&[[1.0]], level);
+                assert_eq!(candidate.previous_peaks()[0].to_bits(), 1.0_f64.to_bits());
+                candidate.push_at_level(&[[0.0; 24]], level);
+                if rate < 192_000 {
+                    assert!(
+                        candidate.previous_peaks()[0] > 0.0,
+                        "retained history must contribute at {level:?}"
+                    );
+                }
+                candidate.push_at_level(&[[0.0; 24]], level);
+                assert_eq!(candidate.previous_peaks()[0].to_bits(), 0.0_f64.to_bits());
+                candidate.push_at_level(&[[-0.25]], level);
+                candidate.push_at_level(&[[]], level);
+                assert_eq!(candidate.previous_peaks()[0].to_bits(), 0.25_f64.to_bits());
+                assert_eq!(candidate.peaks()[0].to_bits(), 1.0_f64.to_bits());
+                assert_eq!(candidate.previous_peaks().as_ptr(), previous_storage);
+            }
+        }
+    }
+
+    #[test]
+    fn full_scale_neighbors_remain_channel_local() {
+        let below = f32::from_bits(1.0_f32.to_bits() - 1);
+        let above = f32::from_bits(1.0_f32.to_bits() + 1);
+        let first = [below, -1.0, above, 0.0];
+        let second = [-above, below, 0.0, 1.0];
+        let planes: Vec<_> = first
+            .iter()
+            .zip(second)
+            .map(|(&initial, later)| {
+                let mut plane = vec![0.0; 74];
+                plane[0] = initial;
+                plane[49] = later;
+                plane
+            })
+            .collect();
+        for rate in [48_000, 96_000, 192_000] {
+            assert_reference(&planes, rate, &[0, 1, 24, 24, 0, 1, 24]);
+            for level in supported_levels() {
+                let mut candidate = TruePeak::new(4, rate);
+                candidate.push_at_level(&first.map(|sample| [sample]), level);
+                for (&actual, sample) in candidate.previous_peaks().iter().zip(first) {
+                    assert_eq!(actual.to_bits(), f64::from(sample).abs().to_bits());
+                }
+                candidate.push_at_level(&[[0.0; 24]; 4], level);
+                candidate.push_at_level(&[[0.0; 24]; 4], level);
+                candidate.push_at_level(&second.map(|sample| [sample]), level);
+                for ((&previous, &cumulative), (initial, later)) in candidate
+                    .previous_peaks()
+                    .iter()
+                    .zip(candidate.peaks())
+                    .zip(first.into_iter().zip(second))
+                {
+                    assert_eq!(previous.to_bits(), f64::from(later).abs().to_bits());
+                    assert_eq!(
+                        cumulative.to_bits(),
+                        f64::from(initial.abs().max(later.abs())).to_bits()
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn intersample_overshoots_remain_channel_local() {
+        let planes: Vec<_> = [0.75, 0.25, 0.0]
+            .into_iter()
+            .map(|amplitude| {
+                (0..97)
+                    .map(|frame| if frame % 4 < 2 { amplitude } else { -amplitude })
+                    .collect()
+            })
+            .collect();
+        for rate in [48_000, 96_000] {
+            assert_reference(&planes, rate, &[1, 12, 0, 24, 7]);
+            for level in supported_levels() {
+                let mut candidate = TruePeak::new(3, rate);
+                candidate.push_at_level(&planes, level);
+                assert!(candidate.previous_peaks()[0] > 1.0);
+                assert!(candidate.previous_peaks()[1] > 0.25);
+                assert!(candidate.previous_peaks()[1] < 1.0);
+                assert_eq!(candidate.previous_peaks()[2].to_bits(), 0.0_f64.to_bits());
+            }
+        }
+    }
+
+    #[test]
     fn nan_histories_do_not_replace_finite_peaks() {
         let mut planes = vec![vec![0.0; 73]; 3];
         for (channel, plane) in planes.iter_mut().enumerate() {
@@ -420,7 +571,9 @@ mod test_true_peak {
         for rate in [48_000, 96_000, 192_000] {
             assert_reference(&planes, rate, &[1]);
         }
-        assert_reference(&[vec![f32::NAN; 29]], 48_000, &[1, 7]);
+        for rate in [48_000, 96_000, 192_000] {
+            assert_reference(&[vec![f32::NAN; 29]], rate, &[0, 1, 7]);
+        }
     }
 
     #[test]
@@ -454,9 +607,12 @@ mod test_true_peak {
             let mut candidate = TruePeak::new(1, rate);
             candidate.push(&[[0.5, 0.5, -0.5, -0.5]]);
             let before = candidate.peaks()[0].to_bits();
+            let previous_before = candidate.previous_peaks()[0].to_bits();
             candidate.push(&[[]]);
             assert_eq!(candidate.peaks()[0].to_bits(), before);
+            assert_eq!(candidate.previous_peaks()[0].to_bits(), previous_before);
             assert_eq!(before, 0.5_f64.to_bits());
+            assert_eq!(previous_before, 0.5_f64.to_bits());
         }
     }
 
@@ -469,8 +625,13 @@ mod test_true_peak {
             for level in supported_levels() {
                 let mut forced = TruePeak::new(2, rate);
                 forced.push_at_level(&planes, level);
-                for (&actual, &expected) in runtime.peaks().iter().zip(forced.peaks()) {
-                    assert_eq!(actual.to_bits(), expected.to_bits(), "{level:?}");
+                for (actual, expected) in [
+                    (runtime.peaks(), forced.peaks()),
+                    (runtime.previous_peaks(), forced.previous_peaks()),
+                ] {
+                    for (&actual, &expected) in actual.iter().zip(expected) {
+                        assert_eq!(actual.to_bits(), expected.to_bits(), "{level:?}");
+                    }
                 }
             }
         }
