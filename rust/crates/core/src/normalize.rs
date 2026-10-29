@@ -298,7 +298,9 @@ pub(crate) fn output_bit_depth(record: &AnalysisRecord) -> u32 {
 /// Source packets that fail to decode in isolation are written as silence and reported in the notice.
 /// Progress of the whole file, through any source analysis, the render, and the output analysis,
 /// is reported to `on_progress`.
-pub(crate) fn normalize_file(
+/// Public only for the benchmarks, the applications normalize through `NormalizeCoordinator`.
+#[doc(hidden)]
+pub fn normalize_file(
     source_record: &AnalysisRecord,
     options: &NormalizationOptions,
     is_cancelled: &dyn Fn() -> bool,
