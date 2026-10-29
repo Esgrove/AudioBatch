@@ -148,7 +148,6 @@ Results go to stdout, and messages and progress go to stderr.
 
 The CLI writes `audiobatch-rs.log` and the GUI `AudioBatchRs.log`,
 in `~/Library/Logs/AudioBatch-rs` on macOS and in the `logs` folder of the `AudioBatch-rs` data directory elsewhere.
-Like the C++ application, each file is trimmed to its last 32 KB when it is opened, and each run starts with a banner.
 Messages logged while a file is analyzed, normalized, or processed name the file,
 and a panic is logged with its backtrace.
 The CLI prints each message once to stderr, and the GUI prints everything it logs to stderr as well.
@@ -218,10 +217,6 @@ and the output device with its sample rate and buffer size in samples.
 - The controls follow the C++ layout: Zoom, Input gain, the Normalize and Overwrite options,
   the Peak and Loudness target with its Normalize button, Plugin Chain, Audio Settings,
   and Play and Process side by side at the bottom, with Play turning into Stop while the file plays.
-  On a wide window the controls and the information panel share half of the width, and the waveform gets the rest.
-  The controls below the sliders then sit in two columns with a Preview chain option,
-  and the panel shows the four metrics in one row and the short details two to a line,
-  while long tags such as the album and the comment keep the full width.
   The chevron in the top left corner of the controls, Options > Collapse Bottom Section,
   or Command or Control with Shift and Space collapses the preview into one row with the chevron,
   Play and Process, the four level metrics, and the waveform.
@@ -233,9 +228,6 @@ and the output device with its sample rate and buffer size in samples.
   Each file is written as a sibling `.aif` that replaces its row, and a converted source is moved to the system trash.
   Overwrite lets the output replace an existing file of the same name, which is moved to the trash too.
   The Status column shows the progress of each file, and a failure keeps the row with the reason.
-  While files are normalized or processed, adding, rescanning, removing, and trashing files are refused with a message,
-  and Clear All Files stops the run instead.
-  Normalization waits for a running analysis to finish.
 - During an analysis, normalization, or processing run the Process button becomes Cancel,
   and File > Cancel Run (Command or Control and period) cancels the run too.
   Files the run has not committed keep their rows, and Clear All Files stops any run.
@@ -245,13 +237,7 @@ and the output device with its sample rate and buffer size in samples.
 - Options > Show Loudness Graph, or the same option in the settings window,
   draws the short-term loudness over the waveform, and Options > Output Device switches the audio device.
 - Windows preview uses ASIO and requires an installed ASIO driver for the audio interface, with no WASAPI fallback.
-  The default output is the first available ASIO device, not the Windows default speakers.
-  Select the interface in Audio Settings if a saved device name no longer matches.
-  ASIO device discovery is cached during the session, so restart the app after installing or connecting an interface.
   Other platforms use their default audio host.
-- Like the C++ version, the audio device is open only while playing.
-  Playing opens it, selecting another file while playing keeps it open,
-  and it closes shortly after playback stops, so other applications can use it.
 - The Audio Settings button, or Options > Audio Settings… (Command or Control and comma),
   opens the settings window.
   It chooses the output device, sample rate, and buffer size, previewing through the plugin chain,
@@ -262,7 +248,6 @@ and the output device with its sample rate and buffer size in samples.
 
 The analysis cache lives in the `AudioBatch-rs` folder of the user data directory,
 apart from the cache of the C++ application.
-It also keeps the Serato Overview of each file, so the waveform is coloured before the tags are read again.
 
 ### Plugins
 
@@ -314,18 +299,6 @@ Scans write `plugins.json`, the list of known plugins that the CLI shares,
 and the chain is saved in `plugin-chain.json`, both in the `AudioBatch-rs` folder.
 A plugin that crashes while processing, previewing, or showing its editor ends the app,
 because only scans run plugins in a separate process.
-
-The GUI log records opened files and directories, discovered file counts,
-and analysis duration with analyzed, cached, and failed file counts.
-It also records analysis failures, cancellations, and quitting.
-Tag reader and decoder warnings include the file path and source module, including during preview playback.
-Log levels use right-aligned labels with padding outside the brackets, such as ` [INFO]:`, ` [WARN]:`, and `[ERROR]:`.
-Warnings and errors include the source file and line when available,
-including framework errors that do not name a module.
-Source locations retain the crate and source-relative path without absolute build-machine directories.
-These are compile-time code locations, not paths from which the application executes.
-Audio file paths remain unchanged.
-Startup logs only the version and build identification, not a full system information report.
 
 ### Stress test
 
