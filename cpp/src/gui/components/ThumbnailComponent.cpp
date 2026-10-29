@@ -6,9 +6,11 @@
 
 #include "gui/components/ThumbnailComponent.h"
 
+#include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
+#include "serato/SeratoOverview.h"
 #include "serato/SeratoWaveformColouring.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
@@ -18,6 +20,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstddef>
+#include <functional>
+#include <memory>
+#include <ranges>
+#include <utility>
+#include <vector>
 
 namespace audiobatch
 {

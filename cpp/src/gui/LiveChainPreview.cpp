@@ -3,9 +3,12 @@
 /// and observes plugin changes without doing host work in processor callbacks.
 
 #include "gui/LiveChain.h"
+#include "plugins/PluginChainPreparation.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
+#include <cstddef>
+#include <optional>
 #include <utility>
 
 namespace audiobatch

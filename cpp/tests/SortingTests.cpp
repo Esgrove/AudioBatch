@@ -1,14 +1,17 @@
 /// Tests for the results table sorting in ResultsSorting.
 
-#include "gui/GuiLayout.h"
+#include "analysis/AudioAnalysisTypes.h"
+#include "gui/AudioBatchComponentConstants.h"
 #include "gui/ResultsSorting.h"
 #include "TestSuites.h"
 #include "utils/StringFormat.h"
 
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <limits>
 #include <map>
+#include <memory>
 #include <optional>
 #include <utility>
 #include <vector>

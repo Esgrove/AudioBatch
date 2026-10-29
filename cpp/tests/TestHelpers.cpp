@@ -5,11 +5,17 @@
 
 #include "TestHelpers.h"
 
+#include "analysis/AudioAnalysisTypes.h"
+#include "normalization/AudioNormalization.h"
 #include "plugins/PluginScanner.h"
+#include "serato/SeratoTagTypes.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
+#include <fmt/base.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <iterator>

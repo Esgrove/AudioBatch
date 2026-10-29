@@ -8,6 +8,7 @@
 
 #include "plugins/PluginProcessingCoordinator.h"
 
+#include "analysis/AudioAnalysisTypes.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginProcessing.h"
 #include "utils/Log.h"
@@ -15,11 +16,16 @@
 #include "utils/ThreadUtils.h"
 
 #include <algorithm>
+#include <atomic>
+#include <cstddef>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <ranges>
 #include <set>
+#include <span>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace audiobatch

@@ -5,6 +5,7 @@
 /// because converting other formats moves the original to the system trash.
 
 #include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "normalization/AudioNormalization.h"
 #include "normalization/NormalizeCoordinator.h"
 #include "TestHelpers.h"
@@ -14,6 +15,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <memory>
 #include <mutex>
 #include <optional>

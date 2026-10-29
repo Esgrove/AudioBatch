@@ -7,6 +7,7 @@
 /// NormalizeCoordinatorTests.cpp covers the coordinator of a normalization run.
 
 #include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "metadata/AudioMetadata.h"
 #include "normalization/AudioNormalization.h"
 #include "TestHelpers.h"

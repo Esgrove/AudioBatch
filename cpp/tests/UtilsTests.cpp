@@ -2,7 +2,6 @@
 /// and DecodeFailureTracker, and for the format checks of the null test that the plugin tests rely on.
 /// The message loop check runs in a helper process, since stopping the loop ends it for the whole process.
 
-#include "analysis/BitDepthDetection.h"
 #include "analysis/DecodeFailureTracker.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
@@ -20,6 +19,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <cstddef>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -582,7 +582,7 @@ private:
 
         std::unique_ptr<juce::OutputStream> stream = destination.createOutputStream();
         juce::WavAudioFormat format;
-        auto writer = format.createWriterFor(
+        auto const writer = format.createWriterFor(
             stream,
             juce::AudioFormatWriterOptions()
                 .withSampleRate(sampleRate)

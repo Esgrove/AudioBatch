@@ -3,10 +3,12 @@
 /// the output device status shown in the status bar, the persisted preview preferences, and the loudness axis ticks.
 /// The committed silence fixture exercises playback without opening hardware or third-party plugins.
 
+#include "gui/AudioBatchComponentState.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/components/AudioSettingsComponent.h"
 #include "gui/components/StatusBar.h"
 #include "gui/GuiLayout.h"
+#include "serato/SeratoTagTypes.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 

@@ -4,7 +4,10 @@
 
 #include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
+#include <unordered_map>
 
+#include <cstddef>
+#include <expected>
 #include <memory>
 #include <mpegfile.h>
 #include <mpegheader.h>

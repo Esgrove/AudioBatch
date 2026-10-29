@@ -9,18 +9,27 @@
 #include "analysis/AnalysisCache.h"
 #include "analysis/AnalysisCoordinator.h"
 #include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "analysis/Sqlite.h"
 #include "analysis/SqliteTransaction.h"
+#include "serato/SeratoOverview.h"
 #include "serato/SeratoTagCache.h"
 #include "serato/SeratoTags.h"
+#include "serato/SeratoTagTypes.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 
+#include <array>
 #include <atomic>
 #include <bit>
+#include <cstdint>
+#include <memory>
+#include <optional>
 #include <span>
 #include <sqlite3.h>
+#include <utility>
 
 namespace audiobatch::tests
 {

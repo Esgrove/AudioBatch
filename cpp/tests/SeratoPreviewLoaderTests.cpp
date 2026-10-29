@@ -3,21 +3,29 @@
 /// All files and databases live in temporary directories,
 /// with no local music or sibling repository dependency.
 
+#include "analysis/AnalysisCache.h"
+#include "serato/SeratoOverview.h"
 #include "serato/SeratoPreviewLoader.h"
 #include "serato/SeratoTagCache.h"
+#include "serato/SeratoTagTypes.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/FileUtils.h"
+#include "utils/ThreadUtils.h"
 #include <condition_variable>
 
 #include <algorithm>
 #include <bit>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <sqlite3.h>
+#include <utility>
 #include <vector>
 
 namespace audiobatch::tests

@@ -6,6 +6,7 @@
 #include "analysis/AnalysisCache.h"
 #include "analysis/AnalysisCoordinator.h"
 #include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/StringFormat.h"

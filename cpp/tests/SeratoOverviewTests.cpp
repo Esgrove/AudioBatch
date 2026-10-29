@@ -5,12 +5,16 @@
 #include "serato/SeratoOverview.h"
 #include "serato/SeratoWaveformColouring.h"
 #include "TestSuites.h"
+#include <initializer_list>
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <memory>
 #include <span>
+#include <vector>
 
 namespace audiobatch::tests
 {

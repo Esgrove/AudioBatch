@@ -6,6 +6,8 @@
 #include "gui/GuiLayout.h"
 #include "TestSuites.h"
 
+#include <memory>
+
 namespace audiobatch::tests
 {
 /// Exercises app-owned font selection and text sizing through the look-and-feel.

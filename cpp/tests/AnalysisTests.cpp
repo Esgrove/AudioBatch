@@ -5,17 +5,22 @@
 /// which shows that each measurement ends up in its own field.
 
 #include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "metadata/AudioMetadata.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/StringFormat.h"
 
+#include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
+#include <cstdint>
 #include <limits>
 #include <memory>
 #include <optional>
+#include <vector>
 
 #if !JUCE_WINDOWS
 #include <sys/stat.h>
@@ -25,14 +30,14 @@ namespace audiobatch::tests
 {
 /// Expected properties of one fixture tone.
 struct ToneFixture {
-    const char* fileName;
-    int channels;
-    int sampleRate;
+    const char* fileName {};
+    int channels {};
+    int sampleRate {};
     /// Expected source bit depth.
     /// MP3 and Ogg Vorbis files report the fixed default of 16 bits, since the formats store no source bit depth.
-    int bitsPerSample;
+    int bitsPerSample {};
     /// True for lossy formats, which get a wider level tolerance.
-    bool lossy;
+    bool lossy {};
     /// Exact decoded length in samples, or nothing for one second at the sample rate.
     /// Lossy files decode to an exact length too, since their encoder delay and padding are removed.
     std::optional<juce::int64> lengthInSamples {std::nullopt};

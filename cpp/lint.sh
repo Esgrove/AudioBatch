@@ -7,6 +7,7 @@ Lint C++ code in src/, tests/, and ../test-plugin/src/ with clang-tidy.
 
 Uses the compile_commands.json from an existing CMake build directory.
 If none is found, configures and builds the platform's Ninja debug preset first.
+On Windows this loads the Visual Studio developer environment when cl is not on PATH.
 On macOS the script also passes the active SDK path so that Homebrew's
 clang-tidy can find platform headers like TargetConditionals.h.
 
@@ -188,6 +189,7 @@ if [ -z "$BUILD_DIR" ]; then
     esac
 
     print_magenta "No compile database found. Configuring and building $BUILD_PRESET..."
+    load_msvc_environment
     cmake --preset "$BUILD_PRESET"
     cmake --build --preset "$BUILD_PRESET"
 
@@ -247,7 +249,7 @@ SOURCES=("${LINTED_SOURCES[@]}")
 print_magenta "Running clang-tidy on ${#SOURCES[@]} source files..."
 
 if [ "$CHECK" = false ]; then
-    "$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}"
+    "$CLANG_TIDY" -p "$BUILD_DIR" --config-file="$REPO/.clang-tidy" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}"
     exit
 fi
 
@@ -255,7 +257,7 @@ OUTPUT_FILE=$(mktemp)
 trap 'rm -f "$OUTPUT_FILE"' EXIT
 
 set +e
-"$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}" 2>&1 | tee "$OUTPUT_FILE"
+"$CLANG_TIDY" -p "$BUILD_DIR" --config-file="$REPO/.clang-tidy" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}" 2>&1 | tee "$OUTPUT_FILE"
 CLANG_TIDY_STATUS=${PIPESTATUS[0]}
 set -e
 

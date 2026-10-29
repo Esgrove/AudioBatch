@@ -5,6 +5,8 @@
 
 #include "gui/components/CustomLookAndFeel.h"
 
+#include "gui/GuiLayout.h"
+
 #include <cmath>
 #include <utility>
 

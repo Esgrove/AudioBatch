@@ -5,15 +5,20 @@
 
 #include "cli/AudioAnalysisCli.h"
 #include "cli/CliOptions.h"
+#include "normalization/AudioNormalization.h"
 #include "utils/StringFormat.h"
 #include "utils/version.h"
+#include <fmt/format.h>
+#include <string_view>
+#include <type_traits>
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <expected>
+#include <functional>
 #include <optional>
 #include <string>
-#include <type_traits>
 #include <utility>
 
 namespace audiobatch

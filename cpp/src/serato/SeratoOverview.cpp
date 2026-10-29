@@ -7,7 +7,13 @@
 #include "serato/SeratoTagTypes.h"
 
 #include <algorithm>
+#include <array>
 #include <bit>
+#include <cstddef>
+#include <cstdint>
+#include <optional>
+#include <span>
+#include <utility>
 
 namespace audiobatch::serato
 {

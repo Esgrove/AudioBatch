@@ -11,11 +11,14 @@
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include <initializer_list>
+#include <string_view>
 
 #include <aifffile.h>
 #include <algorithm>
 #include <array>
 #include <attachedpictureframe.h>
+#include <cstddef>
+#include <cstdint>
 #include <fileref.h>
 #include <flacfile.h>
 #include <generalencapsulatedobjectframe.h>
@@ -24,6 +27,7 @@
 #include <id3v2header.h>
 #include <id3v2tag.h>
 #include <memory>
+#include <string>
 #include <tbytevector.h>
 #include <textidentificationframe.h>
 #include <tfile.h>
@@ -33,6 +37,8 @@
 #include <tstringlist.h>
 #include <tvariant.h>
 #include <unknownframe.h>
+#include <utility>
+#include <vector>
 #include <wavfile.h>
 
 namespace audiobatch

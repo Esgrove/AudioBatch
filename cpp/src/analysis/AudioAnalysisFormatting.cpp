@@ -4,12 +4,14 @@
 
 #include "analysis/AudioAnalysisFormatting.h"
 
+#include "analysis/AudioAnalysisTypes.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 
 #include <cmath>
 #include <cstdint>
+#include <utility>
 
 namespace audiobatch
 {

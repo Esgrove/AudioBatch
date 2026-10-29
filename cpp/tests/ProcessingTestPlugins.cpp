@@ -2,6 +2,11 @@
 
 #include "ProcessingTestPlugins.h"
 
+#include "plugins/PluginProcessing.h"
+
+#include <cstddef>
+#include <vector>
+
 namespace audiobatch::tests
 {
 /// Returns a chain holding only the given plugin.

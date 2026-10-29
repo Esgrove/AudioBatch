@@ -6,15 +6,14 @@
 #include "utils/Log.h"
 
 #include "utils/AppInfo.h"
-#include "utils/ConsolePrint.h"
+#include "utils/ConsolePrint.h" // IWYU pragma: keep, only the release build echo uses it
+#include "utils/StringFormat.h"
 #include "utils/version.h"
-#include <string_view>
 
 #include <atomic>
-#include <bit>
-#include <csignal>
 #include <cstdlib>
 #include <exception>
+#include <memory>
 
 #if !JUCE_WINDOWS
 #include <pthread.h>

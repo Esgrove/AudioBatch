@@ -3,6 +3,7 @@
 
 #include "gui/components/StatusBar.h"
 
+#include "gui/AudioPreviewPlayer.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
 #include "utils/GuiUtils.h"

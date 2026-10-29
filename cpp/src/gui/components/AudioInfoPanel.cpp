@@ -5,15 +5,21 @@
 #include "gui/components/AudioInfoPanel.h"
 
 #include "analysis/AudioAnalysisFormatting.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
+#include "serato/SeratoTagTypes.h"
 #include "utils/GuiUtils.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <memory>
+#include <optional>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace audiobatch
 {

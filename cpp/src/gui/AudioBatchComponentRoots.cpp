@@ -3,11 +3,14 @@
 
 #include "gui/AudioBatchComponent.h"
 #include "gui/AudioBatchComponentConstants.h"
+#include "gui/AudioBatchComponentState.h"
+#include "gui/BackgroundWorkController.h"
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
+#include <memory>
 
 namespace audiobatch
 {

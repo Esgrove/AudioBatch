@@ -5,10 +5,19 @@
 
 #include "plugins/PluginLibrary.h"
 
+#include "plugins/PluginProcessing.h"
 #include "plugins/PluginProcessingCoordinator.h"
+#include "plugins/PluginScanner.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
+
+#include <cstddef>
+#include <expected>
+#include <memory>
+#include <utility>
+#include <vector>
 
 namespace audiobatch
 {

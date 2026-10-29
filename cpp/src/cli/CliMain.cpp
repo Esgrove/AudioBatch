@@ -6,6 +6,7 @@
 /// The completion and help subcommands run without a log file, since they only print or install a script.
 /// When launched as a plugin scan worker by a plugin rescan, it runs the worker instead.
 
+#include "analysis/AudioAnalysisTypes.h"
 #include "cli/AudioAnalysisCli.h"
 #include "cli/PluginListCli.h"
 #include "cli/ShellCompletion.h"
@@ -13,7 +14,12 @@
 #include "utils/AppInfo.h"
 #include "utils/ConsolePrint.h"
 #include "utils/Log.h"
+#include "utils/StringFormat.h"
+#include <fmt/base.h>
+#include <system_error>
 
+#include <cstddef>
+#include <cstdio>
 #include <span>
 #include <variant>
 

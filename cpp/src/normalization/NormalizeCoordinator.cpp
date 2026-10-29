@@ -5,12 +5,18 @@
 
 #include "normalization/NormalizeCoordinator.h"
 
+#include "analysis/AudioAnalysisTypes.h"
+#include "normalization/AudioNormalization.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
 
+#include <atomic>
 #include <map>
+#include <memory>
 #include <ranges>
+#include <utility>
+#include <variant>
 #include <vector>
 
 namespace audiobatch

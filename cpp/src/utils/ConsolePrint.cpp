@@ -5,9 +5,14 @@
 
 #include "utils/ConsolePrint.h"
 
-#include "utils/StringFormat.h"
+#include <fmt/base.h>
+#include <fmt/color.h>
+#include <fmt/format.h>
+#include <string_view>
 
 #include <algorithm>
+#include <cstdio>
+#include <utility>
 
 #if JUCE_WINDOWS
 #include <juce_core/native/juce_BasicNativeHeaders.h>

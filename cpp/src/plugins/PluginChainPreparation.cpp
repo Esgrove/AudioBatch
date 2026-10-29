@@ -4,11 +4,15 @@
 
 #include "plugins/PluginChainPreparation.h"
 
-#include "utils/AudioFormatUtils.h"
+#include "plugins/PluginProcessing.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
 
+#include <cmath>
+#include <cstddef>
 #include <exception>
+#include <optional>
 #include <span>
 
 #if JUCE_MAC

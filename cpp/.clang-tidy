@@ -8,8 +8,6 @@
 #   like `a + b * c`, which hurts readability more than it helps.
 # - readability-uppercase-literal-suffix: float literals use the lowercase 'f' suffix, as in JUCE.
 # - modernize-use-trailing-return-type: the project uses leading return types throughout.
-# - misc-include-cleaner: JUCE modules are included through umbrella headers,
-#   so nearly every use of a JUCE symbol is reported.
 # - misc-use-internal-linkage: flags every test suite class,
 #   which sits next to its factory from tests/TestSuites.h outside an anonymous namespace.
 # - cppcoreguidelines-owning-memory: JUCE APIs such as setContentOwned and createDocumentWindowButton
@@ -50,7 +48,6 @@ Checks: >
   -modernize-use-trailing-return-type,
   -readability-uppercase-literal-suffix,
   -readability-math-missing-parentheses,
-  -misc-include-cleaner,
   -misc-use-internal-linkage,
   -bugprone-exception-escape,
   -misc-multiple-inheritance,
@@ -62,6 +59,8 @@ FormatStyle: file
 CheckOptions:
     cppcoreguidelines-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: "true"
     misc-non-private-member-variables-in-classes.IgnoreClassesWithAllMemberVariablesBeingPublic: "true"
+    misc-include-cleaner.IgnoreHeaders: "juce_.*/.*;juce_.*\\.h;JuceHeader\\.h;.*/JUCE/.*;.*Windows Kits.*;windows\\.h;shobjidl\\.h;io\\.h;stdio\\.h;.*[/\\\\]taglib.*"
+    misc-include-cleaner.DeduplicateFindings: "true"
     modernize-avoid-bind.PermissiveParameterList: "false"
     modernize-deprecated-headers.CheckHeaderFile: "false"
     modernize-loop-convert.IncludeStyle: llvm

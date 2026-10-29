@@ -3,6 +3,11 @@
 
 #include "utils/BackgroundRunner.h"
 
+#include "utils/ThreadUtils.h"
+
+#include <functional>
+#include <utility>
+
 namespace audiobatch
 {
 /// Creates a thread pool with at least one worker.

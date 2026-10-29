@@ -4,13 +4,16 @@
 /// since some formats are registered for reading but cannot write.
 
 #include "analysis/AudioAnalysisFormatting.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "normalization/AudioNormalization.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
+#include <utility>
 #include <vector>
 
 namespace audiobatch

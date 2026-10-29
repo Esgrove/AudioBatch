@@ -3,13 +3,16 @@
 
 #include "cli/AudioAnalysisCliOutput.h"
 
-#include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisFormatting.h"
+#include "analysis/AudioAnalysisTypes.h"
+#include "cli/AudioAnalysisCli.h"
 #include "utils/ConsolePrint.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
+#include <fmt/base.h>
 
 #include <cmath>
+#include <vector>
 
 namespace audiobatch::cli
 {

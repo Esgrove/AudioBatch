@@ -5,9 +5,16 @@
 /// and the presets submenu that the chain menu and the main menu bar share.
 
 #include "gui/LiveChain.h"
+#include "plugins/PluginChainPresets.h"
 #include "utils/AppInfo.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+
+#include <cstddef>
+#include <expected>
+#include <memory>
+#include <utility>
+#include <vector>
 
 namespace audiobatch
 {

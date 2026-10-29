@@ -8,6 +8,8 @@
 #include "gui/GuiLayout.h"
 #include "utils/StringFormat.h"
 
+#include <array>
+#include <functional>
 #include <utility>
 
 namespace audiobatch

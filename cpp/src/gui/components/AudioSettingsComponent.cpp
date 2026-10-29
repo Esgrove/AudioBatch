@@ -3,14 +3,19 @@
 
 #include "gui/components/AudioSettingsComponent.h"
 
+#include "gui/AudioBatchComponentState.h"
 #include "gui/GuiLayout.h"
+#include "serato/SeratoTagTypes.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
+#include <initializer_list>
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <functional>
+#include <ios>
 #include <locale>
 #include <memory>
 #include <optional>

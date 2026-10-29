@@ -8,8 +8,14 @@
 #include "gui/components/PluginChainEditor.h"
 
 #include "gui/components/CustomLookAndFeel.h"
+#include "gui/GuiLayout.h"
+#include "gui/LiveChain.h"
+#include "plugins/PluginChainPreparation.h"
 #include "utils/StringFormat.h"
 
+#include <cstddef>
+#include <functional>
+#include <memory>
 #include <utility>
 
 namespace audiobatch

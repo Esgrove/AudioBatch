@@ -10,12 +10,17 @@
 
 #include "plugins/PluginScanner.h"
 
-#include "utils/AppInfo.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
 #include <condition_variable>
 
+#include <algorithm>
 #include <chrono>
+#include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
+#include <utility>
 
 namespace audiobatch
 {

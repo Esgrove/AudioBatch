@@ -1,10 +1,16 @@
 /// Tests for PreviewController:
 /// the transitions between an empty, released, and loaded preview, and which file each state keeps.
 
+#include "analysis/AnalysisCache.h"
+#include "gui/AudioPreviewPlayer.h"
 #include "gui/PreviewController.h"
+#include "serato/SeratoTagTypes.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/FileUtils.h"
 
+#include <cstdint>
+#include <memory>
 #include <variant>
 
 namespace audiobatch::tests

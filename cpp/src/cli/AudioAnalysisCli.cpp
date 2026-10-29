@@ -4,8 +4,10 @@
 
 #include "cli/AudioAnalysisCli.h"
 
+#include "analysis/AnalysisCache.h"
 #include "analysis/AnalysisCoordinator.h"
 #include "analysis/AudioAnalysis.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "cli/AudioAnalysisCliOutput.h"
 #include "normalization/AudioNormalization.h"
 #include "normalization/NormalizeCoordinator.h"
@@ -14,9 +16,13 @@
 #include "utils/FileUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
+#include <fmt/base.h>
+#include <fmt/color.h>
 #include <unordered_set>
 
 #include <algorithm>
+#include <cstdio>
 #include <iterator>
 #include <map>
 #include <mutex>

@@ -5,15 +5,21 @@
 
 #include "serato/SeratoTagCache.h"
 
+#include "analysis/AnalysisCache.h"
 #include "analysis/Sqlite.h"
 #include "serato/SeratoTags.h"
+#include "serato/SeratoTagTypes.h"
+#include "utils/FileUtils.h"
 
 #include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <span>
 #include <sqlite3.h>
 #include <utility>
+#include <vector>
 
 namespace audiobatch::serato
 {

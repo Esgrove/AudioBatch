@@ -3,6 +3,7 @@
 
 #include "utils/MessageThreadBatcher.h"
 
+#include <functional>
 #include <utility>
 
 namespace audiobatch::utils

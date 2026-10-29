@@ -2,12 +2,24 @@
 /// loading files into the preview player and waveform, the play button state, zoom, the info panel,
 /// and the custom gain controls.
 
+#include "analysis/AnalysisCache.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponent.h"
 #include "gui/AudioBatchComponentConstants.h"
+#include "gui/AudioFileTableModel.h"
 #include "gui/components/AudioInfoPanel.h"
+#include "gui/components/AudioSettingsComponent.h"
+#include "gui/PreviewController.h"
+#include "serato/SeratoOverview.h"
+#include "serato/SeratoTagTypes.h"
 #include "utils/Log.h"
 
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <utility>
 #include <variant>
+#include <vector>
 
 namespace audiobatch
 {

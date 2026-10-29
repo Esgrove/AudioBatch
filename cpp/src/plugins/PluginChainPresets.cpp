@@ -10,6 +10,12 @@
 #include "utils/StringFormat.h"
 
 #include <algorithm>
+#include <expected>
+#include <memory>
+#include <optional>
+#include <span>
+#include <utility>
+#include <vector>
 
 namespace audiobatch::plugin_presets
 {

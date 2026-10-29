@@ -3,16 +3,18 @@
 
 #include "gui/ResultsSorting.h"
 
-#include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisFormatting.h"
-#include "gui/GuiLayout.h"
+#include "analysis/AudioAnalysisTypes.h"
+#include "gui/AudioBatchComponentConstants.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
 #include <cmath>
 #include <compare>
 #include <concepts>
+#include <optional>
 #include <utility>
+#include <vector>
 
 namespace audiobatch
 {

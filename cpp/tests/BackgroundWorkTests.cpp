@@ -1,8 +1,11 @@
 /// Tests for the functions that describe the background work of the main view,
 /// such as the reasons new work cannot start and the progress shown in the status bar and window title.
 
+#include "gui/AudioBatchComponentState.h"
 #include "gui/BackgroundWorkController.h"
 #include "TestSuites.h"
+
+#include <memory>
 
 namespace audiobatch::tests
 {

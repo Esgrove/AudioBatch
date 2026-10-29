@@ -2,18 +2,24 @@
 /// analysis runs and their plans, normalization, and plugin processing,
 /// including the result handlers that update the table, cache, and preview.
 
-#include "analysis/AudioAnalysis.h"
-#include "analysis/AudioAnalysisFormatting.h"
+#include "analysis/AnalysisCoordinator.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioBatchComponent.h"
-#include "gui/AudioBatchComponentConstants.h"
+#include "gui/AudioBatchComponentState.h"
+#include "gui/AudioFileTableModel.h"
+#include "gui/BackgroundWorkController.h"
 #include "gui/components/AudioInfoPanel.h"
+#include "normalization/AudioNormalization.h"
+#include "plugins/PluginProcessing.h"
 #include "utils/GuiUtils.h"
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include "utils/ThreadUtils.h"
 #include <unordered_map>
 
 #include <algorithm>
 #include <optional>
+#include <set>
 #include <utility>
 #include <variant>
 #include <vector>

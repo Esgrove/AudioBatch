@@ -4,6 +4,8 @@
 
 #include "gui/MainWindow.h"
 
+#include "gui/AudioBatchComponent.h"
+#include "gui/components/CustomLookAndFeel.h"
 #include "gui/GuiLayout.h"
 #include "gui/LiveChain.h"
 #include "utils/AppInfo.h"
@@ -13,6 +15,7 @@
 #include "utils/StringFormat.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <utility>
 

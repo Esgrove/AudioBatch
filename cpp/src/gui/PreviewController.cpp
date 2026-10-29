@@ -4,7 +4,17 @@
 
 #include "gui/PreviewController.h"
 
+#include "analysis/AnalysisCache.h"
+#include "gui/AudioPreviewPlayer.h"
+#include "serato/SeratoPreviewLoader.h"
+#include "serato/SeratoTagTypes.h"
+
 #include <cmath>
+#include <cstdint>
+#include <memory>
+#include <optional>
+#include <utility>
+#include <variant>
 
 namespace audiobatch
 {

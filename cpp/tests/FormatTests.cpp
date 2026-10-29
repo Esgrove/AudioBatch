@@ -3,9 +3,11 @@
 
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisFormatting.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "TestSuites.h"
 
 #include <limits>
+#include <memory>
 #include <vector>
 
 namespace audiobatch::tests
