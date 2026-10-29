@@ -30,23 +30,12 @@ Removing a row does not delete the file. Moving a file to the trash is a separat
 ### Waveform Preview
 
 View and play tracks with a zoomable waveform.
-Playback status and the waveform cursor follow the current display's refresh rate, including high-refresh displays.
 The resizable preview workspace has separate columns for controls, selected-file information, and the waveform.
 Sample peak, true peak, integrated loudness, and maximum short-term loudness appear in dedicated metric cards.
-On a wide window the controls and the information share half of the width, and the waveform gets the rest.
-The controls below the sliders then sit in two columns with a Preview chain option,
-and the metric cards fit in one row above the short details, two to a line,
-while long tags such as the album and the comment keep the full width.
 The Play button turns into Stop while the file plays.
 
 An optional orange-red short-term loudness line overlays the waveform, with a compact numeric axis on the left.
 It measures the trailing three seconds and follows waveform zoom and scrolling.
-The initial three seconds use the analyzer's zero-filled startup history.
-The curve describes the source file, not custom preview gain, live plugins, or a normalization target.
-Silent readings leave gaps, and values outside the selected axis range are clipped.
-Analysis retains the existing 10 Hz readings without another decoding pass and caches them in SQLite.
-Older cached tracks need one normal reanalysis to populate this history.
-After that, unchanged tracks show the curve from the cache.
 
 Serato DJ metadata adds optional waveform colours and coloured cue markers,
 and the info panel shows BPM and musical key when available.
@@ -59,7 +48,6 @@ Use the small outlined arrow in the top left corner of the controls,
 or the collapse/expand command in the Options menu.
 The shortcut is `Ctrl+Shift+Space` on Windows and `Cmd+Shift+Space` on macOS.
 The compact row keeps Play, Process, all four metrics, and a smaller waveform visible.
-Other controls are hidden but retain their settings.
 
 ### Live Plugin Preview
 
@@ -74,9 +62,6 @@ The output of a mono file is folded back to mono, so it sounds like the processe
 
 Each plugin row shows `Latency: X samples (Y ms)`.
 The chain window's footer shows the enabled plugins' total latency and the real-time processing sample rate.
-Disabled plugins do not contribute to the total.
-The footer marks the preparation rate as inspection-only when no audio device is open.
-This rate starts at 48 kHz and retains the last playback rate if the device has been closed.
 Plugins may report different latency or sound different when batch processing in offline mode.
 
 Latency compensation aligns processed audio with the waveform's file position.
@@ -103,17 +88,8 @@ Standalone normalization is unchanged.
 ### Audio Settings
 
 Preview opens the audio output device only when playback starts and never requests recording inputs.
-Stopping playback, reaching the end including effect tails, or a playback failure releases the device.
-On Windows, switching to another application stops preview and releases the sound card.
-Returning to AudioBatch does not automatically resume playback or reopen the device.
-The selected interface, sample rate, and buffer size are reused on the next explicit play.
 An open Audio Settings window temporarily holds the device for sample-rate, buffer-size, and driver configuration.
-Closing that window releases an idle device. Switching applications releases it even while Audio Settings is open.
 Windows playback uses ASIO only.
-Without a saved device choice, unavailable registered ASIO drivers are skipped until a working output is found.
-An explicitly selected device is not replaced when it fails to open.
-If opening a settings device fails, focus changes do not retry it or reopen the error dialog.
-Reopen Audio Settings or explicitly start playback to retry after fixing the device.
 Playback is output-only on macOS as well and does not require microphone access.
 
 **Audio Settings** separates audio interface/playback configuration from preview preferences.
@@ -125,10 +101,6 @@ Plugin preview is controlled only from this window and the menu, keeping the mai
 - **Continue playback when changing files:** off by default.
   When enabled, selecting a different file starts it only if preview was already playing.
 - **Play from first cue point:** off by default.
-  Newly loaded tracks begin at their earliest cue marker if it is at or before halfway through the track.
-  Tracks without an eligible cue begin at zero.
-  This also applies when continuing playback across files, but does not start a stopped preview automatically.
-  Manual seeks and hot cue jumps take precedence over this initial position.
 - **Serato waveform colours:** on by default.
 - **Show loudness graph:** off by default.
   Toggle it here or with **Options > Show Loudness Graph**.
