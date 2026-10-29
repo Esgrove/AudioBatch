@@ -26,6 +26,21 @@ bool AudioBatchComponent::isPreviewSectionExpanded() const noexcept
     return previewSectionExpanded;
 }
 
+/// Sets the expanded workspace to the height that fits its controls at the current width, and lays the view out.
+/// The window calls this once after it has chosen its startup bounds,
+/// because the constructor lays the component out at a provisional size whose width can pick the other layout.
+/// Later window resizes and divider drags keep the height the user sees instead.
+void AudioBatchComponent::fitPreviewToControls()
+{
+    const auto workspaceWidth = getWidth() - layout::mainContentPadding * 2;
+    if (workspaceWidth <= 0) {
+        return;
+    }
+    expandedPreviewHeight = layout::expandedPreviewFitHeight(workspaceWidth);
+    restoreExpandedLayout = true;
+    resized();
+}
+
 /// Reverses from the currently displayed height without interrupting preview playback or changing settings.
 void AudioBatchComponent::togglePreviewSection()
 {
@@ -75,7 +90,7 @@ void AudioBatchComponent::resized()
     bounds.reduce(layout::mainContentPadding, layout::mainContentPadding);
     workspaceAvailableHeight = juce::jmax(1, bounds.getHeight());
     if (expandedPreviewHeight == 0 && bounds.getHeight() > 0) {
-        expandedPreviewHeight = juce::roundToInt(-layout::previewPreferredProportion * workspaceAvailableHeight);
+        expandedPreviewHeight = layout::expandedPreviewFitHeight(bounds.getWidth());
     }
 
     const bool compact = !previewSectionExpanded || !previewAnimationAttachment.isEmpty();

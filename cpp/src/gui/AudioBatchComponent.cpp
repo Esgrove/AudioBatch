@@ -64,15 +64,16 @@ void AudioBatchComponent::configureResultsTable()
 /// and connects the waveform, the section toggle, the playback, preview chain, and zoom controls.
 void AudioBatchComponent::configurePreviewControls()
 {
+    // The first layout replaces these preferred sizes with the controls-fit preview height.
     mainVerticalLayout.setItemLayout(
         0,
         layout::resultsTableMinimumHeight,
         layout::resultsTableMaximumProportion,
-        layout::resultsTablePreferredProportion
+        layout::resultsTableMaximumProportion
     );
     mainVerticalLayout.setItemLayout(1, layout::resizeBarHeight, layout::resizeBarHeight, layout::resizeBarHeight);
     mainVerticalLayout.setItemLayout(
-        2, layout::previewMinimumHeight, layout::previewMaximumProportion, layout::previewPreferredProportion
+        2, layout::previewMinimumHeight, layout::previewMaximumProportion, layout::previewMinimumHeight
     );
     addAndMakeVisible(waveformResizeBar);
     addAndMakeVisible(previewWorkspace);

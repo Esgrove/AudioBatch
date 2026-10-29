@@ -37,9 +37,28 @@ public:
         testOutputStatusFormatting();
         testPreferences();
         testLoudnessAxisIntervals();
+        testPreviewFitHeight();
     }
 
 private:
+    /// Checks that the startup preview height fits the controls of the layout that the workspace width selects.
+    void testPreviewFitHeight()
+    {
+        beginTest("The startup preview height fits the controls of the wide and the one-column layouts");
+        expectEquals(layout::widePreviewFitHeight, 282);
+        expectEquals(layout::narrowPreviewFitHeight, 348);
+
+        const auto wideBreakpoint = (layout::widePreview::minimumHalfWidth * 2) + (layout::compactPreview::padding * 2);
+        expectEquals(layout::expandedPreviewFitHeight(wideBreakpoint), layout::widePreviewFitHeight);
+        expectEquals(layout::expandedPreviewFitHeight(wideBreakpoint - 1), layout::narrowPreviewFitHeight);
+        expectEquals(
+            layout::expandedPreviewFitHeight(layout::defaultWindowWidth - (layout::mainContentPadding * 2)),
+            layout::widePreviewFitHeight
+        );
+        expectEquals(layout::expandedPreviewFitHeight(layout::minimumWindowWidth), layout::narrowPreviewFitHeight);
+        expectEquals(layout::expandedPreviewFitHeight(0), layout::narrowPreviewFitHeight);
+    }
+
     /// Checks numeric tick layout without constructing or rendering a GUI component.
     void testLoudnessAxisIntervals()
     {
