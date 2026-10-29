@@ -7,6 +7,8 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include <atomic>
+
 namespace audiobatch::test_plugin
 {
 /// Index and VST3 id of the linear gain parameter, which spans 0 to 2.

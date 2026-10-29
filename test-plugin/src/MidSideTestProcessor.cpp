@@ -5,7 +5,9 @@
 
 #include "MidSideTestProcessor.h"
 
+#include <atomic>
 #include <cstddef>
+#include <memory>
 #include <span>
 #include <utility>
 
