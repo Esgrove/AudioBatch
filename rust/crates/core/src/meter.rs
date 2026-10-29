@@ -100,7 +100,7 @@ impl BlockMeter {
     }
 
     /// Appends decoded planar samples, one slice per channel, measuring every block that fills up.
-    /// A channel shorter than the first one is padded with silence.
+    /// A channel shorter than the first one, including an omitted plane, is padded with silence.
     ///
     /// # Errors
     ///
@@ -111,12 +111,13 @@ impl BlockMeter {
         while offset < frame_count {
             let filled = self.block.first().map_or(0, Vec::len);
             let take = (self.block_size - filled).min(frame_count - offset);
-            for (block_channel, samples) in self.block.iter_mut().zip(chunk) {
-                if let Some(segment) = samples.as_ref().get(offset..offset + take) {
+            for (channel, block_channel) in self.block.iter_mut().enumerate() {
+                let samples = chunk.get(channel).map_or(&[][..], AsRef::as_ref);
+                let available = samples.len().saturating_sub(offset).min(take);
+                if let Some(segment) = samples.get(offset..offset + available) {
                     block_channel.extend_from_slice(segment);
-                } else {
-                    block_channel.resize(block_channel.len() + take, 0.0);
                 }
+                block_channel.resize(block_channel.len() + take - available, 0.0);
             }
             offset += take;
             if filled + take == self.block_size {
@@ -292,6 +293,35 @@ mod test_channel_handling {
         assert_eq!(padded.history, silent.history);
         assert_eq!(padded.max_samples, silent.max_samples);
         assert_eq!(padded.waveform, silent.waveform);
+    }
+
+    #[test]
+    fn a_short_channel_retains_its_nonempty_prefix() {
+        let left = vec![0.25; 10_000];
+        let right = vec![-0.75; 5_123];
+        let mut meter = BlockMeter::new(2, 44_100, None).expect("meter");
+        meter.push(&[left.as_slice(), right.as_slice()]).expect("push");
+        let output = meter.finish(10_000).expect("finish");
+        let mut padded = right;
+        padded.resize(left.len(), 0.0);
+        let expected = measure_signal(&[left, padded], 44_100, 1_000);
+        assert_eq!(output.min_samples, expected.min_samples);
+        assert_eq!(output.true_peaks, expected.true_peaks);
+        assert_eq!(output.history, expected.history);
+        assert_eq!(output.waveform, expected.waveform);
+    }
+
+    #[test]
+    fn missing_planes_are_silent_even_after_a_partial_block() {
+        let left = vec![0.25; 5_000];
+        let mut meter = BlockMeter::new(3, 44_100, None).expect("meter");
+        meter.push(&[&left[..7]]).expect("partial push");
+        meter.push(&[&left[7..]]).expect("remaining push");
+        let output = meter.finish(5_000).expect("finish");
+        let expected = measure_signal(&[left, vec![0.0; 5_000], vec![0.0; 5_000]], 44_100, 1_000);
+        assert_eq!(output.true_peaks, expected.true_peaks);
+        assert_eq!(output.history, expected.history);
+        assert_eq!(output.waveform, expected.waveform);
     }
 
     #[test]
