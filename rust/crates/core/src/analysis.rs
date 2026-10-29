@@ -1,22 +1,17 @@
 //! Audio analysis of a single file: sample peak, true peak, and EBU R128 loudness.
 //!
-//! The decoded packets are regrouped into fixed blocks of one tenth of a second,
-//! one block per short-term loudness update as EBU Tech 3341 asks for,
-//! and each block feeds the ebur128 meter, the per-channel sample extremes, and the waveform overview.
-//! A mono source is measured as dual mono, so it reads the same loudness as the same content in stereo.
+//! The file is decoded packet by packet into the `BlockMeter` of the `meter` module,
+//! which measures the loudness, the peaks, and the waveform overview,
+//! and the measurements are reduced to the left, right, and overall values of the record.
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::Arc;
 
-use ebur128::{Channel, EbuR128, Mode};
-
 use crate::decode::{AudioFileDecoder, DecodeError};
-use crate::record::{
-    AnalysisError, AnalysisFailure, AnalysisRecord, AnalysisStatus, NEGATIVE_INFINITY_LOUDNESS,
-    ShortTermLoudnessHistory, normalize_loudness,
-};
-use crate::waveform::{WaveformBuilder, WaveformOverview};
+use crate::meter::{BlockMeter, MeterError};
+use crate::record::{AnalysisError, AnalysisFailure, AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory};
+use crate::waveform::WaveformOverview;
 
 /// Error message of a cancelled analysis, which callers must not cache.
 pub const CANCELLED_MESSAGE: &str = "Analysis was cancelled";
@@ -30,21 +25,9 @@ enum MeasurementError {
     /// The analysis was cancelled.
     #[error(transparent)]
     Analysis(#[from] AnalysisFailure),
-    /// The loudness meter could not be configured.
-    #[error("Could not initialize loudness analyzer")]
-    Initialize(#[source] ebur128::Error),
-    /// The meter could not accept an audio block.
-    #[error("Loudness analysis failed while processing audio")]
-    Frames(#[source] ebur128::Error),
-    /// The short-term loudness could not be measured.
-    #[error("Short-term loudness analysis failed")]
-    ShortTerm(#[source] ebur128::Error),
-    /// A true peak could not be measured.
-    #[error("True peak analysis failed")]
-    TruePeak(#[source] ebur128::Error),
-    /// The integrated loudness could not be measured.
-    #[error("Integrated loudness analysis failed")]
-    Integrated(#[source] ebur128::Error),
+    /// The loudness meter failed.
+    #[error(transparent)]
+    Meter(#[from] MeterError),
 }
 
 impl MeasurementError {
@@ -53,7 +36,7 @@ impl MeasurementError {
         match self {
             Self::Decode(error) => error.analysis_kind(),
             Self::Analysis(failure) => failure.kind,
-            _ => AnalysisError::MeasurementFailed,
+            Self::Meter(_) => AnalysisError::MeasurementFailed,
         }
     }
 }
@@ -80,95 +63,6 @@ struct DecodeMeasurements {
     max_short_term_lufs: f64,
     short_term_loudness: Arc<ShortTermLoudnessHistory>,
     waveform: Arc<WaveformOverview>,
-}
-
-/// Accumulates decoded audio into fixed-size analysis blocks and measures each completed block.
-struct BlockMeter {
-    meter: EbuR128,
-    block_size: usize,
-    block: Vec<Vec<f32>>,
-    min_samples: Vec<f32>,
-    max_samples: Vec<f32>,
-    max_short_term_lufs: f64,
-    history: Vec<f32>,
-    waveform: WaveformBuilder,
-}
-
-impl BlockMeter {
-    /// Creates a meter for the stream, with integrated, short-term, and true peak measurement.
-    fn new(channels: u32, sample_rate: u32, expected_frames: Option<u64>) -> Result<Self, MeasurementError> {
-        let mut meter = EbuR128::new(channels, sample_rate, Mode::I | Mode::S | Mode::TRUE_PEAK)
-            .map_err(MeasurementError::Initialize)?;
-        if channels == 1 {
-            meter
-                .set_channel(0, Channel::DualMono)
-                .map_err(MeasurementError::Initialize)?;
-        }
-        let channel_count = channels as usize;
-        let block_size = ShortTermLoudnessHistory::samples_per_point_for_rate(sample_rate) as usize;
-        Ok(Self {
-            meter,
-            block_size,
-            block: vec![Vec::with_capacity(block_size); channel_count],
-            min_samples: vec![0.0; channel_count],
-            max_samples: vec![0.0; channel_count],
-            max_short_term_lufs: NEGATIVE_INFINITY_LOUDNESS,
-            history: Vec::new(),
-            waveform: WaveformBuilder::new(channel_count, expected_frames),
-        })
-    }
-
-    /// Appends decoded samples, measuring every block that fills up.
-    fn push(&mut self, chunk: &[Vec<f32>]) -> Result<(), MeasurementError> {
-        let frame_count = chunk.first().map_or(0, Vec::len);
-        let mut offset = 0;
-        while offset < frame_count {
-            let filled = self.block.first().map_or(0, Vec::len);
-            let take = (self.block_size - filled).min(frame_count - offset);
-            for (block_channel, samples) in self.block.iter_mut().zip(chunk) {
-                if let Some(segment) = samples.get(offset..offset + take) {
-                    block_channel.extend_from_slice(segment);
-                } else {
-                    block_channel.resize(block_channel.len() + take, 0.0);
-                }
-            }
-            offset += take;
-            if filled + take == self.block_size {
-                self.measure_block()?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Measures a final partial block and returns the history.
-    fn finish(mut self) -> Result<Self, MeasurementError> {
-        if self.block.first().is_some_and(|samples| !samples.is_empty()) {
-            self.measure_block()?;
-        }
-        Ok(self)
-    }
-
-    /// Feeds the buffered block to the meter, the sample extremes, and the waveform, then empties it.
-    fn measure_block(&mut self) -> Result<(), MeasurementError> {
-        for ((samples, minimum), maximum) in self.block.iter().zip(&mut self.min_samples).zip(&mut self.max_samples) {
-            for &sample in samples {
-                *minimum = minimum.min(sample);
-                *maximum = maximum.max(sample);
-            }
-        }
-        let planes: Vec<&[f32]> = self.block.iter().map(Vec::as_slice).collect();
-        self.waveform.push(&planes);
-        self.meter
-            .add_frames_planar_f32(&planes)
-            .map_err(MeasurementError::Frames)?;
-        let short_term = normalize_loudness(self.meter.loudness_shortterm().map_err(MeasurementError::ShortTerm)?);
-        self.max_short_term_lufs = self.max_short_term_lufs.max(short_term);
-        self.history.push(short_term as f32);
-        for samples in &mut self.block {
-            samples.clear();
-        }
-        Ok(())
-    }
 }
 
 /// Analyzes a single audio file and returns the populated result record.
@@ -277,18 +171,12 @@ fn measure_file(
     on_progress(1.0);
 
     let length_in_samples = decoder.position();
-    let meter = meter.finish()?;
-    let true_peaks = (0..info.channels)
-        .map(|channel| meter.meter.true_peak(channel))
-        .collect::<Result<Vec<f64>, _>>()
-        .map_err(MeasurementError::TruePeak)?;
-    let integrated_lufs = normalize_loudness(meter.meter.loudness_global().map_err(MeasurementError::Integrated)?);
-
+    let output = meter.finish(length_in_samples)?;
     let short_term_loudness = Arc::new(ShortTermLoudnessHistory {
-        values: meter.history,
+        values: output.history,
         sample_rate: f64::from(info.sample_rate),
         length_in_samples,
-        samples_per_point: meter.block_size as u32,
+        samples_per_point: output.samples_per_point,
     });
 
     Ok(DecodeMeasurements {
@@ -297,13 +185,13 @@ fn measure_file(
         channels: info.channels,
         bits_per_sample: info.bits_per_sample,
         length_in_samples,
-        min_samples: meter.min_samples,
-        max_samples: meter.max_samples,
-        true_peaks,
-        integrated_lufs,
-        max_short_term_lufs: meter.max_short_term_lufs,
+        min_samples: output.min_samples,
+        max_samples: output.max_samples,
+        true_peaks: output.true_peaks,
+        integrated_lufs: output.integrated_lufs,
+        max_short_term_lufs: output.max_short_term_lufs,
         short_term_loudness,
-        waveform: meter.waveform.finish(info.sample_rate, length_in_samples),
+        waveform: output.waveform,
     })
 }
 
@@ -436,6 +324,7 @@ mod test_fixture_levels {
 #[cfg(test)]
 mod test_failures {
     use super::*;
+    use crate::record::NEGATIVE_INFINITY_LOUDNESS;
 
     #[test]
     fn silence_has_no_peak_and_no_loudness() {
@@ -482,6 +371,23 @@ mod test_failures {
         assert!(record.has_error());
         assert!(record.error_message.contains("cancelled"), "{}", record.error_message);
         assert!(record.short_term_loudness.is_none());
+    }
+
+    #[test]
+    fn cancellation_during_decoding_fails_without_history() {
+        let checks = std::cell::Cell::new(0);
+        let record = analyze_file(
+            &test_fixtures::fixture("sine_stereo_44100_16.flac"),
+            &|| {
+                checks.set(checks.get() + 1);
+                checks.get() > 3
+            },
+            &mut |_| {},
+        );
+        assert!(checks.get() > 3);
+        assert_eq!(record.error, Some(AnalysisError::Cancelled));
+        assert_eq!(record.error_message, CANCELLED_MESSAGE);
+        assert!(record.short_term_loudness.is_none() && record.waveform.is_none());
     }
 
     #[test]

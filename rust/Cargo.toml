@@ -29,12 +29,15 @@ clap = { version = "4.6.7", features = ["derive"] }
 clap_complete = "4.6.11"
 colored = "3.1.1"
 cpal = "0.18.2"
+criterion = { version = "0.8.2", features = ["html_reports"] }
 crossbeam-channel = "0.5.17"
 crossbeam-queue = "0.3.14"
 csv = "1.4.0"
 ctrlc = "3.5.2"
 dirs = "7.0.0"
 ebur128 = "0.1.11"
+fearless_simd = "1.1.0"
+fearless_simd_macros = "0.1.0"
 indicatif = "0.18.6"
 jiff = "0.2.38"
 libloading = "0.9.0"
@@ -82,6 +85,12 @@ opt-level = 3
 [profile.release]
 lto = true
 codegen-units = 1
+
+# Release with debug symbols for a sampling profiler such as samply.
+# Build with: cargo build --profile profiling --bin audiobatch-rs
+[profile.profiling]
+inherits = "release"
+debug = true
 
 [workspace.lints.rust]
 missing_docs = "warn"

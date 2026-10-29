@@ -596,7 +596,7 @@ fn valid_history_value(value: f32) -> bool {
 }
 
 /// Writes the history with an explicit little-endian header, so the blob reads the same on every platform.
-fn serialize_history(history: &ShortTermLoudnessHistory, record: &AnalysisRecord) -> Option<Vec<u8>> {
+pub(crate) fn serialize_history(history: &ShortTermLoudnessHistory, record: &AnalysisRecord) -> Option<Vec<u8>> {
     if !valid_history_timing(history, record, history.values.len())
         || !history.values.iter().copied().all(valid_history_value)
     {

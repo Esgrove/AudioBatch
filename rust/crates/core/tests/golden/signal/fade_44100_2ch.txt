@@ -1,0 +1,15 @@
+min_sample[0] = -0.48981404 [befac8e8]
+min_sample[1] = -0.49000958 [befae289]
+max_sample[0] = 0.47994968 [3ef5bbf7]
+max_sample[1] = 0.46625888 [3eeeb97c]
+true_peak[0] = 0.5904126763343811 [3fe2e4a920000000]
+true_peak[1] = 0.5772383213043213 [3fe278bc80000000]
+integrated_lufs = -21.480194032336904 [c0357aedff009f12]
+max_short_term_lufs = -30.2308066662539 [c03e3b16254b4261]
+samples_per_point = 4410
+waveform.blob = 8580 bytes [d94fe625a919eb8f]
+history.len = 31
+history[0] = c1f1d8bf c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1
+history[8] = c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1
+history[16] = c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1
+history[24] = c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c1f1d8b1 c2a4beba

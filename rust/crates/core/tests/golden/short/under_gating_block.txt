@@ -1,0 +1,12 @@
+min_sample[0] = -0.4999748 [befffcb2]
+min_sample[1] = -0.4999776 [befffd10]
+max_sample[0] = 0.49999446 [3effff46]
+max_sample[1] = 0.49999234 [3efffeff]
+true_peak[0] = 0.8014308214187622 [3fe9a55240000000]
+true_peak[1] = 0.8163917064666748 [3fea1fe180000000]
+integrated_lufs = -1000.0 [c08f400000000000]
+max_short_term_lufs = -13.402752850920143 [c02ace359f262543]
+samples_per_point = 4800
+waveform.blob = 1232 bytes [1c240161a4251d21]
+history.len = 4
+history[0] = c19b3ee7 c18319bc c16a5898 c15671ad
