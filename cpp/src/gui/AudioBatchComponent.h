@@ -7,6 +7,7 @@
 #pragma once
 
 #include "analysis/AnalysisCache.h"
+#include "gui/ArtworkLoader.h"
 #include "gui/AudioBatchComponentState.h"
 #include "gui/AudioFileTableModel.h"
 #include "gui/AudioPreviewPlayer.h"
@@ -82,6 +83,7 @@ public:
     void fitPreviewToControls();
     void togglePreviewSection();
     void toggleSeratoWaveformColouring();
+    void toggleAlbumArtwork();
     void toggleLoudnessGraph();
     void togglePluginPreview();
     void togglePreviewLatencyCompensation();
@@ -92,6 +94,7 @@ public:
     [[nodiscard]] bool isFileOperationInProgress() const noexcept;
     [[nodiscard]] bool isPreviewSectionExpanded() const noexcept;
     [[nodiscard]] bool isSeratoWaveformColouringEnabled() const noexcept;
+    [[nodiscard]] bool isAlbumArtworkEnabled() const noexcept;
     [[nodiscard]] bool isLoudnessGraphEnabled() const noexcept;
     [[nodiscard]] bool isPluginPreviewEnabled() const noexcept;
     [[nodiscard]] bool isPreviewLatencyCompensated() const noexcept;
@@ -217,6 +220,11 @@ private:
     );
 
     serato::SeratoPreviewLoader::Completion createSeratoPreviewCompletion();
+    ArtworkLoader::Completion createArtworkCompletion();
+
+    void adoptArtwork(const utils::FileIdentity& identity, std::uint64_t generation, juce::Image image);
+    void clearArtwork();
+    void requestArtwork(const juce::File& file, bool forceRefresh = false);
 
     /// Notifies the window when preview command labels or check marks need refreshing.
     std::function<void()> onViewOptionsChanged;
@@ -247,6 +255,12 @@ private:
     /// Its tag worker is stopped explicitly before GUI cleanup,
     /// and it is declared after the cache and the player it uses, so it is destroyed before them.
     PreviewController preview {analysisCache, previewPlayer, createSeratoPreviewCompletion()};
+
+    /// Reads the album artwork of the selected file on its own worker, so it never delays the Serato cue start.
+    /// Stopped explicitly before GUI cleanup.
+    ArtworkLoader artworkLoader {createArtworkCompletion()};
+    /// The album artwork of the selected file.
+    ArtworkState artwork;
 
     /// The known plugins, created in the constructor once the settings storage is set up.
     /// Declared before the chain, which creates its processors through it.

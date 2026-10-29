@@ -35,6 +35,7 @@ constexpr auto waveformColoursKey {"seratoWaveformColours"};
 constexpr auto loudnessGraphKey {"loudnessGraphEnabled"};
 constexpr auto loudnessMinimumKey {"loudnessGraphMinimum"};
 constexpr auto loudnessMaximumKey {"loudnessGraphMaximum"};
+constexpr auto albumArtworkKey {"showAlbumArtwork"};
 /// Most digits a loudness axis limit can have, enough for the whole LUFS values from -60 to +6.
 constexpr int maximumLoudnessLimitDigits {2};
 
@@ -156,6 +157,7 @@ AudioPreviewPreferences loadAudioPreviewPreferences(const juce::PropertiesFile& 
         .playFromFirstCuePoint = settings.getBoolValue(playFromFirstCuePointKey, false),
         .seratoWaveformColours = settings.getBoolValue(waveformColoursKey, true),
         .loudnessGraphEnabled = settings.getBoolValue(loudnessGraphKey, false),
+        .showAlbumArtwork = settings.getBoolValue(albumArtworkKey, true),
     };
     // PropertiesFile's numeric conversion accepts a numeric prefix, so parse the complete saved text.
     const auto minimum = readLoudnessLimit(
@@ -193,6 +195,7 @@ bool saveAudioPreviewPreferences(juce::PropertiesFile& settings, const AudioPrev
     settings.setValue(loudnessGraphKey, preferences.loudnessGraphEnabled);
     settings.setValue(loudnessMinimumKey, preferences.loudnessGraphMinimum);
     settings.setValue(loudnessMaximumKey, preferences.loudnessGraphMaximum);
+    settings.setValue(albumArtworkKey, preferences.showAlbumArtwork);
     if (!settings.saveIfNeeded()) {
         utils::logError(
             "Could not save audio preview preferences to {}", settings.getFile().getFullPathName().quoted()
@@ -355,6 +358,7 @@ void AudioSettingsComponent::preferencesChanged()
             .loudnessGraphEnabled = loudnessGraphToggle.getToggleState(),
             .loudnessGraphMinimum = minimum,
             .loudnessGraphMaximum = maximum,
+            .showAlbumArtwork = displayedPreferences.showAlbumArtwork,
         });
     }
 }

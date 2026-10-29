@@ -16,6 +16,9 @@ std::unique_ptr<juce::UnitTest> createAnalysisTests();
 /// Creates the suite that checks the plans, results, and replaced runs of the analysis coordinator.
 std::unique_ptr<juce::UnitTest> createAnalysisCoordinatorTests();
 
+/// Creates the suite that checks artwork extraction, bounded thumbnail decoding, and stale artwork rejection.
+std::unique_ptr<juce::UnitTest> createArtworkTests();
+
 /// Creates the suite that checks the blocked reasons and progress of the background work of the main view.
 std::unique_ptr<juce::UnitTest> createBackgroundWorkTests();
 

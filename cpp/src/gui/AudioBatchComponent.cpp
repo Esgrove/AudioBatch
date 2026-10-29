@@ -6,6 +6,7 @@
 
 #include "analysis/AudioAnalysisFormatting.h"
 #include "analysis/AudioAnalysisTypes.h"
+#include "gui/ArtworkLoader.h"
 #include "gui/AudioBatchComponentConstants.h"
 #include "gui/AudioFileTableModel.h"
 #include "gui/BackgroundWorkController.h"
@@ -188,6 +189,23 @@ serato::SeratoPreviewLoader::Completion AudioBatchComponent::createSeratoPreview
         };
 }
 
+/// Creates the completion for the artwork worker, which adopts the thumbnail on the message thread
+/// while this component still exists.
+/// Called from a member initializer, so it only captures a safe pointer to this component.
+ArtworkLoader::Completion AudioBatchComponent::createArtworkCompletion()
+{
+    return [safeThis
+            = SafePointer(this)](utils::FileIdentity identity, const std::uint64_t generation, juce::Image image) {
+        juce::MessageManager::callAsync(
+            [safeThis, artworkIdentity = std::move(identity), generation, thumbnail = std::move(image)] {
+                if (safeThis != nullptr) {
+                    safeThis->adoptArtwork(artworkIdentity, generation, thumbnail);
+                }
+            }
+        );
+    };
+}
+
 /// Creates the UI, opens the analysis cache, and starts the initial scan.
 AudioBatchComponent::AudioBatchComponent() :
     fileTableModel(
@@ -264,6 +282,7 @@ AudioBatchComponent::~AudioBatchComponent()
     fileActivity.clearAllActive();
     utils::logDebug("Application shutdown: stopping preview metadata worker");
     preview.stop();
+    artworkLoader.cancelAndWait();
     // A plugin job that hangs makes the shutdown end the process, so the chain is saved first.
     liveChain->saveChain();
     utils::logDebug("Application shutdown: stopping analysis, normalization, and plugin processing workers");

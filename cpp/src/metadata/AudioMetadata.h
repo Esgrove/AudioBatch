@@ -7,6 +7,7 @@
 
 #include <juce_core/juce_core.h>
 
+#include <cstddef>
 #include <vector>
 
 namespace audiobatch
@@ -58,7 +59,19 @@ struct AudioMetadata {
     bool hasId3Tag {false};
 };
 
+/// Limits of an artwork-only read, so a file with huge or many pictures cannot make the preview hold them all.
+struct ArtworkReadLimits {
+    /// Largest encoded picture that is kept, larger ones are skipped.
+    std::size_t maximumBytes {std::size_t {16} * 1024 * 1024};
+    /// Most pictures returned, front covers first.
+    std::size_t maximumCount {4};
+};
+
 [[nodiscard]] bool copyMetadata(const juce::File& sourceFile, const juce::File& destinationFile);
+[[nodiscard]] std::vector<MetadataPicture> readArtworkCandidates(
+    const juce::File& file,
+    const ArtworkReadLimits& limits = {}
+);
 bool readMetadata(const juce::File& file, AudioMetadata& outMetadata);
 bool writeMetadata(const juce::File& file, const AudioMetadata& metadata);
 }  // namespace audiobatch

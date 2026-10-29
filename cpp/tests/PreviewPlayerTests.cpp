@@ -13,8 +13,10 @@
 #include "TestSuites.h"
 
 #include <cmath>
+#include <functional>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace audiobatch::tests
@@ -550,6 +552,43 @@ private:
     /// Uses an isolated settings file to verify unset defaults, persistence, and actual continuation policy.
     void testPreferences()
     {
+        beginTest("Audio Settings changes keep the menu-only album artwork choice");
+        {
+            juce::AudioDeviceManager manager;
+            AudioSettingsComponent settingsComponent(manager);
+            AudioPreviewPreferences shown;
+            shown.showAlbumArtwork = false;
+            settingsComponent.setPreferences(shown);
+            std::optional<AudioPreviewPreferences> reported;
+            settingsComponent.setPreferencesChangedCallback([&reported](const AudioPreviewPreferences& changed) {
+                reported = changed;
+            });
+            juce::ToggleButton* coloursToggle = nullptr;
+            std::function<void(juce::Component&)> findToggle = [&](juce::Component& parent) {
+                for (auto* child : parent.getChildren()) {
+                    if (auto* toggle = dynamic_cast<juce::ToggleButton*>(child);
+                        toggle != nullptr && toggle->getButtonText() == "Serato waveform colours")
+                    {
+                        coloursToggle = toggle;
+                        return;
+                    }
+                    findToggle(*child);
+                }
+            };
+            findToggle(settingsComponent);
+            expect(coloursToggle != nullptr);
+            if (coloursToggle != nullptr && coloursToggle->onClick) {
+                // The test runner has no dispatch loop, so the click is applied the way the button would apply it.
+                coloursToggle->setToggleState(false, juce::dontSendNotification);
+                coloursToggle->onClick();
+            }
+            expect(reported.has_value());
+            if (reported) {
+                expect(!reported->showAlbumArtwork);
+                expect(!reported->seratoWaveformColours);
+            }
+        }
+
         beginTest("Preferences round-trip without changing their unset defaults or auto-starting stopped playback");
         const TemporaryDirectory temporary;
         juce::PropertiesFile::Options options;
@@ -567,6 +606,7 @@ private:
             expect(!defaults.loudnessGraphEnabled);
             expectEquals(defaults.loudnessGraphMinimum, -24.0);
             expectEquals(defaults.loudnessGraphMaximum, -4.0);
+            expect(defaults.showAlbumArtwork);
             const AudioPreviewPreferences changed {
                 .pluginChainEnabled = true,
                 .latencyCompensated = false,
@@ -576,6 +616,7 @@ private:
                 .loudnessGraphEnabled = true,
                 .loudnessGraphMinimum = -32.0,
                 .loudnessGraphMaximum = -2.0,
+                .showAlbumArtwork = false,
             };
             expect(saveAudioPreviewPreferences(settings, changed));
         }
@@ -587,6 +628,7 @@ private:
             expect(saved.continuePlayback);
             expect(saved.playFromFirstCuePoint);
             expect(!saved.seratoWaveformColours);
+            expect(!saved.showAlbumArtwork);
             expect(saved.loudnessGraphEnabled);
             expectEquals(saved.loudnessGraphMinimum, -32.0);
             expectEquals(saved.loudnessGraphMaximum, -2.0);

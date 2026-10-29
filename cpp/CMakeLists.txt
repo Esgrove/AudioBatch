@@ -453,6 +453,8 @@ target_sources(
     AudioBatch
     PRIVATE
         ${AUDIOBATCH_CORE_SOURCES}
+        "src/gui/ArtworkLoader.cpp"
+        "src/gui/ArtworkLoader.h"
         "src/gui/AudioBatchComponent.cpp"
         "src/gui/AudioBatchComponent.h"
         "src/gui/AudioBatchComponentActions.cpp"
@@ -744,6 +746,8 @@ if(BUILD_TESTING)
         PRIVATE
             ${AUDIOBATCH_CORE_SOURCES}
             ${AUDIOBATCH_CLI_SOURCES}
+            "src/gui/ArtworkLoader.cpp"
+            "src/gui/ArtworkLoader.h"
             "src/gui/AudioPreviewPlayer.cpp"
             "src/gui/AudioPreviewPlayer.h"
             "src/gui/AudioBatchComponentState.h"
@@ -792,6 +796,7 @@ if(BUILD_TESTING)
             "src/serato/SeratoWaveformColouring.h"
             "tests/AnalysisCoordinatorTests.cpp"
             "tests/AnalysisTests.cpp"
+            "tests/ArtworkTests.cpp"
             "tests/BackgroundWorkTests.cpp"
             "tests/CacheTests.cpp"
             "tests/CliTests.cpp"

@@ -59,6 +59,7 @@ public:
     static std::vector<AudioInfoRow> formatRows(const AudioAnalysisRecord& record);
 
     void clear();
+    void setArtwork(const juce::Image& image);
     void setCompact(bool compact);
     void setWide(bool wide);
     void showRecord(
@@ -68,12 +69,14 @@ public:
     );
 
     [[nodiscard]] int getPreferredHeight() const;
+    [[nodiscard]] bool hasArtwork() const noexcept;
 
     void paint(juce::Graphics& graphics) override;
     void resized() override;
 
 private:
     [[nodiscard]] int getErrorHeight(int width) const;
+    [[nodiscard]] int getHeaderHeight() const;
 
     [[nodiscard]] int getDetailLineCount() const;
 
@@ -84,6 +87,8 @@ private:
     juce::Label filenameLabel {"File"};
     /// The part of the file name after " - ", shown only for such names.
     juce::Label titleLabel {"Title"};
+    /// The embedded album artwork beside the file name, hidden when the file has none or the option is off.
+    juce::ImageComponent artworkImage {"Album artwork"};
     /// The status of a file that is not analyzed yet or failed, hidden otherwise.
     juce::Label statusLabel {"Status"};
     /// The cards of the peak, true peak, maximum short-term loudness, and integrated loudness.
