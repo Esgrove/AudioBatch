@@ -328,7 +328,8 @@ and reports samples beyond full scale, which saturate.
 Both test suites check processing against the expected outputs of the JUCE test plugin.
 
 **Committing.**
-`AiffWriter` in `core/src/aiff.rs` writes 8, 16, or 24-bit PCM and patches the header sizes in `finish`.
+`AiffWriter` in `core/src/aiff.rs` writes 16 or 24-bit PCM and patches the header sizes in `finish`.
+Normalization raises source depths below 16 bits to 16-bit output.
 It converts floats the way JUCE does, so both applications write the same sample values.
 Both operations render into a hidden temporary file from `create_temporary_output` in the destination folder,
 copy the tags and Serato data onto it with `copy_metadata`, and check it with `validate_written_audio`.

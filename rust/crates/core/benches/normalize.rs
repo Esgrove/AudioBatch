@@ -68,7 +68,7 @@ fn bench_render(criterion: &mut Criterion) {
     let frames = 44_100 * SECONDS;
     let planes = generate(SignalKind::MusicLike, 44_100, 2, frames);
     group.throughput(Throughput::Elements(frames as u64));
-    for bits in [16, 24, 32] {
+    for bits in [16, 24] {
         group.bench_with_input(BenchmarkId::new("gain_and_aiff", bits), &planes, |bencher, planes| {
             bencher.iter(|| render(black_box(planes), bits));
         });

@@ -271,7 +271,7 @@ pub fn normalization_gain(
 
 /// Returns the AIFF bit depth for output written from the analyzed source.
 ///
-/// Keeps the source depth when AIFF supports it, uses 16 bits for MP3 sources,
+/// Keeps the source depth when AIFF supports it, raises lower depths to 16 bits, uses 16 bits for MP3 sources,
 /// and otherwise falls back to the highest supported depth so no precision is lost.
 #[must_use]
 pub(crate) fn output_bit_depth(record: &AnalysisRecord) -> u32 {
@@ -282,6 +282,7 @@ pub(crate) fn output_bit_depth(record: &AnalysisRecord) -> u32 {
     } else {
         0
     };
+    let preferred = if preferred > 0 { preferred.max(16) } else { preferred };
     if SUPPORTED_BIT_DEPTHS.contains(&preferred) {
         preferred
     } else {
@@ -661,6 +662,9 @@ mod test_output_files {
 
     #[test]
     fn keeps_supported_depths_and_falls_back_to_24() {
+        for bits in 1..16 {
+            assert_eq!(output_bit_depth(&record_with_depth("a.wav", bits)), 16);
+        }
         assert_eq!(output_bit_depth(&record_with_depth("a.wav", 16)), 16);
         assert_eq!(output_bit_depth(&record_with_depth("a.wav", 24)), 24);
         assert_eq!(output_bit_depth(&record_with_depth("a.wav", 32)), 24);
