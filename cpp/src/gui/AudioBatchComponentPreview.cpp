@@ -63,6 +63,72 @@ bool AudioBatchComponent::isPreviewLatencyCompensated() const noexcept
     return previewPreferences.latencyCompensated;
 }
 
+/// Reports whether the embedded album artwork is shown beside the file name.
+bool AudioBatchComponent::isAlbumArtworkEnabled() const noexcept
+{
+    return previewPreferences.showAlbumArtwork;
+}
+
+/// Shows or hides the album artwork.
+/// Disabling clears the thumbnail and drops pending work, and enabling reads the selected file's artwork at once.
+void AudioBatchComponent::toggleAlbumArtwork()
+{
+    auto preferences = previewPreferences;
+    preferences.showAlbumArtwork = !preferences.showAlbumArtwork;
+    setPreviewPreferences(preferences);
+}
+
+/// Requests the album artwork of the displayed file, unless this version was already requested.
+/// A forced refresh reads it again, for a file rewritten under the same path.
+/// While the option is off, it only remembers the file, so enabling it later can request the artwork.
+void AudioBatchComponent::requestArtwork(const juce::File& file, const bool forceRefresh)
+{
+    if (artwork.file != file) {
+        clearArtwork();
+        artwork.file = file;
+    }
+    if (!previewPreferences.showAlbumArtwork || !file.existsAsFile()) {
+        return;
+    }
+    if (!forceRefresh && artwork.requested.has_value() && artwork.requested->matches(file)) {
+        return;
+    }
+    artwork.requested.emplace(file);
+    artwork.image = {};
+    artwork.completed = false;
+    previewWorkspace.audioInfo.setArtwork({});
+    if (artworkLoader.request(file) == 0) {
+        artwork.completed = true;
+    }
+}
+
+/// Drops the shown artwork and invalidates pending work, keeping the displayed file.
+void AudioBatchComponent::clearArtwork()
+{
+    artworkLoader.cancel();
+    artwork.requested.reset();
+    artwork.image = {};
+    artwork.completed = false;
+    previewWorkspace.audioInfo.setArtwork({});
+}
+
+/// Adopts a decoded thumbnail only while the request is current, the option is on,
+/// and the file is still the displayed and unchanged one.
+/// A result with no artwork is remembered, so later panel refreshes do not read the file again.
+void AudioBatchComponent::adoptArtwork(
+    const utils::FileIdentity& identity,
+    const std::uint64_t generation,
+    juce::Image image
+)
+{
+    if (!previewPreferences.showAlbumArtwork || !artworkLoader.canAdopt(identity, generation, artwork.file)) {
+        return;
+    }
+    artwork.image = std::move(image);
+    artwork.completed = true;
+    previewWorkspace.audioInfo.setArtwork(artwork.image);
+}
+
 /// Reports whether active playback should continue after a user selects a different file.
 bool AudioBatchComponent::isContinuePreviewPlaybackEnabled() const noexcept
 {
@@ -116,6 +182,13 @@ void AudioBatchComponent::setPreviewPreferences(const AudioPreviewPreferences& p
     }
     const auto previous = previewPreferences;
     previewPreferences = preferences;
+    if (previous.showAlbumArtwork != preferences.showAlbumArtwork) {
+        if (preferences.showAlbumArtwork) {
+            requestArtwork(artwork.file, true);
+        } else {
+            clearArtwork();
+        }
+    }
     if (!preferences.playFromFirstCuePoint) {
         previewPlayer.completeInitialPosition(0.0);
     }
@@ -160,6 +233,10 @@ void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
     }
     const auto seratoData = record.file == preview.getFile() ? preview.getSeratoData() : nullptr;
     previewWorkspace.audioInfo.showRecord(record, fileActivity.getActiveLabel(record.fullPath), seratoData.get());
+    // Follows the displayed record rather than the loaded preview,
+    // so a pending or failed file whose audio cannot load still shows its artwork.
+    requestArtwork(record.file);
+    previewWorkspace.audioInfo.setArtwork(previewPreferences.showAlbumArtwork ? artwork.image : juce::Image());
 }
 
 /// Adopts only complete analysis of the unchanged file backing the loaded preview,
@@ -317,6 +394,7 @@ void AudioBatchComponent::clearCurrentAudioPreview()
 {
     preview.clear();
     clearPreviewDisplay();
+    artwork.file = juce::File();
 }
 
 /// Stops playback, closes the preview file, and clears the waveform, keeping the current file selected,
@@ -327,13 +405,15 @@ void AudioBatchComponent::releasePreviewPlayback()
     clearPreviewDisplay();
 }
 
-/// Clears the waveform, the Serato overlays, and the info panel, and disables the play button,
+/// Clears the waveform, the Serato overlays, the info panel, and the artwork, and disables the play button,
 /// after the preview was released or failed to load.
+/// The next info panel update requests the artwork of the displayed file again.
 void AudioBatchComponent::clearPreviewDisplay()
 {
     previewWorkspace.thumbnail.setSeratoOverview({});
     previewWorkspace.thumbnail.setSeratoMarkers({});
     previewWorkspace.audioInfo.clear();
+    clearArtwork();
     previewWorkspace.thumbnail.setURL(juce::URL());
     previewWorkspace.setPlaybackState(false, false);
 }

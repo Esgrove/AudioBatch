@@ -158,6 +158,11 @@ AudioInfoPanel::AudioInfoPanel()
     errorLabel.setJustificationType(juce::Justification::topLeft);
     addAndMakeVisible(filenameLabel);
     addChildComponent(titleLabel);
+    // Fits the whole picture into the slot with its aspect ratio, scaling the 96 px thumbnail down to 48 px.
+    artworkImage.setImagePlacement(juce::RectanglePlacement::centred);
+    artworkImage.setInterceptsMouseClicks(false, false);
+    artworkImage.setDescription("Embedded album artwork of the selected file");
+    addChildComponent(artworkImage);
     addAndMakeVisible(statusLabel);
     for (auto& metric : metrics) {
         addAndMakeVisible(metric);
@@ -192,7 +197,33 @@ void AudioInfoPanel::clear()
         metric.setValue("-");
     }
     detailsViewport.setViewPosition(0, 0);
+    artworkImage.setImage({});
     setRows({});
+}
+
+/// Shows the album artwork beside the file name, or hides it and reclaims its space for an invalid image.
+/// Only relays out this panel, so the workspace divider never moves when artwork arrives.
+void AudioInfoPanel::setArtwork(const juce::Image& image)
+{
+    if (!image.isValid() && !hasArtwork()) {
+        return;
+    }
+    artworkImage.setImage(image);
+    resized();
+    repaint();
+}
+
+/// Returns true while album artwork is shown or ready to show beside the file name.
+bool AudioInfoPanel::hasArtwork() const noexcept
+{
+    return artworkImage.getImage().isValid();
+}
+
+/// Returns the height of the file name and title rows, raised to the artwork size while artwork is shown.
+int AudioInfoPanel::getHeaderHeight() const
+{
+    const auto textHeight = layout::information::filenameHeight * (hasTitle ? 2 : 1);
+    return hasArtwork() ? juce::jmax(textHeight, layout::information::artworkSize) : textHeight;
 }
 
 /// Reflows the existing metrics without changing their data or the details viewport's scroll position.
@@ -328,8 +359,8 @@ int AudioInfoPanel::getPreferredHeight() const
     const auto summaryHeight = wideMode
         ? layout::information::summaryHeight - layout::information::metricHeight - layout::sectionSpacing
         : layout::information::summaryHeight;
-    return layout::information::verticalPadding * 2 + summaryHeight
-        + (hasTitle ? layout::information::filenameHeight : 0) + (hasStatus ? layout::information::statusHeight : 0)
+    return layout::information::verticalPadding * 2 + summaryHeight - layout::information::filenameHeight
+        + getHeaderHeight() + (hasStatus ? layout::information::statusHeight : 0)
         + getDetailLineCount() * layout::information::rowHeight
         + getErrorHeight(getWidth() - layout::information::horizontalPadding * 2 - layout::scrollBarThickness);
 }
@@ -384,6 +415,7 @@ void AudioInfoPanel::resized()
 {
     filenameLabel.setVisible(!compactMode);
     titleLabel.setVisible(!compactMode && hasTitle);
+    artworkImage.setVisible(!compactMode && hasArtwork());
     statusLabel.setVisible(!compactMode && hasStatus);
     detailsViewport.setVisible(!compactMode);
     if (compactMode) {
@@ -400,8 +432,18 @@ void AudioInfoPanel::resized()
     }
     auto bounds
         = getLocalBounds().reduced(layout::information::horizontalPadding, layout::information::verticalPadding);
-    filenameLabel.setBounds(bounds.removeFromTop(layout::information::filenameHeight));
-    titleLabel.setBounds(bounds.removeFromTop(titleLabel.isVisible() ? layout::information::filenameHeight : 0));
+    auto header = bounds.removeFromTop(getHeaderHeight());
+    if (artworkImage.isVisible()) {
+        artworkImage.setBounds(
+            header.removeFromLeft(layout::information::artworkSize)
+                .withSizeKeepingCentre(layout::information::artworkSize, layout::information::artworkSize)
+        );
+        header.removeFromLeft(layout::information::artworkSpacing);
+    }
+    const auto textHeight = layout::information::filenameHeight * (hasTitle ? 2 : 1);
+    auto text = header.withSizeKeepingCentre(header.getWidth(), textHeight);
+    filenameLabel.setBounds(text.removeFromTop(layout::information::filenameHeight));
+    titleLabel.setBounds(text.removeFromTop(titleLabel.isVisible() ? layout::information::filenameHeight : 0));
     statusLabel.setBounds(bounds.removeFromTop(statusLabel.isVisible() ? layout::information::statusHeight : 0));
     bounds.removeFromTop(layout::sectionSpacing);
     if (wideMode) {

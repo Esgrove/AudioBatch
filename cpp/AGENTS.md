@@ -135,8 +135,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       which share main-view filters, ranges, and menu ids
       in `AudioBatchComponentConstants.h` and UI geometry in `GuiLayout.h`.
       Put new member functions in the file of their topic.
-      `AudioBatchComponentState.h` holds the progress state of the analysis run and of the normalization
-      and plugin processing passes.
+      `AudioBatchComponentState.h` holds the preview preferences, the album artwork state,
+      and the progress state of the analysis run and of the normalization and plugin processing passes.
     - `BackgroundWorkController.*` owns the analysis, normalization, and plugin processing coordinators
       and runs one pass at a time.
       It moves their callbacks to the message thread and reports the results to the main component,
@@ -152,6 +152,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       The chain editor rows refer to their slot by `PluginSlotId` instead of by position.
     - `PreviewController.*` loads and releases the previewed file in that player and reads its Serato tags.
       Its state is a variant of no preview, a released preview that keeps its file, and a loaded preview.
+    - `ArtworkLoader.*` reads the album artwork of the selected file on its own worker,
+      checks the image header before decoding a bounded thumbnail, and drops results of replaced or changed files.
     - `ResultsModel.*` holds the rows of the results table with an index from path to row,
       and merges, removes, and sorts them.
       `AudioFileTableModel.*` shows those rows in the sortable table, and `ResultsSorting.*` compares and sorts records.

@@ -1,4 +1,5 @@
-/// Preview preferences and the state of the background work that AudioBatchComponent runs.
+/// Preview preferences, the album artwork state,
+/// and the state of the background work that AudioBatchComponent runs.
 /// Declares BackgroundWork, the variant of the idle state, an analysis run, and a normalization or processing pass,
 /// which never run at the same time.
 /// Also declares AnalysisResultMessage for results waiting to be merged.
@@ -6,9 +7,11 @@
 #pragma once
 
 #include "analysis/AudioAnalysisTypes.h"
+#include "utils/FileUtils.h"
 
 #include <JuceHeader.h>
 
+#include <optional>
 #include <set>
 #include <variant>
 
@@ -42,6 +45,21 @@ struct AudioPreviewPreferences {
     double loudnessGraphMinimum {defaultLoudnessGraphMinimum};
     /// Top of the loudness axis in LUFS.
     double loudnessGraphMaximum {defaultLoudnessGraphMaximum};
+    /// True to show the embedded album artwork beside the file name.
+    /// Only the Options menu changes it, so Audio Settings carries it over unchanged.
+    bool showAlbumArtwork {true};
+};
+
+/// The album artwork of the selected file, requested once per file version.
+struct ArtworkState {
+    /// The selected file whose artwork is shown or requested, tracked even while the option is off.
+    juce::File file;
+    /// The file version the artwork was requested for, so the panel refreshes reuse it instead of reading again.
+    std::optional<utils::FileIdentity> requested;
+    /// The decoded thumbnail, invalid while pending or when the file has no usable artwork.
+    juce::Image image;
+    /// True once the request for the requested version completed, including with no artwork.
+    bool completed {false};
 };
 
 /// What an analysis run does with the rows already in the table.

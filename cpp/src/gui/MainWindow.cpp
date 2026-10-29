@@ -54,6 +54,7 @@ enum class CommandId : std::uint8_t {
     togglePreviewSection,
     toggleSeratoWaveformColouring,
     toggleLoudnessGraph,
+    toggleAlbumArtwork,
     togglePluginPreview,
     togglePreviewCompensation,
     toggleContinuePlayback,
@@ -240,6 +241,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             addCommandItem(menu, commandManager, CommandId::togglePreviewSection);
             addCommandItem(menu, commandManager, CommandId::toggleSeratoWaveformColouring);
             addCommandItem(menu, commandManager, CommandId::toggleLoudnessGraph);
+            addCommandItem(menu, commandManager, CommandId::toggleAlbumArtwork);
             addCommandItem(menu, commandManager, CommandId::togglePluginPreview);
             addCommandItem(menu, commandManager, CommandId::togglePreviewCompensation);
             addCommandItem(menu, commandManager, CommandId::toggleContinuePlayback);
@@ -279,6 +281,7 @@ juce::PopupMenu MainWindow::getMenuForIndex(const int topLevelMenuIndex, const j
             addCommandItem(menu, commandManager, CommandId::togglePreviewSection);
             addCommandItem(menu, commandManager, CommandId::toggleSeratoWaveformColouring);
             addCommandItem(menu, commandManager, CommandId::toggleLoudnessGraph);
+            addCommandItem(menu, commandManager, CommandId::toggleAlbumArtwork);
             addCommandItem(menu, commandManager, CommandId::togglePluginPreview);
             addCommandItem(menu, commandManager, CommandId::togglePreviewCompensation);
             addCommandItem(menu, commandManager, CommandId::toggleContinuePlayback);
@@ -392,6 +395,11 @@ void MainWindow::getCommandInfo(const juce::CommandID commandID, juce::Applicati
                 "Show Loudness Graph", "Overlay source-file short-term loudness on the waveform", "Options", 0
             );
             result.setTicked(audioBatch.isLoudnessGraphEnabled());
+            result.setActive(!blockedByDialog);
+            break;
+        case CommandId::toggleAlbumArtwork:
+            result.setInfo("Show Album Artwork", "Show the embedded album artwork beside the file name", "Options", 0);
+            result.setTicked(audioBatch.isAlbumArtworkEnabled());
             result.setActive(!blockedByDialog);
             break;
         case CommandId::togglePluginPreview:
@@ -533,6 +541,9 @@ bool MainWindow::perform(const InvocationInfo& info)
     switch (*command) {
         case CommandId::toggleLoudnessGraph:
             getAudioBatch().toggleLoudnessGraph();
+            return true;
+        case CommandId::toggleAlbumArtwork:
+            getAudioBatch().toggleAlbumArtwork();
             return true;
         case CommandId::togglePluginPreview:
             getAudioBatch().togglePluginPreview();

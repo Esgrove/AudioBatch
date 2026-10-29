@@ -169,6 +169,10 @@ constexpr int detailFieldWidth {60};
 constexpr int rowHeight {20};
 constexpr int verticalPadding {8};
 constexpr int horizontalPadding {10};
+/// Side of the square album artwork slot beside the file name, in logical pixels.
+constexpr int artworkSize {48};
+/// Gap between the artwork and the file name.
+constexpr int artworkSpacing {8};
 /// The optional pending/error status row is added separately.
 constexpr int summaryHeight {filenameHeight + sectionSpacing + metricHeight * 2 + sectionSpacing * 2};
 }  // namespace information

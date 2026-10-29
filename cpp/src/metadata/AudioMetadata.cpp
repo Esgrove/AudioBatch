@@ -450,6 +450,32 @@ bool applyMetadata(
 }
 }  // namespace
 
+/// Reads only the embedded pictures of a file for display, without its text tags or opaque ID3v2 frames.
+/// Front covers come first, then the other pictures in tag order.
+/// Pictures over the byte limit are skipped, and at most the given number of pictures are returned.
+/// Returns an empty list for a missing file, a file TagLib cannot open, or a file without pictures.
+std::vector<MetadataPicture> readArtworkCandidates(const juce::File& file, const ArtworkReadLimits& limits)
+{
+    if (!file.existsAsFile() || limits.maximumCount == 0) {
+        return {};
+    }
+    const TagLib::FileRef fileRef(utils::tagLibFileName(file.getFullPathName()), false);
+    if (fileRef.isNull() || fileRef.file() == nullptr) {
+        return {};
+    }
+    auto pictures = readPictures(*fileRef.file());
+    std::erase_if(pictures, [&limits](const MetadataPicture& picture) {
+        return picture.data.getSize() > limits.maximumBytes;
+    });
+    std::ranges::stable_partition(pictures, [](const MetadataPicture& picture) {
+        return picture.pictureType == "Front Cover";
+    });
+    if (pictures.size() > limits.maximumCount) {
+        pictures.resize(limits.maximumCount);
+    }
+    return pictures;
+}
+
 /// Reads text properties, pictures and opaque ID3v2 frames from the given file.
 /// Returns true on success. Output is cleared on entry.
 bool readMetadata(const juce::File& file, AudioMetadata& outMetadata)
