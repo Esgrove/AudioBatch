@@ -1,7 +1,7 @@
 //! Shared core of `AudioBatch`, used by both the CLI and the GUI.
 //!
-//! Decodes audio files with symphonia, measures sample peak, true peak, and EBU R128 loudness with ebur128,
-//! builds the waveform overview in the same decode pass, and caches the results in SQLite.
+//! Decodes audio files with symphonia, measures true peak with SIMD and EBU R128 loudness with ebur128,
+//! builds the waveform overview and source overload history in the same decode pass, and caches the results in SQLite.
 //! Normalizes analyzed files to a peak or loudness target as AIFF, carrying their tags and Serato data over.
 //! `OperationResult` reports what normalization and plugin processing did to each file.
 
@@ -23,10 +23,13 @@ pub mod loudness;
 pub mod metadata;
 #[doc(hidden)]
 pub mod meter;
+#[cfg(test)]
+mod meter_overload_tests;
 pub mod normalize;
 pub mod normalize_coordinator;
 pub mod operation;
 pub mod output_file;
+pub mod overload;
 pub mod record;
 #[doc(hidden)]
 pub mod signals;

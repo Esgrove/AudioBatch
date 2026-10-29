@@ -818,6 +818,13 @@ mod test_normalize_file {
         assert_eq!(output.sample_rate, 44_100);
         assert_eq!(output.bits_per_sample, 16);
         assert_eq!(output.length_in_samples, record.length_in_samples);
+        assert!(
+            output
+                .overloads
+                .as_ref()
+                .expect("reanalyzed output overloads")
+                .matches_stream(output.sample_rate, output.length_in_samples, output.channels,)
+        );
         let peak = gain_to_decibels(f64::from(output.overall_peak.abs()), DECIBEL_FLOOR);
         assert!(peak.abs() < 0.01, "{peak}");
         assert_eq!(*disposed.lock().expect("lock"), vec!["song.wav".to_string()]);

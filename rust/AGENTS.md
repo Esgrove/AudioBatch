@@ -70,6 +70,7 @@ and every crate inherits them with `.workspace = true`.
     reading the MP4 edit list in `decode/gapless.rs`, which symphonia parses but never applies,
     and leaving out the MP3 synthesis delay when no LAME header states the encoder delay.
   - `record.rs` holds `AnalysisRecord`, its status, and the short-term loudness history.
+    `overload.rs` builds and validates bounded per-channel source overload flags and their independent cache blob.
   - `waveform.rs` holds the min/max peak overview and its resolution levels.
   - `discovery.rs` expands input paths into the sorted list of supported audio files.
   - `cache.rs` is the SQLite result cache, with its Serato tag table in `cache/serato.rs`,

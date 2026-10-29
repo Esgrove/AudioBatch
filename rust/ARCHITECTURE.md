@@ -291,8 +291,10 @@ while three failures in a row stop the pass, so no pass works on truncated audio
 
 **Measurements.**
 `BlockMeter` regroups the chunks into blocks of a tenth of a second, one per short-term loudness point.
+Complete aligned blocks borrow decoder planes, while incomplete or silence-padded blocks reuse sample buffers.
+Plane references use fixed storage for the meter's maximum 64 channels.
 Each block goes into an `ebur128` meter with integrated and short-term modes,
-into the true peak meter, the per-channel sample extremes, and the `WaveformBuilder`.
+into the true peak meter, the per-channel sample extremes, the `WaveformBuilder`, and source overload history.
 A mono file is measured as dual mono, so it reads the same loudness as the same content in stereo.
 
 `loudness/true_peak.rs` measures true peak on every architecture with `fearless_simd`.
@@ -307,7 +309,8 @@ Tests compare the selected hardware backend and a forced scalar fallback with th
 The same SIMD path runs on x86 without an opt-in or reference fallback.
 The safe SIMD kernel leaves the caller's floating point environment unchanged.
 Ebur128 temporarily enables flush to zero on x86 with SSE2,
-so exact reference equality for arithmetic underflows is a known validation gap.
+and a focused x86 test demonstrates different arithmetic-underflow results.
+Windows execution and timings remain a separate validation pass.
 
 Integrated and short-term loudness keep the reference's sample summation order.
 A rolling sum of block energies would change the exact short-term history, maximum, and cache blobs,
@@ -318,9 +321,22 @@ The benchmark commands, profiling breakdown, and validation limits are in [Analy
 and `WaveformOverview` keeps them quantized to 8 bits with coarser levels for drawing.
 The Serato Overview tag only colours the waveform, while its shape comes from the decoded audio.
 
+`overload.rs` records independent sample-over and true-peak-over bits for each actual source channel.
+Sample flags come from block-local decoded extrema, while true peak uses the last nonempty push's maxima,
+including interpolation history without resetting the cumulative peaks or flushing an EOF tail.
+Exactly full scale is not an overload.
+Adjacent flag buckets merge with bitwise OR when their count would exceed 8192,
+and future blocks accumulate at the increased stride.
+The history retains rate, decoded length, channel count, and a validated power-of-two block stride.
+A present all-clear history is distinct from missing analysis.
+These are source measurements independent of preview gain or plugins, ready for waveform warning presentation.
+
 **The cache.**
 `AnalysisCache` in `core/src/cache.rs` keeps one SQLite row per path,
-with the levels, the loudness history and waveform as blobs, and the user's custom gain.
+with the levels, loudness history, waveform and overload history as independent blobs, and the user's custom gain.
+Successful rows require valid overload history matching their decoded stream.
+Older rows or missing or malformed history trigger reanalysis through an additive migration and analysis version gate.
+A refill retains same-identity custom gains, including explicit clears, and leaves Serato rows untouched.
 A row holds while the file keeps the stored size and modification time and the analysis version is current.
 Failures that would repeat for the same bytes are stored too, so a broken file is not decoded again.
 The connection opens lazily behind a mutex, so every worker can use the cache.

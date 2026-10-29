@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use crate::decode::{AudioFileDecoder, DecodeError};
 use crate::meter::{BlockMeter, MeterError};
+use crate::overload::OverloadHistory;
 use crate::record::{AnalysisError, AnalysisFailure, AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory};
 use crate::waveform::WaveformOverview;
 
@@ -63,6 +64,7 @@ struct DecodeMeasurements {
     max_short_term_lufs: f64,
     short_term_loudness: Arc<ShortTermLoudnessHistory>,
     waveform: Arc<WaveformOverview>,
+    overloads: Arc<OverloadHistory>,
 }
 
 /// Analyzes a single audio file and returns the populated result record.
@@ -108,6 +110,7 @@ pub fn analyze_file(path: &Path, is_cancelled: &dyn Fn() -> bool, on_progress: &
             record.integrated_lufs = measurements.integrated_lufs;
             record.short_term_loudness = Some(measurements.short_term_loudness);
             record.waveform = Some(measurements.waveform);
+            record.overloads = Some(measurements.overloads);
             record.status = AnalysisStatus::Analyzed;
             record.from_cache = false;
             record
@@ -192,6 +195,7 @@ fn measure_file(
         max_short_term_lufs: output.max_short_term_lufs,
         short_term_loudness,
         waveform: output.waveform,
+        overloads: output.overloads,
     })
 }
 
@@ -308,6 +312,18 @@ mod test_fixture_levels {
         let first = history.values.first().copied().unwrap_or_default();
         let last = history.values.last().copied().unwrap_or_default();
         assert!(first < last);
+    }
+
+    #[test]
+    fn overload_history_matches_the_decoded_stream() {
+        for tone in TONE_FIXTURES {
+            let record = analyze(&tone.path());
+            let overloads = record.overloads.as_ref().expect("source overload history");
+            assert!(overloads.matches_stream(record.sample_rate, record.length_in_samples, record.channels));
+            assert!(overloads.flags.iter().all(|&flags| flags == 0), "{}", tone.file_name);
+        }
+        let failed = analyze(&test_fixtures::fixture("broken.wav"));
+        assert!(failed.overloads.is_none());
     }
 
     #[test]

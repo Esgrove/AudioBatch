@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
+use crate::overload::OverloadHistory;
 use crate::waveform::WaveformOverview;
 
 /// Loudness reported for silence and other unmeasurable signals, in LUFS.
@@ -98,6 +99,8 @@ pub struct AnalysisRecord {
     pub short_term_loudness: Option<Arc<ShortTermLoudnessHistory>>,
     /// Min and max overview of the decoded samples, absent for failed records.
     pub waveform: Option<Arc<WaveformOverview>>,
+    /// Bounded per-channel source overload flags, absent when analysis is unavailable.
+    pub overloads: Option<Arc<OverloadHistory>>,
     /// File size in bytes when the record was made.
     pub file_size: u64,
     /// Modification time in milliseconds since the Unix epoch when the record was made.
