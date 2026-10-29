@@ -124,6 +124,11 @@ Tag reads and metadata copies also enter file spans.
 Each decoder retains its file span and enters it while opening, decoding, and seeking,
 so preview warnings keep their file context even without an analysis span.
 Log file lines include the source module, including third-party crates.
+Levels are right-aligned as `[ INFO]:`, `[ WARN]:`, and `[ERROR]:`, so message columns line up.
+Warnings and errors also include the source file and line when available,
+even when a framework error has an empty module target.
+The formatter shortens compile-time source locations to their crate and source-relative path,
+without absolute build-machine directories, while retaining full audio file paths in the operation spans.
 The CLI logs what it already printed with the `FILE_ONLY_TARGET` target, so it is not printed twice.
 The GUI logs opened input paths, discovered file counts, and analysis duration and result counts at the info level,
 without requiring `AUDIOBATCH_GUI_DEBUG`.
