@@ -74,9 +74,10 @@ public:
             completions.emplace_back(totalFiles, runId);
             condition.notify_all();
         });
-        coordinator.setStartErrorCallback([this](const juce::String& message) {
+        coordinator.setStartErrorCallback([this](const juce::String& message, const int runId) {
             const std::scoped_lock lock(mutex);
             startErrors.add(message);
+            startErrorRunIds.push_back(runId);
         });
     }
 
@@ -125,6 +126,13 @@ public:
         return completions;
     }
 
+    /// Returns the attempted run ids attached to start errors.
+    [[nodiscard]] std::vector<int> getStartErrorRunIds() const
+    {
+        const std::scoped_lock lock(mutex);
+        return startErrorRunIds;
+    }
+
     /// Returns the messages of the start error callback.
     [[nodiscard]] juce::StringArray getStartErrors() const
     {
@@ -140,6 +148,7 @@ private:
     std::vector<PublishedResult> results;
     std::vector<std::pair<int, int>> completions;
     juce::StringArray startErrors;
+    std::vector<int> startErrorRunIds;
     bool holding;
     bool released {false};
 };
@@ -253,6 +262,7 @@ public:
             const auto runId = coordinator.getCurrentRunId();
             expect(recorder.waitForCompletion(runId));
             expectEquals(recorder.getStartErrors().joinIntoString(","), juce::String(noChainsMessage));
+            expect(recorder.getStartErrorRunIds() == std::vector {runId});
             expect(recorder.getCompletions() == std::vector {std::pair {0, runId}});
             expect(recorder.getResults().empty());
         }

@@ -107,9 +107,9 @@ public:
     /// Called from the worker thread once a file has a plugin chain and its processing begins.
     using StartingCallback = std::function<void(const juce::File& file, int runId)>;
 
-    /// Called on the message thread when the coordinator could not start a run.
-    /// Receives the error message, and no run id, because no run started.
-    using StartErrorCallback = std::function<void(juce::String errorMessage)>;
+    /// Called on the message thread when the coordinator could not start a run, with its attempted run id.
+    /// Receivers handling it asynchronously must discard errors from attempts superseded by a later run.
+    using StartErrorCallback = std::function<void(juce::String errorMessage, int runId)>;
 
     explicit PluginProcessingCoordinator(int workerCount = getPluginProcessingWorkerCount());
 
@@ -168,7 +168,7 @@ private:
     /// Receives the result of each file.
     RunCallback<const PluginProcessingResult&, int> resultCallback;
     /// Receives the reason a run could not start its workers.
-    RunCallback<juce::String> startErrorCallback;
+    RunCallback<juce::String, int> startErrorCallback;
     /// Receives each file a worker starts on.
     RunCallback<const juce::File&, int> startingCallback;
 

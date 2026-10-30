@@ -355,7 +355,7 @@ int PluginProcessingCoordinator::start(
     const auto runId = runner.getCurrentRunId();
 
     if (!chainsUsable) {
-        startErrorCallback("No plugin chain instances were available to start processing.");
+        runner.publish(startErrorCallback, runId, "No plugin chain instances were available to start processing.");
         runner.publish(completionCallback, runId, 0);
         return 0;
     }
