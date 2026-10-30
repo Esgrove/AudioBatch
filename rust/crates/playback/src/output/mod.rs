@@ -31,6 +31,8 @@ pub struct SharedState {
     pub generation: AtomicU32,
     /// Generation of the latest load. The decode thread skips older loads and does not publish their properties.
     pub load_generation: AtomicU32,
+    /// Callback-requested generation to decode again from the audible position after an insert change.
+    pub rebuffer_generation: AtomicU32,
     /// True while the user wants audio to play.
     pub playing: AtomicBool,
     /// Linear gain applied before the preview insert, stored as `f32` bits.
@@ -82,6 +84,7 @@ impl SharedState {
         Self {
             generation: AtomicU32::new(NO_GENERATION),
             load_generation: AtomicU32::new(NO_GENERATION),
+            rebuffer_generation: AtomicU32::new(NO_GENERATION),
             playing: AtomicBool::new(false),
             insert_gain_bits: AtomicU32::new(UNITY_GAIN_BITS),
             position: AtomicU64::new(0),
@@ -99,6 +102,17 @@ impl SharedState {
             insert_failed: AtomicBool::new(false),
             stream_lost: AtomicBool::new(false),
         }
+    }
+
+    /// Advances the shared generation without colliding with callback-requested rebuffering.
+    pub fn advance_generation(&self) -> u32 {
+        let previous = self
+            .generation
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |generation| {
+                Some(generation.wrapping_add(1).max(1))
+            })
+            .expect("generation updates always succeed");
+        previous.wrapping_add(1).max(1)
     }
 
     /// Returns the linear gain applied before the preview insert.

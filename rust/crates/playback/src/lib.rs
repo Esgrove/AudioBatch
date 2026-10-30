@@ -43,7 +43,7 @@ pub use preview_insert::{InsertError, PreviewInsert};
 use device::{device_display_name, find_device, output_devices, stream_config};
 use engine::{Command, run_decode_thread};
 use output::insert::DeviceFormat;
-use output::{NO_GENERATION, OutputRenderer, SharedState};
+use output::{OutputRenderer, SharedState};
 use preview_insert::{InsertControl, insert_channel};
 
 /// What the player reports when the preview insert produced output that is not finite.
@@ -119,7 +119,6 @@ pub struct Player {
     output_rate: u32,
     /// Buffer size in frames the stream was opened with, or `None` for the device default.
     buffer_size: Option<u32>,
-    next_generation: u32,
     loaded_path: Option<PathBuf>,
     /// Hands preview inserts to the audio callback and takes back the ones it replaced.
     insert: InsertControl,
@@ -232,7 +231,6 @@ impl Player {
             sample_format,
             output_rate,
             buffer_size,
-            next_generation: NO_GENERATION,
             loaded_path: None,
             insert,
         })
@@ -304,13 +302,9 @@ impl Player {
             return;
         }
         let generation = self.shared.generation.load(Ordering::Acquire);
-        let ended = self.shared.ended_generation.load(Ordering::Acquire) == generation;
-        let at_end = ended
-            || (self.shared.finished_generation.load(Ordering::Acquire) == generation
-                && self
-                    .duration_seconds()
-                    .is_some_and(|duration| self.position_seconds() >= duration - 0.01));
-        if at_end {
+        // A decoded EOF or a playhead near the end can still leave unheard insert latency or tail.
+        // Only the callback's completed drain means a new play should start over.
+        if self.shared.ended_generation.load(Ordering::Acquire) == generation {
             self.seek(0.0);
         }
         self.shared.playing.store(true, Ordering::Relaxed);
@@ -532,13 +526,8 @@ impl Player {
     }
 
     /// Makes a new generation current, so the callback drops every frame of the previous one.
-    fn advance_generation(&mut self) -> u32 {
-        self.next_generation = self.next_generation.wrapping_add(1);
-        if self.next_generation == NO_GENERATION {
-            self.next_generation = 1;
-        }
-        self.shared.generation.store(self.next_generation, Ordering::Release);
-        self.next_generation
+    fn advance_generation(&self) -> u32 {
+        self.shared.advance_generation()
     }
 }
 
