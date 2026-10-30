@@ -1,9 +1,9 @@
-//! Differential tests that run the ebur128 reference and our kernels on the same input and compare the bits.
+//! Differential tests comparing loudness within 0.001 LU and true peak bit for bit against ebur128.
 //!
 //! The reference feeds ebur128 the way the analysis always has, in 100 ms blocks with mono as dual mono.
 //! The inputs cover every signal kind, the rates where the true peak oversampling changes,
 //! one to eight channels, and random chunk sizes from a seeded generator.
-//! Integrated loudness, true peaks, and the stored short-term history are compared exactly.
+//! Integrated and maximum short-term loudness must also agree when displayed to two decimal places.
 //! The f64 short-term maximum is compared before readings are rounded to the f32 history representation.
 
 use ebur128::{Channel, EbuR128, Mode};
@@ -143,6 +143,16 @@ pub fn assert_within(label: &str, what: &str, reference: &[f64], candidate: &[f6
     }
 }
 
+/// Checks the numerical tolerance and the application's two-decimal presentation contract.
+fn assert_loudness_equal(label: &str, what: &str, reference: f64, candidate: f64) {
+    assert_within(label, what, &[reference], &[candidate], 0.001);
+    assert_eq!(
+        format!("{reference:.2}"),
+        format!("{candidate:.2}"),
+        "{label}: displayed {what}"
+    );
+}
+
 #[cfg(test)]
 mod test_harness {
     use super::*;
@@ -153,35 +163,30 @@ mod test_harness {
             let reference = reference(&case);
             let output = measure_signal(&case.planes, case.sample_rate, 1_000);
             assert_bits_equal(&case.label, "true peak", &reference.true_peaks, &output.true_peaks);
-            assert_bits_equal(
+            assert_loudness_equal(
                 &case.label,
                 "integrated",
-                &[reference.integrated_lufs],
-                &[output.integrated_lufs],
+                reference.integrated_lufs,
+                output.integrated_lufs,
             );
             let maximum = reference
                 .short_term
                 .iter()
                 .copied()
                 .fold(crate::record::NEGATIVE_INFINITY_LOUDNESS, f64::max);
-            assert_bits_equal(
-                &case.label,
-                "maximum short-term",
-                &[maximum],
-                &[output.max_short_term_lufs],
-            );
+            assert_loudness_equal(&case.label, "maximum short-term", maximum, output.max_short_term_lufs);
             let history: Vec<f64> = reference
                 .short_term
                 .iter()
                 .map(|&value| f64::from(value as f32))
                 .collect();
             let measured: Vec<f64> = output.history.iter().copied().map(f64::from).collect();
-            assert_bits_equal(&case.label, "short-term", &history, &measured);
+            assert_within(&case.label, "short-term", &history, &measured, 0.001);
         }
     }
 
     #[test]
-    fn repeated_windows_and_gate_changes_preserve_exact_loudness() {
+    fn repeated_windows_and_gate_changes_preserve_displayed_loudness() {
         let mut case = Case::new(SignalKind::MusicLike, 8_000, 2, 7.1);
         for plane in &mut case.planes {
             for (frame, sample) in plane.iter_mut().enumerate() {
@@ -196,26 +201,62 @@ mod test_harness {
         }
         let reference = reference(&case);
         let measured = measure_signal(&case.planes, case.sample_rate, 713);
-        assert_bits_equal(
+        assert_loudness_equal(
             &case.label,
             "integrated",
-            &[reference.integrated_lufs],
-            &[measured.integrated_lufs],
+            reference.integrated_lufs,
+            measured.integrated_lufs,
         );
         let maximum = reference
             .short_term
             .iter()
             .copied()
             .fold(crate::record::NEGATIVE_INFINITY_LOUDNESS, f64::max);
-        assert_bits_equal(&case.label, "maximum", &[maximum], &[measured.max_short_term_lufs]);
-        assert_eq!(
-            measured.history,
-            reference
-                .short_term
-                .iter()
-                .map(|&value| value as f32)
-                .collect::<Vec<_>>()
-        );
+        assert_loudness_equal(&case.label, "maximum", maximum, measured.max_short_term_lufs);
+        let history: Vec<_> = measured.history.iter().map(|&value| f64::from(value)).collect();
+        assert_within(&case.label, "history", &reference.short_term, &history, 0.001);
+    }
+
+    #[test]
+    fn block_energy_meter_matches_reference_before_production_switch() {
+        for case in cases() {
+            let reference = reference(&case);
+            let mut meter = crate::loudness::gating::LoudnessMeter::new(
+                case.channels(),
+                case.sample_rate,
+                Some(case.frames() as u64),
+            );
+            let block = ShortTermLoudnessHistory::samples_per_point_for_rate(case.sample_rate) as usize;
+            let mut history = Vec::new();
+            for start in (0..case.frames()).step_by(block) {
+                history.push(normalize_loudness(
+                    meter.push(&case.chunk(start..(start + block).min(case.frames()))),
+                ));
+            }
+            assert_within(&case.label, "custom history", &reference.short_term, &history, 0.001);
+            assert_loudness_equal(
+                &case.label,
+                "custom integrated",
+                reference.integrated_lufs,
+                normalize_loudness(meter.integrated()),
+            );
+        }
+    }
+
+    #[test]
+    fn final_partial_window_excludes_the_expired_prefix() {
+        for expected in [None, Some(0), Some(57_677)] {
+            let case = Case::new(SignalKind::MusicLike, 8_000, 2, 7.123);
+            let reference = reference(&case);
+            let mut meter = crate::loudness::gating::LoudnessMeter::new(2, 8_000, expected);
+            let mut history = Vec::new();
+            for start in (0..case.frames()).step_by(800) {
+                history.push(normalize_loudness(
+                    meter.push(&case.chunk(start..(start + 800).min(case.frames()))),
+                ));
+            }
+            assert_within(&case.label, "partial window", &reference.short_term, &history, 0.001);
+        }
     }
 
     #[test]
