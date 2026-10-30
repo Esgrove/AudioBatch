@@ -9,6 +9,7 @@
 #include "gui/AudioFileTableModel.h"
 #include "gui/BackgroundWorkController.h"
 #include "gui/components/AudioInfoPanel.h"
+#include "gui/ResultsModel.h"
 #include "normalization/AudioNormalization.h"
 #include "plugins/PluginProcessing.h"
 #include "utils/GuiUtils.h"
@@ -47,7 +48,11 @@ void AudioBatchComponent::reconcilePendingAnalysisResults()
         resultsChanged = true;
 
         if (auto refreshedRecord = analysisCache.getAnalysis(record.file)) {
-            analysisResults.setRecord(row, std::move(*refreshedRecord));
+            const auto merged = analysisResults.merge(std::move(*refreshedRecord));
+            if (merged.customGainCarriedOver) {
+                const auto& updated = analysisResults[merged.row];
+                static_cast<void>(analysisCache.storeCustomGain(updated.file, updated.customGain));
+            }
             continue;
         }
 
@@ -93,8 +98,8 @@ void AudioBatchComponent::analysisResultsReceived(std::vector<AudioAnalysisRecor
         const auto merged = analysisResults.merge(std::move(record));
         const auto& row = analysisResults[merged.row];
 
-        // A gain set while the file was still waiting may only live in the table,
-        // because the cache had no row for this version of the file to store it in yet.
+        // A gain edit, including a clear, may have superseded the queued result,
+        // or may only live in the table while the cache still had no row for this file identity.
         // The coordinator stored the row before publishing the result, so the gain can be stored now.
         // The cache logs its own failures, and the table keeps the gain either way.
         if (merged.customGainCarriedOver) {
@@ -131,6 +136,7 @@ void AudioBatchComponent::replaceRecordsAfterOperation(const std::vector<Committ
         return;
     }
 
+    const auto selectedPaths = getSelectedRecordPaths();
     const auto previewFile = preview.getFile();
     std::optional<juce::File> previewOutput;
     bool previewRecordChanged = false;
@@ -142,6 +148,10 @@ void AudioBatchComponent::replaceRecordsAfterOperation(const std::vector<Committ
 
         // The cache logs its own failures, and a row it could not store or remove is only read again later.
         static_cast<void>(analysisCache.storeAnalysis(analysisResults[merged.row]));
+        if (merged.customGainCarriedOver) {
+            const auto& updated = analysisResults[merged.row];
+            static_cast<void>(analysisCache.storeCustomGain(updated.file, updated.customGain));
+        }
 
         // A converted original was moved to the trash, so its cached row is no longer needed.
         if (newRecord.fullPath != originalPath) {
@@ -156,14 +166,7 @@ void AudioBatchComponent::replaceRecordsAfterOperation(const std::vector<Committ
         }
     }
 
-    auto selectedPaths = getSelectedRecordPaths();
-    for (int index = 0; index < selectedPaths.size(); ++index) {
-        if (const auto moved = movedPaths.find(selectedPaths[index]); moved != movedPaths.end()) {
-            selectedPaths.set(index, moved->second);
-        }
-    }
-
-    refreshTablePreservingSelection(selectedPaths);
+    refreshTablePreservingSelection(remapSelectedPaths(selectedPaths, movedPaths));
 
     if (previewOutput.has_value()) {
         showAudioFile(*previewOutput);
@@ -247,7 +250,9 @@ void AudioBatchComponent::normalizeCompleted(const NormalizingWork& pass, const 
     utils::showFailureSummary(failures, "Normalize", "normalized", this);
     requestArtwork(artwork.file);
 
-    if (!preview.getFile().existsAsFile() && resultsTable.getSelectedRow() >= 0) {
+    if ((!preview.getFile().existsAsFile() || preview.needsReload(preview.getFile()))
+        && resultsTable.getSelectedRow() >= 0)
+    {
         handleSelectionChanged(resultsTable.getSelectedRow());
     }
 
@@ -287,7 +292,11 @@ void AudioBatchComponent::analysisCompleted(const AnalyzingWork& run, const int 
     if (resultsTable.getSelectedRow() < 0 && !analysisResults.empty()) {
         const juce::ScopedValueSetter<bool> automaticSelection(automaticSelectionChange, true);
         resultsTable.selectRow(0);
-    } else if (!preview.getFile().existsAsFile() && resultsTable.getSelectedRow() >= 0) {
+    } else if (
+        (!preview.getFile().existsAsFile() || preview.needsReload(preview.getFile()))
+        && resultsTable.getSelectedRow() >= 0
+    )
+    {
         const juce::ScopedValueSetter<bool> automaticSelection(automaticSelectionChange, true);
         handleSelectionChanged(resultsTable.getSelectedRow());
     }
@@ -368,13 +377,14 @@ void AudioBatchComponent::normalizeRecords(const std::vector<AudioAnalysisRecord
         filesToNormalize.add(record.file);
 
         if (record.file == preview.getFile()) {
-            clearCurrentAudioPreview();
+            releasePreviewPlayback();
         }
     }
 
     auto normalizationOptions = previewWorkspace.normalizationTargetControl.getOptions();
     normalizationOptions.overwriteExisting = previewWorkspace.forceOverwriteToggle.getToggleState();
     if (backgroundWork.startNormalization(recordsToNormalize, normalizationOptions) <= 0) {
+        handleSelectionChanged(resultsTable.getSelectedRow());
         updateStatusLabel();
         return;
     }
@@ -449,13 +459,12 @@ void AudioBatchComponent::analysisPlanReceived(const AnalysisPlan& plan, const A
         return;
     }
 
+    const auto selectedPaths = getSelectedRecordPaths();
     for (const auto& file : plan.staleFiles) {
         analysisResults.addPending(file);
     }
 
-    analysisResults.sort(sortState);
-    resultsTable.updateContent();
-    updateResultsTableColumnWidths();
+    refreshTablePreservingSelection(selectedPaths);
     fileActivity.markActive(plan.staleFiles, FileActivity::waiting);
     updatePreviewLoudnessHistory();
 
@@ -605,6 +614,7 @@ void AudioBatchComponent::processRecords(const std::vector<AudioAnalysisRecord>&
     updateProcessButtonState();
 
     if (expected <= 0) {
+        handleSelectionChanged(resultsTable.getSelectedRow());
         updateStatusLabel();
         return;
     }
@@ -687,7 +697,9 @@ void AudioBatchComponent::processingCompleted(const ProcessingWork& pass, const 
     utils::showFailureSummary(failures, "Plugin Processing", "processed", this);
     requestArtwork(artwork.file);
 
-    if (!preview.getFile().existsAsFile() && resultsTable.getSelectedRow() >= 0) {
+    if ((!preview.getFile().existsAsFile() || preview.needsReload(preview.getFile()))
+        && resultsTable.getSelectedRow() >= 0)
+    {
         handleSelectionChanged(resultsTable.getSelectedRow());
     }
 
@@ -700,6 +712,7 @@ void AudioBatchComponent::processingCompleted(const ProcessingWork& pass, const 
 /// Shows why a plugin processing pass could not start its workers.
 void AudioBatchComponent::processingStartFailed(const juce::String& errorMessage)
 {
+    handleSelectionChanged(resultsTable.getSelectedRow());
     statusBar.setStatusText(errorMessage);
     showPluginProcessingWarning(errorMessage);
 }

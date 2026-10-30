@@ -12,6 +12,7 @@
 #include "gui/AudioBatchComponentState.h"
 #include "serato/SeratoTagTypes.h"
 #include "serato/SeratoWaveformColouring.h"
+#include "utils/FileUtils.h"
 
 #include <JuceHeader.h>
 
@@ -106,7 +107,11 @@ public:
     [[nodiscard]] std::vector<CueArrows> getCueArrows() const;
     [[nodiscard]] std::vector<OverloadMark> getOverloadMarks() const;
 
-    bool loadFromCacheData(const juce::MemoryBlock& waveformData);
+    bool loadFromCacheData(
+        const juce::MemoryBlock& waveformData,
+        std::optional<utils::FileIdentity> identity = std::nullopt
+    );
+    [[nodiscard]] const std::optional<utils::FileIdentity>& getSourceIdentity() const noexcept;
     [[nodiscard]] bool isSeratoWaveformColouringEnabled() const noexcept;
 
     void setDisplayGain(float linearGain);
@@ -120,7 +125,11 @@ public:
     void setSeratoOverview(std::shared_ptr<const serato::Overview> overview);
     void setSeratoWaveformColouringEnabled(bool enabled);
     void setThumbnailFullyLoadedCallback(std::function<void()> callback);
-    void setURL(const juce::URL& url, juce::int64 lengthInSamples = 0);
+    void setURL(
+        const juce::URL& url,
+        juce::int64 lengthInSamples = 0,
+        std::optional<utils::FileIdentity> identity = std::nullopt
+    );
     void setZoom(double zoomLevel);
 
 private:
@@ -148,6 +157,8 @@ private:
     juce::AudioThumbnailCache thumbnailCache {128};
     /// Recreated for each file, because a thumbnail keeps the detail it was created or last loaded with.
     std::unique_ptr<juce::AudioThumbnail> thumbnail;
+    /// Source identity captured before decoding, never sampled again at publication time.
+    std::optional<utils::FileIdentity> sourceIdentity;
     /// The playback cursor drawn over the waveform.
     juce::DrawableRectangle currentPositionMarker;
     /// The child component that shows the cursor, so moving it repaints only the region under it.

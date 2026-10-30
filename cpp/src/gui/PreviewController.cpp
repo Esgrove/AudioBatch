@@ -73,6 +73,13 @@ bool PreviewController::isWaveformLoadedFromCache() const noexcept
     return loaded != nullptr && loaded->waveformLoadedFromCache;
 }
 
+/// Requires reloading for a different source, a released decoder, or a changed same-path source.
+bool PreviewController::needsReload(const juce::File& file) const
+{
+    const auto* loaded = std::get_if<LoadedPreview>(&state);
+    return loaded == nullptr || loaded->file != file || !player.hasLoadedSource() || !loaded->identity.matches(file);
+}
+
 /// Accepts source histories only for complete analysis of the unchanged file backing the loaded waveform.
 /// A released preview, another selection, or a replaced file must never inherit source warning marks.
 /// Gain and plugin-preview preferences deliberately play no part in this identity check.
@@ -101,7 +108,11 @@ bool PreviewController::adoptSeratoData(
         return false;
     }
 
-    if (!seratoLoader.canAdopt(identity, generation, loaded->file)) {
+    if (identity.path != loaded->identity.path || identity.fileSize != loaded->identity.fileSize
+        || identity.modifiedTimeMs != loaded->identity.modifiedTimeMs
+        || identity.platformId != loaded->identity.platformId || identity.preciseTimes != loaded->identity.preciseTimes
+        || !loaded->identity.matches(loaded->file) || !seratoLoader.canAdopt(identity, generation, loaded->file))
+    {
         player.completeInitialPosition(0.0);
         return false;
     }
@@ -121,7 +132,7 @@ bool PreviewController::load(const juce::File& file, const bool playFromFirstCue
     // The identity is taken before loading, so a change during the load makes the analysis look outdated.
     const utils::FileIdentity identity(file);
 
-    if (!player.load(juce::URL(file), playFromFirstCuePoint)) {
+    if (!player.load(juce::URL(file), playFromFirstCuePoint) || !identity.matches(file)) {
         state = ReleasedPreview {.file = file};
         release();
         return false;
@@ -172,7 +183,12 @@ void PreviewController::requestSeratoData()
         return;
     }
 
-    loaded->seratoIdentity.emplace(loaded->file);
+    if (!loaded->identity.matches(loaded->file)) {
+        seratoLoader.cancel();
+        player.completeInitialPosition(0.0);
+        return;
+    }
+    loaded->seratoIdentity = loaded->identity;
     if (seratoLoader.request(loaded->file, *duration) == 0) {
         player.completeInitialPosition(0.0);
     }

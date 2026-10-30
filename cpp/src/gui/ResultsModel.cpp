@@ -6,6 +6,7 @@
 
 #include "analysis/AudioAnalysisTypes.h"
 #include "gui/ResultsSorting.h"
+#include <unordered_map>
 #include <unordered_set>
 
 #include <cstddef>
@@ -20,17 +21,15 @@ namespace
 /// Copies the custom gain of the record in the table onto a new record for the same path,
 /// when the file still has the size and modification time the gain was set for.
 /// A custom gain only applies to the version of the file it was set for, so a changed file starts without one.
-/// Returns true when the gain was carried over.
-bool keepCustomGainOfUnchangedFile(const AudioAnalysisRecord& existing, AudioAnalysisRecord& incoming)
+void keepCustomGainOfUnchangedFile(const AudioAnalysisRecord& existing, AudioAnalysisRecord& incoming)
 {
     if (!existing.customGain || existing.fileSize != incoming.fileSize
         || existing.modifiedTimeMs != incoming.modifiedTimeMs)
     {
-        return false;
+        return;
     }
 
     incoming.customGain = existing.customGain;
-    return true;
 }
 }  // namespace
 
@@ -103,23 +102,33 @@ bool ResultsModel::setCustomGain(const int row, const std::optional<Decibels> ga
     jassert(containsRow(row));
     auto& record = records[static_cast<std::size_t>(row)];
 
-    if (sameCustomGain(record.customGain, gain)) {
-        return false;
-    }
-
+    customGainEdits.insert_or_assign(
+        record.fullPath,
+        CustomGainEdit {.fileSize = record.fileSize, .modifiedTimeMs = record.modifiedTimeMs, .gain = gain}
+    );
+    const auto changed = !sameCustomGain(record.customGain, gain);
     record.customGain = gain;
-    return true;
+    return changed;
 }
 
 /// Replaces the row with the same full path as the record, or appends the record as a new row.
-/// A replaced row passes its custom gain on while the file is unchanged on disk.
+/// Explicit gain edits, including clears, win over queued results while the file identity is unchanged.
+/// Without an explicit edit, an existing nonempty gain is retained for that same identity.
 MergedRecord ResultsModel::merge(AudioAnalysisRecord record)
 {
     if (const auto existing = rowsByPath.find(record.fullPath); existing != rowsByPath.end()) {
         auto& row = records[existing->second];
         const auto incomingGain = record.customGain;
-        const auto carriedOver
-            = keepCustomGainOfUnchangedFile(row, record) && !sameCustomGain(incomingGain, record.customGain);
+        if (const auto edit = customGainEdits.find(record.fullPath); edit != customGainEdits.end()) {
+            if (edit->second.fileSize == record.fileSize && edit->second.modifiedTimeMs == record.modifiedTimeMs) {
+                record.customGain = edit->second.gain;
+            } else {
+                customGainEdits.erase(edit);
+            }
+        } else {
+            keepCustomGainOfUnchangedFile(row, record);
+        }
+        const auto carriedOver = !sameCustomGain(incomingGain, record.customGain);
         row = std::move(record);
         return {.row = static_cast<int>(existing->second), .customGainCarriedOver = carriedOver};
     }
@@ -148,12 +157,16 @@ void ResultsModel::clear() noexcept
 {
     records.clear();
     rowsByPath.clear();
+    customGainEdits.clear();
 }
 
 /// Removes the rows of the given full paths and renumbers the rows after them.
 void ResultsModel::removePaths(const juce::StringArray& paths)
 {
     const std::unordered_set<juce::String> removedPaths(paths.begin(), paths.end());
+    for (const auto& path : paths) {
+        customGainEdits.erase(path);
+    }
     const auto removed = std::erase_if(records, [&removedPaths](const AudioAnalysisRecord& record) {
         return removedPaths.contains(record.fullPath);
     });
@@ -164,14 +177,13 @@ void ResultsModel::removePaths(const juce::StringArray& paths)
 }
 
 /// Replaces the record of a row, which must exist, with a record for the same path,
-/// without carrying anything over from the old record.
+/// preserving authoritative gain edits for the same file identity.
 /// A record for another path goes through replaceAfterOperation, which keeps the paths unique.
 void ResultsModel::setRecord(const int row, AudioAnalysisRecord record)
 {
     jassert(containsRow(row));
-    auto& existing = records[static_cast<std::size_t>(row)];
-    jassert(existing.fullPath == record.fullPath);
-    existing = std::move(record);
+    jassert((*this)[row].fullPath == record.fullPath);
+    merge(std::move(record));
 }
 
 /// Sorts the rows by the primary and secondary sort columns of the state.
@@ -192,5 +204,20 @@ void ResultsModel::rebuildIndex()
     for (std::size_t row = 0; row < records.size(); ++row) {
         rowsByPath.try_emplace(records[row].fullPath, row);
     }
+}
+
+/// Maps a selection captured before row mutations to the committed outputs, keeping each destination once.
+/// Unchanged selected paths stay selected even when another source replaces their existing row.
+juce::StringArray remapSelectedPaths(
+    const juce::StringArray& selectedPaths,
+    const std::unordered_map<juce::String, juce::String>& movedPaths
+)
+{
+    juce::StringArray mappedPaths;
+    for (const auto& path : selectedPaths) {
+        const auto moved = movedPaths.find(path);
+        mappedPaths.addIfNotAlreadyThere(moved != movedPaths.end() ? moved->second : path);
+    }
+    return mappedPaths;
 }
 }  // namespace audiobatch

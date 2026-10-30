@@ -6,6 +6,7 @@
 
 #include "gui/components/ThumbnailComponent.h"
 
+#include "analysis/AnalysisCache.h"
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/OverloadHistory.h"
 #include "gui/AudioPreviewPlayer.h"
@@ -14,6 +15,7 @@
 #include "serato/SeratoOverview.h"
 #include "serato/SeratoTagTypes.h"
 #include "serato/SeratoWaveformColouring.h"
+#include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 #include "utils/ThreadUtils.h"
 
@@ -25,6 +27,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <ranges>
 #include <utility>
 #include <vector>
@@ -72,6 +75,23 @@ constexpr float loudnessGridAlpha {0.12f};
 
 /// Opacity of the black outline drawn under the loudness curve, which keeps it readable over the waveform.
 constexpr float loudnessOutlineAlpha {0.65f};
+
+/// A URL source whose in-memory peaks belong to a captured file version and detail rather than a path alone.
+class VersionedThumbnailSource final : public juce::URLInputSource
+{
+public:
+    /// Captures the immutable cache key used for the entire thumbnail read.
+    VersionedThumbnailSource(const juce::URL& url, const juce::int64 key) : juce::URLInputSource(url), cacheKey(key) {}
+
+    /// Returns the captured key without querying a possibly replaced file.
+    [[nodiscard]] juce::int64 hashCode() const override
+    {
+        return cacheKey;
+    }
+
+private:
+    const juce::int64 cacheKey;
+};
 
 /// Returns the source samples per waveform point for a file:
 /// the power of two that gives it about thumbnailTargetPoints points, within the finest and coarsest detail.
@@ -189,8 +209,12 @@ void ThumbnailComponent::resized()
 }
 
 /// Restores a previously cached waveform without re-reading the audio file.
-bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData)
+bool ThumbnailComponent::loadFromCacheData(
+    const juce::MemoryBlock& waveformData,
+    std::optional<utils::FileIdentity> identity
+)
 {
+    sourceIdentity = std::move(identity);
     colouredWaveform.reset();
     loudnessHistory.reset();
     overloadHistory.reset();
@@ -199,7 +223,7 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
     thumbnail->clear();
     hasNotifiedFullyLoaded = false;
 
-    if (waveformData.getSize() == 0) {
+    if (!isValidWaveformData(waveformData)) {
         visibleRange = {};
         repaint();
         return false;
@@ -223,6 +247,12 @@ bool ThumbnailComponent::loadFromCacheData(const juce::MemoryBlock& waveformData
 
     setRange({0.0, thumbnail->getTotalLength()});
     return true;
+}
+
+/// Returns the identity captured for the waveform, including after its decoder finished.
+const std::optional<utils::FileIdentity>& ThumbnailComponent::getSourceIdentity() const noexcept
+{
+    return sourceIdentity;
 }
 
 /// Serializes the current waveform so it can be stored in the cache.
@@ -263,8 +293,13 @@ void ThumbnailComponent::setMouseWheelGainCallback(std::function<void(float)> ca
 
 /// Loads a new audio resource into the thumbnail display.
 /// The length of the file in samples chooses the waveform detail, the finest for short files.
-void ThumbnailComponent::setURL(const juce::URL& url, const juce::int64 lengthInSamples)
+void ThumbnailComponent::setURL(
+    const juce::URL& url,
+    const juce::int64 lengthInSamples,
+    std::optional<utils::FileIdentity> identity
+)
 {
+    sourceIdentity = std::move(identity);
     colouredWaveform.reset();
     loudnessHistory.reset();
     overloadHistory.reset();
@@ -279,9 +314,14 @@ void ThumbnailComponent::setURL(const juce::URL& url, const juce::int64 lengthIn
         return;
     }
 
-    replaceThumbnail(samplesPerThumbnailPoint(lengthInSamples));
-    // The thumbnail takes ownership of the input source.
-    thumbnail->setSource(new juce::URLInputSource(url));
+    const auto detail = samplesPerThumbnailPoint(lengthInSamples);
+    if (!sourceIdentity && url.isLocalFile()) {
+        sourceIdentity.emplace(url.getLocalFile());
+    }
+    replaceThumbnail(detail);
+    // The thumbnail takes ownership of the source, whose immutable hash prevents same-path stale hits.
+    const auto key = sourceIdentity ? waveformCacheKey(*sourceIdentity, detail) : url.toString(false).hashCode64();
+    thumbnail->setSource(new VersionedThumbnailSource(url, key));
 
     if (thumbnail->getTotalLength() > 0.0) {
         setRange({0.0, thumbnail->getTotalLength()});
@@ -323,8 +363,11 @@ void ThumbnailComponent::setRange(const juce::Range<double> newRange)
 
 /// Reacts to thumbnail load progress by repainting,
 /// and fires the fully-loaded callback exactly once per loaded source.
-void ThumbnailComponent::changeListenerCallback(juce::ChangeBroadcaster* /*source*/)
+void ThumbnailComponent::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
+    if (source != thumbnail.get()) {
+        return;
+    }
     // The thumbnail reports each step of reading the file, and every step changes the waveform pixels.
     colouredWaveform.reset();
     if (thumbnail->getTotalLength() > 0.0 && visibleRange.getLength() <= 0.0) {

@@ -12,18 +12,29 @@
 
 #include <JuceHeader.h>
 
+#include <cstdint>
 #include <optional>
 #include <vector>
 
 namespace audiobatch
 {
-/// Where merging a record put it, and whether it took over the custom gain of the row it replaced.
+/// Where merging a record put it, and whether a retained gain edit must be persisted.
 struct MergedRecord {
     /// The row of the merged record, valid until rows are removed or sorted.
     int row {-1};
-    /// True when the record took over a custom gain it did not carry itself,
+    /// True when a retained gain or explicit clear overrode the incoming gain,
     /// which the cache may not have stored for this version of the file yet.
     bool customGainCarriedOver {false};
+};
+
+/// An explicit gain edit, including a clear, belonging only to the edited version of a file.
+struct CustomGainEdit {
+    /// File size when the gain was edited.
+    std::int64_t fileSize {0};
+    /// Modification time when the gain was edited.
+    std::int64_t modifiedTimeMs {0};
+    /// The authoritative gain, empty after an explicit clear.
+    std::optional<Decibels> gain;
 };
 
 /// The records of the results table, with each full path in at most one row.
@@ -56,5 +67,12 @@ private:
     std::vector<AudioAnalysisRecord> records;
     /// The row of each record by its full path, rebuilt whenever rows move.
     std::unordered_map<juce::String, std::size_t> rowsByPath;
+    /// Explicit edits remain authoritative, including an empty gain, until the file identity changes.
+    std::unordered_map<juce::String, CustomGainEdit> customGainEdits;
 };
+
+juce::StringArray remapSelectedPaths(
+    const juce::StringArray& selectedPaths,
+    const std::unordered_map<juce::String, juce::String>& movedPaths
+);
 }  // namespace audiobatch

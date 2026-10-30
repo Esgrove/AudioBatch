@@ -87,6 +87,43 @@ public:
             expect(!results[0].customGain.has_value());
         }
 
+        beginTest("Explicit clears override stale gains only for the edited file identity");
+        {
+            ResultsModel results;
+            results.merge(makeRecord("a.wav", 1000, Decibels {-3.0f}));
+            expect(results.setCustomGain(0, std::nullopt));
+            const auto stale = results.merge(makeRecord("a.wav", 1000, Decibels {-3.0f}));
+            expect(stale.customGainCarriedOver);
+            expect(!results[0].customGain);
+            expect(!results.setCustomGain(0, std::nullopt));
+            expect(results.merge(makeRecord("a.wav", 1000, Decibels {2.0f})).customGainCarriedOver);
+            expect(!results[0].customGain);
+
+            auto changed = makeRecord("a.wav", 1000, Decibels {4.0f});
+            ++changed.modifiedTimeMs;
+            expect(!results.merge(changed).customGainCarriedOver);
+            expect(sameCustomGain(results[0].customGain, Decibels {4.0f}));
+        }
+
+        beginTest("Unchanged operation and reconciliation records preserve explicit clears");
+        {
+            ResultsModel results;
+            results.merge(makeRecord("a.aif", 1000, Decibels {-3.0f}));
+            results.setCustomGain(0, std::nullopt);
+            const auto stale = makeRecord("a.aif", 1000, Decibels {-3.0f});
+            expect(results.replaceAfterOperation(stale.fullPath, stale).customGainCarriedOver);
+            expect(!results[0].customGain);
+            results.setRecord(0, stale);
+            expect(!results[0].customGain);
+
+            results.removePaths({stale.fullPath});
+            results.merge(stale);
+            expect(sameCustomGain(results[0].customGain, Decibels {-3.0f}));
+            results.clear();
+            results.merge(stale);
+            expect(sameCustomGain(results[0].customGain, Decibels {-3.0f}));
+        }
+
         beginTest("An output with a new path replaces the row of its source");
         {
             ResultsModel results;
@@ -125,6 +162,50 @@ public:
             for (int row = 0; row < results.size(); ++row) {
                 expect(results.findRow(results[row].fullPath) == row);
             }
+        }
+
+        beginTest("A pre-mutation selection follows multiple conversions and an existing output row");
+        {
+            ResultsModel results;
+            for (const auto* name : {"a.wav", "a.aif", "b.wav", "c.wav"}) {
+                results.merge(makeRecord(name));
+            }
+            const juce::StringArray selected {
+                results[0].fullPath, results[1].fullPath, results[2].fullPath, results[3].fullPath
+            };
+            results.replaceAfterOperation(makeRecord("a.wav").fullPath, makeRecord("a.aif"));
+            results.replaceAfterOperation(makeRecord("b.wav").fullPath, makeRecord("b.aif"));
+            results.sort({
+                .primaryColumn = AudioFileTableColumn::name,
+                .secondaryColumn = std::nullopt,
+                .statusText = {},
+            });
+            const auto mapped = remapSelectedPaths(
+                selected,
+                {
+                    {makeRecord("a.wav").fullPath, makeRecord("a.aif").fullPath},
+                    {makeRecord("b.wav").fullPath, makeRecord("b.aif").fullPath},
+                }
+            );
+            expectEquals(mapped.joinIntoString(", "), juce::String("/music/a.aif, /music/b.aif, /music/c.wav"));
+            for (const auto& path : mapped) {
+                expect(results.findRow(path).has_value());
+            }
+        }
+
+        beginTest("Selection paths survive an earlier-sorting analysis insertion");
+        {
+            ResultsModel results;
+            results.merge(makeRecord("b.wav"));
+            const juce::StringArray selected {results[0].fullPath};
+            results.addPending(juce::File("/music/a.wav"));
+            results.sort({
+                .primaryColumn = AudioFileTableColumn::name,
+                .secondaryColumn = std::nullopt,
+                .statusText = {},
+            });
+            expect(results.findRow(selected[0]) == 1);
+            expectEquals(selected[0], makeRecord("b.wav").fullPath);
         }
 
         beginTest("A pending placeholder is only added for a path without a row");

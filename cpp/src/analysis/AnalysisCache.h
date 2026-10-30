@@ -8,6 +8,7 @@
 
 #include "analysis/AudioAnalysisTypes.h"
 #include "analysis/Sqlite.h"
+#include "utils/FileUtils.h"
 
 #include <JuceHeader.h>
 
@@ -25,6 +26,9 @@ struct CustomGainUpdate {
     /// The new gain, or nothing to clear it.
     std::optional<Decibels> customGain;
 };
+
+[[nodiscard]] bool isValidWaveformData(const juce::MemoryBlock& data);
+[[nodiscard]] juce::int64 waveformCacheKey(const utils::FileIdentity& identity, int samplesPerPoint);
 
 /// Persistent SQLite-backed cache for file analysis results and waveform previews.
 class AnalysisCache
@@ -58,7 +62,7 @@ public:
     [[nodiscard]] bool removeAnalysis(const juce::File& file);
     [[nodiscard]] bool storeAnalysis(const AudioAnalysisRecord& record);
     [[nodiscard]] bool storeCustomGain(const juce::File& file, std::optional<Decibels> customGain);
-    [[nodiscard]] bool storeWaveformData(const juce::File& file, const juce::MemoryBlock& waveformData);
+    [[nodiscard]] bool storeWaveformData(const utils::FileIdentity& identity, const juce::MemoryBlock& waveformData);
 
     void withDatabase(const std::function<void(sqlite3& database, sqlite::StatementCache& statements)>& function);
 
@@ -80,8 +84,8 @@ private:
 
     /// Raised when the analysis changed, so cached results of the older analysis are analyzed again.
     static constexpr int analysisVersion {12};
-    /// Raised when the waveform detail changed, so cached waveforms of the coarser detail are generated again.
-    static constexpr int waveformVersion {2};
+    /// Raised when waveform detail or source-version rules change, so older peaks are generated again.
+    static constexpr int waveformVersion {3};
 
     /// Serializes every use of the connection, which is opened without SQLite's own mutex.
     juce::CriticalSection mutex;
