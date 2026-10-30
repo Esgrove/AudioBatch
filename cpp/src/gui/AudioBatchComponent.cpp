@@ -681,6 +681,9 @@ void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
     updateProcessButtonState();
 
     if (!analysisResults.containsRow(row)) {
+        clearArtwork();
+        artwork.file = juce::File();
+        updatePreviewLoudnessHistory();
         return;
     }
 

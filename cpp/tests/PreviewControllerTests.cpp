@@ -2,6 +2,7 @@
 /// the transitions between an empty, released, and loaded preview, and which file each state keeps.
 
 #include "analysis/AnalysisCache.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "gui/PreviewController.h"
 #include "serato/SeratoTagTypes.h"
@@ -86,6 +87,54 @@ public:
             expect(std::holds_alternative<NoPreview>(preview.getState()));
             expect(preview.getFile() == juce::File());
             expect(!player.hasLoadedSource());
+        }
+
+        beginTest("Source histories require ready analysis and matching selected, loaded and on-disk identities");
+        {
+            const TemporaryDirectory directory;
+            const auto selected = directory.copyFixture("silence_stereo_44100_16.wav", "selected.wav");
+            expect(preview.load(selected, false));
+            const utils::FileIdentity identity(selected);
+            AudioAnalysisRecord record;
+            record.file = selected;
+            record.fullPath = identity.path;
+            record.fileSize = identity.fileSize;
+            record.modifiedTimeMs = identity.modifiedTimeMs;
+            record.status = AudioAnalysisStatus::analyzed;
+            expect(preview.canDisplayAnalysis(record));
+            record.status = AudioAnalysisStatus::cached;
+            expect(preview.canDisplayAnalysis(record));
+            record.customGain = Decibels {-12.0f};
+            expect(preview.canDisplayAnalysis(record));
+
+            record.status = AudioAnalysisStatus::pending;
+            expect(!preview.canDisplayAnalysis(record));
+            record.status = AudioAnalysisStatus::failed;
+            expect(!preview.canDisplayAnalysis(record));
+            record.status = AudioAnalysisStatus::analyzed;
+            ++record.fileSize;
+            expect(!preview.canDisplayAnalysis(record));
+            record.fileSize = identity.fileSize;
+            ++record.modifiedTimeMs;
+            expect(!preview.canDisplayAnalysis(record));
+            record.modifiedTimeMs = identity.modifiedTimeMs;
+            record.file = file;
+            expect(!preview.canDisplayAnalysis(record));
+            record.file = selected;
+            record.fullPath = file.getFullPathName();
+            expect(!preview.canDisplayAnalysis(record));
+            record.fullPath = identity.path;
+
+            expect(selected.setLastModificationTime(selected.getLastModificationTime() + juce::RelativeTime::hours(1)));
+            expect(!preview.canDisplayAnalysis(record));
+            record.modifiedTimeMs = selected.getLastModificationTime().toMilliseconds();
+            expect(!preview.canDisplayAnalysis(record));
+            expect(preview.load(selected, false));
+            expect(preview.canDisplayAnalysis(record));
+            preview.release();
+            expect(!preview.canDisplayAnalysis(record));
+            preview.clear();
+            expect(!preview.canDisplayAnalysis(record));
         }
 
         preview.stop();

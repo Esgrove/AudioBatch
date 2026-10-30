@@ -314,6 +314,9 @@ private:
     /// True while the component itself changes the selection, so loading the file does not count as a user choice.
     bool automaticSelectionChange {false};
 
+    /// True once the final startup bounds have selected the controls-fit height.
+    /// Repeated startup notifications must not override a manually adjusted divider.
+    bool previewFitInitialized {false};
     /// Expanded divider allocation is independent of the animated or compact workspace.
     bool previewSectionExpanded {true};
     /// True once an expanding animation ended, so the next layout gives the divider back its expanded height.
