@@ -10,8 +10,11 @@ OPTIONS: All options are optional
     -h | --help
         Display these instructions.
 
-    -c | --cli-only
+    -l | --cli-only
         Build only the CLI binary, which skips the slower GUI build.
+
+    -c | --clean
+        Accepted for the root scripts. Only the C++ CMake build directory is cleaned.
 
     -v | --verbose
         Display commands being executed.
@@ -29,8 +32,11 @@ while [ $# -gt 0 ]; do
         -h | --help)
             print_usage_and_exit 0
             ;;
-        -c | --cli-only)
+        -l | --cli-only)
             CLI_ONLY=true
+            ;;
+        -c | --clean)
+            # Only the C++ project has a CMake build directory to clean.
             ;;
         -v | --verbose)
             set -x

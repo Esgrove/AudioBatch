@@ -24,10 +24,14 @@ OPTIONS: All options are optional
     -r | --reuse
         Skip CMake generation and reuse the existing build directory.
 
+    -c | --clean
+        Delete the selected CMake build directory and its compilation cache before configuring.
+        Cannot be used with --reuse.
+
     -b | --build-type <type>
         Specify build type for CMake. Default is 'Release'.
 
-    -c | --cli-only
+    -l | --cli-only
         Build only the CLI, without the GUI app.
 
     -t | --test
@@ -48,6 +52,7 @@ init_options() {
     USE_XCODE=false
     OPEN_PROJECT=false
     REUSE_BUILD_DIR=false
+    CLEAN_BUILD_DIR=false
     RUN_TESTS=false
     CLI_ONLY=false
 
@@ -68,11 +73,17 @@ init_options() {
             -r | --reuse)
                 REUSE_BUILD_DIR=true
                 ;;
+            -c | --clean)
+                CLEAN_BUILD_DIR=true
+                ;;
             -b | --build-type)
+                if [ $# -lt 2 ]; then
+                    print_error_and_exit "Missing value for $1."
+                fi
                 BUILD_TYPE="$2"
                 shift
                 ;;
-            -c | --cli-only)
+            -l | --cli-only)
                 CLI_ONLY=true
                 ;;
             -t | --test)
@@ -88,6 +99,15 @@ init_options() {
         esac
         shift
     done
+
+    if [ "$CLEAN_BUILD_DIR" = true ] && [ "$REUSE_BUILD_DIR" = true ]; then
+        print_error_and_exit "--clean and --reuse cannot be used together."
+    fi
+    case "$BUILD_TYPE" in
+        "" | *[!a-zA-Z0-9_-]*)
+            print_error_and_exit "Build type must contain only letters, numbers, underscores, or hyphens."
+            ;;
+    esac
 
     if [ "$USE_XCODE" = true ] && [ "$BASH_PLATFORM" != "mac" ]; then
         print_error_and_exit "--xcode is only supported on macOS."
@@ -355,6 +375,10 @@ if [ "$REUSE_BUILD_DIR" = true ]; then
     ensure_cached_build_type
 else
     check_juce_submodule
+    if [ "$CLEAN_BUILD_DIR" = true ]; then
+        print_magenta "Removing CMake build directory: $CMAKE_BUILD_DIR"
+        rm -rf -- "${CMAKE_BUILD_DIR:?}"
+    fi
     export_cmake_project
 fi
 

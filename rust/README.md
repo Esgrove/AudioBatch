@@ -41,7 +41,9 @@ and then installs the shell completions for it.
 On macOS, it installs the app bundle to `/Applications`.
 On Windows, it installs the GUI to `%LOCALAPPDATA%/Programs/AudioBatchRs` with a Start Menu shortcut.
 On other platforms, it installs the GUI binary next to the CLI.
-Both scripts take `--cli-only` to skip the slower GUI build.
+Both scripts take `-l` or `--cli-only` to skip the slower GUI build.
+They also accept `-c` or `--clean` for the repository root scripts,
+but leave Cargo artifacts untouched because the option only cleans the C++ CMake build directory.
 
 Windows GUI builds require the Visual Studio C++ Build Tools, a Windows SDK, and LLVM with `libclang.dll`.
 If LLVM is not found automatically, set `LIBCLANG_PATH` to its `bin` directory.

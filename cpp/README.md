@@ -395,7 +395,11 @@ For release builds, use the build script:
 On macOS, the script builds with Ninja, or with Xcode when given `--xcode`.
 On Windows, it builds with Visual Studio, or with Ninja and MSVC when given `--ninja`,
 which needs a Visual Studio developer command prompt environment, like the `windows-ninja` presets.
-`--cli-only` builds only the CLI.
+`-l` or `--cli-only` builds only the CLI.
+Pass `-c` or `--clean` to delete the selected CMake build directory and its local compilation cache before configuring.
+Only the directory for the selected generator and build type is removed.
+Other build directories are kept.
+`--clean` cannot be combined with `--reuse`.
 To generate a project and open it in the IDE without building, use `--open`:
 
 ```shell
@@ -417,8 +421,10 @@ On Windows, run this from Git Bash.
 The GUI app is installed under `%LOCALAPPDATA%\Programs\AudioBatch`,
 and a Start Menu shortcut is created for Start search.
 The CLI is installed to `~/.local/bin`, together with its shell completions.
-Use `--app-only` or `--cli-only` to install just one of the two.
+Use `--app-only` or `--cli-only` (`-l`) to install just one of the two.
 Pass `--reuse` to skip CMake generation and reuse the existing release build directory.
+Pass `-c` or `--clean` to remove that directory and its local compilation cache before rebuilding and installing.
+For example, `./install.sh --clean` starts with a fresh release CMake configuration.
 
 ## Development
 

@@ -9,6 +9,8 @@ Name a project to build only that one.
 The options are passed to the build script of each project.
 See cpp/build.sh --help and rust/build.sh --help for them.
 Building both projects accepts only the options both scripts have, such as --verbose.
+Use -c or --clean to delete the selected C++ CMake build directory before configuring.
+Rust build artifacts are not cleaned. Use -l or --cli-only to build only the CLIs.
 
 OPTIONS: All options are optional
     -h | --help
