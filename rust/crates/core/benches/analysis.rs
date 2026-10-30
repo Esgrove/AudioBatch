@@ -100,10 +100,10 @@ fn run_block_meter(planes: &[Vec<f32>], sample_rate: u32) -> f64 {
         let end = (start + CHUNK_FRAMES).min(frames);
         let chunk = chunk_planes(planes, start, end);
         let chunk = &chunk[..planes.len()];
-        meter.push(chunk).expect("push");
+        meter.push(chunk);
         start = end;
     }
-    black_box(meter.finish(frames as u64).expect("finish")).integrated_lufs
+    black_box(meter.finish(frames as u64)).integrated_lufs
 }
 
 /// Measures independent interpolation phases in SIMD lanes without decoding or other loudness work.

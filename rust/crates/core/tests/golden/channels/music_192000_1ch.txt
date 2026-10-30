@@ -1,8 +1,8 @@
 min_sample[0] = -0.5074091 [bf01e590]
 max_sample[0] = 0.51054084 [3f02b2ce]
 true_peak[0] = 0.5105408430099487 [3fe05659c0000000]
-integrated_lufs = -11.957195658536824 [c027ea158ca293e3]
-max_short_term_lufs = -19.975319411276317 [c033f9ae886e95f4]
+integrated_lufs = -11.957195658536845 [c027ea158ca293ef]
+max_short_term_lufs = -19.97531941127637 [c033f9ae886e9603]
 samples_per_point = 19200
 waveform.blob = 2732 bytes [5dd39d31ae7600fb]
 history.len = 5

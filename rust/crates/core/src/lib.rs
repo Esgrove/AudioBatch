@@ -1,6 +1,6 @@
 //! Shared core of `AudioBatch`, used by both the CLI and the GUI.
 //!
-//! Decodes audio files with symphonia, measures true peak with SIMD and EBU R128 loudness with ebur128,
+//! Decodes audio files with symphonia, measures true peak with SIMD and EBU R128 loudness with our block-energy meter,
 //! builds the waveform overview and source overload history in the same decode pass, and caches the results in SQLite.
 //! Normalizes analyzed files to a peak or loudness target as AIFF, carrying their tags and Serato data over.
 //! `OperationResult` reports what normalization and plugin processing did to each file.

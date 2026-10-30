@@ -166,7 +166,7 @@ fn measure_file(
         let Some(chunk) = decoder.next_chunk()? else {
             break;
         };
-        meter.push(chunk)?;
+        meter.push(chunk);
         if let Some(expected) = info.expected_frames.filter(|&frames| frames > 0) {
             on_progress((decoder.position() as f64 / expected as f64).min(1.0) as f32);
         }
@@ -174,7 +174,7 @@ fn measure_file(
     on_progress(1.0);
 
     let length_in_samples = decoder.position();
-    let output = meter.finish(length_in_samples)?;
+    let output = meter.finish(length_in_samples);
     let short_term_loudness = Arc::new(ShortTermLoudnessHistory {
         values: output.history,
         sample_rate: f64::from(info.sample_rate),
