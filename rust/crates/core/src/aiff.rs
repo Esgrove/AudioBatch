@@ -121,7 +121,8 @@ impl<W: Write + Seek> AiffWriter<W> {
     /// # Errors
     ///
     /// Returns the same layout, size, and output errors as `write_planar`.
-    pub(crate) fn write_planar_with_gain(
+    #[doc(hidden)]
+    pub fn write_planar_with_gain(
         &mut self,
         planes: &[&[f32]],
         gain: f32,

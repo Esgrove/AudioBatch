@@ -3,7 +3,7 @@
 //! The render group applies the gain to in-memory music and writes it to an `AiffWriter` in memory,
 //! at every output bit depth, so it measures our own sample loop and the float to integer conversion.
 //! The end to end group normalizes a temporary copy of generated files in peak and loudness mode,
-//! which includes the decode, the render, the metadata copy, the validation, and the analysis of the output.
+//! which includes decoding, rendering with quantized output measurement, metadata copying, and validation.
 //! Files that have not been generated with `fixtures/benchmark/generate.py` are skipped with a note.
 
 // Benchmarks are test code, which the workspace allows to index, like the tests.
@@ -40,21 +40,22 @@ const FILES: [&str; 4] = [
     "music_stereo_96000_24.flac",
 ];
 
-/// Scales the planes chunk by chunk and writes them as AIFF to memory, as the normalization render does.
+/// Writes chunks to memory with the production fused gain and quantizer, excluding output measurement.
 fn render(planes: &[Vec<f32>], bits_per_sample: u32) -> usize {
     let frames = planes[0].len();
     let capacity = frames * planes.len() * 4 + 64;
     let cursor = Cursor::new(Vec::with_capacity(capacity));
     let mut writer = AiffWriter::new(cursor, planes.len() as u32, 44_100, bits_per_sample).expect("writer");
-    let mut scaled: Vec<Vec<f32>> = vec![Vec::new(); planes.len()];
     let mut start = 0;
     while start < frames {
         let end = (start + CHUNK_FRAMES).min(frames);
-        for (target, plane) in scaled.iter_mut().zip(planes) {
-            apply_gain(&plane[start..end], GAIN, target);
+        let mut chunk = [&[][..]; 64];
+        for (target, plane) in chunk.iter_mut().zip(planes) {
+            *target = &plane[start..end];
         }
-        let chunk: Vec<&[f32]> = scaled.iter().map(Vec::as_slice).collect();
-        writer.write_planar(&chunk).expect("writes");
+        writer
+            .write_planar_with_gain(&chunk[..planes.len()], GAIN, |_, _| {})
+            .expect("writes");
         start = end;
     }
     writer.finish().expect("finishes").into_inner().len()
