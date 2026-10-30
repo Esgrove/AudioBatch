@@ -257,6 +257,8 @@ def compare(work: Path, results: Path, mode: str, jobs: int) -> None:
                 str(RUST_DIRECTORY / "scripts/compare_outputs.py"),
                 str(work / "cpp/input"),
                 str(work / "rust/input"),
+                "--mode",
+                mode,
                 "--lossy",
                 str(work / "lossy.txt"),
                 "--snapshots",

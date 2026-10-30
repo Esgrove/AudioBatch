@@ -9,9 +9,10 @@ Compares the files the C++ and the Rust CLI leave behind after normalizing their
 Both folders must hold the same file names after the sources were moved to the trash,
 and the sources that failed to normalize must be left as they were.
 Every AIFF output pair must have the same container form and COMM chunk, the same samples, and the same ID3v2 frames.
-With --lossy, the outputs of lossless sources must have identical samples,
-and only the outputs of the lossy sources it lists, which the two decoders may decode differently,
-may differ by the tolerance.
+With --lossy, lossless outputs must have identical samples in peak mode,
+and may differ by at most one integer PCM step in lufs mode.
+Only the outputs of the lossy sources it lists, which the two decoders may decode differently,
+may differ by the dBFS tolerance.
 Without it, every output may differ by the tolerance.
 --list-lossy prints that list for a folder, and must run before normalizing,
 since normalizing moves the sources to the trash.
@@ -22,7 +23,7 @@ Successful outputs must retain the source frame count, ID3 metadata except stale
 Exits with code 1 when anything differs.
 
 Usage: uv run compare_outputs.py <C++ folder> <Rust folder> [--tolerance <dBFS>] [--lossy <list file>]
-       [--snapshots <C++ original snapshot> <Rust original snapshot>]
+       [--mode peak|lufs] [--snapshots <C++ original snapshot> <Rust original snapshot>]
        uv run compare_outputs.py --snapshot <folder> --expectations <JSON> > <snapshot JSON>
        uv run compare_outputs.py --list-lossy <folder> > <list file>
 """
@@ -201,8 +202,14 @@ def validate_sample_geometry(name: str, chunks: dict[bytes, bytes]) -> list[str]
     return []
 
 
-def compare_samples(name: str, cpp: dict[bytes, bytes], rust: dict[bytes, bytes], tolerance: float | None) -> list[str]:
-    """Compares the sample data of two outputs and returns the differences, exactly when there is no tolerance."""
+def compare_samples(
+    name: str,
+    cpp: dict[bytes, bytes],
+    rust: dict[bytes, bytes],
+    tolerance: float | None,
+    lossless_steps: int = 0,
+) -> list[str]:
+    """Compares sample data with a dBFS tolerance for lossy sources or an integer step limit for lossless sources."""
     if cpp.get(b"SSND") == rust.get(b"SSND"):
         return []
     if b"SSND" not in cpp or b"SSND" not in rust:
@@ -216,13 +223,18 @@ def compare_samples(name: str, cpp: dict[bytes, bytes], rust: dict[bytes, bytes]
     rust_samples, _ = decode_samples(rust)
     if len(cpp_samples) != len(rust_samples):
         return [f"{name}: {len(cpp_samples)} samples in C++, {len(rust_samples)} in Rust"]
-    return compare_sample_values(name, cpp_samples, rust_samples, full_scale, tolerance)
+    return compare_sample_values(name, (cpp_samples, rust_samples), full_scale, tolerance, lossless_steps)
 
 
 def compare_sample_values(
-    name: str, cpp: np.ndarray, rust: np.ndarray, full_scale: int, tolerance: float | None
+    name: str,
+    samples: tuple[np.ndarray, np.ndarray],
+    full_scale: int,
+    tolerance: float | None,
+    lossless_steps: int = 0,
 ) -> list[str]:
-    """Compares two equally long sample arrays and returns the differences, exactly when there is no tolerance."""
+    """Checks the maximum sample difference against the lossy dBFS tolerance or lossless integer PCM step limit."""
+    cpp, rust = samples
     steps = int(np.max(np.abs(cpp - rust), initial=0))
     if steps == 0:
         return [f"{name}: SSND chunks differ after the samples"]
@@ -230,7 +242,12 @@ def compare_sample_values(
     differing = int(np.count_nonzero(cpp != rust))
     print(f"  {name}: {differing} samples differ by at most {steps} steps, {level:.1f} dBFS")
     if tolerance is None:
-        return [f"{name}: {differing} samples differ by up to {steps} steps, but the source is lossless"]
+        if steps > lossless_steps:
+            return [
+                f"{name}: {differing} samples differ by up to {steps} steps, "
+                f"above the {lossless_steps} step lossless limit"
+            ]
+        return []
     if level > tolerance:
         return [f"{name}: samples differ by up to {level:.1f} dBFS, above the {tolerance} dBFS tolerance"]
     return []
@@ -252,7 +269,7 @@ def compare_frames(name: str, cpp_path: Path, rust_path: Path, cpp: dict, rust: 
     return differences
 
 
-def compare_outputs(cpp_path: Path, rust_path: Path, tolerance: float | None) -> list[str]:
+def compare_outputs(cpp_path: Path, rust_path: Path, tolerance: float | None, mode: str = "peak") -> list[str]:
     """Compares the container, the samples, and the tags of two AIFF outputs."""
     name = cpp_path.name
     cpp_form, cpp_chunks = read_chunks(cpp_path)
@@ -266,7 +283,8 @@ def compare_outputs(cpp_path: Path, rust_path: Path, tolerance: float | None) ->
     )
     if geometry:
         return geometry
-    return compare_samples(name, cpp_chunks, rust_chunks, tolerance) + compare_frames(
+    lossless_steps = 1 if mode == "lufs" else 0
+    return compare_samples(name, cpp_chunks, rust_chunks, tolerance, lossless_steps) + compare_frames(
         name, cpp_path, rust_path, cpp_chunks, rust_chunks
     )
 
@@ -421,6 +439,12 @@ def main() -> None:
         metavar="FOLDER",
         help="Print the paths of the lossy sources in the folder relative to it, and exit",
     )
+    parser.add_argument(
+        "--mode",
+        choices=("peak", "lufs"),
+        default="peak",
+        help="Normalization mode, permits one integer PCM step for lossless outputs only in lufs mode",
+    )
     parser.add_argument("--snapshot", type=Path, metavar="FOLDER", help="Snapshot originals before normalization")
     parser.add_argument("--expectations", type=Path, help="Expected outcomes from compare_levels.py")
     parser.add_argument("--snapshots", type=Path, nargs=2, help="Original C++ and Rust snapshot files")
@@ -482,7 +506,7 @@ def compare_folders(arguments: argparse.Namespace) -> tuple[list[str], int, int]
     identical = 0
     for path in outputs:
         tolerance = arguments.tolerance if lossy is None or path.with_suffix("") in lossy else None
-        file_differences = compare_outputs(arguments.cpp / path, arguments.rust / path, tolerance)
+        file_differences = compare_outputs(arguments.cpp / path, arguments.rust / path, tolerance, arguments.mode)
         if not file_differences and (arguments.cpp / path).read_bytes() == (arguments.rust / path).read_bytes():
             identical += 1
         differences += file_differences
