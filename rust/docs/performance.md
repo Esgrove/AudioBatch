@@ -9,7 +9,7 @@ The file benchmarks skip missing inputs, while the in-memory benchmarks always r
 
 The five Criterion targets in `crates/core/benches/` measure different costs:
 
-- `analysis` measures `BlockMeter`, the ebur128 components, and `analyze_file`.
+- `analysis` measures `BlockMeter`, SIMD true peak, ebur128 reference components, and `analyze_file`.
 - `decode` opens and drains each file without measuring loudness or building a waveform.
 - `normalize` measures gain and AIFF writing in memory, then normalization of temporary file copies.
 - `waveform` measures overview construction, serialization, and display column queries.
@@ -43,9 +43,11 @@ samply load target/profile-before.json.gz
 `--refresh` bypasses the analysis cache, and `--jobs 1` keeps one analysis worker active.
 The capture still includes startup, logging, and SQLite work.
 Inspect the analysis worker rather than treating the main thread's waits as measurement CPU time.
-Inlining combines several kernels into `Filter::process`, so the component benchmarks separate true peak from K-weighting.
+The historical ebur128 profile below inlines several kernels into `Filter::process`.
+The current `BlockMeter` benchmark includes custom K weighting and gating,
+while component benchmarks isolate true peak and the development-only reference.
 
-## Reference measurements
+## Historical reference measurements
 
 The initial local measurements were collected on October 29, 2026, on an Apple M3 Max,
 with Rust 1.99.1, LLVM 23.1.1, native CPU flags, and release LTO.
@@ -79,6 +81,9 @@ The component timings separate the costs approximately, but must not be presente
 
 ## Custom meter baseline
 
+These are historical measurements from before the custom loudness meter and in-render output measurement.
+They are retained as the comparison baseline, not results for the current implementation.
+
 The October 30, 2026 baseline uses an Apple M3 Max with 16 logical CPUs and 64 GiB of memory,
 macOS 27.2 on arm64, and Rust 1.99.1.
 Rust uses the release profile with LTO, one code generation unit, and `target-cpu=native`.
@@ -90,8 +95,9 @@ The default selection combines the generated long inputs with the normalization 
 Use `--corpus ../fixtures/normalization` for the smaller CI-sized comparison.
 The script writes raw timing samples, combined JSON and Markdown, source and binary hashes,
 and machine and build metadata into a unique directory under `target/cli-benchmark/`.
-Copies and configuration are prepared outside timing, filesystem caches are warm,
-and normalization measures the full CLI workflow, including initial and output analysis.
+Copies and configuration are prepared outside timing, and filesystem caches are warm.
+Normalization measures the full CLI workflow, including initial analysis, rendering, output measurement, and validation.
+At this baseline, output measurement requires a full decode of the written file.
 Every run must pass the existing correctness oracles, independently of its timing.
 The CI reporting step is non-failing and uses no performance threshold.
 
@@ -132,13 +138,114 @@ An exploratory combined-corpus run also measured analysis at 21.969 s for C++ an
 but its generated AAC normalization fails the existing lossy decoder tolerance, so it is not a complete baseline.
 The tolerance is not relaxed to make that benchmark pass.
 
-## Exact output constraints
+## Optimized custom meter results
 
-The golden files freeze every numeric analysis field, the short-term history and cache blobs,
-the waveform, normalization gains, and normalized sample hashes.
-They must not be regenerated to accept a performance change.
-The CLI snapshot in `target/snapshot-before/` also freezes JSON and normalized files.
-Check it with:
+The optimized run uses the same machine, compiler, native CPU flags, release LTO,
+and unchanged `custom-meter-before` Criterion reference as the baseline above.
+Measurements run sequentially, without concurrent builds, tests, or profiling captures.
+The benchmarked implementation includes the custom meter, waveform extrema reuse,
+in-render output measurement, fused gain and quantization, and the at-target fast path.
+
+For the same 10 second in-memory signal and 60 second WAV:
+
+- `meter/block_meter/44100_2ch`: 5.9701 ms, 95 percent interval 5.9556 to 5.9906 ms.
+  The baseline is 27.982 ms, about 4.69 times faster and 78.7 percent less time.
+- `analyze_file/music_stereo_44100_16.wav`: 41.396 ms, interval 41.275 to 41.510 ms.
+  The baseline is 175.52 ms, about 4.24 times faster and 76.4 percent less time.
+- `render/gain_only`: 21.840 microseconds, interval 21.706 to 22.057 microseconds.
+  Criterion detects no significant change, as expected for the unchanged scalar helper.
+- `render/gain_and_aiff/16`: 2.1915 ms, interval 2.1822 to 2.2056 ms.
+  The fused writer benchmark takes about 2.6 percent less time than the baseline.
+- `render/gain_and_aiff/24`: 3.2381 ms, interval 3.2310 to 3.2463 ms.
+  The fused writer benchmark takes about 3.0 percent less time than the baseline.
+- `normalize_file/peak/music_stereo_44100_16.wav`: 84.876 ms, interval 84.551 to 85.178 ms.
+  The baseline is 221.83 ms, about 2.61 times faster and 61.6 percent less time.
+- `normalize_file/lufs/music_stereo_44100_16.wav`: 84.826 ms, interval 84.364 to 85.417 ms.
+  The baseline is 220.69 ms, about 2.60 times faster and 61.5 percent less time.
+
+The render microbenchmark now calls the production fused writer with a no-op sample observer,
+rather than a separately scaled copy and plane-reference allocation.
+It excludes `BlockMeter`, so only the end-to-end normalization benchmark measures output metering.
+The end-to-end Criterion normalization cases start from a current source record,
+whereas CLI normalization also includes initial source analysis.
+Their speedups must not be treated as interchangeable measures of the same operation.
+
+The release CLI comparison uses the same 29 eligible normalization corpus files,
+three measured runs per command, one warmup, and worker counts of 1 and 16 as the baseline.
+Means and sample standard deviations, in seconds, are:
+
+- Analysis, one worker: C++ 1.618250 ± 0.014608, Rust 0.297451 ± 0.007325, C++/Rust 5.440.
+  Rust takes about 65.1 percent less time than its 0.852869 s baseline.
+- Peak normalization, one worker: C++ 3.277709 ± 0.054053, Rust 0.884520 ± 0.011951, C++/Rust 3.706.
+  Rust takes about 56.7 percent less time than its 2.040939 s baseline.
+- Loudness normalization, one worker: C++ 3.270517 ± 0.040099, Rust 0.928473 ± 0.023419, C++/Rust 3.522.
+  Rust takes about 53.9 percent less time than its 2.012160 s baseline.
+- Analysis, 16 workers: C++ 0.310800 ± 0.003239, Rust 0.056582 ± 0.001800, C++/Rust 5.493.
+  Rust takes about 58.9 percent less time than its 0.137665 s baseline.
+- Peak normalization, 16 workers: C++ 0.594622 ± 0.011371, Rust 0.285083 ± 0.002519, C++/Rust 2.086.
+  Rust takes about 34.5 percent less time than its 0.435082 s baseline.
+- Loudness normalization, 16 workers: C++ 0.595915 ± 0.019191, Rust 0.293995 ± 0.004707, C++/Rust 2.027.
+  Rust takes about 34.5 percent less time than its 0.448726 s baseline.
+
+Every measured pair passes the level, normalization-target, sample, and metadata oracles.
+The report and raw exports are in `target/cli-benchmark/20261030T131331Z-XLO4v0/`.
+Its metadata identifies Rust revision `1407953` and the unchanged C++ binary from the baseline.
+The remaining dirty paths contain documentation and comment changes only.
+These are warm-cache local macOS measurements, not Windows or cold-storage throughput claims.
+
+### Optimized profiling and validation
+
+A fresh samply capture runs the generated 60 second stereo WAV 16 times.
+The recording is `target/profile-custom-meter.json.gz`, with its presymbolicated sidecar.
+It contains 729 analysis-worker samples, of which 624, or 85.6 percent,
+have `BlockMeter::measure_planes` as the leaf and 58, or 8.0 percent, have the PCM decoder as the leaf.
+There are no ebur128 or `calc_gating_block` frames.
+The optimized measurement kernels are inlined into `measure_planes`,
+so this capture does not assign separate sampled percentages to K weighting, extrema, waveform, and true peak.
+Those remain distinct required owners of their measurements,
+and waveform rescans still occur when a bucket boundary splits a block.
+It is not a claim of one combined sample loop for every measurement.
+
+The Instruments Allocations capture could not attach to the CLI process on this machine.
+Its failed trace does not establish allocation behavior.
+An isolated release harness in `target/allocation-check/` instead wraps the system allocator with `stats_alloc`.
+It counts zero allocations, reallocations, and allocated bytes across 600 complete 100 ms meter pushes after construction.
+It also counts zero across 599 fused writer, quantized-buffer, and meter pushes at both 16 and 24 bits,
+after the reusable writer scratch is primed and the output sink is reserved.
+The harness calls production APIs and is not a new production dependency or unsafe code in core.
+This verifies steady-state blocks with a known length, not decoding, startup, finish, metadata, unknown-length growth,
+or every possible waveform merge.
+
+The full macOS workspace passes 860 tests with the full normalization corpus required and none skipped.
+Clippy fix, strict all-target Clippy, rustfmt, shell formatting, prose formatting, and Python checks pass.
+The C++ debug preset builds both applications and the test plugin, and all 28 CTest suites pass.
+Changed-source lint and clang-format pass.
+The parity and benchmark tooling tests also pass.
+
+Release C++ parity passes at 0.05 tolerance for all 29 top-level fixtures and all 32 normalization corpus inputs.
+The four normalization targets pass their independent level, target, sample, and metadata checks:
+peak 0 and peak -1 each compare 29 outputs, LUFS -14 compares 28, and LUFS -23 compares 29.
+Expected silent, excessive-gain, short-loudness, and output-conflict failures remain checked, not silently excluded.
+Lossless peak outputs remain sample-exact and loudness outputs stay within one PCM step.
+The in-render record tests independently require exact equality with a fresh decode,
+including history, waveform, overload bytes, file identity, and final partial windows after three seconds.
+
+## Numerical and regression contracts
+
+Integrated loudness, maximum short-term loudness,
+and each short-term history value must stay within 0.001 LU of the ebur128 reference.
+Integrated and maximum short-term values must also display identically at two decimal places.
+This permits a different energy summation order, not arbitrary loudness or display changes.
+True peak retains its unchanged bit-exact contract, with the documented x86 arithmetic-underflow exception below.
+Sample extrema, waveform resolution, overload semantics, and PCM quantization keep their existing contracts.
+
+Goldens record our own implementation's numeric fields, histories, blobs, gains, and normalized sample hashes.
+They are regression snapshots, not a requirement to retain the reference's floating point bits forever.
+A validated numerical change may regenerate the affected goldens and CLI snapshots.
+Review those changes alongside differential checks, displayed-value agreement, chunk-size invariance,
+exact written-PCM measurement checks, normalization targets, and C++ parity.
+A saved CLI snapshot remains useful for identifying changes, but exact old JSON and loudness blobs are not the contract.
+Run the validation with:
 
 ```shell
 cargo nextest run
@@ -148,13 +255,48 @@ cargo nextest run
 ./scripts/parity.sh --release --normalize --lufs -14 ../fixtures/normalization
 ```
 
-A rolling sum of 100 ms energies changes the sample summation order.
-Although its loudness error can be very small, that does not establish exact history, maximum loudness,
-or cache blob equality.
-The current ebur128 interface also does not expose its filtered samples or block energies,
-so an external rolling sum would need another K-weighting pass or a replacement loudness filter.
-That optimization is deferred while the exact golden contract remains in force.
-True-peak interpolation can instead place independent phases in SIMD lanes without reordering each phase's tap sum.
+## Custom loudness and in-render measurement
+
+Production loudness uses `loudness/k_weighting.rs` and `loudness/gating.rs`.
+Ebur128 is a development-only dependency for differential tests and benchmark references.
+K weighting derives sample-rate-specific shelving and high-pass coefficients,
+combines them into a fourth order filter, and uses fixed `f64` state for up to 64 channels.
+The coefficient formulas and recurrence are derived from ebur128, with its license notice retained in the source.
+The default ebur128 channel map includes its four- and five-channel layouts,
+ignores LFE and unused channels for loudness, and doubles mono energy for dual-mono measurement.
+
+Gating keeps 30 channel-weighted 100 ms energies in a fixed ring.
+Complete short-term updates directly sum that ring, rather than subtracting expired energy from a running sum,
+so long streams cannot accumulate running-sum drift.
+Integrated gating uses 400 ms windows every 100 ms.
+Only energies admitted by the absolute gate are appended to the integrated-history `Vec`,
+with capacity reserved from the expected stream length, and the relative gate is applied at finish.
+Leading short-term windows use implicit silence and the full three-second denominator.
+A final partial update does not admit an incomplete integrated gating block.
+
+After three seconds, a final partial update must expire only the corresponding prefix of the outgoing block.
+A ring of whole-block energies alone cannot recover that boundary.
+The implementation therefore also retains one weighted squared energy per frame in a shared three-second ring,
+not three seconds of filtered audio for every channel.
+The final partial update scans the outgoing suffix and combines it with retained block energies and new energy.
+Complete updates only sum the 30 block energies.
+This is an explicit bounded memory compromise for exact partial-window boundaries,
+not a claim of block-energy-only storage.
+
+`BlockMeter` can fail only at construction for channel counts outside 1 through 64
+or sample rates outside 16 through 2822400 Hz.
+The streaming and finish paths do not return meter errors.
+Extrema use fixed arrays, and the waveform reuses them when an entire block fits in the remaining bucket.
+Blocks crossing a waveform bucket boundary still rescan samples to preserve each bucket's range.
+The existing minimum bucket size remains 64 frames, not a 100 ms analysis block.
+
+Normalization measures output during rendering, from the exact decoded `f32` values of the written 16- or 24-bit PCM.
+The writer fuses one `f32` gain multiplication with its existing quantizer,
+without a scaled-audio copy or a per-chunk plane-reference `Vec`.
+Reusable quantized planes feed the same block meter for output peaks, loudness, waveform, and overload history.
+Header and frame-count validation still run before commit, but a full output re-decode is unnecessary.
+An in-place source already at target returns its current record after cancellation and source-identity validation.
+Analysis cache version 5 invalidates older measurements while preserving same-identity custom gains and Serato data.
 
 ## SIMD true peak
 
@@ -166,7 +308,7 @@ Ordered comparisons preserve the reference NaN policy across SIMD backends.
 The interpolator includes decoded sample extrema and does not drain an interpolation tail at end of stream.
 At 192 kHz and above `BlockMeter` reuses the signed extrema it already measured, without another sample scan.
 
-The integrated and short-term reference meter does not run its implied sample peak scan or interpolation.
+The production loudness meter performs neither sample peak scanning nor true-peak interpolation.
 Every architecture uses the same SIMD true peak path, including x86, with no opt-in or reference fallback.
 Ebur128 enables arithmetic flush to zero temporarily on x86 with SSE2,
 while the safe SIMD kernel leaves the caller's floating point environment unchanged.
@@ -185,11 +327,12 @@ and a forced scalar fallback.
 They cover both sides of the 96 and 192 kHz boundaries, specialized and generic channel counts,
 irregular and empty chunks, wrapped histories, NaNs, infinities, signed zeros, and short streams.
 Underflowing interpolation is checked exactly on targets where the reference does not enable x86 flush to zero.
-The unchanged golden and differential tests also compare the integrated `BlockMeter` outputs.
+Golden tests capture the current `BlockMeter`, and differential tests check its loudness within the contract above.
 
-## Local verification
+## Historical SIMD verification
 
-The local macOS run passes all 637 workspace tests with none skipped, including the frozen golden files,
+This verification predates the custom loudness meter and in-render normalization measurements.
+The local macOS run passed all 637 workspace tests with none skipped, including the then-current golden files,
 the ebur128 differential harness, the forced scalar and NEON backends, and the sample-only extrema regression.
 The saved CLI snapshot matches exactly for analysis, peak normalization, and loudness normalization JSON.
 Its 56 peak-normalized and 55 loudness-normalized outputs have identical samples and tags.
@@ -204,8 +347,10 @@ The required full workspace Clippy fix command completes with one existing `too_
 warning in the concurrently edited GUI constructor, outside the measurement changes.
 The full workspace tests and formatting pass with the final NEON and AVX2 dispatch.
 
-## Local SIMD measurements
+## Historical SIMD measurements
 
+These results describe the true-peak SIMD change with the ebur128 loudness meter still in production.
+They are not timings for the current custom loudness and normalization pipeline.
 The final NEON and AVX2 dispatch was measured on the same M3 Max after validation finished,
 without concurrent builds, tests, or profiling captures.
 These figures describe local macOS performance only.
@@ -254,9 +399,10 @@ At lower rates, `TruePeak::previous_peaks` exposes the last nonempty push's maxi
 Source overload history is independent of waveform quantization, gain, preview inserts, and display formatting.
 It retains separate sample and true peak bits per actual channel, OR-merging adjacent buckets at a limit of 8192.
 The final partial bucket preserves the decoded length, and an all-clear history is valid present data.
-Cache analysis version 4 requires a validated independent overload blob for successful rows.
+Cache analysis version 5 requires a validated independent overload blob for successful rows.
 Missing, malformed, or older data triggers a refill without removing custom gains or independent Serato data.
-Normalization and plugin outputs receive their own histories from output reanalysis.
+Normalized outputs receive their histories from exact quantized in-render measurements,
+and plugin outputs receive theirs from output reanalysis.
 Warning projection is separate GUI work.
 Sample flags cover their bucket directly.
 Interpolated flags need conservative coverage of retained filter history, rather than claiming an exact peak position.
@@ -267,10 +413,11 @@ so isolated kernels no longer include a temporary plane-vector allocation for ev
 The histories start empty for each iteration, so a previous normal peak cannot hide the underflow workload.
 `overload_history` measures the production collector separately, including repeated stride doubling.
 The normalization benchmark calls the production `apply_gain` helper, which retains the original scalar f32 product.
-These changes do not introduce extrema, gain, conversion, or K-weighting SIMD kernels.
+Neither the block-pipeline changes nor the custom loudness meter introduce extrema, gain, conversion, or K-weighting SIMD.
 
-### Controlled follow-up measurements
+### Historical controlled follow-up measurements
 
+These measurements predate the custom loudness meter and in-render normalization measurements.
 A fresh `core-followups-before` baseline measures the meter before the block changes,
 separately from the earlier exploratory `before` figures.
 The baseline stereo timings are 30.765 ms at 44.1 kHz, 33.614 ms at 48 kHz,
@@ -310,9 +457,10 @@ For fresh 4800-frame interpolation, SIMD takes 11.323 microseconds at ordinary a
 The corresponding ebur128 timings are 27.080, 27.231, and 27.112 microseconds.
 These local NEON timings do not resolve the x86 flush-to-zero numerical exception.
 
-### Core follow-up verification
+### Historical core follow-up verification
 
-The macOS workspace passes all 684 tests with none skipped.
+This verification describes the block-pipeline and overload-history changes before the custom loudness meter.
+The macOS workspace passed all 684 tests with none skipped.
 The optimized core run passes all 299 tests with `AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES=1`,
 requiring the entire normalization corpus rather than accepting missing LFS members.
 The unchanged CLI snapshot matches analysis, peak, and loudness JSON,
@@ -325,6 +473,8 @@ The dependency `block` still emits its existing future-compatibility notice.
 
 ## Remaining validation
 
+The cross-target checks recorded below predate the custom loudness meter and in-render normalization measurements.
+They must be repeated for the current implementation and do not establish its Windows execution results.
 Windows execution and timings for the x86 SIMD kernels are deferred to the user's PC after the macOS commits.
 They do not block the local macOS work, and cross-target checks do not count as execution evidence.
 The Windows pass must run debug and optimized core tests with the full normalization corpus.
@@ -337,15 +487,14 @@ and all-target checking is blocked by the missing Windows C headers needed by Cr
 Cross-compilation alone does not establish output equality or speed on that machine.
 The x86 analysis path runs the SIMD kernel directly, so Windows validation needs no feature flag or code change.
 Its arithmetic underflow difference remains explicit and must not be hidden by regenerating golden outputs.
-The larger K-weighting and gating replacement, rolling short-term sums,
-and normalization SIMD work must each pass the same safety net
-and get their own controlled benchmark comparison.
+The custom loudness meter and in-render normalization measurements require their own controlled benchmark comparisons.
+The historical runs above do not establish their current correctness or speed.
 
 ## Separate implementation follow-ups
 
-- Keep K-weighting, integrated gating, and any rolling short-term sums in a separate numerical change.
-  The strengthened differential harness now checks f64 maximum loudness and repeated window wraps.
-  A different summation order still cannot satisfy the frozen blob contract merely by staying within a tolerance.
+- Keep the 0.001 LU and two-decimal display contracts covered by differential checks,
+  including `f64` maximum loudness, repeated window wraps, and final partial windows after three seconds.
+  Regenerating our own regression snapshots does not replace those checks.
 - Keep explicit extrema, gain, and AIFF conversion SIMD as independently measured work.
   Preserve scalar exceptional values, signed zero, f64 promotion, clipping, and ties-to-even output rounding.
   The shared scalar gain helper is benchmark coverage, not an optimization claim.

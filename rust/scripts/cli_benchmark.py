@@ -371,7 +371,7 @@ def report(work: Path, results: Path) -> None:
         "Fresh temporary copies and configuration are prepared outside timing. Filesystem cache is warm.",
         (
             "Normalization measures the whole CLI workflow, "
-            "including initial and output analysis, writing, and permanent disposal."
+            "including initial analysis, rendering, output measurement, and permanent disposal."
         ),
         "Config/cache isolation uses HOME, CFFIXED_USER_HOME and XDG variables on a best-effort basis.",
         "",

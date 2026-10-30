@@ -1,6 +1,7 @@
 //! Block-energy windows and the absolute and relative gates of integrated loudness.
 //!
-//! Complete updates retain only thirty weighted energies, rather than three seconds of filtered audio.
+//! Complete short-term queries sum thirty weighted block energies, rather than scanning filtered audio.
+//! A shared ring of weighted per-frame energies preserves the final partial window's outgoing suffix.
 //! The short-term sum is recomputed from that fixed ring, so long streams cannot accumulate subtraction drift.
 //! Integrated history retains only blocks admitted by the absolute gate and applies the relative gate at finish.
 

@@ -276,7 +276,7 @@ sequenceDiagram
     Job->>Decoder: open and probe
     loop every packet
         Job->>Decoder: next_chunk
-        Job->>Job: BlockMeter push, ebur128, extremes, waveform
+        Job->>Job: BlockMeter push, loudness, extremes, waveform
         Job-->>Front: Progress
     end
     Job->>Cache: store_analysis
@@ -298,10 +298,35 @@ while three failures in a row stop the pass, so no pass works on truncated audio
 **Measurements.**
 `BlockMeter` regroups the chunks into blocks of a tenth of a second, one per short-term loudness point.
 Complete aligned blocks borrow decoder planes, while incomplete or silence-padded blocks reuse sample buffers.
-Plane references use fixed storage for the meter's maximum 64 channels.
-Each block goes into an `ebur128` meter with integrated and short-term modes,
-into the true peak meter, the per-channel sample extremes, the `WaveformBuilder`, and source overload history.
-A mono file is measured as dual mono, so it reads the same loudness as the same content in stereo.
+Plane references and per-channel extrema use fixed arrays for the meter's maximum 64 channels.
+Each block feeds the custom loudness meter, true peak, sample extremes, waveform, and source overload history.
+`MeterError` only reports an unsupported stream at construction,
+with 1 through 64 channels and sample rates from 16 through 2822400 Hz accepted.
+Once constructed, pushing blocks and finishing the measurements are infallible.
+
+`loudness/k_weighting.rs` derives the shelving and high-pass coefficients for the sample rate,
+and combines them into a fourth order filter with `f64` state in fixed storage for 64 channels.
+Its coefficient formulas and recurrence are derived from ebur128, with the license notice retained in the source.
+It uses ebur128's default channel map, including its four- and five-channel layouts,
+with LFE and unused channels excluded from loudness.
+A mono file has twice its filtered energy, so it reads the same loudness as the same content in stereo.
+Ebur128 is only a development dependency used by differential tests and component benchmarks.
+
+`loudness/gating.rs` keeps channel-weighted energies for 100 ms blocks in a fixed ring of 30 entries.
+Complete short-term updates sum those 30 energies directly, rather than subtracting from a running sum,
+so repeated window wraps cannot accumulate subtraction drift.
+Integrated loudness uses 400 ms windows at 100 ms steps, with absolute and relative gates.
+Only energies admitted by the absolute gate are appended to its integrated-history `Vec`,
+whose capacity is reserved from the expected decoded length when it is known.
+Short-term windows retain the three-second denominator and implicit leading silence for short streams.
+A final partial block does not create an incomplete integrated gating window.
+
+An exact final partial short-term window after three seconds must expire only the outgoing block's prefix.
+The meter therefore also retains one channel-weighted squared energy per frame in a shared three-second ring.
+It does not retain filtered per-channel audio.
+This is a bounded memory compromise for exact partial-window boundaries,
+not a claim that all loudness state consists of only 30 energies.
+Only the final partial update scans the outgoing suffix, complete updates sum the 30 block energies.
 
 `loudness/true_peak.rs` measures true peak on every architecture with `fearless_simd`.
 Below 96 kHz its four interpolation phases occupy separate `f32x4` lanes,
@@ -318,13 +343,19 @@ Ebur128 temporarily enables flush to zero on x86 with SSE2,
 and a focused x86 test demonstrates different arithmetic-underflow results.
 Windows execution and timings remain a separate validation pass.
 
-Integrated and short-term loudness keep the reference's sample summation order.
-A rolling sum of block energies would change the exact short-term history, maximum, and cache blobs,
-so it cannot replace the reference under the frozen golden contract.
+The loudness contract allows at most 0.001 LU difference from the reference for integrated loudness,
+maximum short-term loudness, and each short-term history value.
+Displayed integrated and maximum short-term loudness must also agree at two decimal places.
+Loudness fields and serialized history are not required to preserve the reference's floating point bits.
+True peak retains its unchanged bit-exact contract, including the documented x86 arithmetic-underflow exception.
+Goldens are this implementation's regression snapshots and may be regenerated for a validated numerical change.
 The benchmark commands, profiling breakdown, and validation limits are in [Analysis performance](docs/performance.md).
 
 `WaveformBuilder` merges neighbouring buckets whenever their count passes 8192,
 and `WaveformOverview` keeps them quantized to 8 bits with coarser levels for drawing.
+It reuses a block's extrema only when the block fits in the remaining waveform bucket,
+otherwise it rescans the samples to preserve each bucket's exact range.
+The finest bucket size remains at least 64 frames, not 100 ms, so short-file resolution is unchanged.
 The Serato Overview tag only colours the waveform, while its shape comes from the decoded audio.
 
 `overload.rs` records independent sample-over and true-peak-over bits for each actual source channel.
@@ -345,6 +376,7 @@ and extends true peak coverage conservatively across interpolation boundaries wi
 `AnalysisCache` in `core/src/cache.rs` keeps one SQLite row per path,
 with the levels, loudness history, waveform and overload history as independent blobs, and the user's custom gain.
 Successful rows require valid overload history matching their decoded stream.
+Analysis version 5 invalidates older measurement rows, including those made by the reference loudness meter.
 Older rows or missing or malformed history trigger reanalysis through an additive migration and analysis version gate.
 A refill retains same-identity custom gains, including explicit clears, and leaves Serato rows untouched.
 A row holds while the file keeps the stored size and modification time and the analysis version is current.
@@ -356,9 +388,11 @@ The database lives in the `AudioBatch-rs` data directory, apart from the C++ app
 ## Normalization and processing
 
 Normalization in `core/src/normalize.rs` and processing in `plugins/src/processing.rs` both write `<name>.aif`.
-They write it next to the source, commit it, and analyze the result.
+They write it next to the source and commit it after validation.
+Normalization measures its quantized output while rendering, while processing analyzes the committed result.
 Both require a finished analysis, and analyze the source again first when it changed on disk.
-Lossless sources normalize to the same samples as in the C++ application, which `scripts/compare_outputs.py` checks.
+Lossless sources normalize to identical samples in peak mode and within one PCM step in loudness mode,
+which `scripts/compare_outputs.py` checks independently of the level comparison.
 
 **The gain.**
 In peak mode, `normalization_gain` brings the sample peak to the target.
@@ -368,8 +402,17 @@ Processing applies the file's custom gain before the first plugin,
 or else the normalization gain when the Normalize option is on.
 A file the normalization refuses is processed at unity gain, with a notice that says why.
 
-**Normalization** streams the decoded chunks, scaled by the gain, into an `AiffWriter` without dither,
+**Normalization** streams decoded chunks into an `AiffWriter` without dither,
 keeping the source bit depth when AIFF supports it.
+The writer fuses one `f32` gain multiplication per sample with PCM quantization,
+without a scaled-audio copy or a per-chunk `Vec` of plane references.
+Its quantizer also returns the exact decoded `f32` value of each written 16- or 24-bit sample.
+Reusable planar buffers feed those values into `BlockMeter`,
+so peaks, loudness, waveform, and overload history describe the written PCM, not the unquantized render.
+The finished file's header and frame count are still validated before commit,
+but normalization does not fully decode the output again to build its analysis record.
+An in-place file already at its target returns the current analysis record without rewriting or decoding it again,
+after checking cancellation and validating that the source identity still matches.
 
 **Processing** accepts mono and stereo sources.
 The worker's `ProcessingChain` asks the UI thread to prepare every plugin for the file:
