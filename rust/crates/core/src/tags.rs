@@ -20,6 +20,7 @@ use lofty::iff::wav::WavFile;
 use lofty::mpeg::MpegFile;
 use lofty::picture::{Picture, PictureType};
 use lofty::prelude::{Accessor, ItemKey, TaggedFileExt};
+use lofty::probe::Probe;
 use lofty::tag::Tag;
 use serato_tags::native::{decode_native_value, native_field_description};
 use serato_tags::{Overview, SeratoData, SeratoTag};
@@ -73,7 +74,8 @@ pub struct FileTags {
     pub key: Option<String>,
     /// Comment.
     pub comment: Option<String>,
-    /// True when the file has embedded album art.
+    /// True when the reader found embedded album art.
+    /// A false value from `read_display_tags` does not establish absence because that reader skips pictures.
     pub has_picture: bool,
     /// Serato DJ data, when the file has any.
     pub serato: Option<SeratoData>,
@@ -123,36 +125,20 @@ impl FileTags {
 ///
 /// Returns an error when the file cannot be opened or parsed.
 pub fn read_tags(path: &Path) -> Result<FileTags, TagsError> {
-    let _span = tracing::info_span!("read_tags", file = %path.display()).entered();
-    let tagged = lofty::read_from_path(path).map_err(|source| TagsError {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let mut tags = FileTags::default();
-    if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
-        tags.title = tag.title().map(Cow::into_owned);
-        tags.artist = tag.artist().map(Cow::into_owned);
-        tags.album = tag.album().map(Cow::into_owned);
-        tags.genre = tag.genre().map(Cow::into_owned);
-        // Vorbis comments may hold the comment as DESCRIPTION, as ffmpeg writes it, so that is the fallback.
-        tags.comment = tag
-            .comment()
-            .map(Cow::into_owned)
-            .or_else(|| tag.get_string(ItemKey::Description).map(str::to_string));
-        tags.year = tag.date().map(|date| date.year);
-        tags.bpm = tag
-            .get_string(ItemKey::Bpm)
-            .or_else(|| tag.get_string(ItemKey::IntegerBpm))
-            .map(str::to_string);
-        tags.key = tag.get_string(ItemKey::InitialKey).map(str::to_string);
-        tags.has_picture = !tag.pictures().is_empty();
-    }
-    tags.serato = if lowercase_extension(path).as_deref() == Some("flac") {
-        read_flac_serato_data(path)
-    } else {
-        read_id3v2(path).as_ref().and_then(serato_data)
-    };
-    Ok(tags)
+    read_tags_with_options(path, ParseOptions::new())
+}
+
+/// Reads the display fields and Serato cues without audio properties or embedded pictures.
+///
+/// `has_picture` is always false because pictures are skipped, not because their absence was established.
+/// Use the independent artwork reader rather than this flag to decide whether artwork is available.
+/// Use `read_tags` when the picture presence flag is required.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be opened or parsed.
+pub fn read_display_tags(path: &Path) -> Result<FileTags, TagsError> {
+    read_tags_with_options(path, display_parse_options())
 }
 
 /// Reads the encoded embedded pictures of a file that are worth decoding as album artwork.
@@ -164,7 +150,7 @@ pub fn read_tags(path: &Path) -> Result<FileTags, TagsError> {
 #[must_use]
 pub fn read_artwork_candidates(path: &Path) -> Vec<Vec<u8>> {
     let _span = tracing::info_span!("read_artwork_candidates", file = %path.display()).entered();
-    let Ok(tagged) = lofty::read_from_path(path) else {
+    let Ok(tagged) = Probe::open(path).and_then(|probe| probe.options(artwork_parse_options()).read()) else {
         return Vec::new();
     };
     let primary = tagged.primary_tag().map(lofty::tag::Tag::tag_type);
@@ -189,6 +175,65 @@ pub(crate) fn read_id3v2(path: &Path) -> Option<Id3v2Tag> {
     }
 }
 
+/// Returns the parsing options for artwork, leaving audio properties out of the independent read.
+fn artwork_parse_options() -> ParseOptions {
+    ParseOptions::new().read_properties(false)
+}
+
+/// Returns the parsing options for text and Serato data, leaving properties and cover bytes unread.
+fn display_parse_options() -> ParseOptions {
+    artwork_parse_options().read_cover_art(false)
+}
+
+/// Reads display fields using the requested picture policy, and Serato data without cover bytes.
+fn read_tags_with_options(path: &Path, options: ParseOptions) -> Result<FileTags, TagsError> {
+    let _span = tracing::info_span!("read_tags", file = %path.display()).entered();
+    let tagged = Probe::open(path)
+        .and_then(|probe| probe.options(options).read())
+        .map_err(|source| TagsError {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    let mut tags = FileTags::default();
+    if let Some(tag) = tagged.primary_tag().or_else(|| tagged.first_tag()) {
+        tags.title = tag.title().map(Cow::into_owned);
+        tags.artist = tag.artist().map(Cow::into_owned);
+        tags.album = tag.album().map(Cow::into_owned);
+        tags.genre = tag.genre().map(Cow::into_owned);
+        // Vorbis comments may hold the comment as DESCRIPTION, as ffmpeg writes it, so that is the fallback.
+        tags.comment = tag
+            .comment()
+            .map(Cow::into_owned)
+            .or_else(|| tag.get_string(ItemKey::Description).map(str::to_string));
+        tags.year = tag.date().map(|date| date.year);
+        tags.bpm = tag
+            .get_string(ItemKey::Bpm)
+            .or_else(|| tag.get_string(ItemKey::IntegerBpm))
+            .map(str::to_string);
+        tags.key = tag.get_string(ItemKey::InitialKey).map(str::to_string);
+        tags.has_picture = !tag.pictures().is_empty();
+    }
+    tags.serato = if lowercase_extension(path).as_deref() == Some("flac") {
+        read_flac_serato_data(path)
+    } else {
+        read_display_id3v2(path).as_ref().and_then(serato_data)
+    };
+    Ok(tags)
+}
+
+/// Reads a concrete `ID3v2` tag for Serato data without changing metadata-copy parsing.
+fn read_display_id3v2(path: &Path) -> Option<Id3v2Tag> {
+    let extension = lowercase_extension(path)?;
+    let mut file = File::open(path).ok()?;
+    let options = display_parse_options();
+    match extension.as_str() {
+        "mp3" => MpegFile::read_from(&mut file, options).ok()?.id3v2().cloned(),
+        "aif" | "aiff" | "aifc" => AiffFile::read_from(&mut file, options).ok()?.id3v2().cloned(),
+        "wav" | "wave" => WavFile::read_from(&mut file, options).ok()?.id3v2().cloned(),
+        _ => None,
+    }
+}
+
 /// Returns true for the formats Serato data is read from:
 /// the `ID3v2` tag of MP3, AIFF, and WAV files, and the Vorbis comments of FLAC files.
 fn supports_serato_data(path: &Path) -> bool {
@@ -204,7 +249,7 @@ fn supports_serato_data(path: &Path) -> bool {
 /// A value that is not a valid wrapper is passed on empty, so its tag reads as invalid rather than absent.
 fn read_flac_serato_data(path: &Path) -> Option<SeratoData> {
     let mut file = File::open(path).ok()?;
-    let flac = FlacFile::read_from(&mut file, ParseOptions::new()).ok()?;
+    let flac = FlacFile::read_from(&mut file, display_parse_options()).ok()?;
     let objects: Vec<(&'static str, Vec<u8>)> = flac
         .vorbis_comments()?
         .items()
@@ -223,12 +268,24 @@ fn read_flac_serato_data(path: &Path) -> Option<SeratoData> {
 /// Returns the encoded data of the pictures worth decoding as album artwork, front covers first.
 /// Empty pictures and those above `ARTWORK_MAXIMUM_BYTES` are skipped, and at most `ARTWORK_MAXIMUM_COUNT` are kept.
 fn select_artwork_candidates<'a>(pictures: impl Iterator<Item = &'a Picture>) -> Vec<Vec<u8>> {
-    let (mut front, other): (Vec<&Picture>, Vec<&Picture>) = pictures
-        .filter(|picture| !picture.data().is_empty() && picture.data().len() <= ARTWORK_MAXIMUM_BYTES)
-        .partition(|picture| picture.pic_type() == PictureType::CoverFront);
-    front.extend(other);
+    let mut front = Vec::with_capacity(ARTWORK_MAXIMUM_COUNT);
+    let mut other = Vec::with_capacity(ARTWORK_MAXIMUM_COUNT);
+    for picture in pictures {
+        if picture.data().is_empty() || picture.data().len() > ARTWORK_MAXIMUM_BYTES {
+            continue;
+        }
+        if picture.pic_type() == PictureType::CoverFront {
+            front.push(picture);
+            if front.len() == ARTWORK_MAXIMUM_COUNT {
+                break;
+            }
+        } else if other.len() < ARTWORK_MAXIMUM_COUNT {
+            other.push(picture);
+        }
+    }
     front
         .into_iter()
+        .chain(other)
         .take(ARTWORK_MAXIMUM_COUNT)
         .map(|picture| picture.data().to_vec())
         .collect()
@@ -317,6 +374,66 @@ mod test_artwork_candidates {
     }
 
     #[test]
+    fn artwork_and_display_options_skip_audio_properties() {
+        assert_eq!(artwork_parse_options(), ParseOptions::new().read_properties(false));
+        assert_eq!(
+            display_parse_options(),
+            ParseOptions::new().read_properties(false).read_cover_art(false)
+        );
+        let tagged = Probe::open(test_fixtures::fixture("tagged_stereo_44100_16.flac"))
+            .expect("opens fixture")
+            .options(artwork_parse_options())
+            .read()
+            .expect("reads tags");
+        assert!(tagged.properties().duration().is_zero());
+        assert!(tagged.primary_tag().is_some());
+    }
+
+    #[test]
+    fn display_reads_skip_pictures_without_changing_full_tag_contract() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        for (name, tag_type) in [
+            ("tagged_stereo_44100_16.flac", TagType::VorbisComments),
+            ("sine_stereo_44100_320k.mp3", TagType::Id3v2),
+            ("sine_stereo_44100_16.wav", TagType::Id3v2),
+            ("serato_rainbow_stereo_44100_16.aif", TagType::Id3v2),
+        ] {
+            let path = test_fixtures::copy_fixture(&directory, name, None);
+            let mut tag = Tag::new(tag_type);
+            tag.set_title("Artwork test title".to_string());
+            tag.push_picture(picture(PictureType::CoverFront, vec![1, 2, 3]));
+            tag.save_to_path(&path, WriteOptions::default()).expect("writes tags");
+            let full = read_tags(&path).expect("reads full tags");
+            let display = read_display_tags(&path).expect("reads display tags");
+            assert!(full.has_picture, "{name}");
+            assert!(
+                !display.has_picture,
+                "display reader deliberately skips pictures in {name}"
+            );
+            assert_eq!(display.title.as_deref(), Some("Artwork test title"));
+            assert_eq!(display.serato, full.serato);
+            assert_eq!(read_artwork_candidates(&path), vec![vec![1, 2, 3]]);
+            if tag_type == TagType::Id3v2 {
+                let copy_tag = read_id3v2(&path).expect("reads metadata-copy tag");
+                assert!(copy_tag.into_iter().any(|frame| frame.id_str() == "APIC"), "{name}");
+                let display_tag = read_display_id3v2(&path).expect("reads display tag");
+                assert!(!display_tag.into_iter().any(|frame| frame.id_str() == "APIC"), "{name}");
+            }
+        }
+    }
+
+    #[test]
+    fn display_reader_keeps_serato_data_without_cover_parsing() {
+        for name in test_fixtures::SERATO_OVERVIEW_FIXTURES {
+            let path = test_fixtures::fixture(name);
+            let full = read_tags(&path).expect("reads full tags");
+            let display = read_display_tags(&path).expect("reads display tags");
+            assert!(display.serato.is_some(), "{name}");
+            assert_eq!(display.serato, full.serato, "{name}");
+        }
+    }
+
+    #[test]
     fn front_covers_come_first_in_tag_order() {
         let pictures = [
             picture(PictureType::CoverBack, vec![1]),
@@ -346,6 +463,18 @@ mod test_artwork_candidates {
             .map(|index| picture(PictureType::Other, vec![u8::try_from(index).expect("small index")]))
             .collect();
         assert_eq!(select_artwork_candidates(pictures.iter()).len(), ARTWORK_MAXIMUM_COUNT);
+    }
+
+    #[test]
+    fn late_front_covers_displace_bounded_other_candidates() {
+        let mut pictures: Vec<Picture> = (0..ARTWORK_MAXIMUM_COUNT + 2)
+            .map(|_| picture(PictureType::CoverBack, vec![1]))
+            .collect();
+        pictures.extend((0..ARTWORK_MAXIMUM_COUNT).map(|_| picture(PictureType::CoverFront, vec![2])));
+        assert_eq!(
+            select_artwork_candidates(pictures.iter()),
+            vec![vec![2]; ARTWORK_MAXIMUM_COUNT]
+        );
     }
 
     #[test]
