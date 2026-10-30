@@ -17,7 +17,7 @@ use rtrb::{Consumer, Producer};
 
 use super::{NO_GENERATION, SharedState, drop_stale_frames, pop_current_frame, write_frame};
 use crate::pipeline::Frame;
-use crate::preview_insert::PreviewInsert;
+use crate::preview_insert::{InsertChange, PreviewInsert};
 
 /// Length of the fade after a reset and of the fade when pausing, in frames.
 pub const TRANSITION_FRAMES: usize = 64;
@@ -36,12 +36,12 @@ pub struct DeviceFormat {
 
 /// The audio callback's side of the insert queues, and the playback through the current insert.
 pub struct InsertRenderer {
-    /// Receives the next insert, or none to remove the current one.
-    commands: Consumer<Option<Box<dyn PreviewInsert>>>,
-    /// Hands replaced inserts back to the player.
-    retired: Producer<Box<dyn PreviewInsert>>,
-    /// The current insert.
-    insert: Option<Box<dyn PreviewInsert>>,
+    /// Receives each insert together with its tail storage.
+    commands: Consumer<InsertChange>,
+    /// Hands replaced inserts and their tail storage back to the player.
+    retired: Producer<InsertChange>,
+    /// The current insert change, including an explicit removal.
+    insert: Option<InsertChange>,
     /// Left channel block.
     left: Vec<f32>,
     /// Right channel block.
@@ -83,7 +83,7 @@ struct InsertPlayback {
 
 impl InsertRenderer {
     /// Creates the audio callback's side of the insert queues, with blocks allocated for the largest insert block.
-    pub fn new(commands: Consumer<Option<Box<dyn PreviewInsert>>>, retired: Producer<Box<dyn PreviewInsert>>) -> Self {
+    pub(crate) fn new(commands: Consumer<InsertChange>, retired: Producer<InsertChange>) -> Self {
         Self {
             commands,
             retired,
@@ -95,8 +95,8 @@ impl InsertRenderer {
     }
 
     /// Returns true when an insert is attached.
-    pub const fn has_insert(&self) -> bool {
-        self.insert.is_some()
+    pub fn has_insert(&self) -> bool {
+        self.insert.as_ref().is_some_and(|change| change.insert.is_some())
     }
 
     /// Makes the insert changes the player sent since the last callback.
@@ -108,16 +108,20 @@ impl InsertRenderer {
             let Ok(next) = self.commands.pop() else {
                 break;
             };
-            if let Some(replaced) = std::mem::replace(&mut self.insert, next) {
+            if let Some(replaced) = self.insert.replace(next) {
                 let _ = self.retired.push(replaced);
             }
             changed = true;
             shared.insert_changes_applied.fetch_add(1, Ordering::Release);
         }
-        let configuration_changed = self.insert.as_ref().is_some_and(|insert| {
-            self.playback.latency != insert.latency_frames()
-                || self.playback.compensate != shared.latency_compensation.load(Ordering::Relaxed)
-        });
+        let configuration_changed = self
+            .insert
+            .as_ref()
+            .and_then(|change| change.insert.as_ref())
+            .is_some_and(|insert| {
+                self.playback.latency != insert.latency_frames()
+                    || self.playback.compensate != shared.latency_compensation.load(Ordering::Relaxed)
+            });
         if changed || configuration_changed {
             self.playback.invalidate(shared);
         }
@@ -135,7 +139,10 @@ impl InsertRenderer {
         for sample in output.iter_mut() {
             *sample = convert(0.0);
         }
-        let Some(insert) = self.insert.as_deref_mut() else {
+        let Some(change) = &mut self.insert else {
+            return;
+        };
+        let Some(insert) = change.insert.as_deref_mut() else {
             return;
         };
         let playback = &mut self.playback;
@@ -177,8 +184,7 @@ impl InsertRenderer {
                 let pulled = playback.pull(frames, generation, gain, left, right);
                 if pulled < length {
                     if shared.finished_generation.load(Ordering::Acquire) == generation {
-                        let drain =
-                            insert.latency_frames() + shared.insert_tail_frames.load(Ordering::Relaxed) as usize;
+                        let drain = insert.latency_frames() + change.tail.load(Ordering::Relaxed);
                         let silence = (length - pulled).min(drain);
                         length = pulled + silence;
                         playback.drain = Some(drain - silence);
@@ -963,6 +969,69 @@ mod test_insert_playback {
         for probe in probes {
             assert_eq!(probe.drop_count.load(Ordering::Relaxed), 1);
             assert!(!probe.dropped_off_control_thread.load(Ordering::Relaxed));
+        }
+    }
+
+    #[test]
+    fn tail_updates_follow_only_the_latest_queued_insert() {
+        for already_attached in [false, true] {
+            let (first, _) = FakeInsert::new(0, 30);
+            let mut harness = Harness::with_insert(first);
+            harness.shared.playing.store(false, Ordering::Relaxed);
+            harness.render(1);
+            let (second, second_probe) = FakeInsert::new(0, 2);
+            harness.control.set(Some(second)).expect("room for replacement");
+            if already_attached {
+                harness.renderer.apply_insert_changes();
+            }
+            harness.control.set_tail(45);
+            harness.push(0, 50, |_| 0.5);
+            harness.shared.finished_generation.store(1, Ordering::Release);
+            harness.shared.playing.store(true, Ordering::Relaxed);
+            harness.render(60);
+            assert!(harness.control.is_settled());
+            assert!(harness.is_playing());
+            harness.render(100);
+            assert!(!harness.is_playing());
+            assert_eq!(second_probe.processed.load(Ordering::Relaxed), 95);
+        }
+    }
+
+    #[test]
+    fn blocked_changes_preserve_the_active_inserts_tail() {
+        for remove in [false, true] {
+            let (first, _) = FakeInsert::new(0, 30);
+            let mut harness = Harness::with_insert(first);
+            harness.shared.playing.store(false, Ordering::Relaxed);
+            harness.render(1);
+            let retire_capacity = harness.renderer.insert.retired.slots();
+            let mut active_probe = Probe::default();
+            for _ in 0..retire_capacity {
+                let (next, probe) = FakeInsert::new(0, 30);
+                active_probe = probe;
+                harness.control.set(Some(next)).expect("room for replacement");
+                harness.render(1);
+            }
+            assert_eq!(harness.renderer.insert.retired.slots(), 0);
+            if remove {
+                harness.control.set(None).expect("room for removal");
+            } else {
+                let (next, _) = FakeInsert::new(0, 2);
+                harness.control.set(Some(next)).expect("room for queued replacement");
+                harness.control.set_tail(7);
+            }
+            harness.push(0, 50, |_| 0.5);
+            harness.shared.finished_generation.store(1, Ordering::Release);
+            harness.shared.playing.store(true, Ordering::Relaxed);
+
+            harness.render(60);
+            assert!(!harness.control.is_settled());
+            assert!(harness.is_playing(), "the active insert still has tail frames to drain");
+            assert_eq!(active_probe.processed.load(Ordering::Relaxed), 60);
+            harness.render(100);
+            assert!(!harness.is_playing());
+            assert_eq!(active_probe.processed.load(Ordering::Relaxed), 80);
+            assert!(harness.shared.ended.load(Ordering::Relaxed));
         }
     }
 

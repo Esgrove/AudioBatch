@@ -7,7 +7,7 @@
 //! The callback counts the swaps it has made, which tells the player when a detach has taken effect.
 
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rtrb::{Consumer, Producer, RingBuffer};
 use thiserror::Error;
@@ -52,15 +52,25 @@ pub trait PreviewInsert: Send {
     fn process(&mut self, left: &mut [f32], right: &mut [f32]) -> bool;
 }
 
+/// An insert and its control-thread tail value, handed over as one queue entry.
+pub struct InsertChange {
+    /// The next insert, or none to remove the current one.
+    pub(crate) insert: Option<Box<dyn PreviewInsert>>,
+    /// Tail of this insert, shared only with its own control-thread updates.
+    pub(crate) tail: Arc<AtomicUsize>,
+}
+
 /// The player's side of the insert queues.
 pub struct InsertControl {
-    /// Sends the next insert, or none to remove the current one.
-    commands: Producer<Option<Box<dyn PreviewInsert>>>,
-    /// Receives the inserts the callback replaced.
-    retired: Consumer<Box<dyn PreviewInsert>>,
+    /// Sends the next insert and its associated tail.
+    commands: Producer<InsertChange>,
+    /// Tail of the latest queued insert, not an earlier insert still awaiting retirement.
+    tail: Arc<AtomicUsize>,
+    /// Receives replaced inserts and tail storage for control-thread disposal.
+    retired: Consumer<InsertChange>,
     /// Number of changes sent so far.
     sent: u64,
-    /// Holds the count of changes the callback has made, and the tail of the current insert.
+    /// Holds the count of changes the callback has made.
     shared: Arc<SharedState>,
 }
 
@@ -72,18 +82,29 @@ impl InsertControl {
     /// Returns an error when earlier changes are still waiting, because the audio callback is not running.
     /// The insert is dropped on this thread then.
     pub fn set(&mut self, insert: Option<Box<dyn PreviewInsert>>) -> Result<(), InsertError> {
-        let tail = insert.as_ref().map_or(0, |insert| insert.tail_frames());
-        if self.commands.push(insert).is_err() {
+        let tail = Arc::new(AtomicUsize::new(
+            insert.as_ref().map_or(0, |insert| insert.tail_frames()),
+        ));
+        if self
+            .commands
+            .push(InsertChange {
+                insert,
+                tail: Arc::clone(&tail),
+            })
+            .is_err()
+        {
             return Err(InsertError::QueueFull);
         }
+        self.tail = tail;
         self.sent += 1;
-        self.set_tail(tail);
         Ok(())
     }
 
     /// Returns the inserts the audio callback has replaced since the last call, for dropping on this thread.
     pub fn take_retired(&mut self) -> Vec<Box<dyn PreviewInsert>> {
-        std::iter::from_fn(|| self.retired.pop().ok()).collect()
+        std::iter::from_fn(|| self.retired.pop().ok())
+            .filter_map(|change| change.insert)
+            .collect()
     }
 
     /// Returns true when the audio callback has made every change sent so far.
@@ -92,20 +113,21 @@ impl InsertControl {
         self.shared.insert_changes_applied.load(Ordering::Acquire) == self.sent
     }
 
-    /// Sets how many frames of output may follow the end of the input for the current insert.
+    /// Sets the tail of the latest queued insert, without changing an older insert still active in the callback.
     pub fn set_tail(&self, frames: usize) {
-        self.shared.insert_tail_frames.store(frames as u64, Ordering::Relaxed);
+        self.tail.store(frames, Ordering::Relaxed);
     }
 }
 
 /// Creates the queues between the player and the audio callback.
-/// The retire queue has room for every queued change and the current insert,
-/// so the callback can always hand back the insert it replaces.
+/// Replaced insert and tail storage return together, so neither can be freed on the audio thread.
+/// A full retire queue stalls changes until the player collects its entries.
 pub fn insert_channel(shared: Arc<SharedState>) -> (InsertControl, InsertRenderer) {
     let (command_producer, command_consumer) = RingBuffer::new(COMMAND_CAPACITY);
     let (retired_producer, retired_consumer) = RingBuffer::new(COMMAND_CAPACITY + 1);
     let control = InsertControl {
         commands: command_producer,
+        tail: Arc::new(AtomicUsize::new(0)),
         retired: retired_consumer,
         sent: 0,
         shared,
@@ -118,6 +140,29 @@ mod test_insert_control {
     use super::*;
 
     #[test]
+    fn tail_storage_is_retired_with_removal_entries_until_control_thread_collection() {
+        let shared = Arc::new(SharedState::new());
+        let (mut control, mut renderer) = insert_channel(Arc::clone(&shared));
+        control.set(None).expect("first removal");
+        let first = Arc::downgrade(&control.tail);
+        renderer.apply_changes(&shared);
+        control.set(None).expect("second removal");
+        control.set_tail(42);
+        renderer.apply_changes(&shared);
+        assert!(control.is_settled());
+        assert!(
+            first.upgrade().is_some(),
+            "tail storage must not be freed by the callback"
+        );
+        assert!(
+            control.take_retired().is_empty(),
+            "removals have no processor to return"
+        );
+        assert!(first.upgrade().is_none(), "collection frees the retired tail storage");
+        assert_eq!(control.tail.load(Ordering::Relaxed), 42);
+    }
+
+    #[test]
     fn full_queue_returns_a_typed_error_without_applying_the_change() {
         let shared = Arc::new(SharedState::new());
         let (mut control, _renderer) = insert_channel(Arc::clone(&shared));
@@ -127,7 +172,7 @@ mod test_insert_control {
         control.set_tail(42);
         assert_eq!(control.set(None), Err(InsertError::QueueFull));
         assert_eq!(control.sent, COMMAND_CAPACITY as u64);
-        assert_eq!(shared.insert_tail_frames.load(Ordering::Relaxed), 42);
+        assert_eq!(control.tail.load(Ordering::Relaxed), 42);
         assert_eq!(
             InsertError::QueueFull.to_string(),
             "The audio output is not taking plugin changes, because its stream is not running"
