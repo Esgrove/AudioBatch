@@ -302,6 +302,7 @@ impl AppView {
             }
         }
         if selected_finished {
+            self.reconcile_selected_preview(cx);
             self.refresh_selected_waveform(cx);
             self.refresh_artwork(cx);
             self.apply_preview_gain(cx);

@@ -9,6 +9,7 @@ use gpui_kit::component::table::{TableEvent, TableState};
 use gpui_kit::{App, Context, Entity, Pixels, Window};
 
 use super::AppView;
+use super::preview::PreviewSource;
 use crate::menus::{ColumnChoice, set_menus};
 use crate::results::{ResultRow, ResultsDelegate, RowState};
 use crate::waveform::{MINIMUM_ZOOM, NO_FILE_TEXT};
@@ -50,7 +51,11 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         // A file waiting for its cue points before it starts counts as playing, so moving on keeps playing.
-        let playing = self.player.as_ref().is_some_and(Player::is_playing) || self.start_after_cues.is_some();
+        let playing = self.player.as_ref().is_some_and(Player::is_playing)
+            || self
+                .start_after_cues
+                .as_ref()
+                .is_some_and(super::cue_start::CueStartIntent::should_play);
         let continue_playback = self.settings.continue_playback && playing;
         let (index, play) = match event {
             // Events arrive after the update that sent them.
@@ -66,8 +71,8 @@ impl AppView {
         };
         let path = table.read(cx).delegate().row(index).map(|row| row.path.clone());
         if let Some(path) = path {
-            // A plain click on another row selects only that file.
-            // The table also selects the row of the same file again after a sort, which keeps the other selected files.
+            // Pointer intent is handled by the row's mouse-down callback, including clicking the preview anchor.
+            // Cursor restoration emits the same event, so a same-path event must preserve the batch selection.
             if self.selected.as_deref() != Some(path.as_path()) {
                 table.update(cx, |state, _| state.delegate_mut().select_only(Some(path.clone())));
             }
@@ -137,7 +142,13 @@ impl AppView {
 
     /// Selects a file: shows its waveform and loads it into the player, playing it when asked.
     pub(super) fn select_path(&mut self, path: &Path, play: bool, cx: &mut Context<Self>) {
-        let changed = self.selected.as_deref() != Some(path);
+        let changed = self.selected.as_deref() != Some(path)
+            || self
+                .preview_source
+                .needs_reload(path, self.player.as_ref().and_then(Player::loaded_path));
+        if changed {
+            self.preview_source.begin(path);
+        }
         self.selected = Some(path.to_path_buf());
         self.table.update(cx, |state, _| {
             state.delegate_mut().set_selected_path(Some(path.to_path_buf()));
@@ -146,8 +157,6 @@ impl AppView {
             cx.notify();
             return;
         }
-        self.refresh_selected_waveform(cx);
-        self.apply_preview_gain(cx);
         self.request_artwork(Some(path), cx);
         if changed {
             self.selected_tags = None;
@@ -161,19 +170,35 @@ impl AppView {
         // With playing from the first cue on, a new file stays silent until its cue points are read,
         // so it starts at the cue instead of jumping there.
         let wait_for_cues = changed && play && self.settings.play_from_first_cue_point;
-        self.start_after_cues = wait_for_cues.then(|| path.to_path_buf());
+        if changed {
+            self.start_after_cues = self.settings.play_from_first_cue_point.then(|| {
+                if play {
+                    super::cue_start::CueStartIntent::new(path)
+                } else {
+                    super::cue_start::CueStartIntent::seek(path)
+                }
+            });
+        } else if play {
+            self.start_after_cues = None;
+        }
         if let Some(player) = &mut self.player {
             if changed || player.loaded_path() != Some(path) {
+                player.set_insert_gain(1.0);
                 player.load(path, 0.0, play && !wait_for_cues);
             } else if play {
                 player.play();
             }
         }
+        // Load first so the previous decoder cannot authorize presentation or gain for the newly selected file.
+        self.refresh_selected_waveform(cx);
+        self.apply_preview_gain(cx);
         cx.notify();
     }
 
     /// Clears the selection and the preview.
     pub(super) fn clear_selection(&mut self, cx: &mut Context<Self>) {
+        self.start_after_cues = None;
+        self.preview_source.clear();
         self.selected = None;
         self.selected_tags = None;
         self.tags_task = None;
@@ -181,6 +206,7 @@ impl AppView {
         self.table
             .update(cx, |state, _| state.delegate_mut().set_selected_path(None));
         if let Some(player) = &mut self.player {
+            player.set_insert_gain(1.0);
             player.unload();
         }
         self.table.update(cx, TableState::clear_selection);
@@ -189,23 +215,43 @@ impl AppView {
             .update(cx, |waveform, cx| waveform.show_placeholder(NO_FILE_TEXT, cx));
     }
 
-    /// Shows the waveform of the selected file, or a placeholder while it has no result.
+    /// Shows a waveform and source warnings only for the captured decoder version or a current static source.
+    /// An absent decoder does not discard useful analysis, but an old decoder cannot borrow new analysis.
     pub(super) fn refresh_selected_waveform(&self, cx: &mut Context<Self>) {
         let Some(selected) = self.selected.clone() else {
             return;
         };
         let row = self.table.read(cx).delegate().row_for(&selected).cloned();
+        let loaded_path = self.player.as_ref().and_then(Player::loaded_path);
         self.waveform.update(cx, |view, cx| match row {
             None => view.show_placeholder(NO_FILE_TEXT, cx),
             Some(row) => {
                 if let Some(record) = row.ready_record() {
-                    view.set_record(record, cx);
+                    if presentation_matches_source(&self.preview_source, loaded_path, record) {
+                        view.set_record(record, cx);
+                    } else {
+                        view.show_placeholder("Analysis does not match the preview source", cx);
+                    }
                 } else {
                     view.show_placeholder(placeholder_text(&row), cx);
                 }
             }
         });
     }
+}
+
+/// Allows static analysis without a decoder, but binds a loaded decoder's waveform and warnings to its capture.
+/// Checking disk identity also rejects a result that became stale before any replacement analysis arrived.
+pub(super) fn presentation_matches_source(
+    source: &PreviewSource,
+    loaded_path: Option<&Path>,
+    record: &AnalysisRecord,
+) -> bool {
+    record.is_ready()
+        && loaded_path.map_or_else(
+            || record.matches_file_on_disk(),
+            |path| path == record.path && source.matches_record(record),
+        )
 }
 
 /// Returns the columns of the Columns submenu, checked while they show.
@@ -228,5 +274,73 @@ fn placeholder_text(row: &ResultRow) -> String {
         RowState::Processing(fraction) => format!("Processing {:.0}%", fraction * 100.0),
         RowState::Done if row.has_error() => String::from("Could not read this file"),
         RowState::Done => String::from("No waveform for this file"),
+    }
+}
+
+#[cfg(test)]
+mod test_preview_presentation_authority {
+    use std::io::Write as _;
+
+    use audiobatch_core::AnalysisStatus;
+    use audiobatch_core::record::file_identity;
+
+    use super::*;
+
+    /// Makes source metadata without a player or a GPUI context.
+    fn record(path: &Path) -> AnalysisRecord {
+        let (file_size, modified_time_ms) = file_identity(path).expect("source identity");
+        AnalysisRecord {
+            path: path.to_path_buf(),
+            file_size,
+            modified_time_ms,
+            status: AnalysisStatus::Analyzed,
+            ..AnalysisRecord::default()
+        }
+    }
+
+    #[test]
+    fn static_presentation_requires_current_ready_analysis_but_no_decoder() {
+        let mut file = tempfile::NamedTempFile::new().expect("source");
+        let mut record = record(file.path());
+        let source = PreviewSource::default();
+        assert!(presentation_matches_source(&source, None, &record));
+        record.status = AnalysisStatus::Failed;
+        assert!(!presentation_matches_source(&source, None, &record));
+        record.status = AnalysisStatus::Analyzed;
+        file.write_all(b"changed source").expect("replacement");
+        assert!(!presentation_matches_source(&source, None, &record));
+    }
+
+    #[test]
+    fn loaded_presentation_requires_the_same_capture_not_just_the_same_path() {
+        let mut file = tempfile::NamedTempFile::new().expect("source");
+        let old_record = record(file.path());
+        let mut source = PreviewSource::default();
+        source.begin(file.path());
+        assert!(presentation_matches_source(&source, Some(file.path()), &old_record));
+        file.write_all(b"new source").expect("replacement");
+        let new_record = record(file.path());
+        assert!(!presentation_matches_source(&source, Some(file.path()), &old_record));
+        assert!(!presentation_matches_source(&source, Some(file.path()), &new_record));
+        source.begin(file.path());
+        assert!(presentation_matches_source(&source, Some(file.path()), &new_record));
+        assert!(!presentation_matches_source(
+            &source,
+            Some(Path::new("another.wav")),
+            &new_record,
+        ));
+    }
+
+    #[test]
+    fn clear_then_reselect_never_reauthorizes_an_old_tag_generation() {
+        let file = tempfile::NamedTempFile::new().expect("source");
+        let mut source = PreviewSource::default();
+        source.begin(file.path());
+        let (version, generation) = source.token().expect("first load");
+        source.clear();
+        source.begin(file.path());
+        assert!(!source.accepts(&version, generation));
+        let (current_version, current_generation) = source.token().expect("second load");
+        assert!(source.accepts(&current_version, current_generation));
     }
 }
