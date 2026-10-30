@@ -16,12 +16,14 @@
 #include "normalization/AudioNormalization.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
+#include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 
 #include <algorithm>
 #include <concepts>
 #include <expected>
 #include <memory>
+#include <optional>
 #include <variant>
 #include <vector>
 
@@ -34,9 +36,12 @@ namespace audiobatch::tests
 namespace
 {
 /// Parses the given arguments as if they followed the executable name on the command line.
-std::expected<CliCommand, CliParseError> parseArguments(const juce::StringArray& arguments)
+std::expected<CliCommand, CliParseError> parseArguments(
+    const juce::StringArray& arguments,
+    const std::optional<juce::String>& deleteEnvironmentValue = std::nullopt
+)
 {
-    return cli::parseArguments(juce::ArgumentList("audiobatch", arguments));
+    return cli::parseArguments(juce::ArgumentList("audiobatch", arguments), deleteEnvironmentValue);
 }
 }  // namespace
 
@@ -50,9 +55,12 @@ public:
     /// recording a failure with the parse error, or for another command type, when they are not.
     /// Returns a default command on failure so the caller can keep checking fields.
     template<std::default_initializable Command>
-    Command expectCommand(const juce::StringArray& arguments)
+    Command expectCommand(
+        const juce::StringArray& arguments,
+        const std::optional<juce::String>& deleteEnvironmentValue = std::nullopt
+    )
     {
-        const auto command = parseArguments(arguments);
+        const auto command = parseArguments(arguments, deleteEnvironmentValue);
         expect(command.has_value(), command.has_value() ? juce::String() : command.error().message);
 
         const auto* parsed = command.has_value() ? std::get_if<Command>(&*command) : nullptr;
@@ -62,9 +70,13 @@ public:
 
     /// Parses arguments that are expected to be rejected, and checks why they were.
     /// Returns the error message, for the few checks where the text itself is the behaviour under test.
-    juce::String expectError(const juce::StringArray& arguments, const CliParseErrorKind kind)
+    juce::String expectError(
+        const juce::StringArray& arguments,
+        const CliParseErrorKind kind,
+        const std::optional<juce::String>& deleteEnvironmentValue = std::nullopt
+    )
     {
-        const auto command = parseArguments(arguments);
+        const auto command = parseArguments(arguments, deleteEnvironmentValue);
         const auto commandLine = arguments.joinIntoString(" ");
         expect(!command.has_value(), utils::format("{} was accepted", commandLine));
         if (command.has_value()) {
@@ -258,6 +270,7 @@ public:
             const auto usage = cli::buildUsage("audiobatch");
             expect(usage.contains("  -j, --jobs <count>      Override worker count"), usage);
             expect(usage.contains("      --peak <dBFS>       Normalize to this sample peak"), usage);
+            expect(usage.contains("  -D, --delete            Permanently delete replaced originals"), usage);
             expect(usage.contains("  completion              "), usage);
             expect(!usage.contains("--group-by"), usage);
 
@@ -366,6 +379,8 @@ public:
         }
 #endif
 
+        runDeleteOptionTests();
+        runDeleteNormalizationTests();
         runInputTests();
         runOutputTests();
         runAnalysisExitCodeTests();
@@ -373,6 +388,153 @@ public:
     }
 
 private:
+    /// Checks delete aliases and environment values without modifying the process environment or touching the trash.
+    void runDeleteOptionTests()
+    {
+        const auto expectDisposer = [this](
+                                        const juce::StringArray& arguments,
+                                        const std::optional<juce::String>& environmentValue,
+                                        const bool deletes
+                                    ) {
+            const auto command = expectCommand<AnalyzeCommand>(arguments, environmentValue);
+            expect(command.normalization.has_value());
+            if (command.normalization) {
+                const auto* disposer = command.normalization->disposeFile.target<decltype(&utils::deleteFile)>();
+                expect(disposer != nullptr && *disposer == (deletes ? utils::deleteFile : utils::trashFile));
+            }
+        };
+
+        beginTest("Delete requires normalize and selects permanent disposal through either alias");
+        for (const auto* option : {"-D", "--delete"}) {
+            expectEquals(
+                expectError({option}, CliParseErrorKind::missingRequiredOption),
+                juce::String("--delete can only be used with --normalize")
+            );
+            expectDisposer({"-n", option}, std::nullopt, true);
+            expectError({"list", option}, CliParseErrorKind::conflictingOptions);
+            expectError({"completion", "zsh", option}, CliParseErrorKind::unknownOption);
+        }
+        expectDisposer({"-nDF"}, std::nullopt, true);
+        expectDisposer({"-n"}, std::nullopt, false);
+
+        beginTest("The delete environment accepts case-insensitive boolish values");
+        for (const auto* value : {"true", "1", "yes", "on", "TRUE", "True", "YES", "Yes", "ON", "On"}) {
+            expectDisposer({"-n"}, juce::String(value), true);
+            expectEquals(
+                expectError({}, CliParseErrorKind::missingRequiredOption, juce::String(value)),
+                juce::String("--delete can only be used with --normalize")
+            );
+        }
+        for (const auto* value : {"false", "0", "no", "off", "FALSE", "False", "NO", "No", "OFF", "Off"}) {
+            expectDisposer({"-n"}, juce::String(value), false);
+            expect(!expectCommand<AnalyzeCommand>({}, juce::String(value)).normalization.has_value());
+        }
+
+        beginTest("The delete environment rejects empty, unknown, and whitespace-padded values");
+        for (const auto* value : {"", "invalid", "2", "-1", " true", "false ", " yes ", "\tON", "off\n"}) {
+            const auto message = expectError({"-n"}, CliParseErrorKind::invalidValue, juce::String(value));
+            expectEquals(
+                message, juce::String("AUDIOBATCH_DELETE must be one of: true, 1, yes, on, false, 0, no, off")
+            );
+        }
+
+        beginTest("Either delete alias overrides disabled and invalid environment values");
+        for (const auto* option : {"-D", "--delete"}) {
+            for (const auto* value : {"false", "0", "NO", "Off", "invalid", "", " true"}) {
+                expectDisposer({"-n", option}, juce::String(value), true);
+                expectError({option}, CliParseErrorKind::missingRequiredOption, juce::String(value));
+            }
+        }
+        expectDisposer({"-nDF"}, juce::String("invalid"), true);
+
+        beginTest("Subcommands validate the environment without applying normalization, and help ignores it");
+        for (const auto* value : {"true", "1", "YES", "On", "false", "0", "NO", "Off"}) {
+            expectCommand<ListPluginsCommand>({"list"}, juce::String(value));
+            expectCommand<CompletionCommand>({"completion", "zsh"}, juce::String(value));
+        }
+        for (const auto* value : {"invalid", ""}) {
+            expectCommand<HelpCommand>({"help"}, juce::String(value));
+            expectError({"list"}, CliParseErrorKind::invalidValue, juce::String(value));
+            expectError({"completion", "zsh"}, CliParseErrorKind::invalidValue, juce::String(value));
+        }
+    }
+
+    /// Runs parsed delete options against temporary audio copies and checks the existing transaction safeguards.
+    void runDeleteNormalizationTests()
+    {
+        const TemporaryDirectory directory;
+        auto command = expectCommand<AnalyzeCommand>({"-nDF", "--peak", "-1"});
+        expect(command.normalization.has_value());
+        if (!command.normalization) {
+            return;
+        }
+        const auto& options = *command.normalization;
+
+        beginTest("Delete normalization converts a source and removes a forced output backup");
+        for (const bool overwrite : {false, true}) {
+            const auto* name = overwrite ? "forced" : "converted";
+            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", juce::String(name) + ".wav");
+            const auto output = getNormalizationOutputFile(source);
+            if (overwrite) {
+                expect(output.replaceWithText("previous output"));
+            }
+            const auto result = normalizeFile(analyzeFile(source), options);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            expect(!source.exists());
+            expect(output.existsAsFile());
+            expectWithinAbsoluteError(peakDecibels(outcomeRecord(result.outcome)), -1.0, 0.01);
+            expect(!output.getSiblingFile("." + output.getFileName() + ".backup").exists());
+        }
+
+        beginTest("Delete normalization preserves the published in-place source and an unchanged no-op");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "in_place_delete.aif");
+            const auto first = normalizeFile(analyzeFile(source), options);
+            expect(!first.hasError(), outcomeError(first.outcome));
+            expect(source.existsAsFile());
+            expectWithinAbsoluteError(peakDecibels(analyzeFile(source)), -1.0, 0.01);
+            juce::MemoryBlock before;
+            expect(source.loadFileAsData(before));
+            const utils::FileIdentity identity(source);
+            const auto second = normalizeFile(analyzeFile(source), options);
+            expect(!second.hasError(), outcomeError(second.outcome));
+            juce::MemoryBlock after;
+            expect(source.loadFileAsData(after));
+            expect(before == after);
+            expect(identity.matches(source));
+        }
+
+        beginTest("Delete normalization keeps a cancelled source and an approved output");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "cancel_delete.wav");
+            const auto output = getNormalizationOutputFile(source);
+            expect(output.replaceWithText("approved"));
+            const utils::FileIdentity identity(source);
+            const auto result = normalizeFile(analyzeFile(source), options, [] { return true; });
+            expect(result.hasError());
+            expect(identity.matches(source));
+            expectEquals(output.loadFileAsString(), juce::String("approved"));
+        }
+
+        beginTest("Delete normalization never disposes of a source replaced during rendering");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "changed_delete.wav");
+            const auto output = getNormalizationOutputFile(source);
+            expect(output.replaceWithText("approved"));
+            bool replaced = false;
+            const auto result = normalizeFile(analyzeFile(source), options, {}, [&](const float progress) {
+                if (progress >= 0.8f && !replaced) {
+                    expect(source.replaceWithText("external"));
+                    replaced = true;
+                }
+            });
+            expect(replaced);
+            expect(outcomeError(result.outcome).contains("source file changed"), outcomeError(result.outcome));
+            expectEquals(source.loadFileAsString(), juce::String("external"));
+            expectEquals(output.loadFileAsString(), juce::String("approved"));
+        }
+    }
+
     /// Checks that every completion script offers the options, values, and subcommands of the parser,
     /// and that each shell's script is installed to its per-user directory.
     void runCompletionTests()
@@ -403,18 +565,23 @@ private:
 
             const auto zsh = cli::buildCompletionScript(CompletionShell::zsh, "audiobatch");
             expect(zsh.startsWith("#compdef audiobatch\n"), zsh);
+            expect(zsh.contains("{-D,--delete}"), zsh);
             expect(zsh.contains(R"('(-s --sort)'{-s,--sort=}'[Sort by peak, lufs, name, or path]:mode:()"), zsh);
             expect(zsh.contains(R"(shell'\''s completion directory)"), zsh);
 
             const auto bash = cli::buildCompletionScript(CompletionShell::bash, "audio-batch");
             expect(bash.contains("complete -o filenames -F _audio_batch audio-batch"), bash);
+            expect(bash.contains("-D --delete"), bash);
 
             const auto fish = cli::buildCompletionScript(CompletionShell::fish, "audiobatch");
             expect(fish.contains("-s o -l output -x -a 'table csv json'"), fish);
+            expect(fish.contains("-s D -l delete"), fish);
             expect(fish.contains(R"(shell\'s completion directory)"), fish);
 
             const auto powerShell = cli::buildCompletionScript(CompletionShell::powershell, "audiobatch");
             expect(powerShell.contains("-CommandName 'audiobatch'"), powerShell);
+            expect(powerShell.contains("'-D'"), powerShell);
+            expect(powerShell.contains("'--delete'"), powerShell);
             expect(powerShell.contains("shell''s completion directory"), powerShell);
         }
 

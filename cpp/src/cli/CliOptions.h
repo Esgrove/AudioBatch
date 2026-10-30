@@ -187,6 +187,13 @@ inline constexpr CliOption forceOption {
     .description = "Let normalize replace an existing output file",
     .values = {},
 };
+inline constexpr CliOption deleteOption {
+    .longName = "--delete",
+    .shortName = "-D",
+    .valueName = "",
+    .description = "Permanently delete replaced originals instead of moving them to the trash",
+    .values = {},
+};
 inline constexpr CliOption peakOption {
     .longName = "--peak",
     .shortName = "",
@@ -266,6 +273,7 @@ inline constexpr std::array analysisOptions {
     std::cref(refreshOption),
     std::cref(normalizeOption),
     std::cref(forceOption),
+    std::cref(deleteOption),
     std::cref(peakOption),
     std::cref(lufsOption),
     std::cref(jobsOption),
