@@ -404,6 +404,7 @@ fn fold_to_mono(left: &mut [f32], right: &mut [f32]) {
 mod test_insert_playback {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use std::thread::{self, ThreadId};
 
     use rtrb::RingBuffer;
 
@@ -423,6 +424,8 @@ mod test_insert_playback {
         processed: Arc<AtomicUsize>,
         resets: Arc<AtomicUsize>,
         dropped: Arc<AtomicBool>,
+        drop_count: Arc<AtomicUsize>,
+        dropped_off_control_thread: Arc<AtomicBool>,
         latency: Arc<AtomicUsize>,
     }
 
@@ -434,6 +437,7 @@ mod test_insert_playback {
         delay_left: Vec<f32>,
         delay_right: Vec<f32>,
         index: usize,
+        control_thread: ThreadId,
         probe: Probe,
     }
 
@@ -457,6 +461,7 @@ mod test_insert_playback {
                 delay_left: vec![0.0; latency],
                 delay_right: vec![0.0; latency],
                 index: 0,
+                control_thread: thread::current().id(),
                 probe: probe.clone(),
             };
             (Box::new(insert), probe)
@@ -510,6 +515,10 @@ mod test_insert_playback {
     impl Drop for FakeInsert {
         fn drop(&mut self) {
             self.probe.dropped.store(true, Ordering::Relaxed);
+            self.probe.drop_count.fetch_add(1, Ordering::Relaxed);
+            if thread::current().id() != self.control_thread {
+                self.probe.dropped_off_control_thread.store(true, Ordering::Relaxed);
+            }
         }
     }
 
@@ -555,6 +564,13 @@ mod test_insert_playback {
             let mut output = vec![1.0_f32; frames * 2];
             self.renderer.render(&mut output, |sample| sample);
             output.chunks(2).filter_map(|frame| frame.first().copied()).collect()
+        }
+
+        /// Runs one callback on a thread distinct from the controlling test thread.
+        fn render_on_callback_thread(&mut self) {
+            thread::scope(|scope| {
+                scope.spawn(|| self.render(1)).join().expect("callback completes");
+            });
         }
 
         fn position(&self) -> u64 {
@@ -882,6 +898,72 @@ mod test_insert_playback {
         assert!(!first_probe.dropped.load(Ordering::Relaxed));
         drop(retired);
         assert!(first_probe.dropped.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_full_retire_queue_stalls_changes_until_control_thread_collection() {
+        let (first, first_probe) = FakeInsert::new(0, 0);
+        let mut harness = Harness::with_insert(first);
+        harness.shared.playing.store(false, Ordering::Relaxed);
+        let retire_capacity = harness.renderer.insert.retired.slots();
+        let mut probes = vec![first_probe];
+        harness.render_on_callback_thread();
+        for _ in 0..retire_capacity {
+            let (next, probe) = FakeInsert::new(0, 0);
+            probes.push(probe);
+            harness.control.set(Some(next)).expect("room for replacement");
+            harness.render_on_callback_thread();
+            assert!(harness.control.is_settled());
+        }
+        let applied = harness.shared.insert_changes_applied.load(Ordering::Acquire);
+        assert_eq!(applied, retire_capacity as u64 + 1);
+        assert_eq!(harness.renderer.insert.retired.slots(), 0);
+
+        let (next, probe) = FakeInsert::new(0, 0);
+        probes.push(probe);
+        harness.control.set(Some(next)).expect("room for pending replacement");
+        harness.control.set(None).expect("room for pending removal");
+        for _ in 0..3 {
+            harness.render_on_callback_thread();
+            assert!(!harness.control.is_settled());
+            assert_eq!(harness.shared.insert_changes_applied.load(Ordering::Acquire), applied);
+            assert!(probes.iter().all(|probe| probe.drop_count.load(Ordering::Relaxed) == 0));
+        }
+
+        let retired = harness.control.take_retired();
+        assert_eq!(retired.len(), retire_capacity);
+        assert!(probes.iter().all(|probe| probe.drop_count.load(Ordering::Relaxed) == 0));
+        assert!(!harness.control.is_settled());
+        drop(retired);
+        for (index, probe) in probes.iter().enumerate() {
+            assert_eq!(
+                probe.drop_count.load(Ordering::Relaxed),
+                usize::from(index < retire_capacity)
+            );
+            assert!(!probe.dropped_off_control_thread.load(Ordering::Relaxed));
+        }
+
+        harness.render_on_callback_thread();
+        assert!(harness.control.is_settled());
+        assert_eq!(
+            harness.shared.insert_changes_applied.load(Ordering::Acquire),
+            applied + 2
+        );
+        assert!(!harness.renderer.insert.has_insert());
+        let retired = harness.control.take_retired();
+        assert_eq!(retired.len(), 2);
+        assert!(
+            probes
+                .iter()
+                .skip(retire_capacity)
+                .all(|probe| probe.drop_count.load(Ordering::Relaxed) == 0)
+        );
+        drop(retired);
+        drop(harness);
+        for probe in probes {
+            assert_eq!(probe.drop_count.load(Ordering::Relaxed), 1);
+            assert!(!probe.dropped_off_control_thread.load(Ordering::Relaxed));
+        }
     }
 
     #[test]
