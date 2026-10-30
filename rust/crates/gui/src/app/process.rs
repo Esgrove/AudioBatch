@@ -22,7 +22,7 @@ use super::analysis::ANALYSIS_POLL_INTERVAL;
 use super::normalize::CANCELLED_RUN_FINISHING;
 use super::{AppView, drain_events};
 use crate::normalization::normalization_options;
-use crate::operation_run::{OperationKind, OperationRun};
+use crate::operation_run::{OperationKind, OperationRun, discard_run};
 
 /// Status text when processing is asked for while files are being analyzed.
 const BLOCKED_BY_ANALYSIS: &str = "Wait for analysis to finish before processing";
@@ -132,14 +132,13 @@ impl AppView {
         cx.notify();
     }
 
-    /// Stops listening to the processing run and cancels it.
+    /// Discards presentation of the run but retains its drain until every writer has returned.
     pub(super) fn stop_processing(&mut self) {
         if let Some(coordinator) = &self.process_coordinator {
             coordinator.cancel();
         }
-        self.process_task = None;
-        self.process_run = None;
-        self.process_winding_down = false;
+        // Removing the run rejects queued results, not the receiver's terminal disconnect.
+        discard_run(&mut self.process_run, &mut self.process_winding_down);
     }
 
     /// Switches the normalization before the plugins on or off, for this session.
@@ -337,6 +336,9 @@ fn spawn_process_drain(receiver: Receiver<ProcessingEvent>, window: &Window, cx:
             if disconnected {
                 let _ = this.update(cx, |view, cx| {
                     view.process_winding_down = false;
+                    if let Some(run) = &mut view.process_run {
+                        run.completed = true;
+                    }
                     view.artwork_rewrites.clear();
                     view.refresh_artwork(cx);
                     cx.notify();

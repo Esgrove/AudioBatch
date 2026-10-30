@@ -23,7 +23,7 @@ use crate::normalization::{
     ALREADY_NORMALIZING, BLOCKED_BY_ANALYSIS, BLOCKED_BY_PROCESSING, NORMALIZATION_IN_PROGRESS, describe_target,
     normalization_options, set_target, target_range,
 };
-use crate::operation_run::{OperationKind, OperationRun};
+use crate::operation_run::{OperationKind, OperationRun, discard_run};
 use crate::results::RowMessage;
 use crate::settings::NormalizeMode;
 
@@ -196,14 +196,14 @@ impl AppView {
         cx.notify();
     }
 
-    /// Stops listening to the normalization run, letting files in progress finish with their originals intact.
+    /// Discards presentation of the run but retains its drain until every writer has returned.
+    /// A source past its last cancellation check can still commit after the list is cleared.
     pub(super) fn cancel_normalization(&mut self) {
         if let Some(coordinator) = &self.normalize_coordinator {
             coordinator.cancel();
         }
-        self.normalize_task = None;
-        self.normalize_run = None;
-        self.normalize_winding_down = false;
+        // Removing the run rejects queued results, not the receiver's terminal disconnect.
+        discard_run(&mut self.normalize_run, &mut self.normalize_winding_down);
     }
 
     /// Returns true while a cancelled normalization or processing run still has files that may commit.
@@ -432,6 +432,9 @@ fn spawn_normalize_drain(receiver: Receiver<NormalizeEvent>, window: &Window, cx
             if disconnected {
                 let _ = this.update(cx, |view, cx| {
                     view.normalize_winding_down = false;
+                    if let Some(run) = &mut view.normalize_run {
+                        run.completed = true;
+                    }
                     view.artwork_rewrites.clear();
                     view.refresh_artwork(cx);
                     cx.notify();

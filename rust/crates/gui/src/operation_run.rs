@@ -166,6 +166,13 @@ impl OperationRun {
     }
 }
 
+/// Discards a cleared list's run without releasing exclusion while its receiver still owns writers.
+/// Repeated clears retain an existing drain guard, including a run cancelled before the clear.
+pub fn discard_run(run: &mut Option<OperationRun>, winding_down: &mut bool) {
+    *winding_down |= run.as_ref().is_some_and(|run| !run.completed);
+    *run = None;
+}
+
 /// Returns the file name of a path for messages.
 fn file_name(path: &Path) -> String {
     path.file_name().map_or_else(
@@ -176,13 +183,91 @@ fn file_name(path: &Path) -> String {
 
 #[cfg(test)]
 mod test_run {
+    use std::fs;
     use std::path::PathBuf;
+    use std::sync::{Arc, mpsc};
+    use std::time::Duration;
+
+    use audiobatch_core::normalize::NormalizationOptions;
+    use audiobatch_core::{NormalizeCoordinator, analyze_file};
 
     use super::*;
 
     /// Returns a failed result for a file name.
     fn failure(name: &str) -> OperationResult {
         OperationResult::failure(&PathBuf::from("/music").join(name), "Could not read")
+    }
+
+    #[test]
+    fn clear_keeps_the_receiver_until_a_gated_writer_disconnects() {
+        let directory = tempfile::tempdir().expect("directory");
+        let source = directory.path().join("song.wav");
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../fixtures/sine_stereo_44100_16.wav");
+        fs::copy(fixture, &source).expect("fixture copy");
+        let record = analyze_file(&source, &|| false, &mut |_| {});
+        let cache = Arc::new(audiobatch_core::AnalysisCache::with_path(
+            directory.path().join("cache.db"),
+        ));
+        let coordinator = NormalizeCoordinator::new(cache, 1).expect("coordinator");
+        let (entered, entry) = mpsc::channel();
+        let (release, released) = crossbeam_channel::bounded::<()>(1);
+        let options = NormalizationOptions {
+            dispose: Arc::new(move |path| {
+                entered.send(()).expect("entered commit");
+                released.recv_timeout(Duration::from_secs(2)).expect("released writer");
+                fs::remove_file(path).is_ok()
+            }),
+            ..NormalizationOptions::default()
+        };
+        let (run_id, receiver) = coordinator.start(vec![record], options);
+        entry
+            .recv_timeout(Duration::from_secs(2))
+            .expect("writer reached commit");
+        let mut run = Some(OperationRun::new(OperationKind::Normalize, run_id, 1));
+        let mut winding_down = false;
+        coordinator.cancel();
+        discard_run(&mut run, &mut winding_down);
+        assert!(winding_down);
+        while receiver.try_recv().is_ok() {}
+        assert!(matches!(
+            receiver.try_recv(),
+            Err(crossbeam_channel::TryRecvError::Empty)
+        ));
+        release.send(()).expect("release commit");
+        for _event in &receiver {
+            assert!(run.is_none(), "late events have no presentation owner");
+        }
+        winding_down = false;
+        assert!(!winding_down);
+    }
+
+    #[test]
+    fn clearing_rejects_results_but_keeps_writer_exclusion_across_repeated_clears() {
+        for kind in [OperationKind::Normalize, OperationKind::Process] {
+            let mut run = Some(OperationRun::new(kind, 7, 1));
+            let mut winding_down = false;
+            discard_run(&mut run, &mut winding_down);
+            assert!(run.is_none());
+            assert!(winding_down);
+            discard_run(&mut run, &mut winding_down);
+            assert!(winding_down);
+        }
+    }
+
+    #[test]
+    fn clearing_cancelled_and_finished_runs_keeps_only_existing_exclusion() {
+        for completed in [false, true] {
+            let mut run = Some(OperationRun::new(OperationKind::Process, 1, 1));
+            run.as_mut().expect("run").completed = completed;
+            let mut winding_down = true;
+            discard_run(&mut run, &mut winding_down);
+            assert!(winding_down);
+        }
+        let mut run = Some(OperationRun::new(OperationKind::Normalize, 1, 1));
+        run.as_mut().expect("run").completed = true;
+        let mut winding_down = false;
+        discard_run(&mut run, &mut winding_down);
+        assert!(!winding_down);
     }
 
     #[test]
