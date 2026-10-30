@@ -36,7 +36,7 @@ csv = "1.4.0"
 ctrlc = "3.5.2"
 dirs = "7.0.0"
 ebur128 = "0.1.11"
-fearless_simd = "1.1.0"
+fearless_simd = "1.2.0"
 fearless_simd_macros = "0.1.0"
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 indicatif = "0.18.6"
