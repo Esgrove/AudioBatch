@@ -282,10 +282,21 @@ cargo run --bin AudioBatchRs
 ./scripts/parity.sh <path>
 ./scripts/parity.sh --normalize [--peak <dBFS> | --lufs <LUFS>] ../fixtures/normalization
 
+# Compare release CLI wall times, with isolated inputs and configuration, requires hyperfine and uv
+./scripts/cli_benchmark.sh
+./scripts/cli_benchmark.sh --corpus ../fixtures/normalization --jobs 2 --runs 3 --warmup 1
+
 # Save an image of the GUI window and quit, for checking the layout without screen recording permission
 cargo build --release -p audiobatch-gui --features snapshot
 AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png ./target/release/AudioBatchRs --autoplay ../fixtures
 ```
+
+The CLI benchmark defaults to `--corpus auto`, combining `../fixtures/normalization` with `../fixtures/benchmark/output`
+when the generated audio is present.
+An explicit `--corpus <directory>` uses only that directory.
+Measured runs alternate C++ and Rust, with warmup once per command,
+and fresh copies and correctness checks outside timing.
+Raw hyperfine exports, combined run statistics, Markdown, and machine/build metadata stay in `target/cli-benchmark/`.
 
 The `snapshot` feature also reads `AUDIOBATCH_GUI_SNAPSHOT_DELAY` in seconds,
 and `AUDIOBATCH_GUI_SNAPSHOT_ACTIONS` with action names such as `audiobatch::ToggleLoudnessGraph`
