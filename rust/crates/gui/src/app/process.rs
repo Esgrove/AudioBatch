@@ -22,7 +22,7 @@ use super::analysis::ANALYSIS_POLL_INTERVAL;
 use super::normalize::CANCELLED_RUN_FINISHING;
 use super::{AppView, drain_events};
 use crate::normalization::normalization_options;
-use crate::operation_run::{OperationKind, OperationRun, discard_run};
+use crate::operation_run::{OperationKind, OperationRun, discard_run, finish_drain};
 
 /// Status text when processing is asked for while files are being analyzed.
 const BLOCKED_BY_ANALYSIS: &str = "Wait for analysis to finish before processing";
@@ -252,14 +252,21 @@ impl AppView {
 
     /// Applies a batch of processing events to the table, the selection, and the status bar.
     fn apply_process_events(&mut self, events: Vec<ProcessingEvent>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((run_id, cancelled)) = self.process_run.as_ref().map(|run| (run.run_id, run.cancelled)) else {
+        if self.process_run.is_none() {
             return;
-        };
+        }
         let mut completed = false;
         let mut replaced = false;
-        for event in events.into_iter().filter(|event| event.run_id() == run_id) {
-            // After a cancel, only outputs that replaced their source are applied.
-            if cancelled && !matches!(&event, ProcessingEvent::Finished { result, .. } if result.output().is_some()) {
+        for event in events {
+            let result = match &event {
+                ProcessingEvent::Finished { result, .. } => Some(result.as_ref()),
+                _ => None,
+            };
+            if self
+                .process_run
+                .as_ref()
+                .is_none_or(|run| !run.accepts_event(event.run_id(), result))
+            {
                 continue;
             }
             match event {
@@ -336,10 +343,7 @@ fn spawn_process_drain(receiver: Receiver<ProcessingEvent>, window: &Window, cx:
             }
             if disconnected {
                 let _ = this.update(cx, |view, cx| {
-                    view.process_winding_down = false;
-                    if let Some(run) = &mut view.process_run {
-                        run.completed = true;
-                    }
+                    finish_drain(&mut view.process_run, &mut view.process_winding_down);
                     view.artwork_rewrites.clear();
                     view.refresh_artwork(cx);
                     cx.notify();
