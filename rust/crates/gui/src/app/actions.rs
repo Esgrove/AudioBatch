@@ -207,7 +207,7 @@ impl AppView {
 
     /// Returns true during an analysis, normalization, or processing run.
     pub(super) fn is_running(&self) -> bool {
-        self.is_analyzing() || self.is_normalizing() || self.is_processing()
+        self.is_analyzing() || self.is_normalizing() || self.is_processing() || self.is_winding_down()
     }
 
     /// Cancels the analysis run, settling the rows it left waiting or analyzing.
