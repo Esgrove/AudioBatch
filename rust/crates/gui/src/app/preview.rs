@@ -87,20 +87,18 @@ impl AppView {
     }
 
     /// Captures the settings of the live instances into the chain.
-    /// A paused preview holds back the edits made in an editor, because edits reach a plugin through processing,
-    /// so its chain is taken out first and put back after.
-    pub(super) fn capture_plugin_states(&mut self, cx: &mut Context<Self>) {
-        let Some(ui) = UiThread::current() else {
-            return;
-        };
-        let paused = !self.player.as_ref().is_some_and(Player::is_playing);
-        if self.plugins.preview.is_attached() && paused {
-            self.detach_plugin_preview();
-            self.plugins.chain.capture_states(&ui);
+    /// The chain is detached and all processors retired before draining edits, even during playback.
+    /// A failed capture keeps the previous saved settings and is reported to the operation that requested it.
+    pub(super) fn capture_plugin_states(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        let ui = UiThread::current().ok_or_else(|| anyhow::anyhow!("Plugin settings require the UI thread"))?;
+        let attached = self.plugins.preview.is_attached();
+        // A finite state snapshot requires exclusive processor ownership, even while playback runs.
+        self.detach_plugin_preview();
+        let result = self.plugins.chain.capture_states(&ui);
+        if attached {
             self.refresh_plugin_preview(cx);
-        } else {
-            self.plugins.chain.capture_states(&ui);
         }
+        result
     }
 
     /// Prepares the live instances again for a new output rate or after their restart requests,
@@ -115,13 +113,12 @@ impl AppView {
         let prepared = rate_changed || !restarts.is_empty();
         if prepared {
             self.detach_plugin_preview();
-            if rate_changed {
-                self.plugins.chain.set_sample_rate(ui, sample_rate);
-            } else {
-                self.plugins.chain.prepare_again(ui, &restarts);
+            let owner = self.plugins.editor_owner;
+            if let Err(error) = self.plugins.chain.apply_restarts(ui, sample_rate, &restarts, owner) {
+                self.report_status(format!("Could not restart the plugin chain: {error:#}"), cx);
             }
         }
-        if self.plugins.preview.take_refresh_pending() || prepared {
+        if (self.plugins.preview.take_refresh_pending() || prepared) && !self.plugins.chain.has_pending_restarts() {
             self.refresh_plugin_preview(cx);
         }
         if let Some(message) = self.plugins.preview.failure() {

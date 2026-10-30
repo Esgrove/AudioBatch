@@ -119,6 +119,15 @@ pub enum InstanceError {
     /// Live processor handles prevent reconfiguration.
     #[error("The plugin is in use by an audio processor")]
     InUse,
+    /// A zero-length parameter delivery failed, so no complete state can be saved.
+    #[error("The plugin failed to flush parameter changes (result {result})")]
+    ParameterFlush {
+        /// The result returned by `process`.
+        result: i32,
+    },
+    /// A reconstructed component refused the state that must survive its reload.
+    #[error("The reloaded plugin refused its saved settings")]
+    RestoreState,
 }
 
 /// How a plugin is told it will be run.
@@ -192,7 +201,7 @@ struct InstanceParts {
     /// The host context the component and controller were initialized with.
     _host: ComWrapper<HostApplication>,
     /// Keeps the module of the plugin loaded.
-    _module: Arc<Module>,
+    module: Arc<Module>,
 }
 
 /// A plugin instance.
@@ -347,7 +356,7 @@ impl PluginInstance {
             connection,
             handler,
             _host: host,
-            _module: Arc::clone(module),
+            module: Arc::clone(module),
         };
         let instance = Self {
             core: Arc::new(InstanceCore {
@@ -369,10 +378,38 @@ impl PluginInstance {
         Ok(instance)
     }
 
+    /// Destroys both component and controller, then creates fresh objects and restores their state.
+    /// All processor handles and editor windows must be retired by the caller first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when handles still exist, reconstruction fails, or the new component refuses its state.
+    pub fn recreate(self, ui: &UiThread, state: &PluginState) -> Result<Self, InstanceError> {
+        self.ensure_no_processors()?;
+        if Arc::strong_count(&self.core) != 1 {
+            return Err(InstanceError::InUse);
+        }
+        let module = Arc::clone(&self.core.parts.module);
+        let dispatcher = self.core.dispatcher.clone();
+        let class_id = self.class_id;
+        drop(self);
+        let mut instance = Self::create(ui, &module, class_id, dispatcher)?;
+        if !instance.set_state(ui, state)? {
+            return Err(InstanceError::RestoreState);
+        }
+        Ok(instance)
+    }
+
     /// Returns the class this instance was created from.
     #[must_use]
     pub const fn class_id(&self) -> ClassId {
         self.class_id
+    }
+
+    /// Returns true while any processor handle must still be retired before lifecycle work.
+    #[must_use]
+    pub fn has_processor_handles(&self) -> bool {
+        self.core.live_processors.load(Ordering::Acquire) > 0
     }
 
     /// Returns true while the plugin is active.
@@ -582,8 +619,11 @@ impl PluginInstance {
     ///
     /// # Errors
     ///
-    /// Never fails at the moment, and keeps the `Result` so callers handle a future failure.
+    /// Returns an error when queued edits cannot be completely delivered before capture.
+    /// Processor handles must be retired first, so state capture cannot overlap audio processing.
     pub fn state(&self, ui: &UiThread) -> Result<PluginState, InstanceError> {
+        self.ensure_no_processors()?;
+        self.flush_parameter_edits(ui)?;
         let component = self.component_state(ui);
         let controller = self.core.parts.controller.as_ref().map_or_else(Vec::new, |controller| {
             let stream = MemoryStream::create();
@@ -663,30 +703,59 @@ impl PluginInstance {
         Ok(())
     }
 
-    /// Delivers queued parameter edits to the processor with a zero-length `process` call,
-    /// so that a following `state` includes them.
+    /// Delivers a finite snapshot of queued edits through zero-length processing calls.
+    /// Failed and undelivered batches remain queued for a later capture attempt.
+    /// Edits produced during processing are left for the next capture rather than chased indefinitely.
     ///
-    /// Does nothing while the plugin is inactive, or while a processor handle exists,
-    /// because the handle delivers the edits with its next block.
-    pub fn flush_parameter_edits(&self, _ui: &UiThread) {
-        if !self.is_active() || self.core.live_processors.load(Ordering::Acquire) > 0 || self.core.edits.is_empty() {
-            return;
+    /// # Errors
+    ///
+    /// Returns an error when the instance is inactive, processors still exist, or parameter processing fails.
+    pub fn flush_parameter_edits(&self, _ui: &UiThread) -> Result<(), InstanceError> {
+        if self.core.edits.is_empty() {
+            return Ok(());
+        }
+        self.ensure_no_processors()?;
+        if !self.is_active() {
+            return Err(InstanceError::ActivationBeforeProcessing);
         }
         if !self.core.try_begin_processing() {
-            return;
+            return Err(InstanceError::InUse);
         }
+        let snapshot: Vec<_> = (0..self.core.edits.len().min(EDIT_QUEUE_CAPACITY))
+            .filter_map(|_| self.core.edits.pop())
+            .collect();
         let changes = ParameterChanges::create();
-        // Edits past the capacity of one call wait for the next flush or block instead of being lost.
-        // The controller only edits on this thread, so they go back in their order once the call is done.
-        let mut carried = Vec::new();
-        while let Some(edit) = self.core.edits.pop() {
-            if !changes.set(edit.id, edit.value) {
-                carried.push(edit);
+        let mut start = 0;
+        let result = (|| {
+            while start < snapshot.len() {
+                changes.clear();
+                let mut end = start;
+                while let Some(edit) = snapshot.get(end) {
+                    if !changes.set(edit.id, edit.value) {
+                        break;
+                    }
+                    end += 1;
+                }
+                self.process_parameter_changes(&changes)?;
+                start = end;
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            // New edits stay newer than the failed snapshot, including repeated parameters.
+            let newer: Vec<_> = (0..self.core.edits.len().min(EDIT_QUEUE_CAPACITY))
+                .filter_map(|_| self.core.edits.pop())
+                .collect();
+            for edit in snapshot.into_iter().skip(start).chain(newer) {
+                self.core.edits.force_push(edit);
             }
         }
-        let changes_pointer = changes
-            .as_com_ref::<IParameterChanges>()
-            .map_or(std::ptr::null_mut(), |changes| changes.as_ptr());
+        self.core.end_processing();
+        result
+    }
+
+    /// Delivers one preallocated parameter batch without audio buffers.
+    fn process_parameter_changes(&self, changes: &ComWrapper<ParameterChanges>) -> Result<(), InstanceError> {
         let mut data = ProcessData {
             processMode: self.setup.map_or_else(
                 || to_i32(ProcessModes_::kRealtime),
@@ -698,18 +767,21 @@ impl PluginInstance {
             numOutputs: 0,
             inputs: std::ptr::null_mut(),
             outputs: std::ptr::null_mut(),
-            inputParameterChanges: changes_pointer,
+            inputParameterChanges: changes
+                .as_com_ref::<IParameterChanges>()
+                .map_or(std::ptr::null_mut(), |changes| changes.as_ptr()),
             outputParameterChanges: std::ptr::null_mut(),
             inputEvents: std::ptr::null_mut(),
             outputEvents: std::ptr::null_mut(),
             processContext: std::ptr::null_mut(),
         };
-        // SAFETY: the processor is active, the processing mark keeps any other call out,
-        // and `data` and the parameter changes live for the call.
-        unsafe { self.core.parts.processor.process(&raw mut data) };
-        self.core.end_processing();
-        for edit in carried {
-            let _ = self.core.edits.push(edit);
+        // SAFETY: the instance is active, no processor handle exists, and the processing mark excludes overlap.
+        // The parameter batch and process data remain valid throughout the call.
+        let result = unsafe { self.core.parts.processor.process(&raw mut data) };
+        if result == kResultOk {
+            Ok(())
+        } else {
+            Err(InstanceError::ParameterFlush { result })
         }
     }
 
@@ -995,6 +1067,39 @@ mod test_lifecycle {
     }
 
     #[test]
+    fn reconstruction_terminates_both_old_objects_before_creating_the_new_pair() {
+        let _log = lock_recorder_log();
+        on_ui(|ui| {
+            let instance = active_instance(ui, Kind::Recorder, 2).expect("recorder");
+            let state = instance.state(ui).expect("state");
+            drop(take_recorded_calls());
+            let instance = instance.recreate(ui, &state).expect("recreate");
+            let calls = take_recorded_calls();
+            let names: Vec<_> = calls.iter().map(|call| call.name).collect();
+            let terminated = names
+                .iter()
+                .position(|&name| name == "component.terminate")
+                .expect("component terminated");
+            let initialized = names
+                .iter()
+                .position(|&name| name == "component.initialize")
+                .expect("new component initialized");
+            assert!(terminated < initialized);
+            assert!(
+                names
+                    .get(..terminated)
+                    .expect("old calls")
+                    .contains(&"controller.terminate")
+            );
+            let new_calls = names.get(initialized..).expect("new calls");
+            assert!(new_calls.contains(&"controller.initialize"));
+            assert!(new_calls.contains(&"component.setState"));
+            assert!(new_calls.contains(&"controller.setState"));
+            drop(instance);
+        });
+    }
+
+    #[test]
     fn setup_changes_are_refused_while_a_processor_exists() {
         let mut instance = on_ui(|ui| active_instance(ui, Kind::Gain, 2)).expect("gain instance");
         let processor = on_ui_processor(&instance);
@@ -1256,6 +1361,169 @@ mod test_buses {
 }
 
 #[cfg(test)]
+mod test_parameter_snapshots {
+    use audiobatch_test_plugin::{BULK_PARAMETER_COUNT, BULK_PARAMETER_START, FLUSH_FAILURE_PARAMETER, Kind};
+
+    use super::*;
+    use crate::test_helpers::{active_instance, on_ui};
+
+    /// Reads the bulk parameter array from its serialized component state.
+    fn values(state: &PluginState) -> Vec<f64> {
+        state
+            .component
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .skip(1)
+            .map(|bytes| f64::from_le_bytes(*bytes))
+            .collect()
+    }
+
+    #[test]
+    fn capture_drains_more_than_one_batch_and_preserves_final_value_order() {
+        on_ui(|ui| {
+            let instance = active_instance(ui, Kind::ManyParameters, 2).expect("bulk instance");
+            for index in 0..BULK_PARAMETER_COUNT {
+                instance
+                    .set_parameter(ui, BULK_PARAMETER_START + u32::try_from(index).expect("small id"), 0.25)
+                    .expect("edit");
+            }
+            for index in [0, 255, 256, 511, 0, 256] {
+                instance
+                    .set_parameter(ui, BULK_PARAMETER_START + index, 0.75)
+                    .expect("repeated final edit");
+            }
+            let state = instance.state(ui).expect("complete snapshot");
+            let captured = values(&state);
+            assert_eq!(captured.len(), BULK_PARAMETER_COUNT);
+            for (index, value) in captured.iter().enumerate() {
+                let wanted = if [0, 255, 256, 511].contains(&index) {
+                    0.75
+                } else {
+                    0.25
+                };
+                assert!((value - wanted).abs() < f64::EPSILON, "parameter {index}: {value}");
+            }
+            assert!(instance.core.edits.is_empty());
+        });
+    }
+
+    #[test]
+    fn failure_propagates_and_keeps_the_previous_saved_blob_and_pending_edits() {
+        on_ui(|ui| {
+            let instance = active_instance(ui, Kind::FlushFailing, 2).expect("failing flush instance");
+            let mut saved = instance.state(ui).expect("initial snapshot needs no flush");
+            let previous = saved.clone();
+            instance.set_parameter(ui, 0, 0.25).expect("edit");
+            let result = instance.state(ui);
+            if let Ok(state) = &result {
+                saved = state.clone();
+            }
+            assert!(matches!(result, Err(InstanceError::ParameterFlush { .. })));
+            assert_eq!(saved, previous);
+            assert_eq!(instance.core.edits.len(), 1);
+            assert!(matches!(instance.state(ui), Err(InstanceError::ParameterFlush { .. })));
+        });
+    }
+
+    #[test]
+    fn a_full_queue_snapshot_drains_all_batches_with_repeated_final_values() {
+        on_ui(|ui| {
+            let instance = active_instance(ui, Kind::ManyParameters, 2).expect("bulk instance");
+            for value in [0.25, 0.75] {
+                for index in 0..BULK_PARAMETER_COUNT {
+                    instance
+                        .set_parameter(
+                            ui,
+                            BULK_PARAMETER_START + u32::try_from(index).expect("small id"),
+                            value,
+                        )
+                        .expect("edit");
+                }
+            }
+            assert_eq!(instance.core.edits.len(), EDIT_QUEUE_CAPACITY);
+            let captured = values(&instance.state(ui).expect("full snapshot"));
+            assert!(captured.iter().all(|value| (value - 0.75).abs() < f64::EPSILON));
+            assert!(instance.core.edits.is_empty());
+        });
+    }
+
+    #[test]
+    fn a_later_failed_batch_can_retry_without_losing_newer_final_values() {
+        on_ui(|ui| {
+            let instance = active_instance(ui, Kind::ManyParameters, 2).expect("bulk instance");
+            let mut saved = instance.state(ui).expect("initial snapshot");
+            let previous = saved.clone();
+            for index in 0..257 {
+                instance
+                    .set_parameter(ui, BULK_PARAMETER_START + index, 0.25)
+                    .expect("edit");
+            }
+            instance
+                .set_parameter(ui, FLUSH_FAILURE_PARAMETER, 1.0)
+                .expect("inject failure");
+            let result = instance.state(ui);
+            if let Ok(state) = &result {
+                saved = state.clone();
+            }
+            assert!(matches!(result, Err(InstanceError::ParameterFlush { .. })));
+            assert_eq!(saved, previous);
+            assert_eq!(instance.core.edits.len(), 2);
+            instance
+                .set_parameter(ui, BULK_PARAMETER_START + 256, 0.75)
+                .expect("newer final value");
+            instance
+                .set_parameter(ui, FLUSH_FAILURE_PARAMETER, 0.0)
+                .expect("clear failure");
+            let captured = values(&instance.state(ui).expect("retry snapshot"));
+            assert!(
+                captured
+                    .iter()
+                    .take(256)
+                    .all(|value| (value - 0.25).abs() < f64::EPSILON)
+            );
+            assert!((captured.get(256).expect("parameter 256") - 0.75).abs() < f64::EPSILON);
+            assert!(instance.core.edits.is_empty());
+        });
+    }
+
+    #[test]
+    fn capture_refuses_a_live_processor_instead_of_saving_a_stale_snapshot() {
+        on_ui(|ui| {
+            let instance = active_instance(ui, Kind::ManyParameters, 2).expect("instance");
+            let processor = instance.processor(ui).expect("processor");
+            instance
+                .set_parameter(ui, BULK_PARAMETER_START + 256, 0.5)
+                .expect("edit");
+            assert!(matches!(instance.state(ui), Err(InstanceError::InUse)));
+            drop(processor);
+            let captured = values(&instance.state(ui).expect("retired snapshot"));
+            assert!((captured.get(256).expect("parameter 256") - 0.5).abs() < f64::EPSILON);
+        });
+    }
+
+    #[test]
+    fn retiring_an_overflow_batch_does_not_replace_a_newer_parameter_value() {
+        on_ui(|ui| {
+            let instance = active_instance(ui, Kind::ManyParameters, 2).expect("instance");
+            let mut processor = instance.processor(ui).expect("processor");
+            for index in 0..257 {
+                instance
+                    .set_parameter(ui, BULK_PARAMETER_START + index, 0.25)
+                    .expect("edit");
+            }
+            processor.process(1).expect("first batch");
+            instance
+                .set_parameter(ui, BULK_PARAMETER_START + 256, 0.75)
+                .expect("newer edit");
+            drop(processor);
+            let captured = values(&instance.state(ui).expect("retired snapshot"));
+            assert!((captured.get(256).expect("parameter 256") - 0.75).abs() < f64::EPSILON);
+        });
+    }
+}
+
+#[cfg(test)]
 mod test_processing {
     use audiobatch_test_plugin::{
         DELAY_LATENCY, ECHO_DELAY, ECHO_LEVEL, EDIT_TRIGGER_PARAMETER, GAIN_PARAMETER, INITIAL_CONTROLLER_STATE, Kind,
@@ -1390,7 +1658,7 @@ mod test_processing {
                 // SAFETY: the controller is valid and this runs on the UI thread.
                 unsafe { controller.setParamNormalized(EDIT_TRIGGER_PARAMETER, 0.75) };
             }
-            instance.flush_parameter_edits(ui);
+            instance.flush_parameter_edits(ui).expect("edits flush");
             instance.state(ui).map_err(|error| error.to_string())
         })
         .expect("state after the flush");
@@ -1404,7 +1672,7 @@ mod test_processing {
             instance
                 .set_parameter(ui, GAIN_PARAMETER, 0.25)
                 .map_err(|error| error.to_string())?;
-            instance.flush_parameter_edits(ui);
+            instance.flush_parameter_edits(ui).expect("edits flush");
             instance.state(ui).map_err(|error| error.to_string())
         })
         .expect("state after the parameter change");

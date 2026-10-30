@@ -16,7 +16,7 @@ use std::sync::{Mutex, PoisonError};
 use vst3::Steinberg::Vst::{
     IComponentHandler, IComponentHandlerTrait as _, IConnectionPoint, IConnectionPointTrait, IEditController,
     IEditControllerTrait, IMessage, IMessageTrait as _, ParamID, ParamValue, ParameterInfo,
-    ParameterInfo_::ParameterFlags_, String128, TChar,
+    ParameterInfo_::ParameterFlags_, RestartFlags_, String128, TChar,
 };
 use vst3::Steinberg::{
     FUnknown, IBStream, IBStreamTrait as _, IPlugView, IPluginBaseTrait, kInvalidArgument, kResultFalse, kResultOk,
@@ -26,7 +26,10 @@ use vst3::{Class, ComPtr, ComRef};
 use vst3_host::strings::to_utf16;
 
 use crate::processor::CONNECTED_MESSAGE;
-use crate::{EDIT_TRIGGER_PARAMETER, GAIN_PARAMETER, INITIAL_CONTROLLER_STATE, record};
+use crate::{
+    BULK_PARAMETER_COUNT, BULK_PARAMETER_START, EDIT_TRIGGER_PARAMETER, FLUSH_FAILURE_PARAMETER, GAIN_PARAMETER,
+    INITIAL_CONTROLLER_STATE, RELOAD_TRIGGER_PARAMETER, record,
+};
 
 /// The edit controller of a fake plugin.
 pub struct TestController {
@@ -196,6 +199,19 @@ impl IEditControllerTrait for TestController {
                 self.perform_gain_edit(value);
                 kResultOk
             }
+            FLUSH_FAILURE_PARAMETER => kResultOk,
+            RELOAD_TRIGGER_PARAMETER => {
+                let handler = self.handler.lock().unwrap_or_else(PoisonError::into_inner).clone();
+                if let Some(handler) = handler {
+                    let flags = i64::from(RestartFlags_::kReloadComponent)
+                        | i64::from(RestartFlags_::kIoChanged)
+                        | i64::from(RestartFlags_::kLatencyChanged);
+                    // SAFETY: the host handler remains alive through the call.
+                    unsafe { handler.restartComponent(i32::try_from(flags).expect("restart bits fit")) };
+                }
+                kResultOk
+            }
+            _ if id >= BULK_PARAMETER_START && (id - BULK_PARAMETER_START) < BULK_PARAMETER_COUNT as u32 => kResultOk,
             _ => kInvalidArgument,
         }
     }

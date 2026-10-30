@@ -141,7 +141,7 @@ fn configured_state(
         LATENCY_PARAMETER,
         f64::from(parameters.latency) / f64::from(LATENCY_MAXIMUM),
     )?;
-    instance.flush_parameter_edits(ui);
+    instance.flush_parameter_edits(ui)?;
     let state = instance.state(ui)?;
     instance.deactivate(ui)?;
     instance.activate(ui)?;

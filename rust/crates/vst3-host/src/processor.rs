@@ -179,7 +179,9 @@ impl ProcessorHandle {
         let input_changes = &self.input_changes;
         self.carried_edits
             .retain(|edit| !input_changes.set(edit.id, edit.value));
-        while let Some(edit) = self.core.edits().pop() {
+        // A producer may keep editing during this block, so process only the finite entry snapshot.
+        for _ in 0..self.core.edits().len().min(EDIT_QUEUE_CAPACITY) {
+            let Some(edit) = self.core.edits().pop() else { break };
             if self.input_changes.set(edit.id, edit.value) {
                 continue;
             }
@@ -259,8 +261,14 @@ unsafe impl Send for ProcessorHandle {}
 impl Drop for ProcessorHandle {
     /// Hands the carried edits back to the instance, so the next handle or flush delivers them.
     fn drop(&mut self) {
-        for edit in self.carried_edits.drain(..) {
-            let _ = self.core.edits().push(edit);
+        if !self.carried_edits.is_empty() {
+            // Retirement is not an audio callback operation. Preserve newer queued values after the older carry.
+            let newer: Vec<_> = (0..self.core.edits().len().min(EDIT_QUEUE_CAPACITY))
+                .filter_map(|_| self.core.edits().pop())
+                .collect();
+            for edit in self.carried_edits.drain(..).chain(newer) {
+                self.core.edits().force_push(edit);
+            }
         }
         self.core.processor_dropped();
     }

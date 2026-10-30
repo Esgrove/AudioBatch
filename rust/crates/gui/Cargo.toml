@@ -33,6 +33,7 @@ trash.workspace = true
 vst3-host = { workspace = true, features = ["editor"] }
 
 [dev-dependencies]
+audiobatch-test-plugin.workspace = true
 tempfile.workspace = true
 
 # Records the version, build time, and commit for the About dialog and `--version`, see `build.rs`.

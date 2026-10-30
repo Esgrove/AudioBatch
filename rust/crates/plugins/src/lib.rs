@@ -24,7 +24,9 @@ mod test_helpers;
 pub use chain::{ChainSlot, PluginChain};
 pub use library::{FORMAT_NAME, KnownPlugins, PluginDataError, PluginDataPaths, PluginDescription, VersionedJsonError};
 pub use presets::{ChainPreset, PresetError, PresetInfo, PresetStore, sanitize_preset_name};
-pub use preview_chain::{PreviewChain, PreviewChainError, PreviewFailure, chain_tail_frames, prepare_for_preview};
+pub use preview_chain::{
+    PreviewChain, PreviewChainError, PreviewFailure, chain_tail_frames, prepare_for_preview, reload_for_preview,
+};
 pub use processing::{ProcessingOptions, process_file};
 pub use processing_chain::{ChainPlugin, ProcessingChain, ProcessingChainError};
 pub use processing_coordinator::{

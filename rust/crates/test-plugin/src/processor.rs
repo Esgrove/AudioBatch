@@ -9,9 +9,10 @@
     reason = "implements the VST3 component and audio processor COM interfaces of the fake plugins"
 )]
 
+use std::array;
 use std::collections::VecDeque;
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 
 use vst3::Steinberg::Vst::{
@@ -28,7 +29,10 @@ use vst3::Steinberg::{
 use vst3::{Class, ComPtr, ComRef, Interface};
 use vst3_host::strings::to_utf16;
 
-use crate::{DELAY_LATENCY, ECHO_DELAY, ECHO_LEVEL, FAILING_STATE_BYTES, GAIN_PARAMETER, Kind, record};
+use crate::{
+    BULK_PARAMETER_COUNT, BULK_PARAMETER_START, DELAY_LATENCY, ECHO_DELAY, ECHO_LEVEL, FAILING_STATE_BYTES,
+    FLUSH_FAILURE_PARAMETER, GAIN_PARAMETER, Kind, RELOAD_TRIGGER_PARAMETER, record,
+};
 
 /// Id of the message the processor sends to its controller when they are connected.
 pub const CONNECTED_MESSAGE: &std::ffi::CStr = c"TestProcessorConnected";
@@ -39,6 +43,12 @@ pub struct TestProcessor {
     kind: Kind,
     /// Linear gain, as `f64` bits.
     gain: AtomicU64,
+    /// Independent parameter values included in bulk state snapshots.
+    parameters: [AtomicU64; BULK_PARAMETER_COUNT],
+    /// A reload is required, and re-preparing this object must not clear it.
+    reload_required: AtomicBool,
+    /// An injected processing failure, cleared by a subsequent parameter edit.
+    flush_failure: AtomicBool,
     /// Arrangement of the main input bus.
     input_arrangement: AtomicU64,
     /// Arrangement of the main output bus.
@@ -64,6 +74,9 @@ impl TestProcessor {
         Self {
             kind,
             gain: AtomicU64::new(1.0_f64.to_bits()),
+            parameters: array::from_fn(|_| AtomicU64::new(0)),
+            reload_required: AtomicBool::new(false),
+            flush_failure: AtomicBool::new(false),
             input_arrangement: AtomicU64::new(arrangement),
             output_arrangement: AtomicU64::new(arrangement),
             delay_lines: Mutex::new(Vec::new()),
@@ -86,9 +99,15 @@ impl TestProcessor {
         match self.kind {
             Kind::MonoOnly => input == SpeakerArr::kMono && output == SpeakerArr::kMono,
             Kind::StereoOnly => input == SpeakerArr::kStereo && output == SpeakerArr::kStereo,
-            Kind::Gain | Kind::Delay | Kind::Echo | Kind::NotFinite | Kind::Recorder | Kind::Failing => {
-                input == output && (input == SpeakerArr::kMono || input == SpeakerArr::kStereo)
-            }
+            Kind::Gain
+            | Kind::Delay
+            | Kind::Echo
+            | Kind::NotFinite
+            | Kind::Recorder
+            | Kind::Failing
+            | Kind::ManyParameters
+            | Kind::FlushFailing
+            | Kind::ReloadRequired => input == output && (input == SpeakerArr::kMono || input == SpeakerArr::kStereo),
         }
     }
 
@@ -119,9 +138,7 @@ impl TestProcessor {
                 continue;
             };
             // SAFETY: the queue is valid.
-            if unsafe { queue.getParameterId() } != GAIN_PARAMETER {
-                continue;
-            }
+            let id = unsafe { queue.getParameterId() };
             let mut offset = 0;
             let mut value = 0.0;
             // SAFETY: the queue is valid.
@@ -131,7 +148,18 @@ impl TestProcessor {
             }
             // SAFETY: the queue is valid, the index is in range, and both result slots live for the call.
             if unsafe { queue.getPoint(points - 1, &raw mut offset, &raw mut value) } == kResultOk {
-                self.gain.store(value.to_bits(), Ordering::Relaxed);
+                if id == GAIN_PARAMETER {
+                    self.gain.store(value.to_bits(), Ordering::Relaxed);
+                } else if id == FLUSH_FAILURE_PARAMETER {
+                    self.flush_failure.store(value > 0.5, Ordering::Relaxed);
+                } else if id == RELOAD_TRIGGER_PARAMETER && self.kind == Kind::ReloadRequired {
+                    self.reload_required.store(true, Ordering::Relaxed);
+                } else if let Some(parameter) = id
+                    .checked_sub(BULK_PARAMETER_START)
+                    .and_then(|index| self.parameters.get(index as usize))
+                {
+                    parameter.store(value.to_bits(), Ordering::Relaxed);
+                }
             }
         }
     }
@@ -145,7 +173,14 @@ impl TestProcessor {
             })
         };
         match self.kind {
-            Kind::Gain | Kind::MonoOnly | Kind::StereoOnly | Kind::Recorder | Kind::Failing => input * gain,
+            Kind::Gain
+            | Kind::MonoOnly
+            | Kind::StereoOnly
+            | Kind::Recorder
+            | Kind::Failing
+            | Kind::ManyParameters
+            | Kind::FlushFailing
+            | Kind::ReloadRequired => input * gain,
             Kind::Delay => delayed(delay_lines) * gain,
             Kind::Echo => ECHO_LEVEL.mul_add(delayed(delay_lines), input) * gain,
             Kind::NotFinite => f32::NAN,
@@ -297,6 +332,15 @@ impl IComponentTrait for TestProcessor {
             return kResultFalse;
         }
         self.gain.store(f64::from_le_bytes(bytes).to_bits(), Ordering::Relaxed);
+        if self.kind == Kind::ManyParameters {
+            for parameter in &self.parameters {
+                // SAFETY: the stream is live and the buffer holds eight writable bytes.
+                if unsafe { stream.read(bytes.as_mut_ptr().cast(), 8, &raw mut read) } != kResultOk || read != 8 {
+                    return kResultFalse;
+                }
+                parameter.store(u64::from_le_bytes(bytes), Ordering::Relaxed);
+            }
+        }
         kResultOk
     }
 
@@ -314,7 +358,21 @@ impl IComponentTrait for TestProcessor {
             return kResultFalse;
         }
         // SAFETY: the stream is valid and the buffer holds the eight bytes written.
-        unsafe { stream.write(bytes.as_mut_ptr().cast(), 8, std::ptr::null_mut()) }
+        let result = unsafe { stream.write(bytes.as_mut_ptr().cast(), 8, std::ptr::null_mut()) };
+        if result != kResultOk {
+            return result;
+        }
+        if self.kind == Kind::ManyParameters {
+            for parameter in &self.parameters {
+                bytes = parameter.load(Ordering::Relaxed).to_le_bytes();
+                // SAFETY: the stream is live and the buffer contains eight readable bytes.
+                let result = unsafe { stream.write(bytes.as_mut_ptr().cast(), 8, std::ptr::null_mut()) };
+                if result != kResultOk {
+                    return result;
+                }
+            }
+        }
+        kResultOk
     }
 }
 
@@ -370,7 +428,16 @@ impl IAudioProcessorTrait for TestProcessor {
 
     unsafe fn setupProcessing(&self, setup: *mut ProcessSetup) -> tresult {
         self.record("processor.setupProcessing");
-        if setup.is_null() { kInvalidArgument } else { kResultOk }
+        if setup.is_null() {
+            return kInvalidArgument;
+        }
+        // SAFETY: the host passes a readable processing setup, checked for null above.
+        let rate = unsafe { (*setup).sampleRate };
+        if rate.is_finite() && rate > 0.0 {
+            kResultOk
+        } else {
+            kResultFalse
+        }
     }
 
     unsafe fn setProcessing(&self, state: TBool) -> tresult {
@@ -398,7 +465,10 @@ impl IAudioProcessorTrait for TestProcessor {
         });
         self.apply_parameter_changes(data.inputParameterChanges);
         let frames = usize::try_from(data.numSamples).unwrap_or_default();
-        if frames > 0 && self.kind == Kind::Failing {
+        if self.kind == Kind::FlushFailing
+            || self.flush_failure.load(Ordering::Relaxed)
+            || (frames > 0 && (self.kind == Kind::Failing || self.reload_required.load(Ordering::Relaxed)))
+        {
             return kResultFalse;
         }
         if frames == 0 || data.numOutputs < 1 || data.outputs.is_null() {

@@ -13,6 +13,6 @@ mod stream;
 
 pub use application::HostApplication;
 pub use component_handler::{ComponentHandler, EDIT_QUEUE_CAPACITY};
-pub use component_handler::{ParameterEdit, RestartFlags};
+pub use component_handler::{ParameterEdit, RestartAction, RestartFlags};
 pub use parameter_changes::ParameterChanges;
 pub use stream::MemoryStream;
