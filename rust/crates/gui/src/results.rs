@@ -13,6 +13,7 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::{PI, TAU};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use audiobatch_core::AnalysisRecord;
 use audiobatch_core::format::{
@@ -159,6 +160,8 @@ pub struct ResultsDelegate {
     /// Files selected besides `selected`, by Command or Control clicks, Shift clicks, and Select All.
     /// Actions on the selection work on them too.
     extra_selected: HashSet<PathBuf>,
+    /// Completed plain pointer selection awaiting the table's selection event, identified independently of its index.
+    pointer_selection: Option<PathBuf>,
     /// Width the Status column fills, which `fit_column` hands to the table.
     status_fill_width: Pixels,
 }
@@ -363,6 +366,7 @@ impl ResultsDelegate {
             secondary_sort: None,
             selected: None,
             extra_selected: HashSet::new(),
+            pointer_selection: None,
             status_fill_width: px(STATUS_MINIMUM_WIDTH),
         };
         delegate.apply_sort_to_columns();
@@ -729,6 +733,16 @@ impl ResultsDelegate {
         }
     }
 
+    /// Records a completed plain pointer click before the table emits its positional selection event.
+    fn pointer_click_row(&mut self, path: &Path) {
+        self.pointer_selection = Some(path.to_path_buf());
+    }
+
+    /// Consumes completed plain pointer intent once, before resolving the table's selection event.
+    pub const fn take_pointer_selection(&mut self) -> Option<PathBuf> {
+        self.pointer_selection.take()
+    }
+
     /// Returns the selected files, the app's selected file first and the others in row order.
     #[must_use]
     pub fn selected_paths(&self) -> Vec<PathBuf> {
@@ -1080,15 +1094,34 @@ impl TableDelegate for ResultsDelegate {
             .rows
             .get(row_index)
             .is_some_and(|row| self.extra_selected.contains(&row.path));
-        let row = div().id(("row", row_index));
+        let path = self.rows.get(row_index).map(|row| row.path.clone());
+        let row = path.as_ref().map_or_else(
+            || div().id(("empty-row", row_index)),
+            |path| div().id(Arc::<Path>::from(path.as_path())),
+        );
         let row = if selected {
             row.bg(rgba(SELECTION_BACKGROUND))
         } else {
             row
         };
-        row.on_mouse_down(
+        let click_path = path.clone();
+        row.on_click(cx.listener(move |state, event: &ClickEvent, _window, cx| {
+            let modifiers = event.modifiers();
+            if matches!(event, ClickEvent::Mouse(_))
+                && !modifiers.shift
+                && !modifiers.secondary(cx)
+                && let Some(path) = &click_path
+            {
+                // The table appends its click listener after this one and emits SelectRow afterwards.
+                state.delegate_mut().pointer_click_row(path);
+            }
+        }))
+        .on_mouse_down(
             MouseButton::Left,
             cx.listener(move |state, event: &MouseDownEvent, _window, cx| {
+                let Some(row_index) = path.as_deref().and_then(|path| state.delegate().index_of(path)) else {
+                    return;
+                };
                 let modifiers = event.modifiers;
                 let extends = modifiers.shift || modifiers.secondary(cx);
                 if !extends {
@@ -1604,6 +1637,38 @@ mod test_selection {
         delegate.select_all();
         delegate.plain_click_row(1);
         assert_eq!(selected(&delegate), ["/b.wav"]);
+    }
+
+    #[test]
+    fn completed_pointer_click_records_path_once_without_changing_batch_selection() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav"]);
+        delegate.select_only(Some(PathBuf::from("/a.wav")));
+        delegate.select_all();
+        delegate.pointer_click_row(Path::new("/a.wav"));
+        assert_eq!(delegate.take_pointer_selection(), Some(PathBuf::from("/a.wav")));
+        assert_eq!(delegate.take_pointer_selection(), None);
+        assert_eq!(selected(&delegate), ["/a.wav", "/b.wav"]);
+    }
+
+    #[test]
+    fn pointer_intent_keeps_its_path_when_rows_change_before_publication() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav"]);
+        delegate.pointer_click_row(Path::new("/a.wav"));
+        delegate.remove(Path::new("/a.wav"));
+        assert_eq!(delegate.row(0).expect("replacement row").path, Path::new("/b.wav"));
+        assert_eq!(delegate.take_pointer_selection(), Some(PathBuf::from("/a.wav")));
+        assert_eq!(delegate.take_pointer_selection(), None);
+    }
+
+    #[test]
+    fn owner_cursor_restoration_has_no_pointer_intent() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav"]);
+        delegate.select_only(Some(PathBuf::from("/a.wav")));
+        delegate.select_all();
+        delegate.set_selected_path(Some(PathBuf::from("/a.wav")));
+        delegate.sort_rows();
+        assert_eq!(delegate.take_pointer_selection(), None);
+        assert_eq!(selected(&delegate), ["/a.wav", "/b.wav"]);
     }
 
     #[test]

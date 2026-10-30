@@ -61,6 +61,11 @@ impl AppView {
             cx.notify();
             return;
         }
+        let pointer_path = if matches!(event, TableEvent::SelectRow(_)) {
+            table.update(cx, |state, _| state.delegate_mut().take_pointer_selection())
+        } else {
+            None
+        };
         let state = table.read(cx);
         let request = table_selection_request(
             event,
@@ -68,9 +73,14 @@ impl AppView {
             self.selected.as_deref(),
             state.delegate(),
             continue_playback,
+            pointer_path.as_deref(),
+            |path| {
+                self.preview_source
+                    .needs_reload(path, self.player.as_ref().and_then(Player::loaded_path))
+            },
         );
         if let Some((path, play)) = request {
-            // Pointer intent is handled by the row's mouse-down callback, including clicking the preview anchor.
+            // Pointer batch selection is handled by the row's mouse-down callback, including the preview anchor.
             // Cursor restoration emits the same event, so a same-path event must preserve the batch selection.
             if self.selected.as_deref() != Some(path.as_path()) {
                 table.update(cx, |state, _| state.delegate_mut().select_only(Some(path.clone())));
@@ -247,6 +257,8 @@ fn table_selection_request(
     selected: Option<&Path>,
     delegate: &ResultsDelegate,
     continue_playback: bool,
+    pointer_path: Option<&Path>,
+    needs_reload: impl FnOnce(&Path) -> bool,
 ) -> Option<(PathBuf, bool)> {
     let (index, play) = match event {
         TableEvent::SelectRow(index) if cursor == Some(*index) => (*index, continue_playback),
@@ -254,9 +266,15 @@ fn table_selection_request(
         _ => return None,
     };
     let path = &delegate.row(index)?.path;
-    // Owner-driven cursor restoration is not a new selection or an explicit play request.
-    if matches!(event, TableEvent::SelectRow(_)) && selected == Some(path.as_path()) {
-        return None;
+    if matches!(event, TableEvent::SelectRow(_)) {
+        // Pointer intent belongs to the rendered path, never a different source now occupying the same index.
+        if pointer_path.is_some_and(|pointer| pointer != path) {
+            return None;
+        }
+        // Restoring a cursor and clicking an unchanged anchor must not consume a pending cue request.
+        if selected == Some(path.as_path()) && (pointer_path.is_none() || !needs_reload(path)) {
+            return None;
+        }
     }
     Some((path.clone(), play))
 }
@@ -300,6 +318,8 @@ fn placeholder_text(row: &ResultRow) -> String {
 
 #[cfg(test)]
 mod test_table_selection_intent {
+    use std::io::Write as _;
+
     use super::*;
     use crate::app::cue_start::CueStartIntent;
 
@@ -307,7 +327,15 @@ mod test_table_selection_intent {
     fn request(event: &TableEvent, cursor: usize, continuation: bool) -> Option<(PathBuf, bool)> {
         let mut delegate = ResultsDelegate::new(1600.0);
         delegate.set_files(&[PathBuf::from("/a.wav"), PathBuf::from("/b.wav")]);
-        table_selection_request(event, Some(cursor), Some(Path::new("/a.wav")), &delegate, continuation)
+        table_selection_request(
+            event,
+            Some(cursor),
+            Some(Path::new("/a.wav")),
+            &delegate,
+            continuation,
+            None,
+            |_| false,
+        )
     }
 
     #[test]
@@ -336,6 +364,109 @@ mod test_table_selection_intent {
             );
         }
         assert_eq!(request(&TableEvent::SelectRow(0), 1, true), None);
+    }
+
+    /// Resolves explicit pointer intent against the real captured source version without a player or window.
+    fn pointer_request(
+        path: &Path,
+        source: &PreviewSource,
+        loaded: Option<&Path>,
+        play: bool,
+    ) -> Option<(PathBuf, bool)> {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_files(&[path.to_path_buf()]);
+        table_selection_request(
+            &TableEvent::SelectRow(0),
+            Some(0),
+            Some(path),
+            &delegate,
+            play,
+            Some(path),
+            |path| source.needs_reload(path, loaded),
+        )
+    }
+
+    #[test]
+    fn explicit_same_row_click_retries_an_unloaded_preview() {
+        let file = tempfile::NamedTempFile::new().expect("source");
+        let path = file.path();
+        let mut source = PreviewSource::default();
+        source.begin(path);
+        for continuation in [false, true] {
+            assert_eq!(
+                pointer_request(path, &source, None, continuation),
+                Some((path.to_path_buf(), continuation))
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_same_row_click_reloads_a_changed_source() {
+        let mut file = tempfile::NamedTempFile::new().expect("source");
+        let mut source = PreviewSource::default();
+        source.begin(file.path());
+        file.write_all(b"replacement source").expect("replacement");
+        assert_eq!(
+            pointer_request(file.path(), &source, Some(file.path()), false),
+            Some((file.path().to_path_buf(), false))
+        );
+    }
+
+    #[test]
+    fn unchanged_same_row_click_preserves_pending_play_and_seek_cues() {
+        let file = tempfile::NamedTempFile::new().expect("source");
+        let path = file.path();
+        let mut source = PreviewSource::default();
+        source.begin(path);
+        for mut intent in [CueStartIntent::new(path), CueStartIntent::seek(path)] {
+            intent.receive_cues(path, std::iter::once(3.0));
+            assert_eq!(pointer_request(path, &source, Some(path), intent.should_play()), None);
+            assert_eq!(intent.position(Some(path), Some(30.0)), Some(3.0));
+        }
+    }
+
+    #[test]
+    fn restoration_preserves_cues_and_multiselection_even_without_a_decoder() {
+        let path = Path::new("/a.wav");
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_files(&[path.to_path_buf(), PathBuf::from("/b.wav")]);
+        delegate.set_selected_path(Some(path.to_path_buf()));
+        delegate.select_all();
+        for mut intent in [CueStartIntent::new(path), CueStartIntent::seek(path)] {
+            intent.receive_cues(path, std::iter::once(3.0));
+            assert_eq!(
+                table_selection_request(
+                    &TableEvent::SelectRow(0),
+                    Some(0),
+                    Some(path),
+                    &delegate,
+                    intent.should_play(),
+                    None,
+                    |_| true,
+                ),
+                None
+            );
+            assert_eq!(intent.position(Some(path), Some(30.0)), Some(3.0));
+            assert_eq!(delegate.selected_paths(), ["/a.wav", "/b.wav"].map(PathBuf::from));
+        }
+    }
+
+    #[test]
+    fn stale_pointer_path_cannot_select_the_new_occupant_of_its_index() {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_files(&[PathBuf::from("/b.wav")]);
+        assert_eq!(
+            table_selection_request(
+                &TableEvent::SelectRow(0),
+                Some(0),
+                Some(Path::new("/a.wav")),
+                &delegate,
+                true,
+                Some(Path::new("/a.wav")),
+                |_| true,
+            ),
+            None
+        );
     }
 
     #[test]
