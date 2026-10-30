@@ -371,7 +371,9 @@ fn processing_job(record: &AnalysisRecord, refusal: Option<String>, context: &Ru
 #[cfg(test)]
 mod test_processing_coordinator {
     use std::fs;
+    use std::path::Path;
 
+    use audiobatch_core::operation::OperationOutcome;
     use audiobatch_test_plugin::Kind;
     use tempfile::TempDir;
 
@@ -514,6 +516,72 @@ mod test_processing_coordinator {
                 result.output().is_some(),
                 "only committed outputs are reported after a cancel"
             );
+        }
+    }
+
+    #[test]
+    fn cancellation_during_commit_reports_and_caches_only_the_committed_file() {
+        let directory = TempDir::new().expect("temp dir");
+        let records: Vec<AnalysisRecord> = (0..2)
+            .map(|index| ready_fixture_copy(&directory, "sine_mono_44100_16.wav", &format!("song{index}.wav")))
+            .collect();
+        let originals: Vec<Vec<u8>> = records
+            .iter()
+            .map(|record| fs::read(&record.path).expect("source bytes"))
+            .collect();
+        let (coordinator, cache) = coordinator(&directory, 1);
+        for record in &records {
+            cache.store_analysis(record).expect("stores source");
+        }
+        let current_run = Arc::clone(&coordinator.current_run);
+        let disposals = Arc::new(AtomicUsize::new(0));
+        let disposal_count = Arc::clone(&disposals);
+        let options = ProcessingOptions {
+            dispose: Arc::new(move |path: &Path| {
+                // A converted source is disposed of only after its output has been published.
+                assert!(path.with_extension("aif").is_file());
+                current_run.fetch_add(1, Ordering::SeqCst);
+                disposal_count.fetch_add(1, Ordering::SeqCst);
+                fs::remove_file(path).is_ok()
+            }),
+            ..deleting_options()
+        };
+
+        let (run_id, receiver) = coordinator.start(records.clone(), options, gain_chains(1));
+        let events: Vec<ProcessingEvent> = receiver.iter().collect();
+
+        assert!(!coordinator.is_current(run_id));
+        assert_eq!(disposals.load(Ordering::SeqCst), 1);
+        assert!(events.iter().all(|event| event.run_id() == run_id));
+        assert!(
+            !events
+                .iter()
+                .any(|event| matches!(event, ProcessingEvent::Completed { .. }))
+        );
+        let finished = results(&events);
+        assert_eq!(finished.len(), 1, "{events:?}");
+        let committed = finished[0];
+        assert!(matches!(committed.outcome, OperationOutcome::Succeeded { .. }));
+        let output = committed.output().expect("committed output");
+        assert!(output.is_ready());
+        assert_eq!(output.path, committed.source.with_extension("aif"));
+        assert!(output.path.is_file());
+        assert!(!committed.source.exists());
+        assert!(!cache.remove_analysis(&committed.source).expect("source cache removed"));
+        assert!(cache.get_analysis(&output.path).is_some());
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event, ProcessingEvent::Started { .. }))
+                .count(),
+            1
+        );
+        for (record, original) in records.iter().zip(&originals) {
+            if record.path != committed.source {
+                assert_eq!(fs::read(&record.path).expect("queued source untouched"), *original);
+                assert!(!record.path.with_extension("aif").exists());
+                assert!(cache.get_analysis(&record.path).is_some());
+            }
         }
     }
 

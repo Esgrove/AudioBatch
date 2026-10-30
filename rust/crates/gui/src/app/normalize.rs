@@ -23,7 +23,7 @@ use crate::normalization::{
     ALREADY_NORMALIZING, BLOCKED_BY_ANALYSIS, BLOCKED_BY_PROCESSING, NORMALIZATION_IN_PROGRESS, describe_target,
     normalization_options, set_target, target_range,
 };
-use crate::operation_run::{OperationKind, OperationRun, discard_run};
+use crate::operation_run::{OperationKind, OperationRun, discard_run, finish_drain};
 use crate::results::RowMessage;
 use crate::settings::NormalizeMode;
 
@@ -292,14 +292,21 @@ impl AppView {
 
     /// Applies a batch of normalization events to the table, the selection, and the status bar.
     fn apply_normalize_events(&mut self, events: Vec<NormalizeEvent>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some((run_id, cancelled)) = self.normalize_run.as_ref().map(|run| (run.run_id, run.cancelled)) else {
+        if self.normalize_run.is_none() {
             return;
-        };
+        }
         let mut completed = false;
         let mut replaced = false;
-        for event in events.into_iter().filter(|event| event.run_id() == run_id) {
-            // After a cancel, only outputs that replaced their source are applied.
-            if cancelled && !matches!(&event, NormalizeEvent::Finished { result, .. } if result.output().is_some()) {
+        for event in events {
+            let result = match &event {
+                NormalizeEvent::Finished { result, .. } => Some(result.as_ref()),
+                _ => None,
+            };
+            if self
+                .normalize_run
+                .as_ref()
+                .is_none_or(|run| !run.accepts_event(event.run_id(), result))
+            {
                 continue;
             }
             match event {
@@ -432,10 +439,7 @@ fn spawn_normalize_drain(receiver: Receiver<NormalizeEvent>, window: &Window, cx
             }
             if disconnected {
                 let _ = this.update(cx, |view, cx| {
-                    view.normalize_winding_down = false;
-                    if let Some(run) = &mut view.normalize_run {
-                        run.completed = true;
-                    }
+                    finish_drain(&mut view.normalize_run, &mut view.normalize_winding_down);
                     view.artwork_rewrites.clear();
                     view.refresh_artwork(cx);
                     cx.notify();

@@ -102,6 +102,13 @@ impl OperationRun {
         }
     }
 
+    /// Accepts current events, retaining only committed outputs after cancellation.
+    /// Metadata and progress carry no result and cannot revive a cancelled run.
+    #[must_use]
+    pub fn accepts_event(&self, run_id: u64, result: Option<&OperationResult>) -> bool {
+        self.run_id == run_id && (!self.cancelled || result.is_some_and(|result| result.output().is_some()))
+    }
+
     /// Counts the result of one file and remembers its failure.
     pub fn record(&mut self, result: &OperationResult) {
         self.finished += 1;
@@ -173,6 +180,15 @@ pub fn discard_run(run: &mut Option<OperationRun>, winding_down: &mut bool) {
     *run = None;
 }
 
+/// Releases writer exclusion only after the receiver has observed its terminal disconnect.
+/// A cleared presentation owner stays absent, while a retained run becomes complete.
+pub const fn finish_drain(run: &mut Option<OperationRun>, winding_down: &mut bool) {
+    *winding_down = false;
+    if let Some(run) = run {
+        run.completed = true;
+    }
+}
+
 /// Returns the file name of a path for messages.
 fn file_name(path: &Path) -> String {
     path.file_name().map_or_else(
@@ -189,7 +205,8 @@ mod test_run {
     use std::time::Duration;
 
     use audiobatch_core::normalize::NormalizationOptions;
-    use audiobatch_core::{NormalizeCoordinator, analyze_file};
+    use audiobatch_core::operation::OperationOutcome;
+    use audiobatch_core::{AnalysisRecord, NormalizeCoordinator, analyze_file};
 
     use super::*;
 
@@ -237,8 +254,9 @@ mod test_run {
         for _event in &receiver {
             assert!(run.is_none(), "late events have no presentation owner");
         }
-        winding_down = false;
+        finish_drain(&mut run, &mut winding_down);
         assert!(!winding_down);
+        assert!(run.is_none());
     }
 
     #[test]
@@ -268,6 +286,63 @@ mod test_run {
         let mut winding_down = false;
         discard_run(&mut run, &mut winding_down);
         assert!(!winding_down);
+    }
+
+    #[test]
+    fn disconnect_settles_retained_and_cleared_runs_of_both_kinds() {
+        for kind in [OperationKind::Normalize, OperationKind::Process] {
+            for cancelled in [false, true] {
+                let mut run = Some(OperationRun::new(kind, 7, 1));
+                run.as_mut().expect("run").cancelled = cancelled;
+                let mut winding_down = true;
+                finish_drain(&mut run, &mut winding_down);
+                assert!(!winding_down);
+                assert!(run.as_ref().expect("retained run").completed);
+                discard_run(&mut run, &mut winding_down);
+                assert!(!winding_down);
+                finish_drain(&mut run, &mut winding_down);
+                assert!(run.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn cancelled_runs_accept_both_committed_outcomes_but_no_other_events() {
+        let source = Path::new("/song.wav");
+        let output = AnalysisRecord {
+            path: PathBuf::from("/song.aif"),
+            ..AnalysisRecord::default()
+        };
+        let results = [
+            OperationResult::success(source, output.clone(), None),
+            OperationResult {
+                source: source.to_path_buf(),
+                outcome: OperationOutcome::CommittedButUnanalyzed {
+                    output,
+                    error: String::from("Analysis failed"),
+                },
+            },
+        ];
+        for kind in [OperationKind::Normalize, OperationKind::Process] {
+            let mut run = OperationRun::new(kind, 7, 1);
+            run.cancelled = true;
+            run.completed = true;
+            assert!(!run.accepts_event(7, None));
+            assert!(!run.accepts_event(7, Some(&failure("song.wav"))));
+            for result in &results {
+                assert!(run.accepts_event(7, Some(result)));
+                assert!(!run.accepts_event(8, Some(result)));
+            }
+            let mut run = Some(run);
+            let mut winding_down = true;
+            discard_run(&mut run, &mut winding_down);
+            assert!(run.is_none());
+            assert!(winding_down);
+            discard_run(&mut run, &mut winding_down);
+            assert!(winding_down);
+            finish_drain(&mut run, &mut winding_down);
+            assert!(!winding_down);
+        }
     }
 
     #[test]
