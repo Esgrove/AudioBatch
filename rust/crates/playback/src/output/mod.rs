@@ -58,8 +58,6 @@ pub struct SharedState {
     pub callback_frames: AtomicU32,
     /// Number of insert changes the audio callback has made.
     pub insert_changes_applied: AtomicU64,
-    /// Frames of output that may follow the end of the input in the current insert.
-    pub insert_tail_frames: AtomicU64,
     /// Whether a reset insert is pre-rolled for its latency, so the output lines up with the playhead.
     pub latency_compensation: AtomicBool,
     /// Set by the callback when the insert produced output that is not finite, cleared when read.
@@ -97,7 +95,6 @@ impl SharedState {
             callback_frames: AtomicU32::new(0),
             underruns: AtomicU64::new(0),
             insert_changes_applied: AtomicU64::new(0),
-            insert_tail_frames: AtomicU64::new(0),
             latency_compensation: AtomicBool::new(true),
             insert_failed: AtomicBool::new(false),
             stream_lost: AtomicBool::new(false),

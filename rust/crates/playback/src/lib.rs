@@ -434,7 +434,8 @@ impl Player {
         self.insert.is_settled()
     }
 
-    /// Sets how many frames of output may follow the end of the file in the current insert.
+    /// Sets the tail of the latest successfully queued insert, whether or not the callback has attached it yet.
+    /// An older insert still awaiting replacement keeps its own tail.
     pub fn set_insert_tail(&self, frames: usize) {
         self.insert.set_tail(frames);
     }
