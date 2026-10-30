@@ -203,6 +203,19 @@ pub fn trash_disposer() -> FileDisposer {
     Arc::new(trash_file)
 }
 
+/// Returns the disposer that permanently deletes files instead of moving them to the trash.
+#[must_use]
+pub fn delete_disposer() -> FileDisposer {
+    Arc::new(|path| match fs::remove_file(path) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(error) => {
+            tracing::error!("Could not delete {}: {error}", path.display());
+            false
+        }
+    })
+}
+
 /// Moves a file to the system trash.
 /// Returns true when the file is gone afterwards, including when it did not exist.
 ///
@@ -608,6 +621,19 @@ mod test_check_output_path {
     use std::error::Error as _;
 
     use super::*;
+
+    #[test]
+    fn delete_disposer_removes_files_and_accepts_missing_paths_but_not_directories() {
+        let directory = tempfile::tempdir().expect("creates directory");
+        let path = directory.path().join("original.wav");
+        fs::write(&path, b"audio").expect("writes");
+        let dispose = delete_disposer();
+        assert!(dispose(&path));
+        assert!(!path.exists());
+        assert!(dispose(&path));
+        assert!(!dispose(directory.path()));
+        assert!(directory.path().is_dir());
+    }
 
     #[test]
     fn validation_preserves_the_decoder_cause() {

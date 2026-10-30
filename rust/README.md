@@ -111,6 +111,9 @@ Lossy MP3, AAC, and Ogg Vorbis files store no bit depth and become 16-bit,
 while ALAC files keep the depth stored in the file.
 The tags, album art, and Serato data are copied over without the Serato overview.
 The converted original goes to the system trash, and an `.aif` file rewritten in place leaves a copy there.
+With `-D` or `--delete`, replaced originals are permanently deleted instead.
+`AUDIOBATCH_DELETE=true` (or `1`) enables the same option, and `false` (or `0`) disables it.
+The option requires `--normalize`.
 An existing output file is only replaced with `--force`,
 and when two selected files would write the same output, only one of them is normalized.
 The output of lossless sources has the same samples as the C++ application writes, without dither.
@@ -134,6 +137,7 @@ Options:
   -f, --refresh          Ignore cached analysis and re-analyze files
   -n, --normalize        Normalize analyzed files, then report the re-analyzed output peaks
   -F, --force            Let normalize replace an existing output file
+  -D, --delete           Permanently delete replaced originals instead of moving them to the trash [env: AUDIOBATCH_DELETE=]
       --peak <DBFS>      Normalize to this sample peak, -12 to 0 (default 0)
       --lufs <LUFS>      Normalize to this integrated loudness, -24 to -6, with a -0.3 dBTP ceiling
   -j, --jobs <COUNT>     Override worker count
