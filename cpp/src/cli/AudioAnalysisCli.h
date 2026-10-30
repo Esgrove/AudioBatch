@@ -141,6 +141,10 @@ juce::StringArray findSkippedInputs(
 );
 
 [[nodiscard]] std::expected<CliCommand, CliParseError> parseArguments(const juce::ArgumentList& commandLine);
+[[nodiscard]] std::expected<CliCommand, CliParseError> parseArguments(
+    const juce::ArgumentList& commandLine,
+    const std::optional<juce::String>& deleteEnvironmentValue
+);
 
 [[nodiscard]] int runAnalysis(const AnalyzeCommand& command);
 [[nodiscard]] int runAnalysis(const AnalyzeCommand& command, AnalysisCache& cache);

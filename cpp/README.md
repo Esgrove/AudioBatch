@@ -145,11 +145,12 @@ Normalization and plugin processing always write `<name>.aif` next to the source
 keeping its sample rate, tags and artwork.
 
 **These operations replace the original audio.**
-Other formats are converted to AIFF and the source is moved to the system trash after a successful write.
+By default, other formats are converted to AIFF and the source is moved to the system trash after a successful write.
 Existing `.aif` sources are rewritten in place, with the original moved to the trash first.
+CLI normalization can permanently delete replaced originals instead with `--delete`.
 
 - An already existing output file is protected unless `Force overwrite` (GUI) or `--force` (CLI) is enabled.
-  Replaced files go to the trash.
+  Replaced files go to the trash unless CLI normalization uses `--delete`.
 - If selected files share an output name, only one is processed. An existing `.aif` source takes priority.
 - If metadata cannot be preserved, the file fails and the original is kept.
 - On Windows, operations that require trashing a file fail on drives without a recycle bin, such as network shares.
@@ -177,6 +178,7 @@ Options:
   -f, --refresh           Ignore cached analysis and re-analyze files
   -n, --normalize         Normalize analyzed files, then report the re-analyzed output peaks
   -F, --force             Let normalize replace an existing output file
+  -D, --delete            Permanently delete replaced originals instead of moving them to the trash
       --peak <dBFS>       Normalize to this sample peak, -12 to 0 (default 0)
       --lufs <LUFS>       Normalize to this integrated loudness, -24 to -6, with a -0.3 dBTP ceiling
   -j, --jobs <count>      Override worker count
@@ -206,6 +208,14 @@ audiobatch -r -n --lufs -14 "music/album"
 Normalization follows the same targets and output rules as the GUI.
 `-n` without a target defaults to 0 dBFS sample peak.
 Results report the levels and paths of the normalized output.
+
+`-D` / `--delete` permanently deletes replaced originals instead of moving them to the trash.
+It requires `--normalize` and also applies to an existing output replaced with `--force`.
+Set `AUDIOBATCH_DELETE=true` to enable it through the environment, or `false` to keep the default trash behavior.
+Accepted values are `true`, `1`, `yes`, and `on` to enable it, or `false`, `0`, `no`, and `off` to disable it.
+Values are case insensitive, and empty or unrecognized values are rejected.
+An explicit `--delete` overrides even an invalid environment value.
+The GUI keeps using the trash.
 
 Export analysis as JSON or CSV for scripts and spreadsheets:
 

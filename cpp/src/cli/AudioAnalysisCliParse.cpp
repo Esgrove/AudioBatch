@@ -6,6 +6,7 @@
 #include "cli/AudioAnalysisCli.h"
 #include "cli/CliOptions.h"
 #include "normalization/AudioNormalization.h"
+#include "utils/FileUtils.h"
 #include "utils/StringFormat.h"
 #include "utils/version.h"
 #include <fmt/format.h>
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdlib>
 #include <expected>
 #include <functional>
 #include <optional>
@@ -187,6 +189,49 @@ juce::ArgumentList expandCombinedShortOptions(const juce::ArgumentList& argument
     }
 
     return expanded;
+}
+
+/// Reads AUDIOBATCH_DELETE without treating an empty value as an absent variable.
+std::optional<juce::String> readDeleteEnvironmentValue()
+{
+#if JUCE_MSVC
+    std::size_t length = 0;
+    if (_wgetenv_s(&length, nullptr, 0, L"AUDIOBATCH_DELETE") != 0 || length == 0) {
+        return std::nullopt;
+    }
+    return juce::SystemStats::getEnvironmentVariable("AUDIOBATCH_DELETE", {});
+#else
+    return juce::SystemStats::getEnvironmentVariable("AUDIOBATCH_DELETE", "false");
+#endif
+}
+
+/// Resolves --delete ahead of AUDIOBATCH_DELETE, accepting clap's case-insensitive boolish values.
+/// An absent variable keeps trash disposal, while an empty or unrecognized value is rejected.
+std::expected<bool, CliParseError> parseDeleteOriginals(
+    const bool explicitDelete,
+    const std::optional<juce::String>& environmentValue
+)
+{
+    if (explicitDelete) {
+        return true;
+    }
+
+    if (!environmentValue.has_value()) {
+        return false;
+    }
+
+    const auto value = environmentValue->toLowerCase();
+    if (value == "false" || value == "0" || value == "no" || value == "off") {
+        return false;
+    }
+
+    if (value == "true" || value == "1" || value == "yes" || value == "on") {
+        return true;
+    }
+
+    return parseError(
+        CliParseErrorKind::invalidValue, "AUDIOBATCH_DELETE must be one of: true, 1, yes, on, false, 0, no, off"
+    );
 }
 
 /// Parses the worker count of --jobs.
@@ -410,9 +455,36 @@ std::expected<CliCommand, CliParseError> parseHelpCommand(const juce::ArgumentLi
     return HelpCommand {.subcommand = subcommand};
 }
 
+/// Validates the input paths left after taking every supported analysis option.
+std::expected<juce::Array<juce::File>, CliParseError> parseInputPaths(const juce::ArgumentList& arguments)
+{
+    juce::Array<juce::File> paths;
+    for (const auto& argument : arguments.arguments) {
+        if (argument.isOption()) {
+            return parseError(CliParseErrorKind::unknownOption, utils::format("Unknown option: {}", argument.text));
+        }
+
+        // A negative number is a value, so one that no option took was most likely meant for the option before it.
+        if (isNumericArgument(argument.text) && argument.text.startsWithChar('-')) {
+            return parseError(
+                CliParseErrorKind::unexpectedNumber,
+                utils::format(
+                    "Unexpected number {}. Pass a negative value right after the option that takes it.", argument.text
+                )
+            );
+        }
+
+        paths.add(argument.resolveAsFile());
+    }
+    return paths;
+}
+
 /// Parses the arguments into an analysis run, with the remaining arguments as its input paths.
-/// The plugin listing options are rejected, and --force, --peak, and --lufs need --normalize.
-std::expected<CliCommand, CliParseError> parseAnalyzeCommand(juce::ArgumentList& arguments)
+/// The plugin listing options are rejected, and --force, --delete, --peak, and --lufs need --normalize.
+std::expected<CliCommand, CliParseError> parseAnalyzeCommand(
+    juce::ArgumentList& arguments,
+    const std::optional<juce::String>& deleteEnvironmentValue
+)
 {
     if (arguments.containsOption(cli::groupByOption.pattern()) || arguments.containsOption(cli::rescanOption.pattern()))
     {
@@ -427,6 +499,11 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(juce::ArgumentList&
     command.reverse = arguments.removeOptionIfFound(cli::reverseOption.pattern());
     const bool normalize = arguments.removeOptionIfFound(cli::normalizeOption.pattern());
     const bool force = arguments.removeOptionIfFound(cli::forceOption.pattern());
+    const auto deleteOriginals
+        = parseDeleteOriginals(arguments.removeOptionIfFound(cli::deleteOption.pattern()), deleteEnvironmentValue);
+    if (!deleteOriginals) {
+        return std::unexpected(deleteOriginals.error());
+    }
 
     if (const auto workerCountValue = takeOptionValue(arguments, cli::jobsOption); workerCountValue.has_value()) {
         const auto workerCount = parseWorkerCount(*workerCountValue);
@@ -457,6 +534,10 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(juce::ArgumentList&
         return parseError(CliParseErrorKind::missingRequiredOption, "--force can only be used with --normalize");
     }
 
+    if (*deleteOriginals && !normalize) {
+        return parseError(CliParseErrorKind::missingRequiredOption, "--delete can only be used with --normalize");
+    }
+
     if ((peakValue.has_value() || loudnessValue.has_value()) && !normalize) {
         return parseError(
             CliParseErrorKind::missingRequiredOption, "--peak and --lufs can only be used with --normalize"
@@ -471,26 +552,15 @@ std::expected<CliCommand, CliParseError> parseAnalyzeCommand(juce::ArgumentList&
         }
 
         normalization->overwriteExisting = force;
+        normalization->disposeFile = *deleteOriginals ? utils::deleteFile : utils::trashFile;
         command.normalization = std::move(*normalization);
     }
 
-    for (const auto& argument : arguments.arguments) {
-        if (argument.isOption()) {
-            return parseError(CliParseErrorKind::unknownOption, utils::format("Unknown option: {}", argument.text));
-        }
-
-        // A negative number is a value, so one that no option took was most likely meant for the option before it.
-        if (isNumericArgument(argument.text) && argument.text.startsWithChar('-')) {
-            return parseError(
-                CliParseErrorKind::unexpectedNumber,
-                utils::format(
-                    "Unexpected number {}. Pass a negative value right after the option that takes it.", argument.text
-                )
-            );
-        }
-
-        command.inputPaths.add(argument.resolveAsFile());
+    auto paths = parseInputPaths(arguments);
+    if (!paths) {
+        return std::unexpected(paths.error());
     }
+    command.inputPaths = std::move(*paths);
 
     return command;
 }
@@ -680,11 +750,28 @@ juce::ArgumentList cli::expandShortOptions(const juce::ArgumentList& arguments)
 /// The help and version flags are handled by the caller before parsing.
 std::expected<CliCommand, CliParseError> cli::parseArguments(const juce::ArgumentList& commandLine)
 {
+    return parseArguments(commandLine, readDeleteEnvironmentValue());
+}
+
+/// Parses arguments with an injected AUDIOBATCH_DELETE value, without reading or changing the process environment.
+/// An absent value keeps the default trash disposal, and an explicit --delete overrides the injected value.
+std::expected<CliCommand, CliParseError> cli::parseArguments(
+    const juce::ArgumentList& commandLine,
+    const std::optional<juce::String>& deleteEnvironmentValue
+)
+{
     auto arguments = expandCombinedShortOptions(commandLine);
     const auto subcommand = findSubcommand(arguments);
 
     if (subcommand != CliSubcommand::none) {
         arguments.arguments.remove(0);
+    }
+
+    // Root environment values are validated even for subcommands, except the help command.
+    if (subcommand == CliSubcommand::list || subcommand == CliSubcommand::completion) {
+        if (const auto deleteOriginals = parseDeleteOriginals(false, deleteEnvironmentValue); !deleteOriginals) {
+            return std::unexpected(deleteOriginals.error());
+        }
     }
 
     switch (subcommand) {
@@ -698,6 +785,6 @@ std::expected<CliCommand, CliParseError> cli::parseArguments(const juce::Argumen
             break;
     }
 
-    return parseAnalyzeCommand(arguments);
+    return parseAnalyzeCommand(arguments, deleteEnvironmentValue);
 }
 }  // namespace audiobatch
