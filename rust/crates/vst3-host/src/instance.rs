@@ -139,6 +139,15 @@ pub enum ProcessMode {
     Offline,
 }
 
+/// The direction of a bus.
+#[derive(Debug, Clone, Copy)]
+enum BusDirection {
+    /// Audio into the plugin.
+    Input,
+    /// Audio out of the plugin.
+    Output,
+}
+
 /// The audio buses of a plugin and their channel counts. Bus 0 in each direction is the main bus.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct BusLayout {
@@ -214,6 +223,16 @@ pub struct PluginInstance {
     layout: Option<BusLayout>,
     /// The setup after `setup`.
     setup: Option<ProcessingSetup>,
+}
+
+impl BusDirection {
+    /// Returns the value the VST3 interfaces take.
+    fn value(self) -> i32 {
+        match self {
+            Self::Input => to_i32(BusDirections_::kInput),
+            Self::Output => to_i32(BusDirections_::kOutput),
+        }
+    }
 }
 
 impl InstanceCore {
@@ -919,25 +938,6 @@ impl std::fmt::Debug for PluginInstance {
             .field("active", &self.is_active())
             .field("layout", &self.layout)
             .finish_non_exhaustive()
-    }
-}
-
-/// The direction of a bus.
-#[derive(Debug, Clone, Copy)]
-enum BusDirection {
-    /// Audio into the plugin.
-    Input,
-    /// Audio out of the plugin.
-    Output,
-}
-
-impl BusDirection {
-    /// Returns the value the VST3 interfaces take.
-    fn value(self) -> i32 {
-        match self {
-            Self::Input => to_i32(BusDirections_::kInput),
-            Self::Output => to_i32(BusDirections_::kOutput),
-        }
     }
 }
 
