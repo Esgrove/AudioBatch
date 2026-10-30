@@ -57,20 +57,19 @@ impl AppView {
                 .as_ref()
                 .is_some_and(super::cue_start::CueStartIntent::should_play);
         let continue_playback = self.settings.continue_playback && playing;
-        let (index, play) = match event {
-            // Events arrive after the update that sent them.
-            // A selection the rows have since moved away from would pick another file.
-            TableEvent::SelectRow(index) if table.read(cx).selected_row() != Some(*index) => return,
-            TableEvent::SelectRow(index) => (*index, continue_playback),
-            TableEvent::DoubleClickedRow(index) => (*index, true),
-            TableEvent::ColumnWidthsChanged(_) => {
-                cx.notify();
-                return;
-            }
-            _ => return,
-        };
-        let path = table.read(cx).delegate().row(index).map(|row| row.path.clone());
-        if let Some(path) = path {
+        if matches!(event, TableEvent::ColumnWidthsChanged(_)) {
+            cx.notify();
+            return;
+        }
+        let state = table.read(cx);
+        let request = table_selection_request(
+            event,
+            state.selected_row(),
+            self.selected.as_deref(),
+            state.delegate(),
+            continue_playback,
+        );
+        if let Some((path, play)) = request {
             // Pointer intent is handled by the row's mouse-down callback, including clicking the preview anchor.
             // Cursor restoration emits the same event, so a same-path event must preserve the batch selection.
             if self.selected.as_deref() != Some(path.as_path()) {
@@ -240,6 +239,28 @@ impl AppView {
     }
 }
 
+/// Resolves a current table event into a source selection and its playback request.
+/// The table can publish a selection after its rows or cursor have already changed.
+fn table_selection_request(
+    event: &TableEvent,
+    cursor: Option<usize>,
+    selected: Option<&Path>,
+    delegate: &ResultsDelegate,
+    continue_playback: bool,
+) -> Option<(PathBuf, bool)> {
+    let (index, play) = match event {
+        TableEvent::SelectRow(index) if cursor == Some(*index) => (*index, continue_playback),
+        TableEvent::DoubleClickedRow(index) => (*index, true),
+        _ => return None,
+    };
+    let path = &delegate.row(index)?.path;
+    // Owner-driven cursor restoration is not a new selection or an explicit play request.
+    if matches!(event, TableEvent::SelectRow(_)) && selected == Some(path.as_path()) {
+        return None;
+    }
+    Some((path.clone(), play))
+}
+
 /// Allows static analysis without a decoder, but binds a loaded decoder's waveform and warnings to its capture.
 /// Checking disk identity also rejects a result that became stale before any replacement analysis arrived.
 pub(super) fn presentation_matches_source(
@@ -274,6 +295,55 @@ fn placeholder_text(row: &ResultRow) -> String {
         RowState::Processing(fraction) => format!("Processing {:.0}%", fraction * 100.0),
         RowState::Done if row.has_error() => String::from("Could not read this file"),
         RowState::Done => String::from("No waveform for this file"),
+    }
+}
+
+#[cfg(test)]
+mod test_table_selection_intent {
+    use super::*;
+    use crate::app::cue_start::CueStartIntent;
+
+    /// Returns the production event decision for two listed sources without opening a player.
+    fn request(event: &TableEvent, cursor: usize, continuation: bool) -> Option<(PathBuf, bool)> {
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_files(&[PathBuf::from("/a.wav"), PathBuf::from("/b.wav")]);
+        table_selection_request(event, Some(cursor), Some(Path::new("/a.wav")), &delegate, continuation)
+    }
+
+    #[test]
+    fn restored_anchor_never_requests_play_or_reselection() {
+        for continuation in [false, true] {
+            assert_eq!(request(&TableEvent::SelectRow(0), 0, continuation), None);
+        }
+    }
+
+    #[test]
+    fn restored_anchor_preserves_pending_play_and_seek_cues() {
+        let path = Path::new("/a.wav");
+        for mut intent in [CueStartIntent::new(path), CueStartIntent::seek(path)] {
+            intent.receive_cues(path, std::iter::once(3.0));
+            assert_eq!(request(&TableEvent::SelectRow(0), 0, intent.should_play()), None);
+            assert_eq!(intent.position(Some(path), Some(30.0)), Some(3.0));
+        }
+    }
+
+    #[test]
+    fn another_source_continues_only_when_requested() {
+        for continuation in [false, true] {
+            assert_eq!(
+                request(&TableEvent::SelectRow(1), 1, continuation),
+                Some((PathBuf::from("/b.wav"), continuation))
+            );
+        }
+        assert_eq!(request(&TableEvent::SelectRow(0), 1, true), None);
+    }
+
+    #[test]
+    fn explicit_activation_of_the_anchor_still_requests_play() {
+        assert_eq!(
+            request(&TableEvent::DoubleClickedRow(0), 0, false),
+            Some((PathBuf::from("/a.wav"), true))
+        );
     }
 }
 
