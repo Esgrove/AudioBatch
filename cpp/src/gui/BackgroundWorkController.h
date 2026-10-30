@@ -23,6 +23,11 @@ namespace audiobatch
 {
 class FileActivityTracker;
 
+namespace tests
+{
+class BackgroundWorkTests;
+}
+
 /// The name of the running pass and how far along it is, shown in the window title and the status bar.
 struct BackgroundProgress {
     /// Name of the running pass, such as "Analyzing", or empty while idle.
@@ -144,6 +149,8 @@ public:
     void startAnalysis(const juce::Array<juce::File>& inputPaths, bool recursive, bool forceRefresh, bool clearResults);
 
 private:
+    friend class tests::BackgroundWorkTests;
+
     void connectAnalysisCallbacks();
     void connectOperationCallbacks();
     void handleAnalysisComplete(int totalFiles, int runId);

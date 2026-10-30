@@ -87,7 +87,7 @@ void AudioBatchComponent::clearAllRecords()
         return;
     }
 
-    // Ending the run here drops the results that were already queued too.
+    // Discard results immediately, but keep writers excluded until their terminal callback.
     backgroundWork.stopAllWork();
 
     analysisResults.clear();

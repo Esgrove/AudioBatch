@@ -140,6 +140,9 @@ int BackgroundWorkController::startNormalization(
     const AudioNormalizationOptions& options
 )
 {
+    if (!isIdle()) {
+        return 0;
+    }
     auto& normalizing = work.emplace<NormalizingWork>();
     normalizing.startedAtMilliseconds = juce::Time::getMillisecondCounterHiRes();
     normalizing.expected = normalizeCoordinator.start(records, options);
@@ -162,6 +165,9 @@ int BackgroundWorkController::startProcessing(
     const double startedAtMilliseconds
 )
 {
+    if (!isIdle()) {
+        return 0;
+    }
     auto& processing = work.emplace<ProcessingWork>();
     processing.startedAtMilliseconds = startedAtMilliseconds;
     processing.expected = pluginCoordinator.start(records, options, std::move(chainInstances));
@@ -212,8 +218,9 @@ bool BackgroundWorkController::cancelCurrentWork()
     return false;
 }
 
-/// Ends any running pass at once without waiting, and drops everything it would still report,
-/// for clearing the list. Files already committed stay on disk.
+/// Clears presentation ownership without releasing a writer that may still commit.
+/// Stopped writers retain their run and completion callback until all files have returned,
+/// but none of their queued or later results can repopulate the cleared list.
 void BackgroundWorkController::stopAllWork()
 {
     // Results of these runs may still be queued or posted by a worker that passed its last check,
@@ -225,10 +232,13 @@ void BackgroundWorkController::stopAllWork()
         discardedProcessingRunId = processing->runId;
     }
     analysisCoordinator.cancel();
-    normalizeCoordinator.cancel();
-    pluginCoordinator.cancel();
+    if (isFileOperationInProgress()) {
+        // Keep the run current so its last job still publishes the terminal callback.
+        static_cast<void>(cancelCurrentWork());
+    } else {
+        work = IdleWork {};
+    }
     fileActivity.clearAllActive();
-    work = IdleWork {};
 }
 
 /// Stops every pass and waits for its workers to finish.
@@ -278,6 +288,9 @@ void BackgroundWorkController::startAnalysis(
     const bool clearResults
 )
 {
+    if (isFileOperationInProgress()) {
+        return;
+    }
     AudioAnalysisOptions options;
     options.inputPaths = inputPaths;
     options.recursive = recursive;
