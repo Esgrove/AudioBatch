@@ -41,7 +41,7 @@ The Rust version covers the key features of the C++ application:
 - Accept files and folders dropped onto the GUI.
 - Normalize files from the CLI and the GUI to a sample peak or loudness target,
   written as AIFF with tags and Serato data.
-  Lossless sources produce the same samples as the C++ application.
+  Lossless sources produce identical samples in peak mode and differ by at most one PCM step in loudness mode.
 - Scan for VST3 plugins in a worker process and list them in the CLI and the GUI.
 - Process files in the GUI through a chain of VST3 effects, written as 16-bit AIFF with tags and Serato data.
 - Show plugin editors in native windows, and play the preview through the plugin chain.
@@ -61,7 +61,10 @@ and every crate inherits them with `.workspace = true`.
 - `crates/core` (`audiobatch-core`): the shared library used by the CLI and the GUI.
   - `analysis.rs` decodes a file and measures peaks and loudness, and builds the waveform overview in the same pass.
     `meter.rs` groups the decoded chunks into the blocks that feed the measurements.
-    `loudness/` holds the loudness kernels and their differential tests against ebur128.
+    `loudness/k_weighting.rs` holds the combined fourth order K-weighting filter,
+    `loudness/gating.rs` the weighted block-energy windows and integrated gates,
+    and `loudness/true_peak.rs` the SIMD interpolator.
+    Ebur128 is a development-only differential reference, not a production dependency.
   - `benches/` measures analysis, decoding, normalization, waveform construction,
     cache reads, and sorting with Criterion.
     The longer inputs come from `../fixtures/benchmark/generate.py` and are generated locally, not committed.
@@ -173,6 +176,35 @@ and every crate inherits them with `.workspace = true`.
 Keep the core and playback crates free of GUI dependencies,
 so the GUI framework stays replaceable without touching them.
 Keep plugin code out of them too, so the preview engine knows plugins only through `PreviewInsert`.
+
+## Analysis And Normalization Contracts
+
+- Loudness may differ from the ebur128 reference by at most 0.001 LU for integrated loudness,
+  maximum short-term loudness, and every short-term history point.
+  Integrated and maximum short-term values must also display the same two decimal places.
+  Do not require reference bit equality for loudness fields or serialized history.
+  True peak keeps its unchanged bit-exact contract and documented x86 arithmetic-underflow exception.
+- Goldens are our own regression snapshots, not immutable reference output.
+  A validated numerical change may regenerate the affected snapshots.
+  Keep differential, displayed-value, chunk-invariance, normalization, and parity checks as independent validation.
+- K weighting uses a combined fourth order `f64` filter with fixed state for 64 channels,
+  ebur128's default channel map, and dual-mono weighting for mono sources.
+  Gating sums a fixed ring of 30 weighted 100 ms energies directly to avoid running-sum drift.
+  Only absolute-gate-admitted integrated energies are appended to a `Vec`, reserved from the expected length.
+- A final partial short-term window after three seconds must expire only the outgoing prefix.
+  One weighted squared energy per frame is retained in a shared three-second ring for that boundary,
+  not filtered per-channel audio.
+  This bounded memory compromise is separate from complete updates, which sum only the 30 block energies.
+- Meter errors occur only at construction for streams outside 1 through 64 channels or 16 through 2822400 Hz.
+  Extrema and plane references use fixed arrays.
+  Waveform building reuses extrema when a block fits in the remaining bucket, otherwise it rescans.
+  Preserve the existing minimum waveform bucket size of 64 frames, not 100 ms.
+- Normalization measures exact decoded `f32` values from the writer's 16- or 24-bit quantizer during rendering.
+  Keep header and frame-count validation, without a full output re-decode.
+  Fuse one `f32` gain multiplication into the writer, without a scaled copy or per-chunk plane-reference `Vec`.
+  An in-place file already at target returns the current record after cancellation and source-identity checks.
+- Cache analysis version 5 invalidates older measurements without discarding same-identity custom gains or Serato data.
+  Keep ebur128 as a development dependency only.
 
 ## VST3 Hosting
 

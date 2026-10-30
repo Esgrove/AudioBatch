@@ -11,8 +11,9 @@ The CLI takes the same arguments and prints the same output as the C++ CLI, so t
 
 ## Crates
 
-- `crates/core`: decoding with symphonia, analysis with ebur128,
-  the waveform overview, tags with lofty, the SQLite cache, and normalization to AIFF
+- `crates/core`: decoding with symphonia, custom BS.1770 loudness and SIMD true peak with fearless_simd,
+  the waveform overview, tags with lofty, the SQLite cache with rusqlite, and normalization to AIFF.
+  Ebur128 is a development-only reference for differential tests and benchmarks.
 - `crates/playback`: preview playback with cpal, rtrb, and rubato, with an optional insert such as a plugin chain
 - `crates/vst3-host`: VST3 hosting on the `vst3` bindings: modules, instances, processing, and editor windows
 - `crates/plugins`: plugin scanning in a worker process, the plugin chain, batch processing, and the preview chain
@@ -24,6 +25,16 @@ The CLI takes the same arguments and prints the same output as the C++ CLI, so t
 
 [`ARCHITECTURE.md`](ARCHITECTURE.md) explains how the crates work together,
 with the threads, the analysis and processing pipelines, the preview, and VST3 hosting.
+
+The custom loudness meter combines K weighting with weighted 100 ms block energies,
+with mono measured as dual mono and the same default channel map as ebur128.
+Its integrated, maximum short-term, and history measurements stay within 0.001 LU of the reference,
+with the same displayed integrated and maximum short-term values at two decimal places.
+True peak keeps its unchanged bit-exact contract, including the documented x86 arithmetic-underflow exception.
+Normalization measures the exact quantized output as it writes, without decoding the completed file a second time.
+Analysis cache version 5 refreshes older measurements automatically
+while retaining same-file custom gains and Serato data.
+See [Analysis performance](docs/performance.md) for the implementation tradeoffs and historical measurements.
 
 ## Build
 

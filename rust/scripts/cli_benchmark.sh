@@ -5,7 +5,7 @@ USAGE="Usage: $0 [OPTIONS]
 
 Benchmark the release C++ and Rust CLIs with hyperfine.
 Measures fresh --refresh analysis, peak 0 normalization, and LUFS -14 normalization,
-with --jobs 1 and --jobs N. Normalization includes initial analysis, writing, and output analysis.
+with --jobs 1 and --jobs N. Normalization includes initial analysis, rendering, output measurement, and validation.
 Every invocation uses the same options and its own fresh temporary copies, prepared outside the timer.
 Replaced temporary originals are permanently deleted with --delete, never sent to the trash.
 The auto corpus combines fixtures/normalization with fixtures/benchmark/output when generated audio exists.
