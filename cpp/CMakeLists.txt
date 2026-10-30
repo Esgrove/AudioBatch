@@ -4,6 +4,15 @@
 
 cmake_minimum_required(VERSION 4.2)
 
+# Select the same SDK for compiler detection and dependency discovery, including builds without a preset.
+# Keep explicit SDK choices, including SDKROOT from the environment.
+if(CMAKE_HOST_APPLE
+   AND NOT CMAKE_OSX_SYSROOT
+   AND "$ENV{SDKROOT}" STREQUAL ""
+)
+    set(CMAKE_OSX_SYSROOT macosx CACHE STRING "macOS SDK" FORCE)
+endif()
+
 project(
     "AudioBatch"
     VERSION 1.2.0
@@ -239,6 +248,23 @@ endif()
 if(WIN32)
     set(ZLIB_USE_STATIC_LIBS ON)
 endif()
+find_package(ZLIB QUIET)
+
+# Apple SDK headers are already found through the compiler's sysroot.
+# FindZLIB and FindSQLite3 can return the SDK's unversioned symlink as an explicit system include,
+# which puts the C headers before libc++ when the compiler uses a different SDK path.
+# Omit only SDK root includes, preserving include directories for separately installed libraries.
+if(APPLE)
+    foreach(system_target IN ITEMS SQLite3::SQLite3 ZLIB::ZLIB)
+        if(TARGET ${system_target})
+            get_target_property(system_includes ${system_target} INTERFACE_INCLUDE_DIRECTORIES)
+            if(system_includes)
+                list(FILTER system_includes EXCLUDE REGEX "\\.sdk/usr/include/?$")
+                set_target_properties(${system_target} PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${system_includes}")
+            endif()
+        endif()
+    endforeach()
+endif()
 
 # The dependencies are pinned to the commit of their release tag, because a tag can be moved.
 # A shallow clone needs a branch or tag name, so these are full clones.
@@ -289,10 +315,8 @@ target_include_directories(
         $<BUILD_INTERFACE:${taglib_SOURCE_DIR}/taglib/toolkit>
 )
 
-# The SYSTEM target property makes consumers include the TagLib headers as system headers,
+# Treat TagLib headers as system headers for consumers, not its own sources,
 # so they are exempt from this project's warnings-as-errors flags.
-# The SYSTEM option of FetchContent_Declare would also apply to the zlib include directory TagLib finds,
-# which on macOS is the SDK include directory and must not come before the libc++ headers.
 set_target_properties(tag PROPERTIES SYSTEM ON)
 
 # Only the library subdirectory is added, which leaves out the tests and the install rules of the top level project.
