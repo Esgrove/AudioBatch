@@ -218,13 +218,14 @@ The information panel shows the embedded album artwork of the selected file besi
 unless the Show Album Artwork option is off.
 `app/artwork.rs` reads it on a background task, separate from the tag read,
 so a slow picture never delays the cue points or the Serato colours.
-`read_artwork_candidates` in `core/src/tags.rs` returns at most four pictures of up to 16 MiB, front covers first,
-and `gui/src/artwork.rs` checks each header before decoding,
+`read_artwork` in `core/src/tags.rs` uses Lofty without audio properties,
+then retains one picture of up to 16 MiB, preferring the front cover and otherwise the first available picture.
+`gui/src/artwork.rs` checks its header before decoding,
 skipping anything that is not a PNG or a JPEG of at most 4096 pixels on either side.
-The first that decodes becomes a BGRA thumbnail of at most 96 pixels, drawn at 48.
+The selected picture becomes a BGRA thumbnail of at most 96 pixels, drawn at 48.
 A result is shown only while its generation and file identity still match the selection.
 Only one artwork read runs at a time, with the latest pending identity replacing intermediate requests.
-Generation and identity checks run before parsing, before each candidate decode, and at foreground adoption.
+Generation and identity checks run before parsing, before decoding, and at foreground adoption.
 Completed no-art identities are remembered until selection, source identity, or a forced refresh changes them.
 
 The Audio Settings, Plugin Chain, and Plugin Manager windows are gpui windows,
