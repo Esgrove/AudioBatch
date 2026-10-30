@@ -12,12 +12,13 @@ use std::time::{Duration, Instant};
 use audiobatch_playback::{Player, PlayerEvent};
 use gpui_kit::{Context, Entity, PathPromptOptions, PromptLevel, SharedString, Task, Window};
 
-use super::gain::{GAIN_WHEEL_STEP_DB, MAXIMUM_GAIN_DB, MINIMUM_GAIN_DB};
+use super::gain::{GAIN_WHEEL_STEP_DB, MAXIMUM_GAIN_DB, MINIMUM_GAIN_DB, take_pending_gains};
 use super::{APP_TITLE, AppView, DEFAULT_GAIN_DB, RunKind};
 use crate::build_info::about_message;
 use crate::controls::{ControlsEvent, SliderControl};
 use crate::demo::{DemoRandom, ROWS_PER_TICK, advance_row, demo_rows, demo_waveform};
 use crate::files::reveal_in_file_manager;
+use crate::results::ResultsDelegate;
 use crate::waveform::{MAXIMUM_ZOOM, MINIMUM_ZOOM, PlayheadSource, WaveformEvent, WaveformView};
 
 /// How often player events are checked.
@@ -72,10 +73,14 @@ impl AppView {
         let removed: HashSet<PathBuf> = paths.iter().cloned().collect();
         self.roots.retain(|root| !removed.contains(root));
         self.excluded.extend(removed.iter().cloned());
-        self.table.update(cx, |state, cx| {
-            state.delegate_mut().remove_many(&removed);
+        let gains = self.table.update(cx, |state, cx| {
+            let gains = remove_result_rows(state.delegate_mut(), &removed, &mut self.pending_gain_paths);
             cx.notify();
+            gains
         });
+        for (path, gain) in gains {
+            self.store_custom_gain(&path, gain);
+        }
         self.clear_selection(cx);
         let next = first_index.and_then(|index| {
             let delegate = self.table.read(cx).delegate();
@@ -182,10 +187,14 @@ impl AppView {
         self.run = None;
         self.clear_selection(cx);
         self.artwork_rewrites.clear();
-        self.table.update(cx, |state, cx| {
-            state.delegate_mut().clear();
+        let gains = self.table.update(cx, |state, cx| {
+            let gains = clear_result_rows(state.delegate_mut(), &mut self.pending_gain_paths);
             cx.notify();
+            gains
         });
+        for (path, gain) in gains {
+            self.store_custom_gain(&path, gain);
+        }
         if was_demo {
             self.connect_playhead(cx);
         }
@@ -472,6 +481,24 @@ impl AppView {
     }
 }
 
+/// Removes result rows and returns any delayed gain writes that still have a source row.
+fn remove_result_rows(
+    delegate: &mut ResultsDelegate,
+    removed: &HashSet<PathBuf>,
+    pending: &mut Vec<PathBuf>,
+) -> Vec<(PathBuf, Option<f32>)> {
+    let gains = take_pending_gains(delegate, pending);
+    delegate.remove_many(removed);
+    gains
+}
+
+/// Clears result rows and returns any delayed gain writes that still have a source row.
+fn clear_result_rows(delegate: &mut ResultsDelegate, pending: &mut Vec<PathBuf>) -> Vec<(PathBuf, Option<f32>)> {
+    let gains = take_pending_gains(delegate, pending);
+    delegate.clear();
+    gains
+}
+
 /// Returns the file name of a path for status messages.
 fn display_name(path: &Path) -> String {
     path.file_name().map_or_else(
@@ -486,5 +513,100 @@ fn describe_files(action: &str, rest: &str, paths: &[PathBuf]) -> String {
     match paths {
         [single] => format!("{action} {} {rest}", display_name(single)),
         _ => format!("{action} {} files {rest}", paths.len()),
+    }
+}
+
+#[cfg(test)]
+mod test_pending_gain_removal {
+    use std::io::Write as _;
+
+    use audiobatch_core::record::{file_identity, same_custom_gain};
+    use audiobatch_core::{AnalysisRecord, AnalysisStatus};
+
+    use super::*;
+
+    /// Lists a ready source with metadata bound to its actual temporary file.
+    fn delegate_for(path: &Path) -> ResultsDelegate {
+        let (file_size, modified_time_ms) = file_identity(path).expect("source identity");
+        let mut delegate = ResultsDelegate::new(1600.0);
+        delegate.set_record(AnalysisRecord {
+            path: path.to_path_buf(),
+            file_size,
+            modified_time_ms,
+            status: AnalysisStatus::Analyzed,
+            ..AnalysisRecord::default()
+        });
+        delegate
+    }
+
+    #[test]
+    fn remove_preserves_a_pending_gain_before_its_row_disappears() {
+        let file = tempfile::NamedTempFile::new().expect("source");
+        let mut delegate = delegate_for(file.path());
+        delegate.set_custom_gain(file.path(), Some(-3.0));
+        let mut pending = vec![file.path().to_path_buf()];
+        let removed = pending.iter().cloned().collect();
+        let writes = remove_result_rows(&mut delegate, &removed, &mut pending);
+        assert_eq!(writes.len(), 1);
+        assert_eq!(writes[0].0, file.path());
+        assert!(same_custom_gain(writes[0].1, Some(-3.0)));
+        assert!(delegate.row_for(file.path()).is_none());
+        assert_eq!(pending, [] as [std::path::PathBuf; 0]);
+    }
+
+    #[test]
+    fn clear_preserves_latest_gains_including_an_explicit_clear() {
+        let first = tempfile::NamedTempFile::new().expect("first source");
+        let second = tempfile::NamedTempFile::new().expect("second source");
+        let mut delegate = delegate_for(first.path());
+        let second_record = delegate_for(second.path())
+            .row_for(second.path())
+            .expect("row")
+            .record
+            .clone()
+            .expect("record");
+        delegate.set_record(second_record);
+        delegate.set_custom_gain(first.path(), Some(-3.0));
+        delegate.set_custom_gain(second.path(), Some(2.0));
+        let mut pending = vec![first.path().to_path_buf(), second.path().to_path_buf()];
+        delegate.set_custom_gain(first.path(), None);
+        delegate.set_custom_gain(second.path(), Some(4.0));
+        let writes = clear_result_rows(&mut delegate, &mut pending);
+        assert_eq!(writes.len(), 2);
+        assert_eq!(writes[0], (first.path().to_path_buf(), None));
+        assert!(same_custom_gain(writes[1].1, Some(4.0)));
+        assert_eq!(delegate.len(), 0);
+        assert_eq!(pending, [] as [std::path::PathBuf; 0]);
+        assert_eq!(
+            take_pending_gains(&delegate, &mut pending),
+            [] as [(std::path::PathBuf, std::option::Option<f32>); 0]
+        );
+    }
+
+    #[test]
+    fn pending_gain_never_writes_a_changed_or_missing_source() {
+        let mut file = tempfile::NamedTempFile::new().expect("source");
+        let mut delegate = delegate_for(file.path());
+        delegate.set_custom_gain(file.path(), Some(-3.0));
+        let mut pending = vec![file.path().to_path_buf(), PathBuf::from("/missing.wav")];
+        file.write_all(b"new source identity").expect("replacement bytes");
+        assert_eq!(
+            take_pending_gains(&delegate, &mut pending),
+            [] as [(std::path::PathBuf, std::option::Option<f32>); 0]
+        );
+        assert_eq!(pending, [] as [std::path::PathBuf; 0]);
+    }
+
+    #[test]
+    fn removing_another_row_still_flushes_the_pending_clear() {
+        let file = tempfile::NamedTempFile::new().expect("source");
+        let mut delegate = delegate_for(file.path());
+        delegate.set_custom_gain(file.path(), None);
+        let mut pending = vec![file.path().to_path_buf()];
+        assert_eq!(
+            remove_result_rows(&mut delegate, &HashSet::new(), &mut pending),
+            [(file.path().to_path_buf(), None)]
+        );
+        assert!(delegate.row_for(file.path()).is_some());
     }
 }
