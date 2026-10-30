@@ -14,11 +14,12 @@ the file names, the AIFF format, the samples, and the ID3v2 frames.
 The outputs of lossless sources must have identical samples,
 and the outputs of lossy sources may differ by the decoders' tolerance.
 Both scripts run with uv, which installs the Python packages they need.
-The originals are left alone, but both CLIs move the replaced copies to the system trash.
-Exits with code 1 when any file differs.
+The originals are left alone, and --delete permanently removes replaced temporary copies without using the trash.
+Reports each CLI's wall time and the Rust/C++ time ratio, including analysis and normalization when requested.
+Exits with code 1 when any file differs or a CLI has an unexpected exit status.
 
-The C++ CLI is taken from AUDIOBATCH_CPP_CLI when set,
-otherwise the newest build in the cpp directory or its CMake debug build directory.
+The C++ CLI is taken from AUDIOBATCH_CPP_CLI when set, otherwise a release build is preferred.
+With --release, an unclassified custom C++ binary requires AUDIOBATCH_CPP_BUILD_TYPE=Release.
 
 OPTIONS: All options are optional
     -h | --help
@@ -44,7 +45,8 @@ OPTIONS: All options are optional
 "
 
 RUST_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-CPP_DIR=$(cd "$RUST_DIR/../cpp" && pwd)
+# shellcheck source=../common.sh
+source "$RUST_DIR/common.sh"
 
 TOLERANCE="0.05"
 RECURSE=()
@@ -97,35 +99,17 @@ if [ ${#PATHS[@]} -eq 0 ]; then
     exit 1
 fi
 
-find_cpp_cli() {
-    if [ -n "${AUDIOBATCH_CPP_CLI:-}" ]; then
-        echo "$AUDIOBATCH_CPP_CLI"
-        return
-    fi
-    # The CMake presets put the CLI in a folder per build type inside the artefacts folder,
-    # older builds put it straight in the artefacts folder, and build.sh copies it into cpp/,
-    # so the most recently built one is used.
-    local candidate
-    local newest=""
-    for candidate in \
-        "$CPP_DIR/audiobatch" \
-        "$CPP_DIR/audiobatch.exe" \
-        "$CPP_DIR/cmake-build-mac-debug/AudioBatchCli_artefacts/audiobatch" \
-        "$CPP_DIR/cmake-build-mac-debug/AudioBatchCli_artefacts/Debug/audiobatch" \
-        "$CPP_DIR/cmake-build-windows-debug/AudioBatchCli_artefacts/audiobatch.exe" \
-        "$CPP_DIR/cmake-build-windows-debug/AudioBatchCli_artefacts/Debug/audiobatch.exe" \
-        "$CPP_DIR/cmake-build-windows-ninja-debug/AudioBatchCli_artefacts/Debug/audiobatch.exe"; do
-        if [ -x "$candidate" ] && { [ -z "$newest" ] || [ "$candidate" -nt "$newest" ]; }; then
-            newest="$candidate"
-        fi
-    done
-    echo "$newest"
-}
-
-CPP_CLI=$(find_cpp_cli)
-if [ -z "$CPP_CLI" ]; then
-    echo "C++ CLI not found. Build it with the CMake debug preset or set AUDIOBATCH_CPP_CLI." >&2
-    exit 1
+require_command uv "uv is required to run the parity oracles. Install it from https://docs.astral.sh/uv/."
+require_command cargo "Cargo is required to build the Rust CLI."
+CPP_PROFILE=any
+if [ "$PROFILE" = release ]; then
+    CPP_PROFILE=release
+else
+    print_yellow "Warning: debug Rust parity timings are diagnostic only, not a release performance comparison." >&2
+fi
+CPP_CLI=$(find_cpp_cli "$CPP_PROFILE")
+if [ "$(cpp_cli_build_type "$CPP_CLI")" != release ]; then
+    print_yellow "Warning: C++ CLI is debug or its build type is unknown. Do not use these timings as a release baseline." >&2
 fi
 
 CARGO_PROFILE=()
@@ -133,7 +117,7 @@ if [ "$PROFILE" = "release" ]; then
     CARGO_PROFILE=(--release)
 fi
 (cd "$RUST_DIR" && cargo build --quiet "${CARGO_PROFILE[@]}" --bin audiobatch-rs)
-RUST_CLI="$RUST_DIR/target/$PROFILE/audiobatch-rs"
+RUST_CLI="$RUST_DIR/target/$PROFILE/$(executable_name audiobatch-rs)"
 
 WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"' EXIT
@@ -146,7 +130,8 @@ RUST_PATHS=("${PATHS[@]}")
 CPP_BASE=""
 RUST_BASE=""
 if [ ${#NORMALIZE[@]} -gt 0 ]; then
-    # Each CLI normalizes its own copy, since normalizing replaces and trashes the inputs.
+    NORMALIZE+=(--delete)
+    # Each CLI normalizes its own copy, since normalizing replaces and permanently deletes the inputs.
     # Every path gets a numbered folder, so paths with the same base name do not overwrite each other.
     CPP_BASE="$WORK_DIR/cpp"
     RUST_BASE="$WORK_DIR/rust"
@@ -155,11 +140,12 @@ if [ ${#NORMALIZE[@]} -gt 0 ]; then
     for path in "${PATHS[@]}"; do
         index=$((index + 1))
         mkdir -p "$CPP_BASE/$index" "$RUST_BASE/$index"
-        cp -R "${path%/}" "$CPP_BASE/$index/"
-        cp -R "${path%/}" "$RUST_BASE/$index/"
+        # Dereference symlinks while copying, so --delete cannot follow a copied link back to a user file.
+        cp -RL "${path%/}" "$CPP_BASE/$index/"
+        cp -RL "${path%/}" "$RUST_BASE/$index/"
     done
     # The lossy sources tell compare_outputs.py which outputs may differ by the tolerance,
-    # and are listed now, since normalizing moves the sources to the trash.
+    # and are listed now, since normalizing deletes the replaced sources.
     uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" --list-lossy "$CPP_BASE" > "$WORK_DIR/lossy.txt"
     CPP_PATHS=("$CPP_BASE")
     RUST_PATHS=("$RUST_BASE")
@@ -190,12 +176,38 @@ if [ ${#NORMALIZE[@]} -gt 0 ]; then
     COMPARE_OPTIONS=(--folders "$CPP_BASE" "$RUST_BASE" "${TARGET[@]}")
 fi
 
-"$CPP_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" "${TARGET_OPTIONS[@]}" --output json "${CPP_PATHS[@]}" \
-    > "$WORK_DIR/cpp.json" 2> "$WORK_DIR/cpp.log" || true
-"$RUST_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" "${TARGET_OPTIONS[@]}" --output json "${RUST_PATHS[@]}" \
-    > "$WORK_DIR/rust.json" 2> "$WORK_DIR/rust.log" || true
+# Bash's time keyword measures only the CLI, not the Python startup or the comparison oracles.
+# The inner redirection keeps the CLI's stderr separate from the wall time.
+run_timed_cli() {
+    local implementation="$1"
+    shift
+    local cli_status=0
+    { time { "$@" > "$WORK_DIR/$implementation.json" 2> "$WORK_DIR/$implementation.log"; }; } \
+        2> "$WORK_DIR/$implementation.time" || cli_status=$?
+    printf '%s\n' "$cli_status" > "$WORK_DIR/$implementation.status"
+}
+
+TIMEFORMAT='%R'
+export LC_NUMERIC=C
+run_timed_cli cpp "$CPP_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" "${TARGET_OPTIONS[@]}" \
+    --output json "${CPP_PATHS[@]}"
+run_timed_cli rust "$RUST_CLI" --refresh "${RECURSE[@]}" "${NORMALIZE[@]}" "${TARGET_OPTIONS[@]}" \
+    --output json "${RUST_PATHS[@]}"
+awk 'NR == 1 { cpp = $1; next } { printf "Wall time: C++ %.3f s, Rust %.3f s", cpp, $1;
+    if (cpp > 0 && $1 > 0) printf ", Rust/C++ %.3fx (C++/Rust %.3fx)", $1 / cpp, cpp / $1;
+    print "" }' "$WORK_DIR/cpp.time" "$WORK_DIR/rust.time"
 
 STATUS=0
+for implementation in cpp rust; do
+    cli_status=$(< "$WORK_DIR/$implementation.status")
+    if [ "$cli_status" != 0 ] && [ "$cli_status" != 2 ]; then
+        print_error "$implementation CLI exited with unexpected status $cli_status"
+        STATUS=1
+    fi
+    if [ "$cli_status" != 0 ]; then
+        while IFS= read -r line; do printf '%s\n' "$line" >&2; done < "$WORK_DIR/$implementation.log"
+    fi
+done
 uv run --quiet --script "$RUST_DIR/scripts/compare_levels.py" "$WORK_DIR/cpp.json" "$WORK_DIR/rust.json" \
     --tolerance "$TOLERANCE" --expectations "$WORK_DIR/expectations.json" "${COMPARE_OPTIONS[@]}" || STATUS=1
 
