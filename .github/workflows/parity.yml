@@ -37,6 +37,44 @@ defaults:
     shell: bash
 
 jobs:
+  windows-filesystem-normalization:
+    # Executes native filesystem, rollback, conflict, metadata, and golden normalization tests.
+    # Injected disposers make the fault cases deterministic, they do not certify real recycle-bin behavior.
+    runs-on: windows-2025-vs2026
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.2
+
+      - name: Test parity oracles natively
+        working-directory: rust
+        run: uv run --script scripts/test_parity.py
+
+      - name: Run native filesystem and normalization corpus
+        working-directory: rust
+        run: |
+          for profile in debug release; do
+            options=()
+            if [ "$profile" = release ]; then options=(--release); fi
+            cargo test "${options[@]}" -p audiobatch-core output_file:: -- --nocapture
+            cargo test "${options[@]}" -p audiobatch-core atomic_write:: -- --nocapture
+            cargo test "${options[@]}" -p audiobatch-core normalize:: -- --nocapture
+            cargo test "${options[@]}" -p audiobatch-core normalize_coordinator:: -- --nocapture
+            cargo test "${options[@]}" -p audiobatch-core metadata:: -- --nocapture
+            cargo test "${options[@]}" -p audiobatch-core golden_tests::test_golden_normalization:: -- --nocapture
+            cargo test "${options[@]}" -p audiobatch-cli run::test_run_analysis::normalize_ -- --nocapture
+          done
+
   parity:
     # Runs the C++ and the Rust CLI on the committed fixtures and compares the levels they report,
     # then normalizes the LFS collection with both and compares the output files.
@@ -63,6 +101,10 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.2
+
+      - name: Test parity oracles
+        working-directory: rust
+        run: uv run --script scripts/test_parity.py
 
       - name: Install Ninja and ccache
         env:

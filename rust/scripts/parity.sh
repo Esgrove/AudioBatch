@@ -166,6 +166,22 @@ if [ ${#NORMALIZE[@]} -gt 0 ]; then
     RECURSE=(--recurse)
 fi
 
+# Capture expected paths and fixture outcomes before either implementation can remove a source.
+EXPECT_OPTIONS=()
+if [ ${#NORMALIZE[@]} -gt 0 ]; then
+    EXPECT_OPTIONS=(--base "$CPP_BASE" "${TARGET[@]}")
+fi
+uv run --quiet --script "$RUST_DIR/scripts/compare_levels.py" \
+    --write-expectations "$WORK_DIR/expectations.json" "${RECURSE[@]}" "${EXPECT_OPTIONS[@]}" \
+    --inputs "${CPP_PATHS[@]}"
+if [ ${#NORMALIZE[@]} -gt 0 ]; then
+    for implementation in cpp rust; do
+        uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" \
+            --snapshot "$WORK_DIR/$implementation" --expectations "$WORK_DIR/expectations.json" \
+            > "$WORK_DIR/$implementation-before.json"
+    done
+fi
+
 # Both CLIs exit with code 2 when a file fails, which the comparison reports per file instead.
 TARGET_OPTIONS=()
 COMPARE_OPTIONS=()
@@ -181,10 +197,10 @@ fi
 
 STATUS=0
 uv run --quiet --script "$RUST_DIR/scripts/compare_levels.py" "$WORK_DIR/cpp.json" "$WORK_DIR/rust.json" \
-    --tolerance "$TOLERANCE" "${COMPARE_OPTIONS[@]}" || STATUS=1
+    --tolerance "$TOLERANCE" --expectations "$WORK_DIR/expectations.json" "${COMPARE_OPTIONS[@]}" || STATUS=1
 
 if [ ${#NORMALIZE[@]} -gt 0 ]; then
     uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$CPP_BASE" "$RUST_BASE" \
-        --lossy "$WORK_DIR/lossy.txt" || STATUS=1
+        --lossy "$WORK_DIR/lossy.txt" --snapshots "$WORK_DIR/cpp-before.json" "$WORK_DIR/rust-before.json" || STATUS=1
 fi
 exit $STATUS
