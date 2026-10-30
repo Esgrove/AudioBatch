@@ -52,6 +52,20 @@ struct AudioPreviewPreferences {
 
 /// The album artwork of the selected file, requested once per file version.
 struct ArtworkState {
+    /// Reuses both a pending request and a completed no-art result until the selected file changes identity.
+    [[nodiscard]] bool needsRequest() const
+    {
+        return !requested.has_value() || !requested->matches(file);
+    }
+
+    /// Drops the image and the no-art cache without forgetting the selected file.
+    void invalidate()
+    {
+        requested.reset();
+        image = {};
+        completed = false;
+    }
+
     /// The selected file whose artwork is shown or requested, tracked even while the option is off.
     juce::File file;
     /// The file version the artwork was requested for, so the panel refreshes reuse it instead of reading again.

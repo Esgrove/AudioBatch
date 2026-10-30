@@ -12,6 +12,7 @@
 #include "gui/PreviewController.h"
 #include "serato/SeratoOverview.h"
 #include "serato/SeratoTagTypes.h"
+#include "utils/FileUtils.h"
 #include "utils/Log.h"
 
 #include <cstdint>
@@ -83,14 +84,19 @@ void AudioBatchComponent::toggleAlbumArtwork()
 /// While the option is off, it only remembers the file, so enabling it later can request the artwork.
 void AudioBatchComponent::requestArtwork(const juce::File& file, const bool forceRefresh)
 {
+    const auto row = getSelectionDisplayRow(resultsTable.getSelectedRows(), resultsTable.getSelectedRow());
+    if (!analysisResults.containsRow(row) || analysisResults[row].file != file) {
+        return;
+    }
     if (artwork.file != file) {
         clearArtwork();
         artwork.file = file;
     }
-    if (!previewPreferences.showAlbumArtwork || !file.existsAsFile()) {
+    if (!previewPreferences.showAlbumArtwork || !file.existsAsFile() || isFileBeingRewritten(file.getFullPathName())) {
+        clearArtwork();
         return;
     }
-    if (!forceRefresh && artwork.requested.has_value() && artwork.requested->matches(file)) {
+    if (!forceRefresh && !artwork.needsRequest()) {
         return;
     }
     artwork.requested.emplace(file);
@@ -106,9 +112,7 @@ void AudioBatchComponent::requestArtwork(const juce::File& file, const bool forc
 void AudioBatchComponent::clearArtwork()
 {
     artworkLoader.cancel();
-    artwork.requested.reset();
-    artwork.image = {};
-    artwork.completed = false;
+    artwork.invalidate();
     previewWorkspace.audioInfo.setArtwork({});
 }
 
@@ -121,7 +125,11 @@ void AudioBatchComponent::adoptArtwork(
     juce::Image image
 )
 {
-    if (!previewPreferences.showAlbumArtwork || !artworkLoader.canAdopt(identity, generation, artwork.file)) {
+    const auto row = getSelectionDisplayRow(resultsTable.getSelectedRows(), resultsTable.getSelectedRow());
+    if (!analysisResults.containsRow(row) || analysisResults[row].file != artwork.file
+        || !previewPreferences.showAlbumArtwork || isFileBeingRewritten(identity.path)
+        || !artworkLoader.canAdopt(identity, generation, artwork.file))
+    {
         return;
     }
     artwork.image = std::move(image);
@@ -246,18 +254,15 @@ void AudioBatchComponent::updatePreviewLoudnessHistory()
 {
     std::shared_ptr<const ShortTermLoudnessHistory> history;
     std::shared_ptr<const OverloadHistory> overloads;
-    const auto* loaded = std::get_if<LoadedPreview>(&preview.getState());
-    if (loaded != nullptr && previewPlayer.hasLoadedSource() && loaded->identity.matches(loaded->file)) {
-        if (const auto row = analysisResults.findRow(loaded->file.getFullPathName())) {
-            const auto& record = analysisResults[*row];
-            const auto activity = fileActivity.getActivity(record.fullPath);
-            if (record.isReady() && record.fileSize == loaded->identity.fileSize
-                && record.modifiedTimeMs == loaded->identity.modifiedTimeMs && activity != FileActivity::waiting
-                && activity != FileActivity::analyzing)
-            {
-                history = record.shortTermLoudness;
-                overloads = record.overloads;
-            }
+    const auto row = getSelectionDisplayRow(resultsTable.getSelectedRows(), resultsTable.getSelectedRow());
+    if (analysisResults.containsRow(row)) {
+        const auto& record = analysisResults[row];
+        const auto activity = fileActivity.getActivity(record.fullPath);
+        if (preview.canDisplayAnalysis(record) && activity != FileActivity::waiting
+            && activity != FileActivity::analyzing)
+        {
+            history = record.shortTermLoudness;
+            overloads = record.overloads;
         }
     }
     previewWorkspace.thumbnail.setLoudnessHistory(std::move(history));

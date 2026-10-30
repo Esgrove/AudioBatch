@@ -3,6 +3,7 @@
 /// rejection of corrupt and oversized images, and dropping results of replaced or changed files.
 
 #include "gui/ArtworkLoader.h"
+#include "gui/AudioBatchComponentState.h"
 #include "metadata/AudioMetadata.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
@@ -59,15 +60,18 @@ bool addFlacPictures(
     return tagged.save();
 }
 
+/// One delivered artwork result.
+struct ArtworkCompletionEntry {
+    /// File version requested by the worker.
+    utils::FileIdentity identity;
+    /// Generation delivered by the worker.
+    std::uint64_t generation {0};
+    /// Thumbnail, invalid for a completed no-art result.
+    juce::Image image;
+};
+
 /// Collects the completions of an artwork loader so the test thread can wait for them.
 struct CompletionLog {
-    /// One delivered result.
-    struct Entry {
-        utils::FileIdentity identity;
-        std::uint64_t generation {0};
-        juce::Image image;
-    };
-
     /// Records a completion from the worker thread.
     void add(utils::FileIdentity identity, const std::uint64_t generation, juce::Image image)
     {
@@ -86,7 +90,7 @@ struct CompletionLog {
     }
 
     /// Returns a copy of the completions so far.
-    std::vector<Entry> snapshot()
+    std::vector<ArtworkCompletionEntry> snapshot()
     {
         const std::scoped_lock lock(mutex);
         return entries;
@@ -94,7 +98,7 @@ struct CompletionLog {
 
     std::mutex mutex;
     std::condition_variable condition;
-    std::vector<Entry> entries;
+    std::vector<ArtworkCompletionEntry> entries;
 };
 }  // namespace
 
@@ -110,6 +114,8 @@ public:
         testCandidates();
         testDecoding();
         testLoader();
+        testInvalidation();
+        testNoArtState();
     }
 
 private:
@@ -149,6 +155,18 @@ private:
         expect(thumbnail.isValid());
         expectEquals(thumbnail.getWidth(), 16);
         expect(thumbnail.getPixelAt(4, 4) == juce::Colours::red);
+
+        beginTest("An invalid front cover falls back to another bounded embedded picture");
+        const auto fallback = directory.copyFixture("sine_stereo_44100_16.flac", "fallback.flac");
+        expect(addFlacPictures(
+            fallback,
+            {{back, TagLib::FLAC::Picture::BackCover}, {juce::MemoryBlock("bad", 3), TagLib::FLAC::Picture::FrontCover}}
+        ));
+        const auto fallbackImage = ArtworkLoader::loadArtworkThumbnail(fallback, {});
+        expect(fallbackImage.isValid());
+        expect(fallbackImage.getPixelAt(2, 2) == juce::Colours::blue);
+        expect(!ArtworkLoader::loadArtworkThumbnail(file, [] { return true; }).isValid());
+        expect(readArtworkCandidates(file, {.maximumCount = 0}).empty());
     }
 
     /// Checks that decoding keeps small images, scales large ones, and rejects corrupt and huge headers.
@@ -165,7 +183,17 @@ private:
         expectEquals(wideImage.getWidth(), artworkThumbnailSize);
         expectEquals(wideImage.getHeight(), artworkThumbnailSize / 2);
 
+        const juce::Image jpegSource(juce::Image::RGB, 12, 6, true);
+        juce::JPEGImageFormat jpegFormat;
+        juce::MemoryOutputStream jpegStream;
+        expect(jpegFormat.writeImageToStream(jpegSource, jpegStream));
+        const auto jpeg = ArtworkLoader::decodeThumbnail(jpegStream.getData(), jpegStream.getDataSize());
+        expectEquals(jpeg.getWidth(), 12);
+        expectEquals(jpeg.getHeight(), 6);
+
         expect(!ArtworkLoader::decodeThumbnail(nullptr, 0).isValid());
+        // An encoded-byte limit is checked before accessing even the signature.
+        expect(!ArtworkLoader::decodeThumbnail(small.getData(), ArtworkReadLimits {}.maximumBytes + 1).isValid());
         const juce::MemoryBlock garbage("not an image at all", 19);
         expect(!ArtworkLoader::decodeThumbnail(garbage.getData(), garbage.getSize()).isValid());
 
@@ -224,7 +252,9 @@ private:
                 }));
             }
             const auto secondGeneration = loader.request(second);
+            const auto latestGeneration = loader.request(first);
             expect(secondGeneration > firstGeneration);
+            expect(latestGeneration > secondGeneration);
             {
                 const std::scoped_lock lock(gateMutex);
                 released = true;
@@ -235,20 +265,127 @@ private:
             expect(log.waitFor(1));
             const auto entries = log.snapshot();
             const auto& entry = entries.front();
-            expect(entry.generation == secondGeneration);
+            expect(entry.generation == latestGeneration);
+            expect(entry.identity.path == first.getFullPathName());
             expect(entry.image.isValid());
-            expect(loader.canAdopt(entry.identity, secondGeneration, second));
-            expect(!loader.canAdopt(entry.identity, firstGeneration, second));
-            expect(!loader.canAdopt(entry.identity, secondGeneration, first));
+            expect(loader.canAdopt(entry.identity, latestGeneration, first));
+            expect(!loader.canAdopt(entry.identity, firstGeneration, first));
+            expect(!loader.canAdopt(entry.identity, latestGeneration, second));
 
-            expect(second.setLastModificationTime(juce::Time::getCurrentTime() + juce::RelativeTime::hours(1)));
-            expect(!loader.canAdopt(entry.identity, secondGeneration, second));
+            expect(first.setLastModificationTime(juce::Time::getCurrentTime() + juce::RelativeTime::hours(1)));
+            expect(!loader.canAdopt(entry.identity, latestGeneration, first));
 
             expectEquals(loader.request(directory.getChildFile("missing.flac")), std::uint64_t {0});
             loader.cancel();
             expect(!loader.canAdopt(entry.identity, secondGeneration, second));
         }
         expectEquals(static_cast<int>(log.snapshot().size()), 1);
+
+        beginTest("A completed no-art result cannot be adopted after disable, clear or forced refresh");
+        CompletionLog noArtLog;
+        ArtworkLoader noArtLoader(
+            [&noArtLog](utils::FileIdentity identity, const std::uint64_t generation, juce::Image image) {
+                noArtLog.add(std::move(identity), generation, std::move(image));
+            },
+            [](const juce::File&, const utils::CancellationCheck&) { return juce::Image(); }
+        );
+        const auto noArtGeneration = noArtLoader.request(second);
+        expect(noArtLog.waitFor(1));
+        const auto noArtEntries = noArtLog.snapshot();
+        if (!noArtEntries.empty()) {
+            const auto& entry = noArtEntries.front();
+            expect(!entry.image.isValid());
+            expect(noArtLoader.canAdopt(entry.identity, noArtGeneration, second));
+            noArtLoader.cancel();
+            expect(!noArtLoader.canAdopt(entry.identity, noArtGeneration, second));
+            expect(noArtLoader.request(second) > noArtGeneration);
+            expect(!noArtLoader.canAdopt(entry.identity, noArtGeneration, second));
+        }
+    }
+
+    /// Exercises cancellation and same-path replacement while the active decoder is gated, without sleeps.
+    void testInvalidation()
+    {
+        beginTest("Disable, release and shutdown invalidate active and pending work, including same-path replacements");
+        const TemporaryDirectory directory;
+        const auto file = directory.copyFixture("sine_stereo_44100_16.flac", "gated.flac");
+        for (const bool replaceFile : {false, true}) {
+            std::mutex mutex;
+            std::condition_variable condition;
+            bool started = false;
+            bool released = false;
+            bool sawCancellation = false;
+            bool decoded = false;
+            CompletionLog log;
+            ArtworkLoader loader(
+                [&log](utils::FileIdentity identity, const std::uint64_t generation, juce::Image image) {
+                    log.add(std::move(identity), generation, std::move(image));
+                },
+                [&](const juce::File&, const utils::CancellationCheck& isCancelled) {
+                    std::unique_lock lock(mutex);
+                    started = true;
+                    condition.notify_all();
+                    condition.wait(lock, [&released] { return released; });
+                    sawCancellation = isCancelled();
+                    decoded = true;
+                    condition.notify_all();
+                    return juce::Image();
+                }
+            );
+            const auto generation = loader.request(file);
+            {
+                std::unique_lock lock(mutex);
+                expect(condition.wait_for(lock, std::chrono::seconds(10), [&started] { return started; }));
+            }
+            const utils::FileIdentity identity(file);
+            if (replaceFile) {
+                expect(file.setLastModificationTime(file.getLastModificationTime() + juce::RelativeTime::hours(1)));
+            } else {
+                static_cast<void>(loader.request(file));
+                loader.cancel();
+            }
+            expect(!loader.canAdopt(identity, generation, file));
+            {
+                const std::scoped_lock lock(mutex);
+                released = true;
+            }
+            condition.notify_all();
+            {
+                std::unique_lock lock(mutex);
+                expect(condition.wait_for(lock, std::chrono::seconds(10), [&decoded] { return decoded; }));
+                // Observe the cancellation before shutdown itself changes the generation.
+                expect(sawCancellation);
+            }
+            loader.cancelAndWait();
+            expect(log.snapshot().empty());
+            expectEquals(loader.request(file), std::uint64_t {0});
+            loader.cancelAndWait();
+        }
+    }
+
+    /// Checks the non-rendering state shared by all panel refresh and invalidation paths.
+    void testNoArtState()
+    {
+        beginTest("Completed no-art results and pending requests are cached by identity until explicitly invalidated");
+        const TemporaryDirectory directory;
+        const auto file = directory.copyFixture("sine_stereo_44100_16.flac", "no-art.flac");
+        ArtworkState state;
+        state.file = file;
+        expect(state.needsRequest());
+        state.requested.emplace(file);
+        expect(!state.needsRequest());
+        state.completed = true;
+        expect(!state.image.isValid());
+        expect(!state.needsRequest());
+        expect(file.setLastModificationTime(file.getLastModificationTime() + juce::RelativeTime::hours(1)));
+        expect(state.needsRequest());
+        state.requested.emplace(file);
+        expect(!state.needsRequest());
+        state.invalidate();
+        expect(state.file == file);
+        expect(state.needsRequest());
+        expect(!state.completed);
+        expect(!state.image.isValid());
     }
 };
 

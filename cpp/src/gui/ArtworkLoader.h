@@ -29,6 +29,9 @@ constexpr int artworkThumbnailSize {96};
 /// Largest width or height a source image may declare, so a hostile header cannot make the decoder allocate gigabytes.
 constexpr int artworkMaximumSourceDimension {4096};
 
+/// Maximum decoded RGBA pixel storage, checked with division before multiplying the source dimensions.
+constexpr std::size_t artworkMaximumDecodedBytes {std::size_t {64} * 1024 * 1024};
+
 /// One artwork request, with the file identity it was made for.
 struct ArtworkRequest {
     /// The file to read the pictures of.

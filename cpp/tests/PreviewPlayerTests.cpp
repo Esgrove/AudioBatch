@@ -59,6 +59,20 @@ private:
         );
         expectEquals(layout::expandedPreviewFitHeight(layout::minimumWindowWidth), layout::narrowPreviewFitHeight);
         expectEquals(layout::expandedPreviewFitHeight(0), layout::narrowPreviewFitHeight);
+        expectEquals(layout::expandedPreviewFitHeight(wideBreakpoint + 1), layout::widePreviewFitHeight);
+
+        beginTest("Short windows clamp the controls fit while preserving the table minimum and manual preference");
+        expectEquals(layout::constrainedPreviewHeight(348, 530), 284);
+        expectEquals(layout::constrainedPreviewHeight(348, 1000), 348);
+        expectEquals(layout::constrainedPreviewHeight(282, 530), 282);
+        expectEquals(layout::constrainedPreviewHeight(1000, 1000), 700);
+        expectEquals(layout::constrainedPreviewHeight(100, 530), 230);
+        // A user-picked split does not re-fit when crossing the wide breakpoint or collapsing and expanding.
+        for (const auto preferred : {250, 300, 420}) {
+            expectEquals(layout::constrainedPreviewHeight(preferred, 1000), preferred);
+            static_cast<void>(layout::constrainedPreviewHeight(preferred, 530));
+            expectEquals(layout::constrainedPreviewHeight(preferred, 1000), preferred);
+        }
     }
 
     /// Checks numeric tick layout without constructing or rendering a GUI component.
@@ -639,6 +653,7 @@ private:
             auto disabled = saved;
             disabled.playFromFirstCuePoint = false;
             disabled.loudnessGraphEnabled = false;
+            disabled.showAlbumArtwork = true;
             expect(saveAudioPreviewPreferences(settings, disabled));
         }
         {
@@ -646,6 +661,7 @@ private:
             expect(!loadAudioPreviewPreferences(settings).playFromFirstCuePoint);
             const auto disabled = loadAudioPreviewPreferences(settings);
             expect(!disabled.loudnessGraphEnabled);
+            expect(disabled.showAlbumArtwork);
             expectEquals(disabled.loudnessGraphMinimum, -32.0);
             expectEquals(disabled.loudnessGraphMaximum, -2.0);
         }

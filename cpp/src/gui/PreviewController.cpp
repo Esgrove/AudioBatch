@@ -5,6 +5,7 @@
 #include "gui/PreviewController.h"
 
 #include "analysis/AnalysisCache.h"
+#include "analysis/AudioAnalysisTypes.h"
 #include "gui/AudioPreviewPlayer.h"
 #include "serato/SeratoPreviewLoader.h"
 #include "serato/SeratoTagTypes.h"
@@ -70,6 +71,17 @@ bool PreviewController::isWaveformLoadedFromCache() const noexcept
 {
     const auto* loaded = std::get_if<LoadedPreview>(&state);
     return loaded != nullptr && loaded->waveformLoadedFromCache;
+}
+
+/// Accepts source histories only for complete analysis of the unchanged file backing the loaded waveform.
+/// A released preview, another selection, or a replaced file must never inherit source warning marks.
+/// Gain and plugin-preview preferences deliberately play no part in this identity check.
+bool PreviewController::canDisplayAnalysis(const AudioAnalysisRecord& record) const
+{
+    const auto* loaded = std::get_if<LoadedPreview>(&state);
+    return loaded != nullptr && player.hasLoadedSource() && record.isReady() && record.file == loaded->file
+        && record.fullPath == loaded->identity.path && record.fileSize == loaded->identity.fileSize
+        && record.modifiedTimeMs == loaded->identity.modifiedTimeMs && loaded->identity.matches(loaded->file);
 }
 
 /// Adopts the Serato tags read for the loaded file while the request generation and the file still match.

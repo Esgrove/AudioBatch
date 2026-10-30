@@ -177,6 +177,12 @@ void AudioBatchComponent::replaceRecordsAfterOperation(const std::vector<Committ
             updateAudioInfo(analysisResults[*row]);
         }
     }
+    for (const auto& output : outputs) {
+        if (artwork.file == output.output.file) {
+            requestArtwork(artwork.file, true);
+            break;
+        }
+    }
 }
 
 /// Applies a batch of normalization results on the message thread.
@@ -239,6 +245,7 @@ void AudioBatchComponent::normalizeCompleted(const NormalizingWork& pass, const 
     );
 
     utils::showFailureSummary(failures, "Normalize", "normalized", this);
+    requestArtwork(artwork.file);
 
     if (!preview.getFile().existsAsFile() && resultsTable.getSelectedRow() >= 0) {
         handleSelectionChanged(resultsTable.getSelectedRow());
@@ -410,6 +417,9 @@ void AudioBatchComponent::startAnalysis(
 
     statusBar.setStatusText("Scanning for audio files...");
     backgroundWork.startAnalysis(inputPaths, recursive, forceRefresh, rows != AnalysisRows::add);
+    if (forceRefresh) {
+        requestArtwork(artwork.file, true);
+    }
     updateProcessButtonState();
 }
 
@@ -675,6 +685,7 @@ void AudioBatchComponent::processingCompleted(const ProcessingWork& pass, const 
     updateProcessButtonState();
 
     utils::showFailureSummary(failures, "Plugin Processing", "processed", this);
+    requestArtwork(artwork.file);
 
     if (!preview.getFile().existsAsFile() && resultsTable.getSelectedRow() >= 0) {
         handleSelectionChanged(resultsTable.getSelectedRow());

@@ -350,6 +350,14 @@ TagLib::PropertyMap buildPropertyMap(const std::vector<MetadataProperty>& proper
     return propertyMap;
 }
 
+/// Returns an optional picture field without assuming every format supplies it.
+template<typename Value>
+Value pictureField(const TagLib::VariantMap& fields, const char* key)
+{
+    const auto field = fields.find(key);
+    return field != fields.end() ? field->second.value<Value>() : Value {};
+}
+
 /// Reads embedded pictures via TagLib's generic "PICTURE" complex property.
 /// Pictures without image data are skipped.
 std::vector<MetadataPicture> readPictures(const TagLib::File& file)
@@ -463,15 +471,30 @@ std::vector<MetadataPicture> readArtworkCandidates(const juce::File& file, const
     if (fileRef.isNull() || fileRef.file() == nullptr) {
         return {};
     }
-    auto pictures = readPictures(*fileRef.file());
-    std::erase_if(pictures, [&limits](const MetadataPicture& picture) {
-        return picture.data.getSize() > limits.maximumBytes;
-    });
-    std::ranges::stable_partition(pictures, [](const MetadataPicture& picture) {
-        return picture.pictureType == "Front Cover";
-    });
-    if (pictures.size() > limits.maximumCount) {
-        pictures.resize(limits.maximumCount);
+    // TagLib owns the parsed properties. Apply limits before making any application-owned image copies.
+    // Metadata-library allocations while opening the file are outside these extraction limits.
+    const auto pictureMaps = fileRef.file()->complexProperties("PICTURE");
+    std::vector<MetadataPicture> pictures;
+    for (const bool frontCovers : {true, false}) {
+        for (const auto& pictureMap : pictureMaps) {
+            if (pictures.size() >= limits.maximumCount) {
+                return pictures;
+            }
+            const auto pictureType = pictureField<TagLib::String>(pictureMap, "pictureType");
+            if ((pictureType == "Front Cover") != frontCovers) {
+                continue;
+            }
+            const auto bytes = pictureField<TagLib::ByteVector>(pictureMap, "data");
+            if (bytes.isEmpty() || bytes.size() > limits.maximumBytes) {
+                continue;
+            }
+            pictures.push_back({
+                .data = juce::MemoryBlock(bytes.data(), bytes.size()),
+                .mimeType = toJuce(pictureField<TagLib::String>(pictureMap, "mimeType")),
+                .description = toJuce(pictureField<TagLib::String>(pictureMap, "description")),
+                .pictureType = toJuce(pictureType),
+            });
+        }
     }
     return pictures;
 }

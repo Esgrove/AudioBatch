@@ -495,6 +495,20 @@ inline int expandedPreviewFitHeight(const int workspaceWidth)
     return previewColumns(workspace).wide ? widePreviewFitHeight : narrowPreviewFitHeight;
 }
 
+/// Clamps the expanded split without changing its remembered preference when a short window needs scrolling.
+inline int constrainedPreviewHeight(const int preferredHeight, const int availableHeight)
+{
+    const auto minimum = static_cast<int>(previewMinimumHeight);
+    const auto maximum = juce::jmax(
+        minimum,
+        juce::jmin(
+            juce::roundToInt(-previewMaximumProportion * availableHeight),
+            availableHeight - static_cast<int>(resultsTableMinimumHeight + resizeBarHeight)
+        )
+    );
+    return juce::jlimit(minimum, maximum, preferredHeight);
+}
+
 /// Centres the initial window within the display's usable area, reducing it on smaller screens.
 inline juce::Rectangle<int> initialWindowBounds(const juce::Rectangle<int> usableArea)
 {

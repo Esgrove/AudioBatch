@@ -73,6 +73,7 @@ public:
     [[nodiscard]] std::shared_ptr<const serato::SeratoData> getSeratoData() const;
     [[nodiscard]] bool isSeratoDataOutdated(const juce::File& file) const;
     [[nodiscard]] bool isWaveformLoadedFromCache() const noexcept;
+    [[nodiscard]] bool canDisplayAnalysis(const AudioAnalysisRecord& record) const;
 
     [[nodiscard]] bool adoptSeratoData(
         const utils::FileIdentity& identity,

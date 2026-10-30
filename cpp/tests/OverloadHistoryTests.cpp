@@ -14,13 +14,16 @@
 
 #include <JuceHeader.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <ebur128.h>
 #include <functional>
 #include <memory>
 #include <numbers>
+#include <span>
 #include <sqlite3.h>
 #include <vector>
 
@@ -75,6 +78,12 @@ bool runSql(const juce::File& databaseFile, const char* sql)
     return result == SQLITE_OK;
 }
 
+/// Releases a reference meter used to pin block-local true-peak coverage.
+void destroyReferenceMeter(ebur128_state* meter)
+{
+    ebur128_destroy(&meter);
+}
+
 /// Builds a history from per-block flags of a single channel.
 std::shared_ptr<const OverloadHistory> buildMono(const std::vector<std::uint8_t>& blocks, const std::int64_t length)
 {
@@ -99,6 +108,7 @@ public:
         runBlobTests();
         runProjectionTests();
         runAnalysisTests();
+        runBoundaryTests();
         runCacheTests();
     }
 
@@ -352,6 +362,55 @@ private:
                 expect(overloadHistoryMatches(*record.overloads, record));
             }
         }
+    }
+
+    /// Pins continuous interpolation across blocks and the analyzer's unflushed EOF coverage.
+    void runBoundaryTests()
+    {
+        beginTest("True-peak interpolation crosses analysis blocks and EOF retains only the existing source coverage");
+        const TemporaryDirectory directory;
+        constexpr int frames = generatedBlockSize + 32;
+        const auto sample = [](const int frame) {
+            if (frame >= generatedBlockSize - 4 && frame < generatedBlockSize) {
+                return frame % 4 < 2 ? 0.85f : -0.85f;
+            }
+            return frame == frames - 1 ? 0.99f : 0.0f;
+        };
+        const auto file = directory.getChildFile("boundary.wav");
+        expect(writeFloatWav(file, 1, frames, [sample](int, const int frame) { return sample(frame); }));
+        const auto record = analyzeFile(file);
+        expect(!record.hasError(), record.errorMessage);
+        const std::unique_ptr<ebur128_state, decltype(&destroyReferenceMeter)> meter(
+            ebur128_init(1, static_cast<unsigned long>(generatedSampleRate), EBUR128_MODE_TRUE_PEAK),
+            destroyReferenceMeter
+        );
+        expect(meter != nullptr);
+        expect(record.overloads != nullptr);
+        if (!meter || !record.overloads) {
+            return;
+        }
+        std::vector<float> samples(static_cast<std::size_t>(frames));
+        for (int frame = 0; frame < frames; ++frame) {
+            samples[static_cast<std::size_t>(frame)] = sample(frame);
+        }
+        for (std::size_t bucket = 0; bucket < 2; ++bucket) {
+            const auto offset = bucket * static_cast<std::size_t>(generatedBlockSize);
+            const auto block = std::span(samples).subspan(offset).first(
+                std::min(samples.size() - offset, static_cast<std::size_t>(generatedBlockSize))
+            );
+            expectEquals(
+                ebur128_add_frames_float(meter.get(), block.data(), block.size()), static_cast<int>(EBUR128_SUCCESS)
+            );
+            double peak = 0.0;
+            expectEquals(ebur128_prev_true_peak(meter.get(), 0, &peak), static_cast<int>(EBUR128_SUCCESS));
+            const auto expected = peak > 1.0 ? OverloadHistory::truePeakOver : 0;
+            expectEquals(static_cast<int>(record.overloads->flagsAt(bucket, 0)), static_cast<int>(expected));
+        }
+        expect((record.overloads->flagsAt(1, 0) & OverloadHistory::truePeakOver) != 0);
+        expectEquals(record.overloads->lengthInSamples, static_cast<std::int64_t>(frames));
+        double unflushedPeak = 0.0;
+        expectEquals(ebur128_true_peak(meter.get(), 0, &unflushedPeak), static_cast<int>(EBUR128_SUCCESS));
+        expectWithinAbsoluteError(record.overallTruePeak, unflushedPeak, 0.000001);
     }
 
     /// Checks the cache round trip, and that old or malformed rows become misses that keep the custom gain.

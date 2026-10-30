@@ -36,6 +36,8 @@ struct ImageDimensions {
 constexpr std::array<std::uint8_t, 8> pngSignature {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
 /// Type of the first PNG chunk, which holds the dimensions.
 constexpr std::array<std::uint8_t, 4> pngHeaderChunk {'I', 'H', 'D', 'R'};
+/// Required byte length of the PNG IHDR data.
+constexpr std::uint32_t pngHeaderDataSize {13};
 /// Offset of the first chunk type in a PNG file.
 constexpr std::size_t pngHeaderChunkOffset {12};
 /// Offset of the big-endian width in a PNG file. The height follows it.
@@ -93,6 +95,7 @@ bool isAllowedDimension(const std::int64_t value)
 std::optional<ImageDimensions> readPngDimensions(const std::span<const std::uint8_t> bytes)
 {
     if (bytes.size() < pngMinimumSize || !std::ranges::equal(bytes.first<pngSignature.size()>(), pngSignature)
+        || readBigEndianAt<std::uint32_t>(bytes, pngSignature.size()) != pngHeaderDataSize
         || !std::ranges::equal(bytes.subspan(pngHeaderChunkOffset, pngHeaderChunk.size()), pngHeaderChunk))
     {
         return std::nullopt;
@@ -141,11 +144,11 @@ std::optional<ImageDimensions> readJpegDimensions(const std::span<const std::uin
             continue;
         }
         const std::size_t length = readBigEndianAt<std::uint16_t>(bytes, position + jpegMarkerSize);
-        if (length < jpegMarkerSize) {
+        if (length < jpegMarkerSize || length > bytes.size() - position - jpegMarkerSize) {
             return ImageDimensions {};
         }
         if (isJpegStartOfFrame(marker)) {
-            if (position + jpegFrameDimensionsEnd > bytes.size()) {
+            if (length < jpegFrameDimensionsEnd - jpegMarkerSize || position + jpegFrameDimensionsEnd > bytes.size()) {
                 return ImageDimensions {};
             }
             const std::int64_t height = readBigEndianAt<std::uint16_t>(bytes, position + jpegHeightOffset);
@@ -197,7 +200,7 @@ juce::Image ArtworkLoader::loadArtworkThumbnail(const juce::File& file, const ut
 /// or dimensions above artworkMaximumSourceDimension return an invalid image without decoding.
 juce::Image ArtworkLoader::decodeThumbnail(const void* data, const std::size_t size)
 {
-    if (data == nullptr || size == 0) {
+    if (data == nullptr || size == 0 || size > ArtworkReadLimits {}.maximumBytes) {
         return {};
     }
     const std::span bytes(static_cast<const std::uint8_t*>(data), size);
@@ -209,6 +212,13 @@ juce::Image ArtworkLoader::decodeThumbnail(const void* data, const std::size_t s
         return {};
     }
 
+    constexpr std::size_t bytesPerPixel {4};
+    const auto widthPixels = static_cast<std::size_t>(dimensions->width);
+    const auto heightPixels = static_cast<std::size_t>(dimensions->height);
+    if (widthPixels > artworkMaximumDecodedBytes / bytesPerPixel / heightPixels) {
+        return {};
+    }
+
     juce::MemoryInputStream stream(data, size, false);
     auto* format = juce::ImageFileFormat::findImageFormatForStream(stream);
     if (format == nullptr) {
@@ -216,7 +226,7 @@ juce::Image ArtworkLoader::decodeThumbnail(const void* data, const std::size_t s
     }
     stream.setPosition(0);
     const auto image = format->decodeImage(stream);
-    if (!image.isValid()) {
+    if (!image.isValid() || image.getWidth() != dimensions->width || image.getHeight() != dimensions->height) {
         return {};
     }
 
@@ -229,7 +239,7 @@ juce::Image ArtworkLoader::decodeThumbnail(const void* data, const std::size_t s
     }
     const auto width = juce::jmax(1, juce::roundToInt(image.getWidth() * scale));
     const auto height = juce::jmax(1, juce::roundToInt(image.getHeight() * scale));
-    return image.convertedToFormat(juce::Image::ARGB).rescaled(width, height, juce::Graphics::highResamplingQuality);
+    return image.rescaled(width, height, juce::Graphics::highResamplingQuality).convertedToFormat(juce::Image::ARGB);
 }
 
 /// Replaces pending work and invalidates earlier reads and deliveries.
@@ -307,11 +317,13 @@ void ArtworkLoader::run(const std::stop_token& stopToken)
 }
 
 /// Decodes the artwork of one request and delivers it while the request is current and the file unchanged.
-/// A changed file completes with an invalid image, so the panel never shows the picture of another version.
+/// Identity is checked before extraction, between candidate decodes, and before delivering a result.
 void ArtworkLoader::process(const ArtworkRequest& active, const std::stop_token& stopToken) const
 {
-    const utils::CancellationCheck isCancelled
-        = [this, &active, stopToken] { return stopToken.stop_requested() || !isCurrentGeneration(active.generation); };
+    const utils::CancellationCheck isCancelled = [this, &active, stopToken] {
+        return stopToken.stop_requested() || !isCurrentGeneration(active.generation)
+            || !active.identity.matches(active.file);
+    };
     if (isCancelled()) {
         return;
     }

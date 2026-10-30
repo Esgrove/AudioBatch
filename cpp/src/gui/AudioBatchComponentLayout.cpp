@@ -33,9 +33,10 @@ bool AudioBatchComponent::isPreviewSectionExpanded() const noexcept
 void AudioBatchComponent::fitPreviewToControls()
 {
     const auto workspaceWidth = getWidth() - layout::mainContentPadding * 2;
-    if (workspaceWidth <= 0) {
+    if (workspaceWidth <= 0 || previewFitInitialized) {
         return;
     }
+    previewFitInitialized = true;
     expandedPreviewHeight = layout::expandedPreviewFitHeight(workspaceWidth);
     restoreExpandedLayout = true;
     resized();
@@ -143,15 +144,7 @@ void AudioBatchComponent::resized()
 /// within the workspace limits and leaving the results table at least its minimum height.
 int AudioBatchComponent::getExpandedPreviewHeight() const
 {
-    const auto minimum = static_cast<int>(layout::previewMinimumHeight);
-    const auto maximum = juce::jmax(
-        minimum,
-        juce::jmin(
-            juce::roundToInt(-layout::previewMaximumProportion * workspaceAvailableHeight),
-            workspaceAvailableHeight - static_cast<int>(layout::resultsTableMinimumHeight + layout::resizeBarHeight)
-        )
-    );
-    return juce::jlimit(minimum, maximum, expandedPreviewHeight);
+    return layout::constrainedPreviewHeight(expandedPreviewHeight, workspaceAvailableHeight);
 }
 
 /// Sets the preferred proportions of the table and the workspace
