@@ -10,6 +10,7 @@
 #include "plugins/PluginChainPresets.h"
 #include "plugins/PluginLibrary.h"
 #include "plugins/PluginProcessing.h"
+#include "ProcessingTestPlugins.h"
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
@@ -28,11 +29,15 @@ namespace
 {
 /// One processing case of the test plugin and the committed file it must produce.
 struct PluginExpectation {
+    /// Source fixture relative to the shared fixture directory.
     const char* source;
+    /// Linear gain applied before the mid/side width.
     float gain;
+    /// Side-channel gain relative to the unchanged mid channel.
     float width;
     /// Latency in samples, which the host must compensate for the output to cancel against the expected file.
     int latency;
+    /// Independently generated output fixture to null test against.
     const char* expected;
 };
 
@@ -84,6 +89,101 @@ constexpr float testLatencyMaximum {1024.0f};
 /// Largest plain value of both test plugin parameters, which map linearly from zero.
 constexpr float testParameterMaximum {2.0f};
 
+/// Reports state restoration synchronously, like a plugin that notifies the host for every state change.
+class NotifyingStatePlugin final : public TestPlugin
+{
+public:
+    /// Starts with a small, serializable gain state and no native resources.
+    NotifyingStatePlugin() : TestPlugin(TestPluginSettings {}) {}
+
+    /// Restores gain and tells listeners that non-parameter state changed.
+    void setStateInformation(const void* data, const int sizeInBytes) override
+    {
+        TestPlugin::setStateInformation(data, sizeInBytes);
+        updateHostDisplay(ChangeDetails {}.withNonParameterStateChanged(true));
+    }
+};
+
+/// Creates in-process effects synchronously so preset lifecycle tests need neither plugin bundles nor windows.
+class PresetTestFormat final : public juce::AudioPluginFormat
+{
+public:
+    /// Identifies descriptions that belong to this in-process format.
+    [[nodiscard]] juce::String getName() const override
+    {
+        return "Preset test";
+    }
+    /// No scan is needed for an explicitly stored test description.
+    void findAllTypesForFile(
+        juce::OwnedArray<juce::PluginDescription>& /*results*/,
+        const juce::String& /*fileOrIdentifier*/
+    ) override
+    {}
+    /// Recognizes only the fixed in-process identifier.
+    bool fileMightContainThisPluginType(const juce::String& identifier) override
+    {
+        return identifier == "preset-test";
+    }
+    /// Names the in-process processor independently of its identifier.
+    juce::String getNameOfPluginFromIdentifier(const juce::String& /*fileOrIdentifier*/) override
+    {
+        return "Preset test effect";
+    }
+    /// The in-process implementation cannot change during a test.
+    bool pluginNeedsRescanning(const juce::PluginDescription& /*description*/) override
+    {
+        return false;
+    }
+    /// The in-process processor is always available.
+    bool doesPluginStillExist(const juce::PluginDescription& /*description*/) override
+    {
+        return true;
+    }
+    /// Explicit descriptions make filesystem scanning unnecessary.
+    [[nodiscard]] bool canScanForPlugins() const override
+    {
+        return false;
+    }
+    /// No native binary is inspected.
+    [[nodiscard]] bool isTrivialToScan() const override
+    {
+        return true;
+    }
+    /// The format has no filesystem search results.
+    juce::StringArray searchPathsForPlugins(
+        const juce::FileSearchPath& /*directoriesToSearch*/,
+        bool /*recursive*/,
+        bool /*allowPluginsWhichRequireAsynchronousInstantiation*/
+    ) override
+    {
+        return {};
+    }
+    /// The format has no filesystem search paths.
+    juce::FileSearchPath getDefaultLocationsToSearch() override
+    {
+        return {};
+    }
+    /// Creation completes inline on the message thread.
+    [[nodiscard]] bool requiresUnblockedMessageThreadDuringCreation(
+        const juce::PluginDescription& /*description*/
+    ) const override
+    {
+        return false;
+    }
+
+protected:
+    /// Hands a new processor directly to the synchronous creation callback.
+    void createPluginInstance(
+        const juce::PluginDescription& /*description*/,
+        double /*initialSampleRate*/,
+        int /*initialBufferSize*/,
+        PluginCreationCallback callback
+    ) override
+    {
+        callback(std::make_unique<NotifyingStatePlugin>(), {});
+    }
+};
+
 /// Points the application settings at a folder inside the temporary directory,
 /// which also places the preset folder there.
 void useTemporarySettings(juce::ApplicationProperties& properties, const TemporaryDirectory& temporary)
@@ -126,11 +226,62 @@ public:
         testChainXml();
         testPresetFiles();
         testLiveChainPresets();
+        testPresetEditsAcrossPreparation();
         testNullTest();
         testPluginProcessing();
     }
 
 private:
+    /// Distinguishes a user edit awaiting display delivery from notifications caused by host restoration.
+    void testPresetEditsAcrossPreparation()
+    {
+        const TemporaryDirectory temporary;
+        juce::ApplicationProperties properties;
+        useTemporarySettings(properties, temporary);
+        PluginLibrary library(properties);
+        library.getFormatManager().addFormat(std::make_unique<PresetTestFormat>());
+        SavedChainSlot saved;
+        saved.description.name = "Preset test effect";
+        saved.description.pluginFormatName = "Preset test";
+        saved.description.fileOrIdentifier = "preset-test";
+        TestPlugin initial({.gain = 0.5f});
+        initial.getStateInformation(saved.state);
+        storeChain(*properties.getUserSettings(), {saved});
+        juce::CriticalSection renderingLock;
+        juce::AudioDeviceManager previewDeviceManager;
+        LiveChain chain(library, properties, renderingLock, previewDeviceManager);
+        expect(!chain.hasOpenPreviewDevice());
+        const auto preset = chain.saveAsPreset("Preparation");
+        expect(preset.has_value());
+        if (!preset) {
+            return;
+        }
+
+        beginTest("Host state restoration and clean context reprepare leave a preset unmodified");
+        auto preview = chain.preparePreview(44'100.0, 128);
+        expect(preview.preparation.errorMessage.isEmpty(), preview.preparation.errorMessage);
+        expectEquals(static_cast<int>(preview.instances.size()), 1);
+        if (preview.instances.empty()) {
+            return;
+        }
+        chain.updatePreviewStatus();
+        expect(!chain.isPresetModified());
+        preview = chain.preparePreview(48'000.0, 256);
+        chain.updatePreviewStatus();
+        expect(!chain.isPresetModified());
+
+        beginTest("A pending preset edit survives context reprepare before display delivery");
+        constexpr float editedGain {0.25f};
+        preview.instances.front()->setStateInformation(&editedGain, sizeof(editedGain));
+        preview = chain.preparePreview(44'100.0, 128);
+        chain.updatePreviewStatus();
+        expect(chain.isPresetModified(), "repreparing the processor erased the pending user edit");
+        juce::MemoryBlock currentState;
+        preview.instances.front()->getStateInformation(currentState);
+        expect(currentState == juce::MemoryBlock(&editedGain, sizeof(editedGain)));
+        expectEquals(chain.getCurrentPresetName(), juce::String("Preparation"));
+    }
+
     /// Checks that the null test cancels identical files, reports a difference,
     /// and finds the delay of a shifted copy through the cross-correlation.
     void testNullTest()

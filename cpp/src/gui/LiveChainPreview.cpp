@@ -63,6 +63,10 @@ bool LiveChain::prepareLiveEntry(LiveSlot& entry)
     }
     entry.preparationError.clear();
     auto& plugin = *entry.instance;
+    // Host preparation can report state changes, which are not user edits.
+    // Detaching only this processor preserves pending edits from it and every other slot.
+    plugin.removeListener(this);
+    const juce::ScopeGuard restoreListener {[&plugin, this] { plugin.addListener(this); }};
     plugin.setNonRealtime(false);
     if (!plugin_processing::configurePreviewChannels(plugin)) {
         entry.preparationError = "The plugin supports neither a stereo nor a mono layout";
@@ -74,8 +78,6 @@ bool LiveChain::prepareLiveEntry(LiveSlot& entry)
         return false;
     }
     plugin_processing::restoreStateAndPrepare(plugin, entry.state, previewSampleRate, previewBlockSize);
-    // Restoring the saved settings reports parameter changes that the user did not make.
-    pendingSettingsChange.store(false);
     plugin.reset();
     entry.prepared = true;
     entry.latencySamples = juce::jmax(0, plugin.getLatencySamples());
