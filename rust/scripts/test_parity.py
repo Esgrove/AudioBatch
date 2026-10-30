@@ -13,12 +13,17 @@ Synthetic files hold only a few samples and physical ID3 frames, so no decoder o
 import io
 import json
 import os
+import shutil
 import struct
+import subprocess
 import tempfile
 import unittest
 from collections import Counter
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
+import cli_benchmark as benchmark
 import compare_levels as levels
 import compare_outputs as outputs
 from mutagen.aiff import AIFF
@@ -60,10 +65,15 @@ def tag(*frames: bytes, version: int = 4) -> bytes:
 
 
 def write_aiff(
-    path: Path, *, samples: bytes = b"\x00\x01\x00\x02", frames: int = 2, metadata: bytes | None = None
+    path: Path,
+    *,
+    samples: bytes = b"\x00\x01\x00\x02",
+    frames: int = 2,
+    bits: int = 16,
+    metadata: bytes | None = None,
 ) -> None:
-    """Writes a tiny valid mono 16-bit AIFF with controlled frame count, audio length, and duplicate tags."""
-    common = struct.pack(">HIH", 1, frames, 16) + bytes.fromhex("400eac44000000000000")
+    """Writes a tiny mono AIFF with controlled bit depth, frame count, audio length, and duplicate tags."""
+    common = struct.pack(">HIH", 1, frames, bits) + bytes.fromhex("400eac44000000000000")
     chunks = {b"COMM": common, b"SSND": bytes(8) + samples}
     if metadata:
         chunks[b"ID3 "] = metadata
@@ -265,6 +275,157 @@ class TestOutputOracle(unittest.TestCase):
             snapshot = outputs.snapshot_folder(folder, expected)
             write_aiff(source)
             self.assertTrue(any("artwork" in difference for difference in outputs.check_preservation(folder, snapshot)))
+
+
+class TestNormalizationMode(unittest.TestCase):
+    """Checks integer PCM limits and mode plumbing without running audio applications or benchmarks."""
+
+    def test_lossless_zero_one_and_two_steps_at_both_bit_depths(self) -> None:
+        """Loudness allows one step per sample, while peak normalization remains exact at 16 and 24 bits."""
+        with tempfile.TemporaryDirectory() as temporary, redirect_stdout(io.StringIO()):
+            cpp, rust = Path(temporary) / "cpp.aif", Path(temporary) / "rust.aif"
+            for bits in (16, 24):
+                width = bits // 8
+                write_aiff(cpp, bits=bits, samples=bytes(width * 2))
+                for steps in (0, 1, 2):
+                    samples = steps.to_bytes(width, "big", signed=True) + (-steps).to_bytes(width, "big", signed=True)
+                    write_aiff(rust, bits=bits, samples=samples)
+                    for mode in ("peak", "lufs"):
+                        with self.subTest(bits=bits, steps=steps, mode=mode):
+                            differences = outputs.compare_outputs(cpp, rust, None, mode)
+                            self.assertEqual(bool(differences), steps > (1 if mode == "lufs" else 0))
+                    with self.subTest(bits=bits, steps=steps, mode="default"):
+                        self.assertEqual(bool(outputs.compare_outputs(cpp, rust, None)), steps > 0)
+
+    def test_lossy_tolerance_does_not_depend_on_normalization_mode(self) -> None:
+        """Lossy differences keep their dBFS threshold rather than inheriting the one-step lossless limit."""
+        with tempfile.TemporaryDirectory() as temporary, redirect_stdout(io.StringIO()):
+            cpp, rust = Path(temporary) / "cpp.aif", Path(temporary) / "rust.aif"
+            for bits in (16, 24):
+                width = bits // 8
+                write_aiff(cpp, bits=bits, samples=bytes(width * 2))
+                for steps, rejected in ((2, False), (1 << (bits - 2), True)):
+                    write_aiff(rust, bits=bits, samples=steps.to_bytes(width, "big", signed=True) + bytes(width))
+                    for mode in ("peak", "lufs"):
+                        with self.subTest(bits=bits, steps=steps, mode=mode):
+                            self.assertEqual(bool(outputs.compare_outputs(cpp, rust, -72.0, mode)), rejected)
+
+    def test_loudness_tolerance_does_not_relax_structure_or_tags(self) -> None:
+        """The one-step allowance cannot mask malformed samples, changed metadata, or SSND alignment bytes."""
+        with tempfile.TemporaryDirectory() as temporary, redirect_stdout(io.StringIO()):
+            cpp, rust = Path(temporary) / "cpp.aif", Path(temporary) / "rust.aif"
+            write_aiff(cpp, metadata=tag(frame(b"TIT2", b"\x03original")))
+            write_aiff(rust, samples=b"\x00\x02\x00\x03", metadata=tag(frame(b"TIT2", b"\x03changed")))
+            self.assertTrue(
+                any("frame" in difference for difference in outputs.compare_outputs(cpp, rust, None, "lufs"))
+            )
+            write_aiff(rust, samples=b"\x00\x02")
+            self.assertTrue(outputs.compare_outputs(cpp, rust, None, "lufs"))
+            _, chunks = outputs.read_chunks(cpp)
+            aligned = {**chunks, b"SSND": struct.pack(">II", 2, 0) + b"\x00\x00" + chunks[b"SSND"][8:]}
+            changed = {**aligned, b"SSND": aligned[b"SSND"][:8] + b"\x00\x01" + aligned[b"SSND"][10:]}
+            self.assertTrue(outputs.compare_samples("aligned", aligned, changed, None, 1))
+
+    def test_output_cli_propagates_mode_and_keeps_peak_default(self) -> None:
+        """The parsed mode reaches lossless folder comparisons, with exact comparison unless lufs is selected."""
+        with tempfile.TemporaryDirectory() as temporary, redirect_stdout(io.StringIO()):
+            root = Path(temporary)
+            cpp, rust = root / "cpp", root / "rust"
+            cpp.mkdir()
+            rust.mkdir()
+            write_aiff(cpp / "tone.aif")
+            write_aiff(rust / "tone.aif", samples=b"\x00\x02\x00\x03")
+            lossy = root / "lossy.txt"
+            lossy.write_text("", encoding="utf-8")
+            for mode in (None, "peak", "lufs"):
+                arguments = ["compare_outputs.py", str(cpp), str(rust), "--lossy", str(lossy)]
+                if mode is not None:
+                    arguments += ["--mode", mode]
+                with self.subTest(mode=mode), patch.object(outputs.sys, "argv", arguments):
+                    if mode == "lufs":
+                        outputs.main()
+                    else:
+                        with self.assertRaises(SystemExit) as raised:
+                            outputs.main()
+                        self.assertEqual(raised.exception.code, 1)
+
+    def test_benchmark_propagates_normalization_mode_to_output_oracle(self) -> None:
+        """Each normalized benchmark pair passes its mode, while analysis invokes no output oracle."""
+        for mode in benchmark.TARGETS:
+            with (
+                self.subTest(mode=mode),
+                patch.object(benchmark, "workspace"),
+                patch.object(benchmark.subprocess, "run") as run,
+            ):
+                benchmark.compare(Path("/work"), Path("/results"), mode, 1)
+                calls = [call.args[0] for call in run.call_args_list]
+                output_calls = [
+                    command for command in calls if any(part.endswith("compare_outputs.py") for part in command)
+                ]
+                self.assertEqual(len(output_calls), int(mode != "analyze"))
+                if output_calls:
+                    command = output_calls[0]
+                    self.assertEqual(command[command.index("--mode") + 1], mode)
+                    self.assertIn("--lossy", command)
+                    self.assertIn("--snapshots", command)
+
+    @unittest.skipIf(os.name == "nt", "Exercises the Bash parity entry point")
+    def test_parity_shell_propagates_selected_target_mode(self) -> None:
+        """The real shell passes the active target mode using recording shims instead of cargo or audio CLIs."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            rust = root / "rust"
+            scripts = rust / "scripts"
+            scripts.mkdir(parents=True)
+            shutil.copy2(Path(__file__).with_name("parity.sh"), scripts)
+            (rust / "common.sh").write_text(
+                'find_cpp_cli() { printf "%s\\n" "$RUST_DIR/target/debug/audiobatch-rs"; }\n'
+                'cpp_cli_build_type() { printf "release\\n"; }\n'
+                'executable_name() { printf "%s\\n" "$1"; }\n'
+                'require_command() { command -v "$1" > /dev/null; }\n'
+                "print_yellow() { :; }\n",
+                encoding="utf-8",
+            )
+            binary = rust / "target/debug/audiobatch-rs"
+            binary.parent.mkdir(parents=True)
+            binary.write_text("#!/bin/bash\nexit 0\n", encoding="utf-8")
+            binary.chmod(0o755)
+            tools = root / "tools"
+            tools.mkdir()
+            for name in ("cargo", "uv"):
+                tool = tools / name
+                tool.write_text(
+                    '#!/bin/bash\nprintf "%s\\0" "${0##*/}" "$@" >> "$PARITY_RECORD"\n'
+                    'printf "\\n" >> "$PARITY_RECORD"\n',
+                    encoding="utf-8",
+                )
+                tool.chmod(0o755)
+            source = root / "tone.wav"
+            source.write_bytes(b"original")
+            record = root / "record"
+            environment = {
+                **os.environ,
+                "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}",
+                "PARITY_RECORD": str(record),
+            }
+            for target, mode in (([], "peak"), (["--peak", "-1"], "peak"), (["--lufs", "-14"], "lufs")):
+                record.write_text("", encoding="utf-8")
+                with self.subTest(target=target):
+                    subprocess.run(
+                        ["bash", str(scripts / "parity.sh"), "--normalize", *target, str(source)],
+                        check=True,
+                        capture_output=True,
+                        env=environment,
+                    )
+                    calls = [line.rstrip("\0").split("\0") for line in record.read_text(encoding="utf-8").splitlines()]
+                    comparisons = [command for command in calls if "--mode" in command]
+                    self.assertEqual(len(comparisons), 1)
+                    command = comparisons[0]
+                    self.assertTrue(command[4].endswith("compare_outputs.py"))
+                    self.assertEqual(command[command.index("--mode") + 1], mode)
+                    self.assertIn("--lossy", command)
+                    self.assertIn("--snapshots", command)
+            self.assertEqual(source.read_bytes(), b"original")
 
 
 if __name__ == "__main__":

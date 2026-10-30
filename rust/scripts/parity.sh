@@ -11,8 +11,9 @@ and the re-analyzed outputs are compared instead.
 Every normalized output must also reach the target, or the true peak ceiling in loudness mode.
 compare_outputs.py then compares the files both CLIs left behind:
 the file names, the AIFF format, the samples, and the ID3v2 frames.
-The outputs of lossless sources must have identical samples,
-and the outputs of lossy sources may differ by the decoders' tolerance.
+The outputs of lossless sources must have identical samples in peak mode,
+and may differ by at most one integer PCM step in loudness mode.
+The outputs of lossy sources may differ by the decoders' tolerance.
 Both scripts run with uv, which installs the Python packages they need.
 The originals are left alone, and --delete permanently removes replaced temporary copies without using the trash.
 Reports each CLI's wall time and the Rust/C++ time ratio, including analysis and normalization when requested.
@@ -212,7 +213,11 @@ uv run --quiet --script "$RUST_DIR/scripts/compare_levels.py" "$WORK_DIR/cpp.jso
     --tolerance "$TOLERANCE" --expectations "$WORK_DIR/expectations.json" "${COMPARE_OPTIONS[@]}" || STATUS=1
 
 if [ ${#NORMALIZE[@]} -gt 0 ]; then
-    uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$CPP_BASE" "$RUST_BASE" \
+    MODE=peak
+    if [ "${TARGET[0]}" = --lufs ]; then
+        MODE=lufs
+    fi
+    uv run --quiet --script "$RUST_DIR/scripts/compare_outputs.py" "$CPP_BASE" "$RUST_BASE" --mode "$MODE" \
         --lossy "$WORK_DIR/lossy.txt" --snapshots "$WORK_DIR/cpp-before.json" "$WORK_DIR/rust-before.json" || STATUS=1
 fi
 exit $STATUS
