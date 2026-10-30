@@ -7,6 +7,7 @@
 #include "TestHelpers.h"
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
+#include "utils/FileUtils.h"
 #include <string_view>
 
 #include <aifffile.h>
@@ -88,6 +89,27 @@ public:
         checkUnsupportedFrames();
         checkVorbisConventions();
         checkMappedTextFrames();
+
+        beginTest("Metadata and artwork reads preserve the source identity");
+        {
+            const TemporaryDirectory directory;
+            for (const auto* name :
+                 {
+                     "sine_stereo_44100_16.wav",
+                     "sine_stereo_44100_16.aif",
+                     "tagged_stereo_44100_16.flac",
+                     "sine_stereo_44100_320k.mp3",
+                 })
+            {
+                const auto source = directory.copyFixture(name);
+                const utils::FileIdentity identity(source);
+                AudioMetadata read;
+                expect(readMetadata(source, read), name);
+                expect(identity.matches(source), name);
+                static_cast<void>(readArtworkCandidates(source));
+                expect(identity.matches(source), name);
+            }
+        }
 
         beginTest("An untagged file has no metadata");
         {

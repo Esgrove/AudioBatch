@@ -653,6 +653,7 @@ PluginProcessingResult processFileWithPlugins(
         return fail(file, inputs.error());
     }
 
+    const utils::FileIdentity expectedSource(file);
     const auto renderProgressStart = sourceRecord.matchesFileOnDisk() ? 0.0f : sourceAnalysisProgressShare;
     const auto record
         = refreshIfChanged(sourceRecord, isCancelled, utils::makeProgressRange(onProgress, 0.0f, renderProgressStart));
@@ -662,7 +663,7 @@ PluginProcessingResult processFileWithPlugins(
     }
 
     auto& formatManager = utils::threadLocalFormatManager();
-    const auto reader = utils::createAudioReader(file);
+    auto reader = utils::createAudioReader(file);
 
     if (reader == nullptr) {
         return fail(file, "Unsupported or unreadable audio file");
@@ -707,7 +708,7 @@ PluginProcessingResult processFileWithPlugins(
 
     // The hidden name keeps a half-written output out of folder scans,
     // and out of later scans after a crash.
-    const juce::TemporaryFile temporaryFile(outputFile, juce::TemporaryFile::useHiddenFile);
+    const utils::OutputTemporaryFile temporaryFile(outputFile);
     const auto finalLength = getFinalLength(*summary, reader->lengthInSamples);
 
     const auto written = writeProcessedAiff(
@@ -726,6 +727,11 @@ PluginProcessingResult processFileWithPlugins(
 
     // Carries ID3 tags, embedded artwork, and similar information across formats
     // such as MP3 to AIFF.
+    if (!expectedSource.matches(file)) {
+        return fail(
+            file, "The source file changed while audio was being rendered. The original file was left unchanged."
+        );
+    }
     if (!copyMetadata(file, temporaryFile.getFile())) {
         return fail(file, "Could not copy metadata onto the processed output");
     }
@@ -745,14 +751,21 @@ PluginProcessingResult processFileWithPlugins(
         return fail(file, cancelledMessage);
     }
 
+    reader.reset();
     // Processing cannot be repeated to get back to the original,
     // so an original rewritten in place keeps a copy in the trash like a converted original does.
+    if (!expectedSource.matches(file)) {
+        return fail(
+            file, "The source file changed while audio was being rendered. The original file was left unchanged."
+        );
+    }
     if (outputFile == file && !utils::disposeOfCopy(file, options.disposeFile)) {
         return fail(file, "Could not move a copy of the original file to the system trash");
     }
 
-    if (const auto commit
-        = utils::commitTemporaryOutput(temporaryFile, file, outputFile, options.overwriteExisting, options.disposeFile);
+    if (const auto commit = utils::commitTemporaryOutput(
+            temporaryFile, file, outputFile, options.overwriteExisting, expectedSource, options.disposeFile
+        );
         !commit)
     {
         return fail(file, commit.error());

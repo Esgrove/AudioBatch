@@ -29,6 +29,9 @@ tracing-subscriber.workspace = true
 trash.workspace = true
 walkdir.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+same-file = "1.0.6"
+
 [dev-dependencies]
 base64.workspace = true
 criterion.workspace = true

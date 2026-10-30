@@ -31,6 +31,7 @@
 #include <tbytevector.h>
 #include <textidentificationframe.h>
 #include <tfile.h>
+#include <tfilestream.h>
 #include <tlist.h>
 #include <tpropertymap.h>
 #include <tstring.h>
@@ -467,7 +468,8 @@ std::vector<MetadataPicture> readArtworkCandidates(const juce::File& file, const
     if (!file.existsAsFile() || limits.maximumCount == 0) {
         return {};
     }
-    const TagLib::FileRef fileRef(utils::tagLibFileName(file.getFullPathName()), false);
+    TagLib::FileStream stream(utils::tagLibFileName(file.getFullPathName()), true);
+    const TagLib::FileRef fileRef(&stream, false);
     if (fileRef.isNull() || fileRef.file() == nullptr) {
         return {};
     }
@@ -510,7 +512,10 @@ bool readMetadata(const juce::File& file, AudioMetadata& outMetadata)
     }
 
     const auto& fullPath = file.getFullPathName();
-    const TagLib::FileRef fileRef(utils::tagLibFileName(fullPath), false);
+    // A writable open can change native file status even when no tags are saved.
+    // Source reads must not invalidate the identity guarding a later commit.
+    TagLib::FileStream stream(utils::tagLibFileName(fullPath), true);
+    const TagLib::FileRef fileRef(&stream, false);
 
     if (fileRef.isNull() || fileRef.file() == nullptr) {
         utils::logError("TagLib could not open file for reading: {}", file.getFullPathName().quoted());

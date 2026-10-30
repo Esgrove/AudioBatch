@@ -11,6 +11,8 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <optional>
+#include <utility>
 
 namespace audiobatch::utils
 {
@@ -25,11 +27,18 @@ enum class TrashResult : std::uint8_t {
 };
 
 /// Captures the cache key before tag reading. Reuse this identity for lookup, delivery and persistence.
-/// Size and modification time cannot detect external edits that deliberately preserve both values.
+/// Native file identifiers and high resolution timestamps reject ordinary same-path replacements.
+/// This is a stale-file guard, not an atomic conditional filesystem operation.
 struct FileIdentity {
     explicit FileIdentity(const juce::File& file);
 
     [[nodiscard]] bool matches(const juce::File& file) const;
+    [[nodiscard]] bool owns(const juce::File& file) const;
+
+    /// Platform device or volume and file identifier, absent when identity capture failed.
+    std::optional<std::pair<std::uint64_t, std::uint64_t>> platformId;
+    /// Nanosecond modification and change times on POSIX, high resolution write time on Windows.
+    std::pair<std::int64_t, std::int64_t> preciseTimes;
 
     /// Absolute path of the file.
     juce::String path;
@@ -38,6 +47,25 @@ struct FileIdentity {
     /// Modification time of the file when the identity was captured, in milliseconds since the epoch.
     std::int64_t modifiedTimeMs;
 };
+
+/// Rendered output whose automatic cleanup can be disabled when recovery cannot move the audio.
+struct OutputTemporaryFile {
+    explicit OutputTemporaryFile(const juce::File& output);
+    ~OutputTemporaryFile();
+    OutputTemporaryFile(const OutputTemporaryFile&) = delete;
+    OutputTemporaryFile& operator=(const OutputTemporaryFile&) = delete;
+    OutputTemporaryFile(OutputTemporaryFile&&) = delete;
+    OutputTemporaryFile& operator=(OutputTemporaryFile&&) = delete;
+    [[nodiscard]] const juce::File& getFile() const;
+    void preserve() const;
+
+private:
+    juce::File file;
+    mutable bool retained {false};
+};
+
+/// Deterministic fault injection at output transaction ownership boundaries.
+using OutputCommitHook = std::function<void(const juce::String&)>;
 
 /// Disposes of a file that a committed output replaces, and returns true when the file is gone.
 using FileDisposer = std::function<bool(const juce::File&)>;
@@ -50,6 +78,7 @@ juce::File getDefaultBrowseDirectory();
     bool overwriteExisting
 );
 juce::String existingOutputMessage(const juce::File& outputFile);
+juce::String resolvedOutputKey(const juce::File& file);
 juce::String fileExtension(const juce::File& file);
 juce::String normalizeExtension(const juce::String& extension);
 juce::String revealInFileManagerLabel();
@@ -68,10 +97,13 @@ void revealFileInFileManager(const juce::File& file);
 void revealParentDirectory(const juce::File& file);
 
 [[nodiscard]] std::expected<void, juce::String> commitTemporaryOutput(
-    const juce::TemporaryFile& temporaryFile,
+    const OutputTemporaryFile& temporaryFile,
     const juce::File& sourceFile,
     const juce::File& outputFile,
     bool overwriteExisting,
-    const FileDisposer& disposeFile = trashFile
+    const FileIdentity& expectedSource,
+    const FileDisposer& disposeFile = trashFile,
+    const OutputCommitHook& hook = {}
 );
+
 }  // namespace audiobatch::utils
