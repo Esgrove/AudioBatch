@@ -314,6 +314,7 @@ fn merge_settings_window(current: &GuiSettings, changed: &GuiSettings) -> GuiSet
         normalize_target_peak_dbfs: current.normalize_target_peak_dbfs,
         normalize_target_lufs: current.normalize_target_lufs,
         show_album_artwork: current.show_album_artwork,
+        hidden_columns: current.hidden_columns.clone(),
         ..changed.clone()
     }
 }
@@ -321,6 +322,22 @@ fn merge_settings_window(current: &GuiSettings, changed: &GuiSettings) -> GuiSet
 #[cfg(test)]
 mod test_settings_merge {
     use super::*;
+
+    #[test]
+    fn audio_settings_preserve_newer_column_preferences() {
+        let current = GuiSettings {
+            hidden_columns: Some(vec![String::from("path")]),
+            ..GuiSettings::default()
+        };
+        let stale = GuiSettings {
+            hidden_columns: Some(vec![String::from("peak_left")]),
+            buffer_size: Some(512),
+            ..GuiSettings::default()
+        };
+        let merged = merge_settings_window(&current, &stale);
+        assert_eq!(merged.hidden_columns, current.hidden_columns);
+        assert_eq!(merged.buffer_size, Some(512));
+    }
 
     #[test]
     fn audio_settings_preserve_both_artwork_toggle_states() {
