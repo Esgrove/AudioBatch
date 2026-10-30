@@ -109,7 +109,30 @@ impl<W: Write + Seek> AiffWriter<W> {
     /// when the file would outgrow the AIFF size fields, or when writing fails.
     #[doc(hidden)]
     pub fn write_planar(&mut self, planes: &[&[f32]]) -> Result<(), AiffError> {
-        self.write_frames(planes, float_to_int32)
+        let bits = u32::from(self.bits_per_sample);
+        self.write_frames(planes, |_, sample| quantize_sample(sample, bits) << (32 - bits))
+    }
+
+    /// Applies one single precision gain multiplication per sample and writes the quantized PCM.
+    /// The observer receives the exact samples an AIFF decoder reads, in frame and channel order,
+    /// so normalization can measure the output without decoding the completed file again.
+    /// Samples are observed before the block is written, so a failed write invalidates those observations.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same layout, size, and output errors as `write_planar`.
+    pub(crate) fn write_planar_with_gain(
+        &mut self,
+        planes: &[&[f32]],
+        gain: f32,
+        mut on_sample: impl FnMut(usize, f32),
+    ) -> Result<(), AiffError> {
+        let bits = u32::from(self.bits_per_sample);
+        self.write_frames(planes, |channel, sample| {
+            let quantized = quantize_sample(sample * gain, bits);
+            on_sample(channel, pcm_to_float(quantized, bits));
+            quantized << (32 - bits)
+        })
     }
 
     /// Appends one block of planar PCM values at the writer's bit depth, one slice per channel,
@@ -125,14 +148,14 @@ impl<W: Write + Seek> AiffWriter<W> {
         let maximum = (1_i32 << (bits - 1)) - 1;
         let minimum = -maximum - 1;
         let shift = 32 - bits;
-        self.write_frames(planes, |value: i32| value.clamp(minimum, maximum) << shift)
+        self.write_frames(planes, |_, value: i32| value.clamp(minimum, maximum) << shift)
     }
 
     /// Appends one block of planar samples, converting each to a 32-bit integer whose high bits are written.
     fn write_frames<T: Copy + Default>(
         &mut self,
         planes: &[&[T]],
-        to_int32: impl Fn(T) -> i32,
+        mut to_int32: impl FnMut(usize, T) -> i32,
     ) -> Result<(), AiffError> {
         if planes.len() != usize::from(self.channels) {
             return Err(AiffError::ChannelCount {
@@ -151,9 +174,9 @@ impl<W: Write + Seek> AiffWriter<W> {
         self.scratch.clear();
         self.scratch.reserve(frames * planes.len() * bytes_per_sample);
         for frame in 0..frames {
-            for plane in planes {
+            for (channel, plane) in planes.iter().enumerate() {
                 let sample = plane.get(frame).copied().unwrap_or_default();
-                let value = to_int32(sample);
+                let value = to_int32(channel, sample);
                 let bytes = value.to_be_bytes();
                 self.scratch.extend(bytes.iter().take(bytes_per_sample));
             }
@@ -205,6 +228,19 @@ pub(crate) fn float_to_int32(sample: f32) -> i32 {
     } else {
         (f64::from(i32::MAX) * sample).round_ties_even() as i32
     }
+}
+
+/// Converts a float to the exact signed PCM integer written at a supported AIFF bit depth.
+/// Rounding takes place at 32 bits before the low bits are discarded, matching `write_planar`.
+#[must_use]
+pub(crate) fn quantize_sample(sample: f32, bits_per_sample: u32) -> i32 {
+    float_to_int32(sample) >> (32 - bits_per_sample)
+}
+
+/// Converts a signed PCM integer at a supported bit depth to the float an AIFF decoder produces.
+#[must_use]
+const fn pcm_to_float(sample: i32, bits_per_sample: u32) -> f32 {
+    sample as f32 / (1_u32 << (bits_per_sample - 1)) as f32
 }
 
 /// Returns the number of sample data bytes for the frame count,
@@ -387,6 +423,104 @@ mod test_aiff_writer {
         writer.write_planar_pcm(&[&[-8_388_608, 8_388_607]]).expect("writes");
         let bytes = writer.finish().expect("finishes").into_inner();
         assert_eq!(bytes.get(54..), Some([0x80, 0, 0, 0x7F, 0xFF, 0xFF].as_slice()));
+    }
+
+    #[test]
+    fn fused_gain_keeps_the_original_scalar_conversion_bytes() {
+        let samples = [
+            -2.0,
+            -1.0,
+            -0.500_015_26,
+            -f32::from_bits(1),
+            -0.0,
+            0.0,
+            f32::from_bits(1),
+            0.123_456_79,
+            0.999_999_94,
+            1.0,
+            2.0,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+            f32::NAN,
+        ];
+        for bits in [16, 24] {
+            for gain in [0.0, -0.0, 0.707, 1.0, 2.0, -2.0, f32::INFINITY, f32::NAN] {
+                let mut writer = AiffWriter::new(Cursor::new(Vec::new()), 1, 44_100, bits).expect("writer");
+                writer
+                    .write_planar_with_gain(&[&samples], gain, |_, _| {})
+                    .expect("writes");
+                let bytes = writer.finish().expect("finishes").into_inner();
+                let expected: Vec<_> = samples
+                    .iter()
+                    .flat_map(|sample| {
+                        float_to_int32(sample * gain)
+                            .to_be_bytes()
+                            .into_iter()
+                            .take(bits as usize / 8)
+                    })
+                    .collect();
+                assert_eq!(
+                    bytes.get(54..54 + expected.len()),
+                    Some(expected.as_slice()),
+                    "{bits} bits, gain {gain}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn observed_quantized_samples_match_the_decoder_bit_for_bit() {
+        let samples = [
+            -2.0,
+            -1.0,
+            -0.500_015_26,
+            -0.123_456_79,
+            -0.0,
+            0.0,
+            f32::from_bits(1),
+            0.123_456_79,
+            0.999_999_94,
+            1.0,
+            2.0,
+            f32::NAN,
+            f32::NEG_INFINITY,
+            f32::INFINITY,
+        ];
+        let directory = tempfile::tempdir().expect("temporary directory");
+        for bits in [16, 24] {
+            let path = directory.path().join(format!("observed-{bits}.aif"));
+            let file = std::fs::File::create(&path).expect("output file");
+            let mut writer = AiffWriter::new(file, 2, 48_000, bits).expect("writer");
+            let mut observed = [Vec::new(), Vec::new()];
+            writer
+                .write_planar_with_gain(&[&samples, &samples], 1.75, |channel, sample| {
+                    observed[channel].push(sample.to_bits());
+                })
+                .expect("writes");
+            writer.finish().expect("finishes");
+            let mut decoder = AudioFileDecoder::open(&path).expect("output decoder");
+            let mut readback = [Vec::new(), Vec::new()];
+            while let Some(chunk) = decoder.next_chunk().expect("decodes") {
+                for (target, samples) in readback.iter_mut().zip(chunk) {
+                    target.extend(samples.iter().map(|sample| sample.to_bits()));
+                }
+            }
+            assert_eq!(observed, readback, "{bits} bits");
+        }
+    }
+
+    #[test]
+    fn fused_gain_rejects_invalid_planes_before_observing_samples() {
+        let mut writer = AiffWriter::new(Cursor::new(Vec::new()), 2, 44_100, 16).expect("writer");
+        assert!(matches!(
+            writer.write_planar_with_gain(&[&[1.0]], 2.0, |_, _| panic!("invalid block was observed")),
+            Err(AiffError::ChannelCount { expected: 2, actual: 1 })
+        ));
+        assert!(matches!(
+            writer.write_planar_with_gain(&[&[1.0], &[]], 2.0, |_, _| panic!("invalid block was observed")),
+            Err(AiffError::ChannelLengths)
+        ));
+        assert_eq!(writer.frames_written(), 0);
     }
 
     #[test]

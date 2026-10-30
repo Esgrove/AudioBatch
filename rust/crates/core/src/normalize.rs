@@ -17,11 +17,12 @@ use std::io::BufWriter;
 use std::path::{Path, PathBuf};
 
 use crate::aiff::{AiffError, AiffWriter, SUPPORTED_BIT_DEPTHS};
-use crate::analysis::{analyze_file, analyze_file_catching_panics};
-use crate::decode::{AudioFileDecoder, DEFAULT_LOSSY_BITS_PER_SAMPLE, DecodeError, is_mp3_path};
+use crate::analysis::{analyze_file, record_from_meter};
+use crate::decode::{AudioFileDecoder, DEFAULT_LOSSY_BITS_PER_SAMPLE, DecodeError, StreamInfo, is_mp3_path};
 use crate::format::{format_error_chain, gain_to_decibels};
 use crate::metadata::copy_metadata;
-use crate::operation::{OperationOutcome, OperationResult, progress_range};
+use crate::meter::{BlockMeter, MeterError, MeterOutput};
+use crate::operation::{OperationResult, progress_range};
 use crate::output_file::{
     FileDisposer, OutputValidationError, SourceIdentity, check_output_path, commit_temporary_output_expected,
     create_temporary_output, dispose_of_copy, trash_disposer, validate_written_audio,
@@ -64,7 +65,7 @@ const DECIBEL_FLOOR: f64 = -1000.0;
 /// Share of a file's progress taken by analyzing a source that changed since its last analysis.
 const SOURCE_ANALYSIS_PROGRESS_SHARE: f32 = 0.3;
 
-/// Progress at which rendering ends and analyzing the output begins.
+/// Progress reserved for rendering before metadata, validation, and committing complete.
 const RENDER_PROGRESS_END: f32 = 0.8;
 
 /// Steps of the output bit depth that a full-scale sample may move by while a file still counts as at its target.
@@ -102,6 +103,9 @@ enum NormalizationRenderError {
     /// Writing or finishing the normalized audio failed.
     #[error("Failed while writing normalized audio data")]
     Write(#[source] AiffError),
+    /// The output meter could not be configured before rendering.
+    #[error(transparent)]
+    Meter(#[from] MeterError),
     /// The operation was cancelled before it committed any output.
     #[error("{CANCELLED_MESSAGE}")]
     Cancelled,
@@ -134,11 +138,11 @@ pub struct NormalizationOptions {
     pub dispose: FileDisposer,
 }
 
-/// What rendering wrote, for validating the output.
+/// Properties and measurements of the exact quantized samples written during rendering.
 struct RenderedAudio {
-    channels: u32,
-    sample_rate: u32,
+    info: StreamInfo,
     frames: u64,
+    measurements: MeterOutput,
     notice: Option<String>,
 }
 
@@ -171,7 +175,7 @@ impl fmt::Debug for NormalizationOptions {
 impl RenderedAudio {
     /// Checks that the written file reads back as what was rendered.
     fn validate(&self, path: &Path) -> Result<(), OutputValidationError> {
-        validate_written_audio(path, self.channels, self.sample_rate, self.frames)
+        validate_written_audio(path, self.info.channels, self.info.sample_rate, self.frames)
     }
 }
 
@@ -272,7 +276,7 @@ pub fn normalization_gain(
 /// Applies a scalar single precision gain, replacing the output while reusing its allocation.
 ///
 /// Each sample uses exactly one `f32` multiplication, without clipping or sanitizing nonfinite values.
-/// Public only so benchmarks exercise the production gain kernel.
+/// Public only so benchmarks measure the gain operation separately from quantization.
 #[doc(hidden)]
 pub fn apply_gain(samples: &[f32], gain: f32, output: &mut Vec<f32>) {
     output.clear();
@@ -300,14 +304,14 @@ pub(crate) fn output_bit_depth(record: &AnalysisRecord) -> u32 {
     }
 }
 
-/// Rewrites a file to the target level in the options, then analyzes the result.
+/// Rewrites a file to the target level in the options, measuring the quantized result while rendering.
 ///
 /// Fails without writing anything when the output path already exists and is not the source,
 /// unless `overwrite_existing` is set, in which case the existing output is disposed of.
 /// When the file changed on disk since it was analyzed, it is analyzed again before computing the gain.
 /// A call cancelled before its output is committed fails and leaves the original untouched.
 /// Source packets that fail to decode in isolation are written as silence and reported in the notice.
-/// Progress of the whole file, through any source analysis, the render, and the output analysis,
+/// Progress of the whole file, through any source analysis, the render, and the commit,
 /// is reported to `on_progress`.
 /// Public only for the benchmarks, the applications normalize through `NormalizeCoordinator`.
 #[doc(hidden)]
@@ -418,35 +422,9 @@ pub fn normalize_file(
         return fail(source, error);
     }
 
-    analyze_normalized_output(source, &output, rendered.notice, on_progress)
-}
-
-/// Reanalyzes committed output and distinguishes a completed write from a failed readback.
-fn analyze_normalized_output(
-    source: &Path,
-    output: &Path,
-    notice: Option<String>,
-    on_progress: &mut dyn FnMut(f32),
-) -> OperationResult {
-    let analysis = analyze_file_catching_panics(
-        output,
-        &|| false,
-        &mut progress_range(on_progress, RENDER_PROGRESS_END, 1.0),
-    );
-    if analysis.has_error() {
-        let error = format!(
-            "The file was normalized, but re-analysis failed: {}",
-            analysis.error_message
-        );
-        return OperationResult {
-            source: source.to_path_buf(),
-            outcome: OperationOutcome::CommittedButUnanalyzed {
-                output: analysis,
-                error,
-            },
-        };
-    }
-    succeed(source, analysis, notice)
+    let analysis = record_from_meter(&output, &rendered.info, rendered.frames, rendered.measurements);
+    on_progress(1.0);
+    succeed(source, analysis, rendered.notice)
 }
 
 /// Streams the source through the AIFF writer packet by packet, applying the gain.
@@ -462,8 +440,11 @@ fn render_normalized_audio(
     let mut decoder = AudioFileDecoder::open(&record.path).map_err(NormalizationRenderError::Open)?;
     let channels = decoder.info().channels;
     let sample_rate = decoder.info().sample_rate;
-    let mut writer = AiffWriter::new(BufWriter::new(file), channels, sample_rate, output_bit_depth(record))?;
+    let bits_per_sample = output_bit_depth(record);
+    let mut meter = BlockMeter::new(channels, sample_rate, Some(record.length_in_samples))?;
+    let mut writer = AiffWriter::new(BufWriter::new(file), channels, sample_rate, bits_per_sample)?;
     let total_frames = record.length_in_samples.max(1);
+    let mut quantized: Vec<Vec<f32>> = vec![Vec::new(); channels as usize];
     let mut scaled: Vec<Vec<f32>> = vec![Vec::new(); channels as usize];
     loop {
         if is_cancelled() {
@@ -472,19 +453,38 @@ fn render_normalized_audio(
         let Some(chunk) = decoder.next_chunk()? else {
             break;
         };
+        let frames = chunk.first().map_or(0, Vec::len);
+        for samples in &mut quantized {
+            samples.clear();
+            samples.reserve(frames);
+        }
         for (target, samples) in scaled.iter_mut().zip(chunk) {
             apply_gain(samples, gain, target);
         }
         let planes: Vec<&[f32]> = scaled.iter().map(Vec::as_slice).collect();
-        writer.write_planar(&planes).map_err(NormalizationRenderError::Write)?;
+        writer
+            .write_planar_with_gain(&planes, 1.0, |channel, sample| {
+                quantized
+                    .get_mut(channel)
+                    .expect("writer channels match the quantized planes")
+                    .push(sample);
+            })
+            .map_err(NormalizationRenderError::Write)?;
+        meter.push(&quantized);
         on_progress((writer.frames_written() as f64 / total_frames as f64).min(1.0) as f32);
     }
     let frames = writer.frames_written();
     writer.finish().map_err(NormalizationRenderError::Write)?;
     Ok(RenderedAudio {
-        channels,
-        sample_rate,
+        info: StreamInfo {
+            channels,
+            sample_rate,
+            bits_per_sample,
+            format_name: "AIFF file".to_string(),
+            expected_frames: Some(frames),
+        },
         frames,
+        measurements: meter.finish(frames),
         notice: decoder.failures().notice(),
     })
 }
@@ -528,6 +528,10 @@ fn path_key(path: &Path) -> String {
         text.into_owned()
     }
 }
+
+#[cfg(test)]
+#[path = "normalize_measurement_tests.rs"]
+mod test_normalized_measurements;
 
 #[cfg(test)]
 mod test_apply_gain {
@@ -878,7 +882,7 @@ mod test_normalize_file {
             output
                 .overloads
                 .as_ref()
-                .expect("reanalyzed output overloads")
+                .expect("rendered output overloads")
                 .matches_stream(output.sample_rate, output.length_in_samples, output.channels,)
         );
         let peak = gain_to_decibels(f64::from(output.overall_peak.abs()), DECIBEL_FLOOR);
@@ -1068,37 +1072,6 @@ mod test_normalize_file {
                 assert_eq!(fs::read(output).expect("output"), b"existing");
             }
             assert!(disposed.lock().expect("disposed").is_empty());
-        }
-    }
-
-    #[test]
-    fn committed_output_remains_authoritative_when_readback_fails() {
-        let directory = tempfile::tempdir().expect("temporary directory");
-        let source = directory.path().join("source.wav");
-        let output = directory.path().join("output.aif");
-        for damaged in [false, true] {
-            if damaged {
-                fs::write(&output, b"damaged committed output").expect("damaged output");
-            }
-
-            let result = analyze_normalized_output(&source, &output, None, &mut |_| {});
-
-            assert_eq!(result.source, source);
-            assert!(matches!(
-                &result.outcome,
-                OperationOutcome::CommittedButUnanalyzed { .. }
-            ));
-            let analysis = result.output().expect("committed output");
-            assert_eq!(analysis.path, output);
-            assert!(analysis.has_error());
-            assert!(
-                result
-                    .error()
-                    .is_some_and(|error| error.starts_with("The file was normalized, but re-analysis failed:"))
-            );
-            if damaged {
-                assert_eq!(fs::read(&output).expect("retained output"), b"damaged committed output");
-            }
         }
     }
 

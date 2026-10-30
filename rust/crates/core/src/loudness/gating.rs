@@ -43,14 +43,23 @@ impl LoudnessMeter {
     pub fn push(&mut self, planes: &[&[f32]]) -> f64 {
         let frames = planes.first().map_or(0, |plane| plane.len());
         let start = self.next * self.block_size;
-        let expired: f64 = if frames == self.block_size {
+        let retained: f64 = if frames == self.block_size {
             0.0
         } else {
-            self.boundary_energy
-                .get(start..start + frames)
+            let other_blocks: f64 = self
+                .energies
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| *index != self.next)
+                .map(|(_, &energy)| energy)
+                .sum();
+            let suffix: f64 = self
+                .boundary_energy
+                .get(start + frames..start + self.block_size)
                 .expect("aligned block fits boundary storage")
                 .iter()
-                .sum()
+                .sum();
+            other_blocks + suffix
         };
         let energy = self.filter.energy_with_frames(
             planes,
@@ -80,7 +89,7 @@ impl LoudnessMeter {
             energy_to_loudness(self.energies.iter().sum::<f64>() / (self.block_size * 30) as f64)
         } else {
             // A partial update does not create an incomplete integrated gating block.
-            energy_to_loudness((self.energies.iter().sum::<f64>() - expired + energy) / (self.block_size * 30) as f64)
+            energy_to_loudness((retained + energy) / (self.block_size * 30) as f64)
         }
     }
 
@@ -143,6 +152,17 @@ mod test_gates {
             meter.push(&[&quiet]);
         }
         assert_eq!(meter.integrated, [] as [f64; 0]);
+    }
+
+    #[test]
+    fn partial_window_retains_a_quiet_suffix_after_a_loud_prefix_expires() {
+        let mut meter = LoudnessMeter::new(1, 8_000, None);
+        meter.energies[0] = 1e20;
+        meter.boundary_energy[0] = 1e20;
+        meter.boundary_energy[1] = 1.0;
+        let measured = meter.push(&[&[0.0]]);
+        let expected = energy_to_loudness(1.0 / 24_000.0);
+        assert_eq!(measured.to_bits(), expected.to_bits());
     }
 
     #[test]
