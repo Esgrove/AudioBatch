@@ -160,7 +160,7 @@ private:
     void handleNormalizeEvents(std::vector<OperationEvent<AudioNormalizationResult>> events);
     void handleProcessingComplete(int totalFiles, int runId);
     void handleProcessingEvents(std::vector<OperationEvent<PluginProcessingResult>> events);
-    void handleProcessingStartError(const juce::String& errorMessage);
+    void handleProcessingStartError(const juce::String& errorMessage, int runId);
 
     [[nodiscard]] bool isCurrentAnalysisRun(int runId) const noexcept;
     [[nodiscard]] bool isCurrentNormalizationRun(int runId) const noexcept;

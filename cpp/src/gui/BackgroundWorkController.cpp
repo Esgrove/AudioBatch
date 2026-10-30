@@ -528,11 +528,12 @@ void BackgroundWorkController::handleProcessingEvents(std::vector<OperationEvent
     }
 }
 
-/// Ends a processing pass whose workers could not start, and reports the error.
-void BackgroundWorkController::handleProcessingStartError(const juce::String& errorMessage)
+/// Reports a failed processing attempt only while it is the latest attempt and no other work owns the view.
+/// A failed start already leaves the controller idle before this queued delivery reaches the message thread.
+void BackgroundWorkController::handleProcessingStartError(const juce::String& errorMessage, const int runId)
 {
-    if (isProcessingInProgress()) {
-        work = IdleWork {};
+    if (pluginCoordinator.getCurrentRunId() != runId || !isIdle() || runId == discardedProcessingRunId) {
+        return;
     }
     listener.processingStartFailed(errorMessage);
 }
