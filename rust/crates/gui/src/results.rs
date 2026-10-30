@@ -559,7 +559,14 @@ impl ResultsDelegate {
     pub fn replace_after_operation(&mut self, source: &Path, mut output: AnalysisRecord, message: Option<RowMessage>) {
         let output_path = output.path.clone();
         if output_path != source {
+            let was_anchor = self.selected.as_deref() == Some(source);
+            let was_extra = self.extra_selected.contains(source);
             self.remove(source);
+            if was_anchor {
+                self.set_selected_path(Some(output_path.clone()));
+            } else if was_extra && self.selected.as_ref() != Some(&output_path) {
+                self.extra_selected.insert(output_path.clone());
+            }
         }
         self.merge_custom_gain(&mut output);
         if let Some(row) = self.row_mut(&output_path) {
@@ -1634,6 +1641,56 @@ mod test_operation_rows {
         delegate.sort = None;
         delegate.set_rows(paths.iter().map(|path| ResultRow::from_record(record(path))).collect());
         delegate
+    }
+
+    #[test]
+    fn conversion_preserves_the_full_selection_in_either_completion_order() {
+        for anchor_first in [false, true] {
+            let mut delegate = delegate_with(&["/a.wav", "/b.wav", "/unselected.wav"]);
+            delegate.select_only(Some(PathBuf::from("/a.wav")));
+            delegate.toggle_row(delegate.index_of(Path::new("/b.wav")).expect("extra row"));
+            let sources = if anchor_first { ["a", "b"] } else { ["b", "a"] };
+            for source in sources {
+                delegate.replace_after_operation(
+                    Path::new(&format!("/{source}.wav")),
+                    record(&format!("/{source}.aif")),
+                    None,
+                );
+            }
+            delegate.sort_rows();
+            assert_eq!(delegate.selected_paths(), ["/a.aif", "/b.aif"].map(PathBuf::from));
+            assert_eq!(delegate.selected_index(), delegate.index_of(Path::new("/a.aif")));
+        }
+    }
+
+    #[test]
+    fn listed_output_and_mixed_failures_preserve_selection_without_duplicates() {
+        let mut delegate = delegate_with(&["/a.aif", "/a.wav", "/b.wav", "/c.wav"]);
+        delegate.select_only(Some(PathBuf::from("/b.wav")));
+        delegate.select_all();
+        delegate.fail_operation(Path::new("/b.wav"), "Output exists");
+        delegate.replace_after_operation(Path::new("/a.wav"), record("/a.aif"), None);
+        delegate.replace_after_operation(Path::new("/c.wav"), record("/c.aif"), None);
+        delegate.sort_rows();
+        assert_eq!(
+            delegate.selected_paths(),
+            ["/b.wav", "/a.aif", "/c.aif"].map(PathBuf::from)
+        );
+        assert_eq!(delegate.len(), 3);
+        assert!(
+            delegate
+                .row_for(Path::new("/b.wav"))
+                .expect("failed source")
+                .shows_error()
+        );
+    }
+
+    #[test]
+    fn unselected_conversion_does_not_extend_the_selection() {
+        let mut delegate = delegate_with(&["/a.wav", "/b.wav"]);
+        delegate.select_only(Some(PathBuf::from("/a.wav")));
+        delegate.replace_after_operation(Path::new("/b.wav"), record("/b.aif"), None);
+        assert_eq!(delegate.selected_paths(), [PathBuf::from("/a.wav")]);
     }
 
     #[test]
