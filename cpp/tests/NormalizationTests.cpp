@@ -14,10 +14,12 @@
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/StringFormat.h"
+#include <system_error>
 #include <type_traits>
 
 #include <algorithm>
 #include <atomic>
+#include <filesystem>
 #include <limits>
 #include <memory>
 #include <utility>
@@ -225,6 +227,38 @@ private:
     /// so it covers the cleanup of a finished temporary output.
     void runLateCancellationTests()
     {
+        beginTest("Replacing a source during rendering preserves newer source and approved output");
+        for (const auto* fixture : {"sine_stereo_44100_16.wav", "sine_stereo_44100_16.aif"}) {
+            const TemporaryDirectory directory;
+            const auto source = directory.copyFixture(fixture);
+            const auto output = getNormalizationOutputFile(source);
+            const auto record = analyzeFile(source);
+            if (source != output) {
+                expect(output.replaceWithText("existing"));
+            }
+            auto options = testNormalizationOptions();
+            options.overwriteExisting = true;
+            int disposed = 0;
+            options.disposeFile = [&disposed](const juce::File&) {
+                ++disposed;
+                return false;
+            };
+            bool replaced = false;
+            const auto result = normalizeFile(record, options, {}, [&](const float fraction) {
+                if (fraction >= 0.8f && !replaced) {
+                    expect(source.replaceWithText("external"));
+                    replaced = true;
+                }
+            });
+            expect(replaced);
+            expect(outcomeError(result.outcome).contains("source file changed"), outcomeError(result.outcome));
+            expectEquals(disposed, 0);
+            expectEquals(source.loadFileAsString(), juce::String("external"));
+            if (source != output) {
+                expectEquals(output.loadFileAsString(), juce::String("existing"));
+            }
+        }
+
         beginTest("Cancelling at any later check leaves the source unchanged and removes the temporary output");
         std::vector<int> allowedCheckCounts;
         {
@@ -328,6 +362,37 @@ private:
             expectEquals(conflicts.size(), 1);
             expect(conflicts.contains(root.getChildFile("song.mp3").getFullPathName()));
         }
+
+#if !JUCE_WINDOWS
+        beginTest("Aliased parents reserve the same absent output with deterministic in-place priority");
+        {
+            const TemporaryDirectory directory;
+            const auto real = directory.getChildFile("real");
+            const auto alias = directory.getChildFile("alias");
+            expect(real.createDirectory());
+            std::error_code error;
+            std::filesystem::create_directory_symlink(
+                real.getFullPathName().toStdString(), alias.getFullPathName().toStdString(), error
+            );
+            expect(!error, juce::String(error.message()));
+            std::vector records {
+                recordForPath(real.getChildFile("song.wav").getFullPathName()),
+                recordForPath(alias.getChildFile("song.flac").getFullPathName()),
+            };
+            auto conflicts = findBatchOutputConflicts(records);
+            expectEquals(conflicts.size(), 1);
+            expect(conflicts.contains(real.getChildFile("song.wav").getFullPathName()));
+            std::ranges::reverse(records);
+            expect(findBatchOutputConflicts(records) == conflicts);
+            records.push_back(recordForPath(real.getChildFile("song.aif").getFullPathName()));
+            conflicts = findBatchOutputConflicts(records);
+            expectEquals(conflicts.size(), 2);
+            expect(!conflicts.contains(real.getChildFile("song.aif").getFullPathName()));
+            std::ranges::reverse(records);
+            expect(findBatchOutputConflicts(records) == conflicts);
+            expect(!real.getChildFile("song.aif").exists());
+        }
+#endif
 
         if (!juce::File::areFileNamesCaseSensitive()) {
             beginTest(

@@ -68,6 +68,34 @@ public:
     {
         const TemporaryDirectory directory;
 
+        beginTest("Replacing a source during final output writing preserves newer source and approved destination");
+        {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", "external.wav");
+            const auto output = getProcessingOutputFile(source);
+            expect(output.replaceWithText("existing"));
+            TestPlugin plugin({});
+            auto options = makeOptions({&plugin});
+            options.overwriteExisting = true;
+            int disposed = 0;
+            options.disposeFile = [&disposed](const juce::File&) {
+                ++disposed;
+                return false;
+            };
+            bool replaced = false;
+            const auto result
+                = processFileWithPlugins(analyzeFile(source), options, chainOf(plugin), {}, [&](const float fraction) {
+                      if (fraction >= 0.85f && !replaced) {
+                          expect(source.replaceWithText("external"));
+                          replaced = true;
+                      }
+                  });
+            expect(replaced);
+            expect(outcomeError(result.outcome).contains("source file changed"), outcomeError(result.outcome));
+            expectEquals(disposed, 0);
+            expectEquals(source.loadFileAsString(), juce::String("external"));
+            expectEquals(output.loadFileAsString(), juce::String("existing"));
+        }
+
         beginTest("A plugin whose process call fails fails the file and leaves the source unchanged");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "process_failure.aif");

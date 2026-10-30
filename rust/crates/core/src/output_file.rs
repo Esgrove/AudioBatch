@@ -1,16 +1,17 @@
 //! Writing processed output next to its source without losing either file on failure.
 //!
 //! Output is rendered into a hidden temporary file in the destination folder,
-//! then renamed into place, which is atomic within one folder.
-//! A file being replaced is first renamed to a hidden backup, so a failed commit can put it back.
+//! then published without replacing an unapproved destination entry.
+//! A file being replaced is first linked to a hidden backup, so a failed commit can put it back.
 //! Files that leave the folder go through a `FileDisposer`,
 //! which moves them to the system trash unless a caller such as a test passes another one.
 
 use std::fs;
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use tempfile::NamedTempFile;
 #[cfg(target_os = "macos")]
@@ -18,7 +19,10 @@ use trash::macos::{DeleteMethod, TrashContextExtMacos};
 
 use crate::decode::{AudioFileDecoder, DecodeError};
 
+#[cfg(test)]
+mod transaction_tests;
 #[cfg(windows)]
+#[path = "output_file/windows_recycle_bin.rs"]
 mod windows_recycle_bin;
 
 /// Highest number tried for a backup name when earlier backups are still around.
@@ -70,6 +74,9 @@ pub enum OutputValidationError {
 /// A failure to create or commit a rendered output safely.
 #[derive(Debug, thiserror::Error)]
 pub enum OutputError {
+    /// The source no longer represents the file that was rendered.
+    #[error("The source file changed while audio was being rendered. The original file was left unchanged.")]
+    SourceChanged,
     /// The destination cannot be replaced.
     #[error(transparent)]
     Path(#[from] OutputPathError),
@@ -95,7 +102,7 @@ pub enum OutputError {
     #[error("Could not move the original audio file to the system trash")]
     DisposeSource,
     /// The original was lost during replacement, but the rendered file was recovered.
-    #[error("Could not replace the original file. The new audio was kept as {}", file_name(.path))]
+    #[error("Could not publish the new audio. The new audio was kept as {}", .path.display())]
     Recovered {
         /// Location of the recovered audio.
         path: PathBuf,
@@ -106,6 +113,85 @@ pub enum OutputError {
     /// The original was lost and the rendered file could not be recovered.
     #[error("Could not replace the original file, and the new audio could not be kept")]
     RecoveryFailed(#[source] std::io::Error),
+}
+
+/// Identity captured before analysis and rendering, including the platform file identifier.
+/// Validation narrows external-edit races but is not an atomic compare-and-swap of a directory entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceIdentity {
+    length: u64,
+    modified: SystemTime,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    changed: (i64, i64),
+    #[cfg(windows)]
+    handle: Arc<same_file::Handle>,
+}
+
+impl SourceIdentity {
+    /// Captures an existing regular file, failing closed when its identity cannot be read.
+    ///
+    /// # Errors
+    ///
+    /// Returns the underlying filesystem error or a non-file error.
+    pub fn capture(path: &Path) -> std::io::Result<Self> {
+        let file = fs::File::open(path)?;
+        let metadata = file.metadata()?;
+        // The safe handle wrapper captures Windows volume and file index from the same open file.
+        #[cfg(windows)]
+        let handle = Arc::new(same_file::Handle::from_file(file)?);
+        if !metadata.is_file() {
+            return Err(std::io::Error::other("source is not a regular file"));
+        }
+        Ok(Self {
+            length: metadata.len(),
+            modified: metadata.modified()?,
+            #[cfg(unix)]
+            device: metadata.dev(),
+            #[cfg(unix)]
+            inode: metadata.ino(),
+            #[cfg(unix)]
+            changed: (metadata.ctime(), metadata.ctime_nsec()),
+            #[cfg(windows)]
+            handle,
+        })
+    }
+
+    /// Refuses a missing, modified, or atomically replaced source before adopting tags or destroying files.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SourceChanged` when the expected bytes are no longer represented by this path.
+    pub fn validate(&self, path: &Path) -> Result<(), OutputError> {
+        if Self::capture(path).as_ref().is_ok_and(|actual| actual == self) {
+            Ok(())
+        } else {
+            Err(OutputError::SourceChanged)
+        }
+    }
+
+    /// Compares object identity and content stats after a link or rename changed its status time.
+    fn owns(&self, path: &Path) -> bool {
+        Self::capture(path).is_ok_and(|actual| {
+            self.length == actual.length && self.modified == actual.modified && {
+                #[cfg(unix)]
+                {
+                    self.device == actual.device && self.inode == actual.inode
+                }
+                #[cfg(windows)]
+                {
+                    self.handle == actual.handle
+                }
+                #[cfg(not(any(unix, windows)))]
+                {
+                    false
+                }
+            }
+        })
+    }
 }
 
 /// Disposes of a file, returning true when the file is gone afterwards, including when it did not exist.
@@ -266,68 +352,150 @@ pub fn dispose_of_copy(path: &Path, dispose: &FileDisposer) -> bool {
 ///
 /// When the output path is the source itself, the source is replaced in place.
 /// Otherwise an output path that fails `check_output_path` fails the commit,
-/// and a file allowed to be overwritten is renamed to a hidden backup next to it first.
-/// After the output is in place, a source with a different path is disposed of,
-/// and when that fails the output is removed again and the backup is renamed back,
-/// so the folder is left as it was.
+/// and a file allowed to be overwritten is linked to an exclusively claimed hidden backup first.
+/// After publication, a source with a different path is disposed of only while its expected identity still matches.
+/// A failed disposal removes only the transaction's owned output and restores the backup into an empty entry.
+/// Concurrent occupants are left untouched, with the backup and rendered audio retained for recovery.
 /// The backup is disposed of last, once everything else succeeded.
 ///
 /// # Errors
 ///
-/// Returns the user-facing message on failure, and the temporary file is removed.
-pub fn commit_temporary_output(
+/// Returns the user-facing failure, retaining completed audio whenever rollback cannot restore the folder.
+#[cfg(test)]
+fn commit_temporary_output(
     temporary: NamedTempFile,
     source: &Path,
     output: &Path,
     overwrite_existing: bool,
     dispose: &FileDisposer,
 ) -> Result<(), OutputError> {
+    let expected = SourceIdentity::capture(source).map_err(|_| OutputError::SourceChanged)?;
+    commit_temporary_output_expected(temporary, source, output, overwrite_existing, dispose, &expected)
+}
+
+/// Commits only the source identity captured before rendering.
+///
+/// Publication and restoration never replace an occupied destination.
+/// File identity checks immediately precede destructive path operations,
+/// but an external writer can still race the final check and use on filesystems without conditional unlink.
+///
+/// # Errors
+///
+/// Returns a source, publication, or disposal failure without deleting an unowned output.
+pub fn commit_temporary_output_expected(
+    temporary: NamedTempFile,
+    source: &Path,
+    output: &Path,
+    overwrite_existing: bool,
+    dispose: &FileDisposer,
+    expected: &SourceIdentity,
+) -> Result<(), OutputError> {
+    commit_with_hook(
+        temporary,
+        source,
+        output,
+        overwrite_existing,
+        dispose,
+        expected,
+        &|_| {},
+    )
+}
+
+/// Runs the transaction with a deterministic fault seam at its ownership transitions.
+fn commit_with_hook(
+    temporary: NamedTempFile,
+    source: &Path,
+    output: &Path,
+    overwrite_existing: bool,
+    dispose: &FileDisposer,
+    expected: &SourceIdentity,
+    hook: &dyn Fn(&str),
+) -> Result<(), OutputError> {
     let replacing_source = output == source;
+    expected.validate(source)?;
     check_output_path(source, output, overwrite_existing)?;
 
+    // Synchronize before moving any approved occupant aside.
+    temporary.as_file().sync_all().map_err(OutputError::Sync)?;
     let backup = if !replacing_source && output.exists() {
-        // Renaming onto a taken backup name would overwrite an earlier backup, so a full set of backups fails.
-        let Some(path) = backup_path(output) else {
-            return Err(OutputError::BackupNamesExhausted);
-        };
-        fs::rename(output, &path).map_err(OutputError::Backup)?;
-        Some(path)
+        let identity = SourceIdentity::capture(output).map_err(OutputError::Backup)?;
+        let path = claim_backup(output, &identity, hook)?;
+        Some((path, identity))
     } else {
         None
     };
-
-    // The data reaches the disk before the rename, so a power loss cannot leave an empty file in place.
-    if let Err(error) = temporary.as_file().sync_all() {
-        restore_backup(backup.as_deref(), output);
-        return Err(OutputError::Sync(error));
-    }
-
-    if let Err(error) = temporary.persist(output) {
-        restore_backup(backup.as_deref(), output);
-        if replacing_source && !source.exists() && error.file.path().is_file() {
-            return Err(keep_new_audio_after_lost_original(error.file, output, error.error));
+    hook("before_publish");
+    if let Err(error) = expected.validate(source) {
+        restore_backup(backup.as_ref(), output);
+        if backup.as_ref().is_some_and(|(_, identity)| !identity.owns(output)) {
+            return Err(keep_new_audio_after_lost_original(
+                temporary,
+                output,
+                std::io::Error::other(error),
+            ));
         }
-        return Err(if replacing_source {
-            OutputError::Replace(error.error)
-        } else {
-            OutputError::Persist(error.error)
-        });
+        return Err(error);
     }
-
-    if !replacing_source && source.is_file() && !dispose(source) {
-        if let Err(error) = fs::remove_file(output) {
-            tracing::error!("Failed to delete file {}: {error}", output.display());
+    let rendered_identity = SourceIdentity::capture(temporary.path()).ok();
+    if replacing_source {
+        if let Err(error) = temporary.persist(output) {
+            if error.file.path().is_file() {
+                return Err(keep_new_audio_after_lost_original(error.file, output, error.error));
+            }
+            return Err(OutputError::Replace(error.error));
         }
-        restore_backup(backup.as_deref(), output);
-        return Err(OutputError::DisposeSource);
+        return Ok(());
+    }
+    // Retain the temporary entry until disposal settles, so a failed rollback can recover rendered audio too.
+    if let Err(error) = fs::hard_link(temporary.path(), output) {
+        restore_backup(backup.as_ref(), output);
+        if temporary.path().is_file() {
+            return Err(keep_new_audio_after_lost_original(temporary, output, error));
+        }
+        return Err(OutputError::Persist(error));
     }
 
-    if let Some(backup) = backup.filter(|backup| backup.is_file())
-        && !dispose(&backup)
+    if !replacing_source {
+        hook("before_dispose");
+        let source_check = expected.validate(source);
+        let output_owned = rendered_identity.as_ref().is_some_and(|identity| identity.owns(output));
+        if source_check.is_err() || !output_owned || !dispose(source) {
+            hook("before_rollback");
+            if rendered_identity.as_ref().is_some_and(|identity| identity.owns(output))
+                && let Err(error) = fs::remove_file(output)
+            {
+                tracing::error!("Failed to delete owned output {}: {error}", output.display());
+            }
+            restore_backup(backup.as_ref(), output);
+            if backup.as_ref().is_some_and(|(_, identity)| !identity.owns(output))
+                || (output.exists()
+                    && !rendered_identity.as_ref().is_some_and(|identity| identity.owns(output))
+                    && backup.is_none())
+            {
+                return Err(keep_new_audio_after_lost_original(
+                    temporary,
+                    output,
+                    std::io::Error::other("rollback destination changed"),
+                ));
+            }
+            return Err(source_check.err().unwrap_or(OutputError::DisposeSource));
+        }
+    }
+
+    if !rendered_identity.as_ref().is_some_and(|identity| identity.owns(output)) {
+        return Err(keep_new_audio_after_lost_original(
+            temporary,
+            output,
+            std::io::Error::other("published output changed during disposal"),
+        ));
+    }
+    if let Some((path, identity)) = backup
+        && identity.owns(&path)
+        && !dispose(&path)
     {
         tracing::warn!(
             "Could not move the replaced output to the system trash, it was kept as {}",
-            backup.display()
+            path.display()
         );
     }
     Ok(())
@@ -356,44 +524,71 @@ fn keep_new_audio_after_lost_original(temporary: NamedTempFile, output: &Path, s
         .extension()
         .map(|extension| format!(".{}", extension.to_string_lossy()))
         .unwrap_or_default();
-    let kept = std::iter::once(format!("{stem} (recovered){extension}"))
+    let mut temporary = temporary;
+    for kept in std::iter::once(format!("{stem} (recovered){extension}"))
         .chain((2..=MAXIMUM_BACKUP_INDEX).map(|index| format!("{stem} (recovered){index}{extension}")))
         .map(|name| output.with_file_name(name))
-        .find(|candidate| !candidate.exists());
-    if let Some(kept) = kept
-        && temporary.persist_noclobber(&kept).is_ok()
     {
-        tracing::error!(
-            "The original file {} was removed while being replaced, the new audio was kept as {}",
-            output.display(),
-            kept.display()
-        );
-        return OutputError::Recovered { path: kept, source };
+        match temporary.persist_noclobber(&kept) {
+            Ok(_) => return OutputError::Recovered { path: kept, source },
+            Err(error) => {
+                let occupied = error.error.kind() == std::io::ErrorKind::AlreadyExists;
+                temporary = error.file;
+                if !occupied {
+                    break;
+                }
+            }
+        }
     }
-    tracing::error!(
-        "The original file {} was removed while being replaced",
-        output.display()
-    );
-    OutputError::RecoveryFailed(source)
+    // Disable automatic cleanup even if moving to a friendly recovery name failed.
+    let path = temporary.path().to_path_buf();
+    let temporary_path = temporary.into_temp_path();
+    if let Err(error) = temporary_path.keep() {
+        // Persist errors retain ownership of the path. Do not let its destructor remove the audio.
+        std::mem::forget(error.path);
+    }
+    tracing::error!("The rendered audio was retained at {}", path.display());
+    OutputError::Recovered { path, source }
 }
 
-/// Returns an unused hidden backup path next to the output,
-/// or `None` when every backup name up to the highest index is taken.
-fn backup_path(output: &Path) -> Option<PathBuf> {
+/// Atomically reserves a backup entry with a hard link before removing the approved output.
+/// No existing backup can be overwritten, including a dangling symbolic link.
+fn claim_backup(output: &Path, identity: &SourceIdentity, hook: &dyn Fn(&str)) -> Result<PathBuf, OutputError> {
     let name = file_name(output);
-    std::iter::once(output.with_file_name(format!(".{name}.backup")))
+    for path in std::iter::once(output.with_file_name(format!(".{name}.backup")))
         .chain((1..=MAXIMUM_BACKUP_INDEX).map(|index| output.with_file_name(format!(".{name}.backup.{index}"))))
-        .find(|candidate| !candidate.exists())
+    {
+        hook("before_backup_claim");
+        match fs::hard_link(output, &path) {
+            Ok(()) => {
+                if !identity.owns(output) || !identity.owns(&path) {
+                    return Err(OutputError::SourceChanged);
+                }
+                fs::remove_file(output).map_err(OutputError::Backup)?;
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(OutputError::Backup(error)),
+        }
+    }
+    Err(OutputError::BackupNamesExhausted)
 }
 
-/// Renames the backup back to the output path, when there is one.
-fn restore_backup(backup: Option<&Path>, output: &Path) {
-    let Some(backup) = backup.filter(|backup| backup.is_file()) else {
+/// Restores only an owned backup into an empty destination, retaining it on every failure.
+fn restore_backup(backup: Option<&(PathBuf, SourceIdentity)>, output: &Path) {
+    let Some((backup, identity)) = backup else {
         return;
     };
-    if fs::rename(backup, output).is_err() {
+    if !identity.owns(backup) {
+        return;
+    }
+    if fs::hard_link(backup, output).is_ok() {
+        if identity.owns(backup) {
+            let _ = fs::remove_file(backup);
+        }
+    } else {
         tracing::error!(
-            "Could not restore the previous output {} from its backup {}",
+            "Could not restore {}. The previous output was kept at {}",
             output.display(),
             backup.display()
         );
@@ -679,7 +874,10 @@ mod test_commit_temporary_output {
 
         assert_eq!(
             error.to_string(),
-            "Could not replace the original file. The new audio was kept as song (recovered)2.aif"
+            format!(
+                "Could not publish the new audio. The new audio was kept as {}",
+                directory.path().join("song (recovered)2.aif").display()
+            )
         );
         assert_eq!(
             fs::read(directory.path().join("song (recovered)2.aif")).expect("reads"),

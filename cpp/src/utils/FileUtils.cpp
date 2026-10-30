@@ -7,8 +7,16 @@
 
 #include "utils/Log.h"
 #include "utils/StringFormat.h"
+#include <system_error>
 
+#include <cstdint>
 #include <expected>
+#include <filesystem>
+#include <optional>
+#include <utility>
+#if !JUCE_WINDOWS
+#include <sys/stat.h>
+#endif
 
 #if JUCE_WINDOWS
 #include <juce_core/native/juce_BasicNativeHeaders.h>
@@ -27,6 +35,17 @@ namespace audiobatch::utils
 {
 namespace
 {
+/// Highest number tried when a hidden backup or recovery name is already occupied.
+constexpr int maximumBackupIndex {1000};
+/// Converts POSIX seconds to the high resolution timestamp used for identity checks.
+constexpr std::int64_t nanosecondsPerSecond {1'000'000'000};
+
+/// An approved output retained under an exclusively claimed backup entry.
+struct OutputBackup {
+    juce::File file;
+    std::optional<FileIdentity> identity;
+};
+
 #if JUCE_WINDOWS
 /// Releases a COM interface when its owning pointer goes out of scope.
 struct ComReleaser {
@@ -286,17 +305,41 @@ bool moveToRecycleBin(const juce::File& file)
 }
 #endif
 
-/// Renames the backup of a replaced output back to the output path after a failed commit.
-/// Logs where the previous output is when the rename fails, so it can still be recovered by hand.
-void restoreOutputBackup(const juce::File& backupFile, const juce::File& outputFile)
+/// Converts a JUCE path without losing native Unicode characters.
+std::filesystem::path nativePath(const juce::File& file)
 {
-    if (backupFile == juce::File() || !backupFile.existsAsFile()) {
+#if JUCE_WINDOWS
+    return {file.getFullPathName().toWideCharPointer()};
+#else
+    return {file.getFullPathName().toRawUTF8()};
+#endif
+}
+
+/// Claims a new directory entry atomically, never replacing an occupant or dangling symlink.
+bool linkWithoutReplacing(const juce::File& source, const juce::File& destination)
+{
+    std::error_code error;
+    std::filesystem::create_hard_link(nativePath(source), nativePath(destination), error);
+    return !error;
+}
+
+/// Restores only an owned backup into an empty output entry, retaining it on failure.
+void restoreOutputBackup(
+    const juce::File& backupFile,
+    const std::optional<FileIdentity>& identity,
+    const juce::File& outputFile
+)
+{
+    if (!identity || !identity->owns(backupFile)) {
         return;
     }
-
-    if (!backupFile.moveFileTo(outputFile)) {
+    if (linkWithoutReplacing(backupFile, outputFile)) {
+        if (identity->owns(backupFile)) {
+            static_cast<void>(deleteFile(backupFile));
+        }
+    } else {
         logError(
-            "Could not restore the previous output {} from its backup {}",
+            "Could not restore {}. The previous output was kept at {}",
             outputFile.getFullPathName().quoted(),
             backupFile.getFullPathName().quoted()
         );
@@ -307,24 +350,85 @@ void restoreOutputBackup(const juce::File& backupFile, const juce::File& outputF
 /// so the temporary file's destructor cannot delete the only remaining copy of the audio.
 /// On Windows, ReplaceFile can delete the original and then fail to move the replacement into place.
 /// Returns the user-facing error describing where the new audio was kept.
-juce::String keepNewAudioAfterLostOriginal(const juce::TemporaryFile& temporaryFile, const juce::File& outputFile)
+juce::String keepNewAudioAfterLostOriginal(const OutputTemporaryFile& temporaryFile, const juce::File& outputFile)
 {
-    const auto keptFile
-        = outputFile
-              .getSiblingFile(outputFile.getFileNameWithoutExtension() + " (recovered)" + outputFile.getFileExtension())
-              .getNonexistentSibling(false);
-
-    if (temporaryFile.getFile().moveFileTo(keptFile) || temporaryFile.getFile().copyFileTo(keptFile)) {
-        logError(
-            "The original file {} was removed while being replaced, the new audio was kept as {}",
-            outputFile.getFullPathName().quoted(),
-            keptFile.getFullPathName().quoted()
+    for (int index = 1; index <= maximumBackupIndex; ++index) {
+        const auto suffix = index == 1 ? juce::String() : juce::String(index);
+        const auto keptFile = outputFile.getSiblingFile(
+            outputFile.getFileNameWithoutExtension() + " (recovered)" + suffix + outputFile.getFileExtension()
         );
-        return format("Could not replace the original file. The new audio was kept as {}", keptFile.getFileName());
+        if (linkWithoutReplacing(temporaryFile.getFile(), keptFile)) {
+            return format("Could not publish the new audio. The new audio was kept as {}", keptFile.getFullPathName());
+        }
     }
+    temporaryFile.preserve();
+    logError("The rendered audio was retained at {}", temporaryFile.getFile().getFullPathName().quoted());
+    return format(
+        "Could not publish the new audio. The new audio was kept as {}", temporaryFile.getFile().getFullPathName()
+    );
+}
 
-    logError("The original file {} was removed while being replaced", outputFile.getFullPathName().quoted());
-    return "Could not replace the original file, and the new audio could not be kept";
+/// Reports a stale source consistently at every metadata and destruction boundary.
+std::unexpected<juce::String> sourceChangedFailure()
+{
+    return std::unexpected(
+        juce::String("The source file changed while audio was being rendered. The original file was left unchanged.")
+    );
+}
+
+/// Retains the approved destination in an exclusively claimed backup before vacating its path.
+std::expected<OutputBackup, juce::String> claimOutputBackup(const juce::File& outputFile, const OutputCommitHook& hook)
+{
+    const FileIdentity identity(outputFile);
+    for (int index = 0; index <= maximumBackupIndex; ++index) {
+        const auto suffix = index == 0 ? juce::String() : "." + juce::String(index);
+        const auto candidate = outputFile.getSiblingFile("." + outputFile.getFileName() + ".backup" + suffix);
+        if (hook) {
+            hook("before_backup_claim");
+        }
+        if (!linkWithoutReplacing(outputFile, candidate)) {
+            continue;
+        }
+        if (!identity.owns(outputFile) || !identity.owns(candidate)) {
+            return sourceChangedFailure();
+        }
+        if (!deleteFile(outputFile)) {
+            return std::unexpected(juce::String("Could not move the existing output file aside"));
+        }
+        return OutputBackup {.file = candidate, .identity = identity};
+    }
+    return std::unexpected(juce::String("Could not move the existing output file aside"));
+}
+
+/// Reverts only the transaction's published entry and preserves audio when another owner blocks restoration.
+std::unexpected<juce::String> rollbackPublishedOutput(
+    const OutputTemporaryFile& temporaryFile,
+    const juce::File& outputFile,
+    const FileIdentity& renderedIdentity,
+    const OutputBackup& backup,
+    const bool sourceMatches,
+    const OutputCommitHook& hook
+)
+{
+    if (hook) {
+        hook("before_rollback");
+    }
+    if (renderedIdentity.owns(outputFile)) {
+        static_cast<void>(deleteFile(outputFile));
+    }
+    restoreOutputBackup(backup.file, backup.identity, outputFile);
+    const bool backupNotRestored = backup.identity && !backup.identity->owns(outputFile);
+    const bool unownedOccupant = !backup.identity && outputFile.exists() && !renderedIdentity.owns(outputFile);
+    if (backupNotRestored || unownedOccupant) {
+        return std::unexpected(keepNewAudioAfterLostOriginal(temporaryFile, outputFile));
+    }
+    if (!sourceMatches) {
+        return sourceChangedFailure();
+    }
+    if (renderedIdentity.owns(temporaryFile.getFile())) {
+        static_cast<void>(deleteFile(temporaryFile.getFile()));
+    }
+    return std::unexpected(juce::String("Could not move the original audio file to the system trash"));
 }
 }  // namespace
 
@@ -333,14 +437,108 @@ FileIdentity::FileIdentity(const juce::File& file) :
     path(file.getFullPathName()),
     fileSize(file.getSize()),
     modifiedTimeMs(file.getLastModificationTime().toMilliseconds())
-{}
+{
+#if JUCE_WINDOWS
+    const auto handle = CreateFileW(
+        file.getFullPathName().toWideCharPointer(),
+        FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_ATTRIBUTE_NORMAL,
+        nullptr
+    );
+    if (handle != INVALID_HANDLE_VALUE) {
+        BY_HANDLE_FILE_INFORMATION information {};
+        if (GetFileInformationByHandle(handle, &information)) {
+            platformId = std::pair {
+                static_cast<std::uint64_t>(information.dwVolumeSerialNumber),
+                (static_cast<std::uint64_t>(information.nFileIndexHigh) << 32U) | information.nFileIndexLow
+            };
+            preciseTimes.first = static_cast<std::int64_t>(
+                (static_cast<std::uint64_t>(information.ftLastWriteTime.dwHighDateTime) << 32U)
+                | information.ftLastWriteTime.dwLowDateTime
+            );
+        }
+        CloseHandle(handle);
+    }
+#else
+    struct stat information {};
+    if (::stat(file.getFullPathName().toRawUTF8(), &information) == 0 && S_ISREG(information.st_mode)) {
+        platformId = std::pair {
+            static_cast<std::uint64_t>(information.st_dev), static_cast<std::uint64_t>(information.st_ino)
+        };
+#if JUCE_MAC
+        preciseTimes
+            = {information.st_mtimespec.tv_sec * nanosecondsPerSecond + information.st_mtimespec.tv_nsec,
+               information.st_ctimespec.tv_sec * nanosecondsPerSecond + information.st_ctimespec.tv_nsec};
+#else
+        preciseTimes
+            = {information.st_mtim.tv_sec * nanosecondsPerSecond + information.st_mtim.tv_nsec,
+               information.st_ctim.tv_sec * nanosecondsPerSecond + information.st_ctim.tv_nsec};
+#endif
+    }
+#endif
+}
 
-/// Requires the same existing file path, size and modification time, with valid captured stats.
+/// Requires the same existing source and content stats, including native file identity.
+/// This is a stale-source guard, not a filesystem compare-and-swap operation.
 bool FileIdentity::matches(const juce::File& file) const
 {
-    return juce::File::isAbsolutePath(path) && path == file.getFullPathName() && fileSize >= 0 && modifiedTimeMs > 0
-        && file.existsAsFile() && file.getSize() == fileSize
-        && file.getLastModificationTime().toMilliseconds() == modifiedTimeMs;
+    const FileIdentity current(file);
+    return path == current.path && owns(file) && preciseTimes == current.preciseTimes;
+}
+
+/// Recognizes an owned file after a rename or link changed its status time.
+bool FileIdentity::owns(const juce::File& file) const
+{
+    const FileIdentity current(file);
+    return platformId && platformId == current.platformId && file.existsAsFile() && fileSize == current.fileSize
+        && modifiedTimeMs == current.modifiedTimeMs && preciseTimes.first == current.preciseTimes.first;
+}
+
+/// Chooses an unpredictable hidden path whose cleanup can be disabled on a recovery failure.
+OutputTemporaryFile::OutputTemporaryFile(const juce::File& output) :
+    file(output.getSiblingFile(
+        "." + output.getFileNameWithoutExtension() + "_temp" + juce::Uuid().toDashedString() + output.getFileExtension()
+    ))
+{}
+
+/// Removes only the temporary output when recovery has not retained it.
+OutputTemporaryFile::~OutputTemporaryFile()
+{
+    if (!retained) {
+        static_cast<void>(deleteFile(file));
+    }
+}
+
+/// Returns the rendered file path.
+const juce::File& OutputTemporaryFile::getFile() const
+{
+    return file;
+}
+
+/// Keeps the original temporary path as the last recovery fallback.
+void OutputTemporaryFile::preserve() const
+{
+    retained = true;
+}
+
+/// Resolves only the existing destination parent, so absent outputs and directory aliases share a key.
+juce::String resolvedOutputKey(const juce::File& file)
+{
+    std::error_code error;
+    auto parent = std::filesystem::weakly_canonical(nativePath(file.getParentDirectory()), error);
+    if (error) {
+        parent = nativePath(file.getParentDirectory());
+    }
+    const auto resolved = parent / nativePath(file).filename();
+#if JUCE_WINDOWS
+    const auto text = juce::String(resolved.wstring().c_str());
+#else
+    const auto text = juce::String::fromUTF8(resolved.string().c_str());
+#endif
+    return juce::File::areFileNamesCaseSensitive() ? text : text.toLowerCase();
 }
 
 /// Moves a file or folder to the OS trash or recycle bin.
@@ -525,74 +723,72 @@ std::expected<void, juce::String> checkOutputPath(
     return {};
 }
 
-/// Moves a finished temporary output into place next to its source and disposes of the source.
-/// When the output path is the source itself, the source is replaced in place.
-/// Otherwise an output path that fails checkOutputPath fails the commit,
-/// and a file allowed to be overwritten is renamed to a hidden backup next to it first.
-/// After the output is in place, a source with a different path is disposed of,
-/// and when that fails the output is removed again and the backup is renamed back,
-/// so the folder is left as it was.
-/// The backup is disposed of last, once everything else succeeded.
-/// When an in-place replace fails after the original was already removed,
-/// the new audio is kept next to it under a "(recovered)" name instead of being deleted with the temporary file.
-/// `disposeFile` moves files to the system trash unless a caller such as a test passes another function.
-/// Returns a user-facing error message on failure.
-/// The temporary file is deleted by its own destructor on failure.
+/// Publishes audio without replacing a concurrent destination and rolls back only owned directory entries.
+/// Native identity checks narrow stale-source races, but cannot make path based disposal an atomic compare-and-swap.
 std::expected<void, juce::String> commitTemporaryOutput(
-    const juce::TemporaryFile& temporaryFile,
+    const OutputTemporaryFile& temporaryFile,
     const juce::File& sourceFile,
     const juce::File& outputFile,
     const bool overwriteExisting,
-    const FileDisposer& disposeFile
+    const FileIdentity& expectedSource,
+    const FileDisposer& disposeFile,
+    const OutputCommitHook& hook
 )
 {
-    const bool replacingSource = outputFile == sourceFile;
-    juce::File backupFile;
-
-    if (auto outputCheck = checkOutputPath(sourceFile, outputFile, overwriteExisting); !outputCheck) {
-        return outputCheck;
-    }
-
-    if (!replacingSource && outputFile.exists()) {
-        // A rename within the folder is atomic and can be undone,
-        // unlike moving the previous output to the trash before the new one is in place.
-        // The dot prefix keeps the backup out of folder scans.
-        backupFile = outputFile.getSiblingFile("." + outputFile.getFileName() + ".backup").getNonexistentSibling(false);
-
-        if (!outputFile.moveFileTo(backupFile)) {
-            return std::unexpected(juce::String("Could not move the existing output file aside"));
+    const auto notify = [&hook](const juce::String& stage) {
+        if (hook) {
+            hook(stage);
         }
+    };
+    if (!expectedSource.matches(sourceFile)) {
+        return sourceChangedFailure();
     }
-
-    if (!temporaryFile.overwriteTargetFileWithTemporary()) {
-        restoreOutputBackup(backupFile, outputFile);
-
-        if (replacingSource && !sourceFile.exists() && temporaryFile.getFile().existsAsFile()) {
+    if (auto check = checkOutputPath(sourceFile, outputFile, overwriteExisting); !check) {
+        return check;
+    }
+    const bool replacingSource = outputFile == sourceFile;
+    OutputBackup backup;
+    if (!replacingSource && outputFile.exists()) {
+        auto claimed = claimOutputBackup(outputFile, hook);
+        if (!claimed) {
+            return std::unexpected(claimed.error());
+        }
+        backup = std::move(*claimed);
+    }
+    notify("before_publish");
+    if (!expectedSource.matches(sourceFile)) {
+        restoreOutputBackup(backup.file, backup.identity, outputFile);
+        if (backup.identity && !backup.identity->owns(outputFile)) {
             return std::unexpected(keepNewAudioAfterLostOriginal(temporaryFile, outputFile));
         }
-        return std::unexpected(
-            juce::String(
-                replacingSource ? "Could not replace the original file with the new audio"
-                                : "Could not move the new audio file into place"
-            )
-        );
+        return sourceChangedFailure();
     }
-
-    if (!replacingSource && sourceFile.existsAsFile() && !disposeFile(sourceFile)) {
-        // A failed delete is logged, and the backup below is restored either way.
-        static_cast<void>(deleteFile(outputFile));
-        restoreOutputBackup(backupFile, outputFile);
-        return std::unexpected(juce::String("Could not move the original audio file to the system trash"));
+    const FileIdentity renderedIdentity(temporaryFile.getFile());
+    const bool published = replacingSource ? temporaryFile.getFile().replaceFileIn(outputFile)
+                                           : linkWithoutReplacing(temporaryFile.getFile(), outputFile);
+    if (!published) {
+        restoreOutputBackup(backup.file, backup.identity, outputFile);
+        if (temporaryFile.getFile().existsAsFile()) {
+            return std::unexpected(keepNewAudioAfterLostOriginal(temporaryFile, outputFile));
+        }
+        return std::unexpected(juce::String("Could not move the new audio file into place"));
     }
-
-    if (backupFile.existsAsFile() && !disposeFile(backupFile)) {
-        // The new output and the source are already settled, so only the leftover backup is reported.
-        logWarn(
-            "Could not move the replaced output to the system trash, it was kept as {}",
-            backupFile.getFullPathName().quoted()
-        );
+    if (!replacingSource) {
+        notify("before_dispose");
+        const bool sourceMatches = expectedSource.matches(sourceFile);
+        if (!sourceMatches || !renderedIdentity.owns(outputFile) || !disposeFile(sourceFile)) {
+            return rollbackPublishedOutput(temporaryFile, outputFile, renderedIdentity, backup, sourceMatches, hook);
+        }
     }
-
+    if (!replacingSource && !renderedIdentity.owns(outputFile)) {
+        return std::unexpected(keepNewAudioAfterLostOriginal(temporaryFile, outputFile));
+    }
+    if (backup.identity && backup.identity->owns(backup.file) && !disposeFile(backup.file)) {
+        logWarn("Could not dispose of the previous output, it was kept as {}", backup.file.getFullPathName().quoted());
+    }
+    if (renderedIdentity.owns(temporaryFile.getFile())) {
+        static_cast<void>(deleteFile(temporaryFile.getFile()));
+    }
     return {};
 }
 

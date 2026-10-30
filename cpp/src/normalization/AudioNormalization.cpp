@@ -65,18 +65,26 @@ AudioNormalizationResult failNormalization(const juce::File& file, const juce::S
 /// so an original rewritten in place keeps a copy in the trash like a converted original does.
 /// Returns the user-facing error on failure.
 std::expected<void, juce::String> commitNormalizedOutput(
-    const juce::TemporaryFile& temporaryFile,
+    const utils::OutputTemporaryFile& temporaryFile,
     const juce::File& file,
     const juce::File& outputFile,
+    const utils::FileIdentity& expectedSource,
     const AudioNormalizationOptions& options
 )
 {
+    if (!expectedSource.matches(file)) {
+        return std::unexpected(
+            juce::String(
+                "The source file changed while audio was being rendered. The original file was left unchanged."
+            )
+        );
+    }
     if (outputFile == file && !utils::disposeOfCopy(file, options.disposeFile)) {
         return std::unexpected(juce::String("Could not move a copy of the original file to the system trash"));
     }
 
     return utils::commitTemporaryOutput(
-        temporaryFile, file, outputFile, options.overwriteExisting, options.disposeFile
+        temporaryFile, file, outputFile, options.overwriteExisting, expectedSource, options.disposeFile
     );
 }
 
@@ -216,8 +224,13 @@ juce::StringArray findBatchOutputConflicts(const std::vector<AudioAnalysisRecord
     juce::StringArray claimedOutputs;
     juce::StringArray conflicts;
 
+    juce::StringArray visitedSources;
     for (const auto* record : ordered) {
-        const auto outputPath = getNormalizationOutputFile(record->file).getFullPathName();
+        if (visitedSources.contains(record->file.getFullPathName())) {
+            continue;
+        }
+        visitedSources.add(record->file.getFullPathName());
+        const auto outputPath = utils::resolvedOutputKey(getNormalizationOutputFile(record->file));
 
         if (claimedOutputs.contains(outputPath, !juce::File::areFileNamesCaseSensitive())) {
             conflicts.add(record->file.getFullPathName());
@@ -329,6 +342,7 @@ AudioNormalizationResult normalizeFile(
     }
 
     // The gain comes from the analyzed peak, so a file that changed since its analysis is measured again first.
+    const utils::FileIdentity expectedSource(file);
     const bool sourceChanged = !sourceRecord.matchesFileOnDisk();
     const auto renderProgressStart = sourceChanged ? sourceAnalysisProgressShare : 0.0f;
     const auto record = sourceChanged
@@ -346,7 +360,7 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, "Unsupported audio format");
     }
 
-    const auto reader = utils::createAudioReader(file);
+    auto reader = utils::createAudioReader(file);
 
     if (reader == nullptr) {
         return failNormalization(file, "Unsupported or unreadable audio file");
@@ -379,7 +393,7 @@ AudioNormalizationResult normalizeFile(
 
     // The hidden name keeps a half-written output out of folder scans,
     // and out of later scans after a crash.
-    const juce::TemporaryFile temporaryFile(outputFile, juce::TemporaryFile::useHiddenFile);
+    const utils::OutputTemporaryFile temporaryFile(outputFile);
     std::unique_ptr<juce::OutputStream> outputStream = temporaryFile.getFile().createOutputStream();
 
     if (outputStream == nullptr) {
@@ -419,6 +433,11 @@ AudioNormalizationResult normalizeFile(
 
     writer.reset();
 
+    if (!expectedSource.matches(file)) {
+        return failNormalization(
+            file, "The source file changed while audio was being rendered. The original file was left unchanged."
+        );
+    }
     if (!copyMetadata(file, temporaryFile.getFile())) {
         return failNormalization(file, "Could not preserve metadata while writing normalized audio");
     }
@@ -447,7 +466,8 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, cancelledMessage);
     }
 
-    if (const auto commit = commitNormalizedOutput(temporaryFile, file, outputFile, options); !commit) {
+    reader.reset();
+    if (const auto commit = commitNormalizedOutput(temporaryFile, file, outputFile, expectedSource, options); !commit) {
         return failNormalization(file, commit.error());
     }
 

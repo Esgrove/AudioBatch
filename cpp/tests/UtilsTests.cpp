@@ -165,10 +165,13 @@ public:
             const auto source = directory.getChildFile("song.aif");
             expect(source.replaceWithText("old"));
 
-            const juce::TemporaryFile temporaryFile(source);
+            const utils::OutputTemporaryFile temporaryFile(source);
             expect(temporaryFile.getFile().replaceWithText("new"));
 
-            expect(utils::commitTemporaryOutput(temporaryFile, source, source, false).has_value());
+            expect(
+                utils::commitTemporaryOutput(temporaryFile, source, source, false, utils::FileIdentity(source))
+                    .has_value()
+            );
             expectEquals(source.loadFileAsString(), juce::String("new"));
         }
 
@@ -180,10 +183,12 @@ public:
             expect(source.replaceWithText("source"));
             expect(output.replaceWithText("unrelated"));
 
-            const juce::TemporaryFile temporaryFile(output);
+            const utils::OutputTemporaryFile temporaryFile(output);
             expect(temporaryFile.getFile().replaceWithText("new"));
 
-            const auto error = utils::commitTemporaryOutput(temporaryFile, source, output, false).error_or({});
+            const auto error
+                = utils::commitTemporaryOutput(temporaryFile, source, output, false, utils::FileIdentity(source))
+                      .error_or({});
             expect(error.contains("already exists"), error);
             expectEquals(output.loadFileAsString(), juce::String("unrelated"));
             expectEquals(source.loadFileAsString(), juce::String("source"));
@@ -199,10 +204,12 @@ public:
             const auto keptFile = output.getChildFile("kept.txt");
             expect(keptFile.replaceWithText("kept"));
 
-            const juce::TemporaryFile temporaryFile(output);
+            const utils::OutputTemporaryFile temporaryFile(output);
             expect(temporaryFile.getFile().replaceWithText("new"));
 
-            const auto error = utils::commitTemporaryOutput(temporaryFile, source, output, true).error_or({});
+            const auto error
+                = utils::commitTemporaryOutput(temporaryFile, source, output, true, utils::FileIdentity(source))
+                      .error_or({});
             expect(error.contains("not a file"), error);
             expect(keptFile.existsAsFile());
             expectEquals(source.loadFileAsString(), juce::String("source"));
@@ -216,15 +223,16 @@ public:
             expect(source.replaceWithText("source"));
             expect(output.replaceWithText("previous"));
 
-            const juce::TemporaryFile temporaryFile(output);
+            const utils::OutputTemporaryFile temporaryFile(output);
             expect(temporaryFile.getFile().replaceWithText("new"));
 
             juce::StringArray disposedContents;
-            const auto commit
-                = utils::commitTemporaryOutput(temporaryFile, source, output, true, [&](const juce::File& file) {
-                      disposedContents.add(file.loadFileAsString());
-                      return file.deleteFile();
-                  });
+            const auto commit = utils::commitTemporaryOutput(
+                temporaryFile, source, output, true, utils::FileIdentity(source), [&](const juce::File& file) {
+                    disposedContents.add(file.loadFileAsString());
+                    return file.deleteFile();
+                }
+            );
 
             expect(commit.has_value(), commit.error_or({}));
             expectEquals(output.loadFileAsString(), juce::String("new"));
@@ -241,12 +249,15 @@ public:
             expect(source.replaceWithText("source"));
             expect(output.replaceWithText("previous"));
 
-            const juce::TemporaryFile temporaryFile(output);
+            const utils::OutputTemporaryFile temporaryFile(output);
             expect(temporaryFile.getFile().replaceWithText("new"));
 
-            const auto error = utils::commitTemporaryOutput(temporaryFile, source, output, true, [](const juce::File&) {
-                                   return false;
-                               }).error_or({});
+            const auto error
+                = utils::commitTemporaryOutput(
+                      temporaryFile, source, output, true, utils::FileIdentity(source), [](const juce::File&) {
+                          return false;
+                      }
+                ).error_or({});
 
             expect(error.contains("original audio file"), error);
             expectEquals(output.loadFileAsString(), juce::String("previous"));
@@ -254,6 +265,7 @@ public:
             expectEquals(output.getParentDirectory().findChildFiles(juce::File::findFiles, false).size(), 2);
         }
 
+        runOutputOwnershipTests();
         runDisposalTests();
 
         beginTest("Names match case-insensitively and CSV fields are escaped");
@@ -492,6 +504,232 @@ public:
     }
 
 private:
+    /// Injects same-stat replacements before rendering and at each source destruction boundary.
+    void runSourceSafetyTests()
+    {
+        beginTest("Source replacement preserving size and mtime is refused");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.wav");
+            const auto output = directory.getChildFile("song.aif");
+            expect(source.replaceWithText("original"));
+            expect(output.replaceWithText("approved"));
+            const utils::FileIdentity expectedSource(source);
+            const auto modified = source.getLastModificationTime();
+            const auto replacement = directory.getChildFile("replacement");
+            expect(replacement.replaceWithText("external"));
+            expect(replacement.setLastModificationTime(modified));
+            expect(replacement.replaceFileIn(source));
+            const utils::OutputTemporaryFile temporary(output);
+            expect(temporary.getFile().replaceWithText("rendered"));
+            const auto result
+                = utils::commitTemporaryOutput(temporary, source, output, true, expectedSource, [](const juce::File&) {
+                      return false;
+                  });
+            expect(!result.has_value());
+            expectEquals(source.loadFileAsString(), juce::String("external"));
+            expectEquals(output.loadFileAsString(), juce::String("approved"));
+        }
+
+        beginTest("Source replacements at commit boundaries are never adopted or disposed");
+        for (const auto& [inPlace, stage] :
+             {std::pair {true, "before_publish"}, {false, "before_publish"}, {false, "before_dispose"}})
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.wav");
+            const auto output = inPlace ? source : directory.getChildFile("song.aif");
+            expect(source.replaceWithText("original"));
+            if (!inPlace) {
+                expect(output.replaceWithText("approved"));
+            }
+            const utils::FileIdentity expectedSource(source);
+            const utils::OutputTemporaryFile temporary(output);
+            expect(temporary.getFile().replaceWithText("rendered"));
+            bool disposed = false;
+            const auto result = utils::commitTemporaryOutput(
+                temporary,
+                source,
+                output,
+                true,
+                expectedSource,
+                [&](const juce::File&) {
+                    disposed = true;
+                    return false;
+                },
+                [&](const juce::String& current) {
+                    if (current == stage) {
+                        const auto replacement = directory.getChildFile("replacement");
+                        expect(replacement.replaceWithText("external"));
+                        expect(replacement.replaceFileIn(source));
+                    }
+                }
+            );
+            expect(!result.has_value());
+            expect(result.error_or({}).contains("source file changed"));
+            expect(!disposed);
+            expectEquals(source.loadFileAsString(), juce::String("external"));
+            if (!inPlace) {
+                expectEquals(output.loadFileAsString(), juce::String("approved"));
+            }
+        }
+    }
+
+    /// Injects external directory mutations at publication, backup reservation, and rollback boundaries.
+    void runOutputOwnershipTests()
+    {
+        runSourceSafetyTests();
+        runRecoveryPreservationTests();
+        beginTest("Concurrent publication occupants survive either overwrite policy with recoverable rendered audio");
+        for (const bool overwrite : {false, true}) {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.wav");
+            const auto output = directory.getChildFile("song.aif");
+            expect(source.replaceWithText("source"));
+            if (overwrite) {
+                expect(output.replaceWithText("approved"));
+            }
+            const utils::FileIdentity expectedSource(source);
+            const utils::OutputTemporaryFile temporary(output);
+            expect(temporary.getFile().replaceWithText("rendered"));
+            const auto result = utils::commitTemporaryOutput(
+                temporary,
+                source,
+                output,
+                overwrite,
+                expectedSource,
+                [](const juce::File&) { return false; },
+                [&](const juce::String& stage) {
+                    if (stage == "before_publish") {
+                        expect(output.replaceWithText("external"));
+                    }
+                }
+            );
+            expect(!result.has_value());
+            expectEquals(output.loadFileAsString(), juce::String("external"));
+            expectEquals(source.loadFileAsString(), juce::String("source"));
+            expectEquals(directory.getChildFile("song (recovered).aif").loadFileAsString(), juce::String("rendered"));
+            if (overwrite) {
+                expectEquals(directory.getChildFile(".song.aif.backup").loadFileAsString(), juce::String("approved"));
+            }
+        }
+
+        beginTest("Rollback keeps an external occupant and its owned backup");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.wav");
+            const auto output = directory.getChildFile("song.aif");
+            expect(source.replaceWithText("source"));
+            expect(output.replaceWithText("approved"));
+            const utils::FileIdentity expectedSource(source);
+            const utils::OutputTemporaryFile temporary(output);
+            expect(temporary.getFile().replaceWithText("rendered"));
+            const auto result = utils::commitTemporaryOutput(
+                temporary,
+                source,
+                output,
+                true,
+                expectedSource,
+                [](const juce::File&) { return false; },
+                [&](const juce::String& stage) {
+                    if (stage == "before_rollback") {
+                        expect(output.replaceWithText("external"));
+                    }
+                }
+            );
+            expect(!result.has_value());
+            expectEquals(output.loadFileAsString(), juce::String("external"));
+            expectEquals(source.loadFileAsString(), juce::String("source"));
+            expectEquals(directory.getChildFile(".song.aif.backup").loadFileAsString(), juce::String("approved"));
+            expectEquals(directory.getChildFile("song (recovered).aif").loadFileAsString(), juce::String("rendered"));
+        }
+
+        beginTest("Concurrent backup reservation does not overwrite the occupied backup");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.wav");
+            const auto output = directory.getChildFile("song.aif");
+            const auto backup = directory.getChildFile(".song.aif.backup");
+            expect(source.replaceWithText("source"));
+            expect(output.replaceWithText("approved"));
+            const utils::FileIdentity expectedSource(source);
+            const utils::OutputTemporaryFile temporary(output);
+            expect(temporary.getFile().replaceWithText("rendered"));
+            const auto result = utils::commitTemporaryOutput(
+                temporary,
+                source,
+                output,
+                true,
+                expectedSource,
+                [](const juce::File& file) { return file.deleteFile(); },
+                [&](const juce::String& stage) {
+                    if (stage == "before_backup_claim" && !backup.exists()) {
+                        expect(backup.replaceWithText("external"));
+                    }
+                }
+            );
+            expect(result.has_value(), result.error_or({}));
+            expectEquals(backup.loadFileAsString(), juce::String("external"));
+        }
+    }
+
+    /// Forces recovery filesystem failures and exhausted names without deleting completed audio.
+    void runRecoveryPreservationTests()
+    {
+        beginTest("Recovery filesystem failures retain the temporary file at its actual path");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.wav");
+            const auto output = directory.getChildFile("missing/song.aif");
+            expect(source.replaceWithText("source"));
+            juce::File retained;
+            {
+                const utils::OutputTemporaryFile temporary(directory.getChildFile("render.aif"));
+                retained = temporary.getFile();
+                expect(retained.replaceWithText("rendered"));
+                const auto result = utils::commitTemporaryOutput(
+                    temporary, source, output, false, utils::FileIdentity(source), [](const juce::File&) {
+                        return false;
+                    }
+                );
+                expect(result.error_or({}).contains(retained.getFullPathName()));
+            }
+            expectEquals(retained.loadFileAsString(), juce::String("rendered"));
+        }
+
+        beginTest("Recovery name exhaustion retains the actual temporary path after its owner is destroyed");
+        {
+            const TemporaryDirectory directory;
+            const auto source = directory.getChildFile("song.wav");
+            const auto output = directory.getChildFile("song.aif");
+            expect(source.replaceWithText("source"));
+            for (int index = 1; index <= 1000; ++index) {
+                const auto suffix = index == 1 ? juce::String() : juce::String(index);
+                expect(directory.getChildFile("song (recovered)" + suffix + ".aif").replaceWithText("occupied"));
+            }
+            juce::File retained;
+            {
+                const utils::OutputTemporaryFile temporary(output);
+                retained = temporary.getFile();
+                expect(retained.replaceWithText("rendered"));
+                const auto result = utils::commitTemporaryOutput(
+                    temporary,
+                    source,
+                    output,
+                    false,
+                    utils::FileIdentity(source),
+                    [](const juce::File&) { return false; },
+                    [&](const juce::String& stage) {
+                        if (stage == "before_publish") {
+                            expect(output.replaceWithText("external"));
+                        }
+                    }
+                );
+                expect(result.error_or({}).contains(retained.getFullPathName()));
+            }
+            expectEquals(retained.loadFileAsString(), juce::String("rendered"));
+        }
+    }
+
     /// Checks that written audio is validated against the expected channel count, sample rate, and length.
     void runWrittenAudioValidationTests(const juce::File& root)
     {

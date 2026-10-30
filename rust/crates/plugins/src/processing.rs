@@ -22,8 +22,8 @@ use audiobatch_core::metadata::{MetadataError, copy_metadata};
 use audiobatch_core::normalize::{NormalizationOptions, normalization_gain, normalization_output_path};
 use audiobatch_core::operation::{OperationOutcome, OperationResult, progress_range};
 use audiobatch_core::output_file::{
-    FileDisposer, OutputError, OutputPathError, OutputValidationError, check_output_path, commit_temporary_output,
-    create_temporary_output, dispose_of_copy, trash_disposer, validate_written_audio,
+    FileDisposer, OutputError, OutputPathError, OutputValidationError, SourceIdentity, check_output_path,
+    commit_temporary_output_expected, create_temporary_output, dispose_of_copy, trash_disposer, validate_written_audio,
 };
 use audiobatch_core::record::{AnalysisError, AnalysisRecord};
 use vst3_host::ProcessError;
@@ -321,6 +321,7 @@ fn try_process_file(
     let output = processing_output_path(source);
     check_output_path(source, &output, options.overwrite_existing)?;
 
+    let expected_source = SourceIdentity::capture(source).map_err(|_| OutputError::SourceChanged)?;
     let render_start = if source_record.matches_file_on_disk() {
         0.0
     } else {
@@ -363,6 +364,7 @@ fn try_process_file(
         is_cancelled,
         &mut progress_range(on_progress, RENDER_PROGRESS_END, WRITE_PROGRESS_END),
     )?;
+    expected_source.validate(source)?;
     if let Err(error) = copy_metadata(source, temporary.path()) {
         tracing::error!("{}", error_chain(&error));
         return Err(ProcessingError::Metadata(error));
@@ -374,10 +376,18 @@ fn try_process_file(
     if is_cancelled() {
         return Err(ProcessingError::Cancelled);
     }
+    expected_source.validate(source)?;
     if output == source && !dispose_of_copy(source, &options.dispose) {
         return Err(ProcessingError::DisposeOriginal);
     }
-    commit_temporary_output(temporary, source, &output, options.overwrite_existing, &options.dispose)?;
+    commit_temporary_output_expected(
+        temporary,
+        source,
+        &output,
+        options.overwrite_existing,
+        &options.dispose,
+        &expected_source,
+    )?;
 
     let notices: Vec<String> = [
         gain_notice,
@@ -388,8 +398,18 @@ fn try_process_file(
     .into_iter()
     .flatten()
     .collect();
+    Ok(analyze_processed_output(source, &output, &notices, on_progress))
+}
+
+/// Analyzes a committed output without reporting a completed rewrite as an untouched-source failure.
+fn analyze_processed_output(
+    source: &Path,
+    output: &Path,
+    notices: &[String],
+    on_progress: &mut dyn FnMut(f32),
+) -> OperationResult {
     let analysis = analyze_file_catching_panics(
-        &output,
+        output,
         &|| false,
         &mut progress_range(on_progress, WRITE_PROGRESS_END, 1.0),
     );
@@ -398,16 +418,16 @@ fn try_process_file(
             "The file was processed, but re-analysis failed: {}",
             analysis.error_message
         );
-        return Ok(OperationResult {
+        return OperationResult {
             source: source.to_path_buf(),
             outcome: OperationOutcome::CommittedButUnanalyzed {
                 output: analysis,
                 error,
             },
-        });
+        };
     }
     let notice = (!notices.is_empty()).then(|| notices.join(". "));
-    Ok(OperationResult::success(source, analysis, notice))
+    OperationResult::success(source, analysis, notice)
 }
 
 /// Returns the record unchanged when the file still matches it on disk, and otherwise analyzes the file again,
@@ -913,6 +933,35 @@ mod test_process_file_failures {
 
     use super::*;
     use crate::test_helpers::{deleting_options, file_names, gain_state, ready_fixture_copy, test_chain};
+
+    #[test]
+    fn source_replaced_during_final_write_is_not_adopted_or_disposed() {
+        let directory = TempDir::new().expect("directory");
+        let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let chain = test_chain(&[(Kind::Gain, gain_state(1.0))]);
+        let output = processing_output_path(&record.path);
+        std::fs::write(&output, b"existing").expect("output");
+        let mut options = deleting_options();
+        options.overwrite_existing = true;
+        let mut replaced = false;
+        let result = process_file(&record, &options, &chain, &|| false, &mut |fraction| {
+            if fraction >= WRITE_PROGRESS_END && !replaced {
+                let replacement = directory.path().join("replacement");
+                std::fs::write(&replacement, b"external").expect("replacement");
+                std::fs::rename(replacement, &record.path).expect("replace");
+                replaced = true;
+            }
+        });
+        assert!(replaced);
+        assert!(
+            result
+                .error()
+                .is_some_and(|error| error.contains("source file changed")),
+            "{result:?}"
+        );
+        assert_eq!(std::fs::read(&record.path).expect("source"), b"external");
+        assert_eq!(std::fs::read(output).expect("output"), b"existing");
+    }
 
     #[test]
     fn non_finite_output_fails_and_leaves_the_source() {

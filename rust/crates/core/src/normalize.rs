@@ -23,8 +23,8 @@ use crate::format::{format_error_chain, gain_to_decibels};
 use crate::metadata::copy_metadata;
 use crate::operation::{OperationOutcome, OperationResult, progress_range};
 use crate::output_file::{
-    FileDisposer, OutputValidationError, check_output_path, commit_temporary_output, create_temporary_output,
-    dispose_of_copy, trash_disposer, validate_written_audio,
+    FileDisposer, OutputValidationError, SourceIdentity, check_output_path, commit_temporary_output_expected,
+    create_temporary_output, dispose_of_copy, trash_disposer, validate_written_audio,
 };
 use crate::record::{AnalysisRecord, NEGATIVE_INFINITY_LOUDNESS};
 
@@ -207,7 +207,7 @@ pub fn find_batch_output_conflicts(records: &[AnalysisRecord]) -> HashSet<PathBu
     let mut claimed: HashSet<String> = HashSet::new();
     let mut conflicts = HashSet::new();
     for source in ordered {
-        if !claimed.insert(path_key(&normalization_output_path(source))) {
+        if !claimed.insert(resolved_output_key(&normalization_output_path(source))) {
             conflicts.insert(source.to_path_buf());
         }
     }
@@ -330,6 +330,9 @@ pub fn normalize_file(
         return fail(source, "File analysis must finish before normalization");
     }
 
+    let Ok(expected_source) = SourceIdentity::capture(source) else {
+        return fail(source, crate::output_file::OutputError::SourceChanged);
+    };
     let source_changed = !source_record.matches_file_on_disk();
     let render_start = if source_changed {
         SOURCE_ANALYSIS_PROGRESS_SHARE
@@ -380,6 +383,9 @@ pub fn normalize_file(
         Err(error) => return fail(source, error),
     };
 
+    if let Err(error) = expected_source.validate(source) {
+        return fail(source, error);
+    }
     if let Err(error) = copy_metadata(source, temporary.path()) {
         tracing::error!("{}", format_error_chain(&error));
         return fail(source, "Could not preserve metadata while writing normalized audio");
@@ -395,17 +401,35 @@ pub fn normalize_file(
     if is_cancelled() {
         return fail(source, CANCELLED_MESSAGE);
     }
+    if let Err(error) = expected_source.validate(source) {
+        return fail(source, error);
+    }
     if output == source && !dispose_of_copy(source, &options.dispose) {
         return fail(source, "Could not move a copy of the original file to the system trash");
     }
-    if let Err(error) =
-        commit_temporary_output(temporary, source, &output, options.overwrite_existing, &options.dispose)
-    {
+    if let Err(error) = commit_temporary_output_expected(
+        temporary,
+        source,
+        &output,
+        options.overwrite_existing,
+        &options.dispose,
+        &expected_source,
+    ) {
         return fail(source, error);
     }
 
+    analyze_normalized_output(source, &output, rendered.notice, on_progress)
+}
+
+/// Reanalyzes committed output and distinguishes a completed write from a failed readback.
+fn analyze_normalized_output(
+    source: &Path,
+    output: &Path,
+    notice: Option<String>,
+    on_progress: &mut dyn FnMut(f32),
+) -> OperationResult {
     let analysis = analyze_file_catching_panics(
-        &output,
+        output,
         &|| false,
         &mut progress_range(on_progress, RENDER_PROGRESS_END, 1.0),
     );
@@ -422,7 +446,7 @@ pub fn normalize_file(
             },
         };
     }
-    succeed(source, analysis, rendered.notice)
+    succeed(source, analysis, notice)
 }
 
 /// Streams the source through the AIFF writer packet by packet, applying the gain.
@@ -486,6 +510,13 @@ fn is_at_target(gain: f32, output_bit_depth: u32) -> bool {
 /// Returns true when two paths name the same file, ignoring case where the file system usually does.
 fn same_path(first: &Path, second: &Path) -> bool {
     path_key(first) == path_key(second)
+}
+
+/// Resolves an existing parent directory without requiring the output file to exist.
+fn resolved_output_key(path: &Path) -> String {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let resolved = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    path_key(&resolved.join(path.file_name().unwrap_or_default()))
 }
 
 /// Returns the path as a comparison key, lowercased on platforms whose file systems usually ignore case.
@@ -727,6 +758,31 @@ mod test_output_files {
             find_batch_output_conflicts(&records),
             HashSet::from([PathBuf::from("/music/song.wav")])
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn aliased_parents_reserve_one_absent_output_with_order_independent_in_place_priority() {
+        let directory = tempfile::tempdir().expect("directory");
+        let real = directory.path().join("real");
+        let alias = directory.path().join("alias");
+        std::fs::create_dir(&real).expect("real");
+        std::os::unix::fs::symlink(&real, &alias).expect("alias");
+        let make = |path: PathBuf| AnalysisRecord {
+            path,
+            ..AnalysisRecord::default()
+        };
+        let mut records = vec![make(real.join("song.wav")), make(alias.join("song.flac"))];
+        let expected = HashSet::from([real.join("song.wav")]);
+        assert_eq!(find_batch_output_conflicts(&records), expected);
+        records.reverse();
+        assert_eq!(find_batch_output_conflicts(&records), expected);
+        records.push(make(real.join("song.aif")));
+        let expected = HashSet::from([real.join("song.wav"), alias.join("song.flac")]);
+        assert_eq!(find_batch_output_conflicts(&records), expected);
+        records.reverse();
+        assert_eq!(find_batch_output_conflicts(&records), expected);
+        assert!(!real.join("song.aif").exists());
     }
 
     #[test]
@@ -978,6 +1034,41 @@ mod test_normalize_file {
         assert_eq!(result.error(), Some(CANCELLED_MESSAGE));
         assert!(disposed.lock().expect("lock").is_empty());
         assert_eq!(file_names(&directory), vec!["song.wav".to_string()]);
+    }
+
+    #[test]
+    fn replacing_source_during_render_preserves_the_replacement_and_existing_output() {
+        for fixture in ["sine_stereo_44100_16.wav", "sine_stereo_44100_16.aif"] {
+            let directory = tempfile::tempdir().expect("directory");
+            let record = ready_fixture_copy(&directory, fixture, fixture);
+            let output = normalization_output_path(&record.path);
+            if output != record.path {
+                fs::write(&output, b"existing").expect("output");
+            }
+            let (mut options, disposed) = options(NormalizationMode::Peak);
+            options.overwrite_existing = true;
+            let mut replaced = false;
+            let result = normalize_file(&record, &options, &|| false, &mut |fraction| {
+                if fraction >= RENDER_PROGRESS_END && !replaced {
+                    let replacement = directory.path().join("replacement");
+                    fs::write(&replacement, b"external").expect("replacement");
+                    fs::rename(replacement, &record.path).expect("replace");
+                    replaced = true;
+                }
+            });
+            assert!(
+                result
+                    .error()
+                    .is_some_and(|error| error.contains("source file changed")),
+                "{result:?}"
+            );
+            assert!(replaced);
+            assert_eq!(fs::read(&record.path).expect("source"), b"external");
+            if output != record.path {
+                assert_eq!(fs::read(output).expect("output"), b"existing");
+            }
+            assert!(disposed.lock().expect("disposed").is_empty());
+        }
     }
 
     #[test]
