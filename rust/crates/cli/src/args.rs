@@ -106,6 +106,10 @@ pub struct CliArgs {
     #[arg(short = 'F', long)]
     pub force: bool,
 
+    /// Permanently delete replaced originals instead of moving them to the trash
+    #[arg(short = 'D', long, env = "AUDIOBATCH_DELETE", value_parser = clap::builder::BoolishValueParser::new())]
+    pub delete: bool,
+
     /// Normalize to this sample peak, -12 to 0 (default 0)
     #[arg(long, value_name = "DBFS", allow_hyphen_values = true)]
     pub peak: Option<String>,
@@ -163,11 +167,14 @@ impl CliArgs {
     ///
     /// # Errors
     ///
-    /// Returns an error message when `--force`, `--peak`, or `--lufs` is given without `--normalize`,
+    /// Returns an error message when `--force`, `--delete`, `--peak`, or `--lufs` is given without `--normalize`,
     /// when both targets are given, or when a target is not a number in its range.
     pub fn normalization(&self) -> Result<Option<NormalizationOptions>, String> {
         if self.force && !self.normalize {
             return Err(String::from("--force can only be used with --normalize"));
+        }
+        if self.delete && !self.normalize {
+            return Err(String::from("--delete can only be used with --normalize"));
         }
         if (self.peak.is_some() || self.lufs.is_some()) && !self.normalize {
             return Err(String::from("--peak and --lufs can only be used with --normalize"));
@@ -342,6 +349,17 @@ mod test_parse_arguments {
             .expect("normalizes");
         assert_eq!(options.mode, NormalizationMode::Loudness);
         assert!((options.target_lufs + 16.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn delete_options_parse() {
+        for option in ["-D", "--delete"] {
+            assert!(parse(&["-n", option]).expect("parses").delete);
+            assert_eq!(
+                normalization(&[option]).err().as_deref(),
+                Some("--delete can only be used with --normalize")
+            );
+        }
     }
 
     #[test]

@@ -13,7 +13,7 @@ use anyhow::Result;
 use audiobatch_core::discovery::normalize_path;
 use audiobatch_core::normalize::{NormalizationOptions, find_batch_output_conflicts};
 use audiobatch_core::operation::{OperationOutcome, OperationResult};
-use audiobatch_core::output_file::FileDisposer;
+use audiobatch_core::output_file::{FileDisposer, delete_disposer};
 use audiobatch_core::sorting::sort_records;
 use audiobatch_core::{
     AnalysisCache, AnalysisCoordinator, AnalysisEvent, AnalysisOptions, AnalysisRecord, AnalysisStatus,
@@ -50,7 +50,7 @@ struct NormalizedRecords {
 
 /// Runs the analysis workflow and returns the process exit code.
 ///
-/// Files replaced by normalization go to `dispose`, which moves them to the trash for the CLI.
+/// Files replaced by normalization go to `dispose`, unless `--delete` requests permanent deletion.
 /// The progress bars are drawn to the targets `progress_target` creates,
 /// which are stderr for the CLI and hidden in tests so the bars do not mix into the test output.
 /// Once `is_interrupted` returns true, the file being normalized stops before its output is committed,
@@ -70,7 +70,10 @@ pub fn run_analysis(
     is_interrupted: &dyn Fn() -> bool,
 ) -> Result<u8> {
     let normalization = match args.normalization() {
-        Ok(normalization) => normalization.map(|options| NormalizationOptions { dispose, ..options }),
+        Ok(normalization) => normalization.map(|options| NormalizationOptions {
+            dispose: if args.delete { delete_disposer() } else { dispose },
+            ..options
+        }),
         Err(error) => {
             // The same usage line and hint that clap prints after its own argument errors.
             write_error!(log, "{error}")?;
@@ -498,6 +501,29 @@ mod test_run_analysis {
             "{output}"
         );
         assert!(!std::path::Path::new(&source).exists());
+    }
+
+    #[test]
+    fn delete_normalizes_without_calling_the_trash_disposer() {
+        let directory = TempDir::new().expect("temp dir");
+        let source = copy_fixture(&directory, "sine_stereo_44100_16.wav", "song.wav");
+        let args = CliArgs::try_parse_from(["audiobatch-rs", "-n", "-D", &source]).expect("arguments parse");
+        let cache = Arc::new(AnalysisCache::with_path(directory.path().join("analysis.db")));
+        let dispose: FileDisposer = Arc::new(|_| panic!("delete must bypass the trash disposer"));
+        let (mut output, mut log) = (Vec::new(), Vec::new());
+        let code = run_analysis(
+            &args,
+            cache,
+            dispose,
+            &mut output,
+            &mut log,
+            ProgressDrawTarget::hidden,
+            &|| false,
+        )
+        .expect("run succeeds");
+        assert_eq!(code, EXIT_SUCCESS, "{}", String::from_utf8_lossy(&log));
+        assert!(!Path::new(&source).exists());
+        assert!(directory.path().join("music/song.aif").is_file());
     }
 
     #[test]
