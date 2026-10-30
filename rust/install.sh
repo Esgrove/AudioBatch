@@ -79,6 +79,7 @@ install_windows_gui_app() {
     print_magenta "Installing Windows GUI app..."
     mkdir -p "$app_install_dir" "$start_menu_dir"
     cp -f "./target/release/$GUI_BINARY_NAME.exe" "$APP_DESTINATION"
+    copy_third_party_licenses "$app_install_dir/licenses"
 
     AUDIOBATCH_TARGET_PATH="$windows_app_destination" \
         AUDIOBATCH_SHORTCUT_PATH="$windows_shortcut_destination" \
@@ -104,6 +105,8 @@ APP_DESTINATION="/Applications/$GUI_APP_BUNDLE"
 
 print_magenta "Installing binaries..."
 cargo install --force --locked --path crates/cli
+require_command "$CLI_BINARY_NAME" "$CLI_BINARY_NAME not found. Is the Cargo install directory in path?"
+copy_third_party_licenses "$(dirname "$(command -v "$CLI_BINARY_NAME")")/audiobatch-rs-licenses"
 
 if [ "$CLI_ONLY" = false ]; then
     cargo build --release --locked --bin "$GUI_BINARY_NAME"

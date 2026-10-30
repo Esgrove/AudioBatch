@@ -62,6 +62,8 @@ else
     executables=$(get_rust_executable_names)
 fi
 
+copy_third_party_licenses "$REPO/audiobatch-rs-licenses"
+
 for executable in $executables; do
     rm -f "$executable"
     if [ "$executable" = "$GUI_BINARY_NAME" ] && [ "$BASH_PLATFORM" = "mac" ]; then

@@ -7,25 +7,8 @@
 //! The x86 reference enables hardware flush to zero during processing, whereas this kernel leaves that setting alone.
 //! Consequently, bit equality with that reference is not guaranteed for arithmetic that underflows within a block.
 
-// Copyright (c) 2011 Jan Kokemüller
-// Copyright (c) 2020 Sebastian Dröge <sebastian@centricular.com>
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of this software
-// and associated documentation files (the "Software"),
-// to deal in the Software without restriction, including
-// without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
-// sell copies of the Software, and to permit persons to whom the Software is furnished to do
-// so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all copies
-// or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-// EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-// IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-// DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+// K-weighting coefficient calculations and filter recurrence are adapted from ebur128 0.1.11.
+// The upstream copyright and MIT license notice are in ../../licenses/ebur128.txt.
 
 use std::f64::consts::PI;
 

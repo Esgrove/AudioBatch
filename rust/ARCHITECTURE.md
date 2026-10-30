@@ -306,7 +306,8 @@ Once constructed, pushing blocks and finishing the measurements are infallible.
 
 `loudness/k_weighting.rs` derives the shelving and high-pass coefficients for the sample rate,
 and combines them into a fourth order filter with `f64` state in fixed storage for 64 channels.
-Its coefficient formulas and recurrence are derived from ebur128, with the license notice retained in the source.
+Its coefficient formulas and recurrence are derived from ebur128.
+The shared upstream notice is in [`crates/core/licenses/ebur128.txt`](crates/core/licenses/ebur128.txt).
 It uses ebur128's default channel map, including its four- and five-channel layouts,
 with LFE and unused channels excluded from loudness.
 A mono file has twice its filtered energy, so it reads the same loudness as the same content in stereo.
@@ -321,12 +322,10 @@ whose capacity is reserved from the expected decoded length when it is known.
 Short-term windows retain the three-second denominator and implicit leading silence for short streams.
 A final partial block does not create an incomplete integrated gating window.
 
-An exact final partial short-term window after three seconds must expire only the outgoing block's prefix.
-The meter therefore also retains one channel-weighted squared energy per frame in a shared three-second ring.
-It does not retain filtered per-channel audio.
-This is a bounded memory compromise for exact partial-window boundaries,
-not a claim that all loudness state consists of only 30 energies.
-Only the final partial update scans the outgoing suffix, complete updates sum the 30 block energies.
+A shared three-second ring of channel-weighted per-frame energies retains exact final partial-window boundaries.
+The final partial query combines the outgoing block's unexpired suffix with complete block energies and new energy.
+Complete queries sum only the 30 block energies.
+The frame-energy ring uses about 1.15 MB at 48 kHz, independent of channel count.
 
 `loudness/true_peak.rs` measures true peak on every architecture with `fearless_simd`.
 Below 96 kHz its four interpolation phases occupy separate `f32x4` lanes,
@@ -337,25 +336,24 @@ Ordered comparisons ignore NaNs without relying on backend-specific SIMD maximum
 Hardware dispatch detects NEON on Apple Silicon or AVX2 on x86 once per process.
 AVX-512 capable AMD CPUs also use the AVX2 backend, with no SSE compatibility paths.
 Tests compare the selected hardware backend and a forced scalar fallback with the reference.
-The same SIMD path runs on x86 without an opt-in or reference fallback.
 The safe SIMD kernel leaves the caller's floating point environment unchanged.
 Ebur128 temporarily enables flush to zero on x86 with SSE2,
-and a focused x86 test demonstrates different arithmetic-underflow results.
-Windows execution and timings remain a separate validation pass.
+and a focused x86 test covers the resulting arithmetic-underflow difference.
+Local correctness and timing results cover macOS on Apple Silicon.
+Windows execution and timings require native validation.
 
 The loudness contract allows at most 0.001 LU difference from the reference for integrated loudness,
 maximum short-term loudness, and each short-term history value.
 Displayed integrated and maximum short-term loudness must also agree at two decimal places.
-Loudness fields and serialized history are not required to preserve the reference's floating point bits.
-True peak retains its unchanged bit-exact contract, including the documented x86 arithmetic-underflow exception.
-Goldens are this implementation's regression snapshots and may be regenerated for a validated numerical change.
+True peak is bit-exact against the reference except for the x86 arithmetic-underflow case.
+Goldens capture regression snapshots, checked alongside differential and parity tests.
 The benchmark commands, profiling breakdown, and validation limits are in [Analysis performance](docs/performance.md).
 
 `WaveformBuilder` merges neighbouring buckets whenever their count passes 8192,
 and `WaveformOverview` keeps them quantized to 8 bits with coarser levels for drawing.
-It reuses a block's extrema only when the block fits in the remaining waveform bucket,
-otherwise it rescans the samples to preserve each bucket's exact range.
-The finest bucket size remains at least 64 frames, not 100 ms, so short-file resolution is unchanged.
+It reuses extrema when a block fits in the remaining bucket and both bounds preserve the actual sample range.
+Bucket crossings and zero-bound extrema require rescanning to retain exact ranges.
+The finest bucket size is at least 64 frames.
 The Serato Overview tag only colours the waveform, while its shape comes from the decoded audio.
 
 `overload.rs` records independent sample-over and true-peak-over bits for each actual source channel.
@@ -376,7 +374,7 @@ and extends true peak coverage conservatively across interpolation boundaries wi
 `AnalysisCache` in `core/src/cache.rs` keeps one SQLite row per path,
 with the levels, loudness history, waveform and overload history as independent blobs, and the user's custom gain.
 Successful rows require valid overload history matching their decoded stream.
-Analysis version 5 invalidates older measurement rows, including those made by the reference loudness meter.
+Analysis version 5 identifies measurements from the current loudness meter.
 Older rows or missing or malformed history trigger reanalysis through an additive migration and analysis version gate.
 A refill retains same-identity custom gains, including explicit clears, and leaves Serato rows untouched.
 A row holds while the file keeps the stored size and modification time and the analysis version is current.

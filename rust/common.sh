@@ -17,6 +17,13 @@ GUI_APP_BUNDLE="$GUI_BINARY_NAME.app"
 GUI_BUNDLE_ID="com.esgrove.audiobatch-rs"
 export CLI_BINARY_NAME GUI_BINARY_NAME GUI_APP_BUNDLE GUI_BUNDLE_ID
 
+# Copy third-party notices into a distribution's license directory, including for CLI-only builds.
+copy_third_party_licenses() {
+    local destination="$1"
+    mkdir -p "$destination"
+    cp "$REPO/crates/core/licenses/ebur128.txt" "$destination/ebur128.txt"
+}
+
 # Add the .exe suffix to an executable name on Windows
 executable_name() {
     if [ "$BASH_PLATFORM" = "windows" ]; then
@@ -174,6 +181,7 @@ create_mac_app_bundle() {
     fi
     # Copied after actool, which writes its own icns file, so older systems show the designed fallback.
     cp "$assets/icon_mac.icns" "$contents/Resources/icon_mac.icns"
+    copy_third_party_licenses "$contents/Resources/licenses"
 
     local version
     version=$(get_workspace_version)
