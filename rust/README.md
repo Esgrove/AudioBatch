@@ -26,15 +26,15 @@ The CLI takes the same arguments and prints the same output as the C++ CLI, so t
 [`ARCHITECTURE.md`](ARCHITECTURE.md) explains how the crates work together,
 with the threads, the analysis and processing pipelines, the preview, and VST3 hosting.
 
-The custom loudness meter combines K weighting with weighted 100 ms block energies,
-with mono measured as dual mono and the same default channel map as ebur128.
-Its integrated, maximum short-term, and history measurements stay within 0.001 LU of the reference,
-with the same displayed integrated and maximum short-term values at two decimal places.
-True peak keeps its unchanged bit-exact contract, including the documented x86 arithmetic-underflow exception.
-Normalization measures the exact quantized output as it writes, without decoding the completed file a second time.
-Analysis cache version 5 refreshes older measurements automatically
-while retaining same-file custom gains and Serato data.
-See [Analysis performance](docs/performance.md) for the implementation tradeoffs and historical measurements.
+Analysis uses custom K weighting and block-energy gating, with SIMD true peak.
+Loudness stays within 0.001 LU of ebur128 and matches displayed integrated
+and maximum short-term values to two decimals.
+Normalization measures the exact quantized output while writing, without a second full decode.
+
+On an M3 Max, the release CLI analyzes the 29-file benchmark corpus in 0.297 s with one worker,
+compared with 1.618 s for C++, about 5.44 times faster.
+Peak and loudness normalization take 0.885 s and 0.928 s, about 3.71 and 3.52 times faster than C++.
+See [Analysis performance](docs/performance.md) for the full results, baseline comparisons, and validation limits.
 
 ## Build
 
@@ -55,6 +55,14 @@ On other platforms, it installs the GUI binary next to the CLI.
 Both scripts take `-l` or `--cli-only` to skip the slower GUI build.
 They also accept `-c` or `--clean` for the repository root scripts,
 but leave Cargo artifacts untouched because the option only cleans the C++ CMake build directory.
+
+K-weighting coefficient calculations, the filter recurrence,
+and true-peak interpolation coefficient calculation include adaptations from ebur128 0.1.11.
+Its complete copyright and MIT license notice is in [`crates/core/licenses/ebur128.txt`](crates/core/licenses/ebur128.txt).
+`build.sh` copies it into `audiobatch-rs-licenses/` beside the loose binaries,
+and `install.sh` copies it into the same directory beside the installed CLI.
+macOS app bundles include it in `Contents/Resources/licenses/`, and Windows GUI installations in `licenses/`.
+Include this notice when distributing binaries built or installed directly with Cargo too.
 
 Windows GUI builds require the Visual Studio C++ Build Tools, a Windows SDK, and LLVM with `libclang.dll`.
 If LLVM is not found automatically, set `LIBCLANG_PATH` to its `bin` directory.
@@ -127,7 +135,8 @@ With `-D` or `--delete`, replaced originals are permanently deleted instead.
 The option requires `--normalize`.
 An existing output file is only replaced with `--force`,
 and when two selected files would write the same output, only one of them is normalized.
-The output of lossless sources has the same samples as the C++ application writes, without dither.
+Lossless output is sample-exact with C++ in peak mode and differs by at most one PCM step in loudness mode.
+Neither mode applies dither.
 
 ```console
 Analyze audio files for sample peak, true peak, and integrated loudness (EBU R128)
@@ -358,30 +367,32 @@ git submodule update --init ../cpp/JUCE
 The tests find the bundle in `../test-plugin/build`, or at the path in `AUDIOBATCH_TEST_VST3`.
 Without it they are skipped, except when the `CI` variable is set, where they fail.
 
-`scripts/parity.sh` runs the Rust and the C++ CLI on the same files,
-and `scripts/compare_levels.py` compares their JSON output.
-Build the C++ CLI first with the CMake debug preset or `build.sh` in `../cpp`.
-With `--normalize`, each CLI normalizes its own copy of the files in a temporary folder,
-and the re-analyzed outputs are compared.
-Every output must reach the target given with `--peak` or `--lufs`.
-`scripts/compare_outputs.py` then compares the output files themselves:
-the file names, the AIFF format, the samples within -72 dBFS, and the ID3v2 frames.
-Both scripts run through [uv](https://docs.astral.sh/uv/), which installs the Python packages they need.
-The originals are left alone, but the replaced copies go to the system trash.
+`scripts/parity.sh` runs both CLIs on the same files, compares their JSON measurements, and reports their wall times.
+Build a C++ release CLI first, then pass `--release` for meaningful timing comparisons.
+With `--normalize`, each CLI works on its own temporary copies and permanently deletes replaced copies with `--delete`.
+Original fixtures remain untouched.
+The checks compare reported levels, normalization targets, output names, AIFF properties, samples, and ID3 metadata.
+Lossless samples must match exactly in peak mode and within one PCM step in loudness mode.
+Lossy output samples use a -72 dBFS difference tolerance for decoder differences.
+The Python helpers run through [uv](https://docs.astral.sh/uv/), which installs their packages.
 
 `../fixtures/normalization` is the collection made for this,
 with every supported format, sample rate, and bit depth, a wide range of tags, and edge cases.
 It is stored with Git LFS, so run `git lfs install` and `git lfs pull` first.
 
 ```shell
-./scripts/parity.sh ../fixtures
-./scripts/parity.sh --normalize ../fixtures/normalization
-./scripts/parity.sh --normalize --lufs -14 ../fixtures/normalization
+./scripts/parity.sh --release ../fixtures
+./scripts/parity.sh --release --normalize ../fixtures/normalization
+./scripts/parity.sh --release --normalize --lufs -14 ../fixtures/normalization
 ```
 
-Lossless sources give byte for byte identical outputs.
-Lossy sources differ by about one least significant bit, and AAC more,
-because the C++ application decodes AAC through the platform decoder.
+For repeated timing comparisons with isolated inputs, warmups, and JSON and Markdown exports:
+
+```shell
+./scripts/cli_benchmark.sh --corpus ../fixtures/normalization
+```
+
+See [Analysis performance](docs/performance.md) for measured results and benchmark settings.
 
 `cargo run -p audiobatch-playback --example play -- <file> [seconds] [sample rate] [buffer size]`
 plays a file through the default output device, optionally at a chosen sample rate and buffer size,

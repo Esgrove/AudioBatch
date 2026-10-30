@@ -94,6 +94,14 @@ jobs:
       - name: Run tests
         run: cargo nextest run --workspace --no-fail-fast
 
+      - name: Set up uv for packaging tests
+        if: runner.os == 'macOS'
+        uses: astral-sh/setup-uv@v10.3.2
+
+      - name: Check distribution license notices
+        if: runner.os == 'macOS'
+        run: uv run --script scripts/test_distribution_licenses.py
+
       # Optimized SIMD kernels must preserve the exact golden output on both hardware backends.
       - name: Log release test hardware and compiler
         run: |
