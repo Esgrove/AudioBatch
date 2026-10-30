@@ -689,7 +689,7 @@ void AudioBatchComponent::handleSelectionChanged(const int lastRowSelected)
 
     const auto& record = analysisResults[row];
 
-    if (record.file.existsAsFile() && preview.getFile() != record.file) {
+    if (record.file.existsAsFile() && !isFileBeingRewritten(record.fullPath) && preview.needsReload(record.file)) {
         const bool continuePlaying
             = shouldContinuePreviewPlayback(previewPreferences, previewPlayer.isPlaying(), !automaticSelectionChange);
         showAudioFile(record.file);

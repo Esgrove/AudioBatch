@@ -235,10 +235,14 @@ void AudioBatchComponent::synchronizePreviewPreferences()
 /// Updates the fixed analysis cards and scrolling details, including pending and failed record states.
 void AudioBatchComponent::updateAudioInfo(const AudioAnalysisRecord& record)
 {
-    updatePreviewLoudnessHistory();
-    if (preview.isSeratoDataOutdated(record.file)) {
-        requestSeratoPreview();
+    if (record.file == preview.getFile() && record.file.existsAsFile() && !isFileBeingRewritten(record.fullPath)
+        && preview.needsReload(record.file))
+    {
+        showAudioFile(record.file);
     }
+    updatePreviewLoudnessHistory();
+    updatePreviewInputGain();
+    updateThumbnailDisplayGain();
     const auto seratoData = record.file == preview.getFile() ? preview.getSeratoData() : nullptr;
     previewWorkspace.audioInfo.showRecord(record, fileActivity.getActiveLabel(record.fullPath), seratoData.get());
     // Follows the displayed record rather than the loaded preview,
@@ -286,11 +290,16 @@ void AudioBatchComponent::showAudioFile(const juce::File& file)
     previewWorkspace.setPlaybackState(true, previewPlayer.isPlaying());
     previewWorkspace.zoomSlider.setValue(100.0, juce::dontSendNotification);
 
+    const auto& loaded = std::get<LoadedPreview>(preview.getState());
     const auto waveformData = file.existsAsFile() ? analysisCache.getWaveformData(file) : std::nullopt;
-    if (waveformData.has_value() && previewWorkspace.thumbnail.loadFromCacheData(*waveformData)) {
+    if (waveformData.has_value() && loaded.identity.matches(file)
+        && previewWorkspace.thumbnail.loadFromCacheData(*waveformData, loaded.identity))
+    {
         preview.setWaveformLoadedFromCache(true);
     } else {
-        previewWorkspace.thumbnail.setURL(juce::URL(file), previewPlayer.getLoadedLengthInSamples().value_or(0));
+        previewWorkspace.thumbnail.setURL(
+            juce::URL(file), previewPlayer.getLoadedLengthInSamples().value_or(0), loaded.identity
+        );
     }
 
     requestSeratoPreview();
@@ -347,12 +356,20 @@ void AudioBatchComponent::handleThumbnailFullyLoaded()
         return;
     }
 
+    const auto& identity = previewWorkspace.thumbnail.getSourceIdentity();
+    if (!identity || identity->path != loaded->identity.path || identity->fileSize != loaded->identity.fileSize
+        || identity->modifiedTimeMs != loaded->identity.modifiedTimeMs
+        || identity->platformId != loaded->identity.platformId
+        || identity->preciseTimes != loaded->identity.preciseTimes || !identity->matches(loaded->file))
+    {
+        return;
+    }
     const auto waveformData = previewWorkspace.thumbnail.saveToCacheData();
     if (waveformData.getSize() == 0) {
         return;
     }
 
-    preview.setWaveformLoadedFromCache(analysisCache.storeWaveformData(loaded->file, waveformData));
+    preview.setWaveformLoadedFromCache(analysisCache.storeWaveformData(*identity, waveformData));
 }
 
 /// Relabels and recolours the play button to match whether the transport is playing.
@@ -474,7 +491,7 @@ void AudioBatchComponent::updatePreviewInputGain(const bool immediately)
     LinearGain gain;
     if (const auto row = analysisResults.findRow(preview.getFile().getFullPathName())) {
         const auto& record = analysisResults[*row];
-        if (record.customGain) {
+        if (preview.canDisplayAnalysis(record) && record.customGain) {
             gain = record.customGain->toLinearGain();
         }
     }
@@ -530,6 +547,8 @@ void AudioBatchComponent::updateThumbnailDisplayGain()
     }
 
     const auto& record = analysisResults[*currentRow];
-    previewWorkspace.thumbnail.setDisplayGain(record.customGain.value_or(Decibels {}).toLinearGain().value);
+    previewWorkspace.thumbnail.setDisplayGain(
+        preview.canDisplayAnalysis(record) ? record.customGain.value_or(Decibels {}).toLinearGain().value : 1.0f
+    );
 }
 }  // namespace audiobatch

@@ -74,6 +74,7 @@ public:
     [[nodiscard]] bool isSeratoDataOutdated(const juce::File& file) const;
     [[nodiscard]] bool isWaveformLoadedFromCache() const noexcept;
     [[nodiscard]] bool canDisplayAnalysis(const AudioAnalysisRecord& record) const;
+    [[nodiscard]] bool needsReload(const juce::File& file) const;
 
     [[nodiscard]] bool adoptSeratoData(
         const utils::FileIdentity& identity,

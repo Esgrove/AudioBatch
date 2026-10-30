@@ -54,6 +54,7 @@ public:
             expect(loaded != nullptr);
             expect(loaded != nullptr && loaded->identity.matches(file));
             expect(preview.getFile() == file);
+            expect(!preview.needsReload(file));
             expect(player.hasLoadedSource());
             expect(!preview.isWaveformLoadedFromCache());
             preview.setWaveformLoadedFromCache(true);
@@ -66,6 +67,10 @@ public:
             expect(std::holds_alternative<ReleasedPreview>(preview.getState()));
             expect(preview.getFile() == file);
             expect(!player.hasLoadedSource());
+            expect(preview.needsReload(file));
+            expect(preview.load(file, false));
+            expect(!preview.needsReload(file));
+            preview.release();
             expect(!preview.isWaveformLoadedFromCache());
             expect(preview.getSeratoData() == nullptr);
             expect(!preview.adoptSeratoData(utils::FileIdentity(file), 1, nullptr));
@@ -78,6 +83,19 @@ public:
             expect(std::holds_alternative<ReleasedPreview>(preview.getState()));
             expect(preview.getFile() == missing);
             expect(!player.hasLoadedSource());
+        }
+
+        beginTest("A failed source can be retried at the same path after it becomes readable");
+        {
+            const TemporaryDirectory directory;
+            const auto retry = directory.getChildFile("retry.wav");
+            expect(retry.replaceWithText("not an audio source"));
+            expect(!preview.load(retry, false));
+            expect(preview.getFile() == retry);
+            expect(preview.needsReload(retry));
+            expect(file.copyFileTo(retry));
+            expect(preview.load(retry, false));
+            expect(!preview.needsReload(retry));
         }
 
         beginTest("Clearing forgets the file");
@@ -127,6 +145,7 @@ public:
 
             expect(selected.setLastModificationTime(selected.getLastModificationTime() + juce::RelativeTime::hours(1)));
             expect(!preview.canDisplayAnalysis(record));
+            expect(preview.needsReload(selected));
             record.modifiedTimeMs = selected.getLastModificationTime().toMilliseconds();
             expect(!preview.canDisplayAnalysis(record));
             expect(preview.load(selected, false));

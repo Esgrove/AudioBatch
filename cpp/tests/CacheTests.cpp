@@ -24,6 +24,7 @@
 #include <array>
 #include <atomic>
 #include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -33,6 +34,29 @@
 
 namespace audiobatch::tests
 {
+namespace
+{
+/// Builds a small complete waveform without decoding or rendering audio.
+juce::MemoryBlock validWaveform()
+{
+    juce::MemoryBlock result;
+    juce::MemoryOutputStream output(result, false);
+    output.write("jatm", 4);
+    output.writeInt(16);
+    output.writeInt64(32);
+    output.writeInt64(32);
+    output.writeInt(3);
+    output.writeInt(1);
+    output.writeInt(44'100);
+    output.writeInt64(0);
+    output.writeInt64(0);
+    for (int point = 0; point < 3; ++point) {
+        output.writeShort(0);
+    }
+    return result;
+}
+}  // namespace
+
 /// Checks that cached analysis is returned for unchanged files and dropped for changed ones.
 class CacheTests final : public juce::UnitTest
 {
@@ -195,6 +219,19 @@ public:
             expectEquals(cached.value_or(AudioAnalysisRecord {}).customGain.value_or(Decibels {}).value, -3.5f);
         }
 
+        beginTest("An explicit clear remains persisted after a stale analysis is stored");
+        {
+            const auto clearFile = directory.copyFixture("sine_mono_44100_16.wav", "cleared_gain.wav");
+            auto stale = analyzeFile(clearFile);
+            stale.customGain = Decibels {-3.0f};
+            expect(cache.storeAnalysis(stale));
+            expect(cache.storeCustomGain(stale.file, std::nullopt));
+            expect(cache.storeAnalysis(stale));
+            const auto cached = cache.getAnalysis(stale.file);
+            expect(cached.has_value());
+            expect(cached && !cached->customGain);
+        }
+
         beginTest("A custom gain for a file without a cached row reports that nothing was stored");
         {
             const auto waitingFile = directory.copyFixture("sine_stereo_44100_16.wav", "waiting.wav");
@@ -266,15 +303,113 @@ public:
             const auto waveformFile = directory.copyFixture("sine_stereo_44100_16.wav", "waveform.wav");
             expect(cache.storeAnalysis(analyzeFile(waveformFile)));
 
-            const juce::String waveformText("waveform bytes");
-            const juce::MemoryBlock waveform(waveformText.toRawUTF8(), waveformText.getNumBytesAsUTF8());
-            expect(cache.storeWaveformData(waveformFile, waveform));
+            const auto waveform = validWaveform();
+            expect(cache.storeWaveformData(utils::FileIdentity(waveformFile), waveform));
 
             const auto loaded = cache.getWaveformData(waveformFile);
             expect(loaded.has_value() && *loaded == waveform);
 
             expect(cache.storeAnalysis(analyzeFile(waveformFile)));
             expect(!cache.getWaveformData(waveformFile).has_value());
+        }
+
+        beginTest("Malformed waveform headers and geometry are rejected before allocation");
+        {
+            const auto valid = validWaveform();
+            expect(isValidWaveformData(valid));
+            juce::AudioFormatManager formats;
+            juce::AudioThumbnailCache thumbnails(1);
+            juce::AudioThumbnail thumbnail(16, formats, thumbnails);
+            juce::MemoryInputStream roundTrip(valid, false);
+            expect(thumbnail.loadFrom(roundTrip));
+            for (std::size_t length = 0; length < valid.getSize(); ++length) {
+                const juce::MemoryBlock truncated(valid.getData(), length);
+                expect(!isValidWaveformData(truncated));
+                juce::MemoryInputStream input(truncated, false);
+                expect(!thumbnail.loadFrom(input));
+            }
+            for (const auto& [offset, value] :
+                 std::array<std::pair<juce::int64, int>, 7> {
+                     {{4, 0}, {4, -1}, {24, 0x7fffffff}, {24, -1}, {28, 3}, {28, 0x7fffffff}, {32, 0}},
+                 })
+            {
+                auto corrupt = valid;
+                juce::MemoryOutputStream output(corrupt, true);
+                expect(output.setPosition(offset));
+                output.writeInt(value);
+                expect(!isValidWaveformData(corrupt));
+                juce::MemoryInputStream input(corrupt, false);
+                if (value != 3) {
+                    expect(!thumbnail.loadFrom(input));
+                }
+            }
+            for (const auto& [offset, value] :
+                 std::array<std::pair<juce::int64, juce::int64>, 3> {{{8, 16}, {16, 33}, {16, -1}}})
+            {
+                auto corrupt = valid;
+                juce::MemoryOutputStream output(corrupt, true);
+                expect(output.setPosition(offset));
+                output.writeInt64(value);
+                expect(!isValidWaveformData(corrupt));
+                juce::MemoryInputStream input(corrupt, false);
+                expect(!thumbnail.loadFrom(input));
+            }
+            auto incomplete = valid;
+            juce::MemoryOutputStream output(incomplete, true);
+            expect(output.setPosition(16));
+            output.writeInt64(0);
+            expect(!isValidWaveformData(incomplete));
+            auto trailingBytes = valid;
+            trailingBytes.append("extra", 5);
+            expect(!isValidWaveformData(trailingBytes));
+
+            thumbnail.clear();
+            juce::MemoryBlock empty;
+            juce::MemoryOutputStream emptyOutput(empty, false);
+            thumbnail.saveTo(emptyOutput);
+            emptyOutput.flush();
+            juce::MemoryInputStream emptyInput(empty, false);
+            expect(thumbnail.loadFrom(emptyInput));
+            expect(!isValidWaveformData(empty));
+        }
+
+        beginTest("Obsolete waveform publication cannot attach peaks to newer analysis");
+        {
+            const auto waveformFile = directory.copyFixture("sine_stereo_44100_16.wav", "late_waveform.wav");
+            const utils::FileIdentity oldIdentity(waveformFile);
+            expect(cache.storeAnalysis(analyzeFile(waveformFile)));
+            const auto oldKey = waveformCacheKey(oldIdentity, 16);
+            juce::AudioFormatManager formats;
+            juce::AudioThumbnailCache thumbnails(2);
+            juce::AudioThumbnail thumbnail(16, formats, thumbnails);
+            const auto waveform = validWaveform();
+            juce::MemoryInputStream peaks(waveform, false);
+            expect(thumbnail.loadFrom(peaks));
+            thumbnails.storeThumb(thumbnail, oldKey);
+            expect(thumbnails.loadThumb(thumbnail, oldKey));
+            expect(fixtureFile("sine_stereo_48000_24.wav").copyFileTo(waveformFile));
+            expect(waveformFile.setLastModificationTime(juce::Time(oldIdentity.modifiedTimeMs + 10'000)));
+            const utils::FileIdentity newIdentity(waveformFile);
+            expect(oldKey != waveformCacheKey(newIdentity, 16));
+            expect(!thumbnails.loadThumb(thumbnail, waveformCacheKey(newIdentity, 16)));
+            expect(oldKey != waveformCacheKey(oldIdentity, 32));
+            auto replacedIdentity = oldIdentity;
+            replacedIdentity.platformId = std::pair<std::uint64_t, std::uint64_t> {1, 2};
+            const auto replacedKey = waveformCacheKey(replacedIdentity, 16);
+            ++replacedIdentity.platformId->second;
+            expect(replacedKey != waveformCacheKey(replacedIdentity, 16));
+            const auto preciseKey = waveformCacheKey(replacedIdentity, 16);
+            ++replacedIdentity.preciseTimes.first;
+            expect(preciseKey != waveformCacheKey(replacedIdentity, 16));
+            expect(cache.storeAnalysis(analyzeFile(waveformFile)));
+            expect(!cache.storeWaveformData(oldIdentity, validWaveform()));
+            expect(!cache.getWaveformData(waveformFile));
+            expect(cache.storeWaveformData(newIdentity, validWaveform()));
+            expect(cache.getWaveformData(waveformFile).has_value());
+            expect(executeSql(
+                directory.getChildFile("analysis.db"), "UPDATE file_analysis SET waveform_data = X'6a61746d';"
+            ));
+            expect(!cache.getWaveformData(waveformFile));
         }
 
         beginTest("A cached record is dropped when only the modification time of the file changes");
@@ -584,10 +719,10 @@ private:
         expect(serato::storeCachedTag(cache, identity, positive));
         const auto analyzed = analyzeFile(file);
         expect(cache.storeAnalysis(analyzed));
-        const juce::MemoryBlock waveform("cached peaks", 12);
-        expect(cache.storeWaveformData(file, waveform));
+        const auto waveform = validWaveform();
+        expect(cache.storeWaveformData(utils::FileIdentity(file), waveform));
         expectSqlScalar(databaseFile, "SELECT analysis_version FROM file_analysis;", 12);
-        expectSqlScalar(databaseFile, "SELECT waveform_version FROM file_analysis;", 2);
+        expectSqlScalar(databaseFile, "SELECT waveform_version FROM file_analysis;", 3);
         expect(serato::getCachedTag(cache, identity).has_value());
         const auto loadedWaveform = cache.getWaveformData(file);
         expect(loadedWaveform.has_value() && *loadedWaveform == waveform);
@@ -599,7 +734,7 @@ private:
 
         beginTest("Explicit eviction removes analysis, waveform and all tag kinds");
         expect(cache.storeAnalysis(analyzed));
-        expect(cache.storeWaveformData(file, waveform));
+        expect(cache.storeWaveformData(utils::FileIdentity(file), waveform));
         expect(executeSql(databaseFile, R"SQL(
             INSERT INTO serato_tag_cache
             SELECT file_path, 2, file_size, modified_time_ms, parser_version, result_state, decoded_data, updated_at_ms
@@ -670,7 +805,7 @@ private:
         expect(parent.createDirectory());
         expect(fixtureFile("sine_stereo_44100_16.wav").copyFileTo(detachedFile));
         expect(detachedFile.setLastModificationTime(juce::Time(detachedIdentity.modifiedTimeMs)));
-        expect(serato::getCachedTag(cache, detachedIdentity).has_value());
+        expect(serato::getCachedTag(cache, utils::FileIdentity(detachedFile)).has_value());
         expect(cache.removeAnalysis(detachedFile));
 
         beginTest("A tag row replaced after the pruning snapshot retains its new identity");
@@ -899,8 +1034,8 @@ private:
         beginTest("All kinds coexist with analysis and waveform writes and independent version changes");
         const auto analyzed = analyzeFile(file);
         expect(cache.storeAnalysis(analyzed));
-        const juce::MemoryBlock waveform("cached peaks", 12);
-        expect(cache.storeWaveformData(file, waveform));
+        const auto waveform = validWaveform();
+        expect(cache.storeWaveformData(utils::FileIdentity(file), waveform));
         for (const auto& positive : positives) {
             expect(serato::storeCachedTag(cache, identity, positive));
         }
