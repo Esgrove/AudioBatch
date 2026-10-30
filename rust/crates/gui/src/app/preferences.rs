@@ -315,6 +315,7 @@ fn merge_settings_window(current: &GuiSettings, changed: &GuiSettings) -> GuiSet
         normalize_target_peak_dbfs: current.normalize_target_peak_dbfs,
         normalize_target_lufs: current.normalize_target_lufs,
         show_album_artwork: current.show_album_artwork,
+        serato_waveform_colours: current.serato_waveform_colours,
         hidden_columns: current.hidden_columns.clone(),
         ..changed.clone()
     }
@@ -323,6 +324,24 @@ fn merge_settings_window(current: &GuiSettings, changed: &GuiSettings) -> GuiSet
 #[cfg(test)]
 mod test_settings_merge {
     use super::*;
+
+    #[test]
+    fn audio_settings_preserve_both_serato_colour_toggle_states() {
+        for enabled in [false, true] {
+            let current = GuiSettings {
+                serato_waveform_colours: enabled,
+                ..GuiSettings::default()
+            };
+            let stale = GuiSettings {
+                serato_waveform_colours: !enabled,
+                buffer_size: Some(512),
+                ..GuiSettings::default()
+            };
+            let merged = merge_settings_window(&current, &stale);
+            assert_eq!(merged.serato_waveform_colours, enabled);
+            assert_eq!(merged.buffer_size, Some(512));
+        }
+    }
 
     #[test]
     fn audio_settings_preserve_newer_column_preferences() {
