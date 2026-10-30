@@ -237,6 +237,62 @@ fn truncated_source_notice_survives_render_time_analysis() {
 }
 
 #[test]
+fn at_target_returns_the_current_record_and_completes_progress() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let mut source = extended_fixture(&directory, 1, 16);
+    source.custom_gain_db = Some(-3.0);
+    let options = NormalizationOptions {
+        target_peak_dbfs: crate::format::gain_to_decibels(f64::from(source.overall_peak.abs()), -1000.0),
+        ..options()
+    };
+    let mut progress = Vec::new();
+    let result = normalize_file(&source, &options, &|| false, &mut |fraction| progress.push(fraction));
+    assert!(result.error().is_none(), "{:?}", result.error());
+    assert_exact(result.output().expect("current output"), &source);
+    assert_eq!(progress, vec![1.0]);
+}
+
+#[test]
+fn cancelled_at_target_does_not_return_a_successful_record() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let source = ready_fixture_copy(&directory, "sine_stereo_44100_16.aif", "source.aif");
+    let options = NormalizationOptions {
+        target_peak_dbfs: crate::format::gain_to_decibels(f64::from(source.overall_peak.abs()), -1000.0),
+        ..options()
+    };
+    let result = normalize_file(&source, &options, &|| true, &mut |_| panic!("cancelled progress"));
+    assert_eq!(result.error(), Some(CANCELLED_MESSAGE));
+}
+
+#[test]
+fn changed_at_target_source_is_not_returned_as_current() {
+    let directory = tempfile::tempdir().expect("temporary directory");
+    let source = ready_fixture_copy(&directory, "sine_stereo_44100_16.aif", "source.aif");
+    let options = NormalizationOptions {
+        target_peak_dbfs: crate::format::gain_to_decibels(f64::from(source.overall_peak.abs()), -1000.0),
+        ..options()
+    };
+    let result = normalize_file(
+        &source,
+        &options,
+        &|| {
+            std::fs::write(&source.path, b"external replacement").expect("replaces source");
+            false
+        },
+        &mut |_| panic!("changed source progress"),
+    );
+    assert!(
+        result
+            .error()
+            .is_some_and(|error| error.contains("source file changed"))
+    );
+    assert_eq!(
+        std::fs::read(&source.path).expect("replacement"),
+        b"external replacement"
+    );
+}
+
+#[test]
 fn cancelled_render_never_publishes_measured_output() {
     let directory = tempfile::tempdir().expect("temporary directory");
     let source = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "source.wav");

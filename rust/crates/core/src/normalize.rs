@@ -360,15 +360,14 @@ pub fn normalize_file(
     };
 
     if output == source && is_at_target(gain, output_bit_depth(&record)) {
-        let analysis = analyze_file(
-            source,
-            is_cancelled,
-            &mut progress_range(on_progress, render_start, 1.0),
-        );
-        if analysis.has_error() {
-            return fail(source, analysis.error_message);
+        if is_cancelled() {
+            return fail(source, CANCELLED_MESSAGE);
         }
-        return succeed(source, analysis, None);
+        if let Err(error) = expected_source.validate(source) {
+            return fail(source, error);
+        }
+        on_progress(1.0);
+        return succeed(source, record, None);
     }
 
     let temporary = match create_temporary_output(&output) {
@@ -445,7 +444,6 @@ fn render_normalized_audio(
     let mut writer = AiffWriter::new(BufWriter::new(file), channels, sample_rate, bits_per_sample)?;
     let total_frames = record.length_in_samples.max(1);
     let mut quantized: Vec<Vec<f32>> = vec![Vec::new(); channels as usize];
-    let mut scaled: Vec<Vec<f32>> = vec![Vec::new(); channels as usize];
     loop {
         if is_cancelled() {
             return Err(NormalizationRenderError::Cancelled);
@@ -458,17 +456,21 @@ fn render_normalized_audio(
             samples.clear();
             samples.reserve(frames);
         }
-        for (target, samples) in scaled.iter_mut().zip(chunk) {
-            apply_gain(samples, gain, target);
+        let mut planes = [&[][..]; 64];
+        for (plane, samples) in planes.iter_mut().zip(chunk) {
+            *plane = samples;
         }
-        let planes: Vec<&[f32]> = scaled.iter().map(Vec::as_slice).collect();
         writer
-            .write_planar_with_gain(&planes, 1.0, |channel, sample| {
-                quantized
-                    .get_mut(channel)
-                    .expect("writer channels match the quantized planes")
-                    .push(sample);
-            })
+            .write_planar_with_gain(
+                planes.get(..channels as usize).expect("validated channel count"),
+                gain,
+                |channel, sample| {
+                    quantized
+                        .get_mut(channel)
+                        .expect("writer channels match the quantized planes")
+                        .push(sample);
+                },
+            )
             .map_err(NormalizationRenderError::Write)?;
         meter.push(&quantized);
         on_progress((writer.frames_written() as f64 / total_frames as f64).min(1.0) as f32);
