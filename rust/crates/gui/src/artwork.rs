@@ -1,6 +1,6 @@
 //! Bounded decoding of the embedded album artwork shown beside the file name in the information panel.
 //!
-//! Pictures are read independently of display tags and Serato cues, front covers first.
+//! One picture is read independently of display tags and Serato cues, preferring the front cover.
 //! Encoded size, format, dimensions, and pixel storage are checked before pixel decoding,
 //! with an explicit allocation budget passed to the decoder.
 //! Only a BGRA thumbnail no larger than `THUMBNAIL_SIZE` on either side is retained.
@@ -9,7 +9,7 @@
 use std::io::Cursor;
 use std::path::Path;
 
-use audiobatch_core::tags::{ARTWORK_MAXIMUM_BYTES, ARTWORK_MAXIMUM_COUNT, read_artwork_candidates};
+use audiobatch_core::tags::{ARTWORK_MAXIMUM_BYTES, read_artwork};
 use gpui_kit::RenderImage;
 use image::{DynamicImage, Frame, ImageDecoder as _, ImageFormat, ImageReader, Limits, RgbaImage};
 
@@ -24,7 +24,7 @@ pub const MAXIMUM_SOURCE_DIMENSION: u32 = 4096;
 /// Decoder allocation limits are best effort, while dimension and output storage checks are strict.
 const MAXIMUM_DECODE_BYTES: u64 = 128 * 1024 * 1024;
 
-/// Reads the pictures of a file and returns the thumbnail of the first one that decodes, front covers first.
+/// Reads the preferred picture of a file and returns its thumbnail.
 /// Returns none when the file has no usable picture.
 #[must_use]
 #[expect(
@@ -37,11 +37,11 @@ pub fn load_artwork_thumbnail(path: &Path) -> Option<RenderImage> {
 
 /// Reads artwork only while the caller's generation and file identity remain current.
 ///
-/// Checks before reading tags, before each candidate decode, and after decoding.
-/// Reading tags or decoding one candidate cannot be interrupted, so callers must also check at foreground adoption.
+/// Checks before reading tags, before decoding the selected picture, and after decoding.
+/// Parsing or decoding cannot be interrupted, so callers must also check at foreground adoption.
 #[must_use]
 pub fn load_artwork_thumbnail_if_current(path: &Path, is_current: impl Fn() -> bool) -> Option<RenderImage> {
-    read_thumbnail_if_current(path, &is_current, read_artwork_candidates, decode_thumbnail)
+    read_thumbnail_if_current(path, &is_current, read_artwork, decode_thumbnail)
 }
 
 /// Decodes a PNG or JPEG picture into a BGRA thumbnail no larger than `THUMBNAIL_SIZE` on either side.
@@ -52,27 +52,23 @@ pub fn decode_thumbnail(data: &[u8]) -> Option<RenderImage> {
     Some(render_thumbnail(decode_thumbnail_rgba(data)?))
 }
 
-/// Reads bounded candidates and tries each only while the request is current.
+/// Reads and decodes one preferred picture only while the request is current.
 /// Reader and decoder injection lets lifecycle tests cover cancellation without GUI rendering or file races.
 fn read_thumbnail_if_current<Thumbnail>(
     path: &Path,
     is_current: &impl Fn() -> bool,
-    read: impl FnOnce(&Path) -> Vec<Vec<u8>>,
-    decode: impl Fn(&[u8]) -> Option<Thumbnail>,
+    read: impl FnOnce(&Path) -> Option<Vec<u8>>,
+    decode: impl FnOnce(&[u8]) -> Option<Thumbnail>,
 ) -> Option<Thumbnail> {
     if !is_current() {
         return None;
     }
-    let candidates = read(path);
-    for data in candidates.iter().take(ARTWORK_MAXIMUM_COUNT) {
-        if !is_current() {
-            return None;
-        }
-        if let Some(thumbnail) = decode(data) {
-            return is_current().then_some(thumbnail);
-        }
+    let data = read(path)?;
+    if !is_current() {
+        return None;
     }
-    None
+    let thumbnail = decode(&data)?;
+    is_current().then_some(thumbnail)
 }
 
 /// Converts RGBA thumbnail pixels to the BGRA frame format gpui draws.
@@ -230,16 +226,24 @@ mod test_decode_thumbnail {
     }
 
     #[test]
-    fn candidate_decoding_falls_back_after_corrupt_front_cover() {
-        let fallback = encoded(3, 2, ImageFormat::Png);
+    fn decodes_only_the_selected_picture() {
         let thumbnail = read_thumbnail_if_current(
             Path::new("artwork.flac"),
             &|| true,
-            |_| vec![b"corrupt front cover".to_vec(), fallback],
+            |_| Some(encoded(3, 2, ImageFormat::Png)),
             decode_thumbnail_rgba,
         )
-        .expect("decodes fallback");
+        .expect("decodes selected picture");
         assert_eq!(thumbnail.dimensions(), (3, 2));
+        assert!(
+            read_thumbnail_if_current(
+                Path::new("artwork.flac"),
+                &|| true,
+                |_| Some(b"corrupt front cover".to_vec()),
+                decode_thumbnail_rgba,
+            )
+            .is_none()
+        );
     }
 }
 
@@ -262,36 +266,18 @@ mod test_artwork_cancellation {
     }
 
     #[test]
-    fn cancellation_after_tag_parsing_skips_all_decodes() {
+    fn cancellation_after_tag_parsing_skips_decode() {
         let current = Cell::new(true);
         let thumbnail: Option<()> = read_thumbnail_if_current(
             Path::new("artwork.flac"),
             &|| current.get(),
             |_| {
                 current.set(false);
-                vec![vec![1]]
+                Some(vec![1])
             },
-            |_| panic!("must not decode stale candidates"),
+            |_| panic!("must not decode stale picture"),
         );
         assert!(thumbnail.is_none());
-    }
-
-    #[test]
-    fn cancellation_between_candidates_prevents_fallback_decode() {
-        let current = Cell::new(true);
-        let decodes = Cell::new(0);
-        let thumbnail: Option<()> = read_thumbnail_if_current(
-            Path::new("artwork.flac"),
-            &|| current.get(),
-            |_| vec![vec![1], vec![2]],
-            |_| {
-                decodes.set(decodes.get() + 1);
-                current.set(false);
-                None
-            },
-        );
-        assert!(thumbnail.is_none());
-        assert_eq!(decodes.get(), 1);
     }
 
     #[test]
@@ -300,7 +286,7 @@ mod test_artwork_cancellation {
         let thumbnail = read_thumbnail_if_current(
             Path::new("artwork.flac"),
             &|| current.get(),
-            |_| vec![vec![1]],
+            |_| Some(vec![1]),
             |_| {
                 current.set(false);
                 Some(())
@@ -310,19 +296,13 @@ mod test_artwork_cancellation {
     }
 
     #[test]
-    fn decoding_attempts_are_bounded_and_empty_candidates_are_harmless() {
-        let decodes = Cell::new(0);
+    fn missing_artwork_never_reaches_the_decoder() {
         let thumbnail: Option<()> = read_thumbnail_if_current(
-            Path::new("artwork.flac"),
+            Path::new("missing.wav"),
             &|| true,
-            |_| vec![vec![1]; ARTWORK_MAXIMUM_COUNT + 1],
-            |_| {
-                decodes.set(decodes.get() + 1);
-                None
-            },
+            |_| None,
+            |_| panic!("must not decode missing artwork"),
         );
         assert!(thumbnail.is_none());
-        assert_eq!(decodes.get(), ARTWORK_MAXIMUM_COUNT);
-        assert!(read_thumbnail_if_current(Path::new("missing.wav"), &|| true, |_| vec![], |_| Some(())).is_none());
     }
 }
