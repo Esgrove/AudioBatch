@@ -8,8 +8,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::decode::{AudioFileDecoder, DecodeError};
-use crate::meter::{BlockMeter, MeterError};
+use crate::decode::{AudioFileDecoder, DecodeError, StreamInfo};
+use crate::meter::{BlockMeter, MeterError, MeterOutput};
 use crate::overload::OverloadHistory;
 use crate::record::{AnalysisError, AnalysisFailure, AnalysisRecord, AnalysisStatus, ShortTermLoudnessHistory};
 use crate::waveform::WaveformOverview;
@@ -129,6 +129,42 @@ pub fn analyze_file_catching_panics(
             "Analysis failed unexpectedly",
         )
     })
+}
+
+/// Builds a current output record from measurements collected while rendering the committed file.
+pub(crate) fn record_from_meter(
+    path: &Path,
+    info: &StreamInfo,
+    length_in_samples: u64,
+    output: MeterOutput,
+) -> AnalysisRecord {
+    let mut record = AnalysisRecord::from_path(path);
+    let peaks = summarize(&output.signed_peaks, dominant_peak_f32);
+    let true_peaks = summarize(&output.true_peaks, dominant_peak_f64);
+    record.format_name.clone_from(&info.format_name);
+    record.sample_rate = info.sample_rate;
+    record.channels = info.channels;
+    record.bits_per_sample = info.bits_per_sample;
+    record.length_in_samples = length_in_samples;
+    record.duration_seconds = length_in_samples as f64 / f64::from(info.sample_rate);
+    record.peak_left = peaks.left;
+    record.peak_right = peaks.right;
+    record.overall_peak = peaks.overall;
+    record.true_peak_left = true_peaks.left;
+    record.true_peak_right = true_peaks.right;
+    record.overall_true_peak = true_peaks.overall;
+    record.integrated_lufs = output.integrated_lufs;
+    record.max_short_term_lufs = output.max_short_term_lufs;
+    record.short_term_loudness = Some(Arc::new(ShortTermLoudnessHistory {
+        values: output.history,
+        sample_rate: f64::from(info.sample_rate),
+        length_in_samples,
+        samples_per_point: output.samples_per_point,
+    }));
+    record.waveform = Some(output.waveform);
+    record.overloads = Some(output.overloads);
+    record.status = AnalysisStatus::Analyzed;
+    record
 }
 
 /// Picks the sample extreme with the larger magnitude, preserving its sign.
