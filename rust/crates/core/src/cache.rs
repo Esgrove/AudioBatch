@@ -897,6 +897,19 @@ mod test_custom_gain {
     }
 
     #[test]
+    fn explicit_clear_survives_a_stale_analysis_write() {
+        let directory = TempDir::new().expect("temp dir");
+        let cache = temporary_cache(&directory);
+        let mut stale = analyze_fixture_copy(&directory, "sine_mono_44100_16.wav");
+        stale.custom_gain_db = Some(-3.0);
+        cache.store_analysis(&stale).expect("stores old gain");
+        cache.store_custom_gain(&stale.path, None).expect("clears gain");
+        cache.store_analysis(&stale).expect("stores stale result");
+        let cached = cache.get_analysis(&stale.path).expect("cached analysis");
+        assert_eq!(cached.custom_gain_db, None);
+    }
+
+    #[test]
     fn new_analysis_of_a_changed_file_drops_the_gain() {
         let directory = TempDir::new().expect("temp dir");
         let cache = temporary_cache(&directory);
