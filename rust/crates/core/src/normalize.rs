@@ -1072,6 +1072,37 @@ mod test_normalize_file {
     }
 
     #[test]
+    fn committed_output_remains_authoritative_when_readback_fails() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let source = directory.path().join("source.wav");
+        let output = directory.path().join("output.aif");
+        for damaged in [false, true] {
+            if damaged {
+                fs::write(&output, b"damaged committed output").expect("damaged output");
+            }
+
+            let result = analyze_normalized_output(&source, &output, None, &mut |_| {});
+
+            assert_eq!(result.source, source);
+            assert!(matches!(
+                &result.outcome,
+                OperationOutcome::CommittedButUnanalyzed { .. }
+            ));
+            let analysis = result.output().expect("committed output");
+            assert_eq!(analysis.path, output);
+            assert!(analysis.has_error());
+            assert!(
+                result
+                    .error()
+                    .is_some_and(|error| error.starts_with("The file was normalized, but re-analysis failed:"))
+            );
+            if damaged {
+                assert_eq!(fs::read(&output).expect("retained output"), b"damaged committed output");
+            }
+        }
+    }
+
+    #[test]
     fn progress_reaches_the_end() {
         let directory = tempfile::tempdir().expect("creates directory");
         let record = ready_fixture_copy(&directory, "sine_stereo_44100_16.wav", "song.wav");

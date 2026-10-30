@@ -771,6 +771,32 @@ mod test_process_file_output {
     }
 
     #[test]
+    fn an_invalid_committed_output_retains_its_path_and_failed_readback() {
+        let directory = TempDir::new().expect("temp dir");
+        let source = directory.path().join("song.wav");
+        let output = directory.path().join("song.aif");
+        std::fs::write(&output, b"not audio").expect("invalid committed output");
+
+        let result = analyze_processed_output(&source, &output, &[], &mut |_| {});
+
+        let OperationOutcome::CommittedButUnanalyzed {
+            output: analysis,
+            error,
+        } = &result.outcome
+        else {
+            panic!("a committed output must not become an untouched-source failure: {result:?}");
+        };
+        assert_eq!(result.source, source);
+        assert_eq!(analysis.path, output);
+        assert!(analysis.has_error());
+        assert!(error.starts_with("The file was processed, but re-analysis failed: "));
+        assert!(error.ends_with(&analysis.error_message));
+        assert_eq!(result.error(), Some(error.as_str()));
+        assert_eq!(result.output().map(|record| &record.path), Some(&output));
+        assert_eq!(std::fs::read(&output).expect("retained output"), b"not audio");
+    }
+
+    #[test]
     fn the_saved_state_is_restored_for_every_file() {
         let chain = test_chain(&[(Kind::Gain, gain_state(0.5))]);
         for _ in 0..2 {

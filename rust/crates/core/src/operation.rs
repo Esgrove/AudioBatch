@@ -106,3 +106,160 @@ pub fn update_cache(cache: &AnalysisCache, source: &AnalysisRecord, result: &Ope
 pub fn progress_range(on_progress: &mut dyn FnMut(f32), start: f32, end: f32) -> impl FnMut(f32) + '_ {
     move |fraction| on_progress((end - start).mul_add(fraction.clamp(0.0, 1.0), start))
 }
+
+#[cfg(test)]
+mod test_operation_results {
+    use super::*;
+
+    #[test]
+    fn failed_and_committed_outcomes_keep_distinct_output_authority() {
+        let source = Path::new("source.wav");
+        let failed = OperationResult::failure(source, "untouched");
+        assert_eq!(failed.source, source);
+        assert_eq!(failed.error(), Some("untouched"));
+        assert!(failed.output().is_none());
+
+        let output = AnalysisRecord {
+            path: PathBuf::from("output.aif"),
+            ..AnalysisRecord::default()
+        };
+        let committed = OperationResult {
+            source: source.to_path_buf(),
+            outcome: OperationOutcome::CommittedButUnanalyzed {
+                output: output.clone(),
+                error: "readback failed".to_owned(),
+            },
+        };
+        assert_eq!(committed.error(), Some("readback failed"));
+        assert_eq!(committed.output().map(|record| &record.path), Some(&output.path));
+
+        let succeeded = OperationResult::success(source, output.clone(), Some("decode notice".to_owned()));
+        assert_eq!(succeeded.error(), None);
+        assert_eq!(succeeded.output().map(|record| &record.path), Some(&output.path));
+        assert!(matches!(
+            succeeded.outcome,
+            OperationOutcome::Succeeded { notice: Some(notice), .. } if notice == "decode notice"
+        ));
+    }
+
+    #[test]
+    fn progress_is_clamped_and_mapped_to_the_callers_range() {
+        let mut reported = Vec::new();
+        {
+            let mut report = |fraction| reported.push(fraction);
+            let mut progress = progress_range(&mut report, 0.2, 0.8);
+            for fraction in [-1.0, 0.0, 0.5, 1.0, 2.0] {
+                progress(fraction);
+            }
+        }
+        for (actual, expected) in reported.iter().zip([0.2, 0.2, 0.5, 0.8, 0.8]) {
+            assert!((actual - expected).abs() < 1e-6);
+        }
+        assert_eq!(reported.len(), 5);
+    }
+}
+
+#[cfg(test)]
+mod test_operation_cache {
+    use tempfile::TempDir;
+
+    use super::*;
+    use crate::test_helpers::{ready_fixture_copy, temporary_cache};
+
+    #[test]
+    fn failed_operations_leave_the_cached_source_untouched() {
+        let directory = TempDir::new().expect("temporary directory");
+        let cache = temporary_cache(&directory);
+        let source = ready_fixture_copy(&directory, "sine_mono_24000_16.wav", "source.wav");
+        cache.store_analysis(&source).expect("stores source");
+
+        update_cache(
+            &cache,
+            &source,
+            &OperationResult::failure(&source.path, "not committed"),
+        );
+
+        assert!(cache.get_analysis(&source.path).is_some());
+    }
+
+    #[test]
+    fn successful_conversion_removes_only_the_source_and_stores_the_output() {
+        let directory = TempDir::new().expect("temporary directory");
+        let cache = temporary_cache(&directory);
+        let source = ready_fixture_copy(&directory, "sine_mono_24000_16.wav", "source.wav");
+        let output = ready_fixture_copy(&directory, "sine_mono_24000_16.wav", "output.wav");
+        let unrelated = ready_fixture_copy(&directory, "sine_mono_24000_16.wav", "unrelated.wav");
+        for record in [&source, &unrelated] {
+            cache.store_analysis(record).expect("stores record");
+        }
+
+        update_cache(
+            &cache,
+            &source,
+            &OperationResult::success(&source.path, output.clone(), None),
+        );
+
+        assert!(cache.get_analysis(&source.path).is_none());
+        assert!(cache.get_analysis(&output.path).is_some());
+        assert!(cache.get_analysis(&unrelated.path).is_some());
+    }
+
+    #[test]
+    fn unanalyzed_conversion_removes_the_source_without_storing_a_failed_readback() {
+        let directory = TempDir::new().expect("temporary directory");
+        let cache = temporary_cache(&directory);
+        let source = ready_fixture_copy(&directory, "sine_mono_24000_16.wav", "source.wav");
+        cache.store_analysis(&source).expect("stores source");
+        let output = AnalysisRecord {
+            path: directory.path().join("output.aif"),
+            ..AnalysisRecord::default()
+        };
+        let result = OperationResult {
+            source: source.path.clone(),
+            outcome: OperationOutcome::CommittedButUnanalyzed {
+                output: output.clone(),
+                error: "readback failed".to_owned(),
+            },
+        };
+
+        update_cache(&cache, &source, &result);
+
+        assert!(!cache.remove_analysis(&source.path).expect("source row removed"));
+        assert!(!cache.remove_analysis(&output.path).expect("output row absent"));
+    }
+
+    #[test]
+    fn unavailable_cache_cannot_turn_a_committed_output_into_a_failure() {
+        let directory = TempDir::new().expect("temporary directory");
+        let cache = AnalysisCache::with_path(directory.path());
+        let source = AnalysisRecord {
+            path: directory.path().join("source.wav"),
+            ..AnalysisRecord::default()
+        };
+        let output = AnalysisRecord {
+            path: directory.path().join("output.aif"),
+            ..AnalysisRecord::default()
+        };
+        let result = OperationResult::success(&source.path, output.clone(), None);
+
+        update_cache(&cache, &source, &result);
+
+        assert_eq!(result.error(), None);
+        assert_eq!(result.output().map(|record| &record.path), Some(&output.path));
+    }
+
+    #[test]
+    fn successful_in_place_output_replaces_the_cached_measurements() {
+        let directory = TempDir::new().expect("temporary directory");
+        let cache = temporary_cache(&directory);
+        let source = ready_fixture_copy(&directory, "sine_mono_24000_16.wav", "source.wav");
+        cache.store_analysis(&source).expect("stores source");
+        let mut output = source.clone();
+        output.overall_peak = 0.25;
+
+        update_cache(&cache, &source, &OperationResult::success(&source.path, output, None));
+
+        let cached = cache.get_analysis(&source.path).expect("updated cache row");
+        assert!((cached.overall_peak - 0.25).abs() < f32::EPSILON);
+    }
+}
