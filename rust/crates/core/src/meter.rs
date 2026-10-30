@@ -33,8 +33,8 @@ pub struct BlockMeter {
     sample_rate: u32,
     block_size: usize,
     block: Vec<Vec<f32>>,
-    min_samples: Vec<f32>,
-    max_samples: Vec<f32>,
+    min_samples: [f32; 64],
+    max_samples: [f32; 64],
     max_short_term_lufs: f64,
     history: Vec<f32>,
     waveform: WaveformBuilder,
@@ -49,6 +49,8 @@ pub struct MeterOutput {
     pub min_samples: Vec<f32>,
     /// Largest sample of each channel, zero or above.
     pub max_samples: Vec<f32>,
+    /// Sample extreme of each channel with its original sign, preferring the positive extreme on a tie.
+    pub signed_peaks: Vec<f32>,
     /// True peak of each channel as a linear amplitude.
     pub true_peaks: Vec<f64>,
     /// Gated integrated loudness in LUFS, or the silence sentinel.
@@ -84,10 +86,14 @@ impl BlockMeter {
             sample_rate,
             block_size,
             block: vec![Vec::with_capacity(block_size); channel_count],
-            min_samples: vec![0.0; channel_count],
-            max_samples: vec![0.0; channel_count],
+            min_samples: [0.0; 64],
+            max_samples: [0.0; 64],
             max_short_term_lufs: NEGATIVE_INFINITY_LOUDNESS,
-            history: Vec::new(),
+            history: Vec::with_capacity(
+                expected_frames
+                    .and_then(|frames| usize::try_from(frames.div_ceil(block_size as u64)).ok())
+                    .unwrap_or(0),
+            ),
             waveform: WaveformBuilder::new(channel_count, expected_frames),
             overloads: OverloadHistoryBuilder::new(channels, sample_rate),
         })
@@ -148,12 +154,28 @@ impl BlockMeter {
         if self.block.first().is_some_and(|samples| !samples.is_empty()) {
             self.measure_block();
         }
+        let channels = self.block.len();
+        let min_samples = self
+            .min_samples
+            .get(..channels)
+            .expect("validated channel count")
+            .to_vec();
+        let max_samples = self
+            .max_samples
+            .get(..channels)
+            .expect("validated channel count")
+            .to_vec();
+        let signed_peaks = min_samples
+            .iter()
+            .zip(&max_samples)
+            .map(|(&minimum, &maximum)| crate::analysis::signed_peak_from_extrema(minimum, maximum))
+            .collect();
         let true_peaks = self.true_peak.as_ref().map_or_else(
             || {
                 // No interpolation is needed at these rates, reuse the signed sample extremes.
-                self.min_samples
+                min_samples
                     .iter()
-                    .zip(&self.max_samples)
+                    .zip(&max_samples)
                     .map(|(&minimum, &maximum)| f64::from(minimum).abs().max(f64::from(maximum).abs()))
                     .collect()
             },
@@ -161,8 +183,9 @@ impl BlockMeter {
         );
         let integrated_lufs = normalize_loudness(self.meter.integrated());
         MeterOutput {
-            min_samples: self.min_samples,
-            max_samples: self.max_samples,
+            min_samples,
+            max_samples,
+            signed_peaks,
             true_peaks,
             integrated_lufs,
             max_short_term_lufs: self.max_short_term_lufs,
@@ -194,6 +217,8 @@ impl BlockMeter {
     /// Measures one fixed analysis block, whether borrowed directly or assembled from decoder packets.
     fn measure_planes(&mut self, planes: &[&[f32]]) {
         let mut flags = [0_u8; 64];
+        let mut block_minima = [0.0_f32; 64];
+        let mut block_maxima = [0.0_f32; 64];
         for (channel, ((samples, minimum), maximum)) in planes
             .iter()
             .zip(&mut self.min_samples)
@@ -205,6 +230,8 @@ impl BlockMeter {
                 block_minimum = block_minimum.min(sample);
                 block_maximum = block_maximum.max(sample);
             }
+            *block_minima.get_mut(channel).expect("validated channel") = block_minimum;
+            *block_maxima.get_mut(channel).expect("validated channel") = block_maximum;
             *minimum = minimum.min(block_minimum);
             *maximum = maximum.max(block_maximum);
             if (block_minimum < -1.0 || block_maximum > 1.0)
@@ -216,7 +243,7 @@ impl BlockMeter {
                 }
             }
         }
-        self.waveform.push(planes);
+        self.waveform.push_extrema(planes, &block_minima, &block_maxima);
         if let Some(true_peak) = &mut self.true_peak {
             true_peak.push(planes);
             for (flag, &peak) in flags.iter_mut().zip(true_peak.previous_peaks()) {

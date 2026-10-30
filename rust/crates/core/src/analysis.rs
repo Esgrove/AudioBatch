@@ -57,8 +57,7 @@ struct DecodeMeasurements {
     channels: u32,
     bits_per_sample: u32,
     length_in_samples: u64,
-    min_samples: Vec<f32>,
-    max_samples: Vec<f32>,
+    signed_peaks: Vec<f32>,
     true_peaks: Vec<f64>,
     integrated_lufs: f64,
     max_short_term_lufs: f64,
@@ -81,13 +80,7 @@ pub fn analyze_file(path: &Path, is_cancelled: &dyn Fn() -> bool, on_progress: &
     }
     match measure_file(path, is_cancelled, on_progress) {
         Ok(measurements) => {
-            let signed_peaks: Vec<f32> = measurements
-                .min_samples
-                .iter()
-                .zip(&measurements.max_samples)
-                .map(|(&minimum, &maximum)| signed_peak_from_extrema(minimum, maximum))
-                .collect();
-            let peaks = summarize(&signed_peaks, dominant_peak_f32);
+            let peaks = summarize(&measurements.signed_peaks, dominant_peak_f32);
             let true_peaks = summarize(&measurements.true_peaks, dominant_peak_f64);
 
             record.format_name = measurements.format_name;
@@ -188,8 +181,7 @@ fn measure_file(
         channels: info.channels,
         bits_per_sample: info.bits_per_sample,
         length_in_samples,
-        min_samples: output.min_samples,
-        max_samples: output.max_samples,
+        signed_peaks: output.signed_peaks,
         true_peaks: output.true_peaks,
         integrated_lufs: output.integrated_lufs,
         max_short_term_lufs: output.max_short_term_lufs,

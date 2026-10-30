@@ -287,13 +287,17 @@ impl WaveformBuilder {
         let channels = channels.max(1);
         let target = expected_frames.unwrap_or(0) / (MAXIMUM_BUCKETS as u64 / 2);
         let frames_per_bucket = target.max(MINIMUM_FRAMES_PER_BUCKET).next_power_of_two();
+        let expected_buckets = expected_frames
+            .unwrap_or(0)
+            .div_ceil(frames_per_bucket)
+            .min(MAXIMUM_BUCKETS as u64) as usize;
         Self {
             channels,
             frames_per_bucket,
             frames_in_bucket: 0,
             current_min: vec![0.0; channels],
             current_max: vec![0.0; channels],
-            peaks: Vec::new(),
+            peaks: Vec::with_capacity(expected_buckets * channels),
         }
     }
 
@@ -331,6 +335,58 @@ impl WaveformBuilder {
             if self.frames_in_bucket == self.frames_per_bucket {
                 self.close_bucket();
             }
+        }
+    }
+
+    /// Folds a block using per-channel extrema when it fits in the remaining bucket.
+    /// The supplied extrema must include zero and ignore NaNs, as a zero-initialized reduction does.
+    /// A zero bound is rescanned to distinguish an artificial zero from the actual sample range.
+    /// Blocks crossing a bucket boundary use `push` to retain each bucket's exact range.
+    pub(crate) fn push_extrema(&mut self, planes: &[&[f32]], minimum: &[f32], maximum: &[f32]) {
+        let frame_count = planes.first().map_or(0, |samples| samples.len());
+        if frame_count == 0 {
+            return;
+        }
+        let channel_count = planes.len().min(self.channels);
+        if frame_count as u64 > self.frames_per_bucket - self.frames_in_bucket
+            || minimum.len() < channel_count
+            || maximum.len() < channel_count
+            || planes
+                .iter()
+                .take(channel_count)
+                .any(|samples| samples.len() != frame_count)
+        {
+            self.push(planes);
+            return;
+        }
+
+        for (channel, ((samples, &minimum), &maximum)) in
+            planes.iter().zip(minimum).zip(maximum).enumerate().take(self.channels)
+        {
+            let (minimum, maximum) = if minimum.abs().to_bits() == 0 || maximum.abs().to_bits() == 0 {
+                samples
+                    .iter()
+                    .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), &sample| {
+                        (low.min(sample), high.max(sample))
+                    })
+            } else {
+                (minimum, maximum)
+            };
+            if let (Some(current_min), Some(current_max)) =
+                (self.current_min.get_mut(channel), self.current_max.get_mut(channel))
+            {
+                if self.frames_in_bucket == 0 {
+                    *current_min = minimum;
+                    *current_max = maximum;
+                } else {
+                    *current_min = current_min.min(minimum);
+                    *current_max = current_max.max(maximum);
+                }
+            }
+        }
+        self.frames_in_bucket += frame_count as u64;
+        if self.frames_in_bucket == self.frames_per_bucket {
+            self.close_bucket();
         }
     }
 
@@ -412,6 +468,171 @@ fn merge_bucket_pairs(peaks: &[QuantizedPeak], channels: usize) -> Vec<Quantized
             })
         })
         .collect()
+}
+
+#[cfg(test)]
+mod test_waveform_extrema {
+    use super::*;
+
+    /// Pushes the same block through the sample scan and the zero-initialized extrema path.
+    fn push_both(reference: &mut WaveformBuilder, optimized: &mut WaveformBuilder, planes: &[&[f32]]) {
+        let (minimum, maximum): (Vec<_>, Vec<_>) = planes
+            .iter()
+            .map(|samples| {
+                samples.iter().fold((0.0_f32, 0.0_f32), |(low, high), &sample| {
+                    (low.min(sample), high.max(sample))
+                })
+            })
+            .unzip();
+        reference.push(planes);
+        optimized.push_extrema(planes, &minimum, &maximum);
+    }
+
+    /// Checks every resolution level and the exact serialized bytes of both builders.
+    fn finish_both(reference: WaveformBuilder, optimized: WaveformBuilder, frames: u64) -> Arc<WaveformOverview> {
+        let reference = reference.finish(48_000, frames);
+        let optimized = optimized.finish(48_000, frames);
+        assert_eq!(reference, optimized);
+        assert_eq!(reference.to_bytes(), optimized.to_bytes());
+        optimized
+    }
+
+    #[test]
+    fn extrema_match_across_boundaries_and_a_partial_final_bucket() {
+        let left: Vec<_> = (0..170).map(|frame| (frame as f32 * 0.13).sin()).collect();
+        let right: Vec<_> = left.iter().map(|sample| -sample * 0.5).collect();
+        let mut reference = WaveformBuilder::new(2, Some(170));
+        let mut optimized = reference.clone();
+        let mut offset = 0;
+        for frames in [17, 47, 65, 3, 38] {
+            let end = offset + frames;
+            push_both(
+                &mut reference,
+                &mut optimized,
+                &[
+                    left.get(offset..end).expect("left block"),
+                    right.get(offset..end).expect("right block"),
+                ],
+            );
+            assert_eq!(reference.frames_in_bucket, optimized.frames_in_bucket);
+            offset = end;
+        }
+        let overview = finish_both(reference, optimized, 170);
+        assert_eq!(overview.base_level().frames_per_bucket, MINIMUM_FRAMES_PER_BUCKET);
+        assert_eq!(overview.bucket_count(), 3);
+    }
+
+    #[test]
+    fn extrema_match_when_buckets_merge() {
+        let block: Vec<_> = (0..64).map(|frame| (frame as f32 * 0.13).sin()).collect();
+        let mut reference = WaveformBuilder::new(2, None);
+        let mut optimized = reference.clone();
+        for _ in 0..MAXIMUM_BUCKETS {
+            push_both(&mut reference, &mut optimized, &[&block, &block]);
+        }
+        assert_eq!(optimized.frames_per_bucket, MINIMUM_FRAMES_PER_BUCKET * 2);
+        push_both(&mut reference, &mut optimized, &[&block, &block]);
+        let tail = [0.25; 65];
+        push_both(&mut reference, &mut optimized, &[&tail, &tail]);
+        let overview = finish_both(reference, optimized, MAXIMUM_BUCKETS as u64 * 64 + 129);
+        assert_eq!(overview.bucket_count(), MAXIMUM_BUCKETS / 2 + 2);
+    }
+
+    #[test]
+    fn zero_initialized_extrema_preserve_one_sided_ranges_and_nans() {
+        let mut reference = WaveformBuilder::new(3, None);
+        let mut optimized = reference.clone();
+        let nan = [f32::NAN; 64];
+        let positive = [0.25; 64];
+        let negative = [-0.25; 64];
+        push_both(&mut reference, &mut optimized, &[&positive, &negative, &nan]);
+
+        let mut positive_with_nan = [0.5; 64];
+        *positive_with_nan.first_mut().expect("nonempty positive block") = f32::NAN;
+        let mut negative_with_nan = [-0.5; 64];
+        *negative_with_nan.last_mut().expect("nonempty negative block") = f32::NAN;
+        push_both(
+            &mut reference,
+            &mut optimized,
+            &[&nan, &positive_with_nan, &negative_with_nan],
+        );
+        let nan_tail = nan.get(..16).expect("NaN tail");
+        push_both(&mut reference, &mut optimized, &[nan_tail, nan_tail, nan_tail]);
+        push_both(
+            &mut reference,
+            &mut optimized,
+            &[
+                positive.get(..16).expect("positive tail"),
+                negative.get(..16).expect("negative tail"),
+                nan_tail,
+            ],
+        );
+        let overview = finish_both(reference, optimized, 160);
+        assert_eq!(
+            overview.base_level().peaks,
+            [
+                QuantizedPeak { min: 31, max: 32 },
+                QuantizedPeak { min: -32, max: -31 },
+                QuantizedPeak { min: 0, max: 0 },
+                QuantizedPeak { min: 0, max: 0 },
+                QuantizedPeak { min: 63, max: 64 },
+                QuantizedPeak { min: -64, max: -63 },
+                QuantizedPeak { min: 31, max: 32 },
+                QuantizedPeak { min: -32, max: -31 },
+                QuantizedPeak { min: 0, max: 0 },
+            ]
+        );
+    }
+
+    #[test]
+    fn extrema_preserve_signed_zero_subnormals_and_nonfinite_samples() {
+        let mut reference = WaveformBuilder::new(1, None);
+        let mut optimized = reference.clone();
+        let subnormal = f32::from_bits(1);
+        let samples = [
+            0.0,
+            -0.0,
+            subnormal,
+            -subnormal,
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+        ];
+        for sample in samples {
+            let block = [sample; 64];
+            push_both(&mut reference, &mut optimized, &[&block]);
+        }
+        let mixed = [f32::NAN, -0.0, subnormal, -subnormal, 0.5, -0.5, 0.0, f32::NAN];
+        for block in mixed.chunks(3) {
+            push_both(&mut reference, &mut optimized, &[block]);
+        }
+        let nonfinite = [f32::NAN, f32::NEG_INFINITY, f32::INFINITY];
+        push_both(&mut reference, &mut optimized, &[&nonfinite]);
+        let overview = finish_both(
+            reference,
+            optimized,
+            samples.len() as u64 * 64 + mixed.len() as u64 + nonfinite.len() as u64,
+        );
+        assert_eq!(
+            overview.base_level().peaks.get(2),
+            Some(&QuantizedPeak { min: 0, max: 1 })
+        );
+        assert_eq!(
+            overview.base_level().peaks.get(3),
+            Some(&QuantizedPeak { min: -1, max: 0 })
+        );
+    }
+
+    #[test]
+    fn empty_blocks_do_not_change_bucket_state_or_resolution() {
+        let mut reference = WaveformBuilder::new(1, Some(65));
+        assert!(reference.peaks.capacity() >= 2);
+        let mut optimized = reference.clone();
+        assert_eq!(optimized.frames_per_bucket, MINIMUM_FRAMES_PER_BUCKET);
+        push_both(&mut reference, &mut optimized, &[]);
+        push_both(&mut reference, &mut optimized, &[&[]]);
+        finish_both(reference, optimized, 0);
+    }
 }
 
 #[cfg(test)]
