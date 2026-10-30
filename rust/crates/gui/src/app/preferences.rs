@@ -245,13 +245,7 @@ impl AppView {
     /// and its copy of them is stale once the main window changes the mode, a target, or the option.
     fn on_settings_event(&mut self, _view: Entity<SettingsView>, event: &SettingsEvent, cx: &mut Context<Self>) {
         let SettingsEvent::Changed(changed) = event;
-        let settings = GuiSettings {
-            normalize_mode: self.settings.normalize_mode,
-            normalize_target_peak_dbfs: self.settings.normalize_target_peak_dbfs,
-            normalize_target_lufs: self.settings.normalize_target_lufs,
-            show_album_artwork: self.settings.show_album_artwork,
-            ..changed.clone()
-        };
+        let settings = merge_settings_window(&self.settings, changed);
         self.apply_settings(settings, cx);
     }
 
@@ -311,6 +305,65 @@ pub(super) fn open_player(output: &OutputConfig) -> anyhow::Result<Player> {
             })
         })
         .or_else(|_| Player::new(None))?)
+}
+
+/// Applies editable Audio Settings fields without replacing newer menu-only preferences from a stale snapshot.
+fn merge_settings_window(current: &GuiSettings, changed: &GuiSettings) -> GuiSettings {
+    GuiSettings {
+        normalize_mode: current.normalize_mode,
+        normalize_target_peak_dbfs: current.normalize_target_peak_dbfs,
+        normalize_target_lufs: current.normalize_target_lufs,
+        show_album_artwork: current.show_album_artwork,
+        ..changed.clone()
+    }
+}
+
+#[cfg(test)]
+mod test_settings_merge {
+    use super::*;
+
+    #[test]
+    fn audio_settings_preserve_both_artwork_toggle_states() {
+        for enabled in [false, true] {
+            let current = GuiSettings {
+                show_album_artwork: enabled,
+                ..GuiSettings::default()
+            };
+            let stale = GuiSettings {
+                show_album_artwork: !enabled,
+                buffer_size: Some(512),
+                ..GuiSettings::default()
+            };
+            let merged = merge_settings_window(&current, &stale);
+            assert_eq!(merged.show_album_artwork, enabled);
+            assert_eq!(merged.buffer_size, Some(512));
+        }
+    }
+
+    #[test]
+    fn audio_settings_keep_newer_normalization_targets() {
+        let current = GuiSettings {
+            normalize_target_lufs: -12.0,
+            normalize_mode: crate::settings::NormalizeMode::Loudness,
+            ..GuiSettings::default()
+        };
+        let merged = merge_settings_window(&current, &GuiSettings::default());
+        assert!((merged.normalize_target_lufs + 12.0).abs() < f64::EPSILON);
+        assert_eq!(merged.normalize_mode, current.normalize_mode);
+    }
+
+    #[test]
+    fn audio_settings_apply_device_changes_without_changing_the_menu_choice() {
+        let changed = GuiSettings {
+            output_device: Some(String::from("New device")),
+            sample_rate: Some(48_000),
+            ..GuiSettings::default()
+        };
+        let merged = merge_settings_window(&GuiSettings::default(), &changed);
+        assert_eq!(merged.output_device, changed.output_device);
+        assert_eq!(merged.sample_rate, changed.sample_rate);
+        assert!(merged.show_album_artwork);
+    }
 }
 
 /// Returns where to start a file with cue points:

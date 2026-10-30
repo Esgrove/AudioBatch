@@ -125,6 +125,36 @@ const COMPACT_METRICS_MINIMUM_WIDTH: f32 = 400.0 + COMPACT_METRIC_SPACING * 3.0;
 /// Narrowest width the compact row leaves the waveform before the metrics stop shrinking it.
 const COMPACT_WAVEFORM_MINIMUM_WIDTH: f32 = 140.0;
 
+/// Maximum startup frames to wait when a platform does not report its requested maximized state.
+const STARTUP_GEOMETRY_FRAME_LIMIT: u16 = 60;
+
+/// Consecutive startup geometry observations, independent of the rendered split state.
+#[derive(Default)]
+pub(super) struct PreviewStartupFit {
+    previous: Option<(f32, f32)>,
+    observations: u16,
+    complete: bool,
+}
+
+impl PreviewStartupFit {
+    /// Commits once after stable valid geometry and platform readiness, with a bounded platform fallback.
+    fn observe(&mut self, geometry: (f32, f32), platform_ready: bool) -> bool {
+        if self.complete || geometry.0 <= 0.0 || geometry.1 <= 0.0 {
+            return false;
+        }
+        self.observations = self.observations.saturating_add(1);
+        let stable = self
+            .previous
+            .is_some_and(|previous| (previous.0 - geometry.0).abs() < 0.5 && (previous.1 - geometry.1).abs() < 0.5);
+        self.previous = Some(geometry);
+        if stable && (platform_ready || self.observations >= STARTUP_GEOMETRY_FRAME_LIMIT) {
+            self.complete = true;
+            return true;
+        }
+        false
+    }
+}
+
 impl AppView {
     /// Returns the status bar text for the audio output:
     /// the device name, its sample rate, and its buffer size, for example "Speakers, 48 kHz, 512 samples".
@@ -370,22 +400,27 @@ impl AppView {
             )
     }
 
-    /// Fits the expanded preview to its controls again when the content area changed size,
-    /// until the user drags the divider.
-    /// The fit height only changes when the width crosses the wide layout breakpoint,
-    /// or when a short window clamps it, since the preview panel keeps its size while it fits.
-    /// This also covers the platform maximizing the window after its first frame.
-    /// A new split state lays out with the initial panel size, which the existing one only uses once.
-    fn fit_preview_to_content(&mut self, content_width: f32, workspace_height: f32, cx: &mut Context<Self>) {
-        if !self.preview_auto_fit || self.preview_compact {
+    /// Waits for matching startup geometry on consecutive frames, including deferred platform maximization.
+    /// Commits the controls-fit split once, and never refits it on later resize, selection, or artwork arrival.
+    pub fn schedule_preview_startup_fit(&self, initially_maximized: bool, window: &Window, cx: &Context<Self>) {
+        if self.preview_startup_fit.complete {
             return;
         }
-        let height = preview_fit_height(content_width, workspace_height);
-        if (height - self.preview_height).abs() < f32::EPSILON {
-            return;
-        }
-        self.preview_height = height;
-        self.workspace_split = cx.new(|_| ResizableState::default());
+        let this = cx.weak_entity();
+        window.on_next_frame(move |window, cx| {
+            let _ = this.update(cx, |view, cx| {
+                let geometry = content_size(window.viewport_size());
+                let platform_ready = !initially_maximized || window.is_maximized();
+                if view.preview_startup_fit.observe(geometry, platform_ready) {
+                    view.preview_height = preview_fit_height(geometry.0, geometry.1);
+                    view.workspace_split = cx.new(|_| ResizableState::default());
+                    cx.notify();
+                }
+                if !view.preview_startup_fit.complete {
+                    view.schedule_preview_startup_fit(initially_maximized, window, cx);
+                }
+            });
+        });
     }
 
     /// Renders the results table above the preview:
@@ -404,7 +439,7 @@ impl AppView {
             .size(px(self.preview_height))
             .size_range(px(PREVIEW_MINIMUM_HEIGHT)..px(preview_maximum))
             .child(self.render_preview(content_width, cx));
-        let preview = if self.preview_auto_fit {
+        let preview = if self.preview_fixed_size {
             preview.fixed()
         } else {
             preview
@@ -413,7 +448,10 @@ impl AppView {
             v_resizable("workspace")
                 .with_state(&self.workspace_split)
                 .with_handle_appearance(divider_appearance())
-                .on_resize(cx.listener(|view, _, _, _| view.preview_auto_fit = false))
+                .on_resize(cx.listener(|view, _, _, _| {
+                    view.preview_fixed_size = false;
+                    view.preview_startup_fit.complete = true;
+                }))
                 .child(
                     resizable_panel()
                         .size_range(px(TABLE_MINIMUM_HEIGHT)..Pixels::MAX)
@@ -441,7 +479,6 @@ impl Render for AppView {
             fill_status_column(state, table_width, window, cx);
         });
         self.sync_gain_slider(window, cx);
-        self.fit_preview_to_content(content_width, workspace_height, cx);
         if std::mem::take(&mut self.zoom_reset_pending) {
             self.zoom_slider
                 .update(cx, |slider, cx| slider.set_value(MINIMUM_ZOOM as f32, window, cx));
@@ -548,7 +585,9 @@ pub(super) fn preview_fit_height(content_width: f32, workspace_height: f32) -> f
 
 /// Returns the tallest height the divider allows the expanded preview in a workspace of the given height.
 fn preview_maximum_height(workspace_height: f32) -> f32 {
-    (workspace_height * PREVIEW_MAXIMUM_PROPORTION).max(PREVIEW_MINIMUM_HEIGHT + 1.0)
+    (workspace_height * PREVIEW_MAXIMUM_PROPORTION)
+        .min(workspace_height - TABLE_MINIMUM_HEIGHT)
+        .max(PREVIEW_MINIMUM_HEIGHT + 1.0)
 }
 
 /// Returns the width of the controls column, which the compact row also uses for its chevron and playback buttons.
@@ -595,4 +634,52 @@ fn status_separator() -> Div {
         .w(px(1.0))
         .h(px(STATUS_SEPARATOR_INSET.mul_add(-2.0, STATUS_BAR_HEIGHT)))
         .bg(color(palette::GREY_MEDIUM))
+}
+
+#[cfg(test)]
+mod test_preview_startup_fit {
+    use super::*;
+
+    #[test]
+    fn width_breakpoint_matches_the_controls_layout() {
+        let breakpoint = WIDE_MINIMUM_HALF_WIDTH * 2.0;
+        let wide = preview_fit_height(breakpoint, 1000.0);
+        let narrow = preview_fit_height(breakpoint - 1.0, 1000.0);
+        assert!((wide - (DIVIDER_SPACING + controls_fit_height(true))).abs() < f32::EPSILON);
+        assert!((narrow - (DIVIDER_SPACING + controls_fit_height(false))).abs() < f32::EPSILON);
+        assert!(narrow > wide);
+        assert!((preview_fit_height(breakpoint + 1.0, 1000.0) - wide).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn short_workspaces_reserve_the_table_minimum() {
+        for workspace in [480.0, 520.0, 600.0] {
+            let height = preview_fit_height(1000.0, workspace);
+            assert!(height >= PREVIEW_MINIMUM_HEIGHT);
+            assert!(height <= workspace - TABLE_MINIMUM_HEIGHT);
+            assert!(height <= workspace * PREVIEW_MAXIMUM_PROPORTION);
+        }
+    }
+
+    #[test]
+    fn provisional_maximized_geometry_is_not_committed() {
+        let mut startup = PreviewStartupFit::default();
+        assert!(!startup.observe((1400.0, 700.0), false));
+        assert!(!startup.observe((1400.0, 700.0), false));
+        assert!(!startup.observe((1900.0, 1000.0), true));
+        assert!(startup.observe((1900.0, 1000.0), true));
+        assert!(!startup.observe((1200.0, 700.0), true));
+    }
+
+    #[test]
+    fn manual_split_blocks_startup_refit_and_normal_startup_commits_once() {
+        let mut startup = PreviewStartupFit::default();
+        assert!(!startup.observe((1900.0, 1000.0), true));
+        startup.complete = true;
+        assert!(!startup.observe((1900.0, 1000.0), true));
+        let mut normal = PreviewStartupFit::default();
+        assert!(!normal.observe((1200.0, 700.0), true));
+        assert!(normal.observe((1200.0, 700.0), true));
+        assert!(!normal.observe((1900.0, 1000.0), true));
+    }
 }

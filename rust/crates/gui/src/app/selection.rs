@@ -148,11 +148,11 @@ impl AppView {
         }
         self.refresh_selected_waveform(cx);
         self.apply_preview_gain(cx);
+        self.request_artwork(Some(path), cx);
         if changed {
             self.selected_tags = None;
             self.clear_tag_marks(cx);
             self.tags_task = Some(self.spawn_tag_read(path.to_path_buf(), cx));
-            self.request_artwork(Some(path), cx);
             // Each file starts at the whole-file zoom.
             self.waveform
                 .update(cx, |waveform, cx| waveform.set_zoom(MINIMUM_ZOOM, cx));
@@ -199,7 +199,7 @@ impl AppView {
             None => view.show_placeholder(NO_FILE_TEXT, cx),
             Some(row) => {
                 if let Some(record) = row.ready_record() {
-                    view.show(record.waveform.clone(), record.short_term_loudness.clone(), cx);
+                    view.set_record(record, cx);
                 } else {
                     view.show_placeholder(placeholder_text(&row), cx);
                 }

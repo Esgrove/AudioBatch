@@ -256,6 +256,15 @@ impl AppView {
             cx.notify();
             return;
         };
+        self.artwork_rewrites
+            .extend(records.iter().map(|record| record.path.clone()));
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|selected| records.iter().any(|record| &record.path == selected))
+        {
+            self.invalidate_artwork(cx);
+        }
         if let Some(player) = &mut self.player
             && player
                 .loaded_path()
@@ -341,6 +350,7 @@ impl AppView {
     /// The caller sorts the rows and restores the selection after the batch.
     pub(super) fn apply_operation_result(&mut self, result: OperationResult, cx: &mut Context<Self>) {
         let source = result.source;
+        self.artwork_rewrites.remove(&source);
         let output_path = match &result.outcome {
             OperationOutcome::Failed { .. } => None,
             OperationOutcome::CommittedButUnanalyzed { output, .. } | OperationOutcome::Succeeded { output, .. } => {
@@ -378,6 +388,7 @@ impl AppView {
             }
         } else if self.selected.as_deref() == Some(source.as_path()) {
             self.refresh_selected_waveform(cx);
+            self.refresh_artwork(cx);
         }
     }
 
@@ -399,6 +410,8 @@ impl AppView {
         }
         if self.selected.as_deref().is_some_and(|selected| !selected.exists()) {
             self.clear_selection(cx);
+        } else {
+            self.refresh_artwork(cx);
         }
     }
 }
@@ -419,6 +432,8 @@ fn spawn_normalize_drain(receiver: Receiver<NormalizeEvent>, window: &Window, cx
             if disconnected {
                 let _ = this.update(cx, |view, cx| {
                     view.normalize_winding_down = false;
+                    view.artwork_rewrites.clear();
+                    view.refresh_artwork(cx);
                     cx.notify();
                 });
                 break;

@@ -208,6 +208,15 @@ impl AppView {
                 }
             }
         }
+        self.artwork_rewrites
+            .extend(records.iter().map(|record| record.path.clone()));
+        if self
+            .selected
+            .as_ref()
+            .is_some_and(|selected| records.iter().any(|record| &record.path == selected))
+        {
+            self.invalidate_artwork(cx);
+        }
         if let Some(player) = &mut self.player
             && player
                 .loaded_path()
@@ -325,6 +334,8 @@ fn spawn_process_drain(receiver: Receiver<ProcessingEvent>, window: &Window, cx:
             if disconnected {
                 let _ = this.update(cx, |view, cx| {
                     view.process_winding_down = false;
+                    view.artwork_rewrites.clear();
+                    view.refresh_artwork(cx);
                     cx.notify();
                 });
                 break;

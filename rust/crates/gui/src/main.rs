@@ -122,8 +122,10 @@ fn main() {
                     return;
                 }
             };
+            let initial_bounds = initial_window_bounds(cx);
+            let initially_maximized = matches!(initial_bounds, WindowBounds::Maximized(_));
             let window_options = WindowOptions {
-                window_bounds: Some(initial_window_bounds(cx)),
+                window_bounds: Some(initial_bounds),
                 window_min_size: Some(size(px(MINIMUM_WINDOW_SIZE.0), px(MINIMUM_WINDOW_SIZE.1))),
                 titlebar: Some(TitlebarOptions {
                     title: Some(APP_TITLE.into()),
@@ -142,6 +144,7 @@ fn main() {
                 }
                 cx.new(|cx| {
                     let mut view = AppView::new(&options, dispatcher, window, cx);
+                    view.schedule_preview_startup_fit(initially_maximized, window, cx);
                     if let Some(launches) = launches.clone() {
                         view.listen_for_launches(launches, window, cx);
                     }

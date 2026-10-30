@@ -210,7 +210,9 @@ The preview collapses into one row through the chevron, the Options menu, or the
 `render_compact_preview` then shows the chevron, Play and Process, the four metrics, and the waveform,
 and the `ResizableState` keeps the divider where it was for when the preview expands again.
 The expanded preview starts at the height that fits its controls, from `fit_height` in `controls.rs`,
-and follows that height as the window changes size until the user drags the divider.
+after startup geometry settles, including deferred platform maximization.
+The initial split is committed once and is not refitted on later window resizing or artwork arrival.
+The divider state survives selection changes and collapse/expand.
 
 The information panel shows the embedded album artwork of the selected file beside its name,
 unless the Show Album Artwork option is off.
@@ -220,7 +222,10 @@ so a slow picture never delays the cue points or the Serato colours.
 and `gui/src/artwork.rs` checks each header before decoding,
 skipping anything that is not a PNG or a JPEG of at most 4096 pixels on either side.
 The first that decodes becomes a BGRA thumbnail of at most 96 pixels, drawn at 48.
-A result is shown only while its file is still selected and unchanged since the read started.
+A result is shown only while its generation and file identity still match the selection.
+Only one artwork read runs at a time, with the latest pending identity replacing intermediate requests.
+Generation and identity checks run before parsing, before each candidate decode, and at foreground adoption.
+Completed no-art identities are remembered until selection, source identity, or a forced refresh changes them.
 
 The Audio Settings, Plugin Chain, and Plugin Manager windows are gpui windows,
 held in `SettingsWindow` and `PluginWindow`.
@@ -329,7 +334,11 @@ Adjacent flag buckets merge with bitwise OR when their count would exceed 8192,
 and future blocks accumulate at the increased stride.
 The history retains rate, decoded length, channel count, and a validated power-of-two block stride.
 A present all-clear history is distinct from missing analysis.
-These are source measurements independent of preview gain or plugins, ready for waveform warning presentation.
+These source measurements remain independent of preview gain and plugins.
+The waveform attaches history only when the record, waveform timing, and on-disk identity agree.
+Sample overs use solid amber edge caps and a restrained channel tint, while true-peak-only overs use hollow caps.
+Projection merges flags per screen column so isolated subpixel warnings stay visible,
+and extends true peak coverage conservatively across interpolation boundaries without shifting sample regions.
 
 **The cache.**
 `AnalysisCache` in `core/src/cache.rs` keeps one SQLite row per path,
