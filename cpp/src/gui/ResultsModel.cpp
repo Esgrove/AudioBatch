@@ -179,7 +179,7 @@ void ResultsModel::removePaths(const juce::StringArray& paths)
 /// Replaces the record of a row, which must exist, with a record for the same path,
 /// preserving authoritative gain edits for the same file identity.
 /// A record for another path goes through replaceAfterOperation, which keeps the paths unique.
-void ResultsModel::setRecord(const int row, AudioAnalysisRecord record)
+void ResultsModel::setRecord([[maybe_unused]] const int row, AudioAnalysisRecord record)
 {
     jassert(containsRow(row));
     jassert((*this)[row].fullPath == record.fullPath);
