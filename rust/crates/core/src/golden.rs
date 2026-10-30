@@ -1,4 +1,4 @@
-//! Golden snapshots that freeze the exact output of the measurement and normalization code.
+//! Regression snapshots of our loudness meter, peak measurements, and normalization output.
 //!
 //! The level tests elsewhere check values within decibel tolerances, which a change in the last bit passes.
 //! These tests record every value with its exact bits in a small text file per input in `tests/golden/`,
@@ -194,10 +194,10 @@ pub fn measure_signal(planes: &[Vec<f32>], sample_rate: u32, chunk_frames: usize
     while offset < frames {
         let end = (offset + chunk_frames.max(1)).min(frames);
         let chunk: Vec<&[f32]> = planes.iter().map(|plane| &plane[offset..end]).collect();
-        meter.push(&chunk).expect("meter accepts the chunk");
+        meter.push(&chunk);
         offset = end;
     }
-    meter.finish(frames as u64).expect("meter finishes")
+    meter.finish(frames as u64)
 }
 
 /// Fails the test with every collected difference.

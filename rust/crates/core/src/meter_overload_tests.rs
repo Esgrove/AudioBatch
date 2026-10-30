@@ -72,10 +72,7 @@ fn boundary_interpolation_uses_continuous_state_without_an_eof_flush() {
 
 #[test]
 fn empty_and_nonfinite_streams_have_explicit_history() {
-    let empty = BlockMeter::new(1, 48_000, None)
-        .expect("meter")
-        .finish(0)
-        .expect("finish");
+    let empty = BlockMeter::new(1, 48_000, None).expect("meter").finish(0);
     assert_eq!(empty.overloads.flags, [] as [u8; 0]);
     assert!(empty.overloads.is_valid());
     let planes = vec![vec![f32::NAN; 4], vec![f32::INFINITY, f32::NEG_INFINITY, -0.0, 0.0]];

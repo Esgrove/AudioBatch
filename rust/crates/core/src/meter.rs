@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use ebur128::{Channel, EbuR128, Mode};
+use crate::loudness::gating::LoudnessMeter;
 
 use crate::loudness::true_peak::TruePeak;
 use crate::overload::{OverloadHistory, OverloadHistoryBuilder, SAMPLE_OVER, TRUE_PEAK_OVER};
@@ -20,24 +20,15 @@ use crate::waveform::{WaveformBuilder, WaveformOverview};
 #[doc(hidden)]
 #[derive(Debug, thiserror::Error)]
 pub enum MeterError {
-    /// The loudness meter could not be configured.
+    /// The stream is outside the supported one to 64 channels or 16 to 2822400 Hz range.
     #[error("Could not initialize loudness analyzer")]
-    Initialize(#[source] ebur128::Error),
-    /// The meter could not accept an audio block.
-    #[error("Loudness analysis failed while processing audio")]
-    Frames(#[source] ebur128::Error),
-    /// The short-term loudness could not be measured.
-    #[error("Short-term loudness analysis failed")]
-    ShortTerm(#[source] ebur128::Error),
-    /// The integrated loudness could not be measured.
-    #[error("Integrated loudness analysis failed")]
-    Integrated(#[source] ebur128::Error),
+    UnsupportedStream,
 }
 
 /// Accumulates decoded audio into fixed-size analysis blocks and measures each completed block.
 #[doc(hidden)]
 pub struct BlockMeter {
-    meter: EbuR128,
+    meter: LoudnessMeter,
     true_peak: Option<TruePeak>,
     sample_rate: u32,
     block_size: usize,
@@ -81,13 +72,11 @@ impl BlockMeter {
     ///
     /// Returns an error when the meter does not support the channel count or the sample rate.
     pub fn new(channels: u32, sample_rate: u32, expected_frames: Option<u64>) -> Result<Self, MeterError> {
-        let mut meter = EbuR128::new(channels, sample_rate, Mode::I | Mode::S).map_err(MeterError::Initialize)?;
-        if channels == 1 {
-            meter
-                .set_channel(0, Channel::DualMono)
-                .map_err(MeterError::Initialize)?;
+        if !(1..=64).contains(&channels) || !(16..=2_822_400).contains(&sample_rate) {
+            return Err(MeterError::UnsupportedStream);
         }
         let channel_count = channels as usize;
+        let meter = LoudnessMeter::new(channel_count, sample_rate, expected_frames);
         let block_size = ShortTermLoudnessHistory::samples_per_point_for_rate(sample_rate) as usize;
         Ok(Self {
             meter,
@@ -107,11 +96,7 @@ impl BlockMeter {
     /// Appends decoded planar samples, one slice per channel, measuring every block that fills up.
     /// A channel shorter than the first one, including an omitted plane, is padded with silence.
     /// Complete blocks borrow the decoder's planes directly, while partial blocks retain reusable sample storage.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the loudness meter rejects a block.
-    pub fn push<P: AsRef<[f32]>>(&mut self, chunk: &[P]) -> Result<(), MeterError> {
+    pub fn push<P: AsRef<[f32]>>(&mut self, chunk: &[P]) {
         let frame_count = chunk.first().map_or(0, |plane| plane.as_ref().len());
         let mut offset = 0;
         while offset < frame_count {
@@ -137,7 +122,7 @@ impl BlockMeter {
                         planes
                             .get(..channels)
                             .expect("validated channel count fits fixed storage"),
-                    )?;
+                    );
                     offset += take;
                     continue;
                 }
@@ -152,20 +137,16 @@ impl BlockMeter {
             }
             offset += take;
             if filled + take == self.block_size {
-                self.measure_block()?;
+                self.measure_block();
             }
         }
-        Ok(())
     }
 
     /// Measures a final partial block and returns the measurements of the stream of `length_in_samples` frames.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when the loudness meter rejects the last block or cannot report a value.
-    pub fn finish(mut self, length_in_samples: u64) -> Result<MeterOutput, MeterError> {
+    #[must_use]
+    pub fn finish(mut self, length_in_samples: u64) -> MeterOutput {
         if self.block.first().is_some_and(|samples| !samples.is_empty()) {
-            self.measure_block()?;
+            self.measure_block();
         }
         let true_peaks = self.true_peak.as_ref().map_or_else(
             || {
@@ -178,8 +159,8 @@ impl BlockMeter {
             },
             |meter| meter.peaks().to_vec(),
         );
-        let integrated_lufs = normalize_loudness(self.meter.loudness_global().map_err(MeterError::Integrated)?);
-        Ok(MeterOutput {
+        let integrated_lufs = normalize_loudness(self.meter.integrated());
+        MeterOutput {
             min_samples: self.min_samples,
             max_samples: self.max_samples,
             true_peaks,
@@ -189,17 +170,17 @@ impl BlockMeter {
             samples_per_point: self.block_size as u32,
             waveform: self.waveform.finish(self.sample_rate, length_in_samples),
             overloads: Arc::new(self.overloads.finish(length_in_samples)),
-        })
+        }
     }
 
     /// Feeds a buffered block without allocating plane references and retains its sample storage for reuse.
-    fn measure_block(&mut self) -> Result<(), MeterError> {
+    fn measure_block(&mut self) {
         let mut block = std::mem::take(&mut self.block);
         let mut planes = [&[][..]; 64];
         for (plane, samples) in planes.iter_mut().zip(&block) {
             *plane = samples;
         }
-        let result = self.measure_planes(
+        self.measure_planes(
             planes
                 .get(..block.len())
                 .expect("validated channel count fits fixed storage"),
@@ -208,11 +189,10 @@ impl BlockMeter {
             samples.clear();
         }
         self.block = block;
-        result
     }
 
     /// Measures one fixed analysis block, whether borrowed directly or assembled from decoder packets.
-    fn measure_planes(&mut self, planes: &[&[f32]]) -> Result<(), MeterError> {
+    fn measure_planes(&mut self, planes: &[&[f32]]) {
         let mut flags = [0_u8; 64];
         for (channel, ((samples, minimum), maximum)) in planes
             .iter()
@@ -245,8 +225,7 @@ impl BlockMeter {
                 }
             }
         }
-        self.meter.add_frames_planar_f32(planes).map_err(MeterError::Frames)?;
-        let short_term = normalize_loudness(self.meter.loudness_shortterm().map_err(MeterError::ShortTerm)?);
+        let short_term = normalize_loudness(self.meter.push(planes));
         self.max_short_term_lufs = self.max_short_term_lufs.max(short_term);
         self.history.push(short_term as f32);
         self.overloads.push(
@@ -254,7 +233,6 @@ impl BlockMeter {
                 .get(..planes.len())
                 .expect("validated channel count fits fixed storage"),
         );
-        Ok(())
     }
 }
 
@@ -320,10 +298,10 @@ mod test_chunk_size_invariance {
         while offset < 40_000 {
             let end = (offset + 1 + random.next_below(9_000) as usize).min(40_000);
             let chunk: Vec<&[f32]> = planes.iter().map(|plane| &plane[offset..end]).collect();
-            meter.push(&chunk).expect("push");
+            meter.push(&chunk);
             offset = end;
         }
-        assert_eq!(exact(&meter.finish(40_000).expect("finish")), reference);
+        assert_eq!(exact(&meter.finish(40_000)), reference);
     }
 }
 
@@ -364,8 +342,8 @@ mod test_channel_handling {
     fn a_short_channel_is_padded_with_silence() {
         let left = generate(SignalKind::Sine, 44_100, 1, 10_000).remove(0);
         let mut padded = BlockMeter::new(2, 44_100, None).expect("meter");
-        padded.push(&[left.as_slice(), &[]]).expect("push");
-        let padded = padded.finish(10_000).expect("finish");
+        padded.push(&[left.as_slice(), &[]]);
+        let padded = padded.finish(10_000);
         let silent = measure_signal(&[left, vec![0.0; 10_000]], 44_100, 10_000);
         assert_eq!(padded.true_peaks, silent.true_peaks);
         assert_eq!(padded.history, silent.history);
@@ -378,8 +356,8 @@ mod test_channel_handling {
         let left = vec![0.25; 10_000];
         let right = vec![-0.75; 5_123];
         let mut meter = BlockMeter::new(2, 44_100, None).expect("meter");
-        meter.push(&[left.as_slice(), right.as_slice()]).expect("push");
-        let output = meter.finish(10_000).expect("finish");
+        meter.push(&[left.as_slice(), right.as_slice()]);
+        let output = meter.finish(10_000);
         let mut padded = right;
         padded.resize(left.len(), 0.0);
         let expected = measure_signal(&[left, padded], 44_100, 1_000);
@@ -393,9 +371,9 @@ mod test_channel_handling {
     fn missing_planes_are_silent_even_after_a_partial_block() {
         let left = vec![0.25; 5_000];
         let mut meter = BlockMeter::new(3, 44_100, None).expect("meter");
-        meter.push(&[&left[..7]]).expect("partial push");
-        meter.push(&[&left[7..]]).expect("remaining push");
-        let output = meter.finish(5_000).expect("finish");
+        meter.push(&[&left[..7]]);
+        meter.push(&[&left[7..]]);
+        let output = meter.finish(5_000);
         let expected = measure_signal(&[left, vec![0.0; 5_000], vec![0.0; 5_000]], 44_100, 1_000);
         assert_eq!(output.true_peaks, expected.true_peaks);
         assert_eq!(output.history, expected.history);
@@ -421,10 +399,7 @@ mod test_edge_signals {
 
     #[test]
     fn empty_input_has_no_history_and_no_loudness() {
-        let output = BlockMeter::new(2, 44_100, None)
-            .expect("meter")
-            .finish(0)
-            .expect("finish");
+        let output = BlockMeter::new(2, 44_100, None).expect("meter").finish(0);
         assert_eq!(output.history, Vec::<f32>::new());
         assert_eq!(output.integrated_lufs.to_bits(), NEGATIVE_INFINITY_LOUDNESS.to_bits());
         assert_eq!(

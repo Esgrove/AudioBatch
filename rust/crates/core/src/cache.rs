@@ -29,7 +29,7 @@ mod test_overload;
 pub(crate) const DATA_DIRECTORY_NAME: &str = "AudioBatch-rs";
 
 /// Version of the analysis rules. Rows written with another version are re-analyzed.
-const ANALYSIS_VERSION: i64 = 4;
+const ANALYSIS_VERSION: i64 = 5;
 
 /// Columns added to `file_analysis` after its first version, with their definitions,
 /// which databases created before them gain when they are opened.

@@ -11,7 +11,6 @@ rust-version.workspace = true
 [dependencies]
 crossbeam-channel.workspace = true
 dirs.workspace = true
-ebur128.workspace = true
 fearless_simd.workspace = true
 fearless_simd_macros.workspace = true
 jiff.workspace = true
@@ -35,6 +34,7 @@ same-file = "1.0.6"
 [dev-dependencies]
 base64.workspace = true
 criterion.workspace = true
+ebur128.workspace = true
 fearless_simd = { workspace = true, features = ["force_support_fallback"] }
 log.workspace = true
 test-fixtures.workspace = true
