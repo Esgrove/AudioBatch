@@ -102,14 +102,16 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.2
 
-      - name: Test parity oracles
+      - name: Test parity oracles and benchmark tooling
         working-directory: rust
-        run: uv run --script scripts/test_parity.py
+        run: |
+          uv run --script scripts/test_parity.py
+          uv run --script scripts/test_cli_benchmark.py
 
-      - name: Install Ninja and ccache
+      - name: Install Ninja, ccache, and hyperfine
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
-        run: brew install ninja ccache
+        run: brew install ninja ccache hyperfine
 
       - name: Get JUCE commit
         id: juce
@@ -171,3 +173,19 @@ jobs:
           ./scripts/parity.sh --release --normalize --peak -1 ../fixtures/normalization
           ./scripts/parity.sh --release --normalize --lufs -14 ../fixtures/normalization
           ./scripts/parity.sh --release --normalize --lufs -23 ../fixtures/normalization
+
+      # Timing is informational, and benchmark failures must not fail parity.
+      - name: Report release CLI timings
+        continue-on-error: true
+        working-directory: rust
+        run: |
+          export AUDIOBATCH_CPP_CLI="$PWD/../cpp/cmake-build-mac-release/AudioBatchCli_artefacts/Release/audiobatch"
+          ./scripts/cli_benchmark.sh --no-build --jobs 2 --runs 3 --warmup 1 --corpus ../fixtures/normalization
+
+      - name: Upload CLI benchmark results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-benchmark-${{ runner.os }}
+          path: rust/target/cli-benchmark/
+          if-no-files-found: ignore
