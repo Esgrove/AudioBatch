@@ -77,6 +77,61 @@ The eight-iteration samply capture contains 1,832 analysis-worker samples:
 The profile confirms that repeated energy scans, not true-peak interpolation alone, dominate this input.
 The component timings separate the costs approximately, but must not be presented as mutually exclusive sampled shares.
 
+## Custom meter baseline
+
+The October 30, 2026 baseline uses an Apple M3 Max with 16 logical CPUs and 64 GiB of memory,
+macOS 27.2 on arm64, and Rust 1.99.1.
+Rust uses the release profile with LTO, one code generation unit, and `target-cpu=native`.
+The C++ CLI uses the `macos-release` CMake preset with `-O3 -DNDEBUG`.
+The loudness measurement still uses ebur128 0.1.11 at this baseline.
+
+Run `./scripts/cli_benchmark.sh` to measure both release CLIs with alternating hyperfine runs.
+The default selection combines the generated long inputs with the normalization corpus.
+Use `--corpus ../fixtures/normalization` for the smaller CI-sized comparison.
+The script writes raw timing samples, combined JSON and Markdown, source and binary hashes,
+and machine and build metadata into a unique directory under `target/cli-benchmark/`.
+Copies and configuration are prepared outside timing, filesystem caches are warm,
+and normalization measures the full CLI workflow, including initial and output analysis.
+Every run must pass the existing correctness oracles, independently of its timing.
+The CI reporting step is non-failing and uses no performance threshold.
+
+The `custom-meter-before` Criterion baseline was saved before the loudness implementation changed.
+For 10 seconds of stereo music at 44.1 kHz, and the corresponding 60 second WAV for file benchmarks:
+
+- `meter/block_meter/44100_2ch`: 27.982 ms, 95 percent interval 27.928 to 28.047 ms.
+- `analyze_file/music_stereo_44100_16.wav`: 175.52 ms, interval 174.64 to 176.60 ms.
+- `render/gain_only`: 21.801 microseconds, interval 21.726 to 21.855 microseconds.
+- `render/gain_and_aiff/16`: 2.2577 ms, interval 2.2414 to 2.2750 ms.
+- `render/gain_and_aiff/24`: 3.3613 ms, interval 3.3256 to 3.3941 ms.
+- `normalize_file/peak/music_stereo_44100_16.wav`: 221.83 ms, interval 220.71 to 222.91 ms.
+- `normalize_file/lufs/music_stereo_44100_16.wav`: 220.69 ms, interval 219.94 to 221.78 ms.
+
+Save and compare these cases with:
+
+```shell
+cargo bench -p audiobatch-core --bench analysis -- 'meter/block_meter/44100_2ch|analyze_file/music_stereo_44100_16.wav' --save-baseline custom-meter-before --noplot
+cargo bench -p audiobatch-core --bench normalize -- 'render/|normalize_file/(peak|lufs)/music_stereo_44100_16.wav' --save-baseline custom-meter-before --noplot
+```
+
+The release CLI baseline uses 29 eligible files from `fixtures/normalization`,
+with three measured runs per command, one warmup, and no concurrent compilation or tests.
+The three known failure fixtures are excluded from timing, not from parity verification.
+Means and sample standard deviations, in seconds, are:
+
+- Analysis, one worker: C++ 1.610621 ± 0.012303, Rust 0.852869 ± 0.007723, C++/Rust 1.888.
+- Peak normalization, one worker: C++ 3.325175 ± 0.023885, Rust 2.040939 ± 0.026699, C++/Rust 1.629.
+- Loudness normalization, one worker: C++ 3.252798 ± 0.018845, Rust 2.012160 ± 0.001571, C++/Rust 1.617.
+- Analysis, 16 workers: C++ 0.302230 ± 0.001993, Rust 0.137665 ± 0.002688, C++/Rust 2.195.
+- Peak normalization, 16 workers: C++ 0.592095 ± 0.005922, Rust 0.435082 ± 0.009631, C++/Rust 1.361.
+- Loudness normalization, 16 workers: C++ 0.593568 ± 0.004899, Rust 0.448726 ± 0.005761, C++/Rust 1.323.
+
+All analysis and normalized-output correctness checks pass for every measured pair.
+The raw report is `target/cli-benchmark/20261030T123706Z-EwC7zE/summary.md`, with adjacent JSON and binary hashes.
+The Rust binary identifies revision `e5eca33`, and C++ identifies `704ae4b`.
+An exploratory combined-corpus run also measured analysis at 21.969 s for C++ and 3.333 s for Rust with one worker,
+but its generated AAC normalization fails the existing lossy decoder tolerance, so it is not a complete baseline.
+The tolerance is not relaxed to make that benchmark pass.
+
 ## Exact output constraints
 
 The golden files freeze every numeric analysis field, the short-term history and cache blobs,
