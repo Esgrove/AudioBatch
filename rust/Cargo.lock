@@ -666,6 +666,7 @@ dependencies = [
  "audiobatch-core",
  "audiobatch-playback",
  "audiobatch-plugins",
+ "audiobatch-test-plugin",
  "build-info",
  "crossbeam-channel",
  "gpui-kit",

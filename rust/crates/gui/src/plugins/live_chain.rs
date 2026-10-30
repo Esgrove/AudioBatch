@@ -21,10 +21,10 @@ use std::path::PathBuf;
 
 use anyhow::{Context as _, Result};
 use audiobatch_plugins::{
-    ChainSlot, PluginChain, PluginDescription, PreviewChain, chain_tail_frames, prepare_for_preview,
+    ChainSlot, PluginChain, PluginDescription, PreviewChain, chain_tail_frames, prepare_for_preview, reload_for_preview,
 };
 use raw_window_handle::RawWindowHandle;
-use vst3_host::{EditorWindow, Module, PluginInstance, UiDispatcher, UiThread};
+use vst3_host::{EditorWindow, Module, PluginInstance, RestartAction, UiDispatcher, UiThread};
 
 /// Most frames the preview passes to the live instances in one call.
 pub const PREVIEW_BLOCK_FRAMES: usize = 1024;
@@ -32,6 +32,15 @@ pub const PREVIEW_BLOCK_FRAMES: usize = 1024;
 /// Identifies a slot of the live chain for as long as the slot exists. Ids are never reused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SlotId(u64);
+
+/// Lifecycle action retained until the preview has retired the slot's processor handles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlotRestart {
+    /// Stable slot identity, independent of chain order.
+    id: SlotId,
+    /// Full reload or lighter reconfiguration.
+    action: RestartAction,
+}
 
 /// One slot of the live chain.
 pub struct LiveSlot {
@@ -54,6 +63,8 @@ pub struct LiveSlot {
     /// True when the plugin refused its saved settings, for example before its license is ready.
     /// The saved settings are kept instead of the plugin's defaults until the user opens its editor.
     keep_saved_state: bool,
+    /// Strongest requested lifecycle action, retained until processor retirement and successful application.
+    pending_restart: Option<RestartAction>,
 }
 
 /// The plugin chain the user edits, saved to the chain file.
@@ -164,17 +175,17 @@ impl LiveSlot {
         self.instance.as_ref().is_some_and(PluginInstance::take_dirty)
     }
 
-    /// Captures the instance's current settings into the saved slot.
-    fn capture_state(&mut self, ui: &UiThread) {
-        if self.keep_saved_state {
-            return;
+    /// Captures complete settings, leaving the previous saved state unchanged on delivery failure.
+    fn capture_state(&mut self, ui: &UiThread) -> Result<()> {
+        if !self.keep_saved_state
+            && let Some(instance) = &self.instance
+        {
+            let state = instance
+                .state(ui)
+                .with_context(|| format!("{}: Could not capture settings", self.slot.plugin.name))?;
+            self.slot.set_state(state);
         }
-        if let Some(instance) = &self.instance {
-            instance.flush_parameter_edits(ui);
-            if let Ok(state) = instance.state(ui) {
-                self.slot.set_state(state);
-            }
-        }
+        Ok(())
     }
 }
 
@@ -391,38 +402,117 @@ impl LiveChain {
         self.modified = false;
     }
 
-    /// Prepares every instance again at another rate.
-    pub fn set_sample_rate(&mut self, ui: &UiThread, sample_rate: u32) {
-        if self.sample_rate == sample_rate {
-            return;
-        }
-        self.sample_rate = sample_rate;
+    /// Collects typed requests without forgetting work while processors are still being retired.
+    pub fn take_restart_requests(&mut self) -> Vec<SlotRestart> {
         for slot in &mut self.slots {
-            slot.prepare(ui, sample_rate);
+            if let Some(action) = slot
+                .instance
+                .as_ref()
+                .and_then(|instance| instance.take_restart_flags().action())
+            {
+                slot.pending_restart = Some(match (slot.pending_restart, action) {
+                    (Some(RestartAction::Reload), _) | (_, RestartAction::Reload) => RestartAction::Reload,
+                    _ => RestartAction::Reconfigure,
+                });
+            }
         }
-    }
-
-    /// Returns the slots whose instances asked for a new bus layout, a reload, or reported a new latency,
-    /// and clears their requests.
-    /// The caller takes their processors back from the preview before preparing them again.
-    pub fn take_restart_requests(&self) -> Vec<SlotId> {
         self.slots
             .iter()
-            .filter(|slot| {
-                slot.instance
-                    .as_ref()
-                    .is_some_and(|instance| instance.take_restart_flags().needs_reconfiguration())
-            })
-            .map(|slot| slot.id)
+            .filter_map(|slot| slot.pending_restart.map(|action| SlotRestart { id: slot.id, action }))
             .collect()
     }
 
-    /// Prepares the instances of some slots again at the current rate.
-    pub fn prepare_again(&mut self, ui: &UiThread, ids: &[SlotId]) {
-        let sample_rate = self.sample_rate;
-        for slot in self.slots.iter_mut().filter(|slot| ids.contains(&slot.id)) {
-            slot.prepare(ui, sample_rate);
+    /// Returns true while lifecycle work is waiting for processor retirement.
+    #[must_use]
+    pub fn has_pending_restarts(&self) -> bool {
+        self.slots.iter().any(|slot| slot.pending_restart.is_some())
+    }
+
+    /// Applies restart actions and device rate changes together, with full reload taking precedence.
+    /// Failed retirement retains the request for the next tick, and failed reloads keep their saved settings.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first retirement, capture, reconstruction, preparation or editor reopening failure.
+    pub fn apply_restarts(
+        &mut self,
+        ui: &UiThread,
+        sample_rate: u32,
+        requests: &[SlotRestart],
+        owner: Option<RawWindowHandle>,
+    ) -> Result<()> {
+        let rate_changed = self.sample_rate != sample_rate;
+        let mut first_error = None;
+        for slot in &mut self.slots {
+            let action = requests
+                .iter()
+                .find(|request| request.id == slot.id)
+                .map(|request| request.action);
+            if !rate_changed && action.is_none() {
+                continue;
+            }
+            if slot
+                .instance
+                .as_ref()
+                .is_some_and(PluginInstance::has_processor_handles)
+            {
+                slot.pending_restart = Some(action.unwrap_or(RestartAction::Reconfigure));
+                first_error
+                    .get_or_insert_with(|| anyhow::anyhow!("{}: The plugin is still in use", slot.slot.plugin.name));
+                continue;
+            }
+            if action == Some(RestartAction::Reload) {
+                let reopen = slot.editor.as_ref().is_some_and(|editor| !editor.is_closed());
+                // Destroy the view before state capture and component/controller teardown.
+                slot.editor = None;
+                let result = slot.capture_state(ui).and_then(|()| {
+                    if let Some(instance) = slot.instance.take() {
+                        let instance = reload_for_preview(
+                            ui,
+                            instance,
+                            &slot.slot.state(),
+                            f64::from(sample_rate),
+                            PREVIEW_BLOCK_FRAMES,
+                        )?;
+                        slot.latency_samples = instance.latency_samples(ui);
+                        slot.instance = Some(instance);
+                    } else {
+                        slot.load(ui, &self.dispatcher, sample_rate);
+                        if let Some(error) = &slot.error {
+                            anyhow::bail!("{error}");
+                        }
+                    }
+                    slot.error = None;
+                    Ok(())
+                });
+                if let Err(error) = result {
+                    // Never let a later device-rate change revive an old component whose reload failed.
+                    // The last complete saved state remains available for an explicit load retry.
+                    slot.instance = None;
+                    slot.error = Some(format!("Could not reload: {error:#}"));
+                    slot.latency_samples = 0;
+                    slot.pending_restart = None;
+                    first_error.get_or_insert(error);
+                    continue;
+                }
+                if reopen && let Some(instance) = &slot.instance {
+                    match EditorWindow::open(ui, instance, &slot.slot.plugin.name, owner) {
+                        Ok(editor) => slot.editor = Some(editor),
+                        Err(error) => {
+                            first_error.get_or_insert_with(|| anyhow::Error::from(error));
+                        }
+                    }
+                }
+            } else {
+                slot.prepare(ui, sample_rate);
+                if let Some(error) = &slot.error {
+                    first_error.get_or_insert_with(|| anyhow::anyhow!("{}: {error}", slot.slot.plugin.name));
+                }
+            }
+            slot.pending_restart = None;
         }
+        self.sample_rate = sample_rate;
+        first_error.map_or(Ok(()), Err)
     }
 
     /// Builds the preview chain of the enabled slots, or returns `None` when no slot is enabled.
@@ -435,6 +525,9 @@ impl LiveChain {
         let mut plugins = Vec::new();
         for slot in self.slots.iter().filter(|slot| slot.is_enabled()) {
             let name = slot.slot.plugin.name.as_str();
+            if slot.pending_restart.is_some() {
+                anyhow::bail!("{name}: The plugin is waiting for its processor to retire");
+            }
             match (&slot.instance, &slot.error) {
                 (_, Some(error)) => anyhow::bail!("{name}: {error}"),
                 (Some(instance), None) => plugins.push((name, instance)),
@@ -458,13 +551,38 @@ impl LiveChain {
         chain_tail_frames(ui, instances, f64::from(self.sample_rate))
     }
 
-    /// Captures the current settings of every instance into the saved slots.
-    /// Edits made in an editor reach an instance's state only through processing,
-    /// so the caller takes the processors back from a paused preview first.
-    pub fn capture_states(&mut self, ui: &UiThread) {
-        for slot in &mut self.slots {
-            slot.capture_state(ui);
+    /// Captures the current settings of every instance into the saved slots atomically.
+    /// Every processor must be retired first, so queued edits can be completely delivered.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error without changing saved slots when any instance cannot flush its queued edits.
+    pub fn capture_states(&mut self, ui: &UiThread) -> Result<()> {
+        // Stage every blob before publishing any, so a failed slot cannot produce a mixed saved snapshot.
+        let states = self
+            .slots
+            .iter()
+            .map(|slot| {
+                if slot.keep_saved_state {
+                    Ok(None)
+                } else {
+                    slot.instance
+                        .as_ref()
+                        .map(|instance| {
+                            instance
+                                .state(ui)
+                                .with_context(|| format!("{}: Could not capture settings", slot.slot.plugin.name))
+                        })
+                        .transpose()
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for (slot, state) in self.slots.iter_mut().zip(states) {
+            if let Some(state) = state {
+                slot.slot.set_state(state);
+            }
         }
+        Ok(())
     }
 
     /// Shows the editor of a slot, opening a window titled with the plugin's name when it has none.
@@ -483,7 +601,7 @@ impl LiveChain {
             editor.show(ui);
             return Ok(());
         }
-        if !slot.load_attempted {
+        if !slot.load_attempted || slot.instance.is_none() {
             slot.load(ui, &self.dispatcher, self.sample_rate);
         }
         // A plugin that loaded but could not be prepared for the preview still opens, so its settings can be changed.
@@ -496,13 +614,12 @@ impl LiveChain {
         Ok(())
     }
 
-    /// Captures the settings of the slots whose editors the user closed, and destroys those windows.
-    /// Returns true when any editor was closed, so the chain should be saved.
-    pub fn reap_closed_editors(&mut self, ui: &UiThread) -> bool {
+    /// Destroys the editor windows the user closed, on the UI thread.
+    /// Returns true when any editor was closed, so the caller detaches processors and captures all slots atomically.
+    pub fn reap_closed_editors(&mut self, _ui: &UiThread) -> bool {
         let mut reaped = false;
         for slot in &mut self.slots {
             if slot.editor.as_ref().is_some_and(EditorWindow::is_closed) {
-                slot.capture_state(ui);
                 slot.editor = None;
                 reaped = true;
             }
@@ -568,6 +685,7 @@ impl LiveChain {
             error: None,
             load_attempted: false,
             keep_saved_state: false,
+            pending_restart: None,
         }
     }
 }
@@ -623,6 +741,7 @@ mod test_slots {
             error: Some(String::from("Missing")),
             load_attempted: true,
             keep_saved_state: false,
+            pending_restart: None,
         });
         id
     }
@@ -723,6 +842,222 @@ mod test_slots {
 }
 
 #[cfg(test)]
+mod test_restarts {
+    use audiobatch_test_plugin::{Kind, RELOAD_TRIGGER_PARAMETER};
+    use vst3_host::ClassId;
+
+    use super::*;
+    use crate::test_helpers::effect;
+
+    /// Adds an in-process fake instance without opening a native editor or loading a bundle.
+    fn fake_slot(ui: &UiThread, chain: &mut LiveChain, kind: Kind) -> SlotId {
+        let module = Module::from_factory(ui, "restart tests", audiobatch_test_plugin::factory());
+        let mut instance =
+            PluginInstance::create(ui, &module, ClassId::from_tuid(&kind.class_id()), None).expect("instance");
+        prepare_instance(ui, &mut instance, chain.sample_rate).expect("prepare");
+        let mut slot = chain.new_slot(ChainSlot::new(effect("Tests", kind.name())));
+        slot.slot.set_state(instance.state(ui).expect("initial state"));
+        slot.instance = Some(instance);
+        slot.load_attempted = true;
+        let id = slot.id;
+        chain.slots.push(slot);
+        id
+    }
+
+    /// Runs a non-rendering lifecycle assertion on the process's existing test UI thread.
+    fn on_ui(test: impl FnOnce(&UiThread, &mut LiveChain) + Send + 'static) {
+        super::test_replace::dispatcher()
+            .call(
+                move |ui| {
+                    let mut chain = LiveChain::new(
+                        PathBuf::from("/unused/plugin-chain.json"),
+                        super::test_replace::dispatcher().clone(),
+                        48_000,
+                    );
+                    test(ui, &mut chain);
+                },
+                &|| false,
+            )
+            .expect("UI job");
+    }
+
+    #[test]
+    fn reload_survives_device_rate_and_latency_flags_and_restores_the_state() {
+        on_ui(|ui, chain| {
+            let id = fake_slot(ui, chain, Kind::ReloadRequired);
+            let instance = chain
+                .slots
+                .first()
+                .expect("first slot")
+                .instance
+                .as_ref()
+                .expect("instance");
+            instance.set_parameter(ui, 0, 0.375).expect("gain");
+            instance
+                .set_parameter(ui, RELOAD_TRIGGER_PARAMETER, 1.0)
+                .expect("trigger");
+            let requests = chain.take_restart_requests();
+            assert_eq!(
+                requests,
+                [SlotRestart {
+                    id,
+                    action: RestartAction::Reload
+                }]
+            );
+            chain.apply_restarts(ui, 96_000, &requests, None).expect("reload");
+            assert_eq!(chain.sample_rate(), 96_000);
+            let instance = chain
+                .slots
+                .first()
+                .expect("first slot")
+                .instance
+                .as_ref()
+                .expect("recreated instance");
+            assert_eq!(instance.state(ui).expect("state").component, 0.375_f64.to_le_bytes());
+            let mut processor = instance.processor(ui).expect("processor");
+            assert!((processor.sample_rate() - 96_000.0).abs() < f64::EPSILON);
+            processor.process(1).expect("fresh component works");
+        });
+    }
+
+    #[test]
+    fn a_reload_request_is_retained_until_all_processor_handles_retire() {
+        on_ui(|ui, chain| {
+            let id = fake_slot(ui, chain, Kind::ReloadRequired);
+            let instance = chain
+                .slots
+                .first()
+                .expect("first slot")
+                .instance
+                .as_ref()
+                .expect("instance");
+            let processor = instance.processor(ui).expect("old processor");
+            instance
+                .set_parameter(ui, RELOAD_TRIGGER_PARAMETER, 1.0)
+                .expect("trigger");
+            let requests = chain.take_restart_requests();
+            assert!(chain.apply_restarts(ui, 96_000, &requests, None).is_err());
+            assert_eq!(
+                chain.take_restart_requests(),
+                [SlotRestart {
+                    id,
+                    action: RestartAction::Reload
+                }]
+            );
+            drop(processor);
+            let requests = chain.take_restart_requests();
+            chain
+                .apply_restarts(ui, 96_000, &requests, None)
+                .expect("retired reload");
+            let mut processor = chain
+                .slots
+                .first()
+                .expect("first slot")
+                .instance
+                .as_ref()
+                .expect("instance")
+                .processor(ui)
+                .expect("new processor");
+            processor.process(1).expect("reload repaired component");
+        });
+    }
+
+    #[test]
+    fn failed_capture_and_failed_reload_preserve_the_previous_saved_settings() {
+        on_ui(|ui, chain| {
+            fake_slot(ui, chain, Kind::FlushFailing);
+            let previous = chain.chain();
+            chain
+                .slots
+                .first()
+                .expect("first slot")
+                .instance
+                .as_ref()
+                .expect("instance")
+                .set_parameter(ui, 0, 0.5)
+                .expect("edit");
+            assert!(chain.capture_states(ui).is_err());
+            assert_eq!(chain.chain(), previous);
+            let id = chain.slots.first().expect("first slot").id;
+            assert!(
+                chain
+                    .apply_restarts(
+                        ui,
+                        48_000,
+                        &[SlotRestart {
+                            id,
+                            action: RestartAction::Reload
+                        }],
+                        None
+                    )
+                    .is_err()
+            );
+            assert_eq!(chain.chain(), previous);
+            assert!(!chain.slots.first().expect("first slot").is_ready());
+            assert!(chain.preview_chain(ui).is_err());
+        });
+    }
+
+    #[test]
+    fn one_failed_slot_prevents_publishing_a_partially_updated_chain_snapshot() {
+        on_ui(|ui, chain| {
+            fake_slot(ui, chain, Kind::Gain);
+            fake_slot(ui, chain, Kind::FlushFailing);
+            let previous = chain.chain();
+            for slot in &chain.slots {
+                slot.instance
+                    .as_ref()
+                    .expect("instance")
+                    .set_parameter(ui, 0, 0.25)
+                    .expect("edit");
+            }
+            assert!(chain.capture_states(ui).is_err());
+            assert_eq!(chain.chain(), previous);
+        });
+    }
+
+    #[test]
+    fn rejected_reload_state_leaves_the_saved_blob_available_for_recovery() {
+        on_ui(|ui, chain| {
+            let id = fake_slot(ui, chain, Kind::Gain);
+            let slot = chain.slots.first_mut().expect("slot");
+            slot.slot.component_state = vec![1, 2, 3];
+            slot.keep_saved_state = true;
+            let previous = chain.chain();
+            let requests = [SlotRestart {
+                id,
+                action: RestartAction::Reload,
+            }];
+            assert!(chain.apply_restarts(ui, 48_000, &requests, None).is_err());
+            assert_eq!(chain.chain(), previous);
+            assert!(!chain.slots.first().expect("slot").has_instance());
+            assert!(chain.preview_chain(ui).is_err());
+        });
+    }
+
+    #[test]
+    fn lighter_reconfiguration_keeps_objects_and_recovers_from_failed_preparation() {
+        on_ui(|ui, chain| {
+            let id = fake_slot(ui, chain, Kind::Gain);
+            let previous = chain.chain();
+            let requests = [SlotRestart {
+                id,
+                action: RestartAction::Reconfigure,
+            }];
+            assert!(chain.apply_restarts(ui, 0, &requests, None).is_err());
+            assert!(chain.slots.first().expect("first slot").has_instance());
+            assert!(!chain.slots.first().expect("first slot").is_ready());
+            assert_eq!(chain.chain(), previous);
+            chain
+                .apply_restarts(ui, 96_000, &requests, None)
+                .expect("recover preparation");
+            assert!(chain.slots.first().expect("first slot").is_ready());
+            assert_eq!(chain.chain(), previous);
+        });
+    }
+}
+
+#[cfg(test)]
 mod test_replace {
     use std::sync::OnceLock;
 
@@ -735,7 +1070,7 @@ mod test_replace {
     static DISPATCHER: OnceLock<UiDispatcher> = OnceLock::new();
 
     /// Returns the dispatcher of the shared test UI thread, starting the thread on first use.
-    fn dispatcher() -> &'static UiDispatcher {
+    pub(super) fn dispatcher() -> &'static UiDispatcher {
         DISPATCHER.get_or_init(|| UiThread::spawn_dedicated().expect("no other UI thread in the test process"))
     }
 

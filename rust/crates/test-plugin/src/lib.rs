@@ -30,6 +30,18 @@ pub const GAIN_PARAMETER: u32 = 0;
 /// Setting it with `setParamNormalized` calls `performEdit` for the gain with the same value.
 pub const EDIT_TRIGGER_PARAMETER: u32 = 1;
 
+/// First of 512 independent parameters used to test multi-batch state capture.
+pub const BULK_PARAMETER_START: u32 = 100;
+
+/// Number of independent bulk parameters.
+pub const BULK_PARAMETER_COUNT: usize = 512;
+
+/// Makes the reload test controller request component reload, bus and latency changes together.
+pub const RELOAD_TRIGGER_PARAMETER: u32 = 9000;
+
+/// Makes the processor fail the batch carrying it until set back to zero.
+pub const FLUSH_FAILURE_PARAMETER: u32 = 9001;
+
 /// Latency of the delay plugin, in samples.
 pub const DELAY_LATENCY: u32 = 64;
 
@@ -79,6 +91,12 @@ pub enum Kind {
     /// whose component `setState` refuses every state without reading it,
     /// and whose component `getState` fails after writing the first `FAILING_STATE_BYTES` bytes of the gain.
     Failing,
+    /// Stores 512 independent parameters in its component state.
+    ManyParameters,
+    /// Refuses even zero-length processing, so parameter snapshot delivery fails.
+    FlushFailing,
+    /// Stops processing after a reload trigger until its component is reconstructed.
+    ReloadRequired,
 }
 
 /// One call logged by a recorder plugin.
@@ -92,7 +110,7 @@ pub struct RecordedCall {
 
 impl Kind {
     /// Every kind, in the order the factory lists them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 11] = [
         Self::Gain,
         Self::Delay,
         Self::Echo,
@@ -101,6 +119,9 @@ impl Kind {
         Self::StereoOnly,
         Self::Recorder,
         Self::Failing,
+        Self::ManyParameters,
+        Self::FlushFailing,
+        Self::ReloadRequired,
     ];
 
     /// Returns the class id of the plugin's component.
@@ -115,6 +136,9 @@ impl Kind {
             Self::StereoOnly => 6,
             Self::Recorder => 7,
             Self::Failing => 8,
+            Self::ManyParameters => 9,
+            Self::FlushFailing => 10,
+            Self::ReloadRequired => 11,
         };
         uid(0x5A1C_0000, 0x0000_4000, 0x8000_0000, index)
     }
@@ -131,6 +155,9 @@ impl Kind {
             Self::StereoOnly => "Test Stereo Only",
             Self::Recorder => "Test Recorder",
             Self::Failing => "Test Failing",
+            Self::ManyParameters => "Test Many Parameters",
+            Self::FlushFailing => "Test Flush Failing",
+            Self::ReloadRequired => "Test Reload Required",
         }
     }
 
@@ -139,9 +166,15 @@ impl Kind {
     pub const fn subcategories(self) -> &'static str {
         match self {
             Self::Delay | Self::Echo => "Fx|Delay",
-            Self::Gain | Self::NotFinite | Self::MonoOnly | Self::StereoOnly | Self::Recorder | Self::Failing => {
-                "Fx|Dynamics"
-            }
+            Self::Gain
+            | Self::NotFinite
+            | Self::MonoOnly
+            | Self::StereoOnly
+            | Self::Recorder
+            | Self::Failing
+            | Self::ManyParameters
+            | Self::FlushFailing
+            | Self::ReloadRequired => "Fx|Dynamics",
         }
     }
 

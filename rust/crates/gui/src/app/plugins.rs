@@ -189,8 +189,11 @@ impl AppView {
     /// The preview chain is taken out of the player first, so it delivers no more edits.
     pub(super) fn save_plugin_chain(&mut self) {
         self.detach_plugin_preview();
-        if let Some(ui) = UiThread::current() {
-            self.plugins.chain.capture_states(&ui);
+        if let Some(ui) = UiThread::current()
+            && let Err(error) = self.plugins.chain.capture_states(&ui)
+        {
+            tracing::error!("{error:#}");
+            return;
         }
         if let Err(error) = self.plugins.chain.save() {
             tracing::error!("{error:#}");
@@ -369,7 +372,10 @@ impl AppView {
 
     /// Captures the settings of the instances, saves the chain, and shows it in the menus and the windows.
     fn save_chain_settings(&mut self, cx: &mut Context<Self>) {
-        self.capture_plugin_states(cx);
+        if let Err(error) = self.capture_plugin_states(cx) {
+            self.report_status(format!("Could not save plugin settings: {error:#}"), cx);
+            return;
+        }
         if let Err(error) = self.plugins.chain.save() {
             self.status = format!("{error:#}").into();
         }
@@ -381,7 +387,9 @@ impl AppView {
         if self.plugins.chain.len() == 0 {
             return self.report_status(String::from("Add a plugin before saving the chain as a preset"), cx);
         }
-        self.capture_plugin_states(cx);
+        if let Err(error) = self.capture_plugin_states(cx) {
+            return self.report_status(format!("Could not save the preset: {error:#}"), cx);
+        }
         match self.plugins.presets.save(name, &self.plugins.chain.chain()) {
             Ok(path) => {
                 let saved = path

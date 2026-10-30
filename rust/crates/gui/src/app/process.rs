@@ -191,7 +191,10 @@ impl AppView {
         let Some(ui) = UiThread::current() else {
             return;
         };
-        self.capture_plugin_states(cx);
+        if let Err(error) = self.capture_plugin_states(cx) {
+            self.report_status(format!("Could not capture plugin settings: {error:#}"), cx);
+            return;
+        }
         if let Err(error) = self.plugins.chain.save() {
             tracing::error!("{error:#}");
         }

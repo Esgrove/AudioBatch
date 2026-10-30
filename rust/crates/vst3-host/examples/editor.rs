@@ -51,7 +51,7 @@ fn main() -> Result<()> {
         handle_events(EVENT_WAIT);
     }
     drop(editor);
-    instance.flush_parameter_edits(&ui);
+    instance.flush_parameter_edits(&ui)?;
     let state = instance.state(&ui)?;
     println!(
         "Captured {} bytes of component state and {} bytes of controller state",

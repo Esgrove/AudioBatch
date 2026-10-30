@@ -23,6 +23,15 @@ use vst3::Steinberg::{FIDString, TBool, kResultFalse, kResultOk, tresult};
 /// When the queue is full the oldest edit is dropped, because a newer value supersedes it.
 pub const EDIT_QUEUE_CAPACITY: usize = 1024;
 
+/// Lifecycle work required by a restart request, with reload taking precedence over reconfiguration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestartAction {
+    /// Recreate both component and controller, restoring the captured state.
+    Reload,
+    /// Reuse the objects and prepare their buses, latency and processing setup again.
+    Reconfigure,
+}
+
 /// One parameter change made in a plugin's controller.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParameterEdit {
@@ -47,6 +56,18 @@ pub struct ComponentHandler {
 }
 
 impl RestartFlags {
+    /// Returns the strongest lifecycle action while preserving full reload requests.
+    #[must_use]
+    pub fn action(self) -> Option<RestartAction> {
+        if self.reload_component() {
+            Some(RestartAction::Reload)
+        } else if self.io_changed() || self.latency_changed() {
+            Some(RestartAction::Reconfigure)
+        } else {
+            None
+        }
+    }
+
     /// Returns true when no restart was requested.
     #[must_use]
     pub const fn is_empty(self) -> bool {
@@ -198,6 +219,24 @@ mod test_component_handler {
         }
         assert_eq!(edits.pop().map(|edit| edit.id), Some(2));
         assert_eq!(edits.pop().map(|edit| edit.id), Some(3));
+    }
+
+    #[test]
+    fn combined_restart_flags_keep_reload_stronger_than_latency_and_bus_changes() {
+        let flags = RestartFlags(
+            flag_bits(RestartFlags_::kReloadComponent)
+                | flag_bits(RestartFlags_::kLatencyChanged)
+                | flag_bits(RestartFlags_::kIoChanged),
+        );
+        assert_eq!(flags.action(), Some(RestartAction::Reload));
+        assert_eq!(
+            RestartFlags(flag_bits(RestartFlags_::kLatencyChanged)).action(),
+            Some(RestartAction::Reconfigure)
+        );
+        assert_eq!(
+            RestartFlags(flag_bits(RestartFlags_::kParamValuesChanged)).action(),
+            None
+        );
     }
 
     #[test]

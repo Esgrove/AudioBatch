@@ -12,7 +12,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 
-use vst3_host::{InstanceError, PluginInstance, ProcessError, ProcessMode, ProcessorHandle, UiThread};
+use vst3_host::{InstanceError, PluginInstance, PluginState, ProcessError, ProcessMode, ProcessorHandle, UiThread};
 
 use crate::chain_signal::{ChainSignal, StageFailure};
 use crate::library::error_chain;
@@ -227,6 +227,24 @@ pub fn chain_tail_frames<'a>(
         .sum()
 }
 
+/// Reconstructs a retired instance and restores its state before preparing it at the current device rate.
+/// The owner closes its editor and retires every processor before calling this function.
+///
+/// # Errors
+///
+/// Returns an error when reconstruction, state restoration, or preview preparation fails.
+pub fn reload_for_preview(
+    ui: &UiThread,
+    instance: PluginInstance,
+    state: &PluginState,
+    sample_rate: f64,
+    block_frames: usize,
+) -> Result<PluginInstance, InstanceError> {
+    let mut instance = instance.recreate(ui, state)?;
+    prepare_for_preview(ui, &mut instance, sample_rate, block_frames)?;
+    Ok(instance)
+}
+
 /// Prepares an instance for stereo realtime processing at a rate and activates it.
 /// A plugin that only takes mono is prepared for mono, and the preview folds the stereo signal into it.
 ///
@@ -377,6 +395,72 @@ mod test_preview_chain {
             failure.message().as_deref(),
             Some("Second: The plugin failed to process audio (result 1)")
         );
+    }
+
+    #[test]
+    fn reload_reconstructs_an_instance_that_repreparation_cannot_repair() {
+        dispatcher()
+            .call(
+                |ui| {
+                    let module = Module::from_factory(ui, "reload test", audiobatch_test_plugin::factory());
+                    let mut instance = PluginInstance::create(
+                        ui,
+                        &module,
+                        ClassId::from_tuid(&Kind::ReloadRequired.class_id()),
+                        Some(dispatcher().clone()),
+                    )
+                    .expect("instance");
+                    prepare_for_preview(ui, &mut instance, RATE, SETUP_BLOCK_FRAMES).expect("prepare");
+                    instance.set_parameter(ui, 0, 0.375).expect("gain");
+                    instance
+                        .set_parameter(ui, audiobatch_test_plugin::RELOAD_TRIGGER_PARAMETER, 1.0)
+                        .expect("reload trigger");
+                    let flags = instance.take_restart_flags();
+                    assert!(flags.reload_component() && flags.latency_changed() && flags.io_changed());
+                    assert_eq!(flags.action(), Some(vst3_host::RestartAction::Reload));
+                    let state = instance.state(ui).expect("capture flushes trigger");
+                    prepare_for_preview(ui, &mut instance, 96_000.0, SETUP_BLOCK_FRAMES).expect("lighter reprepare");
+                    let mut broken = instance.processor(ui).expect("processor");
+                    assert!(broken.process(1).is_err());
+                    drop(broken);
+                    let instance =
+                        reload_for_preview(ui, instance, &state, 96_000.0, SETUP_BLOCK_FRAMES).expect("full reload");
+                    assert_eq!(instance.state(ui).expect("restored"), state);
+                    let mut processor = instance.processor(ui).expect("fresh processor");
+                    assert!((processor.sample_rate() - 96_000.0).abs() < f64::EPSILON);
+                    processor.process(1).expect("reconstruction repaired process");
+                },
+                &|| false,
+            )
+            .expect("UI job");
+    }
+
+    #[test]
+    fn failed_reconstruction_or_preparation_never_returns_a_ready_replacement() {
+        dispatcher()
+            .call(
+                |ui| {
+                    let module = Module::from_factory(ui, "reload failures", audiobatch_test_plugin::factory());
+                    let make = || {
+                        PluginInstance::create(ui, &module, ClassId::from_tuid(&Kind::Gain.class_id()), None)
+                            .expect("gain")
+                    };
+                    let invalid = PluginState {
+                        component: vec![0; 3],
+                        controller: Vec::new(),
+                    };
+                    assert!(matches!(
+                        reload_for_preview(ui, make(), &invalid, RATE, SETUP_BLOCK_FRAMES),
+                        Err(InstanceError::RestoreState)
+                    ));
+                    assert!(matches!(
+                        reload_for_preview(ui, make(), &gain_state(0.25), 0.0, SETUP_BLOCK_FRAMES),
+                        Err(InstanceError::Setup { .. })
+                    ));
+                },
+                &|| false,
+            )
+            .expect("UI job");
     }
 
     #[test]

@@ -34,7 +34,7 @@ pub use discovery::{default_search_folders, find_bundles, is_bundle_path};
 #[cfg(feature = "editor")]
 pub use editor::{EditorError, EditorWindow};
 pub use factory::{ClassId, ClassIdError, ClassInfo, FactoryInfo};
-pub use host_objects::{ParameterEdit, RestartFlags};
+pub use host_objects::{ParameterEdit, RestartAction, RestartFlags};
 pub use instance::{BusLayout, InstanceError, PluginInstance, PluginState, ProcessMode};
 pub use module::{FactoryError, Module, ModuleError};
 pub use module_info::read_module_info;
