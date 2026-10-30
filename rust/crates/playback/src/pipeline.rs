@@ -41,6 +41,14 @@ pub enum PipelineError {
     /// Processing a resampler chunk failed.
     #[error("Resampling failed")]
     Resample(#[source] ResampleError),
+    /// The FFT geometry did not produce the required output within its finite drain budget.
+    #[error("Resampler drain produced {actual} frames instead of {expected}")]
+    IncompleteDrain {
+        /// Exact number of output frames required by the source length and rate ratio.
+        expected: u64,
+        /// Number of output frames actually emitted.
+        actual: u64,
+    },
 }
 
 /// One stereo output frame with the bookkeeping the audio callback needs.
@@ -78,8 +86,14 @@ struct ResamplerStage {
     start_position: u64,
     /// Output frames emitted since the last open or seek.
     emitted: u64,
-    /// Source frames per output frame.
-    step: f64,
+    /// Actual source frames accepted since the last open or seek, excluding EOF padding.
+    received_input: u64,
+    /// Input frames already passed to the FFT resampler, including EOF padding.
+    processed_input: u64,
+    /// Source frames per second, used for exact rational frame accounting.
+    source_rate: u32,
+    /// Output frames per second, used for exact rational frame accounting.
+    output_rate: u32,
     /// Output frames still to drop to compensate for the resampler delay.
     skip_output: usize,
 }
@@ -176,7 +190,7 @@ impl FramePipeline {
         }
         let Some(chunk) = self.decoder.next_chunk()? else {
             if let Some(stage) = &mut self.resampler {
-                stage.flush(self.position, self.generation, output)?;
+                stage.flush(self.generation, output)?;
             }
             self.finished = true;
             return Ok(false);
@@ -232,7 +246,10 @@ impl ResamplerStage {
             filled: 0,
             start_position: 0,
             emitted: 0,
-            step: f64::from(source_rate) / f64::from(output_rate),
+            received_input: 0,
+            processed_input: 0,
+            source_rate,
+            output_rate,
             skip_output,
         })
     }
@@ -243,12 +260,9 @@ impl ResamplerStage {
         self.filled = 0;
         self.start_position = position;
         self.emitted = 0;
+        self.received_input = 0;
+        self.processed_input = 0;
         self.skip_output = self.resampler.output_delay();
-    }
-
-    /// Returns the source position of the next emitted frame.
-    fn next_position(&self) -> u64 {
-        self.start_position + (self.emitted as f64 * self.step) as u64
     }
 
     /// Buffers decoded samples and resamples every complete input chunk.
@@ -259,6 +273,7 @@ impl ResamplerStage {
         generation: u32,
         output: &mut Vec<Frame>,
     ) -> Result<(), PipelineError> {
+        self.received_input += left.len() as u64;
         let mut offset = 0;
         while offset < left.len() {
             let take = (RESAMPLER_CHUNK_FRAMES - self.filled).min(left.len() - offset);
@@ -280,27 +295,46 @@ impl ResamplerStage {
     }
 
     /// Resamples the remaining partial chunk and the resampler delay at the end of the file.
-    /// Frames past the end of the source are dropped.
-    fn flush(&mut self, end_position: u64, generation: u32, output: &mut Vec<Frame>) -> Result<(), PipelineError> {
-        let mut remaining_chunks = 1 + self.skip_output.div_ceil(RESAMPLER_CHUNK_FRAMES) + 1;
-        while remaining_chunks > 0 && self.next_position() < end_position {
+    /// The required FFT blocks include the output delay, in output frames.
+    /// Converting those blocks to input frames gives a finite budget even when one FFT block spans many input chunks.
+    fn flush(&mut self, generation: u32, output: &mut Vec<Frame>) -> Result<(), PipelineError> {
+        let expected = self.output_length();
+        let raw_output = expected + self.resampler.output_delay() as u64;
+        let fft_blocks = raw_output.div_ceil(self.resampler.fft_size_out() as u64);
+        let required_input = fft_blocks * self.resampler.fft_size_in() as u64;
+        let remaining_chunks = required_input
+            .saturating_sub(self.processed_input)
+            .div_ceil(RESAMPLER_CHUNK_FRAMES as u64);
+        for _ in 0..remaining_chunks {
+            if self.emitted == expected {
+                break;
+            }
             for channel in &mut self.input {
                 if let Some(tail) = channel.get_mut(self.filled..) {
                     tail.fill(0.0);
                 }
             }
-            self.filled = RESAMPLER_CHUNK_FRAMES;
-            self.process_chunk(generation, Some(end_position), output)?;
-            remaining_chunks -= 1;
+            self.process_chunk(generation, Some(expected), output)?;
+        }
+        if self.emitted != expected {
+            return Err(PipelineError::IncompleteDrain {
+                expected,
+                actual: self.emitted,
+            });
         }
         Ok(())
+    }
+
+    /// Returns the exact number of output timestamps strictly before the end of the accepted input.
+    fn output_length(&self) -> u64 {
+        (self.received_input * u64::from(self.output_rate)).div_ceil(u64::from(self.source_rate))
     }
 
     /// Resamples one full input chunk and appends the output frames.
     fn process_chunk(
         &mut self,
         generation: u32,
-        end_position: Option<u64>,
+        output_limit: Option<u64>,
         output: &mut Vec<Frame>,
     ) -> Result<(), PipelineError> {
         let output_capacity = self.output.first().map_or(0, Vec::len);
@@ -313,6 +347,7 @@ impl ResamplerStage {
             .process_into_buffer(&input, &mut resampled, None)
             .map_err(PipelineError::Resample)?;
 
+        self.processed_input += RESAMPLER_CHUNK_FRAMES as u64;
         let skipped = self.skip_output.min(written);
         self.skip_output -= skipped;
         let (Some(left), Some(right)) = (self.output.first(), self.output.get(1)) else {
@@ -320,10 +355,11 @@ impl ResamplerStage {
         };
         // Positions follow the emitted frames after the delay, so the playhead lines up with the audio.
         for index in skipped..written {
-            let position = self.start_position + (self.emitted as f64 * self.step) as u64;
-            if end_position.is_some_and(|end| position >= end) {
+            if self.emitted >= output_limit.unwrap_or_else(|| self.output_length()) {
                 break;
             }
+            let position =
+                self.start_position + self.emitted * u64::from(self.source_rate) / u64::from(self.output_rate);
             output.push(Frame {
                 generation,
                 position,
@@ -346,6 +382,102 @@ mod test_frame_pipeline {
         let mut frames = Vec::new();
         while pipeline.produce(&mut frames).expect("decodes") {}
         frames
+    }
+
+    /// Writes a small mono WAV with frame-identifying samples at an arbitrary integer rate.
+    fn ramp_wav(rate: u32, frames: u32) -> tempfile::NamedTempFile {
+        let data_bytes = frames * 2;
+        let mut wav = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+        wav.extend_from_slice(b"WAVEfmt ");
+        wav.extend_from_slice(&16_u32.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&1_u16.to_le_bytes());
+        wav.extend_from_slice(&rate.to_le_bytes());
+        wav.extend_from_slice(&(rate * 2).to_le_bytes());
+        wav.extend_from_slice(&2_u16.to_le_bytes());
+        wav.extend_from_slice(&16_u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_bytes.to_le_bytes());
+        for index in 0..frames {
+            wav.extend_from_slice(&((index % 4096) as i16).to_le_bytes());
+        }
+        let file = tempfile::Builder::new()
+            .suffix(".wav")
+            .tempfile()
+            .expect("temporary WAV");
+        std::fs::write(file.path(), wav).expect("written");
+        file
+    }
+
+    /// Checks exact output length and rational source positions across a short-stream matrix.
+    fn assert_eof_lengths(source_rate: u32, output_rate: u32, lengths: &[u32]) {
+        for &length in lengths {
+            let file = ramp_wav(source_rate, length);
+            let mut pipeline = FramePipeline::open(file.path(), output_rate, 9, 0.0).expect("opens");
+            let frames = produce_all(&mut pipeline);
+            let expected = (u64::from(length) * u64::from(output_rate)).div_ceil(u64::from(source_rate));
+            assert_eq!(
+                frames.len() as u64,
+                expected,
+                "{source_rate} -> {output_rate}, length {length}"
+            );
+            for (index, frame) in frames.iter().enumerate() {
+                assert_eq!(frame.generation, 9);
+                assert_eq!(
+                    frame.position,
+                    index as u64 * u64::from(source_rate) / u64::from(output_rate)
+                );
+                assert!(frame.left.is_finite());
+            }
+            assert!(!pipeline.produce(&mut Vec::new()).expect("already finished"));
+        }
+    }
+
+    #[test]
+    fn eof_drains_exact_lengths_for_common_rates() {
+        assert_eof_lengths(44_100, 48_000, &[1, 147, 1023, 44_100]);
+        assert_eof_lengths(48_000, 44_100, &[1, 147, 1023, 48_000]);
+    }
+
+    #[test]
+    fn eof_drains_exact_short_lengths_for_coprime_rates() {
+        assert_eof_lengths(44_101, 48_000, &[1, 147, 1023]);
+    }
+
+    #[test]
+    fn eof_drains_a_complete_second_at_coprime_rates() {
+        assert_eof_lengths(44_101, 48_000, &[44_101]);
+    }
+
+    #[test]
+    fn resampled_seeks_reset_delay_and_exact_length_accounting() {
+        for (source_rate, output_rate) in [(44_100, 48_000), (48_000, 44_100), (44_101, 48_000)] {
+            let length = 4097;
+            let file = ramp_wav(source_rate, length);
+            let mut pipeline = FramePipeline::open(file.path(), output_rate, 1, 0.0).expect("opens");
+            produce_all(&mut pipeline);
+            for (generation, target) in [(2, 137), (3, 4096), (4, 4097), (5, 0)] {
+                pipeline
+                    .seek(f64::from(target) / f64::from(source_rate), generation)
+                    .expect("seeks");
+                let frames = produce_all(&mut pipeline);
+                let expected = (u64::from(length - target) * u64::from(output_rate)).div_ceil(u64::from(source_rate));
+                assert_eq!(
+                    frames.len() as u64,
+                    expected,
+                    "{source_rate} -> {output_rate}, target {target}"
+                );
+                for (index, frame) in frames.iter().enumerate() {
+                    assert_eq!(frame.generation, generation);
+                    assert_eq!(
+                        frame.position,
+                        u64::from(target) + index as u64 * u64::from(source_rate) / u64::from(output_rate)
+                    );
+                }
+            }
+        }
     }
 
     #[test]
@@ -406,9 +538,7 @@ mod test_frame_pipeline {
         let path = test_fixtures::fixture("sine_stereo_44100_16.wav");
         let mut pipeline = FramePipeline::open(&path, 48_000, 1, 0.0).expect("opens");
         let frames = produce_all(&mut pipeline);
-        let expected = 48_000_i64;
-        let produced = i64::try_from(frames.len()).expect("fits");
-        assert!((produced - expected).abs() < 1200, "{produced} frames");
+        assert_eq!(frames.len(), 48_000);
         assert!(frames.windows(2).all(|pair| pair[1].position >= pair[0].position));
         let peak = frames.iter().map(|frame| frame.left.abs()).fold(0.0_f32, f32::max);
         assert!((peak - 0.5).abs() < 0.05, "peak {peak}");

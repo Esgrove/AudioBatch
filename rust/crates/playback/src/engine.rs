@@ -2,7 +2,7 @@
 //!
 //! Receives load and seek commands, runs the `FramePipeline` of the current file,
 //! and keeps the ring buffer to the audio callback filled.
-//! It blocks on the command channel while idle and polls it between packets while decoding,
+//! It polls commands and callback rebuffer requests between packets and while idle,
 //! so a seek takes effect within one packet.
 
 use std::path::PathBuf;
@@ -97,9 +97,10 @@ pub fn run_decode_thread(
                 Err(RecvTimeoutError::Disconnected) => return,
             }
         } else {
-            match commands.recv() {
+            match commands.recv_timeout(FULL_BUFFER_WAIT) {
                 Ok(command) => Some(command),
-                Err(_) => return,
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => return,
             }
         };
 
@@ -130,6 +131,22 @@ pub fn run_decode_thread(
                 Command::Shutdown => return,
             }
             continue;
+        }
+
+        // Apply queued loads and seeks first, so a callback request cannot seek an unopened or superseded source.
+        let rebuffer = shared.rebuffer_generation.swap(0, Ordering::AcqRel);
+        if rebuffer != 0 && shared.generation.load(Ordering::Acquire) == rebuffer {
+            pending.clear();
+            cursor = 0;
+            finish_after_pending = None;
+            let rate = shared.source_rate.load(Ordering::Relaxed);
+            let position = shared.position.load(Ordering::Relaxed);
+            let seconds = if rate > 0 {
+                position as f64 / f64::from(rate)
+            } else {
+                0.0
+            };
+            pipeline = seek_pipeline(pipeline.take(), seconds, rebuffer, events, shared);
         }
 
         if cursor >= pending.len() {
@@ -191,7 +208,7 @@ fn open_pipeline(
             shared.source_rate.store(info.sample_rate, Ordering::Relaxed);
             shared.source_frames.store(frames, Ordering::Relaxed);
             shared.source_mono.store(info.channels == 1, Ordering::Relaxed);
-            let start_frame = (start_seconds.max(0.0) * f64::from(info.sample_rate)) as u64;
+            let start_frame = (start_seconds.max(0.0) * f64::from(info.sample_rate)).round() as u64;
             shared.position.store(start_frame, Ordering::Relaxed);
             let _ = events.send(PlayerEvent::Loaded {
                 path: path.clone(),
@@ -229,7 +246,7 @@ fn seek_pipeline(
     match current.seek(seconds, generation) {
         Ok(()) => {
             if shared.generation.load(Ordering::Acquire) == generation {
-                let target = (seconds.max(0.0) * f64::from(current.info().sample_rate)) as u64;
+                let target = (seconds.max(0.0) * f64::from(current.info().sample_rate)).round() as u64;
                 shared.position.store(target, Ordering::Relaxed);
             }
             Some((path, current))
@@ -444,6 +461,27 @@ mod test_decode_thread {
 
         decode.load(&test_fixtures::fixture("sine_stereo_44100_16.wav"), 3, 0.0);
         assert_eq!(decode.drain_until_finished(3).len(), 44_100);
+    }
+
+    #[test]
+    fn callback_rebuffer_after_decoding_eof_restarts_at_the_audible_cursor() {
+        let mut decode = DecodeThread::start();
+        decode.load(&test_fixtures::fixture("sine_stereo_44100_16.wav"), 1, 0.0);
+        let original = decode.drain_until_finished(1);
+        assert!(matches!(decode.next_event(), PlayerEvent::Loaded { .. }));
+        decode.shared.position.store(137, Ordering::Relaxed);
+        let generation = decode.shared.advance_generation();
+        decode.shared.rebuffer_generation.store(generation, Ordering::Release);
+        let resumed = decode.drain_until_finished(generation);
+        assert_eq!(resumed.len(), original.len() - 137);
+        assert!(consecutive_from(&resumed, 137));
+        for (actual, expected) in resumed.iter().zip(&original[137..]) {
+            assert_eq!(actual.generation, generation);
+            assert!((actual.left - expected.left).abs() < f32::EPSILON);
+            assert!((actual.right - expected.right).abs() < f32::EPSILON);
+        }
+        decode.send(Command::Shutdown);
+        assert!(wait_for_exit(decode.thread));
     }
 
     #[test]

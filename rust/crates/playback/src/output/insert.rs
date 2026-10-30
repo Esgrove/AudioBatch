@@ -2,7 +2,8 @@
 //!
 //! Frames are pulled from the ring buffer into preallocated stereo blocks,
 //! the gain is applied, and the insert processes blocks no longer than it accepts.
-//! Each start, seek, resume from pause, and insert change resets the insert.
+//! Each start, seek, and insert change resets the insert.
+//! Pausing preserves its buffered input, so resuming cannot skip frames that have not been heard.
 //! With latency compensation on, the reset is followed by a silent pre-roll of the insert's latency,
 //! while the playhead stays still, so what is heard lines up with the waveform.
 //! The first frames after a reset fade in, and a pause fades out, so neither clicks.
@@ -54,10 +55,16 @@ pub struct InsertRenderer {
 struct InsertPlayback {
     /// True from a reset until playback stops, ends, or fails.
     active: bool,
+    /// True while processing is suspended by a pause, with its buffered audio preserved.
+    paused: bool,
     /// Generation the insert was last reset for.
     generation: u32,
     /// Set when the insert changed, so the next playing callback resets it.
     needs_reset: bool,
+    /// Latency used for the last reset, so a changed latency triggers audible-position rebuffering.
+    latency: usize,
+    /// Compensation mode used for the last reset.
+    compensate: bool,
     /// Frames of the silent pre-roll still to process.
     pre_roll: usize,
     /// Frames of the fade-in already output.
@@ -96,6 +103,7 @@ impl InsertRenderer {
     /// A change is only made while the retire queue has room for the insert it replaces,
     /// so an insert is never dropped on the audio thread.
     pub fn apply_changes(&mut self, shared: &SharedState) {
+        let mut changed = false;
         while self.retired.slots() > 0 {
             let Ok(next) = self.commands.pop() else {
                 break;
@@ -103,8 +111,15 @@ impl InsertRenderer {
             if let Some(replaced) = std::mem::replace(&mut self.insert, next) {
                 let _ = self.retired.push(replaced);
             }
-            self.playback.needs_reset = true;
+            changed = true;
             shared.insert_changes_applied.fetch_add(1, Ordering::Release);
+        }
+        let configuration_changed = self.insert.as_ref().is_some_and(|insert| {
+            self.playback.latency != insert.latency_frames()
+                || self.playback.compensate != shared.latency_compensation.load(Ordering::Relaxed)
+        });
+        if changed || configuration_changed {
+            self.playback.invalidate(shared);
         }
     }
 
@@ -198,6 +213,7 @@ impl InsertRenderer {
             }
             if playback.fade_out == Some(0) {
                 playback.active = false;
+                playback.paused = true;
             }
             if underrun || length == 0 {
                 break;
@@ -211,8 +227,27 @@ impl InsertRenderer {
 }
 
 impl InsertPlayback {
+    /// Invalidates processing state and requests fresh input from the audible cursor if input was consumed.
+    /// Only the callback advances this generation, and the decoder reads the request without a callback-side lock.
+    fn invalidate(&mut self, shared: &SharedState) {
+        if !self.needs_reset && self.start_position.is_some() && self.latency > 0 {
+            let next = self.generation.wrapping_add(1).max(1);
+            if shared
+                .generation
+                .compare_exchange(self.generation, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                shared.rebuffer_generation.store(next, Ordering::Release);
+            }
+        }
+        self.needs_reset = true;
+        self.active = false;
+        self.paused = false;
+    }
+
     /// Follows the player's transport.
-    /// Playing after a stop, a pause, a seek, or an insert change resets the insert.
+    /// Playing after a stop, a seek, or an insert change resets the insert.
+    /// Resuming preserves buffered audio, including a partially completed pre-roll.
     /// A pause fades out, except during the pre-roll, where nothing is heard yet, and after a seek.
     fn follow_transport(
         &mut self,
@@ -222,7 +257,7 @@ impl InsertPlayback {
         device_rate: u32,
     ) {
         if shared.playing.load(Ordering::Relaxed) {
-            if !self.active || self.fade_out.is_some() || self.needs_reset || self.generation != generation {
+            if self.needs_reset || self.generation != generation || (!self.active && !self.paused) {
                 let position = device_position(shared, device_rate);
                 self.reset(
                     insert,
@@ -230,10 +265,16 @@ impl InsertPlayback {
                     shared.latency_compensation.load(Ordering::Relaxed),
                     position,
                 );
+            } else if !self.active || self.fade_out.is_some() {
+                self.active = true;
+                self.paused = false;
+                self.fade_out = None;
+                self.faded_in = 0;
             }
         } else if self.active {
             if self.pre_roll > 0 || self.generation != generation {
                 self.active = false;
+                self.paused = true;
             } else if self.fade_out.is_none() {
                 self.fade_out = Some(TRANSITION_FRAMES);
             }
@@ -250,7 +291,9 @@ impl InsertPlayback {
     /// Ends playback after the latency and the tail were drained, with the playhead at the end.
     fn end(&mut self, shared: &SharedState, generation: u32) {
         self.active = false;
-        shared.position.store(self.end_position, Ordering::Relaxed);
+        if self.start_position.is_some() {
+            shared.position.store(self.end_position, Ordering::Relaxed);
+        }
         shared.playing.store(false, Ordering::Relaxed);
         shared.ended_generation.store(generation, Ordering::Release);
         shared.ended.store(true, Ordering::Release);
@@ -263,6 +306,8 @@ impl InsertPlayback {
         *self = Self {
             active: true,
             generation,
+            latency: insert.latency_frames(),
+            compensate,
             pre_roll: if compensate { insert.latency_frames() } else { 0 },
             ..Self::default()
         };
@@ -325,7 +370,10 @@ impl InsertPlayback {
             self.emitted > 0,
             source_rate > 0 && device_rate > 0,
         ) {
-            let advanced = (self.emitted as f64 * f64::from(source_rate) / f64::from(device_rate)).round() as u64;
+            let audible = self
+                .emitted
+                .saturating_sub(if self.compensate { 0 } else { self.latency as u64 });
+            let advanced = audible * u64::from(source_rate) / u64::from(device_rate);
             shared
                 .position
                 .store((start + advanced).min(self.end_position), Ordering::Relaxed);
@@ -375,11 +423,11 @@ mod test_insert_playback {
         processed: Arc<AtomicUsize>,
         resets: Arc<AtomicUsize>,
         dropped: Arc<AtomicBool>,
+        latency: Arc<AtomicUsize>,
     }
 
     /// An insert that delays its input by its latency, and can output NaN or silence the right channel instead.
     struct FakeInsert {
-        latency: usize,
         tail: usize,
         non_finite: bool,
         mutes_right: bool,
@@ -401,8 +449,8 @@ mod test_insert_playback {
         /// Creates a fake insert with the latency and tail in frames, and the probe that observes it.
         fn new(latency: usize, tail: usize) -> (Box<Self>, Probe) {
             let probe = Probe::default();
+            probe.latency.store(latency, Ordering::Relaxed);
             let insert = Self {
-                latency,
                 tail,
                 non_finite: false,
                 mutes_right: false,
@@ -421,7 +469,7 @@ mod test_insert_playback {
         }
 
         fn latency_frames(&self) -> usize {
-            self.latency
+            self.probe.latency.load(Ordering::Relaxed)
         }
 
         fn tail_frames(&self) -> usize {
@@ -441,6 +489,7 @@ mod test_insert_playback {
                 left.fill(f32::NAN);
                 return false;
             }
+            let latency = self.latency_frames();
             for (left, right) in left.iter_mut().zip(right.iter_mut()) {
                 if let (Some(delayed_left), Some(delayed_right)) = (
                     self.delay_left.get_mut(self.index),
@@ -448,7 +497,7 @@ mod test_insert_playback {
                 ) {
                     *left = std::mem::replace(delayed_left, *left);
                     *right = std::mem::replace(delayed_right, *right);
-                    self.index = (self.index + 1) % self.latency;
+                    self.index = (self.index + 1) % latency;
                 }
             }
             if self.mutes_right {
@@ -488,10 +537,11 @@ mod test_insert_playback {
 
         /// Queues frames of generation 1 at consecutive positions from `start`, with values from `value`.
         fn push(&mut self, start: u64, count: u64, value: impl Fn(u64) -> f32) {
+            let generation = self.shared.generation.load(Ordering::Acquire);
             for position in start..start + count {
                 let sample = value(position - start);
                 let frame = Frame {
-                    generation: 1,
+                    generation,
                     position,
                     left: sample,
                     right: sample,
@@ -616,16 +666,17 @@ mod test_insert_playback {
     }
 
     #[test]
-    fn a_pause_fades_out_and_a_resume_resets() {
-        let (insert, probe) = FakeInsert::new(0, 0);
+    fn a_pause_fades_out_and_a_resume_preserves_unheard_input() {
+        let (insert, probe) = FakeInsert::new(131, 0);
         let mut harness = Harness::with_insert(insert);
-        harness.push(0, 1000, |_| 0.5);
+        harness.push(0, 1000, ramp);
+        harness.render(131);
         harness.render(100);
         harness.shared.playing.store(false, Ordering::Relaxed);
         let output = harness.render(100);
         let (fade, silence) = output.split_at(TRANSITION_FRAMES);
         for (index, &sample) in fade.iter().enumerate() {
-            let expected = 0.5 * (TRANSITION_FRAMES - index) as f32 / TRANSITION_FRAMES as f32;
+            let expected = ramp(100 + index as u64) * (TRANSITION_FRAMES - index) as f32 / TRANSITION_FRAMES as f32;
             assert_close(sample, expected, &format!("frame {index}"));
         }
         assert!(silence.iter().all(|&sample| sample == 0.0));
@@ -633,12 +684,184 @@ mod test_insert_playback {
         assert_eq!(probe.resets.load(Ordering::Relaxed), 1);
         harness.shared.playing.store(true, Ordering::Relaxed);
         let output = harness.render(10);
+        assert_eq!(probe.resets.load(Ordering::Relaxed), 1);
+        for (index, &sample) in output.iter().enumerate() {
+            assert_close(sample, ramp(164 + index as u64) * fade_in(index), "resumed frame");
+        }
+        assert_eq!(harness.position(), 174);
+    }
+
+    #[test]
+    fn pausing_during_pre_roll_preserves_every_unheard_frame() {
+        let (insert, probe) = FakeInsert::new(131, 0);
+        let mut harness = Harness::with_insert(insert);
+        harness.push(0, 1000, ramp);
+        assert!(harness.render(53).iter().all(|sample| sample.abs() < f32::EPSILON));
+        harness.shared.playing.store(false, Ordering::Relaxed);
+        assert!(harness.render(100).iter().all(|sample| sample.abs() < f32::EPSILON));
+        assert_eq!(harness.position(), 0);
+        harness.shared.playing.store(true, Ordering::Relaxed);
+        let output = harness.render(78 + 100);
+        assert!(output[..78].iter().all(|sample| sample.abs() < f32::EPSILON));
+        for (index, &sample) in output[78..].iter().enumerate() {
+            assert_close(sample, ramp(index as u64) * fade_in(index), "pre-roll resume");
+        }
+        assert_eq!(probe.resets.load(Ordering::Relaxed), 1);
+        assert_eq!(harness.position(), 100);
+    }
+
+    #[test]
+    fn underrun_then_eof_keeps_the_delayed_ramp_contiguous() {
+        let (insert, probe) = FakeInsert::new(131, 0);
+        let mut harness = Harness::with_insert(insert);
+        harness.push(0, 53, ramp);
+        assert!(harness.render(200).iter().all(|sample| sample.abs() < f32::EPSILON));
+        assert_eq!(harness.position(), 0);
+        assert_eq!(harness.shared.underruns.load(Ordering::Relaxed), 1);
+        harness.push(53, 147, |index| ramp(index + 53));
+        harness.shared.finished_generation.store(1, Ordering::Release);
+        let output = harness.render(78 + 220);
+        for (index, &sample) in output[78..278].iter().enumerate() {
+            assert_close(sample, ramp(index as u64) * fade_in(index), "underrun and EOF");
+        }
+        assert!(output[278..].iter().all(|sample| sample.abs() < f32::EPSILON));
+        assert_eq!(probe.processed.load(Ordering::Relaxed), 331);
+        assert_eq!(harness.position(), 200);
+        assert!(!harness.is_playing());
+        assert!(harness.shared.ended.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn pausing_during_eof_drain_preserves_the_remaining_input() {
+        let (insert, probe) = FakeInsert::new(131, 0);
+        let mut harness = Harness::with_insert(insert);
+        harness.push(0, 200, ramp);
+        harness.shared.finished_generation.store(1, Ordering::Release);
+        harness.render(231);
+        harness.shared.playing.store(false, Ordering::Relaxed);
+        harness.render(100);
+        assert_eq!(harness.position(), 164);
+        assert!(!harness.shared.ended.load(Ordering::Relaxed));
+        harness.shared.playing.store(true, Ordering::Relaxed);
+        let output = harness.render(100);
+        for (index, &sample) in output[..36].iter().enumerate() {
+            assert_close(sample, ramp(164 + index as u64) * fade_in(index), "resumed EOF frame");
+        }
+        assert!(output[36..].iter().all(|sample| sample.abs() < f32::EPSILON));
+        assert_eq!(probe.resets.load(Ordering::Relaxed), 1);
+        assert_eq!(harness.position(), 200);
+        assert!(harness.shared.ended.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn an_empty_eof_after_seek_keeps_the_target_position() {
+        let (insert, _probe) = FakeInsert::new(17, 0);
+        let mut harness = Harness::with_insert(insert);
+        harness.shared.position.store(500, Ordering::Relaxed);
+        harness.shared.finished_generation.store(1, Ordering::Release);
+        let output = harness.render(100);
+        assert!(output.iter().all(|sample| sample.abs() < f32::EPSILON));
+        assert_eq!(harness.position(), 500);
+        assert!(harness.shared.ended.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_seek_cancels_unheard_pre_roll_and_resets_at_the_target() {
+        let (insert, probe) = FakeInsert::new(131, 0);
+        let mut harness = Harness::with_insert(insert);
+        harness.push(0, 1000, ramp);
+        harness.render(53);
+        harness.shared.advance_generation();
+        harness.shared.position.store(500, Ordering::Relaxed);
+        harness.push(500, 1000, |index| ramp(500 + index));
+        let output = harness.render(231);
+        assert!(output[..131].iter().all(|sample| sample.abs() < f32::EPSILON));
+        for (index, &sample) in output[131..].iter().enumerate() {
+            assert_close(sample, ramp(500 + index as u64) * fade_in(index), "seek frame");
+        }
         assert_eq!(probe.resets.load(Ordering::Relaxed), 2);
-        assert_close(
-            output.first().copied().unwrap_or_default(),
-            0.5 * fade_in(0),
-            "first frame",
-        );
+        assert_eq!(harness.position(), 600);
+    }
+
+    #[test]
+    fn swaps_and_compensation_changes_rebuffer_from_the_audible_cursor() {
+        for transition in ["swap", "latency", "compensation"] {
+            let (insert, probe) = FakeInsert::new(131, 0);
+            let mut harness = Harness::with_insert(insert);
+            harness.push(0, 1000, ramp);
+            harness.render(231);
+            assert_eq!(harness.position(), 100);
+            let latency = match transition {
+                "swap" => {
+                    let (next, _probe) = FakeInsert::new(17, 0);
+                    harness.control.set(Some(next)).expect("room for replacement");
+                    17
+                }
+                "latency" => {
+                    probe.latency.store(17, Ordering::Relaxed);
+                    17
+                }
+                _ => {
+                    harness.shared.latency_compensation.store(false, Ordering::Relaxed);
+                    131
+                }
+            };
+            assert!(harness.render(64).iter().all(|sample| sample.abs() < f32::EPSILON));
+            assert_eq!(harness.position(), 100);
+            assert_eq!(harness.shared.rebuffer_generation.load(Ordering::Acquire), 2);
+            harness.push(100, 1000, |index| ramp(index + 100));
+            let output = harness.render(latency + 100);
+            assert!(output[..latency].iter().all(|sample| sample.abs() < f32::EPSILON));
+            for (index, &sample) in output[latency..].iter().enumerate() {
+                let fade = if transition == "compensation" {
+                    fade_in(index + latency)
+                } else {
+                    fade_in(index)
+                };
+                assert_close(sample, ramp(index as u64 + 100) * fade, "rebuffered frame");
+            }
+            assert_eq!(harness.position(), 200);
+        }
+    }
+
+    #[test]
+    fn replacing_a_paused_insert_never_processes_its_stale_input() {
+        let (insert, _probe) = FakeInsert::new(131, 0);
+        let mut harness = Harness::with_insert(insert);
+        harness.push(0, 1000, ramp);
+        harness.render(231);
+        harness.shared.playing.store(false, Ordering::Relaxed);
+        harness.render(100);
+        assert_eq!(harness.position(), 164);
+        let (next, probe) = FakeInsert::new(17, 0);
+        harness.control.set(Some(next)).expect("room for replacement");
+        assert!(harness.render(100).iter().all(|sample| sample.abs() < f32::EPSILON));
+        assert_eq!(probe.processed.load(Ordering::Relaxed), 0);
+        assert_eq!(harness.position(), 164);
+        harness.push(164, 1000, |index| ramp(index + 164));
+        harness.shared.playing.store(true, Ordering::Relaxed);
+        let output = harness.render(117);
+        for (index, &sample) in output[17..].iter().enumerate() {
+            assert_close(sample, ramp(index as u64 + 164) * fade_in(index), "paused replacement");
+        }
+        assert_eq!(harness.position(), 264);
+    }
+
+    #[test]
+    fn removing_a_delayed_insert_rebuffers_before_direct_playback() {
+        let (insert, _probe) = FakeInsert::new(131, 0);
+        let mut harness = Harness::with_insert(insert);
+        harness.push(0, 1000, ramp);
+        harness.render(231);
+        harness.control.set(None).expect("room for removal");
+        assert!(harness.render(64).iter().all(|sample| sample.abs() < f32::EPSILON));
+        assert_eq!(harness.position(), 100);
+        harness.push(100, 100, |index| ramp(index + 100));
+        let output = harness.render(100);
+        for (index, &sample) in output.iter().enumerate() {
+            assert_close(sample, ramp(index as u64 + 100), "direct frame");
+        }
+        assert_eq!(harness.position(), 200);
     }
 
     #[test]
