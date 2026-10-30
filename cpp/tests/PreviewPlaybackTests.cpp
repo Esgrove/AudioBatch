@@ -22,8 +22,8 @@ namespace audiobatch::tests
 {
 namespace
 {
-constexpr double previewTestRate = 8000.0;
-constexpr int previewTestBlockSize = 64;
+constexpr double previewTestRate {8000.0};
+constexpr int previewTestBlockSize {64};
 
 /// Stores the application settings of a test in the given temporary directory, so the user's settings stay untouched.
 void useTemporarySettings(juce::ApplicationProperties& properties, const TemporaryDirectory& temporary)
@@ -60,12 +60,12 @@ void storeUnavailableChain(
 
 /// Editable behavior shared by the test processor and its simulated editor.
 struct PreviewTestSettings {
-    float gain = 1.0f;
-    float offset = 0.0f;
-    int delay = 0;
-    int echo = 0;
-    double reportedTail = -1.0;
-    bool invalid = false;
+    float gain {1.0f};
+    float offset {0.0f};
+    int delay {0};
+    int echo {0};
+    double reportedTail {-1.0};
+    bool invalid {false};
 };
 
 /// Small mutable effect whose editor-equivalent gain field is read directly by the renderer.
@@ -202,8 +202,8 @@ private:
 
     PreviewTestSettings settings;
     juce::AudioBuffer<float> history;
-    double rate = previewTestRate;
-    int historyPosition = 0;
+    double rate {previewTestRate};
+    int historyPosition {0};
 };
 
 /// Collects callback output until the renderer finishes, including any trailing zero padding in the final callback.

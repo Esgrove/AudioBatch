@@ -27,14 +27,10 @@ public:
 
     void resized() override;
 
-    /// Enables or disables the Normalize button, which the owner keeps in step with the selection.
     void setNormalizeEnabled(bool enabled);
 
-    /// Enables or disables the mode buttons and the target slider, but not the Normalize button,
-    /// which the owner keeps in step with the option that normalizes before the plugins.
     void setTargetEnabled(bool enabled);
 
-    /// Sets the callback the Normalize button calls to normalize the selected files to the target.
     void setNormalizeCallback(std::function<void()> callback);
 
 private:
