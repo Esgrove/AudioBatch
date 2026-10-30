@@ -4,6 +4,7 @@
 //! a thin white playhead, and a short-term loudness curve with its axis when the graph is enabled.
 //! The envelopes are blue, or coloured column by column from the Serato Overview tag when the file has one,
 //! while their shape still comes from the decoded audio.
+//! Identity-matched source overloads add solid amber sample caps and hollow true peak caps, independent of input gain.
 //! The view zooms around the playhead and follows it while playing,
 //! and it scales the envelope by the input gain.
 //! Pressing pauses at the clicked time, dragging scrubs, releasing plays from there,
@@ -16,20 +17,26 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
+use audiobatch_core::overload::OverloadHistory;
 use audiobatch_core::record::NEGATIVE_INFINITY_LOUDNESS;
 use audiobatch_core::serato_tags::Overview;
 use audiobatch_core::serato_tags::colouring::{OverviewColour, column_colours};
-use audiobatch_core::{ShortTermLoudnessHistory, WaveformOverview};
+use audiobatch_core::{AnalysisRecord, ShortTermLoudnessHistory, WaveformOverview};
 use audiobatch_playback::PlayheadHandle;
 use gpui_kit::{
     App, Bounds, ContentMask, Context, EventEmitter, Hsla, InteractiveElement as _, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollEvent,
-    SharedString, Styled as _, TextAlign, TextRun, Window, canvas, div, fill, font, point, px, size,
+    SharedString, StatefulInteractiveElement as _, Styled as _, TextAlign, TextRun, Window, canvas, div, fill, font,
+    point, px, size,
 };
 
 use crate::info_panel::{CORNER_RADIUS, OUTLINE_ALPHA};
 use crate::settings::{DEFAULT_LOUDNESS_MAXIMUM, DEFAULT_LOUDNESS_MINIMUM};
-use crate::theme::{TEXT_FONT, black, color, palette, white};
+use crate::theme::{TEXT_FONT, black, color, palette, tooltip, white};
+
+use self::overloads::SourceOverloads;
+
+mod overloads;
 
 /// Lowest zoom level, the whole file.
 pub const MINIMUM_ZOOM: f64 = 1.0;
@@ -78,6 +85,9 @@ const PLAYING_PLAYHEAD_ALPHA: f32 = 0.85;
 
 /// Opacity of the playhead while paused away from the start.
 const PAUSED_PLAYHEAD_ALPHA: f32 = 0.4;
+
+/// Contextual explanation shown only when the displayed source has overload warnings.
+const SOURCE_OVERS_TOOLTIP: &str = "Source overs: solid = sample > 0 dBFS, outlined = true peak > 0 dBTP.";
 
 /// Wheel distance in pixels for one zoom step or one decibel of gain.
 const WHEEL_STEP_PIXELS: f32 = 20.0;
@@ -130,6 +140,8 @@ pub struct CueMarker {
 /// Paints the overview of one file.
 pub struct WaveformView {
     overview: Option<Arc<WaveformOverview>>,
+    /// Source-only warnings validated against the record, waveform, and on-disk file identity.
+    overloads: SourceOverloads,
     /// Serato Overview of the file, which colours the envelope when present.
     serato_overview: Option<Arc<Overview>>,
     cues: Vec<CueMarker>,
@@ -187,6 +199,7 @@ struct ColumnBucket {
 /// Everything the paint closure needs, copied out of the view for one frame.
 struct PaintData {
     overview: Arc<WaveformOverview>,
+    overloads: Option<Arc<OverloadHistory>>,
     serato_overview: Option<Arc<Overview>>,
     loudness: Option<Arc<ShortTermLoudnessHistory>>,
     show_loudness: bool,
@@ -230,6 +243,7 @@ impl WaveformView {
     pub fn new() -> Self {
         Self {
             overview: None,
+            overloads: SourceOverloads::default(),
             serato_overview: None,
             cues: Vec::new(),
             loudness: None,
@@ -253,7 +267,14 @@ impl WaveformView {
         }
     }
 
-    /// Shows the overview of an analyzed file.
+    /// Shows an analyzed record and attaches source warnings only while its file identity and waveform match.
+    /// Warning attachment does not change input gain, cues, playback, or the visible range of the same overview.
+    pub fn set_record(&mut self, record: &AnalysisRecord, cx: &mut Context<Self>) {
+        self.show(record.waveform.clone(), record.short_term_loudness.clone(), cx);
+        self.overloads.set_record(record);
+    }
+
+    /// Shows an overview without source warnings, for example for synthetic demo data.
     /// A different file starts from its beginning, while the same file keeps the visible range.
     pub fn show(
         &mut self,
@@ -273,6 +294,7 @@ impl WaveformView {
         } else {
             SharedString::from("No waveform for this file")
         };
+        self.overloads.clear();
         self.overview = overview;
         self.loudness = loudness;
         self.clamp_visible_start();
@@ -283,6 +305,7 @@ impl WaveformView {
     /// The cue points stay, so they reappear once the overview of the same file is shown.
     pub fn show_placeholder(&mut self, text: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.placeholder = text.into();
+        self.overloads.clear();
         self.overview = None;
         self.loudness = None;
         self.visible_start = 0.0;
@@ -494,6 +517,7 @@ impl Render for WaveformView {
                 });
                 let data = PaintData {
                     overview,
+                    overloads: self.overloads.history().cloned(),
                     serato_overview: self.serato_overview.clone().filter(|_| self.serato_colours),
                     loudness: self.loudness.clone(),
                     show_loudness: self.show_loudness,
@@ -517,7 +541,7 @@ impl Render for WaveformView {
             },
         );
 
-        div()
+        let panel = div()
             .id("waveform")
             .size_full()
             .p(px(PLOT_INSET))
@@ -531,7 +555,12 @@ impl Render for WaveformView {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
-            .on_scroll(cx.listener(Self::on_scroll))
+            .on_scroll(cx.listener(Self::on_scroll));
+        if self.overloads.has_overloads() {
+            panel.tooltip(tooltip(SOURCE_OVERS_TOOLTIP))
+        } else {
+            panel
+        }
     }
 }
 
@@ -614,6 +643,9 @@ fn paint_waveform(data: &PaintData, bounds: Bounds<Pixels>, window: &mut Window,
         plot,
     };
     paint_channels(data, &viewport, window);
+    window.with_content_mask(Some(ContentMask { bounds: plot }), |window| {
+        overloads::paint(data, &viewport, window);
+    });
     if data.show_loudness {
         paint_loudness_axis(bounds, plot, data.loudness_range, window, cx);
         if let Some(history) = data.loudness.as_deref() {

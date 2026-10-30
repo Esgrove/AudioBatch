@@ -186,6 +186,10 @@ impl AppView {
                 cx.notify();
             });
         }
+        if refresh && self.selected.as_ref().is_some_and(|selected| inputs.contains(selected)) {
+            self.invalidate_artwork(cx);
+        }
+        self.refresh_artwork(cx);
         let (run_id, receiver) = coordinator.start(AnalysisOptions {
             input_paths: inputs,
             recursive: true,
@@ -299,6 +303,7 @@ impl AppView {
         }
         if selected_finished {
             self.refresh_selected_waveform(cx);
+            self.refresh_artwork(cx);
             self.apply_preview_gain(cx);
         }
         cx.notify();

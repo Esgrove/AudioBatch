@@ -51,9 +51,11 @@ use crate::results::ResultsDelegate;
 use crate::settings::GuiSettings;
 use crate::waveform::{PlayheadSource, WaveformView};
 use analysis::{RunKind, RunProgress, drain_events};
+use artwork::{ArtworkIdentity, ArtworkRequests};
 use gain::DEFAULT_GAIN_DB;
 use plugins::PluginWindow;
 use preferences::SettingsWindow;
+use render::PreviewStartupFit;
 use selection::column_choices;
 use startup::{Startup, new_results_table, new_sliders, open_startup};
 
@@ -137,8 +139,12 @@ pub struct AppView {
     /// Reads the tags of the selected file. Replacing it drops a read that is no longer wanted.
     tags_task: Option<Task<()>>,
     /// Album artwork thumbnail of the selected file, read in the background after selection.
-    selected_artwork: Option<(PathBuf, Arc<RenderImage>)>,
-    /// Reads the artwork of the selected file. Replacing it drops a read that is no longer wanted.
+    selected_artwork: Option<(ArtworkIdentity, Arc<RenderImage>)>,
+    /// Coalesces selected-file identities and rejects obsolete artwork generations.
+    artwork_requests: ArtworkRequests,
+    /// Sources released for output replacement, excluded from artwork reads until their operation drains.
+    artwork_rewrites: HashSet<PathBuf>,
+    /// Drains the active artwork read before starting its latest pending replacement.
     artwork_task: Option<Task<()>>,
     status: SharedString,
     /// Output text of the status bar at the last check, so a change in the buffer size renders again.
@@ -151,10 +157,10 @@ pub struct AppView {
     window_title: String,
     /// Height the expanded preview starts at, the height that fits its controls in the opening window.
     preview_height: f32,
-    /// True while the expanded preview follows the height that fits its controls when the window changes size,
-    /// so a window the platform maximizes after opening still starts with the fitted preview.
-    /// Dragging the divider ends it, and the split then stays where the user left it.
-    preview_auto_fit: bool,
+    /// Samples startup geometry until platform maximization and layout have settled, then commits the split once.
+    preview_startup_fit: PreviewStartupFit,
+    /// Keeps the initial preview height on container resize until the user chooses a proportional split by dragging.
+    preview_fixed_size: bool,
     /// Sizes of the table and the expanded preview, kept while the preview is collapsed.
     workspace_split: Entity<ResizableState>,
     /// True while the preview is collapsed into its compact row.
@@ -198,6 +204,7 @@ impl AppView {
         subscriptions.push(cx.on_app_quit(|view, cx| {
             view.flush_gain_store(cx);
             view.save_plugin_chain();
+            view.invalidate_artwork(cx);
             async {}
         }));
 
@@ -251,6 +258,8 @@ impl AppView {
             selected_tags: None,
             tags_task: None,
             selected_artwork: None,
+            artwork_requests: ArtworkRequests::default(),
+            artwork_rewrites: HashSet::new(),
             artwork_task: None,
             status,
             shown_output: SharedString::default(),
@@ -259,7 +268,8 @@ impl AppView {
             settings_window: None,
             window_title: String::from(APP_TITLE),
             preview_height: render::preview_fit_height(content_width, workspace_height),
-            preview_auto_fit: true,
+            preview_startup_fit: PreviewStartupFit::default(),
+            preview_fixed_size: true,
             workspace_split: cx.new(|_| ResizableState::default()),
             preview_compact: false,
             autoplay_pending: options.autoplay,

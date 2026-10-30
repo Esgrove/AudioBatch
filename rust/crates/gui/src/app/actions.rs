@@ -181,6 +181,7 @@ impl AppView {
         self.excluded.clear();
         self.run = None;
         self.clear_selection(cx);
+        self.artwork_rewrites.clear();
         self.table.update(cx, |state, cx| {
             state.delegate_mut().clear();
             cx.notify();

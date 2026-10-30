@@ -10,7 +10,8 @@ use std::sync::Arc;
 
 use audiobatch_core::record::file_identity;
 use audiobatch_core::serato_tags::Overview;
-use audiobatch_core::{FileTags, SeratoOverviewState, read_tags};
+use audiobatch_core::tags::read_display_tags;
+use audiobatch_core::{FileTags, SeratoOverviewState};
 use gpui_kit::{Context, Task};
 
 use super::AppView;
@@ -50,7 +51,7 @@ impl AppView {
                 .background_executor()
                 .spawn(async move {
                     let identity = file_identity(&read_path);
-                    let tags = read_tags(&read_path).ok();
+                    let tags = read_display_tags(&read_path).ok();
                     let state = tags
                         .as_ref()
                         .map(|tags| SeratoOverviewState::from_tags(&read_path, tags));
