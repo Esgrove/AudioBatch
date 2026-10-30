@@ -16,7 +16,6 @@ use gpui_kit::{
 
 use super::AppView;
 use crate::menus::set_menus;
-use crate::results::ResultRow;
 use crate::settings::GuiSettings;
 use crate::settings_window::{
     SETTINGS_HEIGHT, SETTINGS_TITLE, SETTINGS_WIDTH, SettingsEvent, SettingsSnapshot, SettingsView,
@@ -26,9 +25,6 @@ use crate::waveform::CueMarker;
 /// Smallest size of the settings window.
 /// The width keeps the loudness graph checkbox and both range fields on one row without squeezing the checkbox label.
 const SETTINGS_MINIMUM_SIZE: (f32, f32) = (520.0, 320.0);
-
-/// Playhead position in seconds below which a file counts as not moved yet, so it may jump to its first cue point.
-const CUE_START_WINDOW_SECONDS: f64 = 0.5;
 
 /// The open settings window and the subscription to its changes.
 pub(super) struct SettingsWindow {
@@ -135,33 +131,31 @@ impl AppView {
     /// Starts the selected file at its first cue point when the option is on,
     /// as long as the playhead has not moved since the file was loaded.
     /// A file waiting for its cue points to start playing starts now, at the cue or at the beginning.
-    pub(super) fn start_at_first_cue(&mut self, path: &Path, cues: &[CueMarker], cx: &Context<Self>) {
-        let waiting = self.start_after_cues.as_deref() == Some(path);
-        if waiting {
-            self.start_after_cues = None;
-        }
+    pub(super) fn start_at_first_cue(&mut self, path: &Path, cues: &[CueMarker], _cx: &Context<Self>) {
         if !self.settings.play_from_first_cue_point {
             return;
         }
-        let duration = self
-            .table
-            .read(cx)
-            .delegate()
-            .row_for(path)
-            .and_then(ResultRow::ready_record)
-            .map(|record| record.duration_seconds)
-            .or_else(|| self.player.as_ref().and_then(Player::duration_seconds));
-        let start = duration.and_then(|duration| first_cue_start(cues, duration));
-        let Some(player) = self.player.as_mut().filter(|player| player.loaded_path() == Some(path)) else {
+        if let Some(intent) = &mut self.start_after_cues {
+            intent.receive_cues(path, cues.iter().map(|cue| cue.seconds));
+            self.resolve_cue_start();
+        }
+    }
+
+    /// Starts a pending cue request exactly once after both metadata and this load's duration are ready.
+    pub(super) fn resolve_cue_start(&mut self) {
+        let Some(player) = &mut self.player else {
             return;
         };
-        if waiting {
-            player.seek(start.unwrap_or(0.0));
-            player.play();
-        } else if let Some(start) = start
-            && player.position_seconds() < CUE_START_WINDOW_SECONDS
-        {
+        let start = self
+            .start_after_cues
+            .as_ref()
+            .and_then(|intent| intent.position(player.loaded_path(), player.duration_seconds()));
+        if let Some(start) = start {
+            let play = self.start_after_cues.take().is_some_and(|intent| intent.should_play());
             player.seek(start);
+            if play {
+                player.play();
+            }
         }
     }
 
@@ -172,6 +166,12 @@ impl AppView {
     /// A changed compensation builds a new chain, so it takes effect at once instead of at the next start or seek.
     pub(super) fn apply_settings(&mut self, settings: GuiSettings, cx: &mut Context<Self>) {
         let mut settings = settings;
+        if !settings.play_from_first_cue_point
+            && self.start_after_cues.take().is_some_and(|intent| intent.should_play())
+            && let Some(player) = &mut self.player
+        {
+            player.play();
+        }
         let preview_changed = settings.preview_plugin_chain != self.settings.preview_plugin_chain
             || settings.compensate_preview_latency != self.settings.compensate_preview_latency;
         let output = settings.output_config();
@@ -261,6 +261,7 @@ impl AppView {
                 .map(|path| (path.to_path_buf(), player.position_seconds()))
         });
         let gain = self.player.as_ref().map_or(1.0, Player::insert_gain);
+        self.start_after_cues = None;
         self.player = None;
         self.plugins.preview.player_replaced();
         let result = match Player::with_config(output) {
@@ -380,53 +381,5 @@ mod test_settings_merge {
         assert_eq!(merged.output_device, changed.output_device);
         assert_eq!(merged.sample_rate, changed.sample_rate);
         assert!(merged.show_album_artwork);
-    }
-}
-
-/// Returns where to start a file with cue points:
-/// the earliest cue point when it is after the start and at or before halfway through the file.
-fn first_cue_start(cues: &[CueMarker], duration: f64) -> Option<f64> {
-    if !duration.is_finite() || duration <= 0.0 {
-        return None;
-    }
-    cues.iter()
-        .map(|cue| cue.seconds)
-        .filter(|seconds| seconds.is_finite() && *seconds >= 0.0)
-        .min_by(f64::total_cmp)
-        .filter(|&seconds| seconds > 0.0 && seconds <= duration * 0.5)
-}
-
-#[cfg(test)]
-mod test_first_cue_start {
-    use super::*;
-
-    /// Returns cue markers at the times in seconds.
-    fn cues(seconds: &[f64]) -> Vec<CueMarker> {
-        seconds
-            .iter()
-            .map(|&seconds| CueMarker {
-                seconds,
-                color: 0,
-                slot: 0,
-            })
-            .collect()
-    }
-
-    #[test]
-    fn starts_at_the_earliest_cue_in_the_first_half() {
-        assert_eq!(first_cue_start(&cues(&[30.0, 12.5, 90.0]), 200.0), Some(12.5));
-    }
-
-    #[test]
-    fn a_cue_after_halfway_starts_from_zero() {
-        assert_eq!(first_cue_start(&cues(&[120.0]), 200.0), None);
-        assert_eq!(first_cue_start(&cues(&[100.0]), 200.0), Some(100.0));
-    }
-
-    #[test]
-    fn no_cues_or_no_duration_start_from_zero() {
-        assert_eq!(first_cue_start(&[], 200.0), None);
-        assert_eq!(first_cue_start(&cues(&[0.0]), 200.0), None);
-        assert_eq!(first_cue_start(&cues(&[10.0]), 0.0), None);
     }
 }

@@ -254,6 +254,7 @@ impl AppView {
 
     /// Stops playback and returns to the start of the file.
     pub(super) fn stop_playback(&mut self, cx: &mut Context<Self>) {
+        self.start_after_cues = None;
         if let Some(player) = &mut self.player {
             player.stop();
         }
@@ -375,10 +376,12 @@ impl AppView {
                             tracing::info!("player: {event:?}");
                         }
                         if let PlayerEvent::Error { message, .. } = event {
+                            view.start_after_cues = None;
                             view.status = message.into();
                         }
                         cx.notify();
                     }
+                    view.resolve_cue_start();
                     let output = view.output_label();
                     if output != view.shown_output {
                         view.shown_output = output;
@@ -409,6 +412,7 @@ impl AppView {
                 }
             }
             WaveformEvent::SeekRequested(seconds) => {
+                self.start_after_cues = None;
                 if let Some(player) = &mut self.player {
                     player.seek(*seconds);
                 }
@@ -419,6 +423,7 @@ impl AppView {
                 }
             }
             WaveformEvent::RestartRequested => {
+                self.start_after_cues = None;
                 if let Some(player) = &mut self.player {
                     player.seek(0.0);
                     player.play();

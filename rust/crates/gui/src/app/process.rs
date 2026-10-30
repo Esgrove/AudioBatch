@@ -224,6 +224,7 @@ impl AppView {
                 .loaded_path()
                 .is_some_and(|loaded| records.iter().any(|record| record.path == loaded))
         {
+            self.start_after_cues = None;
             player.unload();
         }
         self.table.update(cx, |state, cx| {

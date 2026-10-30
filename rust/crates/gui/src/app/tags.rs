@@ -23,11 +23,15 @@ impl AppView {
     /// and the file moves to its first cue point when that option is on.
     /// The Serato Overview colours the waveform, first from the cache and then from the tags.
     pub(super) fn spawn_tag_read(&self, path: PathBuf, cx: &Context<Self>) -> Task<()> {
+        let token = self.preview_source.token();
         let cache = self
             .coordinator
             .as_ref()
             .map(|coordinator| Arc::clone(coordinator.cache()));
         cx.spawn(async move |this, cx| {
+            let Some((version, generation)) = token else {
+                return;
+            };
             let cached = match cache.clone() {
                 Some(cache) => {
                     let lookup_path = path.clone();
@@ -40,7 +44,11 @@ impl AppView {
             if let Some(state) = &cached {
                 let overview = state.overview().cloned();
                 if this
-                    .update(cx, |view, cx| view.show_serato_overview(&path, overview, cx))
+                    .update(cx, |view, cx| {
+                        if view.preview_source.accepts(&version, generation) {
+                            view.show_serato_overview(&path, overview, cx);
+                        }
+                    })
                     .is_err()
                 {
                     return;
@@ -69,7 +77,9 @@ impl AppView {
                 })
                 .await;
             let _ = this.update(cx, |view, cx| {
-                if view.selected.as_deref() != Some(path.as_path()) {
+                if view.selected.as_deref() != Some(path.as_path())
+                    || !view.preview_source.accepts(&version, generation)
+                {
                     return;
                 }
                 if let Some(state) = &state {

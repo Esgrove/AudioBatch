@@ -14,6 +14,7 @@
 mod actions;
 mod analysis;
 mod artwork;
+mod cue_start;
 mod gain;
 mod normalize;
 mod plugins;
@@ -134,6 +135,8 @@ pub struct AppView {
     excluded: HashSet<PathBuf>,
     run: Option<RunProgress>,
     selected: Option<PathBuf>,
+    /// Captured source version and generation shared by playback, presentation, and metadata reads.
+    preview_source: preview::PreviewSource,
     /// Tags of the selected file, read in the background after selection.
     selected_tags: Option<(PathBuf, Arc<FileTags>)>,
     /// Reads the tags of the selected file. Replacing it drops a read that is no longer wanted.
@@ -174,7 +177,7 @@ pub struct AppView {
     /// Files whose custom gain the mouse wheel changed, written to the cache once the wheel rests.
     pending_gain_paths: Vec<PathBuf>,
     /// File to start playing once its cue points are read, when playing from the first cue is on.
-    start_after_cues: Option<PathBuf>,
+    start_after_cues: Option<cue_start::CueStartIntent>,
     /// True when a new file reset the waveform zoom, which the next render shows on the zoom slider.
     zoom_reset_pending: bool,
     /// Writes the pending gain after the delay. Replacing it restarts the delay.
@@ -255,6 +258,7 @@ impl AppView {
             excluded: HashSet::new(),
             run: None,
             selected: None,
+            preview_source: preview::PreviewSource::default(),
             selected_tags: None,
             tags_task: None,
             selected_artwork: None,
