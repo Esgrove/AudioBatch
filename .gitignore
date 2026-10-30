@@ -64,3 +64,6 @@
 
 # Generated benchmark audio
 /fixtures/benchmark/output/
+
+# Other
+*.pdf
