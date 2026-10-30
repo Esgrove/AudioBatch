@@ -26,6 +26,99 @@ executable_name() {
     fi
 }
 
+# Identify a C++ build from its configuration directory or CMake cache.
+# Custom binaries need AUDIOBATCH_CPP_BUILD_TYPE=Release to explicitly attest an otherwise unknown release build.
+cpp_cli_build_type() {
+    local binary="$1"
+    case "$binary" in
+        */Debug/*)
+            echo debug
+            return
+            ;;
+        */Release/*)
+            echo release
+            return
+            ;;
+    esac
+    local directory
+    directory=$(cd "$(dirname "$binary")" && pwd -P)
+    while [ "$directory" != / ]; do
+        if [ -f "$directory/CMakeCache.txt" ]; then
+            local build_type
+            build_type=$(awk -F= '/^CMAKE_BUILD_TYPE:STRING=/ { print tolower($2); exit }' "$directory/CMakeCache.txt")
+            if [ "$build_type" = release ] || [ "$build_type" = debug ]; then
+                echo "$build_type"
+                return
+            fi
+            break
+        fi
+        directory=$(dirname "$directory")
+    done
+    case "$binary" in
+        */cmake-build-*-debug/*)
+            echo debug
+            return
+            ;;
+        */cmake-build-*-release/*)
+            echo release
+            return
+            ;;
+    esac
+    case "${AUDIOBATCH_CPP_BUILD_TYPE:-}" in
+        Release | release) echo release ;;
+        Debug | debug) echo debug ;;
+        *) echo unknown ;;
+    esac
+}
+
+# Find the C++ CLI, preferring the newest verified release build over every debug or unclassified build.
+# Passing "release" forbids a debug or unclassified baseline, including an explicit override.
+find_cpp_cli() {
+    local profile="${1:-any}"
+    local cpp_directory="$REPO/../cpp"
+    local binary_name
+    binary_name=$(executable_name audiobatch)
+    if [ -n "${AUDIOBATCH_CPP_CLI:-}" ]; then
+        if [ ! -x "$AUDIOBATCH_CPP_CLI" ]; then
+            print_error "C++ CLI is not executable: $AUDIOBATCH_CPP_CLI"
+            return 1
+        fi
+        local override
+        override="$(cd "$(dirname "$AUDIOBATCH_CPP_CLI")" && pwd -P)/$(basename "$AUDIOBATCH_CPP_CLI")"
+        if [ "$profile" = release ] && [ "$(cpp_cli_build_type "$override")" != release ]; then
+            print_error "A release C++ CLI is required. Use a Release artefact, or attest a custom build with AUDIOBATCH_CPP_BUILD_TYPE=Release."
+            return 1
+        fi
+        echo "$override"
+        return
+    fi
+    local candidate newest="" fallback=""
+    for candidate in \
+        "$cpp_directory"/cmake-build-*/AudioBatchCli_artefacts/Release/"$binary_name" \
+        "$cpp_directory"/cmake-build-*/AudioBatchCli_artefacts/"$binary_name" \
+        "$cpp_directory/$binary_name" \
+        "$cpp_directory"/cmake-build-*/AudioBatchCli_artefacts/Debug/"$binary_name"; do
+        if [ ! -x "$candidate" ]; then
+            continue
+        fi
+        if [ "$(cpp_cli_build_type "$candidate")" = release ]; then
+            if [ -z "$newest" ] || [ "$candidate" -nt "$newest" ]; then
+                newest="$candidate"
+            fi
+        elif [ -z "$fallback" ] || [ "$candidate" -nt "$fallback" ]; then
+            fallback="$candidate"
+        fi
+    done
+    if [ -n "$newest" ]; then
+        echo "$newest"
+    elif [ "$profile" != release ] && [ -n "$fallback" ]; then
+        echo "$fallback"
+    else
+        print_error "C++ CLI not found. Build a CMake release preset, or set AUDIOBATCH_CPP_CLI to a release binary."
+        return 1
+    fi
+}
+
 # Get all Rust executable names from the [[bin]] sections of the workspace crates
 get_rust_executable_names() {
     local executables
