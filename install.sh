@@ -9,6 +9,8 @@ Name a project to install only that one.
 The options are passed to the install script of each project.
 See cpp/install.sh --help and rust/install.sh --help for them.
 Installing both projects accepts only the options both scripts have, such as --cli-only and --verbose.
+Use -c or --clean to delete the C++ release CMake build directory before rebuilding.
+Rust build artifacts are not cleaned. Use -l or --cli-only to install only the CLIs.
 
 OPTIONS: All options are optional
     -h | --help

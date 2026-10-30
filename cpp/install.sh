@@ -17,7 +17,7 @@ OPTIONS: All options are optional
     -h | --help
         Display these instructions.
 
-    -c | --cli-only
+    -l | --cli-only
         Build and install only the CLI binary.
 
     -a | --app-only
@@ -25,6 +25,10 @@ OPTIONS: All options are optional
 
     -r | --reuse
         Skip CMake generation and reuse the existing release build directory.
+
+    -c | --clean
+        Delete the release CMake build directory and its compilation cache before rebuilding.
+        Cannot be used with --reuse.
 
     -v | --verbose
         Display commands being executed.
@@ -39,13 +43,14 @@ init_options() {
     INSTALL_CLI=true
     INSTALL_APP=true
     REUSE_BUILD_DIR=false
+    CLEAN_BUILD_DIR=false
 
     while [ $# -gt 0 ]; do
         case "$1" in
             -h | --help)
                 print_usage_and_exit 0
                 ;;
-            -c | --cli-only)
+            -l | --cli-only)
                 INSTALL_CLI=true
                 INSTALL_APP=false
                 ;;
@@ -55,6 +60,9 @@ init_options() {
                 ;;
             -r | --reuse)
                 REUSE_BUILD_DIR=true
+                ;;
+            -c | --clean)
+                CLEAN_BUILD_DIR=true
                 ;;
             -v | --verbose)
                 set -x
@@ -66,6 +74,10 @@ init_options() {
         esac
         shift
     done
+
+    if [ "$CLEAN_BUILD_DIR" = true ] && [ "$REUSE_BUILD_DIR" = true ]; then
+        print_error_and_exit "--clean and --reuse cannot be used together."
+    fi
 
     CLI_BINARY_NAME="audiobatch"
     GUI_APP_BUNDLE="AudioBatch.app"
@@ -225,6 +237,9 @@ if [ "$INSTALL_APP" != true ]; then
 fi
 if [ "$REUSE_BUILD_DIR" = true ]; then
     BUILD_OPTIONS+=(--reuse)
+fi
+if [ "$CLEAN_BUILD_DIR" = true ]; then
+    BUILD_OPTIONS+=(--clean)
 fi
 "$DIR/build.sh" -b Release "${BUILD_OPTIONS[@]}"
 

@@ -55,6 +55,11 @@ Name a project first to run only its script, such as `./build.sh rust` or `./ins
 The options are passed on to the project scripts,
 so running both projects accepts only the options both scripts have, such as `--cli-only` for `install.sh`.
 `./build.sh cpp --help` shows the options of the C++ build script.
+Both build and install scripts accept `-c` or `--clean` to rebuild from scratch.
+This deletes the selected C++ CMake build directory and its local compilation cache before rebuilding.
+The Rust scripts accept the option without cleaning Cargo artifacts.
+Use `-l` or `--cli-only` to build or install only the CLIs.
+For example, `./install.sh --clean` rebuilds C++ from scratch and installs both versions.
 
 ## Differences between the versions
 
