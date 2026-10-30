@@ -15,6 +15,10 @@
 #include <span>
 #include <vector>
 
+namespace audiobatch::tests
+{
+namespace
+{
 /// Logger that writes to standard output.
 /// On Windows the default logger only writes to the debugger, so CTest would not show any test output.
 class ConsoleLogger final : public juce::Logger
@@ -28,8 +32,6 @@ protected:
     }
 };
 
-namespace audiobatch::tests
-{
 /// Adapts a registered JUCE suite to GoogleTest without changing its assertions or fixtures.
 class JuceSuiteTest : public testing::Test
 {
@@ -57,6 +59,7 @@ private:
 
     juce::UnitTest& suite;
 };
+}  // namespace
 }  // namespace audiobatch::tests
 
 /// Registers all compiled suites and delegates discovery, selection and results to GoogleTest.
@@ -73,7 +76,7 @@ int main(int argumentCount, char* arguments[])
         return *helperExitCode;
     }
 
-    ConsoleLogger consoleLogger;
+    audiobatch::tests::ConsoleLogger consoleLogger;
     juce::Logger::setCurrentLogger(&consoleLogger);
 
     std::vector<std::unique_ptr<juce::UnitTest>> suites;

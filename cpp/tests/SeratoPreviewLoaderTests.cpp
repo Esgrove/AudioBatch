@@ -204,11 +204,11 @@ public:
     }
 
 private:
-    static constexpr auto watchdog = std::chrono::seconds(10);
+    static constexpr auto watchdog {std::chrono::seconds(10)};
     ReadStatus status;
     bool gateFirst;
-    bool released = false;
-    bool observedCancellation = false;
+    bool released {false};
+    bool observedCancellation {false};
     mutable std::mutex mutex;
     std::condition_variable condition;
     std::vector<juce::String> paths;

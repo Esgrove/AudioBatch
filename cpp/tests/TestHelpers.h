@@ -21,11 +21,11 @@
 namespace audiobatch::tests
 {
 /// Peak level of the fixture tones, which have a peak amplitude of 0.5, in dBFS.
-constexpr double fixturePeakDecibels = -6.0206;
+constexpr double fixturePeakDecibels {-6.0206};
 /// Integrated loudness of a fixture tone, in LUFS.
 /// A 1 kHz sine on both channels measures the same as its peak level, as in EBU Tech 3341.
 /// Mono fixtures are measured as dual mono, so they read the same as the stereo ones.
-constexpr double fixtureLoudness = fixturePeakDecibels;
+constexpr double fixtureLoudness {fixturePeakDecibels};
 /// Sample peak of the intersample fixture, a quarter sample rate sine whose samples fall between its peaks, in dBFS.
 /// Its sample peak, true peak, and loudness all differ, so a measurement reported in the wrong field fails.
 constexpr double intersampleFixturePeakDecibels {-9.03};

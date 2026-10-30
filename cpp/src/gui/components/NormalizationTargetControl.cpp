@@ -133,11 +133,14 @@ void NormalizationTargetControl::resized()
     normalizeButton.setBounds(sliderRow);
 }
 
+/// Enables or disables the Normalize button, which the owner keeps in step with the selection.
 void NormalizationTargetControl::setNormalizeEnabled(const bool enabled)
 {
     normalizeButton.setEnabled(enabled);
 }
 
+/// Enables or disables the mode buttons and the target slider, but not the Normalize button,
+/// which the owner keeps in step with the option that normalizes before the plugins.
 void NormalizationTargetControl::setTargetEnabled(const bool enabled)
 {
     peakButton.setEnabled(enabled);
@@ -145,6 +148,7 @@ void NormalizationTargetControl::setTargetEnabled(const bool enabled)
     targetSlider.setEnabled(enabled);
 }
 
+/// Sets the callback the Normalize button calls to normalize the selected files to the target.
 void NormalizationTargetControl::setNormalizeCallback(std::function<void()> callback)
 {
     normalizeButton.onClick = std::move(callback);

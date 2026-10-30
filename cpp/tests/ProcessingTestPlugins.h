@@ -22,26 +22,26 @@ namespace audiobatch::tests
 /// Behaviour of a TestPlugin.
 struct TestPluginSettings {
     /// Linear gain applied to every main channel.
-    float gain = 1.0f;
+    float gain {1.0f};
     /// Extra linear gain applied to the right channel only, after the channel swap.
-    float rightGain = 1.0f;
+    float rightGain {1.0f};
     /// Swaps the left and right channels before the gain.
-    bool swapChannels = false;
+    bool swapChannels {false};
     /// Accepts a mono main bus in addition to stereo.
-    bool acceptsMono = false;
+    bool acceptsMono {false};
     /// Refuses a stereo main bus, which together with acceptsMono makes a mono-only plugin.
-    bool refusesStereo = false;
+    bool refusesStereo {false};
     /// Replaces the first sample of every block with infinity, like an unstable filter.
-    bool producesInfinity = false;
+    bool producesInfinity {false};
     /// Multiplies the gain by this factor after every block, like a plugin that adapts to its input.
     /// The current gain is the plugin state, so restoring the state undoes the adaptation.
-    float adaptiveGainStep = 1.0f;
+    float adaptiveGainStep {1.0f};
     /// Delays the output by this many samples and reports the delay as the plugin latency.
-    int latencySamples = 0;
+    int latencySamples {0};
     /// Adds an echo at half level this many samples after the input, and reports the echo as the tail.
-    int echoSamples = 0;
+    int echoSamples {0};
     /// Tail length reported without producing any tail, in seconds, for a plugin without an echo.
-    double reportedTailSeconds = 0.0;
+    double reportedTailSeconds {0.0};
     /// Emits a repeated pattern spanning 16-bit quantization boundaries and the PCM clipping limits.
     bool producesQuantizationPattern {false};
     /// Emits half a 16-bit step below full scale, which rounds down to the largest positive sample.
@@ -285,12 +285,18 @@ private:
         }
     }
 
+    /// Behaviour selected by the test.
     TestPluginSettings settings;
+    /// Linear gain restored from state and advanced after each processed block.
     float currentGain;
-    int widestBuffer = 0;
-    double preparedSampleRate = 44'100.0;
+    /// Largest channel count presented to the processor.
+    int widestBuffer {0};
+    /// Rate used to express the echo length in seconds.
+    double preparedSampleRate {44'100.0};
+    /// Recent samples of each main channel for latency and echo processing.
     std::vector<std::vector<float>> history;
-    std::size_t historyPosition = 0;
+    /// Next sample position in the circular delay history.
+    std::size_t historyPosition {0};
 };
 
 /// Records preparation order and emulates an Audio Unit that needs initialization before state restoration.
@@ -388,12 +394,13 @@ private:
     /// Ordered host lifecycle calls, excluding audio rendering.
     juce::StringArray lifecycle;
     /// Most recent preparation block size, including editor-specific sizes.
-    int preparedBlockSize = 0;
+    int preparedBlockSize {0};
     /// Most recent preparation sample rate.
-    double lastSampleRate = 0.0;
-
+    double lastSampleRate {0.0};
+    /// Advertises the Audio Unit lifecycle when enabled.
     bool audioUnit;
-    bool initialized = false;
+    /// True between preparation and resource release.
+    bool initialized {false};
 };
 
 /// Records its resource release and its destruction in a log owned by the test, which outlives the plugin.
@@ -423,6 +430,7 @@ public:
     }
 
 private:
+    /// Teardown log owned by the test, which outlives the plugin.
     juce::StringArray& events;
 };
 
@@ -439,6 +447,7 @@ public:
         ++changeCount;
     }
 
+    /// Number of processor change notifications received.
     int changeCount {0};
 };
 
@@ -494,6 +503,7 @@ public:
     }
 
 private:
+    /// Exposes the failed process result to the host.
     FailingVST3Client client;
 };
 
