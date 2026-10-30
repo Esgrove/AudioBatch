@@ -139,6 +139,8 @@ pub struct RowMessage {
 pub struct ResultsDelegate {
     rows: Vec<ResultRow>,
     index: HashMap<PathBuf, usize>,
+    /// Explicit edits, including clears, scoped to the file identity they were made for.
+    gain_edits: HashMap<PathBuf, CustomGainEdit>,
     /// Definitions of the shown columns in display order, which changes when the user drags a column.
     columns: Vec<Column>,
     /// Keys of the shown columns in display order, matching `columns`.
@@ -159,6 +161,14 @@ pub struct ResultsDelegate {
     extra_selected: HashSet<PathBuf>,
     /// Width the Status column fills, which `fit_column` hands to the table.
     status_fill_width: Pixels,
+}
+
+/// An explicit gain choice belonging only to one version of a file.
+#[derive(Clone, Copy)]
+struct CustomGainEdit {
+    file_size: u64,
+    modified_time_ms: i64,
+    gain: Option<f32>,
 }
 
 /// One column of the results table.
@@ -343,6 +353,7 @@ impl ResultsDelegate {
         let mut delegate = Self {
             rows: Vec::new(),
             index: HashMap::new(),
+            gain_edits: HashMap::new(),
             columns: Vec::new(),
             order: Vec::new(),
             all_columns,
@@ -432,6 +443,12 @@ impl ResultsDelegate {
         self.index.get(path).copied()
     }
 
+    /// Returns the current row of the preview anchor, independent of the table's numeric cursor.
+    #[must_use]
+    pub fn selected_index(&self) -> Option<usize> {
+        self.selected.as_deref().and_then(|path| self.index_of(path))
+    }
+
     /// Returns the number of rows.
     #[must_use]
     pub const fn len(&self) -> usize {
@@ -472,10 +489,12 @@ impl ResultsDelegate {
             .collect();
         self.sort_rows();
         self.extra_selected.retain(|path| self.index.contains_key(path));
+        self.gain_edits.retain(|path, _| self.index.contains_key(path));
     }
 
     /// Replaces every row, for example with synthetic rows.
     pub fn set_rows(&mut self, rows: Vec<ResultRow>) {
+        self.gain_edits.clear();
         self.rows = rows;
         self.sort_rows();
         self.extra_selected.retain(|path| self.index.contains_key(path));
@@ -542,14 +561,8 @@ impl ResultsDelegate {
         if output_path != source {
             self.remove(source);
         }
+        self.merge_custom_gain(&mut output);
         if let Some(row) = self.row_mut(&output_path) {
-            if let Some(previous) = &row.record
-                && output.custom_gain_db.is_none()
-                && previous.file_size == output.file_size
-                && previous.modified_time_ms == output.modified_time_ms
-            {
-                output.custom_gain_db = previous.custom_gain_db;
-            }
             row.state = RowState::Done;
             row.record = Some(output);
             row.message = message;
@@ -564,24 +577,18 @@ impl ResultsDelegate {
     /// Stores the result of a file, adding a row when the file is not listed yet.
     /// A replaced record passes its custom gain on while the file is unchanged on disk,
     /// because the user may have set it before the cache had a row to keep it in.
-    /// Returns the gain when it was carried over, so the caller can store it in the cache.
-    pub fn set_record(&mut self, mut record: AnalysisRecord) -> Option<f32> {
+    /// Returns the authoritative gain, including `Some(None)` for a clear, when the cache must be updated.
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option requests persistence, the inner option is a nullable gain"
+    )]
+    pub fn set_record(&mut self, mut record: AnalysisRecord) -> Option<Option<f32>> {
+        let carried_over = self.merge_custom_gain(&mut record);
         let Some(row) = self.row_mut(&record.path) else {
             self.index.insert(record.path.clone(), self.rows.len());
             self.rows.push(ResultRow::from_record(record));
             return None;
         };
-        let carried_over = row
-            .record
-            .as_ref()
-            .filter(|existing| {
-                existing.file_size == record.file_size && existing.modified_time_ms == record.modified_time_ms
-            })
-            .and_then(|existing| existing.custom_gain_db)
-            .filter(|&gain| !same_custom_gain(Some(gain), record.custom_gain_db));
-        if let Some(gain) = carried_over {
-            record.custom_gain_db = Some(gain);
-        }
         row.state = RowState::Done;
         row.record = Some(record);
         row.message = None;
@@ -598,17 +605,22 @@ impl ResultsDelegate {
         else {
             return false;
         };
-        if same_custom_gain(record.custom_gain_db, custom_gain_db) {
-            return false;
-        }
+        let edit = CustomGainEdit {
+            file_size: record.file_size,
+            modified_time_ms: record.modified_time_ms,
+            gain: custom_gain_db,
+        };
+        let changed = !same_custom_gain(record.custom_gain_db, custom_gain_db);
         record.custom_gain_db = custom_gain_db;
-        true
+        self.gain_edits.insert(path.to_path_buf(), edit);
+        changed
     }
 
     /// Removes the row of a file and returns its former index.
     pub fn remove(&mut self, path: &Path) -> Option<usize> {
         let index = self.index_of(path)?;
         self.rows.remove(index);
+        self.gain_edits.remove(path);
         self.extra_selected.remove(path);
         self.rebuild_index();
         Some(index)
@@ -619,6 +631,7 @@ impl ResultsDelegate {
         let count = self.rows.len();
         self.rows.retain(|row| !paths.contains(&row.path));
         self.extra_selected.retain(|path| !paths.contains(path));
+        self.gain_edits.retain(|path, _| !paths.contains(path));
         self.rebuild_index();
         count - self.rows.len()
     }
@@ -654,7 +667,20 @@ impl ResultsDelegate {
                 continue;
             }
             row.state = RowState::Done;
-            if let Some(record) = cached(&row.path) {
+            if let Some(mut record) = cached(&row.path) {
+                if let Some(edit) = self.gain_edits.get(&row.path).copied() {
+                    if edit.file_size == record.file_size && edit.modified_time_ms == record.modified_time_ms {
+                        record.custom_gain_db = edit.gain;
+                    } else {
+                        self.gain_edits.remove(&row.path);
+                    }
+                } else if let Some(existing) = &row.record
+                    && existing.file_size == record.file_size
+                    && existing.modified_time_ms == record.modified_time_ms
+                    && existing.custom_gain_db.is_some()
+                {
+                    record.custom_gain_db = existing.custom_gain_db;
+                }
                 row.record = Some(record);
             } else if row.record.is_none() {
                 let text = if row.path.exists() {
@@ -686,6 +712,14 @@ impl ResultsDelegate {
     pub fn select_only(&mut self, path: Option<PathBuf>) {
         self.extra_selected.clear();
         self.selected = path;
+    }
+
+    /// Applies a plain pointer press, even when the pressed row is already the preview anchor.
+    /// Programmatic cursor restoration does not call this, so it keeps the batch selection.
+    fn plain_click_row(&mut self, row_index: usize) {
+        if let Some(path) = self.row(row_index).map(|row| row.path.clone()) {
+            self.select_only(Some(path));
+        }
     }
 
     /// Returns the selected files, the app's selected file first and the others in row order.
@@ -749,6 +783,7 @@ impl ResultsDelegate {
     pub fn clear(&mut self) {
         self.rows.clear();
         self.index.clear();
+        self.gain_edits.clear();
         self.extra_selected.clear();
     }
 
@@ -882,6 +917,30 @@ impl ResultsDelegate {
         }
     }
 
+    /// Applies the latest explicit edit or an existing nonempty gain only to the same file identity.
+    /// An identity change retires the old edit rather than letting it affect a replacement file.
+    #[expect(
+        clippy::option_option,
+        reason = "The outer option requests persistence, the inner option is a nullable gain"
+    )]
+    fn merge_custom_gain(&mut self, incoming: &mut AnalysisRecord) -> Option<Option<f32>> {
+        let incoming_gain = incoming.custom_gain_db;
+        if let Some(edit) = self.gain_edits.get(&incoming.path).copied() {
+            if edit.file_size == incoming.file_size && edit.modified_time_ms == incoming.modified_time_ms {
+                incoming.custom_gain_db = edit.gain;
+            } else {
+                self.gain_edits.remove(&incoming.path);
+            }
+        } else if let Some(existing) = self.row_for(&incoming.path).and_then(|row| row.record.as_ref())
+            && existing.file_size == incoming.file_size
+            && existing.modified_time_ms == incoming.modified_time_ms
+            && existing.custom_gain_db.is_some()
+        {
+            incoming.custom_gain_db = existing.custom_gain_db;
+        }
+        (!same_custom_gain(incoming_gain, incoming.custom_gain_db)).then_some(incoming.custom_gain_db)
+    }
+
     /// Returns a mutable row by path.
     fn row_mut(&mut self, path: &Path) -> Option<&mut ResultRow> {
         let index = *self.index.get(path)?;
@@ -949,13 +1008,7 @@ impl TableDelegate for ResultsDelegate {
         self.apply_sort_to_columns();
         self.sort_rows();
         // The table calls this while it is being updated, so its selection can only move afterwards.
-        if let Some(index) = self.selected.as_deref().and_then(|path| self.index_of(path)) {
-            cx.defer_in(window, move |state, _window, cx| {
-                if state.selected_row() != Some(index) {
-                    state.set_selected_row(index, cx);
-                }
-            });
-        }
+        cx.defer_in(window, restore_table_cursor);
         cx.notify();
     }
 
@@ -993,10 +1046,11 @@ impl TableDelegate for ResultsDelegate {
             .text_size(px(HEADER_FONT_SIZE))
             .truncate()
             .child(name)
-            .on_click(cx.listener(move |state, event: &ClickEvent, _window, cx| {
+            .on_click(cx.listener(move |state, event: &ClickEvent, window, cx| {
                 if event.modifiers().secondary(cx) {
                     cx.stop_propagation();
                     state.delegate_mut().toggle_secondary_sort(column_index);
+                    restore_table_cursor(state, window, cx);
                     cx.notify();
                 }
             }));
@@ -1031,6 +1085,8 @@ impl TableDelegate for ResultsDelegate {
                 let modifiers = event.modifiers;
                 let extends = modifiers.shift || modifiers.secondary(cx);
                 if !extends {
+                    state.delegate_mut().plain_click_row(row_index);
+                    cx.notify();
                     return;
                 }
                 if !state.delegate().has_selection() {
@@ -1160,6 +1216,20 @@ pub fn fill_status_column(
     if (target - current).abs() >= 0.5 {
         state.delegate_mut().status_fill_width = px(target);
         state.fit_col(status, window, cx);
+    }
+}
+
+/// Restores the table cursor from the current path index after either kind of header sort.
+/// Reading the current index here also handles another reorder before a deferred primary-sort callback.
+fn restore_table_cursor(
+    state: &mut TableState<ResultsDelegate>,
+    _window: &mut Window,
+    cx: &mut Context<TableState<ResultsDelegate>>,
+) {
+    if let Some(index) = state.delegate().selected_index()
+        && state.selected_row() != Some(index)
+    {
+        state.set_selected_row(index, cx);
     }
 }
 
@@ -1383,7 +1453,7 @@ mod test_custom_gain {
     #[test]
     fn new_record_of_an_unchanged_file_takes_over_the_gain() {
         let mut delegate = delegate_with(vec![record("/a.wav", Some(-3.0))]);
-        assert_eq!(delegate.set_record(record("/a.wav", None)), Some(-3.0));
+        assert_eq!(delegate.set_record(record("/a.wav", None)), Some(Some(-3.0)));
         assert_eq!(gain_of(&delegate, "/a.wav"), Some(-3.0));
         assert_eq!(delegate.set_record(record("/a.wav", Some(-3.0))), None);
     }
@@ -1395,6 +1465,41 @@ mod test_custom_gain {
         changed.modified_time_ms += 1;
         assert_eq!(delegate.set_record(changed), None);
         assert_eq!(gain_of(&delegate, "/a.wav"), None);
+    }
+
+    #[test]
+    fn explicit_clear_wins_stale_analysis_and_requests_cache_clear() {
+        let mut delegate = delegate_with(vec![record("/a.wav", Some(-3.0))]);
+        assert!(delegate.set_custom_gain(Path::new("/a.wav"), None));
+        assert_eq!(delegate.set_record(record("/a.wav", Some(-3.0))), Some(None));
+        assert_eq!(gain_of(&delegate, "/a.wav"), None);
+        assert_eq!(delegate.set_record(record("/a.wav", None)), None);
+        assert!(!delegate.set_custom_gain(Path::new("/a.wav"), None));
+        assert_eq!(delegate.set_record(record("/a.wav", Some(2.0))), Some(None));
+    }
+
+    #[test]
+    fn changed_identity_does_not_inherit_an_explicit_edit() {
+        let mut delegate = delegate_with(vec![record("/a.wav", Some(-3.0))]);
+        delegate.set_custom_gain(Path::new("/a.wav"), None);
+        let mut changed = record("/a.wav", Some(4.0));
+        changed.modified_time_ms += 1;
+        assert_eq!(delegate.set_record(changed), None);
+        assert!(same_custom_gain(gain_of(&delegate, "/a.wav"), Some(4.0)));
+    }
+
+    #[test]
+    fn operation_and_cancelled_analysis_keep_explicit_clear() {
+        let mut delegate = delegate_with(vec![record("/a.wav", Some(-3.0))]);
+        delegate.set_custom_gain(Path::new("/a.wav"), None);
+        delegate.replace_after_operation(Path::new("/a.wav"), record("/a.wav", Some(-3.0)), None);
+        assert_eq!(gain_of(&delegate, "/a.wav"), None);
+        delegate.mark_started(Path::new("/a.wav"));
+        delegate.finish_cancelled_analysis(|_| Some(record("/a.wav", Some(-3.0))));
+        assert_eq!(gain_of(&delegate, "/a.wav"), None);
+        delegate.remove(Path::new("/a.wav"));
+        delegate.set_record(record("/a.wav", Some(-3.0)));
+        assert!(same_custom_gain(gain_of(&delegate, "/a.wav"), Some(-3.0)));
     }
 
     #[test]
@@ -1487,7 +1592,10 @@ mod test_selection {
         assert_eq!(selected(&delegate), ["/a.wav", "/b.wav", "/c.wav"]);
         delegate.set_selected_path(Some(PathBuf::from("/a.wav")));
         assert_eq!(selected(&delegate).len(), 3);
-        delegate.select_only(Some(PathBuf::from("/b.wav")));
+        delegate.plain_click_row(delegate.selected_index().expect("preview anchor row"));
+        assert_eq!(selected(&delegate), ["/a.wav"]);
+        delegate.select_all();
+        delegate.plain_click_row(1);
         assert_eq!(selected(&delegate), ["/b.wav"]);
     }
 
@@ -1769,12 +1877,21 @@ mod test_column_visibility_and_sort {
         );
         // The Peak sort breaks its own ties by loudness, quietest first.
         assert_eq!(names(&delegate), ["b.wav", "c.wav", "a.wav"]);
+        delegate.select_only(Some(PathBuf::from("/a.wav")));
+        delegate.select_all();
+        let previous_cursor = delegate.selected_index();
         let integrated = delegate.order.iter().position(|&key| key == ColumnKey::Integrated);
         delegate.toggle_secondary_sort(integrated.expect("the LUFS-I column shows"));
         assert_eq!(delegate.secondary_sort, Some((ColumnKey::Integrated, true)));
         assert_eq!(names(&delegate), ["b.wav", "c.wav", "a.wav"]);
         delegate.toggle_secondary_sort(integrated.expect("the LUFS-I column shows"));
         assert_eq!(names(&delegate), ["b.wav", "a.wav", "c.wav"]);
+        assert_ne!(delegate.selected_index(), previous_cursor);
+        assert_eq!(delegate.selected_index(), Some(1));
+        assert_eq!(
+            delegate.selected_paths(),
+            ["/a.wav", "/b.wav", "/c.wav"].map(PathBuf::from)
+        );
         let peak = delegate.order.iter().position(|&key| key == ColumnKey::Peak);
         delegate.toggle_secondary_sort(peak.expect("the Peak column shows"));
         assert_eq!(delegate.secondary_sort, None);

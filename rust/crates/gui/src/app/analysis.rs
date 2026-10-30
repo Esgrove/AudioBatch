@@ -268,7 +268,7 @@ impl AppView {
         });
         // The coordinator stored each row before publishing it, so a carried over gain can be stored now.
         for (path, gain) in carried_gains {
-            self.store_custom_gain(&path, Some(gain));
+            self.store_custom_gain(&path, gain);
         }
 
         if let Some(run) = &mut self.run {
