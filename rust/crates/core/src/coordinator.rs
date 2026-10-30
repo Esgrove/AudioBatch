@@ -23,11 +23,6 @@ use crate::record::{AnalysisOptions, AnalysisRecord};
 /// Smallest progress step that is published, so the receiver is not flooded with events.
 const PROGRESS_STEP: f32 = 0.02;
 
-/// A failure to create the analysis worker threads.
-#[derive(Debug, thiserror::Error)]
-#[error("Failed to create the analysis worker pool")]
-pub struct AnalysisCoordinatorError(#[source] pub rayon::ThreadPoolBuildError);
-
 /// Events of one analysis run, in the order they are published.
 #[derive(Debug, Clone)]
 pub enum AnalysisEvent {
@@ -71,6 +66,11 @@ pub enum AnalysisEvent {
         total_files: usize,
     },
 }
+
+/// A failure to create the analysis worker threads.
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to create the analysis worker pool")]
+pub struct AnalysisCoordinatorError(#[source] pub rayon::ThreadPoolBuildError);
 
 /// Runs analysis in the background on a fixed-size worker pool.
 pub struct AnalysisCoordinator {

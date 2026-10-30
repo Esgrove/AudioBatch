@@ -97,19 +97,6 @@ pub enum DecodeError {
     Seek(#[source] SymphoniaError),
 }
 
-impl DecodeError {
-    /// Returns the analysis classification used by the cache.
-    #[must_use]
-    pub const fn analysis_kind(&self) -> AnalysisError {
-        match self {
-            Self::Open(_) => AnalysisError::Unreadable,
-            Self::Probe(_) | Self::MissingTrack | Self::Parameters | Self::Codec(_) => AnalysisError::Unsupported,
-            Self::PacketLimit { .. } => AnalysisError::DecodeFailed,
-            Self::Decode { .. } | Self::InvalidSeek(_) | Self::Seek(_) => AnalysisError::MeasurementFailed,
-        }
-    }
-}
-
 /// Stream properties of an opened audio file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StreamInfo {
@@ -165,6 +152,19 @@ pub struct AudioFileDecoder {
     /// True for an MP3 file without a LAME delay, whose stated length may be symphonia's guess from the file size.
     /// Packet trimming and the failure rules then ignore the stated length, which may cut real audio short.
     ignore_packet_trim: bool,
+}
+
+impl DecodeError {
+    /// Returns the analysis classification used by the cache.
+    #[must_use]
+    pub const fn analysis_kind(&self) -> AnalysisError {
+        match self {
+            Self::Open(_) => AnalysisError::Unreadable,
+            Self::Probe(_) | Self::MissingTrack | Self::Parameters | Self::Codec(_) => AnalysisError::Unsupported,
+            Self::PacketLimit { .. } => AnalysisError::DecodeFailed,
+            Self::Decode { .. } | Self::InvalidSeek(_) | Self::Seek(_) => AnalysisError::MeasurementFailed,
+        }
+    }
 }
 
 impl DecodeFailureTracker {

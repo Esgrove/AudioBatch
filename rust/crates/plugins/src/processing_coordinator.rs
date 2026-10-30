@@ -32,11 +32,6 @@ const PROGRESS_STEP: f32 = 0.02;
 /// How often a job waiting for a free chain checks for cancellation.
 const CHAIN_WAIT_INTERVAL: Duration = Duration::from_millis(50);
 
-/// Failure to create the worker pool for plugin processing.
-#[derive(Debug, thiserror::Error)]
-#[error("Failed to create the plugin processing worker pool")]
-pub struct ProcessingCoordinatorError(#[source] pub rayon::ThreadPoolBuildError);
-
 /// Events of one processing run, in the order they are published for each file.
 #[derive(Debug, Clone)]
 pub enum ProcessingEvent {
@@ -71,6 +66,11 @@ pub enum ProcessingEvent {
         total_files: usize,
     },
 }
+
+/// Failure to create the worker pool for plugin processing.
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to create the plugin processing worker pool")]
+pub struct ProcessingCoordinatorError(#[source] pub rayon::ThreadPoolBuildError);
 
 /// Runs plugin processing in the background on a fixed-size worker pool.
 pub struct ProcessingCoordinator {

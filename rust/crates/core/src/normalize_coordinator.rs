@@ -27,11 +27,6 @@ use crate::record::AnalysisRecord;
 /// Smallest progress step that is published, so the receiver is not flooded with events.
 const PROGRESS_STEP: f32 = 0.02;
 
-/// A failure to create the normalization worker threads.
-#[derive(Debug, thiserror::Error)]
-#[error("Failed to create the normalization worker pool")]
-pub struct NormalizeCoordinatorError(#[source] pub rayon::ThreadPoolBuildError);
-
 /// Events of one normalization run, in the order they are published for each file.
 #[derive(Debug, Clone)]
 pub enum NormalizeEvent {
@@ -66,6 +61,11 @@ pub enum NormalizeEvent {
         total_files: usize,
     },
 }
+
+/// A failure to create the normalization worker threads.
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to create the normalization worker pool")]
+pub struct NormalizeCoordinatorError(#[source] pub rayon::ThreadPoolBuildError);
 
 /// Runs normalization in the background on a fixed-size worker pool.
 pub struct NormalizeCoordinator {

@@ -27,17 +27,6 @@ use serato_tags::{Overview, SeratoData, SeratoTag};
 /// Largest encoded embedded picture passed to the thumbnail decoder, 16 MiB.
 pub const ARTWORK_MAXIMUM_BYTES: usize = 16 * 1024 * 1024;
 
-/// A failure to open or parse the display tags of an audio file.
-#[derive(Debug, thiserror::Error)]
-#[error("Failed to read tags of {}", path.display())]
-pub struct TagsError {
-    /// File whose tags could not be read.
-    pub path: PathBuf,
-    /// Tag reader's concrete parse or I/O failure.
-    #[source]
-    pub source: lofty::error::FileParseError,
-}
-
 /// What reading the Serato Overview tag of a file found, the read results the tag cache keeps.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SeratoOverviewState {
@@ -49,6 +38,17 @@ pub enum SeratoOverviewState {
     Unsupported,
     /// The file has an overview that could not be parsed.
     Invalid,
+}
+
+/// A failure to open or parse the display tags of an audio file.
+#[derive(Debug, thiserror::Error)]
+#[error("Failed to read tags of {}", path.display())]
+pub struct TagsError {
+    /// File whose tags could not be read.
+    pub path: PathBuf,
+    /// Tag reader's concrete parse or I/O failure.
+    #[source]
+    pub source: lofty::error::FileParseError,
 }
 
 /// Tag fields shown in the GUI information panel.
