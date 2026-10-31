@@ -251,8 +251,8 @@ The C++ debug build and all 28 CTest suites pass, as do clang-tidy and clang-for
 
 Local Windows validation passes all 870 workspace tests with the normalization corpus required.
 The three opt-in numerical diagnostic tests remain ignored in the routine run.
-The combined Windows CI selector passes all 112 selected tests in each of debug and release,
-including the full normalization goldens.
+The Windows Rust job requires the full normalization goldens in debug and release.
+Optimized checks cover the complete core suite and the selected CLI normalization tests.
 Clippy, rustfmt, workflow validation, benchmark-tooling regressions, parity-oracle tests,
 and the changed Python, shell, and prose formatting checks pass.
 
@@ -319,10 +319,13 @@ Nextest compiles its test targets and runs the input identity tests as part of t
 The separate macOS coverage job remains.
 Temporary numerical captures and their uploads are not part of routine CI.
 
-The Windows parity job downloads the full normalization corpus through the LFS cache
-and runs one combined filesystem, normalization, and golden selector in each of debug and release.
+The Windows Rust build job downloads the full normalization corpus through the LFS cache.
+Its full debug workspace and optimized core suites cover filesystem, normalization, and golden checks,
+with CLI normalization tests included in the optimized run too.
 `AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES=1` rejects missing audio and unresolved LFS pointers.
 Native parity-oracle and benchmark-tooling tests run separately from the timings.
+Normalization-fixture changes trigger the Rust workflow.
+The separate parity workflow runs the macOS C++ versus Rust comparison, without a duplicate Windows test job.
 
 Numerical reports remain available on demand:
 

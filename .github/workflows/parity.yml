@@ -39,58 +39,6 @@ defaults:
     shell: bash
 
 jobs:
-  windows-filesystem-normalization:
-    # Executes native filesystem, rollback, conflict, metadata, and golden normalization tests.
-    # Injected disposers make the fault cases deterministic, they do not certify real recycle-bin behavior.
-    runs-on: windows-2025-vs2026
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: List LFS objects
-        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-objects
-
-      - name: Restore LFS objects
-        uses: actions/cache@v6
-        with:
-          path: .git/lfs
-          key: lfs-${{ hashFiles('.lfs-objects') }}
-
-      - name: Pull LFS files
-        run: git lfs pull
-
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install nextest
-        uses: taiki-e/install-action@nextest
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v10.3.2
-
-      - name: Test parity oracles and benchmark tooling natively
-        working-directory: rust
-        run: |
-          uv run --script scripts/test_parity.py
-          uv run --script scripts/test_cli_benchmark.py
-
-      - name: Run native filesystem and normalization corpus
-        working-directory: rust
-        env:
-          AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES: "1"
-        run: |
-          for profile in debug release; do
-            options=()
-            if [ "$profile" = release ]; then options=(--release); fi
-            cargo nextest run "${options[@]}" -p audiobatch-core -p audiobatch-cli --no-fail-fast \
-              -E 'test(/output_file::|atomic_write::|normalize::|normalize_coordinator::|metadata::|golden_tests::/) | (package(audiobatch-cli) & test(run::test_run_analysis::normalize_))'
-          done
-
   parity:
     # Runs the C++ and the Rust CLI on the committed fixtures and compares the levels they report,
     # then normalizes the LFS collection with both and compares the output files.
