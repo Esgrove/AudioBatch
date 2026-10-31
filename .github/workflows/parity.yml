@@ -73,9 +73,11 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v10.3.2
 
-      - name: Test parity oracles natively
+      - name: Test parity oracles and benchmark tooling natively
         working-directory: rust
-        run: uv run --script scripts/test_parity.py
+        run: |
+          uv run --script scripts/test_parity.py
+          uv run --script scripts/test_cli_benchmark.py
 
       - name: Run native filesystem and normalization corpus
         working-directory: rust

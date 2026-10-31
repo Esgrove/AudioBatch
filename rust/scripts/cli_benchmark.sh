@@ -83,6 +83,13 @@ fi
 
 require_command hyperfine "hyperfine is required. Install it with brew install hyperfine or cargo install hyperfine."
 require_command uv "uv is required for benchmark preparation and validation. Install it from https://docs.astral.sh/uv/."
+BENCHMARK_SHELL=bash
+if [ "$BASH_PLATFORM" = windows ]; then
+    require_command cygpath "Git Bash with cygpath is required for native Windows benchmarks."
+    require_command bash.exe "Git Bash is required for native Windows benchmarks."
+    # A bare bash can resolve to WSL when a native Windows process launches it.
+    BENCHMARK_SHELL="\"$(cygpath -m "$(command -v bash.exe)")\""
+fi
 CPP_CLI=$(find_cpp_cli release)
 if [ "$BUILD" = true ]; then
     require_command cargo "Cargo is required to build the release Rust CLI."
@@ -95,6 +102,7 @@ fi
 
 mkdir -p "$RUST_DIR/target/cli-benchmark"
 RESULT_DIR=$(mktemp -d "$RUST_DIR/target/cli-benchmark/$(date -u +%Y%m%dT%H%M%SZ)-XXXXXX")
+RESULT_DIR=$(cd "$RESULT_DIR" && pwd -P)
 echo "Benchmark results and failure logs: $RESULT_DIR"
 WORK_DIR=$(mktemp -d)
 WORK_DIR=$(cd "$WORK_DIR" && pwd -P)
@@ -116,7 +124,7 @@ for jobs in "${WORKER_COUNTS[@]}"; do
         for ((run = 1; run <= RUNS; run++)); do
             warmup=0
             if [ "$run" -eq 1 ]; then warmup="$WARMUP"; fi
-            benchmark_options=(--shell bash --warmup "$warmup" --runs 1
+            benchmark_options=(--shell "$BENCHMARK_SHELL" --warmup "$warmup" --runs 1
                 --export-json "$RESULT_DIR/raw/$mode-jobs-$jobs-run-$run.json")
             for implementation in cpp rust; do
                 binary="$CPP_CLI"

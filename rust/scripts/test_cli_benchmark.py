@@ -68,11 +68,11 @@ class TestCorpusSafety(unittest.TestCase):
                 self.assertEqual(benchmark.select_corpora("auto"), [generated, normalization])
                 self.assertEqual(benchmark.select_corpora(str(normalization)), [normalization.resolve()])
 
-    def test_windows_excludes_juce_unsupported_codecs(self) -> None:
+    def test_windows_excludes_juce_unsupported_extensions(self) -> None:
         """Unsupported Windows inputs never reach fixture probing or either timed CLI."""
         with tempfile.TemporaryDirectory() as temporary:
             corpus = Path(temporary)
-            for name in ("valid.wav", "tone.aac", "tone.m4a", "tone.mp4", "tone.alac", "upper.M4A"):
+            for name in ("valid.wav", "tone.aac", "tone.m4a", "tone.mp4", "tone.alac", "upper.M4A", "tone.aifc"):
                 (corpus / name).write_bytes(b"audio")
             with (
                 patch.object(benchmark.sys, "platform", "win32"),
@@ -84,7 +84,7 @@ class TestCorpusSafety(unittest.TestCase):
             properties.assert_called_once_with(corpus / "valid.wav")
             self.assertEqual(
                 {Path(row["path"]).name for row in excluded},
-                {"tone.aac", "tone.m4a", "tone.mp4", "tone.alac", "upper.M4A"},
+                {"tone.aac", "tone.m4a", "tone.mp4", "tone.alac", "upper.M4A", "tone.aifc"},
             )
             self.assertTrue(all("Windows" in row["reason"] for row in excluded))
 
@@ -478,10 +478,9 @@ class TestReleaseSelection(unittest.TestCase):
             root = Path(temporary).resolve()
             rust = root / "rust"
             rust.mkdir()
-            executable = "audiobatch.exe" if os.name == "nt" else "audiobatch"
-            release = root / "cpp/cmake-build-mac-release/AudioBatchCli_artefacts/Release" / executable
-            debug = root / "cpp/cmake-build-mac-debug/AudioBatchCli_artefacts/Debug" / executable
-            copied = root / "cpp" / executable
+            release = root / "cpp/cmake-build-mac-release/AudioBatchCli_artefacts/Release/audiobatch"
+            debug = root / "cpp/cmake-build-mac-debug/AudioBatchCli_artefacts/Debug/audiobatch"
+            copied = root / "cpp/audiobatch"
             for binary in (release, debug, copied):
                 binary.parent.mkdir(parents=True, exist_ok=True)
                 binary.touch(mode=0o755)
@@ -529,8 +528,15 @@ class TestReleaseSelection(unittest.TestCase):
             self.assertNotEqual(selected.returncode, 0)
             self.assertIn("release C++ CLI is required", selected.stderr)
 
+
+class TestBuildTypeTraversal(unittest.TestCase):
+    """Checks root termination with POSIX and native Windows path tools."""
+
     def test_unchanging_parent_terminates_build_type_search(self) -> None:
         """A native Windows dirname can return the drive root unchanged instead of a POSIX root."""
+        bash = shutil.which("bash")
+        if bash is None:
+            self.fail("Bash is required to test build type traversal")
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             binary = root / "audiobatch"
@@ -541,7 +547,15 @@ class TestReleaseSelection(unittest.TestCase):
                 'unset AUDIOBATCH_CPP_BUILD_TYPE; cpp_cli_build_type "$2"'
             )
             selected = subprocess.run(
-                ["bash", "-c", script, "test", str(benchmark.RUST_DIRECTORY / "common.sh"), str(binary), str(root)],
+                [
+                    bash,
+                    "-c",
+                    script,
+                    "test",
+                    (benchmark.RUST_DIRECTORY / "common.sh").as_posix(),
+                    binary.as_posix(),
+                    root.as_posix(),
+                ],
                 text=True,
                 capture_output=True,
                 check=True,
