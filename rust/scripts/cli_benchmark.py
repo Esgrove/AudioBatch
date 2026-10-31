@@ -62,8 +62,14 @@ def discover_sources(corpus: Path) -> tuple[list[Path], list[dict]]:
     for source in sorted(corpus.rglob("*")):
         if source.is_symlink():
             raise ValueError(f"Corpus symlinks are not allowed: {source}")
-        if sys.platform == "win32" and source.is_file() and source.suffix.lower() in {".aac", ".m4a", ".mp4", ".alac"}:
-            excluded.append({"path": str(source), "reason": "JUCE does not support AAC or ALAC on Windows"})
+        if (
+            sys.platform == "win32"
+            and source.is_file()
+            and source.suffix.lower() in {".aac", ".m4a", ".mp4", ".alac", ".aifc"}
+        ):
+            excluded.append(
+                {"path": str(source), "reason": f"C++ CLI does not discover {source.suffix.lower()} on Windows"}
+            )
             continue
         if not source.is_file() or source.suffix.lower() not in levels.AUDIO_EXTENSIONS:
             continue
