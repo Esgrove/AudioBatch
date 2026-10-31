@@ -8,6 +8,7 @@
 //! It also locates the test VST3 that `test-plugin/` builds, lists the outputs that plugin must produce,
 //! and holds the null test that compares a processed output against its expected file.
 
+mod identity;
 mod null_test;
 
 use std::io::Read as _;
@@ -15,6 +16,7 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
+pub use identity::{check_identity_manifest, file_sha256, pcm_sha256};
 pub use null_test::{NullTestResult, null_test};
 
 /// Peak level of the fixture tones, which have a peak amplitude of 0.5, in dBFS.

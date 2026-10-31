@@ -129,6 +129,102 @@ fn energy_to_loudness(energy: f64) -> f64 {
 #[cfg(test)]
 mod test_gates {
     use super::*;
+    use crate::golden::{GoldenText, diagnostic_signals, write_diagnostic_report};
+    use crate::signals::generate;
+
+    #[test]
+    #[ignore = "writes cross-platform gate diagnostics; run explicitly with --ignored"]
+    fn numerical_diagnostics_gating() {
+        let mut text = GoldenText::default();
+        for (kind, rate, channels, seconds) in diagnostic_signals() {
+            let key = format!("{}_{rate}_{channels}ch", kind.name());
+            let planes = generate(kind, rate, channels, (f64::from(rate) * seconds) as usize);
+            text.value(&format!("{key}.pcm_sha256"), test_fixtures::pcm_sha256(rate, &planes));
+            let frames = planes.first().expect("generated channels").len();
+            let mut meter = LoudnessMeter::new(channels, rate, Some(frames as u64));
+            for (block, start) in (0..frames).step_by(meter.block_size).enumerate() {
+                let end = (start + meter.block_size).min(frames);
+                let slices: Vec<_> = planes
+                    .iter()
+                    .map(|plane| plane.get(start..end).expect("aligned planes"))
+                    .collect();
+                let retained = if end - start == meter.block_size {
+                    0.0
+                } else {
+                    let other_blocks: f64 = meter
+                        .energies
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| *index != meter.next)
+                        .map(|(_, &energy)| energy)
+                        .sum();
+                    let boundary = meter.next * meter.block_size;
+                    let suffix: f64 = meter
+                        .boundary_energy
+                        .get(boundary + end - start..boundary + meter.block_size)
+                        .expect("partial boundary")
+                        .iter()
+                        .sum();
+                    other_blocks + suffix
+                };
+                let mut probe = meter.filter.clone();
+                let mut frame_energy = vec![0.0; end - start];
+                let energy = probe.energy_with_frames(&slices, &mut frame_energy);
+                let admitted = meter.integrated.len();
+                let boundary = meter.next * meter.block_size;
+                let loudness = meter.push(&slices);
+                assert_eq!(
+                    frame_energy.iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+                    meter
+                        .boundary_energy
+                        .get(boundary..boundary + end - start)
+                        .expect("recorded block energy")
+                        .iter()
+                        .map(|value| value.to_bits())
+                        .collect::<Vec<_>>(),
+                    "diagnostics must match the production filtering path"
+                );
+                let total_energy = if end - start == meter.block_size {
+                    meter.energies.iter().sum::<f64>()
+                } else {
+                    retained + energy
+                };
+                let mean_energy = total_energy / (meter.block_size * 30) as f64;
+                assert_eq!(energy_to_loudness(mean_energy).to_bits(), loudness.to_bits());
+                text.float(&format!("{key}.block[{block}].energy"), energy);
+                text.float(&format!("{key}.block[{block}].short_term_mean_energy"), mean_energy);
+                text.float(&format!("{key}.block[{block}].short_term_lufs"), loudness);
+                text.float32(&format!("{key}.block[{block}].history_lufs"), loudness as f32);
+                text.value(
+                    &format!("{key}.block[{block}].absolute_admitted"),
+                    meter.integrated.len() > admitted,
+                );
+                if meter.complete_blocks >= 4 && end - start == meter.block_size {
+                    let gating_energy: f64 = (1..=4)
+                        .map(|offset| meter.energies[(meter.next + 30 - offset) % 30])
+                        .sum::<f64>()
+                        / (meter.block_size * 4) as f64;
+                    text.float(&format!("{key}.block[{block}].absolute_gate_energy"), gating_energy);
+                }
+            }
+            let threshold = meter.admitted_sum / meter.integrated.len().max(1) as f64 * 0.1;
+            let admitted: Vec<_> = meter.integrated.iter().map(|&energy| energy >= threshold).collect();
+            let (sum, count) = meter
+                .integrated
+                .iter()
+                .filter(|&&energy| energy >= threshold)
+                .fold((0.0, 0_u64), |(sum, count), &energy| (sum + energy, count + 1));
+            let mean_energy = if count == 0 { 0.0 } else { sum / count as f64 };
+            assert_eq!(energy_to_loudness(mean_energy).to_bits(), meter.integrated().to_bits());
+            text.float(&format!("{key}.relative_threshold"), threshold);
+            text.value(&format!("{key}.relative_admitted"), admitted);
+            text.value(&format!("{key}.absolute_count"), meter.integrated.len());
+            text.value(&format!("{key}.relative_count"), count);
+            text.float(&format!("{key}.integrated_mean_energy"), mean_energy);
+            text.float(&format!("{key}.integrated_lufs"), meter.integrated());
+        }
+        write_diagnostic_report("gating", &text);
+    }
 
     #[test]
     fn empty_and_silent_windows_have_no_loudness() {

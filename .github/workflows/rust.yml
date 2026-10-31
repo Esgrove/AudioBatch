@@ -91,6 +91,40 @@ jobs:
       - name: Build
         run: cargo build --workspace --all-targets
 
+      - name: Check shared input identities
+        run: |
+          cargo test -p test-fixtures test_identity --lib
+          cargo test -p audiobatch-core generated_inputs_have_shared_identities --lib
+          cargo test --release -p audiobatch-core generated_inputs_have_shared_identities --lib
+
+      - name: Capture debug numerical stages
+        env:
+          AUDIOBATCH_DIAGNOSTICS_DIR: target/numerical-diagnostics/debug
+        run: cargo test -p audiobatch-core numerical_diagnostics_ --lib -- --ignored
+
+      - name: Capture optimized numerical stages
+        env:
+          AUDIOBATCH_DIAGNOSTICS_DIR: target/numerical-diagnostics/release
+        run: cargo test --release -p audiobatch-core numerical_diagnostics_ --lib -- --ignored
+
+      - name: Save numerical diagnostic provenance
+        if: always()
+        run: |
+          mkdir -p target/numerical-diagnostics
+          git rev-parse HEAD > target/numerical-diagnostics/revision.txt
+          cp Cargo.lock target/numerical-diagnostics/Cargo.lock
+          sha256sum Cargo.lock > target/numerical-diagnostics/Cargo.lock.sha256
+          cp crates/core/tests/golden/input/signals.txt target/numerical-diagnostics/input-signals.txt
+          cp ../fixtures/checksums.sha256 target/numerical-diagnostics/fixture-checksums.sha256
+
+      - name: Upload numerical diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: numerical-diagnostics-${{ matrix.os }}
+          path: rust/target/numerical-diagnostics
+          if-no-files-found: error
+
       - name: Run tests
         run: cargo nextest run --workspace --no-fail-fast
 

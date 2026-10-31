@@ -13,10 +13,12 @@ use std::fmt::Write as _;
 use std::fs;
 use std::hash::Hasher as _;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use crate::cache::serialize_history;
 use crate::meter::{BlockMeter, MeterOutput};
 use crate::record::AnalysisRecord;
+use crate::signals::SignalKind;
 
 /// Environment variable that rewrites the golden files instead of comparing against them.
 const UPDATE_VARIABLE: &str = "UPDATE_GOLDEN";
@@ -208,4 +210,47 @@ pub fn assert_no_differences(differences: &[String]) {
         differences.len(),
         differences.join("\n")
     );
+}
+
+/// Writes an opt-in numerical report separately from all regression snapshots.
+///
+/// # Panics
+///
+/// Panics if compiler information cannot be read or the diagnostic directory cannot be written.
+pub fn write_diagnostic_report(name: &str, text: &GoldenText) {
+    let workspace = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let directory = workspace.join(
+        std::env::var_os("AUDIOBATCH_DIAGNOSTICS_DIR")
+            .map_or_else(|| PathBuf::from("target/numerical-diagnostics"), PathBuf::from),
+    );
+    fs::create_dir_all(&directory).expect("creates the numerical diagnostic directory");
+    let compiler = Command::new("rustc")
+        .args(["--version", "--verbose"])
+        .output()
+        .expect("reads compiler version");
+    assert!(compiler.status.success(), "compiler version command failed");
+    let mut report = String::new();
+    let _ = writeln!(report, "os = {}", std::env::consts::OS);
+    let _ = writeln!(report, "architecture = {}", std::env::consts::ARCH);
+    let _ = writeln!(report, "debug_assertions = {}", cfg!(debug_assertions));
+    let _ = writeln!(report, "rustflags = {:?}", std::env::var_os("RUSTFLAGS"));
+    let _ = writeln!(report, "compiled_avx2 = {}", cfg!(target_feature = "avx2"));
+    let _ = writeln!(report, "compiled_fma = {}", cfg!(target_feature = "fma"));
+    let _ = writeln!(report, "compiled_neon = {}", cfg!(target_feature = "neon"));
+    #[cfg(target_arch = "x86_64")]
+    let _ = writeln!(report, "runtime_avx2 = {}", std::arch::is_x86_feature_detected!("avx2"));
+    report.push_str(&String::from_utf8(compiler.stdout).expect("compiler version is UTF-8"));
+    report.push_str(text.text());
+    fs::write(directory.join(format!("{name}.txt")), report).expect("writes numerical diagnostic report");
+}
+
+/// The two differing DC tails and the 192 kHz channel-count corpus, without interpolation.
+pub fn diagnostic_signals() -> impl Iterator<Item = (SignalKind, u32, usize, f64)> {
+    [(SignalKind::Dc, 88_200, 2, 3.1), (SignalKind::Dc, 192_000, 2, 3.1)]
+        .into_iter()
+        .chain(
+            [1, 2, 3, 4, 6, 8]
+                .into_iter()
+                .map(|channels| (SignalKind::MusicLike, 192_000, channels, 0.45)),
+        )
 }

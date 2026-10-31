@@ -15,6 +15,71 @@ Regenerate them with:
 It needs ffmpeg with the libmp3lame encoder, and uv for the Python scripts.
 When a fixture changes, update the expected values in the C++ tests and in the Rust `test-fixtures` crate.
 
+## Input Identities
+
+`checksums.sha256` records the exact bytes and inventory of the ordinary fixtures and plugin expected outputs.
+Check it from this directory with `sha256sum --check checksums.sha256`.
+The Rust `test-fixtures` tests also check it, and reject missing expectations or added, removed, or changed audio files.
+Downloaded normalization files are checked against their existing Git LFS SHA-256 object IDs by the decoder diagnostic test.
+Their hashes are not duplicated in this manifest.
+
+The Rust in-memory signal corpus has a separate, shared manifest at `../rust/crates/core/tests/golden/input/signals.txt`,
+independent of the measurement snapshots.
+Its 88 cases cover every generated kind and sample rate, the channel-count corpus, and short block boundaries.
+The canonical PCM SHA-256 input is `AudioBatch PCM SHA-256 v1` followed by a NUL byte,
+then the sample rate and channel count as little-endian `u32`, the frame count as little-endian `u64`,
+and every channel's ordered `f32` sample bits in little-endian, channel-major order.
+It preserves signed zero and subnormals, rejects nonfinite samples and unequal planes,
+and does not depend on decoder packet boundaries.
+The initial manifest was captured on Windows.
+Matching macOS verification is still required.
+These hashes prove input identity, not measurement correctness.
+
+From `../rust/`, verify inputs and capture diagnostic reports without changing any expectations:
+
+```shell
+cargo test -p test-fixtures test_identity --lib
+cargo test -p audiobatch-core generated_inputs_have_shared_identities --lib
+AUDIOBATCH_DIAGNOSTICS_DIR=target/numerical-diagnostics/debug cargo test -p audiobatch-core numerical_diagnostics_ --lib -- --ignored
+AUDIOBATCH_DIAGNOSTICS_DIR=target/numerical-diagnostics/release cargo test --release -p audiobatch-core numerical_diagnostics_ --lib -- --ignored
+```
+
+Diagnostic paths are relative to `rust/`, unless an absolute path is supplied.
+Reports separate source bytes, stream properties, decoded PCM, coefficient and filter-state bits,
+per-frame and block energies, gate membership, pre-log energy, and loudness and history bits.
+The decoder report includes whether normalization audio was downloaded and records rejected files and decode notices.
+Lossy decoded-PCM hashes are diagnostic evidence, not new platform-specific pass expectations.
+Compare matching commits, lockfiles, compiler versions, profiles, and CPU settings before locating the first differing stage.
+Repeat with `RUSTFLAGS=""` for the portable CI setting.
+This does not disable runtime SIMD dispatch.
+The Rust CI matrix captures both profiles and uploads provenance and reports before the output tests.
+It does not download normalization audio, so that collection remains an explicit CI coverage gap.
+Rust decoder diagnostics support AAC and ALAC.
+These must not be run through JUCE on Windows.
+
+## Regeneration Provenance
+
+Installing a newer ffmpeg or Python package does not alter committed fixtures used by existing tests.
+Regeneration is an intentional change.
+Ffmpeg's bitexact flags do not guarantee identical bytes across encoder versions and builds.
+`generate.sh` prints the repository revision, modified generator paths, ffmpeg version and build configuration,
+and uv version before writing fixtures.
+Retain this output and record the resolved Python interpreter and package versions
+when regenerating through Python scripts.
+Compare byte hashes and decoded PCM before deciding whether differences are metadata-only or changed audio.
+Do not regenerate fixtures or accept new input hashes merely to make measurement failures pass.
+
+After reviewing an intentional input change, capture only the affected manifest test from `../rust/`:
+
+```shell
+UPDATE_INPUT_IDENTITIES=1 cargo test -p test-fixtures committed_fixture_bytes_have_shared_identities --lib
+UPDATE_INPUT_IDENTITIES=1 cargo test -p audiobatch-core generated_inputs_have_shared_identities --lib
+```
+
+Then rerun the verification commands with the capture variable unset, and verify both platforms.
+Do not enable capture for the whole helper suite, whose missing and changed manifest tests must fail closed.
+`UPDATE_INPUT_IDENTITIES` is separate from `UPDATE_GOLDEN` and never changes measured-output expectations.
+
 ## Tones
 
 Unless the name says otherwise, every tone is one second of a 1 kHz sine with a peak amplitude of 0.5,
