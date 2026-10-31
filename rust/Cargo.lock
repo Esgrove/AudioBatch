@@ -7716,6 +7716,7 @@ dependencies = [
 name = "test-fixtures"
 version = "1.2.0"
 dependencies = [
+ "colored",
  "sha2 0.11.1",
  "tempfile",
 ]
