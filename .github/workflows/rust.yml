@@ -38,6 +38,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  CLICOLOR_FORCE: "1"
   # Override target-cpu=native from rust/.cargo/config.toml to avoid illegal instruction
   # errors on GitHub Actions runners with varying CPU capabilities
   RUSTFLAGS: ""
@@ -95,9 +96,9 @@ jobs:
 
       - name: Check shared input identities
         run: |
-          cargo test -p test-fixtures test_identity --lib
-          cargo test -p audiobatch-core generated_inputs_have_shared_identities --lib
-          cargo test --release -p audiobatch-core generated_inputs_have_shared_identities --lib
+          cargo test -p test-fixtures test_identity --lib -- --show-output
+          cargo test -p audiobatch-core generated_inputs_have_shared_identities --lib -- --show-output
+          cargo test --release -p audiobatch-core generated_inputs_have_shared_identities --lib -- --show-output
 
       - name: Capture debug numerical stages
         env:
@@ -128,7 +129,7 @@ jobs:
           if-no-files-found: error
 
       - name: Run tests
-        run: cargo nextest run --workspace --no-fail-fast
+        run: cargo nextest run --workspace --no-fail-fast --success-output final
 
       - name: Set up uv for packaging tests
         if: runner.os == 'macOS'

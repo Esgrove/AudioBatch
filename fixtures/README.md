@@ -38,11 +38,15 @@ These hashes prove input identity, not measurement correctness.
 From `../rust/`, verify inputs and capture diagnostic reports without changing any expectations:
 
 ```shell
-cargo test -p test-fixtures test_identity --lib
-cargo test -p audiobatch-core generated_inputs_have_shared_identities --lib
+cargo test -p test-fixtures test_identity --lib -- --show-output
+cargo test -p audiobatch-core generated_inputs_have_shared_identities --lib -- --show-output
 AUDIOBATCH_DIAGNOSTICS_DIR=target/numerical-diagnostics/debug cargo test -p audiobatch-core numerical_diagnostics_ --lib -- --ignored
 AUDIOBATCH_DIAGNOSTICS_DIR=target/numerical-diagnostics/release cargo test --release -p audiobatch-core numerical_diagnostics_ --lib -- --ignored
 ```
+
+Identity checks list green matches and totals, or red mismatches with only the changed, missing, or unexpected entries.
+Ordering, line-ending, and final-newline differences still fail the exact text comparison.
+Use `NO_COLOR=1` for plain text, or `CLICOLOR_FORCE=1` to enable colors in captured output.
 
 Diagnostic paths are relative to `rust/`, unless an absolute path is supplied.
 Reports separate source bytes, stream properties, decoded PCM, coefficient and filter-state bits,

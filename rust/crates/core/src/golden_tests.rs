@@ -58,7 +58,7 @@ mod test_golden_signals {
             text.value(&format!("short/noise_48000_{frames}"), pcm_sha256(48_000, &planes));
         }
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/input/signals.txt");
-        check_identity_manifest(&path, text.text()).expect("generated PCM matches the shared input manifest");
+        check_identity_manifest(&path, text.text()).unwrap_or_else(|report| panic!("{report}"));
     }
 
     /// Measures every signal kind in stereo at the rate.

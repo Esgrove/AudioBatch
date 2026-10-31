@@ -1,10 +1,12 @@
 //! Exact identities of fixture bytes and planar PCM, independent of platform byte order.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::fs::{self, File};
 use std::io::{self, Read as _};
 use std::path::Path;
 
+use colored::{Color, ColoredString, Colorize as _};
 use sha2::{Digest as _, Sha256};
 
 /// Compares an input manifest exactly, or captures it when `UPDATE_INPUT_IDENTITIES=1` is set.
@@ -12,22 +14,30 @@ use sha2::{Digest as _, Sha256};
 ///
 /// # Errors
 ///
-/// Returns a missing or mismatching manifest, or a capture failure, with its path and contents.
+/// Returns a missing or mismatching manifest, or a capture failure, with a focused difference report.
 pub fn check_identity_manifest(path: &Path, actual: &str) -> Result<(), String> {
     if std::env::var("UPDATE_INPUT_IDENTITIES").as_deref() == Ok("1") {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
         }
-        return fs::write(path, actual).map_err(|error| format!("{}: {error}", path.display()));
+        fs::write(path, actual).map_err(|error| format!("{}: {error}", path.display()))?;
+        println!("{} {}", report_label("[CAPTURED]", Color::Yellow), path.display());
+        return Ok(());
     }
-    let expected = fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let expected = fs::read_to_string(path).map_err(|error| {
+        let status = if error.kind() == io::ErrorKind::NotFound {
+            "[MISSING]"
+        } else {
+            "[ERROR]"
+        };
+        format!("{} {}\n  {error}", report_label(status, Color::Red), path.display())
+    })?;
+    let report = manifest_report(path, &expected, actual);
     if expected == actual {
+        println!("{report}");
         Ok(())
     } else {
-        Err(format!(
-            "{}: input identity differs\nexpected:\n{expected}\nactual:\n{actual}",
-            path.display()
-        ))
+        Err(report)
     }
 }
 
@@ -83,6 +93,118 @@ pub fn pcm_sha256(sample_rate: u32, planes: &[Vec<f32>]) -> String {
     lower_hex(&hasher.finalize())
 }
 
+fn report_label(text: &str, color: Color) -> ColoredString {
+    if std::env::var_os("NO_COLOR").is_some() {
+        text.normal()
+    } else {
+        text.color(color).bold()
+    }
+}
+
+fn manifest_entries(text: &str) -> Option<BTreeMap<&str, &str>> {
+    let mut entries = BTreeMap::new();
+    for line in text.lines() {
+        let (name, value) = if let Some(entry) = line.split_once(" = ") {
+            entry
+        } else {
+            let (value, name) = line.split_once("  ")?;
+            (name, value)
+        };
+        if entries.insert(name, value).is_some() {
+            return None;
+        }
+    }
+    Some(entries)
+}
+
+fn manifest_report(path: &Path, expected: &str, actual: &str) -> String {
+    let mut report = format!(
+        "{} {}\n",
+        report_label("Input identities:", Color::Cyan),
+        path.display()
+    );
+    let mut matched = 0;
+    let mut failed = 0;
+    if let Some((expected_entries, actual_entries)) = manifest_entries(expected).zip(manifest_entries(actual)) {
+        let names: BTreeSet<_> = expected_entries.keys().chain(actual_entries.keys()).collect();
+        for name in names {
+            match (expected_entries.get(name), actual_entries.get(name)) {
+                (Some(old), Some(new)) if old == new => {
+                    matched += 1;
+                    if expected == actual {
+                        let _ = writeln!(report, "  {} {name}", report_label("[MATCH]", Color::Green));
+                    }
+                }
+                (Some(old), Some(new)) => {
+                    failed += 1;
+                    let _ = writeln!(
+                        report,
+                        "  {} {name}\n    expected: {old}\n    actual:   {new}",
+                        report_label("[MISMATCH]", Color::Red)
+                    );
+                }
+                (Some(old), None) => {
+                    failed += 1;
+                    let _ = writeln!(
+                        report,
+                        "  {} {name}\n    expected: {old}",
+                        report_label("[MISSING]", Color::Red)
+                    );
+                }
+                (None, Some(new)) => {
+                    failed += 1;
+                    let _ = writeln!(
+                        report,
+                        "  {} {name}\n    actual:   {new}",
+                        report_label("[UNEXPECTED]", Color::Red)
+                    );
+                }
+                (None, None) => unreachable!("name comes from a manifest"),
+            }
+        }
+    } else if expected == actual {
+        for line in actual.lines() {
+            matched += 1;
+            let _ = writeln!(report, "  {} {line}", report_label("[MATCH]", Color::Green));
+        }
+    }
+    if expected != actual && failed == 0 {
+        failed = 1;
+        let reason = if expected.lines().eq(actual.lines()) {
+            "LINE ENDINGS / FINAL NEWLINE"
+        } else {
+            "ORDER / FORMATTING / TEXT"
+        };
+        let offset = expected
+            .bytes()
+            .zip(actual.bytes())
+            .position(|(old, new)| old != new)
+            .unwrap_or_else(|| expected.len().min(actual.len()));
+        let _ = writeln!(
+            report,
+            "  {} {reason}; first differing byte: {offset}",
+            report_label("[MISMATCH]", Color::Red)
+        );
+        for (label, text) in [("expected", expected), ("actual", actual)] {
+            let _ = writeln!(
+                report,
+                "    {label}: {} bytes, {} LF, {} CRLF, final newline: {}",
+                text.len(),
+                text.matches('\n').count() - text.matches("\r\n").count(),
+                text.matches("\r\n").count(),
+                text.ends_with('\n')
+            );
+        }
+    }
+    let status = if failed == 0 {
+        report_label("[PASS]", Color::Green)
+    } else {
+        report_label("[FAIL]", Color::Red)
+    };
+    let _ = write!(report, "{status} {matched} matched, {failed} failed");
+    report
+}
+
 fn lower_hex(bytes: &[u8]) -> String {
     let mut text = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -119,7 +241,62 @@ mod test_identity {
             }
         }
         check_identity_manifest(&directory.join("checksums.sha256"), &actual)
-            .expect("committed fixture bytes match the shared manifest");
+            .unwrap_or_else(|report| panic!("{report}"));
+    }
+
+    #[test]
+    fn mismatch_report_names_only_changed_entries() {
+        let report = manifest_report(
+            Path::new("checksums.sha256"),
+            "same-hash  unchanged.wav\nold-hash  broken.wav\n",
+            "same-hash  unchanged.wav\nnew-hash  broken.wav\n",
+        );
+        assert!(report.contains("broken.wav\n    expected: old-hash\n    actual:   new-hash"));
+        assert!(report.contains("1 matched, 1 failed"));
+        assert!(!report.contains("unchanged.wav"));
+    }
+
+    #[test]
+    fn report_distinguishes_missing_and_unexpected_entries() {
+        let report = manifest_report(
+            Path::new("signals.txt"),
+            "missing = 1\nshared = 2\n",
+            "shared = 2\nunexpected = 3\n",
+        );
+        assert!(report.contains("MISSING"));
+        assert!(report.contains("missing\n    expected: 1"));
+        assert!(report.contains("UNEXPECTED"));
+        assert!(report.contains("unexpected\n    actual:   3"));
+        assert!(report.contains("1 matched, 2 failed"));
+    }
+
+    #[test]
+    fn text_only_changes_remain_failures_with_an_explanation() {
+        let expected = "first = 1\nsecond = 2\n";
+        for actual in ["first = 1\r\nsecond = 2\r\n", "first = 1\nsecond = 2"] {
+            let report = manifest_report(Path::new("signals.txt"), expected, actual);
+            assert!(report.contains("LINE ENDINGS / FINAL NEWLINE"));
+            assert!(report.contains("2 matched, 1 failed"));
+        }
+        let reordered = manifest_report(Path::new("signals.txt"), expected, "second = 2\nfirst = 1\n");
+        assert!(reordered.contains("ORDER / FORMATTING / TEXT"));
+        assert!(reordered.contains("2 matched, 1 failed"));
+        let duplicate = manifest_report(Path::new("signals.txt"), expected, "first = 1\nfirst = 1\n");
+        assert!(duplicate.contains("failed"));
+        assert!(!duplicate.contains("0 failed"));
+    }
+
+    #[test]
+    fn matching_report_lists_entries_and_totals() {
+        let text = "first = 1\nsecond = 2\n";
+        let report = manifest_report(Path::new("signals.txt"), text, text);
+        assert!(report.contains("MATCH"));
+        assert!(report.contains("first"));
+        assert!(report.contains("second"));
+        assert!(report.contains("2 matched, 0 failed"));
+        let plain = manifest_report(Path::new("identity.txt"), "expected\n", "expected\n");
+        assert!(plain.contains("expected"));
+        assert!(plain.contains("1 matched, 0 failed"));
     }
 
     #[test]
