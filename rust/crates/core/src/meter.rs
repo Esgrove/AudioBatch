@@ -227,13 +227,21 @@ impl BlockMeter {
         {
             let (mut block_minimum, mut block_maximum) = (0.0_f32, 0.0_f32);
             for &sample in *samples {
-                block_minimum = block_minimum.min(sample);
-                block_maximum = block_maximum.max(sample);
+                if sample < block_minimum {
+                    block_minimum = sample;
+                }
+                if sample > block_maximum {
+                    block_maximum = sample;
+                }
             }
             *block_minima.get_mut(channel).expect("validated channel") = block_minimum;
             *block_maxima.get_mut(channel).expect("validated channel") = block_maximum;
-            *minimum = minimum.min(block_minimum);
-            *maximum = maximum.max(block_maximum);
+            if block_minimum < *minimum {
+                *minimum = block_minimum;
+            }
+            if block_maximum > *maximum {
+                *maximum = block_maximum;
+            }
             if (block_minimum < -1.0 || block_maximum > 1.0)
                 && let Some(flag) = flags.get_mut(channel)
             {
@@ -424,6 +432,23 @@ mod test_edge_signals {
     use crate::record::NEGATIVE_INFINITY_LOUDNESS;
     use crate::signals::{SignalKind, generate};
 
+    /// Finds the zero-bounded sample extrema independently of meter blocks, ignoring NaNs and zero sign.
+    fn reference_extrema(samples: &[f32]) -> (f32, f32) {
+        let minimum = samples
+            .iter()
+            .copied()
+            .filter(|sample| *sample < 0.0)
+            .min_by(f32::total_cmp)
+            .unwrap_or(0.0);
+        let maximum = samples
+            .iter()
+            .copied()
+            .filter(|sample| *sample > 0.0)
+            .max_by(f32::total_cmp)
+            .unwrap_or(0.0);
+        (minimum, maximum)
+    }
+
     #[test]
     fn empty_input_has_no_history_and_no_loudness() {
         let output = BlockMeter::new(2, 44_100, None).expect("meter").finish(0);
@@ -510,9 +535,7 @@ mod test_edge_signals {
         ];
         for frames in [1, 7, 4_799, 4_800, 4_801, 9_603] {
             let plane: Vec<_> = (0..frames).map(|index| samples[index % samples.len()]).collect();
-            let (minimum, maximum) = plane.iter().fold((0.0_f32, 0.0_f32), |(minimum, maximum), &sample| {
-                (minimum.min(sample), maximum.max(sample))
-            });
+            let (minimum, maximum) = reference_extrema(&plane);
             let output = measure_signal(&[plane], 48_000, frames);
             assert_eq!(output.min_samples[0].to_bits(), minimum.to_bits());
             assert_eq!(output.max_samples[0].to_bits(), maximum.to_bits());
@@ -528,12 +551,25 @@ mod test_edge_signals {
             negative_zero_then_nan,
             alternating_zero_blocks,
         ] {
-            let (minimum, maximum) = samples.iter().fold((0.0_f32, 0.0_f32), |(minimum, maximum), &sample| {
-                (minimum.min(sample), maximum.max(sample))
-            });
-            let output = measure_signal(&[samples], 48_000, 4_801);
-            assert_eq!(output.min_samples[0].to_bits(), minimum.to_bits());
-            assert_eq!(output.max_samples[0].to_bits(), maximum.to_bits());
+            let (minimum, maximum) = reference_extrema(&samples);
+            for chunk_frames in [1_000, 4_800, 4_801, 9_603] {
+                let output = measure_signal(std::slice::from_ref(&samples), 48_000, chunk_frames);
+                assert_eq!(output.min_samples[0].to_bits(), minimum.to_bits());
+                assert_eq!(output.max_samples[0].to_bits(), maximum.to_bits());
+            }
+        }
+        for boundary in [4_799, 4_800, 4_801, 9_599, 9_600, 9_601] {
+            let mut samples = vec![-0.0; 9_603];
+            samples[boundary] = -0.75;
+            samples[boundary + 1] = 0.5;
+            let (minimum, maximum) = reference_extrema(&samples);
+            assert_eq!(minimum.to_bits(), (-0.75_f32).to_bits());
+            assert_eq!(maximum.to_bits(), 0.5_f32.to_bits());
+            for chunk_frames in [1_000, 4_800, 4_801, 9_603] {
+                let output = measure_signal(std::slice::from_ref(&samples), 48_000, chunk_frames);
+                assert_eq!(output.min_samples[0].to_bits(), minimum.to_bits());
+                assert_eq!(output.max_samples[0].to_bits(), maximum.to_bits());
+            }
         }
     }
 

@@ -68,6 +68,26 @@ class TestCorpusSafety(unittest.TestCase):
                 self.assertEqual(benchmark.select_corpora("auto"), [generated, normalization])
                 self.assertEqual(benchmark.select_corpora(str(normalization)), [normalization.resolve()])
 
+    def test_windows_excludes_juce_unsupported_codecs(self) -> None:
+        """Unsupported Windows inputs never reach fixture probing or either timed CLI."""
+        with tempfile.TemporaryDirectory() as temporary:
+            corpus = Path(temporary)
+            for name in ("valid.wav", "tone.aac", "tone.m4a", "tone.mp4", "tone.alac", "upper.M4A"):
+                (corpus / name).write_bytes(b"audio")
+            with (
+                patch.object(benchmark.sys, "platform", "win32"),
+                patch.object(benchmark.levels, "fixture_properties", return_value={}) as properties,
+                patch.object(benchmark.levels, "expected_failure", return_value=False),
+            ):
+                sources, excluded = benchmark.discover_sources(corpus)
+            self.assertEqual([source.name for source in sources], ["valid.wav"])
+            properties.assert_called_once_with(corpus / "valid.wav")
+            self.assertEqual(
+                {Path(row["path"]).name for row in excluded},
+                {"tone.aac", "tone.m4a", "tone.mp4", "tone.alac", "upper.M4A"},
+            )
+            self.assertTrue(all("Windows" in row["reason"] for row in excluded))
+
     def test_auto_without_generated_audio_uses_normalization(self) -> None:
         """An absent or empty generated collection is optional, but normalization is always selected."""
         with tempfile.TemporaryDirectory() as temporary:
@@ -177,7 +197,7 @@ class TestPrivatePreparation(unittest.TestCase):
             with patch.object(benchmark, "command_output", return_value="--delete --jobs --refresh"):
                 benchmark.initialize(arguments)
             expected = json.loads((work / "peak-expectations.json").read_text(encoding="utf-8"))
-            self.assertEqual(set(expected), {"0001/tone.aif", "0002/tone.aif"})
+            self.assertEqual(set(expected), {str(Path("0001") / "tone.aif"), str(Path("0002") / "tone.aif")})
             self.assertTrue(all(row["status"] == "analyzed" for row in expected.values()))
             benchmark.prepare(work, "rust")
             (work / "rust/input/0001/tone.aif").write_bytes(b"rewritten")

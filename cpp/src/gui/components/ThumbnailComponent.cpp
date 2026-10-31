@@ -602,12 +602,12 @@ std::vector<OverloadMark> ThumbnailComponent::getOverloadMarks() const
         const auto laneBottom = static_cast<float>(laneBottomPixel);
         std::size_t column = 0;
         while (column < columns.size()) {
-            const auto flags = columns[column];
-            if (flags == 0) {
+            const auto columnFlags = columns[column];
+            if (columnFlags == 0) {
                 ++column;
                 continue;
             }
-            const auto sampleOver = (flags & OverloadHistory::sampleOver) != 0;
+            const auto sampleOver = (columnFlags & OverloadHistory::sampleOver) != 0;
             auto end = column + 1;
             while (end < columns.size() && columns[end] != 0
                    && ((columns[end] & OverloadHistory::sampleOver) != 0) == sampleOver)

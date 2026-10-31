@@ -157,6 +157,7 @@ std::vector<ChainPresetInfo> listPresets(const juce::File& directory)
              directory,
              false,
              utils::format("*{}", presetFileExtension),
+             // NOLINTNEXTLINE(bugprone-signed-bitwise): JUCE's file-search flags use an int-based API.
              juce::File::findFiles | juce::File::ignoreHiddenFiles
          ))
     {

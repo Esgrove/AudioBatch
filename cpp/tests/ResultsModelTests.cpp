@@ -167,8 +167,8 @@ public:
         beginTest("A pre-mutation selection follows multiple conversions and an existing output row");
         {
             ResultsModel results;
-            for (const auto* name : {"a.wav", "a.aif", "b.wav", "c.wav"}) {
-                results.merge(makeRecord(name));
+            for (const auto* fileName : {"a.wav", "a.aif", "b.wav", "c.wav"}) {
+                results.merge(makeRecord(fileName));
             }
             const juce::StringArray selected {
                 results[0].fullPath, results[1].fullPath, results[2].fullPath, results[3].fullPath
@@ -187,7 +187,10 @@ public:
                     {makeRecord("b.wav").fullPath, makeRecord("b.aif").fullPath},
                 }
             );
-            expectEquals(mapped.joinIntoString(", "), juce::String("/music/a.aif, /music/b.aif, /music/c.wav"));
+            const juce::StringArray expected {
+                makeRecord("a.aif").fullPath, makeRecord("b.aif").fullPath, makeRecord("c.wav").fullPath
+            };
+            expectEquals(mapped.joinIntoString(", "), expected.joinIntoString(", "));
             for (const auto& path : mapped) {
                 expect(results.findRow(path).has_value());
             }
