@@ -355,6 +355,20 @@ AUDIOBATCH_GUI_SNAPSHOT=/tmp/gui.png AUDIOBATCH_GUI_SNAPSHOT_ACTIONS=audiobatch:
 cargo nextest run
 ```
 
+The core golden tests compare exact floating point bits, histories, waveforms, and normalized samples.
+Windows x86-64 uses snapshots in `crates/core/tests/golden/windows-x86_64/` for outputs affected by platform math,
+and falls back to the shared snapshots for all other outputs.
+Generated signal identities and source fixture checksums are shared across platforms.
+Only regenerate snapshots after validating an intentional numerical change:
+
+```shell
+RUSTFLAGS="" UPDATE_GOLDEN=1 cargo test -p audiobatch-core --lib golden_tests
+```
+
+On Windows this writes only differing overrides, preserves the shared snapshots,
+and removes an override when its output becomes identical to the shared snapshot.
+Both debug and release tests must pass without `UPDATE_GOLDEN`.
+
 The plugin tests also load `AudioBatch Test MS`, the JUCE VST3 in `../test-plugin/` that the C++ tests use,
 and check its output against the expected files in `../fixtures/plugin_expected/`.
 Build it once with CMake and the JUCE submodule:

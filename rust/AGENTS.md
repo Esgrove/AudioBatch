@@ -187,6 +187,10 @@ Keep plugin code out of them too, so the preview engine knows plugins only throu
 - Goldens are our own regression snapshots, not immutable reference output.
   A validated numerical change may regenerate the affected snapshots.
   Keep differential, displayed-value, chunk-invariance, normalization, and parity checks as independent validation.
+  Windows x86-64 selects exact-bit overrides in `crates/core/tests/golden/windows-x86_64/`,
+  falling back to shared snapshots for outputs without an override.
+  `UPDATE_GOLDEN=1` on Windows writes only differing overrides and never rewrites the shared snapshots.
+  Generated input identities and fixture checksums remain shared across platforms.
 - K weighting uses a combined fourth order `f64` filter with fixed state for 64 channels,
   ebur128's default channel map, and dual-mono weighting for mono sources.
   Gating sums a fixed ring of 30 weighted 100 ms energies directly to avoid running-sum drift.
