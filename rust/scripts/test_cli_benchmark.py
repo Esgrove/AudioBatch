@@ -478,9 +478,10 @@ class TestReleaseSelection(unittest.TestCase):
             root = Path(temporary).resolve()
             rust = root / "rust"
             rust.mkdir()
-            release = root / "cpp/cmake-build-mac-release/AudioBatchCli_artefacts/Release/audiobatch"
-            debug = root / "cpp/cmake-build-mac-debug/AudioBatchCli_artefacts/Debug/audiobatch"
-            copied = root / "cpp/audiobatch"
+            executable = "audiobatch.exe" if os.name == "nt" else "audiobatch"
+            release = root / "cpp/cmake-build-mac-release/AudioBatchCli_artefacts/Release" / executable
+            debug = root / "cpp/cmake-build-mac-debug/AudioBatchCli_artefacts/Debug" / executable
+            copied = root / "cpp" / executable
             for binary in (release, debug, copied):
                 binary.parent.mkdir(parents=True, exist_ok=True)
                 binary.touch(mode=0o755)
@@ -527,6 +528,26 @@ class TestReleaseSelection(unittest.TestCase):
             )
             self.assertNotEqual(selected.returncode, 0)
             self.assertIn("release C++ CLI is required", selected.stderr)
+
+    def test_unchanging_parent_terminates_build_type_search(self) -> None:
+        """A native Windows dirname can return the drive root unchanged instead of a POSIX root."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            binary = root / "audiobatch"
+            binary.touch(mode=0o755)
+            script = (
+                'source "$1"; cd "$3"; ROOT=$(pwd -P); '
+                'dirname() { printf "%s\\n" "$ROOT"; }; '
+                'unset AUDIOBATCH_CPP_BUILD_TYPE; cpp_cli_build_type "$2"'
+            )
+            selected = subprocess.run(
+                ["bash", "-c", script, "test", str(benchmark.RUST_DIRECTORY / "common.sh"), str(binary), str(root)],
+                text=True,
+                capture_output=True,
+                check=True,
+                timeout=5,
+            )
+            self.assertEqual(selected.stdout.strip(), "unknown")
 
 
 if __name__ == "__main__":

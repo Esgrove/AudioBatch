@@ -59,7 +59,12 @@ cpp_cli_build_type() {
             fi
             break
         fi
-        directory=$(dirname "$directory")
+        local parent
+        parent=$(dirname "$directory")
+        if [ "$parent" = "$directory" ]; then
+            break
+        fi
+        directory="$parent"
     done
     case "$binary" in
         */cmake-build-*-debug/*)

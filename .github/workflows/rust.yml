@@ -82,6 +82,8 @@ jobs:
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
 
       - name: Install nextest
         uses: taiki-e/install-action@nextest
@@ -91,43 +93,20 @@ jobs:
         with:
           workspaces: rust
 
-      - name: Build
-        run: cargo build --workspace --all-targets
+      - name: Check formatting
+        if: runner.os == 'macOS'
+        run: cargo fmt --all --check
 
-      - name: Check shared input identities
-        run: |
-          cargo test -p test-fixtures test_identity --lib -- --show-output
-          cargo test -p audiobatch-core generated_inputs_have_shared_identities --lib -- --show-output
-          cargo test --release -p audiobatch-core generated_inputs_have_shared_identities --lib -- --show-output
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Capture debug numerical stages
-        env:
-          AUDIOBATCH_DIAGNOSTICS_DIR: target/numerical-diagnostics/debug
-        run: cargo test -p audiobatch-core numerical_diagnostics_ --lib -- --ignored
+      # The snapshot feature is off in normal builds, so it needs its own compile check.
+      - name: Build GUI with the snapshot feature
+        if: runner.os == 'macOS'
+        run: cargo build -p audiobatch-gui --features snapshot
 
-      - name: Capture optimized numerical stages
-        env:
-          AUDIOBATCH_DIAGNOSTICS_DIR: target/numerical-diagnostics/release
-        run: cargo test --release -p audiobatch-core numerical_diagnostics_ --lib -- --ignored
-
-      - name: Save numerical diagnostic provenance
-        if: always()
-        run: |
-          mkdir -p target/numerical-diagnostics
-          git rev-parse HEAD > target/numerical-diagnostics/revision.txt
-          cp Cargo.lock target/numerical-diagnostics/Cargo.lock
-          sha256sum Cargo.lock > target/numerical-diagnostics/Cargo.lock.sha256
-          cp crates/core/tests/golden/input/signals.txt target/numerical-diagnostics/input-signals.txt
-          cp ../fixtures/checksums.sha256 target/numerical-diagnostics/fixture-checksums.sha256
-
-      - name: Upload numerical diagnostics
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: numerical-diagnostics-${{ matrix.os }}
-          path: rust/target/numerical-diagnostics
-          if-no-files-found: error
-
+      # Includes shared fixture checksums, generated input identities, and exact platform goldens.
+      # Nextest builds the test targets, avoiding a separate all-targets build.
       - name: Run tests
         run: cargo nextest run --workspace --no-fail-fast --success-output final
 
@@ -139,24 +118,7 @@ jobs:
         if: runner.os == 'macOS'
         run: uv run --script scripts/test_distribution_licenses.py
 
-      # Optimized SIMD kernels must preserve the exact golden output on both hardware backends.
-      - name: Log release test hardware and compiler
-        run: |
-          rustc --version --verbose
-          rustc --print cfg
-          echo "Portable RUSTFLAGS: '$RUSTFLAGS'"
-          echo "Runner: $RUNNER_OS $RUNNER_ARCH"
-          case "$RUNNER_ARCH" in
-            ARM64) echo "True peak backend: NEON" ;;
-            X64) echo "True peak backend: AVX2 (runtime checked)" ;;
-          esac
-          if [ "$RUNNER_OS" = "macOS" ]; then
-            sysctl -n machdep.cpu.brand_string
-            sysctl -n hw.optional.neon || true
-          else
-            powershell.exe -NoProfile -Command 'Get-CimInstance Win32_Processor | Select-Object Name, Architecture, NumberOfCores | Format-List'
-          fi
-
+      # Each backend must preserve its platform baseline in optimized builds too.
       - name: Run optimized core tests
         run: cargo nextest run --release -p audiobatch-core --no-fail-fast
 
@@ -175,40 +137,6 @@ jobs:
             echo "Expected exit code 2 for a broken file, got $EXIT_CODE"
             exit 1
           fi
-
-  lint:
-    # Clippy runs on both platforms, since the VST3 host, the editor windows, and the GUI have platform code.
-    strategy:
-      matrix:
-        os: [macos-latest, windows-2025-vs2026]
-      fail-fast: false
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Set up Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy,rustfmt
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust
-
-      - name: Check formatting
-        if: runner.os == 'macOS'
-        run: cargo fmt --all --check
-
-      # Exit non-zero if there are any warnings
-      - name: Lint
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      # The snapshot feature renders the GUI to a PNG for checking layouts, and is off in normal builds.
-      - name: Build GUI with the snapshot feature
-        if: runner.os == 'macOS'
-        run: cargo build -p audiobatch-gui --features snapshot
 
   coverage:
     runs-on: macos-latest
