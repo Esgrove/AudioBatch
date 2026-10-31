@@ -4,6 +4,8 @@
 //! These tests record every value with its exact bits in a small text file per input in `tests/golden/`,
 //! as `f64::to_bits` hex next to the decimal value for reading,
 //! and fail when any value differs, printing the old and the new line.
+//! Windows x86-64 uses overrides in `tests/golden/windows-x86_64/` only where platform math differs.
+//! All other outputs use the shared snapshots, and input identities remain shared on every platform.
 //! Running the tests with `UPDATE_GOLDEN=1` rewrites the files.
 //! Only regenerate them in a commit that explains why the output changed, never inside an optimization.
 //! The inputs are the committed fixtures, the Git LFS fixtures in `fixtures/normalization` when present,
@@ -12,6 +14,7 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::hash::Hasher as _;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -22,6 +25,13 @@ use crate::signals::SignalKind;
 
 /// Environment variable that rewrites the golden files instead of comparing against them.
 const UPDATE_VARIABLE: &str = "UPDATE_GOLDEN";
+
+/// Only targets with independently validated numerical baselines may select overrides.
+const PLATFORM_DIRECTORY: Option<&str> = if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
+    Some("windows-x86_64")
+} else {
+    None
+};
 
 /// Builds the text of one golden file, a line per value.
 #[derive(Default)]
@@ -117,15 +127,13 @@ impl GoldenText {
     /// Compares the text against the golden file of the name, or rewrites it when `UPDATE_GOLDEN` is set.
     /// Returns a description of the differences, or `None` when the file matches.
     pub fn check(&self, name: &str) -> Option<String> {
-        let path = golden_path(name);
+        let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
         if std::env::var_os(UPDATE_VARIABLE).is_some() {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).expect("creates the golden directory");
-            }
-            fs::write(&path, &self.text).expect("writes the golden file");
+            write_golden(&directory, name, PLATFORM_DIRECTORY, &self.text);
             return None;
         }
-        let Ok(expected) = fs::read_to_string(&path) else {
+        let path = golden_path(&directory, name, PLATFORM_DIRECTORY);
+        let Some(expected) = read_golden(&path) else {
             return Some(format!(
                 "{name}: no golden file at {}, run with {UPDATE_VARIABLE}=1 to create it",
                 path.display()
@@ -162,11 +170,47 @@ pub fn hash(bytes: &[u8]) -> u64 {
     hasher.finish()
 }
 
-/// Returns the path of the golden file of the name.
-fn golden_path(name: &str) -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/golden")
-        .join(format!("{name}.txt"))
+/// Selects an existing platform override, otherwise the shared snapshot.
+fn golden_path(directory: &Path, name: &str, platform: Option<&str>) -> PathBuf {
+    if let Some(platform) = platform {
+        let path = directory.join(platform).join(format!("{name}.txt"));
+        if path.try_exists().expect("checks for a platform golden file") {
+            return path;
+        }
+    }
+    directory.join(format!("{name}.txt"))
+}
+
+/// Reads a snapshot, treating only a missing file as an absent baseline.
+fn read_golden(path: &Path) -> Option<String> {
+    match fs::read_to_string(path) {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == ErrorKind::NotFound => None,
+        Err(error) => panic!("cannot read golden file {}: {error}", path.display()),
+    }
+}
+
+/// Updates only the current platform, omitting or removing overrides identical to the shared snapshot.
+fn write_golden(directory: &Path, name: &str, platform: Option<&str>, text: &str) {
+    let shared = directory.join(format!("{name}.txt"));
+    let path = if let Some(platform) = platform {
+        let path = directory.join(platform).join(format!("{name}.txt"));
+        if read_golden(&shared).is_some_and(|expected| expected == text) {
+            match fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(error) if error.kind() == ErrorKind::NotFound => {}
+                Err(error) => panic!("cannot remove redundant golden file {}: {error}", path.display()),
+            }
+            return;
+        }
+        path
+    } else {
+        shared
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).expect("creates the golden directory");
+    }
+    fs::write(&path, text).expect("writes the golden file");
 }
 
 /// Describes the lines that differ between the expected and the actual text, or returns `None` when they match.
@@ -253,4 +297,64 @@ pub fn diagnostic_signals() -> impl Iterator<Item = (SignalKind, u32, usize, f64
                 .into_iter()
                 .map(|channels| (SignalKind::MusicLike, 192_000, channels, 0.45)),
         )
+}
+
+#[cfg(test)]
+mod test_platform_goldens {
+    use std::fs;
+
+    use super::{difference, golden_path, read_golden, write_golden};
+
+    #[test]
+    fn missing_override_uses_shared_snapshot() {
+        let directory = tempfile::tempdir().expect("creates the golden directory");
+        write_golden(directory.path(), "signal/dc", None, "shared\n");
+        let path = golden_path(directory.path(), "signal/dc", Some("windows-x86_64"));
+        assert_eq!(path, directory.path().join("signal/dc.txt"));
+        assert_eq!(read_golden(&path).as_deref(), Some("shared\n"));
+    }
+
+    #[test]
+    fn override_is_selected_only_for_its_platform() {
+        let directory = tempfile::tempdir().expect("creates the golden directory");
+        write_golden(directory.path(), "signal/dc", None, "shared\n");
+        write_golden(directory.path(), "signal/dc", Some("windows-x86_64"), "windows\n");
+        let windows = golden_path(directory.path(), "signal/dc", Some("windows-x86_64"));
+        let shared = golden_path(directory.path(), "signal/dc", None);
+        assert_eq!(read_golden(&windows).as_deref(), Some("windows\n"));
+        assert_eq!(read_golden(&shared).as_deref(), Some("shared\n"));
+    }
+
+    #[test]
+    fn identical_outputs_do_not_create_overrides() {
+        let directory = tempfile::tempdir().expect("creates the golden directory");
+        write_golden(directory.path(), "signal/dc", None, "shared\n");
+        write_golden(directory.path(), "signal/dc", Some("windows-x86_64"), "shared\n");
+        assert!(!directory.path().join("windows-x86_64").exists());
+    }
+
+    #[test]
+    fn converged_outputs_remove_only_the_override() {
+        let directory = tempfile::tempdir().expect("creates the golden directory");
+        write_golden(directory.path(), "signal/dc", None, "shared\n");
+        write_golden(directory.path(), "signal/dc", Some("windows-x86_64"), "windows\n");
+        write_golden(directory.path(), "signal/dc", Some("windows-x86_64"), "shared\n");
+        assert!(!directory.path().join("windows-x86_64/signal/dc.txt").exists());
+        assert_eq!(
+            fs::read_to_string(directory.path().join("signal/dc.txt")).expect("reads the shared snapshot"),
+            "shared\n"
+        );
+    }
+
+    #[test]
+    fn last_bit_differences_still_fail() {
+        assert!(
+            difference(
+                "signal/dc",
+                "level = 1.0 [3ff0000000000000]\n",
+                "level = 1.0000000000000002 [3ff0000000000001]\n",
+            )
+            .is_some()
+        );
+    }
 }
