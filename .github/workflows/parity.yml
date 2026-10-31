@@ -47,8 +47,23 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
+      - name: List LFS objects
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-objects
+
+      - name: Restore LFS objects
+        uses: actions/cache@v6
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-objects') }}
+
+      - name: Pull LFS files
+        run: git lfs pull
+
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Install nextest
+        uses: taiki-e/install-action@nextest
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
@@ -64,17 +79,14 @@ jobs:
 
       - name: Run native filesystem and normalization corpus
         working-directory: rust
+        env:
+          AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES: "1"
         run: |
           for profile in debug release; do
             options=()
             if [ "$profile" = release ]; then options=(--release); fi
-            cargo test "${options[@]}" -p audiobatch-core output_file:: -- --nocapture
-            cargo test "${options[@]}" -p audiobatch-core atomic_write:: -- --nocapture
-            cargo test "${options[@]}" -p audiobatch-core normalize:: -- --nocapture
-            cargo test "${options[@]}" -p audiobatch-core normalize_coordinator:: -- --nocapture
-            cargo test "${options[@]}" -p audiobatch-core metadata:: -- --nocapture
-            cargo test "${options[@]}" -p audiobatch-core golden_tests::test_golden_normalization:: -- --nocapture
-            cargo test "${options[@]}" -p audiobatch-cli run::test_run_analysis::normalize_ -- --nocapture
+            cargo nextest run "${options[@]}" -p audiobatch-core -p audiobatch-cli --no-fail-fast \
+              -E 'test(/output_file::|atomic_write::|normalize::|normalize_coordinator::|metadata::|golden_tests::/) | (package(audiobatch-cli) & test(run::test_run_analysis::normalize_))'
           done
 
   parity:
