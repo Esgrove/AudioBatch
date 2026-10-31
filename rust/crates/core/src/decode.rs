@@ -731,9 +731,82 @@ mod test_decode_failure_tracker {
 mod test_audio_file_decoder {
     use std::error::Error as _;
     use std::num::NonZero;
+    use std::process::Command;
+
+    use test_fixtures::{file_sha256, pcm_sha256};
 
     use super::*;
+    use crate::golden::{GoldenText, write_diagnostic_report};
     use crate::test_helpers::scrambled_fixture_copy;
+
+    #[test]
+    #[ignore = "writes cross-platform PCM diagnostics; run explicitly with --ignored"]
+    fn numerical_diagnostics_decoded_fixtures() {
+        let mut text = GoldenText::default();
+        let normalization = test_fixtures::normalization_files();
+        text.value("normalization.available", !normalization.is_empty());
+        let lfs = if normalization.is_empty() {
+            None
+        } else {
+            let output = Command::new("git")
+                .args(["lfs", "ls-files", "--json"])
+                .current_dir(test_fixtures::fixtures_directory().parent().expect("repository root"))
+                .output()
+                .expect("reads Git LFS identities");
+            assert!(output.status.success(), "Git LFS identity command failed");
+            Some(serde_json::from_slice::<serde_json::Value>(&output.stdout).expect("Git LFS identities are JSON"))
+        };
+        for (collection, paths) in [
+            ("fixtures", test_fixtures::fixture_files()),
+            ("normalization", normalization),
+        ] {
+            text.value(&format!("{collection}.count"), paths.len());
+            for path in paths {
+                let name = path.file_name().expect("fixture name").to_string_lossy();
+                let key = format!("{collection}/{name}");
+                let source_hash = file_sha256(&path).expect("hashes source fixture");
+                text.value(&format!("{key}.source_sha256"), &source_hash);
+                if collection == "normalization" {
+                    let lfs_name = format!("fixtures/normalization/{name}");
+                    let expected = lfs
+                        .as_ref()
+                        .and_then(|value| value.get("files"))
+                        .and_then(serde_json::Value::as_array)
+                        .expect("Git LFS file list")
+                        .iter()
+                        .find(|entry| entry.get("name").and_then(serde_json::Value::as_str) == Some(&lfs_name))
+                        .and_then(|entry| entry.get("oid"))
+                        .and_then(serde_json::Value::as_str)
+                        .expect("normalization fixture has a Git LFS identity");
+                    assert_eq!(source_hash, expected, "{key}: source differs from its Git LFS object");
+                }
+                let mut decoder = match AudioFileDecoder::open(&path) {
+                    Ok(decoder) => decoder,
+                    Err(error) => {
+                        text.value(&format!("{key}.open_error"), error.analysis_kind());
+                        continue;
+                    }
+                };
+                let info = decoder.info().clone();
+                text.value(&format!("{key}.sample_rate"), info.sample_rate);
+                text.value(&format!("{key}.channels"), info.channels);
+                text.value(&format!("{key}.expected_frames"), info.expected_frames);
+                let mut planes = vec![Vec::new(); info.channels as usize];
+                while let Some(chunk) = decoder.next_chunk().expect("decodes fixture for PCM identity") {
+                    assert_eq!(chunk.len(), planes.len());
+                    for (plane, packet) in planes.iter_mut().zip(chunk) {
+                        plane.extend_from_slice(packet);
+                    }
+                }
+                let frames = planes.first().expect("decoded channels").len();
+                assert_eq!(frames as u64, decoder.position(), "{key}: decoder position");
+                text.value(&format!("{key}.decoded_frames"), frames);
+                text.value(&format!("{key}.pcm_sha256"), pcm_sha256(info.sample_rate, &planes));
+                text.value(&format!("{key}.notice"), decoder.failures().notice());
+            }
+        }
+        write_diagnostic_report("decoded-fixtures", &text);
+    }
 
     #[test]
     fn decoder_errors_preserve_sources_and_cache_classification() {

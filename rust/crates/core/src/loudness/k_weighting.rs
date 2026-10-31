@@ -322,6 +322,57 @@ mod test_coefficients {
 #[cfg(test)]
 mod test_filter {
     use super::{Coefficients, KWeighting, filter_coefficients};
+    use crate::golden::{GoldenText, diagnostic_signals, write_diagnostic_report};
+    use crate::signals::generate;
+
+    #[test]
+    #[ignore = "writes cross-platform filter diagnostics; run explicitly with --ignored"]
+    fn numerical_diagnostics_k_weighting() {
+        let mut text = GoldenText::default();
+        for (kind, rate, channels, seconds) in diagnostic_signals() {
+            let key = format!("{}_{rate}_{channels}ch", kind.name());
+            let planes = generate(kind, rate, channels, (f64::from(rate) * seconds) as usize);
+            text.value(&format!("{key}.pcm_sha256"), test_fixtures::pcm_sha256(rate, &planes));
+            let mut filter = KWeighting::new(channels, rate);
+            for (index, (&numerator, &denominator)) in filter
+                .coefficients
+                .numerator
+                .iter()
+                .zip(&filter.coefficients.denominator)
+                .enumerate()
+            {
+                text.float(&format!("{key}.numerator[{index}]"), numerator);
+                text.float(&format!("{key}.denominator[{index}]"), denominator);
+            }
+            let block_size = (rate as usize + 5) / 10;
+            let frames = planes.first().expect("generated channels").len();
+            for (block, start) in (0..frames).step_by(block_size).enumerate() {
+                let end = (start + block_size).min(frames);
+                let slices: Vec<_> = planes
+                    .iter()
+                    .map(|plane| plane.get(start..end).expect("aligned planes"))
+                    .collect();
+                let mut frame_energy = vec![0.0; end - start];
+                let energy = filter.energy_with_frames(&slices, &mut frame_energy);
+                assert!(energy.is_finite() && frame_energy.iter().all(|energy| energy.is_finite()));
+                text.float(&format!("{key}.block[{block}].energy"), energy);
+                for (chunk, energies) in frame_energy.chunks(8).enumerate() {
+                    text.value(
+                        &format!("{key}.block[{block}].frame_bits[{}]", chunk * 8),
+                        energies.iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+                    );
+                }
+                for (channel, state) in filter.state.iter().take(channels).enumerate() {
+                    text.float(&format!("{key}.weight[{channel}]"), filter.weights[channel]);
+                    text.value(
+                        &format!("{key}.block[{block}].state_bits[{channel}]"),
+                        state.map(f64::to_bits),
+                    );
+                }
+            }
+        }
+        write_diagnostic_report("k-weighting", &text);
+    }
 
     /// Generates scalar reference output with four explicit delay variables.
     #[expect(

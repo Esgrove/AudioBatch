@@ -1,7 +1,7 @@
 //! Deterministic in-memory test signals for the measurement tests and benchmarks.
 //!
 //! Every generator returns planar samples, one vector per channel, and depends only on its arguments,
-//! so a golden value recorded from a signal stays valid on every machine.
+//! with shared SHA-256 input identities checked independently of the measurement snapshots.
 //! The noise comes from a seeded xorshift generator instead of a random crate for the same reason,
 //! and the sine is a polynomial of plain multiplications and additions,
 //! since the platform math library may round `sin` and `exp` differently in the last bit.

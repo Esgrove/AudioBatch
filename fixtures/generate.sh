@@ -11,6 +11,12 @@ set -eo pipefail
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$DIR"
 
+printf 'Fixture generator revision: '
+git rev-parse HEAD
+git status --short -- generate.sh serato_overview.py
+ffmpeg -version
+uv --version
+
 TONE="0.5*sin(2*PI*1000*t)"
 
 # Renders the tone with the given sample rate and channel count, followed by the output options and file name.

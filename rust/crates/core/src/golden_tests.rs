@@ -4,6 +4,10 @@
 
 #[cfg(test)]
 mod test_golden_signals {
+    use std::path::Path;
+
+    use test_fixtures::{check_identity_manifest, pcm_sha256};
+
     use crate::golden::{GoldenText, assert_no_differences, measure_signal};
     use crate::signals::{SignalKind, generate};
 
@@ -18,6 +22,44 @@ mod test_golden_signals {
 
     /// Frames per chunk, like a decoder packet, and not a multiple of the block size.
     const CHUNK_FRAMES: usize = 1_000;
+
+    #[test]
+    fn generated_inputs_have_shared_identities() {
+        let mut text = GoldenText::default();
+        text.value("pcm.encoding", 1);
+        for rate in [8_000, 22_050, 44_100, 48_000, 88_200, 96_000, 176_400, 192_000] {
+            for kind in SignalKind::ALL {
+                let frames = (f64::from(rate) * SECONDS) as usize;
+                let planes = generate(kind, rate, 2, frames);
+                assert!(planes.iter().flatten().all(|sample| sample.is_finite()));
+                if kind == SignalKind::Dc {
+                    assert!(
+                        planes
+                            .iter()
+                            .flatten()
+                            .all(|sample| sample.to_bits() == 0.25_f32.to_bits())
+                    );
+                }
+                text.value(&format!("signal/{}_{rate}_2ch", kind.name()), pcm_sha256(rate, &planes));
+            }
+        }
+        for rate in [44_100, 96_000, 192_000] {
+            for channels in CHANNELS {
+                let frames = (f64::from(rate) * CHANNEL_SECONDS) as usize;
+                let planes = generate(SignalKind::MusicLike, rate, channels, frames);
+                text.value(
+                    &format!("channels/music_{rate}_{channels}ch"),
+                    pcm_sha256(rate, &planes),
+                );
+            }
+        }
+        for frames in [1, 4_799, 4_800, 4_801, 19_199, 19_200] {
+            let planes = generate(SignalKind::Noise, 48_000, 2, frames);
+            text.value(&format!("short/noise_48000_{frames}"), pcm_sha256(48_000, &planes));
+        }
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/input/signals.txt");
+        check_identity_manifest(&path, text.text()).expect("generated PCM matches the shared input manifest");
+    }
 
     /// Measures every signal kind in stereo at the rate.
     fn every_signal_in_stereo(rate: u32) {

@@ -37,6 +37,7 @@ criterion.workspace = true
 ebur128.workspace = true
 fearless_simd = { workspace = true, features = ["force_support_fallback"] }
 log.workspace = true
+serde_json.workspace = true
 test-fixtures.workspace = true
 
 [[bench]]

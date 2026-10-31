@@ -645,6 +645,7 @@ dependencies = [
  "rayon",
  "rusqlite",
  "serato-tags",
+ "serde_json",
  "symphonia",
  "symphonia-common",
  "tempfile",
@@ -7715,6 +7716,7 @@ dependencies = [
 name = "test-fixtures"
 version = "1.2.0"
 dependencies = [
+ "sha2 0.11.1",
  "tempfile",
 ]
 
