@@ -7,3 +7,6 @@ fixtures/normalization/*.m4a filter=lfs diff=lfs merge=lfs -text
 fixtures/normalization/*.mp3 filter=lfs diff=lfs merge=lfs -text
 fixtures/normalization/*.ogg filter=lfs diff=lfs merge=lfs -text
 fixtures/normalization/*.wav filter=lfs diff=lfs merge=lfs -text
+
+rust/crates/core/tests/golden/**/*.txt text eol=lf
+fixtures/checksums.sha256 text eol=lf
