@@ -6,8 +6,10 @@
 #include "utils/StringFormat.h"
 #include <unordered_map>
 
+#include <cmath>
 #include <cstddef>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <mpegfile.h>
 #include <mpegheader.h>
@@ -22,6 +24,41 @@ namespace
 /// Samples of layer III synthesis delay that both JUCE's MP3 reader and Core Audio leave out at the start of a file.
 constexpr juce::int64 mp3DecoderDelaySamples {529};
 }  // namespace
+
+/// Applies one float gain multiplication and matches JUCE's float-to-integer writer conversion.
+/// The observed samples may replace the input in place and exactly describe decoded AIFF PCM.
+std::expected<void, juce::String> quantizeNormalizedSamples(
+    const std::span<const float> input,
+    const std::span<int> pcm,
+    const std::span<float> observed,
+    const float gain,
+    const int bitsPerSample
+)
+{
+    if (pcm.size() != input.size() || observed.size() != input.size() || bitsPerSample <= 0 || bitsPerSample > 32
+        || bitsPerSample % 8 != 0)
+    {
+        return std::unexpected(juce::String("Invalid normalization PCM buffer or bit depth"));
+    }
+    for (std::size_t index = 0; index < input.size(); ++index) {
+        const auto gained = input[index] * gain;
+        if (!std::isfinite(gained)) {
+            return std::unexpected(juce::String("Normalization produced invalid samples (infinity or NaN)"));
+        }
+        const auto sample = static_cast<double>(gained);
+        int quantized = 0;
+        if (sample <= -1.0) {
+            quantized = std::numeric_limits<int>::min();
+        } else if (sample >= 1.0) {
+            quantized = std::numeric_limits<int>::max();
+        } else {
+            quantized = juce::roundToInt(static_cast<double>(std::numeric_limits<int>::max()) * sample);
+        }
+        pcm[index] = quantized;
+        observed[index] = pcmSampleToFloat(quantized, bitsPerSample);
+    }
+    return {};
+}
 
 /// Registers the formats of juce::AudioFormatManager::registerBasicFormats,
 /// but with JUCE's MP3 reader ahead of Core Audio, since the manager opens a file with the first format that reads it.

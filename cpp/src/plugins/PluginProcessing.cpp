@@ -13,12 +13,13 @@
 /// so the end of the audible tail is known before the final 16-bit AIFF file is written.
 /// Output is truncated without additional dither or gain adjustment. Plugins handle dithering and output level.
 /// The AIFF file is validated, given the original file's metadata,
-/// and then moved into place, with the processed file re-analyzed for the result record.
+/// and then moved into place, with measurements gathered from the final PCM supplying the result record.
 
 #include "plugins/PluginProcessing.h"
 
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/AudioMeasurement.h"
 #include "analysis/DecodeFailureTracker.h"
 #include "metadata/AudioMetadata.h"
 #include "normalization/AudioNormalization.h"
@@ -60,8 +61,8 @@ constexpr auto cancelledMessage {"Processing was cancelled"};
 constexpr float sourceAnalysisProgressShare {0.1f};
 /// Progress at which rendering through the chain ends and writing the final output begins.
 constexpr float renderProgressEnd {0.7f};
-/// Progress at which writing the final output ends and analyzing the output begins.
-constexpr float writeProgressEnd {0.85f};
+/// Progress reserved for the final PCM write and metering before metadata validation and commit.
+constexpr float writeProgressEnd {0.95f};
 
 /// Most channels a source can have, since processing, like analysis, targets mono and stereo files.
 /// A file with more channels is refused, because the output would drop the extra channels
@@ -82,6 +83,8 @@ struct RenderSummary {
 struct WriteSummary {
     /// True when the final PCM conversion saturated at least one sample.
     bool clipped {false};
+    /// Measurements of the retained, quantized output.
+    AudioAnalysisRecord measurements;
 };
 
 /// The gain applied before the first plugin, and why the requested normalization was skipped, if it was.
@@ -167,14 +170,9 @@ bool readInputBlock(
     const auto readSucceeded
         = utils::readFloatSamples(reader, utils::writePointers(readBuffer), samplePosition, samplesToRead);
 
+    const auto gain = juce::approximatelyEqual(inputGain, 1.0f) ? 1.0f : inputGain;
     for (int channel = 0; channel < channelCount; ++channel) {
-        buffer.copyFrom(channel, 0, readBuffer, channel, 0, samplesToRead);
-    }
-
-    if (!juce::approximatelyEqual(inputGain, 1.0f)) {
-        for (int channel = 0; channel < channelCount; ++channel) {
-            buffer.applyGain(channel, 0, samplesToRead, inputGain);
-        }
+        buffer.copyFrom(channel, 0, readBuffer.getReadPointer(channel), samplesToRead, gain);
     }
 
     return readSucceeded;
@@ -320,7 +318,7 @@ juce::int64 getFinalLength(const RenderSummary& summary, const juce::int64 sourc
 /// Low bits are discarded without dither and out-of-range samples saturate without changing gain.
 /// Explicit quantization avoids the float writer's full-scale scaling changing exact 16-bit sample values.
 /// The written fraction is reported to onProgress after each block.
-/// Returns whether a sample was saturated during this final PCM conversion, or an error message.
+/// Returns output measurements and whether a sample saturated during final PCM conversion, or an error message.
 std::expected<WriteSummary, juce::String> writeFinalOutput(
     juce::AudioFormatReader& renderedReader,
     juce::AudioFormatWriter& writer,
@@ -336,6 +334,10 @@ std::expected<WriteSummary, juce::String> writeFinalOutput(
     for (int channel = 0; channel < block.getNumChannels(); ++channel) {
         outputChannels[static_cast<std::size_t>(channel)] = quantizedBlock.getReadPointer(channel);
     }
+    AudioMeasurement measurement(block.getNumChannels(), renderedReader.sampleRate, finalLength);
+    if (const auto initialized = measurement.checkInitialization(); !initialized) {
+        return std::unexpected(initialized.error());
+    }
 
     for (juce::int64 samplePosition = 0; samplePosition < finalLength; samplePosition += finalizeBlockSize) {
         if (utils::isCancellationRequested(isCancelled)) {
@@ -350,9 +352,7 @@ std::expected<WriteSummary, juce::String> writeFinalOutput(
         }
 
         for (int channel = 0; channel < block.getNumChannels(); ++channel) {
-            const std::span<const float> input(
-                block.getReadPointer(channel), static_cast<std::size_t>(samplesThisBlock)
-            );
+            const std::span<float> input(block.getWritePointer(channel), static_cast<std::size_t>(samplesThisBlock));
             const std::span<int> output(
                 quantizedBlock.getWritePointer(channel), static_cast<std::size_t>(samplesThisBlock)
             );
@@ -366,16 +366,25 @@ std::expected<WriteSummary, juce::String> writeFinalOutput(
                     = summary.clipped || scaled < minimumPcmValue || scaled >= static_cast<float>(outputPcmScale);
                 const auto limited = juce::jlimit(minimumPcmValue, maximumPcmValue, scaled);
                 output[sample] = static_cast<int>(std::floor(limited)) * outputPcmAlignment;
+                input[sample] = utils::pcmSampleToFloat(output[sample], outputBitsPerSample);
             }
         }
 
         if (!writer.write(outputChannels.data(), samplesThisBlock)) {
             return std::unexpected(juce::String("Failed while writing processed audio data"));
         }
+        if (const auto measured = measurement.push(block, 0, samplesThisBlock); !measured) {
+            return std::unexpected(measured.error());
+        }
 
         utils::reportProgress(onProgress, utils::progressFraction(samplePosition + samplesThisBlock, finalLength));
     }
 
+    auto measured = measurement.finish();
+    if (!measured) {
+        return std::unexpected(measured.error());
+    }
+    summary.measurements = std::move(*measured);
     return summary;
 }
 
@@ -449,7 +458,7 @@ std::expected<RenderSummary, juce::String> renderChainToFile(
 
 /// Writes the trimmed intermediate audio as 16-bit AIFF without additional gain adjustment or dither.
 /// The write progress is reported to onProgress.
-/// Returns whether the final PCM conversion saturated samples, or an error message.
+/// Returns exact output measurements and whether the final PCM conversion saturated samples, or an error message.
 std::expected<WriteSummary, juce::String> writeProcessedAiff(
     juce::AudioFormat& aiffFormat,
     const juce::File& intermediateFile,
@@ -636,7 +645,7 @@ juce::String describeFailedProcessCall(const juce::AudioPluginInstance& plugin)
 /// Output is always 16-bit PCM without additional dithering or post-chain gain adjustment.
 /// When the file changed on disk since sourceRecord was analyzed, it is analyzed again first.
 /// An `.aif` source is rewritten in place after a copy of it is disposed of through options.disposeFile.
-/// Progress of the whole file, through any source analysis, the render, the final write, and the output analysis,
+/// Progress of the whole file, through any source analysis, the render, the final write and metering, and commit,
 /// is reported to onProgress.
 PluginProcessingResult processFileWithPlugins(
     const AudioAnalysisRecord& sourceRecord,
@@ -711,7 +720,7 @@ PluginProcessingResult processFileWithPlugins(
     const utils::OutputTemporaryFile temporaryFile(outputFile);
     const auto finalLength = getFinalLength(*summary, reader->lengthInSamples);
 
-    const auto written = writeProcessedAiff(
+    auto written = writeProcessedAiff(
         *aiffFormat,
         intermediateFile.getFile(),
         temporaryFile.getFile(),
@@ -752,6 +761,7 @@ PluginProcessingResult processFileWithPlugins(
     }
 
     reader.reset();
+    const utils::FileIdentity renderedIdentity(temporaryFile.getFile());
     // Processing cannot be repeated to get back to the original,
     // so an original rewritten in place keeps a copy in the trash like a converted original does.
     if (!expectedSource.matches(file)) {
@@ -791,13 +801,15 @@ PluginProcessingResult processFileWithPlugins(
         );
     }
 
-    auto analysis = analyzeFile(outputFile, {}, utils::makeProgressRange(onProgress, writeProgressEnd, 1.0f));
+    auto analysis
+        = completeRenderedAnalysis(std::move(written->measurements), outputFile, outputBitsPerSample, renderedIdentity);
+    utils::reportProgress(onProgress, 1.0f);
     // Custom gain has been baked in. Clear it on the new record.
     analysis.customGain.reset();
 
     if (analysis.hasError()) {
-        auto error = utils::format("The file was processed, but re-analysis failed: {}", analysis.errorMessage);
-        utils::logError("Plugin processing re-analysis failed for {}", outputFile.getFullPathName().quoted());
+        auto error = utils::format("The file was processed, but output analysis failed: {}", analysis.errorMessage);
+        utils::logError("Plugin processing output analysis failed for {}", outputFile.getFullPathName().quoted());
         return PluginProcessingResult::forFile(
             file, CommittedButUnanalyzed {.output = std::move(analysis), .error = std::move(error)}
         );

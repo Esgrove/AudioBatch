@@ -226,8 +226,11 @@ sequenceDiagram
 
 - `analyzeFile` opens the file with `createAudioReader`, which uses a per-thread format manager
   and corrects the length of MP3 files without a Xing header.
-- `createLoudnessState` sets up libebur128 for integrated loudness, short-term loudness, and true peak,
+- `AudioMeasurement` sets up libebur128 for integrated loudness, short-term loudness, and true peak,
   and measures a mono file as dual mono, so it reads as loud as the same content in stereo.
+- It accepts planar chunks from decoding or PCM output writing and measures fixed intervals,
+  borrowing complete intervals and buffering only those that cross chunk boundaries.
+  Its final reduction supplies the same record fields to all three services.
 - `measureDecodedAudio` reads blocks of a tenth of a second, which keeps the short-term loudness history at 10 Hz.
   `DecodeFailureTracker` tolerates a failed final block and isolated failed blocks,
   and fails the file after three failed blocks in a row.
@@ -248,7 +251,11 @@ sequenceDiagram
 ## Normalization and processing
 
 Normalization and plugin processing share the start of the pipeline and everything after rendering.
-Both write `<name>.aif` next to the source, and both re-analyze the output for the new table row.
+Both write `<name>.aif` next to the source and measure the exact quantized PCM while writing it.
+The committed file's identity is attached to those measurements for the new table row,
+without decoding the output again.
+Its native file identity must still match the rendered temporary file after commit,
+so a replacement or modification cannot receive measurements of different bytes.
 
 ```mermaid
 flowchart TD
@@ -257,16 +264,16 @@ flowchart TD
     reanalyze["analyzeFile again"]
     outputCheck["checkOutputPath"]
     gain["getNormalizationGain or getInputGain"]
-    normalizeRender["renderNormalizedAudio to a hidden temporary AIFF"]
+    normalizeRender["renderNormalizedAudio writes and meters quantized AIFF"]
     prepare["PreparedChain::prepare on the message thread"]
     chainRender["renderThroughChain to a 32-bit float WAV"]
-    quantize["writeFinalOutput as 16-bit AIFF"]
+    quantize["writeFinalOutput writes and meters 16-bit AIFF"]
     metadata["copyMetadata"]
     validate["validateWrittenAudio"]
     cancelled{"Cancelled?"}
     commit["commitTemporaryOutput"]
     dispose["Trash the replaced files"]
-    analyze["analyzeFile on the output"]
+    analyze["Attach committed file identity to output measurements"]
     keep["Source left unchanged"]
 
     record --> changed
@@ -285,10 +292,14 @@ or in loudness mode the gain to the target loudness, lowered so the true peak st
 It refuses a silent file and a gain above 40 dB instead of capping it.
 For plugin processing, `getInputGain` applies the file's custom gain when it has one,
 then the normalization gain when Normalize is on, and unity gain with a notice when normalization refuses the file.
-An `.aif` file that is already at its target is not rewritten, and only analyzed again.
+An `.aif` file already at its target is not rewritten.
+Its current analysis is reused after cancellation and file-identity checks,
+and a stale source is analyzed only once before making the gain decision.
 
 **Normalization rendering.** `normalizeFile` streams the source in blocks of 32768 samples,
 applies the gain, and writes AIFF at the source sample rate.
+Reusable integer buffers preserve JUCE's float-writer rounding and full-scale saturation,
+while the meter receives the exact samples a JUCE AIFF reader would decode at the output bit depth.
 `getNormalizationOutputBitDepth` keeps the source bit depth when the AIFF writer supports it,
 uses 16 bits for MP3, and otherwise the deepest supported depth, so 32-bit float becomes 24-bit.
 
@@ -312,17 +323,21 @@ uses 16 bits for MP3, and otherwise the deepest supported depth, so 32-bit float
 - `writeFinalOutput` trims the trailing silence below -96 dB but never makes the output shorter than the source.
   It quantizes to 16 bits by truncation, saturates samples outside the range, and reports clipping in the notice.
   It adds no dither and no gain reduction.
+  The same quantized PCM feeds `AudioMeasurement` for the final retained length.
+  The float intermediate remains necessary to establish the audible tail before the final output is written.
 
 **Metadata, validation, and commit.** `copyMetadata` copies the tags, the pictures,
 and the opaque ID3v2 frames onto the output as ID3v2.4, and drops the Serato overview.
 A source that cannot be opened, or tags that cannot be written, fail the file before anything is committed.
 A source in a format TagLib does not read is processed without tags.
-`validateWrittenAudio` reads the output back and checks its channel count, sample rate, and length.
+`validateWrittenAudio` opens the output and checks its channel count, sample rate, and length,
+without decoding its audio samples.
 After a last cancellation check, `disposeOfCopy` trashes a copy of an `.aif` source that is rewritten in place.
 `commitTemporaryOutput` moves an existing output aside as a hidden backup, moves the new file into place,
 trashes a converted source, and restores the folder when any step fails.
 The `disposeFile` option moves files to the trash, and tests replace it with a delete.
-The outcome is `OperationSucceeded`, `CommittedButUnanalyzed` when the output exists but its analysis failed,
+The outcome is `OperationSucceeded`, `CommittedButUnanalyzed`
+when the committed output cannot be opened to complete its analysis record,
 or `OperationFailed`, which leaves the source untouched.
 
 ## Preview

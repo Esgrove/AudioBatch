@@ -44,6 +44,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       and `BitDepthDetection.*` detects the source bit depth from the audio file,
       with a fixed default of 16 for MP3 and AAC files and the ALAC depth read through TagLib.
       `DecodeFailureTracker.h` holds the shared rules for read failures while decoding a file block by block.
+      `AudioMeasurement.*` groups decoded or rendered PCM into fixed libebur128 measurement intervals
+      and supplies peaks, loudness, and overload histories without decoding rendered output again.
       `OverloadHistory.*` build, validate, project, and serialize the bounded per-channel source overload flags.
     - `AnalysisCache.*` manage the SQLite result cache.
       Its implementation is split into `AnalysisCache.cpp` (analysis and waveform persistence)
@@ -91,6 +93,8 @@ The source lists in `CMakeLists.txt` decide which target builds each file.
       Native Windows request types and APIs stay private to its implementation.
     - `AudioFormatUtils.*` holds the per-thread format manager, the AIFF writer lookup, peak math,
       and the conversion of a path to a TagLib file name.
+      It also quantizes normalized PCM with JUCE-compatible rounding
+      and reconstructs its exact decoded samples for measurement while writing.
       `registerAudioFormats` puts JUCE's MP3 reader ahead of Core Audio,
       because Core Audio keeps the encoder delay of MP3 files tagged by FFmpeg encoders,
       which would move the audio later than the Serato cue points of the file.

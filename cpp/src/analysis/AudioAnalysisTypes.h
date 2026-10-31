@@ -304,7 +304,7 @@ struct OperationFailed {
     bool cancelled {false};
 };
 
-/// A run that wrote its output, which then could not be analyzed.
+/// A run that committed its output but could not complete the output analysis record.
 /// A converted source is in the trash by then, so the output takes the place of the source either way.
 struct CommittedButUnanalyzed {
     /// The failed analysis of the output file.
@@ -313,7 +313,7 @@ struct CommittedButUnanalyzed {
     juce::String error;
 };
 
-/// A run that wrote and analyzed its output, or found the file already at its target and analyzed it again.
+/// A run that wrote and measured its output, or reused the analysis of a file already at its target.
 struct OperationSucceeded {
     /// The analysis of the output file.
     AudioAnalysisRecord output;

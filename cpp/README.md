@@ -12,6 +12,76 @@ GUI and CLI tool (C++23 and JUCE) for analyzing and batch processing audio files
 Supports mono and stereo audio, including WAV, AIFF, FLAC, MP3 and Ogg Vorbis.
 Multichannel audio and Linux are not currently supported.
 
+## Processing performance
+
+Normalization and plugin processing measure the exact quantized PCM while writing the final AIFF,
+instead of decoding that output again.
+Normalization reuses PCM scratch buffers, and an in-place AIFF already at target reuses its current analysis.
+Metadata copying, structural output validation, source-identity checks, and cancellation remain in the pipeline.
+Plugin processing retains its float intermediate for latency compensation and audible-tail trimming.
+The loudness and true-peak meter remains libebur128.
+
+Local Windows x86-64 measurements on October 31, 2026,
+compare the pre-change and optimized C++ Release CLIs on the same 26 eligible normalization fixtures.
+The existing Rust CLI benchmark harness uses one warmup and ten measured runs at one and 32 workers.
+Inputs are copied outside timing, filesystem caches are warm, and builds and tests finish before timing.
+The corpus hashes and Rust control binary match between runs.
+Normalization timing includes initial source analysis, rendering, output measurement, metadata,
+validation, cache updates, and permanent disposal of temporary originals.
+
+Times are mean +/- sample standard deviation in seconds.
+Reductions compare the observed C++ means, not a guaranteed speedup.
+
+| Workers | Operation | Before, s | After, s | Mean reduction |
+| ---: | :--- | :--- | :--- | ---: |
+| 1 | Analysis | 1.216249 +/- 0.026176 | 1.129525 +/- 0.012701 | 7.13% |
+| 1 | Peak normalization, 0 dBFS | 2.499244 +/- 0.081625 | 2.399352 +/- 0.166628 | 4.00% |
+| 1 | Loudness normalization, -14 LUFS | 2.482048 +/- 0.031524 | 2.386702 +/- 0.036526 | 3.84% |
+| 32 | Analysis | 0.344105 +/- 0.004906 | 0.426476 +/- 0.196112 | -23.94% |
+| 32 | Peak normalization, 0 dBFS | 0.644645 +/- 0.022174 | 0.627434 +/- 0.092848 | 2.67% |
+| 32 | Loudness normalization, -14 LUFS | 0.641227 +/- 0.032131 | 0.678890 +/- 0.145917 | -5.87% |
+
+Negative reductions mean slower observed means.
+The measurements are modest and noisy, especially the 32-worker cases.
+The optimized analysis maximum is 0.806 seconds and its median is 0.335 seconds,
+compared with the original median of 0.343 seconds.
+The loudness medians are 0.625 seconds before and 0.616 seconds after, despite its slower optimized mean.
+Standalone analysis shifts too, so the table does not isolate the benefit of each change.
+The multi-worker results do not establish a reliable overall speedup.
+Removing output decoding does not remove its metering, which still accounts for much of the work.
+These measurements do not certify macOS performance or plugin-processing throughput.
+
+All measured C++/Rust pairs pass the existing parity checks.
+A separate exact C++ before/after comparison passes analysis and normalization at 0/-1 dBFS and -14/-23 LUFS,
+with identical output PCM, metadata, and reported levels for all 26 eligible files.
+The streaming-meter regressions also compare every loudness-history value and overload flag with output readback.
+
+### TODO: SIMD analysis
+
+Prototype vectorized sample scanning and true-peak interpolation using the Rust optimization work as a guide.
+Keep libebur128 as the differential reference and retain a scalar fallback.
+Benchmark both individual kernels and whole-file analysis before choosing an implementation.
+Verify signed peak ties, overload boundaries, short-term loudness histories, continuous true-peak state,
+floating-point rounding, and normalization/plugin output parity across chunk sizes and supported platforms.
+
+Prefer the [C++26 standard SIMD library](https://en.cppreference.com/cpp/numeric/simd) once the supported compiler
+and standard-library combinations implement it.
+Check `<simd>`, `__cpp_lib_simd`, and a working vector operation rather than just the C++26 language mode.
+The draft API has evolved.
+The current documentation uses `std::simd::vec<T>` rather than `std::simd<T>`.
+Local probes with MSVC 19.51 (STL update 202604) and Clang 23.1.4 using MSVC's STL find neither `<simd>`
+nor `__cpp_lib_simd`, even in their latest language modes.
+[libc++ 21's status table](https://github.com/llvm/llvm-project/blob/release/21.x/libcxx/docs/Status/Cxx2cPapers.csv)
+does not mark the base SIMD proposal implemented,
+and the [upstream libc++ implementation tracker](https://github.com/llvm/llvm-project/issues/118384) remains open.
+A newer Homebrew Clang alone does not supply missing library features.
+Verify the actual libc++ used on macOS, including whether it is Apple's system library or Homebrew's.
+
+If standard-library support is still insufficient,
+evaluate [Google Highway](https://github.com/google/highway) for portable x86-64/ARM64 SIMD,
+runtime instruction-set dispatch, and scalar fallback within the C++23 baseline.
+This is future work: no C++ standard upgrade, meter replacement, or SIMD dependency is introduced here.
+
 ## GUI
 
 Choose a folder or drop folders onto the window to start background analysis.
