@@ -57,8 +57,9 @@ which explains how its parts work together.
   `format.yml` runs the root `./format.sh --check` on every change,
   and checks that `fixtures/plugin_expected/` matches what its script writes.
   `rust.yml` checks out only the JUCE submodule, to build the test plugin.
+  Its Windows build job downloads the LFS fixtures and requires the full normalization corpus.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
-  and is the only workflow that downloads the LFS files.
+  downloading the LFS fixtures for the macOS CLI comparison.
 
 ## Working Rules
 

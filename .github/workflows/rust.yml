@@ -11,7 +11,6 @@ on:
       - "common.sh"
       - "cpp/JUCE"
       - "fixtures/**"
-      - "!fixtures/normalization/**"
       - "rust/**"
       - "test-plugin/**"
       - "!**/*.md"
@@ -23,7 +22,6 @@ on:
       - "common.sh"
       - "cpp/JUCE"
       - "fixtures/**"
-      - "!fixtures/normalization/**"
       - "rust/**"
       - "test-plugin/**"
       - "!**/*.md"
@@ -57,6 +55,8 @@ jobs:
         os: [macos-latest, windows-2025-vs2026]
       fail-fast: false
     runs-on: ${{ matrix.os }}
+    env:
+      AUDIOBATCH_REQUIRE_NORMALIZATION_FIXTURES: ${{ startsWith(matrix.os, 'windows-') && '1' || '0' }}
     steps:
       # The Rust port does not use JUCE, but the test VST3 in test-plugin/ is built with it.
       # The JUCE submodule is the only one, and checkout fetches it at depth 1.
@@ -64,6 +64,23 @@ jobs:
         uses: actions/checkout@v7
         with:
           submodules: true
+
+      - name: List LFS objects
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: git lfs ls-files --long | cut -d ' ' -f1 | sort > .lfs-objects
+
+      - name: Restore LFS objects
+        if: runner.os == 'Windows'
+        uses: actions/cache@v6
+        with:
+          path: .git/lfs
+          key: lfs-${{ hashFiles('.lfs-objects') }}
+
+      - name: Pull LFS files
+        if: runner.os == 'Windows'
+        working-directory: .
+        run: git lfs pull
 
       - name: Get JUCE commit
         id: juce
@@ -93,6 +110,15 @@ jobs:
         with:
           workspaces: rust
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v10.3.2
+
+      - name: Test parity oracles and benchmark tooling natively
+        if: runner.os == 'Windows'
+        run: |
+          uv run --script scripts/test_parity.py
+          uv run --script scripts/test_cli_benchmark.py
+
       - name: Check formatting
         if: runner.os == 'macOS'
         run: cargo fmt --all --check
@@ -110,17 +136,18 @@ jobs:
       - name: Run tests
         run: cargo nextest run --workspace --no-fail-fast --success-output final
 
-      - name: Set up uv for packaging tests
-        if: runner.os == 'macOS'
-        uses: astral-sh/setup-uv@v10.3.2
-
       - name: Check distribution license notices
         if: runner.os == 'macOS'
         run: uv run --script scripts/test_distribution_licenses.py
 
       # Each backend must preserve its platform baseline in optimized builds too.
-      - name: Run optimized core tests
-        run: cargo nextest run --release -p audiobatch-core --no-fail-fast
+      - name: Run optimized core and Windows CLI tests
+        run: |
+          options=()
+          if [ "$RUNNER_OS" = Windows ]; then
+            options=(-p audiobatch-cli -E 'package(audiobatch-core) | (package(audiobatch-cli) & test(run::test_run_analysis::normalize_))')
+          fi
+          cargo nextest run --release -p audiobatch-core "${options[@]}" --no-fail-fast
 
       # Runs the CLI on the committed fixtures and checks the reported level and the exit codes,
       # like the CLI smoke test of the C++ build.
