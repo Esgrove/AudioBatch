@@ -64,9 +64,10 @@ pub fn file_sha256(path: &Path) -> io::Result<String> {
 
 /// Returns the SHA-256 of a versioned, channel-major planar PCM representation.
 ///
-/// The bytes are `AudioBatch PCM SHA-256 v1\0`, little-endian sample rate and channel count
-/// as `u32`, frame count as `u64`, then every channel's ordered little-endian `f32` bits.
-/// Signed zero and subnormal samples are preserved; decoder packet boundaries are not included.
+/// The bytes are `AudioBatch PCM SHA-256 v1\0`, little-endian sample rate and channel count as `u32`,
+/// frame count as `u64`, then every channel's ordered little-endian `f32` bits.
+/// Signed zero and subnormal samples are preserved.
+/// Decoder packet boundaries are not included.
 ///
 /// # Panics
 ///
