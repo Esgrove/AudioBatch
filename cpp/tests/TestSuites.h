@@ -10,6 +10,8 @@
 
 namespace audiobatch::tests
 {
+std::unique_ptr<juce::UnitTest> createMeasurementTests();
+
 /// Creates the suite that analyzes the committed audio fixtures and checks the measured levels.
 std::unique_ptr<juce::UnitTest> createAnalysisTests();
 

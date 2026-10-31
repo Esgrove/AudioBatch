@@ -13,6 +13,7 @@
 #include <cmath>
 #include <concepts>
 #include <expected>
+#include <limits>
 #include <memory>
 #include <span>
 #include <tfile.h>
@@ -52,4 +53,22 @@ std::unordered_map<juce::String, juce::String> aiffWriterMetadata(const juce::St
 );
 
 std::span<float* const> writePointers(juce::AudioBuffer<float>& buffer);
+
+/// Reconstructs the float a JUCE integer AIFF reader returns after discarding unwritten low bits.
+/// The input is aligned to the most significant bits of a 32-bit PCM value.
+[[nodiscard]] inline float pcmSampleToFloat(const int sample, const int bitsPerSample) noexcept
+{
+    const auto shift = 32 - bitsPerSample;
+    const auto aligned = (sample >> shift) * (std::int64_t {1} << shift);
+    constexpr auto scale = 1.0f / static_cast<float>(std::numeric_limits<int>::max());
+    return static_cast<float>(aligned) * scale;
+}
+
+[[nodiscard]] std::expected<void, juce::String> quantizeNormalizedSamples(
+    std::span<const float> input,
+    std::span<int> pcm,
+    std::span<float> observed,
+    float gain,
+    int bitsPerSample
+);
 }  // namespace audiobatch::utils

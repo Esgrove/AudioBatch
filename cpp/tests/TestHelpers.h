@@ -20,6 +20,12 @@
 
 namespace audiobatch::tests
 {
+void expectAnalysisMeasurementsEqual(
+    juce::UnitTest& test,
+    const AudioAnalysisRecord& actual,
+    const AudioAnalysisRecord& expected
+);
+
 /// Peak level of the fixture tones, which have a peak amplitude of 0.5, in dBFS.
 constexpr double fixturePeakDecibels {-6.0206};
 /// Integrated loudness of a fixture tone, in LUFS.

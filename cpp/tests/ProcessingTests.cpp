@@ -600,6 +600,9 @@ public:
                 expectEquals(outcomeRecord(result.outcome).sampleRate, original.sampleRate);
                 expectEquals(outcomeRecord(result.outcome).channels, original.channels);
                 expectEquals(outcomeRecord(result.outcome).lengthInSamples, original.lengthInSamples);
+                expectAnalysisMeasurementsEqual(
+                    *this, outcomeRecord(result.outcome), analyzeFile(outcomeRecord(result.outcome).file)
+                );
                 const auto reader = utils::createAudioReader(outcomeRecord(result.outcome).file);
                 expect(reader != nullptr);
                 if (reader != nullptr) {

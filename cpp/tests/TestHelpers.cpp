@@ -351,6 +351,45 @@ int findBestLag(const std::vector<int>& expected, const std::vector<int>& actual
 }
 }  // namespace
 
+/// Checks every measurement field and both complete histories against an independent readback.
+void expectAnalysisMeasurementsEqual(
+    juce::UnitTest& test,
+    const AudioAnalysisRecord& actual,
+    const AudioAnalysisRecord& expected
+)
+{
+    test.expect(actual.isReady() && expected.isReady());
+    test.expectWithinAbsoluteError(actual.peakLeft, expected.peakLeft, 0.0f);
+    test.expectWithinAbsoluteError(actual.peakRight, expected.peakRight, 0.0f);
+    test.expectWithinAbsoluteError(actual.overallPeak, expected.overallPeak, 0.0f);
+    test.expectWithinAbsoluteError(actual.truePeakLeft, expected.truePeakLeft, 0.0);
+    test.expectWithinAbsoluteError(actual.truePeakRight, expected.truePeakRight, 0.0);
+    test.expectWithinAbsoluteError(actual.overallTruePeak, expected.overallTruePeak, 0.0);
+    test.expectWithinAbsoluteError(actual.integratedLufs, expected.integratedLufs, 0.0);
+    test.expectWithinAbsoluteError(actual.maxShortTermLufs, expected.maxShortTermLufs, 0.0);
+    test.expectWithinAbsoluteError(actual.durationSeconds, expected.durationSeconds, 0.0);
+    test.expectEquals(actual.lengthInSamples, expected.lengthInSamples);
+    test.expectEquals(actual.sampleRate, expected.sampleRate);
+    test.expectEquals(actual.channels, expected.channels);
+    test.expect(actual.shortTermLoudness != nullptr && expected.shortTermLoudness != nullptr);
+    test.expect(actual.overloads != nullptr && expected.overloads != nullptr);
+    if (actual.shortTermLoudness != nullptr && expected.shortTermLoudness != nullptr) {
+        test.expect(actual.shortTermLoudness->values == expected.shortTermLoudness->values);
+        test.expectEquals(actual.shortTermLoudness->samplesPerPoint, expected.shortTermLoudness->samplesPerPoint);
+        test.expectEquals(actual.shortTermLoudness->lengthInSamples, expected.shortTermLoudness->lengthInSamples);
+        test.expectWithinAbsoluteError(
+            actual.shortTermLoudness->sampleRate, expected.shortTermLoudness->sampleRate, 0.0
+        );
+    }
+    if (actual.overloads != nullptr && expected.overloads != nullptr) {
+        test.expect(actual.overloads->flags == expected.overloads->flags);
+        test.expectEquals(actual.overloads->samplesPerBucket, expected.overloads->samplesPerBucket);
+        test.expectEquals(actual.overloads->lengthInSamples, expected.overloads->lengthInSamples);
+        test.expectEquals(actual.overloads->channelCount, expected.overloads->channelCount);
+        test.expectWithinAbsoluteError(actual.overloads->sampleRate, expected.overloads->sampleRate, 0.0);
+    }
+}
+
 juce::String NullTestResult::describe() const
 {
     if (!readable) {

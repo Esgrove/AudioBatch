@@ -1,12 +1,14 @@
 /// Implementation of the normalization functions.
 /// Reads source files through per-thread JUCE format readers, applies the peak or loudness gain in chunks,
-/// and writes AIFF output. Carries source tags and embedded art across through Metadata handling.
+/// and writes AIFF while measuring the exact quantized output.
+/// Carries source tags and embedded art across through Metadata handling.
 /// The format support reporting lives in NormalizationFormatSupport.cpp.
 
 #include "normalization/AudioNormalization.h"
 
 #include "analysis/AudioAnalysis.h"
 #include "analysis/AudioAnalysisTypes.h"
+#include "analysis/AudioMeasurement.h"
 #include "analysis/DecodeFailureTracker.h"
 #include "metadata/AudioMetadata.h"
 #include "utils/AudioFormatUtils.h"
@@ -21,6 +23,7 @@
 #include <expected>
 #include <memory>
 #include <ranges>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -36,8 +39,16 @@ constexpr auto cancelledMessage {"Normalization was cancelled"};
 
 /// Share of a file's progress taken by analyzing a source that changed since its last analysis.
 constexpr float sourceAnalysisProgressShare {0.3f};
-/// Progress at which rendering the normalized audio ends and analyzing the output begins.
-constexpr float renderProgressEnd {0.8f};
+/// Progress reserved for rendering and metering before metadata validation and commit.
+constexpr float renderProgressEnd {0.95f};
+
+/// Exact output measurements and the notice from tolerated source decode failures.
+struct NormalizedRender {
+    /// Measurements of the quantized AIFF samples.
+    AudioAnalysisRecord measurements;
+    /// Notice about tolerated read failures.
+    juce::String decodeNotice;
+};
 
 /// Steps of the output bit depth that a full-scale sample may move by while a file still counts as at its target.
 /// A 16-bit file whose peak is the largest positive sample, 32767 of 32768,
@@ -132,22 +143,30 @@ int resolvePreferredOutputBitDepth(
 
 /// Streams the source through the writer block by block, applying the normalization gain.
 /// Read failures follow the shared DecodeFailureTracker rules.
-/// Returns the tracker's notice about tolerated failures, which is empty when there were none,
+/// Returns the output measurements and the tracker's notice about tolerated failures,
 /// or a user-facing error message, including when cancellation is requested between blocks.
 /// The written fraction of the file is reported to onProgress after each block.
-std::expected<juce::String, juce::String> renderNormalizedAudio(
+std::expected<NormalizedRender, juce::String> renderNormalizedAudio(
     juce::AudioFormatReader& reader,
     juce::AudioFormatWriter& writer,
     const float gain,
+    const int bitsPerSample,
     const utils::CancellationCheck& isCancelled,
     const utils::ProgressCallback& onProgress
 )
 {
     juce::AudioBuffer<float> buffer(static_cast<int>(reader.numChannels), normalizationBlockSize);
+    juce::AudioBuffer<int> pcm(buffer.getNumChannels(), normalizationBlockSize);
     std::vector<float*> channelPointers(reader.numChannels);
+    std::vector<const int*> outputChannels(static_cast<std::size_t>(buffer.getNumChannels()) + 1, nullptr);
 
     for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
         channelPointers[static_cast<std::size_t>(channel)] = buffer.getWritePointer(channel);
+        outputChannels[static_cast<std::size_t>(channel)] = pcm.getReadPointer(channel);
+    }
+    AudioMeasurement measurement(buffer.getNumChannels(), reader.sampleRate, reader.lengthInSamples);
+    if (const auto initialized = measurement.checkInitialization(); !initialized) {
+        return std::unexpected(initialized.error());
     }
 
     DecodeFailureTracker failureTracker(reader.lengthInSamples);
@@ -179,10 +198,26 @@ std::expected<juce::String, juce::String> renderNormalizedAudio(
             return std::unexpected(failureTracker.getErrorMessage());
         }
 
-        buffer.applyGain(gain);
-
-        if (!writer.writeFromAudioSampleBuffer(buffer, 0, samplesThisBlock)) {
+        for (int channel = 0; channel < buffer.getNumChannels(); ++channel) {
+            const auto frames = static_cast<std::size_t>(samplesThisBlock);
+            auto* samples = channelPointers[static_cast<std::size_t>(channel)];
+            if (const auto quantized = utils::quantizeNormalizedSamples(
+                    std::span<const float>(samples, frames),
+                    std::span<int>(pcm.getWritePointer(channel), frames),
+                    std::span<float>(samples, frames),
+                    gain,
+                    bitsPerSample
+                );
+                !quantized)
+            {
+                return std::unexpected(quantized.error());
+            }
+        }
+        if (!writer.write(outputChannels.data(), samplesThisBlock)) {
             return std::unexpected(juce::String("Failed while writing normalized audio data"));
+        }
+        if (const auto measured = measurement.push(buffer, 0, samplesThisBlock); !measured) {
+            return std::unexpected(measured.error());
         }
 
         utils::reportProgress(
@@ -190,7 +225,11 @@ std::expected<juce::String, juce::String> renderNormalizedAudio(
         );
     }
 
-    return failureTracker.getNotice();
+    auto measured = measurement.finish();
+    if (!measured) {
+        return std::unexpected(measured.error());
+    }
+    return NormalizedRender {.measurements = std::move(*measured), .decodeNotice = failureTracker.getNotice()};
 }
 }  // namespace
 
@@ -375,11 +414,15 @@ AudioNormalizationResult normalizeFile(
     const auto gain = normalizationGain->value;
 
     if (outputFile == file && isAtTarget(*normalizationGain, getNormalizationOutputBitDepth(record, *reader))) {
-        auto analysis = analyzeFile(file, isCancelled, utils::makeProgressRange(onProgress, renderProgressStart, 1.0f));
-
-        if (analysis.hasError()) {
-            return AudioNormalizationResult::failure(file, analysis.errorMessage);
+        if (utils::isCancellationRequested(isCancelled)) {
+            return failNormalization(file, cancelledMessage);
         }
+        if (!expectedSource.matches(file)) {
+            return failNormalization(file, "The source file changed while normalization was being checked.");
+        }
+        auto analysis = record;
+        analysis.customGain.reset();
+        utils::reportProgress(onProgress, 1.0f);
 
         utils::logInfo(
             "Normalized: {:.2f} s, {} (already at target)",
@@ -419,16 +462,17 @@ AudioNormalizationResult normalizeFile(
         return failNormalization(file, getNormalizationSupportMessage(file));
     }
 
-    auto decodeNotice = renderNormalizedAudio(
+    auto rendered = renderNormalizedAudio(
         *reader,
         *writer,
         gain,
+        writerBitDepth,
         isCancelled,
         utils::makeProgressRange(onProgress, renderProgressStart, renderProgressEnd)
     );
 
-    if (!decodeNotice) {
-        return failNormalization(file, decodeNotice.error());
+    if (!rendered) {
+        return failNormalization(file, rendered.error());
     }
 
     writer.reset();
@@ -467,19 +511,22 @@ AudioNormalizationResult normalizeFile(
     }
 
     reader.reset();
+    const utils::FileIdentity renderedIdentity(temporaryFile.getFile());
     if (const auto commit = commitNormalizedOutput(temporaryFile, file, outputFile, expectedSource, options); !commit) {
         return failNormalization(file, commit.error());
     }
 
-    auto analysis = analyzeFile(outputFile, {}, utils::makeProgressRange(onProgress, renderProgressEnd, 1.0f));
-    auto notice = std::move(*decodeNotice);
+    auto analysis
+        = completeRenderedAnalysis(std::move(rendered->measurements), outputFile, writerBitDepth, renderedIdentity);
+    auto notice = std::move(rendered->decodeNotice);
+    utils::reportProgress(onProgress, 1.0f);
 
     if (notice.isNotEmpty()) {
         utils::logWarn("Normalization warning: {}, {}", outputFile.getFullPathName().quoted(), notice);
     }
 
     if (analysis.hasError()) {
-        auto error = utils::format("The file was normalized, but re-analysis failed: {}", analysis.errorMessage);
+        auto error = utils::format("The file was normalized, but output analysis failed: {}", analysis.errorMessage);
         utils::logError("Normalization failed for {}: {}", file.getFullPathName().quoted(), error);
         return AudioNormalizationResult::forFile(
             file, CommittedButUnanalyzed {.output = std::move(analysis), .error = std::move(error)}

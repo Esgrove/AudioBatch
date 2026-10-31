@@ -196,6 +196,9 @@ private:
             const auto result = normalizeFile(record, options);
             expect(!result.hasError(), outcomeError(result.outcome));
             const auto outputReader = utils::createAudioReader(getNormalizationOutputFile(source));
+            expectAnalysisMeasurementsEqual(
+                *this, outcomeRecord(result.outcome), analyzeFile(getNormalizationOutputFile(source))
+            );
             expect(outputReader != nullptr, fixtureName);
             if (outputReader != nullptr) {
                 expectEquals(static_cast<int>(outputReader->bitsPerSample), expectedBits, fixtureName);
@@ -597,7 +600,7 @@ private:
             );
         }
 
-        beginTest("Cancellation stops re-analysis of an unchanged in-place no-op");
+        beginTest("Cancellation stops an unchanged in-place no-op");
         {
             const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cancelled_no_op.aif");
             const auto record = analyzeFile(source);
@@ -608,6 +611,26 @@ private:
             expect(result.hasError());
             expect(std::holds_alternative<OperationFailed>(result.outcome));
             expect(outcomeError(result.outcome).containsIgnoreCase("cancel"), outcomeError(result.outcome));
+        }
+
+        beginTest("At-target normalization reuses fresh and cached histories without re-measuring audio");
+        for (const auto cached : {false, true}) {
+            const auto source = directory.copyFixture("sine_stereo_44100_16.aif", "cached_no_op.aif");
+            auto record = analyzeFile(source);
+            record.fromCache = cached;
+            record.status = cached ? AudioAnalysisStatus::cached : AudioAnalysisStatus::analyzed;
+            record.customGain = Decibels {3.0f};
+            auto options = testNormalizationOptions();
+            options.targetPeakDbfs = peakDecibels(record);
+            const auto result = normalizeFile(record, options);
+            expect(!result.hasError(), outcomeError(result.outcome));
+            const auto& output = outcomeRecord(result.outcome);
+            expect(output.shortTermLoudness == record.shortTermLoudness);
+            expect(output.overloads == record.overloads);
+            expect(output.fromCache == record.fromCache);
+            expect(output.status == record.status);
+            expect(!output.customGain);
+            expect(output.matchesFileOnDisk());
         }
 
         beginTest(
