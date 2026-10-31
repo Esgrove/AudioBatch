@@ -55,7 +55,9 @@ or wherever the `AUDIOBATCH_TEST_VST3` variable points.
 Without the bundle the Rust plugin tests skip, except in CI, where they fail.
 
 The plugin's source compiles with strict warnings as errors, and `../cpp/lint.sh` checks it with clang-tidy.
-`../cpp/format.sh` formats it.
+`../cpp/format.sh` formats it using `../cpp/.clang-format`, and the root `../format.sh` runs that same formatter.
+On Windows the explicit style-file path is converted to native form for clang-format.
+CMake formatting also uses the C++ configuration explicitly, without relying on the plugin's configuration symlink.
 
 ## Changing the Processing
 

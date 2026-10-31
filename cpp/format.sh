@@ -52,6 +52,13 @@ cd "$REPO"
 
 require_command clang-format
 
+PLUGIN_STYLE_FILE="$REPO/.clang-format"
+if [ "$BASH_PLATFORM" = windows ]; then
+    require_command cygpath "Git Bash with cygpath is required for Windows formatting."
+    # MSYS does not convert paths embedded after the "file:" style prefix.
+    PLUGIN_STYLE_FILE=$(cygpath -m "$PLUGIN_STYLE_FILE")
+fi
+
 # Collect the C++ sources and headers under src/ and tests/, including subdirectories,
 # and those of the test plugin that the tests load.
 CPP_FILES=()
@@ -67,11 +74,11 @@ done < <(find "$REPO/src" "$REPO/tests" "$REPO/../test-plugin/src" -type f \( -n
 if [ "$CHECK" = true ]; then
     print_magenta "Checking C++ formatting..."
     clang-format --verbose --style=file --dry-run --Werror "${CPP_FILES[@]}"
-    clang-format --verbose --style="file:$REPO/.clang-format" --dry-run --Werror "${PLUGIN_CPP_FILES[@]}"
+    clang-format --verbose --style="file:$PLUGIN_STYLE_FILE" --dry-run --Werror "${PLUGIN_CPP_FILES[@]}"
 else
     print_magenta "Formatting C++ files..."
     clang-format -i --verbose --style=file "${CPP_FILES[@]}"
-    clang-format -i --verbose --style="file:$REPO/.clang-format" "${PLUGIN_CPP_FILES[@]}"
+    clang-format -i --verbose --style="file:$PLUGIN_STYLE_FILE" "${PLUGIN_CPP_FILES[@]}"
 fi
 
 # Use an installed cmake-format, or fetch it on demand with uvx.
@@ -89,10 +96,12 @@ fi
 if [ ${#CMAKE_FORMAT[@]} -gt 0 ]; then
     if [ "$CHECK" = true ]; then
         print_magenta "Checking CMake formatting..."
-        "${CMAKE_FORMAT[@]}" --check CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt
+        "${CMAKE_FORMAT[@]}" --config-files "$REPO/.cmake-format.yaml" --check \
+            CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt
     else
         print_magenta "Formatting CMake files..."
-        "${CMAKE_FORMAT[@]}" --in-place CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt
+        "${CMAKE_FORMAT[@]}" --config-files "$REPO/.cmake-format.yaml" --in-place \
+            CMakeLists.txt cmake/*.cmake ../test-plugin/CMakeLists.txt
     fi
 fi
 
