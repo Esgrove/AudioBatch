@@ -37,8 +37,10 @@ namespace
 {
 /// Highest number tried when a hidden backup or recovery name is already occupied.
 constexpr int maximumBackupIndex {1000};
+#if !JUCE_WINDOWS
 /// Converts POSIX seconds to the high resolution timestamp used for identity checks.
 constexpr std::int64_t nanosecondsPerSecond {1'000'000'000};
+#endif
 
 /// An approved output retained under an exclusively claimed backup entry.
 struct OutputBackup {
@@ -439,7 +441,7 @@ FileIdentity::FileIdentity(const juce::File& file) :
     modifiedTimeMs(file.getLastModificationTime().toMilliseconds())
 {
 #if JUCE_WINDOWS
-    const auto handle = CreateFileW(
+    auto* const handle = CreateFileW(
         file.getFullPathName().toWideCharPointer(),
         FILE_READ_ATTRIBUTES,
         FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -450,7 +452,7 @@ FileIdentity::FileIdentity(const juce::File& file) :
     );
     if (handle != INVALID_HANDLE_VALUE) {
         BY_HANDLE_FILE_INFORMATION information {};
-        if (GetFileInformationByHandle(handle, &information)) {
+        if (GetFileInformationByHandle(handle, &information) != 0) {
             platformId = std::pair {
                 static_cast<std::uint64_t>(information.dwVolumeSerialNumber),
                 (static_cast<std::uint64_t>(information.nFileIndexHigh) << 32U) | information.nFileIndexLow
@@ -675,9 +677,11 @@ juce::String existingOutputMessage(const juce::File& outputFile)
 /// Returns true when the copy was made and disposed of.
 bool disposeOfCopy(const juce::File& file, const FileDisposer& disposeFile)
 {
-    const auto directory = juce::File::getSpecialLocation(juce::File::tempDirectory)
-                               .getChildFile("AudioBatch")
-                               .getChildFile(format("original-{}", juce::Uuid().toDashedString()));
+    const auto parentDirectory = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("AudioBatch");
+    if (!parentDirectory.createDirectory() && !parentDirectory.isDirectory()) {
+        return false;
+    }
+    const auto directory = parentDirectory.getChildFile(format("original-{}", juce::Uuid().toDashedString()));
 
     if (directory.exists() || !directory.createDirectory()) {
         return false;

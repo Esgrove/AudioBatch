@@ -93,7 +93,7 @@ public:
         beginTest("Metadata and artwork reads preserve the source identity");
         {
             const TemporaryDirectory directory;
-            for (const auto* name :
+            for (const auto* fileName :
                  {
                      "sine_stereo_44100_16.wav",
                      "sine_stereo_44100_16.aif",
@@ -101,13 +101,13 @@ public:
                      "sine_stereo_44100_320k.mp3",
                  })
             {
-                const auto source = directory.copyFixture(name);
+                const auto source = directory.copyFixture(fileName);
                 const utils::FileIdentity identity(source);
                 AudioMetadata read;
-                expect(readMetadata(source, read), name);
-                expect(identity.matches(source), name);
+                expect(readMetadata(source, read), fileName);
+                expect(identity.matches(source), fileName);
                 static_cast<void>(readArtworkCandidates(source));
-                expect(identity.matches(source), name);
+                expect(identity.matches(source), fileName);
             }
         }
 

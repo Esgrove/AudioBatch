@@ -54,7 +54,7 @@ bool writeFloatWav(
     }
     std::unique_ptr<juce::OutputStream> stream = file.createOutputStream();
     juce::WavAudioFormat format;
-    auto writer = format.createWriterFor(
+    const auto writer = format.createWriterFor(
         stream,
         juce::AudioFormatWriterOptions()
             .withSampleRate(generatedSampleRate)

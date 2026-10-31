@@ -472,8 +472,8 @@ private:
 
         beginTest("Delete normalization converts a source and removes a forced output backup");
         for (const bool overwrite : {false, true}) {
-            const auto* name = overwrite ? "forced" : "converted";
-            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", juce::String(name) + ".wav");
+            const auto* outputStem = overwrite ? "forced" : "converted";
+            const auto source = directory.copyFixture("sine_stereo_44100_16.wav", juce::String(outputStem) + ".wav");
             const auto output = getNormalizationOutputFile(source);
             if (overwrite) {
                 expect(output.replaceWithText("previous output"));

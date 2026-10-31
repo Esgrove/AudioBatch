@@ -149,6 +149,7 @@ bool stepToCompletion(sqlite3_stmt& statement)
 /// Binds a memory block as a blob. The 64-bit call keeps sizes above 2 GiB from wrapping around.
 bool bindBlob(sqlite3_stmt& statement, const int index, const juce::MemoryBlock& data)
 {
+    // NOLINTNEXTLINE(performance-no-int-to-ptr): SQLITE_TRANSIENT is SQLite's copy-lifetime sentinel.
     return sqlite3_bind_blob64(&statement, index, data.getData(), data.getSize(), SQLITE_TRANSIENT) == SQLITE_OK
         || logStatementError(statement, "bind blob", index);
 }
@@ -176,6 +177,7 @@ bool bindNull(sqlite3_stmt& statement, const int index)
 /// Binds a juce::String as UTF-8 text.
 bool bindText(sqlite3_stmt& statement, const int index, const juce::String& value)
 {
+    // NOLINTNEXTLINE(performance-no-int-to-ptr): SQLITE_TRANSIENT is SQLite's copy-lifetime sentinel.
     return sqlite3_bind_text(&statement, index, value.toRawUTF8(), -1, SQLITE_TRANSIENT) == SQLITE_OK
         || logStatementError(statement, "bind text", index);
 }

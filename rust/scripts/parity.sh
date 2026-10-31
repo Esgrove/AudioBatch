@@ -95,6 +95,27 @@ while [ $# -gt 0 ]; do
     shift
 done
 
+if [ "$BASH_PLATFORM" = windows ]; then
+    SUPPORTED_PATHS=()
+    for path in "${PATHS[@]}"; do
+        DEPTH=()
+        if [ ${#RECURSE[@]} -eq 0 ]; then DEPTH=(-maxdepth 1); fi
+        while IFS= read -r -d '' input; do
+            case "${input,,}" in
+                *.aac | *.m4a | *.mp4 | *.alac)
+                    print_yellow "Skipping unsupported JUCE Windows codec: $input" >&2
+                    ;;
+                *) SUPPORTED_PATHS+=("$input") ;;
+            esac
+        done < <(if [ -d "$path" ]; then
+            find -L "$path" "${DEPTH[@]}" -type f -print0
+        else
+            printf '%s\0' "$path"
+        fi)
+    done
+    PATHS=("${SUPPORTED_PATHS[@]}")
+fi
+
 if [ ${#PATHS[@]} -eq 0 ]; then
     echo "$USAGE"
     exit 1

@@ -14,17 +14,20 @@
 #include "TestSuites.h"
 #include "utils/AudioFormatUtils.h"
 #include "utils/StringFormat.h"
-#include <system_error>
 #include <type_traits>
 
 #include <algorithm>
 #include <atomic>
-#include <filesystem>
 #include <limits>
 #include <memory>
 #include <utility>
 #include <variant>
 #include <vector>
+#if !JUCE_WINDOWS
+#include <system_error>
+
+#include <filesystem>
+#endif
 
 namespace audiobatch::tests
 {
@@ -299,7 +302,9 @@ private:
             expect(source.loadFileAsData(remainingBytes));
             expect(remainingBytes == originalBytes, context);
             const auto leftovers = source.getParentDirectory().findChildFiles(
-                juce::File::findFiles | juce::File::ignoreHiddenFiles, false
+                // NOLINTNEXTLINE(bugprone-signed-bitwise): JUCE's file-search flags use an int-based API.
+                juce::File::findFiles | juce::File::ignoreHiddenFiles,
+                false
             );
             const auto hiddenLeftovers = source.getParentDirectory().findChildFiles(juce::File::findFiles, false);
             expectEquals(leftovers.size(), 1, context);

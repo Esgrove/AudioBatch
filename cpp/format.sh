@@ -55,16 +55,23 @@ require_command clang-format
 # Collect the C++ sources and headers under src/ and tests/, including subdirectories,
 # and those of the test plugin that the tests load.
 CPP_FILES=()
+PLUGIN_CPP_FILES=()
 while IFS= read -r file; do
-    CPP_FILES+=("$file")
+    if [[ "$file" == "$REPO/../test-plugin/"* ]]; then
+        PLUGIN_CPP_FILES+=("$file")
+    else
+        CPP_FILES+=("$file")
+    fi
 done < <(find "$REPO/src" "$REPO/tests" "$REPO/../test-plugin/src" -type f \( -name "*.cpp" -o -name "*.h" \) | sort)
 
 if [ "$CHECK" = true ]; then
     print_magenta "Checking C++ formatting..."
     clang-format --verbose --style=file --dry-run --Werror "${CPP_FILES[@]}"
+    clang-format --verbose --style="file:$REPO/.clang-format" --dry-run --Werror "${PLUGIN_CPP_FILES[@]}"
 else
     print_magenta "Formatting C++ files..."
     clang-format -i --verbose --style=file "${CPP_FILES[@]}"
+    clang-format -i --verbose --style="file:$REPO/.clang-format" "${PLUGIN_CPP_FILES[@]}"
 fi
 
 # Use an installed cmake-format, or fetch it on demand with uvx.

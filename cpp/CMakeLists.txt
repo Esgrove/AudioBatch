@@ -204,6 +204,7 @@ if(APPLE)
     )
 elseif(MSVC)
     add_compile_definitions(_MSVC_STL_HARDENING=1)
+    add_compile_options($<$<COMPILE_LANGUAGE:CXX>:/EHsc>)
 endif()
 
 # Adds all the module sources so they appear correctly in the IDE

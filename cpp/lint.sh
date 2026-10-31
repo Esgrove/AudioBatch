@@ -157,6 +157,32 @@ if [ -z "$CLANG_TIDY" ]; then
 fi
 
 # Locate a compile_commands.json from one of the known CMake build directories.
+# Applies the shared configuration directly to the test plugin, including Windows symlink-stub checkouts.
+run_clang_tidy() {
+    local status=0
+    if [ "${#PROJECT_SOURCES[@]}" -gt 0 ]; then
+        "$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" \
+            "${PROJECT_SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}" || status=$?
+    fi
+    if [ "${#PLUGIN_SOURCES[@]}" -gt 0 ]; then
+        local overlay=""
+        local plugin_args=()
+        if [ "$BASH_PLATFORM" = windows ] && [ ! -L "$ROOT/test-plugin/.clang-format" ]; then
+            overlay=$(mktemp)
+            printf '{"version":0,"roots":[{"type":"file","name":"%s","external-contents":"%s"}]}\n' \
+                "$(cygpath -m "$ROOT/test-plugin/.clang-format")" \
+                "$(cygpath -m "$REPO/.clang-format")" > "$overlay"
+            plugin_args+=(--vfsoverlay="$overlay")
+        fi
+        "$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" --config-file="$REPO/.clang-tidy" \
+            "${plugin_args[@]}" "${PLUGIN_SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}" || status=$?
+        if [ -n "$overlay" ]; then
+            rm -f "$overlay"
+        fi
+    fi
+    return "$status"
+}
+
 # Prefer the debug build that the editor and the CMake debug presets share.
 BUILD_DIR=""
 if [ "$FUZZ" = true ]; then
@@ -245,11 +271,20 @@ if [ "${#LINTED_SOURCES[@]}" -eq 0 ]; then
     exit 0
 fi
 SOURCES=("${LINTED_SOURCES[@]}")
+PROJECT_SOURCES=()
+PLUGIN_SOURCES=()
+for source in "${SOURCES[@]}"; do
+    if [[ "$source" == "$ROOT/test-plugin/"* ]]; then
+        PLUGIN_SOURCES+=("$source")
+    else
+        PROJECT_SOURCES+=("$source")
+    fi
+done
 
 print_magenta "Running clang-tidy on ${#SOURCES[@]} source files..."
 
 if [ "$CHECK" = false ]; then
-    "$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}"
+    run_clang_tidy
     exit
 fi
 
@@ -257,7 +292,7 @@ OUTPUT_FILE=$(mktemp)
 trap 'rm -f "$OUTPUT_FILE"' EXIT
 
 set +e
-"$CLANG_TIDY" -p "$BUILD_DIR" --quiet "${EXTRA_ARGS[@]}" "${SOURCES[@]}" "${CLANG_TIDY_ARGS[@]}" 2>&1 | tee "$OUTPUT_FILE"
+run_clang_tidy 2>&1 | tee "$OUTPUT_FILE"
 CLANG_TIDY_STATUS=${PIPESTATUS[0]}
 set -e
 

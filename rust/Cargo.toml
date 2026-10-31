@@ -66,6 +66,7 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 trash = "5.2.9"
 unicode-width = "0.2.3"
 walkdir = "2.5.0"
+winapi-util = "0.1.11"
 windows-sys = "0.61.2"
 
 # The bindings of VST SDK 3.8.0, the SDK JUCE bundles for the C++ application.

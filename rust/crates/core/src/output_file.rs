@@ -128,7 +128,9 @@ pub struct SourceIdentity {
     #[cfg(unix)]
     changed: (i64, i64),
     #[cfg(windows)]
-    handle: Arc<same_file::Handle>,
+    volume: u64,
+    #[cfg(windows)]
+    index: u64,
 }
 
 impl SourceIdentity {
@@ -140,9 +142,8 @@ impl SourceIdentity {
     pub fn capture(path: &Path) -> std::io::Result<Self> {
         let file = fs::File::open(path)?;
         let metadata = file.metadata()?;
-        // The safe handle wrapper captures Windows volume and file index from the same open file.
         #[cfg(windows)]
-        let handle = Arc::new(same_file::Handle::from_file(file)?);
+        let information = winapi_util::file::information(&file)?;
         if !metadata.is_file() {
             return Err(std::io::Error::other("source is not a regular file"));
         }
@@ -156,7 +157,9 @@ impl SourceIdentity {
             #[cfg(unix)]
             changed: (metadata.ctime(), metadata.ctime_nsec()),
             #[cfg(windows)]
-            handle,
+            volume: information.volume_serial_number(),
+            #[cfg(windows)]
+            index: information.file_index(),
         })
     }
 
@@ -183,7 +186,7 @@ impl SourceIdentity {
                 }
                 #[cfg(windows)]
                 {
-                    self.handle == actual.handle
+                    self.volume == actual.volume && self.index == actual.index
                 }
                 #[cfg(not(any(unix, windows)))]
                 {
