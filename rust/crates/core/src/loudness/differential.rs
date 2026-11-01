@@ -1,5 +1,5 @@
 //! Differential tests comparing loudness within 0.001 LU and true peak bit for bit against ebur128.
-//! A focused x86 test covers the reference's different arithmetic-underflow handling.
+//! True peak comparisons include x86 arithmetic underflow.
 //!
 //! The reference feeds ebur128 the way the analysis always has, in 100 ms blocks with mono as dual mono.
 //! The inputs cover every signal kind, the rates where the true peak oversampling changes,

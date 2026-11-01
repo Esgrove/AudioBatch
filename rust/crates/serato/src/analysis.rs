@@ -5,7 +5,7 @@ use std::fmt::Display;
 
 /// A malformed Serato analysis version payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[error("Data is too short to contain version information")]
+#[error("{}", if *length < 2 { "Data is too short to contain version information" } else { "Unexpected analysis payload size" })]
 pub struct AnalysisVersionError {
     /// Number of bytes in the payload.
     pub length: usize,
@@ -30,9 +30,9 @@ impl AnalysisVersion {
     ///
     /// # Errors
     ///
-    /// Returns an error when the data has fewer than two bytes.
+    /// Returns an error when the data does not have exactly two bytes.
     pub const fn parse(data: &[u8]) -> Result<Self, AnalysisVersionError> {
-        let [major_version, minor_version, ..] = data else {
+        let [major_version, minor_version] = data else {
             return Err(AnalysisVersionError { length: data.len() });
         };
         Ok(Self {
@@ -60,10 +60,9 @@ mod test_analysis_version {
     }
 
     #[test]
-    fn parses_data_longer_than_two_bytes() {
-        let version = AnalysisVersion::parse(&[3, 7, 0xFF, 0xAB]).expect("Should parse when data has extra bytes");
-        assert_eq!(version.major_version, 3);
-        assert_eq!(version.minor_version, 7);
+    fn rejects_extended_payloads() {
+        assert!(AnalysisVersion::parse(&[3, 7, 0xFF, 0xAB]).is_err());
+        assert!(AnalysisVersion::parse(&[3, 7, 0]).is_err());
     }
 
     #[test]

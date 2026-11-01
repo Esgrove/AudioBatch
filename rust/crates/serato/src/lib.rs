@@ -14,6 +14,7 @@ mod markers;
 pub mod native;
 mod overview;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fmt::Display;
 use std::str::FromStr;
@@ -88,7 +89,7 @@ impl FromStr for SeratoTag {
             "Serato Analysis" => Ok(Self::Analysis),
             "Serato Autotags" => Ok(Self::Autotags),
             "Serato BeatGrid" => Ok(Self::BeatGrid),
-            "Serato Markers2" => Ok(Self::Markers),
+            "Serato Markers2" | "Serato Markers_" => Ok(Self::Markers),
             "Serato Overview" => Ok(Self::Overview),
             _ => Err(UnknownTagError {
                 description: description.to_owned(),
@@ -116,17 +117,29 @@ impl Display for SeratoTag {
 impl SeratoData {
     /// Parses the Serato tags among the given GEOB frames, as `(description, data)` pairs.
     ///
-    /// Frames with other descriptions are ignored.
+    /// Frames with other descriptions are ignored. The first valid frame of each kind wins,
+    /// and recovered invalid duplicates do not leave errors.
+    /// Valid Markers2 frames take precedence over legacy markers regardless of frame order.
     /// Returns `None` when no Serato tag was found, valid or not.
     #[must_use]
     pub fn parse<'a>(frames: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> Option<Self> {
         let mut data = Self::default();
         let mut found_any = false;
+        let mut selected = BTreeSet::new();
+        let mut errors = BTreeMap::new();
+        let mut legacy = Vec::new();
         for (description, bytes) in frames {
             let Ok(tag) = SeratoTag::from_str(description) else {
                 continue;
             };
             found_any = true;
+            if description == "Serato Markers_" {
+                legacy.push(bytes);
+                continue;
+            }
+            if selected.contains(&tag) {
+                continue;
+            }
             let result = match tag {
                 SeratoTag::Analysis => AnalysisVersion::parse(bytes)
                     .map(|value| data.analysis = Some(value))
@@ -145,20 +158,41 @@ impl SeratoData {
                     .map_err(|error| error.to_string()),
             };
             if let Err(error) = result {
-                data.errors.push(format!("{tag}: {error}"));
+                errors.entry(tag).or_insert(error);
+            } else {
+                selected.insert(tag);
+                errors.remove(&tag);
             }
         }
+        if !selected.contains(&SeratoTag::Markers) {
+            for bytes in legacy {
+                match Markers::parse_legacy(bytes) {
+                    Ok(markers) => {
+                        data.markers = markers;
+                        errors.remove(&SeratoTag::Markers);
+                        break;
+                    }
+                    Err(error) => {
+                        errors.insert(SeratoTag::Markers, error.to_string());
+                    }
+                }
+            }
+        }
+        data.errors = errors
+            .into_iter()
+            .map(|(tag, error)| format!("{tag}: {error}"))
+            .collect();
         found_any.then_some(data)
     }
 
     /// Returns the BPM from the autotags, or from the beatgrid when the autotags have none.
     #[must_use]
-    pub fn bpm(&self) -> Option<f32> {
+    pub fn bpm(&self) -> Option<f64> {
         self.autotags
             .as_ref()
             .map(|autotags| autotags.bpm)
             .filter(|&bpm| bpm > 0.0)
-            .or_else(|| self.beatgrid.as_ref().and_then(BeatGrid::bpm))
+            .or_else(|| self.beatgrid.as_ref().and_then(BeatGrid::bpm).map(f64::from))
     }
 
     /// Returns true when the file had the given tag but it could not be parsed.
@@ -289,6 +323,109 @@ mod test_serato_data {
         assert_eq!(SeratoData::parse([("Other", &[0_u8][..])]), None);
     }
 
+    #[test]
+    fn first_valid_duplicate_wins_and_clears_previous_failures() {
+        for frames in [
+            vec![
+                ("Serato Analysis", &[2_u8][..]),
+                ("Serato Analysis", &[2, 1]),
+                ("Serato Analysis", &[3, 4]),
+            ],
+            vec![
+                ("Serato Analysis", &[2_u8, 1][..]),
+                ("Serato Analysis", &[2]),
+                ("Serato Analysis", &[3, 4]),
+            ],
+        ] {
+            let data = SeratoData::parse(frames).expect("matching tags");
+            assert_eq!(
+                data.analysis,
+                Some(AnalysisVersion {
+                    major_version: 2,
+                    minor_version: 1
+                })
+            );
+            assert_eq!(data.errors, [] as [std::string::String; 0]);
+            assert!(!data.failed_to_parse(SeratoTag::Analysis));
+        }
+        let data = SeratoData::parse([("Serato Analysis", &[2_u8][..]), ("Serato Analysis", &[])])
+            .expect("invalid duplicates");
+        assert_eq!(data.errors.len(), 1);
+    }
+    #[test]
+    fn legacy_fallback_and_markers2_precedence_are_independent_of_order() {
+        let legacy = crate::markers::test_legacy::payload();
+        let modern = b"\x01\x01AQFDT0xPUgAAAAAEAASRAA==\0".as_slice();
+        let modern_markers = Markers::parse(modern).expect("modern track color");
+        for frames in [
+            vec![("Serato Markers_", legacy.as_slice()), ("Serato Markers2", modern)],
+            vec![("Serato Markers2", modern), ("Serato Markers_", legacy.as_slice())],
+        ] {
+            let data = SeratoData::parse(frames).expect("markers");
+            assert_eq!(data.markers, modern_markers);
+            assert_eq!(data.errors, [] as [std::string::String; 0]);
+        }
+        for frames in [
+            vec![
+                ("Serato Markers2", b"invalid".as_slice()),
+                ("Serato Markers_", legacy.as_slice()),
+            ],
+            vec![
+                ("Serato Markers_", b"invalid".as_slice()),
+                ("Serato Markers_", legacy.as_slice()),
+            ],
+        ] {
+            let data = SeratoData::parse(frames).expect("fallback");
+            assert_eq!(data.markers, Markers::parse_legacy(&legacy).expect("legacy"));
+            assert_eq!(data.errors, [] as [std::string::String; 0]);
+        }
+        let data = SeratoData::parse([("Serato Markers_", b"invalid".as_slice())]).expect("invalid legacy");
+        assert!(data.failed_to_parse(SeratoTag::Markers));
+    }
+
+    #[test]
+    fn every_kind_selects_first_valid_and_reports_only_unrecovered_failures() {
+        let grid = [
+            &[1, 0, 0, 0, 0, 1][..],
+            &0.25_f32.to_be_bytes(),
+            &127.12_f32.to_be_bytes(),
+            &[0],
+        ]
+        .concat();
+        let cases = [
+            ("Serato Analysis", &[2, 1][..]),
+            ("Serato Autotags", AUTOTAGS),
+            ("Serato BeatGrid", grid.as_slice()),
+            ("Serato Markers2", b"\x01\x01AQFDT0xPUgAAAAAEAASRAA==\0"),
+            (
+                "Serato Overview",
+                &[1, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+            ),
+        ];
+        for (description, valid) in cases {
+            let expected = SeratoData::parse([(description, valid)]).expect("valid kind");
+            assert!(expected.errors.is_empty(), "{description}: {:?}", expected.errors);
+            for frames in [
+                [
+                    (description, b"bad".as_slice()),
+                    (description, valid),
+                    (description, b"bad".as_slice()),
+                ],
+                [
+                    (description, valid),
+                    (description, valid),
+                    (description, b"bad".as_slice()),
+                ],
+            ] {
+                assert_eq!(SeratoData::parse(frames), Some(expected.clone()), "{description}");
+            }
+        }
+        let data = SeratoData::parse([("Serato BeatGrid", grid.as_slice())]).expect("grid fallback");
+        assert_eq!(
+            data.bpm().expect("final BPM").to_bits(),
+            f64::from(127.12_f32).to_bits()
+        );
+    }
     #[test]
     fn collects_errors_instead_of_printing() {
         let data = SeratoData::parse([("Serato Analysis", &[2_u8][..])]).expect("found serato tags");

@@ -3,9 +3,195 @@
 use audiobatch_core::cache::AnalysisCache;
 use audiobatch_core::metadata::copy_metadata;
 use audiobatch_core::serato_tags::colouring::{OverviewColour, column_colours, slice_colour};
-use audiobatch_core::serato_tags::{BeatGridMarker, Markers, Overview, SeratoData, format_position_timestamp};
+use audiobatch_core::serato_tags::{BeatGridMarker, Markers, Overview, SeratoData};
 use audiobatch_core::tags::{FileTags, SeratoOverviewState, read_display_tags, read_tags};
+use base64::{Engine as _, engine::general_purpose::STANDARD};
+use lofty::config::WriteOptions;
+use lofty::ogg::tag::VorbisComments;
+use lofty::prelude::TagExt;
+use std::path::{Path, PathBuf};
+use tempfile::TempDir;
 use test_fixtures::{MetadataFixture, file_sha256, metadata_fixtures};
+
+/// Writes duplicate native comments or raw ID3v2.3 objects without a tag library deduplicating frames.
+fn write_serato_file(directory: &TempDir, native: bool, frames: &[(&str, &[u8])]) -> PathBuf {
+    if native {
+        let path = test_fixtures::copy_fixture(directory, "sine_stereo_44100_16.flac", None);
+        let mut comments = VorbisComments::default();
+        for (description, payload) in frames {
+            let field = audiobatch_core::serato_tags::native::NATIVE_FIELDS
+                .iter()
+                .find(|(_, name)| name == description)
+                .expect("native name")
+                .0;
+            let mut wrapper = b"application/octet-stream\0\0".to_vec();
+            wrapper.extend_from_slice(description.as_bytes());
+            wrapper.push(0);
+            wrapper.extend_from_slice(payload);
+            comments.push(field.to_string(), STANDARD.encode(wrapper));
+        }
+        comments
+            .save_to_path(&path, WriteOptions::default())
+            .expect("writes native duplicates");
+        return path;
+    }
+    let path = directory.path().join("duplicates.mp3");
+    let source = std::fs::read(test_fixtures::fixture("sine_stereo_44100_320k.mp3")).expect("MP3 fixture");
+    let audio = if source.starts_with(b"ID3") {
+        let size = source
+            .get(6..10)
+            .expect("complete fixture header")
+            .iter()
+            .fold(0_usize, |size, byte| (size << 7) | usize::from(*byte));
+        source.get(10 + size..).expect("complete fixture tag")
+    } else {
+        &source
+    };
+    let mut body = Vec::new();
+    for (description, payload) in frames {
+        let mut object = b"\0application/octet-stream\0\0".to_vec();
+        object.extend_from_slice(description.as_bytes());
+        object.push(0);
+        object.extend_from_slice(payload);
+        body.extend_from_slice(b"GEOB");
+        body.extend_from_slice(&u32::try_from(object.len()).expect("small frame").to_be_bytes());
+        body.extend_from_slice(&[0, 0]);
+        body.extend_from_slice(&object);
+    }
+    let length = u32::try_from(body.len()).expect("small ID3 tag");
+    let mut bytes = b"ID3\x03\0\0".to_vec();
+    for shift in [21, 14, 7, 0] {
+        bytes.push(u8::try_from((length >> shift) & 127).expect("seven bits"));
+    }
+    bytes.extend_from_slice(&body);
+    bytes.extend_from_slice(audio);
+    std::fs::write(&path, bytes).expect("writes raw duplicate frames");
+    path
+}
+
+/// Checks both readers and the persistent Overview outcome, including invalid and absent states.
+fn check_duplicate_readers(path: &Path, expected: &SeratoData, cache: &AnalysisCache) {
+    let full = read_tags(path).expect("full duplicate tags");
+    let display = read_display_tags(path).expect("display duplicate tags");
+    assert_eq!(full.serato.as_ref(), Some(expected), "{}: full", path.display());
+    assert_eq!(display.serato, full.serato, "{}: display", path.display());
+    let state = SeratoOverviewState::from_tags(path, &display);
+    cache
+        .store_serato_overview(path, &state)
+        .expect("stores selection outcome");
+    assert_eq!(cache.get_serato_overview(path).expect("cached outcome"), state);
+}
+
+#[test]
+fn duplicate_selection_is_identical_in_native_and_id3_readers() {
+    let cache_directory = tempfile::Builder::new()
+        .prefix("metadata-cache-")
+        .tempdir_in(env!("CARGO_MANIFEST_DIR"))
+        .expect("repository cache directory");
+    let cache = AnalysisCache::with_path(cache_directory.path().join("analysis.db"));
+    let grid = [
+        &[1, 0, 0, 0, 0, 1][..],
+        &0.25_f32.to_be_bytes(),
+        &127.12_f32.to_be_bytes(),
+        &[0],
+    ]
+    .concat();
+    let cases = [
+        ("Serato Analysis", &[2, 1][..], &[3, 4][..]),
+        (
+            "Serato Autotags",
+            b"\x01\x01127.12\0-3.257\x000.001\0",
+            b"\x01\x01128.00\0-2.000\x001.000\0",
+        ),
+        ("Serato BeatGrid", grid.as_slice(), &[1, 0, 0, 0, 0, 0]),
+        (
+            "Serato Markers2",
+            b"\x01\x01AQFDT0xPUgAAAAAEAASRAA==\0",
+            b"\x01\x01AQEA\0",
+        ),
+        (
+            "Serato Overview",
+            &[1, 5, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+            &[1, 5, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3],
+        ),
+    ];
+    for native in [false, true] {
+        for (description, first, second) in cases {
+            for payloads in [
+                [b"invalid".as_slice(), first, second],
+                [first, b"invalid".as_slice(), second],
+                [first, second, b"invalid".as_slice()],
+                [b"invalid".as_slice(), b"invalid".as_slice(), b"invalid".as_slice()],
+            ] {
+                let frames = payloads.map(|payload| (description, payload));
+                let expected = SeratoData::parse(frames).expect("matching description");
+                let directory = tempfile::Builder::new()
+                    .prefix("metadata-tags-")
+                    .tempdir_in(env!("CARGO_MANIFEST_DIR"))
+                    .expect("repository tags directory");
+                let path = write_serato_file(&directory, native, &frames);
+                check_duplicate_readers(&path, &expected, &cache);
+            }
+        }
+    }
+}
+
+#[test]
+fn legacy_fallback_survives_native_and_id3_readers() {
+    let cache_directory = tempfile::Builder::new()
+        .prefix("metadata-cache-")
+        .tempdir_in(env!("CARGO_MANIFEST_DIR"))
+        .expect("repository cache directory");
+    let cache = AnalysisCache::with_path(cache_directory.path().join("analysis.db"));
+    let mut legacy = vec![2, 5, 0, 0, 0, 14];
+    for slot in 0..14 {
+        let mut record = [0; 22];
+        record[0] = if slot == 0 { 0 } else { 127 };
+        record[20] = if slot < 5 { 1 } else { 3 };
+        record[1..5].copy_from_slice(&[0, 0, 3, 116]);
+        record[16..20].copy_from_slice(&[0, 72, 104, 86]);
+        legacy.extend_from_slice(&record);
+    }
+    legacy.extend_from_slice(&[7, 124, 0, 1]);
+    for native in [false, true] {
+        for frames in [
+            vec![("Serato Markers_", legacy.as_slice())],
+            vec![
+                ("Serato Markers2", b"invalid".as_slice()),
+                ("Serato Markers_", legacy.as_slice()),
+            ],
+            vec![
+                ("Serato Markers_", legacy.as_slice()),
+                ("Serato Markers2", b"\x01\x01AQEA\0".as_slice()),
+            ],
+            vec![
+                ("Serato Markers2", b"\x01\x01AQEA\0".as_slice()),
+                ("Serato Markers_", legacy.as_slice()),
+            ],
+        ] {
+            let expected = SeratoData::parse(frames.iter().copied()).expect("marker selection");
+            let directory = tempfile::Builder::new()
+                .prefix("metadata-legacy-")
+                .tempdir_in(env!("CARGO_MANIFEST_DIR"))
+                .expect("repository legacy directory");
+            let path = write_serato_file(&directory, native, &frames);
+            check_duplicate_readers(&path, &expected, &cache);
+            if frames.iter().all(|(_, bytes)| *bytes != b"\x01\x01AQEA\0") {
+                let cue = expected.cues().next().expect("legacy cue");
+                assert_eq!(cue.position, 500);
+                assert_eq!(cue.color.to_rgb_u32(), 0x12_34_56);
+                assert_eq!(cue.name, "");
+                assert_eq!(
+                    expected.track_color().expect("legacy track colour").to_rgb_u32(),
+                    0xff_00_01
+                );
+            } else {
+                assert_eq!(expected.markers, Vec::<Markers>::new(), "valid empty Markers2 wins");
+            }
+            assert_eq!(expected.errors, Vec::<String>::new());
+        }
+    }
+}
 
 /// Checks one labelled fixture through both production tag-reading modes and the overview cache.
 fn check_fixture(name: &str) {
@@ -91,7 +277,7 @@ fn check_serato(data: &SeratoData, case: &MetadataFixture) {
         );
     }
     assert_eq!(
-        data.bpm().map(f32::to_bits),
+        data.bpm().map(f64::to_bits),
         Some(case.autotags[0].to_bits()),
         "{name}: final analysed BPM"
     );
@@ -115,12 +301,7 @@ fn check_serato(data: &SeratoData, case: &MetadataFixture) {
         assert_eq!(actual.index, expected.index, "{name}: cue slot");
         assert_eq!(actual.position, expected.position_ms, "{name}: cue position");
         assert_eq!(actual.color.to_rgb_u32(), expected.rgb, "{name}: cue colour");
-        let label = if expected.name.is_empty() {
-            format_position_timestamp(expected.position_ms)
-        } else {
-            expected.name.clone()
-        };
-        assert_eq!(actual.name, label, "{name}: cue label");
+        assert_eq!(actual.name, expected.name, "{name}: exact source cue label");
     }
     let loops: Vec<_> = data
         .markers
@@ -174,15 +355,23 @@ fn check_beatgrid(data: &SeratoData, case: &MetadataFixture) {
         for (actual, expected) in actual.markers.iter().zip(expected) {
             match actual {
                 BeatGridMarker::Terminal { position, bpm } => {
-                    assert_eq!(*position, expected.position_seconds, "{name}: terminal position");
-                    assert_eq!(Some(*bpm), expected.bpm, "{name}: terminal BPM");
+                    assert_eq!(
+                        f64::from(*position),
+                        expected.position_seconds,
+                        "{name}: terminal position"
+                    );
+                    assert_eq!(Some(f64::from(*bpm)), expected.bpm, "{name}: terminal BPM");
                     assert_eq!(expected.beats_until_next, 0);
                 }
                 BeatGridMarker::NonTerminal {
                     position,
                     beats_till_next,
                 } => {
-                    assert_eq!(*position, expected.position_seconds, "{name}: anchor position");
+                    assert_eq!(
+                        f64::from(*position),
+                        expected.position_seconds,
+                        "{name}: anchor position"
+                    );
                     assert_eq!(*beats_till_next, expected.beats_until_next, "{name}: beat count");
                     assert_eq!(expected.bpm, None);
                 }

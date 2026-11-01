@@ -15,8 +15,9 @@ pub const BAND_COUNT: usize = 16;
 /// Highest number of slices accepted when parsing or deserializing.
 pub const MAXIMUM_SLICES: usize = 65_536;
 
-/// Version of the overview cache representation, raised when it changes.
-pub const OVERVIEW_PARSER_VERSION: u32 = 2;
+/// Version of persisted Overview read outcomes, raised when parsing or tag selection changes.
+/// Version 3 invalidates results selected before first-valid duplicate recovery.
+pub const OVERVIEW_PARSER_VERSION: u32 = 3;
 
 /// Stable identifier of the Overview tag kind in the cache, part of the shared `serato_tag_cache` schema.
 pub const OVERVIEW_TAG_KIND: u32 = 1;
@@ -30,7 +31,10 @@ const MAXIMUM_PAYLOAD_BYTES: usize = PAYLOAD_HEADER.len() + MAXIMUM_SLICES * BAN
 /// Magic bytes at the start of a cached overview.
 const CACHE_MAGIC: [u8; 4] = *b"SOVR";
 
-/// Size of the cache header: the magic, the kind, the parser version, and the slice count.
+/// Version of the unchanged raster blob layout, shared with the C++ serializer.
+const CACHE_FORMAT_VERSION: u32 = 2;
+
+/// Size of the cache header: the magic, the kind, the format version, and the slice count.
 const CACHE_HEADER_BYTES: usize = 16;
 
 /// Palette indices of one time slice, top to bottom.
@@ -116,7 +120,7 @@ impl Overview {
         };
         if *magic != CACHE_MAGIC
             || u32::from_be_bytes(*kind) != OVERVIEW_TAG_KIND
-            || u32::from_be_bytes(*version) != OVERVIEW_PARSER_VERSION
+            || u32::from_be_bytes(*version) != CACHE_FORMAT_VERSION
         {
             return None;
         }
@@ -130,7 +134,7 @@ impl Overview {
     }
 
     /// Writes the cache representation, with the raw palette indices after a header.
-    /// The header has the magic, then the kind, the parser version, and the slice count as big-endian fields.
+    /// The header has the magic, then the kind, the format version, and the slice count as big-endian fields.
     /// Returns an empty vector for an overview without slices or with more than `MAXIMUM_SLICES`.
     #[must_use]
     pub fn serialize(&self) -> Vec<u8> {
@@ -143,7 +147,7 @@ impl Overview {
         let mut bytes = Vec::with_capacity(CACHE_HEADER_BYTES + self.slices.len() * BAND_COUNT);
         bytes.extend_from_slice(&CACHE_MAGIC);
         bytes.extend_from_slice(&OVERVIEW_TAG_KIND.to_be_bytes());
-        bytes.extend_from_slice(&OVERVIEW_PARSER_VERSION.to_be_bytes());
+        bytes.extend_from_slice(&CACHE_FORMAT_VERSION.to_be_bytes());
         bytes.extend_from_slice(&count.to_be_bytes());
         bytes.extend(self.slices.iter().flatten());
         bytes
@@ -253,6 +257,15 @@ mod test_cache_representation {
     fn round_trips_the_largest_overview() {
         let overview = overview(MAXIMUM_SLICES);
         assert_eq!(Overview::deserialize(&overview.serialize()), Some(overview));
+    }
+
+    #[test]
+    fn read_parser_version_does_not_change_shared_raster_blobs() {
+        assert_eq!(OVERVIEW_PARSER_VERSION, 3);
+        let overview = overview(1);
+        let bytes = overview.serialize();
+        assert_eq!(&bytes[8..12], &2_u32.to_be_bytes());
+        assert_eq!(Overview::deserialize(&bytes), Some(overview));
     }
 
     #[test]

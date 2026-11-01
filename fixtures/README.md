@@ -149,6 +149,11 @@ which must remain signed rather than being clamped or interpreted as a large pos
 The synth FLAC and MP3 also have locked loops, with their own exact positions.
 The dmt cues include `Kick`, `Snare`, and `Fill`, and the synth's first cue is named `1`.
 Other cue labels are empty.
+Labels retain the exact source text, including whitespace and empty strings.
+Any timestamp fallback belongs to presentation, not parsed metadata.
+ASCII Autotags numbers and final BPM retain binary64 precision.
+Beatgrid's stored binary32 values widen exactly for comparisons with the shared numeric expectations,
+which must never be narrowed to binary32.
 The Rust reader retains its timestamp-label fallback for those.
 
 Ordinary BPM and Serato BPM are separate expectations.
@@ -162,6 +167,11 @@ The real files exercise compact Autotags numbers and native FLAC zero padding
 that the synthetic rainbow fixture does not.
 Native wrapper repair must not relax malformed-base64 or partial-raster rejection in the raw parsers.
 Parser versions invalidate old cached failures so corrected Overview data can be read again.
+Rust Overview cache version 3 also invalidates every version-2 outcome,
+including present data selected from a later duplicate and invalid states that valid duplicates can recover.
+This read/parser version gates the SQLite row independently of the unchanged version-2 `SOVR` raster layout.
+Both implementations retain byte-compatible raster serialization.
+C++ keeps its existing Overview cache version because its duplicate selection is unchanged.
 
 `metadata/inspect_metadata.py` repeats the independent container inspection with Python's standard library,
 using ffprobe only for ordinary text tags.

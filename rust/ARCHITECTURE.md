@@ -339,15 +339,19 @@ Hardware dispatch detects NEON on Apple Silicon or AVX2 on x86 once per process.
 AVX-512 capable AMD CPUs also use the AVX2 backend, with no SSE compatibility paths.
 Tests compare the selected hardware backend and a forced scalar fallback with the reference.
 The safe SIMD kernel leaves the caller's floating point environment unchanged.
-Ebur128 temporarily enables flush to zero on x86 with SSE2,
-and a focused x86 test covers the resulting arithmetic-underflow difference.
+On x86, subnormal-sensitive histories emulate ebur128's arithmetic flush to zero with binary64 intermediates
+and binary32 rounding after each multiply and add.
+Ordinary histories retain the binary32 SIMD path,
+with a conservative coefficient-derived bound ensuring that no arithmetic result can become subnormal.
+Subnormal decoded sample peaks remain intact.
+Tests require exact reference agreement for underflowing products, subnormal inputs, and history transitions.
 Native correctness and timing results cover macOS on Apple Silicon and Windows on x86-64.
 The dated results and platform-specific validation limits are in [Analysis performance](docs/performance.md).
 
 The loudness contract allows at most 0.001 LU difference from the reference for integrated loudness,
 maximum short-term loudness, and each short-term history value.
 Displayed integrated and maximum short-term loudness must also agree at two decimal places.
-True peak is bit-exact against the reference except for the x86 arithmetic-underflow case.
+True peak is bit-exact against the reference, including x86 arithmetic underflow.
 Goldens capture regression snapshots, checked alongside differential and parity tests.
 The benchmark commands, profiling breakdown, and validation limits are in [Analysis performance](docs/performance.md).
 
@@ -376,7 +380,7 @@ and extends true peak coverage conservatively across interpolation boundaries wi
 `AnalysisCache` in `core/src/cache.rs` keeps one SQLite row per path,
 with the levels, loudness history, waveform and overload history as independent blobs, and the user's custom gain.
 Successful rows require valid overload history matching their decoded stream.
-Analysis version 5 identifies measurements from the current loudness meter.
+Analysis version 6 identifies measurements from the current loudness and true peak meters.
 Older rows or missing or malformed history trigger reanalysis through an additive migration and analysis version gate.
 A refill retains same-identity custom gains, including explicit clears, and leaves Serato rows untouched.
 A row holds while the file keeps the stored size and modification time and the analysis version is current.
