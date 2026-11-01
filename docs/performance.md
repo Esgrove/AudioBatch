@@ -1,5 +1,8 @@
 # Analysis performance
 
+Commands run from `rust/`, and unqualified crate and generated report paths are relative to that workspace.
+The measurements compare both implementations where stated.
+
 ## macOS results
 
 Rust uses a custom K-weighting and gating meter, SIMD true peak, and in-render normalization measurements.
@@ -279,6 +282,76 @@ Reproduce from `rust/` with current Release binaries:
 cargo bench -p audiobatch-core --bench analysis --bench normalize --bench misc -- --save-baseline windows-local
 ```
 
+## In-place VST3 processing
+
+Measurements on November 1, 2026, use the Windows machine and release settings above,
+with the same C++ executable and real AudioBatch Test MS bundle throughout.
+The baseline uses the pre-existing Rust Release example.
+The optimized example is rebuilt from the working tree.
+Each of the six cases repeats one second of committed input 100 times,
+with one unreported warmup and 30 measured renders.
+Setup, allocation, decoding, and exports remain outside timing.
+Host and chain modes retain their source-to-block and block-to-output transfers.
+The optimized host lends the block directly to VST3 rather than copying through separate host buffers.
+Chain mode also retains channel adaptation and finite checks.
+
+The buffered chain transferred every main channel into each processor,
+cleared its separate output buffers, and copied its result back into the signal.
+Mono/stereo main buses now borrow that signal in place,
+with the same channel pointer array for input and output during the call.
+Only output-only channels and auxiliary buses are cleared.
+A scoped binding restores owned bus descriptions even when processing fails.
+Controller edits, transport, exclusive-processing guards, and latency handling are unchanged.
+The buffered API and wider-main-bus adapter remain available.
+Offline rendering and preview use the same optimized chain path.
+
+The first optimized run has the following means and sample standard deviations in milliseconds.
+The baseline column is the Rust mean before the change.
+The ratio compares the C++ and optimized Rust means within the same run.
+
+| Mode | Input | Plugins | Latency, frames | Rust baseline, ms | C++, ms | Rust in place, ms | C++ / Rust |
+| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Host | 44.1 kHz stereo | 1 | 0 | 8.227 | 7.398 ± 0.248 | 7.001 ± 0.248 | 1.057 |
+| Chain | 44.1 kHz stereo | 1 | 0 | 10.231 | 10.236 ± 0.393 | 9.105 ± 0.335 | 1.124 |
+| Chain | 44.1 kHz mono | 1 | 0 | 4.567 | 4.055 ± 0.257 | 3.514 ± 0.200 | 1.154 |
+| Chain | 48 kHz stereo | 4 | 0 | 25.402 | 23.511 ± 0.487 | 21.090 ± 0.367 | 1.115 |
+| Chain | 96 kHz stereo | 8 | 0 | 90.254 | 79.924 ± 0.675 | 73.507 ± 0.566 | 1.087 |
+| Chain | 44.1 kHz stereo | 4 | 1024 | 96.487 | 93.984 ± 0.744 | 92.123 ± 0.640 | 1.020 |
+
+Zero-latency chain times fall by 11.0 to 23.1 percent against the baseline in this run.
+An independent second optimized run also favors Rust in all six cases,
+with C++ / Rust ratios of 1.082, 1.111, 1.037, 1.106, 1.095, and 1.026 in table order.
+The latency case is dominated by the plugin's own delay processing and has a small, timing-sensitive improvement.
+Absolute timings vary between runs, notably the mono chain,
+so these are local comparisons rather than a general plugin speed guarantee.
+They exclude file decoding and writing and do not establish an end-to-end file-processing speedup.
+Native macOS execution was not available.
+
+Every render in all three reports has zero floating-point residual
+and zero differing 16-bit PCM samples against independent arithmetic,
+including latency compensation and repeated state restoration.
+Regression tests compare in-place and buffered gain, delay, and echo output exactly.
+They also cover short-block suffixes, unchanged owned buffers, auxiliary silence,
+invalid buffers, failure cleanup, and mixed mono/stereo stage order.
+The fake test processor reads each sample before writing it through raw pointers,
+without creating overlapping mutable input and output slices when the buffers alias.
+Strict workspace Clippy and formatting checks pass.
+The full debug workspace runs 920 tests successfully, with three existing skips.
+The optimized host and plugin suites run all 157 tests successfully, with no skips.
+
+Reports, relative to `rust/`:
+
+- Baseline: `target/vst3-benchmark/20261101T193725Z-4qNaeC/`.
+- Optimized: `target/vst3-benchmark/20261101T195232Z-pTQ0s7/`.
+- Repeat: `target/vst3-benchmark/20261101T195253Z-ZNIuq8/`.
+
+Reproduce after building the Release Rust example, keeping the C++ executable and bundle unchanged:
+
+```shell
+cargo build --release -p audiobatch-plugins --example vst3_benchmark
+./scripts/vst3_benchmark.sh --iterations 30 --repeat 100 --no-build
+```
+
 ## Processing and memory
 
 `BlockMeter` groups planar decoder chunks into 100 ms measurement blocks.
@@ -315,7 +388,8 @@ There is no scaled-audio copy, per-chunk plane-reference allocation, or full out
 Header and frame-count validation remain in place before commit.
 An in-place source already at target returns its current record after cancellation and source-identity checks.
 
-[Rust architecture](../rust/ARCHITECTURE.md) describes the channel map, waveform, overload history, cache, and commit lifecycle.
+[Rust architecture](../rust/ARCHITECTURE.md) describes the channel
+map, waveform, overload history, cache, and commit lifecycle.
 The adapted coefficient routines retain their upstream notice in
 [`crates/core/licenses/ebur128.txt`](../rust/crates/core/licenses/ebur128.txt).
 

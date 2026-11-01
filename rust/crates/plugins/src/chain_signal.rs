@@ -7,6 +7,7 @@
 //! so the order of the plugins does not drop a channel.
 //! Main input channels beyond the signal get silence.
 //! After each plugin the signal has as many channels as the plugin's main output, limited to mono or stereo.
+//! Mono/stereo main buses borrow the signal in place, while wider buses use the host's owned buffers.
 
 use vst3_host::{ProcessError, ProcessorHandle};
 
@@ -57,6 +58,11 @@ impl ChainSignal {
         self.channels.get(channel).map(Vec::as_slice)
     }
 
+    /// Borrows both channel buffers, including the scratch channel of a mono signal.
+    pub(crate) fn channels_mut(&mut self) -> [&mut [f32]; MAXIMUM_SIGNAL_CHANNELS] {
+        self.channels.each_mut().map(Vec::as_mut_slice)
+    }
+
     /// Runs the first `frames` frames of the block through every processor in order.
     /// `frames` is limited to the block length.
     ///
@@ -68,6 +74,17 @@ impl ChainSignal {
         for (index, processor) in processors.iter_mut().enumerate() {
             let main_inputs = processor.input_channels();
             self.fit_to(main_inputs.clamp(1, MAXIMUM_SIGNAL_CHANNELS));
+            let main_outputs = processor.output_channels();
+            if main_inputs.max(main_outputs) <= MAXIMUM_SIGNAL_CHANNELS && frames <= processor.max_block_frames() {
+                processor
+                    .process_in_place(&mut self.channels_mut(), frames)
+                    .map_err(|error| StageFailure { index, error })?;
+                for signal in self.channels.iter_mut().skip(main_outputs) {
+                    signal.fill(0.0);
+                }
+                self.width = main_outputs.clamp(1, MAXIMUM_SIGNAL_CHANNELS);
+                continue;
+            }
             for channel in 0..main_inputs {
                 let Some(input) = processor.input_channel_mut(channel) else {
                     continue;
@@ -80,7 +97,6 @@ impl ChainSignal {
             processor
                 .process(frames)
                 .map_err(|error| StageFailure { index, error })?;
-            let main_outputs = processor.output_channels();
             for (channel, signal) in self.channels.iter_mut().enumerate() {
                 match processor.output_channel(channel) {
                     Some(output) => copy_samples(output, signal, frames),
