@@ -352,6 +352,105 @@ cargo build --release -p audiobatch-plugins --example vst3_benchmark
 ./scripts/vst3_benchmark.sh --iterations 30 --repeat 100 --no-build
 ```
 
+## Windows compiler validation
+
+The Windows validation after the native build and in-place Rust VST3 changes uses MSVC 19.51 and LLVM 23.1.4.
+Both C++ applications and the test executable build in Debug and Release with each compiler.
+All 30 C++ suites pass in each configuration, with no widened tolerances.
+The MSVC and LLVM AddressSanitizer builds also pass all 30 suites.
+LLVM AddressSanitizer uses RelWithDebInfo and the dynamic release CRT because it cannot link the Debug CRT.
+Its runtime DLL is available during plugin manifest generation and copied beside the test executable.
+Both sanitizer configurations retain standard library hardening and disable native targeting and LTO.
+The GUI and CLI also build under both sanitizer configurations.
+
+Rust 1.99.1 builds both applications in Debug and Release and passes strict workspace Clippy for all targets.
+All 920 workspace tests pass in both Debug and Release, with three existing skips in each run.
+The three Release VST3 benchmark verification tests pass too.
+The Rust tests use the freshly built MSVC Release VST3 and require the normalization fixture collection.
+The full repository formatting check passes, including C++, Rust, CMake, shell, JSON, Python, and prose checks.
+The parity, CLI benchmark, and distribution license tooling tests also pass with their existing platform skips.
+Full clang-tidy checks pass against both the MSVC and clang-cl Debug compile databases.
+Each checks all 106 Windows project and test-plugin sources, including shared sources in every applicable target.
+The two macOS-only fuzz harnesses are excluded by the Windows runner.
+
+| Compiler | Debug suites | Release suites | AddressSanitizer suites |
+| :--- | ---: | ---: | ---: |
+| MSVC 19.51 | 30 / 30 | 30 / 30 | 30 / 30 |
+| clang-cl 23.1.4 | 30 / 30 | 30 / 30 | 30 / 30 |
+
+Run the sanitizer checks from `cpp/`:
+
+```shell
+./sanitize.sh
+./sanitize.sh --clang
+```
+
+### Native VST3 compiler comparison
+
+The refreshed measurements on November 1, 2026, use the same Ryzen 9 7950X Windows machine described above.
+Both C++ Release builds enable checked LTO and native CPU targeting, with nonfused floating-point arithmetic.
+The MSVC build uses `/arch:AVX512` and `/favor:AMD64`, and clang-cl uses `-march=native` and `-mtune=native`.
+Rust 1.99.1 uses native CPU targeting, release LTO, and one code generation unit.
+The C++ binaries were configured at `bdc842a`, with the sanitizer support subsequently committed as `de7304f`.
+The Rust Release example was rebuilt after `de7304f`.
+All builds, tests, sanitizers, and lints finish before timing, and both benchmark runs execute sequentially.
+
+Both comparisons load the identical MSVC Release AudioBatch Test MS bundle.
+Every case repeats one second of committed input 100 times, with one unreported warmup and 30 measured renders.
+The timed work boundaries, 1024-frame blocks, state restoration,
+and latency compensation match the preceding comparison.
+Setup, decoding, allocation, and sample exports remain outside timing.
+Each comparison has its own Rust control measurements using the same executable.
+All 12 cases have zero floating-point residual and zero differing 16-bit PCM samples against independent arithmetic.
+
+Times are mean +/- sample standard deviation in milliseconds.
+Ratios below one favor C++, and ratios above one favor Rust.
+
+| C++ compiler | Mode | Input | Plugins | Latency, frames | C++, ms | Rust, ms | C++ / Rust |
+| :--- | :--- | :--- | ---: | ---: | ---: | ---: | ---: |
+| MSVC | Host | 44.1 kHz stereo | 1 | 0 | 7.309 +/- 0.217 | 7.353 +/- 0.541 | 0.994 |
+| MSVC | Chain | 44.1 kHz stereo | 1 | 0 | 10.290 +/- 0.363 | 9.406 +/- 0.406 | 1.094 |
+| MSVC | Chain | 44.1 kHz mono | 1 | 0 | 4.197 +/- 0.363 | 3.610 +/- 0.207 | 1.163 |
+| MSVC | Chain | 48 kHz stereo | 4 | 0 | 23.716 +/- 0.486 | 21.464 +/- 0.395 | 1.105 |
+| MSVC | Chain | 96 kHz stereo | 8 | 0 | 80.464 +/- 0.903 | 73.582 +/- 0.877 | 1.094 |
+| MSVC | Chain | 44.1 kHz stereo | 4 | 1024 | 95.365 +/- 0.891 | 93.144 +/- 0.965 | 1.024 |
+| clang-cl | Host | 44.1 kHz stereo | 1 | 0 | 7.291 +/- 0.271 | 7.240 +/- 0.507 | 1.007 |
+| clang-cl | Chain | 44.1 kHz stereo | 1 | 0 | 8.732 +/- 0.335 | 9.245 +/- 0.392 | 0.945 |
+| clang-cl | Chain | 44.1 kHz mono | 1 | 0 | 3.207 +/- 0.219 | 3.679 +/- 0.319 | 0.872 |
+| clang-cl | Chain | 48 kHz stereo | 4 | 0 | 21.741 +/- 0.417 | 21.423 +/- 0.383 | 1.015 |
+| clang-cl | Chain | 96 kHz stereo | 8 | 0 | 76.485 +/- 0.667 | 76.541 +/- 0.929 | 0.999 |
+| clang-cl | Chain | 44.1 kHz stereo | 4 | 1024 | 93.658 +/- 0.787 | 93.355 +/- 0.865 | 1.003 |
+
+Rust has lower observed chain means than MSVC in this run, while the single-host measurements are close.
+With clang-cl, C++ has lower means in the mono and single-plugin stereo chains, and the remaining cases are close.
+Rust control times vary between comparisons, particularly in the 96 kHz case.
+These local measurements do not establish a universal compiler or host ranking,
+or an end-to-end file-processing speedup.
+The preceding baseline and in-place reports remain unchanged.
+
+Reports, relative to `rust/`:
+
+- MSVC comparison: `target/vst3-benchmark/20261101T212839Z-SBSgoK/`.
+- clang-cl comparison: `target/vst3-benchmark/20261101T212900Z-zdPAa2/`.
+
+The reports retain every timing sample, planar sample export, and independent comparison result.
+Measured binary SHA-256 identities:
+
+| Binary | SHA-256 |
+| :--- | :--- |
+| MSVC C++ test executable | `d04bd34cd3eab7df428102bd08e1c37cd5a4c15a3d16bb4ecd12670193813afa` |
+| clang-cl C++ test executable | `b7c064014e21570fb74270f8dc8069744635c5a3d173559b558a04d9c6d1109b` |
+| Rust VST3 benchmark example | `b3df81f665d5babeb2a22f0dcde8f5c17d7e6c1775874f080c686217a269e544` |
+| Shared MSVC VST3 module | `9e19da6afff86726278b8c59c6b5051f79b413793286ae9150534e852ee0ce14` |
+
+Reproduce from `rust/` with the validated Release binaries:
+
+```shell
+./scripts/vst3_benchmark.sh --iterations 30 --repeat 100 --no-build
+./scripts/vst3_benchmark.sh --iterations 30 --repeat 100 --no-build \
+  --cpp ../cpp/cmake-build-windows-clang-release/AudioBatchTests_artefacts/Release/AudioBatchTests.exe
+```
+
 ## Processing and memory
 
 `BlockMeter` groups planar decoder chunks into 100 ms measurement blocks.
