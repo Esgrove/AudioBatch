@@ -119,8 +119,7 @@ Bash completions go to `~/.bash_completion.d`.
 `audiobatch-rs` takes the analysis and normalization options of the C++ `audiobatch` CLI
 and prints the same table, CSV, and JSON output.
 It exits with code 2 when a file fails and with code 1 for invalid arguments.
-The `list` and `completion` subcommands work the same as in the C++ CLI,
-except that only `audiobatch-rs` also generates elvish completions.
+The `list` subcommand lists scanned VST3 effects, and `completion` generates shell completions.
 
 `--normalize` writes every analyzed file as a sibling `<name>.aif` at the source sample rate,
 brought to a sample peak of 0 dBFS, or to the `--peak` or `--lufs` target.
@@ -205,72 +204,40 @@ Options:
 cargo run --release --bin AudioBatchRs -- [--autoplay] [paths...]
 ```
 
-The window shows the results table,
-and below it the controls, the information panel, and the waveform.
-A status bar along the bottom shows the listed folders, the analysis or normalization status and progress,
-and the output device with its sample rate and buffer size in samples.
+Open or drop files and folders to start background analysis.
+Compare levels and file properties in a sortable results table with configurable columns and per-file progress.
+Rescanning analyzes only new and changed files, while re-analysis ignores cached results.
+Normalization, processing, and file actions work on the selection, with confirmed batch commands for all analyzed files.
 
-- Drop folders to replace the list, or hold Shift to add them. Dropped files are added.
-  File > Choose Folder, Add Folder, and Add Files do the same through a dialog.
-  Like the C++ version, only one app runs: launching it again opens the given paths in the running app,
-  as if they were dropped onto its window, and brings it to the front.
-- Select a row to see its levels, details, tags, waveform, and Serato cue points.
-  A file with a Serato Overview tag gets a waveform coloured from it,
-  while the shape still comes from the decoded audio, and other files are drawn in blue.
-  Options > Serato Waveform Colours (Command or Control and Shift and S) turns the colouring off.
-  Serato data is read from MP3, AIFF, WAV, and FLAC files, and the keys 1 to 8 play from the hot cue in that slot.
-  Double-click a row, press space, or use Play to play, and press escape to stop and return to the start.
-  Like in the C++ version, the preview plays mono and stereo files, and refuses files with more channels.
-- Command or Control click adds a row to the selection or takes it out, Shift click selects a range,
-  and Command or Control and A, or File > Select All Files, selects every row.
-  The preview shows the file selected first, and the gain, normalizing, processing, re-analyzing,
-  removing, and trashing work on every selected file, like in the C++ version.
-- Drag a column header to reorder the columns, and hover it to see what the column shows and in which unit.
-  Options > Columns shows or hides columns, and Peak L, Peak R, and Gain start hidden, like in the C++ version.
-  The table starts sorted by Peak, quietest first.
-  Command or Control click on a header title sets a secondary sort that breaks ties of the main sort,
-  marked "[2^]" or "[2v]", and the same click on the main sort column clears it.
-- Press on the waveform to pause there, drag to scrub, and release to play from that point,
-  like in the C++ version. Double-click plays from the start.
-  The wheel zooms around the playhead, and Command or Control with the wheel changes the input gain in 0.1 dB steps.
-  Double-click the Zoom or Input gain slider to reset it to 100% or 0 dB, and each new file starts at 100%.
-  With playing from the first cue point on, a played file waits for its cue points and starts at the first one.
-- The Input gain slider sets a per-file gain for the selected file, shown in the Gain column.
-  It scales the waveform, and the preview while it plays through the plugin chain, as it does in processing.
-  A preview without the plugin chain plays the file unchanged, like in the C++ version.
-  The gain is saved in the analysis cache until the file changes.
-  File > Clear Per-file Gain removes it.
-- The controls follow the C++ layout: Zoom, Input gain, the Normalize and Overwrite options,
-  the Peak and Loudness target with its Normalize button, Plugin Chain, Audio Settings,
-  and Play and Process side by side at the bottom, with Play turning into Stop while the file plays.
-  The chevron in the top left corner of the controls, Options > Collapse Bottom Section,
-  or Command or Control with Shift and Space collapses the preview into one row with the chevron,
-  Play and Process, the four level metrics, and the waveform.
-  The same chevron or shortcut expands it again, with the divider where it was.
-- The Peak and Loudness buttons choose a sample peak target from -12 to 0 dBFS,
-  or a loudness target from -24 to -6 LUFS limited to a -0.3 dBTP true peak.
-  The Normalize button and File > Normalize Selected normalize the selected file,
-  and File > Normalize All Files normalizes every analyzed file after a confirmation.
-  Each file is written as a sibling `.aif` that replaces its row, and a converted source is moved to the system trash.
-  Overwrite lets the output replace an existing file of the same name, which is moved to the trash too.
-  The Status column shows the progress of each file, and a failure keeps the row with the reason.
-- During an analysis, normalization, or processing run the Process button becomes Cancel,
-  and File > Cancel Run (Command or Control and period) cancels the run too.
-  Files the run has not committed keep their rows, and Clear All Files stops any run.
-- File > Rescan (F5) picks up new and changed files,
-  and the File menu also re-analyzes, removes, trashes, or reveals the selected file.
-  Moving a file to the trash asks first, and Command or Control with Shift and Backspace skips the question.
-- Options > Show Loudness Graph, or the same option in the settings window,
-  draws the short-term loudness over the waveform, and Options > Output Device switches the audio device.
-- Windows preview uses ASIO and requires an installed ASIO driver for the audio interface, with no WASAPI fallback.
-  Other platforms use their default audio host.
-- The Audio Settings button, or Options > Audio Settings… (Command or Control and comma),
-  opens the settings window.
-  It chooses the output device, sample rate, and buffer size, previewing through the plugin chain,
-  continuing playback when changing files, starting at the first cue point, and the loudness graph with its range.
-  The settings are saved in `gui-settings.json` next to the analysis cache.
-- Hovering the controls, the information panel, and the status bar shows tooltips.
-- `--autoplay` selects and plays the first file that analyzed successfully once the startup analysis completes.
+### Waveform and playback
+
+The preview shows the selected file's levels, tags, waveform, and Serato cue points.
+It supports mono and stereo playback, waveform zoom and scrubbing, and playback from Serato hot cues.
+Serato Overview tags provide optional waveform colours, and a short-term loudness graph can overlay the waveform.
+Multichannel playback is not supported.
+
+Per-file input gain scales the waveform and feeds plugin preview and processing.
+Dry playback stays unchanged.
+The gain is cached until the source file changes.
+
+Audio Settings chooses the output device, sample rate, buffer size, and preview preferences,
+including plugin preview, latency compensation, continued playback when changing files, and starting at the first cue.
+Windows playback requires an installed ASIO driver, with no WASAPI fallback.
+Other platforms use their default audio host.
+Settings persist between sessions.
+
+### Normalization and file safety
+
+Normalize selected files or every analyzed file to a sample peak from -12 to 0 dBFS,
+or loudness from -24 to -6 LUFS with a -0.3 dBTP ceiling.
+The ceiling can leave a file below its loudness target.
+Output is a sibling `.aif` with the source metadata, and replaced originals go to the system trash.
+Existing output files are protected unless Overwrite is enabled.
+Failures keep the original row and report the reason.
+
+Analysis, normalization, and processing runs can be cancelled.
+Uncommitted files keep their originals and rows, while completed files show their new output.
+Removing a row does not delete its file, and moving files to the trash is a separate action.
 
 The analysis cache lives in the `AudioBatch-rs` folder of the user data directory,
 apart from the cache of the C++ application.
@@ -298,8 +265,6 @@ Instruments are listed by scans but cannot be added to the chain.
   Plugins > Chain Presets loads a preset from the menu too, with the loaded one checked.
   Each preset is a JSON file in the `chain-presets` folder of the data directory.
   Changing the chain or a plugin's settings afterwards keeps the preset file as it is, until it is saved again.
-  The Presets title then marks the loaded preset modified, and its Save button becomes Update,
-  which saves over the loaded preset without asking.
 - Process, or Plugins > Process Selected With Plugin Chain, renders the selected file through the enabled plugins,
   and Plugins > Process All Files With Plugin Chain… renders every analyzed file after a confirmation.
   Before the first plugin each file gets its custom gain,

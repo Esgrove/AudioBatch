@@ -84,40 +84,28 @@ This is future work: no C++ standard upgrade, meter replacement, or SIMD depende
 
 ## GUI
 
-Choose a folder or drop folders onto the window to start background analysis.
-Use `File > Add Folder...` or hold `Shift` while dropping to add folders without clearing the results.
-`Rescan` or `F5` scans all selected folders again, analyzing only new and changed files and keeping the other rows.
-`Re-analyze Selected` analyzes the selected files again, ignoring their cached results.
-Quit with `Ctrl+Q` on Windows or `Cmd+Q` on macOS.
+Open or drop files and folders onto the window to start background analysis.
+Add folders without clearing existing results, or rescan to analyze only new and changed files.
+Re-analysis ignores cached results.
 
 Sort results by level, loudness or file details, and show or hide columns from the table header menu.
 The results context menu lets you normalize, process, re-analyze, reveal or remove selected files.
-`File > Normalize All Files...` and `Plugins > Process All Files...` run every analyzed file after a confirmation.
-During a run the Process button becomes Cancel, and `File > Cancel Run` (`Cmd+.` or `Ctrl+.`) cancels it too.
-Files the run has not committed keep their rows, and `Clear All Files` stops any run.
+Batch normalization and plugin processing can run every analyzed file after a confirmation.
+Analysis, normalization, and processing runs can be cancelled.
+Uncommitted files keep their originals and rows, while completed files show their new output.
 Removing a row does not delete the file. Moving a file to the trash is a separate action.
 
 ### Waveform Preview
 
 View and play tracks with a zoomable waveform.
-The resizable preview workspace has separate columns for controls, selected-file information, and the waveform.
 Sample peak, true peak, integrated loudness, and maximum short-term loudness appear in dedicated metric cards.
-The Play button turns into Stop while the file plays.
 
 An optional orange-red short-term loudness line overlays the waveform, with a compact numeric axis on the left.
 It measures the trailing three seconds and follows waveform zoom and scrolling.
 
 Serato DJ metadata adds optional waveform colours and coloured cue markers,
 and the info panel shows BPM and musical key when available.
-Files without Serato tag data show a default blue waveform.
-The Up and Down arrow keys navigate the song list even while the waveform has keyboard focus.
-Number keys `1` to `8` jump to the corresponding Serato hot cue and start playback from either the song list
-or waveform, without clicking or moving keyboard focus first.
-
-Use the small outlined arrow in the top left corner of the controls,
-or the collapse/expand command in the Options menu.
-The shortcut is `Ctrl+Shift+Space` on Windows and `Cmd+Shift+Space` on macOS.
-The compact row keeps Play, Process, all four metrics, and a smaller waveform visible.
+Playback supports jumping directly to Serato hot cues.
 
 ### Live Plugin Preview
 
@@ -130,8 +118,7 @@ The chain runs in stereo, and a plugin that only supports mono gets both channel
 with its output copied to both.
 The output of a mono file is folded back to mono, so it sounds like the processed file.
 
-Each plugin row shows `Latency: X samples (Y ms)`.
-The chain window's footer shows the enabled plugins' total latency and the real-time processing sample rate.
+The chain window reports plugin latency and the real-time processing sample rate.
 Plugins may report different latency or sound different when batch processing in offline mode.
 
 Latency compensation aligns processed audio with the waveform's file position.
@@ -164,7 +151,6 @@ Playback is output-only on macOS as well and does not require microphone access.
 
 **Audio Settings** separates audio interface/playback configuration from preview preferences.
 The preview preferences are also available as ticked commands in the Options menu.
-Plugin preview is controlled only from this window and the menu, keeping the main playback controls uncluttered.
 
 - **Preview plugin chain:** off by default.
 - **Compensate plugin latency:** on by default.
@@ -173,12 +159,10 @@ Plugin preview is controlled only from this window and the menu, keeping the mai
 - **Play from first cue point:** off by default.
 - **Serato waveform colours:** on by default.
 - **Show loudness graph:** off by default.
-  Toggle it here or with **Options > Show Loudness Graph**.
   The minimum and maximum axis limits default to **-24 and -4 LUFS**.
   Limits accept integers from -60 to +6 LUFS.
 
 All preview choices and the loudness axis limits are remembered between sessions.
-These preferences do not add controls to the main preview workspace.
 
 ### Normalization
 
@@ -198,12 +182,8 @@ Scanning isolates plugin crashes so they do not take down the app.
 The preset row of the chain window saves the chain under a name,
 with the plugins, their order, which ones are enabled, and their settings,
 and loads or deletes the saved presets.
-The Chain Presets submenu of the plugin menu and the Presets submenu of the chain menu list them too,
-and Show Presets Folder opens the `Chain Presets` folder next to the settings file,
-which holds one XML file per preset.
-Changing the chain or a plugin's settings after loading a preset marks it modified in the preset list,
-and Update saves the changes over it.
-Clear Chain removes every plugin from the chain.
+Presets are stored as XML files in the `Chain Presets` folder next to the settings file.
+Changing a loaded chain does not change its preset until it is saved again.
 
 Processing uses offline rendering, compensates plugin latency and preserves reverb and delay tails.
 Output is 16-bit PCM AIFF. Samples beyond full scale saturate and are reported, without gain reduction.
