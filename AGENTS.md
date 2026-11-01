@@ -19,7 +19,8 @@ which explains how its parts work together.
 - `build.sh`, `install.sh`, and `format.sh` run the scripts of the same name in both projects,
   or in the one named by their first argument, `cpp` or `rust`, through `run_project_scripts` in `common.sh`.
   `format.sh` also formats the root shell scripts and the prose outside the projects when shfmt and slb are installed,
-  and runs ruff on the Python scripts through uv.
+  runs ruff on the Python scripts through uv,
+  and formats tracked and non-ignored new JSON files with jq using two-space indentation.
 - `fixtures/` holds the committed audio fixtures that both test suites read in place,
   and `fixtures/README.md` lists them with what each one tests.
   `fixtures/generate.sh` regenerates them with ffmpeg,
@@ -62,6 +63,27 @@ which explains how its parts work together.
   Its Windows build job downloads the LFS fixtures and requires the full normalization corpus.
   `parity.yml` compares the levels both CLIs report and the files they write when normalizing,
   downloading the LFS fixtures for the macOS CLI comparison.
+
+## Behavioral Parity
+
+For the same input and supported operation, the C++ and Rust applications must produce the same meaningful results.
+This includes parsed metadata, names, positions, colors, numerical values, analysis results, and processed audio.
+Different results are bugs to investigate and fix, not features of the implementations.
+The C++ implementation is a reference,
+not an oracle that overrides the file format or independently verified expectations.
+
+Use shared, independent expectations and cross-implementation tests where possible.
+Do not add implementation-specific expected values or widen tolerances merely to make divergent results pass.
+A passing test with a tolerance does not establish exact parity or justify a difference.
+Keep presentation fallbacks separate from parsed source values,
+and apply the same presentation rules in both applications.
+
+An exception requires a strong, documented reason,
+such as a platform capability or a dependency behavior that cannot reasonably be reconciled in project code
+without unsafe or impractical third-party patches.
+Using different libraries does not by itself justify different results.
+Document each exception beside the affected behavior and tests, including its cause, scope, and measurable bounds.
+Keep exceptions narrow, and revisit them when their technical constraints change.
 
 ## Working Rules
 

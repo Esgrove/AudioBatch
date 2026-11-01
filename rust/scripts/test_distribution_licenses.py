@@ -87,36 +87,40 @@ class TestDistributionLicenses(unittest.TestCase):
 
     def run_script(self, name: str, *arguments: str) -> None:
         """Runs a production entry point without changing files outside the temporary workspace."""
-        result = subprocess.run(
-            ["bash", str(self.rust / name), *arguments],
+        bash = shutil.which("bash")
+        if bash is None:
+            self.fail("Bash is required to test distribution shell entry points")
+        # The copied production script only sees this test's temporary tools and paths.
+        result = subprocess.run(  # noqa: S603
+            [bash, str(self.rust / name), *arguments],
             cwd=self.rust,
             env=self.environment,
             capture_output=True,
             text=True,
             check=False,
         )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        assert result.returncode == 0, result.stdout + result.stderr
 
     def assert_notice(self, directory: Path) -> None:
         """Requires the packaged notice to match the complete canonical text byte for byte."""
-        self.assertEqual((directory / "ebur128.txt").read_bytes(), (RUST_DIRECTORY / NOTICE_PATH).read_bytes())
+        assert (directory / "ebur128.txt").read_bytes() == (RUST_DIRECTORY / NOTICE_PATH).read_bytes()
 
     def test_cli_only_build_carries_notice(self) -> None:
         """Skipping the GUI still creates a notice beside the distributable CLI."""
         self.run_script("build.sh", "--cli-only")
-        self.assertTrue((self.rust / "audiobatch-rs").is_file())
+        assert (self.rust / "audiobatch-rs").is_file()
         self.assert_notice(self.rust / "audiobatch-rs-licenses")
 
     def test_cli_only_install_carries_notice(self) -> None:
         """The installed CLI receives its notice even with an installation path containing spaces."""
         self.run_script("install.sh", "--cli-only")
-        self.assertTrue((self.bin / "audiobatch-rs").is_file())
+        assert (self.bin / "audiobatch-rs").is_file()
         self.assert_notice(self.bin / "audiobatch-rs-licenses")
 
     def test_loose_gui_build_carries_notice(self) -> None:
         """Both loose binaries share one packaged notice directory."""
         self.run_script("build.sh")
-        self.assertTrue((self.rust / "AudioBatchRs").is_file())
+        assert (self.rust / "AudioBatchRs").is_file()
         self.assert_notice(self.rust / "audiobatch-rs-licenses")
 
     def test_macos_bundle_carries_notice_before_signing(self) -> None:
@@ -137,7 +141,7 @@ class TestDistributionLicenses(unittest.TestCase):
         self.write_executable(self.bin / "audiobatch-rs", 'exec "$TEST_BIN/audiobatch-rs.exe" "$@"\n')
         self.run_script("install.sh")
         app = self.root / "local app data/Programs/AudioBatchRs"
-        self.assertTrue((app / "AudioBatchRs.exe").is_file())
+        assert (app / "AudioBatchRs.exe").is_file()
         self.assert_notice(app / "licenses")
         self.assert_notice(self.bin / "audiobatch-rs-licenses")
 

@@ -17,7 +17,8 @@ When a fixture changes, update the expected values in the C++ tests and in the R
 
 ## Input Identities
 
-`checksums.sha256` records the exact bytes and inventory of the ordinary fixtures and plugin expected outputs.
+`checksums.sha256` records the exact bytes and inventory of the ordinary fixtures,
+real metadata samples, and plugin expected outputs.
 Check it from this directory with `sha256sum --check checksums.sha256`.
 The Rust `test-fixtures` tests also check it, and reject missing expectations or added, removed, or changed audio files.
 Downloaded normalization files are checked against their existing Git LFS SHA-256 object IDs by the decoder diagnostic test.
@@ -120,6 +121,61 @@ and the K-weighting boost at 11 kHz raises its integrated loudness to about -2.7
 
 ffmpeg cannot write Serato tags, so `serato_overview.py` adds the Overview tag the way Serato stores it:
 a GEOB frame in an ID3v2 tag for MP3 and AIFF, and a `SERATO_OVERVIEW` comment for FLAC.
+
+## Real Metadata Samples
+
+`metadata/` holds nine short loop samples with original ordinary tags and Serato analysis:
+`dmt_drum_127_26A`, `RK6_beat_loop_01_126_c`, and `shs_ot_synth_127_mallet_F`,
+each in AIFF, FLAC, and MP3.
+These are supplied recordings, not outputs of `generate.sh`.
+Keep their bytes unchanged.
+
+`metadata/expected.json` records independent, per-file expectations inspected from the container bytes.
+Both implementations check ordinary tags, Analysis versions, Autotags BPM and gain,
+cue slots and exact millisecond positions, saved loops, track and marker colours,
+BPM lock, dedicated beatgrid anchors, and the Overview raster.
+Its FNV-1a checksum covers every raw palette cell, excluding the two-byte header,
+and sampled slices also check decoded colours and background fallback.
+The sampled `rgb` fields pin the same exact final packed RGB in both implementations,
+without a one-component tolerance.
+Both normalize components to binary32 and round to the nearest integer, with halfway components rounded upward.
+Tests also check those colours after cache decoding and through the waveform gradient or column API.
+Source SHA-256 checks prevent the tests or metadata-copy operations from modifying the originals.
+
+Cue positions differ between formats, so no cross-format timing tolerance is used.
+All three RK6 files have BPM lock enabled.
+The synth AIFF has a locked saved loop named `loop` from **-5 ms to 7555 ms**,
+which must remain signed rather than being clamped or interpreted as a large positive timestamp.
+The synth FLAC and MP3 also have locked loops, with their own exact positions.
+The dmt cues include `Kick`, `Snare`, and `Fill`, and the synth's first cue is named `1`.
+Other cue labels are empty.
+The Rust reader retains its timestamp-label fallback for those.
+
+Ordinary BPM and Serato BPM are separate expectations.
+The synth's dedicated terminal beatgrid BPM is about 96.81 even though its ordinary BPM is 126.97.
+RK6 uses `Abm` in ID3's standard key frame and the enharmonic spelling `G#m` in FLAC's native key field.
+The MP3 files have custom text fields named `ANALYSISVERSION` and `BEATGRID`,
+but no dedicated Serato Analysis or BeatGrid frames.
+Those parsed kinds must remain absent.
+
+The real files exercise compact Autotags numbers and native FLAC zero padding
+that the synthetic rainbow fixture does not.
+Native wrapper repair must not relax malformed-base64 or partial-raster rejection in the raw parsers.
+Parser versions invalidate old cached failures so corrected Overview data can be read again.
+
+`metadata/inspect_metadata.py` repeats the independent container inspection with Python's standard library,
+using ffprobe only for ordinary text tags.
+It locates the fixtures relative to its own path on Windows, macOS, and Linux.
+From the repository root, verify the fixed expectations without rewriting them:
+
+```shell
+uv run --script fixtures/metadata/inspect_metadata.py --check
+```
+
+Without `--check`, it prints the inspection as JSON.
+Use `--output <path>` to save a capture, or `--directory <path>` to inspect another fixture directory.
+Review intentional metadata changes before updating the fixed expectations and the checksum manifest.
+Normal C++ and Rust tests read committed expectations and do not require Python or ffprobe.
 
 ## Plugin Expected Outputs
 

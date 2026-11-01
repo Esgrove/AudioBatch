@@ -2,6 +2,7 @@
 /// No test data comes from local music or from another repository's fixtures.
 
 #include "serato/SeratoBytes.h"
+#include "serato/SeratoOverview.h"
 #include "serato/SeratoTags.h"
 #include "serato/SeratoTagTypes.h"
 #include "TestSuites.h"
@@ -133,18 +134,157 @@ public:
     void runTest() override
     {
         testPayloads();
+        testRealLayouts();
         testCache();
     }
 
 private:
+    /// Pins compact numeric fields, native-only envelope quirks and signed loop cache validation.
+    void testRealLayouts()
+    {
+        beginTest("Compact Autotags preserve three terminated numbers and reject garbage");
+        const auto text = std::to_array(
+            "\x01\x01"
+            "127.12\0"
+            "1.135\0"
+            "0.000"
+        );
+        const std::vector<std::uint8_t> compact(text.begin(), text.end());
+        const auto parsed = serato::parseAutotags(compact);
+        expect(parsed.has_value());
+        if (parsed) {
+            expectEquals(parsed->bpm, 127.12);
+            expectEquals(parsed->autoGain, 1.135);
+            expectEquals(parsed->gain, 0.0);
+        }
+        auto malformed = compact;
+        malformed.back() = 'X';
+        expect(!serato::parseAutotags(malformed));
+        malformed = compact;
+        malformed.push_back(0);
+        expect(!serato::parseAutotags(malformed));
+        malformed = compact;
+        malformed[8] = 'X';
+        expect(!serato::parseAutotags(malformed));
+
+        beginTest("Native FLAC alone trims a structural zero suffix and dangling zero sextet");
+        const auto checkNative = [this](const serato::TagKind kind, std::vector<std::uint8_t> payload) {
+            const auto names = serato::getTagNames(kind);
+            expect(names.has_value());
+            if (!names) {
+                return;
+            }
+            expect(serato::parseTagPayload(kind, payload).value.has_value());
+            payload.push_back(0);
+            expect(!serato::parseTagPayload(kind, payload).value.has_value());
+            juce::MemoryOutputStream wrapper;
+            wrapper.writeString("application/octet-stream");
+            wrapper.writeString("");
+            wrapper.writeString(juce::String(std::string(names->description)));
+            wrapper.write(payload.data(), payload.size());
+            const auto encodedText = juce::Base64::toBase64(wrapper.getData(), wrapper.getDataSize());
+            const auto string = encodedText.toStdString();
+            std::vector<std::uint8_t> encoded(string.begin(), string.end());
+            auto decoded = serato::decodeNativeTagBase64(encoded);
+            expect(decoded.has_value());
+            if (decoded) {
+                const std::span bytes(static_cast<const std::uint8_t*>(decoded->getData()), decoded->getSize());
+                const auto unwrapped = serato::parseTagWrapper(bytes, names->description);
+                expect(unwrapped.has_value());
+                if (unwrapped) {
+                    expect(serato::parseTagPayload(kind, *unwrapped).value.has_value());
+                }
+            }
+            if (!string.contains('=')) {
+                encoded.push_back('A');
+                expect(!serato::decodeTagBase64(encoded));
+                expect(serato::decodeNativeTagBase64(encoded).has_value());
+                encoded.back() = 'B';
+                expect(!serato::decodeNativeTagBase64(encoded));
+            } else {
+                encoded.push_back('A');
+                expect(!serato::decodeNativeTagBase64(encoded));
+            }
+            payload.back() = 9;
+            juce::MemoryOutputStream garbage;
+            garbage.writeString("application/octet-stream");
+            garbage.writeString("");
+            garbage.writeString(juce::String(std::string(names->description)));
+            garbage.write(payload.data(), payload.size());
+            const auto bytes = payloadBytes(garbage);
+            const auto unwrapped = serato::parseTagWrapper(bytes, names->description);
+            expect(unwrapped.has_value());
+            if (unwrapped) {
+                expect(!serato::parseTagPayload(kind, *unwrapped).value.has_value());
+            }
+        };
+        std::vector<std::uint8_t> overview(2 + serato::Overview::bandCount, 37);
+        overview[0] = 1;
+        overview[1] = 5;
+        checkNative(serato::TagKind::overview, overview);
+        checkNative(serato::TagKind::analysis, {2, 1});
+        checkNative(serato::TagKind::beatGrid, gridPayload());
+
+        beginTest("Markers2 permits exact record exhaustion and preserves a signed lead-in through cache");
+        juce::MemoryOutputStream body;
+        body.writeByte(1);
+        body.writeByte(1);
+        std::vector<std::uint8_t> loop(25, 0);
+        loop[2] = 255;
+        loop[3] = 255;
+        loop[4] = 255;
+        loop[5] = 251;
+        loop[8] = 29;
+        loop[9] = 131;
+        loop[19] = 1;
+        loop[20] = 'l';
+        loop[21] = 'o';
+        loop[22] = 'o';
+        loop[23] = 'p';
+        markerRecord(body, "LOOP", loop);
+        const auto markers = serato::parseMarkers2(markerEnvelope(body));
+        expect(markers.has_value());
+        if (markers) {
+            expectEquals(static_cast<int>(markers->loops.size()), 1);
+        }
+        if (markers && markers->loops.size() == 1) {
+            expectEquals(markers->loops.front().startMilliseconds, std::int32_t {-5});
+            expectEquals(markers->loops.front().endMilliseconds, std::int32_t {7555});
+            const auto result = serato::TagReadResult::present(*markers);
+            const auto block = serato::serializeTag(result);
+            const auto cached = serato::deserializeTag(serato::TagKind::markers, block);
+            expect(cached.has_value());
+            if (cached) {
+                expectEquals(
+                    std::get<serato::Markers>(*cached->value).loops.front().startMilliseconds, std::int32_t {-5}
+                );
+            }
+            auto stale = block;
+            const std::uint8_t oldVersion = 1;
+            stale.copyFrom(&oldVersion, 11, 1);
+            expect(!serato::deserializeTag(serato::TagKind::markers, stale));
+            auto reversed = *markers;
+            reversed.loops.front().endMilliseconds = -6;
+            expect(serato::serializeTag(serato::TagReadResult::present(reversed)).isEmpty());
+        }
+        body.writeByte(7);
+        expect(!serato::parseMarkers2(markerEnvelope(body)));
+        juce::MemoryOutputStream reversedBody;
+        reversedBody.writeByte(1);
+        reversedBody.writeByte(1);
+        std::ranges::fill(std::span(loop).subspan(6, 4), std::uint8_t {255});
+        loop[9] = 250;
+        markerRecord(reversedBody, "LOOP", loop);
+        expect(!serato::parseMarkers2(markerEnvelope(reversedBody)));
+    }
+
     /// Checks documented wire layouts and fail-closed handling of malformed payloads.
     void testPayloads()
     {
         beginTest("Stable kind IDs, versions and analysis are independent of musical key");
         for (std::size_t index = 0; index < serato::allTagKinds.size(); ++index) {
             expectEquals(static_cast<int>(serato::allTagKinds[index]), static_cast<int>(index + 1));
-            const auto expectedVersion = serato::allTagKinds[index] == serato::TagKind::trackInfo ? 2 : 1;
-            expectEquals(static_cast<int>(serato::parserVersion(serato::allTagKinds[index])), expectedVersion);
+            expectEquals(static_cast<int>(serato::parserVersion(serato::allTagKinds[index])), 2);
         }
         expect(!serato::supportsTagKind(std::bit_cast<serato::TagKind>(std::uint8_t {99})));
         const std::array<std::uint8_t, 2> analysis {2, 1};

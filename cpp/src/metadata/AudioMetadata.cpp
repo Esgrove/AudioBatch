@@ -197,7 +197,7 @@ void appendSeratoFrame(AudioMetadata& metadata, const juce::String& value, const
 {
     const auto encoded = value.toStdString();
     const std::vector<std::uint8_t> bytes(encoded.begin(), encoded.end());
-    const auto decoded = serato::decodeTagBase64(bytes);
+    const auto decoded = serato::decodeNativeTagBase64(bytes);
     if (!decoded) {
         return;
     }
@@ -210,8 +210,8 @@ void appendSeratoFrame(AudioMetadata& metadata, const juce::String& value, const
     frame.setMimeType("application/octet-stream");
     frame.setDescription(TagLib::String(std::string(expectedDescription)));
     const auto payloadOffset = static_cast<std::size_t>(wrappedPayload->data() - decodedBytes.data());
-    const auto payload
-        = std::span(static_cast<const char*>(decoded->getData()), decoded->getSize()).subspan(payloadOffset);
+    const auto payload = std::span(static_cast<const char*>(decoded->getData()), decoded->getSize())
+                             .subspan(payloadOffset, wrappedPayload->size());
     frame.setObject(TagLib::ByteVector(payload.data(), static_cast<unsigned int>(payload.size())));
     const auto rendered = frame.render();
     const juce::MemoryBlock frameBytes(rendered.data(), rendered.size());

@@ -47,7 +47,7 @@ struct Contributions {
 }
 
 impl OverviewColour {
-    /// Returns the colour as a `0xRRGGBB` value.
+    /// Returns the colour as a `0xRRGGBB` value, rounding halfway components upward as in the C++ renderer.
     #[must_use]
     pub fn to_rgb_u32(self) -> u32 {
         let component = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u32;
@@ -200,6 +200,17 @@ mod test_slice_colour {
         assert_colour(slice_colour(&[RED_INDEX; BAND_COUNT]), 255, 0, 0);
         assert_colour(slice_colour(&[GREEN_INDEX; BAND_COUNT]), 0, 255, 0);
         assert_colour(slice_colour(&[215; BAND_COUNT]), 255, 255, 255);
+    }
+
+    #[test]
+    fn final_rgb_rounds_halfway_components_upward() {
+        let mut cells = [0; BAND_COUNT];
+        cells[..6].fill(6);
+        cells[0] = 7;
+        assert_eq!(slice_colour(&cells).expect("foreground").to_rgb_u32(), 0x00_3309);
+        cells.fill(212);
+        cells[..8].fill(213);
+        assert_eq!(slice_colour(&cells).expect("foreground").to_rgb_u32(), 0xFF_FF80);
     }
 
     #[test]

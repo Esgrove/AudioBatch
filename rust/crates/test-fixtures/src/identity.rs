@@ -230,6 +230,7 @@ mod test_identity {
                 "plugin_expected/",
                 crate::audio_files_in(&directory.join("plugin_expected")),
             ),
+            ("metadata/", crate::audio_files_in(&directory.join("metadata"))),
         ] {
             assert!(!files.is_empty(), "committed fixture collection is missing: {prefix}");
             for path in files {

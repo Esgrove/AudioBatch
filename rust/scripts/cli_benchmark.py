@@ -41,7 +41,8 @@ def write_json(path: Path, value: object) -> None:
 def command_output(command: list[str]) -> str:
     """Captures machine metadata without turning an unavailable optional command into a benchmark failure."""
     try:
-        completed = subprocess.run(command, check=True, text=True, capture_output=True)
+        # Commands are argument lists constructed by this script, never shell-interpolated text.
+        completed = subprocess.run(command, check=True, text=True, capture_output=True)  # noqa: S603
     except (OSError, subprocess.CalledProcessError) as error:
         return f"Unavailable: {error}"
     return completed.stdout.strip()
@@ -56,12 +57,14 @@ def fingerprint(path: Path) -> str:
 def discover_sources(corpus: Path) -> tuple[list[Path], list[dict]]:
     """Rejects pointers and symlinks, then excludes independently known normalization failures."""
     if not corpus.is_dir():
-        raise ValueError(f"Corpus directory not found: {corpus}")
+        message = f"Corpus directory not found: {corpus}"
+        raise ValueError(message)
     sources = []
     excluded = []
     for source in sorted(corpus.rglob("*")):
         if source.is_symlink():
-            raise ValueError(f"Corpus symlinks are not allowed: {source}")
+            message = f"Corpus symlinks are not allowed: {source}"
+            raise ValueError(message)
         if (
             sys.platform == "win32"
             and source.is_file()
@@ -77,7 +80,8 @@ def discover_sources(corpus: Path) -> tuple[list[Path], list[dict]]:
             continue
         with source.open("rb") as audio:
             if audio.read(80).startswith(b"version https://git-lfs.github.com/spec/v1"):
-                raise ValueError(f"Git LFS pointer instead of audio: {source}. Run git lfs pull first.")
+                message = f"Git LFS pointer instead of audio: {source}. Run git lfs pull first."
+                raise ValueError(message)
         properties = levels.fixture_properties(source)
         if any(
             levels.expected_failure(properties, target.get("peak"), target.get("lufs")) for target in TARGETS.values()
@@ -86,7 +90,8 @@ def discover_sources(corpus: Path) -> tuple[list[Path], list[dict]]:
         else:
             sources.append(source)
     if not sources:
-        raise ValueError(f"No usable audio files in {corpus}. Generate fixtures/benchmark/output or run git lfs pull.")
+        message = f"No usable audio files in {corpus}. Generate fixtures/benchmark/output or run git lfs pull."
+        raise ValueError(message)
     return sources, excluded
 
 
@@ -107,10 +112,12 @@ def select_corpora(corpus: str = "auto") -> list[Path]:
 def workspace(path: Path) -> dict:
     """Requires a marker bound to this exact private directory before copying or removing anything."""
     if path.is_symlink() or path.resolve() != path:
-        raise ValueError(f"Workspace must be a physical absolute directory: {path}")
+        message = f"Workspace must be a physical absolute directory: {path}"
+        raise ValueError(message)
     state = json.loads((path / MARKER_NAME).read_text(encoding="utf-8"))
     if state["workspace"] != str(path) or path == Path(path.anchor):
-        raise ValueError(f"Invalid private workspace: {path}")
+        message = f"Invalid private workspace: {path}"
+        raise ValueError(message)
     return state
 
 
@@ -118,7 +125,8 @@ def initialize(arguments: argparse.Namespace) -> None:
     """Copies a safe, conflict-free seed corpus and records the machine, binaries, and benchmark settings."""
     work = arguments.work
     if work.is_symlink() or work.resolve() != work or any(work.iterdir()):
-        raise ValueError("Initialization requires an empty physical temporary directory")
+        message = "Initialization requires an empty physical temporary directory"
+        raise ValueError(message)
     corpora = select_corpora(arguments.corpus)
     sources = []
     excluded = []
@@ -130,7 +138,8 @@ def initialize(arguments: argparse.Namespace) -> None:
         help_text = command_output([str(binary), "--help"])
         for option in ("--delete", "--jobs", "--refresh"):
             if option not in help_text:
-                raise ValueError(f"{implementation} CLI does not advertise {option}. Rebuild the release CLI: {binary}")
+                message = f"{implementation} CLI does not advertise {option}. Rebuild the release CLI: {binary}"
+                raise ValueError(message)
     state = {"workspace": str(work), "results": str(arguments.results.resolve())}
     write_json(work / MARKER_NAME, state)
     seed = work / "seed"
@@ -147,7 +156,8 @@ def initialize(arguments: argparse.Namespace) -> None:
     for mode, target in TARGETS.items():
         expected = levels.expected_results(levels.input_files([seed], recurse=True), seed, **target)
         if not expected or any(row["status"] != "analyzed" for row in expected.values()):
-            raise ValueError(f"Benchmark selection unexpectedly contains failures in {mode} mode")
+            message = f"Benchmark selection unexpectedly contains failures in {mode} mode"
+            raise ValueError(message)
         write_json(work / f"{mode}-expectations.json", expected)
         if mode != "analyze":
             write_json(work / f"{mode}-before.json", outputs.snapshot_folder(seed, expected))
@@ -207,7 +217,8 @@ def prepare(work: Path, implementation: str) -> None:
     workspace(work)
     destination = work / implementation
     if destination.is_symlink():
-        raise ValueError(f"Refusing to remove a symlink: {destination}")
+        message = f"Refusing to remove a symlink: {destination}"
+        raise ValueError(message)
     if destination.exists():
         shutil.rmtree(destination)
     home = destination / "home"
@@ -239,8 +250,12 @@ def check(work: Path, results: Path, implementation: str, mode: str, jobs: int) 
 def compare(work: Path, results: Path, mode: str, jobs: int) -> None:
     """Runs the existing cross-implementation level and normalized-file oracles after each benchmark pair."""
     workspace(work)
+    uv = shutil.which("uv")
+    if uv is None:
+        message = "uv is required to run the benchmark correctness oracles"
+        raise FileNotFoundError(message)
     command = [
-        "uv",
+        uv,
         "run",
         "--quiet",
         "--script",
@@ -255,11 +270,12 @@ def compare(work: Path, results: Path, mode: str, jobs: int) -> None:
     ]
     if mode != "analyze":
         command += [f"--{mode}", str(0 if mode == "peak" else -14)]
-    subprocess.run(command, check=True)
+    # Both commands invoke a resolved uv executable with script paths and arguments, without a shell.
+    subprocess.run(command, check=True)  # noqa: S603
     if mode != "analyze":
-        subprocess.run(
+        subprocess.run(  # noqa: S603
             [
-                "uv",
+                uv,
                 "run",
                 "--quiet",
                 "--script",
@@ -320,12 +336,14 @@ def combine(work: Path, results: Path, mode: str, jobs: int) -> None:
         path = Path("raw") / f"{mode}-jobs-{jobs}-run-{run}.json"
         exported = json.loads((results / path).read_text(encoding="utf-8"))
         if [row.get("name", row["command"]) for row in exported["results"]] != commands:
-            raise ValueError(f"Unexpected benchmark command order in {path}")
+            message = f"Unexpected benchmark command order in {path}"
+            raise ValueError(message)
         raw_exports.append(str(path))
         for row in exported["results"]:
             samples = measurements(row)
             if len(samples) != 1 or samples[0]["exit_code"] != 0:
-                raise ValueError(f"Expected one successful measurement per command in {path}")
+                message = f"Expected one successful measurement per command in {path}"
+                raise ValueError(message)
             collected[row.get("name", row["command"])].extend(samples)
     combined = []
     markdown = [
@@ -335,7 +353,8 @@ def combine(work: Path, results: Path, mode: str, jobs: int) -> None:
     for command, samples in collected.items():
         metrics = samples[0].keys() - {"exit_code"}
         if "time_wall_clock" not in metrics or any(sample.keys() - {"exit_code"} != metrics for sample in samples):
-            raise ValueError(f"Inconsistent or missing hyperfine metrics for {command}")
+            message = f"Inconsistent or missing hyperfine metrics for {command}"
+            raise ValueError(message)
         summary = {}
         for metric in sorted(metrics):
             values = [sample[metric]["value"] for sample in samples]
@@ -344,9 +363,11 @@ def combine(work: Path, results: Path, mode: str, jobs: int) -> None:
                 not math.isfinite(value) or value < 0 or (metric == "time_wall_clock" and value == 0)
                 for value in values
             ) or any(sample[metric].get("unit", "count") != unit for sample in samples):
-                raise ValueError(f"Invalid hyperfine {metric} measurements for {command}")
+                message = f"Invalid hyperfine {metric} measurements for {command}"
+                raise ValueError(message)
             if metric == "time_wall_clock" and unit != "second":
-                raise ValueError("Hyperfine wall times must use seconds")
+                message = "Hyperfine wall times must use seconds"
+                raise ValueError(message)
             summary[metric] = metric_summary(values, unit)
         combined.append({"command": command, "measurements": samples, "summary": summary})
         wall = summary["time_wall_clock"]
@@ -372,8 +393,10 @@ def report(work: Path, results: Path) -> None:
         "",
         "Timing is informational and has no pass/fail threshold. Correctness checks passed.",
         "",
-        f"Corpora: {', '.join(f'`{corpus}`' for corpus in metadata['corpora'])}, "
-        f"{len(metadata['files'])} files, {metadata['runs']} measured runs per command.",
+        (
+            f"Corpora: {', '.join(f'`{corpus}`' for corpus in metadata['corpora'])}, "
+            f"{len(metadata['files'])} files, {metadata['runs']} measured runs per command."
+        ),
         "Measured runs alternate C++ and Rust. Each command warms up only before its first measured run.",
         f"CPU: {metadata['cpu']}",
         "",
@@ -390,7 +413,8 @@ def report(work: Path, results: Path) -> None:
             exported = json.loads((results / f"{mode}-jobs-{jobs}.json").read_text(encoding="utf-8"))
             cpp, rust = (wall_mean(row) for row in exported["results"])
             if not all(math.isfinite(value) and value > 0 for value in (cpp, rust)):
-                raise ValueError("Invalid or missing hyperfine wall time")
+                message = "Invalid or missing hyperfine wall time"
+                raise ValueError(message)
             summary = {
                 "mode": mode,
                 "jobs": jobs,

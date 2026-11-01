@@ -72,6 +72,7 @@ inline constexpr std::array allTagNames {
     std::span<const std::uint8_t> bytes,
     bool markersWorkaround = false
 );
+[[nodiscard]] std::optional<juce::MemoryBlock> decodeNativeTagBase64(std::span<const std::uint8_t> bytes);
 [[nodiscard]] std::optional<std::span<const std::uint8_t>> parseTagWrapper(
     std::span<const std::uint8_t> decoded,
     std::string_view description

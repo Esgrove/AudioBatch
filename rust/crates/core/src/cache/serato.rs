@@ -228,6 +228,33 @@ mod test_serato_cache {
     }
 
     #[test]
+    fn old_invalid_native_overview_is_reparsed_and_replaced() {
+        let setup = setup();
+        let path = test_fixtures::metadata_fixtures()
+            .into_iter()
+            .find(|case| case.file == "dmt_drum_127_26A.flac")
+            .expect("real FLAC case")
+            .path();
+        setup
+            .cache
+            .store_serato_overview(&path, &SeratoOverviewState::Invalid)
+            .expect("old invalid state");
+        setup
+            .cache
+            .with_connection(|connection| Ok(connection.execute("UPDATE serato_tag_cache SET parser_version = 1", [])?))
+            .expect("marks pre-repair parser");
+        assert_eq!(setup.cache.get_serato_overview(&path), None);
+        let tags = crate::tags::read_display_tags(&path).expect("repaired native decoder");
+        let state = SeratoOverviewState::from_tags(&path, &tags);
+        assert!(matches!(state, SeratoOverviewState::Present(_)));
+        setup
+            .cache
+            .store_serato_overview(&path, &state)
+            .expect("replaces old invalid row");
+        assert_eq!(setup.cache.get_serato_overview(&path), Some(state));
+    }
+
+    #[test]
     fn missing_file_and_empty_overview_are_not_stored() {
         let setup = setup();
         let missing = setup.directory.path().join("missing.mp3");

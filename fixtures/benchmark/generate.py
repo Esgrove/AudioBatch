@@ -19,6 +19,7 @@ Usage: uv run fixtures/benchmark/generate.py [--force]
 """
 
 import argparse
+import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -106,8 +107,13 @@ def sources() -> list[Source]:
 
 def ffmpeg(*arguments: str) -> None:
     """Runs ffmpeg quietly and fails if the command exits unsuccessfully."""
-    command = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", *arguments]
-    subprocess.run(command, check=True)
+    executable = shutil.which("ffmpeg")
+    if executable is None:
+        message = "ffmpeg is required to generate benchmark fixtures"
+        raise FileNotFoundError(message)
+    command = [executable, "-hide_banner", "-loglevel", "error", "-y", *arguments]
+    # The resolved executable receives generated arguments without shell interpolation.
+    subprocess.run(command, check=True)  # noqa: S603
 
 
 def render_master(source: Source, master: Path) -> None:

@@ -195,7 +195,10 @@
     {
       "name": "macos-fuzz",
       "configurePreset": "macos-fuzz",
-      "targets": ["SeratoTagFuzzer", "CliArgumentsFuzzer"]
+      "targets": [
+        "SeratoTagFuzzer",
+        "CliArgumentsFuzzer"
+      ]
     }
   ]
 }

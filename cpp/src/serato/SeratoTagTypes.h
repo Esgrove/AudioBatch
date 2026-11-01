@@ -94,10 +94,10 @@ struct CuePoint {
 
 /// An owned saved loop and its lock state.
 struct Loop {
-    /// Start of the loop in the track, in milliseconds.
-    std::uint32_t startMilliseconds {0};
+    /// Signed start of the loop in milliseconds, retaining negative lead-in positions.
+    std::int32_t startMilliseconds {0};
     /// End of the loop in the track, in milliseconds, never before its start.
-    std::uint32_t endMilliseconds {0};
+    std::int32_t endMilliseconds {0};
     /// Zero-based saved loop slot.
     std::uint8_t index {0};
     /// Colour Serato shows the loop in.
@@ -202,12 +202,14 @@ struct TagReadResult {
 inline constexpr std::uint32_t trackInfoParserVersion {2};
 
 /// Reports the independent numeric cache schema version for a supported kind.
+/// Version two reparses native FLAC extraction failures
+/// and preserves signed loops and exact Markers2 record exhaustion.
 [[nodiscard]] constexpr std::uint32_t parserVersion(const TagKind kind)
 {
     if (kind == TagKind::overview) {
         return overviewParserVersion;
     }
-    return kind == TagKind::trackInfo ? trackInfoParserVersion : 1;
+    return kind == TagKind::trackInfo ? trackInfoParserVersion : 2;
 }
 
 /// Rejects unrecognized persisted kind identifiers.

@@ -140,7 +140,7 @@ public:
                     0,
                     0,
                     0,
-                    1,
+                    2,
                     0,
                     0,
                     1,
@@ -208,6 +208,20 @@ private:
         expectColour(serato::colourForOverviewSlice(uniformSlice(redIndex), fallback), 255, 0, 0);
         expectColour(serato::colourForOverviewSlice(uniformSlice(greenIndex), fallback), 0, 255, 0);
         expectColour(serato::colourForOverviewSlice(uniformSlice(215), fallback), 255, 255, 255);
+
+        beginTest("Final RGB rounds halfway components upward in both implementations");
+        {
+            auto slice = uniformSlice(0);
+            std::ranges::fill(std::span(slice).first(6), std::uint8_t {6});
+            slice[0] = 7;
+            const auto rounded = serato::colourForOverviewSlice(slice, fallback);
+            expectEquals(static_cast<int>(rounded.getRed()), 0);
+            expectEquals(static_cast<int>(rounded.getGreen()), 51);
+            expectEquals(static_cast<int>(rounded.getBlue()), 9);
+            slice = uniformSlice(212);
+            std::ranges::fill(std::span(slice).first(8), std::uint8_t {213});
+            expect(serato::colourForOverviewSlice(slice, fallback) == juce::Colour(255, 255, 128));
+        }
 
         beginTest("Background and reserved cells are skipped, and a slice without colour uses the opaque fallback");
         {

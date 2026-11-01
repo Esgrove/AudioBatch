@@ -126,13 +126,17 @@ impl AutoTags {
     /// |   `09` |   `07` | `2d 33 2e 32 35 37 00` |      `-3.257` | ASCII (zero-terminated) | Auto Gain
     /// |   `16` |   `06` | `30 2e 30 30 30 00`    |       `0.000` | ASCII (zero-terminated) | Gain dB
     ///
-    /// The checks are strict, so a damaged tag fails instead of yielding wrong values.
+    /// Real Serato exports also use compact, unpadded numeric fields in 20- or 21-byte payloads.
+    /// Both layouts require terminated, finite numbers and reject extra nonzero data.
     ///
     /// # Errors
     ///
     /// Returns an error when the size or version is unexpected, a number cannot be parsed,
     /// or the BPM is negative.
     pub fn parse(data: &[u8]) -> Result<Self, AutoTagsError> {
+        if matches!(data.len(), 20 | 21) && data.starts_with(&[1, 1]) {
+            return Self::parse_compact(data);
+        }
         let (Some(bpm_bytes), Some(auto_gain_bytes)) = (
             data.get(BPM_OFFSET..AUTO_GAIN_OFFSET),
             data.get(AUTO_GAIN_OFFSET..GAIN_OFFSET),
@@ -166,6 +170,35 @@ impl AutoTags {
             }
             _ => 0.0,
         };
+        Ok(Self { bpm, auto_gain, gain })
+    }
+
+    fn parse_compact(data: &[u8]) -> Result<Self, AutoTagsError> {
+        let mut remaining = data.get(2..).ok_or(AutoTagsError::TooShort { length: data.len() })?;
+        let mut number = |field| {
+            let length = remaining
+                .iter()
+                .position(|byte| *byte == 0)
+                .ok_or(AutoTagsError::InvalidField {
+                    field,
+                    source: AutoTagsNumberError::MissingTerminator,
+                })?;
+            let (bytes, rest) = remaining.split_at(length + 1);
+            remaining = rest;
+            fixed_number(bytes).map_err(|source| AutoTagsError::InvalidField { field, source })
+        };
+        let bpm = number(AutoTagsField::Bpm)?;
+        if bpm < 0.0 {
+            return Err(AutoTagsError::NegativeBpm { bpm });
+        }
+        let auto_gain = number(AutoTagsField::AutoGain)?;
+        let gain = number(AutoTagsField::Gain)?;
+        if remaining.len() > 1 || remaining.iter().any(|byte| *byte != 0) {
+            return Err(AutoTagsError::SizeOrVersion {
+                length: data.len(),
+                version: [1, 1],
+            });
+        }
         Ok(Self { bpm, auto_gain, gain })
     }
 }
@@ -250,6 +283,32 @@ mod test_autotags {
         assert!((autotags.bpm - 115.0).abs() < 0.001);
         assert!((autotags.auto_gain - 2.5).abs() < 0.001);
         assert!((autotags.gain - 1.2).abs() < 0.001);
+    }
+
+    #[test]
+    fn parses_compact_real_serato_fields() {
+        for data in [
+            b"\x01\x01127.12\x001.135\x000.000\0".as_slice(),
+            b"\x01\x0196.81\x002.682\x000.000\0",
+            b"\x01\x0196.81\x002.682\x000.000\0\0",
+        ] {
+            let tags = AutoTags::parse(data).expect("compact terminated fields");
+            assert!(tags.bpm > 0.0);
+            assert!(tags.auto_gain > 0.0);
+            assert_eq!(tags.gain, 0.0);
+        }
+    }
+
+    #[test]
+    fn compact_layout_rejects_corruption() {
+        for data in [
+            b"\x01\x01127.12\x001.135\x000.000x".as_slice(),
+            b"\x01\x01127.12\x001.135\0NaNxx\0",
+            b"\x01\x0196.81\x002.682\x000.000\0x",
+            b"\x01\x01-27.12\x001.135\x000.000\0",
+        ] {
+            assert!(AutoTags::parse(data).is_err(), "{data:?}");
+        }
     }
 
     #[test]

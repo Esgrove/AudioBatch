@@ -849,6 +849,7 @@ if(BUILD_TESTING)
             "tests/SeratoPreviewLoaderTests.cpp"
             "tests/SeratoPreviewTests.cpp"
             "tests/SeratoTagReaderTests.cpp"
+            "tests/RealMetadataTests.cpp"
             "tests/SeratoTagsTests.cpp"
             "tests/SortingTests.cpp"
             "tests/TestHelpers.cpp"

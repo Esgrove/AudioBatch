@@ -16,7 +16,7 @@ pub const BAND_COUNT: usize = 16;
 pub const MAXIMUM_SLICES: usize = 65_536;
 
 /// Version of the overview cache representation, raised when it changes.
-pub const OVERVIEW_PARSER_VERSION: u32 = 1;
+pub const OVERVIEW_PARSER_VERSION: u32 = 2;
 
 /// Stable identifier of the Overview tag kind in the cache, part of the shared `serato_tag_cache` schema.
 pub const OVERVIEW_TAG_KIND: u32 = 1;
@@ -245,7 +245,7 @@ mod test_cache_representation {
         let overview = overview(257);
         let bytes = overview.serialize();
         assert_eq!(bytes.len(), 16 + 257 * 16);
-        assert_eq!(&bytes[..16], b"SOVR\0\0\0\x01\0\0\0\x01\0\0\x01\x01");
+        assert_eq!(&bytes[..16], b"SOVR\0\0\0\x01\0\0\0\x02\0\0\x01\x01");
         assert_eq!(Overview::deserialize(&bytes), Some(overview));
     }
 

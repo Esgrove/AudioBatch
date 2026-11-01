@@ -58,7 +58,7 @@ void accumulateSlice(
     }
 }
 
-/// Produces the opaque arithmetic mean RGB without contrast adjustment, or opaque fallback for no valid cells.
+/// Produces the opaque arithmetic mean RGB, rounding halfway components upward as in the Rust renderer.
 juce::Colour colourForContributions(const ColourContributions& contributions, const juce::Colour fallback)
 {
     if (contributions.weight <= 0.0) {
@@ -66,12 +66,15 @@ juce::Colour colourForContributions(const ColourContributions& contributions, co
     }
 
     const auto divisor = contributions.weight * maximumColourComponent;
-    return juce::Colour::fromFloatRGBA(
-        static_cast<float>(contributions.components[0] / divisor),
-        static_cast<float>(contributions.components[1] / divisor),
-        static_cast<float>(contributions.components[2] / divisor),
-        1.0f
-    );
+    const auto component = [divisor](const double sum) {
+        const auto normalized = std::clamp(static_cast<float>(sum / divisor), 0.0f, 1.0f);
+        return static_cast<juce::uint8>(std::lround(normalized * static_cast<float>(maximumColourComponent)));
+    };
+    return {
+        component(contributions.components[0]),
+        component(contributions.components[1]),
+        component(contributions.components[2])
+    };
 }
 
 /// Decodes adjacent slices before interpolating RGB sums and valid-cell weights between their centres.

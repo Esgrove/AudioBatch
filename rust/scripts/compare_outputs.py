@@ -64,16 +64,19 @@ def read_chunks(path: Path) -> tuple[bytes, dict[bytes, bytes]]:
     """Returns complete AIFF chunks, rejecting truncation and duplicate structural chunks."""
     data = path.read_bytes()
     if len(data) < FORM_HEADER_SIZE or data[:4] != b"FORM" or struct.unpack(">I", data[4:8])[0] + 8 != len(data):
-        raise ValueError(f"{path.name}: invalid FORM length")
+        message = f"{path.name}: invalid FORM length"
+        raise ValueError(message)
     chunks = {}
     position = 12
     while position < len(data):
         if position + 8 > len(data):
-            raise ValueError(f"{path.name}: truncated chunk header")
+            message = f"{path.name}: truncated chunk header"
+            raise ValueError(message)
         chunk_id = data[position : position + 4]
         size = struct.unpack(">I", data[position + 4 : position + 8])[0]
         if position + 8 + size > len(data) or chunk_id in chunks:
-            raise ValueError(f"{path.name}: truncated or duplicate {chunk_id!r} chunk")
+            message = f"{path.name}: truncated or duplicate {chunk_id!r} chunk"
+            raise ValueError(message)
         chunks[chunk_id] = data[position + 8 : position + 8 + size]
         position += 8 + size + (size & 1)
     return data[8:12], chunks
@@ -101,28 +104,34 @@ def synchsafe(data: bytes) -> int:
 def raw_frames(tag: bytes) -> list[bytes]:
     """Returns separate serialized ID3v2.3 or ID3v2.4 frames without merging identical frame identities."""
     if len(tag) < ID3_HEADER_SIZE or tag[:3] != b"ID3" or tag[3] not in {3, 4}:
-        raise ValueError("expected an ID3v2.3 or ID3v2.4 tag")
+        message = "expected an ID3v2.3 or ID3v2.4 tag"
+        raise ValueError(message)
     version = tag[3]
     end = ID3_HEADER_SIZE + synchsafe(tag[6:10])
     if end > len(tag):
-        raise ValueError("truncated ID3 tag")
+        message = "truncated ID3 tag"
+        raise ValueError(message)
     position = ID3_HEADER_SIZE
     if tag[5] & ID3_EXTENDED_HEADER_FLAG:
         extended = tag[position : position + 4]
         if len(extended) != ID3_SIZE_BYTES:
-            raise ValueError("truncated ID3 extended header")
+            message = "truncated ID3 extended header"
+            raise ValueError(message)
         position += synchsafe(extended) if version >= ID3_SYNCHSAFE_VERSION else 4 + struct.unpack(">I", extended)[0]
         if position > end:
-            raise ValueError("ID3 extended header exceeds the tag")
+            message = "ID3 extended header exceeds the tag"
+            raise ValueError(message)
     frames = []
     while position < end and tag[position] != 0:
         if position + ID3_HEADER_SIZE > end:
-            raise ValueError("truncated ID3 frame header")
+            message = "truncated ID3 frame header"
+            raise ValueError(message)
         size_bytes = tag[position + 4 : position + 8]
         size = synchsafe(size_bytes) if version >= ID3_SYNCHSAFE_VERSION else struct.unpack(">I", size_bytes)[0]
         next_position = position + ID3_HEADER_SIZE + size
         if next_position > end:
-            raise ValueError("ID3 frame payload exceeds the tag")
+            message = "ID3 frame payload exceeds the tag"
+            raise ValueError(message)
         frames.append(tag[position:next_position])
         position = next_position
     return frames
@@ -173,7 +182,7 @@ def frame_fields(frame: Frame) -> tuple:
             continue
         value = getattr(frame, spec.name)
         if isinstance(value, bytes) and len(value) > HASHED_PAYLOAD_BYTES:
-            value = f"{len(value)} bytes sha1 {hashlib.sha1(value).hexdigest()[:12]}"
+            value = f"{len(value)} bytes sha1 {hashlib.sha1(value, usedforsecurity=False).hexdigest()[:12]}"
         elif isinstance(value, list):
             value = tuple(str(item) for item in value)
         fields.append((spec.name, str(value) if not isinstance(value, tuple) else value))
@@ -244,8 +253,10 @@ def compare_sample_values(
     if tolerance is None:
         if steps > lossless_steps:
             return [
-                f"{name}: {differing} samples differ by up to {steps} steps, "
-                f"above the {lossless_steps} step lossless limit"
+                (
+                    f"{name}: {differing} samples differ by up to {steps} steps, "
+                    f"above the {lossless_steps} step lossless limit"
+                )
             ]
         return []
     if level > tolerance:

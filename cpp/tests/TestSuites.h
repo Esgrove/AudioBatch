@@ -85,6 +85,9 @@ std::unique_ptr<juce::UnitTest> createSeratoOverviewTests();
 /// Creates the suite that checks read-only Serato GEOB and FLAC extraction on temporary copies.
 std::unique_ptr<juce::UnitTest> createSeratoTagReaderTests();
 
+/// Creates the suite that pins real metadata containers to independently decoded expectations.
+std::unique_ptr<juce::UnitTest> createRealMetadataTests();
+
 /// Creates the suite that checks synthetic metadata payloads and bounded per-kind cache codecs.
 std::unique_ptr<juce::UnitTest> createSeratoTagsTests();
 
